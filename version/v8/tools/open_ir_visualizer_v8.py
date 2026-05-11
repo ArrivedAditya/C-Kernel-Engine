@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 """
 IR Visualizer Launcher for C-Kernel-Engine v8
 
@@ -427,11 +429,6 @@ def infer_run_model_input(model_root: Path, weight_dtype: str | None = None) -> 
 
 
 def infer_chat_template(run_model_input: str, model_root: Path) -> str:
-    probe = f"{run_model_input} {model_root.name}".lower()
-    # Gemma GGUF chat templates are often not compatible with our runtime path;
-    # prefer raw prompt mode unless the operator overrides explicitly.
-    if "gemma" in probe:
-        return "none"
     return "auto"
 
 
@@ -3117,6 +3114,7 @@ def load_model_data(
         "regression_ledger",
         "embedding_dump",
         "multimodal_bridge_report",
+        "full_network_graph",
         "bridge_encoder_ir1",
         "bridge_encoder_layout",
         "bridge_encoder_call",
@@ -3222,6 +3220,7 @@ def load_model_data(
         ),
         "kernel_registry": [V8_ROOT / "kernel_maps" / "KERNEL_REGISTRY.json"],
         "multimodal_bridge_report": [bridge_root / "bridge_report.json"] if bridge_root is not None else [],
+        "full_network_graph": [bridge_root / "full_network_graph.json"] if bridge_root is not None else [],
         "bridge_encoder_ir1": [bridge_encoder_root / "ir1.json"] if bridge_encoder_root is not None else [],
         "bridge_encoder_layout": [bridge_encoder_root / "layout.json"] if bridge_encoder_root is not None else [],
         "bridge_encoder_call": [bridge_encoder_root / "call.json"] if bridge_encoder_root is not None else [],

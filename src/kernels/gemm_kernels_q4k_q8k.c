@@ -18,8 +18,10 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
+#include "ck_threadpool.h"
 #include "ckernel_quant.h"
 
 void gemv_q4_k_q8_k_avx2(float *y,
@@ -105,9 +107,12 @@ void quantize_row_q8_k_ref(const float *x, void *vy, int k) {
 void quantize_row_q8_k_sse(const float *x, void *vy, int k);
 void quantize_row_q8_k_avx(const float *x, void *vy, int k);
 void quantize_row_q8_k_avx2(const float *x, void *vy, int k);
+void quantize_row_q8_k_avx512(const float *x, void *vy, int k);
 
 void quantize_row_q8_k(const float *x, void *vy, int k) {
-#if defined(__AVX2__)
+#if defined(__AVX512F__) && defined(__AVX512BW__)
+    quantize_row_q8_k_avx512(x, vy, k);
+#elif defined(__AVX2__)
     quantize_row_q8_k_avx2(x, vy, k);
 #elif defined(__AVX__)
     quantize_row_q8_k_avx(x, vy, k);
@@ -132,41 +137,31 @@ static float dot_q4_k_q8_k_ref(const block_q4_K *w,
         const float d = CK_FP16_TO_FP32(w[i].d) * x[i].d;
         const float dmin = CK_FP16_TO_FP32(w[i].dmin) * x[i].d;
 
-        /* Q4_K layout: process 64 elements at a time
-         * - Low nibbles of qs[0..31] → elements 0..31 → uses sc[0], m[0]
-         * - High nibbles of qs[0..31] → elements 32..63 → uses sc[1], m[1]
-         * - Low nibbles of qs[32..63] → elements 64..95 → uses sc[2], m[2]
-         * - etc.
-         */
         int is = 0;
         int q_offset = 0;
 
         for (int j = 0; j < QK_K; j += 64) {
             const uint8_t *qs = &w[i].qs[q_offset];
-            const int8_t *q8_lo = &x[i].qs[j];       /* Elements j to j+31 */
-            const int8_t *q8_hi = &x[i].qs[j + 32];  /* Elements j+32 to j+63 */
+            const int8_t *q8_lo = &x[i].qs[j];
+            const int8_t *q8_hi = &x[i].qs[j + 32];
 
-            /* Sum for low nibbles (elements j to j+31) */
             int32_t sum_q4q8_lo = 0;
             for (int l = 0; l < 32; ++l) {
                 int q4_val = qs[l] & 0x0F;
                 sum_q4q8_lo += q4_val * q8_lo[l];
             }
 
-            /* Sum for high nibbles (elements j+32 to j+63) */
             int32_t sum_q4q8_hi = 0;
             for (int l = 0; l < 32; ++l) {
                 int q4_val = qs[l] >> 4;
                 sum_q4q8_hi += q4_val * q8_hi[l];
             }
 
-            /* bsums: each bsum is 16 elements */
             int32_t bsum_lo = (int32_t)x[i].bsums[j / 16] +
                               (int32_t)x[i].bsums[j / 16 + 1];
             int32_t bsum_hi = (int32_t)x[i].bsums[(j + 32) / 16] +
                               (int32_t)x[i].bsums[(j + 32) / 16 + 1];
 
-            /* Accumulate: d * sc * sum(q4*q8) - dmin * m * sum(q8) */
             sumf += d * (float)sc[is] * (float)sum_q4q8_lo;
             sumf -= dmin * (float)m_val[is] * (float)bsum_lo;
             sumf += d * (float)sc[is + 1] * (float)sum_q4q8_hi;
@@ -247,6 +242,11 @@ void gemv_q4_k_q8_k(float *y,
                     const void *x_q8,
                     int M, int K)
 {
+    const char *ref_env = getenv("CK_DEBUG_Q4K_Q8_REF");
+    if (ref_env && atoi(ref_env) != 0) {
+        gemv_q4_k_q8_k_ref(y, W, x_q8, M, K);
+        return;
+    }
 #if defined(__AVX512VNNI__) && defined(__AVX512VL__)
     /* VNNI: Best for decode (single token) - INT8 dot product acceleration */
     gemv_q4_k_q8_k_vnni(y, W, x_q8, M, K);
@@ -280,6 +280,45 @@ void gemm_q4_k_q8_k_ref(float *Y,
     }
 }
 
+typedef struct {
+    float *Y;
+    const void *W;
+    const block_q8_K *X;
+    int M_out;
+    int N_batch;
+    int K;
+    int blocks_per_vec;
+    int blocks_per_row;
+} gemm_q4_k_q8_k_work_t;
+
+static void gemm_q4_k_q8_k_thread_fn(int ith, int nth, void *args)
+{
+    gemm_q4_k_q8_k_work_t *a = (gemm_q4_k_q8_k_work_t *)args;
+    if (!a || ith < 0 || nth <= 0 || ith >= nth) {
+        return;
+    }
+
+    const int dr = (a->M_out + nth - 1) / nth;
+    const int r0 = dr * ith;
+    const int r1 = (r0 + dr < a->M_out) ? (r0 + dr) : a->M_out;
+    if (r0 >= a->M_out) {
+        return;
+    }
+
+    const block_q4_K *blocks = (const block_q4_K *)a->W;
+    const block_q4_K *w_start = blocks + (size_t)r0 * (size_t)a->blocks_per_row;
+    const int rows = r1 - r0;
+
+    for (int n = 0; n < a->N_batch; ++n) {
+        const block_q8_K *x_row = a->X + (size_t)n * (size_t)a->blocks_per_vec;
+        gemv_q4_k_q8_k(a->Y + (size_t)n * (size_t)a->M_out + (size_t)r0,
+                       w_start,
+                       x_row,
+                       rows,
+                       a->K);
+    }
+}
+
 void gemm_q4_k_q8_k(float *Y,
                     const void *W,
                     const void *X_q8,
@@ -291,6 +330,31 @@ void gemm_q4_k_q8_k(float *Y,
 
     const block_q8_K *X = (const block_q8_K *)X_q8;
     const int blocks_per_vec = K / QK_K;
+    const int blocks_per_row = K / QK_K;
+    const size_t work_items = (size_t)M * (size_t)N;
+
+    if (work_items >= 4096u && M >= 512 && N > 1) {
+        ck_threadpool_t *pool = ck_threadpool_global();
+        const int pool_threads = pool ? ck_threadpool_n_threads(pool) : 1;
+        int active_threads = pool_threads;
+        if (active_threads > M) {
+            active_threads = M;
+        }
+        if (active_threads > 1) {
+            gemm_q4_k_q8_k_work_t work = {
+                .Y = Y,
+                .W = W,
+                .X = X,
+                .M_out = M,
+                .N_batch = N,
+                .K = K,
+                .blocks_per_vec = blocks_per_vec,
+                .blocks_per_row = blocks_per_row,
+            };
+            ck_threadpool_dispatch_n(pool, active_threads, gemm_q4_k_q8_k_thread_fn, &work);
+            return;
+        }
+    }
 
     for (int n = 0; n < N; ++n) {
         const block_q8_K *x_row = X + (size_t)n * (size_t)blocks_per_vec;
