@@ -48,10 +48,19 @@ void quantize_row_q8_k_avx512(const float *x, void *vy, int k) {
 
         const float iscale = -127.0f / max;
         const __m512 v_iscale = _mm512_set1_ps(iscale);
+        const __m512 v_magic = _mm512_set1_ps(12582912.0f);
+        const __m512i v_mantissa = _mm512_set1_epi32(0x007fffff);
+        const __m512i v_bias = _mm512_set1_epi32(0x00400000);
+        const __m512i v_min = _mm512_set1_epi32(-128);
+        const __m512i v_max = _mm512_set1_epi32(127);
 
         for (int j = 0; j < QK_K; j += 16) {
             const __m512 xf = _mm512_loadu_ps(x + j);
-            const __m512i q32 = _mm512_cvtps_epi32(_mm512_mul_ps(xf, v_iscale));
+            const __m512 scaled = _mm512_mul_ps(xf, v_iscale);
+            __m512i q32 = _mm512_sub_epi32(
+                _mm512_and_si512(_mm512_castps_si512(_mm512_add_ps(scaled, v_magic)), v_mantissa),
+                v_bias);
+            q32 = _mm512_min_epi32(_mm512_max_epi32(q32, v_min), v_max);
             const __m128i q8 = _mm512_cvtsepi32_epi8(q32);
             _mm_storeu_si128((__m128i *)(y[i].qs + j), q8);
 

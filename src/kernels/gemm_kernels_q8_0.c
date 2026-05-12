@@ -1219,6 +1219,11 @@ void vec_dot_q8_0_q8_0_sse(int n, float *s, const void *vx, const void *vy)
  */
 void vec_dot_q8_0_q8_0(int n, float *s, const void *vx, const void *vy)
 {
+    const char *ref_env = getenv("CK_DEBUG_Q8_0_Q8_0_REF");
+    if (ref_env && ref_env[0] && ref_env[0] != '0') {
+        vec_dot_q8_0_q8_0_ref(n, s, vx, vy);
+        return;
+    }
 #ifdef __AVX512F__
     vec_dot_q8_0_q8_0_avx512(n, s, vx, vy);
 #elif defined(__AVX2__)

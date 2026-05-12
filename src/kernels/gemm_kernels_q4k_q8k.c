@@ -110,6 +110,11 @@ void quantize_row_q8_k_avx2(const float *x, void *vy, int k);
 void quantize_row_q8_k_avx512(const float *x, void *vy, int k);
 
 void quantize_row_q8_k(const float *x, void *vy, int k) {
+    const char *ref_env = getenv("CK_DEBUG_Q8K_REF");
+    if (ref_env && atoi(ref_env) != 0) {
+        quantize_row_q8_k_ref(x, vy, k);
+        return;
+    }
 #if defined(__AVX512F__) && defined(__AVX512BW__)
     quantize_row_q8_k_avx512(x, vy, k);
 #elif defined(__AVX2__)
@@ -129,6 +134,7 @@ static float dot_q4_k_q8_k_ref(const block_q4_K *w,
 {
     const int nb = k / QK_K;
     float sumf = 0.0f;
+    float sums[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
     for (int i = 0; i < nb; ++i) {
         uint8_t sc[8], m_val[8];
@@ -136,6 +142,12 @@ static float dot_q4_k_q8_k_ref(const block_q4_K *w,
 
         const float d = CK_FP16_TO_FP32(w[i].d) * x[i].d;
         const float dmin = CK_FP16_TO_FP32(w[i].dmin) * x[i].d;
+
+        int32_t aux32[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        int sumi = 0;
+        for (int j = 0; j < QK_K / 16; ++j) {
+            sumi += (int)x[i].bsums[j] * (int)m_val[j / 2];
+        }
 
         int is = 0;
         int q_offset = 0;
@@ -145,33 +157,31 @@ static float dot_q4_k_q8_k_ref(const block_q4_K *w,
             const int8_t *q8_lo = &x[i].qs[j];
             const int8_t *q8_hi = &x[i].qs[j + 32];
 
-            int32_t sum_q4q8_lo = 0;
             for (int l = 0; l < 32; ++l) {
                 int q4_val = qs[l] & 0x0F;
-                sum_q4q8_lo += q4_val * q8_lo[l];
+                const int prod = q4_val * q8_lo[l];
+                aux32[l & 7] += (int)sc[is] * prod;
             }
 
-            int32_t sum_q4q8_hi = 0;
             for (int l = 0; l < 32; ++l) {
                 int q4_val = qs[l] >> 4;
-                sum_q4q8_hi += q4_val * q8_hi[l];
+                const int prod = q4_val * q8_hi[l];
+                aux32[l & 7] += (int)sc[is + 1] * prod;
             }
-
-            int32_t bsum_lo = (int32_t)x[i].bsums[j / 16] +
-                              (int32_t)x[i].bsums[j / 16 + 1];
-            int32_t bsum_hi = (int32_t)x[i].bsums[(j + 32) / 16] +
-                              (int32_t)x[i].bsums[(j + 32) / 16 + 1];
-
-            sumf += d * (float)sc[is] * (float)sum_q4q8_lo;
-            sumf -= dmin * (float)m_val[is] * (float)bsum_lo;
-            sumf += d * (float)sc[is + 1] * (float)sum_q4q8_hi;
-            sumf -= dmin * (float)m_val[is + 1] * (float)bsum_hi;
 
             q_offset += 32;
             is += 2;
         }
+
+        for (int l = 0; l < 8; ++l) {
+            sums[l] += d * (float)aux32[l];
+        }
+        sumf -= dmin * (float)sumi;
     }
 
+    for (int l = 0; l < 8; ++l) {
+        sumf += sums[l];
+    }
     return sumf;
 }
 
@@ -247,7 +257,7 @@ void gemv_q4_k_q8_k(float *y,
         gemv_q4_k_q8_k_ref(y, W, x_q8, M, K);
         return;
     }
-#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__) && !defined(CK_NO_AVX512_VNNI)
     /* VNNI: Best for decode (single token) - INT8 dot product acceleration */
     gemv_q4_k_q8_k_vnni(y, W, x_q8, M, K);
 #elif defined(__AVX2__)

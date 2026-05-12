@@ -51,6 +51,11 @@ void quantize_row_q8_k_sse(const float *x, void *vy, int k) {
 
         const float iscale = -127.0f / max;
         const __m128 v_iscale = _mm_set1_ps(iscale);
+        const __m128 v_magic = _mm_set1_ps(12582912.0f);
+        const __m128i v_mantissa = _mm_set1_epi32(0x007fffff);
+        const __m128i v_bias = _mm_set1_epi32(0x00400000);
+        const __m128i v_min = _mm_set1_epi32(-128);
+        const __m128i v_max = _mm_set1_epi32(127);
 
         for (int j = 0; j < QK_K; j += 16) {
             const __m128 x0 = _mm_loadu_ps(x + j + 0);
@@ -58,10 +63,23 @@ void quantize_row_q8_k_sse(const float *x, void *vy, int k) {
             const __m128 x2 = _mm_loadu_ps(x + j + 8);
             const __m128 x3 = _mm_loadu_ps(x + j + 12);
 
-            const __m128i q0 = _mm_cvtps_epi32(_mm_mul_ps(x0, v_iscale));
-            const __m128i q1 = _mm_cvtps_epi32(_mm_mul_ps(x1, v_iscale));
-            const __m128i q2 = _mm_cvtps_epi32(_mm_mul_ps(x2, v_iscale));
-            const __m128i q3 = _mm_cvtps_epi32(_mm_mul_ps(x3, v_iscale));
+            __m128i q0 = _mm_sub_epi32(
+                _mm_and_si128(_mm_castps_si128(_mm_add_ps(_mm_mul_ps(x0, v_iscale), v_magic)), v_mantissa),
+                v_bias);
+            __m128i q1 = _mm_sub_epi32(
+                _mm_and_si128(_mm_castps_si128(_mm_add_ps(_mm_mul_ps(x1, v_iscale), v_magic)), v_mantissa),
+                v_bias);
+            __m128i q2 = _mm_sub_epi32(
+                _mm_and_si128(_mm_castps_si128(_mm_add_ps(_mm_mul_ps(x2, v_iscale), v_magic)), v_mantissa),
+                v_bias);
+            __m128i q3 = _mm_sub_epi32(
+                _mm_and_si128(_mm_castps_si128(_mm_add_ps(_mm_mul_ps(x3, v_iscale), v_magic)), v_mantissa),
+                v_bias);
+
+            q0 = _mm_min_epi32(_mm_max_epi32(q0, v_min), v_max);
+            q1 = _mm_min_epi32(_mm_max_epi32(q1, v_min), v_max);
+            q2 = _mm_min_epi32(_mm_max_epi32(q2, v_min), v_max);
+            q3 = _mm_min_epi32(_mm_max_epi32(q3, v_min), v_max);
 
             const __m128i q01 = _mm_packs_epi32(q0, q1);
             const __m128i q23 = _mm_packs_epi32(q2, q3);

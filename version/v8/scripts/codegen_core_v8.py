@@ -621,6 +621,7 @@ def emit_op(
     op_instance_idx: int = 0,
     force_outproj_fp32_layers: set[int] | None = None,
     force_attn_proj_fp32_layers: set[int] | None = None,
+    force_mlp_gate_up_fp32_layers: set[int] | None = None,
 ) -> str:
     """Emit a single function call from an IR operation.
 
@@ -638,6 +639,7 @@ def emit_op(
     args = op.get("args", [])
     force_outproj_fp32 = int(layer) in (force_outproj_fp32_layers or set())
     force_attn_proj_fp32 = int(layer) in (force_attn_proj_fp32_layers or set())
+    force_mlp_gate_up_fp32 = int(layer) in (force_mlp_gate_up_fp32_layers or set())
 
     lines = []
     lines.append(f"    /* Op {idx}: {function} ({op_name}) layer={layer} section={section} */")
@@ -1115,7 +1117,8 @@ def emit_op(
                 lines.append("    CK_PROFILE_BEGIN();")
             lines.append(
                 f"    const int {active_name} = debug_mlp_gate_up_fp32 || "
-                f"(debug_mlp_gate_up_fp32_layer == {layer});"
+                f"(debug_mlp_gate_up_fp32_layer == {layer}) || "
+                f"{1 if force_mlp_gate_up_fp32 else 0};"
             )
             lines.append(f"    if ({active_name} && ck_debug_mlp_gate_up_fp32_input != NULL) {{")
             lines.append(f"    {fp32_function}(")
@@ -1665,6 +1668,21 @@ static void ck_decode(CKModel *model, int32_t token) {
             force_attn_proj_fp32_layers.add(int(raw_attn_proj_layers))
         except Exception:
             pass
+    force_mlp_gate_up_fp32_layers: set[int] = set()
+    raw_mlp_gate_up_layers = config.get("mlp_gate_up_fp32_layers")
+    if raw_mlp_gate_up_layers is None:
+        raw_mlp_gate_up_layers = config.get("mlp_gate_up_fp32_layer")
+    if isinstance(raw_mlp_gate_up_layers, (list, tuple, set)):
+        for raw_layer in raw_mlp_gate_up_layers:
+            try:
+                force_mlp_gate_up_fp32_layers.add(int(raw_layer))
+            except Exception:
+                pass
+    elif raw_mlp_gate_up_layers is not None:
+        try:
+            force_mlp_gate_up_fp32_layers.add(int(raw_mlp_gate_up_layers))
+        except Exception:
+            pass
     if profile:
         lines.append("    CK_PROFILE_VARS();")
     lines.append(f"    /* Store token at offset {token_offset} (from layout) */")
@@ -1704,6 +1722,7 @@ static void ck_decode(CKModel *model, int32_t token) {
                 op_instance_idx=op_instance_idx,
                 force_outproj_fp32_layers=force_outproj_fp32_layers,
                 force_attn_proj_fp32_layers=force_attn_proj_fp32_layers,
+                force_mlp_gate_up_fp32_layers=force_mlp_gate_up_fp32_layers,
             )
         )
         if (scale_embeddings_sqrt_dim

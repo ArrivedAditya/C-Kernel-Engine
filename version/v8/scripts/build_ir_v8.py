@@ -229,9 +229,15 @@ def _inject_runtime_config_defaults(config: Dict[str, Any], arch: str) -> Dict[s
 
     if arch_lc == "qwen35":
         config.setdefault("prefer_q8_0_contract", True)
+        # Empirical CK-vs-llama parity guard for Qwen3.5 decode:
+        # layer-0 recurrent gate is closer with the Q8_K activation contract,
+        # while layer-0 MLP gate/up stays on the FP32 adapter. Keep both as
+        # config defaults so other model families and later layers are not
+        # silently moved onto a broad fallback path.
+        config.setdefault("mlp_gate_up_fp32_layers", [0])
         _merge_activation_defaults(
             {
-                "recurrent_gate_proj": "fp32",
+                "recurrent_gate_proj": "q8_k",
                 "recurrent_alpha_proj": "q8_0",
                 "recurrent_beta_proj": "q8_0",
             }
@@ -1953,6 +1959,7 @@ RESIDUAL_SOURCE_BRANCH_STARTERS = {
     # Feed-forward branches
     "mlp_gate_up", "mlp_gate", "mlp_up",
 }
+PRE_NORM_Q8_DIRECT_CONSUMERS = RESIDUAL_SOURCE_BRANCH_STARTERS
 
 
 def should_insert_residual_save(layer_ops: List[str], op_idx: int) -> bool:
@@ -2615,11 +2622,11 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
     if op_name in ("branch_fc2",):
         return projector_out, projector_hidden
     # Quantize ops: _input_dim is the size to quantize
-    # quantize_input_0/1: quantize embed_dim (rmsnorm output before projections)
+    # quantize_input_0/1/2: quantize embed_dim (rmsnorm output before projections)
     # quantize_out_proj_input: quantize embed_dim (attention output)
     # quantize_mlp_down_input: quantize intermediate_size (swiglu output)
     # quantize_final_output: quantize embed_dim (footer rmsnorm output before logits)
-    if op_name in ("quantize_input_0", "quantize_input_1"):
+    if op_name in ("quantize_input_0", "quantize_input_1", "quantize_input_2"):
         return embed, embed  # output_dim not used, but _input_dim = embed
     if op_name == "quantize_final_output":
         projector_in_dim = int(config.get("projector_in_dim", 0) or 0)
@@ -4011,6 +4018,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             return {"x": "branch_normed" if act == "fp32" else "branch_normed"}
         if op_type == "branch_fc2":
             return {"x": "branch_mlp" if act == "fp32" else "branch_mlp"}
+        if op_type == "recurrent_gate_proj":
+            return {"x": "main_stream" if act == "fp32" else "main_stream_q8"}
         if op_type == "recurrent_out_proj":
             return {"x": "recurrent_normed" if act == "fp32" else "main_stream_q8"}
         if op_type == "mlp_down":
@@ -4623,15 +4632,33 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                         if not kernels and OP_TO_WEIGHT_KEYS.get(op) != "metadata":
                             print(f"            {op:20s} → (no kernel)")
 
-                        # Insert quantize op after rmsnorm if needed
+                        # Insert one quantize op after rmsnorm if any consumer in
+                        # this normed section needs a Q8 activation. Qwen3.5
+                        # recurrent blocks have a FP32 qkv projection followed by
+                        # a Q4_K/Q8_K gate projection, so checking only the
+                        # immediate next op misses the required quantize.
                         if op in PRE_NORM_OP_NAMES and op_idx + 1 < len(layer_ops):
-                            next_op = layer_ops[op_idx + 1]
-                            next_kernels = []
-                            next_kernels.extend(
-                                map_op_to_kernel(next_op, layer_quant, mode, header_quant)
-                            )
+                            section_kernels = []
+                            for future_op_item in layer_ops[op_idx + 1:]:
+                                future_op = (
+                                    future_op_item["op"]
+                                    if isinstance(future_op_item, dict)
+                                    else str(future_op_item)
+                                )
+                                if future_op in PRE_NORM_OP_NAMES:
+                                    break
+                                # Only projections that directly consume the
+                                # normed stream should trigger quantize_input_N.
+                                # Later consumers such as out_proj/mlp_down have
+                                # their own quantize insertion after attention
+                                # or activation transforms.
+                                if future_op not in PRE_NORM_Q8_DIRECT_CONSUMERS:
+                                    break
+                                section_kernels.extend(
+                                    map_op_to_kernel(future_op, layer_quant, mode, header_quant)
+                                )
 
-                            for nk in next_kernels:
+                            for nk in section_kernels:
                                 nk_id = nk[0] if isinstance(nk, tuple) else nk
                                 if kernel_needs_q8_activation(registry, nk_id):
                                     # Get activation dtype from kernel
@@ -8093,7 +8120,7 @@ def generate_ir_lower_2(
             merged_tokens = int(params.get("vision_merged_tokens", 0) or 0)
             hidden_dim = int(params.get("projector_hidden_dim", 0) or 0)
             params.setdefault("gelu_elems", merged_tokens * hidden_dim)
-        if op_type in ("quantize_input_0", "quantize_input_1", "quantize_out_proj_input", "quantize_mlp_down_input", "quantize_recurrent_out_proj_input", "quantize_final_output"):
+        if op_type in ("quantize_input_0", "quantize_input_1", "quantize_input_2", "quantize_out_proj_input", "quantize_mlp_down_input", "quantize_recurrent_out_proj_input", "quantize_final_output"):
             default_quant_rows = int(params.get("_m", params.get("seq_len", 1)) or 1)
             params.setdefault("rows", default_quant_rows)
         if op_type == "quantize_final_output":
@@ -8205,7 +8232,7 @@ def generate_ir_lower_2(
             op_type == "rope_qk" and ir_op.get("kernel", "") == "mrope_qk_vision"
         ):
             params["_m"] = int(params.get("vision_num_patches", params.get("_m", 1)) or 1)
-        if op_type in ("quantize_input_0", "quantize_input_1", "quantize_out_proj_input", "quantize_mlp_down_input", "quantize_recurrent_out_proj_input", "quantize_final_output"):
+        if op_type in ("quantize_input_0", "quantize_input_1", "quantize_input_2", "quantize_out_proj_input", "quantize_mlp_down_input", "quantize_recurrent_out_proj_input", "quantize_final_output"):
             inferred_quant_rows = int(params.get("_m", params.get("seq_len", params.get("rows", 1))) or 1)
             if int(params.get("rows", 0) or 0) <= 1 and inferred_quant_rows > 1:
                 params["rows"] = inferred_quant_rows
