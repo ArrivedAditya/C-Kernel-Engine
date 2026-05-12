@@ -49,14 +49,17 @@ def _edge_row() -> np.ndarray:
     return vals
 
 
-def test_q8_k_quantizer_variants_match_dispatch() -> None:
+def test_q8_k_quantizer_variants_match_ref() -> None:
     lib = load_lib("libckernel_engine.so")
+    ref = _bind(lib.quantize_row_q8_k_ref)
     variants = {
+        "dispatch": _bind(lib.quantize_row_q8_k),
         "sse": _bind(lib.quantize_row_q8_k_sse),
         "avx": _bind(lib.quantize_row_q8_k_avx),
         "avx2": _bind(lib.quantize_row_q8_k_avx2),
     }
-    dispatch = _bind(lib.quantize_row_q8_k)
+    if hasattr(lib, "quantize_row_q8_k_avx512"):
+        variants["avx512"] = _bind(lib.quantize_row_q8_k_avx512)
 
     rng = np.random.default_rng(1234)
     rows = [
@@ -67,11 +70,11 @@ def test_q8_k_quantizer_variants_match_dispatch() -> None:
     ]
 
     for row in rows:
-        expected = _quantize(dispatch, row)
+        expected = _quantize(ref, row)
         for name, fn in variants.items():
             got = _quantize(fn, row)
-            assert got == expected, f"{name} Q8_K quantizer differs from dispatch for k={row.size}"
+            assert got == expected, f"{name} Q8_K quantizer differs from scalar reference for k={row.size}"
 
 
 if __name__ == "__main__":
-    test_q8_k_quantizer_variants_match_dispatch()
+    test_q8_k_quantizer_variants_match_ref()

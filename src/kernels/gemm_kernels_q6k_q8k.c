@@ -32,6 +32,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdlib.h>
 
 #include "ckernel_quant.h"
 
@@ -73,6 +74,7 @@ static float dot_q6_k_q8_k_ref(const block_q6_K *w,
 {
     const int nb = K / QK_K;
     float sumf = 0.0f;
+    float sums[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
     for (int i = 0; i < nb; ++i) {
         const float d = GGML_FP16_TO_FP32(w[i].d) * x[i].d;
@@ -81,6 +83,7 @@ static float dot_q6_k_q8_k_ref(const block_q6_K *w,
         const uint8_t *qh = w[i].qh;
         const int8_t *sc = w[i].scales;
         const int8_t *q8 = x[i].qs;
+        int32_t aux32[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 
         /* Process 256 weights in 2 iterations of 128 */
         for (int n = 0; n < QK_K; n += 128) {
@@ -103,19 +106,25 @@ static float dot_q6_k_q8_k_ref(const block_q6_K *w,
                 /* q4: weights l+96 (high nibble of ql[l+32], bits 6-7 of qh[l]) */
                 const int8_t q4 = (int8_t)((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
 
-                /* Accumulate: d * scale * q6 * q8 */
-                sumf += d * (float)sc[is + 0] * (float)q1 * (float)q8[l + 0];
-                sumf += d * (float)sc[is + 2] * (float)q2 * (float)q8[l + 32];
-                sumf += d * (float)sc[is + 4] * (float)q3 * (float)q8[l + 64];
-                sumf += d * (float)sc[is + 6] * (float)q4 * (float)q8[l + 96];
+                aux32[l & 7] += (int)sc[is + 0] * (int)q1 * (int)q8[l + 0];
+                aux32[l & 7] += (int)sc[is + 2] * (int)q2 * (int)q8[l + 32];
+                aux32[l & 7] += (int)sc[is + 4] * (int)q3 * (int)q8[l + 64];
+                aux32[l & 7] += (int)sc[is + 6] * (int)q4 * (int)q8[l + 96];
             }
             q8 += 128;
             ql += 64;
             qh += 32;
             sc += 8;
         }
+
+        for (int l = 0; l < 8; ++l) {
+            sums[l] += d * (float)aux32[l];
+        }
     }
 
+    for (int l = 0; l < 8; ++l) {
+        sumf += sums[l];
+    }
     return sumf;
 }
 
@@ -1053,6 +1062,25 @@ void gemv_q6_k_q8_k(float *y,
                      const void *x_q8,
                      int M, int K)
 {
+    const char *simd_env = getenv("CK_DEBUG_Q6K_Q8K_SIMD");
+    if (simd_env && simd_env[0] && simd_env[0] != '0') {
+#if defined(__AVX512VBMI__)
+        gemv_q6_k_q8_k_avx512_vbmi(y, W, x_q8, M, K);
+        return;
+#elif defined(__AVX512F__)
+        gemv_q6_k_q8_k_avx512(y, W, x_q8, M, K);
+        return;
+#elif defined(__AVX2__)
+        gemv_q6_k_q8_k_avx2(y, W, x_q8, M, K);
+        return;
+#elif defined(__AVX__)
+        gemv_q6_k_q8_k_avx(y, W, x_q8, M, K);
+        return;
+#elif defined(__SSE4_1__)
+        gemv_q6_k_q8_k_sse(y, W, x_q8, M, K);
+        return;
+#endif
+    }
     gemv_q6_k_q8_k_ref(y, W, x_q8, M, K);
 }
 
