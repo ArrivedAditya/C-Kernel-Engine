@@ -622,6 +622,7 @@ def emit_op(
     force_outproj_fp32_layers: set[int] | None = None,
     force_attn_proj_fp32_layers: set[int] | None = None,
     force_mlp_gate_up_fp32_layers: set[int] | None = None,
+    force_mlp_gate_up_q8_contract_layers: set[int] | None = None,
 ) -> str:
     """Emit a single function call from an IR operation.
 
@@ -640,6 +641,7 @@ def emit_op(
     force_outproj_fp32 = int(layer) in (force_outproj_fp32_layers or set())
     force_attn_proj_fp32 = int(layer) in (force_attn_proj_fp32_layers or set())
     force_mlp_gate_up_fp32 = int(layer) in (force_mlp_gate_up_fp32_layers or set())
+    force_mlp_gate_up_q8_contract = int(layer) in (force_mlp_gate_up_q8_contract_layers or set())
 
     lines = []
     lines.append(f"    /* Op {idx}: {function} ({op_name}) layer={layer} section={section} */")
@@ -738,6 +740,7 @@ def emit_op(
         k_expr = arg_expr_by_name.get("k")
         if x_expr and y_expr and k_expr:
             lines.append(f"    ck_debug_attn_proj_fp32_input = {x_expr};")
+            lines.append(f"    ck_debug_recurrent_proj_fp32_input = {x_expr};")
             if profile:
                 lines.append("    CK_PROFILE_BEGIN();")
             lines.append("    quantize_row_q8_k(")
@@ -747,6 +750,76 @@ def emit_op(
             lines.append("    );")
             if profile:
                 lines.append(f'    CK_PROFILE_END("decode", "{function}", "{op_name}", {layer});')
+            if seq_idx is not None:
+                lines.append(f"    if (stop_seq == {seq_idx}) return;")
+            return "\n".join(lines)
+
+    if op_name in {"recurrent_gate_proj", "recurrent_alpha_proj", "recurrent_beta_proj"} and function in {"gemv_q4_k_q8_k", "gemv_q8_0_q8_0_contract"}:
+        arg_expr_by_name = {}
+        for arg in args:
+            nm = str(arg.get("name", "")).lower()
+            ex = str(arg.get("expr", ""))
+            if nm and ex and nm not in arg_expr_by_name:
+                arg_expr_by_name[nm] = ex
+
+        y_expr = arg_expr_by_name.get("y")
+        w_expr = arg_expr_by_name.get("w")
+        x_q8_expr = arg_expr_by_name.get("x_q8")
+        x_expr = arg_expr_by_name.get("x")
+        m_expr = arg_expr_by_name.get("m")
+        k_expr = arg_expr_by_name.get("k")
+        fp32_function = "gemv_q4_k" if function == "gemv_q4_k_q8_k" else "gemv_q8_0"
+        q8_call_input = x_q8_expr if function == "gemv_q4_k_q8_k" else x_expr
+        if y_expr and w_expr and q8_call_input and m_expr and k_expr:
+            active_name = f"ck_debug_recurrent_proj_fp32_active_{seq_idx if seq_idx is not None else idx}"
+            lines.append(
+                f"    const int {active_name} = "
+                f"((debug_recurrent_proj_fp32_layer == {layer}) && "
+                f"(!debug_recurrent_proj_op_env || debug_recurrent_proj_op_env[0] == '\\0' || "
+                f"strcmp(debug_recurrent_proj_op_env, \"all\") == 0 || "
+                f"strcmp(debug_recurrent_proj_op_env, \"{op_name}\") == 0));"
+            )
+            lines.append(f"    if ({active_name} && ck_debug_recurrent_proj_fp32_input != NULL) {{")
+            if profile:
+                lines.append("        CK_PROFILE_BEGIN();")
+            lines.append(f"        {fp32_function}(")
+            lines.append(f"            {y_expr},")
+            lines.append(f"            {w_expr},")
+            lines.append("            ck_debug_recurrent_proj_fp32_input,")
+            lines.append(f"            {m_expr},")
+            lines.append(f"            {k_expr}")
+            lines.append("        );")
+            if profile:
+                lines.append(f'        CK_PROFILE_END("decode", "{fp32_function}", "{op_name}", {layer});')
+            lines.append("    } else {")
+            if profile:
+                lines.append("        CK_PROFILE_BEGIN();")
+            lines.append(f"        {function}(")
+            lines.append(f"            {y_expr},")
+            lines.append(f"            {w_expr},")
+            lines.append(f"            {q8_call_input},")
+            lines.append(f"            {m_expr},")
+            lines.append(f"            {k_expr}")
+            lines.append("        );")
+            if profile:
+                lines.append(f'        CK_PROFILE_END("decode", "{function}", "{op_name}", {layer});')
+            lines.append("    }")
+            if dump:
+                raw_expr = y_expr.replace("(float*)", "").replace("(void*)", "").strip()
+                lines.append("    #ifdef CK_PARITY_DUMP")
+                lines.append(f'    ck_dump_tensor((float*){raw_expr}, {layer}, "{op_name}", {m_expr});')
+                lines.append("    #endif")
+            hidden_label = {
+                "recurrent_gate_proj": "z",
+                "recurrent_alpha_proj": "alpha",
+                "recurrent_beta_proj": "beta",
+            }.get(op_name)
+            if hidden_label:
+                raw_expr = y_expr.replace("(float*)", "").replace("(void*)", "").strip()
+                lines.append(
+                    f'    ck_debug_export_hidden(model, {layer}, "{hidden_label}", '
+                    f'(const float*){raw_expr}, {m_expr});'
+                )
             if seq_idx is not None:
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
@@ -806,6 +879,12 @@ def emit_op(
                 lines.append("    #ifdef CK_PARITY_DUMP")
                 lines.append(f'    ck_dump_tensor((float*){raw_expr}, {layer}, "{dump_label}", {m_expr});')
                 lines.append("    #endif")
+            raw_expr = y_expr.replace("(float*)", "").replace("(void*)", "").strip()
+            hidden_label = "q_proj" if op_name == "q_gate_proj" else op_name
+            lines.append(
+                f'    ck_debug_export_hidden(model, {layer}, "{hidden_label}", '
+                f'(const float*){raw_expr}, {m_expr});'
+            )
             if seq_idx is not None:
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
@@ -985,6 +1064,11 @@ def emit_op(
                 lines.append("    #ifdef CK_PARITY_DUMP")
                 lines.append(f'    ck_dump_tensor((float*){raw_expr}, {layer}, "attn_output", {m_expr});')
                 lines.append("    #endif")
+            raw_expr = y_expr.replace("(float*)", "").replace("(void*)", "").strip()
+            lines.append(
+                f'    ck_debug_export_hidden(model, {layer}, "out_proj", '
+                f'(const float*){raw_expr}, {m_expr});'
+            )
             if seq_idx is not None:
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
@@ -1080,6 +1164,11 @@ def emit_op(
                 lines.append(f'    ck_dump_tensor((float*){raw_expr}, {layer}, "down_proj", {m_expr});')
                 lines.append(f'    ck_dump_tensor((float*){raw_expr}, {layer}, "ffn_down", {m_expr});')
                 lines.append("    #endif")
+            raw_expr = y_expr.replace("(float*)", "").replace("(void*)", "").strip()
+            lines.append(
+                f'    ck_debug_export_hidden(model, {layer}, "mlp_down", '
+                f'(const float*){raw_expr}, {m_expr});'
+            )
             if seq_idx is not None:
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
@@ -1112,6 +1201,8 @@ def emit_op(
             up_w_expr = f"((const void*)((const uint8_t*)({w_expr}) + ((size_t)({half_expr}) * {row_bytes_expr})))"
             fp32_function = "gemv_q4_k" if function in {"gemv_q4_k", "gemv_q4_k_q8_k"} else "gemv_q6_k"
             active_name = f"ck_debug_mlp_gate_up_fp32_active_{seq_idx if seq_idx is not None else idx}"
+            q8_contract_name = f"ck_debug_mlp_gate_up_q8_contract_active_{seq_idx if seq_idx is not None else idx}"
+            q8_contract_supported = function in {"gemv_q4_k_q8_k", "gemv_q6_k_q8_k"}
 
             if profile:
                 lines.append("    CK_PROFILE_BEGIN();")
@@ -1120,7 +1211,30 @@ def emit_op(
                 f"(debug_mlp_gate_up_fp32_layer == {layer}) || "
                 f"{1 if force_mlp_gate_up_fp32 else 0};"
             )
-            lines.append(f"    if ({active_name} && ck_debug_mlp_gate_up_fp32_input != NULL) {{")
+            lines.append(
+                f"    const int {q8_contract_name} = "
+                f"({1 if q8_contract_supported else 0}) && "
+                f"(debug_mlp_gate_up_q8_contract || "
+                f"(debug_mlp_gate_up_q8_contract_layer == {layer}) || "
+                f"{1 if force_mlp_gate_up_q8_contract else 0});"
+            )
+            lines.append(f"    if ({q8_contract_name} && ck_debug_mlp_gate_up_fp32_input != NULL) {{")
+            lines.append(f"    quantize_row_q8_k(ck_debug_mlp_gate_up_fp32_input, {x_expr}, {k_expr});")
+            lines.append(f"    {function}(")
+            lines.append(f"        {gate_y_expr},")
+            lines.append(f"        {gate_w_expr},")
+            lines.append(f"        {x_expr},")
+            lines.append(f"        {half_expr},")
+            lines.append(f"        {k_expr}")
+            lines.append("    );")
+            lines.append(f"    {function}(")
+            lines.append(f"        {up_y_expr},")
+            lines.append(f"        {up_w_expr},")
+            lines.append(f"        {x_expr},")
+            lines.append(f"        {half_expr},")
+            lines.append(f"        {k_expr}")
+            lines.append("    );")
+            lines.append(f"    }} else if ({active_name} && ck_debug_mlp_gate_up_fp32_input != NULL) {{")
             lines.append(f"    {fp32_function}(")
             lines.append(f"        {gate_y_expr},")
             lines.append(f"        {gate_w_expr},")
@@ -1154,14 +1268,19 @@ def emit_op(
             if profile:
                 lines.append(f'    CK_PROFILE_END("decode", "{function}", "{op_name}", {layer});')
 
+            raw_expr = y_expr.replace("(float*)", "").replace("(void*)", "").strip()
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "mlp_gate", (const float*){raw_expr}, {half_expr});')
+            lines.append(
+                f'    ck_debug_export_hidden(model, {layer}, "mlp_up", '
+                f'(const float*)(((const float*){raw_expr}) + {half_expr}), {half_expr});'
+            )
+
             if debug:
-                raw_expr = y_expr.replace("(float*)", "").replace("(void*)", "").strip()
                 lines.append(f'    {{ float *_dbg = (float*){raw_expr}; '
                             f'printf("[Op {idx} {op_name} L{layer}] out[0..4]: %f %f %f %f %f\\n", '
                             f'_dbg[0], _dbg[1], _dbg[2], _dbg[3], _dbg[4]); }}')
 
             if dump:
-                raw_expr = y_expr.replace("(float*)", "").replace("(void*)", "").strip()
                 lines.append("    #ifdef CK_PARITY_DUMP")
                 lines.append(f'    ck_dump_tensor((float*){raw_expr}, {layer}, "ffn_gate_up", {m_expr});')
                 lines.append(f'    ck_dump_tensor((float*){raw_expr}, {layer}, "gate_proj", {half_expr});')
@@ -1235,6 +1354,161 @@ def emit_op(
     lines.append("    );")
     if profile:
         lines.append(f'    CK_PROFILE_END("decode", "{function}", "{op_name}", {layer});')
+
+    arg_expr_by_name_for_hidden: Dict[str, str] = {}
+    for arg in args:
+        nm = str(arg.get("name", "")).lower()
+        ex = str(arg.get("expr", ""))
+        if nm and ex and nm not in arg_expr_by_name_for_hidden:
+            arg_expr_by_name_for_hidden[nm] = ex
+
+    def _hidden_arg(*names: str) -> str | None:
+        for nm in names:
+            ex = arg_expr_by_name_for_hidden.get(nm.lower())
+            if ex:
+                return ex
+        return None
+
+    def _hidden_raw(expr: str | None) -> str | None:
+        if not expr:
+            return None
+        return expr.replace("(float*)", "").replace("(void*)", "").strip()
+
+    def _mul_expr(*terms: str | None) -> str | None:
+        non_empty = [t for t in terms if t and str(t) != "0"]
+        if not non_empty:
+            return None
+        return " * ".join(f"({t})" for t in non_empty)
+
+    def _hidden_count(*names: str, default: str = "EMBED_DIM") -> str:
+        for nm in names:
+            ex = arg_expr_by_name_for_hidden.get(nm.lower())
+            if ex:
+                return ex
+        return default
+
+    def _emit_hidden_export(expr: str | None, label: str, count_expr: str | None) -> None:
+        raw_expr = _hidden_raw(expr)
+        if raw_expr and count_expr:
+            lines.append(
+                f'    ck_debug_export_hidden(model, {layer}, "{label}", '
+                f'(const float*){raw_expr}, {count_expr});'
+            )
+
+    if op_name == "residual_add":
+        out_expr = _hidden_raw(_hidden_arg("output", "out", "c", "y"))
+        if out_expr:
+            if op_instance_idx == 0:
+                lines.append(f'    ck_debug_export_hidden(model, {layer}, "after_attn", (const float*){out_expr}, EMBED_DIM);')
+            elif op_instance_idx == 1:
+                lines.append(f'    ck_debug_export_hidden(model, {layer}, "layer_out", (const float*){out_expr}, EMBED_DIM);')
+    elif op_name == "post_attention_norm":
+        out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y"))
+        if out_expr:
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "post_attn_norm", (const float*){out_expr}, EMBED_DIM);')
+    elif op_name in ("silu_mul", "swiglu"):
+        out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y", "data"))
+        if out_expr:
+            count_expr = _hidden_count("dim", "n", "intermediate_dim", default="INTERMEDIATE_DIM")
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "mlp_swiglu", (const float*){out_expr}, {count_expr});')
+    elif op_name == "mlp_down":
+        out_expr = _hidden_raw(_hidden_arg("output", "out", "c", "y"))
+        if out_expr:
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "mlp_down", (const float*){out_expr}, EMBED_DIM);')
+    elif op_name == "recurrent_qkv_proj":
+        _emit_hidden_export(
+            _hidden_arg("output", "out", "c", "y"),
+            "linear_attn_qkv_mixed",
+            _hidden_count("m", "n", "rows", "dim", default="0"),
+        )
+    elif op_name == "recurrent_gate_proj":
+        _emit_hidden_export(
+            _hidden_arg("output", "out", "c", "y"),
+            "z",
+            _hidden_count("m", "n", "rows", "dim", default="0"),
+        )
+    elif op_name == "recurrent_alpha_proj":
+        _emit_hidden_export(
+            _hidden_arg("output", "out", "c", "y"),
+            "alpha",
+            _hidden_count("m", "n", "rows", "dim", default="0"),
+        )
+    elif op_name == "recurrent_beta_proj":
+        _emit_hidden_export(
+            _hidden_arg("output", "out", "c", "y"),
+            "beta",
+            _hidden_count("m", "n", "rows", "dim", default="0"),
+        )
+    elif op_name == "recurrent_dt_gate":
+        _emit_hidden_export(
+            _hidden_arg("gate", "output", "out"),
+            "gate",
+            _mul_expr(_hidden_arg("rows"), _hidden_arg("dim")),
+        )
+    elif op_name == "recurrent_conv_state_update":
+        q_dim = _hidden_arg("q_dim")
+        k_dim = _hidden_arg("k_dim")
+        v_dim = _hidden_arg("v_dim")
+        history_len = _hidden_arg("history_len")
+        num_tokens = _hidden_arg("num_tokens")
+        width_expr = f"({history_len}) + ({num_tokens})" if history_len and num_tokens else None
+        channel_expr = f"({q_dim}) + ({k_dim}) + ({v_dim})" if q_dim and k_dim and v_dim else None
+        _emit_hidden_export(
+            _hidden_arg("conv_x"),
+            "conv_input",
+            _mul_expr(_hidden_arg("num_seqs"), channel_expr, width_expr),
+        )
+    elif op_name == "recurrent_ssm_conv":
+        _emit_hidden_export(
+            _hidden_arg("out", "output"),
+            "conv_output_raw",
+            _mul_expr(_hidden_arg("num_tokens"), _hidden_arg("num_channels")),
+        )
+    elif op_name == "recurrent_silu":
+        _emit_hidden_export(
+            _hidden_arg("out", "output"),
+            "conv_output_silu",
+            _mul_expr(_hidden_arg("rows"), _hidden_arg("dim")),
+        )
+    elif op_name == "recurrent_split_conv_qkv":
+        rows_expr = _hidden_arg("rows")
+        q_dim = _hidden_arg("q_dim")
+        k_dim = _hidden_arg("k_dim")
+        v_dim = _hidden_arg("v_dim")
+        _emit_hidden_export(_hidden_arg("q"), "q_conv", _mul_expr(rows_expr, q_dim))
+        _emit_hidden_export(_hidden_arg("k"), "k_conv", _mul_expr(rows_expr, k_dim))
+        _emit_hidden_export(_hidden_arg("v"), "v_conv_predelta", _mul_expr(rows_expr, v_dim))
+    elif op_name == "recurrent_qk_l2_norm":
+        rows_expr = _hidden_arg("rows")
+        _emit_hidden_export(_hidden_arg("q"), "q_conv_predelta", _mul_expr(rows_expr, _hidden_arg("q_dim")))
+        _emit_hidden_export(_hidden_arg("k"), "k_conv_predelta", _mul_expr(rows_expr, _hidden_arg("k_dim")))
+    elif op_name == "recurrent_core":
+        _emit_hidden_export(
+            _hidden_arg("output", "out", "c", "y"),
+            "attn_output",
+            _mul_expr(_hidden_arg("tokens", "num_tokens", "rows"), _hidden_arg("num_heads", "groups"), _hidden_arg("state_dim", "head_dim")),
+        )
+        _emit_hidden_export(
+            _hidden_arg("state_out"),
+            "new_state",
+            _mul_expr(_hidden_arg("num_heads", "groups"), _hidden_arg("state_dim", "head_dim"), _hidden_arg("state_dim", "head_dim")),
+        )
+    elif op_name == "recurrent_norm_gate":
+        _emit_hidden_export(
+            _hidden_arg("output", "out", "c", "y"),
+            "final_output",
+            _mul_expr(_hidden_arg("rows", "tokens"), _hidden_arg("num_heads", "groups"), _hidden_arg("head_dim", "state_dim")),
+        )
+    elif op_name == "recurrent_out_proj":
+        _emit_hidden_export(
+            _hidden_arg("output", "out", "c", "y"),
+            "linear_attn_out",
+            _hidden_count("m", "n", "rows", "dim", default="EMBED_DIM"),
+        )
+    elif op_name == "final_rmsnorm":
+        out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y"))
+        if out_expr:
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "final_hidden", (const float*){out_expr}, EMBED_DIM);')
 
     # Add debug output if enabled
     if debug:
@@ -1619,11 +1893,19 @@ static void ck_decode(CKModel *model, int32_t token) {
     int debug_mlp_gate_up_fp32 = debug_mlp_gate_up_env ? (atoi(debug_mlp_gate_up_env) != 0) : 0;
     const char *debug_mlp_gate_up_layer_env = getenv("CK_V8_DEBUG_MLP_GATE_UP_FP32_LAYER");
     int debug_mlp_gate_up_fp32_layer = debug_mlp_gate_up_layer_env ? atoi(debug_mlp_gate_up_layer_env) : -1;
+    const char *debug_mlp_gate_up_q8_contract_env = getenv("CK_V8_DEBUG_MLP_GATE_UP_Q8_CONTRACT");
+    int debug_mlp_gate_up_q8_contract = debug_mlp_gate_up_q8_contract_env ? (atoi(debug_mlp_gate_up_q8_contract_env) != 0) : 0;
+    const char *debug_mlp_gate_up_q8_contract_layer_env = getenv("CK_V8_DEBUG_MLP_GATE_UP_Q8_CONTRACT_LAYER");
+    int debug_mlp_gate_up_q8_contract_layer = debug_mlp_gate_up_q8_contract_layer_env ? atoi(debug_mlp_gate_up_q8_contract_layer_env) : -1;
     const float *ck_debug_mlp_gate_up_fp32_input = NULL;
     const char *debug_attn_proj_layer_env = getenv("CK_V8_DEBUG_ATTN_PROJ_FP32_LAYER");
     int debug_attn_proj_fp32_layer = debug_attn_proj_layer_env ? atoi(debug_attn_proj_layer_env) : -1;
     const char *debug_attn_proj_op_env = getenv("CK_V8_DEBUG_ATTN_PROJ_FP32_OP");
     const float *ck_debug_attn_proj_fp32_input = NULL;
+    const char *debug_recurrent_proj_layer_env = getenv("CK_V8_DEBUG_RECURRENT_PROJ_FP32_LAYER");
+    int debug_recurrent_proj_fp32_layer = debug_recurrent_proj_layer_env ? atoi(debug_recurrent_proj_layer_env) : -1;
+    const char *debug_recurrent_proj_op_env = getenv("CK_V8_DEBUG_RECURRENT_PROJ_FP32_OP");
+    const float *ck_debug_recurrent_proj_fp32_input = NULL;
     const char *debug_lm_head_env = getenv("CK_V8_DEBUG_LM_HEAD_FP32");
     int debug_lm_head_fp32 = debug_lm_head_env ? (atoi(debug_lm_head_env) != 0) : 0;
     const float *ck_debug_lm_head_fp32_input = NULL;
@@ -1683,6 +1965,21 @@ static void ck_decode(CKModel *model, int32_t token) {
             force_mlp_gate_up_fp32_layers.add(int(raw_mlp_gate_up_layers))
         except Exception:
             pass
+    force_mlp_gate_up_q8_contract_layers: set[int] = set()
+    raw_mlp_gate_up_q8_contract_layers = config.get("mlp_gate_up_q8_contract_layers")
+    if raw_mlp_gate_up_q8_contract_layers is None:
+        raw_mlp_gate_up_q8_contract_layers = config.get("mlp_gate_up_q8_contract_layer")
+    if isinstance(raw_mlp_gate_up_q8_contract_layers, (list, tuple, set)):
+        for raw_layer in raw_mlp_gate_up_q8_contract_layers:
+            try:
+                force_mlp_gate_up_q8_contract_layers.add(int(raw_layer))
+            except Exception:
+                pass
+    elif raw_mlp_gate_up_q8_contract_layers is not None:
+        try:
+            force_mlp_gate_up_q8_contract_layers.add(int(raw_mlp_gate_up_q8_contract_layers))
+        except Exception:
+            pass
     if profile:
         lines.append("    CK_PROFILE_VARS();")
     lines.append(f"    /* Store token at offset {token_offset} (from layout) */")
@@ -1723,6 +2020,7 @@ static void ck_decode(CKModel *model, int32_t token) {
                 force_outproj_fp32_layers=force_outproj_fp32_layers,
                 force_attn_proj_fp32_layers=force_attn_proj_fp32_layers,
                 force_mlp_gate_up_fp32_layers=force_mlp_gate_up_fp32_layers,
+                force_mlp_gate_up_q8_contract_layers=force_mlp_gate_up_q8_contract_layers,
             )
         )
         if (scale_embeddings_sqrt_dim
@@ -2040,6 +2338,19 @@ static void ck_decode(CKModel *model, int32_t token);
 static void ck_prefill(CKModel *model, const int32_t *tokens, int count);
 static int ck_trace_pos_enabled(void);
 static void ck_trace_pos(const char *stage, int32_t token, int count, int before_pos, int after_pos);
+
+static void ck_debug_export_hidden(CKModel *model, int layer, const char *name, const float *data, int count) {{
+    const char *dir = getenv("CK_DEBUG_EXPORT_HIDDEN");
+    if (!dir || !dir[0] || !model || !name || !data || count <= 0) return;
+    char path[1024];
+    int n = snprintf(path, sizeof(path), "%s/tok_%04d_layer_%03d_%s.f32",
+                     dir, model->pos, layer, name);
+    if (n <= 0 || (size_t)n >= sizeof(path)) return;
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    (void)fwrite(data, sizeof(float), (size_t)count, f);
+    fclose(f);
+}}
 
 static int do_init(const char *weights_path) {{
     if (g_model) return 0;

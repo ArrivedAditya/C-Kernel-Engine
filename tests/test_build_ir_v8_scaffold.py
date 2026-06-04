@@ -37,6 +37,15 @@ def _normalized_template_doc(doc: dict) -> dict:
     attention_contract = normalized.get("contract", {}).get("attention_contract")
     if isinstance(attention_contract, dict):
         attention_contract.pop("train_runtime_contract", None)
+        for key in (
+            "layer_policy_config_key",
+            "layer_kind_config_key",
+            "state_policy_config_key",
+            "attention_policy_config_key",
+            "recurrent_policy_config_key",
+            "kv_policy_config_key",
+        ):
+            attention_contract.pop(key, None)
     return normalized
 
 

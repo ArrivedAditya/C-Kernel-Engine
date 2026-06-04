@@ -1,0 +1,22 @@
+{
+  "id": "v_norm",
+  "op": "v_norm",
+  "variant": "fp32_no_gamma",
+  "quant": {"activation": "fp32", "output": "fp32"},
+  "inputs": [
+    {"name": "input", "dtype": "fp32", "shape": ["T", "D"], "desc": "Input [tokens, dim]"}
+  ],
+  "outputs": [
+    {"name": "output", "dtype": "fp32", "shape": ["T", "D"], "desc": "RMS-normalized output without learned scale"}
+  ],
+  "dims": ["tokens", "num_kv_heads", "head_dim"],
+  "params": [
+    {"name": "eps", "dtype": "float", "default": 1e-6}
+  ],
+  "impl": {
+    "function": "gemma4_v_norm_forward",
+    "c_declaration": "void gemma4_v_norm_forward(const float *input, float *output, float *rstd_cache, int tokens, int num_kv_heads, int head_dim, float eps);",
+    "sources": ["src/kernels/rmsnorm_kernels.c"]
+  },
+  "notes": "Gemma4 V RMSNorm without gamma. Normalizes each [head_dim] V head independently, matching llama.cpp ggml_rms_norm after reshape."
+}

@@ -352,6 +352,7 @@ SRCS    := src/backend_native.c \
 	           src/kernels/recurrent_qk_norm_kernels.c \
 	           src/kernels/recurrent_norm_kernels.c \
 	           src/kernels/deltanet_kernels.c \
+	           src/kernels/gemma4_per_layer_embed.c \
 	           src/kernels/attention_decode_fused.c \
 	           src/kernels/embedding_kernels.c \
 	           src/kernels/embedding_kernels_bf16.c \

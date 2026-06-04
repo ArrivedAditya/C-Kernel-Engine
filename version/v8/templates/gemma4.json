@@ -37,12 +37,19 @@
       "system_prompt_separator": "\n\n",
       "default_system_prompt": "",
       "inject_default_system_prompt": false,
-      "force_bos_text_if_tokenizer_add_bos_false": "",
+      "force_bos_text_if_tokenizer_add_bos_false": "<bos>",
       "last_user_prefix": "",
       "last_user_prefix_suppression_markers": [],
-      "stop_text_markers": ["<turn|>"],
-      "token_stop_markers": ["<turn|>"],
-      "template_markers": ["<|turn>", "<turn|>"],
+      "stop_text_markers": [
+        "<turn|>"
+      ],
+      "token_stop_markers": [
+        "<turn|>"
+      ],
+      "template_markers": [
+        "<|turn>",
+        "<turn|>"
+      ],
       "min_response_tokens": 8
     },
     "attention_contract": {
@@ -50,7 +57,13 @@
       "rope_type": "rope",
       "qk_norm": true,
       "kv_layout": "layer_major_kv_cache",
-      "attn_variant": "hybrid_sliding_attention"
+      "attn_variant": "hybrid_sliding_attention",
+      "layer_policy_config_key": "layer_attention_plan",
+      "layer_kind_config_key": "layer_kinds",
+      "kv_policy_config_key": "layer_kv_policy",
+      "kv_source_config_key": "layer_kv_source",
+      "sliding_window_config_key": "layer_sliding_window",
+      "rope_kind_config_key": "layer_rope_kind"
     },
     "block_contract": {
       "norm_type": "rmsnorm",
@@ -82,16 +95,27 @@
     }
   },
   "kernels": {
-    "rope_qk": "rope_forward_qk",
-    "rope_init": "rope_precompute_cache_split"
+    "rope_qk": "rope_forward_qk_gemma4",
+    "rope_init": "rope_precompute_cache_split",
+    "attn": "attention_forward_causal_head_major_gqa_flash_strided_gemma4",
+    "attn_sliding": "attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4",
+    "attn_decode": "attention_forward_decode_head_major_gqa_flash_gemma4",
+    "attn_sliding_decode": "attention_forward_decode_head_major_gqa_flash_sliding_gemma4"
   },
-  "sequence": ["decoder"],
+  "sequence": [
+    "decoder"
+  ],
   "block_types": {
     "decoder": {
-      "sequence": ["header", "body", "footer"],
+      "sequence": [
+        "header",
+        "body",
+        "footer"
+      ],
       "header": [
         "bpe_tokenizer",
-        "dense_embedding_lookup"
+        "dense_embedding_lookup",
+        "gemma4_per_layer_prepare"
       ],
       "body": {
         "type": "hybrid_sliding_attention",
@@ -99,13 +123,15 @@
         "default_kind": "sliding_attention",
         "quant_aliases_common": {
           "ln1_gamma": "attn_norm",
-          "ln2_gamma": "post_attention_norm",
+          "ln2_gamma": "ffn_norm",
+          "post_attention_norm": "attn_post_norm",
+          "post_ffn_norm": "ffn_post_norm",
           "w1": "ffn_gate",
           "w3": "ffn_up",
           "w2": "ffn_down"
         },
         "quant_aliases_by_kind": {
-          "sliding_attention": {
+          "sliding_attention_kv": {
             "wq": "attn_q",
             "wk": "attn_k",
             "wv": "attn_v",
@@ -113,54 +139,107 @@
             "q_norm": "attn_q_norm",
             "k_norm": "attn_k_norm"
           },
-          "full_attention": {
+          "full_attention_kv": {
             "wq": "attn_q",
             "wk": "attn_k",
             "wv": "attn_v",
             "wo": "attn_output",
             "q_norm": "attn_q_norm",
             "k_norm": "attn_k_norm"
+          },
+          "sliding_attention_shared_kv": {
+            "wq": "attn_q",
+            "wo": "attn_output",
+            "q_norm": "attn_q_norm"
+          },
+          "full_attention_shared_kv": {
+            "wq": "attn_q",
+            "wo": "attn_output",
+            "q_norm": "attn_q_norm"
           }
         },
         "ops_by_kind": {
-          "sliding_attention": [
+          "sliding_attention_kv": [
             "attn_norm",
             "q_proj",
             "k_proj",
             "v_proj",
+            "v_norm",
             "qk_norm",
             "rope_qk",
             "attn_sliding",
             "out_proj",
-            "residual_add",
             "post_attention_norm",
+            "residual_add",
+            "ffn_norm",
             "mlp_gate_up",
             "geglu",
             "mlp_down",
-            "residual_add"
+            "post_ffn_norm",
+            "residual_add",
+            "gemma4_per_layer_embed"
           ],
-          "full_attention": [
+          "full_attention_kv": [
             "attn_norm",
             "q_proj",
             "k_proj",
             "v_proj",
+            "v_norm",
             "qk_norm",
             "rope_qk",
             "attn",
             "out_proj",
-            "residual_add",
             "post_attention_norm",
+            "residual_add",
+            "ffn_norm",
             "mlp_gate_up",
             "geglu",
             "mlp_down",
-            "residual_add"
+            "post_ffn_norm",
+            "residual_add",
+            "gemma4_per_layer_embed"
+          ],
+          "sliding_attention_shared_kv": [
+            "attn_norm",
+            "q_proj",
+            "q_norm",
+            "rope_q",
+            "attn_sliding_shared_kv",
+            "out_proj",
+            "post_attention_norm",
+            "residual_add",
+            "ffn_norm",
+            "mlp_gate_up",
+            "geglu",
+            "mlp_down",
+            "post_ffn_norm",
+            "residual_add",
+            "gemma4_per_layer_embed"
+          ],
+          "full_attention_shared_kv": [
+            "attn_norm",
+            "q_proj",
+            "q_norm",
+            "rope_q",
+            "attn_shared_kv",
+            "out_proj",
+            "post_attention_norm",
+            "residual_add",
+            "ffn_norm",
+            "mlp_gate_up",
+            "geglu",
+            "mlp_down",
+            "post_ffn_norm",
+            "residual_add",
+            "gemma4_per_layer_embed"
           ]
         }
       },
       "footer": [
         "final_rmsnorm",
         "weight_tying",
-        "logits"
+        "logits",
+        "final_logit_softcap"
       ]
     }
   }

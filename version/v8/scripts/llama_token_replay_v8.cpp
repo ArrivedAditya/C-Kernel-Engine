@@ -23,6 +23,7 @@ struct Args {
     std::string prompt;
     std::string prefix_f32_path;
     std::string logits_out_path;
+    std::string embeddings_out_path;
     std::string dump_dir;
     std::vector<std::string> dump_names;
     std::string decode_mode = "batched";
@@ -34,6 +35,7 @@ struct Args {
     int prefix_grid_y = 0;
     int prefix_row_dim = 0;
     int prefix_text_pos = -1;
+    bool no_repack = false;
 };
 
 struct DumpState {
@@ -183,6 +185,12 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
             args.logits_out_path = v;
             continue;
         }
+        if (a == "--embeddings-out") {
+            const char * v = need_value("--embeddings-out");
+            if (!v) return false;
+            args.embeddings_out_path = v;
+            continue;
+        }
         if (a == "--dump-dir") {
             const char * v = need_value("--dump-dir");
             if (!v) return false;
@@ -215,14 +223,18 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
             }
             continue;
         }
+        if (a == "--no-repack") {
+            args.no_repack = true;
+            continue;
+        }
         if (a == "-h" || a == "--help") {
             std::cout
                 << "Usage: llama_token_replay --model <path.gguf> "
                 << "(--tokens <id,id,...> | --prompt <text> | [--tokens-before <id,id,...>] [--tokens-after <id,id,...>]) "
-                << "--logits-out <path.bin> [--prefix-f32 <path.f32>] "
+                << "--logits-out <path.bin> [--embeddings-out <path.f32>] [--prefix-f32 <path.f32>] "
                 << "[--prefix-grid-x N --prefix-grid-y N] [--prefix-row-dim N] [--prefix-text-pos N] [--ctx N] [--top-k K] [--threads N] "
                 << "[--decode-mode batched|sequential] [--prefix-decode-mode batched|sequential] "
-                << "[--dump-dir dir --dump-names a,b,c]\n";
+                << "[--dump-dir dir --dump-names a,b,c] [--no-repack]\n";
             std::exit(0);
         }
         err = "unknown arg: " + a;
@@ -707,6 +719,7 @@ int main(int argc, char ** argv) {
     mparams.n_gpu_layers = 0;
     mparams.use_mmap = true;
     mparams.use_mlock = false;
+    mparams.use_extra_bufts = !args.no_repack;
 
     llama_model * model = llama_model_load_from_file(args.model_path.c_str(), mparams);
     if (!model) {
@@ -753,6 +766,7 @@ int main(int argc, char ** argv) {
     int n_threads = args.threads > 0 ? args.threads : std::max(1, hw_threads);
     cparams.n_threads = n_threads;
     cparams.n_threads_batch = n_threads;
+    cparams.embeddings = !args.embeddings_out_path.empty();
     DumpState dump_state;
     if (!args.dump_dir.empty()) {
         dump_state.dump_dir = args.dump_dir;
@@ -789,13 +803,13 @@ int main(int argc, char ** argv) {
         int32_t rc = decode_tokens(
             ctx,
             tokens_before,
-            args.decode_mode,
+            args.prefix_decode_mode,
             0,
             dump_state.dump_dir.empty() ? nullptr : &dump_state
         );
         if (rc != 0) {
             std::ostringstream oss;
-            oss << "llama_decode failed rc=" << rc << " mode=" << args.decode_mode << " while replaying tokens-before";
+            oss << "llama_decode failed rc=" << rc << " mode=" << args.prefix_decode_mode << " while replaying tokens-before";
             print_json_error(oss.str());
             llama_free(ctx);
             llama_model_free(model);
@@ -875,6 +889,38 @@ int main(int argc, char ** argv) {
         return 8;
     }
 
+    int32_t n_embd_out = 0;
+    if (!args.embeddings_out_path.empty()) {
+        n_embd_out = llama_model_n_embd_out(model);
+        const float * emb = llama_get_embeddings_ith(ctx, -1);
+        if (!emb) {
+            emb = llama_get_embeddings(ctx);
+        }
+        if (!emb || n_embd_out <= 0) {
+            print_json_error("llama embeddings pointer is null");
+            llama_free(ctx);
+            llama_model_free(model);
+            llama_backend_free();
+            return 15;
+        }
+        std::ofstream f(args.embeddings_out_path, std::ios::binary | std::ios::trunc);
+        if (!f) {
+            print_json_error("failed opening embeddings-out file");
+            llama_free(ctx);
+            llama_model_free(model);
+            llama_backend_free();
+            return 16;
+        }
+        f.write(reinterpret_cast<const char *>(emb), static_cast<std::streamsize>(n_embd_out) * sizeof(float));
+        if (!f.good()) {
+            print_json_error("failed writing embeddings-out file");
+            llama_free(ctx);
+            llama_model_free(model);
+            llama_backend_free();
+            return 17;
+        }
+    }
+
     {
         std::ofstream f(args.logits_out_path, std::ios::binary | std::ios::trunc);
         if (!f) {
@@ -914,6 +960,7 @@ int main(int argc, char ** argv) {
     std::cout << "\"prefix_position_count\":" << std::max<int32_t>(0, prefix_text_pos - static_cast<int32_t>(tokens_before.size())) << ",";
     std::cout << "\"prefix_start_pos\":" << tokens_before.size() << ",";
     std::cout << "\"prefix_text_pos\":" << prefix_text_pos << ",";
+    std::cout << "\"n_embd_out\":" << n_embd_out << ",";
     std::cout << "\"tokens\":[";
     for (size_t i = 0; i < tokens_before.size(); ++i) {
         if (i) std::cout << ",";

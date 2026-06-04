@@ -1,0 +1,105 @@
+{
+  "id": "gemma4_per_layer_embed_forward",
+  "op": "gemma4_per_layer_embed",
+  "variant": "gemma4_scalar_correctness",
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "hidden",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "E"
+      ],
+      "desc": "Main hidden stream, updated in-place"
+    },
+    {
+      "name": "per_layer_input",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "L",
+        "P"
+      ],
+      "desc": "Prepared Gemma4 per-layer input stream"
+    }
+  ],
+  "weights": [
+    {
+      "name": "inp_gate",
+      "dtype": "fp32",
+      "shape": [
+        "P",
+        "E"
+      ],
+      "desc": "Layer input gate projection"
+    },
+    {
+      "name": "proj",
+      "dtype": "fp32",
+      "shape": [
+        "E",
+        "P"
+      ],
+      "desc": "Layer projection back to model stream"
+    },
+    {
+      "name": "post_norm",
+      "dtype": "fp32",
+      "shape": [
+        "E"
+      ],
+      "desc": "Layer post projection RMSNorm scale"
+    },
+    {
+      "name": "out_scale",
+      "dtype": "fp32",
+      "shape": [
+        1
+      ],
+      "desc": "Optional Gemma4 layer output scale"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "hidden",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "E"
+      ],
+      "desc": "Updated hidden stream"
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "seq_len",
+    "num_layers",
+    "embed_dim",
+    "per_layer_dim"
+  ],
+  "params": [
+    {
+      "name": "eps",
+      "dtype": "float32",
+      "desc": "RMSNorm epsilon"
+    }
+  ],
+  "impl": {
+    "function": "gemma4_per_layer_embed_forward",
+    "c_declaration": "void gemma4_per_layer_embed_forward(float *hidden, const float *per_layer_input, const float *inp_gate, const float *proj, const float *post_norm, const float *out_scale, int tokens, int layer, int num_layers, int embed_dim, int per_layer_dim, float eps);",
+    "sources": [
+      "src/kernels/gemma4_per_layer_embed.c"
+    ]
+  },
+  "notes": "First-pass correctness implementation of llama.cpp Gemma4 per-layer embedding branch."
+}

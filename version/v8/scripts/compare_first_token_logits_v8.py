@@ -25,7 +25,12 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_DIR = Path(__file__).resolve().parent
-LLAMA_CPP = ROOT / "llama.cpp"
+_LLAMA_CPP_ENV = os.environ.get("CK_LLAMA_CPP_DIR")
+LLAMA_CPP = Path(_LLAMA_CPP_ENV).expanduser().resolve() if _LLAMA_CPP_ENV else ROOT / "llama.cpp"
+if not (LLAMA_CPP / "include").exists():
+    _software_llama = Path("/opt/app-root/src/Software/llama.cpp")
+    if (_software_llama / "include").exists():
+        LLAMA_CPP = _software_llama
 HELPER_SRC = SCRIPT_DIR / "llama_token_replay_v8.cpp"
 HELPER_BIN = Path("/tmp/ckv8_llama_token_replay")
 
@@ -175,10 +180,21 @@ def ensure_llama_helper() -> Path:
     return HELPER_BIN
 
 
-def run_llama_logits(gguf_path: Path, tokens: list[int], ctx_len: int, top_k: int, threads: int) -> dict[str, Any]:
+def run_llama_logits(
+    gguf_path: Path,
+    tokens: list[int],
+    ctx_len: int,
+    top_k: int,
+    threads: int,
+    decode_mode: str = "batched",
+    no_repack: bool = False,
+) -> dict[str, Any]:
     helper = ensure_llama_helper()
     with tempfile.TemporaryDirectory(prefix="llama_token_replay_") as td:
         logits_path = Path(td) / "llama_logits.f32"
+        mode = str(decode_mode or "batched").strip().lower()
+        if mode not in {"batched", "sequential"}:
+            raise ValueError(f"unsupported llama decode mode: {decode_mode}")
         cmd = [
             str(helper),
             "--model",
@@ -191,7 +207,11 @@ def run_llama_logits(gguf_path: Path, tokens: list[int], ctx_len: int, top_k: in
             str(int(top_k)),
             "--logits-out",
             str(logits_path),
+            "--decode-mode",
+            mode,
         ]
+        if no_repack:
+            cmd.append("--no-repack")
         if threads > 0:
             cmd.extend(["--threads", str(int(threads))])
         proc = _run(cmd, cwd=ROOT)
@@ -217,7 +237,89 @@ def run_llama_logits(gguf_path: Path, tokens: list[int], ctx_len: int, top_k: in
         }
 
 
-def load_ck_logits(model_dir: Path, tokens: list[int]) -> dict[str, Any]:
+def run_llama_logits_segmented(
+    gguf_path: Path,
+    tokens_before: list[int],
+    tokens_after: list[int],
+    ctx_len: int,
+    top_k: int,
+    threads: int,
+    prefix_decode_mode: str = "batched",
+    decode_mode: str = "sequential",
+    no_repack: bool = False,
+) -> dict[str, Any]:
+    helper = ensure_llama_helper()
+    if not tokens_before and not tokens_after:
+        raise ValueError("segmented llama replay needs at least one token")
+    with tempfile.TemporaryDirectory(prefix="llama_token_replay_") as td:
+        logits_path = Path(td) / "llama_logits.f32"
+        before_mode = str(prefix_decode_mode or "batched").strip().lower()
+        after_mode = str(decode_mode or "sequential").strip().lower()
+        if before_mode not in {"batched", "sequential"}:
+            raise ValueError(f"unsupported llama prefix decode mode: {prefix_decode_mode}")
+        if after_mode not in {"batched", "sequential"}:
+            raise ValueError(f"unsupported llama decode mode: {decode_mode}")
+        cmd = [
+            str(helper),
+            "--model",
+            str(gguf_path),
+            "--ctx",
+            str(int(ctx_len)),
+            "--top-k",
+            str(int(top_k)),
+            "--logits-out",
+            str(logits_path),
+            "--prefix-decode-mode",
+            before_mode,
+            "--decode-mode",
+            after_mode,
+        ]
+        if tokens_before:
+            cmd.extend(["--tokens-before", ",".join(str(t) for t in tokens_before)])
+        if tokens_after:
+            cmd.extend(["--tokens-after", ",".join(str(t) for t in tokens_after)])
+        if no_repack:
+            cmd.append("--no-repack")
+        if threads > 0:
+            cmd.extend(["--threads", str(int(threads))])
+        proc = _run(cmd, cwd=ROOT)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                "llama_token_replay segmented replay failed\n"
+                f"cmd: {' '.join(cmd)}\n"
+                f"rc: {proc.returncode}\n"
+                f"stdout:\n{proc.stdout}\n"
+                f"stderr:\n{proc.stderr}\n"
+            )
+        meta = json.loads(proc.stdout.strip())
+        if not isinstance(meta, dict) or not meta.get("ok"):
+            raise RuntimeError(f"llama_token_replay returned invalid payload: {proc.stdout.strip()}")
+
+        n_vocab = int(meta.get("n_vocab", 0))
+        logits = np.fromfile(logits_path, dtype=np.float32)
+        if logits.size != n_vocab:
+            raise RuntimeError(f"llama logits size mismatch: got={logits.size} expected={n_vocab}")
+        return {
+            "meta": meta,
+            "logits": logits,
+        }
+
+
+def load_ck_logits(model_dir: Path, tokens: list[int], ck_prefill_mode: str = "auto") -> dict[str, Any]:
+    return load_ck_logits_segmented(
+        model_dir=model_dir,
+        prompt_tokens=tokens,
+        decode_tokens=[],
+        ck_prefill_mode=ck_prefill_mode,
+    )
+
+
+def load_ck_logits_segmented(
+    model_dir: Path,
+    prompt_tokens: list[int],
+    decode_tokens: list[int],
+    ck_prefill_mode: str = "auto",
+) -> dict[str, Any]:
     lib_path = model_dir / "libmodel.so"
     lib = ctypes.CDLL(str(lib_path), mode=ctypes.RTLD_GLOBAL)
 
@@ -286,10 +388,27 @@ def load_ck_logits(model_dir: Path, tokens: list[int]) -> dict[str, Any]:
             strict_env = os.environ.get("CK_STRICT_PARITY")
             lib.ck_set_strict_parity(1 if strict_env and int(strict_env) != 0 else 0)
         runtime_contract = load_runtime_contract(model_dir)
-        prefill_policy = str(runtime_contract.get("prefill_policy") or "batched").strip().lower()
+        contract_prefill_policy = str(runtime_contract.get("prefill_policy") or "batched").strip().lower()
+        requested_mode = str(ck_prefill_mode or "auto").strip().lower()
+        if requested_mode == "auto":
+            prefill_policy = contract_prefill_policy
+        elif requested_mode == "sequential":
+            prefill_policy = "sequential_decode"
+        elif requested_mode == "batched":
+            prefill_policy = "batched"
+        elif requested_mode == "hybrid":
+            prefill_policy = "hybrid"
+        else:
+            raise ValueError(f"unsupported CK prefill mode: {ck_prefill_mode}")
         vocab = int(lib.ck_model_get_vocab_size())
         if vocab <= 0:
             raise RuntimeError(f"invalid CK vocab size: {vocab}")
+        prompt = [int(x) for x in prompt_tokens]
+        generated = [int(x) for x in decode_tokens]
+        tokens = prompt + generated
+        if not tokens:
+            raise RuntimeError("CK logit replay requires at least one token")
+
         if prefill_policy == "sequential_decode":
             if not has_decode:
                 raise RuntimeError("runtime contract requires sequential prefill but ck_model_decode is unavailable")
@@ -299,8 +418,24 @@ def load_ck_logits(model_dir: Path, tokens: list[int]) -> dict[str, Any]:
                 rc = lib.ck_model_decode(ctypes.c_int32(int(tok)), None)
                 if rc != 0:
                     raise RuntimeError(f"ck_model_decode failed rc={rc}")
+        elif prefill_policy == "hybrid":
+            if not has_decode:
+                raise RuntimeError("hybrid CK replay requires ck_model_decode")
+            if not prompt:
+                raise RuntimeError("hybrid CK replay requires at least one prompt token")
+            arr = (ctypes.c_int32 * len(prompt))(*prompt)
+            rc = lib.ck_model_embed_tokens(arr, len(prompt))
+            if rc != 0:
+                raise RuntimeError(f"ck_model_embed_tokens failed rc={rc}")
+            rc = lib.ck_model_forward(None)
+            if rc != 0:
+                raise RuntimeError(f"ck_model_forward failed rc={rc}")
+            for tok in generated:
+                rc = lib.ck_model_decode(ctypes.c_int32(int(tok)), None)
+                if rc != 0:
+                    raise RuntimeError(f"ck_model_decode failed rc={rc}")
         else:
-            arr = (ctypes.c_int32 * len(tokens))(*[int(x) for x in tokens])
+            arr = (ctypes.c_int32 * len(tokens))(*tokens)
             rc = lib.ck_model_embed_tokens(arr, len(tokens))
             if rc != 0:
                 raise RuntimeError(f"ck_model_embed_tokens failed rc={rc}")
@@ -326,6 +461,8 @@ def load_ck_logits(model_dir: Path, tokens: list[int]) -> dict[str, Any]:
             "stride": stride,
             "init_dir": str(init_dir_used) if init_dir_used is not None else str(model_dir),
             "prefill_policy": prefill_policy,
+            "contract_prefill_policy": contract_prefill_policy,
+            "ck_prefill_mode": requested_mode,
             "logits": logits,
         }
     finally:
@@ -360,6 +497,14 @@ def compare_logits(
 
     ck_top_list = [int(x) for x in ck_top.tolist()]
     ll_top_list = [int(x) for x in ll_top.tolist()]
+    ck_top1 = ck_top_list[0]
+    ll_top1 = ll_top_list[0]
+    ck_top2 = ck_top_list[1] if len(ck_top_list) > 1 else ck_top1
+    ll_top2 = ll_top_list[1] if len(ll_top_list) > 1 else ll_top1
+    ck_top1_margin = float(a[ck_top1] - a[ck_top2]) if ck_top2 != ck_top1 else 0.0
+    llama_top1_margin = float(b[ll_top1] - b[ll_top2]) if ll_top2 != ll_top1 else 0.0
+    ck_llama_winner_delta_in_ck = float(a[ck_top1] - a[ll_top1])
+    llama_winner_delta_in_llama = float(b[ll_top1] - b[ck_top1])
     overlap = set(ck_top_list) & set(ll_top_list)
     inspected_ids = sorted(set(ck_top_list) | set(ll_top_list))
     inspected_logits = [
@@ -378,9 +523,13 @@ def compare_logits(
         "mean_abs_diff": mean_abs,
         "rmse": rmse,
         "cosine": cosine,
-        "top1_ck": ck_top_list[0],
-        "top1_llama": ll_top_list[0],
-        "top1_match": bool(ck_top_list[0] == ll_top_list[0]),
+        "top1_ck": ck_top1,
+        "top1_llama": ll_top1,
+        "top1_match": bool(ck_top1 == ll_top1),
+        "ck_top1_margin": ck_top1_margin,
+        "llama_top1_margin": llama_top1_margin,
+        "ck_llama_winner_delta_in_ck": ck_llama_winner_delta_in_ck,
+        "llama_winner_delta_in_llama": llama_winner_delta_in_llama,
         "topk_overlap_count": len(overlap),
         "topk_overlap_ratio": float(len(overlap) / float(k)),
         "topk": k,
@@ -398,6 +547,17 @@ def main() -> int:
     ap.add_argument("--ctx-len", type=int, default=256)
     ap.add_argument("--top-k", type=int, default=16)
     ap.add_argument("--threads", type=int, default=0)
+    ap.add_argument(
+        "--llama-decode-mode",
+        choices=["auto", "batched", "sequential"],
+        default="auto",
+        help="llama.cpp replay mode; auto mirrors CK sequential_decode contracts.",
+    )
+    ap.add_argument(
+        "--llama-no-repack",
+        action="store_true",
+        help="Disable llama.cpp CPU tensor repacking in the replay helper for accumulation-order attribution.",
+    )
     ap.add_argument("--require-top1-match", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--min-topk-overlap", type=float, default=0.50)
     ap.add_argument("--max-abs-threshold", type=float, default=1.0e9)
@@ -407,10 +567,22 @@ def main() -> int:
     model_dir = discover_ck_model_dir(args.model_dir)
     gguf_path = discover_gguf(args.gguf, model_dir)
     tokens = parse_tokens_csv(args.tokens)
+    runtime_contract = load_runtime_contract(model_dir)
+    llama_decode_mode = str(args.llama_decode_mode)
+    if llama_decode_mode == "auto":
+        llama_decode_mode = "batched"
 
     # Run llama helper first. CK runtime initializes OpenMP/threadpool state;
     # forking a subprocess after that can crash on some systems.
-    ll = run_llama_logits(gguf_path, tokens, int(args.ctx_len), int(args.top_k), int(args.threads))
+    ll = run_llama_logits(
+        gguf_path,
+        tokens,
+        int(args.ctx_len),
+        int(args.top_k),
+        int(args.threads),
+        decode_mode=llama_decode_mode,
+        no_repack=bool(args.llama_no_repack),
+    )
     ck = load_ck_logits(model_dir, tokens)
     cmp = compare_logits(ck["logits"], ll["logits"], int(args.top_k))
 
@@ -441,6 +613,8 @@ def main() -> int:
         "llama": {
             "n_vocab": int(ll["meta"]["n_vocab"]),
             "token_count": int(ll["meta"]["token_count"]),
+            "decode_mode": llama_decode_mode,
+            "no_repack": bool(args.llama_no_repack),
             "topk_count": int(len(ll["meta"].get("topk", []) or [])),
             "topk_sample": ll["meta"].get("topk", [])[: min(8, int(args.top_k))],
         },

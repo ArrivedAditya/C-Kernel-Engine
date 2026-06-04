@@ -16,6 +16,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "ckernel_quant.h"
@@ -94,10 +95,33 @@ void gemv_q4_k_q8_k_vnni(float *y,
                          const void *x_q8,
                          int M, int K)
 {
-    /* Correctness first: the previous VNNI path changed the float accumulation
+    const char *fast_env = getenv("CK_ENABLE_Q4K_Q8K_VNNI_FAST");
+    if (fast_env && fast_env[0] && fast_env[0] != '0') {
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+        if (!y || !W || !x_q8 || M <= 0 || K <= 0) {
+            return;
+        }
+
+        const block_q4_K *blocks = (const block_q4_K *)W;
+        const block_q8_K *x = (const block_q8_K *)x_q8;
+        const int blocks_per_row = K / QK_K;
+
+        for (int row = 0; row < M; ++row) {
+            const block_q4_K *w_row = blocks + (size_t)row * (size_t)blocks_per_row;
+            float sum = 0.0f;
+            for (int b = 0; b < blocks_per_row; ++b) {
+                sum += dot_q4_k_q8_k_vnni_block(&w_row[b], &x[b]);
+            }
+            y[row] = sum;
+        }
+        return;
+#endif
+    }
+
+    /* Correctness first: the fast VNNI path changes the float accumulation
      * order enough to move borderline Qwen3.5 logits. Keep production on the
-     * llama-style scalar accumulation until the VNNI kernel preserves that
-     * contract exactly.
+     * llama-style scalar accumulation unless explicitly benchmarking the fast
+     * path with CK_ENABLE_Q4K_Q8K_VNNI_FAST=1.
      */
     gemv_q4_k_q8_k_ref(y, W, x_q8, M, K);
 }

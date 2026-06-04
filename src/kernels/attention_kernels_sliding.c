@@ -525,6 +525,71 @@ void attention_forward_causal_head_major_gqa_flash_strided_sliding(
  *
  * After changes: make test
  */
+void attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4(
+    const float *q,
+    const float *k,
+    const float *v,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int kv_stride_tokens,
+    int sliding_window)
+{
+    if (!q || !k || !v || !output) {
+        return;
+    }
+    if (num_heads <= 0 || num_kv_heads <= 0 || num_tokens <= 0) {
+        return;
+    }
+    if (kv_stride_tokens < num_tokens) {
+        return;
+    }
+
+    if (getenv("CK_FORCE_NONSLIDING_ATTN")) {
+        attention_forward_causal_head_major_gqa_flash_strided_gemma4(
+            q, k, v, output, num_heads, num_kv_heads, num_tokens,
+            head_dim, aligned_head_dim, kv_stride_tokens
+        );
+        return;
+    }
+
+    const float scale = 1.0f;
+    const int T = num_tokens;
+    const size_t kv_head_stride = (size_t)kv_stride_tokens * (size_t)aligned_head_dim;
+
+#if defined(__AVX512F__)
+    #define SLIDING_FLASH_IMPL_GEMMA4 attention_flash_query_sliding_avx512
+#elif defined(__AVX2__)
+    #define SLIDING_FLASH_IMPL_GEMMA4 attention_flash_query_sliding_avx2
+#elif defined(__AVX__)
+    #define SLIDING_FLASH_IMPL_GEMMA4 attention_flash_query_sliding_avx
+#else
+    #define SLIDING_FLASH_IMPL_GEMMA4 attention_flash_query_sliding
+#endif
+
+    for (int h = 0; h < num_heads; ++h) {
+        int kv_head = (int)((long long)h * (long long)num_kv_heads / (long long)num_heads);
+        const float *k_head = k + (size_t)kv_head * kv_head_stride;
+        const float *v_head = v + (size_t)kv_head * kv_head_stride;
+
+        for (int i = 0; i < T; ++i) {
+            const float *q_vec = q + qkv_index(h, i, 0, T, aligned_head_dim);
+            float *out_vec = output + qkv_index(h, i, 0, T, aligned_head_dim);
+            SLIDING_FLASH_IMPL_GEMMA4(q_vec, k_head, v_head,
+                                      /*query_pos=*/i,
+                                      /*kv_tokens=*/T,
+                                      head_dim, aligned_head_dim,
+                                      scale, out_vec,
+                                      sliding_window);
+        }
+    }
+
+#undef SLIDING_FLASH_IMPL_GEMMA4
+}
+
 void attention_forward_decode_head_major_gqa_flash_sliding(
     const float *q_token,
     const float *k_cache,
@@ -609,4 +674,77 @@ void attention_forward_decode_head_major_gqa_flash_sliding(
     }
 
 #undef SLIDING_DECODE_IMPL
+}
+
+void attention_forward_decode_head_major_gqa_flash_sliding_gemma4(
+    const float *q_token,
+    const float *k_cache,
+    const float *v_cache,
+    float *out_token,
+    int num_heads,
+    int num_kv_heads,
+    int kv_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    int sliding_window)
+{
+    if (!q_token || !k_cache || !v_cache || !out_token) {
+        return;
+    }
+    if (num_heads <= 0 || num_kv_heads <= 0 || cache_capacity <= 0) {
+        return;
+    }
+    if (kv_tokens <= 0 || kv_tokens > cache_capacity || head_dim <= 0 || aligned_head_dim <= 0) {
+        return;
+    }
+
+    if (getenv("CK_FORCE_NONSLIDING_ATTN")) {
+        attention_forward_decode_head_major_gqa_flash_gemma4(
+            q_token, k_cache, v_cache, out_token,
+            num_heads, num_kv_heads, kv_tokens, cache_capacity,
+            head_dim, aligned_head_dim
+        );
+        return;
+    }
+
+    const float scale = 1.0f;
+    const size_t head_stride = (size_t)cache_capacity * (size_t)aligned_head_dim;
+    int effective_kv_tokens = kv_tokens;
+    if (sliding_window > 0 && sliding_window < kv_tokens) {
+        effective_kv_tokens = sliding_window;
+    }
+    if (effective_kv_tokens <= 0) {
+        return;
+    }
+    int kv_start_offset = kv_tokens - effective_kv_tokens;
+
+#if defined(__AVX512F__)
+    #define SLIDING_DECODE_IMPL_GEMMA4 attention_flash_query_sliding_avx512
+#elif defined(__AVX2__)
+    #define SLIDING_DECODE_IMPL_GEMMA4 attention_flash_query_sliding_avx2
+#elif defined(__AVX__)
+    #define SLIDING_DECODE_IMPL_GEMMA4 attention_flash_query_sliding_avx
+#else
+    #define SLIDING_DECODE_IMPL_GEMMA4 attention_flash_query_sliding
+#endif
+
+    for (int h = 0; h < num_heads; ++h) {
+        int kv_head = (int)((long long)h * (long long)num_kv_heads / (long long)num_heads);
+        const float *q_head = q_token + (size_t)h * (size_t)aligned_head_dim;
+        const float *k_head = k_cache + (size_t)kv_head * head_stride
+                            + (size_t)kv_start_offset * (size_t)aligned_head_dim;
+        const float *v_head = v_cache + (size_t)kv_head * head_stride
+                            + (size_t)kv_start_offset * (size_t)aligned_head_dim;
+        float *out_head = out_token + (size_t)h * (size_t)aligned_head_dim;
+
+        SLIDING_DECODE_IMPL_GEMMA4(q_head, k_head, v_head,
+                                   /*query_pos=*/effective_kv_tokens - 1,
+                                   /*kv_tokens=*/effective_kv_tokens,
+                                   head_dim, aligned_head_dim,
+                                   scale, out_head,
+                                   /*sliding_window=*/0);
+    }
+
+#undef SLIDING_DECODE_IMPL_GEMMA4
 }

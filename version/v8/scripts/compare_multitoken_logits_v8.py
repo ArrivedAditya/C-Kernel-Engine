@@ -20,8 +20,11 @@ from compare_first_token_logits_v8 import (  # type: ignore
     discover_ck_model_dir,
     discover_gguf,
     load_ck_logits,
+    load_ck_logits_segmented,
+    load_runtime_contract,
     parse_tokens_csv,
     run_llama_logits,
+    run_llama_logits_segmented,
 )
 
 
@@ -35,14 +38,47 @@ def run_multitoken_parity(
     top_k: int,
     threads: int,
     append_on_divergence: str,
+    ck_prefill_mode: str,
+    llama_decode_mode: str,
+    llama_no_repack: bool,
 ) -> dict[str, Any]:
     tokens = [int(t) for t in prompt_tokens]
     steps: list[dict[str, Any]] = []
     first_divergence: dict[str, Any] | None = None
 
     for step in range(max(1, int(max_new_tokens))):
-        ll = run_llama_logits(gguf_path, tokens, int(ctx_len), int(top_k), int(threads))
-        ck = load_ck_logits(model_dir, tokens)
+        if llama_decode_mode == "hybrid":
+            ll = run_llama_logits_segmented(
+                gguf_path,
+                [int(t) for t in prompt_tokens],
+                [int(t) for t in tokens[len(prompt_tokens) :]],
+                int(ctx_len),
+                int(top_k),
+                int(threads),
+                prefix_decode_mode="batched",
+                decode_mode="sequential",
+                no_repack=llama_no_repack,
+            )
+        else:
+            ll = run_llama_logits(
+                gguf_path,
+                tokens,
+                int(ctx_len),
+                int(top_k),
+                int(threads),
+                decode_mode=llama_decode_mode,
+                no_repack=llama_no_repack,
+            )
+        generated_tokens = [int(t) for t in tokens[len(prompt_tokens) :]]
+        if ck_prefill_mode == "hybrid":
+            ck = load_ck_logits_segmented(
+                model_dir=model_dir,
+                prompt_tokens=[int(t) for t in prompt_tokens],
+                decode_tokens=generated_tokens,
+                ck_prefill_mode="hybrid",
+            )
+        else:
+            ck = load_ck_logits(model_dir, tokens, ck_prefill_mode=ck_prefill_mode)
         cmp = compare_logits(ck["logits"], ll["logits"], int(top_k))
         ck_next = int(cmp["top1_ck"])
         llama_next = int(cmp["top1_llama"])
@@ -58,6 +94,10 @@ def run_multitoken_parity(
             "rmse": float(cmp["rmse"]),
             "mean_abs_diff": float(cmp["mean_abs_diff"]),
             "max_abs_diff": float(cmp["max_abs_diff"]),
+            "ck_top1_margin": float(cmp.get("ck_top1_margin", 0.0)),
+            "llama_top1_margin": float(cmp.get("llama_top1_margin", 0.0)),
+            "ck_llama_winner_delta_in_ck": float(cmp.get("ck_llama_winner_delta_in_ck", 0.0)),
+            "llama_winner_delta_in_llama": float(cmp.get("llama_winner_delta_in_llama", 0.0)),
             "topk_overlap_count": int(cmp["topk_overlap_count"]),
             "topk_overlap_ratio": float(cmp["topk_overlap_ratio"]),
             "ck_topk_ids": list(cmp["ck_topk_ids"]),
@@ -90,6 +130,9 @@ def run_multitoken_parity(
         "top_k": int(top_k),
         "threads": int(threads),
         "append_on_divergence": str(append_on_divergence),
+        "ck_prefill_mode": str(ck_prefill_mode),
+        "llama_decode_mode": str(llama_decode_mode),
+        "llama_no_repack": bool(llama_no_repack),
         "first_divergence": first_divergence,
         "steps": steps,
     }
@@ -105,6 +148,27 @@ def main() -> int:
     ap.add_argument("--top-k", type=int, default=20)
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument(
+        "--llama-decode-mode",
+        choices=["auto", "batched", "sequential", "hybrid"],
+        default="auto",
+        help="llama.cpp replay mode; hybrid batches the initial prompt then decodes generated tokens sequentially.",
+    )
+    ap.add_argument(
+        "--ck-prefill-mode",
+        choices=["auto", "sequential", "batched", "hybrid"],
+        default="auto",
+        help=(
+            "CK replay mode. auto follows runtime_contract; sequential feeds every token through decode; "
+            "batched runs the whole prefix through ck_model_forward; hybrid batches the initial prompt "
+            "then decodes generated tokens one by one."
+        ),
+    )
+    ap.add_argument(
+        "--llama-no-repack",
+        action="store_true",
+        help="Disable llama.cpp CPU tensor repacking in the replay helper for accumulation-order attribution.",
+    )
+    ap.add_argument(
         "--append-on-divergence",
         choices=["stop", "llama", "ck"],
         default="stop",
@@ -117,6 +181,11 @@ def main() -> int:
     model_dir = discover_ck_model_dir(args.model_dir)
     gguf_path = discover_gguf(args.gguf, model_dir)
     prompt_tokens = parse_tokens_csv(args.tokens)
+    runtime_contract = load_runtime_contract(model_dir)
+    llama_decode_mode = str(args.llama_decode_mode)
+    if llama_decode_mode == "auto":
+        prefill_policy = str(runtime_contract.get("prefill_policy") or "batched").strip().lower()
+        llama_decode_mode = "hybrid" if prefill_policy == "sequential_decode" else "batched"
     report = run_multitoken_parity(
         model_dir=model_dir,
         gguf_path=gguf_path,
@@ -126,6 +195,9 @@ def main() -> int:
         top_k=int(args.top_k),
         threads=int(args.threads),
         append_on_divergence=str(args.append_on_divergence),
+        ck_prefill_mode=str(args.ck_prefill_mode),
+        llama_decode_mode=llama_decode_mode,
+        llama_no_repack=bool(args.llama_no_repack),
     )
 
     if args.json_out:
@@ -138,12 +210,19 @@ def main() -> int:
                 "status=fail "
                 f"step={first['step']} prefix_len={first['prefix_len']} "
                 f"ck_next={first['ck_next']} llama_next={first['llama_next']} "
+                f"llama_mode={llama_decode_mode} "
+                f"ck_mode={args.ck_prefill_mode} "
+                f"llama_no_repack={bool(args.llama_no_repack)} "
                 f"cosine={first['cosine']:.6f} rmse={first['rmse']:.6f} "
+                f"ck_margin={first['ck_top1_margin']:.6f} llama_margin={first['llama_top1_margin']:.6f} "
                 f"topk_overlap={first['topk_overlap_count']}/{args.top_k}"
             )
         else:
             print(
                 "status=pass "
+                f"llama_mode={llama_decode_mode} "
+                f"ck_mode={args.ck_prefill_mode} "
+                f"llama_no_repack={bool(args.llama_no_repack)} "
                 f"steps={len(report.get('steps', []))} "
                 f"final_prefix_len={len(report.get('final_prefix', []))}"
             )

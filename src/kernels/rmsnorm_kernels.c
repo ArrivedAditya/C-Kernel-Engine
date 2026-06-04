@@ -251,6 +251,54 @@ void rmsnorm_forward(const float *input,
     }
 }
 
+void rmsnorm_forward_no_weight(const float *input,
+                               float *output,
+                               float *rstd_cache,
+                               int tokens,
+                               int d_model,
+                               int aligned_embed_dim,
+                               float eps)
+{
+    if (!input || !output || tokens <= 0 || d_model <= 0 || aligned_embed_dim <= 0) {
+        return;
+    }
+    const float inv_d = 1.0f / (float)d_model;
+    for (int t = 0; t < tokens; ++t) {
+        const float *x = input + (size_t)t * (size_t)aligned_embed_dim;
+        float *y = output + (size_t)t * (size_t)aligned_embed_dim;
+        double sum_sq = 0.0;
+        for (int d = 0; d < d_model; ++d) {
+            sum_sq += (double)x[d] * (double)x[d];
+        }
+        const float rstd = 1.0f / sqrtf((float)(sum_sq * (double)inv_d) + eps);
+        if (rstd_cache) {
+            rstd_cache[t] = rstd;
+        }
+        for (int d = 0; d < d_model; ++d) {
+            y[d] = x[d] * rstd;
+        }
+        for (int d = d_model; d < aligned_embed_dim; ++d) {
+            y[d] = 0.0f;
+        }
+    }
+}
+
+void gemma4_v_norm_forward(const float *input,
+                           float *output,
+                           float *rstd_cache,
+                           int tokens,
+                           int num_kv_heads,
+                           int head_dim,
+                           float eps)
+{
+    if (!input || !output || tokens <= 0 || num_kv_heads <= 0 || head_dim <= 0) {
+        return;
+    }
+    rmsnorm_forward_no_weight(input, output, rstd_cache,
+                              tokens * num_kv_heads, head_dim, head_dim, eps);
+}
+
+
 /**
  * RMSNorm backward pass
  * @test test_rmsnorm.py::TestRMSNormBackward::test_backward_tokens

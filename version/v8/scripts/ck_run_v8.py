@@ -270,12 +270,15 @@ def _compiler_supports_openmp(compiler: str, omp_flag: str) -> bool:
         probe.close()
         out_path = probe.name + ".out"
         cmd = [compiler, probe.name, omp_flag, "-o", out_path]
-        proc = subprocess.run(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+        try:
+            proc = subprocess.run(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except FileNotFoundError:
+            return bool(shutil.which(compiler))
         try:
             if os.path.exists(out_path):
                 os.unlink(out_path)
@@ -966,8 +969,9 @@ def step_run_chat(work_dir: Path, args: argparse.Namespace, *, gguf_path: Path |
         cmd.extend(["--repeat-penalty", str(float(args.repeat_penalty))])
     if args.repeat_last_n is not None:
         cmd.extend(["--repeat-last-n", str(int(args.repeat_last_n))])
-    if args.no_repeat_ngram_size is not None:
-        cmd.extend(["--no-repeat-ngram-size", str(int(args.no_repeat_ngram_size))])
+    no_repeat_ngram_size = getattr(args, "no_repeat_ngram_size", None)
+    if no_repeat_ngram_size is not None:
+        cmd.extend(["--no-repeat-ngram-size", str(int(no_repeat_ngram_size))])
     if args.prompt:
         cmd.extend(["--prompt", args.prompt])
     if args.no_chat_template:
@@ -1083,8 +1087,9 @@ def run_pipeline(args: argparse.Namespace) -> int:
             cmd.extend(["--repeat-penalty", str(float(args.repeat_penalty))])
         if args.repeat_last_n is not None:
             cmd.extend(["--repeat-last-n", str(int(args.repeat_last_n))])
-        if args.no_repeat_ngram_size is not None:
-            cmd.extend(["--no-repeat-ngram-size", str(int(args.no_repeat_ngram_size))])
+        no_repeat_ngram_size = getattr(args, "no_repeat_ngram_size", None)
+        if no_repeat_ngram_size is not None:
+            cmd.extend(["--no-repeat-ngram-size", str(int(no_repeat_ngram_size))])
         for override in list(getattr(args, "vision_activation_pref", []) or []):
             cmd.extend(["--vision-activation-pref", str(override)])
         if args.no_chat_template:
@@ -1195,7 +1200,7 @@ Examples:
     run_parser.add_argument("--repeat-last-n", type=int, default=None)
     run_parser.add_argument("--no-repeat-ngram-size", type=int, default=None)
     run_parser.add_argument("--prompt", default=None, help="Single prompt (non-interactive if set)")
-    run_parser.add_argument("--chat-template", choices=["auto", "none", "qwen", "qwen2", "qwen3", "qwen35", "qwen3vl", "gemma", "gemma3", "llama"], default="auto")
+    run_parser.add_argument("--chat-template", choices=["auto", "none", "qwen", "qwen2", "qwen3", "qwen35", "qwen3vl", "gemma", "gemma3", "gemma4", "llama"], default="auto")
     run_parser.add_argument("--no-chat-template", action="store_true")
     run_parser.add_argument("--allow-raw-prompt", action="store_true")
     run_parser.add_argument("--thinking-mode", choices=["auto", "visible", "suppressed"], default="auto")

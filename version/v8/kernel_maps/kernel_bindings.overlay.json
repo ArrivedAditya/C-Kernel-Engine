@@ -117,6 +117,7 @@
             "ln2_gamma",
             "post_attention_norm",
             "post_ffn_norm",
+            "v_norm_gamma",
             "final_ln_weight"
           ]
         },
@@ -1098,6 +1099,517 @@
         {
           "name": "aligned_head_dim",
           "source": "dim:head_dim"
+        }
+      ]
+    },
+    "gemma4_per_layer_embed_forward": {
+      "note": "Apply Gemma4 per-layer residual branch using prepared per-layer input stream.",
+      "params": [
+        {
+          "name": "hidden",
+          "source": "activation:hidden",
+          "cast": "float*"
+        },
+        {
+          "name": "per_layer_input",
+          "source": "activation:per_layer_input",
+          "cast": "const float*"
+        },
+        {
+          "name": "inp_gate",
+          "source": "weight_f:per_layer_inp_gate"
+        },
+        {
+          "name": "proj",
+          "source": "weight_f:per_layer_proj"
+        },
+        {
+          "name": "post_norm",
+          "source": "weight_f:per_layer_post_norm"
+        },
+        {
+          "name": "out_scale",
+          "source": "weight_f:layer_output_scale"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "layer",
+          "source": "runtime:layer"
+        },
+        {
+          "name": "num_layers",
+          "source": "dim:num_layers"
+        },
+        {
+          "name": "embed_dim",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "per_layer_dim",
+          "source": "dim:per_layer_dim"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps"
+        }
+      ]
+    },
+    "gemma4_per_layer_prepare_forward": {
+      "note": "Prepare Gemma4 per-layer input stream from original embeddings.",
+      "params": [
+        {
+          "name": "per_layer_input",
+          "source": "output:per_layer_input",
+          "cast": "float*"
+        },
+        {
+          "name": "hidden",
+          "source": "activation:hidden",
+          "cast": "const float*"
+        },
+        {
+          "name": "token_ids",
+          "source": "activation:tokens",
+          "cast": "const int32_t*"
+        },
+        {
+          "name": "per_layer_token_emb",
+          "source": "weight:per_layer_token_emb"
+        },
+        {
+          "name": "per_layer_model_proj",
+          "source": "weight:per_layer_model_proj",
+          "cast": "const uint16_t*"
+        },
+        {
+          "name": "per_layer_proj_norm",
+          "source": "weight_f:per_layer_proj_norm"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "num_layers",
+          "source": "dim:num_layers"
+        },
+        {
+          "name": "embed_dim",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "per_layer_dim",
+          "source": "dim:per_layer_dim"
+        },
+        {
+          "name": "vocab_size",
+          "source": "dim:vocab_size"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps"
+        }
+      ]
+    },
+    "gemma4_final_logit_softcap_forward": {
+      "note": "Apply Gemma4 final logit softcapping in-place: tanh(logit / cap) * cap.",
+      "params": [
+        {
+          "name": "logits",
+          "source": "activation:logits",
+          "cast": "float*"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "vocab_size",
+          "source": "dim:vocab_size"
+        },
+        {
+          "name": "cap",
+          "source": "dim:final_logit_softcapping"
+        }
+      ]
+    },
+    "attention_forward_causal_head_major_gqa_flash_strided_gemma4": {
+      "note": "Prefill: all tokens process together with causal mask Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
+      "params": [
+        {
+          "name": "q",
+          "source": "scratch:q_scratch",
+          "cast": "float*"
+        },
+        {
+          "name": "k",
+          "source": "scratch:k_scratch",
+          "cast": "float*"
+        },
+        {
+          "name": "v",
+          "source": "scratch:v_scratch",
+          "cast": "float*"
+        },
+        {
+          "name": "output",
+          "source": "output:out",
+          "cast": "float*"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "kv_stride_tokens",
+          "source": "dim:max_seq_len"
+        }
+      ]
+    },
+    "attention_forward_full_head_major_gqa_flash_strided_gemma4": {
+      "note": "Prefill: full / bidirectional attention across the entire sequence Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
+      "params": [
+        {
+          "name": "q",
+          "source": "scratch:q_scratch",
+          "cast": "float*"
+        },
+        {
+          "name": "k",
+          "source": "scratch:k_scratch",
+          "cast": "float*"
+        },
+        {
+          "name": "v",
+          "source": "scratch:v_scratch",
+          "cast": "float*"
+        },
+        {
+          "name": "output",
+          "source": "output:out",
+          "cast": "float*"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "kv_stride_tokens",
+          "source": "dim:max_seq_len"
+        }
+      ]
+    },
+    "attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4": {
+      "note": "Prefill: sliding window attention with causal mask Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
+      "params": [
+        {
+          "name": "q",
+          "source": "scratch:q_scratch",
+          "cast": "float*"
+        },
+        {
+          "name": "k",
+          "source": "scratch:k_scratch",
+          "cast": "float*"
+        },
+        {
+          "name": "v",
+          "source": "scratch:v_scratch",
+          "cast": "float*"
+        },
+        {
+          "name": "output",
+          "source": "output:out",
+          "cast": "float*"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "kv_stride_tokens",
+          "source": "dim:max_seq_len"
+        },
+        {
+          "name": "sliding_window",
+          "source": "dim:sliding_window"
+        }
+      ]
+    },
+    "attention_forward_decode_head_major_gqa_flash_gemma4": {
+      "note": "Decode: single query token attends to KV cache (positions 0..pos) Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
+      "params": [
+        {
+          "name": "q_token",
+          "source": "scratch:q_scratch",
+          "cast": "const float*"
+        },
+        {
+          "name": "k_cache",
+          "source": "runtime:kv_cache_k_layer",
+          "cast": "const float*"
+        },
+        {
+          "name": "v_cache",
+          "source": "runtime:kv_cache_v_layer",
+          "cast": "const float*"
+        },
+        {
+          "name": "out_token",
+          "source": "output:out",
+          "cast": "float*"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "kv_tokens",
+          "source": "runtime:kv_tokens"
+        },
+        {
+          "name": "cache_capacity",
+          "source": "dim:max_seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        }
+      ]
+    },
+    "attention_forward_decode_head_major_gqa_flash_sliding_gemma4": {
+      "note": "Decode: sliding window attention - single query token attends to last W KV cache entries Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
+      "params": [
+        {
+          "name": "q_token",
+          "source": "scratch:q_scratch",
+          "cast": "const float*"
+        },
+        {
+          "name": "k_cache",
+          "source": "runtime:kv_cache_k_layer",
+          "cast": "const float*"
+        },
+        {
+          "name": "v_cache",
+          "source": "runtime:kv_cache_v_layer",
+          "cast": "const float*"
+        },
+        {
+          "name": "out_token",
+          "source": "output:out",
+          "cast": "float*"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "kv_tokens",
+          "source": "runtime:kv_tokens"
+        },
+        {
+          "name": "cache_capacity",
+          "source": "dim:max_seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "sliding_window",
+          "source": "dim:sliding_window"
+        }
+      ]
+    },
+    "rope_forward_qk_gemma4_direct": {
+      "note": "Gemma4 RoPE uses per-layer frequency base and optional full-attention frequency factors.",
+      "params": [
+        {
+          "name": "q",
+          "source": "scratch:q_scratch",
+          "cast": "float*"
+        },
+        {
+          "name": "k",
+          "source": "scratch:k_scratch",
+          "cast": "float*"
+        },
+        {
+          "name": "freq_factors",
+          "source": "weight_f:rope_freqs",
+          "cast": "const float*"
+        },
+        {
+          "name": "use_freq_factors",
+          "source": "dim:use_rope_freq_factors"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "pos_offset",
+          "source": "runtime:pos"
+        },
+        {
+          "name": "rotary_dim",
+          "source": "dim:rotary_dim"
+        },
+        {
+          "name": "freq_base",
+          "source": "dim:rope_freq_base"
+        }
+      ]
+    },
+    "gemma4_v_norm_forward": {
+      "params": [
+        {
+          "name": "input",
+          "source": "activation:input",
+          "cast": "const float*"
+        },
+        {
+          "name": "output",
+          "source": "output:output",
+          "cast": "float*"
+        },
+        {
+          "name": "rstd_cache",
+          "source": "null"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps"
+        }
+      ]
+    },
+    "rmsnorm_forward_no_weight": {
+      "params": [
+        {
+          "name": "input",
+          "source": "activation:input",
+          "cast": "const float*"
+        },
+        {
+          "name": "output",
+          "source": "output:output",
+          "cast": "float*"
+        },
+        {
+          "name": "rstd_cache",
+          "source": "null"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "d_model",
+          "source": "dim:_output_dim"
+        },
+        {
+          "name": "aligned_embed_dim",
+          "source": "dim:_output_dim"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps"
         }
       ]
     }
