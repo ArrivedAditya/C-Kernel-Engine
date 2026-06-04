@@ -1,0 +1,58 @@
+{
+  "id": "gemma4_final_logit_softcap_forward",
+  "op": "final_logit_softcap",
+  "variant": "gemma4_scalar_correctness",
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "logits",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "V"
+      ],
+      "desc": "Logits buffer updated in-place"
+    }
+  ],
+  "weights": [],
+  "outputs": [
+    {
+      "name": "logits",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "V"
+      ],
+      "desc": "Softcapped logits"
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "seq_len",
+    "vocab_size"
+  ],
+  "params": [
+    {
+      "name": "cap",
+      "dtype": "float32",
+      "desc": "Softcap value; <=0 disables"
+    }
+  ],
+  "impl": {
+    "function": "gemma4_final_logit_softcap_forward",
+    "c_declaration": "void gemma4_final_logit_softcap_forward(float *logits, int tokens, int vocab_size, float cap);",
+    "sources": [
+      "src/kernels/gemma4_per_layer_embed.c"
+    ]
+  },
+  "notes": "Gemma4 final logit softcapping matching llama.cpp: tanh(logit / cap) * cap."
+}

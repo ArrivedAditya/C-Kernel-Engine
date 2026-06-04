@@ -348,6 +348,10 @@ OP_DATAFLOW = {
         "inputs": {"token_ids": "external:token_ids"},
         "outputs": {"out": {"slot": "main_stream", "dtype": "fp32"}},
     },
+    "gemma4_per_layer_prepare": {
+        "inputs": {"input": "main_stream", "tokens": "external:token_ids"},
+        "outputs": {"per_layer_input": {"slot": "gemma4_per_layer_stream", "dtype": "fp32"}},
+    },
     "patchify": {
         "inputs": {"image": "external:image_input"},
         "outputs": {"patches": {"slot": "patch_scratch", "dtype": "fp32"}},
@@ -409,9 +413,21 @@ OP_DATAFLOW = {
         "inputs": {"input": "main_stream"},
         "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
     },
+    "gemma4_per_layer_embed": {
+        "inputs": {"hidden": "main_stream", "per_layer_input": "gemma4_per_layer_stream"},
+        "outputs": {"hidden": {"slot": "main_stream", "dtype": "fp32"}},
+    },
+    "v_norm": {
+        "inputs": {"input": "v_scratch"},
+        "outputs": {"output": {"slot": "v_scratch", "dtype": "fp32"}},
+    },
     "final_rmsnorm": {
         "inputs": {"input": "main_stream"},
         "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
+    },
+    "final_logit_softcap": {
+        "inputs": {"logits": "logits"},
+        "outputs": {"logits": {"slot": "logits", "dtype": "fp32"}},
     },
     "quantize_input_0": {
         "inputs": {"input": "main_stream"},
@@ -1206,8 +1222,8 @@ def generate_init_ops(manifest: Dict, config: Dict) -> List[Dict]:
     if rope_type in ("rope", "rope_qk", True):
         # Get config values
         rope_theta = config["rope_theta"]
-        head_dim = config["head_dim"]
-        rotary_dim = config["rotary_dim"]
+        head_dim = max(int(config["head_dim"]), int(config.get("max_rotary_dim", config["rotary_dim"]) or config["rotary_dim"]))
+        rotary_dim = int(config.get("max_rotary_dim", config["rotary_dim"]) or config["rotary_dim"])
         max_seq_len = config["context_length"]
 
         # RoPE scaling (for extended context models like Llama 3.1)
@@ -1577,6 +1593,24 @@ def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, 
     kv_cache_dtype = "fp16" if mode == "decode" and decode_kv_cache_dtype in {"fp16", "f16"} else "fp32"
     kv_elem_bytes = _dtype_size_bytes(kv_cache_dtype)
 
+    def _positive_int_config(name: str, default: int) -> int:
+        try:
+            value = int(config.get(name, default) or default)
+        except Exception:
+            value = default
+        return value if value > 0 else default
+
+    max_q_head_dim = max(head_dim, _positive_int_config("max_q_head_dim", head_dim))
+    max_k_head_dim = max(head_dim, _positive_int_config("max_k_head_dim", head_dim))
+    max_v_head_dim = max(head_dim, _positive_int_config("max_v_head_dim", head_dim))
+    kv_cache_head_dim = max(
+        max_k_head_dim,
+        max_v_head_dim,
+        _positive_int_config("kv_cache_head_dim", head_dim),
+    )
+    max_attn_head_dim = max(max_q_head_dim, max_k_head_dim, max_v_head_dim, kv_cache_head_dim)
+    kv_cache_token_stride_total = int(config.get("kv_cache_token_stride_total", 0) or 0)
+
     max_context = int(config.get("context_length", 32768))
     if context_len is None:
         context_len = max_context
@@ -1633,38 +1667,51 @@ def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, 
 
     # KV cache + RoPE
     if uses_kv_cache:
-        kv_per_layer = num_kv_heads * context_len * head_dim * kv_elem_bytes
-        total_kv_size = num_layers * 2 * kv_per_layer
-        add("kv_cache", total_kv_size, f"[{num_layers}, 2, {num_kv_heads}, {context_len}, {head_dim}]", kv_cache_dtype)
+        if kv_cache_token_stride_total > 0:
+            total_kv_size = context_len * kv_cache_token_stride_total * kv_elem_bytes
+            add("kv_cache", total_kv_size, f"[variable_kv, {context_len}, mixed_head_dim]", kv_cache_dtype)
+        else:
+            kv_per_layer = num_kv_heads * context_len * kv_cache_head_dim * kv_elem_bytes
+            total_kv_size = num_layers * 2 * kv_per_layer
+            add("kv_cache", total_kv_size, f"[{num_layers}, 2, {num_kv_heads}, {context_len}, {kv_cache_head_dim}]", kv_cache_dtype)
 
-    rotary_dim = config.get("rotary_dim", head_dim)
+    rotary_dim = int(config.get("rotary_dim", head_dim) or head_dim)
+    layer_rotary = config.get("layer_rotary_dim")
+    if isinstance(layer_rotary, list) and layer_rotary:
+        rotary_dim = max(rotary_dim, max(int(v or 0) for v in layer_rotary))
     rope_half = int(rotary_dim) // 2
     if uses_rope:
         rope_size = context_len * rope_half * 4 * 2
         add("rope_cache", rope_size, f"[2, {context_len}, {rope_half}]")
 
     # Scratch buffers
-    q_size = num_heads * seq_len * head_dim * 4
-    k_size = num_kv_heads * seq_len * head_dim * 4
-    v_size = num_kv_heads * seq_len * head_dim * 4
-    attn_out_size = num_heads * seq_len * head_dim * 4
+    q_size = num_heads * seq_len * max_q_head_dim * 4
+    k_size = num_kv_heads * seq_len * max_k_head_dim * 4
+    v_size = num_kv_heads * seq_len * max_v_head_dim * 4
+    attn_out_size = num_heads * seq_len * max_q_head_dim * 4
     q_gate_proj_dim = int(config.get("q_gate_proj_dim", config.get("attn_q_gate_proj_dim", 0)) or 0)
     if q_gate_proj_dim <= 0:
-        q_gate_proj_dim = 2 * num_heads * head_dim
-    attn_gate_dim = int(config.get("attn_gate_dim", max(q_gate_proj_dim - (num_heads * head_dim), 0)) or 0)
+        q_gate_proj_dim = 2 * num_heads * max_q_head_dim
+    attn_gate_dim = int(config.get("attn_gate_dim", max(q_gate_proj_dim - (num_heads * max_q_head_dim), 0)) or 0)
     if attn_gate_dim <= 0:
-        attn_gate_dim = num_heads * head_dim
+        attn_gate_dim = num_heads * max_q_head_dim
     attn_q_gate_packed_size = seq_len * q_gate_proj_dim * 4
     attn_gate_size = seq_len * attn_gate_dim * 4
-    add("q_scratch", q_size, f"[{num_heads}, {seq_len}, {head_dim}]")
-    add("k_scratch", k_size, f"[{num_kv_heads}, {seq_len}, {head_dim}]")
-    add("v_scratch", v_size, f"[{num_kv_heads}, {seq_len}, {head_dim}]")
+    add("q_scratch", q_size, f"[{num_heads}, {seq_len}, {max_q_head_dim}]")
+    add("k_scratch", k_size, f"[{num_kv_heads}, {seq_len}, {max_k_head_dim}]")
+    add("v_scratch", v_size, f"[{num_kv_heads}, {seq_len}, {max_v_head_dim}]")
     add("attn_q_gate_packed", attn_q_gate_packed_size, f"[{seq_len}, {q_gate_proj_dim}]")
     add("attn_gate", attn_gate_size, f"[{seq_len}, {attn_gate_dim}]")
-    add("attn_scratch", attn_out_size, f"[{num_heads}, {seq_len}, {head_dim}]")
+    add("attn_scratch", attn_out_size, f"[{num_heads}, {seq_len}, {max_q_head_dim}]")
+
+    if bool(config.get("gemma4_per_layer_embedding", False)):
+        per_layer_dim = int(config.get("per_layer_dim", 0) or 0)
+        if per_layer_dim > 0 and num_layers > 0:
+            per_layer_size = seq_len * num_layers * per_layer_dim * 4
+            add("gemma4_per_layer_stream", per_layer_size, f"[{seq_len}, {num_layers}, {per_layer_dim}]")
 
     mlp_size = seq_len * intermediate_size * 2 * 4
-    fused_attn_scratch = max(350 * 1024, 3 * num_heads * seq_len * head_dim * 4 + embed_dim * 4 * seq_len * 4)
+    fused_attn_scratch = max(350 * 1024, 3 * num_heads * seq_len * max_attn_head_dim * 4 + embed_dim * 4 * seq_len * 4)
     # BF16 GeGLU needs 3 * seq_len * dim * 4 (input [a,b] + output)
     geglu_bf16_scratch = seq_len * intermediate_size * 3 * 4
     scratch_size = max(mlp_size, fused_attn_scratch, geglu_bf16_scratch)
@@ -1772,6 +1819,10 @@ TEMPLATE_TO_KERNEL_OP = {
     "post_attention_norm": "rmsnorm",
     "ffn_norm": "rmsnorm",
     "post_ffn_norm": "rmsnorm",
+    "gemma4_per_layer_prepare": "gemma4_per_layer_prepare",
+    "gemma4_per_layer_embed": "gemma4_per_layer_embed",
+    "final_logit_softcap": "final_logit_softcap",
+    "v_norm": "v_norm",
     "qkv_proj": "qkv_projection",  # Or fallback to 3x matmul
     "qkv_packed_proj": "matmul",
     "q_proj": "matmul",
@@ -2644,6 +2695,77 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
     if op_name in ("quantize_mlp_down_input",):
         return inter, inter  # _input_dim = intermediate_size
     return None, None
+
+
+def _config_layer_int(config: Dict, key: str, layer: int, default: int) -> int:
+    vals = config.get(key)
+    if isinstance(vals, list) and 0 <= layer < len(vals):
+        try:
+            return int(vals[layer])
+        except (TypeError, ValueError):
+            return int(default)
+    return int(default)
+
+
+def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: Dict) -> None:
+    """Apply explicit per-layer attention dimensions for architectures that need them."""
+    if str(config.get("model", "")).lower() != "gemma4" or layer < 0:
+        return
+
+    embed_dim = int(config.get("embed_dim", 0) or 0)
+    num_kv_heads = int(config.get("num_kv_heads", config.get("num_heads", 1)) or 1)
+    q_head_dim = _config_layer_int(config, "layer_q_head_dim", layer, int(config.get("head_dim", 0) or 0))
+    k_head_dim = _config_layer_int(config, "layer_k_head_dim", layer, q_head_dim)
+    v_head_dim = _config_layer_int(config, "layer_v_head_dim", layer, k_head_dim)
+    q_dim = _config_layer_int(config, "layer_q_dim", layer, int(config.get("num_heads", 1) or 1) * q_head_dim)
+    k_dim = num_kv_heads * k_head_dim
+    v_dim = num_kv_heads * v_head_dim
+    rotary_dim = _config_layer_int(config, "layer_rotary_dim", layer, int(config.get("rotary_dim", q_head_dim) or q_head_dim))
+    sliding_window = _config_layer_int(config, "layer_sliding_window", layer, int(config.get("sliding_window", 0) or 0))
+    rope_kinds = config.get("layer_rope_kind")
+    rope_kind = str(rope_kinds[layer]) if isinstance(rope_kinds, list) and 0 <= layer < len(rope_kinds) else ("swa" if sliding_window > 0 else "full")
+    rope_freq_base = float(config.get("rope_theta_swa" if rope_kind == "swa" else "rope_theta", config.get("rope_theta", 10000.0)) or 10000.0)
+
+    if op_name == "q_proj":
+        params["_output_dim"] = q_dim
+        params["_input_dim"] = embed_dim
+        params["output_dim"] = q_dim
+    elif op_name == "k_proj":
+        params["_output_dim"] = k_dim
+        params["_input_dim"] = embed_dim
+        params["output_dim"] = k_dim
+    elif op_name == "v_proj":
+        params["_output_dim"] = v_dim
+        params["_input_dim"] = embed_dim
+        params["output_dim"] = v_dim
+    elif op_name == "out_proj":
+        params["_output_dim"] = embed_dim
+        params["_input_dim"] = q_dim
+        params["input_dim"] = q_dim
+    elif op_name == "quantize_out_proj_input":
+        params["_output_dim"] = q_dim
+        params["_input_dim"] = q_dim
+        params["input_dim"] = q_dim
+    elif op_name in ("qk_norm", "rope_qk", "kv_cache_store", "attn", "attn_sliding"):
+        params["head_dim"] = q_head_dim
+        params["q_head_dim"] = q_head_dim
+        params["k_head_dim"] = k_head_dim
+        params["v_head_dim"] = v_head_dim
+        params["q_dim"] = q_dim
+        params["k_dim"] = k_dim
+        params["v_dim"] = v_dim
+        params["rotary_dim"] = rotary_dim
+        params["n_dims"] = rotary_dim
+        params["rope_freq_base"] = rope_freq_base
+        params["use_rope_freq_factors"] = 1 if (op_name == "rope_qk" and rope_kind == "full") else 0
+        if sliding_window > 0:
+            params["sliding_window"] = sliding_window
+    elif op_name == "v_norm":
+        params["embed_dim"] = v_dim
+        params["d_model"] = v_dim
+        params["aligned_embed_dim"] = v_dim
+        params["_input_dim"] = v_dim
+        params["_output_dim"] = v_dim
 
 
 def _align_up(value: int, alignment: int) -> int:
@@ -4105,6 +4227,19 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "post_attention_norm": None,
         "ffn_norm": None,
         "post_ffn_norm": None,
+        "gemma4_per_layer_prepare": [
+            "per_layer_token_emb",
+            "per_layer_model_proj",
+            "per_layer_proj_norm",
+        ],
+        "gemma4_per_layer_embed": [
+            "per_layer_inp_gate",
+            "per_layer_proj",
+            "per_layer_post_norm",
+            "layer_output_scale",
+        ],
+        "final_logit_softcap": None,
+        "v_norm": [],
         "final_rmsnorm": None,
         "qk_norm": None,  # Per-head RMSNorm gamma is always fp32
 
@@ -4207,6 +4342,20 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         # Metadata ops - no kernel
         if weight_info == "metadata":
             return []
+
+        # Explicit no-weight math ops. These are real kernels, but they must not
+        # flow through the header/footer weighted path below, which would invent
+        # a q8_0 weight requirement and fail to bind kernels such as Gemma4 V RMSNorm.
+        if op in {"v_norm"}:
+            kernel_id = find_kernel(
+                registry,
+                op=kernel_op,
+                quant={},
+                mode=mode,
+                prefer_q8_activation=prefer_q8_activation,
+                prefer_parallel=use_parallel,
+            )
+            return [kernel_id] if kernel_id else []
 
         # Ops with quantized weights
         if isinstance(weight_info, list) and weight_info:
@@ -4840,6 +4989,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         ("ffn_norm", 0): ["ln2_gamma"],     # Pre-MLP norm (Gemma)
         ("post_attention_norm", 0): ["post_attention_norm"],
         ("post_ffn_norm", 0): ["post_ffn_norm"],
+        ("v_norm", 0): [],
         # residual_add: both instances use same weights (none), but tracked for consistency
         ("residual_add", 0): [],            # Post-attention residual
         ("residual_add", 1): [],            # Post-MLP residual
@@ -4928,6 +5078,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                 weight_keys = list(explicit_refs.keys())
         elif section == "body" and (op, instance_idx) in REPEATED_OP_WEIGHTS:
             weight_keys = REPEATED_OP_WEIGHTS[(op, instance_idx)]
+        elif section == "body" and op == "rope_qk" and str(config.get("model", "")).lower() == "gemma4":
+            weight_keys = ["rope_freqs"]
         elif section == "header":
             weight_keys = _header_weight_keys(op)
         elif section == "footer":
@@ -5422,7 +5574,22 @@ def insert_bias_add_ops(
         if isinstance(bias_weight_name, str) and is_zero_bias_tensor(bias_weight_name):
             skipped_zero += 1
             continue
-        if kernel_supports_bias(op.get("kernel", "")):
+
+        # Prefill GEMM kernels bind optional bias directly, but decode lowering
+        # rewrites these projection ops to GEMV kernels that do not take bias.
+        # Keep Gemma4/Qwen-style projection biases explicit in decode so the
+        # later GEMV specialization cannot silently drop them.
+        decode_needs_explicit_bias = mode == "decode" and op_type in {
+            "q_proj",
+            "q_gate_proj",
+            "k_proj",
+            "v_proj",
+            "out_proj",
+            "mlp_gate_up",
+            "mlp_up",
+            "mlp_down",
+        }
+        if kernel_supports_bias(op.get("kernel", "")) and not decode_needs_explicit_bias:
             continue
 
         out_dim, _ = compute_matmul_dims(op_type, config)
@@ -5661,6 +5828,15 @@ def generate_ir_lower_1(
     force_decode_attn_regular = str(os.environ.get("CK_V7_DECODE_ATTN_REGULAR", "")).strip().lower() in ("1", "true", "yes", "on")
     decode_kv_cache_dtype = str(config.get("decode_kv_cache_dtype", "fp32") or "fp32").strip().lower()
     decode_uses_fp16_kv = decode_kv_cache_dtype in {"fp16", "f16"}
+    layer_kv_source_cfg = config.get("layer_kv_source") if isinstance(config.get("layer_kv_source"), list) else []
+
+    def _kv_read_layer_for(layer: int) -> int:
+        try:
+            if 0 <= int(layer) < len(layer_kv_source_cfg):
+                return int(layer_kv_source_cfg[int(layer)])
+        except (TypeError, ValueError):
+            pass
+        return int(layer)
 
     for i, op in enumerate(lowered_ops):
         final_ops.append(op)
@@ -5685,6 +5861,7 @@ def generate_ir_lower_1(
                         "kv_cache_k": {"type": "kv_cache", "buffer": f"kv_cache_k_L{layer}"},
                         "kv_cache_v": {"type": "kv_cache", "buffer": f"kv_cache_v_L{layer}"},
                     },
+                    "params": copy.deepcopy(op.get("params", {})),
                     "scratch": [],
                     "_auto_inserted": True,
                 }
@@ -5705,10 +5882,12 @@ def generate_ir_lower_1(
                         decode_kernel = "attention_forward_decode_head_major_gqa_flash_f16cache"
                 op["kernel"] = decode_kernel
                 op["function"] = decode_kernel
+                kv_read_layer = _kv_read_layer_for(int(op.get("layer", 0)))
+                op["_kv_cache_read_layer"] = kv_read_layer
                 # Update inputs to use KV cache instead of scratch
                 op.setdefault("inputs", {})
-                op["inputs"]["k_cache"] = {"type": "kv_cache", "source": f"kv_cache_k_L{op['layer']}"}
-                op["inputs"]["v_cache"] = {"type": "kv_cache", "source": f"kv_cache_v_L{op['layer']}"}
+                op["inputs"]["k_cache"] = {"type": "kv_cache", "source": f"kv_cache_k_L{kv_read_layer}"}
+                op["inputs"]["v_cache"] = {"type": "kv_cache", "source": f"kv_cache_v_L{kv_read_layer}"}
                 # Remove scratch K/V references if present
                 op["inputs"].pop("k", None)
                 op["inputs"].pop("v", None)
@@ -5914,6 +6093,7 @@ WEIGHT_PATTERNS = {
 
     # QK norm weights (per-head RMSNorm gamma for Q and K)
     "q_norm": ["layer.{L}.q_norm", "layers.{L}.attention.q_norm", "layer.{L}.attn_q_norm"],
+    "rope_freqs": ["rope_freqs"],
     "k_norm": ["layer.{L}.k_norm", "layers.{L}.attention.k_norm", "layer.{L}.attn_k_norm"],
 
     # Recurrent hybrid block weights
@@ -5945,6 +6125,12 @@ WEIGHT_PATTERNS = {
     "ln2_beta": ["layer.{L}.ln2_beta", "layers.{L}.ffn_norm.bias", "v.blk.{L}.ln2.bias"],
     "post_attention_norm": ["layer.{L}.post_attention_norm", "layers.{L}.post_attention_norm.weight"],
     "post_ffn_norm": ["layer.{L}.post_ffn_norm", "layer.{L}.post_ffw_norm", "layers.{L}.post_ffn_norm.weight"],
+    "per_layer_token_emb": ["per_layer_token_emb"],
+    "per_layer_model_proj": ["per_layer_model_proj"],
+    "per_layer_proj_norm": ["per_layer_proj_norm"],
+    "per_layer_inp_gate": ["layer.{L}.per_layer_inp_gate"],
+    "per_layer_proj": ["layer.{L}.per_layer_proj"],
+    "per_layer_post_norm": ["layer.{L}.per_layer_post_norm"],
     "patch_emb": [
         "patch_emb.weight",
         "patch_embeddings.weight",
@@ -6027,6 +6213,19 @@ TEMPLATE_OP_WEIGHTS = {
     "post_attention_norm": ["post_attention_norm"],
     "ffn_norm": ["ln2_gamma"],
     "post_ffn_norm": ["post_ffn_norm"],
+    "gemma4_per_layer_prepare": [
+        "per_layer_token_emb",
+        "per_layer_model_proj",
+        "per_layer_proj_norm",
+    ],
+    "gemma4_per_layer_embed": [
+        "per_layer_inp_gate",
+        "per_layer_proj",
+        "per_layer_post_norm",
+        "layer_output_scale",
+    ],
+    "final_logit_softcap": [],
+    "v_norm": [],
     "final_rmsnorm": ["final_ln_weight", "final_ln_bias"],
     "qkv_proj": ["wq", "wk", "wv", "bq", "bk", "bv"],  # QKV + optional biases (for fused kernel)
     "qkv_packed_proj": ["attn_qkv", "bqkv"],
@@ -6294,6 +6493,23 @@ def generate_memory_layout(
             non_model_weights.add(v)
     model_weights = all_weight_names - non_model_weights
 
+    template_family = str(template.get("family", "") or template.get("name", "") or "").strip().lower()
+    model_family = str(config.get("model", "") or config.get("model_type", "") or "").strip().lower()
+    if template_family == "gemma4" or model_family == "gemma4":
+        # Gemma4 GGUFs may carry layer.*.v_norm_gamma tensors, but llama.cpp
+        # applies V RMSNorm as an unweighted ggml_rms_norm. Treat these as
+        # intentionally ignored only for the explicit Gemma4 template.
+        ignored_v_norm_gamma = {
+            w for w in model_weights
+            if w.startswith("layer.") and w.endswith(".v_norm_gamma")
+        }
+        if ignored_v_norm_gamma:
+            model_weights -= ignored_v_norm_gamma
+            print(
+                f"  Ignoring {len(ignored_v_norm_gamma)} Gemma4 v_norm_gamma tensors "
+                "because V RMSNorm is unweighted"
+            )
+
     # Weights expected but not used by IR1
     unused_by_ir1 = expected_weights - ir1_used_weights
 
@@ -6413,6 +6629,27 @@ def generate_memory_layout(
     kv_cache_dtype = "fp16" if mode == "decode" and decode_kv_cache_dtype in {"fp16", "f16"} else "fp32"
     kv_elem_bytes = _dtype_size_bytes(kv_cache_dtype)
 
+    head_dim = int(head_dim)
+    num_heads = int(num_heads)
+    num_kv_heads = int(num_kv_heads)
+    def _positive_int_config(name: str, default: int) -> int:
+        try:
+            value = int(config.get(name, default) or default)
+        except Exception:
+            value = default
+        return value if value > 0 else default
+
+    max_q_head_dim = max(head_dim, _positive_int_config("max_q_head_dim", head_dim))
+    max_k_head_dim = max(head_dim, _positive_int_config("max_k_head_dim", head_dim))
+    max_v_head_dim = max(head_dim, _positive_int_config("max_v_head_dim", head_dim))
+    kv_cache_head_dim = max(
+        max_k_head_dim,
+        max_v_head_dim,
+        _positive_int_config("kv_cache_head_dim", head_dim),
+    )
+    max_attn_head_dim = max(max_q_head_dim, max_k_head_dim, max_v_head_dim, kv_cache_head_dim)
+    kv_cache_token_stride_total = int(config.get("kv_cache_token_stride_total", 0) or 0)
+
     # Use provided context_len or default from config
     max_context = config.get("context_length", 32768)
     if context_len is None:
@@ -6495,12 +6732,19 @@ def generate_memory_layout(
     # KV cache: [num_layers, 2, num_kv_heads, context_len, head_dim]
     # Stores K and V for all layers, indexed by position
     if uses_kv_cache:
-        kv_per_layer = num_kv_heads * context_len * head_dim * kv_elem_bytes
-        total_kv_size = num_layers * 2 * kv_per_layer
-        add_buffer("kv_cache", total_kv_size, f"[{num_layers}, 2, {num_kv_heads}, {context_len}, {head_dim}]", kv_cache_dtype)
+        if kv_cache_token_stride_total > 0:
+            total_kv_size = context_len * kv_cache_token_stride_total * kv_elem_bytes
+            add_buffer("kv_cache", total_kv_size, f"[variable_kv, {context_len}, mixed_head_dim]", kv_cache_dtype)
+        else:
+            kv_per_layer = num_kv_heads * context_len * kv_cache_head_dim * kv_elem_bytes
+            total_kv_size = num_layers * 2 * kv_per_layer
+            add_buffer("kv_cache", total_kv_size, f"[{num_layers}, 2, {num_kv_heads}, {context_len}, {kv_cache_head_dim}]", kv_cache_dtype)
 
     # RoPE tables: precomputed cos/sin [2, context_len, rotary_dim/2]
-    rotary_dim = config.get("rotary_dim", head_dim)
+    rotary_dim = int(config.get("rotary_dim", head_dim) or head_dim)
+    layer_rotary = config.get("layer_rotary_dim")
+    if isinstance(layer_rotary, list) and layer_rotary:
+        rotary_dim = max(rotary_dim, max(int(v or 0) for v in layer_rotary))
     rope_half = int(rotary_dim) // 2
     if uses_rope:
         rope_size = context_len * rope_half * 4 * 2
@@ -6508,35 +6752,41 @@ def generate_memory_layout(
 
     # Layer scratch buffers (reused across layers)
     # Q output: [num_heads, seq_len, head_dim]
-    q_size = num_heads * seq_len * head_dim * 4
-    add_buffer("q_scratch", q_size, f"[{num_heads}, {seq_len}, {head_dim}]")
+    q_size = num_heads * seq_len * max_q_head_dim * 4
+    add_buffer("q_scratch", q_size, f"[{num_heads}, {seq_len}, {max_q_head_dim}]")
 
-    # K output: [num_kv_heads, seq_len, head_dim]
-    k_size = num_kv_heads * seq_len * head_dim * 4
-    add_buffer("k_scratch", k_size, f"[{num_kv_heads}, {seq_len}, {head_dim}]")
+    # K output: [num_kv_heads, seq_len, max_k_head_dim]
+    k_size = num_kv_heads * seq_len * max_k_head_dim * 4
+    add_buffer("k_scratch", k_size, f"[{num_kv_heads}, {seq_len}, {max_k_head_dim}]")
 
-    # V output: [num_kv_heads, seq_len, head_dim]
-    v_size = num_kv_heads * seq_len * head_dim * 4
-    add_buffer("v_scratch", v_size, f"[{num_kv_heads}, {seq_len}, {head_dim}]")
+    # V output: [num_kv_heads, seq_len, max_v_head_dim]
+    v_size = num_kv_heads * seq_len * max_v_head_dim * 4
+    add_buffer("v_scratch", v_size, f"[{num_kv_heads}, {seq_len}, {max_v_head_dim}]")
 
-    # Attention output: [num_heads, seq_len, head_dim]
-    attn_out_size = num_heads * seq_len * head_dim * 4
+    # Attention output: [num_heads, seq_len, max_q_head_dim]
+    attn_out_size = num_heads * seq_len * max_q_head_dim * 4
     q_gate_proj_dim = int(config.get("q_gate_proj_dim", config.get("attn_q_gate_proj_dim", 0)) or 0)
     if q_gate_proj_dim <= 0:
-        q_gate_proj_dim = 2 * num_heads * head_dim
-    attn_gate_dim = int(config.get("attn_gate_dim", max(q_gate_proj_dim - (num_heads * head_dim), 0)) or 0)
+        q_gate_proj_dim = 2 * num_heads * max_q_head_dim
+    attn_gate_dim = int(config.get("attn_gate_dim", max(q_gate_proj_dim - (num_heads * max_q_head_dim), 0)) or 0)
     if attn_gate_dim <= 0:
-        attn_gate_dim = num_heads * head_dim
+        attn_gate_dim = num_heads * max_q_head_dim
     add_buffer("attn_q_gate_packed", seq_len * q_gate_proj_dim * 4, f"[{seq_len}, {q_gate_proj_dim}]")
     add_buffer("attn_gate", seq_len * attn_gate_dim * 4, f"[{seq_len}, {attn_gate_dim}]")
-    add_buffer("attn_scratch", attn_out_size, f"[{num_heads}, {seq_len}, {head_dim}]")
+    add_buffer("attn_scratch", attn_out_size, f"[{num_heads}, {seq_len}, {max_q_head_dim}]")
+
+    if bool(config.get("gemma4_per_layer_embedding", False)):
+        per_layer_dim = int(config.get("per_layer_dim", 0) or 0)
+        if per_layer_dim > 0 and num_layers > 0:
+            per_layer_size = seq_len * num_layers * per_layer_dim * 4
+            add_buffer("gemma4_per_layer_stream", per_layer_size, f"[{seq_len}, {num_layers}, {per_layer_dim}]")
 
     # MLP scratch: [seq_len, intermediate_size * 2]
     mlp_size = seq_len * intermediate_size * 2 * 4
     # Fused attention scratch needs more space (Q, attn_out, proj, qkv_scratch)
     # Formula: 3 * num_heads * seq_len * head_dim * 4 + qkv_scratch (embed_dim * 4 * tokens + overhead)
     # For safety, use at least 350KB for decode fused attention
-    fused_attn_scratch = max(350 * 1024, 3 * num_heads * seq_len * head_dim * 4 + embed_dim * 4 * seq_len * 4)
+    fused_attn_scratch = max(350 * 1024, 3 * num_heads * seq_len * max_attn_head_dim * 4 + embed_dim * 4 * seq_len * 4)
     # BF16 GeGLU needs 3 * seq_len * dim * 4 (input [a,b] + output)
     geglu_bf16_scratch = seq_len * intermediate_size * 3 * 4
     scratch_size = max(mlp_size, fused_attn_scratch, geglu_bf16_scratch)
@@ -7062,10 +7312,17 @@ def generate_ir_lower_2(
     kv_cache_dtype = str(config.get("decode_kv_cache_dtype", "fp32") or "fp32").strip().lower()
     kv_elem_bytes = _dtype_size_bytes(kv_cache_dtype if kv_cache_dtype in {"fp16", "f16"} else "fp32")
 
+    layer_k_cache_offset = config.get("layer_k_cache_offset") if isinstance(config.get("layer_k_cache_offset"), list) else []
+    layer_v_cache_offset = config.get("layer_v_cache_offset") if isinstance(config.get("layer_v_cache_offset"), list) else []
+
     def kv_layer_offsets(layer: int) -> Optional[Tuple[int, int]]:
         kv_buf = activation_buffers.get("kv_cache")
         if not kv_buf or not context_len or not num_kv_heads or not head_dim:
             return None
+        if 0 <= int(layer) < len(layer_k_cache_offset) and 0 <= int(layer) < len(layer_v_cache_offset):
+            k_base = kv_buf["offset"] + int(layer_k_cache_offset[int(layer)]) * int(context_len) * kv_elem_bytes
+            v_base = kv_buf["offset"] + int(layer_v_cache_offset[int(layer)]) * int(context_len) * kv_elem_bytes
+            return k_base, v_base
         kv_per_layer = num_kv_heads * context_len * head_dim * kv_elem_bytes
         base = kv_buf["offset"] + layer * 2 * kv_per_layer
         return base, base + kv_per_layer
@@ -7146,6 +7403,8 @@ def generate_ir_lower_2(
             "outputs": {},
             "params": {},
         }
+        if "_kv_cache_read_layer" in ir_op:
+            lowered_op["_kv_cache_read_layer"] = int(ir_op["_kv_cache_read_layer"])
 
         # Process weights - add concrete bump offsets
         for wkey, winfo in ir_op.get("weights", {}).items():
@@ -7702,6 +7961,30 @@ def generate_ir_lower_2(
                             }
                             continue
 
+                if ir_op.get("op") == "gemma4_per_layer_prepare" and input_name in ("tokens", "token_ids"):
+                    buf = activation_buffers.get("token_ids")
+                    if buf:
+                        lowered_op["activations"][input_name] = {
+                            "buffer": "token_ids",
+                            "activation_offset": buf["offset"],
+                            "dtype": "i32",
+                            "ptr_expr": f"activations + {buf['offset']}",
+                        }
+                        continue
+
+                declared_slot = input_info.get("slot")
+                declared_from = input_info.get("from")
+                if declared_slot == "external:token_ids" or declared_from == "external:token_ids":
+                    buf = activation_buffers.get("token_ids")
+                    if buf:
+                        lowered_op["activations"][input_name] = {
+                            "buffer": "token_ids",
+                            "activation_offset": buf["offset"],
+                            "dtype": "i32",
+                            "ptr_expr": f"activations + {buf['offset']}",
+                        }
+                        continue
+
                 # Special case: embedding operation reads from token_ids, not layer_input
                 if "embedding" in ir_op.get("kernel", "").lower() and "token" in input_name.lower():
                     buf = activation_buffers.get("token_ids")
@@ -7709,7 +7992,7 @@ def generate_ir_lower_2(
                         lowered_op["activations"][input_name] = {
                             "buffer": "token_ids",
                             "activation_offset": buf["offset"],
-                            "dtype": "int32",
+                            "dtype": "i32",
                             "ptr_expr": f"activations + {buf['offset']}",
                         }
                         continue
@@ -7983,7 +8266,7 @@ def generate_ir_lower_2(
                 # For DECODE mode, use KV cache offsets for K and V (they're read from cache)
                 # For PREFILL mode, use scratch buffers (K/V are computed fresh each time)
                 if mode == "decode" and scratch_name in ("k_scratch", "v_scratch"):
-                    layer_idx = int(ir_op.get("layer", 0))
+                    layer_idx = int(ir_op.get("_kv_cache_read_layer", ir_op.get("layer", 0)))
                     kv_offs = kv_layer_offsets(layer_idx)
                     if kv_offs:
                         k_off, v_off = kv_offs
@@ -8203,6 +8486,7 @@ def generate_ir_lower_2(
             params["_output_dim"] = out_dim
         if in_dim is not None and "_input_dim" not in params:
             params["_input_dim"] = in_dim
+        apply_layer_attention_dims(op_type, params, int(lowered_op.get("layer", -1)), config)
 
         if op_type == "bias_add" and "_output_dim" not in params:
             for w in lowered_op.get("weights", {}).values():
@@ -8817,17 +9101,50 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     op_errors.append(f"{func}.{name}: missing param '{key}'")
                     expr = "0"
 
+            elif src.startswith("config:"):
+                key = src.split(":", 1)[1]
+                if key in config:
+                    val = config[key]
+                    if isinstance(val, str):
+                        expr = f'"{val}"'
+                    elif isinstance(val, bool):
+                        expr = "1" if val else "0"
+                    else:
+                        expr = str(val)
+                else:
+                    op_errors.append(f"{func}.{name}: missing config '{key}'")
+                    expr = "0"
+
             elif src.startswith("runtime:"):
                 key = src.split(":", 1)[1]
                 layer = op.get("layer", 0)
+                kv_layer = int(op.get("_kv_cache_read_layer", layer))
+                try:
+                    kv_cache_head_dim = int(config.get("kv_cache_head_dim", config.get("head_dim", 1)) or config.get("head_dim", 1) or 1)
+                except Exception:
+                    kv_cache_head_dim = int(config.get("head_dim", 1) or 1)
+                if kv_cache_head_dim <= 0:
+                    kv_cache_head_dim = 1
+                layer_k_offsets = config.get("layer_k_cache_offset") if isinstance(config.get("layer_k_cache_offset"), list) else []
+                layer_v_offsets = config.get("layer_v_cache_offset") if isinstance(config.get("layer_v_cache_offset"), list) else []
+                if 0 <= kv_layer < len(layer_k_offsets) and 0 <= kv_layer < len(layer_v_offsets):
+                    k_expr = f"(model->kv_cache + {int(layer_k_offsets[kv_layer])}ULL*MAX_SEQ_LEN)"
+                    v_expr = f"(model->kv_cache + {int(layer_v_offsets[kv_layer])}ULL*MAX_SEQ_LEN)"
+                    k_expr_f16 = f"(model->kv_cache_f16 + {int(layer_k_offsets[kv_layer])}ULL*MAX_SEQ_LEN)"
+                    v_expr_f16 = f"(model->kv_cache_f16 + {int(layer_v_offsets[kv_layer])}ULL*MAX_SEQ_LEN)"
+                else:
+                    k_expr = f"(model->kv_cache + ({kv_layer}*2)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
+                    v_expr = f"(model->kv_cache + ({kv_layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
+                    k_expr_f16 = f"(model->kv_cache_f16 + ({kv_layer}*2)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
+                    v_expr_f16 = f"(model->kv_cache_f16 + ({kv_layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
                 if key in ("kv_cache_k_layer", "kv_k"):
-                    expr = f"(model->kv_cache + ({layer}*2)*NUM_KV_HEADS*MAX_SEQ_LEN*HEAD_DIM)"
+                    expr = k_expr
                 elif key in ("kv_cache_v_layer", "kv_v"):
-                    expr = f"(model->kv_cache + ({layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*HEAD_DIM)"
+                    expr = v_expr
                 elif key == "kv_cache_k_layer_f16":
-                    expr = f"(model->kv_cache_f16 + ({layer}*2)*NUM_KV_HEADS*MAX_SEQ_LEN*HEAD_DIM)"
+                    expr = k_expr_f16
                 elif key == "kv_cache_v_layer_f16":
-                    expr = f"(model->kv_cache_f16 + ({layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*HEAD_DIM)"
+                    expr = v_expr_f16
                 elif key == "rope_cos":
                     expr = "model->rope_cos"
                 elif key == "rope_sin":
@@ -9097,11 +9414,13 @@ def generate_init_ir_lower_3(init_ir: Dict, layout: Dict) -> Dict:
                 "expr": f"(float*)(g_model->bump + {rope_cache_define})",
             })
 
-            # sin_cache output buffer (offset by head_dim/2)
+            head_dim = int(params.get("head_dim", {}).get("value", op_config.get("head_dim", config["head_dim"])))
+
+            # sin_cache output buffer (offset by the init cache row width)
             args.append({
                 "name": "sin_cache",
                 "source": "output:rope_sin",
-                "expr": f"(float*)(g_model->bump + {rope_cache_define}) + MAX_SEQ_LEN * HEAD_DIM / 2",
+                "expr": f"(float*)(g_model->bump + {rope_cache_define}) + MAX_SEQ_LEN * {head_dim} / 2",
             })
 
             # max_seq_len
@@ -9115,7 +9434,7 @@ def generate_init_ir_lower_3(init_ir: Dict, layout: Dict) -> Dict:
             args.append({
                 "name": "head_dim",
                 "source": "dim:head_dim",
-                "expr": "HEAD_DIM",
+                "expr": str(head_dim),
             })
 
             # base (rope_theta)

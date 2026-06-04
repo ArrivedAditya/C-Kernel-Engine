@@ -826,6 +826,20 @@ void rmsnorm_forward(const float *input,
                      int d_model,
                      int aligned_embed_dim,
                      float eps);
+void rmsnorm_forward_no_weight(const float *input,
+                               float *output,
+                               float *rstd_cache,
+                               int tokens,
+                               int d_model,
+                               int aligned_embed_dim,
+                               float eps);
+void gemma4_v_norm_forward(const float *input,
+                           float *output,
+                           float *rstd_cache,
+                           int tokens,
+                           int num_kv_heads,
+                           int head_dim,
+                           float eps);
 
 void rmsnorm_backward(const float *d_output,
                       const float *input,
@@ -848,6 +862,37 @@ void qk_norm_forward(float *q,
                      int head_dim,
                      float eps);
 
+
+void gemma4_per_layer_prepare_forward(float *per_layer_input,
+                                      const float *hidden,
+                                      const int32_t *token_ids,
+                                      const void *per_layer_token_emb,
+                                      const uint16_t *per_layer_model_proj,
+                                      const float *per_layer_proj_norm,
+                                      int tokens,
+                                      int num_layers,
+                                      int embed_dim,
+                                      int per_layer_dim,
+                                      int vocab_size,
+                                      float eps);
+
+void gemma4_per_layer_embed_forward(float *hidden,
+                                    const float *per_layer_input,
+                                    const float *inp_gate,
+                                    const float *proj,
+                                    const float *post_norm,
+                                    const float *out_scale,
+                                    int tokens,
+                                    int layer,
+                                    int num_layers,
+                                    int embed_dim,
+                                    int per_layer_dim,
+                                    float eps);
+
+void gemma4_final_logit_softcap_forward(float *logits,
+                                        int tokens,
+                                        int vocab_size,
+                                        float cap);
 void qk_norm_backward(const float *d_q_out,
                       const float *d_k_out,
                       const float *q_in,
@@ -1162,6 +1207,28 @@ void attention_forward_full_head_major_gqa_flash_strided(const float *q,
                                                          int aligned_head_dim,
                                                          int kv_stride_tokens);
 
+void attention_forward_causal_head_major_gqa_flash_strided_gemma4(const float *q,
+                                                                  const float *k,
+                                                                  const float *v,
+                                                                  float *output,
+                                                                  int num_heads,
+                                                                  int num_kv_heads,
+                                                                  int num_tokens,
+                                                                  int head_dim,
+                                                                  int aligned_head_dim,
+                                                                  int kv_stride_tokens);
+
+void attention_forward_full_head_major_gqa_flash_strided_gemma4(const float *q,
+                                                                const float *k,
+                                                                const float *v,
+                                                                float *output,
+                                                                int num_heads,
+                                                                int num_kv_heads,
+                                                                int num_tokens,
+                                                                int head_dim,
+                                                                int aligned_head_dim,
+                                                                int kv_stride_tokens);
+
 // Regular exact full / bidirectional attention for encoder-style prefill.
 // This matches the non-flash CPU reference path more closely than the online
 // flash reduction used by the causal kernels.
@@ -1217,6 +1284,17 @@ void attention_forward_decode_head_major_gqa_flash(const float *q_token,
                                                   int head_dim,
                                                   int aligned_head_dim);
 
+void attention_forward_decode_head_major_gqa_flash_gemma4(const float *q_token,
+                                                          const float *k_cache,
+                                                          const float *v_cache,
+                                                          float *out_token,
+                                                          int num_heads,
+                                                          int num_kv_heads,
+                                                          int kv_tokens,
+                                                          int cache_capacity,
+                                                          int head_dim,
+                                                          int aligned_head_dim);
+
 // Llama-parity decode flash attention variant that rounds K/V through FP16 before use.
 void attention_forward_decode_head_major_gqa_flash_f16kv(const float *q_token,
                                                          const float *k_cache,
@@ -1260,6 +1338,19 @@ void attention_forward_decode_head_major_gqa_regular(const float *q_token,
 // Each token attends to the last `sliding_window` tokens.
 //   sliding_window: window size (0 or negative = no limit, like regular causal)
 void attention_forward_causal_head_major_gqa_flash_strided_sliding(
+    const float *q,
+    const float *k,
+    const float *v,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int kv_stride_tokens,
+    int sliding_window);
+
+void attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4(
     const float *q,
     const float *k,
     const float *v,
@@ -1610,6 +1701,19 @@ void gated_deltanet_autoregressive_backward(const float *d_out,
 // Sliding-window attention forward (decode, flash-style)
 // Single query token attends to the last `sliding_window` tokens in KV cache.
 void attention_forward_decode_head_major_gqa_flash_sliding(
+    const float *q_token,
+    const float *k_cache,
+    const float *v_cache,
+    float *out_token,
+    int num_heads,
+    int num_kv_heads,
+    int kv_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    int sliding_window);
+
+void attention_forward_decode_head_major_gqa_flash_sliding_gemma4(
     const float *q_token,
     const float *k_cache,
     const float *v_cache,
@@ -2152,6 +2256,31 @@ void rope_forward_qk_with_rotary_dim(float *q,
                                      int aligned_head_dim,
                                      int pos_offset,
                                      int rotary_dim);
+
+void rope_forward_qk_gemma4_direct(float *q,
+                                   float *k,
+                                   const float *freq_factors,
+                                   int use_freq_factors,
+                                   int num_heads,
+                                   int num_kv_heads,
+                                   int num_tokens,
+                                   int head_dim,
+                                   int aligned_head_dim,
+                                   int pos_offset,
+                                   int rotary_dim,
+                                   float freq_base);
+void rope_forward_qk_with_rotary_dim_cache_stride(float *q,
+                                                  float *k,
+                                                  const float *cos_cache,
+                                                  const float *sin_cache,
+                                                  int num_heads,
+                                                  int num_kv_heads,
+                                                  int num_tokens,
+                                                  int head_dim,
+                                                  int aligned_head_dim,
+                                                  int pos_offset,
+                                                  int rotary_dim,
+                                                  int cache_rotary_dim);
 
 void rope_forward_qk_pairwise_with_rotary_dim(float *q,
                                               float *k,

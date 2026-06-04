@@ -836,6 +836,135 @@ void rope_forward_qk_with_rotary_dim(float *q,
                                 head_dim, aligned_head_dim, pos_offset, rotary_dim);
 }
 
+
+void rope_forward_qk_gemma4_direct(float *q,
+                                   float *k,
+                                   const float *freq_factors,
+                                   int use_freq_factors,
+                                   int num_heads,
+                                   int num_kv_heads,
+                                   int num_tokens,
+                                   int head_dim,
+                                   int aligned_head_dim,
+                                   int pos_offset,
+                                   int rotary_dim,
+                                   float freq_base)
+{
+    if (rotary_dim <= 0 || rotary_dim > head_dim) {
+        rotary_dim = head_dim;
+    }
+    if (freq_base <= 0.0f) {
+        freq_base = 10000.0f;
+    }
+    const int rotary_half = rotary_dim / 2;
+    const size_t head_stride = (size_t)num_tokens * (size_t)aligned_head_dim;
+    const float theta_scale = powf(freq_base, -2.0f / (float)rotary_dim);
+
+    for (int h = 0; h < num_heads; ++h) {
+        float *head = q + (size_t)h * head_stride;
+        for (int t = 0; t < num_tokens; ++t) {
+            const float pos = (float)(pos_offset + t);
+            float *x_row = head + (size_t)t * (size_t)aligned_head_dim;
+            for (int i = 0; i < rotary_half; ++i) {
+                const int idx0 = 2 * i;
+                const int idx1 = idx0 + 1;
+                const float ff = (use_freq_factors && freq_factors) ? freq_factors[i] : 1.0f;
+                const float theta = pos * powf(theta_scale, (float)i) / ff;
+                const float c = cosf(theta);
+                const float sv = sinf(theta);
+                const float x0 = x_row[idx0];
+                const float x1 = x_row[idx1];
+                x_row[idx0] = x0 * c - x1 * sv;
+                x_row[idx1] = x0 * sv + x1 * c;
+            }
+        }
+    }
+
+    for (int h = 0; h < num_kv_heads; ++h) {
+        float *head = k + (size_t)h * head_stride;
+        for (int t = 0; t < num_tokens; ++t) {
+            const float pos = (float)(pos_offset + t);
+            float *x_row = head + (size_t)t * (size_t)aligned_head_dim;
+            for (int i = 0; i < rotary_half; ++i) {
+                const int idx0 = 2 * i;
+                const int idx1 = idx0 + 1;
+                const float ff = (use_freq_factors && freq_factors) ? freq_factors[i] : 1.0f;
+                const float theta = pos * powf(theta_scale, (float)i) / ff;
+                const float c = cosf(theta);
+                const float sv = sinf(theta);
+                const float x0 = x_row[idx0];
+                const float x1 = x_row[idx1];
+                x_row[idx0] = x0 * c - x1 * sv;
+                x_row[idx1] = x0 * sv + x1 * c;
+            }
+        }
+    }
+}
+
+void rope_forward_qk_with_rotary_dim_cache_stride(float *q,
+                                                  float *k,
+                                                  const float *cos_cache,
+                                                  const float *sin_cache,
+                                                  int num_heads,
+                                                  int num_kv_heads,
+                                                  int num_tokens,
+                                                  int head_dim,
+                                                  int aligned_head_dim,
+                                                  int pos_offset,
+                                                  int rotary_dim,
+                                                  int cache_rotary_dim)
+{
+    if (rotary_dim <= 0 || rotary_dim > head_dim) {
+        rotary_dim = head_dim;
+    }
+    if (cache_rotary_dim < rotary_dim) {
+        cache_rotary_dim = rotary_dim;
+    }
+    const int rotary_half = rotary_dim / 2;
+    const int cache_half = cache_rotary_dim / 2;
+    const size_t head_stride = (size_t)num_tokens * (size_t)aligned_head_dim;
+
+    for (int h = 0; h < num_heads; ++h) {
+        float *head = q + (size_t)h * head_stride;
+        for (int t = 0; t < num_tokens; ++t) {
+            const int pos = pos_offset + t;
+            const float *cos_row = cos_cache + (size_t)pos * (size_t)cache_half;
+            const float *sin_row = sin_cache + (size_t)pos * (size_t)cache_half;
+            float *x_row = head + (size_t)t * (size_t)aligned_head_dim;
+            for (int i = 0; i < rotary_half; ++i) {
+                const int idx0 = 2 * i;
+                const int idx1 = idx0 + 1;
+                const float x0 = x_row[idx0];
+                const float x1 = x_row[idx1];
+                const float c = cos_row[i];
+                const float sv = sin_row[i];
+                x_row[idx0] = x0 * c - x1 * sv;
+                x_row[idx1] = x0 * sv + x1 * c;
+            }
+        }
+    }
+
+    for (int h = 0; h < num_kv_heads; ++h) {
+        float *head = k + (size_t)h * head_stride;
+        for (int t = 0; t < num_tokens; ++t) {
+            const int pos = pos_offset + t;
+            const float *cos_row = cos_cache + (size_t)pos * (size_t)cache_half;
+            const float *sin_row = sin_cache + (size_t)pos * (size_t)cache_half;
+            float *x_row = head + (size_t)t * (size_t)aligned_head_dim;
+            for (int i = 0; i < rotary_half; ++i) {
+                const int idx0 = 2 * i;
+                const int idx1 = idx0 + 1;
+                const float x0 = x_row[idx0];
+                const float x1 = x_row[idx1];
+                const float c = cos_row[i];
+                const float sv = sin_row[i];
+                x_row[idx0] = x0 * c - x1 * sv;
+                x_row[idx1] = x0 * sv + x1 * c;
+            }
+        }
+    }
+}
+
 void rope_forward_qk_pairwise_with_rotary_dim(float *q,
                                               float *k,
                                               const float *cos_cache,

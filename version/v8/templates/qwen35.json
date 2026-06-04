@@ -58,7 +58,13 @@
       "rope_type": "rope",
       "qk_norm": "hybrid_full_attention_only",
       "kv_layout": "layer_major_kv_cache",
-      "attn_variant": "hybrid_recurrent_attention"
+      "attn_variant": "hybrid_recurrent_attention",
+      "layer_policy_config_key": "layer_execution_plan",
+      "layer_kind_config_key": "layer_kinds",
+      "state_policy_config_key": "layer_state_policy",
+      "attention_policy_config_key": "layer_attention_policy",
+      "recurrent_policy_config_key": "layer_recurrent_policy",
+      "kv_policy_config_key": "layer_kv_policy"
     },
     "block_contract": {
       "norm_type": "rmsnorm",

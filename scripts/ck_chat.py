@@ -2365,7 +2365,7 @@ def main():
                        help="Stop generation when '<eos>' appears in decoded text")
     parser.add_argument("--stop-on-text", action="append", default=[],
                        help="Stop generation when this decoded text marker appears (repeatable)")
-    parser.add_argument("--chat-template", choices=["auto", "none", "qwen", "qwen3", "qwen35", "gemma"], default="auto",
+    parser.add_argument("--chat-template", choices=["auto", "none", "qwen", "qwen3", "qwen35", "gemma", "gemma3", "gemma4"], default="auto",
                        help="Chat template mode: auto (from GGUF), none, qwen, qwen3, qwen35, or gemma")
     parser.add_argument("--no-chat-template", action="store_true",
                        help="Disable chat template formatting (same as --chat-template=none)")

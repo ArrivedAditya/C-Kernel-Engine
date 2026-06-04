@@ -3,15 +3,15 @@
     "description": "Kernel registry generated from v8 kernel maps",
     "version": "v8",
     "generated_by": "ck_run_v8.py",
-    "source_dir": "/home/root/Workspace/C-Kernel-Engine/version/v8/kernel_maps",
+    "source_dir": "/home/antshiv/Workspace/C-Kernel-Engine/version/v8/kernel_maps",
     "counts": {
-      "total": 132,
+      "total": 142,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
-        "attention": 10,
+        "attention": 13,
         "attention_projection": 1,
-        "attention_sliding": 2,
+        "attention_sliding": 4,
         "attn_gate_sigmoid_mul": 1,
         "attn_gate_sigmoid_mul_backward": 1,
         "bias_add": 1,
@@ -19,6 +19,7 @@
         "embedding_backward": 1,
         "feature_concat": 1,
         "feature_slice_copy": 1,
+        "final_logit_softcap": 1,
         "fused_attention_block": 3,
         "fused_linear_bias": 3,
         "fused_mlp_block": 1,
@@ -28,6 +29,8 @@
         "gelu": 3,
         "gemm": 14,
         "gemm_backward": 1,
+        "gemma4_per_layer_embed": 1,
+        "gemma4_per_layer_prepare": 1,
         "gemv": 13,
         "kv_cache_store": 2,
         "layernorm": 2,
@@ -52,7 +55,7 @@
         "residual_add": 1,
         "residual_save": 1,
         "rmsnorm": 2,
-        "rope": 5,
+        "rope": 6,
         "rope_backward": 2,
         "rope_init": 2,
         "rowwise_bias_add": 1,
@@ -65,6 +68,7 @@
         "ssm_conv1d_backward": 1,
         "swiglu": 3,
         "tokenizer": 1,
+        "v_norm": 1,
         "vision_patchify": 1
       }
     }
@@ -643,6 +647,76 @@
       "_source_file": "attention_decode_flash_f16kv.json"
     },
     {
+      "id": "attention_forward_decode_head_major_gqa_flash_gemma4",
+      "op": "attention",
+      "variant": "decode_head_major_gqa_flash_gemma4_noscale",
+      "mode": "decode",
+      "quant": {
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q_token",
+          "dtype": "fp32",
+          "shape": [
+            "num_heads",
+            "head_dim"
+          ],
+          "desc": "Query for single token [num_heads, head_dim]"
+        },
+        {
+          "name": "k_cache",
+          "dtype": "fp32",
+          "shape": [
+            "num_kv_heads",
+            "cache_capacity",
+            "head_dim"
+          ],
+          "desc": "K cache [num_kv_heads, max_seq_len, head_dim]"
+        },
+        {
+          "name": "v_cache",
+          "dtype": "fp32",
+          "shape": [
+            "num_kv_heads",
+            "cache_capacity",
+            "head_dim"
+          ],
+          "desc": "V cache [num_kv_heads, max_seq_len, head_dim]"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out_token",
+          "dtype": "fp32",
+          "shape": [
+            "num_heads",
+            "head_dim"
+          ],
+          "desc": "Output for single token [num_heads, head_dim]"
+        }
+      ],
+      "dims": [
+        "num_heads",
+        "num_kv_heads",
+        "kv_tokens",
+        "cache_capacity",
+        "head_dim",
+        "aligned_head_dim"
+      ],
+      "impl": {
+        "function": "attention_forward_decode_head_major_gqa_flash_gemma4",
+        "c_declaration": "void attention_forward_decode_head_major_gqa_flash_gemma4(const float *q_token, const float *k_cache, const float *v_cache, float *out_token, int num_heads, int num_kv_heads, int kv_tokens, int cache_capacity, int head_dim, int aligned_head_dim);",
+        "sources": [
+          "src/kernels/attention_kernels.c"
+        ]
+      },
+      "notes": "Gemma4 no-scale decode attention. Gemma4 uses attention_scale=1.0 in llama.cpp, not 1/sqrt(head_dim).",
+      "name": "attention_forward_decode_head_major_gqa_flash_gemma4",
+      "_source_file": "attention_decode_flash_gemma4.json"
+    },
+    {
       "id": "attention_forward_causal_head_major_gqa_flash_strided",
       "op": "attention",
       "variant": "causal_flash_fp32",
@@ -979,6 +1053,191 @@
       "_source_file": "attention_forward_causal_head_major_gqa_flash_strided_f16kv.json"
     },
     {
+      "id": "attention_forward_causal_head_major_gqa_flash_strided_gemma4",
+      "op": "attention",
+      "variant": "causal_flash_fp32_gemma4_noscale",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor [heads, tokens, head_dim]"
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "runtime_buffers": [
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "S",
+            "D"
+          ],
+          "desc": "Key tensor [kv_heads, seq_len, head_dim], strided layout (KV cache)"
+        },
+        {
+          "name": "v",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "S",
+            "D"
+          ],
+          "desc": "Value tensor [kv_heads, seq_len, head_dim], strided layout (KV cache)"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Attention output [heads, tokens, head_dim]"
+        }
+      ],
+      "scratch": [
+        {
+          "name": "qkv_scratch",
+          "dtype": "fp32",
+          "size_bytes": "H * T * D * 4",
+          "desc": "QKV tiles for flash attention"
+        },
+        {
+          "name": "attn_scratch",
+          "dtype": "fp32",
+          "size_bytes": "H * T * T * 4",
+          "desc": "Attention scores [heads, T, T]"
+        }
+      ],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "S",
+        "D"
+      ],
+      "params": [
+        {
+          "name": "kv_stride_tokens",
+          "dtype": "int32",
+          "desc": "Stride in tokens for KV cache layout"
+        },
+        {
+          "name": "head_dim",
+          "dtype": "int32",
+          "desc": "Head dimension (unpadded)"
+        },
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32",
+          "desc": "Aligned head dimension for SIMD"
+        }
+      ],
+      "parallelization": {
+        "supported": [
+          "head"
+        ],
+        "preferred": {
+          "prefill": "head",
+          "decode": "head"
+        },
+        "strategies": [
+          {
+            "name": "head",
+            "partition_dim": "H",
+            "param_style": "ith_nth",
+            "notes": "Parallelize across heads; each thread handles one or more heads."
+          }
+        ]
+      },
+      "constraints": {
+        "alignment": {
+          "D": 64,
+          "T": 32
+        },
+        "notes": "Flash attention uses SIMD paths when available. T should be multiple of 32 for optimal tile sizes."
+      },
+      "impl": {
+        "function": "attention_forward_causal_head_major_gqa_flash_strided_gemma4",
+        "c_declaration": "void attention_forward_causal_head_major_gqa_flash_strided_gemma4(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens);",
+        "sources": [
+          "src/kernels/attention_kernels.c",
+          "src/kernels/softmax_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx512",
+            "requires": [
+              "avx512f",
+              "fma"
+            ],
+            "compile_flags": [
+              "-mavx512f",
+              "-mfma"
+            ]
+          },
+          {
+            "name": "avx2",
+            "requires": [
+              "avx2",
+              "fma"
+            ],
+            "compile_flags": [
+              "-mavx2",
+              "-mfma"
+            ]
+          },
+          {
+            "name": "avx",
+            "requires": [
+              "avx"
+            ],
+            "compile_flags": [
+              "-mavx"
+            ]
+          },
+          {
+            "name": "ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_attention.py"
+        ],
+        "bench": [
+          "scripts/bench_attention.py"
+        ],
+        "parity": [
+          {
+            "kind": "llamacpp",
+            "command": "python test_mega_fusion_parity.py",
+            "tolerance": "1e-4",
+            "notes": "Compare against llama.cpp ggml_flash_attn_ext"
+          }
+        ]
+      },
+      "notes": "Gemma4 no-scale causal multi-head attention. Gemma4 uses attention_scale=1.0 in llama.cpp, not 1/sqrt(head_dim).",
+      "name": "attention_forward_causal_head_major_gqa_flash_strided_gemma4",
+      "_source_file": "attention_forward_causal_head_major_gqa_flash_strided_gemma4.json"
+    },
+    {
       "id": "attention_forward_causal_head_major_gqa_flash_strided_sliding",
       "op": "attention_sliding",
       "variant": "causal_flash_fp32_sliding",
@@ -1169,6 +1428,196 @@
       "_source_file": "attention_forward_causal_head_major_gqa_flash_strided_sliding.json"
     },
     {
+      "id": "attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4",
+      "op": "attention_sliding",
+      "variant": "causal_flash_fp32_sliding_gemma4_noscale",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor [heads, tokens, head_dim]"
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "runtime_buffers": [
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "S",
+            "D"
+          ],
+          "desc": "Key tensor [kv_heads, seq_len, head_dim], strided layout (KV cache)"
+        },
+        {
+          "name": "v",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "S",
+            "D"
+          ],
+          "desc": "Value tensor [kv_heads, seq_len, head_dim], strided layout (KV cache)"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Attention output [heads, tokens, head_dim]"
+        }
+      ],
+      "scratch": [
+        {
+          "name": "qkv_scratch",
+          "dtype": "fp32",
+          "size_bytes": "H * T * D * 4",
+          "desc": "QKV tiles for flash attention"
+        },
+        {
+          "name": "attn_scratch",
+          "dtype": "fp32",
+          "size_bytes": "H * T * T * 4",
+          "desc": "Attention scores [heads, T, T]"
+        }
+      ],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "S",
+        "D"
+      ],
+      "params": [
+        {
+          "name": "kv_stride_tokens",
+          "dtype": "int32",
+          "desc": "Stride in tokens for KV cache layout"
+        },
+        {
+          "name": "head_dim",
+          "dtype": "int32",
+          "desc": "Head dimension (unpadded)"
+        },
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32",
+          "desc": "Aligned head dimension for SIMD"
+        },
+        {
+          "name": "sliding_window",
+          "dtype": "int32",
+          "desc": "Sliding window size (0 = no limit)"
+        }
+      ],
+      "parallelization": {
+        "supported": [
+          "head"
+        ],
+        "preferred": {
+          "prefill": "head",
+          "decode": "head"
+        },
+        "strategies": [
+          {
+            "name": "head",
+            "partition_dim": "H",
+            "param_style": "ith_nth",
+            "notes": "Parallelize across heads; each thread handles one or more heads."
+          }
+        ]
+      },
+      "constraints": {
+        "alignment": {
+          "D": 64,
+          "T": 32
+        },
+        "notes": "Flash attention uses SIMD paths when available. T should be multiple of 32 for optimal tile sizes."
+      },
+      "impl": {
+        "function": "attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4",
+        "c_declaration": "void attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens, int sliding_window);",
+        "sources": [
+          "src/kernels/attention_kernels_sliding.c",
+          "src/kernels/softmax_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx512",
+            "requires": [
+              "avx512f",
+              "fma"
+            ],
+            "compile_flags": [
+              "-mavx512f",
+              "-mfma"
+            ]
+          },
+          {
+            "name": "avx2",
+            "requires": [
+              "avx2",
+              "fma"
+            ],
+            "compile_flags": [
+              "-mavx2",
+              "-mfma"
+            ]
+          },
+          {
+            "name": "avx",
+            "requires": [
+              "avx"
+            ],
+            "compile_flags": [
+              "-mavx"
+            ]
+          },
+          {
+            "name": "ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_attention_sliding.py"
+        ],
+        "bench": [
+          "scripts/bench_attention.py"
+        ],
+        "parity": [
+          {
+            "kind": "llamacpp",
+            "command": "python test_mega_fusion_parity.py",
+            "tolerance": "1e-4",
+            "notes": "Compare against llama.cpp ggml_flash_attn_ext with sliding window"
+          }
+        ]
+      },
+      "notes": "Gemma4 no-scale causal sliding-window attention. Gemma4 uses attention_scale=1.0 in llama.cpp, not 1/sqrt(head_dim).",
+      "name": "attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4",
+      "_source_file": "attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4.json"
+    },
+    {
       "id": "attention_forward_decode_head_major_gqa_flash_f16cache",
       "op": "attention",
       "variant": "decode_head_major_gqa_flash_f16cache",
@@ -1340,6 +1789,109 @@
       "notes": "Flash attention for decode mode with sliding window: single query token attends to the last W KV cache entries.",
       "name": "attention_forward_decode_head_major_gqa_flash_sliding",
       "_source_file": "attention_forward_decode_head_major_gqa_flash_sliding.json"
+    },
+    {
+      "id": "attention_forward_decode_head_major_gqa_flash_sliding_gemma4",
+      "op": "attention_sliding",
+      "variant": "decode_flash_fp32_sliding_gemma4_noscale",
+      "mode": "decode",
+      "quant": {
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q_token",
+          "dtype": "fp32",
+          "shape": [
+            "num_heads",
+            "head_dim"
+          ],
+          "desc": "Query for single token [num_heads, head_dim]"
+        },
+        {
+          "name": "k_cache",
+          "dtype": "fp32",
+          "shape": [
+            "num_kv_heads",
+            "cache_capacity",
+            "head_dim"
+          ],
+          "desc": "K cache [num_kv_heads, max_seq_len, head_dim]"
+        },
+        {
+          "name": "v_cache",
+          "dtype": "fp32",
+          "shape": [
+            "num_kv_heads",
+            "cache_capacity",
+            "head_dim"
+          ],
+          "desc": "V cache [num_kv_heads, max_seq_len, head_dim]"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out_token",
+          "dtype": "fp32",
+          "shape": [
+            "num_heads",
+            "head_dim"
+          ],
+          "desc": "Output for single token [num_heads, head_dim]"
+        }
+      ],
+      "dims": [
+        "num_heads",
+        "num_kv_heads",
+        "kv_tokens",
+        "cache_capacity",
+        "head_dim",
+        "aligned_head_dim"
+      ],
+      "params": [
+        {
+          "name": "head_dim",
+          "dtype": "int32",
+          "desc": "Head dimension (unpadded)"
+        },
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32",
+          "desc": "Aligned head dimension for SIMD"
+        },
+        {
+          "name": "sliding_window",
+          "dtype": "int32",
+          "desc": "Sliding window size (0 = no limit)"
+        }
+      ],
+      "impl": {
+        "function": "attention_forward_decode_head_major_gqa_flash_sliding_gemma4",
+        "c_declaration": "void attention_forward_decode_head_major_gqa_flash_sliding_gemma4(const float *q_token, const float *k_cache, const float *v_cache, float *out_token, int num_heads, int num_kv_heads, int kv_tokens, int cache_capacity, int head_dim, int aligned_head_dim, int sliding_window);",
+        "sources": [
+          "src/kernels/attention_kernels_sliding.c"
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_attention_sliding.py"
+        ],
+        "bench": [
+          "scripts/bench_attention.py"
+        ],
+        "parity": [
+          {
+            "kind": "llamacpp",
+            "command": "python test_mega_fusion_parity.py",
+            "tolerance": "1e-4",
+            "notes": "Compare against llama.cpp with sliding window"
+          }
+        ]
+      },
+      "notes": "Gemma4 no-scale decode sliding-window attention. Gemma4 uses attention_scale=1.0 in llama.cpp, not 1/sqrt(head_dim).",
+      "name": "attention_forward_decode_head_major_gqa_flash_sliding_gemma4",
+      "_source_file": "attention_forward_decode_head_major_gqa_flash_sliding_gemma4.json"
     },
     {
       "id": "attention_forward_decode_head_major_gqa_regular",
@@ -1746,6 +2298,182 @@
       "notes": "Full / bidirectional multi-head attention with GQA support. Intended for encoder-style prefill where every token attends to the full sequence.",
       "name": "attention_forward_full_head_major_gqa_flash_strided",
       "_source_file": "attention_forward_full_head_major_gqa_flash_strided.json"
+    },
+    {
+      "id": "attention_forward_full_head_major_gqa_flash_strided_gemma4",
+      "op": "attention",
+      "variant": "full_flash_fp32_gemma4_noscale",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor [heads, tokens, head_dim]"
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "runtime_buffers": [
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "S",
+            "D"
+          ],
+          "desc": "Key tensor [kv_heads, seq_len, head_dim], strided layout"
+        },
+        {
+          "name": "v",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "S",
+            "D"
+          ],
+          "desc": "Value tensor [kv_heads, seq_len, head_dim], strided layout"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Attention output [heads, tokens, head_dim]"
+        }
+      ],
+      "scratch": [
+        {
+          "name": "qkv_scratch",
+          "dtype": "fp32",
+          "size_bytes": "H * T * D * 4",
+          "desc": "QKV tiles for flash attention"
+        },
+        {
+          "name": "attn_scratch",
+          "dtype": "fp32",
+          "size_bytes": "H * T * T * 4",
+          "desc": "Attention scores [heads, T, T]"
+        }
+      ],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "S",
+        "D"
+      ],
+      "params": [
+        {
+          "name": "kv_stride_tokens",
+          "dtype": "int32",
+          "desc": "Stride in tokens for KV layout"
+        },
+        {
+          "name": "head_dim",
+          "dtype": "int32",
+          "desc": "Head dimension (unpadded)"
+        },
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32",
+          "desc": "Aligned head dimension for SIMD"
+        }
+      ],
+      "parallelization": {
+        "supported": [
+          "head"
+        ],
+        "preferred": {
+          "prefill": "head"
+        },
+        "strategies": [
+          {
+            "name": "head",
+            "partition_dim": "H",
+            "param_style": "ith_nth",
+            "notes": "Parallelize across heads; each thread handles one or more heads."
+          }
+        ]
+      },
+      "constraints": {
+        "alignment": {
+          "D": 64,
+          "T": 32
+        },
+        "notes": "Flash attention uses SIMD paths when available. This variant is full / bidirectional and applies no causal mask."
+      },
+      "impl": {
+        "function": "attention_forward_full_head_major_gqa_flash_strided_gemma4",
+        "c_declaration": "void attention_forward_full_head_major_gqa_flash_strided_gemma4(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens);",
+        "sources": [
+          "src/kernels/attention_kernels.c",
+          "src/kernels/softmax_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx512",
+            "requires": [
+              "avx512f",
+              "fma"
+            ],
+            "compile_flags": [
+              "-mavx512f",
+              "-mfma"
+            ]
+          },
+          {
+            "name": "avx2",
+            "requires": [
+              "avx2",
+              "fma"
+            ],
+            "compile_flags": [
+              "-mavx2",
+              "-mfma"
+            ]
+          },
+          {
+            "name": "avx",
+            "requires": [
+              "avx"
+            ],
+            "compile_flags": [
+              "-mavx"
+            ]
+          },
+          {
+            "name": "ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_attention_full.py"
+        ],
+        "bench": [
+          "unittest/test_attention.py"
+        ]
+      },
+      "notes": "Gemma4 no-scale full multi-head attention. Gemma4 uses attention_scale=1.0 in llama.cpp, not 1/sqrt(head_dim).",
+      "name": "attention_forward_full_head_major_gqa_flash_strided_gemma4",
+      "_source_file": "attention_forward_full_head_major_gqa_flash_strided_gemma4.json"
     },
     {
       "id": "attention_forward_full_head_major_gqa_ggml_strided",
@@ -6043,6 +6771,267 @@
       "notes": "Opt-in contract path: internally quantizes FP32 activations to Q8_0 before compute.",
       "name": "gemm_nt_q8_0_q8_0_contract",
       "_source_file": "gemm_nt_q8_0_q8_0_contract.json"
+    },
+    {
+      "id": "gemma4_final_logit_softcap_forward",
+      "op": "final_logit_softcap",
+      "variant": "gemma4_scalar_correctness",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "logits",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "V"
+          ],
+          "desc": "Logits buffer updated in-place"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "logits",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "V"
+          ],
+          "desc": "Softcapped logits"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "seq_len",
+        "vocab_size"
+      ],
+      "params": [
+        {
+          "name": "cap",
+          "dtype": "float32",
+          "desc": "Softcap value; <=0 disables"
+        }
+      ],
+      "impl": {
+        "function": "gemma4_final_logit_softcap_forward",
+        "c_declaration": "void gemma4_final_logit_softcap_forward(float *logits, int tokens, int vocab_size, float cap);",
+        "sources": [
+          "src/kernels/gemma4_per_layer_embed.c"
+        ]
+      },
+      "notes": "Gemma4 final logit softcapping matching llama.cpp: tanh(logit / cap) * cap.",
+      "name": "gemma4_final_logit_softcap_forward",
+      "_source_file": "gemma4_final_logit_softcap_forward.json"
+    },
+    {
+      "id": "gemma4_per_layer_embed_forward",
+      "op": "gemma4_per_layer_embed",
+      "variant": "gemma4_scalar_correctness",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "hidden",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ],
+          "desc": "Main hidden stream, updated in-place"
+        },
+        {
+          "name": "per_layer_input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "L",
+            "P"
+          ],
+          "desc": "Prepared Gemma4 per-layer input stream"
+        }
+      ],
+      "weights": [
+        {
+          "name": "inp_gate",
+          "dtype": "fp32",
+          "shape": [
+            "P",
+            "E"
+          ],
+          "desc": "Layer input gate projection"
+        },
+        {
+          "name": "proj",
+          "dtype": "fp32",
+          "shape": [
+            "E",
+            "P"
+          ],
+          "desc": "Layer projection back to model stream"
+        },
+        {
+          "name": "post_norm",
+          "dtype": "fp32",
+          "shape": [
+            "E"
+          ],
+          "desc": "Layer post projection RMSNorm scale"
+        },
+        {
+          "name": "out_scale",
+          "dtype": "fp32",
+          "shape": [
+            1
+          ],
+          "desc": "Optional Gemma4 layer output scale"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "hidden",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ],
+          "desc": "Updated hidden stream"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "seq_len",
+        "num_layers",
+        "embed_dim",
+        "per_layer_dim"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float32",
+          "desc": "RMSNorm epsilon"
+        }
+      ],
+      "impl": {
+        "function": "gemma4_per_layer_embed_forward",
+        "c_declaration": "void gemma4_per_layer_embed_forward(float *hidden, const float *per_layer_input, const float *inp_gate, const float *proj, const float *post_norm, const float *out_scale, int tokens, int layer, int num_layers, int embed_dim, int per_layer_dim, float eps);",
+        "sources": [
+          "src/kernels/gemma4_per_layer_embed.c"
+        ]
+      },
+      "notes": "First-pass correctness implementation of llama.cpp Gemma4 per-layer embedding branch.",
+      "name": "gemma4_per_layer_embed_forward",
+      "_source_file": "gemma4_per_layer_embed_forward.json"
+    },
+    {
+      "id": "gemma4_per_layer_prepare_forward",
+      "op": "gemma4_per_layer_prepare",
+      "variant": "gemma4_scalar_correctness",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "q5_k",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "hidden",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ]
+        },
+        {
+          "name": "tokens",
+          "dtype": "i32",
+          "shape": [
+            "T"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "per_layer_token_emb",
+          "dtype": "q5_k",
+          "shape": [
+            "V",
+            "L",
+            "P"
+          ]
+        },
+        {
+          "name": "per_layer_model_proj",
+          "dtype": "bf16",
+          "shape": [
+            "L",
+            "P",
+            "E"
+          ]
+        },
+        {
+          "name": "per_layer_proj_norm",
+          "dtype": "fp32",
+          "shape": [
+            "P"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "per_layer_input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "L",
+            "P"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "seq_len",
+        "num_layers",
+        "embed_dim",
+        "per_layer_dim",
+        "vocab_size"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "gemma4_per_layer_prepare_forward",
+        "c_declaration": "void gemma4_per_layer_prepare_forward(float *per_layer_input, const float *hidden, const int32_t *token_ids, const void *per_layer_token_emb, const uint16_t *per_layer_model_proj, const float *per_layer_proj_norm, int tokens, int num_layers, int embed_dim, int per_layer_dim, int vocab_size, float eps);",
+        "sources": [
+          "src/kernels/gemma4_per_layer_embed.c"
+        ]
+      },
+      "notes": "Prepare Gemma4 per-layer input stream once from original token embedding stream.",
+      "name": "gemma4_per_layer_prepare_forward",
+      "_source_file": "gemma4_per_layer_prepare_forward.json"
     },
     {
       "id": "gemv_fused_q5_0_bias",
@@ -12585,6 +13574,59 @@
       "_source_file": "rmsnorm_forward.json"
     },
     {
+      "id": "v_norm",
+      "op": "v_norm",
+      "variant": "fp32_no_gamma",
+      "quant": {
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "D"
+          ],
+          "desc": "Input [tokens, dim]"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "D"
+          ],
+          "desc": "RMS-normalized output without learned scale"
+        }
+      ],
+      "dims": [
+        "tokens",
+        "num_kv_heads",
+        "head_dim"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float",
+          "default": 1e-06
+        }
+      ],
+      "impl": {
+        "function": "gemma4_v_norm_forward",
+        "c_declaration": "void gemma4_v_norm_forward(const float *input, float *output, float *rstd_cache, int tokens, int num_kv_heads, int head_dim, float eps);",
+        "sources": [
+          "src/kernels/rmsnorm_kernels.c"
+        ]
+      },
+      "notes": "Gemma4 V RMSNorm without gamma. Normalizes each [head_dim] V head independently, matching llama.cpp ggml_rms_norm after reshape.",
+      "name": "v_norm",
+      "_source_file": "rmsnorm_no_weight.json"
+    },
+    {
       "id": "rope_backward_qk_f32",
       "op": "rope_backward",
       "variant": "fp32_qk",
@@ -13064,6 +14106,208 @@
       "notes": "Rotary Position Embedding (RoPE) for queries and keys. Applies rotation in complex plane: x_rot = x * cos(theta) + rotate_half(x) * sin(theta). Only rotates first rotary_dim channels; remaining channels pass through unchanged.",
       "name": "rope_forward_qk",
       "_source_file": "rope_forward_qk.json"
+    },
+    {
+      "id": "rope_forward_qk_gemma4",
+      "op": "rope",
+      "variant": "fp32_head_major",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor [heads, tokens, head_dim] to be rotated in-place"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Key tensor [kv_heads, tokens, head_dim] to be rotated in-place"
+        }
+      ],
+      "weights": [
+        {
+          "name": "rope_freqs",
+          "dtype": "fp32",
+          "shape": [
+            "rotary_dim/2"
+          ],
+          "desc": "Gemma4 full-attention proportional RoPE frequency factors; ignored for sliding layers"
+        }
+      ],
+      "activations": [],
+      "runtime_buffers": [
+        {
+          "name": "cos_cache",
+          "dtype": "fp32",
+          "shape": [
+            "max_T",
+            "rotary_dim",
+            2
+          ],
+          "desc": "RoPE cos cache [max_seq, rotary_dim/2]"
+        },
+        {
+          "name": "sin_cache",
+          "dtype": "fp32",
+          "shape": [
+            "max_T",
+            "rotary_dim",
+            2
+          ],
+          "desc": "RoPE sin cache [max_seq, rotary_dim/2]"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor after RoPE application (in-place)"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Key tensor after RoPE application (in-place)"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D",
+        "rotary_dim"
+      ],
+      "params": [
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32",
+          "desc": "Aligned head dimension for SIMD"
+        },
+        {
+          "name": "pos_offset",
+          "dtype": "int32",
+          "desc": "Position offset for cos/sin cache lookup"
+        },
+        {
+          "name": "rotary_dim",
+          "dtype": "int32",
+          "desc": "RoPE rotary dimensions (only rotate first rotary_dim channels)"
+        },
+        {
+          "name": "cache_rotary_dim",
+          "dtype": "int32",
+          "source": "dim:max_rotary_dim",
+          "desc": "RoPE cache row width for mixed Gemma4 rotary dimensions"
+        }
+      ],
+      "parallelization": {
+        "supported": [
+          "head",
+          "token"
+        ],
+        "preferred": {
+          "prefill": "head",
+          "decode": "head"
+        },
+        "strategies": [
+          {
+            "name": "head",
+            "partition_dim": "H",
+            "param_style": "ith_nth",
+            "notes": "Parallelize across heads; each thread handles one or more heads."
+          },
+          {
+            "name": "token",
+            "partition_dim": "T",
+            "param_style": "ith_nth",
+            "notes": "Parallelize across tokens; each thread handles one or more tokens."
+          }
+        ]
+      },
+      "constraints": {
+        "alignment": {
+          "D": 64,
+          "T": 32
+        },
+        "notes": "D should be multiple of 64 for optimal SIMD. D is the unpadded dimension; AD is used for alignment."
+      },
+      "impl": {
+        "function": "rope_forward_qk_gemma4_direct",
+        "c_declaration": "void rope_forward_qk_gemma4_direct(float *q, float *k, const float *freq_factors, int use_freq_factors, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int rotary_dim, float freq_base);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx512",
+            "requires": [
+              "avx512f",
+              "fma"
+            ],
+            "compile_flags": [
+              "-mavx512f",
+              "-mfma"
+            ]
+          },
+          {
+            "name": "avx",
+            "requires": [
+              "avx"
+            ],
+            "compile_flags": [
+              "-mavx"
+            ]
+          },
+          {
+            "name": "ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_rope.py"
+        ],
+        "bench": [
+          "scripts/bench_rope.py"
+        ],
+        "parity": [
+          {
+            "kind": "numpy",
+            "command": "python unittest/test_rope.py --compare-numpy",
+            "tolerance": "1e-5",
+            "notes": "Verify RoPE rotation matches numpy reference"
+          }
+        ]
+      },
+      "notes": "Rotary Position Embedding (RoPE) for queries and keys. Applies rotation in complex plane: x_rot = x * cos(theta) + rotate_half(x) * sin(theta). Only rotates first rotary_dim channels; remaining channels pass through unchanged. Gemma4 variant uses max_rotary_dim as cache row stride so sliding/full layers can share one RoPE cache.",
+      "name": "rope_forward_qk_gemma4",
+      "_source_file": "rope_forward_qk_gemma4.json"
     },
     {
       "id": "rope_forward_qk_pairwise",
