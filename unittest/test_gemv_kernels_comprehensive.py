@@ -275,11 +275,20 @@ def load_libraries() -> Tuple[Optional[ctypes.CDLL], Optional[ctypes.CDLL]]:
     base_dir = Path(__file__).resolve().parents[1]
 
     # llama.cpp library
-    llama_paths = [
-        base_dir / "llama.cpp" / "libggml_kernel_test.so",
-        base_dir / "llama.cpp" / "build" / "libggml_kernel_test.so",
-        base_dir / "llama.cpp" / "build" / "bin" / "libggml_kernel_test.so",
-    ]
+    llama_roots = []
+    if os.environ.get("LLAMA_CPP_DIR"):
+        llama_roots.append(Path(os.environ["LLAMA_CPP_DIR"]).expanduser())
+    llama_roots.extend([
+        base_dir / "llama.cpp",
+        Path("/opt/app-root/src/Software/llama.cpp"),
+    ])
+    llama_paths = []
+    for root in llama_roots:
+        llama_paths.extend([
+            root / "libggml_kernel_test.so",
+            root / "build" / "libggml_kernel_test.so",
+            root / "build" / "bin" / "libggml_kernel_test.so",
+        ])
     libggml = None
     for p in llama_paths:
         if p.exists():

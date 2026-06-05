@@ -28,11 +28,6 @@ from test_utils import (
 )
 from bf16_utils import float32_to_bf16, bf16_to_float32, numpy_to_uint16_ptr
 
-cpu = get_cpu_info()
-if not cpu.avx512bf16:
-    print("BF16 kernels require AVX-512 BF16; skipping this test on the current CPU.")
-    sys.exit(0)
-
 lib = load_lib("libckernel_relu.so", "libckernel_engine.so")
 
 lib.relu_forward_bf16.argtypes = [
@@ -147,8 +142,37 @@ def run_backward_tests(N=4096, warmup=10, iterations=2000):
     return report
 
 
+def run_edge_case_tests():
+    x_np = np.array([-3.5, -0.0, 0.0, 1.25, 12.0, -2.0, 0.5], dtype=np.float32)
+    upstream_np = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0], dtype=np.float32)
+
+    x_bf16 = float32_to_bf16(x_np)
+    upstream_bf16 = float32_to_bf16(upstream_np)
+    out_bf16 = np.zeros_like(x_bf16)
+    dx_bf16 = np.zeros_like(x_bf16)
+
+    lib.relu_forward_bf16(
+        numpy_to_uint16_ptr(x_bf16),
+        numpy_to_uint16_ptr(out_bf16),
+        ctypes.c_size_t(x_bf16.size),
+    )
+    lib.relu_backward_bf16(
+        numpy_to_uint16_ptr(x_bf16),
+        numpy_to_uint16_ptr(upstream_bf16),
+        numpy_to_uint16_ptr(dx_bf16),
+        ctypes.c_size_t(x_bf16.size),
+    )
+
+    out = bf16_to_float32(out_bf16)
+    dx = bf16_to_float32(dx_bf16)
+    np.testing.assert_allclose(out, np.maximum(x_np, 0.0), rtol=0, atol=0)
+    np.testing.assert_allclose(dx, np.where(x_np > 0.0, upstream_np, 0.0), rtol=0, atol=0)
+
+
 if __name__ == "__main__":
     print_system_info()
+
+    run_edge_case_tests()
 
     fwd_report = run_forward_tests()
     fwd_report.print_report()
@@ -158,4 +182,3 @@ if __name__ == "__main__":
 
     if not fwd_report.all_passed() or not bwd_report.all_passed():
         sys.exit(1)
-
