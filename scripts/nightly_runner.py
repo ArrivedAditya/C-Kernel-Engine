@@ -256,6 +256,7 @@ TEST_SUITES = {
     "cross_entropy": TestSuite("Cross Entropy", "kernels", UNITTEST_DIR / "test_cross_entropy.py"),
     "optimizer": TestSuite("Optimizer (AdamW/SGD)", "training", UNITTEST_DIR / "test_optimizer.py"),
     "lm_head_litmus": TestSuite("LM Head Litmus", "kernels", UNITTEST_DIR / "test_lm_head_litmus.py"),
+    "deepseek_reference": TestSuite("DeepSeek Reference Kernels", "kernels", UNITTEST_DIR / "test_deepseek_reference_kernels.py"),
     "vision": TestSuite("Vision", "kernels", UNITTEST_DIR / "test_vision.py"),
     # NOTE: Orchestration test disabled - v6.5 uses generated code with local helpers,
     # not orchestration layer. Use llamacpp-parity-full for quantized kernel validation.

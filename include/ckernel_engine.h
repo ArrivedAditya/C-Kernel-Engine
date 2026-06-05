@@ -2095,6 +2095,15 @@ void topk_softmax_f32(const float *scores,
                       int *indices,
                       float *weights);
 
+// Backward for hard top-k followed by softmax over selected values.
+void topk_softmax_backward_f32(const int *indices,
+                               const float *weights,
+                               const float *d_weights,
+                               float *d_scores,
+                               int num_tokens,
+                               int n_experts_or_keys,
+                               int k);
+
 // Batched top-K for multiple tokens
 void topk_batched_f32(const float *scores,
                       int num_tokens,
@@ -2105,6 +2114,86 @@ void topk_batched_f32(const float *scores,
 
 // Argmax (top-1)
 int argmax_f32(const float *scores, int n);
+
+// =============================================================================
+// DeepSeek-style scalar reference kernels
+// =============================================================================
+
+void deepseek_mhc_mix_f32(const float *streams,
+                          const float *mix,
+                          float *out,
+                          int tokens,
+                          int n_streams,
+                          int dim);
+
+void deepseek_mhc_mix_backward_f32(const float *d_out,
+                                   const float *streams,
+                                   const float *mix,
+                                   float *d_streams,
+                                   float *d_mix,
+                                   int tokens,
+                                   int n_streams,
+                                   int dim);
+
+void deepseek_dsa_topk_softmax_f32(const float *scores,
+                                   int *indices,
+                                   float *weights,
+                                   int tokens,
+                                   int heads,
+                                   int key_count,
+                                   int top_k);
+
+void deepseek_dsa_topk_softmax_backward_f32(const int *indices,
+                                            const float *weights,
+                                            const float *d_weights,
+                                            float *d_scores,
+                                            int tokens,
+                                            int heads,
+                                            int key_count,
+                                            int top_k);
+
+void deepseek_csa_attention_f32(const float *q,
+                                const float *k,
+                                const float *v,
+                                const int *indices,
+                                float *out,
+                                float *attn,
+                                int query_tokens,
+                                int key_tokens,
+                                int heads,
+                                int dim,
+                                int top_k,
+                                float scale);
+
+void deepseek_csa_attention_backward_f32(const float *d_out,
+                                         const float *q,
+                                         const float *k,
+                                         const float *v,
+                                         const int *indices,
+                                         const float *attn,
+                                         float *d_q,
+                                         float *d_k,
+                                         float *d_v,
+                                         int query_tokens,
+                                         int key_tokens,
+                                         int heads,
+                                         int dim,
+                                         int top_k,
+                                         float scale);
+
+void deepseek_hybrid_attention_f32(const float *q,
+                                   const float *k,
+                                   const float *v,
+                                   const int *indices,
+                                   float *out,
+                                   float *attn,
+                                   int query_tokens,
+                                   int key_tokens,
+                                   int heads,
+                                   int dim,
+                                   int top_k,
+                                   float scale,
+                                   int mode);
 
 // Attention backward (GQA-aware): computes d_q, d_k, d_v.
 void attention_backward_causal_head_major_gqa(

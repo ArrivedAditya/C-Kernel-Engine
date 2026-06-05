@@ -172,6 +172,57 @@ void topk_softmax_f32(const float *scores,
     }
 }
 
+/**
+ * @brief Backward for hard top-k followed by softmax over selected values.
+ *
+ * Matches PyTorch behavior for:
+ *   values, indices = torch.topk(scores, k, dim=-1)
+ *   weights = torch.softmax(values, dim=-1)
+ *
+ * The hard selected indices are treated as fixed for this backward pass.
+ * Gradients are scattered only to selected scores; unselected scores are zero.
+ */
+void topk_softmax_backward_f32(const int *indices,
+                               const float *weights,
+                               const float *d_weights,
+                               float *d_scores,
+                               int num_tokens,
+                               int n_experts_or_keys,
+                               int k)
+{
+    if (!indices || !weights || !d_weights || !d_scores ||
+        num_tokens <= 0 || n_experts_or_keys <= 0 || k <= 0) {
+        return;
+    }
+
+    const size_t total = (size_t)num_tokens * (size_t)n_experts_or_keys;
+    for (size_t i = 0; i < total; ++i) {
+        d_scores[i] = 0.0f;
+    }
+
+    for (int t = 0; t < num_tokens; ++t) {
+        const int *row_indices = indices + (size_t)t * (size_t)k;
+        const float *row_weights = weights + (size_t)t * (size_t)k;
+        const float *row_d_weights = d_weights + (size_t)t * (size_t)k;
+        float *row_d_scores = d_scores + (size_t)t * (size_t)n_experts_or_keys;
+
+        float dot = 0.0f;
+        for (int i = 0; i < k; ++i) {
+            const int idx = row_indices[i];
+            if (idx >= 0 && idx < n_experts_or_keys) {
+                dot += row_weights[i] * row_d_weights[i];
+            }
+        }
+
+        for (int i = 0; i < k; ++i) {
+            const int idx = row_indices[i];
+            if (idx >= 0 && idx < n_experts_or_keys) {
+                row_d_scores[idx] += row_weights[i] * (row_d_weights[i] - dot);
+            }
+        }
+    }
+}
+
 /* =============================================================================
  * Batched Top-K (for multiple tokens)
  *
