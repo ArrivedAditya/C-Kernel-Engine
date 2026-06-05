@@ -612,9 +612,11 @@ PY_TESTS := unittest/test_layernorm.py \
 
 PY_TESTS_BF16 := unittest/bf16/test_sigmoid_bf16.py \
                 unittest/bf16/test_rmsnorm_bf16.py \
+                unittest/bf16/test_gemm_backward_bf16.py \
                 unittest/bf16/test_mlp_bf16.py \
                 unittest/bf16/test_attention_bf16.py \
                 unittest/bf16/test_gelu_bf16.py \
+                unittest/bf16/test_geglu_bf16.py \
                 unittest/bf16/test_layernorm_bf16.py \
                 unittest/bf16/test_rope_bf16.py \
                 unittest/bf16/test_relu_bf16.py \
@@ -1084,14 +1086,14 @@ ck-emit-v2: emit-v2
 ck-emit: emit
 	@true
 
-$(LIB_GELU): $(BUILD_STAMP) src/kernels/gelu_kernels.c src/kernels/geglu_kernels.c src/kernels/gelu_kernels_bf16.c include/ckernel_engine.h
-	$(CC) $(CFLAGS) -shared -o $@ src/kernels/gelu_kernels.c src/kernels/geglu_kernels.c src/kernels/gelu_kernels_bf16.c -lm
+$(LIB_GELU): $(BUILD_STAMP) src/kernels/gelu_kernels.c src/kernels/geglu_kernels.c src/kernels/gelu_kernels_bf16.c src/ckernel_strict.c src/ck_threadpool.c include/ckernel_engine.h
+	$(CC) $(CFLAGS) -shared -o $@ src/kernels/gelu_kernels.c src/kernels/geglu_kernels.c src/kernels/gelu_kernels_bf16.c src/ckernel_strict.c src/ck_threadpool.c -lm -lpthread
 
 $(LIB_RMSNORM): $(BUILD_STAMP) src/kernels/rmsnorm_kernels.c src/kernels/rmsnorm_kernels_bf16.c src/kernels/rmsnorm_kernels_int8.c src/kernels/rmsnorm_kernels_int4.c src/ckernel_strict.c src/ck_threadpool.c include/ckernel_engine.h
 	$(CC) $(CFLAGS) -shared -o $@ src/kernels/rmsnorm_kernels.c src/kernels/rmsnorm_kernels_bf16.c src/kernels/rmsnorm_kernels_int8.c src/kernels/rmsnorm_kernels_int4.c src/ckernel_strict.c src/ck_threadpool.c -lm -lpthread
 
-$(LIB_LN): $(BUILD_STAMP) src/kernels/layernorm_kernels.c src/kernels/layernorm_kernels_bf16.c include/ckernel_engine.h
-	$(CC) $(CFLAGS) -shared -o $@ src/kernels/layernorm_kernels.c src/kernels/layernorm_kernels_bf16.c -lm
+$(LIB_LN): $(BUILD_STAMP) src/kernels/layernorm_kernels.c src/kernels/layernorm_kernels_bf16.c src/ckernel_strict.c src/ck_threadpool.c include/ckernel_engine.h
+	$(CC) $(CFLAGS) -shared -o $@ src/kernels/layernorm_kernels.c src/kernels/layernorm_kernels_bf16.c src/ckernel_strict.c src/ck_threadpool.c -lm -lpthread
 
 $(LIB_SOFT): $(BUILD_STAMP) src/kernels/softmax_kernels.c src/kernels/softmax_kernels_bf16.c include/ckernel_engine.h
 	$(CC) $(CFLAGS) -shared -o $@ src/kernels/softmax_kernels.c src/kernels/softmax_kernels_bf16.c -lm

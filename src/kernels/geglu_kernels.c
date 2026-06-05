@@ -118,3 +118,43 @@ void geglu_backward_fp32(const float *x,
         }
     }
 }
+
+void geglu_backward_bf16_mixed(const uint16_t *x,
+                               const uint16_t *d_out,
+                               float *d_x,
+                               int tokens,
+                               int dim)
+{
+    if (!x || !d_out || !d_x || tokens <= 0 || dim <= 0) {
+        return;
+    }
+
+    const float sqrt_2_over_pi = 0.7978845608f;
+    const float coeff = 0.044715f;
+    const int inner_dim = dim * 2;
+
+    for (int t = 0; t < tokens; ++t) {
+        const uint16_t *x_ptr = x + (size_t)t * (size_t)inner_dim;
+        const uint16_t *d_out_ptr = d_out + (size_t)t * (size_t)dim;
+        float *d_x_ptr = d_x + (size_t)t * (size_t)inner_dim;
+
+        for (int d = 0; d < dim; ++d) {
+            const float a = bf16_to_float(x_ptr[d]);
+            const float b = bf16_to_float(x_ptr[dim + d]);
+            const float dout = bf16_to_float(d_out_ptr[d]);
+
+            const float a2 = a * a;
+            const float a3 = a2 * a;
+            const float g = sqrt_2_over_pi * (a + coeff * a3);
+            const float tanh_g = tanhf(g);
+            const float sech2_g = 1.0f - tanh_g * tanh_g;
+            const float g_prime = sqrt_2_over_pi * (1.0f + 3.0f * coeff * a2);
+
+            const float d_gelu = 0.5f * (1.0f + tanh_g) + 0.5f * a * sech2_g * g_prime;
+            d_x_ptr[d] = dout * d_gelu * b;
+
+            const float gelu_a = 0.5f * a * (1.0f + tanh_g);
+            d_x_ptr[dim + d] = dout * gelu_a;
+        }
+    }
+}

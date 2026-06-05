@@ -112,3 +112,42 @@ void embedding_backward_bf16(const int32_t *token_ids,
     }
 }
 
+void embedding_backward_bf16_mixed(const int32_t *token_ids,
+                                   int token_count,
+                                   const uint16_t *d_output,
+                                   float *d_token_embeddings,
+                                   float *d_pos_embeddings,
+                                   int vocab_size,
+                                   int embed_dim,
+                                   int aligned_embed_dim,
+                                   int context_window,
+                                   int add_pos)
+{
+    if (!token_ids || !d_output || !d_token_embeddings) {
+        return;
+    }
+
+    int tokens = token_count;
+    if (tokens < 0) tokens = 0;
+    if (tokens > context_window) tokens = context_window;
+
+    for (int t = 0; t < tokens; ++t) {
+        int id = token_ids[t];
+        if (id < 0 || id >= vocab_size) {
+            id = 0;
+        }
+
+        const uint16_t *d_out = d_output + (size_t)t * (size_t)aligned_embed_dim;
+        float *d_tok = d_token_embeddings + (size_t)id * (size_t)aligned_embed_dim;
+        float *d_pos = d_pos_embeddings ? (d_pos_embeddings + (size_t)t * (size_t)aligned_embed_dim) : NULL;
+
+        for (int d = 0; d < embed_dim; ++d) {
+            const float grad = bf16_to_float(d_out[d]);
+            d_tok[d] += grad;
+            if (add_pos && d_pos) {
+                d_pos[d] += grad;
+            }
+        }
+    }
+}
+
