@@ -24,10 +24,16 @@
  */
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if defined(__AVX512F__)
 #include <immintrin.h>
+#endif
+
+#if defined(__linux__) && defined(__AMX_TILE__)
+#include <sys/syscall.h>
+#include <unistd.h>
 #endif
 
 #ifdef _OPENMP
@@ -221,6 +227,116 @@ static inline __m512bh load_bf16x32(const uint16_t *ptr)
     return (__m512bh)_mm512_loadu_si512((const __m512i *)ptr);
 }
 
+#if defined(__AMX_TILE__) && defined(__AMX_BF16__)
+
+#ifndef ARCH_REQ_XCOMP_PERM
+#define ARCH_REQ_XCOMP_PERM 0x1023
+#endif
+#ifndef XFEATURE_XTILE_DATA
+#define XFEATURE_XTILE_DATA 18
+#endif
+
+typedef struct ck_amx_tile_config {
+    uint8_t palette_id;
+    uint8_t start_row;
+    uint8_t reserved_0[14];
+    uint16_t colsb[16];
+    uint8_t rows[16];
+} ck_amx_tile_config;
+
+static int ck_amx_request_xtile_data(void)
+{
+#if defined(__linux__)
+    static int state = 0;
+    if (state == 1) {
+        return 1;
+    }
+    if (state == -1) {
+        return 0;
+    }
+    long rc = syscall(SYS_arch_prctl, ARCH_REQ_XCOMP_PERM, XFEATURE_XTILE_DATA);
+    state = (rc == 0) ? 1 : -1;
+    return state == 1;
+#else
+    return 0;
+#endif
+}
+
+static void ck_amx_config_bf16_16x16x32(void)
+{
+    ck_amx_tile_config cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.palette_id = 1;
+
+    cfg.rows[0] = 16;       /* A: 16 rows x 32 BF16 */
+    cfg.colsb[0] = 64;
+    cfg.rows[1] = 16;       /* B: 16 K-pair rows x 16 BF16-pair columns */
+    cfg.colsb[1] = 64;
+    cfg.rows[2] = 16;       /* C: 16 rows x 16 FP32 */
+    cfg.colsb[2] = 64;
+
+    _tile_loadconfig(&cfg);
+}
+
+static void ck_pack_bf16_ktile_pairs_16x16(uint16_t *dst,
+                                             const uint16_t *B,
+                                             int K,
+                                             int j,
+                                             int k)
+{
+    for (int kp = 0; kp < 16; ++kp) {
+        const int k0 = k + kp * 2;
+        for (int nn = 0; nn < 16; ++nn) {
+            dst[(size_t)kp * 32u + (size_t)nn * 2u + 0u] =
+                B[(size_t)(j + nn) * (size_t)K + (size_t)k0];
+            dst[(size_t)kp * 32u + (size_t)nn * 2u + 1u] =
+                B[(size_t)(j + nn) * (size_t)K + (size_t)(k0 + 1)];
+        }
+    }
+}
+
+static void gemm_bf16_fp32out_amx(const uint16_t *A,
+                                  const uint16_t *B,
+                                  const float *bias,
+                                  float *C,
+                                  int M, int N, int K)
+{
+    ck_amx_config_bf16_16x16x32();
+
+    uint16_t b_tile[16 * 32];
+
+    for (int i = 0; i < M; i += 16) {
+        for (int j = 0; j < N; j += 16) {
+            _tile_zero(2);
+
+            for (int k = 0; k < K; k += 32) {
+                ck_pack_bf16_ktile_pairs_16x16(b_tile, B, K, j, k);
+                _tile_loadd(0, A + (size_t)i * (size_t)K + (size_t)k, K * (int)sizeof(uint16_t));
+                _tile_loadd(1, b_tile, 32 * (int)sizeof(uint16_t));
+                _tile_dpbf16ps(2, 0, 1);
+            }
+
+            _tile_stored(2, C + (size_t)i * (size_t)N + (size_t)j, N * (int)sizeof(float));
+
+            if (bias) {
+                for (int ii = 0; ii < 16; ++ii) {
+                    float *c_row = C + (size_t)(i + ii) * (size_t)N + (size_t)j;
+                    for (int jj = 0; jj < 16; ++jj) {
+                        c_row[jj] += bias[j + jj];
+                    }
+                }
+            }
+        }
+    }
+
+    _tile_release();
+}
+
+#define HAVE_AMX_BF16 1
+#else
+#define HAVE_AMX_BF16 0
+#endif /* __AMX_TILE__ && __AMX_BF16__ */
+
 static void gemm_bf16_native(const uint16_t *A,
                               const uint16_t *B,
                               const uint16_t *bias,
@@ -307,7 +423,84 @@ void gemm_bf16_fp32out(const uint16_t *A,
         return;
     }
 
-#if defined(__AVX512F__)
+#if HAVE_NATIVE_BF16
+    const char *amx_env = getenv("CK_BF16_AMX");
+    if (amx_env && amx_env[0] == '1' && HAVE_AMX_BF16 &&
+        (M % 16) == 0 && (N % 16) == 0 && (K % 32) == 0 &&
+        M >= 16 && N >= 16 && K >= 32 && ck_amx_request_xtile_data()) {
+        gemm_bf16_fp32out_amx(A, B, bias, C, M, N, K);
+        return;
+    }
+
+    #pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < M; ++i) {
+        const uint16_t *a_row = A + (size_t)i * K;
+        int j = 0;
+
+        for (; j + 4 <= N; j += 4) {
+            const uint16_t *b0 = B + (size_t)(j + 0) * K;
+            const uint16_t *b1 = B + (size_t)(j + 1) * K;
+            const uint16_t *b2 = B + (size_t)(j + 2) * K;
+            const uint16_t *b3 = B + (size_t)(j + 3) * K;
+            __m512 acc0 = _mm512_setzero_ps();
+            __m512 acc1 = _mm512_setzero_ps();
+            __m512 acc2 = _mm512_setzero_ps();
+            __m512 acc3 = _mm512_setzero_ps();
+
+            int k = 0;
+            for (; k <= K - 32; k += 32) {
+                const __m512bh a_vec = load_bf16x32(a_row + k);
+                acc0 = _mm512_dpbf16_ps(acc0, a_vec, load_bf16x32(b0 + k));
+                acc1 = _mm512_dpbf16_ps(acc1, a_vec, load_bf16x32(b1 + k));
+                acc2 = _mm512_dpbf16_ps(acc2, a_vec, load_bf16x32(b2 + k));
+                acc3 = _mm512_dpbf16_ps(acc3, a_vec, load_bf16x32(b3 + k));
+            }
+
+            float s0 = _mm512_reduce_add_ps(acc0);
+            float s1 = _mm512_reduce_add_ps(acc1);
+            float s2 = _mm512_reduce_add_ps(acc2);
+            float s3 = _mm512_reduce_add_ps(acc3);
+            for (; k < K; ++k) {
+                const float a = bf16_to_float(a_row[k]);
+                s0 += a * bf16_to_float(b0[k]);
+                s1 += a * bf16_to_float(b1[k]);
+                s2 += a * bf16_to_float(b2[k]);
+                s3 += a * bf16_to_float(b3[k]);
+            }
+            if (bias) {
+                s0 += bias[j + 0];
+                s1 += bias[j + 1];
+                s2 += bias[j + 2];
+                s3 += bias[j + 3];
+            }
+            C[(size_t)i * N + (j + 0)] = s0;
+            C[(size_t)i * N + (j + 1)] = s1;
+            C[(size_t)i * N + (j + 2)] = s2;
+            C[(size_t)i * N + (j + 3)] = s3;
+        }
+
+        for (; j < N; ++j) {
+            const uint16_t *b_row = B + (size_t)j * K;
+            __m512 sum_vec = _mm512_setzero_ps();
+
+            int k = 0;
+            for (; k <= K - 32; k += 32) {
+                const __m512bh a_vec = load_bf16x32(a_row + k);
+                const __m512bh b_vec = load_bf16x32(b_row + k);
+                sum_vec = _mm512_dpbf16_ps(sum_vec, a_vec, b_vec);
+            }
+
+            float sum = _mm512_reduce_add_ps(sum_vec);
+            for (; k < K; ++k) {
+                sum += bf16_to_float(a_row[k]) * bf16_to_float(b_row[k]);
+            }
+            if (bias) {
+                sum += bias[j];
+            }
+            C[(size_t)i * N + j] = sum;
+        }
+    }
+#elif defined(__AVX512F__)
     #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < M; ++i) {
         const uint16_t *a_row = A + (size_t)i * K;

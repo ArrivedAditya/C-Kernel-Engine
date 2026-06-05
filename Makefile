@@ -2053,6 +2053,9 @@ llamacpp-parity-nightly:
 	@echo "Running Thread Pool GEMV parity tests (serial vs dispatch)..."
 	@$(MAKE) --no-print-directory test-threadpool-parity
 	@echo ""
+	@echo "Running comprehensive Q4/Q5/Q8 GEMV CK vs llama.cpp tests (quick)..."
+	@$(MAKE) --no-print-directory test-gemv-comprehensive-quick
+	@echo ""
 	@echo "Running GEMM AVX vs scalar benchmark (quick)..."
 	@$(MAKE) --no-print-directory test-gemm-avx-bench-quick
 	@echo ""
