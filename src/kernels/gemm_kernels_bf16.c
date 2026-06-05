@@ -67,7 +67,6 @@ static void gemm_bf16_scalar(const uint16_t *A,
         }
     }
 }
-
 #if defined(__AVX512F__)
 
 /* ==========================================================================
@@ -496,4 +495,67 @@ void gemm_tn_bf16(const uint16_t *A,
         }
     }
 #endif
+}
+
+/*
+ * Mixed-precision BF16 linear backward for training.
+ *
+ * Forward contract:
+ *   Y[t, o] = dot(input[t, :], weight[o, :]) + bias[o]
+ *
+ * Inputs are BF16 storage, math and gradients are FP32. This mirrors the
+ * standard mixed-precision training contract where activations/weights may be
+ * BF16 but gradient accumulation remains FP32.
+ */
+void gemm_backward_bf16_mixed(const uint16_t *d_output,
+                              const uint16_t *input,
+                              const uint16_t *weight,
+                              float *d_input,
+                              float *d_weight,
+                              float *d_bias,
+                              int tokens,
+                              int in_dim,
+                              int out_dim)
+{
+    if (!d_output || !input || !weight || tokens <= 0 || in_dim <= 0 || out_dim <= 0) {
+        return;
+    }
+
+    if (d_input) {
+        for (int t = 0; t < tokens; ++t) {
+            for (int i = 0; i < in_dim; ++i) {
+                float sum = 0.0f;
+                for (int o = 0; o < out_dim; ++o) {
+                    const float dy = bf16_to_float(d_output[(size_t)t * (size_t)out_dim + (size_t)o]);
+                    const float w = bf16_to_float(weight[(size_t)o * (size_t)in_dim + (size_t)i]);
+                    sum += dy * w;
+                }
+                d_input[(size_t)t * (size_t)in_dim + (size_t)i] = sum;
+            }
+        }
+    }
+
+    if (d_weight) {
+        for (int o = 0; o < out_dim; ++o) {
+            for (int i = 0; i < in_dim; ++i) {
+                float sum = 0.0f;
+                for (int t = 0; t < tokens; ++t) {
+                    const float dy = bf16_to_float(d_output[(size_t)t * (size_t)out_dim + (size_t)o]);
+                    const float x = bf16_to_float(input[(size_t)t * (size_t)in_dim + (size_t)i]);
+                    sum += dy * x;
+                }
+                d_weight[(size_t)o * (size_t)in_dim + (size_t)i] = sum;
+            }
+        }
+    }
+
+    if (d_bias) {
+        for (int o = 0; o < out_dim; ++o) {
+            float sum = 0.0f;
+            for (int t = 0; t < tokens; ++t) {
+                sum += bf16_to_float(d_output[(size_t)t * (size_t)out_dim + (size_t)o]);
+            }
+            d_bias[o] = sum;
+        }
+    }
 }

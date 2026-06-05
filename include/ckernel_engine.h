@@ -171,6 +171,17 @@ void gemm_blocked_serial_bf16(const uint16_t *A,
                               uint16_t *C,
                               int M, int N, int K);
 
+// BF16 storage, FP32 gradient accumulation for linear backward.
+void gemm_backward_bf16_mixed(const uint16_t *d_output,
+                              const uint16_t *input,
+                              const uint16_t *weight,
+                              float *d_input,
+                              float *d_weight,
+                              float *d_bias,
+                              int tokens,
+                              int in_dim,
+                              int out_dim);
+
 void gemm_nt_f16(const float *A,
                  const void *B,
                  const float *bias,
@@ -1039,6 +1050,11 @@ void geglu_backward_fp32(const float *x,
                          float *d_x,
                          int tokens,
                          int dim);
+void geglu_backward_bf16_mixed(const uint16_t *x,
+                               const uint16_t *d_out,
+                               float *d_x,
+                               int tokens,
+                               int dim);
 
 	// ReLU kernels.
 	void relu_forward(const float *input, float *output, size_t n);
@@ -1860,6 +1876,24 @@ void mlp_token_parallel_bf16_fp32act(const uint16_t *input,
                                       float *scratch_bias2_f,    /* [D] */
                                       uint16_t *scratch_fc1_bf16); /* [T * 4*D] */
 
+/* BF16 MLP backward: BF16 storage, FP32 gradient accumulation. */
+void mlp_token_parallel_bf16_backward_mixed(const uint16_t *input,
+                                            const uint16_t *W_fc1,
+                                            const uint16_t *b_fc1,
+                                            const uint16_t *W_fc2,
+                                            const uint16_t *d_output,
+                                            float *d_input,
+                                            float *d_W_fc1,
+                                            float *d_b_fc1,
+                                            float *d_W_fc2,
+                                            float *d_b_fc2,
+                                            int T,
+                                            int aligned_dim,
+                                            int num_threads,
+                                            float *scratch_fc1_pre,
+                                            uint16_t *scratch_fc1_act_bf16,
+                                            float *scratch_d_fc1);
+
 // MLP FC1/FC2 backward kernels (generic), adapted from C-Transformer.
 void fc2_backward_kernel(const float *d_output,
                          const float *fc2_input,
@@ -2552,6 +2586,17 @@ void embedding_forward_q8_0(const int32_t *token_ids,
 	                             int aligned_embed_dim,
 	                             int context_window,
 	                             int add_pos);
+
+	void embedding_backward_bf16_mixed(const int32_t *token_ids,
+	                                   int token_count,
+	                                   const uint16_t *d_output,
+	                                   float *d_token_embeddings,
+	                                   float *d_pos_embeddings,
+	                                   int vocab_size,
+	                                   int embed_dim,
+	                                   int aligned_embed_dim,
+	                                   int context_window,
+	                                   int add_pos);
 
 // Softmax cross-entropy loss + gradient w.r.t logits.
 // logits: [tokens x vocab_size], targets: [tokens], d_logits: [tokens x vocab_size]

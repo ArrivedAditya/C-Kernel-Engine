@@ -21,7 +21,7 @@ from test_utils import (
     max_diff, time_function, print_system_info
 )
 from bf16_utils import (
-    float32_to_bf16, numpy_to_uint16_ptr
+    float32_to_bf16, bf16_to_float32, numpy_to_uint16_ptr
 )
 
 cpu = get_cpu_info()
@@ -49,6 +49,26 @@ lib.mlp_token_parallel_bf16.argtypes = [
     ctypes.POINTER(ctypes.c_uint16),  # scratch_fc1_bf16 [T * 4*D]
 ]
 lib.mlp_token_parallel_bf16.restype = None
+
+lib.mlp_token_parallel_bf16_backward_mixed.argtypes = [
+    ctypes.POINTER(ctypes.c_uint16),  # input
+    ctypes.POINTER(ctypes.c_uint16),  # W_fc1
+    ctypes.POINTER(ctypes.c_uint16),  # b_fc1
+    ctypes.POINTER(ctypes.c_uint16),  # W_fc2
+    ctypes.POINTER(ctypes.c_uint16),  # d_output
+    ctypes.POINTER(ctypes.c_float),   # d_input
+    ctypes.POINTER(ctypes.c_float),   # d_W_fc1
+    ctypes.POINTER(ctypes.c_float),   # d_b_fc1
+    ctypes.POINTER(ctypes.c_float),   # d_W_fc2
+    ctypes.POINTER(ctypes.c_float),   # d_b_fc2
+    ctypes.c_int,                     # T
+    ctypes.c_int,                     # aligned_dim
+    ctypes.c_int,                     # num_threads
+    ctypes.POINTER(ctypes.c_float),   # scratch_fc1_pre [T * 4*D]
+    ctypes.POINTER(ctypes.c_uint16),  # scratch_fc1_act_bf16 [T * 4*D]
+    ctypes.POINTER(ctypes.c_float),   # scratch_d_fc1 [T * 4*D]
+]
+lib.mlp_token_parallel_bf16_backward_mixed.restype = None
 
 
 def run_forward_tests(T=64, D=128, warmup=10, iterations=500):
@@ -126,11 +146,99 @@ def run_forward_tests(T=64, D=128, warmup=10, iterations=500):
     return report
 
 
+def run_backward_tests(T=7, D=16, warmup=5, iterations=100):
+    np.random.seed(2)
+    fourD = 4 * D
+
+    x_np = (np.random.randn(T, D).astype(np.float32) * 0.5)
+    W1_np = (np.random.randn(fourD, D).astype(np.float32) * 0.02)
+    b1_np = (np.random.randn(fourD).astype(np.float32) * 0.01)
+    W2_np = (np.random.randn(D, fourD).astype(np.float32) * 0.02)
+    d_out_np = (np.random.randn(T, D).astype(np.float32) * 0.25)
+
+    x_bf = float32_to_bf16(x_np)
+    W1_bf = float32_to_bf16(W1_np)
+    b1_bf = float32_to_bf16(b1_np)
+    W2_bf = float32_to_bf16(W2_np)
+    d_out_bf = float32_to_bf16(d_out_np)
+
+    d_input = np.zeros((T, D), dtype=np.float32)
+    d_W1 = np.zeros((fourD, D), dtype=np.float32)
+    d_b1 = np.zeros(fourD, dtype=np.float32)
+    d_W2 = np.zeros((D, fourD), dtype=np.float32)
+    d_b2 = np.zeros(D, dtype=np.float32)
+    scratch_fc1_pre = np.zeros((T, fourD), dtype=np.float32)
+    scratch_fc1_act_bf16 = np.zeros((T, fourD), dtype=np.uint16)
+    scratch_d_fc1 = np.zeros((T, fourD), dtype=np.float32)
+
+    def c_backward():
+        lib.mlp_token_parallel_bf16_backward_mixed(
+            numpy_to_uint16_ptr(x_bf),
+            numpy_to_uint16_ptr(W1_bf),
+            numpy_to_uint16_ptr(b1_bf),
+            numpy_to_uint16_ptr(W2_bf),
+            numpy_to_uint16_ptr(d_out_bf),
+            d_input.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            d_W1.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            d_b1.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            d_W2.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            d_b2.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            ctypes.c_int(T), ctypes.c_int(D), ctypes.c_int(1),
+            scratch_fc1_pre.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            scratch_fc1_act_bf16.ctypes.data_as(ctypes.POINTER(ctypes.c_uint16)),
+            scratch_d_fc1.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        )
+
+    x = torch.from_numpy(bf16_to_float32(x_bf.copy())).to(torch.float32).detach().requires_grad_(True)
+    W1 = torch.from_numpy(bf16_to_float32(W1_bf.copy())).to(torch.float32).detach().requires_grad_(True)
+    b1 = torch.from_numpy(bf16_to_float32(b1_bf.copy())).to(torch.float32).detach().requires_grad_(True)
+    W2 = torch.from_numpy(bf16_to_float32(W2_bf.copy())).to(torch.float32).detach().requires_grad_(True)
+    d_out = torch.from_numpy(bf16_to_float32(d_out_bf.copy())).to(torch.float32)
+
+    z1 = F.linear(x, W1, b1)
+    h = F.gelu(z1, approximate="tanh")
+    hq = torch.from_numpy(bf16_to_float32(float32_to_bf16(h.detach().numpy()))).to(torch.float32)
+    hq = h + (hq - h).detach()
+    y = F.linear(hq, W2, None)
+    y.backward(d_out)
+
+    c_backward()
+
+    report = TestReport(
+        test_name="MLP Backward (BF16 storage, FP32 grads)",
+        dtype="bf16/fp32",
+        shape=f"T={T}, D={D}, 4D={fourD}",
+        cpu_info=get_cpu_info(),
+    )
+
+    checks = [
+        ("d_input", torch.from_numpy(d_input), x.grad.to(torch.float32), 2e-4),
+        ("d_W_fc1", torch.from_numpy(d_W1), W1.grad.to(torch.float32), 2e-4),
+        ("d_b_fc1", torch.from_numpy(d_b1), b1.grad.to(torch.float32), 2e-4),
+        ("d_W_fc2", torch.from_numpy(d_W2), W2.grad.to(torch.float32), 2e-4),
+        ("d_b_fc2", torch.from_numpy(d_b2), d_out.sum(dim=0).to(torch.float32), 2e-4),
+    ]
+    for name, got, ref, tol in checks:
+        diff = max_diff(got, ref)
+        report.add_result(TestResult(
+            name=name,
+            passed=diff <= tol,
+            max_diff=diff,
+            tolerance=tol,
+            kernel_time=time_function(c_backward, warmup=warmup, iterations=iterations, name="C MLP BF16 Backward") if name == "d_input" else None,
+        ))
+
+    return report
+
+
 if __name__ == "__main__":
     print_system_info()
 
-    report = run_forward_tests()
-    report.print_report()
+    fwd_report = run_forward_tests()
+    fwd_report.print_report()
 
-    if not report.all_passed():
+    bwd_report = run_backward_tests()
+    bwd_report.print_report()
+
+    if not fwd_report.all_passed() or not bwd_report.all_passed():
         exit(1)

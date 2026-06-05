@@ -50,6 +50,19 @@ static inline float gelu_scalar(float x)
     return 0.5f * x * (1.0f + tanhf(c * (x + k * x3)));
 }
 
+static inline float gelu_derivative_scalar(float x)
+{
+    const float c = 0.7978845608f;  /* sqrt(2/pi) */
+    const float k = 0.044715f;
+    const float x2 = x * x;
+    const float x3 = x2 * x;
+    const float g = c * (x + k * x3);
+    const float tanh_g = tanhf(g);
+    const float sech2_g = 1.0f - tanh_g * tanh_g;
+    const float g_prime = c * (1.0f + 3.0f * k * x2);
+    return 0.5f * (1.0f + tanh_g) + 0.5f * x * sech2_g * g_prime;
+}
+
 #if defined(__AVX512F__)
 /* Vectorized GELU using polynomial approximation of tanh */
 static inline __m512 gelu_avx512(__m512 x)
@@ -236,6 +249,117 @@ void mlp_token_parallel_bf16_fp32act(const uint16_t *input,
     /* Convert fc1_output to BF16 for FC2 */
     float_tensor_to_bf16(fc1_output, scratch_fc1_bf16, (size_t)T * fourD);
     gemm_bf16_fp32out(scratch_fc1_bf16, W_fc2, scratch_bias2_f, output, T, D, fourD);
+}
+
+
+/**
+ * BF16 MLP backward with FP32 gradient accumulation.
+ *
+ * Forward contract matched here:
+ *   z1 = input_bf16 @ W_fc1_bf16.T + b_fc1_bf16
+ *   h  = GELU(z1)
+ *   hq = round_to_bf16(h)
+ *   y  = hq @ W_fc2_bf16.T + b_fc2_bf16
+ *
+ * Gradients are accumulated and written as FP32. The BF16 activation cast is
+ * treated like PyTorch's mixed-precision cast: gradient flows through to h,
+ * while d_W_fc2 uses the rounded hq values that FC2 actually consumed.
+ */
+void mlp_token_parallel_bf16_backward_mixed(const uint16_t *input,
+                                            const uint16_t *W_fc1,
+                                            const uint16_t *b_fc1,
+                                            const uint16_t *W_fc2,
+                                            const uint16_t *d_output,
+                                            float *d_input,
+                                            float *d_W_fc1,
+                                            float *d_b_fc1,
+                                            float *d_W_fc2,
+                                            float *d_b_fc2,
+                                            int T,
+                                            int aligned_dim,
+                                            int num_threads,
+                                            float *scratch_fc1_pre,
+                                            uint16_t *scratch_fc1_act_bf16,
+                                            float *scratch_d_fc1)
+{
+    if (!input || !W_fc1 || !b_fc1 || !W_fc2 || !d_output) return;
+    if (!scratch_fc1_pre || !scratch_fc1_act_bf16 || !scratch_d_fc1) return;
+    if (T <= 0 || aligned_dim <= 0) return;
+
+    (void)num_threads;
+    const int D = aligned_dim;
+    const int fourD = 4 * D;
+
+    /* Recompute FC1 pre-activation and the rounded activation consumed by FC2. */
+    for (int t = 0; t < T; ++t) {
+        for (int j = 0; j < fourD; ++j) {
+            float sum = bf16_to_float(b_fc1[j]);
+            for (int i = 0; i < D; ++i) {
+                const float x = bf16_to_float(input[(size_t)t * (size_t)D + (size_t)i]);
+                const float w = bf16_to_float(W_fc1[(size_t)j * (size_t)D + (size_t)i]);
+                sum += x * w;
+            }
+            scratch_fc1_pre[(size_t)t * (size_t)fourD + (size_t)j] = sum;
+            scratch_fc1_act_bf16[(size_t)t * (size_t)fourD + (size_t)j] = float_to_bf16(gelu_scalar(sum));
+        }
+    }
+
+    if (d_input) {
+        for (int t = 0; t < T; ++t) {
+            for (int i = 0; i < D; ++i) {
+                d_input[(size_t)t * (size_t)D + (size_t)i] = 0.0f;
+            }
+        }
+    }
+    if (d_W_fc1) {
+        for (size_t i = 0; i < (size_t)fourD * (size_t)D; ++i) d_W_fc1[i] = 0.0f;
+    }
+    if (d_b_fc1) {
+        for (int j = 0; j < fourD; ++j) d_b_fc1[j] = 0.0f;
+    }
+    if (d_W_fc2) {
+        for (size_t i = 0; i < (size_t)D * (size_t)fourD; ++i) d_W_fc2[i] = 0.0f;
+    }
+    if (d_b_fc2) {
+        for (int o = 0; o < D; ++o) d_b_fc2[o] = 0.0f;
+    }
+
+    /* d_W_fc2, d_b_fc2, and d_h = d_output @ W_fc2. */
+    for (int t = 0; t < T; ++t) {
+        for (int j = 0; j < fourD; ++j) {
+            float dh = 0.0f;
+            const float hq = bf16_to_float(scratch_fc1_act_bf16[(size_t)t * (size_t)fourD + (size_t)j]);
+            for (int o = 0; o < D; ++o) {
+                const float dy = bf16_to_float(d_output[(size_t)t * (size_t)D + (size_t)o]);
+                const float w2 = bf16_to_float(W_fc2[(size_t)o * (size_t)fourD + (size_t)j]);
+                dh += dy * w2;
+                if (d_W_fc2) {
+                    d_W_fc2[(size_t)o * (size_t)fourD + (size_t)j] += dy * hq;
+                }
+            }
+            const float z = scratch_fc1_pre[(size_t)t * (size_t)fourD + (size_t)j];
+            scratch_d_fc1[(size_t)t * (size_t)fourD + (size_t)j] = dh * gelu_derivative_scalar(z);
+        }
+        if (d_b_fc2) {
+            for (int o = 0; o < D; ++o) {
+                d_b_fc2[o] += bf16_to_float(d_output[(size_t)t * (size_t)D + (size_t)o]);
+            }
+        }
+    }
+
+    /* Backprop through FC1. */
+    for (int t = 0; t < T; ++t) {
+        for (int j = 0; j < fourD; ++j) {
+            const float dz = scratch_d_fc1[(size_t)t * (size_t)fourD + (size_t)j];
+            if (d_b_fc1) d_b_fc1[j] += dz;
+            for (int i = 0; i < D; ++i) {
+                const float x = bf16_to_float(input[(size_t)t * (size_t)D + (size_t)i]);
+                const float w1 = bf16_to_float(W_fc1[(size_t)j * (size_t)D + (size_t)i]);
+                if (d_W_fc1) d_W_fc1[(size_t)j * (size_t)D + (size_t)i] += dz * x;
+                if (d_input) d_input[(size_t)t * (size_t)D + (size_t)i] += dz * w1;
+            }
+        }
+    }
 }
 
 #pragma GCC diagnostic pop
