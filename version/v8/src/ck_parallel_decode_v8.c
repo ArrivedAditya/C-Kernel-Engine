@@ -18,6 +18,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 /* External parallel GEMV kernels (defined in src/kernels/) */
 extern void gemv_q5_0_parallel_simd(float *y, const void *W, const float *x,
@@ -92,6 +93,58 @@ typedef struct {
     int          K;
     size_t       W_row_bytes;
 } gemv_fp32_args_t;
+
+static int ck_min_int(int a, int b) { return a < b ? a : b; }
+
+static int ck_env_enabled(const char *name)
+{
+    const char *v = getenv(name);
+    return v && v[0] && strcmp(v, "0") != 0;
+}
+
+static int ck_env_int_or(const char *name, int fallback)
+{
+    const char *v = getenv(name);
+    if (!v || !v[0]) return fallback;
+    int parsed = atoi(v);
+    return parsed > 0 ? parsed : fallback;
+}
+
+static int ck_shape_aware_enabled(const ck_threadpool_t *pool)
+{
+    const int pool_threads = ck_threadpool_n_threads(pool);
+    if (ck_env_enabled("CK_DISABLE_SHAPE_AWARE_THREADPOOL")) return 0;
+    if (getenv("CK_GEMV_THREAD_CAP") || getenv("CK_GEMV_SMALL_SERIAL_THRESHOLD")) return 1;
+    return pool_threads > 16;
+}
+
+static int ck_select_gemv_active_threads(const ck_threadpool_t *pool, int M, int K)
+{
+    const int pool_threads = ck_threadpool_n_threads(pool);
+    if (pool_threads <= 1 || M <= 1 || K <= 0) return 1;
+    if (!ck_shape_aware_enabled(pool)) return pool_threads;
+    if (M >= 4096) return pool_threads;
+    if (M >= 512) return ck_min_int(pool_threads, ck_env_int_or("CK_GEMV_THREAD_CAP", 12));
+    return 1;
+}
+
+static int ck_select_fused_q5_active_threads(const ck_threadpool_t *pool, int M, int K)
+{
+    const int pool_threads = ck_threadpool_n_threads(pool);
+    if (pool_threads <= 1 || M <= 1 || K <= 0) return 1;
+    if (!ck_shape_aware_enabled(pool)) return pool_threads;
+    if (M < 512) return 1;
+    if (M < 1024 && K < 2048) return 1;
+    return ck_min_int(pool_threads, ck_env_int_or("CK_GEMV_THREAD_CAP", 24));
+}
+
+static int ck_should_run_gemv_serial(const ck_threadpool_t *pool, int M, int K)
+{
+    const int pool_threads = ck_threadpool_n_threads(pool);
+    if (!ck_shape_aware_enabled(pool)) return 0;
+    if (M < ck_env_int_or("CK_GEMV_SMALL_SERIAL_THRESHOLD", 512)) return 1;
+    return pool_threads > 16 && M < 1024 && K < 2048;
+}
 
 /* Q5_K weights are row-major packed super-blocks.
  * Keep a local layout copy to compute byte offsets without pulling in
@@ -181,60 +234,60 @@ void gemv_q5_0_q8_0_parallel_dispatch(
     float *y, const void *W, const void *x_q8, int M, int K)
 {
     ck_threadpool_t *pool = ck_threadpool_global();
-    if (!pool || ck_threadpool_n_threads(pool) <= 1) {
+    if (!pool || ck_threadpool_n_threads(pool) <= 1 || ck_should_run_gemv_serial(pool, M, K)) {
         /* Fall back to serial — avoids overhead for single-thread */
         gemv_q5_0_q8_0(y, W, x_q8, M, K);
         return;
     }
 
     gemv_args_t args = { .y = y, .W = W, .x_q8 = x_q8, .M = M, .K = K };
-    ck_threadpool_dispatch(pool, work_gemv_q5_0_q8_0, &args);
+    ck_threadpool_dispatch_n(pool, ck_select_gemv_active_threads(pool, M, K), work_gemv_q5_0_q8_0, &args);
 }
 
 void gemv_q6_k_q8_k_parallel_dispatch(
     float *y, const void *W, const void *x_q8, int M, int K)
 {
     ck_threadpool_t *pool = ck_threadpool_global();
-    if (!pool || ck_threadpool_n_threads(pool) <= 1) {
+    if (!pool || ck_threadpool_n_threads(pool) <= 1 || ck_should_run_gemv_serial(pool, M, K)) {
         gemv_q6_k_q8_k(y, W, x_q8, M, K);
         return;
     }
 
     gemv_args_t args = { .y = y, .W = W, .x_q8 = x_q8, .M = M, .K = K };
-    ck_threadpool_dispatch(pool, work_gemv_q6_k_q8_k, &args);
+    ck_threadpool_dispatch_n(pool, ck_select_gemv_active_threads(pool, M, K), work_gemv_q6_k_q8_k, &args);
 }
 
 void gemv_q4_k_q8_k_parallel_dispatch(
     float *y, const void *W, const void *x_q8, int M, int K)
 {
     ck_threadpool_t *pool = ck_threadpool_global();
-    if (!pool || ck_threadpool_n_threads(pool) <= 1) {
+    if (!pool || ck_threadpool_n_threads(pool) <= 1 || ck_should_run_gemv_serial(pool, M, K)) {
         gemv_q4_k_q8_k(y, W, x_q8, M, K);
         return;
     }
 
     gemv_args_t args = { .y = y, .W = W, .x_q8 = x_q8, .M = M, .K = K };
-    ck_threadpool_dispatch(pool, work_gemv_q4_k_q8_k, &args);
+    ck_threadpool_dispatch_n(pool, ck_select_gemv_active_threads(pool, M, K), work_gemv_q4_k_q8_k, &args);
 }
 
 void gemv_q8_0_q8_0_parallel_dispatch(
     float *y, const void *W, const void *x_q8, int M, int K)
 {
     ck_threadpool_t *pool = ck_threadpool_global();
-    if (!pool || ck_threadpool_n_threads(pool) <= 1) {
+    if (!pool || ck_threadpool_n_threads(pool) <= 1 || ck_should_run_gemv_serial(pool, M, K)) {
         gemv_q8_0_q8_0(y, W, x_q8, M, K);
         return;
     }
 
     gemv_args_t args = { .y = y, .W = W, .x_q8 = x_q8, .M = M, .K = K };
-    ck_threadpool_dispatch(pool, work_gemv_q8_0_q8_0, &args);
+    ck_threadpool_dispatch_n(pool, ck_select_gemv_active_threads(pool, M, K), work_gemv_q8_0_q8_0, &args);
 }
 
 void gemv_q5_1_q8_1_parallel_dispatch(
     float *y, const void *W, const float *x, int M, int K)
 {
     ck_threadpool_t *pool = ck_threadpool_global();
-    if (!pool || ck_threadpool_n_threads(pool) <= 1 || M <= 1 || (K % QK5_1) != 0) {
+    if (!pool || ck_threadpool_n_threads(pool) <= 1 || ck_should_run_gemv_serial(pool, M, K) || M <= 1 || (K % QK5_1) != 0) {
         gemv_q5_1_q8_1(y, W, x, M, K);
         return;
     }
@@ -243,14 +296,14 @@ void gemv_q5_1_q8_1_parallel_dispatch(
     gemv_fp32_args_t args = {
         .y = y, .W = W, .x = x, .M = M, .K = K, .W_row_bytes = W_row_bytes
     };
-    ck_threadpool_dispatch(pool, work_gemv_q5_1_q8_1, &args);
+    ck_threadpool_dispatch_n(pool, ck_select_gemv_active_threads(pool, M, K), work_gemv_q5_1_q8_1, &args);
 }
 
 void gemv_q5_k_parallel_dispatch(
     float *y, const void *W, const float *x, int M, int K)
 {
     ck_threadpool_t *pool = ck_threadpool_global();
-    if (!pool || ck_threadpool_n_threads(pool) <= 1 || M <= 1 || (K % QK_K) != 0) {
+    if (!pool || ck_threadpool_n_threads(pool) <= 1 || ck_should_run_gemv_serial(pool, M, K) || M <= 1 || (K % QK_K) != 0) {
         gemv_q5_k(y, W, x, M, K);
         return;
     }
@@ -259,7 +312,7 @@ void gemv_q5_k_parallel_dispatch(
     gemv_fp32_args_t args = {
         .y = y, .W = W, .x = x, .M = M, .K = K, .W_row_bytes = W_row_bytes
     };
-    ck_threadpool_dispatch(pool, work_gemv_q5_k, &args);
+    ck_threadpool_dispatch_n(pool, ck_select_gemv_active_threads(pool, M, K), work_gemv_q5_k, &args);
 }
 
 /* Keep stack footprint aligned with the contract kernel implementation. */
@@ -269,7 +322,7 @@ void gemv_q8_0_q8_0_contract_parallel_dispatch(
     float *y, const void *W, const float *x, int M, int K)
 {
     ck_threadpool_t *pool = ck_threadpool_global();
-    if (!pool || ck_threadpool_n_threads(pool) <= 1) {
+    if (!pool || ck_threadpool_n_threads(pool) <= 1 || ck_should_run_gemv_serial(pool, M, K)) {
         gemv_q8_0_q8_0_contract(y, W, x, M, K);
         return;
     }
@@ -309,7 +362,7 @@ void gemv_fused_q5_0_bias_parallel_dispatch(
     float *y, const void *W, const float *x, const float *bias, int M, int K)
 {
     ck_threadpool_t *pool = ck_threadpool_global();
-    if (!pool || ck_threadpool_n_threads(pool) <= 1) {
+    if (!pool || ck_threadpool_n_threads(pool) <= 1 || ck_should_run_gemv_serial(pool, M, K)) {
         /* Fall back to original fused kernel (serial) */
         gemv_fused_q5_0_bias_dispatch(y, W, x, bias, M, K);
         return;
@@ -323,7 +376,7 @@ void gemv_fused_q5_0_bias_parallel_dispatch(
 
     /* Step 2: Parallel GEMV — reuse existing parallel dispatch */
     gemv_args_t args = { .y = y, .W = W, .x_q8 = x_q8_buf, .M = M, .K = K };
-    ck_threadpool_dispatch(pool, work_gemv_q5_0_q8_0, &args);
+    ck_threadpool_dispatch_n(pool, ck_select_fused_q5_active_threads(pool, M, K), work_gemv_q5_0_q8_0, &args);
 
     /* Step 3: Add bias (serial, fast) */
     if (bias) {

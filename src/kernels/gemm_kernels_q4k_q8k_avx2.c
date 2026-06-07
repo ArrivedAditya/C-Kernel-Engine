@@ -16,7 +16,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 
 #include "ckernel_quant.h"
 
@@ -39,50 +38,70 @@ static inline int32_t hsum256_epi32(__m256i v) {
     return _mm_cvtsi128_si32(sum);
 }
 
-static inline void load_q8_even_odd_16(const int8_t *q8,
-                                       __m256i *even16,
-                                       __m256i *odd16) {
-    const __m128i q8_lo = _mm_loadu_si128((const __m128i *)q8);
-    const __m128i q8_hi = _mm_loadu_si128((const __m128i *)(q8 + 16));
-    const __m128i even_mask = _mm_setr_epi8(
-        0, 2, 4, 6, 8, 10, 12, 14,
-        (char)0x80, (char)0x80, (char)0x80, (char)0x80,
-        (char)0x80, (char)0x80, (char)0x80, (char)0x80);
-    const __m128i odd_mask = _mm_setr_epi8(
-        1, 3, 5, 7, 9, 11, 13, 15,
-        (char)0x80, (char)0x80, (char)0x80, (char)0x80,
-        (char)0x80, (char)0x80, (char)0x80, (char)0x80);
+static inline int32_t dot_q4_q8_16_avx2(const uint8_t *q4,
+                                        const int8_t *q8,
+                                        int high_nibble) {
+    const __m128i q4_packed = _mm_loadu_si128((const __m128i *)q4);
+    const __m128i mask4 = _mm_set1_epi8(0x0F);
+    const __m128i q4_nibbles = high_nibble
+        ? _mm_and_si128(_mm_srli_epi16(q4_packed, 4), mask4)
+        : _mm_and_si128(q4_packed, mask4);
+    const __m128i q8_bytes = _mm_loadu_si128((const __m128i *)q8);
 
-    const __m128i q8_lo_even = _mm_shuffle_epi8(q8_lo, even_mask);
-    const __m128i q8_hi_even = _mm_shuffle_epi8(q8_hi, even_mask);
-    const __m128i q8_even = _mm_unpacklo_epi64(q8_lo_even, q8_hi_even);
+    const __m256i q4_16 = _mm256_cvtepu8_epi16(q4_nibbles);
+    const __m256i q8_16 = _mm256_cvtepi8_epi16(q8_bytes);
+    const __m256i prod = _mm256_madd_epi16(q4_16, q8_16);
 
-    const __m128i q8_lo_odd = _mm_shuffle_epi8(q8_lo, odd_mask);
-    const __m128i q8_hi_odd = _mm_shuffle_epi8(q8_hi, odd_mask);
-    const __m128i q8_odd = _mm_unpacklo_epi64(q8_lo_odd, q8_hi_odd);
-
-    *even16 = _mm256_cvtepi8_epi16(q8_even);
-    *odd16 = _mm256_cvtepi8_epi16(q8_odd);
+    return hsum256_epi32(prod);
 }
 
 static inline int32_t dot_q4_q8_32_avx2(const uint8_t *q4,
-                                        const int8_t *q8) {
-    const __m128i q4_packed = _mm_loadu_si128((const __m128i *)q4);
-    const __m128i mask4 = _mm_set1_epi8(0x0F);
-    const __m128i q4_lo = _mm_and_si128(q4_packed, mask4);
-    const __m128i q4_hi = _mm_and_si128(_mm_srli_epi16(q4_packed, 4), mask4);
+                                        const int8_t *q8,
+                                        int high_nibble) {
+    return dot_q4_q8_16_avx2(q4, q8, high_nibble)
+         + dot_q4_q8_16_avx2(q4 + 16, q8 + 16, high_nibble);
+}
 
-    const __m256i q4_lo16 = _mm256_cvtepu8_epi16(q4_lo);
-    const __m256i q4_hi16 = _mm256_cvtepu8_epi16(q4_hi);
+static float dot_q4_k_q8_k_avx2(const block_q4_K *w,
+                                const block_q8_K *x,
+                                int k)
+{
+    const int nb = k / QK_K;
+    float sumf = 0.0f;
 
-    __m256i q8_even16;
-    __m256i q8_odd16;
-    load_q8_even_odd_16(q8, &q8_even16, &q8_odd16);
+    for (int i = 0; i < nb; ++i) {
+        uint8_t sc[8], m_val[8];
+        unpack_q4_k_scales(w[i].scales, sc, m_val);
 
-    const __m256i prod_lo = _mm256_madd_epi16(q4_lo16, q8_even16);
-    const __m256i prod_hi = _mm256_madd_epi16(q4_hi16, q8_odd16);
+        const float d = CK_FP16_TO_FP32(w[i].d) * x[i].d;
+        const float dmin = CK_FP16_TO_FP32(w[i].dmin) * x[i].d;
 
-    return hsum256_epi32(prod_lo) + hsum256_epi32(prod_hi);
+        int sumi = 0;
+        for (int j = 0; j < QK_K / 16; ++j) {
+            sumi += (int)x[i].bsums[j] * (int)m_val[j / 2];
+        }
+
+        int32_t sumi_block = 0;
+        int is = 0;
+        int q_offset = 0;
+
+        for (int j = 0; j < QK_K; j += 64) {
+            const uint8_t *qs = &w[i].qs[q_offset];
+            const int8_t *q8_lo = &x[i].qs[j];
+            const int8_t *q8_hi = &x[i].qs[j + 32];
+
+            const int32_t lo = dot_q4_q8_32_avx2(qs, q8_lo, 0);
+            const int32_t hi = dot_q4_q8_32_avx2(qs, q8_hi, 1);
+            sumi_block += (int32_t)sc[is] * lo + (int32_t)sc[is + 1] * hi;
+
+            q_offset += 32;
+            is += 2;
+        }
+
+        sumf += d * (float)sumi_block - dmin * (float)sumi;
+    }
+
+    return sumf;
 }
 #endif
 
@@ -91,9 +110,20 @@ void gemv_q4_k_q8_k_avx2(float *y,
                          const void *x_q8,
                          int M, int K)
 {
-    /* TODO: Implement AVX2 version with correct Q4_K memory layout.
-     * For now, fall back to reference implementation which has been
-     * fixed to use the correct layout.
-     */
+#if defined(__AVX2__)
+    if (!y || !W || !x_q8 || M <= 0 || K <= 0) {
+        return;
+    }
+
+    const block_q4_K *blocks = (const block_q4_K *)W;
+    const block_q8_K *x = (const block_q8_K *)x_q8;
+    const int blocks_per_row = K / QK_K;
+
+    for (int row = 0; row < M; ++row) {
+        const block_q4_K *w_row = blocks + (size_t)row * (size_t)blocks_per_row;
+        y[row] = dot_q4_k_q8_k_avx2(w_row, x, K);
+    }
+#else
     gemv_q4_k_q8_k_ref(y, W, x_q8, M, K);
+#endif
 }

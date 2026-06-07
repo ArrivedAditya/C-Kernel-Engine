@@ -936,7 +936,7 @@ def emit_op(
         rows_expr = arg_expr_by_name.get("rows")
         if x_expr and y_expr and k_expr and rows_expr:
             lines.append(f"    ck_debug_lm_head_fp32_input = {x_expr};")
-            lines.append("    if (!debug_lm_head_fp32) {")
+            lines.append("    if (!g_ck_skip_decode_logits && !debug_lm_head_fp32) {")
             if profile:
                 lines.append("        CK_PROFILE_BEGIN();")
             lines.extend([
@@ -973,7 +973,8 @@ def emit_op(
         k_expr = arg_expr_by_name.get("k")
         fp32_function = "gemv_q4_k" if function == "gemv_q4_k_q8_k" else "gemv_q6_k"
         if y_expr and w_expr and x_expr and m_expr and k_expr:
-            lines.append("    if (debug_lm_head_fp32 && ck_debug_lm_head_fp32_input != NULL) {")
+            lines.append("    if (!g_ck_skip_decode_logits) {")
+            lines.append("        if (debug_lm_head_fp32 && ck_debug_lm_head_fp32_input != NULL) {")
             if profile:
                 lines.append("        CK_PROFILE_BEGIN();")
             lines.append(f"        {fp32_function}(")
@@ -985,7 +986,7 @@ def emit_op(
             lines.append("        );")
             if profile:
                 lines.append(f'        CK_PROFILE_END("decode", "{fp32_function}", "{op_name}", {layer});')
-            lines.append("    } else {")
+            lines.append("        } else {")
             if profile:
                 lines.append("        CK_PROFILE_BEGIN();")
             lines.append(f"        {function}(")
@@ -997,12 +998,13 @@ def emit_op(
             lines.append("        );")
             if profile:
                 lines.append(f'        CK_PROFILE_END("decode", "{function}", "{op_name}", {layer});')
-            lines.append("    }")
+            lines.append("        }")
             if dump:
                 raw_expr = y_expr.replace("(float*)", "").replace("(void*)", "").strip()
-                lines.append("    #ifdef CK_PARITY_DUMP")
+                lines.append("        #ifdef CK_PARITY_DUMP")
                 lines.append(f'    ck_dump_tensor((float*){raw_expr}, {layer}, "logits", {m_expr});')
-                lines.append("    #endif")
+                lines.append("        #endif")
+            lines.append("    }")
             if seq_idx is not None:
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
@@ -2315,6 +2317,7 @@ typedef struct {{
 
 static CKModel *g_model = NULL;
 static ck_manifest_map_t *g_manifest = NULL;
+static int g_ck_skip_decode_logits = 0;
 
 /* Weight pointer macros */
 #define W_PTR(off) ((void*)(g_model->bump_weights + (off)))
@@ -2551,8 +2554,10 @@ CK_EXPORT int ck_model_embed_tokens(const int32_t *tokens, int count) {{
 
     /* Single token or no prefill: process one by one via decode */
     for (int i = 0; i < count; i++) {{
+        g_ck_skip_decode_logits = (i + 1 < count);
         ck_decode(g_model, tokens[i]);
-    }}{profile_dump_after_decode}
+    }}
+    g_ck_skip_decode_logits = 0;{profile_dump_after_decode}
     ck_trace_pos("embed_decode_end", tokens[count - 1], count, before_pos, g_model->pos);
     return 0;
 }}
@@ -2571,6 +2576,7 @@ CK_EXPORT int ck_model_decode(int32_t token, float *output) {{
     /* Capture position before decode (ck_decode increments pos at end) */
     int token_pos = g_model->pos;
     ck_trace_pos("decode_begin", token, 1, token_pos, g_model->pos);
+    g_ck_skip_decode_logits = 0;
     ck_decode(g_model, token);{profile_dump_after_decode}{decode_logits_copy}
     ck_trace_pos("decode_end", token, 1, token_pos, g_model->pos);
     return 0;

@@ -326,6 +326,10 @@ def get_test_cases(quick: bool = False, large: bool = False) -> dict:
                 TestCase("tiny", M=1, K=256, description="Minimal Q4_K"),
                 TestCase("small", M=256, K=256, description="Small square"),
             ],
+            "Q6_K": [
+                TestCase("tiny", M=1, K=256, description="Minimal Q6_K decode"),
+                TestCase("small", M=1, K=512, description="Small Q6_K decode"),
+            ],
             "Q5_0": [
                 TestCase("tiny", M=1, K=32, tol=1e-2, description="Minimal Q5_0"),
                 TestCase("small", M=32, K=256, tol=1e-2, description="Small"),
@@ -360,6 +364,16 @@ def get_test_cases(quick: bool = False, large: bool = False) -> dict:
             TestCase("medium_sq", M=1024, K=1024, description="Medium square"),
             TestCase("medium_wide", M=1024, K=2048, description="Medium wide"),
             TestCase("medium_tall", M=2048, K=1024, description="Medium tall"),
+        ],
+        "Q6_K": [
+            # Q6_K parity harness currently exposes a decode-style single-row
+            # entry point. Keep M=1 so reported GFLOPS match actual work.
+            TestCase("tiny", M=1, K=256, description="Minimal Q6_K decode"),
+            TestCase("small", M=1, K=512, description="Small Q6_K decode"),
+            TestCase("qwen", M=1, K=768, description="Qwen 0.5B Q6_K decode"),
+            TestCase("medium", M=1, K=1024, description="Medium Q6_K decode"),
+            TestCase("wide", M=1, K=2048, description="Wide Q6_K decode"),
+            TestCase("mlp_down", M=1, K=4864, description="Qwen 0.5B MLP down decode"),
         ],
         "Q5_0": [
             # Q5_0 tolerance set to 2e-2 because CK and llama.cpp use different
@@ -412,6 +426,10 @@ def get_test_cases(quick: bool = False, large: bool = False) -> dict:
                 TestCase("llama_mlp_up", M=11264, K=4096, description="LLaMA 7B MLP up"),
                 TestCase("llama_mlp_down", M=4096, K=11264, description="LLaMA 7B MLP down"),
                 TestCase("llama_embed", M=32000, K=4096, description="LLaMA 7B embedding"),
+            ],
+            "Q6_K": [
+                TestCase("llama_qkv", M=1, K=4096, description="LLaMA 7B Q6_K decode"),
+                TestCase("llama_mlp_down", M=1, K=11264, description="LLaMA 7B Q6_K MLP down decode"),
             ],
             "Q5_0": [
                 TestCase("llama_qkv", M=4096, K=4096, tol=2e-2, description="LLaMA 7B QKV"),
@@ -531,6 +549,15 @@ class KernelTester:
             ctypes.c_int
         ]
         lib.ck_test_gemv_q4_k.restype = None
+
+        # GEMV Q6_K (FP32 input quantized to Q8_K, decode path)
+        lib.ck_test_gemv_q6_k.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.c_int   # cols
+        ]
+        lib.ck_test_gemv_q6_k.restype = None
 
         # GEMV Q5_0 (FP32 input - dequant path)
         lib.ck_test_gemv_q5_0.argtypes = [
@@ -658,6 +685,20 @@ class KernelTester:
                     if has_llama_ref:
                         # llama.cpp test only does single dot product (M=1)
                         self.libggml.test_gemv_q5_0(w, x, y, K)
+
+        elif qtype == "Q6_K":
+            if K % QK_K != 0:
+                return TestResult(name, False, 0, 0, error=f"K={K} not multiple of {QK_K}")
+            if M != 1:
+                return TestResult(name, False, 0, 0, error="Q6_K harness currently supports decode M=1 only")
+            weight_gen = random_q6k_weights
+            has_llama_ref = False
+
+            def call_ck(w, x, y):
+                self.libck.ck_test_gemv_q6_k(w, x, y, K)
+
+            def call_llama(w, x, y):
+                return None
 
         elif qtype == "Q8_0":
             if K % QK8_0 != 0:
@@ -929,6 +970,7 @@ def print_header():
             Testing: output[M] = weights[M,K] x input[K]
 
   {CYAN}KERNELS:{RESET} Q4_K     - 4-bit K-quant (llama.cpp reference)
+            Q6_K     - 6-bit K-quant decode (CK timing + sanity check)
             Q5_0     - 5-bit legacy quant (llama.cpp reference)
             Q8_0     - 8-bit legacy quant (llama.cpp reference)
             Q5_0_Q8_0 - Direct Q5_0 x Q8_0 vec_dot (llama.cpp reference)

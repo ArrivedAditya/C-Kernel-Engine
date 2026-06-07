@@ -52,6 +52,16 @@ static int ck_q8_0_debug_ref(void)
     return cached;
 }
 
+static int ck_q8_0_q8_0_debug_ref(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        const char *env = getenv("CK_DEBUG_Q8_0_Q8_0_REF");
+        cached = (env && env[0] && env[0] != '0') ? 1 : 0;
+    }
+    return cached;
+}
+
 static inline int ck_nearest_int_q8_0(float fval) {
     /* Match llama.cpp's deterministic nearest-even helper. */
     float val = fval + 12582912.f;
@@ -1219,8 +1229,7 @@ void vec_dot_q8_0_q8_0_sse(int n, float *s, const void *vx, const void *vy)
  */
 void vec_dot_q8_0_q8_0(int n, float *s, const void *vx, const void *vy)
 {
-    const char *ref_env = getenv("CK_DEBUG_Q8_0_Q8_0_REF");
-    if (ref_env && ref_env[0] && ref_env[0] != '0') {
+    if (ck_q8_0_q8_0_debug_ref()) {
         vec_dot_q8_0_q8_0_ref(n, s, vx, vy);
         return;
     }

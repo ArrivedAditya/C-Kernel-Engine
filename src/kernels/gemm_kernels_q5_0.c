@@ -1081,7 +1081,7 @@ void vec_dot_q5_0_q8_0_avx512(int n, float *s, const void *vx, const void *vy)
 }
 #endif
 
-#if defined(__AVX2__) && !defined(__AVX512F__)
+#if defined(__AVX2__)
 static inline __m256i bytes_from_bits_32_avx(const uint8_t *qh);
 static inline __m256i bytes_from_nibbles_32_avx(const uint8_t *qs);
 static inline __m256 mul_sum_i8_pairs_float_avx(const __m256i x, const __m256i y);
@@ -1247,7 +1247,7 @@ void vec_dot_q5_0_q8_0_sse(int n, float *s, const void *vx, const void *vy)
 }
 #endif
 
-#if defined(__AVX__) && !defined(__AVX512F__)
+#if defined(__AVX__)
 
 /* Combine two __m128i into __m256i (AVX without AVX2) */
 #define MM256_SET_M128I(hi, lo) _mm256_insertf128_si256(_mm256_castsi128_si256(lo), (hi), 1)
@@ -1601,10 +1601,13 @@ void gemm_nt_q5_0_q8_0_unroll_avx(
  */
 void vec_dot_q5_0_q8_0(int n, float *s, const void *vx, const void *vy)
 {
-#if defined(__AVX512F__)
-    vec_dot_q5_0_q8_0_avx512(n, s, vx, vy);
-#elif defined(__AVX2__)
+#if defined(__AVX2__)
+    /* llama.cpp uses the packed AVX2 dot on AVX-512 hosts as well. It keeps
+     * Q5/Q8 data in byte lanes and avoids the per-block 32-bit lane expansion
+     * overhead of the baseline AVX-512 path. */
     vec_dot_q5_0_q8_0_avx2(n, s, vx, vy);
+#elif defined(__AVX512F__)
+    vec_dot_q5_0_q8_0_avx512(n, s, vx, vy);
 #elif defined(__ARM_NEON) || defined(__aarch64__)
     vec_dot_q5_0_q8_0_neon(n, s, vx, vy);
 #elif defined(__AVX__)

@@ -34,6 +34,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 
+#include "ckernel_engine.h"
 #include "ckernel_quant.h"
 
 /* Include SIMD headers based on available extensions */
@@ -50,6 +51,16 @@ void gemv_q6_k_q8_k_avx512_vbmi(float *y, const void *W, const void *x_q8, int M
 void gemv_q6_k_q8_k_avx2(float *y, const void *W, const void *x_q8, int M, int K);
 void gemv_q6_k_q8_k_avx(float *y, const void *W, const void *x_q8, int M, int K);
 void gemv_q6_k_q8_k_sse(float *y, const void *W, const void *x_q8, int M, int K);
+
+static int ck_q6k_q8k_force_ref(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        const char *env = getenv("CK_DEBUG_Q6K_Q8K_REF");
+        cached = (env && env[0] && env[0] != '0') ? 1 : 0;
+    }
+    return cached;
+}
 
 /* ============================================================================
  * Reference Implementation
@@ -1062,12 +1073,26 @@ void gemv_q6_k_q8_k(float *y,
                      const void *x_q8,
                      int M, int K)
 {
+    if (ck_strict_parity_enabled() || ck_q6k_q8k_force_ref()) {
+        gemv_q6_k_q8_k_ref(y, W, x_q8, M, K);
+        return;
+    }
+
     const char *simd_env = getenv("CK_DEBUG_Q6K_Q8K_SIMD");
-    if (simd_env && simd_env[0] && simd_env[0] != '0') {
-#if defined(__AVX512VBMI__)
+    if (!(simd_env && simd_env[0] && simd_env[0] != '0')) {
+        /* Keep the public Q6_K dispatcher on the llama-compatible scalar
+         * reduction for now. The AVX/AVX2 path is faster, but it changes the
+         * reduction order enough to fail tight GEMM parity in some cases.
+         * Promote SIMD/packed Q6 only after the faster path is numerically
+         * reliable across model-family parity and long-decode tests. */
+        gemv_q6_k_q8_k_ref(y, W, x_q8, M, K);
+        return;
+    }
+
+#if defined(__AVX512F__) && defined(__AVX512BW__) && defined(__AVX512VBMI__)
         gemv_q6_k_q8_k_avx512_vbmi(y, W, x_q8, M, K);
         return;
-#elif defined(__AVX512F__)
+#elif defined(__AVX512F__) && defined(__AVX512BW__)
         gemv_q6_k_q8_k_avx512(y, W, x_q8, M, K);
         return;
 #elif defined(__AVX2__)
@@ -1080,7 +1105,6 @@ void gemv_q6_k_q8_k(float *y,
         gemv_q6_k_q8_k_sse(y, W, x_q8, M, K);
         return;
 #endif
-    }
     gemv_q6_k_q8_k_ref(y, W, x_q8, M, K);
 }
 
@@ -1149,10 +1173,28 @@ void gemv_q6_k_q8_k_parallel_simd(float *y,
     const block_q6_K *blocks = (const block_q6_K *)W;
     const block_q8_K *x = (const block_q8_K *)x_q8;
     const int blocks_per_row = K / QK_K;
+    const int strict = ck_strict_parity_enabled() || ck_q6k_q8k_force_ref();
 
     for (int row = r0; row < r1; ++row) {
         const block_q6_K *w_row = blocks + (size_t)row * (size_t)blocks_per_row;
+#if defined(__AVX512F__) && defined(__AVX512BW__) && defined(__AVX512VBMI__)
+        y[row] = strict ? dot_q6_k_q8_k_ref(w_row, x, K)
+                        : dot_q6_k_q8_k_avx512_vbmi(w_row, x, K);
+#elif defined(__AVX512F__) && defined(__AVX512BW__)
+        y[row] = strict ? dot_q6_k_q8_k_ref(w_row, x, K)
+                        : dot_q6_k_q8_k_avx512(w_row, x, K);
+#elif defined(__AVX2__)
+        y[row] = strict ? dot_q6_k_q8_k_ref(w_row, x, K)
+                        : dot_q6_k_q8_k_avx2(w_row, x, K);
+#elif defined(__AVX__)
+        y[row] = strict ? dot_q6_k_q8_k_ref(w_row, x, K)
+                        : dot_q6_k_q8_k_avx(w_row, x, K);
+#elif defined(__SSSE3__)
+        y[row] = strict ? dot_q6_k_q8_k_ref(w_row, x, K)
+                        : dot_q6_k_q8_k_sse(w_row, x, K);
+#else
         y[row] = dot_q6_k_q8_k_ref(w_row, x, K);
+#endif
     }
 }
 
