@@ -1,6 +1,6 @@
 {
   "schema": "ck.spec_training_manifest.v1",
-  "generated_at": "2026-04-13T12:46:50.196182+00:00",
+  "generated_at": "2026-06-05T05:12:15.166899+00:00",
   "generator": "build_spec_training_story_v7.py",
   "source_roots": [
     {
