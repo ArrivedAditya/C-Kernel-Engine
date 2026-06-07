@@ -19,6 +19,7 @@ import re
 import struct
 import sys
 import time
+import codecs
 from pathlib import Path
 from typing import Optional, List
 
@@ -1838,6 +1839,47 @@ def _normalize_visible_chat_markup(text: str) -> str:
     return normalized
 
 
+def _strip_trailing_decode_artifacts(text: str) -> str:
+    """Remove invalid UTF-8 replacement tails without hiding valid thinking text."""
+    if not text:
+        return text
+    # The byte-fallback tokenizer can occasionally surface an invalid trailing
+    # fragment as U+FFFD plus byte-mapped glyphs. Keep normal content intact.
+    return re.sub(r"\s*\ufffd[\u0100-\u01ff\ufffd]*\s*$", "", text)
+
+
+def _style_thinking_for_terminal(text: str, *, enabled: bool = True) -> str:
+    """Dim visible <think> blocks while preserving the exact generated text."""
+    if not enabled or not text or "<think>" not in text:
+        return text
+
+    dim = "\033[90m"
+    reset = "\033[0m"
+    out: List[str] = []
+    pos = 0
+    lower = text.lower()
+
+    while pos < len(text):
+        start = lower.find("<think>", pos)
+        if start < 0:
+            out.append(text[pos:])
+            break
+        out.append(text[pos:start])
+        end = lower.find("</think>", start)
+        if end < 0:
+            out.append(dim)
+            out.append(text[start:])
+            out.append(reset)
+            break
+        end += len("</think>")
+        out.append(dim)
+        out.append(text[start:end])
+        out.append(reset)
+        pos = end
+
+    return "".join(out)
+
+
 def _piece_for_debug(piece: str) -> str:
     """Render raw vocab pieces in a byte/escape form for easier debugging."""
     if not piece:
@@ -1904,6 +1946,7 @@ def generate(model: CKModel, prompt: str, max_tokens: int = 50,
     stopped_on_text: Optional[str] = None
     stop_reason: Optional[str] = None
     displayed_chars = 0
+    display_decoder = codecs.getincrementaldecoder("utf-8")("strict")
 
     if verbose:
         print(f"[Prompt tokens: {prompt_tokens}]")
@@ -1933,8 +1976,8 @@ def generate(model: CKModel, prompt: str, max_tokens: int = 50,
     def _response_text() -> str:
         hit = _first_text_stop()
         if hit is None:
-            return _normalize_visible_chat_markup(generated_text)
-        return _normalize_visible_chat_markup(generated_text[:hit[0]])
+            return _strip_trailing_decode_artifacts(_normalize_visible_chat_markup(generated_text))
+        return _strip_trailing_decode_artifacts(_normalize_visible_chat_markup(generated_text[:hit[0]]))
 
     def _displayable_text(force: bool = False) -> str:
         hit = _first_text_stop()
@@ -1955,7 +1998,7 @@ def generate(model: CKModel, prompt: str, max_tokens: int = 50,
         return _normalize_visible_chat_markup(generated_text)
 
     def _flush_text_output(force: bool = False) -> None:
-        nonlocal displayed_chars
+        nonlocal displayed_chars, display_decoder
         if show_token_ids:
             return
         visible_text = _displayable_text(force=force)
@@ -1964,9 +2007,23 @@ def generate(model: CKModel, prompt: str, max_tokens: int = 50,
         chunk = visible_text[displayed_chars:]
         if not chunk:
             return
-        display_text = _escape_text_for_display(
-            chunk, ascii_only=ascii_display, escape_newlines=escape_newlines
-        ) if safe_display else chunk
+        if safe_display:
+            try:
+                pending = display_decoder.decode(chunk.encode("utf-8", errors="surrogatepass"), final=force)
+            except UnicodeError:
+                pending = chunk.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+                pending = _strip_trailing_decode_artifacts(pending) if force else pending.replace("\ufffd", "")
+                display_decoder = codecs.getincrementaldecoder("utf-8")("strict")
+            display_text = _escape_text_for_display(
+                pending, ascii_only=ascii_display, escape_newlines=escape_newlines
+            )
+            display_text = _strip_trailing_decode_artifacts(display_text)
+        else:
+            display_text = chunk
+        display_text = _style_thinking_for_terminal(
+            display_text,
+            enabled=safe_display and not ascii_display and not escape_newlines and sys.stdout.isatty(),
+        )
         print(display_text, end='', flush=True)
         displayed_chars = len(visible_text)
 
