@@ -509,6 +509,26 @@ class TestCKChatRuntimeContract(unittest.TestCase):
         self.assertIn("Answer", rendered)
         self.assertEqual(out.count("<think>"), 1)
 
+    def test_terminal_thinking_style_preserves_text(self) -> None:
+        text = "<think>\nReasoning\n</think>\nAnswer"
+        styled = ck_chat._style_thinking_for_terminal(text, enabled=True)
+        self.assertIn("\033[90m<think>", styled)
+        self.assertIn("</think>\033[0m", styled)
+        self.assertEqual(
+            styled.replace("\033[90m", "").replace("\033[0m", ""),
+            text,
+        )
+
+    def test_strip_trailing_decode_artifacts_keeps_valid_text(self) -> None:
+        self.assertEqual(
+            ck_chat._strip_trailing_decode_artifacts("Hello! \ufffd\u0141\u013a\u012c"),
+            "Hello!",
+        )
+        self.assertEqual(
+            ck_chat._strip_trailing_decode_artifacts("<think>\nReasoning\n</think>\nAnswer"),
+            "<think>\nReasoning\n</think>\nAnswer",
+        )
+
     def test_generate_reports_stop_reason_when_eos_token_hits(self) -> None:
         class FakeModel:
             has_kv_decode = False

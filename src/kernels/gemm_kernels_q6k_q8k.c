@@ -1078,7 +1078,10 @@ void gemv_q6_k_q8_k(float *y,
         return;
     }
 
-    const char *simd_env = getenv("CK_DEBUG_Q6K_Q8K_SIMD");
+    const char *simd_env = getenv("CK_Q6K_Q8K_SIMD");
+    if (!simd_env || !simd_env[0]) {
+        simd_env = getenv("CK_DEBUG_Q6K_Q8K_SIMD");
+    }
     if (!(simd_env && simd_env[0] && simd_env[0] != '0')) {
         /* Keep the public Q6_K dispatcher on the llama-compatible scalar
          * reduction for now. The AVX/AVX2 path is faster, but it changes the
@@ -1089,10 +1092,8 @@ void gemv_q6_k_q8_k(float *y,
         return;
     }
 
-#if defined(__AVX512F__) && defined(__AVX512BW__) && defined(__AVX512VBMI__)
-        gemv_q6_k_q8_k_avx512_vbmi(y, W, x_q8, M, K);
-        return;
-#elif defined(__AVX512F__) && defined(__AVX512BW__)
+#if defined(__AVX512F__) && defined(__AVX512BW__)
+        /* Avoid the Q6 VBMI implementation: it is not parity-safe on Xeon 6542Y. */
         gemv_q6_k_q8_k_avx512(y, W, x_q8, M, K);
         return;
 #elif defined(__AVX2__)
@@ -1177,10 +1178,8 @@ void gemv_q6_k_q8_k_parallel_simd(float *y,
 
     for (int row = r0; row < r1; ++row) {
         const block_q6_K *w_row = blocks + (size_t)row * (size_t)blocks_per_row;
-#if defined(__AVX512F__) && defined(__AVX512BW__) && defined(__AVX512VBMI__)
-        y[row] = strict ? dot_q6_k_q8_k_ref(w_row, x, K)
-                        : dot_q6_k_q8_k_avx512_vbmi(w_row, x, K);
-#elif defined(__AVX512F__) && defined(__AVX512BW__)
+#if defined(__AVX512F__) && defined(__AVX512BW__)
+        /* Avoid the Q6 VBMI implementation: it is not parity-safe on Xeon 6542Y. */
         y[row] = strict ? dot_q6_k_q8_k_ref(w_row, x, K)
                         : dot_q6_k_q8_k_avx512(w_row, x, K);
 #elif defined(__AVX2__)
@@ -1189,7 +1188,7 @@ void gemv_q6_k_q8_k_parallel_simd(float *y,
 #elif defined(__AVX__)
         y[row] = strict ? dot_q6_k_q8_k_ref(w_row, x, K)
                         : dot_q6_k_q8_k_avx(w_row, x, K);
-#elif defined(__SSSE3__)
+#elif defined(__SSE4_1__)
         y[row] = strict ? dot_q6_k_q8_k_ref(w_row, x, K)
                         : dot_q6_k_q8_k_sse(w_row, x, K);
 #else
