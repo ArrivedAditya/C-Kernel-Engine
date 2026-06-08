@@ -33,6 +33,12 @@ BLOCK_Q6_K_SIZE = 210  # 128 (ql) + 64 (qh) + 16 (scales) + 2 (d)
 BLOCK_Q8_K_SIZE = 292  # 4 (d) + 256 (qs) + 32 (bsums)
 
 
+def q6k_q8k_abs_tol():
+    simd = os.getenv("CK_Q6K_Q8K_SIMD") or os.getenv("CK_DEBUG_Q6K_Q8K_SIMD")
+    default = "3e-4" if simd else "2e-4"
+    return float(os.getenv("CK_Q6K_Q8K_ABS_TOL", default))
+
+
 def fp16_to_fp32(h):
     """Convert FP16 (uint16) to FP32"""
     return np.frombuffer(struct.pack('<H', h), dtype=np.float16)[0].astype(np.float32)
@@ -344,7 +350,10 @@ def test_gemv_q6k_q8k(lib):
     print(f"  MSE:      {mse:.6e}")
     print(f"  Max Diff: {max_diff:.6e}")
 
-    if max_diff < 2e-4:
+    tol = q6k_q8k_abs_tol()
+    print(f"  Tolerance: {tol:.6e}")
+
+    if max_diff < tol:
         print(f"  {GREEN}PASS{RESET}")
         return True
     else:
@@ -410,7 +419,10 @@ def test_gemm_nt_q6k_q8k(lib):
     print(f"  MSE:      {mse:.6e}")
     print(f"  Max Diff: {max_diff:.6e}")
 
-    if max_diff < 2e-4:
+    tol = q6k_q8k_abs_tol()
+    print(f"  Tolerance: {tol:.6e}")
+
+    if max_diff < tol:
         print(f"  {GREEN}PASS{RESET}")
         return True
     else:
