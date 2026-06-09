@@ -30,6 +30,22 @@ jobs:
           submodules: false
           fetch-depth: 0
 
+      - name: Free runner disk space
+        run: |
+          echo "=== Disk before cleanup ==="
+          df -h
+
+          # GitHub-hosted runners carry large SDK/tool caches that this C/C++
+          # workflow does not use. Free them before model conversion and
+          # llama.cpp builds start producing multi-GB temporary artifacts.
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+
+          echo "=== Disk after cleanup ==="
+          df -h
+
       - name: Check CPU features
         run: |
           echo "=== CPU Info ==="
@@ -121,6 +137,13 @@ jobs:
           echo "=== Running Kernel Parity Tests ==="
           export LD_LIBRARY_PATH="$PWD/llama.cpp/build/bin:$LD_LIBRARY_PATH"
           ./scripts/run_parity_smoketest.sh --quick 2>&1 | tee build/parity_test.log
+
+      - name: Clean llama.cpp build artifacts
+        if: always()
+        run: |
+          rm -rf llama.cpp
+          echo "=== Disk after llama.cpp cleanup ==="
+          df -h
 
       - name: Determine v7 Fast Regression Scope
         id: regression_scope
@@ -224,8 +247,8 @@ jobs:
           set -o pipefail
           echo "=== Running Fast Regression ==="
           echo "Reason: ${{ steps.regression_scope.outputs.reason }}"
-          mkdir -p build/regression-runs build/regression-reports
-          make regression-fast REGRESSION_ARGS="--run-root build/regression-runs --report-root build/regression-reports" 2>&1 | tee build/regression_fast.log
+          mkdir -p "${RUNNER_TEMP}/ck-regression-runs" build/regression-reports
+          make regression-fast REGRESSION_ARGS="--run-root ${RUNNER_TEMP}/ck-regression-runs --report-root build/regression-reports" 2>&1 | tee build/regression_fast.log
 
       - name: Run Nightly Test Suite
         run: |
@@ -498,6 +521,14 @@ jobs:
           print("Attached v7 nightly summaries to nightly latest.json")
           PY
 
+      - name: Clean regression run artifacts
+        if: always()
+        run: |
+          rm -rf "${RUNNER_TEMP}/ck-regression-runs"
+          rm -rf build/regression-runs
+          echo "=== Disk after regression cleanup ==="
+          df -h
+
       - name: Run v6.6 E2E Tests
         run: |
           echo "=== Running v6.6 E2E Tests ==="
@@ -522,6 +553,18 @@ jobs:
           }
           echo ""
           echo "=== v6.6 Strict Parity Matrix Complete ==="
+
+      - name: Final disk cleanup before artifact upload
+        if: always()
+        run: |
+          rm -rf "${RUNNER_TEMP}/ck-engine-v8"
+          rm -rf "${RUNNER_TEMP}/ck-engine"
+          rm -rf "${HOME}/.cache/ck-engine"
+          rm -rf "${HOME}/.cache/ck-engine-v6.6"
+          rm -rf "${HOME}/.cache/ck-engine-v7"
+          rm -rf "${HOME}/.cache/ck-engine-v8"
+          echo "=== Disk before artifact upload ==="
+          df -h
 
       - name: Upload test results
         uses: actions/upload-artifact@v4
