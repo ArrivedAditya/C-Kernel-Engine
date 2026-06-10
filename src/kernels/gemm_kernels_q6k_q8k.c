@@ -1267,3 +1267,89 @@ void gemm_nt_q6_k_q8_k(const void *A_q8,
         }
     }
 }
+
+
+static inline float ck_dot_q6_k_q8_k_fast_or_ref(const block_q6_K *w,
+                                                  const block_q8_K *x,
+                                                  int K)
+{
+    if (ck_strict_parity_enabled() || ck_q6k_q8k_force_ref()) {
+        return dot_q6_k_q8_k_ref(w, x, K);
+    }
+#if defined(__AVX512F__) && defined(__AVX512BW__)
+    return dot_q6_k_q8_k_avx512(w, x, K);
+#elif defined(__AVX2__)
+    return dot_q6_k_q8_k_avx2(w, x, K);
+#elif defined(__AVX__)
+    return dot_q6_k_q8_k_avx(w, x, K);
+#elif defined(__SSE4_1__)
+    return dot_q6_k_q8_k_sse(w, x, K);
+#else
+    return dot_q6_k_q8_k_ref(w, x, K);
+#endif
+}
+
+/**
+ * @brief Compute one C[m0:m1, n0:n1] tile for Q8_K activations x Q6_K weights.
+ *
+ * Pure tile math only: no threadpool, no global scheduling, no allocation.
+ * The orchestrator decides how to split tile jobs across cores.
+ */
+void gemm_nt_q6_k_q8_k_tile(const void *A_q8,
+                             const void *B,
+                             const float *bias,
+                             float *C,
+                             int M, int N, int K,
+                             int m0, int m1,
+                             int n0, int n1)
+{
+    if (!A_q8 || !B || !C) {
+        return;
+    }
+    if (M <= 0 || N <= 0 || K <= 0 || K % QK_K != 0) {
+        return;
+    }
+    if (m0 < 0) m0 = 0;
+    if (n0 < 0) n0 = 0;
+    if (m1 > M) m1 = M;
+    if (n1 > N) n1 = N;
+    if (m0 >= m1 || n0 >= n1) {
+        return;
+    }
+
+    const block_q8_K *A = (const block_q8_K *)A_q8;
+    const block_q6_K *W = (const block_q6_K *)B;
+    const int blocks_per_vec = K / QK_K;
+    const int blocks_per_row = K / QK_K;
+
+    for (int n = n0; n < n1; ++n) {
+        const block_q6_K *w_row = W + (size_t)n * (size_t)blocks_per_row;
+        const float b = bias ? bias[n] : 0.0f;
+        for (int m = m0; m < m1; ++m) {
+            const block_q8_K *a_row = A + (size_t)m * (size_t)blocks_per_vec;
+            C[(size_t)m * (size_t)N + (size_t)n] = ck_dot_q6_k_q8_k_fast_or_ref(w_row, a_row, K) + b;
+        }
+    }
+}
+
+/**
+ * @brief Experimental single-thread tiled NT GEMM wrapper.
+ *
+ * Kept as a separate symbol from gemm_nt_q6_k_q8_k for benchmarks and parity.
+ * Production prefill should prefer the v8 2D tile scheduler when enabled.
+ */
+void gemm_nt_q6_k_q8_k_tiled(const void *A_q8,
+                              const void *B,
+                              const float *bias,
+                              float *C,
+                              int M, int N, int K)
+{
+    enum { TILE_M = 8, TILE_N = 16 };
+    for (int n0 = 0; n0 < N; n0 += TILE_N) {
+        const int n1 = (n0 + TILE_N < N) ? (n0 + TILE_N) : N;
+        for (int m0 = 0; m0 < M; m0 += TILE_M) {
+            const int m1 = (m0 + TILE_M < M) ? (m0 + TILE_M) : M;
+            gemm_nt_q6_k_q8_k_tile(A_q8, B, bias, C, M, N, K, m0, m1, n0, n1);
+        }
+    }
+}

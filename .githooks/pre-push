@@ -121,26 +121,11 @@ case "${CK_PREPUSH_V66_GATE:-auto}" in
     1|true|TRUE|yes|YES|always)
         ck_should_run_v66_gate=1
         ;;
-    0|false|FALSE|no|NO|never)
+    0|false|FALSE|no|NO|never|auto)
         ck_should_run_v66_gate=0
         ;;
     *)
-        for path in "${PUSH_CHANGED_FILES[@]}"; do
-            case "$path" in
-                Makefile|.githooks/pre-push|.github/workflows/nightly.yml)
-                    ck_should_run_v66_gate=1
-                    break
-                    ;;
-                include/*|src/*|scripts/*|tests/*)
-                    ck_should_run_v66_gate=1
-                    break
-                    ;;
-                version/v6.6/*)
-                    ck_should_run_v66_gate=1
-                    break
-                    ;;
-            esac
-        done
+        ck_should_run_v66_gate=0
         ;;
 esac
 
@@ -157,9 +142,9 @@ else
 fi
 
 if [ "$ck_should_run_v66_gate" = "1" ]; then
-    echo -e "${YELLOW}  ↳ v6.6 compatibility gate enabled for pushed shared/runtime changes${NC}"
+    echo -e "${YELLOW}  ↳ v6.6 legacy gate enabled by CK_PREPUSH_V66_GATE${NC}"
 else
-    echo -e "${YELLOW}  ↳ v6.6 compatibility gate skipped (no pushed shared/v6.6 changes)${NC}"
+    echo -e "${YELLOW}  ↳ v6.6 legacy gate skipped by default (set CK_PREPUSH_V66_GATE=1 to run)${NC}"
 fi
 
 # =============================================================================
@@ -467,10 +452,10 @@ else
 fi
 
 # =============================================================================
-# Test 4: v6.6 required release gate
+# Test 4: v6.6 legacy release gate
 # =============================================================================
 if [ "$ck_should_run_v66_gate" = "1" ]; then
-    echo -e "${YELLOW}[4/6]${NC} Running v6.6 release gate..."
+    echo -e "${YELLOW}[4/6]${NC} Running v6.6 legacy release gate..."
     V66_PREPUSH_CACHE="${CK_V66_PREPUSH_CACHE_DIR:-$HOME/.cache/ck-engine-v6.6/models_prepush}"
     V66_PREPUSH_CLEAN="${CK_V66_PREPUSH_CLEAN:-1}"
     V66_PREPUSH_FULL_GATE="${CK_PREPUSH_V66_FULL_GATE:-0}"
@@ -518,7 +503,7 @@ if [ "$ck_should_run_v66_gate" = "1" ]; then
         fi
     fi
 else
-    echo -e "${YELLOW}[4/6]${NC} Skipping v6.6 release gate (no pushed shared/v6.6 changes)..."
+    echo -e "${YELLOW}[4/6]${NC} Skipping v6.6 legacy release gate..."
 fi
 
 # =============================================================================

@@ -367,6 +367,20 @@ void gemm_nt_q6_k_q8_k(const void *A_q8,
                        float *C,
                        int M, int N, int K);
 
+void gemm_nt_q6_k_q8_k_tile(const void *A_q8,
+                            const void *B,
+                            const float *bias,
+                            float *C,
+                            int M, int N, int K,
+                            int m0, int m1,
+                            int n0, int n1);
+
+void gemm_nt_q6_k_q8_k_tiled(const void *A_q8,
+                             const void *B,
+                             const float *bias,
+                             float *C,
+                             int M, int N, int K);
+
 void gemm_nt_q8_0_q8_0(const void *A_q8,
                        const void *B,
                        const float *bias,

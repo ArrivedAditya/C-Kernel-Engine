@@ -33,6 +33,8 @@ extern void gemv_q8_0_q8_0_parallel_simd(float *y, const void *W, const void *x_
 /* Q4_K parallel SIMD — check if it exists, otherwise fall back */
 extern void gemv_q4_k_q8_k_parallel_simd(float *y, const void *W, const void *x_q8,
                                           int M, int K, int ith, int nth);
+extern void gemv_q4_k_q8_k_parallel_vnni(float *y, const void *W, const void *x_q8,
+                                          int M, int K, int ith, int nth);
 extern void gemv_q4_k_q8_k_parallel(float *y, const void *W, const void *x_q8,
                                      int M, int K, int ith, int nth);
 
@@ -179,7 +181,15 @@ static void work_gemv_q4_k_q8_k(int ith, int nth, void *args)
 #if defined(CK_TARGET_ARM)
     gemv_q4_k_q8_k_parallel(a->y, a->W, a->x_q8, a->M, a->K, ith, nth);
 #else
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+    if (ck_env_enabled("CK_ENABLE_Q4K_Q8K_VNNI_FAST")) {
+        gemv_q4_k_q8_k_parallel_vnni(a->y, a->W, a->x_q8, a->M, a->K, ith, nth);
+    } else {
+        gemv_q4_k_q8_k_parallel_simd(a->y, a->W, a->x_q8, a->M, a->K, ith, nth);
+    }
+#else
     gemv_q4_k_q8_k_parallel_simd(a->y, a->W, a->x_q8, a->M, a->K, ith, nth);
+#endif
 #endif
 }
 

@@ -931,6 +931,29 @@ def _generate_visualizer_html(work_dir: Path) -> Path:
     return report_path
 
 
+def step_sweep_kernels(work_dir: Path, ir_paths: dict[str, Path], *, quick: bool = True) -> Path:
+    log(f"\n{C_ORANGE}[tune]{C_RESET} Sweeping kernel dispatch choices", C_DIM)
+    report_path = work_dir / "kernel_tuning.json"
+    engine_lib = work_dir / "libckernel_engine.so"
+    cmd = [
+        sys.executable,
+        str(PROJECT_ROOT / "benchmarks" / "sweep_q6k_prefill_dispatch.py"),
+        "--from-lowered",
+        str(ir_paths["prefill_call"]),
+        "--engine-lib",
+        str(engine_lib),
+        "--json-out",
+        str(report_path),
+        "--threads",
+        str(_detect_default_ck_threads()),
+    ]
+    if quick:
+        cmd.append("--quick")
+    run_cmd(cmd, cwd=PROJECT_ROOT)
+    log(f"  Kernel tuning: {report_path}", C_GREEN)
+    return report_path
+
+
 def step_run_chat(work_dir: Path, args: argparse.Namespace, *, gguf_path: Path | None) -> None:
     log_step(6, "Starting chat")
     kernel_lib = BUILD_DIR / "libckernel_engine.so"
@@ -1150,6 +1173,13 @@ def run_pipeline(args: argparse.Namespace) -> int:
     model_c_path = step_codegen(work_dir, ir_paths, force=args.force_compile)
     lib_path = step_compile(model_c_path, work_dir, force=args.force_compile)
 
+    if getattr(args, "sweep_kernels", False):
+        step_sweep_kernels(
+            work_dir,
+            ir_paths,
+            quick=not getattr(args, "sweep_kernels_full", False),
+        )
+
     if getattr(args, "generate_visualizer", False):
         log(f"\n{C_ORANGE}[viz]{C_RESET} Generating IR visualizer HTML", C_DIM)
         _generate_visualizer_html(work_dir)
@@ -1211,6 +1241,8 @@ Examples:
     run_parser.add_argument("--force-compile", action="store_true")
     run_parser.add_argument("--generate-visualizer", action="store_true")
     run_parser.add_argument("--generate-only", action="store_true")
+    run_parser.add_argument("--sweep-kernels", action="store_true", help="Sweep kernel dispatch choices and write kernel_tuning.json")
+    run_parser.add_argument("--sweep-kernels-full", action="store_true", help="Use the full kernel sweep instead of the quick deployment sweep")
 
     run_parser.add_argument(
         "--mmproj",
