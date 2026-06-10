@@ -2383,7 +2383,32 @@ test-v8-decoder-matrix-quick: ck-cli-v8
 		--repeats $${CK_V8_DECODER_REPEATS:-1} \
 		--json-out build/v8_decoder_matrix_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_DECODER_PROMPT:-128}_n$${CK_V8_DECODER_DECODE:-32}.json
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick
+profile-v8-prefill-ops: ck-cli-v8
+	@echo "Profiling v8 prefill operator costs..."
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/profile_v8_prefill_ops.py \
+		--models $${CK_V8_PROFILE_MODELS:-qwen35-0.8b-q4_k_m,qwen2-0.5b-q4_k_m} \
+		--threads $${CK_NUM_THREADS:-12} \
+		--prompt $${CK_V8_PROFILE_PROMPT:-512} \
+		--decode $${CK_V8_PROFILE_DECODE:-1} \
+		--context-len $${CK_V8_PROFILE_CONTEXT:-1024} \
+		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
+		--json-out build/v8_prefill_ops_profile_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-512}.json
+
+profile-v8-prefill-ops-quick: ck-cli-v8
+	@echo "Profiling v8 prefill operator costs (quick)..."
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/profile_v8_prefill_ops.py \
+		--models $${CK_V8_PROFILE_MODELS:-qwen35-0.8b-q4_k_m,qwen2-0.5b-q4_k_m} \
+		--threads $${CK_NUM_THREADS:-12} \
+		--prompt $${CK_V8_PROFILE_PROMPT:-128} \
+		--decode $${CK_V8_PROFILE_DECODE:-1} \
+		--context-len $${CK_V8_PROFILE_CONTEXT:-1024} \
+		--limit $${CK_V8_PROFILE_LIMIT:-10} \
+		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
+		--json-out build/v8_prefill_ops_profile_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-128}.json
+
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick profile-v8-prefill-ops profile-v8-prefill-ops-quick
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

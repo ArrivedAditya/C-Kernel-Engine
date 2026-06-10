@@ -785,7 +785,7 @@ def step_build_ir(
     return outputs
 
 
-def step_codegen(output_dir: Path, ir_paths: dict[str, Path], *, force: bool = False) -> Path:
+def step_codegen(output_dir: Path, ir_paths: dict[str, Path], *, force: bool = False, profile: bool = False) -> Path:
     log_step(4, "Generating C code")
     model_c_path = output_dir / "model_v8.c"
     if (
@@ -811,6 +811,8 @@ def step_codegen(output_dir: Path, ir_paths: dict[str, Path], *, force: bool = F
         "--output",
         str(model_c_path),
     ]
+    if profile:
+        cmd.append("--profile")
     run_cmd(cmd, cwd=PROJECT_ROOT)
     return model_c_path
 
@@ -1170,7 +1172,7 @@ def run_pipeline(args: argparse.Namespace) -> int:
         context_len=args.context_len,
         logits_layout=args.logits_layout,
     )
-    model_c_path = step_codegen(work_dir, ir_paths, force=args.force_compile)
+    model_c_path = step_codegen(work_dir, ir_paths, force=args.force_compile, profile=args.profile)
     lib_path = step_compile(model_c_path, work_dir, force=args.force_compile)
 
     if getattr(args, "sweep_kernels", False):
@@ -1241,6 +1243,7 @@ Examples:
     run_parser.add_argument("--force-compile", action="store_true")
     run_parser.add_argument("--generate-visualizer", action="store_true")
     run_parser.add_argument("--generate-only", action="store_true")
+    run_parser.add_argument("--profile", action="store_true", help="Emit CK_PROFILE timing wrappers into the generated runtime")
     run_parser.add_argument("--sweep-kernels", action="store_true", help="Sweep kernel dispatch choices and write kernel_tuning.json")
     run_parser.add_argument("--sweep-kernels-full", action="store_true", help="Use the full kernel sweep instead of the quick deployment sweep")
 
