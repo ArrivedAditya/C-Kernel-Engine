@@ -173,6 +173,7 @@ def main() -> int:
     parser.add_argument("--max-n", type=int, default=32768, help="Skip extracted shapes with very large N, such as full-vocab logits")
     parser.add_argument("--max-shapes", type=int, default=8, help="Maximum unique lowered shapes to sweep")
     parser.add_argument("--threads", type=int, default=int(os.getenv("CK_NUM_THREADS", "12")))
+    parser.add_argument("--thread-values", default=None, help="Comma-separated thread counts to sweep; overrides --threads")
     parser.add_argument("--engine-lib", type=Path, default=ROOT / "build" / "libckernel_engine.so")
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--iters", type=int, default=2)
@@ -188,60 +189,63 @@ def main() -> int:
         selected = args.shape or ["qwen2_mlp_down", "nanbeige_mlp_down"]
         shapes_map = {name: SHAPES[name] for name in selected}
     m_values = [16, 128, 512] if args.quick else _parse_csv_ints(args.m_values)
+    thread_values = _parse_csv_ints(args.thread_values) if args.thread_values else [args.threads]
 
     results: list[dict[str, Any]] = []
-    print(f"Q6_K x Q8_K prefill dispatch sweep threads={args.threads}")
-    for shape_name, (n, k) in shapes_map.items():
-        print(f"\nshape={shape_name} N={n} K={k}")
-        for m in m_values:
-            row = _run_one(
-                shape_name=shape_name,
-                m=m,
-                n=n,
-                k=k,
-                mode="row",
-                threads=args.threads,
-                warmup=args.warmup,
-                iters=args.iters,
-                force_2d=False,
-                engine_lib=args.engine_lib,
-            )
-            tiled = _run_one(
-                shape_name=shape_name,
-                m=m,
-                n=n,
-                k=k,
-                mode="2d",
-                threads=args.threads,
-                warmup=args.warmup,
-                iters=args.iters,
-                force_2d=True,
-                engine_lib=args.engine_lib,
-            )
-            results.extend([row, tiled])
-            if row.get("status") == "pass" and tiled.get("status") == "pass":
-                speedup = float(row["best_ms"]) / float(tiled["best_ms"])
-                delta = (float(row["best_ms"]) - float(tiled["best_ms"])) / float(row["best_ms"]) * 100.0
-                checksum_abs_diff = abs(float(row["checksum"]) - float(tiled["checksum"]))
-                checksum_ok = checksum_abs_diff <= CHECKSUM_ABS_TOL
-                row["paired_with"] = "2d"
-                tiled["paired_with"] = "row"
-                row["checksum_abs_diff"] = checksum_abs_diff
-                tiled["checksum_abs_diff"] = checksum_abs_diff
-                row["checksum_match"] = checksum_ok
-                tiled["checksum_match"] = checksum_ok
-                print(
-                    f"M={m:4d} row={row['best_ms']:8.2f}ms "
-                    f"2d={tiled['best_ms']:8.2f}ms speed={speedup:5.3f} "
-                    f"delta={delta:+6.2f}% checksum={'ok' if checksum_ok else 'DIFF'} "
-                    f"diff={checksum_abs_diff:.3e}"
+    print(f"Q6_K x Q8_K prefill dispatch sweep threads={','.join(str(t) for t in thread_values)}")
+    for threads in thread_values:
+        print(f"\nthreads={threads}")
+        for shape_name, (n, k) in shapes_map.items():
+            print(f"\nshape={shape_name} N={n} K={k}")
+            for m in m_values:
+                row = _run_one(
+                    shape_name=shape_name,
+                    m=m,
+                    n=n,
+                    k=k,
+                    mode="row",
+                    threads=threads,
+                    warmup=args.warmup,
+                    iters=args.iters,
+                    force_2d=False,
+                    engine_lib=args.engine_lib,
                 )
-            else:
-                print(f"M={m:4d} FAIL row={row.get('status')} 2d={tiled.get('status')}")
+                tiled = _run_one(
+                    shape_name=shape_name,
+                    m=m,
+                    n=n,
+                    k=k,
+                    mode="2d",
+                    threads=threads,
+                    warmup=args.warmup,
+                    iters=args.iters,
+                    force_2d=True,
+                    engine_lib=args.engine_lib,
+                )
+                results.extend([row, tiled])
+                if row.get("status") == "pass" and tiled.get("status") == "pass":
+                    speedup = float(row["best_ms"]) / float(tiled["best_ms"])
+                    delta = (float(row["best_ms"]) - float(tiled["best_ms"])) / float(row["best_ms"]) * 100.0
+                    checksum_abs_diff = abs(float(row["checksum"]) - float(tiled["checksum"]))
+                    checksum_ok = checksum_abs_diff <= CHECKSUM_ABS_TOL
+                    row["paired_with"] = "2d"
+                    tiled["paired_with"] = "row"
+                    row["checksum_abs_diff"] = checksum_abs_diff
+                    tiled["checksum_abs_diff"] = checksum_abs_diff
+                    row["checksum_match"] = checksum_ok
+                    tiled["checksum_match"] = checksum_ok
+                    print(
+                        f"T={threads:2d} M={m:4d} row={row['best_ms']:8.2f}ms "
+                        f"2d={tiled['best_ms']:8.2f}ms speed={speedup:5.3f} "
+                        f"delta={delta:+6.2f}% checksum={'ok' if checksum_ok else 'DIFF'} "
+                        f"diff={checksum_abs_diff:.3e}"
+                    )
+                else:
+                    print(f"T={threads:2d} M={m:4d} FAIL row={row.get('status')} 2d={tiled.get('status')}")
 
     report = {
         "kind": "q6k_q8k_prefill_dispatch_sweep",
-        "threads": args.threads,
+        "threads": thread_values,
         "engine_lib": str(args.engine_lib),
         "warmup": args.warmup,
         "iters": args.iters,

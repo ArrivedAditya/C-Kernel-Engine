@@ -47,6 +47,8 @@ extern void gemm_nt_q5_0_q8_0(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q8_0_q8_0(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
+extern void gemm_nt_q4_k_q8_k(const void *A, const void *B, const float *bias,
+                                float *C, int M, int N, int K);
 extern void gemm_nt_q6_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q6_k_q8_k_tile(const void *A, const void *B, const float *bias,
@@ -224,6 +226,23 @@ static void work_gemm_nt_q8_0_q8_0(int ith, int nth, void *args)
     );
 }
 
+static void work_gemm_nt_q4_k_q8_k(int ith, int nth, void *args)
+{
+    const gemm_args_t *a = (const gemm_args_t *)args;
+    int dr = (a->M + nth - 1) / nth;
+    int r0 = dr * ith;
+    int r1 = (r0 + dr < a->M) ? (r0 + dr) : a->M;
+    if (r0 >= a->M) return;
+
+    gemm_nt_q4_k_q8_k(
+        (const char *)a->A + (size_t)r0 * a->A_row_bytes,
+        a->B,
+        a->bias,
+        a->C + (size_t)r0 * a->N,
+        r1 - r0, a->N, a->K
+    );
+}
+
 static void work_gemm_nt_q6_k_q8_k(int ith, int nth, void *args)
 {
     const gemm_args_t *a = (const gemm_args_t *)args;
@@ -355,6 +374,38 @@ void gemm_nt_q8_0_q8_0_parallel_dispatch(
         .A_row_bytes = A_row_bytes
     };
     ck_threadpool_dispatch_n(pool, ck_select_gemm_active_threads(pool, M, N, K), work_gemm_nt_q8_0_q8_0, &args);
+}
+
+void gemm_nt_q4_k_q8_k_parallel_dispatch(
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K)
+{
+    /* Q4_K prefill row-splitting is currently a benchmark path, not a default
+     * production path. On local i7 AVX2 testing it was parity-clean but slower
+     * for the Qwen/Qwen3.5 shapes measured by test_threadpool_parity and the
+     * v8 decoder matrix. Keep it opt-in until hardware sweeps show a stable win.
+     */
+    const char *enable_q4_pool = getenv("CK_ENABLE_Q4K_Q8K_PREFILL_POOL");
+    if (!enable_q4_pool || enable_q4_pool[0] == '\0' || enable_q4_pool[0] == '0') {
+        gemm_nt_q4_k_q8_k(A, B, bias, C, M, N, K);
+        return;
+    }
+
+    ck_threadpool_t *pool = ck_threadpool_global();
+    if (!pool || ck_threadpool_n_threads(pool) <= 1 || M <= 1 || ck_should_run_gemm_serial(pool, M, N, K)) {
+        gemm_nt_q4_k_q8_k(A, B, bias, C, M, N, K);
+        return;
+    }
+
+    /* A is Q8_K: row_bytes = (K / QK_K) * sizeof(block_q8_K) */
+    size_t A_row_bytes = (size_t)(K / QK_K) * sizeof(block_q8_K);
+
+    gemm_args_t args = {
+        .A = A, .B = B, .bias = bias, .C = C,
+        .M = M, .N = N, .K = K,
+        .A_row_bytes = A_row_bytes
+    };
+    ck_threadpool_dispatch_n(pool, ck_select_gemm_active_threads(pool, M, N, K), work_gemm_nt_q4_k_q8_k, &args);
 }
 
 void gemm_nt_q6_k_q8_k_parallel_dispatch(
