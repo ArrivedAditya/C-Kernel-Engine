@@ -872,9 +872,14 @@ def save_json_report(results: list[TestResult], filepath: Path, start_time: date
         d = asdict(r)
         # Convert SubTestResult objects to dicts
         d['sub_tests'] = [asdict(st) for st in r.sub_tests]
-        # Don't include full stdout/stderr in JSON (too large)
-        d['stdout'] = ""
-        d['stderr'] = ""
+        # Keep pass reports compact, but preserve bounded failure context so
+        # red dashboard rows explain non-zero exits, timeouts, and setup issues.
+        if r.status in ("fail", "timeout"):
+            d['stdout'] = r.stdout
+            d['stderr'] = r.stderr
+        else:
+            d['stdout'] = ""
+            d['stderr'] = ""
         results_dicts.append(d)
 
     report = {
