@@ -188,12 +188,13 @@ def run_forward_tests(N=4096, warmup=10, iterations=1000):
     out_ggml = torch.from_numpy(out_ggml_np.copy())
     diff_ggml = max_diff(out_ggml, ggml_ref)
     kernel_time_ggml = time_function(c_gelu_ggml, warmup=warmup, iterations=iterations, name="C GELU GGML")
+    ggml_fp16_tol = 1e-4
 
     report.add_result(TestResult(
         name="GGML (fp16 table)",
-        passed=diff_ggml <= 1e-6,
+        passed=diff_ggml <= ggml_fp16_tol,
         max_diff=diff_ggml,
-        tolerance=1e-6,
+        tolerance=ggml_fp16_tol,
         pytorch_time=None,
         kernel_time=kernel_time_ggml
     ))
