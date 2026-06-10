@@ -3627,10 +3627,12 @@ def main() -> None:
                 "layer_attention_policy": qwen35_execution_plan["layer_attention_policy"],
                 "layer_recurrent_policy": qwen35_execution_plan["layer_recurrent_policy"],
                 "layer_kv_policy": qwen35_execution_plan["layer_kv_policy"],
-                # Qwen3.5 contains recurrent stateful layers. Batched prefill
-                # for those layers is not equivalent to autoregressive decode
-                # until the recurrent prefill state update has dedicated parity.
-                "prefill_policy": "sequential_decode",
+                # Qwen3.5 contains recurrent stateful layers. Prefill must run
+                # recurrent kernels over the runtime prompt length, not the
+                # static IR context length. The v8 prefill generator now emits
+                # dynamic num_tokens for those calls, and CK-vs-decode plus
+                # llama.cpp replay parity cover this contract.
+                "prefill_policy": "batched",
                 "sampler_defaults": {
                     "repeat_penalty": 1.12,
                     "repeat_last_n": 96,

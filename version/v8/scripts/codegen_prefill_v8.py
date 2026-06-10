@@ -326,15 +326,30 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
     # Build argument list with substitutions
     args = []
     arg_expr_by_name: Dict[str, str] = {}
+    dynamic_token_arg_names = {
+        "seq_len",
+        "num_tokens",
+        "token_count",
+        "tokens",
+        "rows",
+        "m",
+    }
     for arg in args_list:
         expr = arg.get("expr", "0")
         source = arg.get("source", "")
         name = arg.get("name", "")
+        name_lc = str(name).lower()
 
         # Substitute num_tokens for token count parameters
         if source == "const:1":
             expr = "num_tokens"
         elif source == "dim:seq_len":
+            expr = "num_tokens"
+        elif source in ("param:seq_len", "runtime:seq_len"):
+            expr = "num_tokens"
+        elif name_lc in dynamic_token_arg_names and source in {"dim:_m", "param:_m", "runtime:kv_tokens", "runtime:cache_len"}:
+            expr = "num_tokens"
+        elif name_lc in {"seq_len", "num_tokens", "token_count", "tokens", "rows"} and str(expr).isdigit():
             expr = "num_tokens"
         # For memcpy size, compute dynamically
         elif source == "dim:_memcpy_bytes" and op_type == "residual_save":
