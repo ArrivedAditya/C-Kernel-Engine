@@ -14,6 +14,23 @@
  *
  * Fast path: if M <= 1 or pool has <= 1 thread, calls serial directly.
  *
+ * Q6_K x Q8_K prefill scheduling note:
+ * ------------------------------------
+ * The optional 2D scheduler is a load-balancing tool, not a universally faster
+ * Q6 kernel. Row splitting reuses each Q8_K activation row across the full N
+ * output dimension. Splitting N into tiles creates more independent jobs, but
+ * rereads the same activation tile once per N tile and adds scheduler work.
+ *
+ * Local i7 roofline-style sweeps on 2026-06-09 showed:
+ *   - Qwen2-like MLP-down (N=896, K=4864): 2D was slower through M=256 and
+ *     only +1.4% at M=512.
+ *   - Nanbeige/large-Q6-like MLP-down (N=2560, K=10240): 2D was faster from
+ *     M=16 onward, +5% to +23% depending on M.
+ *
+ * Therefore CK_ENABLE_Q6K_Q8K_2D_PREFILL is still opt-in, and the dispatcher
+ * additionally gates it to wide Q6 shapes by default. Use
+ * CK_FORCE_Q6K_Q8K_2D_PREFILL=1 only for benchmarking raw 2D behavior.
+ *
  * Reuses the same global thread pool as decode (ck_threadpool_global()).
  */
 
@@ -32,6 +49,11 @@ extern void gemm_nt_q8_0_q8_0(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q6_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
+extern void gemm_nt_q6_k_q8_k_tile(const void *A, const void *B, const float *bias,
+                                    float *C, int M, int N, int K,
+                                    int m0, int m1, int n0, int n1);
+extern void gemm_nt_q6_k_q8_k_tiled(const void *A, const void *B, const float *bias,
+                                      float *C, int M, int N, int K);
 extern void gemm_nt_q5_1_q8_1(const float *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q5_k(const float *A, const void *B, const float *bias,
@@ -70,6 +92,8 @@ typedef struct {
     int          N;           /* Output dimension */
     int          K;           /* Input dimension */
     size_t       A_row_bytes; /* Bytes per row of A (for pointer arithmetic) */
+    int          tile_m;      /* 2D scheduler token tile height */
+    int          tile_n;      /* 2D scheduler output tile width */
 } gemm_args_t;
 
 static int ck_min_int(int a, int b) { return a < b ? a : b; }
@@ -89,6 +113,45 @@ static int ck_env_int_or2(const char *primary, const char *secondary, int fallba
     return parsed > 0 ? parsed : fallback;
 }
 
+static int ck_ceil_div_int(int a, int b)
+{
+    return (a + b - 1) / b;
+}
+
+static int ck_select_gemm_active_threads(const ck_threadpool_t *pool, int M, int N, int K);
+
+static int ck_q6k_q8k_2d_prefill_forced(void)
+{
+    return ck_env_enabled("CK_FORCE_Q6K_Q8K_2D_PREFILL");
+}
+
+static int ck_should_use_q6k_q8k_2d_prefill(const ck_threadpool_t *pool,
+                                             int M, int N, int K,
+                                             int tile_m, int tile_n)
+{
+    if (!ck_env_enabled("CK_ENABLE_Q6K_Q8K_2D_PREFILL")) return 0;
+    if (ck_q6k_q8k_2d_prefill_forced()) return 1;
+    if (!pool || ck_threadpool_n_threads(pool) <= 1) return 0;
+    if (M <= 1 || N <= 0 || K <= 0) return 0;
+    if (K % QK_K != 0) return 0;
+
+    const int tm = tile_m > 0 ? tile_m : 16;
+    const int tn = tile_n > 0 ? tile_n : 256;
+    const int mt = ck_ceil_div_int(M, tm);
+    const int nt = ck_ceil_div_int(N, tn);
+    const int jobs = mt * nt;
+    const int active = ck_select_gemm_active_threads(pool, M, N, K);
+
+    if (jobs < active * 2) return 0;
+
+    /* 2D tiling pays off only when the output dimension is wide enough that
+     * N-side job balance offsets the extra activation rereads. Narrow MLP-down
+     * shapes such as Qwen2/Gemma/Qwen3.5 remain faster with row splitting. */
+    if (N < 2048 || K < 8192) return 0;
+
+    return 1;
+}
+
 static int ck_shape_aware_enabled(const ck_threadpool_t *pool)
 {
     const int pool_threads = ck_threadpool_n_threads(pool);
@@ -102,8 +165,14 @@ static int ck_select_gemm_active_threads(const ck_threadpool_t *pool, int M, int
     const int pool_threads = ck_threadpool_n_threads(pool);
     if (pool_threads <= 1 || M <= 1 || N <= 0 || K <= 0) return 1;
     if (!ck_shape_aware_enabled(pool)) return pool_threads;
+
+    if (getenv("CK_GEMM_THREAD_CAP") || getenv("CK_GEMV_THREAD_CAP")) {
+        return ck_min_int(pool_threads,
+                          ck_env_int_or2("CK_GEMM_THREAD_CAP", "CK_GEMV_THREAD_CAP", pool_threads));
+    }
+
     if (N >= 4096 || K >= 4096) return pool_threads;
-    if (M >= 512) return ck_min_int(pool_threads, ck_env_int_or2("CK_GEMM_THREAD_CAP", "CK_GEMV_THREAD_CAP", 24));
+    if (M >= 512) return ck_min_int(pool_threads, 24);
     return pool_threads;
 }
 
@@ -163,13 +232,46 @@ static void work_gemm_nt_q6_k_q8_k(int ith, int nth, void *args)
     int r1 = (r0 + dr < a->M) ? (r0 + dr) : a->M;
     if (r0 >= a->M) return;
 
-    gemm_nt_q6_k_q8_k(
-        (const char *)a->A + (size_t)r0 * a->A_row_bytes,
-        a->B,
-        a->bias,
-        a->C + (size_t)r0 * a->N,
-        r1 - r0, a->N, a->K
-    );
+    if (ck_env_enabled("CK_ENABLE_Q6K_Q8K_TILED_PREFILL")) {
+        gemm_nt_q6_k_q8_k_tiled(
+            (const char *)a->A + (size_t)r0 * a->A_row_bytes,
+            a->B,
+            a->bias,
+            a->C + (size_t)r0 * a->N,
+            r1 - r0, a->N, a->K
+        );
+    } else {
+        gemm_nt_q6_k_q8_k(
+            (const char *)a->A + (size_t)r0 * a->A_row_bytes,
+            a->B,
+            a->bias,
+            a->C + (size_t)r0 * a->N,
+            r1 - r0, a->N, a->K
+        );
+    }
+}
+
+static void work_gemm_nt_q6_k_q8_k_2d(int ith, int nth, void *args)
+{
+    const gemm_args_t *a = (const gemm_args_t *)args;
+    if (!a || ith < 0 || nth <= 0 || ith >= nth) return;
+
+    const int tile_m = a->tile_m > 0 ? a->tile_m : 16;
+    const int tile_n = a->tile_n > 0 ? a->tile_n : 256;
+    const int mt = ck_ceil_div_int(a->M, tile_m);
+    const int nt = ck_ceil_div_int(a->N, tile_n);
+    const int total = mt * nt;
+
+    for (int job = ith; job < total; job += nth) {
+        const int jm = job % mt;
+        const int jn = job / mt;
+        const int m0 = jm * tile_m;
+        const int m1 = ck_min_int(m0 + tile_m, a->M);
+        const int n0 = jn * tile_n;
+        const int n1 = ck_min_int(n0 + tile_n, a->N);
+        gemm_nt_q6_k_q8_k_tile(a->A, a->B, a->bias, a->C,
+                               a->M, a->N, a->K, m0, m1, n0, n1);
+    }
 }
 
 static void work_gemm_nt_q5_1_q8_1(int ith, int nth, void *args)
@@ -271,9 +373,16 @@ void gemm_nt_q6_k_q8_k_parallel_dispatch(
     gemm_args_t args = {
         .A = A, .B = B, .bias = bias, .C = C,
         .M = M, .N = N, .K = K,
-        .A_row_bytes = A_row_bytes
+        .A_row_bytes = A_row_bytes,
+        .tile_m = ck_env_int_or2("CK_PREFILL_TILE_M", NULL, 16),
+        .tile_n = ck_env_int_or2("CK_PREFILL_TILE_N", NULL, 256)
     };
-    ck_threadpool_dispatch_n(pool, ck_select_gemm_active_threads(pool, M, N, K), work_gemm_nt_q6_k_q8_k, &args);
+    const int active = ck_select_gemm_active_threads(pool, M, N, K);
+    if (ck_should_use_q6k_q8k_2d_prefill(pool, M, N, K, args.tile_m, args.tile_n)) {
+        ck_threadpool_dispatch_n(pool, active, work_gemm_nt_q6_k_q8_k_2d, &args);
+    } else {
+        ck_threadpool_dispatch_n(pool, active, work_gemm_nt_q6_k_q8_k, &args);
+    }
 }
 
 void gemm_nt_q5_1_q8_1_parallel_dispatch(

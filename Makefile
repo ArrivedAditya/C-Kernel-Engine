@@ -2309,7 +2309,46 @@ test-threadpool-parity-verbose: $(THREADPOOL_BIN)
 	@echo "Running Thread Pool GEMV parity + speed test (verbose)..."
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(THREADPOOL_BIN) --verbose
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose
+# Representative Gemma4-sized Q6_K x Q8_K prefill dispatch benchmark.
+# This is benchmark/dispatch coverage, not a correctness gate for every PR.
+# It compares token-row splitting against the opt-in 2D tile scheduler on
+# M=1024, N=2560, K=10240 unless overridden by CLI args.
+test-q6k-prefill-tile-bench: $(LIB)
+	@echo "Running Q6_K x Q8_K prefill tile benchmark (Gemma4-sized)..."
+	CK_Q6K_Q8K_SIMD=1 CK_NUM_THREADS=$${CK_NUM_THREADS:-24} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_q6k_prefill_tile.py --iters 4 --warmup 1 --threads $${CK_NUM_THREADS:-24}
+
+test-q6k-prefill-tile-bench-quick: $(LIB)
+	@echo "Running Q6_K x Q8_K prefill tile benchmark (quick)..."
+	CK_Q6K_Q8K_SIMD=1 CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_q6k_prefill_tile.py --iters 2 --warmup 1 --threads $${CK_NUM_THREADS:-12}
+
+test-q6k-prefill-dispatch-sweep: $(LIB)
+	@echo "Running Q6_K x Q8_K prefill dispatch sweep..."
+	CK_Q6K_Q8K_SIMD=1 CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/sweep_q6k_prefill_dispatch.py \
+		--threads $${CK_NUM_THREADS:-12} --engine-lib build/libckernel_engine.so \
+		--json-out build/q6k_prefill_dispatch_sweep.json
+
+test-q6k-prefill-dispatch-sweep-quick: $(LIB)
+	@echo "Running Q6_K x Q8_K prefill dispatch sweep (quick)..."
+	CK_Q6K_Q8K_SIMD=1 CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/sweep_q6k_prefill_dispatch.py --quick \
+		--threads $${CK_NUM_THREADS:-12} --engine-lib build/libckernel_engine.so \
+		--json-out build/q6k_prefill_dispatch_sweep_quick.json
+
+test-q6k-prefill-dispatch-sweep-avx2:
+	@if [ ! -f build_avx2/libckernel_engine.so ]; then \
+		echo "SKIP: build_avx2/libckernel_engine.so not found. Run the ISA variant build first."; \
+		exit 0; \
+	fi
+	@echo "Running Q6_K x Q8_K prefill dispatch sweep (AVX2 library)..."
+	CK_Q6K_Q8K_SIMD=1 CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/sweep_q6k_prefill_dispatch.py --quick \
+		--threads $${CK_NUM_THREADS:-12} --engine-lib build_avx2/libckernel_engine.so \
+		--json-out build/q6k_prefill_dispatch_sweep_avx2.json
+
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

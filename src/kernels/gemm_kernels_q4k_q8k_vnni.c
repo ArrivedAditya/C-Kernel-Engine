@@ -125,3 +125,48 @@ void gemv_q4_k_q8_k_vnni(float *y,
      */
     gemv_q4_k_q8_k_ref(y, W, x_q8, M, K);
 }
+
+
+void gemv_q4_k_q8_k_parallel_vnni(float *y,
+                                  const void *W,
+                                  const void *x_q8,
+                                  int M, int K,
+                                  int ith, int nth)
+{
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+    if (!y || !W || !x_q8 || M <= 0 || K <= 0) {
+        return;
+    }
+    if (ith < 0 || nth <= 0 || ith >= nth) {
+        return;
+    }
+
+    const int dr = (M + nth - 1) / nth;
+    const int r0 = dr * ith;
+    const int r1 = (r0 + dr < M) ? (r0 + dr) : M;
+    if (r0 >= M) {
+        return;
+    }
+
+    const block_q4_K *blocks = (const block_q4_K *)W;
+    const block_q8_K *x = (const block_q8_K *)x_q8;
+    const int blocks_per_row = K / QK_K;
+
+    for (int row = r0; row < r1; ++row) {
+        const block_q4_K *w_row = blocks + (size_t)row * (size_t)blocks_per_row;
+        float sum = 0.0f;
+        for (int b = 0; b < blocks_per_row; ++b) {
+            sum += dot_q4_k_q8_k_vnni_block(&w_row[b], &x[b]);
+        }
+        y[row] = sum;
+    }
+#else
+    (void)y;
+    (void)W;
+    (void)x_q8;
+    (void)M;
+    (void)K;
+    (void)ith;
+    (void)nth;
+#endif
+}
