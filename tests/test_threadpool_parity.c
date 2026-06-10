@@ -15,6 +15,7 @@
  *   6. gemm_nt_q5_0_q8_0    vs  gemm_nt_q5_0_q8_0_parallel_dispatch    (Q/K proj, out proj, MLP gate+up)
  *   7. gemm_nt_q8_0_q8_0    vs  gemm_nt_q8_0_q8_0_parallel_dispatch    (V proj)
  *   8. gemm_nt_q6_k_q8_k    vs  gemm_nt_q6_k_q8_k_parallel_dispatch    (MLP down proj)
+ *   9. gemm_nt_q4_k_q8_k    vs  gemm_nt_q4_k_q8_k_parallel_dispatch    (Q4_K proj)
  *
  * ADR: Thread pool vs OpenMP
  *   - OpenMP fork/join creates threads per #pragma region (~15-50us overhead)
@@ -170,6 +171,8 @@ extern void gemm_nt_q8_0_q8_0(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q6_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
+extern void gemm_nt_q4_k_q8_k(const void *A, const void *B, const float *bias,
+                                float *C, int M, int N, int K);
 
 /* GEMM kernel declarations (thread pool dispatch from ck_parallel_prefill.c) */
 extern void gemm_nt_q5_0_q8_0_parallel_dispatch(const void *A, const void *B,
@@ -179,6 +182,9 @@ extern void gemm_nt_q8_0_q8_0_parallel_dispatch(const void *A, const void *B,
                                                    const float *bias, float *C,
                                                    int M, int N, int K);
 extern void gemm_nt_q6_k_q8_k_parallel_dispatch(const void *A, const void *B,
+                                                   const float *bias, float *C,
+                                                   int M, int N, int K);
+extern void gemm_nt_q4_k_q8_k_parallel_dispatch(const void *A, const void *B,
                                                    const float *bias, float *C,
                                                    int M, int N, int K);
 
@@ -311,6 +317,50 @@ static double bench_gemm(gemm_fn_t fn, const void *A, const void *B,
     return (t1 - t0) / iters;
 }
 
+/* Simple Q4_K quantization for test data (lossy but deterministic).
+ * This is only for serial-vs-dispatch parity: both paths consume the same
+ * synthetic Q4_K blocks, so exact reconstruction quality is not the target.
+ */
+static void quantize_to_q4_K(const float *src, void *dst, int M, int K) {
+    block_q4_K *blocks = (block_q4_K *)dst;
+    const int blocks_per_row = K / QK_K;  /* QK_K = 256 */
+
+    for (int row = 0; row < M; row++) {
+        for (int b = 0; b < blocks_per_row; b++) {
+            const float *wp = &src[row * K + b * QK_K];
+            block_q4_K *blk = &blocks[row * blocks_per_row + b];
+
+            float amax = 0.0f;
+            for (int i = 0; i < QK_K; i++) {
+                float a = fabsf(wp[i]);
+                if (a > amax) amax = a;
+            }
+
+            float d = amax / 15.0f;
+            float id = (d != 0.0f) ? 1.0f / d : 0.0f;
+            blk->d = fp32_to_fp16(d);
+            blk->dmin = fp32_to_fp16(0.0f);
+
+            memset(blk->scales, 0, sizeof(blk->scales));
+            for (int i = 0; i < 4; i++) blk->scales[i] = 1;      /* sc[0..3] */
+            for (int i = 8; i < 12; i++) blk->scales[i] = 1;     /* sc[4..7] low nibble */
+            memset(blk->qs, 0, sizeof(blk->qs));
+
+            for (int iter = 0; iter < 4; iter++) {
+                uint8_t *qs = &blk->qs[iter * 32];
+                const int base = iter * 64;
+                for (int l = 0; l < 32; l++) {
+                    int q0 = (int)(fabsf(wp[base + l]) * id + 0.5f);
+                    int q1 = (int)(fabsf(wp[base + 32 + l]) * id + 0.5f);
+                    if (q0 < 0) q0 = 0; if (q0 > 15) q0 = 15;
+                    if (q1 < 0) q1 = 0; if (q1 > 15) q1 = 15;
+                    qs[l] = (uint8_t)((q0 & 0x0F) | ((q1 & 0x0F) << 4));
+                }
+            }
+        }
+    }
+}
+
 /* Simple Q6_K quantization for test data (lossy but deterministic) */
 static void quantize_to_q6_K(const float *src, void *dst, int M, int K) {
     block_q6_K *blocks = (block_q6_K *)dst;
@@ -412,6 +462,7 @@ static int run_gemm_test(const char *test_name,
                           int B_is_q5,  /* 1 = Q5_0 weights, 0 = Q8_0 weights */
                           int A_is_q8_K,  /* 1 = Q8_K activations, 0 = Q8_0 activations */
                           int B_is_q6_K,  /* 1 = Q6_K weights */
+                          int B_is_q4_K,  /* 1 = Q4_K weights */
                           gemm_test_config_t *configs,
                           int warmup, int iters, float abs_tol, int verbose) {
     int pass_count = 0, fail_count = 0;
@@ -454,6 +505,8 @@ static int run_gemm_test(const char *test_name,
         /* Quantize B (weights) */
         if (B_is_q6_K) {
             quantize_to_q6_K(B_fp32, B_q, N, K);
+        } else if (B_is_q4_K) {
+            quantize_to_q4_K(B_fp32, B_q, N, K);
         } else if (B_is_q5) {
             quantize_to_q5_0(B_fp32, B_q, N, K);
         } else {
@@ -805,6 +858,7 @@ int main(int argc, char **argv) {
         1,  /* B_is_q5 */
         0,  /* A_is_q8_K */
         0,  /* B_is_q6_K */
+        0,  /* B_is_q4_K */
         gemm_cfgs, warmup, iters, abs_tol, verbose
     );
 
@@ -826,6 +880,7 @@ int main(int argc, char **argv) {
         0,  /* B_is_q5 */
         0,  /* A_is_q8_K */
         0,  /* B_is_q6_K */
+        0,  /* B_is_q4_K */
         gemm_cfgs, warmup, iters, abs_tol, verbose
     );
 
@@ -860,7 +915,45 @@ int main(int argc, char **argv) {
                 0,  /* B_is_q5 */
                 1,  /* A_is_q8_K */
                 1,  /* B_is_q6_K */
+                0,  /* B_is_q4_K */
                 q6k_configs, warmup, iters, abs_tol, verbose
+            );
+        } else {
+            printf("\n  (Skipped: no configs with K %% 256 == 0)\n");
+        }
+    }
+
+    /* =========================================================================
+     * Test 9: gemm_nt_q4_k_q8_k serial vs thread pool dispatch
+     *         (Q8_K activations x Q4_K weights — Q/K/out/MLP proj)
+     * ========================================================================= */
+    printf("\n");
+    printf("================================================================================\n");
+    printf("  TEST 9: gemm_nt_q4_k_q8_k (serial) vs\n");
+    printf("          gemm_nt_q4_k_q8_k_parallel_dispatch (pool) [prefill]\n");
+    printf("================================================================================\n");
+
+    {
+        gemm_test_config_t q4k_configs[16];
+        int q4k_count = 0;
+        for (int c = 0; gemm_cfgs[c].name && q4k_count < 15; c++) {
+            if (gemm_cfgs[c].K % QK_K == 0) {
+                q4k_configs[q4k_count++] = gemm_cfgs[c];
+            }
+        }
+        q4k_configs[q4k_count] = (gemm_test_config_t){NULL, 0, 0, 0};
+
+        if (q4k_count > 0) {
+            total_fail += run_gemm_test(
+                "q4_k_q8_k",
+                gemm_nt_q4_k_q8_k, gemm_nt_q4_k_q8_k_parallel_dispatch,
+                QK_K, sizeof(block_q8_K),   /* A = Q8_K */
+                QK_K, sizeof(block_q4_K),   /* B = Q4_K */
+                0,  /* B_is_q5 */
+                1,  /* A_is_q8_K */
+                0,  /* B_is_q6_K */
+                1,  /* B_is_q4_K */
+                q4k_configs, warmup, iters, abs_tol, verbose
             );
         } else {
             printf("\n  (Skipped: no configs with K %% 256 == 0)\n");
@@ -874,7 +967,7 @@ int main(int argc, char **argv) {
     printf("  SUMMARY\n");
     printf("================================================================================\n");
     printf("  Thread pool:   %d threads\n", n_threads);
-    printf("  Tests:         GEMV decode (1-5) + GEMM prefill (6-8)\n");
+    printf("  Tests:         GEMV decode (1-5) + GEMM prefill (6-9)\n");
     printf("  Failed:        %d\n", total_fail);
     printf("================================================================================\n");
 

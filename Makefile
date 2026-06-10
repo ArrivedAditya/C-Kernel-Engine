@@ -2286,13 +2286,14 @@ test-gemv-omp-verbose: $(GEMV_OMP_BIN)
 
 THREADPOOL_BIN := $(BUILD_DIR)/test_threadpool_parity
 V66_SRC_DIR    := version/v6.6/src
+V8_SRC_DIR     := version/v8/src
 
-$(THREADPOOL_BIN): $(LIB) tests/test_threadpool_parity.c $(V66_SRC_DIR)/ck_parallel_decode.c $(V66_SRC_DIR)/ck_parallel_prefill.c
+$(THREADPOOL_BIN): $(LIB) tests/test_threadpool_parity.c $(V66_SRC_DIR)/ck_parallel_decode.c $(V8_SRC_DIR)/ck_parallel_prefill_v8.c
 	@mkdir -p $(BUILD_DIR)
-	$(CC) -O3 -march=native -Iinclude -I$(V66_SRC_DIR) \
+	$(CC) -O3 -march=native -Iinclude -I$(V66_SRC_DIR) -I$(V8_SRC_DIR) \
 		tests/test_threadpool_parity.c \
 		$(V66_SRC_DIR)/ck_parallel_decode.c \
-		$(V66_SRC_DIR)/ck_parallel_prefill.c \
+		$(V8_SRC_DIR)/ck_parallel_prefill_v8.c \
 		-L$(BUILD_DIR) -lckernel_engine -lm -lpthread \
 		-Wl,-rpath,$(BUILD_DIR) \
 		-o $(THREADPOOL_BIN)
@@ -2348,7 +2349,41 @@ test-q6k-prefill-dispatch-sweep-avx2:
 		--threads $${CK_NUM_THREADS:-12} --engine-lib build_avx2/libckernel_engine.so \
 		--json-out build/q6k_prefill_dispatch_sweep_avx2.json
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2
+test-q6k-prefill-thread-sweep-quick: $(LIB)
+	@echo "Running Q6_K x Q8_K prefill thread sweep (quick)..."
+	CK_Q6K_Q8K_SIMD=1 OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/sweep_q6k_prefill_dispatch.py \
+		--shape $${CK_Q6K_SWEEP_SHAPE:-qwen2_mlp_down} \
+		--m-values $${CK_Q6K_SWEEP_M:-128} \
+		--thread-values $${CK_Q6K_SWEEP_THREADS:-1,2,4,8,12,24,48} \
+		--warmup $${CK_Q6K_SWEEP_WARMUP:-1} \
+		--iters $${CK_Q6K_SWEEP_ITERS:-2} \
+		--engine-lib build/libckernel_engine.so \
+		--json-out build/q6k_prefill_$${CK_Q6K_SWEEP_SHAPE:-qwen2_mlp_down}_thread_sweep.json
+
+test-v8-decoder-matrix: ck-cli-v8
+	@echo "Running v8 decoder matrix benchmark (CKE vs llama.cpp)..."
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_v8_decoder_matrix.py \
+		--models $${CK_V8_DECODER_MODELS:-all} \
+		--threads $${CK_NUM_THREADS:-12} \
+		--prompt $${CK_V8_DECODER_PROMPT:-512} \
+		--decode $${CK_V8_DECODER_DECODE:-128} \
+		--repeats $${CK_V8_DECODER_REPEATS:-1} \
+		--json-out build/v8_decoder_matrix_t$${CK_NUM_THREADS:-12}_p$${CK_V8_DECODER_PROMPT:-512}_n$${CK_V8_DECODER_DECODE:-128}.json
+
+test-v8-decoder-matrix-quick: ck-cli-v8
+	@echo "Running v8 decoder matrix benchmark (quick, CKE vs llama.cpp)..."
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_v8_decoder_matrix.py \
+		--models $${CK_V8_DECODER_MODELS:-qwen35-0.8b-q4_k_m,qwen2-0.5b-q4_k_m} \
+		--threads $${CK_NUM_THREADS:-12} \
+		--prompt $${CK_V8_DECODER_PROMPT:-128} \
+		--decode $${CK_V8_DECODER_DECODE:-32} \
+		--repeats $${CK_V8_DECODER_REPEATS:-1} \
+		--json-out build/v8_decoder_matrix_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_DECODER_PROMPT:-128}_n$${CK_V8_DECODER_DECODE:-32}.json
+
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

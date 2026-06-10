@@ -18,6 +18,7 @@
  * Kernel types:
  *   - gemm_nt_q5_0_q8_0: Q8_0 activations x Q5_0 weights (Q/K proj, out proj, MLP gate+up)
  *   - gemm_nt_q8_0_q8_0: Q8_0 activations x Q8_0 weights (V proj)
+ *   - gemm_nt_q4_k_q8_k: Q8_K activations x Q4_K weights (Q/K/out/MLP proj)
  *   - gemm_nt_q6_k_q8_k: Q8_K activations x Q6_K weights (MLP down proj)
  *   - gemm_nt_q5_1_q8_1: FP32 activations x Q5_1 weights
  *   - gemm_nt_q5_k:      FP32 activations x Q5_K weights
@@ -45,6 +46,10 @@ void gemm_nt_q8_0_q8_0_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
     int M, int N, int K);
 
+void gemm_nt_q4_k_q8_k_parallel_dispatch(
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K);
+
 void gemm_nt_q6_k_q8_k_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
     int M, int N, int K);
@@ -66,6 +71,9 @@ void gemm_nt_q5_k_parallel_dispatch(
 
 #define gemm_nt_q8_0_q8_0(A, B, bias, C, M, N, K) \
     gemm_nt_q8_0_q8_0_parallel_dispatch(A, B, bias, C, M, N, K)
+
+#define gemm_nt_q4_k_q8_k(A, B, bias, C, M, N, K) \
+    gemm_nt_q4_k_q8_k_parallel_dispatch(A, B, bias, C, M, N, K)
 
 #define gemm_nt_q6_k_q8_k(A, B, bias, C, M, N, K) \
     gemm_nt_q6_k_q8_k_parallel_dispatch(A, B, bias, C, M, N, K)
