@@ -5731,7 +5731,10 @@ def generate_ir_lower_1(
         # Special handling for residual_save/memcpy: compute _memcpy_bytes
         if op_name == "residual_save":
             embed_dim = manifest.get("config", {}).get("embed_dim", 896)
-            seq_len = 1 if mode == "decode" else manifest.get("config", {}).get("context_length", 2048)
+            seq_len = int(lowered_op["params"].get(
+                "seq_len",
+                1 if mode == "decode" else manifest.get("config", {}).get("context_length", 2048),
+            ))
             lowered_op["params"]["_memcpy_bytes"] = embed_dim * seq_len * 4  # FP32 = 4 bytes
         elif op_name == "kv_cache_batch_copy":
             # NOTE: "batch" here means a token block in prefill, not multi-request batching.
