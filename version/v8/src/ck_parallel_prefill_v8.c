@@ -49,6 +49,7 @@ extern void gemm_nt_q8_0_q8_0(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q4_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
+extern void gemv_q4_k_q8_k(float *y, const void *W, const void *x_q8, int M, int K);
 extern void gemm_nt_q6_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q6_k_q8_k_tile(const void *A, const void *B, const float *bias,
@@ -234,13 +235,21 @@ static void work_gemm_nt_q4_k_q8_k(int ith, int nth, void *args)
     int r1 = (r0 + dr < a->M) ? (r0 + dr) : a->M;
     if (r0 >= a->M) return;
 
-    gemm_nt_q4_k_q8_k(
-        (const char *)a->A + (size_t)r0 * a->A_row_bytes,
-        a->B,
-        a->bias,
-        a->C + (size_t)r0 * a->N,
-        r1 - r0, a->N, a->K
-    );
+    /* Do not call gemm_nt_q4_k_q8_k() here: that raw implementation can
+     * start its own internal output-row threadpool for large Q4_K shapes.
+     * This worker already runs inside the v8 prefill pool, so nesting the
+     * same pool can corrupt scheduling and parity. Use the one-token GEMV
+     * primitive directly for each assigned token row. */
+    for (int m = r0; m < r1; ++m) {
+        const void *x_row = (const char *)a->A + (size_t)m * a->A_row_bytes;
+        float *c_row = a->C + (size_t)m * (size_t)a->N;
+        gemv_q4_k_q8_k(c_row, a->B, x_row, a->N, a->K);
+        if (a->bias) {
+            for (int n = 0; n < a->N; ++n) {
+                c_row[n] += a->bias[n];
+            }
+        }
+    }
 }
 
 static void work_gemm_nt_q6_k_q8_k(int ith, int nth, void *args)
