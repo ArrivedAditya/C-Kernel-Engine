@@ -37,6 +37,7 @@ SHAPES: dict[str, dict[str, Any]] = {
     "qwen35_gate_up_q4_k_smoke": {"kind": "q4_k", "N": 512, "K": 1024},
     "qwen35_gate_up_q4_k": {"kind": "q4_k", "N": 3584, "K": 1024},
     "nanbeige_gate_up_q4_k": {"kind": "q4_k", "N": 10496, "K": 2560},
+    "gemma4_gate_up_q4_k": {"kind": "q4_k", "N": 10240, "K": 2560},
 }
 
 
@@ -201,14 +202,23 @@ def _run_one(engine: ctypes.CDLL, model: ctypes.CDLL, *, shape: str, kind: str, 
     c_pool = (ctypes.c_float * (m * n))()
     serial, dispatch = _bind(engine, model, kind)
 
+    os.environ["CK_NUM_THREADS"] = str(threads)
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+    if hasattr(engine, "ck_threadpool_global_destroy"):
+        engine.ck_threadpool_global_destroy.argtypes = []
+        engine.ck_threadpool_global_destroy.restype = None
+        engine.ck_threadpool_global_destroy()
+    elif hasattr(engine, "ck_threadpool_shutdown"):
+        engine.ck_threadpool_shutdown.argtypes = []
+        engine.ck_threadpool_shutdown.restype = None
+        engine.ck_threadpool_shutdown()
+
     if hasattr(engine, "ck_set_num_threads"):
         engine.ck_set_num_threads.argtypes = [ctypes.c_int]
         engine.ck_set_num_threads(threads)
     if hasattr(model, "ck_parallel_prefill_init"):
         model.ck_parallel_prefill_init()
-
-    os.environ["CK_NUM_THREADS"] = str(threads)
-    os.environ.setdefault("OMP_NUM_THREADS", "1")
     if kind == "q4_k":
         os.environ["CK_ENABLE_Q4K_Q8K_PREFILL_POOL"] = "1"
 
