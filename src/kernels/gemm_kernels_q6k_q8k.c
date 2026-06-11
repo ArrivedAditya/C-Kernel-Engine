@@ -1197,6 +1197,10 @@ void gemv_q6_k_q8_k_parallel_simd(float *y,
     }
 }
 
+static inline float ck_dot_q6_k_q8_k_fast_or_ref(const block_q6_K *w,
+                                                  const block_q8_K *x,
+                                                  int K);
+
 /**
  * @brief GEMM: Y = W @ X^T where W is Q6_K and X is Q8_K
  *
@@ -1254,20 +1258,25 @@ void gemm_nt_q6_k_q8_k(const void *A_q8,
         return;
     }
 
-    gemm_q6_k_q8_k(C, B, A_q8, /*M_out=*/N, /*N_batch=*/M, K);
+    /* Prefill GEMM is the hot Qwen2/Qwen3.5 MLP-down path. Keep decode
+     * gemv_q6_k_q8_k() conservative, but allow GEMM/prefill to use the
+     * parity-gated SIMD dot helper by default. CK strict parity and
+     * CK_DEBUG_Q6K_Q8K_REF=1 still force the scalar reference reduction. */
+    const block_q8_K *A = (const block_q8_K *)A_q8;
+    const block_q6_K *W = (const block_q6_K *)B;
+    const int blocks_per_vec = K / QK_K;
+    const int blocks_per_row = K / QK_K;
 
-    if (!bias) {
-        return;
-    }
-
-    for (int i = 0; i < M; ++i) {
-        float *row = C + (size_t)i * (size_t)N;
-        for (int j = 0; j < N; ++j) {
-            row[j] += bias[j];
+    for (int m = 0; m < M; ++m) {
+        const block_q8_K *a_row = A + (size_t)m * (size_t)blocks_per_vec;
+        float *c_row = C + (size_t)m * (size_t)N;
+        for (int n = 0; n < N; ++n) {
+            const block_q6_K *w_row = W + (size_t)n * (size_t)blocks_per_row;
+            const float b = bias ? bias[n] : 0.0f;
+            c_row[n] = ck_dot_q6_k_q8_k_fast_or_ref(w_row, a_row, K) + b;
         }
     }
 }
-
 
 static inline float ck_dot_q6_k_q8_k_fast_or_ref(const block_q6_K *w,
                                                   const block_q8_K *x,
