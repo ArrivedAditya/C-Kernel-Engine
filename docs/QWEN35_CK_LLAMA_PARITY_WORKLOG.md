@@ -942,3 +942,38 @@ llama's hybrid/chunked prompt-state evolution currently have compensating
 differences. The next safe target is to compare recurrent state and q/k norm
 across the prompt boundary, especially token 30 -> generated token 31, before
 applying any formula change.
+
+## 2026-06-11: Q4_K/Q8_K AVX-512 VNNI default policy
+
+Pulled PR #38 (`221f0ae8`), which added the v8 prefill op profiler and routed
+Q6_K prefill GEMM through the parity-gated SIMD dot helper. Profiling on the
+5th Gen Xeon showed the remaining prefill hot spot is Q4_K x Q8_K, especially
+`mlp_gate_up`:
+
+- Qwen3.5 p128/t12 scalar opt-out (`CK_ENABLE_Q4K_Q8K_VNNI_FAST=0`):
+  `958.9 ms`, `133.5 tok/s`; `mlp_gate_up=353.5 ms`.
+- Qwen3.5 p128/t12 VNNI default: `616.4 ms`, `207.6 tok/s`;
+  `mlp_gate_up=165.2 ms`.
+- Gemma4 p64/t12 scalar opt-out: `4084.4 ms`, `15.7 tok/s`;
+  `mlp_gate_up=1767.6 ms`.
+- Gemma4 p64/t12 VNNI default: `3042.5 ms`, `21.0 tok/s`;
+  `mlp_gate_up=1108.2 ms`.
+
+The first attempt only changed `gemv_q4_k_q8_k_vnni()`, but v8 parallel decode
+still gated `gemv_q4_k_q8_k_parallel_vnni()` behind
+`CK_ENABLE_Q4K_Q8K_VNNI_FAST=1`. After updating the v8 dispatch wrapper too,
+default Qwen3.5 one-step parity matches the explicit fast path:
+
+- default VNNI: one-step pass; 16-token probe diverges at step 12
+  (`ck_next=3511`, `llama_next=11`, cosine `0.999356`, RMSE `0.142286`,
+  top-k overlap `16/16`).
+- scalar opt-out: step-0 divergence (`ck_next=4434`, `llama_next=14542`,
+  cosine `0.998865`, RMSE `0.171412`, top-k overlap `15/16`).
+
+Policy: AVX-512/VNNI hosts now use Q4_K x Q8_K VNNI by default when strict
+parity is off. `CK_ENABLE_Q4K_Q8K_VNNI_FAST=0`, `CK_DEBUG_Q4K_Q8_REF=1`, or
+strict parity keep the scalar/reference path for attribution. This is a real
+prefill speed win and also improves the current Qwen3.5 divergence point, but
+it does not close full CK-vs-llama parity. The next speed target remains a
+proper packed/tiled Q4_K prefill GEMM/microkernel because row-threadpool
+scheduling still does not scale Q4 prefill well.

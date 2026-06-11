@@ -14,6 +14,7 @@
 
 #include "ck_parallel_decode_v8.h"
 #include "ck_threadpool.h"
+#include "ckernel_engine.h"
 #include "ckernel_quant.h"
 
 #include <stdio.h>
@@ -182,7 +183,9 @@ static void work_gemv_q4_k_q8_k(int ith, int nth, void *args)
     gemv_q4_k_q8_k_parallel(a->y, a->W, a->x_q8, a->M, a->K, ith, nth);
 #else
 #if defined(__AVX512VNNI__) && defined(__AVX512VL__)
-    if (ck_env_enabled("CK_ENABLE_Q4K_Q8K_VNNI_FAST")) {
+    const char *fast_env = getenv("CK_ENABLE_Q4K_Q8K_VNNI_FAST");
+    const int fast_disabled = fast_env && fast_env[0] && fast_env[0] == '0';
+    if (!fast_disabled && !ck_strict_parity_enabled()) {
         gemv_q4_k_q8_k_parallel_vnni(a->y, a->W, a->x_q8, a->M, a->K, ith, nth);
     } else {
         gemv_q4_k_q8_k_parallel_simd(a->y, a->W, a->x_q8, a->M, a->K, ith, nth);

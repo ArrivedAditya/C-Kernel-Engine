@@ -41,6 +41,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 /* Serial GEMM kernels (defined in src/kernels/) */
 extern void gemm_nt_q5_0_q8_0(const void *A, const void *B, const float *bias,
@@ -50,6 +51,14 @@ extern void gemm_nt_q8_0_q8_0(const void *A, const void *B, const float *bias,
 extern void gemm_nt_q4_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemv_q4_k_q8_k(float *y, const void *W, const void *x_q8, int M, int K);
+extern size_t q4_k_packed_meta_block_size(void);
+extern void pack_q4_k_to_packed_meta(const void *src, void *dst, int N, int K);
+extern void gemm_nt_q4_k_packed_meta_q8_k_threaded(const void *A_q8,
+                                                    const void *B_packed,
+                                                    const float *bias,
+                                                    float *C,
+                                                    int M, int N, int K,
+                                                    int threads);
 extern void gemm_nt_q6_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q6_k_q8_k_tile(const void *A, const void *B, const float *bias,
@@ -126,6 +135,112 @@ static int ck_select_gemm_active_threads(const ck_threadpool_t *pool, int M, int
 static int ck_q6k_q8k_2d_prefill_forced(void)
 {
     return ck_env_enabled("CK_FORCE_Q6K_Q8K_2D_PREFILL");
+}
+
+typedef struct ck_q4k_packed_meta_cache_entry {
+    const void *src;
+    int N;
+    int K;
+    void *packed;
+    struct ck_q4k_packed_meta_cache_entry *next;
+} ck_q4k_packed_meta_cache_entry_t;
+
+static pthread_mutex_t ck_q4k_packed_meta_cache_mu = PTHREAD_MUTEX_INITIALIZER;
+static ck_q4k_packed_meta_cache_entry_t *ck_q4k_packed_meta_cache_head = NULL;
+
+/* Q4_K packed-meta prefill experiment
+ * -----------------------------------
+ * This is intentionally kept in the v8 prefill dispatcher for now instead of
+ * being promoted to a default src/kernels entry point. The pure kernel pieces
+ * live in gemm_kernels_q4k_q8k_vnni.c, but this code owns runtime policy:
+ * shape gating, thread selection, and temporary packed-weight lifetime.
+ *
+ * What we tested locally on the i7 laptop (2026-06-11):
+ *   - Standalone Qwen3.5-like Q4_K x Q8_K shapes (N=3584,K=1024) improved
+ *     about 1.2x-1.4x across M=128..1024, depending on thread count.
+ *   - Nanbeige-like large Q4_K shapes (N=10496,K=2560) usually improved, but
+ *     N-split ownership regressed at some 12-thread M=512 cases. M-split was
+ *     the safer policy on this machine.
+ *   - Full-model Qwen3.5 prefill improved at prompt 128 and 256 tokens
+ *     (roughly 1.10x-1.13x), while prompt 512 was only a small full-model win
+ *     because other operators became the bottleneck.
+ *   - Kernel-level parity stayed tight in the standalone benchmark
+ *     (max abs around 6e-05 to 1.2e-04), and v8/threadpool quick gates passed.
+ *
+ * What is still missing before promotion:
+ *   - Packed weights should be produced at model-load/conversion time or stored
+ *     in the model runtime layout. This lazy cache is acceptable for profiling,
+ *     but it is not the final ownership model and currently leaks until process
+ *     exit.
+ *   - The dispatch rule must be hardware-swept on Xeon/AVX-512 and lower-core
+ *     AVX2 machines. The current i7 data supports Qwen3.5-like M-split, not a
+ *     universal Q4_K policy.
+ *   - N-split should remain a profiling option until it is consistently faster
+ *     on a target platform. On this laptop it was mixed.
+ *   - Model-level profiling must show that the full prompt path benefits after
+ *     other bottlenecks such as Q5_K recurrent projection, SSM conv, attention,
+ *     and Q6/Q4 down projection are accounted for.
+ *
+ * Promotion criteria:
+ *   1. Add a real packed-weight layout to the v8 model/load path, with explicit
+ *      memory accounting and cleanup.
+ *   2. Keep canonical GGUF-layout Q4_K kernels as the parity fallback.
+ *   3. Select packed-meta only through shape/hardware dispatch after benchmark
+ *      sweeps pass for the target CPU class.
+ *   4. Add nightly sweep coverage so CK can learn/verify which Q4_K prefill
+ *      policy is best per hardware/model shape.
+ */
+static void *ck_get_q4k_packed_meta_cached(const void *B, int N, int K)
+{
+    if (!B || N <= 0 || K <= 0 || (K % QK_K) != 0) return NULL;
+
+    pthread_mutex_lock(&ck_q4k_packed_meta_cache_mu);
+    for (ck_q4k_packed_meta_cache_entry_t *e = ck_q4k_packed_meta_cache_head; e; e = e->next) {
+        if (e->src == B && e->N == N && e->K == K) {
+            void *packed = e->packed;
+            pthread_mutex_unlock(&ck_q4k_packed_meta_cache_mu);
+            return packed;
+        }
+    }
+
+    const size_t blocks = (size_t)N * (size_t)(K / QK_K);
+    const size_t bytes = blocks * q4_k_packed_meta_block_size();
+    void *packed = malloc(bytes);
+    ck_q4k_packed_meta_cache_entry_t *entry =
+        (ck_q4k_packed_meta_cache_entry_t *)malloc(sizeof(*entry));
+    if (!packed || !entry) {
+        free(packed);
+        free(entry);
+        pthread_mutex_unlock(&ck_q4k_packed_meta_cache_mu);
+        return NULL;
+    }
+
+    pack_q4_k_to_packed_meta(B, packed, N, K);
+    entry->src = B;
+    entry->N = N;
+    entry->K = K;
+    entry->packed = packed;
+    entry->next = ck_q4k_packed_meta_cache_head;
+    ck_q4k_packed_meta_cache_head = entry;
+    pthread_mutex_unlock(&ck_q4k_packed_meta_cache_mu);
+    return packed;
+}
+
+static int ck_should_use_q4k_packed_meta_prefill(int M, int N, int K)
+{
+    if (!ck_env_enabled("CK_ENABLE_Q4K_PACKED_META_PREFILL")) return 0;
+    if (M <= 1 || N <= 0 || K <= 0 || (K % QK_K) != 0) return 0;
+
+    const int min_m = ck_env_int_or2("CK_Q4K_PACKED_META_MIN_M", NULL, 256);
+    if (M < min_m) return 0;
+
+    /* Local i7 sweeps show packed-meta helps Qwen3.5-like Q4 prefill at
+     * larger prompt batches, but it can regress very wide synthetic shapes.
+     * Keep the production experiment shape-gated until hardware sweeps say
+     * otherwise. */
+    if (getenv("CK_FORCE_Q4K_PACKED_META_PREFILL")) return 1;
+    if (K <= 2048 && N >= 1024 && N <= 8192) return 1;
+    return 0;
 }
 
 static int ck_should_use_q6k_q8k_2d_prefill(const ck_threadpool_t *pool,
@@ -389,6 +504,18 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
     int M, int N, int K)
 {
+    ck_threadpool_t *pool = ck_threadpool_global();
+    if (pool && ck_should_use_q4k_packed_meta_prefill(M, N, K)) {
+        void *packed = ck_get_q4k_packed_meta_cached(B, N, K);
+        if (packed) {
+            gemm_nt_q4_k_packed_meta_q8_k_threaded(
+                A, packed, bias, C, M, N, K,
+                ck_select_gemm_active_threads(pool, M, N, K)
+            );
+            return;
+        }
+    }
+
     /* Q4_K prefill row-splitting is currently a benchmark path, not a default
      * production path. On local i7 AVX2 testing it was parity-clean but slower
      * for the Qwen/Qwen3.5 shapes measured by test_threadpool_parity and the
@@ -400,7 +527,6 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
         return;
     }
 
-    ck_threadpool_t *pool = ck_threadpool_global();
     if (!pool || ck_threadpool_n_threads(pool) <= 1 || M <= 1 || ck_should_run_gemm_serial(pool, M, N, K)) {
         gemm_nt_q4_k_q8_k(A, B, bias, C, M, N, K);
         return;
