@@ -2361,6 +2361,32 @@ test-q6k-prefill-thread-sweep-quick: $(LIB)
 		--engine-lib build/libckernel_engine.so \
 		--json-out build/q6k_prefill_$${CK_Q6K_SWEEP_SHAPE:-qwen2_mlp_down}_thread_sweep.json
 
+test-q4-q5-prefill-dispatch-sweep: $(LIB)
+	@echo "Running Q4_K/Q5_0 prefill dispatch sweep..."
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/sweep_q4_q5_prefill_dispatch.py \
+		--threads $${CK_NUM_THREADS:-12} --engine-lib build/libckernel_engine.so \
+		--json-out build/q4_q5_prefill_dispatch_sweep.json
+
+test-q4-q5-prefill-dispatch-sweep-quick: $(LIB)
+	@echo "Running Q4_K/Q5_0 prefill dispatch sweep (quick)..."
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/sweep_q4_q5_prefill_dispatch.py --quick \
+		--threads $${CK_NUM_THREADS:-12} --engine-lib build/libckernel_engine.so \
+		--json-out build/q4_q5_prefill_dispatch_sweep_quick.json
+
+test-q4-q5-prefill-thread-sweep-quick: $(LIB)
+	@echo "Running Q4_K/Q5_0 prefill thread sweep (quick)..."
+	OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/sweep_q4_q5_prefill_dispatch.py \
+		--shape $${CK_Q4_Q5_SWEEP_SHAPE:-qwen35_gate_up_q4_k} \
+		--m-values $${CK_Q4_Q5_SWEEP_M:-128} \
+		--thread-values $${CK_Q4_Q5_SWEEP_THREADS:-1,2,4,8,12,24,48} \
+		--warmup $${CK_Q4_Q5_SWEEP_WARMUP:-1} \
+		--iters $${CK_Q4_Q5_SWEEP_ITERS:-2} \
+		--engine-lib build/libckernel_engine.so \
+		--json-out build/q4_q5_prefill_$${CK_Q4_Q5_SWEEP_SHAPE:-qwen35_gate_up_q4_k}_thread_sweep.json
+
 test-v8-decoder-matrix: ck-cli-v8
 	@echo "Running v8 decoder matrix benchmark (CKE vs llama.cpp)..."
 	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
@@ -2408,7 +2434,7 @@ profile-v8-prefill-ops-quick: ck-cli-v8
 		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
 		--json-out build/v8_prefill_ops_profile_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-128}.json
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick profile-v8-prefill-ops profile-v8-prefill-ops-quick
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-dispatch-sweep-quick test-q4-q5-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick profile-v8-prefill-ops profile-v8-prefill-ops-quick
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)
