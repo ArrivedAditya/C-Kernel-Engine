@@ -138,11 +138,13 @@ jobs:
           export LD_LIBRARY_PATH="$PWD/llama.cpp/build/bin:$LD_LIBRARY_PATH"
           ./scripts/run_parity_smoketest.sh --quick 2>&1 | tee build/parity_test.log
 
-      - name: Clean llama.cpp build artifacts
+      - name: Check disk after llama.cpp parity setup
         if: always()
         run: |
-          rm -rf llama.cpp
-          echo "=== Disk after llama.cpp cleanup ==="
+          # Keep llama.cpp available through the full nightly runner. The
+          # report includes litmus and llama.cpp parity rows that compile
+          # against ggml headers/libraries after this point.
+          echo "=== Disk after llama.cpp parity setup ==="
           df -h
 
       - name: Determine v7 Fast Regression Scope
@@ -557,6 +559,7 @@ jobs:
       - name: Final disk cleanup before artifact upload
         if: always()
         run: |
+          rm -rf llama.cpp
           rm -rf "${RUNNER_TEMP}/ck-engine-v8"
           rm -rf "${RUNNER_TEMP}/ck-engine"
           rm -rf "${HOME}/.cache/ck-engine"

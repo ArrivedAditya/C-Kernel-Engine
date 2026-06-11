@@ -4,6 +4,7 @@ import math
 import os
 import shutil
 import subprocess
+import tempfile
 
 import numpy as np
 import torch
@@ -462,7 +463,10 @@ def main():
     args = parse_args()
     here = os.path.dirname(os.path.abspath(__file__))
     root = os.path.dirname(here)
-    build_dir = args.build_dir or os.path.join(root, "build")
+    build_dir = args.build_dir or tempfile.mkdtemp(
+        prefix=f"litmus-{os.getpid()}-",
+        dir=os.path.join(root, "build"),
+    )
     os.makedirs(build_dir, exist_ok=True)
 
     cfg = build_config(args)
