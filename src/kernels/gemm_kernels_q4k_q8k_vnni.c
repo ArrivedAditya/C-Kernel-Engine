@@ -12,6 +12,16 @@
  * After changes: make test && make llamacpp-parity-full
  *
  * Requires AVX512-VNNI for vpdpbusd instruction.
+ *
+ * Packed-meta status:
+ * The packed-meta Q4_K helpers in this file are real kernel experiments, but
+ * they are not the default production layout yet. The current v8 integration
+ * is env-gated because the dispatcher still owns temporary packed-weight
+ * lifetime and shape policy. The final production design should prepack Q4_K
+ * weights at model-load/conversion time, record the extra memory in the model
+ * layout, free it with the model runtime, and choose this kernel only through
+ * hardware/shape dispatch after sweep data confirms it wins. Until then, keep
+ * the canonical GGUF-layout Q4_K path as the parity fallback.
  */
 
 #include <stddef.h>
