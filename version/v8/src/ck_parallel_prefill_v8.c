@@ -289,7 +289,7 @@ static int ck_select_gemm_active_threads(const ck_threadpool_t *pool, int M, int
                           ck_env_int_or2("CK_GEMM_THREAD_CAP", "CK_GEMV_THREAD_CAP", pool_threads));
     }
 
-    if (N >= 4096 || K >= 4096) return pool_threads;
+    if (N >= 4096 || K >= 4096) return ck_min_int(pool_threads, ck_env_int_or2("CK_GEMM_THREAD_CAP", "CK_GEMV_THREAD_CAP", 24));
     if (M >= 512) return ck_min_int(pool_threads, 24);
     return pool_threads;
 }
