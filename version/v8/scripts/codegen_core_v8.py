@@ -824,7 +824,7 @@ def emit_op(
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
 
-    if op_name in {"q_gate_proj", "k_proj", "v_proj"} and function in {"gemv_q4_k_q8_k", "gemv_q6_k_q8_k"}:
+    if op_name in {"q_proj", "q_gate_proj", "k_proj", "v_proj"} and function in {"gemv_q4_k_q8_k", "gemv_q6_k_q8_k"}:
         arg_expr_by_name = {}
         for arg in args:
             nm = str(arg.get("name", "")).lower()
@@ -907,6 +907,10 @@ def emit_op(
                 f"(debug_outproj_fp32_layer == {layer}) || {1 if force_outproj_fp32 else 0};"
             )
             lines.append(f"    ck_debug_outproj_fp32_input = {x_expr};")
+            lines.append(
+                f'    ck_debug_export_hidden(model, {layer}, "attn_out", '
+                f'(const float*)({x_expr}), (int)({k_expr}));'
+            )
             lines.append(f"    if (!{active_name}) {{")
             if profile:
                 lines.append("        CK_PROFILE_BEGIN();")
@@ -1310,7 +1314,7 @@ def emit_op(
 
         if x_expr and y_expr and k_expr and rows_expr:
             active_name = None
-            if op_name == "quantize_input_1":
+            if op_name in {"quantize_input_1", "quantize_input_2"}:
                 active_name = f"ck_debug_mlp_gate_up_fp32_active_{seq_idx if seq_idx is not None else idx}"
                 lines.append(
                     f"    const int {active_name} = debug_mlp_gate_up_fp32 || "
@@ -1389,6 +1393,13 @@ def emit_op(
                 return ex
         return default
 
+    def _hidden_token_count() -> str | None:
+        for nm in ("num_tokens", "tokens", "token_count", "rows", "n_tokens"):
+            ex = arg_expr_by_name_for_hidden.get(nm)
+            if ex:
+                return ex
+        return None
+
     def _emit_hidden_export(expr: str | None, label: str, count_expr: str | None) -> None:
         raw_expr = _hidden_raw(expr)
         if raw_expr and count_expr:
@@ -1397,26 +1408,102 @@ def emit_op(
                 f'(const float*){raw_expr}, {count_expr});'
             )
 
+    def _emit_hidden_export_last_row(
+        expr: str | None,
+        label: str,
+        row_count_expr: str | None,
+        row_stride_expr: str | None = None,
+    ) -> None:
+        raw_expr = _hidden_raw(expr)
+        token_count_expr = _hidden_token_count()
+        if raw_expr and row_count_expr and token_count_expr:
+            stride_expr = row_stride_expr or row_count_expr
+            lines.append(
+                f'    if (({token_count_expr}) > 1) ck_debug_export_hidden(model, {layer}, "{label}_last", '
+                f'(const float*)(((const float*){raw_expr}) + (((size_t)({token_count_expr}) - 1u) * (size_t)({stride_expr}))), '
+                f'{row_count_expr});'
+            )
+
     if op_name == "residual_add":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "c", "y"))
+        residual_expr = _hidden_raw(_hidden_arg("b"))
+        if op_instance_idx == 0 and residual_expr:
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "after_attn_residual", (const float*){residual_expr}, EMBED_DIM);')
+            _emit_hidden_export_last_row(residual_expr, "after_attn_residual", "EMBED_DIM")
+        elif op_instance_idx == 1 and residual_expr:
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "ffn_residual", (const float*){residual_expr}, EMBED_DIM);')
+            _emit_hidden_export_last_row(residual_expr, "ffn_residual", "EMBED_DIM")
         if out_expr:
             if op_instance_idx == 0:
                 lines.append(f'    ck_debug_export_hidden(model, {layer}, "after_attn", (const float*){out_expr}, EMBED_DIM);')
+                _emit_hidden_export_last_row(out_expr, "after_attn", "EMBED_DIM")
             elif op_instance_idx == 1:
                 lines.append(f'    ck_debug_export_hidden(model, {layer}, "layer_out", (const float*){out_expr}, EMBED_DIM);')
+                _emit_hidden_export_last_row(out_expr, "layer_out", "EMBED_DIM")
     elif op_name == "post_attention_norm":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y"))
         if out_expr:
             lines.append(f'    ck_debug_export_hidden(model, {layer}, "post_attn_norm", (const float*){out_expr}, EMBED_DIM);')
+            _emit_hidden_export_last_row(out_expr, "post_attn_norm", "EMBED_DIM")
+    elif op_name == "ffn_norm":
+        out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y"))
+        if out_expr:
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "ffn_norm", (const float*){out_expr}, EMBED_DIM);')
+            _emit_hidden_export_last_row(out_expr, "ffn_norm", "EMBED_DIM")
+    elif op_name == "post_ffn_norm":
+        out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y"))
+        if out_expr:
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "post_ffn_norm", (const float*){out_expr}, EMBED_DIM);')
+            _emit_hidden_export_last_row(out_expr, "post_ffn_norm", "EMBED_DIM")
+    elif op_name == "qk_norm":
+        q_expr = _hidden_raw(_hidden_arg("q"))
+        k_expr = _hidden_raw(_hidden_arg("k"))
+        q_count = _mul_expr(_hidden_arg("num_heads") or "NUM_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
+        k_count = _mul_expr(_hidden_arg("num_kv_heads") or "NUM_KV_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
+        if q_expr and q_count:
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "qk_norm_q", (const float*){q_expr}, {q_count});')
+        if k_expr and k_count:
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "qk_norm_k", (const float*){k_expr}, {k_count});')
+    elif op_name == "rope_qk":
+        q_expr = _hidden_raw(_hidden_arg("q"))
+        k_expr = _hidden_raw(_hidden_arg("k"))
+        q_count = _mul_expr(_hidden_arg("num_heads") or "NUM_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
+        k_count = _mul_expr(_hidden_arg("num_kv_heads") or "NUM_KV_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
+        if q_expr and q_count:
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "rope_q", (const float*){q_expr}, {q_count});')
+        if k_expr and k_count:
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "rope_k", (const float*){k_expr}, {k_count});')
     elif op_name in ("silu_mul", "swiglu"):
         out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y", "data"))
         if out_expr:
             count_expr = _hidden_count("dim", "n", "intermediate_dim", default="INTERMEDIATE_DIM")
             lines.append(f'    ck_debug_export_hidden(model, {layer}, "mlp_swiglu", (const float*){out_expr}, {count_expr});')
+            _emit_hidden_export_last_row(out_expr, "mlp_swiglu", count_expr)
+    elif op_name == "geglu":
+        out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y", "data"))
+        if out_expr:
+            count_expr = _hidden_count("dim", "n", "intermediate_dim", default="INTERMEDIATE_DIM")
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "mlp_geglu", (const float*){out_expr}, {count_expr});')
+            _emit_hidden_export_last_row(out_expr, "mlp_geglu", count_expr)
     elif op_name == "mlp_down":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "c", "y"))
         if out_expr:
             lines.append(f'    ck_debug_export_hidden(model, {layer}, "mlp_down", (const float*){out_expr}, EMBED_DIM);')
+            _emit_hidden_export_last_row(out_expr, "mlp_down", "EMBED_DIM")
+    elif op_name == "gemma4_per_layer_prepare":
+        out_expr = _hidden_raw(_hidden_arg("output", "out", "per_layer_input", "y"))
+        if out_expr:
+            count_expr = _hidden_count("tokens", "rows", "n", default="1")
+            lines.append(
+                f'    ck_debug_export_hidden(model, {layer}, "gemma4_per_layer_prepare", '
+                f'(const float*){out_expr}, ({count_expr}) * NUM_LAYERS * 256);'
+            )
+            _emit_hidden_export_last_row(out_expr, "gemma4_per_layer_prepare", "NUM_LAYERS * 256", "NUM_LAYERS * 256")
+    elif op_name == "gemma4_per_layer_embed":
+        out_expr = _hidden_raw(_hidden_arg("hidden", "output", "out", "x", "y"))
+        if out_expr:
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "gemma4_per_layer_embed", (const float*){out_expr}, EMBED_DIM);')
+            _emit_hidden_export_last_row(out_expr, "gemma4_per_layer_embed", "EMBED_DIM")
     elif op_name == "recurrent_qkv_proj":
         _emit_hidden_export(
             _hidden_arg("output", "out", "c", "y"),
@@ -2277,7 +2364,7 @@ CK_EXPORT void ck_model_profile_dump(void) {
     recurrent_reset_lines: list[str] = []
     prefill_policy = str(config.get("prefill_policy") or "").strip().lower()
     force_sequential_prefill = prefill_policy in {"sequential_decode", "decode"}
-    prefill_guard = " && 0" if force_sequential_prefill else ""
+    prefill_guard = " && 0" if force_sequential_prefill else " && !(getenv(\"CK_V8_FORCE_DECODE_PREFILL\") && atoi(getenv(\"CK_V8_FORCE_DECODE_PREFILL\")) != 0)"
     for buf_name, macro_name in (
         ("recurrent_conv_state", "A_RECURRENT_CONV_STATE"),
         ("recurrent_ssm_state", "A_RECURRENT_SSM_STATE"),

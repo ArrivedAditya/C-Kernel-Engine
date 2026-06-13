@@ -437,6 +437,10 @@ OP_DATAFLOW = {
         "inputs": {"input": "main_stream"},
         "outputs": {"output": {"slot": "main_stream_q8", "dtype": "q8_0"}},
     },
+    "quantize_input_2": {
+        "inputs": {"input": "main_stream"},
+        "outputs": {"output": {"slot": "main_stream_q8", "dtype": "q8_0"}},
+    },
     "residual_save": {
         "inputs": {"src": "main_stream"},
         "outputs": {"dst": {"slot": "residual", "dtype": "fp32"}},
@@ -2761,6 +2765,8 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
         if sliding_window > 0:
             params["sliding_window"] = sliding_window
     elif op_name == "v_norm":
+        params["head_dim"] = v_head_dim
+        params["v_head_dim"] = v_head_dim
         params["embed_dim"] = v_dim
         params["d_model"] = v_dim
         params["aligned_embed_dim"] = v_dim

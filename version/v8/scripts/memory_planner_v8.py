@@ -449,7 +449,7 @@ class MemoryPlanner:
             # rmsnorm reads main stream
             return self.state.main_stream_buffer, "fp32"
 
-        elif op_type in ("quantize_input_0", "quantize_input_1"):
+        elif op_type in ("quantize_input_0", "quantize_input_1", "quantize_input_2"):
             # quantize reads from main stream (FP32)
             return self.state.main_stream_buffer, "fp32"
 
@@ -512,7 +512,7 @@ class MemoryPlanner:
             self.state.record_write(buffer, op_id, "fp32")
             return buffer, "fp32"
 
-        elif op_type in ("quantize_input_0", "quantize_input_1"):
+        elif op_type in ("quantize_input_0", "quantize_input_1", "quantize_input_2"):
             # Quantize writes Q8 to the "other" buffer (ping-pong)
             buffer = self.state.main_stream_q8_buffer
             self.state.record_write(buffer, op_id, dtype)
@@ -622,7 +622,7 @@ class MemoryPlanner:
 
         # Swap after quantize ops that feed into projections
         # This ensures the FP32 output buffer is ready for the next op
-        if op_type in ("quantize_input_0", "quantize_input_1",
+        if op_type in ("quantize_input_0", "quantize_input_1", "quantize_input_2",
                        "quantize_out_proj_input", "quantize_mlp_down_input"):
             # After quantize, the Q8 is in main_stream_q8_buffer
             # The projection will read from there and write FP32 to main_stream_buffer
