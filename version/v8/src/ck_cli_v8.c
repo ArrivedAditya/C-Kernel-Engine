@@ -159,6 +159,7 @@ typedef enum {
     CHAT_TEMPLATE_CHATML,
     CHAT_TEMPLATE_MISTRAL,
     CHAT_TEMPLATE_GEMMA,
+    CHAT_TEMPLATE_GEMMA4,
 } ChatTemplateType;
 
 typedef struct {
@@ -222,6 +223,15 @@ static const ChatTemplate g_templates[] = {
         .user_suffix = "<end_of_turn>\n",
         .assistant_prefix = "<start_of_turn>model\n",
         .assistant_suffix = "<end_of_turn>\n",
+    },
+    [CHAT_TEMPLATE_GEMMA4] = {
+        .type = CHAT_TEMPLATE_GEMMA4,
+        .system_prefix = "<|turn>system\n",
+        .system_suffix = "<turn|>\n",
+        .user_prefix = "<|turn>user\n",
+        .user_suffix = "<turn|>\n",
+        .assistant_prefix = "<|turn>model\n",
+        .assistant_suffix = "<turn|>\n",
     },
 };
 
@@ -1674,6 +1684,7 @@ static ChatTemplateType detect_chat_template(const char *model_name) {
     if (strstr(lower, "qwen")) return CHAT_TEMPLATE_QWEN;
     if (strstr(lower, "llama")) return CHAT_TEMPLATE_LLAMA;
     if (strstr(lower, "mistral")) return CHAT_TEMPLATE_MISTRAL;
+    if (strstr(lower, "gemma4") || strstr(lower, "gemma-4") || strstr(lower, "gemma_4")) return CHAT_TEMPLATE_GEMMA4;
     if (strstr(lower, "gemma")) return CHAT_TEMPLATE_GEMMA;
 
     return CHAT_TEMPLATE_CHATML;  /* Default */
@@ -1779,6 +1790,10 @@ static void eos_pattern_init(ChatTemplateType tmpl) {
         case CHAT_TEMPLATE_GEMMA:
             g_eos_state.target_pattern = "end_of_turn";
             g_eos_state.partial_prefix = "end";
+            break;
+        case CHAT_TEMPLATE_GEMMA4:
+            g_eos_state.target_pattern = "turn|";
+            g_eos_state.partial_prefix = "turn";
             break;
         default:
             break;
@@ -4801,6 +4816,7 @@ int main(int argc, char **argv) {
            opt.chat_template == CHAT_TEMPLATE_QWEN ? "qwen" :
            opt.chat_template == CHAT_TEMPLATE_LLAMA ? "llama" :
            opt.chat_template == CHAT_TEMPLATE_MISTRAL ? "mistral" :
+           opt.chat_template == CHAT_TEMPLATE_GEMMA4 ? "gemma4" :
            opt.chat_template == CHAT_TEMPLATE_GEMMA ? "gemma" : "chatml");
 
     /* Print CPU capability info */

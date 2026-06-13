@@ -50,15 +50,51 @@ from typing import Dict, List, Optional
 
 
 def _annotate_kv_transpose_roles(ops: List[Dict]) -> None:
-    """Mark each transpose_kv_to_head_major op as K or V within its layer."""
-    layer_kv_count: Dict[int, int] = {}
+    """Mark synthetic transpose ops with K/V role and per-layer head geometry."""
+
+    def _arg_expr(op: Dict, name: str) -> Optional[str]:
+        target = name.lower()
+        for arg in op.get("args", []) or []:
+            if str(arg.get("name", "")).lower() == target:
+                expr = str(arg.get("expr", "")).strip()
+                return expr or None
+        return None
+
+    layer_dims: Dict[int, Dict[str, str]] = {}
     for op in ops:
-        if op.get("op") != "transpose_kv_to_head_major":
+        if op.get("op") != "qk_norm":
             continue
         layer = int(op.get("layer", 0))
-        count = layer_kv_count.get(layer, 0)
-        op["_is_k"] = (count == 0)
-        layer_kv_count[layer] = count + 1
+        num_heads = _arg_expr(op, "num_heads")
+        num_kv_heads = _arg_expr(op, "num_kv_heads")
+        head_dim = _arg_expr(op, "head_dim")
+        if num_heads and num_kv_heads and head_dim:
+            layer_dims[layer] = {
+                "num_heads": num_heads,
+                "num_kv_heads": num_kv_heads,
+                "head_dim": head_dim,
+            }
+
+    layer_kv_count: Dict[int, int] = {}
+    for op in ops:
+        op_name = op.get("op")
+        if op_name not in {
+            "transpose_qkv_to_head_major",
+            "transpose_kv_to_head_major",
+            "transpose_attn_out_to_token_major",
+            "kv_cache_batch_copy",
+        }:
+            continue
+        layer = int(op.get("layer", 0))
+        dims = layer_dims.get(layer)
+        if dims:
+            op["_num_heads"] = dims["num_heads"]
+            op["_num_kv_heads"] = dims["num_kv_heads"]
+            op["_head_dim"] = dims["head_dim"]
+        if op_name == "transpose_kv_to_head_major":
+            count = layer_kv_count.get(layer, 0)
+            op["_is_k"] = (count == 0)
+            layer_kv_count[layer] = count + 1
 
 
 def get_parallel_pragma(op: Dict) -> str:
@@ -195,8 +231,8 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         # Scratch layout: [num_kv_heads, num_tokens, head_dim] (compact, head-major)
         # KV cache layout: [num_kv_heads, max_seq_len, head_dim] (with stride, head-major)
         layer = op.get("layer", 0)
-        num_kv_heads = config.get("num_kv_heads", 2)
-        head_dim = config.get("head_dim", 64)
+        num_kv_heads = op.get("_num_kv_heads", config.get("num_kv_heads", 2))
+        head_dim = op.get("_head_dim", config.get("head_dim", 64))
         context_len = config.get("context_len", config.get("context_length", 1024))
         return f"""    /* Op {seq_idx}: kv_cache_batch_copy layer={layer} */
     /* Copy K/V from head-major scratch to KV cache for subsequent decode */
@@ -226,8 +262,8 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
 
     # Handle transpose_kv_to_head_major: convert from [T, Hkv*D] to [Hkv, T, D]
     if op_type == "transpose_kv_to_head_major":
-        num_kv_heads = config.get("num_kv_heads", 2)
-        head_dim = config.get("head_dim", 64)
+        num_kv_heads = op.get("_num_kv_heads", config.get("num_kv_heads", 2))
+        head_dim = op.get("_head_dim", config.get("head_dim", 64))
         # _is_k is set by emit_prefill_function preprocessing
         is_k = op.get("_is_k", True)
         scratch_name = "A_K_SCRATCH" if is_k else "A_V_SCRATCH"
@@ -259,8 +295,8 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
     if op_type == "transpose_qkv_to_head_major":
         qkv_type = op.get("_qkv_type", "q")
         if qkv_type == "q":
-            num_heads = config.get("num_heads", 14)
-            head_dim = config.get("head_dim", 64)
+            num_heads = op.get("_num_heads", config.get("num_heads", 14))
+            head_dim = op.get("_head_dim", config.get("head_dim", 64))
             scratch_name = "A_Q_SCRATCH"
             max_tokens = config.get("context_len", config.get("context_length", 1024))
             omp_pragma = get_parallel_pragma(op)
@@ -289,8 +325,8 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
     # Handle transpose_attn_out_to_token_major: convert from [H, T, D] to [T, H*D]
     # This is the reverse of the Q transpose - needed after attention before out_proj
     if op_type == "transpose_attn_out_to_token_major":
-        num_heads = config.get("num_heads", 14)
-        head_dim = config.get("head_dim", 64)
+        num_heads = op.get("_num_heads", config.get("num_heads", 14))
+        head_dim = op.get("_head_dim", config.get("head_dim", 64))
         max_tokens = config.get("context_len", config.get("context_length", 1024))
         # Parallelize over heads (outer loop)
         omp_pragma = get_parallel_pragma(op)
@@ -409,12 +445,103 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             if profile:
                 lines.append(f'    CK_PROFILE_END("prefill", "{func}", "{op_type}", {layer});')
 
+            raw_expr = c_expr.replace("(float*)", "").replace("(void*)", "").strip()
+            lines.append(
+                f'    if (num_tokens > 1) ck_debug_export_hidden(model, {layer}, "out_proj_last", '
+                f'(const float*)(((const float*){raw_expr}) + (((size_t)num_tokens - 1u) * (size_t)(EMBED_DIM))), '
+                f'EMBED_DIM);'
+            )
+
             if dump:
                 raw_expr = c_expr.replace("(float*)", "").replace("(void*)", "").strip()
                 size_expr = f"({m_expr}) * ({n_expr})"
                 lines.append("    #ifdef CK_PARITY_DUMP")
                 lines.append(f'    ck_dump_tensor((float*){raw_expr}, {layer}, "attn_output", {size_expr});')
                 lines.append("    #endif")
+            return "\n".join(lines)
+
+    if op_type == "mlp_gate_up" and func in ("gemm_nt_q4_k_q8_k", "gemm_nt_q6_k_q8_k"):
+        a_expr = arg_expr_by_name.get("a")
+        b_expr = arg_expr_by_name.get("b")
+        bias_expr = arg_expr_by_name.get("bias", "NULL")
+        c_expr = arg_expr_by_name.get("c")
+        m_expr = arg_expr_by_name.get("m", "num_tokens")
+        n_expr = arg_expr_by_name.get("n")
+        k_expr = arg_expr_by_name.get("k")
+        row_gemv_func = "gemv_q4_k_q8_k" if func == "gemm_nt_q4_k_q8_k" else "gemv_q6_k_q8_k"
+        weight_row_bytes_expr = f"(((size_t)({k_expr}) / 256u) * 144u)" if func == "gemm_nt_q4_k_q8_k" else f"(((size_t)({k_expr}) / 256u) * 210u)"
+        if a_expr and b_expr and c_expr and n_expr and k_expr:
+            lines.append(f"    if (debug_prefill_mlp_gate_up_row_gemv || debug_prefill_mlp_gate_up_row_gemv_layer == {layer}) {{")
+            if profile:
+                lines.append("        CK_PROFILE_BEGIN();")
+            lines.extend([
+                f"        const int _ck_m = (int)({m_expr});",
+                f"        const int _ck_n = (int)({n_expr});",
+                f"        const int _ck_k = (int)({k_expr});",
+                "        const int _ck_half = _ck_n / 2;",
+                "        const size_t _ck_a_row_bytes = (size_t)(_ck_k / QK_K) * sizeof(block_q8_K);",
+                f"        const size_t _ck_w_row_bytes = {weight_row_bytes_expr};",
+                f"        const uint8_t *_ck_a_base = (const uint8_t*)({a_expr});",
+                f"        const uint8_t *_ck_w_base = (const uint8_t*)({b_expr});",
+                f"        const float *_ck_bias = (const float*)({bias_expr});",
+                f"        float *_ck_c_base = (float*)({c_expr});",
+                "        for (int _ck_t = 0; _ck_t < _ck_m; ++_ck_t) {",
+                "            const void *_ck_xq8 = (const void*)(_ck_a_base + (size_t)_ck_t * _ck_a_row_bytes);",
+                "            float *_ck_y = _ck_c_base + (size_t)_ck_t * (size_t)_ck_n;",
+                f"            {row_gemv_func}(_ck_y, (const void*)_ck_w_base, _ck_xq8, _ck_half, _ck_k);",
+                f"            {row_gemv_func}(_ck_y + _ck_half, (const void*)(_ck_w_base + (size_t)_ck_half * _ck_w_row_bytes), _ck_xq8, _ck_half, _ck_k);",
+                "            if (_ck_bias != NULL) {",
+                "                for (int _ck_i = 0; _ck_i < _ck_n; ++_ck_i) _ck_y[_ck_i] += _ck_bias[_ck_i];",
+                "            }",
+                "        }",
+            ])
+            if profile:
+                lines.append(f'        CK_PROFILE_END("prefill", "{row_gemv_func}", "{op_type}_row_gemv", {layer});')
+            fp32_func = "gemm_nt_q4_k" if func == "gemm_nt_q4_k_q8_k" else "gemm_nt_q6_k"
+            lines.append(f"    }} else if ((debug_mlp_gate_up_fp32 || debug_mlp_gate_up_fp32_layer == {layer}) && ck_debug_mlp_gate_up_fp32_input != NULL) {{")
+            if profile:
+                lines.append("        CK_PROFILE_BEGIN();")
+            lines.extend([
+                f"        {fp32_func}(",
+                "            ck_debug_mlp_gate_up_fp32_input,",
+                f"            {b_expr},",
+                f"            {bias_expr},",
+                f"            {c_expr},",
+                f"            {m_expr},",
+                f"            {n_expr},",
+                f"            {k_expr}",
+                "        );",
+            ])
+            if profile:
+                lines.append(f'        CK_PROFILE_END("prefill", "{fp32_func}", "{op_type}", {layer});')
+            lines.append("    } else {")
+            if profile:
+                lines.append("        CK_PROFILE_BEGIN();")
+            lines.extend([
+                f"        {func}(",
+                f"            {a_expr},",
+                f"            {b_expr},",
+                f"            {bias_expr},",
+                f"            {c_expr},",
+                f"            {m_expr},",
+                f"            {n_expr},",
+                f"            {k_expr}",
+                "        );",
+            ])
+            if profile:
+                lines.append(f'        CK_PROFILE_END("prefill", "{func}", "{op_type}", {layer});')
+            lines.append("    }")
+            raw_expr = c_expr.replace("(float*)", "").replace("(void*)", "").strip()
+            lines.append(
+                f'    if (num_tokens > 1) ck_debug_export_hidden(model, {layer}, "mlp_gate_last", '
+                f'(const float*)(((const float*){raw_expr}) + (((size_t)num_tokens - 1u) * (size_t)({n_expr}))), '
+                f'(({n_expr}) / 2));'
+            )
+            lines.append(
+                f'    if (num_tokens > 1) ck_debug_export_hidden(model, {layer}, "mlp_up_last", '
+                f'(const float*)(((const float*){raw_expr}) + (((size_t)num_tokens - 1u) * (size_t)({n_expr})) + (size_t)((({n_expr}) / 2))), '
+                f'(({n_expr}) / 2));'
+            )
             return "\n".join(lines)
 
     # Format the function call / quantization loop
@@ -426,8 +553,15 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             row_bytes_expr = "(size_t)(_k / QK_K) * sizeof(block_q8_K)"
         else:
             row_bytes_expr = "(size_t)(_k / QK8_0) * sizeof(block_q8_0)"
+        if op_type == "quantize_input_2":
+            lines.append(f"    ck_debug_mlp_gate_up_fp32_input = (const float*)({x_expr});")
         if op_type == "quantize_out_proj_input":
             lines.append(f"    ck_debug_outproj_fp32_input = (const float*)({x_expr});")
+            lines.append(
+                f'    if (num_tokens > 1) ck_debug_export_hidden(model, {layer}, "attn_out_last", '
+                f'(const float*)(((const float*)({x_expr})) + (((size_t)num_tokens - 1u) * (size_t)({k_expr}))), '
+                f'(int)({k_expr}));'
+            )
             lines.append("    if (!debug_outproj_fp32) {")
             lines.append(f"        const float *_x_base = (const float*)({x_expr});")
             lines.append(f"        uint8_t *_y_base = (uint8_t*)({y_expr});")
@@ -470,6 +604,101 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             lines.append("    );")
     if profile:
         lines.append(f'    CK_PROFILE_END("prefill", "{func}", "{op_type}", {layer});')
+
+    def _hidden_arg(*names: str) -> Optional[str]:
+        for nm in names:
+            ex = arg_expr_by_name.get(nm.lower())
+            if ex:
+                return ex
+        return None
+
+    def _hidden_raw(expr: Optional[str]) -> Optional[str]:
+        if not expr:
+            return None
+        return expr.replace("(float*)", "").replace("(void*)", "").strip()
+
+    def _emit_hidden_last(
+        expr: Optional[str],
+        label: str,
+        width_expr: Optional[str],
+        stride_expr: Optional[str] = None,
+    ) -> None:
+        raw = _hidden_raw(expr)
+        if not raw or not width_expr:
+            return
+        row_stride = stride_expr or width_expr
+        lines.append(
+            f'    if (num_tokens > 1) ck_debug_export_hidden(model, {layer}, "{label}_last", '
+            f'(const float*)(((const float*){raw}) + (((size_t)num_tokens - 1u) * (size_t)({row_stride}))), '
+            f'{width_expr});'
+        )
+
+    def _emit_head_major_last(expr: Optional[str], label: str, heads_expr: Optional[str], dim_expr: Optional[str]) -> None:
+        raw = _hidden_raw(expr)
+        if not raw or not heads_expr or not dim_expr:
+            return
+        safe_label = label.replace("-", "_").replace(".", "_")
+        lines.append("    if (num_tokens > 1) {")
+        lines.append(f"        const int _ck_{safe_label}_heads = (int)({heads_expr});")
+        lines.append(f"        const int _ck_{safe_label}_dim = (int)({dim_expr});")
+        lines.append(f"        const float *_ck_{safe_label}_src = (const float*){raw};")
+        lines.append(f"        float _ck_{safe_label}_last[(size_t)_ck_{safe_label}_heads * (size_t)_ck_{safe_label}_dim];")
+        lines.append(f"        for (int _ck_h = 0; _ck_h < _ck_{safe_label}_heads; ++_ck_h) {{")
+        lines.append(f"            const float *_ck_s = _ck_{safe_label}_src + ((size_t)_ck_h * (size_t)num_tokens + ((size_t)num_tokens - 1u)) * (size_t)_ck_{safe_label}_dim;")
+        lines.append(f"            memcpy(_ck_{safe_label}_last + (size_t)_ck_h * (size_t)_ck_{safe_label}_dim, _ck_s, (size_t)_ck_{safe_label}_dim * sizeof(float));")
+        lines.append("        }")
+        lines.append(f'        ck_debug_export_hidden(model, {layer}, "{label}_last", _ck_{safe_label}_last, _ck_{safe_label}_heads * _ck_{safe_label}_dim);')
+        lines.append("    }")
+
+    if op_type == "gemma4_per_layer_prepare":
+        _emit_hidden_last(_hidden_arg("output", "out", "per_layer_input", "y"), "gemma4_per_layer_prepare", "NUM_LAYERS * 256")
+    elif op_type == "q_proj":
+        _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "q_proj", _hidden_arg("n") or "NUM_HEADS * HEAD_DIM")
+    elif op_type == "k_proj":
+        _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "k_proj", _hidden_arg("n") or "NUM_KV_HEADS * HEAD_DIM")
+    elif op_type == "v_proj":
+        _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "v_proj", _hidden_arg("n") or "NUM_KV_HEADS * HEAD_DIM")
+    elif op_type == "qk_norm":
+        _emit_head_major_last(_hidden_arg("q"), "qk_norm_q", _hidden_arg("num_heads") or "NUM_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
+        _emit_head_major_last(_hidden_arg("k"), "qk_norm_k", _hidden_arg("num_kv_heads") or "NUM_KV_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
+    elif op_type == "rope_qk":
+        _emit_head_major_last(_hidden_arg("q"), "rope_q", _hidden_arg("num_heads") or "NUM_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
+        _emit_head_major_last(_hidden_arg("k"), "rope_k", _hidden_arg("num_kv_heads") or "NUM_KV_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
+    elif op_type == "out_proj":
+        _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "out_proj", "EMBED_DIM")
+    elif op_type == "post_attention_norm":
+        _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "post_attn_norm", "EMBED_DIM")
+    elif op_type == "ffn_norm":
+        _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "ffn_norm", "EMBED_DIM")
+    elif op_type == "post_ffn_norm":
+        _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "post_ffn_norm", "EMBED_DIM")
+    elif op_type == "residual_add":
+        if op_instance_idx == 0:
+            _emit_hidden_last(_hidden_arg("b"), "after_attn_residual", "EMBED_DIM")
+            _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "after_attn", "EMBED_DIM")
+        elif op_instance_idx == 1:
+            _emit_hidden_last(_hidden_arg("b"), "ffn_residual", "EMBED_DIM")
+            _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "layer_out", "EMBED_DIM")
+    elif op_type == "mlp_gate_up":
+        out_expr = _hidden_arg("output", "out", "c", "y")
+        total_expr = _hidden_arg("n") or "(2 * INTERMEDIATE_DIM)"
+        half_expr = f"(({total_expr}) / 2)"
+        _emit_hidden_last(out_expr, "mlp_gate", half_expr, total_expr)
+        raw = _hidden_raw(out_expr)
+        if raw:
+            lines.append(
+                f'    if (num_tokens > 1) ck_debug_export_hidden(model, {layer}, "mlp_up_last", '
+                f'(const float*)(((const float*){raw}) + (((size_t)num_tokens - 1u) * (size_t)({total_expr})) + (size_t)({half_expr})), '
+                f'{half_expr});'
+            )
+    elif op_type == "geglu":
+        _emit_hidden_last(_hidden_arg("output", "out", "x", "y", "data"), "mlp_geglu", _hidden_arg("dim") or "INTERMEDIATE_DIM")
+    elif op_type == "mlp_down":
+        _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "mlp_down", "EMBED_DIM")
+    elif op_type == "gemma4_per_layer_embed":
+        _emit_hidden_last(_hidden_arg("hidden", "output", "out", "x", "y"), "gemma4_per_layer_embed", "EMBED_DIM")
+    elif op_type == "final_rmsnorm":
+        _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "final_hidden", "EMBED_DIM")
 
     if dump:
         dump_op_map = {
@@ -586,6 +815,15 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
     const char *debug_outproj_env = getenv("CK_V7_DEBUG_OUTPROJ_FP32");
     int debug_outproj_fp32 = debug_outproj_env ? (atoi(debug_outproj_env) != 0) : 0;
     const float *ck_debug_outproj_fp32_input = NULL;
+    const char *debug_mlp_gate_up_env = getenv("CK_V8_DEBUG_MLP_GATE_UP_FP32");
+    int debug_mlp_gate_up_fp32 = debug_mlp_gate_up_env ? (atoi(debug_mlp_gate_up_env) != 0) : 0;
+    const char *debug_mlp_gate_up_layer_env = getenv("CK_V8_DEBUG_MLP_GATE_UP_FP32_LAYER");
+    int debug_mlp_gate_up_fp32_layer = debug_mlp_gate_up_layer_env ? atoi(debug_mlp_gate_up_layer_env) : -1;
+    const float *ck_debug_mlp_gate_up_fp32_input = NULL;
+    const char *debug_prefill_mlp_gate_up_row_gemv_env = getenv("CK_V8_DEBUG_PREFILL_MLP_GATE_UP_ROW_GEMV");
+    int debug_prefill_mlp_gate_up_row_gemv = debug_prefill_mlp_gate_up_row_gemv_env ? (atoi(debug_prefill_mlp_gate_up_row_gemv_env) != 0) : 0;
+    const char *debug_prefill_mlp_gate_up_row_gemv_layer_env = getenv("CK_V8_DEBUG_PREFILL_MLP_GATE_UP_ROW_GEMV_LAYER");
+    int debug_prefill_mlp_gate_up_row_gemv_layer = debug_prefill_mlp_gate_up_row_gemv_layer_env ? atoi(debug_prefill_mlp_gate_up_row_gemv_layer_env) : -1;
 
     /* Copy input tokens to activation buffer (follow same pattern as decode) */
     memcpy((void*)(model->bump + A_TOKEN_IDS), tokens, (size_t)num_tokens * sizeof(int32_t));
@@ -602,8 +840,16 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
 
     _annotate_kv_transpose_roles(ops)
     residual_add_count_total = 0
+    residual_add_counts_by_layer: Dict[int, int] = {}
 
     for seq_idx, op in enumerate(ops):
+        op_type_for_instance = str(op.get("op", ""))
+        if op_type_for_instance == "residual_add" and "op_instance_idx" not in op and "instance" not in op:
+            layer_for_instance = int(op.get("layer", -1))
+            inst = residual_add_counts_by_layer.get(layer_for_instance, 0)
+            op = dict(op)
+            op["op_instance_idx"] = inst
+            residual_add_counts_by_layer[layer_for_instance] = inst + 1
         lines.append(emit_prefill_op(op, seq_idx, config, profile=profile, dump=dump))
         lines.append(f"    if (stop_seq == {seq_idx}) return;")
         if (scale_embeddings_sqrt_dim
@@ -624,7 +870,10 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
     }
     #ifdef CK_PARITY_DUMP
     ck_dump_tensor((float*)(model->bump + A_EMBEDDED_INPUT), -1, "inp_scaled", num_tokens * EMBED_DIM);
-    #endif""")
+    #endif
+    if (num_tokens > 1) ck_debug_export_hidden(model, -1, "embedding_scaled_last",
+        (const float*)(((const float*)(model->bump + A_EMBEDDED_INPUT)) + (((size_t)num_tokens - 1u) * (size_t)EMBED_DIM)),
+        EMBED_DIM);""")
             embed_scale_emitted = True
         lines.append("")
 
@@ -871,10 +1120,42 @@ def _emit_prefill_gemm_fp32_override(op: Dict, seq_idx: int, *, debug_flag_name:
     fp32_func = "gemm_nt_q4_k" if func == "gemm_nt_q4_k_q8_k" else "gemm_nt_q6_k"
     layer_value = op.get("layer", -1)
     layer = int(layer_value) if layer_value is not None else -1
+    row_gemv_func = "gemv_q4_k_q8_k" if func == "gemm_nt_q4_k_q8_k" else "gemv_q6_k_q8_k"
+    weight_row_bytes_expr = f"(((size_t)({k_expr}) / 256u) * 144u)" if func == "gemm_nt_q4_k_q8_k" else f"(((size_t)({k_expr}) / 256u) * 210u)"
+
+    row_gemv_allowed = 1 if str(op.get("op", "")) == "mlp_gate_up" else 0
     lines = [
         f"    /* Op {seq_idx}: {func} ({op.get('op', 'unknown')}) layer={layer} */",
-        f"    if ({debug_flag_name} && {debug_input_name} != NULL) {{",
+        f"    if ({row_gemv_allowed} && (debug_prefill_mlp_gate_up_row_gemv || debug_prefill_mlp_gate_up_row_gemv_layer == {layer})) {{",
     ]
+    if profile:
+        lines.append("        CK_PROFILE_BEGIN();")
+    lines.extend(
+        [
+            f"        const int _ck_m = (int)({m_expr});",
+            f"        const int _ck_n = (int)({n_expr});",
+            f"        const int _ck_k = (int)({k_expr});",
+            "        const int _ck_half = _ck_n / 2;",
+            f"        const size_t _ck_a_row_bytes = (size_t)(_ck_k / QK_K) * sizeof(block_q8_K);",
+            f"        const size_t _ck_w_row_bytes = {weight_row_bytes_expr};",
+            f"        const uint8_t *_ck_a_base = (const uint8_t*)({a_expr});",
+            f"        const uint8_t *_ck_w_base = (const uint8_t*)({b_expr});",
+            f"        const float *_ck_bias = (const float*)({bias_expr});",
+            f"        float *_ck_c_base = (float*)({c_expr});",
+            "        for (int _ck_t = 0; _ck_t < _ck_m; ++_ck_t) {",
+            "            const void *_ck_xq8 = (const void*)(_ck_a_base + (size_t)_ck_t * _ck_a_row_bytes);",
+            "            float *_ck_y = _ck_c_base + (size_t)_ck_t * (size_t)_ck_n;",
+            f"            {row_gemv_func}(_ck_y, (const void*)_ck_w_base, _ck_xq8, _ck_half, _ck_k);",
+            f"            {row_gemv_func}(_ck_y + _ck_half, (const void*)(_ck_w_base + (size_t)_ck_half * _ck_w_row_bytes), _ck_xq8, _ck_half, _ck_k);",
+            "            if (_ck_bias != NULL) {",
+            "                for (int _ck_i = 0; _ck_i < _ck_n; ++_ck_i) _ck_y[_ck_i] += _ck_bias[_ck_i];",
+            "            }",
+            "        }",
+        ]
+    )
+    if profile:
+        lines.append(f'        CK_PROFILE_END("prefill", "{row_gemv_func}", "{op.get("op", "unknown")}_row_gemv", {layer});')
+    lines.append(f"    }} else if ({debug_flag_name} && {debug_input_name} != NULL) {{")
     if profile:
         lines.append("        CK_PROFILE_BEGIN();")
     lines.extend(
@@ -960,6 +1241,13 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
     const char *debug_mlp_down_env = getenv("CK_V7_DEBUG_MLP_DOWN_FP32");
     int debug_mlp_down_fp32 = debug_mlp_down_env ? (atoi(debug_mlp_down_env) != 0) : 0;
     const float *ck_debug_mlp_down_fp32_input = NULL;
+    const char *debug_mlp_gate_up_env = getenv("CK_V8_DEBUG_MLP_GATE_UP_FP32");
+    int debug_mlp_gate_up_fp32 = debug_mlp_gate_up_env ? (atoi(debug_mlp_gate_up_env) != 0) : 0;
+    const char *debug_prefill_mlp_gate_up_row_gemv_env = getenv("CK_V8_DEBUG_PREFILL_MLP_GATE_UP_ROW_GEMV");
+    int debug_prefill_mlp_gate_up_row_gemv = debug_prefill_mlp_gate_up_row_gemv_env ? (atoi(debug_prefill_mlp_gate_up_row_gemv_env) != 0) : 0;
+    const char *debug_prefill_mlp_gate_up_row_gemv_layer_env = getenv("CK_V8_DEBUG_PREFILL_MLP_GATE_UP_ROW_GEMV_LAYER");
+    int debug_prefill_mlp_gate_up_row_gemv_layer = debug_prefill_mlp_gate_up_row_gemv_layer_env ? atoi(debug_prefill_mlp_gate_up_row_gemv_layer_env) : -1;
+    const float *ck_debug_mlp_gate_up_fp32_input = NULL;
 """
     prologue = prologue.replace(
         "int debug_outproj_fp32 = debug_outproj_env ? (atoi(debug_outproj_env) != 0) : 0;",
@@ -983,9 +1271,16 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
 
     _annotate_kv_transpose_roles(ops)
     residual_add_count_total = 0
+    residual_add_counts_by_layer: Dict[int, int] = {}
 
     for seq_idx, op in enumerate(ops):
         op_type = str(op.get("op", ""))
+        if op_type == "residual_add" and "op_instance_idx" not in op and "instance" not in op:
+            layer_for_instance = int(op.get("layer", -1))
+            inst = residual_add_counts_by_layer.get(layer_for_instance, 0)
+            op = dict(op)
+            op["op_instance_idx"] = inst
+            residual_add_counts_by_layer[layer_for_instance] = inst + 1
         if op_type == "dense_embedding_lookup":
             lines.append(f"    if (stop_seq == {seq_idx}) return;")
             if (
@@ -998,7 +1293,25 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
                 lines.append("")
             continue
 
-        if is_qwen3vl and op_type == "quantize_mlp_down_input" and str(op.get("function", "")) in {"quantize_row_q8_0", "quantize_row_q8_k"}:
+        if op_type == "quantize_input_2" and str(op.get("function", "")) in {"quantize_row_q8_0", "quantize_row_q8_k"}:
+            op_code = _emit_prefill_quant_debug_override(
+                op,
+                seq_idx,
+                config,
+                debug_flag_name="debug_mlp_gate_up_fp32",
+                debug_input_name="ck_debug_mlp_gate_up_fp32_input",
+                profile=profile,
+            )
+        elif op_type == "mlp_gate_up" and str(op.get("function", "")) in {"gemm_nt_q4_k_q8_k", "gemm_nt_q6_k_q8_k"}:
+            op_code = _emit_prefill_gemm_fp32_override(
+                op,
+                seq_idx,
+                debug_flag_name="debug_mlp_gate_up_fp32",
+                debug_input_name="ck_debug_mlp_gate_up_fp32_input",
+                profile=profile,
+                dump=dump,
+            )
+        elif is_qwen3vl and op_type == "quantize_mlp_down_input" and str(op.get("function", "")) in {"quantize_row_q8_0", "quantize_row_q8_k"}:
             op_code = _emit_prefill_quant_debug_override(
                 op,
                 seq_idx,
