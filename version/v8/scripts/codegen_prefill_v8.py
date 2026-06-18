@@ -234,6 +234,16 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         num_kv_heads = op.get("_num_kv_heads", config.get("num_kv_heads", 2))
         head_dim = op.get("_head_dim", config.get("head_dim", 64))
         context_len = config.get("context_len", config.get("context_length", 1024))
+        k_offsets = config.get("layer_k_cache_offset") or []
+        v_offsets = config.get("layer_v_cache_offset") or []
+        if isinstance(k_offsets, list) and layer < len(k_offsets) and k_offsets[layer] is not None:
+            k_base_expr = f"kv_cache + ({int(k_offsets[layer])}ULL*cache_stride)"
+        else:
+            k_base_expr = f"kv_cache + (1ULL*({layer}*2)*Hkv*cache_stride*D)"
+        if isinstance(v_offsets, list) and layer < len(v_offsets) and v_offsets[layer] is not None:
+            v_base_expr = f"kv_cache + ({int(v_offsets[layer])}ULL*cache_stride)"
+        else:
+            v_base_expr = f"kv_cache + (1ULL*({layer}*2+1)*Hkv*cache_stride*D)"
         return f"""    /* Op {seq_idx}: kv_cache_batch_copy layer={layer} */
     /* Copy K/V from head-major scratch to KV cache for subsequent decode */
     {{
@@ -247,13 +257,13 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             /* K: copy from scratch[h, 0:num_tokens, :] to cache[h, 0:num_tokens, :] */
             /* Scratch is compact: stride = num_tokens, Cache has stride = cache_stride */
             memcpy(
-                kv_cache + (1ULL*({layer}*2)*Hkv*cache_stride*D) + (size_t)h*cache_stride*D,
+                {k_base_expr} + (size_t)h*cache_stride*D,
                 k_scratch + h*num_tokens*D,
                 (size_t)num_tokens * D * sizeof(float)
             );
             /* V: copy from scratch[h, 0:num_tokens, :] to cache[h, 0:num_tokens, :] */
             memcpy(
-                kv_cache + (1ULL*({layer}*2+1)*Hkv*cache_stride*D) + (size_t)h*cache_stride*D,
+                {v_base_expr} + (size_t)h*cache_stride*D,
                 v_scratch + h*num_tokens*D,
                 (size_t)num_tokens * D * sizeof(float)
             );
@@ -362,6 +372,34 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
     # Build argument list with substitutions
     args = []
     arg_expr_by_name: Dict[str, str] = {}
+    shared_kv_source_layer = layer
+    layer_kv_source = config.get("layer_kv_source")
+    if op_type in ("attn", "attn_sliding") and isinstance(layer_kv_source, list):
+        try:
+            if 0 <= int(layer) < len(layer_kv_source):
+                shared_kv_source_layer = int(layer_kv_source[int(layer)])
+        except (TypeError, ValueError):
+            shared_kv_source_layer = layer
+    use_prefill_shared_kv_cache = (
+        op_type in ("attn", "attn_sliding")
+        and isinstance(shared_kv_source_layer, int)
+        and int(shared_kv_source_layer) != int(layer)
+    )
+
+    def _prefill_kv_cache_expr(which: str, source_layer: int) -> str:
+        offsets_key = "layer_k_cache_offset" if which == "k" else "layer_v_cache_offset"
+        offsets = config.get(offsets_key)
+        if isinstance(offsets, list) and 0 <= int(source_layer) < len(offsets):
+            return f"(model->kv_cache + {int(offsets[int(source_layer)])}ULL*MAX_SEQ_LEN)"
+        try:
+            kv_cache_head_dim = int(config.get("kv_cache_head_dim", config.get("head_dim", 1)) or config.get("head_dim", 1) or 1)
+        except Exception:
+            kv_cache_head_dim = int(config.get("head_dim", 1) or 1)
+        if kv_cache_head_dim <= 0:
+            kv_cache_head_dim = 1
+        term = f"({int(source_layer)}*2)" if which == "k" else f"({int(source_layer)}*2+1)"
+        return f"(model->kv_cache + {term}*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
+
     dynamic_token_arg_names = {
         "seq_len",
         "num_tokens",
@@ -387,6 +425,10 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             expr = "num_tokens"
         elif name_lc in {"seq_len", "num_tokens", "token_count", "tokens", "rows"} and str(expr).isdigit():
             expr = "num_tokens"
+        elif use_prefill_shared_kv_cache and name_lc in {"k", "k_cache"}:
+            expr = f"(const float*){_prefill_kv_cache_expr('k', int(shared_kv_source_layer))}"
+        elif use_prefill_shared_kv_cache and name_lc in {"v", "v_cache"}:
+            expr = f"(const float*){_prefill_kv_cache_expr('v', int(shared_kv_source_layer))}"
         # For memcpy size, compute dynamically
         elif source == "dim:_memcpy_bytes" and op_type == "residual_save":
             expr = f"(size_t)num_tokens * {embed_dim} * sizeof(float)"
@@ -397,7 +439,7 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         # [Hkv, num_tokens, D]. The stride in tokens must be num_tokens, not
         # MAX_SEQ_LEN/context length. Apply to both regular and sliding attention.
         elif name == "kv_stride_tokens" and op_type in ("attn", "attn_sliding"):
-            expr = "num_tokens"
+            expr = "MAX_SEQ_LEN" if use_prefill_shared_kv_cache else "num_tokens"
 
         args.append(expr)
         name_key = str(name).lower()
