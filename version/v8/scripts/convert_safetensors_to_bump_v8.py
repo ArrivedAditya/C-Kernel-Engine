@@ -51,6 +51,9 @@ DTYPE_TO_CK = {
     "F32": ("fp32", CK_DT_FP32, 4),
     "BF16": ("bf16", CK_DT_BF16, 2),
     "F16": ("fp16", CK_DT_FP16, 2),
+    "float32": ("fp32", CK_DT_FP32, 4),
+    "bfloat16": ("bf16", CK_DT_BF16, 2),
+    "float16": ("fp16", CK_DT_FP16, 2),
 }
 
 
@@ -158,6 +161,13 @@ def _dtype_code(dtype_name: str) -> int:
     raise ValueError(f"unsupported dtype {dtype_name}")
 
 
+def _header_dtype_to_ck(dtype: str) -> tuple[str, int]:
+    row = DTYPE_TO_CK.get(str(dtype))
+    if row:
+        return row[0], row[2]
+    return "fp32", 4
+
+
 def _synth_bytes(kind: str, shape: tuple[int, ...], dtype_policy: str) -> tuple[bytes, str, list[int]]:
     n = int(np.prod(shape, dtype=np.int64))
     if kind == "zeros_fp32":
@@ -243,6 +253,131 @@ def _gemma4_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor]) 
     return refs
 
 
+def _first_existing(headers: dict[str, HeaderTensor], names: Iterable[str]) -> str | None:
+    for name in names:
+        if name in headers:
+            return name
+    return None
+
+
+def _require_existing(headers: dict[str, HeaderTensor], names: Iterable[str], desc: str) -> str:
+    found = _first_existing(headers, names)
+    if found is None:
+        raise SystemExit(f"Missing required safetensors tensor for {desc}: tried {list(names)}")
+    return found
+
+
+def _language_prefix(headers: dict[str, HeaderTensor]) -> str:
+    if "model.embed_tokens.weight" in headers:
+        return "model."
+    if "model.language_model.embed_tokens.weight" in headers:
+        return "model.language_model."
+    return "model."
+
+
+def _maybe_tensor_ref(
+    headers: dict[str, HeaderTensor],
+    ck_name: str,
+    source_names: tuple[str, ...],
+    *,
+    dtype: str | None = None,
+) -> TensorRef | None:
+    found = _first_existing(headers, source_names)
+    if found is None:
+        return None
+    return TensorRef(ck_name, (found,), dtype=dtype)
+
+
+def _llama_family_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor]) -> list[TensorRef]:
+    num_layers = int(config.get("num_layers") or config.get("num_hidden_layers") or 0)
+    embed_dim = int(config.get("embed_dim") or config.get("hidden_size") or 0)
+    intermediate = int(config.get("intermediate_size") or 0)
+    num_heads = int(config.get("num_heads") or config.get("num_attention_heads") or 0)
+    num_kv_heads = int(config.get("num_kv_heads") or config.get("num_key_value_heads") or num_heads or 0)
+    head_dim = int(config.get("head_dim") or (embed_dim // max(1, num_heads)))
+    if num_layers <= 0 or embed_dim <= 0 or intermediate <= 0 or num_heads <= 0:
+        raise SystemExit("Llama-family config missing num_layers/embed_dim/intermediate_size/num_heads")
+
+    q_dim = num_heads * head_dim
+    kv_dim = num_kv_heads * head_dim
+    prefix = _language_prefix(headers)
+    refs: list[TensorRef] = [
+        TensorRef("token_emb", (_require_existing(headers, (f"{prefix}embed_tokens.weight", "model.embed_tokens.weight"), "token_emb"),)),
+    ]
+
+    for layer in range(num_layers):
+        layer_prefix = f"{prefix}layers.{layer}"
+        refs.extend([
+            TensorRef(f"layer.{layer}.ln1_gamma", (_require_existing(headers, (f"{layer_prefix}.input_layernorm.weight",), f"layer {layer} input norm"),), dtype="fp32"),
+            TensorRef(f"layer.{layer}.ln2_gamma", (_require_existing(headers, (f"{layer_prefix}.post_attention_layernorm.weight", f"{layer_prefix}.pre_feedforward_layernorm.weight"), f"layer {layer} ffn norm"),), dtype="fp32"),
+            TensorRef(f"layer.{layer}.wq", (_require_existing(headers, (f"{layer_prefix}.self_attn.q_proj.weight",), f"layer {layer} q_proj"),)),
+            _maybe_tensor_ref(headers, f"layer.{layer}.bq", (f"{layer_prefix}.self_attn.q_proj.bias",), dtype="fp32")
+            or TensorRef(f"layer.{layer}.bq", (), dtype="fp32", synth="zeros_fp32", shape=(q_dim,)),
+        ])
+        q_norm = _maybe_tensor_ref(headers, f"layer.{layer}.q_norm", (f"{layer_prefix}.self_attn.q_norm.weight",), dtype="fp32")
+        if q_norm is not None:
+            refs.append(q_norm)
+        refs.extend([
+            TensorRef(f"layer.{layer}.wk", (_require_existing(headers, (f"{layer_prefix}.self_attn.k_proj.weight",), f"layer {layer} k_proj"),)),
+            _maybe_tensor_ref(headers, f"layer.{layer}.bk", (f"{layer_prefix}.self_attn.k_proj.bias",), dtype="fp32")
+            or TensorRef(f"layer.{layer}.bk", (), dtype="fp32", synth="zeros_fp32", shape=(kv_dim,)),
+        ])
+        k_norm = _maybe_tensor_ref(headers, f"layer.{layer}.k_norm", (f"{layer_prefix}.self_attn.k_norm.weight",), dtype="fp32")
+        if k_norm is not None:
+            refs.append(k_norm)
+        refs.extend([
+            TensorRef(f"layer.{layer}.wv", (_require_existing(headers, (f"{layer_prefix}.self_attn.v_proj.weight",), f"layer {layer} v_proj"),)),
+            _maybe_tensor_ref(headers, f"layer.{layer}.bv", (f"{layer_prefix}.self_attn.v_proj.bias",), dtype="fp32")
+            or TensorRef(f"layer.{layer}.bv", (), dtype="fp32", synth="zeros_fp32", shape=(kv_dim,)),
+            TensorRef(f"layer.{layer}.wo", (_require_existing(headers, (f"{layer_prefix}.self_attn.o_proj.weight",), f"layer {layer} o_proj"),)),
+            _maybe_tensor_ref(headers, f"layer.{layer}.bo", (f"{layer_prefix}.self_attn.o_proj.bias",), dtype="fp32")
+            or TensorRef(f"layer.{layer}.bo", (), dtype="fp32", synth="zeros_fp32", shape=(embed_dim,)),
+            TensorRef(
+                f"layer.{layer}.w1",
+                (
+                    _require_existing(headers, (f"{layer_prefix}.mlp.gate_proj.weight",), f"layer {layer} gate_proj"),
+                    _require_existing(headers, (f"{layer_prefix}.mlp.up_proj.weight",), f"layer {layer} up_proj"),
+                ),
+            ),
+            TensorRef(f"layer.{layer}.b1", (), dtype="fp32", synth="zeros_fp32", shape=(2 * intermediate,)),
+            TensorRef(f"layer.{layer}.w2", (_require_existing(headers, (f"{layer_prefix}.mlp.down_proj.weight",), f"layer {layer} down_proj"),)),
+            TensorRef(f"layer.{layer}.b2", (), dtype="fp32", synth="zeros_fp32", shape=(embed_dim,)),
+        ])
+
+    refs.extend([
+        TensorRef("final_ln_weight", (_require_existing(headers, (f"{prefix}norm.weight", "model.norm.weight"), "final norm"),), dtype="fp32"),
+        TensorRef("final_ln_bias", (), dtype="fp32", synth="zeros_fp32", shape=(embed_dim,)),
+    ])
+    lm_head = _first_existing(headers, ("lm_head.weight", f"{prefix}lm_head.weight", "model.lm_head.weight"))
+    if lm_head is not None:
+        refs.append(TensorRef("output.weight", (lm_head,)))
+    return refs
+
+
+def _infer_arch(hf: dict[str, Any]) -> str:
+    text = hf.get("text_config") if isinstance(hf.get("text_config"), dict) else hf
+    mt = str(text.get("model_type") or hf.get("model_type") or "").lower()
+    if "gemma" in mt and "4" in mt:
+        return "gemma4"
+    if "gemma" in mt and "3" in mt:
+        return "gemma3"
+    if "qwen3" in mt:
+        return "qwen3"
+    if "qwen2" in mt or mt == "qwen":
+        return "qwen2"
+    if "llama" in mt:
+        return "llama"
+    return mt
+
+
+def _refs_for_arch(arch: str, config: dict[str, Any], headers: dict[str, HeaderTensor]) -> list[TensorRef]:
+    if arch == "gemma4":
+        return _gemma4_text_refs(config, headers)
+    if arch in {"llama", "qwen2", "qwen3", "gemma3"}:
+        return _llama_family_text_refs(config, headers)
+    raise SystemExit(f"Unsupported safetensors arch for v8 importer: {arch}")
+
+
 def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> dict[str, Any]:
     hf = _hf_config(model_dir)
     base = _load_runtime_config_template(config_template)
@@ -284,8 +419,11 @@ def _entry_size_from_header(ref: TensorRef, headers: dict[str, HeaderTensor], dt
             raise KeyError(src)
         h = headers[src]
         shape = h.shape
-        dtype = ref.dtype or {"float32": "fp32", "bfloat16": "bf16", "float16": "fp16"}.get(h.dtype, "fp32")
-        elem = {"fp32": 4, "bf16": 2, "fp16": 2}[dtype]
+        if ref.dtype:
+            dtype = ref.dtype
+            elem = {"fp32": 4, "bf16": 2, "fp16": 2}[dtype]
+        else:
+            dtype, elem = _header_dtype_to_ck(h.dtype)
         total += int(np.prod(shape, dtype=np.int64)) * elem
         out_dtype = out_dtype or dtype
         out_shape = shape if not out_shape else out_shape
@@ -326,7 +464,7 @@ def main() -> int:
     ap.add_argument("--output", required=True, type=Path, help="output weights.bump")
     ap.add_argument("--config-out", required=True, type=Path)
     ap.add_argument("--manifest-out", required=True, type=Path)
-    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4"])
+    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma3", "llama", "qwen2", "qwen3"])
     ap.add_argument("--config-template", type=Path, help="existing v8 config/manifest to reuse explicit runtime policy")
     ap.add_argument("--dtype", default="preserve", choices=["preserve", "bf16", "fp32"])
     ap.add_argument("--dry-run", action="store_true", help="validate mapping and write JSON reports only; do not write BUMP")
@@ -337,13 +475,10 @@ def main() -> int:
     hf = _hf_config(model_dir)
     arch = args.arch
     if arch == "auto":
-        mt = str((hf.get("text_config") or hf).get("model_type") or hf.get("model_type") or "").lower()
-        arch = "gemma4" if "gemma" in mt and "4" in mt else mt
-    if arch != "gemma4":
-        raise SystemExit(f"Unsupported safetensors arch for v8 importer: {arch}")
+        arch = _infer_arch(hf)
 
     config = _build_config(model_dir, arch, args.config_template)
-    refs = _gemma4_text_refs(config, headers)
+    refs = _refs_for_arch(arch, config, headers)
     missing: list[str] = []
     entries_preview: list[dict[str, Any]] = []
     dtype_table: list[int] = []
