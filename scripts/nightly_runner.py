@@ -404,6 +404,12 @@ MAKE_TARGETS = {
         "target": "v7-stabilization-nightly",
         "timeout_sec": 7200,
     },
+    "v8_gemma4_highmem": {
+        "name": "v8 Gemma4 High-Memory Smoke",
+        "category": "parity",
+        "target": "test-v8-gemma4-highmem",
+        "timeout_sec": 5400,
+    },
 }
 
 # Benchmark targets with perf extraction
