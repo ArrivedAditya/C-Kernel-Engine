@@ -63,7 +63,8 @@
       "kv_policy_config_key": "layer_kv_policy",
       "kv_source_config_key": "layer_kv_source",
       "sliding_window_config_key": "layer_sliding_window",
-      "rope_kind_config_key": "layer_rope_kind"
+      "rope_kind_config_key": "layer_rope_kind",
+      "rope_param_mode": "per_layer_direct"
     },
     "block_contract": {
       "norm_type": "rmsnorm",
@@ -95,7 +96,7 @@
     }
   },
   "kernels": {
-    "rope_qk": "rope_forward_qk_gemma4",
+    "rope_qk": "rope_forward_qk_split_direct",
     "rope_init": "rope_precompute_cache_split",
     "attn": "attention_forward_causal_head_major_gqa_flash_strided_gemma4",
     "attn_sliding": "attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4",

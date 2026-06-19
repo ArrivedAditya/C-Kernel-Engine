@@ -148,7 +148,7 @@ def _last_token_row_offset_expr(func_name: str, embed_dim: int) -> Optional[str]
         return f"(size_t)(num_tokens - 1) * (size_t)({embed_dim} / QK_K) * sizeof(block_q8_K)"
     if "q8_0" in fn:
         return f"(size_t)(num_tokens - 1) * (size_t)({embed_dim} / QK8_0) * sizeof(block_q8_0)"
-    if "fp32" in fn or "f32" in fn:
+    if "fp32" in fn or "f32" in fn or "bf16" in fn:
         return f"(size_t)(num_tokens - 1) * (size_t){embed_dim} * sizeof(float)"
     # Conservative default for q8_0-style activation packing.
     row_bytes = _q8_0_row_bytes(embed_dim)
@@ -224,7 +224,8 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         (const void*)(((const uint8_t*)({input_expr})) + {row_offset_expr}),
         {vocab_size},
         {embed_dim}
-    );"""
+    );
+    ck_debug_export_hidden(model, -1, "logits", (const float*){output_expr}, VOCAB_SIZE);"""
 
     if op_type == "kv_cache_batch_copy":
         # Copy K/V from scratch (head-major after transpose) to KV cache

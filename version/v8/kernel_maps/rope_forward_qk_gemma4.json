@@ -29,7 +29,16 @@
       "desc": "Key tensor [kv_heads, tokens, head_dim] to be rotated in-place"
     }
   ],
-  "weights": [{"name": "rope_freqs", "dtype": "fp32", "shape": ["rotary_dim/2"], "desc": "Gemma4 full-attention proportional RoPE frequency factors; ignored for sliding layers"}],
+  "weights": [
+    {
+      "name": "rope_freqs",
+      "dtype": "fp32",
+      "shape": [
+        "rotary_dim/2"
+      ],
+      "desc": "Gemma4 full-attention proportional RoPE frequency factors; ignored for sliding layers"
+    }
+  ],
   "activations": [],
   "runtime_buffers": [
     {
@@ -138,8 +147,8 @@
     "notes": "D should be multiple of 64 for optimal SIMD. D is the unpadded dimension; AD is used for alignment."
   },
   "impl": {
-    "function": "rope_forward_qk_gemma4_direct",
-    "c_declaration": "void rope_forward_qk_gemma4_direct(float *q, float *k, const float *freq_factors, int use_freq_factors, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int rotary_dim, float freq_base);",
+    "function": "rope_forward_qk_split_direct_f32",
+    "c_declaration": "void rope_forward_qk_split_direct_f32(float *q, float *k, const float *freq_factors, int use_freq_factors, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int rotary_dim, float freq_base);",
     "sources": [
       "src/kernels/rope_kernels.c"
     ],
@@ -187,5 +196,5 @@
       }
     ]
   },
-  "notes": "Rotary Position Embedding (RoPE) for queries and keys. Applies rotation in complex plane: x_rot = x * cos(theta) + rotate_half(x) * sin(theta). Only rotates first rotary_dim channels; remaining channels pass through unchanged. Gemma4 variant uses max_rotary_dim as cache row stride so sliding/full layers can share one RoPE cache."
+  "notes": "Compatibility map for Gemma4 templates. The implementation is the generic split-half direct RoPE path, selected by rope_layout=split and rope_param_mode=per_layer_direct in new templates."
 }

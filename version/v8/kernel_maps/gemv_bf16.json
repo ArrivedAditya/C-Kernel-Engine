@@ -1,0 +1,29 @@
+{
+  "id": "gemv_bf16",
+  "op": "gemv",
+  "variant": "bf16_w_fp32_a_fp32_out",
+  "quant": {
+    "weight": "bf16",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {"name": "x", "dtype": "fp32", "shape": ["K"], "desc": "Input vector [K] (FP32, rounded to BF16 inside kernel)"}
+  ],
+  "weights": [
+    {"name": "W", "dtype": "bf16", "shape": ["M", "K"], "desc": "Weight matrix [rows, cols] BF16"}
+  ],
+  "outputs": [
+    {"name": "y", "dtype": "fp32", "shape": ["M"], "desc": "Output vector [M] = W @ x"}
+  ],
+  "scratch": [],
+  "dims": ["M", "K"],
+  "constraints": {},
+  "impl": {
+    "function": "gemv_bf16",
+    "c_declaration": "void gemv_bf16(float *y, const void *W, const float *x, int M, int K);",
+    "sources": ["src/kernels/gemm_kernels_bf16.c"]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "notes": "Exact safetensors/BUMP BF16 weight inference path for decode. Activation is rounded to BF16 before multiply."
+}

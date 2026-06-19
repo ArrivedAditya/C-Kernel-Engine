@@ -188,6 +188,17 @@ void gemm_nt_f16(const float *A,
                  float *C,
                  int M, int N, int K);
 
+void gemv_bf16(float *y,
+               const void *W,
+               const float *x,
+               int M, int K);
+
+void gemm_nt_bf16(const float *A,
+                  const void *B,
+                  const float *bias,
+                  float *C,
+                  int M, int N, int K);
+
 // =============================================================================
 // Quantized (GGML-style) GEMM/GEMV helpers
 // =============================================================================
@@ -900,6 +911,19 @@ void gemma4_per_layer_prepare_forward(float *per_layer_input,
                                       int per_layer_dim,
                                       int vocab_size,
                                       float eps);
+
+void gemma4_per_layer_prepare_bf16_forward(float *per_layer_input,
+                                           const float *hidden,
+                                           const int32_t *token_ids,
+                                           const uint16_t *per_layer_token_emb,
+                                           const uint16_t *per_layer_model_proj,
+                                           const float *per_layer_proj_norm,
+                                           int tokens,
+                                           int num_layers,
+                                           int embed_dim,
+                                           int per_layer_dim,
+                                           int vocab_size,
+                                           float eps);
 
 void gemma4_per_layer_embed_forward(float *hidden,
                                     const float *per_layer_input,
@@ -2394,6 +2418,19 @@ void rope_forward_qk_with_rotary_dim(float *q,
                                      int pos_offset,
                                      int rotary_dim);
 
+void rope_forward_qk_split_direct_f32(float *q,
+                                      float *k,
+                                      const float *freq_factors,
+                                      int use_freq_factors,
+                                      int num_heads,
+                                      int num_kv_heads,
+                                      int num_tokens,
+                                      int head_dim,
+                                      int aligned_head_dim,
+                                      int pos_offset,
+                                      int rotary_dim,
+                                      float freq_base);
+
 void rope_forward_qk_gemma4_direct(float *q,
                                    float *k,
                                    const float *freq_factors,
@@ -2663,6 +2700,17 @@ void embedding_forward_q8_0(const int32_t *token_ids,
 	                            int aligned_embed_dim,
 	                            int context_window,
 	                            int add_pos);
+
+void embedding_forward_bf16_fp32(const int32_t *token_ids,
+                                 int token_count,
+                                 int vocab_size,
+                                 const uint16_t *token_embeddings,
+                                 const float *pos_embeddings,
+                                 float *output,
+                                 int embed_dim,
+                                 int aligned_embed_dim,
+                                 int context_window,
+                                 int add_pos);
 
 // Embedding backward: accumulates into d_token_embeddings and d_pos_embeddings.
 // d_output: [context_window x aligned_embed_dim]

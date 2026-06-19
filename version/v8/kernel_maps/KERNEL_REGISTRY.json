@@ -3,9 +3,9 @@
     "description": "Kernel registry generated from v8 kernel maps",
     "version": "v8",
     "generated_by": "ck_run_v8.py",
-    "source_dir": "/home/antshiv/Workspace/C-Kernel-Engine/version/v8/kernel_maps",
+    "source_dir": "/opt/app-root/src/Ashivaku/C-Kernel-Engine/version/v8/kernel_maps",
     "counts": {
-      "total": 142,
+      "total": 147,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -15,7 +15,7 @@
         "attn_gate_sigmoid_mul": 1,
         "attn_gate_sigmoid_mul_backward": 1,
         "bias_add": 1,
-        "embedding": 5,
+        "embedding": 6,
         "embedding_backward": 1,
         "feature_concat": 1,
         "feature_slice_copy": 1,
@@ -27,11 +27,11 @@
         "gated_deltanet": 2,
         "geglu": 4,
         "gelu": 3,
-        "gemm": 14,
+        "gemm": 15,
         "gemm_backward": 1,
         "gemma4_per_layer_embed": 1,
-        "gemma4_per_layer_prepare": 1,
-        "gemv": 13,
+        "gemma4_per_layer_prepare": 2,
+        "gemv": 14,
         "kv_cache_store": 2,
         "layernorm": 2,
         "logits_store_indexed": 1,
@@ -55,7 +55,7 @@
         "residual_add": 1,
         "residual_save": 1,
         "rmsnorm": 2,
-        "rope": 6,
+        "rope": 7,
         "rope_backward": 2,
         "rope_init": 2,
         "rowwise_bias_add": 1,
@@ -3625,6 +3625,107 @@
       "_source_file": "embedding_backward_f32.json"
     },
     {
+      "id": "embedding_forward_bf16_fp32",
+      "op": "embedding",
+      "variant": "bf16_weight_fp32_output",
+      "quant": {
+        "weight": "bf16",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "tokens",
+          "dtype": "int32",
+          "shape": [
+            "T"
+          ],
+          "desc": "Input token IDs [tokens]"
+        }
+      ],
+      "weights": [
+        {
+          "name": "weight",
+          "dtype": "bf16",
+          "shape": [
+            "V",
+            "E"
+          ],
+          "desc": "Embedding weights [vocab_size, embed_dim] (FP32)"
+        }
+      ],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ],
+          "desc": "Embeddings [tokens, embed_dim]"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "T",
+        "E",
+        "V"
+      ],
+      "params": [],
+      "parallelization": {
+        "supported": [
+          "token"
+        ],
+        "preferred": {
+          "prefill": "token",
+          "decode": "token"
+        },
+        "strategies": [
+          {
+            "name": "token",
+            "partition_dim": "T",
+            "param_style": "range",
+            "range": {
+              "min_chunk": 1
+            },
+            "notes": "Process tokens in parallel; each thread handles a slice of tokens."
+          }
+        ]
+      },
+      "constraints": {
+        "alignment": {
+          "E": 64
+        },
+        "notes": "Simple table lookup; E should be multiple of 64 for SIMD."
+      },
+      "impl": {
+        "function": "embedding_forward_bf16_fp32",
+        "c_declaration": "void embedding_forward_bf16_fp32(const int32_t *token_ids, int token_count, int vocab_size, const uint16_t *token_embeddings, const float *pos_embeddings, float *output, int embed_dim, int aligned_embed_dim, int context_window, int add_pos);",
+        "sources": [
+          "src/kernels/embedding_kernels_bf16.c"
+        ],
+        "variants": [
+          {
+            "name": "default",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_embedding.py"
+        ],
+        "bench": [
+          "scripts/bench_embedding.py"
+        ]
+      },
+      "notes": "Token embedding lookup with BF16 weights and FP32 output for v8 inference streams.",
+      "name": "embedding_forward_bf16_fp32",
+      "_source_file": "embedding_forward_bf16_fp32.json"
+    },
+    {
       "id": "embedding_forward_fp32",
       "op": "embedding",
       "variant": "fp32",
@@ -5535,6 +5636,78 @@
       "_source_file": "gemm_blocked_serial.json"
     },
     {
+      "id": "gemm_nt_bf16",
+      "op": "gemm",
+      "variant": "bf16_w_fp32_a_fp32_out",
+      "quant": {
+        "weight": "bf16",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "A",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "K"
+          ],
+          "desc": "Activation matrix [rows, cols] (FP32, rounded to BF16 inside kernel)"
+        },
+        {
+          "name": "B",
+          "dtype": "bf16",
+          "shape": [
+            "N",
+            "K"
+          ],
+          "desc": "Weight matrix [output rows, input cols] BF16"
+        },
+        {
+          "name": "bias",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "optional": true,
+          "desc": "Bias [N] (optional)"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "C",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "N"
+          ],
+          "desc": "Result [M, N]"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "M",
+        "N",
+        "K"
+      ],
+      "constraints": {},
+      "impl": {
+        "function": "gemm_nt_bf16",
+        "c_declaration": "void gemm_nt_bf16(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);",
+        "sources": [
+          "src/kernels/gemm_kernels_bf16.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "notes": "Exact safetensors/BUMP BF16 weight inference path for prefill. Activation rows are rounded to BF16 before multiply.",
+      "name": "gemm_nt_bf16",
+      "_source_file": "gemm_nt_bf16.json"
+    },
+    {
       "id": "gemm_nt_f16",
       "op": "gemm",
       "variant": "f16_w_fp32_a_fp32_out",
@@ -6940,6 +7113,100 @@
       "_source_file": "gemma4_per_layer_embed_forward.json"
     },
     {
+      "id": "gemma4_per_layer_prepare_bf16_forward",
+      "op": "gemma4_per_layer_prepare",
+      "variant": "gemma4_bf16_scalar_correctness",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "bf16",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "hidden",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ]
+        },
+        {
+          "name": "tokens",
+          "dtype": "i32",
+          "shape": [
+            "T"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "per_layer_token_emb",
+          "dtype": "bf16",
+          "shape": [
+            "V",
+            "L",
+            "P"
+          ]
+        },
+        {
+          "name": "per_layer_model_proj",
+          "dtype": "bf16",
+          "shape": [
+            "L",
+            "P",
+            "E"
+          ]
+        },
+        {
+          "name": "per_layer_proj_norm",
+          "dtype": "fp32",
+          "shape": [
+            "P"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "per_layer_input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "L",
+            "P"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "seq_len",
+        "num_layers",
+        "embed_dim",
+        "per_layer_dim",
+        "vocab_size"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "gemma4_per_layer_prepare_bf16_forward",
+        "c_declaration": "void gemma4_per_layer_prepare_bf16_forward(float *per_layer_input, const float *hidden, const int32_t *token_ids, const uint16_t *per_layer_token_emb, const uint16_t *per_layer_model_proj, const float *per_layer_proj_norm, int tokens, int num_layers, int embed_dim, int per_layer_dim, int vocab_size, float eps);",
+        "sources": [
+          "src/kernels/gemma4_per_layer_embed.c"
+        ]
+      },
+      "notes": "Prepare Gemma4 per-layer input stream from BF16 safetensors token embeddings and BF16 projection weights.",
+      "name": "gemma4_per_layer_prepare_bf16_forward",
+      "_source_file": "gemma4_per_layer_prepare_bf16_forward.json"
+    },
+    {
       "id": "gemma4_per_layer_prepare_forward",
       "op": "gemma4_per_layer_prepare",
       "variant": "gemma4_scalar_correctness",
@@ -7032,6 +7299,68 @@
       "notes": "Prepare Gemma4 per-layer input stream once from original token embedding stream.",
       "name": "gemma4_per_layer_prepare_forward",
       "_source_file": "gemma4_per_layer_prepare_forward.json"
+    },
+    {
+      "id": "gemv_bf16",
+      "op": "gemv",
+      "variant": "bf16_w_fp32_a_fp32_out",
+      "quant": {
+        "weight": "bf16",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "K"
+          ],
+          "desc": "Input vector [K] (FP32, rounded to BF16 inside kernel)"
+        }
+      ],
+      "weights": [
+        {
+          "name": "W",
+          "dtype": "bf16",
+          "shape": [
+            "M",
+            "K"
+          ],
+          "desc": "Weight matrix [rows, cols] BF16"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "y",
+          "dtype": "fp32",
+          "shape": [
+            "M"
+          ],
+          "desc": "Output vector [M] = W @ x"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "M",
+        "K"
+      ],
+      "constraints": {},
+      "impl": {
+        "function": "gemv_bf16",
+        "c_declaration": "void gemv_bf16(float *y, const void *W, const float *x, int M, int K);",
+        "sources": [
+          "src/kernels/gemm_kernels_bf16.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "notes": "Exact safetensors/BUMP BF16 weight inference path for decode. Activation is rounded to BF16 before multiply.",
+      "name": "gemv_bf16",
+      "_source_file": "gemv_bf16.json"
     },
     {
       "id": "gemv_fused_q5_0_bias",
@@ -14256,8 +14585,8 @@
         "notes": "D should be multiple of 64 for optimal SIMD. D is the unpadded dimension; AD is used for alignment."
       },
       "impl": {
-        "function": "rope_forward_qk_gemma4_direct",
-        "c_declaration": "void rope_forward_qk_gemma4_direct(float *q, float *k, const float *freq_factors, int use_freq_factors, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int rotary_dim, float freq_base);",
+        "function": "rope_forward_qk_split_direct_f32",
+        "c_declaration": "void rope_forward_qk_split_direct_f32(float *q, float *k, const float *freq_factors, int use_freq_factors, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int rotary_dim, float freq_base);",
         "sources": [
           "src/kernels/rope_kernels.c"
         ],
@@ -14305,7 +14634,7 @@
           }
         ]
       },
-      "notes": "Rotary Position Embedding (RoPE) for queries and keys. Applies rotation in complex plane: x_rot = x * cos(theta) + rotate_half(x) * sin(theta). Only rotates first rotary_dim channels; remaining channels pass through unchanged. Gemma4 variant uses max_rotary_dim as cache row stride so sliding/full layers can share one RoPE cache.",
+      "notes": "Compatibility map for Gemma4 templates. The implementation is the generic split-half direct RoPE path, selected by rope_layout=split and rope_param_mode=per_layer_direct in new templates.",
       "name": "rope_forward_qk_gemma4",
       "_source_file": "rope_forward_qk_gemma4.json"
     },
@@ -14653,6 +14982,130 @@
       "notes": "Split-cache RoPE for queries and keys (head_dim/2 cache layout). Matches legacy precompute layout.",
       "name": "rope_forward_qk_split",
       "_source_file": "rope_forward_qk_split.json"
+    },
+    {
+      "id": "rope_forward_qk_split_direct",
+      "op": "rope",
+      "variant": "fp32_head_major_split_half_direct",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor [heads, tokens, head_dim] to be rotated in-place"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Key tensor [kv_heads, tokens, head_dim] to be rotated in-place"
+        }
+      ],
+      "weights": [
+        {
+          "name": "rope_freqs",
+          "dtype": "fp32",
+          "shape": [
+            "rotary_dim/2"
+          ],
+          "desc": "Optional proportional RoPE frequency factors; ignored when use_rope_freq_factors=0"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor after split-half RoPE application"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Key tensor after split-half RoPE application"
+        }
+      ],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D",
+        "rotary_dim"
+      ],
+      "params": [
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32",
+          "desc": "Aligned head dimension for SIMD"
+        },
+        {
+          "name": "pos_offset",
+          "dtype": "int32",
+          "desc": "Absolute position offset"
+        },
+        {
+          "name": "rotary_dim",
+          "dtype": "int32",
+          "desc": "RoPE rotary dimensions"
+        },
+        {
+          "name": "freq_base",
+          "dtype": "float32",
+          "source": "dim:rope_freq_base",
+          "desc": "Per-layer RoPE theta/base"
+        }
+      ],
+      "impl": {
+        "function": "rope_forward_qk_split_direct_f32",
+        "c_declaration": "void rope_forward_qk_split_direct_f32(float *q, float *k, const float *freq_factors, int use_freq_factors, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int rotary_dim, float freq_base);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_rope.py"
+        ],
+        "parity": [
+          {
+            "kind": "torch",
+            "command": "python version/v8/scripts/gemma4_answer_parity_debug_v8.py --debug-hidden",
+            "tolerance": "1e-5",
+            "notes": "Validated against HF split-half rotate_half semantics for direct per-layer theta RoPE."
+          }
+        ]
+      },
+      "notes": "Generic split-half direct RoPE for models that need per-layer theta/rotary_dim and optional frequency factors instead of one precomputed cache. Gemma4 is the first v8 user, but the contract is model-neutral.",
+      "name": "rope_forward_qk_split_direct",
+      "_source_file": "rope_forward_qk_split_direct.json"
     },
     {
       "id": "rope_precompute_cache",
