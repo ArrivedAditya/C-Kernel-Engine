@@ -1601,10 +1601,11 @@ def emit_op(
             _hidden_count("m", "n", "rows", "dim", default="0"),
         )
     elif op_name == "recurrent_dt_gate":
+        gate_count = _mul_expr(_hidden_arg("rows"), _hidden_arg("num_heads"), _hidden_arg("state_dim")) or _mul_expr(_hidden_arg("rows"), _hidden_arg("dim"))
         _emit_hidden_export(
             _hidden_arg("gate", "output", "out"),
             "gate",
-            _mul_expr(_hidden_arg("rows"), _hidden_arg("dim")),
+            gate_count,
         )
     elif op_name == "recurrent_conv_state_update":
         q_dim = _hidden_arg("q_dim")
@@ -1954,7 +1955,8 @@ def emit_op(
         elif op_name == "recurrent_beta_proj":
             _emit_dump(_get_arg("output", "out", "c", "y"), "beta", m_dim or n_dim)
         elif op_name == "recurrent_dt_gate":
-            _emit_dump(_get_arg("gate", "output", "out"), "gate", _mul_expr(_get_arg("rows"), _get_arg("dim")))
+            gate_count = _mul_expr(_get_arg("rows"), _get_arg("num_heads"), _get_arg("state_dim")) or _mul_expr(_get_arg("rows"), _get_arg("dim"))
+            _emit_dump(_get_arg("gate", "output", "out"), "gate", gate_count)
         elif op_name == "recurrent_conv_state_update":
             q_dim = _get_arg("q_dim")
             k_dim = _get_arg("k_dim")

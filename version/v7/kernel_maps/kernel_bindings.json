@@ -1173,8 +1173,12 @@
           "source": "runtime:seq_len"
         },
         {
-          "name": "dim",
+          "name": "num_heads",
           "source": "dim:gate_dim"
+        },
+        {
+          "name": "state_dim",
+          "source": "dim:ssm_state_size"
         }
       ]
     },
@@ -1221,8 +1225,12 @@
           "source": "runtime:seq_len"
         },
         {
-          "name": "dim",
+          "name": "num_heads",
           "source": "dim:gate_dim"
+        },
+        {
+          "name": "state_dim",
+          "source": "dim:ssm_state_size"
         }
       ]
     },
@@ -1269,8 +1277,12 @@
           "source": "runtime:seq_len"
         },
         {
-          "name": "dim",
+          "name": "num_heads",
           "source": "dim:gate_dim"
+        },
+        {
+          "name": "state_dim",
+          "source": "dim:ssm_state_size"
         }
       ]
     },
@@ -1495,7 +1507,8 @@
         {"name": "gate", "source": "activation:gate", "cast": "const float*"},
         {"name": "out", "source": "output:out", "cast": "float*"},
         {"name": "rows", "source": "runtime:seq_len"},
-        {"name": "dim", "source": "dim:attn_out_dim"}
+        {"name": "num_heads", "source": "dim:num_heads"},
+        {"name": "state_dim", "source": "dim:head_dim"}
       ]
     },
     "attn_gate_sigmoid_mul_backward": {
@@ -1507,7 +1520,8 @@
         {"name": "d_x", "source": "output:d_x", "cast": "float*"},
         {"name": "d_gate", "source": "output:d_gate", "cast": "float*"},
         {"name": "rows", "source": "runtime:seq_len"},
-        {"name": "dim", "source": "dim:attn_out_dim"}
+        {"name": "num_heads", "source": "dim:num_heads"},
+        {"name": "state_dim", "source": "dim:head_dim"}
       ]
     },
     "attn_gate_sigmoid_mul_backward_f32": {
@@ -1519,7 +1533,8 @@
         {"name": "d_x", "source": "output:d_x", "cast": "float*"},
         {"name": "d_gate", "source": "output:d_gate", "cast": "float*"},
         {"name": "rows", "source": "runtime:seq_len"},
-        {"name": "dim", "source": "dim:attn_out_dim"}
+        {"name": "num_heads", "source": "dim:num_heads"},
+        {"name": "state_dim", "source": "dim:head_dim"}
       ]
     },
     "ssm_conv1d_forward": {

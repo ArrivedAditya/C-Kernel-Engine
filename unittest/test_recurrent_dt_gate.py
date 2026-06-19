@@ -46,6 +46,7 @@ def _load_lib() -> ctypes.CDLL | None:
                 ctypes.POINTER(ctypes.c_float),
                 ctypes.c_int,
                 ctypes.c_int,
+                ctypes.c_int,
             ]
             fwd.restype = None
 
@@ -62,6 +63,19 @@ def _load_lib() -> ctypes.CDLL | None:
                 ctypes.c_int,
             ]
             bwd.restype = None
+
+            if hasattr(lib, "recurrent_dt_gate_expanded_forward"):
+                expanded = lib.recurrent_dt_gate_expanded_forward
+                expanded.argtypes = [
+                    ctypes.POINTER(ctypes.c_float),
+                    ctypes.POINTER(ctypes.c_float),
+                    ctypes.POINTER(ctypes.c_float),
+                    ctypes.POINTER(ctypes.c_float),
+                    ctypes.c_int,
+                    ctypes.c_int,
+                    ctypes.c_int,
+                ]
+                expanded.restype = None
             return lib
     return None
 
@@ -96,6 +110,7 @@ class TestRecurrentDTGateParity(unittest.TestCase):
             _as_ptr(a),
             _as_ptr(ck_gate),
             rows,
+            1,
             dim,
         )
 
@@ -140,6 +155,34 @@ class TestRecurrentDTGateParity(unittest.TestCase):
 
     def test_qwen35_like_case(self) -> None:
         self._run_case(rows=7, dim=16, seed=29)
+
+    def test_qwen35_expanded_vector_gate_forward(self) -> None:
+        if not hasattr(LIB, "recurrent_dt_gate_expanded_forward"):
+            self.skipTest("recurrent_dt_gate_expanded_forward not exported")
+        rows = 3
+        heads = 16
+        state_dim = 128
+        rng = np.random.default_rng(41)
+        alpha = (0.30 * rng.standard_normal((rows, heads))).astype(np.float32)
+        dt_bias = (0.20 * rng.standard_normal(heads)).astype(np.float32)
+        a = (0.25 * rng.standard_normal((heads, state_dim))).astype(np.float32)
+        ck_gate = np.zeros((rows, heads * state_dim), dtype=np.float32)
+
+        LIB.recurrent_dt_gate_expanded_forward(
+            _as_ptr(alpha),
+            _as_ptr(dt_bias),
+            _as_ptr(a),
+            _as_ptr(ck_gate),
+            rows,
+            heads,
+            state_dim,
+        )
+
+        t_alpha = torch.tensor(alpha, dtype=torch.float32)
+        t_dt_bias = torch.tensor(dt_bias, dtype=torch.float32)
+        t_a = torch.tensor(a, dtype=torch.float32)
+        torch_gate = (F.softplus(t_alpha + t_dt_bias).unsqueeze(-1) * t_a).reshape(rows, heads * state_dim).numpy()
+        np.testing.assert_allclose(ck_gate, torch_gate, atol=self.atol_forward, rtol=0.0)
 
 
 if __name__ == "__main__":

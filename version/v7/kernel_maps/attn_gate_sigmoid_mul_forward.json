@@ -37,7 +37,7 @@
   },
   "impl": {
     "function": "attn_gate_sigmoid_mul_forward",
-    "c_declaration": "void attn_gate_sigmoid_mul_forward(const float *x, const float *gate, float *out, int rows, int dim);",
+    "c_declaration": "void attn_gate_sigmoid_mul_forward(const float *x, const float *gate, float *out, int rows, int num_heads, int state_dim);",
     "sources": ["src/kernels/hybrid_attention_kernels.c"],
     "variants": [
       {"name": "ref", "requires": [], "compile_flags": []}

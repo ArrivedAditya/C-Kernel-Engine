@@ -102,7 +102,8 @@ extern void attn_gate_sigmoid_mul_forward(
     const float *gate,
     float *out,
     int rows,
-    int dim);
+    int num_heads,
+    int state_dim);
 
 /* Recurrent packed QKV split kernel (from recurrent_split_kernels.c) */
 extern void recurrent_split_qkv_forward(
@@ -839,7 +840,7 @@ void ck_test_attn_gate_sigmoid_mul(const float *x,
                                    int rows,
                                    int dim)
 {
-    attn_gate_sigmoid_mul_forward(x, gate, out, rows, dim);
+    attn_gate_sigmoid_mul_forward(x, gate, out, rows, 1, dim);
 }
 
 void ck_test_recurrent_norm_gate(const float *x,
