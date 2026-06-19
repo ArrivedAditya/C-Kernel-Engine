@@ -280,14 +280,13 @@ void gated_deltanet_autoregressive_forward_avx(const float *q,
         float *state_cur = state_out + (size_t)h * state_stride;
         float *out_head = out + (size_t)h * vec_stride;
 
-        const float beta_s = ck_deltanet_sigmoidf(beta[h]);
         const float gate = expf(g[h]);
+        const float beta_s = ck_deltanet_sigmoidf(beta[h]);
 
         /* q and k arrive pre-normalized by recurrent_qk_l2_norm. */
         ck_deltanet_scale_rows_avx(q_head, q_hat, state_dim, q_scale);
         ck_deltanet_scale_rows_avx(k_head, k_hat, state_dim, 1.0f);
 
-        const __m256 gate_v = _mm256_set1_ps(gate);
         const __m256 beta_v = _mm256_set1_ps(beta_s);
         const __m256 zero_v = _mm256_setzero_ps();
 
@@ -304,6 +303,7 @@ void gated_deltanet_autoregressive_forward_avx(const float *q,
         for (int row = 0; row < state_dim; ++row) {
             const size_t row_off = (size_t)row * (size_t)state_dim;
             const __m256 k_hat_v = _mm256_set1_ps(k_hat[row]);
+            const __m256 gate_v = _mm256_set1_ps(gate);
 
             col = 0;
             for (; col + 8 <= state_dim; col += 8) {
@@ -396,14 +396,13 @@ void gated_deltanet_autoregressive_forward_avx2(const float *q,
         float *state_cur = state_out + (size_t)h * state_stride;
         float *out_head = out + (size_t)h * vec_stride;
 
-        const float beta_s = ck_deltanet_sigmoidf(beta[h]);
         const float gate = expf(g[h]);
+        const float beta_s = ck_deltanet_sigmoidf(beta[h]);
 
         /* q and k arrive pre-normalized by recurrent_qk_l2_norm. */
         ck_deltanet_scale_rows_avx(q_head, q_hat, state_dim, q_scale);
         ck_deltanet_scale_rows_avx(k_head, k_hat, state_dim, 1.0f);
 
-        const __m256 gate_v = _mm256_set1_ps(gate);
         const __m256 beta_v = _mm256_set1_ps(beta_s);
         const __m256 zero_v = _mm256_setzero_ps();
 
@@ -423,13 +422,15 @@ void gated_deltanet_autoregressive_forward_avx2(const float *q,
             const size_t row1_off = (size_t)(row + 1) * (size_t)state_dim;
             const __m256 k0_v = _mm256_set1_ps(k_hat[row]);
             const __m256 k1_v = _mm256_set1_ps(k_hat[row + 1]);
+            const __m256 gate0_v = _mm256_set1_ps(gate);
+            const __m256 gate1_v = _mm256_set1_ps(gate);
 
             col = 0;
             for (; col + 8 <= state_dim; col += 8) {
                 __m256 prev0_v = _mm256_loadu_ps(state_prev + row0_off + (size_t)col);
                 __m256 prev1_v = _mm256_loadu_ps(state_prev + row1_off + (size_t)col);
-                __m256 cur0_v = _mm256_mul_ps(prev0_v, gate_v);
-                __m256 cur1_v = _mm256_mul_ps(prev1_v, gate_v);
+                __m256 cur0_v = _mm256_mul_ps(prev0_v, gate0_v);
+                __m256 cur1_v = _mm256_mul_ps(prev1_v, gate1_v);
                 __m256 kv_v = _mm256_loadu_ps(kv_mem + col);
                 kv_v = ck_deltanet_fmadd256(cur0_v, k0_v, kv_v);
                 kv_v = ck_deltanet_fmadd256(cur1_v, k1_v, kv_v);
@@ -448,6 +449,7 @@ void gated_deltanet_autoregressive_forward_avx2(const float *q,
         for (; row < state_dim; ++row) {
             const size_t row_off = (size_t)row * (size_t)state_dim;
             const __m256 k_hat_v = _mm256_set1_ps(k_hat[row]);
+            const __m256 gate_v = _mm256_set1_ps(gate);
             col = 0;
             for (; col + 8 <= state_dim; col += 8) {
                 __m256 prev_v = _mm256_loadu_ps(state_prev + row_off + (size_t)col);
@@ -578,14 +580,13 @@ void gated_deltanet_autoregressive_forward_avx512(const float *q,
         float *state_cur = state_out + (size_t)h * state_stride;
         float *out_head = out + (size_t)h * vec_stride;
 
-        const float beta_s = ck_deltanet_sigmoidf(beta[h]);
         const float gate = expf(g[h]);
+        const float beta_s = ck_deltanet_sigmoidf(beta[h]);
 
         /* q and k arrive pre-normalized by recurrent_qk_l2_norm. */
         ck_deltanet_scale_rows_avx512(q_head, q_hat, state_dim, q_scale);
         ck_deltanet_scale_rows_avx512(k_head, k_hat, state_dim, 1.0f);
 
-        const __m512 gate_v = _mm512_set1_ps(gate);
         const __m512 beta_v = _mm512_set1_ps(beta_s);
         const __m512 zero_v = _mm512_setzero_ps();
 
@@ -602,6 +603,7 @@ void gated_deltanet_autoregressive_forward_avx512(const float *q,
         for (int row = 0; row < state_dim; ++row) {
             const size_t row_off = (size_t)row * (size_t)state_dim;
             const __m512 k_hat_v = _mm512_set1_ps(k_hat[row]);
+            const __m512 gate_v = _mm512_set1_ps(gate);
             col = 0;
             for (; col + 16 <= state_dim; col += 16) {
                 __m512 prev_v = _mm512_loadu_ps(state_prev + row_off + (size_t)col);

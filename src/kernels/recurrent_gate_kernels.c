@@ -28,13 +28,36 @@ void recurrent_dt_gate_forward(const float *alpha,
                                const float *a,
                                float *gate,
                                int rows,
-                               int dim) {
+                               int num_heads,
+                               int state_dim) {
+    const int dim = num_heads * state_dim;
     for (int row = 0; row < rows; ++row) {
         const float *alpha_row = alpha + (size_t) row * (size_t) dim;
         float *gate_row = gate + (size_t) row * (size_t) dim;
         for (int col = 0; col < dim; ++col) {
             const float x = alpha_row[col] + dt_bias[col];
             gate_row[col] = recurrent_softplus(x) * a[col];
+        }
+    }
+}
+
+void recurrent_dt_gate_expanded_forward(const float *alpha,
+                                        const float *dt_bias,
+                                        const float *a,
+                                        float *gate,
+                                        int rows,
+                                        int num_heads,
+                                        int state_dim) {
+    for (int row = 0; row < rows; ++row) {
+        const float *alpha_row = alpha + (size_t) row * (size_t) num_heads;
+        float *gate_row = gate + (size_t) row * (size_t) num_heads * (size_t) state_dim;
+        for (int h = 0; h < num_heads; ++h) {
+            const float sp = recurrent_softplus(alpha_row[h] + dt_bias[h]);
+            const float *a_head = a + (size_t) h * (size_t) state_dim;
+            float *gate_head = gate_row + (size_t) h * (size_t) state_dim;
+            for (int col = 0; col < state_dim; ++col) {
+                gate_head[col] = sp * a_head[col];
+            }
         }
     }
 }

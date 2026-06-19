@@ -1545,7 +1545,8 @@ void recurrent_dt_gate_forward(const float *alpha,
                                const float *a,
                                float *gate,
                                int rows,
-                               int dim);
+                               int num_heads,
+                               int state_dim);
 
 // Backward for recurrent_dt_gate_forward.
 // Layout:
@@ -1556,6 +1557,20 @@ void recurrent_dt_gate_forward(const float *alpha,
 //   d_alpha   : [rows, dim]
 //   d_dt_bias : [dim]
 //   d_a       : [dim]
+// Expanded Qwen3.5/KDA-style dt gate.
+// Layout:
+//   alpha   : [rows, num_heads]
+//   dt_bias : [num_heads]
+//   a       : [num_heads, state_dim] (already converted to -exp(A_log))
+//   gate    : [rows, num_heads * state_dim]
+void recurrent_dt_gate_expanded_forward(const float *alpha,
+                                        const float *dt_bias,
+                                        const float *a,
+                                        float *gate,
+                                        int rows,
+                                        int num_heads,
+                                        int state_dim);
+
 void recurrent_dt_gate_backward(const float *d_gate,
                                 const float *alpha,
                                 const float *dt_bias,
@@ -1695,14 +1710,15 @@ void recurrent_norm_gate_backward(const float *d_out,
 // Apply sigmoid(gate) to the full-attention qwen3.5 gate path and multiply it
 // elementwise with the attention output before the output projection.
 // Layout:
-//   x      : [rows, dim]
-//   gate   : [rows, dim]
-//   out    : [rows, dim]
+//   x      : [rows, num_heads * state_dim]
+//   gate   : [rows, num_heads * state_dim]
+//   out    : [rows, num_heads * state_dim]
 void attn_gate_sigmoid_mul_forward(const float *x,
                                    const float *gate,
                                    float *out,
                                    int rows,
-                                   int dim);
+                                   int num_heads,
+                                   int state_dim);
 
 void attn_gate_sigmoid_mul_backward(const float *d_out,
                                     const float *x,
@@ -1710,7 +1726,8 @@ void attn_gate_sigmoid_mul_backward(const float *d_out,
                                     float *d_x,
                                     float *d_gate,
                                     int rows,
-                                    int dim);
+                                    int num_heads,
+                                    int state_dim);
 
 void gated_deltanet_autoregressive_forward(const float *q,
                                            const float *k,

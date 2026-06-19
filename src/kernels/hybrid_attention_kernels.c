@@ -96,7 +96,9 @@ void attn_gate_sigmoid_mul_forward(const float *x,
                                    const float *gate,
                                    float *out,
                                    int rows,
-                                   int dim) {
+                                   int num_heads,
+                                   int state_dim) {
+    const int dim = num_heads * state_dim;
     for (int row = 0; row < rows; ++row) {
         const float *x_row = x + (size_t) row * (size_t) dim;
         const float *gate_row = gate + (size_t) row * (size_t) dim;
@@ -113,7 +115,9 @@ void attn_gate_sigmoid_mul_backward(const float *d_out,
                                     float *d_x,
                                     float *d_gate,
                                     int rows,
-                                    int dim) {
+                                    int num_heads,
+                                    int state_dim) {
+    const int dim = num_heads * state_dim;
     for (int row = 0; row < rows; ++row) {
         const float *d_out_row = d_out + (size_t) row * (size_t) dim;
         const float *x_row = x + (size_t) row * (size_t) dim;

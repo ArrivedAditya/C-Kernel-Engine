@@ -3,7 +3,7 @@
     "description": "Kernel registry generated from v8 kernel maps",
     "version": "v8",
     "generated_by": "ck_run_v8.py",
-    "source_dir": "/opt/app-root/src/Ashivaku/C-Kernel-Engine/version/v8/kernel_maps",
+    "source_dir": "/home/antshiv/Workspace/C-Kernel-Engine/version/v8/kernel_maps",
     "counts": {
       "total": 147,
       "by_op": {
@@ -2828,7 +2828,7 @@
       },
       "impl": {
         "function": "attn_gate_sigmoid_mul_forward",
-        "c_declaration": "void attn_gate_sigmoid_mul_forward(const float *x, const float *gate, float *out, int rows, int dim);",
+        "c_declaration": "void attn_gate_sigmoid_mul_forward(const float *x, const float *gate, float *out, int rows, int num_heads, int state_dim);",
         "sources": [
           "src/kernels/hybrid_attention_kernels.c"
         ],
@@ -12233,9 +12233,9 @@
           "dtype": "fp32",
           "shape": [
             "R",
-            "D"
+            "H"
           ],
-          "desc": "Per-row recurrent alpha values"
+          "desc": "Per-row, per-head recurrent alpha values"
         }
       ],
       "weights": [
@@ -12243,17 +12243,18 @@
           "name": "dt_bias",
           "dtype": "fp32",
           "shape": [
-            "D"
+            "H"
           ],
-          "desc": "Per-dimension dt bias"
+          "desc": "Per-head dt bias"
         },
         {
           "name": "a",
           "dtype": "fp32",
           "shape": [
-            "D"
+            "H",
+            "S"
           ],
-          "desc": "Per-dimension recurrent A scale"
+          "desc": "Per-head/per-state recurrent A scale, converted to -exp(A_log)"
         }
       ],
       "activations": [],
@@ -12263,15 +12264,16 @@
           "dtype": "fp32",
           "shape": [
             "R",
-            "D"
+            "H*S"
           ],
-          "desc": "DeltaNet gate rows after dt transform"
+          "desc": "Expanded DeltaNet vector gate rows"
         }
       ],
       "scratch": [],
       "dims": [
         "R",
-        "D"
+        "H",
+        "S"
       ],
       "params": [],
       "parallelization": {
@@ -12295,11 +12297,11 @@
         ]
       },
       "constraints": {
-        "notes": "Applies softplus(alpha + dt_bias) * a row-wise."
+        "notes": "Applies softplus(alpha + dt_bias) * a and expands [R,H] to [R,H*S]."
       },
       "impl": {
         "function": "recurrent_dt_gate_forward",
-        "c_declaration": "void recurrent_dt_gate_forward(const float *alpha, const float *dt_bias, const float *a, float *gate, int rows, int dim);",
+        "c_declaration": "void recurrent_dt_gate_forward(const float *alpha, const float *dt_bias, const float *a, float *gate, int rows, int num_heads, int state_dim);",
         "sources": [
           "src/kernels/recurrent_gate_kernels.c"
         ],
@@ -12330,7 +12332,7 @@
           }
         ]
       },
-      "notes": "Explicit recurrent dt gate transform used before the DeltaNet core.",
+      "notes": "Scalar recurrent dt gate transform used before Qwen3.5 DeltaNet core.",
       "name": "recurrent_dt_gate_forward",
       "_source_file": "recurrent_dt_gate_forward.json"
     },

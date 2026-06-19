@@ -174,7 +174,8 @@ class TestDeltaNetRegistryV7(unittest.TestCase):
                 "a",
                 "gate",
                 "rows",
-                "dim",
+                "num_heads",
+                "state_dim",
             ],
         )
 
@@ -250,7 +251,8 @@ class TestDeltaNetRegistryV7(unittest.TestCase):
                 "gate",
                 "out",
                 "rows",
-                "dim",
+                "num_heads",
+                "state_dim",
             ],
         )
 

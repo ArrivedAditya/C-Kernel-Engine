@@ -4,9 +4,9 @@ from __future__ import annotations
 """Convert HF safetensors language weights into v8 BUMPWGT5 artifacts.
 
 This is a BUMP-first importer.  GGUF and safetensors are source formats; CK
-runtime consumes weights.bump + sidecars.  The first supported target is the
-Gemma4 text/language model path, using CK-internal manifest names so existing
-v8 IR/codegen can consume the result.
+runtime consumes weights.bump + sidecars.  Supported targets map source tensor
+names into CK-internal manifest names so existing v8 IR/codegen can consume
+safetensors and GGUF through the same BUMP runtime contract.
 """
 
 import argparse
@@ -40,6 +40,7 @@ from convert_gguf_to_bump_v8 import (  # type: ignore
     _inject_runtime_config_defaults,
     apply_model_contract_overrides,
     build_bumpv5_metadata,
+    build_qwen35_execution_plan,
     calculate_manifest_hash,
     calculate_metadata_hash,
     calculate_template_hash,
@@ -253,6 +254,67 @@ def _gemma4_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor]) 
     return refs
 
 
+def _qwen35_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor]) -> list[TensorRef]:
+    text = config.get("text_config") if isinstance(config.get("text_config"), dict) else config
+    num_layers = int(config.get("num_layers") or config.get("num_hidden_layers") or text.get("num_hidden_layers") or 0)
+    embed_dim = int(config.get("embed_dim") or config.get("hidden_size") or text.get("hidden_size") or 0)
+    intermediate = int(config.get("intermediate_size") or text.get("intermediate_size") or 0)
+    num_heads = int(config.get("num_heads") or text.get("num_attention_heads") or 0)
+    num_kv_heads = int(config.get("num_kv_heads") or text.get("num_key_value_heads") or 0)
+    head_dim = int(config.get("head_dim") or text.get("head_dim") or (embed_dim // max(1, num_heads)))
+    if num_layers <= 0 or embed_dim <= 0 or intermediate <= 0 or num_heads <= 0:
+        raise SystemExit("Qwen3.5 config missing num_layers/embed_dim/intermediate_size/num_heads")
+
+    prefix = "model.language_model."
+    layer_types = list(config.get("layer_types") or text.get("layer_types") or [])
+    if layer_types and len(layer_types) != num_layers:
+        raise SystemExit(f"Qwen3.5 layer_types length {len(layer_types)} != num_layers {num_layers}")
+
+    refs: list[TensorRef] = [
+        TensorRef("token_emb", (_require_existing(headers, (f"{prefix}embed_tokens.weight",), "token_emb"),)),
+    ]
+
+    for layer in range(num_layers):
+        layer_prefix = f"{prefix}layers.{layer}"
+        layer_type = str(layer_types[layer] if layer_types else ("full_attention" if (layer + 1) % 4 == 0 else "linear_attention"))
+        refs.extend([
+            TensorRef(f"layer.{layer}.attn_norm", (_require_existing(headers, (f"{layer_prefix}.input_layernorm.weight",), f"layer {layer} input norm"),), dtype="fp32"),
+            TensorRef(f"layer.{layer}.post_attention_norm", (_require_existing(headers, (f"{layer_prefix}.post_attention_layernorm.weight",), f"layer {layer} post attention norm"),), dtype="fp32"),
+            TensorRef(f"layer.{layer}.ffn_gate", (_require_existing(headers, (f"{layer_prefix}.mlp.gate_proj.weight",), f"layer {layer} gate_proj"),)),
+            TensorRef(f"layer.{layer}.ffn_up", (_require_existing(headers, (f"{layer_prefix}.mlp.up_proj.weight",), f"layer {layer} up_proj"),)),
+            TensorRef(f"layer.{layer}.ffn_down", (_require_existing(headers, (f"{layer_prefix}.mlp.down_proj.weight",), f"layer {layer} down_proj"),)),
+        ])
+        if layer_type in {"linear_attention", "recurrent"}:
+            refs.extend([
+                TensorRef(f"layer.{layer}.attn_qkv", (_require_existing(headers, (f"{layer_prefix}.linear_attn.in_proj_qkv.weight",), f"layer {layer} recurrent qkv"),)),
+                TensorRef(f"layer.{layer}.attn_gate", (_require_existing(headers, (f"{layer_prefix}.linear_attn.in_proj_z.weight",), f"layer {layer} recurrent gate"),)),
+                TensorRef(f"layer.{layer}.ssm_alpha", (_require_existing(headers, (f"{layer_prefix}.linear_attn.in_proj_a.weight",), f"layer {layer} recurrent alpha"),)),
+                TensorRef(f"layer.{layer}.ssm_beta", (_require_existing(headers, (f"{layer_prefix}.linear_attn.in_proj_b.weight",), f"layer {layer} recurrent beta"),)),
+                TensorRef(f"layer.{layer}.ssm_conv1d", (_require_existing(headers, (f"{layer_prefix}.linear_attn.conv1d.weight",), f"layer {layer} recurrent conv1d"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.ssm_dt_bias", (_require_existing(headers, (f"{layer_prefix}.linear_attn.dt_bias",), f"layer {layer} recurrent dt bias"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.ssm_a", (_require_existing(headers, (f"{layer_prefix}.linear_attn.A_log",), f"layer {layer} recurrent A_log"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.ssm_norm", (_require_existing(headers, (f"{layer_prefix}.linear_attn.norm.weight",), f"layer {layer} recurrent norm"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.ssm_out", (_require_existing(headers, (f"{layer_prefix}.linear_attn.out_proj.weight",), f"layer {layer} recurrent out"),)),
+            ])
+        elif layer_type == "full_attention":
+            refs.extend([
+                TensorRef(f"layer.{layer}.attn_q_gate", (_require_existing(headers, (f"{layer_prefix}.self_attn.q_proj.weight",), f"layer {layer} q_proj"),)),
+                TensorRef(f"layer.{layer}.attn_k", (_require_existing(headers, (f"{layer_prefix}.self_attn.k_proj.weight",), f"layer {layer} k_proj"),)),
+                TensorRef(f"layer.{layer}.attn_v", (_require_existing(headers, (f"{layer_prefix}.self_attn.v_proj.weight",), f"layer {layer} v_proj"),)),
+                TensorRef(f"layer.{layer}.attn_output", (_require_existing(headers, (f"{layer_prefix}.self_attn.o_proj.weight",), f"layer {layer} o_proj"),)),
+                TensorRef(f"layer.{layer}.attn_q_norm", (_require_existing(headers, (f"{layer_prefix}.self_attn.q_norm.weight",), f"layer {layer} q_norm"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.attn_k_norm", (_require_existing(headers, (f"{layer_prefix}.self_attn.k_norm.weight",), f"layer {layer} k_norm"),), dtype="fp32"),
+            ])
+        else:
+            raise SystemExit(f"Unsupported Qwen3.5 layer_type at layer {layer}: {layer_type}")
+
+    refs.append(TensorRef("final_ln_weight", (_require_existing(headers, (f"{prefix}norm.weight",), "final norm"),), dtype="fp32"))
+    lm_head = _first_existing(headers, ("lm_head.weight", f"{prefix}lm_head.weight"))
+    if lm_head is not None:
+        refs.append(TensorRef("output.weight", (lm_head,)))
+    return refs
+
+
 def _first_existing(headers: dict[str, HeaderTensor], names: Iterable[str]) -> str | None:
     for name in names:
         if name in headers:
@@ -361,6 +423,8 @@ def _infer_arch(hf: dict[str, Any]) -> str:
         return "gemma4"
     if "gemma" in mt and "3" in mt:
         return "gemma3"
+    if "qwen3_5" in mt or "qwen3.5" in mt or "qwen35" in mt:
+        return "qwen35"
     if "qwen3" in mt:
         return "qwen3"
     if "qwen2" in mt or mt == "qwen":
@@ -373,6 +437,8 @@ def _infer_arch(hf: dict[str, Any]) -> str:
 def _refs_for_arch(arch: str, config: dict[str, Any], headers: dict[str, HeaderTensor]) -> list[TensorRef]:
     if arch == "gemma4":
         return _gemma4_text_refs(config, headers)
+    if arch == "qwen35":
+        return _qwen35_text_refs(config, headers)
     if arch in {"llama", "qwen2", "qwen3", "gemma3"}:
         return _llama_family_text_refs(config, headers)
     raise SystemExit(f"Unsupported safetensors arch for v8 importer: {arch}")
@@ -400,13 +466,93 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
     rope_params = text.get("rope_parameters") if isinstance(text.get("rope_parameters"), dict) else {}
     full_rope = rope_params.get("full_attention") if isinstance(rope_params.get("full_attention"), dict) else {}
     sliding_rope = rope_params.get("sliding_attention") if isinstance(rope_params.get("sliding_attention"), dict) else {}
-    cfg.setdefault("rope_theta", full_rope.get("rope_theta", text.get("rope_theta", 1000000.0)))
+    rope_parameters = text.get("rope_parameters") if isinstance(text.get("rope_parameters"), dict) else {}
+    cfg.setdefault("rope_theta", full_rope.get("rope_theta", rope_parameters.get("rope_theta", text.get("rope_theta", 1000000.0))))
     cfg.setdefault("rope_theta_swa", sliding_rope.get("rope_theta", 10000.0))
-    cfg.setdefault("rope_layout", "split")
+    mrope_sections_raw = rope_parameters.get("mrope_section") or []
+    rope_interleaved = bool(rope_parameters.get("mrope_interleaved", False))
+    if mrope_sections_raw:
+        cfg.setdefault("rope_layout", "multi_section_1d")
+    else:
+        cfg.setdefault("rope_layout", "pairwise" if rope_interleaved else "split")
     cfg.setdefault("rope_param_mode", "per_layer_direct")
     cfg.setdefault("rms_eps", text.get("rms_norm_eps", text.get("rms_norm_epsilon", 1e-6)))
     cfg.setdefault("rms_norm_eps", cfg.get("rms_eps"))
     cfg.setdefault("tie_word_embeddings", bool(text.get("tie_word_embeddings", True)))
+    if arch == "qwen35":
+        headers = _load_safetensors_headers(model_dir)
+        q_gate_proj_dim = 0
+        attn_out_dim = 0
+        recurrent_q_dim = int(text.get("linear_num_key_heads", 0) or 0) * int(text.get("linear_key_head_dim", 0) or 0)
+        recurrent_k_dim = recurrent_q_dim
+        recurrent_v_dim = int(text.get("linear_num_value_heads", 0) or 0) * int(text.get("linear_value_head_dim", 0) or 0)
+        ssm_time_step_rank = 0
+        for name, h in headers.items():
+            if name.endswith(".self_attn.q_proj.weight") and len(h.shape) >= 2:
+                q_gate_proj_dim = int(h.shape[0])
+                if q_gate_proj_dim % 2 == 0:
+                    attn_out_dim = q_gate_proj_dim // 2
+            elif name.endswith(".linear_attn.in_proj_qkv.weight") and len(h.shape) >= 2:
+                total = int(h.shape[0])
+                if recurrent_q_dim <= 0 or recurrent_k_dim <= 0 or recurrent_v_dim <= 0:
+                    recurrent_q_dim = total // 3
+                    recurrent_k_dim = total // 3
+                    recurrent_v_dim = total - recurrent_q_dim - recurrent_k_dim
+            elif name.endswith(".linear_attn.in_proj_a.weight") and len(h.shape) >= 2:
+                ssm_time_step_rank = max(ssm_time_step_rank, int(h.shape[0]))
+        if attn_out_dim <= 0:
+            attn_out_dim = int(text.get("num_attention_heads", cfg.get("num_heads", 0))) * int(text.get("head_dim", cfg.get("head_dim", 0)))
+        if q_gate_proj_dim <= 0:
+            q_gate_proj_dim = attn_out_dim * 2
+        if ssm_time_step_rank <= 0:
+            ssm_time_step_rank = int(text.get("linear_num_key_heads") or text.get("linear_num_value_heads") or 0)
+
+        layer_types = [str(x) for x in (text.get("layer_types") or [])]
+        layer_kinds = ["full_attention" if x == "full_attention" else "recurrent" for x in layer_types]
+        if not layer_kinds:
+            n_layers = int(cfg.get("num_layers") or 0)
+            interval = int(text.get("full_attention_interval") or 4)
+            layer_kinds = ["full_attention" if (i + 1) % interval == 0 else "recurrent" for i in range(n_layers)]
+        execution_plan = build_qwen35_execution_plan(layer_kinds)
+        cfg.update({
+            "model": "qwen35",
+            "arch": "qwen35",
+            "model_type": "qwen35",
+            "attn_out_dim": int(attn_out_dim),
+            "attn_q_gate_proj_dim": int(q_gate_proj_dim),
+            "intermediate_dim": int(cfg.get("intermediate_size") or 0),
+            "max_seq_len": int(cfg.get("context_length") or 0),
+            "rotary_dim": int(int(text.get("head_dim", cfg.get("head_dim", 0))) * float(rope_parameters.get("partial_rotary_factor", 1.0))),
+            "has_qk_norm": any(kind == "full_attention" for kind in layer_kinds),
+            "has_attention_biases": False,
+            "layer_types": layer_types,
+            "layer_kinds": layer_kinds,
+            "hybrid_block_pattern": layer_kinds[:],
+            "layer_execution_plan": execution_plan["layer_execution_plan"],
+            "layer_state_policy": execution_plan["layer_state_policy"],
+            "layer_attention_policy": execution_plan["layer_attention_policy"],
+            "layer_recurrent_policy": execution_plan["layer_recurrent_policy"],
+            "layer_kv_policy": execution_plan["layer_kv_policy"],
+            "prefill_policy": "batched",
+            "full_attention_interval": int(text.get("full_attention_interval") or 4),
+            "ssm_conv_kernel": int(text.get("linear_conv_kernel_dim") or 4),
+            "ssm_state_size": int(text.get("linear_key_head_dim") or max(1, recurrent_q_dim)),
+            "ssm_group_count": int(text.get("linear_num_key_heads") or max(1, recurrent_q_dim // max(1, int(text.get("linear_key_head_dim") or recurrent_q_dim)))),
+            "ssm_time_step_rank": int(ssm_time_step_rank),
+            "ssm_inner_size": int(recurrent_v_dim),
+            "q_dim": int(recurrent_q_dim),
+            "k_dim": int(recurrent_k_dim),
+            "v_dim": int(recurrent_v_dim),
+            "gate_dim": int(ssm_time_step_rank),
+            "ssm_conv_channels": int(recurrent_q_dim + recurrent_k_dim + recurrent_v_dim),
+            "recurrent_num_heads": int(ssm_time_step_rank),
+            "recurrent_head_dim": int(recurrent_v_dim // max(1, ssm_time_step_rank)) if ssm_time_step_rank else int(text.get("linear_key_head_dim") or 0),
+            "sampler_defaults": {"repeat_penalty": 1.12, "repeat_last_n": 96, "no_repeat_ngram_size": 4},
+        })
+        mrope = list(rope_parameters.get("mrope_section") or [])
+        if mrope:
+            cfg["mrope_sections"] = [int(v) for v in mrope] + ([0] if len(mrope) == 3 else [])
+            cfg["mrope_n_dims"] = int(sum(int(v) for v in mrope))
     cfg = _inject_runtime_config_defaults(cfg, arch)
     if arch == "gemma4" and "layer_kinds" not in cfg:
         raise SystemExit("Gemma4 safetensors conversion currently requires --config-template with explicit layer_kinds/shared KV policy")
@@ -436,6 +582,80 @@ def _entry_size_from_header(ref: TensorRef, headers: dict[str, HeaderTensor], dt
     return out_dtype or "fp32", total, out_shape
 
 
+def _is_qwen35_shifted_norm_ref(ref: TensorRef) -> bool:
+    if not ref.source_names:
+        return False
+    src = ref.source_names[0]
+    if not src.endswith("norm.weight"):
+        return False
+    # llama.cpp shifts Qwen3.5 norm weights by +1, except the recurrent
+    # linear_attn.norm.weight used inside the DeltaNet norm-gate.
+    if src.endswith("linear_attn.norm.weight"):
+        return False
+    return ref.ck_name == "final_ln_weight" or ref.ck_name.endswith((
+        ".attn_norm",
+        ".post_attention_norm",
+        ".attn_q_norm",
+        ".attn_k_norm",
+    ))
+
+
+def _ref_transform(ref: TensorRef) -> str | None:
+    if ref.ck_name.endswith(".ssm_a"):
+        return "neg_exp_a_log"
+    if _is_qwen35_shifted_norm_ref(ref):
+        return "qwen35_norm_plus_one"
+    return None
+
+
+def _ignored_source_tensor(arch: str, name: str) -> str | None:
+    if name.startswith("mtp.") or name.startswith("model.mtp."):
+        return "mtp_decoder_block_not_in_main_pass"
+    if arch == "qwen35" and (name.startswith("model.visual.") or name.startswith("visual.")):
+        return "vision_tower_not_in_decoder_pass"
+    if arch == "qwen35" and name.startswith("model.vision_model."):
+        return "vision_tower_not_in_decoder_pass"
+    return None
+
+
+def _build_source_audit(arch: str, headers: dict[str, HeaderTensor], refs: list[TensorRef]) -> dict[str, Any]:
+    consumed: dict[str, list[str]] = {}
+    synthetic: list[str] = []
+    transforms: list[dict[str, str]] = []
+    for ref in refs:
+        transform = _ref_transform(ref)
+        if ref.source_names:
+            for src in ref.source_names:
+                consumed.setdefault(src, []).append(ref.ck_name)
+                if transform:
+                    transforms.append({"source": src, "target": ref.ck_name, "transform": transform})
+        else:
+            synthetic.append(ref.ck_name)
+    ignored: list[dict[str, str]] = []
+    unmapped: list[str] = []
+    for name in sorted(headers):
+        if name in consumed:
+            continue
+        reason = _ignored_source_tensor(arch, name)
+        if reason:
+            ignored.append({"source": name, "reason": reason})
+        else:
+            unmapped.append(name)
+    return {
+        "arch": arch,
+        "source_tensor_count": len(headers),
+        "consumed_source_count": len(consumed),
+        "consumed_source_tensors": sorted(consumed),
+        "source_to_targets": {name: sorted(targets) for name, targets in sorted(consumed.items())},
+        "entry_count": len(refs),
+        "synthetic_entries": synthetic,
+        "ignored_source_tensors": ignored,
+        "unmapped_source_tensors": unmapped,
+        "transforms": transforms,
+        "verdict": "fail" if unmapped else "pass",
+    }
+
+
 def _write_ref(w: HashingWriter, model_dir: Path, headers: dict[str, HeaderTensor], ref: TensorRef, dtype_policy: str) -> tuple[str, int, list[int]]:
     if ref.synth:
         data, dt, shape = _synth_bytes(ref.synth, ref.shape or (), dtype_policy)
@@ -446,6 +666,13 @@ def _write_ref(w: HashingWriter, model_dir: Path, headers: dict[str, HeaderTenso
     out_shape: list[int] = []
     for src in ref.source_names:
         t = _load_tensor(model_dir, headers, src)
+        transform = _ref_transform(ref)
+        if transform == "neg_exp_a_log":
+            import torch
+            t = -torch.exp(t.to(dtype=torch.float32))
+        elif transform == "qwen35_norm_plus_one":
+            import torch
+            t = t.to(dtype=torch.float32) + 1.0
         policy = ref.dtype or dtype_policy
         data, dt, shape = _torch_to_bytes(t, policy)
         w.write(data)
@@ -470,10 +697,12 @@ def main() -> int:
     ap.add_argument("--output", required=True, type=Path, help="output weights.bump")
     ap.add_argument("--config-out", required=True, type=Path)
     ap.add_argument("--manifest-out", required=True, type=Path)
-    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma3", "llama", "qwen2", "qwen3"])
+    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma3", "llama", "qwen2", "qwen3", "qwen35"])
     ap.add_argument("--config-template", type=Path, help="existing v8 config/manifest to reuse explicit runtime policy")
     ap.add_argument("--dtype", default="preserve", choices=["preserve", "bf16", "fp32"])
     ap.add_argument("--dry-run", action="store_true", help="validate mapping and write JSON reports only; do not write BUMP")
+    ap.add_argument("--audit-out", type=Path, help="write safetensors source coverage audit JSON; default is manifest directory/conversion_audit.json")
+    ap.add_argument("--allow-unmapped", action="store_true", help="allow non-ignored source tensors to remain unmapped")
     args = ap.parse_args()
 
     model_dir = args.checkpoint.resolve()
@@ -497,18 +726,30 @@ def main() -> int:
             continue
         dt, size, shape = _entry_size_from_header(ref, headers, args.dtype)
         dtype_table.append(_dtype_code(dt))
-        entries_preview.append({
+        preview_entry = {
             "name": ref.ck_name,
             "dtype": dt,
             "file_offset": offset,
             "size": size,
             "source_name": "+".join(ref.source_names) if ref.source_names else f"synthetic:{ref.synth}",
             "shape": shape,
-        })
+        }
+        transform = _ref_transform(ref)
+        if transform:
+            preview_entry["transform"] = transform
+        entries_preview.append(preview_entry)
         offset += size
     if missing:
         uniq = sorted(set(missing))
         raise SystemExit("Missing required safetensors tensors:\n  " + "\n  ".join(uniq[:80]))
+
+    audit = _build_source_audit(arch, headers, refs)
+    audit_out = args.audit_out or (args.manifest_out.parent / "conversion_audit.json")
+    audit_out.parent.mkdir(parents=True, exist_ok=True)
+    audit_out.write_text(json.dumps(audit, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if audit["unmapped_source_tensors"] and not args.allow_unmapped:
+        sample = "\n  ".join(audit["unmapped_source_tensors"][:80])
+        raise SystemExit(f"Unmapped safetensors source tensors; see {audit_out}:\n  {sample}")
 
     template = apply_model_contract_overrides(
         load_template_for_arch(arch),
@@ -545,6 +786,7 @@ def main() -> int:
         "context_length": int(config.get("context_length", 0) or 0),
         "has_attention_biases": False,
         "has_qk_norm": True,
+        "source_audit": audit,
         "entries": entries_preview,
     }
 
@@ -572,14 +814,18 @@ def main() -> int:
             start = current_offset
             dt, size, shape = _write_ref(w, model_dir, headers, ref, args.dtype)
             current_offset += size
-            entries.append({
+            entry = {
                 "name": ref.ck_name,
                 "dtype": dt,
                 "file_offset": start,
                 "size": size,
                 "source_name": "+".join(ref.source_names) if ref.source_names else f"synthetic:{ref.synth}",
                 "shape": shape,
-            })
+            }
+            transform = _ref_transform(ref)
+            if transform:
+                entry["transform"] = transform
+            entries.append(entry)
         checksum = w.digest()
         manifest["entries"] = entries
         args.manifest_out.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")

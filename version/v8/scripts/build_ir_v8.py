@@ -1752,7 +1752,8 @@ def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, 
     )):
         packed_dim = max(recurrent_q + recurrent_k + recurrent_v, recurrent_inner)
         packed_size = seq_len * packed_dim * 4
-        gate_size = seq_len * recurrent_inner * 4
+        recurrent_inner_size = seq_len * recurrent_inner * 4
+        gate_size = seq_len * recurrent_gate * 4
         beta_size = seq_len * recurrent_gate * 4
         q_size = seq_len * recurrent_q * 4
         k_size = seq_len * recurrent_k * 4
@@ -1765,9 +1766,9 @@ def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, 
         conv_state_size = num_layers * conv_state_stride
         ssm_state_size = num_layers * ssm_state_stride
         add("recurrent_packed", packed_size, f"[{seq_len}, {packed_dim}]")
-        add("recurrent_z", gate_size, f"[{seq_len}, {recurrent_inner}]")
-        add("recurrent_normed", gate_size, f"[{seq_len}, {recurrent_inner}]")
-        add("recurrent_g", beta_size, f"[{seq_len}, {recurrent_gate}]")
+        add("recurrent_z", recurrent_inner_size, f"[{seq_len}, {recurrent_inner}]")
+        add("recurrent_normed", recurrent_inner_size, f"[{seq_len}, {recurrent_inner}]")
+        add("recurrent_g", gate_size, f"[{seq_len}, {recurrent_gate}]")
         add("recurrent_beta", beta_size, f"[{seq_len}, {recurrent_gate}]")
         add("recurrent_q", q_size, f"[{seq_len}, {recurrent_q}]")
         add("recurrent_k", k_size, f"[{seq_len}, {recurrent_k}]")
@@ -2716,7 +2717,48 @@ def _config_layer_int(config: Dict, key: str, layer: int, default: int) -> int:
 
 def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: Dict) -> None:
     """Apply explicit per-layer attention dimensions for architectures that need them."""
-    if str(config.get("model", "")).lower() != "gemma4" or layer < 0:
+    model_lc = str(config.get("model", "")).lower()
+    if layer < 0:
+        return
+    if model_lc == "qwen35":
+        embed_dim = int(config.get("embed_dim", 0) or 0)
+        num_heads = int(config.get("num_heads", 1) or 1)
+        num_kv_heads = int(config.get("num_kv_heads", num_heads) or num_heads)
+        head_dim = int(config.get("head_dim", 0) or 0)
+        q_dim = int(config.get("attn_out_dim", num_heads * head_dim) or (num_heads * head_dim))
+        k_dim = int(num_kv_heads * head_dim)
+        v_dim = int(num_kv_heads * head_dim)
+        rotary_dim = int(config.get("mrope_n_dims", config.get("rotary_dim", head_dim)) or head_dim)
+        rope_freq_base = float(config.get("rope_theta", 1000000.0) or 1000000.0)
+        if op_name == "q_gate_proj":
+            params["_output_dim"] = int(config.get("q_gate_proj_dim", config.get("attn_q_gate_proj_dim", q_dim * 2)) or (q_dim * 2))
+            params["_input_dim"] = embed_dim
+        elif op_name == "k_proj":
+            params["_output_dim"] = k_dim
+            params["_input_dim"] = embed_dim
+            params["output_dim"] = k_dim
+        elif op_name == "v_proj":
+            params["_output_dim"] = v_dim
+            params["_input_dim"] = embed_dim
+            params["output_dim"] = v_dim
+        elif op_name == "out_proj":
+            params["_output_dim"] = embed_dim
+            params["_input_dim"] = q_dim
+            params["input_dim"] = q_dim
+        elif op_name in ("qk_norm", "rope_qk", "kv_cache_store", "attn", "attn_sliding"):
+            params["head_dim"] = head_dim
+            params["q_head_dim"] = head_dim
+            params["k_head_dim"] = head_dim
+            params["v_head_dim"] = head_dim
+            params["q_dim"] = q_dim
+            params["k_dim"] = k_dim
+            params["v_dim"] = v_dim
+            params["rotary_dim"] = rotary_dim
+            params["n_dims"] = rotary_dim
+            params["rope_freq_base"] = rope_freq_base
+            params["use_rope_freq_factors"] = 1 if op_name == "rope_qk" else 0
+        return
+    if model_lc != "gemma4":
         return
 
     embed_dim = int(config.get("embed_dim", 0) or 0)
@@ -6863,7 +6905,8 @@ def generate_memory_layout(
     )):
         packed_dim = max(recurrent_q + recurrent_k + recurrent_v, recurrent_inner)
         packed_size = seq_len * packed_dim * 4
-        gate_size = seq_len * recurrent_inner * 4
+        recurrent_inner_size = seq_len * recurrent_inner * 4
+        gate_size = seq_len * recurrent_gate * 4
         beta_size = seq_len * recurrent_gate * 4
         rq_size = seq_len * recurrent_q * 4
         rk_size = seq_len * recurrent_k * 4
@@ -6876,9 +6919,9 @@ def generate_memory_layout(
         conv_state_size = num_layers * conv_state_stride
         ssm_state_size = num_layers * ssm_state_stride
         add_buffer("recurrent_packed", packed_size, f"[{seq_len}, {packed_dim}]")
-        add_buffer("recurrent_z", gate_size, f"[{seq_len}, {recurrent_inner}]")
-        add_buffer("recurrent_normed", gate_size, f"[{seq_len}, {recurrent_inner}]")
-        add_buffer("recurrent_g", beta_size, f"[{seq_len}, {recurrent_gate}]")
+        add_buffer("recurrent_z", recurrent_inner_size, f"[{seq_len}, {recurrent_inner}]")
+        add_buffer("recurrent_normed", recurrent_inner_size, f"[{seq_len}, {recurrent_inner}]")
+        add_buffer("recurrent_g", gate_size, f"[{seq_len}, {recurrent_gate}]")
         add_buffer("recurrent_beta", beta_size, f"[{seq_len}, {recurrent_gate}]")
         add_buffer("recurrent_q", rq_size, f"[{seq_len}, {recurrent_q}]")
         add_buffer("recurrent_k", rk_size, f"[{seq_len}, {recurrent_k}]")

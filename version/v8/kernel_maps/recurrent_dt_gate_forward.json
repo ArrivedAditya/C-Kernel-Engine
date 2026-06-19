@@ -8,45 +8,95 @@
     "output": "fp32"
   },
   "inputs": [
-    {"name": "alpha", "dtype": "fp32", "shape": ["R", "D"], "desc": "Per-row recurrent alpha values"}
+    {
+      "name": "alpha",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ],
+      "desc": "Per-row, per-head recurrent alpha values"
+    }
   ],
   "weights": [
-    {"name": "dt_bias", "dtype": "fp32", "shape": ["D"], "desc": "Per-dimension dt bias"},
-    {"name": "a", "dtype": "fp32", "shape": ["D"], "desc": "Per-dimension recurrent A scale"}
+    {
+      "name": "dt_bias",
+      "dtype": "fp32",
+      "shape": [
+        "H"
+      ],
+      "desc": "Per-head dt bias"
+    },
+    {
+      "name": "a",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "S"
+      ],
+      "desc": "Per-head/per-state recurrent A scale, converted to -exp(A_log)"
+    }
   ],
   "activations": [],
   "outputs": [
-    {"name": "gate", "dtype": "fp32", "shape": ["R", "D"], "desc": "DeltaNet gate rows after dt transform"}
+    {
+      "name": "gate",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H*S"
+      ],
+      "desc": "Expanded DeltaNet vector gate rows"
+    }
   ],
   "scratch": [],
-  "dims": ["R", "D"],
+  "dims": [
+    "R",
+    "H",
+    "S"
+  ],
   "params": [],
   "parallelization": {
-    "supported": ["row"],
-    "preferred": {"prefill": "row", "decode": "row"},
+    "supported": [
+      "row"
+    ],
+    "preferred": {
+      "prefill": "row",
+      "decode": "row"
+    },
     "strategies": [
       {
         "name": "row",
         "partition_dim": "R",
         "param_style": "range",
-        "range": {"min_chunk": 1},
+        "range": {
+          "min_chunk": 1
+        },
         "notes": "Each row can be transformed independently."
       }
     ]
   },
   "constraints": {
-    "notes": "Applies softplus(alpha + dt_bias) * a row-wise."
+    "notes": "Applies softplus(alpha + dt_bias) * a and expands [R,H] to [R,H*S]."
   },
   "impl": {
     "function": "recurrent_dt_gate_forward",
-    "c_declaration": "void recurrent_dt_gate_forward(const float *alpha, const float *dt_bias, const float *a, float *gate, int rows, int dim);",
-    "sources": ["src/kernels/recurrent_gate_kernels.c"],
+    "c_declaration": "void recurrent_dt_gate_forward(const float *alpha, const float *dt_bias, const float *a, float *gate, int rows, int num_heads, int state_dim);",
+    "sources": [
+      "src/kernels/recurrent_gate_kernels.c"
+    ],
     "variants": [
-      {"name": "ref", "requires": [], "compile_flags": []}
+      {
+        "name": "ref",
+        "requires": [],
+        "compile_flags": []
+      }
     ]
   },
   "tests": {
-    "unit": ["unittest/test_recurrent_dt_gate.py"],
+    "unit": [
+      "unittest/test_recurrent_dt_gate.py"
+    ],
     "parity": [
       {
         "kind": "pytorch",
@@ -62,5 +112,5 @@
       }
     ]
   },
-  "notes": "Explicit recurrent dt gate transform used before the DeltaNet core."
+  "notes": "Scalar recurrent dt gate transform used before Qwen3.5 DeltaNet core."
 }

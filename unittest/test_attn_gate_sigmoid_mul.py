@@ -16,6 +16,7 @@ LIB.attn_gate_sigmoid_mul_forward.argtypes = [
     ctypes.POINTER(ctypes.c_float),
     ctypes.c_int,
     ctypes.c_int,
+    ctypes.c_int,
 ]
 LIB.attn_gate_sigmoid_mul_forward.restype = None
 
@@ -25,6 +26,7 @@ LIB.attn_gate_sigmoid_mul_backward.argtypes = [
     ctypes.POINTER(ctypes.c_float),
     ctypes.POINTER(ctypes.c_float),
     ctypes.POINTER(ctypes.c_float),
+    ctypes.c_int,
     ctypes.c_int,
     ctypes.c_int,
 ]
@@ -37,7 +39,8 @@ def _ptr(arr: np.ndarray):
 
 def main() -> None:
     torch.manual_seed(0)
-    rows, dim = 9, 128
+    rows, num_heads, state_dim = 9, 4, 32
+    dim = num_heads * state_dim
     x = torch.randn(rows, dim, dtype=torch.float32)
     gate = torch.randn(rows, dim, dtype=torch.float32)
     ref_out = x * torch.sigmoid(gate)
@@ -45,7 +48,7 @@ def main() -> None:
     x_np = x.numpy().copy()
     gate_np = gate.numpy().copy()
     out_np = np.zeros((rows, dim), dtype=np.float32)
-    LIB.attn_gate_sigmoid_mul_forward(_ptr(x_np), _ptr(gate_np), _ptr(out_np), rows, dim)
+    LIB.attn_gate_sigmoid_mul_forward(_ptr(x_np), _ptr(gate_np), _ptr(out_np), rows, num_heads, state_dim)
     np.testing.assert_allclose(out_np, ref_out.numpy(), rtol=1e-6, atol=1e-6)
 
     d_out = torch.randn(rows, dim, dtype=torch.float32)
@@ -62,7 +65,8 @@ def main() -> None:
         _ptr(d_x_np),
         _ptr(d_gate_np),
         rows,
-        dim,
+        num_heads,
+        state_dim,
     )
     np.testing.assert_allclose(d_x_np, ref_d_x.numpy(), rtol=1e-6, atol=1e-6)
     np.testing.assert_allclose(d_gate_np, ref_d_gate.numpy(), rtol=1e-6, atol=1e-6)
