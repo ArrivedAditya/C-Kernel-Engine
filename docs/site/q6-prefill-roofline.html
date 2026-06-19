@@ -6,11 +6,11 @@
     <title>Documentation | C-Kernel-Engine</title>
     <meta name="description" content="C-Kernel-Engine documentation for a CPU-native AI runtime, kernels, code generation, training, and inference on Linux systems.">
     <meta name="robots" content="index,follow">
-    <link rel="canonical" href="https://antshiv.github.io/C-Kernel-Engine/testing.html">
+    <link rel="canonical" href="https://antshiv.github.io/C-Kernel-Engine/q6-prefill-roofline.html">
     <meta property="og:title" content="Documentation | C-Kernel-Engine">
     <meta property="og:description" content="C-Kernel-Engine documentation for a CPU-native AI runtime, kernels, code generation, training, and inference on Linux systems.">
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://antshiv.github.io/C-Kernel-Engine/testing.html">
+    <meta property="og:url" content="https://antshiv.github.io/C-Kernel-Engine/q6-prefill-roofline.html">
     <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
     <style>
         :root {
@@ -941,679 +941,128 @@
     <main>
 ---
 layout: default
-title: Testing Methodology
-permalink: /testing/
+title: Q6_K Prefill Roofline Notes
+permalink: /q6-prefill-roofline/
 ---
 
 <div class="container">
-  <h1>Testing Methodology</h1>
+  <h1>Q6_K Prefill Roofline Notes</h1>
   <p class="lead">
-    Multi-level numerical parity testing to ensure correctness against PyTorch.
+    Why the Q6_K x Q8_K 2D prefill scheduler is shape-gated instead of enabled globally.
   </p>
 
   <div class="alert alert-info">
-    <strong>Philosophy:</strong> Every kernel, layer, and model must match PyTorch to machine precision.
-    Bugs in numerical code compound across layers and steps - a 1e-6 error per layer becomes 1e-4 after 100 layers.
-    We test at every level to catch bugs where they originate.
+    <strong>Summary:</strong>
+    the 2D scheduler is a load-balancing optimization, not a replacement for row-split prefill.
+    It helps wide Q6_K shapes such as Nanbeige MLP-down, but can regress narrower Qwen2/Gemma/Qwen3.5 shapes.
   </div>
 
-  <div class="alert alert-success">
-    <strong>Vision encoder parity note:</strong>
-    the Qwen3-VL encoder parity closure and postmortem now live at
-    <a href="/vision-encoder-parity/">Vision Encoder Parity</a>.
-    That page documents the actual failure mode, the debugging sequence, and the regressions to watch for on future encoder ports.
-  </div>
-
-  <div class="alert alert-warning">
-    <strong>Quantized inference performance gate:</strong> BF16 kernels are primarily the
-    training / BF16-serving path. Production CPU inference for GGUF models is usually
-    dominated by quantized Q4_K/Q5_K/Q6_K/Q8_K GEMV/GEMM, activation quantization,
-    head-major output projection, and threadpool orchestration. Kernel changes in those
-    paths must be checked against llama.cpp for both parity and speed before they are
-    considered production-ready.
-  </div>
-
-  <h2>No-root Quantized Performance Workflow</h2>
+  <h2>Kernel Under Test</h2>
   <p>
-    On shared Xeon systems where <code>perf</code>, VTune, or Advisor are unavailable,
-    use repeatable CK-vs-llama.cpp timing gates and kernel-scoped benchmarks instead
-    of hardware counters. Keep BF16/AMX training experiments separate from quantized
-    inference patches unless the model path actually uses BF16 tensors.
-  </p>
-  <ul>
-    <li><code>LLAMA_CPP_DIR=/opt/app-root/src/Software/llama.cpp make test-gemv-comprehensive-quick</code> - quick Q4/Q5/Q8 GEMV parity and speed against llama.cpp.</li>
-    <li><code>make test-gemv-omp-quick</code> - serial vs OpenMP GEMV parity, useful for proving when OpenMP is not the right production scheduler.</li>
-    <li><code>make test-threadpool-parity-quick</code> - production threadpool dispatch parity and speed for GEMV/GEMM decode/prefill shapes.</li>
-    <li><code>LLAMA_CPP_DIR=/opt/app-root/src/Software/llama.cpp make test-head-major-q5-vs-llama-quick</code> - head-major Q5/Q8 output projection against llama.cpp.</li>
-    <li><code>make llamacpp-parity-nightly</code> - nightly llama.cpp parity profile; includes the quantized GEMV quick lane, threadpool dispatch, DeltaNet ISA, and head-major Q5 checks.</li>
-    <li><code>make llamacpp-parity-perf</code> or <code>make llamacpp-parity-perf-large</code> - longer performance runs when changing shared quantized kernels.</li>
-  </ul>
-  <p>
-    Current optimization priority for inference is shared quantized kernels and orchestration:
-    <code>gemv_q4_k_q8_k</code>, <code>gemv_q6_k_q8_k</code>,
-    <code>gemm_nt_q4_k_q8_k</code>, Q8_K activation quantization, final logits /
-    head-major projection, and row-sweep dispatch through the persistent threadpool.
-    AMX BF16 work is valuable for BF16 training and BF16 serving, but it is not a substitute
-    for measuring the quantized decode path used by Qwen, Gemma, Nanbeige, and vision GGUFs.
+    The benchmark targets <code>gemm_nt_q6_k_q8_k_parallel_dispatch()</code> in
+    <code>version/v8/src/ck_parallel_prefill_v8.c</code>. The math kernel computes
+    <code>C = A @ B^T</code>, where <code>A</code> is token-major Q8_K activations and
+    <code>B</code> is Q6_K weights. This is used by v8 prefill for model-family MLP-down and
+    some projection/logit paths.
   </p>
 
-  <div class="alert alert-info">
-    <strong>Q6_K prefill performance note:</strong>
-    the v8 Q6_K x Q8_K 2D prefill scheduler is shape-gated based on local roofline-style measurements.
-    See <a href="/q6-prefill-roofline/">Q6_K Prefill Roofline Notes</a> for the measured shapes, commands, and dispatch policy.
-    For the broader GEMM/GEMV production-kernel model, see
-    <a href="/gemm-optimization/#gemm-vs-gemv-production">GEMM vs GEMV in Production LLM Serving</a>.
-  </div>
-
-  <hr>
-
-  <h2>Testing Pyramid</h2>
+  <h2>Roofline Interpretation</h2>
   <p>
-    Tests are organized in levels, from individual kernels up to full training loops.
-    If a higher-level test fails but lower-level tests pass, the bug is in integration, not kernels.
+    Row-split scheduling assigns token rows to workers. For each worker, a Q8_K activation row is
+    reused across the full output dimension <code>N</code>. The 2D scheduler splits both token rows
+    and output columns. That creates more jobs and better load balance, but rereads the same Q8_K
+    activation tile once per <code>N</code> tile.
+  </p>
+  <p>
+    On memory-bound Q6_K prefill, the extra Q8_K activation traffic is only worth it when the shape is
+    wide enough that row-split does not keep cores busy or does not balance work well. Narrow output
+    dimensions usually stay faster with row splitting.
   </p>
 
-  <!-- Pyramid Infographic Styles -->
-  <style>
-    .pyramid-container {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      padding: 3rem 1rem;
-      max-width: 800px;
-      margin: 0 auto;
-    }
+  <h2>Local Measurement</h2>
+  <p>
+    Measurements below were taken on the local i7 development machine on 2026-06-09 with
+    <code>CK_NUM_THREADS=12</code>, <code>OMP_NUM_THREADS=1</code>, and <code>CK_Q6K_Q8K_SIMD=1</code>.
+    The benchmark used synthetic finite Q6_K/Q8_K blocks and compared row-split dispatch against raw
+    2D dispatch with <code>CK_FORCE_Q6K_Q8K_2D_PREFILL=1</code>.
+  </p>
 
-    .pyramid-level {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      width: 100%;
-      margin-bottom: 1rem;
-    }
-
-    /* Step number badge on top */
-    .step-badge {
-      width: 32px;
-      height: 32px;
-      background: #2d3748;
-      color: white;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.9rem;
-      font-weight: 700;
-      margin-bottom: 0.5rem;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-    }
-
-    /* The colored bar */
-    .level-bar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 1rem 1.5rem;
-      border-radius: 8px;
-      color: white;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-      cursor: pointer;
-    }
-
-    .level-bar:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 6px 20px rgba(0,0,0,0.25);
-    }
-
-    .level-info {
-      text-align: left;
-    }
-
-    .level-title {
-      font-size: 1.1rem;
-      font-weight: 700;
-      margin-bottom: 0.25rem;
-    }
-
-    .level-desc {
-      font-size: 0.85rem;
-      opacity: 0.9;
-    }
-
-    .level-catches {
-      font-size: 0.8rem;
-      opacity: 0.8;
-      margin-top: 0.25rem;
-      font-style: italic;
-    }
-
-    .level-precision {
-      font-family: 'Monaco', 'Consolas', monospace;
-      font-size: 0.85rem;
-      background: rgba(255,255,255,0.2);
-      padding: 0.3rem 0.6rem;
-      border-radius: 4px;
-      white-space: nowrap;
-    }
-
-    /* Connector arrow between levels */
-    .connector {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      color: #a0aec0;
-      margin: 0.25rem 0;
-    }
-
-    .connector-line {
-      width: 2px;
-      height: 20px;
-      background: linear-gradient(to bottom, #cbd5e0, #a0aec0);
-    }
-
-    .connector-arrow {
-      font-size: 1rem;
-    }
-
-    /* Pyramid widths - widest at bottom */
-    .width-5 { width: 50%; }
-    .width-4 { width: 62%; }
-    .width-3 { width: 74%; }
-    .width-2 { width: 86%; }
-    .width-1 { width: 98%; }
-
-    /* Level colors */
-    .color-5 { background: linear-gradient(135deg, #ed8936, #c05621); }
-    .color-4 { background: linear-gradient(135deg, #ecc94b, #d69e2e); }
-    .color-3 { background: linear-gradient(135deg, #68d391, #38a169); }
-    .color-2 { background: linear-gradient(135deg, #4fd1c5, #319795); }
-    .color-1 { background: linear-gradient(135deg, #63b3ed, #3182ce); }
-
-    /* Legend */
-    .pyramid-legend {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: center;
-      gap: 1.5rem;
-      margin-top: 2rem;
-      padding: 1rem 1.5rem;
-      background: #f7fafc;
-      border-radius: 8px;
-      border: 1px solid #e2e8f0;
-    }
-
-    .legend-item {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      font-size: 0.9rem;
-      color: #4a5568;
-    }
-
-    .legend-dot {
-      width: 14px;
-      height: 14px;
-      border-radius: 3px;
-    }
-
-    @media (max-width: 600px) {
-      .level-bar { flex-direction: column; text-align: center; gap: 0.5rem; }
-      .level-info { text-align: center; }
-      .width-5, .width-4, .width-3, .width-2, .width-1 { width: 100%; }
-    }
-  </style>
-
-  <!-- Pyramid Infographic -->
-  <div class="pyramid-container">
-
-    <!-- Level 5: Training Parity -->
-    <div class="pyramid-level">
-      <div class="step-badge">5</div>
-      <div class="level-bar color-5 width-5">
-        <div class="level-info">
-          <div class="level-title">Training Parity</div>
-          <div class="level-desc">Forward + Backward + Weight Updates</div>
-          <div class="level-catches">Catches: Gradient accumulation, optimizer bugs</div>
-        </div>
-        <div class="level-precision">&lt; 1e-3</div>
-      </div>
-    </div>
-
-    <div class="connector">
-      <div class="connector-arrow">▲</div>
-      <div class="connector-line"></div>
-    </div>
-
-    <!-- Level 4: Full Forward Parity -->
-    <div class="pyramid-level">
-      <div class="step-badge">4</div>
-      <div class="level-bar color-4 width-4">
-        <div class="level-info">
-          <div class="level-title">Full Forward Parity</div>
-          <div class="level-desc">All Layers → Compare Logits to PyTorch</div>
-          <div class="level-catches">Catches: Layer chaining, weight loading bugs</div>
-        </div>
-        <div class="level-precision">&lt; 1e-3</div>
-      </div>
-    </div>
-
-    <div class="connector">
-      <div class="connector-arrow">▲</div>
-      <div class="connector-line"></div>
-    </div>
-
-    <!-- Level 3: Per-Stage Layer Diff -->
-    <div class="pyramid-level">
-      <div class="step-badge">3</div>
-      <div class="level-bar color-3 width-3">
-        <div class="level-info">
-          <div class="level-title">Per-Stage Layer Diff</div>
-          <div class="level-desc">RoPE → Attention → Projection → MLP</div>
-          <div class="level-catches">Catches: Stage-specific bugs (RoPE, attention)</div>
-        </div>
-        <div class="level-precision">&lt; 1e-4</div>
-      </div>
-    </div>
-
-    <div class="connector">
-      <div class="connector-arrow">▲</div>
-      <div class="connector-line"></div>
-    </div>
-
-    <!-- Level 2: Full Layer Tests -->
-    <div class="pyramid-level">
-      <div class="step-badge">2</div>
-      <div class="level-bar color-2 width-2">
-        <div class="level-info">
-          <div class="level-title">Full Layer Tests</div>
-          <div class="level-desc">Complete Transformer Layer (Forward + Backward)</div>
-          <div class="level-catches">Catches: Kernel integration, buffer handling</div>
-        </div>
-        <div class="level-precision">&lt; 1e-4</div>
-      </div>
-    </div>
-
-    <div class="connector">
-      <div class="connector-arrow">▲</div>
-      <div class="connector-line"></div>
-    </div>
-
-    <!-- Level 1: Kernel Unit Tests -->
-    <div class="pyramid-level">
-      <div class="step-badge">1</div>
-      <div class="level-bar color-1 width-1">
-        <div class="level-info">
-          <div class="level-title">Kernel Unit Tests</div>
-          <div class="level-desc">RoPE, RMSNorm, Attention, GEMM, SwiGLU, Cross-Entropy</div>
-          <div class="level-catches">Catches: Individual kernel bugs, math errors</div>
-        </div>
-        <div class="level-precision">&lt; 1e-5</div>
-      </div>
-    </div>
-
-    <!-- Legend -->
-    <div class="pyramid-legend">
-      <div class="legend-item">
-        <div class="legend-dot" style="background: #3182ce;"></div>
-        <span>Foundation</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-dot" style="background: #38a169;"></div>
-        <span>Integration</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-dot" style="background: #ed8936;"></div>
-        <span>End-to-End</span>
-      </div>
-      <div class="legend-item" style="margin-left: 1rem; padding-left: 1rem; border-left: 1px solid #cbd5e0;">
-        <span style="color: #718096;">▲ Build up from foundation</span>
-      </div>
-    </div>
-
-  </div>
-
-  <hr>
-
-  <h2>Level 1: Kernel Unit Tests</h2>
-  <p>Each kernel is tested independently against a PyTorch reference.</p>
-
-  <h3>What We Test</h3>
-  <table class="table table-striped">
-    <thead><tr><th>Test File</th><th>Kernels Tested</th><th>Forward</th><th>Backward</th></tr></thead>
+  <table>
+    <thead>
+      <tr>
+        <th>Shape</th>
+        <th>M</th>
+        <th>Row Split</th>
+        <th>2D Tile</th>
+        <th>Result</th>
+      </tr>
+    </thead>
     <tbody>
-      <tr><td><code>test_rope.py</code></td><td>RoPE precompute, apply</td><td>✓</td><td>✓</td></tr>
-      <tr><td><code>test_rmsnorm.py</code></td><td>RMS normalization</td><td>✓</td><td>✓</td></tr>
-      <tr><td><code>test_attention.py</code></td><td>Causal attention (MHA, GQA)</td><td>✓</td><td>-</td></tr>
-      <tr><td><code>test_attention_backward.py</code></td><td>Attention gradients</td><td>-</td><td>✓</td></tr>
-      <tr><td><code>test_kv_cache_attention.py</code></td><td>Flash prefill + KV-cache decode attention</td><td>✓</td><td>-</td></tr>
-      <tr><td><code>test_gemm.py</code></td><td>Matrix multiplication</td><td>✓</td><td>-</td></tr>
-      <tr><td><code>test_mlp.py</code></td><td>Feed-forward layers</td><td>✓</td><td>✓</td></tr>
-      <tr><td><code>test_gelu.py</code></td><td>GELU activation</td><td>✓</td><td>✓</td></tr>
-      <tr><td><code>test_swiglu.py</code></td><td>SwiGLU activation</td><td>✓</td><td>✓</td></tr>
-      <tr><td><code>test_cross_entropy.py</code></td><td>Loss function</td><td>✓</td><td>✓</td></tr>
-      <tr><td><code>test_embedding.py</code></td><td>Token embeddings</td><td>✓</td><td>✓</td></tr>
+      <tr><td>Qwen2-like N=896 K=4864</td><td>16</td><td>0.97 ms</td><td>2.02 ms</td><td>2D slower</td></tr>
+      <tr><td>Qwen2-like N=896 K=4864</td><td>64</td><td>2.82 ms</td><td>3.05 ms</td><td>2D slower</td></tr>
+      <tr><td>Qwen2-like N=896 K=4864</td><td>256</td><td>9.89 ms</td><td>9.94 ms</td><td>neutral/slower</td></tr>
+      <tr><td>Qwen2-like N=896 K=4864</td><td>512</td><td>19.27 ms</td><td>19.00 ms</td><td>2D +1.4%</td></tr>
+      <tr><td>Large Q6 N=2560 K=10240</td><td>16</td><td>5.80 ms</td><td>4.46 ms</td><td>2D +23.1%</td></tr>
+      <tr><td>Large Q6 N=2560 K=10240</td><td>128</td><td>33.09 ms</td><td>28.92 ms</td><td>2D +12.6%</td></tr>
+      <tr><td>Large Q6 N=2560 K=10240</td><td>1024</td><td>253.92 ms</td><td>233.13 ms</td><td>2D +8.2%</td></tr>
     </tbody>
   </table>
 
-  <h3>How It Works</h3>
-  <pre class="code-block">
-# Example: test_rope.py
-1. Load C library via ctypes
-2. Generate random input tensors
-3. Run C kernel
-4. Run PyTorch reference
-5. Compare: max_diff should be < 1e-5
-  </pre>
-
-  <h3>Running</h3>
-  <pre class="code-block">
-make test              # Run all kernel unit tests
-make test-bf16         # Run BF16 tests (skips on unsupported CPUs)
-python unittest/test_rope.py  # Run specific test
-  </pre>
-
-  <hr>
-
-  <h2>Level 2: Full Layer Tests</h2>
-  <p>Tests a complete transformer layer with all kernels combined.</p>
-
-  <h3>What It Validates</h3>
-  <ul>
-    <li>RMSNorm → QKV projection → RoPE → Attention → Output projection → Residual</li>
-    <li>RMSNorm → MLP (SwiGLU) → Residual</li>
-    <li>Forward AND backward through entire layer</li>
-  </ul>
-
-  <pre class="code-block">
-# unittest/test_orchestration_layer.py
-- Uses ck_layer_forward_rmsnorm_swiglu()
-- Uses ck_layer_backward_rmsnorm_swiglu()
-- Compares output and all intermediate buffers
-  </pre>
-
-  <pre class="code-block">
-# unittest/test_kv_cache_layer_decode.py
-- Prefill with ck_layer_forward_rmsnorm_swiglu()
-- Decode with ck_layer_forward_rmsnorm_swiglu_decode()
-- Compares full-layer outputs (prefill+decode vs full forward)
-  </pre>
-
-  <hr>
-
-  <h2>Level 3: Per-Stage Layer Diff</h2>
-  <p>Uses real model weights to test each stage within a layer.</p>
-
-  <h3>Why This Matters</h3>
+  <h2>Family-Level Signal</h2>
   <p>
-    Kernel tests use random weights. Real model weights may expose edge cases
-    (specific value ranges, correlations) that random tests miss.
+    A longer prompt smoke test across cached v8 families showed the same pattern:
+    Qwen2 regressed with raw 2D enabled, Qwen3.5 was slightly slower, Gemma was neutral, and Nanbeige
+    improved modestly. Qwen3 in the local cache was Q8-heavy, so this Q6-specific path was mostly neutral.
   </p>
 
-  <h3>What It Reports</h3>
-  <pre class="code-block">
-$ make smollm-layer-diff SMOLLM_LAYER=0 SMOLLM_STAGE_DUMP=1
-
-Stage-by-stage diffs for layer 0:
-  ln1_out:    max_diff=1.53e-05
-  q (post-rope): max_diff=2.10e-05
-  k (post-rope): max_diff=1.89e-05
-  scores:     max_diff=3.21e-05
-  attn_out:   max_diff=2.87e-05
-  proj_out:   max_diff=4.12e-05
-  ln2_out:    max_diff=1.98e-05
-  fc1_out:    max_diff=3.55e-05
-  swiglu_out: max_diff=2.44e-05
-  output:     max_diff=5.02e-05
-  </pre>
-
-  <h3>Debugging Pattern</h3>
-  <pre class="code-block">
-If q/k diverge after RoPE → RoPE bug
-If scores/attn_out diverge → Attention bug
-If proj diverges while attn_out clean → Output projection bug
-If mlp_out diverges → MLP/SwiGLU bug
-  </pre>
-
-  <hr>
-
-  <h2>Level 4: Full Forward Parity</h2>
-  <p>Runs all layers and compares final logits to PyTorch.</p>
-
-  <pre class="code-block">
-$ make smollm-forward SMOLLM_TEXT="Hello world" SMOLLM_CONTEXT=5
-
-Logits diff: max_abs=3.05e-05 mean_abs=1.23e-05
-pos 0 top1: C=28 Torch=28 [OK]
-pos 1 top1: C=1715 Torch=1715 [OK]
-pos 2 top1: C=504 Torch=504 [OK]
-pos 3 top1: C=33 Torch=33 [OK]
-pos 4 top1: C=29 Torch=29 [OK]
-  </pre>
-
-  <h3>What It Catches</h3>
-  <ul>
-    <li>Weight loading/conversion bugs (HF → bump format)</li>
-    <li>Layer chaining bugs (output of layer N → input of layer N+1)</li>
-    <li>Error accumulation across many layers</li>
-    <li>Context-length dependent bugs (RoPE at different positions)</li>
-  </ul>
-
-  <hr>
-
-  <h2>Level 5: Training Parity</h2>
-  <p>The most comprehensive test: forward + backward + weight update.</p>
-
-  <h3>What It Tests</h3>
-  <pre class="code-block">
-1. Initialize identical weights in C and PyTorch
-2. Run forward pass → compare loss
-3. Run backward pass → compute gradients
-4. Apply SGD update → compare updated weights
-5. Repeat for N steps → check error accumulation
-  </pre>
-
-  <h3>Example Output (5 steps)</h3>
-  <pre class="code-block">
-$ make tiny-parity TINY_STEPS=5
-
-step 0 loss=5.567055
-step 1 loss=5.557948
-step 2 loss=5.548960
-step 3 loss=5.540207
-step 4 loss=5.531786
-
-C loss: 5.531786 | Torch loss: 5.520767
-Max weight diff: 8.535e-04
-
-layer.0.wq   max_diff=2.235e-08
-layer.0.wk   max_diff=2.980e-08
-layer.0.wv   max_diff=4.891e-06
-...
-  </pre>
-
-  <h3>Expected Tolerances</h3>
-  <table class="table table-striped">
-    <thead><tr><th>Steps</th><th>Max Weight Diff</th><th>Loss Diff</th><th>Status</th></tr></thead>
-    <tbody>
-      <tr><td>1</td><td>< 1e-5</td><td>< 1e-5</td><td>Excellent</td></tr>
-      <tr><td>5</td><td>< 1e-3</td><td>< 0.01</td><td>Good</td></tr>
-      <tr><td>20</td><td>< 1e-2</td><td>< 0.1</td><td>Acceptable</td></tr>
-      <tr><td>100+</td><td>Compare curves</td><td>Same trend</td><td>Valid</td></tr>
-    </tbody>
-  </table>
-
-  <hr>
-
-  <h2>Test Configurations</h2>
-  <p>We test across multiple model configurations to catch edge cases.</p>
-
-  <table class="table table-striped">
-    <thead><tr><th>Config</th><th>Hidden</th><th>Heads</th><th>KV Heads</th><th>Layers</th><th>Purpose</th></tr></thead>
-    <tbody>
-      <tr><td>tiny</td><td>64</td><td>2</td><td>2</td><td>2</td><td>Baseline</td></tr>
-      <tr><td>gqa</td><td>128</td><td>8</td><td>2</td><td>2</td><td>Grouped Query Attention</td></tr>
-      <tr><td>deep</td><td>64</td><td>2</td><td>2</td><td>6</td><td>Error accumulation</td></tr>
-      <tr><td>wide</td><td>128</td><td>8</td><td>8</td><td>2</td><td>Many heads</td></tr>
-      <tr><td>no_rope</td><td>64</td><td>2</td><td>2</td><td>2</td><td>Positional embeddings only</td></tr>
-      <tr><td>medium</td><td>256</td><td>4</td><td>4</td><td>4</td><td>Larger scale</td></tr>
-    </tbody>
-  </table>
-
-  <hr>
-
-  <h2>Running the Full Test Suite</h2>
-
-  <pre class="code-block">
-# Quick tests (< 1 minute)
-./scripts/run_all_tests.sh quick
-
-# Full tests (5-10 minutes)
-./scripts/run_all_tests.sh full
-
-# Stress tests (10+ minutes)
-./scripts/run_all_tests.sh stress
-  </pre>
-
-  <hr>
-
-  <h2>v6.6 Contract + Matrix Gates</h2>
+  <h2>Dispatch Policy</h2>
   <p>
-    Before heavy E2E/parity runs, v6.6 uses two explicit preflight gates:
-    a static tooling-contract checker and a dynamic 3-model matrix checker.
+    <code>CK_ENABLE_Q6K_Q8K_2D_PREFILL=1</code> remains opt-in, but the dispatcher now also checks shape.
+    By default, 2D Q6 prefill is selected only for wide shapes with <code>N &gt;= 2048</code> and
+    <code>K &gt;= 8192</code>, with enough tile jobs to keep the active thread pool busy.
+  </p>
+  <p>
+    For raw benchmarking, use <code>CK_FORCE_Q6K_Q8K_2D_PREFILL=1</code>. Do not use the force flag in
+    production or model-family regression runs unless the goal is to measure the scheduler itself.
   </p>
 
-  <pre class="code-block">
-# Primary v6.6 release gate (recommended)
-make v6.6-gate
-
-# Runtime-required parity matrix (when llama parity runtime is present)
-make v6.6-validate-parity-matrix-required
-
-# Optional standalone gates
-make v6.6-validate-contracts
-make v6.6-kernel-map-gate
-make v6.6-validate-matrix-smoke
-make v6.6-validate-longdecode
-  </pre>
-
+  <h2>Deployment Tuning Model</h2>
   <p>
-    Reports are also written to:
-    <code>version/v6.6/tools/contract_report_latest.json</code> and
-    <code>version/v6.6/tools/model_matrix_report_latest.json</code>.
-    When kernel maps change, regenerate with <code>make v6.6-kernel-map-regenerate</code>.
+    The long-term deployment flow should treat kernel selection as a hardware/model tuning artifact:
   </p>
-
-  <hr>
-
-  <h2>Sliding-Window Regression Coverage</h2>
-  <p>
-    Sliding-window attention now has an explicit contract test that is wired into
-    regular test, llama.cpp parity flow, and nightly reporting.
-  </p>
-
-  <pre class="code-block">
-# Run only sliding-window contract check
-make test-attention-sliding
-
-# Included in main kernel suite
-make test
-
-# Included in llama.cpp parity smoke/full flows
-make llamacpp-parity
-make llamacpp-parity-full
-  </pre>
-
-  <p>
-    Implementation path:
-    <code>unittest/test_attention_sliding_contract.py</code>,
-    <code>scripts/run_parity_smoketest.sh</code>, and
-    <code>scripts/nightly_runner.py</code>.
-  </p>
-
-  <hr>
-
-  <h2>Case Study: Finding the RoPE Bug</h2>
-  <p>
-    This methodology found a subtle RoPE rotation convention bug that caused
-    predictions to diverge at later context positions.
-  </p>
-
-  <h3>Symptoms</h3>
-  <pre class="code-block">
-- Kernel tests: PASSED (1e-5 precision)
-- Layer tests: PASSED (1e-5 precision)
-- Full forward: FAILED (predictions diverge at position 3+)
-  </pre>
-
-  <h3>Investigation</h3>
-  <pre class="code-block">
-1. Kernel tests passed → kernels are correct for SOME convention
-2. Layer tests passed → same story
-3. But full model failed → bug is in convention, not math
-4. Per-stage diff showed: q/k looked "correct" but were wrong convention
-  </pre>
-
-  <h3>Root Cause</h3>
-  <pre class="code-block">
-Our RoPE:     (x[0], x[1]), (x[2], x[3]), ...  (interleaved pairs)
-Llama/SmolLM: (x[0..half], x[half..dim])       (rotate-half)
-
-Both are mathematically valid RoPE, but weights are trained for one convention.
-  </pre>
-
-  <h3>Fix</h3>
-  <pre class="code-block">
-1. Update C kernel: src/kernels/rope_kernels.c
-2. Update Python references: unittest/test_rope.py, scripts/smollm_layer_stage_diff.py
-3. Re-run all tests: ALL PASS
-  </pre>
-
-  <hr>
-
-  <h2>Adding Tests for New Models</h2>
-  <p>When adding support for a new model architecture, follow this checklist:</p>
-
   <ol>
-    <li><strong>Kernel tests</strong>: Add tests for any new kernels (e.g., sliding window attention)</li>
-    <li><strong>Layer tests</strong>: Test full layer if architecture differs</li>
-    <li><strong>Weight conversion</strong>: Run <code>compare_bump_to_hf.py</code> to verify weights</li>
-    <li><strong>Forward parity</strong>: Run forward pass and compare logits</li>
-    <li><strong>Training parity</strong>: Run 5-20 steps and compare weight updates</li>
-    <li><strong>Stress test</strong>: Run 100+ steps to check for numerical drift</li>
+    <li>Build or load the model runtime and extract the lowered kernel shapes.</li>
+    <li>Run a bounded sweep for the hardware with <code>--sweep-kernels</code>.</li>
+    <li>Write the result to the runtime directory as <code>kernel_tuning.json</code>.</li>
+    <li>Have IR/codegen or dispatch read that file on later runs.</li>
+    <li>If the file is missing, use conservative built-in defaults.</li>
   </ol>
+  <p>
+    This keeps production deterministic while still allowing each CPU target to choose the best kernel
+    policy for its cache, memory bandwidth, ISA, and thread topology. The current Q6 sweep runner is the
+    first concrete version of that pattern.
+  </p>
+  <pre><code>python -B version/v8/scripts/ck_run_v8.py run build/regression-runs/qwen2 \
+  --run build/qwen2-tuned --context-len 1024 --generate-only --sweep-kernels
 
-  <hr>
+python -B version/v8/scripts/ck_run_v8.py run build/regression-runs/qwen2 \
+  --run build/qwen2-tuned --context-len 1024 --generate-only --sweep-kernels --sweep-kernels-full</code></pre>
 
-  <h2>Numerical Precision Guidelines</h2>
+  <h2>Reproduction</h2>
+  <pre><code>make build/libckernel_engine.so
+make test-q6k-prefill-dispatch-sweep-quick
+make test-q6k-prefill-dispatch-sweep
+make test-q6k-prefill-dispatch-sweep-avx2
 
-  <table class="table table-striped">
-    <thead><tr><th>Comparison</th><th>Float32 Threshold</th><th>Notes</th></tr></thead>
-    <tbody>
-      <tr><td>Kernel output</td><td>1e-5</td><td>Should be near machine epsilon</td></tr>
-      <tr><td>Layer output</td><td>1e-4</td><td>Small accumulation acceptable</td></tr>
-      <tr><td>Full forward (logits)</td><td>1e-3</td><td>30 layers × 1e-5 = 3e-4</td></tr>
-      <tr><td>1-step gradients</td><td>1e-5</td><td>Should match very closely</td></tr>
-      <tr><td>Multi-step weights</td><td>1e-3</td><td>Errors compound over steps</td></tr>
-      <tr><td>Token embeddings grad</td><td>1e-2</td><td>Aggregates from all layers</td></tr>
-    </tbody>
-  </table>
+CK_NUM_THREADS=12 OMP_NUM_THREADS=1 CK_Q6K_Q8K_SIMD=1 \
+  python -B benchmarks/bench_q6k_prefill_tile.py \
+  --mode compare --m 1024 --n 2560 --k 10240 --threads 12 --warmup 1 --iters 3
 
-  <div class="alert alert-warning">
-    <strong>Red Flags:</strong>
-    <ul>
-      <li>Any diff > 1.0 → Bug, not numerical precision</li>
-      <li>Diffs growing exponentially over steps → Numerical instability</li>
-      <li>One specific layer/kernel much worse than others → Bug in that component</li>
-    </ul>
-  </div>
-
+CK_FORCE_Q6K_Q8K_2D_PREFILL=1 CK_ENABLE_Q6K_Q8K_2D_PREFILL=1 \
+CK_NUM_THREADS=12 OMP_NUM_THREADS=1 CK_Q6K_Q8K_SIMD=1 \
+  python -B benchmarks/bench_q6k_prefill_tile.py \
+  --mode 2d --m 128 --n 2560 --k 10240 --threads 12 --warmup 1 --iters 2</code></pre>
 </div>
-
-<section>
-<h2>High-Memory Model Smoke</h2>
-<p>The nightly parity lane includes <code>make test-v8-gemma4-highmem</code>. It skips unless enough RAM is available.</p>
-</section>
     </main>
 
     <!-- SVG Viewer Overlay (shared across all pages) -->
