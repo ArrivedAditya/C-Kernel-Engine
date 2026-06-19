@@ -257,6 +257,7 @@ TEST_SUITES = {
     "optimizer": TestSuite("Optimizer (AdamW/SGD)", "training", UNITTEST_DIR / "test_optimizer.py"),
     "lm_head_litmus": TestSuite("LM Head Litmus", "kernels", UNITTEST_DIR / "test_lm_head_litmus.py"),
     "deepseek_reference": TestSuite("DeepSeek Reference Kernels", "kernels", UNITTEST_DIR / "test_deepseek_reference_kernels.py"),
+    "relu2": TestSuite("ReLU2", "kernels", UNITTEST_DIR / "test_relu2.py"),
     "vision": TestSuite("Vision", "kernels", UNITTEST_DIR / "test_vision.py"),
     # NOTE: Orchestration test disabled - v6.5 uses generated code with local helpers,
     # not orchestration layer. Use llamacpp-parity-full for quantized kernel validation.
@@ -426,7 +427,7 @@ BENCH_TARGETS = {
 
 # Quick subset for fast validation
 QUICK_TESTS = [
-    "gemm", "relu", "softmax", "rmsnorm", "attention", "attention_sliding",
+    "gemm", "relu", "relu2", "softmax", "rmsnorm", "attention", "attention_sliding",
     "deltanet_backward",
     "relu_bf16", "rmsnorm_bf16",
     "q4k_kernels",

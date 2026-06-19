@@ -3,9 +3,9 @@
     "description": "Kernel registry generated from v8 kernel maps",
     "version": "v8",
     "generated_by": "ck_run_v8.py",
-    "source_dir": "/home/antshiv/Workspace/C-Kernel-Engine/version/v8/kernel_maps",
+    "source_dir": "/opt/app-root/src/Ashivaku/C-Kernel-Engine/version/v8/kernel_maps",
     "counts": {
-      "total": 147,
+      "total": 149,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -52,6 +52,7 @@
         "recurrent_split_conv_qkv": 2,
         "recurrent_split_qkv": 1,
         "recurrent_split_qkv_backward": 1,
+        "relu2": 2,
         "residual_add": 1,
         "residual_save": 1,
         "rmsnorm": 2,
@@ -13512,6 +13513,187 @@
       "notes": "Explicit split kernel for recurrent packed QKV rows.",
       "name": "recurrent_split_qkv_forward",
       "_source_file": "recurrent_split_qkv_forward.json"
+    },
+    {
+      "id": "relu2_backward_f32",
+      "op": "relu2",
+      "variant": "backward_fp32",
+      "modes": {
+        "inference": false,
+        "training": true,
+        "backward": true
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ]
+        },
+        {
+          "name": "d_out",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ]
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "d_x",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "N"
+      ],
+      "params": [],
+      "parallelization": {
+        "supported": [
+          "element"
+        ],
+        "preferred": {
+          "prefill": "element",
+          "decode": "element"
+        },
+        "strategies": [
+          {
+            "name": "element",
+            "partition_dim": "N",
+            "param_style": "range",
+            "range": {
+              "min_chunk": 256
+            }
+          }
+        ]
+      },
+      "impl": {
+        "function": "relu2_backward",
+        "c_declaration": "void relu2_backward(const float *input, const float *d_output, float *d_input, size_t n);",
+        "sources": [
+          "src/kernels/relu_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "simd_or_ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_relu2.py"
+        ],
+        "parity": [
+          {
+            "kind": "pytorch",
+            "command": ".venv/bin/python unittest/test_relu2.py",
+            "tolerance": "1e-6"
+          }
+        ]
+      },
+      "name": "relu2_backward_f32",
+      "_source_file": "relu2_backward.json"
+    },
+    {
+      "id": "relu2_forward",
+      "op": "relu2",
+      "variant": "fp32",
+      "modes": {
+        "inference": true,
+        "training": true,
+        "backward": false
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ]
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "N"
+      ],
+      "params": [],
+      "parallelization": {
+        "supported": [
+          "element"
+        ],
+        "preferred": {
+          "prefill": "element",
+          "decode": "element"
+        },
+        "strategies": [
+          {
+            "name": "element",
+            "partition_dim": "N",
+            "param_style": "range",
+            "range": {
+              "min_chunk": 256
+            }
+          }
+        ]
+      },
+      "impl": {
+        "function": "relu2_forward",
+        "c_declaration": "void relu2_forward(const float *input, float *output, size_t n);",
+        "sources": [
+          "src/kernels/relu_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "simd_or_ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_relu2.py"
+        ],
+        "parity": [
+          {
+            "kind": "pytorch",
+            "command": ".venv/bin/python unittest/test_relu2.py",
+            "tolerance": "1e-6"
+          }
+        ]
+      },
+      "name": "relu2_forward",
+      "_source_file": "relu2_forward.json"
     },
     {
       "id": "residual_add_backward_f32",

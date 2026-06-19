@@ -1212,6 +1212,12 @@ test-recurrent-conv-state-update: $(LIB)
 test-recurrent-silu: $(LIB)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_recurrent_silu.py $(ARGS)
 
+test-relu2: $(LIB)
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_relu2.py $(ARGS)
+
+test-relu2-perf: $(LIB)
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_relu2.py --benchmark
+
 test-recurrent-split-conv-qkv: $(LIB)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_recurrent_split_conv_qkv.py $(ARGS)
 

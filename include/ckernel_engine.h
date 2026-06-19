@@ -1101,6 +1101,11 @@ void geglu_backward_bf16_mixed(const uint16_t *x,
 	                   const float *d_output,
 	                   float *d_input,
 	                   size_t n);
+	void relu2_forward(const float *input, float *output, size_t n);
+	void relu2_backward(const float *input,
+	                    const float *d_output,
+	                    float *d_input,
+	                    size_t n);
 
 	void relu_forward_bf16(const uint16_t *input, uint16_t *output, size_t n);
 	void relu_forward_inplace_bf16(uint16_t *data, size_t n);
