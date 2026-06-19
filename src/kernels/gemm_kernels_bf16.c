@@ -544,6 +544,69 @@ void gemm_bf16_fp32out(const uint16_t *A,
 #endif
 }
 
+
+/* ============================================================================
+ * Inference kernels for exact safetensors/BUMP BF16 weights.
+ *
+ * The v8 inference graph currently keeps activation streams as FP32.  These
+ * wrappers preserve the established quantized/FP16 inference ABI while consuming
+ * BF16 row-major weights from safetensors BUMP artifacts:
+ *   GEMV: y[M]      = W[M,K] @ bf16_round(x[K])
+ *   GEMM: C[M,N]    = bf16_round(A[M,K]) @ W[N,K].T + bias[N]
+ *
+ * Rounding the FP32 activation to BF16 before multiply gives a closer contract
+ * to a BF16 PyTorch model than multiplying full FP32 activations by BF16
+ * weights, while still avoiding a separate activation-conversion buffer.
+ * ========================================================================== */
+void gemv_bf16(float *y,
+               const void *W,
+               const float *x,
+               int M, int K)
+{
+    const uint16_t *w = (const uint16_t *)W;
+    if (!y || !w || !x || M <= 0 || K <= 0) {
+        return;
+    }
+
+#pragma omp parallel for schedule(static) if(M > 16)
+    for (int i = 0; i < M; ++i) {
+        const uint16_t *w_row = w + (size_t)i * (size_t)K;
+        float sum = 0.0f;
+        for (int k = 0; k < K; ++k) {
+            const float xb = bf16_to_float(float_to_bf16(x[k]));
+            sum += xb * bf16_to_float(w_row[k]);
+        }
+        y[i] = sum;
+    }
+}
+
+void gemm_nt_bf16(const float *A,
+                  const void *B,
+                  const float *bias,
+                  float *C,
+                  int M, int N, int K)
+{
+    const uint16_t *w = (const uint16_t *)B;
+    if (!A || !w || !C || M <= 0 || N <= 0 || K <= 0) {
+        return;
+    }
+
+#pragma omp parallel for schedule(dynamic) if(M * N > 4096)
+    for (int i = 0; i < M; ++i) {
+        const float *a_row = A + (size_t)i * (size_t)K;
+        float *c_row = C + (size_t)i * (size_t)N;
+        for (int j = 0; j < N; ++j) {
+            const uint16_t *w_row = w + (size_t)j * (size_t)K;
+            float sum = bias ? bias[j] : 0.0f;
+            for (int k = 0; k < K; ++k) {
+                const float ab = bf16_to_float(float_to_bf16(a_row[k]));
+                sum += ab * bf16_to_float(w_row[k]);
+            }
+            c_row[j] = sum;
+        }
+    }
+}
+
 /* ==========================================================================
  * Backward kernels for training
  * ========================================================================== */

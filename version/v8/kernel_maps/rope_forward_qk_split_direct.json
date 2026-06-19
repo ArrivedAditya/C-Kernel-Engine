@@ -1,0 +1,122 @@
+{
+  "id": "rope_forward_qk_split_direct",
+  "op": "rope",
+  "variant": "fp32_head_major_split_half_direct",
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "T",
+        "D"
+      ],
+      "desc": "Query tensor [heads, tokens, head_dim] to be rotated in-place"
+    },
+    {
+      "name": "k",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "T",
+        "D"
+      ],
+      "desc": "Key tensor [kv_heads, tokens, head_dim] to be rotated in-place"
+    }
+  ],
+  "weights": [
+    {
+      "name": "rope_freqs",
+      "dtype": "fp32",
+      "shape": [
+        "rotary_dim/2"
+      ],
+      "desc": "Optional proportional RoPE frequency factors; ignored when use_rope_freq_factors=0"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "T",
+        "D"
+      ],
+      "desc": "Query tensor after split-half RoPE application"
+    },
+    {
+      "name": "k",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "T",
+        "D"
+      ],
+      "desc": "Key tensor after split-half RoPE application"
+    }
+  ],
+  "dims": [
+    "H",
+    "KV",
+    "T",
+    "D",
+    "rotary_dim"
+  ],
+  "params": [
+    {
+      "name": "aligned_head_dim",
+      "dtype": "int32",
+      "desc": "Aligned head dimension for SIMD"
+    },
+    {
+      "name": "pos_offset",
+      "dtype": "int32",
+      "desc": "Absolute position offset"
+    },
+    {
+      "name": "rotary_dim",
+      "dtype": "int32",
+      "desc": "RoPE rotary dimensions"
+    },
+    {
+      "name": "freq_base",
+      "dtype": "float32",
+      "source": "dim:rope_freq_base",
+      "desc": "Per-layer RoPE theta/base"
+    }
+  ],
+  "impl": {
+    "function": "rope_forward_qk_split_direct_f32",
+    "c_declaration": "void rope_forward_qk_split_direct_f32(float *q, float *k, const float *freq_factors, int use_freq_factors, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int rotary_dim, float freq_base);",
+    "sources": [
+      "src/kernels/rope_kernels.c"
+    ],
+    "variants": [
+      {
+        "name": "ref",
+        "requires": [],
+        "compile_flags": []
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "unittest/test_rope.py"
+    ],
+    "parity": [
+      {
+        "kind": "torch",
+        "command": "python version/v8/scripts/gemma4_answer_parity_debug_v8.py --debug-hidden",
+        "tolerance": "1e-5",
+        "notes": "Validated against HF split-half rotate_half semantics for direct per-layer theta RoPE."
+      }
+    ]
+  },
+  "notes": "Generic split-half direct RoPE for models that need per-layer theta/rotary_dim and optional frequency factors instead of one precomputed cache. Gemma4 is the first v8 user, but the contract is model-neutral."
+}

@@ -1,333 +1,17 @@
 {
   "bindings": {
-    "im2patch": {
-      "note": "Allow rectangular vision inputs by binding explicit image_height/image_width.",
-      "params": [
-        {
-          "name": "image",
-          "source": "activation:image",
-          "cast": "const float*"
-        },
-        {
-          "name": "patches",
-          "source": "output:patches",
-          "cast": "float*"
-        },
-        {
-          "name": "C",
-          "source": "dim:vision_channels"
-        },
-        {
-          "name": "H",
-          "source": "dim:image_height"
-        },
-        {
-          "name": "W",
-          "source": "dim:image_width"
-        },
-        {
-          "name": "P",
-          "source": "dim:patch_size"
-        }
-      ]
-    },
-    "gemm_nt_fp32_exact": {
-      "note": "Exact FP32 NT GEMM binding for parity-sensitive matmuls.",
-      "params": [
-        {
-          "name": "A",
-          "source": "activation:a",
-          "cast": "const float*"
-        },
-        {
-          "name": "B",
-          "source": "weight:_first_weight"
-        },
-        {
-          "name": "bias",
-          "source": "weight_f:_bias"
-        },
-        {
-          "name": "C",
-          "source": "output:c",
-          "cast": "float*"
-        },
-        {
-          "name": "M",
-          "source": "dim:_m"
-        },
-        {
-          "name": "N",
-          "source": "dim:_output_dim"
-        },
-        {
-          "name": "K",
-          "source": "dim:_input_dim"
-        }
-      ]
-    },
-    "gemm_naive_parallel": {
-      "note": "Exact FP32 NT GEMM binding for parity-sensitive matmuls.",
-      "params": [
-        {
-          "name": "A",
-          "source": "activation:a",
-          "cast": "const float*"
-        },
-        {
-          "name": "B",
-          "source": "weight:_first_weight"
-        },
-        {
-          "name": "bias",
-          "source": "weight_f:_bias"
-        },
-        {
-          "name": "C",
-          "source": "output:c",
-          "cast": "float*"
-        },
-        {
-          "name": "M",
-          "source": "dim:_m"
-        },
-        {
-          "name": "N",
-          "source": "dim:_output_dim"
-        },
-        {
-          "name": "K",
-          "source": "dim:_input_dim"
-        }
-      ]
-    },
-    "rmsnorm_forward": {
-      "note": "RMSNorm does not require an rstd cache in v8 runtimes.",
-      "params": [
-        {
-          "name": "input",
-          "source": "activation:input",
-          "cast": "const float*"
-        },
-        {
-          "name": "gamma",
-          "source": "weight_f:_gamma",
-          "alt": [
-            "ln1_gamma",
-            "ln2_gamma",
-            "post_attention_norm",
-            "post_ffn_norm",
-            "v_norm_gamma",
-            "final_ln_weight"
-          ]
-        },
-        {
-          "name": "output",
-          "source": "output:output",
-          "cast": "float*"
-        },
-        {
-          "name": "rstd_cache",
-          "source": "null"
-        },
-        {
-          "name": "tokens",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "d_model",
-          "source": "dim:embed_dim"
-        },
-        {
-          "name": "aligned_embed_dim",
-          "source": "dim:embed_dim"
-        },
-        {
-          "name": "eps",
-          "source": "dim:rms_eps"
-        }
-      ]
-    },
-    "layernorm_fp32_exact": {
-      "note": "Exact LayerNorm binding for parity-sensitive templates.",
-      "params": [
-        {
-          "name": "input",
-          "source": "activation:input",
-          "cast": "const float*"
-        },
-        {
-          "name": "gamma",
-          "source": "weight_f:gamma",
-          "alt": [
-            "ln1_gamma",
-            "ln2_gamma",
-            "final_ln_weight",
-            "branch_norm_gamma"
-          ]
-        },
-        {
-          "name": "beta",
-          "source": "weight_f:beta",
-          "alt": [
-            "ln1_beta",
-            "ln2_beta",
-            "final_ln_bias",
-            "branch_norm_beta"
-          ]
-        },
-        {
-          "name": "output",
-          "source": "output:output",
-          "cast": "float*"
-        },
-        {
-          "name": "mean_cache",
-          "source": "null"
-        },
-        {
-          "name": "rstd_cache",
-          "source": "null"
-        },
-        {
-          "name": "tokens",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "d_model",
-          "source": "dim:embed_dim"
-        },
-        {
-          "name": "eps",
-          "source": "dim:rms_eps"
-        }
-      ]
-    },
-    "layernorm_naive_serial_matched_precision": {
-      "note": "Direct function-name alias for the exact LayerNorm binding.",
-      "params": [
-        {
-          "name": "input",
-          "source": "activation:input",
-          "cast": "const float*"
-        },
-        {
-          "name": "gamma",
-          "source": "weight_f:gamma",
-          "alt": [
-            "ln1_gamma",
-            "ln2_gamma",
-            "final_ln_weight",
-            "branch_norm_gamma"
-          ]
-        },
-        {
-          "name": "beta",
-          "source": "weight_f:beta",
-          "alt": [
-            "ln1_beta",
-            "ln2_beta",
-            "final_ln_bias",
-            "branch_norm_beta"
-          ]
-        },
-        {
-          "name": "output",
-          "source": "output:output",
-          "cast": "float*"
-        },
-        {
-          "name": "mean_cache",
-          "source": "null"
-        },
-        {
-          "name": "rstd_cache",
-          "source": "null"
-        },
-        {
-          "name": "tokens",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "d_model",
-          "source": "dim:embed_dim"
-        },
-        {
-          "name": "eps",
-          "source": "dim:rms_eps"
-        }
-      ]
-    },
-    "gemm_nt_f16": {
-      "note": "FP16-weight dense GEMM wrapper with the standard matmul ABI.",
-      "params": [
-        {
-          "name": "A",
-          "source": "activation:a",
-          "cast": "const float*"
-        },
-        {
-          "name": "B",
-          "source": "weight:_first_weight"
-        },
-        {
-          "name": "bias",
-          "source": "weight_f:_bias"
-        },
-        {
-          "name": "C",
-          "source": "output:c",
-          "cast": "float*"
-        },
-        {
-          "name": "M",
-          "source": "dim:_m"
-        },
-        {
-          "name": "N",
-          "source": "dim:_output_dim"
-        },
-        {
-          "name": "K",
-          "source": "dim:_input_dim"
-        }
-      ]
-    },
-    "rowwise_bias_add": {
-      "note": "Explicit in-place rowwise bias binding for vision/header bring-up.",
-      "params": [
-        {
-          "name": "x",
-          "source": "output:x",
-          "cast": "float*"
-        },
-        {
-          "name": "bias",
-          "source": "weight:bias",
-          "cast": "const float*"
-        },
-        {
-          "name": "rows",
-          "source": "dim:rows"
-        },
-        {
-          "name": "dim",
-          "source": "dim:dim"
-        }
-      ]
-    },
     "add_stream_reorder_2d": {
       "note": "Sum two token-major streams and reorder the result into merged-tile traversal.",
       "params": [
         {
+          "cast": "float*",
           "name": "main_inout",
-          "source": "output:out",
-          "cast": "float*"
+          "source": "output:out"
         },
         {
+          "cast": "float*",
           "name": "aux_scratch",
-          "source": "activation:b",
-          "cast": "float*"
+          "source": "activation:b"
         },
         {
           "name": "grid_h",
@@ -347,315 +31,28 @@
         }
       ]
     },
-    "position_embeddings_add_tiled_2d": {
-      "note": "Add position embeddings to an activation stream already laid out in merged-tile order.",
+    "attention_forward_causal_head_major_gqa_flash_strided_gemma4": {
+      "note": "Prefill: all tokens process together with causal mask Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
       "params": [
         {
-          "name": "x",
-          "source": "output:x",
-          "cast": "float*"
-        },
-        {
-          "name": "position_embd",
-          "source": "weight:pos_emb",
-          "cast": "const float*"
-        },
-        {
-          "name": "grid_h",
-          "source": "dim:vision_grid_h"
-        },
-        {
-          "name": "grid_w",
-          "source": "dim:vision_grid_w"
-        },
-        {
-          "name": "embed_dim",
-          "source": "dim:embed_dim"
-        },
-        {
-          "name": "merge_size",
-          "source": "dim:merge_size"
-        },
-        {
-          "name": "source_grid_size",
-          "source": "dim:source_grid_size"
-        }
-      ]
-    },
-    "spatial_merge_contiguous_tiled": {
-      "note": "Merge contiguous groups of merge_size^2 tokens from a merged-tile-ordered stream.",
-      "params": [
-        {
-          "name": "input",
-          "source": "activation:input",
-          "cast": "const float*"
-        },
-        {
-          "name": "output",
-          "source": "output:output",
-          "cast": "float*"
-        },
-        {
-          "name": "grid_h",
-          "source": "dim:vision_grid_h"
-        },
-        {
-          "name": "grid_w",
-          "source": "dim:vision_grid_w"
-        },
-        {
-          "name": "embed_dim",
-          "source": "dim:embed_dim"
-        },
-        {
-          "name": "merge_size",
-          "source": "dim:merge_size"
-        }
-      ]
-    },
-    "layernorm_forward": {
-      "note": "Generic LayerNorm binding with explicit gamma and beta.",
-      "params": [
-        {
-          "name": "input",
-          "source": "activation:input",
-          "cast": "const float*"
-        },
-        {
-          "name": "gamma",
-          "source": "weight_f:gamma",
-          "alt": [
-            "ln1_gamma",
-            "ln2_gamma",
-            "final_ln_weight",
-            "branch_norm_gamma"
-          ]
-        },
-        {
-          "name": "beta",
-          "source": "weight_f:beta",
-          "alt": [
-            "ln1_beta",
-            "ln2_beta",
-            "final_ln_bias",
-            "branch_norm_beta"
-          ]
-        },
-        {
-          "name": "output",
-          "source": "output:output",
-          "cast": "float*"
-        },
-        {
-          "name": "mean_cache_slice",
-          "source": "null"
-        },
-        {
-          "name": "rstd_cache_slice",
-          "source": "null"
-        },
-        {
-          "name": "num_tokens_in_slice",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "d_model",
-          "source": "dim:embed_dim"
-        },
-        {
-          "name": "eps",
-          "source": "dim:rms_eps"
-        }
-      ]
-    },
-    "layernorm_forward_unrolled_slice": {
-      "note": "Generic LayerNorm binding with explicit gamma and beta.",
-      "params": [
-        {
-          "name": "input",
-          "source": "activation:input",
-          "cast": "const float*"
-        },
-        {
-          "name": "gamma",
-          "source": "weight_f:gamma",
-          "alt": [
-            "ln1_gamma",
-            "ln2_gamma",
-            "final_ln_weight",
-            "branch_norm_gamma"
-          ]
-        },
-        {
-          "name": "beta",
-          "source": "weight_f:beta",
-          "alt": [
-            "ln1_beta",
-            "ln2_beta",
-            "final_ln_bias",
-            "branch_norm_beta"
-          ]
-        },
-        {
-          "name": "output",
-          "source": "output:output",
-          "cast": "float*"
-        },
-        {
-          "name": "mean_cache_slice",
-          "source": "null"
-        },
-        {
-          "name": "rstd_cache_slice",
-          "source": "null"
-        },
-        {
-          "name": "num_tokens_in_slice",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "d_model",
-          "source": "dim:embed_dim"
-        },
-        {
-          "name": "eps",
-          "source": "dim:rms_eps"
-        }
-      ]
-    },
-    "gelu_exact_inplace": {
-      "note": "Exact in-place GELU binding for parity-sensitive v8 paths.",
-      "params": [
-        {
-          "name": "data",
-          "source": "output:out",
-          "cast": "float*"
-        },
-        {
-          "name": "n",
-          "source": "dim:gelu_elems"
-        }
-      ]
-    },
-    "gelu_ggml_inplace": {
-      "note": "GGML-compatible in-place GELU binding for llama.cpp parity-sensitive v8 paths.",
-      "params": [
-        {
-          "name": "data",
-          "source": "output:out",
-          "cast": "float*"
-        },
-        {
-          "name": "n",
-          "source": "dim:gelu_elems"
-        }
-      ]
-    },
-    "feature_slice_copy": {
-      "note": "Generic row-wise copy into a feature-axis slice of a wider destination tensor.",
-      "params": [
-        {
-          "name": "src",
-          "source": "activation:src",
-          "cast": "const float*"
-        },
-        {
-          "name": "dst",
-          "source": "output:dst",
-          "cast": "float*"
-        },
-        {
-          "name": "rows",
-          "source": "dim:rows"
-        },
-        {
-          "name": "src_dim",
-          "source": "dim:src_dim"
-        },
-        {
-          "name": "dst_dim",
-          "source": "dim:dst_dim"
-        },
-        {
-          "name": "dst_feature_offset",
-          "source": "dim:dst_feature_offset"
-        }
-      ]
-    },
-    "feature_concat": {
-      "note": "Concatenate a main output with fixed-width collected branch slices.",
-      "params": [
-        {
-          "name": "main_input",
-          "source": "activation:main_input",
-          "cast": "const float*"
-        },
-        {
-          "name": "branch_input",
-          "source": "activation:branch_input",
-          "cast": "const float*"
-        },
-        {
-          "name": "output",
-          "source": "output:output",
-          "cast": "float*"
-        },
-        {
-          "name": "rows",
-          "source": "dim:rows"
-        },
-        {
-          "name": "main_dim",
-          "source": "dim:main_dim"
-        },
-        {
-          "name": "branch_slice_dim",
-          "source": "dim:branch_slice_dim"
-        },
-        {
-          "name": "num_branch_slices",
-          "source": "dim:num_branch_slices"
-        }
-      ]
-    },
-    "split_qkv_packed_head_major_forward": {
-      "note": "Split packed token-major QKV rows into head-major Q/K/V buffers for transformer attention.",
-      "params": [
-        {
-          "name": "packed_qkv",
-          "source": "activation:packed_qkv",
-          "cast": "const float*"
-        },
-        {
+          "cast": "float*",
           "name": "q",
-          "source": "output:q",
-          "cast": "float*"
+          "source": "scratch:q_scratch"
         },
         {
+          "cast": "float*",
           "name": "k",
-          "source": "output:k",
-          "cast": "float*"
+          "source": "scratch:k_scratch"
         },
         {
+          "cast": "float*",
           "name": "v",
-          "source": "output:v",
-          "cast": "float*"
+          "source": "scratch:v_scratch"
         },
         {
-          "name": "rows",
-          "source": "runtime:seq_len"
-        },
-        {
-          "name": "q_dim",
-          "source": "dim:q_dim"
-        },
-        {
-          "name": "k_dim",
-          "source": "dim:k_dim"
-        },
-        {
-          "name": "v_dim",
-          "source": "dim:v_dim"
+          "cast": "float*",
+          "name": "output",
+          "source": "output:out"
         },
         {
           "name": "num_heads",
@@ -664,6 +61,226 @@
         {
           "name": "num_kv_heads",
           "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "kv_stride_tokens",
+          "source": "dim:max_seq_len"
+        }
+      ]
+    },
+    "attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4": {
+      "note": "Prefill: sliding window attention with causal mask Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
+      "params": [
+        {
+          "cast": "float*",
+          "name": "q",
+          "source": "scratch:q_scratch"
+        },
+        {
+          "cast": "float*",
+          "name": "k",
+          "source": "scratch:k_scratch"
+        },
+        {
+          "cast": "float*",
+          "name": "v",
+          "source": "scratch:v_scratch"
+        },
+        {
+          "cast": "float*",
+          "name": "output",
+          "source": "output:out"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "kv_stride_tokens",
+          "source": "dim:max_seq_len"
+        },
+        {
+          "name": "sliding_window",
+          "source": "dim:sliding_window"
+        }
+      ]
+    },
+    "attention_forward_decode_head_major_gqa_flash_f16cache": {
+      "note": "Decode flash attention over packed FP16 KV-cache storage.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "q_token",
+          "source": "scratch:q_scratch"
+        },
+        {
+          "cast": "const uint16_t*",
+          "name": "k_cache",
+          "source": "runtime:kv_cache_k_layer_f16"
+        },
+        {
+          "cast": "const uint16_t*",
+          "name": "v_cache",
+          "source": "runtime:kv_cache_v_layer_f16"
+        },
+        {
+          "cast": "float*",
+          "name": "out_token",
+          "source": "output:out"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "kv_tokens",
+          "source": "runtime:kv_tokens"
+        },
+        {
+          "name": "cache_capacity",
+          "source": "dim:max_seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        }
+      ]
+    },
+    "attention_forward_decode_head_major_gqa_flash_gemma4": {
+      "note": "Decode: single query token attends to KV cache (positions 0..pos) Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "q_token",
+          "source": "scratch:q_scratch"
+        },
+        {
+          "cast": "const float*",
+          "name": "k_cache",
+          "source": "runtime:kv_cache_k_layer"
+        },
+        {
+          "cast": "const float*",
+          "name": "v_cache",
+          "source": "runtime:kv_cache_v_layer"
+        },
+        {
+          "cast": "float*",
+          "name": "out_token",
+          "source": "output:out"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "kv_tokens",
+          "source": "runtime:kv_tokens"
+        },
+        {
+          "name": "cache_capacity",
+          "source": "dim:max_seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        }
+      ]
+    },
+    "attention_forward_decode_head_major_gqa_flash_sliding_gemma4": {
+      "note": "Decode: sliding window attention - single query token attends to last W KV cache entries Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "q_token",
+          "source": "scratch:q_scratch"
+        },
+        {
+          "cast": "const float*",
+          "name": "k_cache",
+          "source": "runtime:kv_cache_k_layer"
+        },
+        {
+          "cast": "const float*",
+          "name": "v_cache",
+          "source": "runtime:kv_cache_v_layer"
+        },
+        {
+          "cast": "float*",
+          "name": "out_token",
+          "source": "output:out"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "kv_tokens",
+          "source": "runtime:kv_tokens"
+        },
+        {
+          "name": "cache_capacity",
+          "source": "dim:max_seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "sliding_window",
+          "source": "dim:sliding_window"
         }
       ]
     },
@@ -671,24 +288,73 @@
       "note": "Prefill: exact full / bidirectional grouped-query attention across the entire sequence",
       "params": [
         {
+          "cast": "float*",
           "name": "q",
-          "source": "scratch:q_scratch",
-          "cast": "float*"
+          "source": "scratch:q_scratch"
         },
         {
+          "cast": "float*",
           "name": "k",
-          "source": "scratch:k_scratch",
-          "cast": "float*"
+          "source": "scratch:k_scratch"
         },
         {
+          "cast": "float*",
           "name": "v",
-          "source": "scratch:v_scratch",
-          "cast": "float*"
+          "source": "scratch:v_scratch"
         },
         {
+          "cast": "float*",
           "name": "output",
-          "source": "output:out",
-          "cast": "float*"
+          "source": "output:out"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "kv_stride_tokens",
+          "source": "dim:max_seq_len"
+        }
+      ]
+    },
+    "attention_forward_full_head_major_gqa_flash_strided_gemma4": {
+      "note": "Prefill: full / bidirectional attention across the entire sequence Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
+      "params": [
+        {
+          "cast": "float*",
+          "name": "q",
+          "source": "scratch:q_scratch"
+        },
+        {
+          "cast": "float*",
+          "name": "k",
+          "source": "scratch:k_scratch"
+        },
+        {
+          "cast": "float*",
+          "name": "v",
+          "source": "scratch:v_scratch"
+        },
+        {
+          "cast": "float*",
+          "name": "output",
+          "source": "output:out"
         },
         {
           "name": "num_heads",
@@ -720,24 +386,24 @@
       "note": "Prefill: GGML-compatible non-flash full / bidirectional grouped-query attention across the entire sequence",
       "params": [
         {
+          "cast": "float*",
           "name": "q",
-          "source": "scratch:q_scratch",
-          "cast": "float*"
+          "source": "scratch:q_scratch"
         },
         {
+          "cast": "float*",
           "name": "k",
-          "source": "scratch:k_scratch",
-          "cast": "float*"
+          "source": "scratch:k_scratch"
         },
         {
+          "cast": "float*",
           "name": "v",
-          "source": "scratch:v_scratch",
-          "cast": "float*"
+          "source": "scratch:v_scratch"
         },
         {
+          "cast": "float*",
           "name": "output",
-          "source": "output:out",
-          "cast": "float*"
+          "source": "output:out"
         },
         {
           "name": "num_heads",
@@ -765,340 +431,308 @@
         }
       ]
     },
-    "vision_position_ids_2d_merge": {
-      "note": "Materialize merged-tile vision position IDs for position-driven M-RoPE.",
+    "embedding_forward_bf16_fp32": {
+      "note": "BF16 token embedding lookup with FP32 output for v8 inference streams.",
       "params": [
         {
-          "name": "positions",
-          "source": "output:positions",
-          "cast": "int32_t*"
+          "cast": "int32_t*",
+          "name": "token_ids",
+          "source": "activation:tokens"
         },
         {
-          "name": "grid_h",
-          "source": "dim:vision_grid_h"
-        },
-        {
-          "name": "grid_w",
-          "source": "dim:vision_grid_w"
-        },
-        {
-          "name": "merge_size",
-          "source": "dim:merge_size"
-        }
-      ]
-    },
-    "mrope_qk_vision": {
-      "note": "Vision multi-section RoPE driven by explicit per-token position IDs.",
-      "params": [
-        {
-          "name": "q",
-          "source": "output:q",
-          "cast": "float*"
-        },
-        {
-          "name": "k",
-          "source": "output:k",
-          "cast": "float*"
-        },
-        {
-          "name": "positions",
-          "source": "activation:positions",
-          "cast": "const int32_t*"
-        },
-        {
-          "name": "num_heads",
-          "source": "dim:num_heads"
-        },
-        {
-          "name": "num_kv_heads",
-          "source": "dim:num_kv_heads"
-        },
-        {
-          "name": "num_tokens",
+          "name": "token_count",
           "source": "dim:seq_len"
         },
         {
-          "name": "head_dim",
-          "source": "dim:head_dim"
+          "name": "vocab_size",
+          "source": "dim:vocab_size"
         },
         {
-          "name": "aligned_head_dim",
-          "source": "dim:head_dim"
+          "cast": "const uint16_t*",
+          "name": "token_embeddings",
+          "source": "weight:token_emb"
         },
         {
-          "name": "n_dims",
-          "source": "dim:n_dims"
+          "name": "pos_embeddings",
+          "source": "null"
         },
         {
-          "name": "section_0",
-          "source": "dim:section_0"
+          "cast": "float*",
+          "name": "output",
+          "source": "output:output"
         },
         {
-          "name": "section_1",
-          "source": "dim:section_1"
+          "name": "embed_dim",
+          "source": "dim:embed_dim"
         },
         {
-          "name": "section_2",
-          "source": "dim:section_2"
+          "name": "aligned_embed_dim",
+          "source": "dim:embed_dim"
         },
         {
-          "name": "section_3",
-          "source": "dim:section_3"
-        },
-        {
-          "name": "n_ctx_orig",
-          "source": "dim:n_ctx_orig"
-        },
-        {
-          "name": "freq_base",
-          "source": "dim:freq_base"
-        },
-        {
-          "name": "freq_scale",
-          "source": "dim:freq_scale"
-        },
-        {
-          "name": "ext_factor",
-          "source": "dim:ext_factor"
-        },
-        {
-          "name": "attn_factor",
-          "source": "dim:attn_factor"
-        },
-        {
-          "name": "beta_fast",
-          "source": "dim:beta_fast"
-        },
-        {
-          "name": "beta_slow",
-          "source": "dim:beta_slow"
-        }
-      ]
-    },
-    "mrope_qk_text": {
-      "note": "Text multi-section RoPE driven by runtime token position offset.",
-      "params": [
-        {
-          "name": "q",
-          "source": "output:q",
-          "cast": "float*"
-        },
-        {
-          "name": "k",
-          "source": "output:k",
-          "cast": "float*"
-        },
-        {
-          "name": "num_heads",
-          "source": "dim:num_heads"
-        },
-        {
-          "name": "num_kv_heads",
-          "source": "dim:num_kv_heads"
-        },
-        {
-          "name": "num_tokens",
+          "name": "context_window",
           "source": "dim:seq_len"
         },
         {
-          "name": "head_dim",
-          "source": "dim:head_dim"
-        },
-        {
-          "name": "aligned_head_dim",
-          "source": "dim:head_dim"
-        },
-        {
-          "name": "pos_offset",
-          "source": "runtime:pos"
-        },
-        {
-          "name": "n_dims",
-          "source": "dim:n_dims"
-        },
-        {
-          "name": "section_0",
-          "source": "dim:section_0"
-        },
-        {
-          "name": "section_1",
-          "source": "dim:section_1"
-        },
-        {
-          "name": "section_2",
-          "source": "dim:section_2"
-        },
-        {
-          "name": "section_3",
-          "source": "dim:section_3"
-        },
-        {
-          "name": "n_ctx_orig",
-          "source": "dim:n_ctx_orig"
-        },
-        {
-          "name": "freq_base",
-          "source": "dim:freq_base"
-        },
-        {
-          "name": "freq_scale",
-          "source": "dim:freq_scale"
-        },
-        {
-          "name": "ext_factor",
-          "source": "dim:ext_factor"
-        },
-        {
-          "name": "attn_factor",
-          "source": "dim:attn_factor"
-        },
-        {
-          "name": "beta_fast",
-          "source": "dim:beta_fast"
-        },
-        {
-          "name": "beta_slow",
-          "source": "dim:beta_slow"
+          "name": "add_pos",
+          "source": "const:0"
         }
       ]
     },
-    "quantize_row_q8_0": {
-      "note": "Allow vision/footer quantize ops to request batched row emission when rows is present.",
+    "feature_concat": {
+      "note": "Concatenate a main output with fixed-width collected branch slices.",
       "params": [
         {
-          "name": "x",
-          "source": "activation:input",
-          "cast": "const float*"
+          "cast": "const float*",
+          "name": "main_input",
+          "source": "activation:main_input"
         },
         {
-          "name": "y",
-          "source": "output:output",
-          "cast": "void*"
+          "cast": "const float*",
+          "name": "branch_input",
+          "source": "activation:branch_input"
         },
         {
-          "name": "k",
-          "source": "dim:_input_dim"
+          "cast": "float*",
+          "name": "output",
+          "source": "output:output"
         },
         {
           "name": "rows",
           "source": "dim:rows"
+        },
+        {
+          "name": "main_dim",
+          "source": "dim:main_dim"
+        },
+        {
+          "name": "branch_slice_dim",
+          "source": "dim:branch_slice_dim"
+        },
+        {
+          "name": "num_branch_slices",
+          "source": "dim:num_branch_slices"
         }
       ]
     },
-    "quantize_row_q8_k": {
-      "note": "Allow vision/footer quantize ops to request batched row emission when rows is present.",
+    "feature_slice_copy": {
+      "note": "Generic row-wise copy into a feature-axis slice of a wider destination tensor.",
       "params": [
         {
-          "name": "x",
-          "source": "activation:input",
-          "cast": "const float*"
+          "cast": "const float*",
+          "name": "src",
+          "source": "activation:src"
         },
         {
-          "name": "y",
-          "source": "output:output",
-          "cast": "void*"
-        },
-        {
-          "name": "k",
-          "source": "dim:_input_dim"
+          "cast": "float*",
+          "name": "dst",
+          "source": "output:dst"
         },
         {
           "name": "rows",
           "source": "dim:rows"
+        },
+        {
+          "name": "src_dim",
+          "source": "dim:src_dim"
+        },
+        {
+          "name": "dst_dim",
+          "source": "dim:dst_dim"
+        },
+        {
+          "name": "dst_feature_offset",
+          "source": "dim:dst_feature_offset"
         }
       ]
     },
-    "kv_cache_store_f16": {
-      "note": "Store K,V into the packed FP16 decode KV cache.",
+    "gelu_exact_inplace": {
+      "note": "Exact in-place GELU binding for parity-sensitive v8 paths.",
       "params": [
         {
-          "name": "kv_cache_k",
-          "source": "runtime:kv_cache_k_layer_f16",
-          "cast": "uint16_t*"
+          "cast": "float*",
+          "name": "data",
+          "source": "output:out"
         },
         {
-          "name": "kv_cache_v",
-          "source": "runtime:kv_cache_v_layer_f16",
-          "cast": "uint16_t*"
-        },
-        {
-          "name": "k",
-          "source": "scratch:k_scratch",
-          "cast": "const float*"
-        },
-        {
-          "name": "v",
-          "source": "scratch:v_scratch",
-          "cast": "const float*"
-        },
-        {
-          "name": "layer",
-          "source": "runtime:layer"
-        },
-        {
-          "name": "pos",
-          "source": "runtime:pos"
-        },
-        {
-          "name": "num_kv_heads",
-          "source": "dim:num_kv_heads"
-        },
-        {
-          "name": "head_dim",
-          "source": "dim:head_dim"
-        },
-        {
-          "name": "max_seq_len",
-          "source": "dim:max_seq_len"
+          "name": "n",
+          "source": "dim:gelu_elems"
         }
       ]
     },
-    "attention_forward_decode_head_major_gqa_flash_f16cache": {
-      "note": "Decode flash attention over packed FP16 KV-cache storage.",
+    "gelu_ggml_inplace": {
+      "note": "GGML-compatible in-place GELU binding for llama.cpp parity-sensitive v8 paths.",
       "params": [
         {
-          "name": "q_token",
-          "source": "scratch:q_scratch",
-          "cast": "const float*"
+          "cast": "float*",
+          "name": "data",
+          "source": "output:out"
         },
         {
-          "name": "k_cache",
-          "source": "runtime:kv_cache_k_layer_f16",
-          "cast": "const uint16_t*"
+          "name": "n",
+          "source": "dim:gelu_elems"
+        }
+      ]
+    },
+    "gemm_naive_parallel": {
+      "note": "Exact FP32 NT GEMM binding for parity-sensitive matmuls.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "A",
+          "source": "activation:a"
         },
         {
-          "name": "v_cache",
-          "source": "runtime:kv_cache_v_layer_f16",
-          "cast": "const uint16_t*"
+          "name": "B",
+          "source": "weight:_first_weight"
         },
         {
-          "name": "out_token",
-          "source": "output:out",
-          "cast": "float*"
+          "name": "bias",
+          "source": "weight_f:_bias"
         },
         {
-          "name": "num_heads",
-          "source": "dim:num_heads"
+          "cast": "float*",
+          "name": "C",
+          "source": "output:c"
         },
         {
-          "name": "num_kv_heads",
-          "source": "dim:num_kv_heads"
+          "name": "M",
+          "source": "dim:_m"
         },
         {
-          "name": "kv_tokens",
-          "source": "runtime:kv_tokens"
+          "name": "N",
+          "source": "dim:_output_dim"
         },
         {
-          "name": "cache_capacity",
-          "source": "dim:max_seq_len"
+          "name": "K",
+          "source": "dim:_input_dim"
+        }
+      ]
+    },
+    "gemm_nt_bf16": {
+      "note": "BF16-weight dense GEMM wrapper with the standard matmul ABI.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "A",
+          "source": "activation:a"
         },
         {
-          "name": "head_dim",
-          "source": "dim:head_dim"
+          "name": "B",
+          "source": "weight:_first_weight"
         },
         {
-          "name": "aligned_head_dim",
-          "source": "dim:head_dim"
+          "name": "bias",
+          "source": "weight_f:_bias"
+        },
+        {
+          "cast": "float*",
+          "name": "C",
+          "source": "output:c"
+        },
+        {
+          "name": "M",
+          "source": "dim:_m"
+        },
+        {
+          "name": "N",
+          "source": "dim:_output_dim"
+        },
+        {
+          "name": "K",
+          "source": "dim:_input_dim"
+        }
+      ]
+    },
+    "gemm_nt_f16": {
+      "note": "FP16-weight dense GEMM wrapper with the standard matmul ABI.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "A",
+          "source": "activation:a"
+        },
+        {
+          "name": "B",
+          "source": "weight:_first_weight"
+        },
+        {
+          "name": "bias",
+          "source": "weight_f:_bias"
+        },
+        {
+          "cast": "float*",
+          "name": "C",
+          "source": "output:c"
+        },
+        {
+          "name": "M",
+          "source": "dim:_m"
+        },
+        {
+          "name": "N",
+          "source": "dim:_output_dim"
+        },
+        {
+          "name": "K",
+          "source": "dim:_input_dim"
+        }
+      ]
+    },
+    "gemm_nt_fp32_exact": {
+      "note": "Exact FP32 NT GEMM binding for parity-sensitive matmuls.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "A",
+          "source": "activation:a"
+        },
+        {
+          "name": "B",
+          "source": "weight:_first_weight"
+        },
+        {
+          "name": "bias",
+          "source": "weight_f:_bias"
+        },
+        {
+          "cast": "float*",
+          "name": "C",
+          "source": "output:c"
+        },
+        {
+          "name": "M",
+          "source": "dim:_m"
+        },
+        {
+          "name": "N",
+          "source": "dim:_output_dim"
+        },
+        {
+          "name": "K",
+          "source": "dim:_input_dim"
+        }
+      ]
+    },
+    "gemma4_final_logit_softcap_forward": {
+      "note": "Apply Gemma4 final logit softcapping in-place: tanh(logit / cap) * cap.",
+      "params": [
+        {
+          "cast": "float*",
+          "name": "logits",
+          "source": "activation:logits"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "vocab_size",
+          "source": "dim:vocab_size"
+        },
+        {
+          "name": "cap",
+          "source": "dim:final_logit_softcapping"
         }
       ]
     },
@@ -1106,14 +740,14 @@
       "note": "Apply Gemma4 per-layer residual branch using prepared per-layer input stream.",
       "params": [
         {
+          "cast": "float*",
           "name": "hidden",
-          "source": "activation:hidden",
-          "cast": "float*"
+          "source": "activation:hidden"
         },
         {
+          "cast": "const float*",
           "name": "per_layer_input",
-          "source": "activation:per_layer_input",
-          "cast": "const float*"
+          "source": "activation:per_layer_input"
         },
         {
           "name": "inp_gate",
@@ -1157,32 +791,33 @@
         }
       ]
     },
-    "gemma4_per_layer_prepare_forward": {
-      "note": "Prepare Gemma4 per-layer input stream from original embeddings.",
+    "gemma4_per_layer_prepare_bf16_forward": {
+      "note": "Prepare Gemma4 per-layer input stream from BF16 safetensors embeddings.",
       "params": [
         {
+          "cast": "float*",
           "name": "per_layer_input",
-          "source": "output:per_layer_input",
-          "cast": "float*"
+          "source": "output:per_layer_input"
         },
         {
+          "cast": "const float*",
           "name": "hidden",
-          "source": "activation:hidden",
-          "cast": "const float*"
+          "source": "activation:hidden"
         },
         {
+          "cast": "const int32_t*",
           "name": "token_ids",
-          "source": "activation:tokens",
-          "cast": "const int32_t*"
+          "source": "activation:tokens"
         },
         {
+          "cast": "const uint16_t*",
           "name": "per_layer_token_emb",
           "source": "weight:per_layer_token_emb"
         },
         {
+          "cast": "const uint16_t*",
           "name": "per_layer_model_proj",
-          "source": "weight:per_layer_model_proj",
-          "cast": "const uint16_t*"
+          "source": "weight:per_layer_model_proj"
         },
         {
           "name": "per_layer_proj_norm",
@@ -1214,50 +849,432 @@
         }
       ]
     },
-    "gemma4_final_logit_softcap_forward": {
-      "note": "Apply Gemma4 final logit softcapping in-place: tanh(logit / cap) * cap.",
+    "gemma4_per_layer_prepare_forward": {
+      "note": "Prepare Gemma4 per-layer input stream from original embeddings.",
       "params": [
         {
-          "name": "logits",
-          "source": "activation:logits",
-          "cast": "float*"
+          "cast": "float*",
+          "name": "per_layer_input",
+          "source": "output:per_layer_input"
+        },
+        {
+          "cast": "const float*",
+          "name": "hidden",
+          "source": "activation:hidden"
+        },
+        {
+          "cast": "const int32_t*",
+          "name": "token_ids",
+          "source": "activation:tokens"
+        },
+        {
+          "name": "per_layer_token_emb",
+          "source": "weight:per_layer_token_emb"
+        },
+        {
+          "cast": "const uint16_t*",
+          "name": "per_layer_model_proj",
+          "source": "weight:per_layer_model_proj"
+        },
+        {
+          "name": "per_layer_proj_norm",
+          "source": "weight_f:per_layer_proj_norm"
         },
         {
           "name": "tokens",
           "source": "dim:seq_len"
         },
         {
+          "name": "num_layers",
+          "source": "dim:num_layers"
+        },
+        {
+          "name": "embed_dim",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "per_layer_dim",
+          "source": "dim:per_layer_dim"
+        },
+        {
           "name": "vocab_size",
           "source": "dim:vocab_size"
         },
         {
-          "name": "cap",
-          "source": "dim:final_logit_softcapping"
+          "name": "eps",
+          "source": "dim:rms_eps"
         }
       ]
     },
-    "attention_forward_causal_head_major_gqa_flash_strided_gemma4": {
-      "note": "Prefill: all tokens process together with causal mask Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
+    "gemma4_v_norm_forward": {
       "params": [
         {
-          "name": "q",
-          "source": "scratch:q_scratch",
-          "cast": "float*"
+          "cast": "const float*",
+          "name": "input",
+          "source": "activation:input"
         },
         {
-          "name": "k",
-          "source": "scratch:k_scratch",
-          "cast": "float*"
-        },
-        {
-          "name": "v",
-          "source": "scratch:v_scratch",
-          "cast": "float*"
-        },
-        {
+          "cast": "float*",
           "name": "output",
-          "source": "output:out",
-          "cast": "float*"
+          "source": "output:output"
+        },
+        {
+          "name": "rstd_cache",
+          "source": "null"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps"
+        }
+      ]
+    },
+    "gemv_bf16": {
+      "note": "BF16-weight dense GEMV wrapper with the standard matmul ABI.",
+      "params": [
+        {
+          "cast": "float*",
+          "name": "y",
+          "source": "output:y"
+        },
+        {
+          "name": "W",
+          "source": "weight:_first_weight"
+        },
+        {
+          "cast": "const float*",
+          "name": "x",
+          "source": "activation:x"
+        },
+        {
+          "name": "M",
+          "source": "dim:_output_dim"
+        },
+        {
+          "name": "K",
+          "source": "dim:_input_dim"
+        }
+      ]
+    },
+    "im2patch": {
+      "note": "Allow rectangular vision inputs by binding explicit image_height/image_width.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "image",
+          "source": "activation:image"
+        },
+        {
+          "cast": "float*",
+          "name": "patches",
+          "source": "output:patches"
+        },
+        {
+          "name": "C",
+          "source": "dim:vision_channels"
+        },
+        {
+          "name": "H",
+          "source": "dim:image_height"
+        },
+        {
+          "name": "W",
+          "source": "dim:image_width"
+        },
+        {
+          "name": "P",
+          "source": "dim:patch_size"
+        }
+      ]
+    },
+    "kv_cache_store_f16": {
+      "note": "Store K,V into the packed FP16 decode KV cache.",
+      "params": [
+        {
+          "cast": "uint16_t*",
+          "name": "kv_cache_k",
+          "source": "runtime:kv_cache_k_layer_f16"
+        },
+        {
+          "cast": "uint16_t*",
+          "name": "kv_cache_v",
+          "source": "runtime:kv_cache_v_layer_f16"
+        },
+        {
+          "cast": "const float*",
+          "name": "k",
+          "source": "scratch:k_scratch"
+        },
+        {
+          "cast": "const float*",
+          "name": "v",
+          "source": "scratch:v_scratch"
+        },
+        {
+          "name": "layer",
+          "source": "runtime:layer"
+        },
+        {
+          "name": "pos",
+          "source": "runtime:pos"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "max_seq_len",
+          "source": "dim:max_seq_len"
+        }
+      ]
+    },
+    "layernorm_forward": {
+      "note": "Generic LayerNorm binding with explicit gamma and beta.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "input",
+          "source": "activation:input"
+        },
+        {
+          "alt": [
+            "ln1_gamma",
+            "ln2_gamma",
+            "final_ln_weight",
+            "branch_norm_gamma"
+          ],
+          "name": "gamma",
+          "source": "weight_f:gamma"
+        },
+        {
+          "alt": [
+            "ln1_beta",
+            "ln2_beta",
+            "final_ln_bias",
+            "branch_norm_beta"
+          ],
+          "name": "beta",
+          "source": "weight_f:beta"
+        },
+        {
+          "cast": "float*",
+          "name": "output",
+          "source": "output:output"
+        },
+        {
+          "name": "mean_cache_slice",
+          "source": "null"
+        },
+        {
+          "name": "rstd_cache_slice",
+          "source": "null"
+        },
+        {
+          "name": "num_tokens_in_slice",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "d_model",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps"
+        }
+      ]
+    },
+    "layernorm_forward_unrolled_slice": {
+      "note": "Generic LayerNorm binding with explicit gamma and beta.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "input",
+          "source": "activation:input"
+        },
+        {
+          "alt": [
+            "ln1_gamma",
+            "ln2_gamma",
+            "final_ln_weight",
+            "branch_norm_gamma"
+          ],
+          "name": "gamma",
+          "source": "weight_f:gamma"
+        },
+        {
+          "alt": [
+            "ln1_beta",
+            "ln2_beta",
+            "final_ln_bias",
+            "branch_norm_beta"
+          ],
+          "name": "beta",
+          "source": "weight_f:beta"
+        },
+        {
+          "cast": "float*",
+          "name": "output",
+          "source": "output:output"
+        },
+        {
+          "name": "mean_cache_slice",
+          "source": "null"
+        },
+        {
+          "name": "rstd_cache_slice",
+          "source": "null"
+        },
+        {
+          "name": "num_tokens_in_slice",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "d_model",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps"
+        }
+      ]
+    },
+    "layernorm_fp32_exact": {
+      "note": "Exact LayerNorm binding for parity-sensitive templates.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "input",
+          "source": "activation:input"
+        },
+        {
+          "alt": [
+            "ln1_gamma",
+            "ln2_gamma",
+            "final_ln_weight",
+            "branch_norm_gamma"
+          ],
+          "name": "gamma",
+          "source": "weight_f:gamma"
+        },
+        {
+          "alt": [
+            "ln1_beta",
+            "ln2_beta",
+            "final_ln_bias",
+            "branch_norm_beta"
+          ],
+          "name": "beta",
+          "source": "weight_f:beta"
+        },
+        {
+          "cast": "float*",
+          "name": "output",
+          "source": "output:output"
+        },
+        {
+          "name": "mean_cache",
+          "source": "null"
+        },
+        {
+          "name": "rstd_cache",
+          "source": "null"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "d_model",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps"
+        }
+      ]
+    },
+    "layernorm_naive_serial_matched_precision": {
+      "note": "Direct function-name alias for the exact LayerNorm binding.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "input",
+          "source": "activation:input"
+        },
+        {
+          "alt": [
+            "ln1_gamma",
+            "ln2_gamma",
+            "final_ln_weight",
+            "branch_norm_gamma"
+          ],
+          "name": "gamma",
+          "source": "weight_f:gamma"
+        },
+        {
+          "alt": [
+            "ln1_beta",
+            "ln2_beta",
+            "final_ln_bias",
+            "branch_norm_beta"
+          ],
+          "name": "beta",
+          "source": "weight_f:beta"
+        },
+        {
+          "cast": "float*",
+          "name": "output",
+          "source": "output:output"
+        },
+        {
+          "name": "mean_cache",
+          "source": "null"
+        },
+        {
+          "name": "rstd_cache",
+          "source": "null"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "d_model",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps"
+        }
+      ]
+    },
+    "mrope_qk_text": {
+      "note": "Text multi-section RoPE driven by runtime token position offset.",
+      "params": [
+        {
+          "cast": "float*",
+          "name": "q",
+          "source": "output:q"
+        },
+        {
+          "cast": "float*",
+          "name": "k",
+          "source": "output:k"
         },
         {
           "name": "num_heads",
@@ -1280,33 +1297,76 @@
           "source": "dim:head_dim"
         },
         {
-          "name": "kv_stride_tokens",
-          "source": "dim:max_seq_len"
+          "name": "pos_offset",
+          "source": "runtime:pos"
+        },
+        {
+          "name": "n_dims",
+          "source": "dim:n_dims"
+        },
+        {
+          "name": "section_0",
+          "source": "dim:section_0"
+        },
+        {
+          "name": "section_1",
+          "source": "dim:section_1"
+        },
+        {
+          "name": "section_2",
+          "source": "dim:section_2"
+        },
+        {
+          "name": "section_3",
+          "source": "dim:section_3"
+        },
+        {
+          "name": "n_ctx_orig",
+          "source": "dim:n_ctx_orig"
+        },
+        {
+          "name": "freq_base",
+          "source": "dim:freq_base"
+        },
+        {
+          "name": "freq_scale",
+          "source": "dim:freq_scale"
+        },
+        {
+          "name": "ext_factor",
+          "source": "dim:ext_factor"
+        },
+        {
+          "name": "attn_factor",
+          "source": "dim:attn_factor"
+        },
+        {
+          "name": "beta_fast",
+          "source": "dim:beta_fast"
+        },
+        {
+          "name": "beta_slow",
+          "source": "dim:beta_slow"
         }
       ]
     },
-    "attention_forward_full_head_major_gqa_flash_strided_gemma4": {
-      "note": "Prefill: full / bidirectional attention across the entire sequence Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
+    "mrope_qk_vision": {
+      "note": "Vision multi-section RoPE driven by explicit per-token position IDs.",
       "params": [
         {
+          "cast": "float*",
           "name": "q",
-          "source": "scratch:q_scratch",
-          "cast": "float*"
+          "source": "output:q"
         },
         {
+          "cast": "float*",
           "name": "k",
-          "source": "scratch:k_scratch",
-          "cast": "float*"
+          "source": "output:k"
         },
         {
-          "name": "v",
-          "source": "scratch:v_scratch",
-          "cast": "float*"
-        },
-        {
-          "name": "output",
-          "source": "output:out",
-          "cast": "float*"
+          "cast": "const int32_t*",
+          "name": "positions",
+          "source": "activation:positions"
         },
         {
           "name": "num_heads",
@@ -1329,163 +1389,214 @@
           "source": "dim:head_dim"
         },
         {
-          "name": "kv_stride_tokens",
-          "source": "dim:max_seq_len"
+          "name": "n_dims",
+          "source": "dim:n_dims"
+        },
+        {
+          "name": "section_0",
+          "source": "dim:section_0"
+        },
+        {
+          "name": "section_1",
+          "source": "dim:section_1"
+        },
+        {
+          "name": "section_2",
+          "source": "dim:section_2"
+        },
+        {
+          "name": "section_3",
+          "source": "dim:section_3"
+        },
+        {
+          "name": "n_ctx_orig",
+          "source": "dim:n_ctx_orig"
+        },
+        {
+          "name": "freq_base",
+          "source": "dim:freq_base"
+        },
+        {
+          "name": "freq_scale",
+          "source": "dim:freq_scale"
+        },
+        {
+          "name": "ext_factor",
+          "source": "dim:ext_factor"
+        },
+        {
+          "name": "attn_factor",
+          "source": "dim:attn_factor"
+        },
+        {
+          "name": "beta_fast",
+          "source": "dim:beta_fast"
+        },
+        {
+          "name": "beta_slow",
+          "source": "dim:beta_slow"
         }
       ]
     },
-    "attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4": {
-      "note": "Prefill: sliding window attention with causal mask Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
+    "position_embeddings_add_tiled_2d": {
+      "note": "Add position embeddings to an activation stream already laid out in merged-tile order.",
       "params": [
         {
-          "name": "q",
-          "source": "scratch:q_scratch",
-          "cast": "float*"
+          "cast": "float*",
+          "name": "x",
+          "source": "output:x"
+        },
+        {
+          "cast": "const float*",
+          "name": "position_embd",
+          "source": "weight:pos_emb"
+        },
+        {
+          "name": "grid_h",
+          "source": "dim:vision_grid_h"
+        },
+        {
+          "name": "grid_w",
+          "source": "dim:vision_grid_w"
+        },
+        {
+          "name": "embed_dim",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "merge_size",
+          "source": "dim:merge_size"
+        },
+        {
+          "name": "source_grid_size",
+          "source": "dim:source_grid_size"
+        }
+      ]
+    },
+    "quantize_row_q8_0": {
+      "note": "Allow vision/footer quantize ops to request batched row emission when rows is present.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "x",
+          "source": "activation:input"
+        },
+        {
+          "cast": "void*",
+          "name": "y",
+          "source": "output:output"
         },
         {
           "name": "k",
-          "source": "scratch:k_scratch",
-          "cast": "float*"
+          "source": "dim:_input_dim"
         },
         {
-          "name": "v",
-          "source": "scratch:v_scratch",
-          "cast": "float*"
+          "name": "rows",
+          "source": "dim:rows"
+        }
+      ]
+    },
+    "quantize_row_q8_k": {
+      "note": "Allow vision/footer quantize ops to request batched row emission when rows is present.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "x",
+          "source": "activation:input"
         },
         {
+          "cast": "void*",
+          "name": "y",
+          "source": "output:output"
+        },
+        {
+          "name": "k",
+          "source": "dim:_input_dim"
+        },
+        {
+          "name": "rows",
+          "source": "dim:rows"
+        }
+      ]
+    },
+    "rmsnorm_forward": {
+      "note": "RMSNorm does not require an rstd cache in v8 runtimes.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "input",
+          "source": "activation:input"
+        },
+        {
+          "alt": [
+            "ln1_gamma",
+            "ln2_gamma",
+            "post_attention_norm",
+            "post_ffn_norm",
+            "v_norm_gamma",
+            "final_ln_weight"
+          ],
+          "name": "gamma",
+          "source": "weight_f:_gamma"
+        },
+        {
+          "cast": "float*",
           "name": "output",
-          "source": "output:out",
-          "cast": "float*"
+          "source": "output:output"
         },
         {
-          "name": "num_heads",
-          "source": "dim:num_heads"
+          "name": "rstd_cache",
+          "source": "null"
         },
         {
-          "name": "num_kv_heads",
-          "source": "dim:num_kv_heads"
-        },
-        {
-          "name": "num_tokens",
+          "name": "tokens",
           "source": "dim:seq_len"
         },
         {
-          "name": "head_dim",
-          "source": "dim:head_dim"
+          "name": "d_model",
+          "source": "dim:embed_dim"
         },
         {
-          "name": "aligned_head_dim",
-          "source": "dim:head_dim"
+          "name": "aligned_embed_dim",
+          "source": "dim:embed_dim"
         },
         {
-          "name": "kv_stride_tokens",
-          "source": "dim:max_seq_len"
-        },
-        {
-          "name": "sliding_window",
-          "source": "dim:sliding_window"
+          "name": "eps",
+          "source": "dim:rms_eps"
         }
       ]
     },
-    "attention_forward_decode_head_major_gqa_flash_gemma4": {
-      "note": "Decode: single query token attends to KV cache (positions 0..pos) Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
+    "rmsnorm_forward_no_weight": {
       "params": [
         {
-          "name": "q_token",
-          "source": "scratch:q_scratch",
-          "cast": "const float*"
+          "cast": "const float*",
+          "name": "input",
+          "source": "activation:input"
         },
         {
-          "name": "k_cache",
-          "source": "runtime:kv_cache_k_layer",
-          "cast": "const float*"
+          "cast": "float*",
+          "name": "output",
+          "source": "output:output"
         },
         {
-          "name": "v_cache",
-          "source": "runtime:kv_cache_v_layer",
-          "cast": "const float*"
+          "name": "rstd_cache",
+          "source": "null"
         },
         {
-          "name": "out_token",
-          "source": "output:out",
-          "cast": "float*"
+          "name": "tokens",
+          "source": "dim:seq_len"
         },
         {
-          "name": "num_heads",
-          "source": "dim:num_heads"
+          "name": "d_model",
+          "source": "dim:_output_dim"
         },
         {
-          "name": "num_kv_heads",
-          "source": "dim:num_kv_heads"
+          "name": "aligned_embed_dim",
+          "source": "dim:_output_dim"
         },
         {
-          "name": "kv_tokens",
-          "source": "runtime:kv_tokens"
-        },
-        {
-          "name": "cache_capacity",
-          "source": "dim:max_seq_len"
-        },
-        {
-          "name": "head_dim",
-          "source": "dim:head_dim"
-        },
-        {
-          "name": "aligned_head_dim",
-          "source": "dim:head_dim"
-        }
-      ]
-    },
-    "attention_forward_decode_head_major_gqa_flash_sliding_gemma4": {
-      "note": "Decode: sliding window attention - single query token attends to last W KV cache entries Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
-      "params": [
-        {
-          "name": "q_token",
-          "source": "scratch:q_scratch",
-          "cast": "const float*"
-        },
-        {
-          "name": "k_cache",
-          "source": "runtime:kv_cache_k_layer",
-          "cast": "const float*"
-        },
-        {
-          "name": "v_cache",
-          "source": "runtime:kv_cache_v_layer",
-          "cast": "const float*"
-        },
-        {
-          "name": "out_token",
-          "source": "output:out",
-          "cast": "float*"
-        },
-        {
-          "name": "num_heads",
-          "source": "dim:num_heads"
-        },
-        {
-          "name": "num_kv_heads",
-          "source": "dim:num_kv_heads"
-        },
-        {
-          "name": "kv_tokens",
-          "source": "runtime:kv_tokens"
-        },
-        {
-          "name": "cache_capacity",
-          "source": "dim:max_seq_len"
-        },
-        {
-          "name": "head_dim",
-          "source": "dim:head_dim"
-        },
-        {
-          "name": "aligned_head_dim",
-          "source": "dim:head_dim"
-        },
-        {
-          "name": "sliding_window",
-          "source": "dim:sliding_window"
+          "name": "eps",
+          "source": "dim:rms_eps"
         }
       ]
     },
@@ -1493,19 +1604,19 @@
       "note": "Gemma4 RoPE uses per-layer frequency base and optional full-attention frequency factors.",
       "params": [
         {
+          "cast": "float*",
           "name": "q",
-          "source": "scratch:q_scratch",
-          "cast": "float*"
+          "source": "scratch:q_scratch"
         },
         {
+          "cast": "float*",
           "name": "k",
-          "source": "scratch:k_scratch",
-          "cast": "float*"
+          "source": "scratch:k_scratch"
         },
         {
+          "cast": "const float*",
           "name": "freq_factors",
-          "source": "weight_f:rope_freqs",
-          "cast": "const float*"
+          "source": "weight_f:rope_freqs"
         },
         {
           "name": "use_freq_factors",
@@ -1545,71 +1656,184 @@
         }
       ]
     },
-    "gemma4_v_norm_forward": {
+    "rowwise_bias_add": {
+      "note": "Explicit in-place rowwise bias binding for vision/header bring-up.",
       "params": [
         {
+          "cast": "float*",
+          "name": "x",
+          "source": "output:x"
+        },
+        {
+          "cast": "const float*",
+          "name": "bias",
+          "source": "weight:bias"
+        },
+        {
+          "name": "rows",
+          "source": "dim:rows"
+        },
+        {
+          "name": "dim",
+          "source": "dim:dim"
+        }
+      ]
+    },
+    "spatial_merge_contiguous_tiled": {
+      "note": "Merge contiguous groups of merge_size^2 tokens from a merged-tile-ordered stream.",
+      "params": [
+        {
+          "cast": "const float*",
           "name": "input",
-          "source": "activation:input",
-          "cast": "const float*"
+          "source": "activation:input"
         },
         {
+          "cast": "float*",
           "name": "output",
-          "source": "output:output",
-          "cast": "float*"
+          "source": "output:output"
         },
         {
-          "name": "rstd_cache",
-          "source": "null"
+          "name": "grid_h",
+          "source": "dim:vision_grid_h"
         },
         {
-          "name": "tokens",
-          "source": "dim:seq_len"
+          "name": "grid_w",
+          "source": "dim:vision_grid_w"
+        },
+        {
+          "name": "embed_dim",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "merge_size",
+          "source": "dim:merge_size"
+        }
+      ]
+    },
+    "split_qkv_packed_head_major_forward": {
+      "note": "Split packed token-major QKV rows into head-major Q/K/V buffers for transformer attention.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "packed_qkv",
+          "source": "activation:packed_qkv"
+        },
+        {
+          "cast": "float*",
+          "name": "q",
+          "source": "output:q"
+        },
+        {
+          "cast": "float*",
+          "name": "k",
+          "source": "output:k"
+        },
+        {
+          "cast": "float*",
+          "name": "v",
+          "source": "output:v"
+        },
+        {
+          "name": "rows",
+          "source": "runtime:seq_len"
+        },
+        {
+          "name": "q_dim",
+          "source": "dim:q_dim"
+        },
+        {
+          "name": "k_dim",
+          "source": "dim:k_dim"
+        },
+        {
+          "name": "v_dim",
+          "source": "dim:v_dim"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        }
+      ]
+    },
+    "vision_position_ids_2d_merge": {
+      "note": "Materialize merged-tile vision position IDs for position-driven M-RoPE.",
+      "params": [
+        {
+          "cast": "int32_t*",
+          "name": "positions",
+          "source": "output:positions"
+        },
+        {
+          "name": "grid_h",
+          "source": "dim:vision_grid_h"
+        },
+        {
+          "name": "grid_w",
+          "source": "dim:vision_grid_w"
+        },
+        {
+          "name": "merge_size",
+          "source": "dim:merge_size"
+        }
+      ]
+    },
+    "rope_forward_qk_split_direct_f32": {
+      "note": "Generic split-half direct RoPE with per-layer theta/rotary_dim and optional frequency factors.",
+      "params": [
+        {
+          "cast": "float*",
+          "name": "q",
+          "source": "scratch:q_scratch"
+        },
+        {
+          "cast": "float*",
+          "name": "k",
+          "source": "scratch:k_scratch"
+        },
+        {
+          "cast": "const float*",
+          "name": "freq_factors",
+          "source": "weight_f:rope_freqs"
+        },
+        {
+          "name": "use_freq_factors",
+          "source": "dim:use_rope_freq_factors"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
         },
         {
           "name": "num_kv_heads",
           "source": "dim:num_kv_heads"
         },
         {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
           "name": "head_dim",
           "source": "dim:head_dim"
         },
         {
-          "name": "eps",
-          "source": "dim:rms_eps"
-        }
-      ]
-    },
-    "rmsnorm_forward_no_weight": {
-      "params": [
-        {
-          "name": "input",
-          "source": "activation:input",
-          "cast": "const float*"
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
         },
         {
-          "name": "output",
-          "source": "output:output",
-          "cast": "float*"
+          "name": "pos_offset",
+          "source": "runtime:pos"
         },
         {
-          "name": "rstd_cache",
-          "source": "null"
+          "name": "rotary_dim",
+          "source": "dim:rotary_dim"
         },
         {
-          "name": "tokens",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "d_model",
-          "source": "dim:_output_dim"
-        },
-        {
-          "name": "aligned_embed_dim",
-          "source": "dim:_output_dim"
-        },
-        {
-          "name": "eps",
-          "source": "dim:rms_eps"
+          "name": "freq_base",
+          "source": "dim:rope_freq_base"
         }
       ]
     }

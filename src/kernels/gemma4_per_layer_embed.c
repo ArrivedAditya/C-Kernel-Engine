@@ -147,6 +147,68 @@ void gemma4_per_layer_prepare_forward(float *per_layer_input,
     }
 }
 
+
+void gemma4_per_layer_prepare_bf16_forward(float *per_layer_input,
+                                           const float *hidden,
+                                           const int32_t *token_ids,
+                                           const uint16_t *per_layer_token_emb,
+                                           const uint16_t *per_layer_model_proj,
+                                           const float *per_layer_proj_norm,
+                                           int tokens,
+                                           int num_layers,
+                                           int embed_dim,
+                                           int per_layer_dim,
+                                           int vocab_size,
+                                           float eps)
+{
+    if (!per_layer_input || !hidden || !token_ids || !per_layer_token_emb ||
+        !per_layer_model_proj || !per_layer_proj_norm || tokens <= 0 ||
+        num_layers <= 0 || embed_dim <= 0 || per_layer_dim <= 0 || vocab_size <= 0) {
+        return;
+    }
+
+    const float token_scale = sqrtf((float)per_layer_dim);
+    const float model_scale = 1.0f / sqrtf((float)embed_dim);
+    const float mix_scale = 0.7071067811865475f;
+
+    float token_vec[QK_K];
+    float proj_vec[QK_K];
+    float proj_normed[QK_K];
+    if (per_layer_dim > QK_K) {
+        return;
+    }
+
+    for (int t = 0; t < tokens; ++t) {
+        const int token = token_ids[t];
+        if (token < 0 || token >= vocab_size) {
+            continue;
+        }
+        const float *h = hidden + (size_t)t * (size_t)embed_dim;
+        for (int layer = 0; layer < num_layers; ++layer) {
+            float *dst = per_layer_input + ((size_t)t * (size_t)num_layers + (size_t)layer) * (size_t)per_layer_dim;
+            const uint16_t *tok_row = per_layer_token_emb +
+                ((size_t)token * (size_t)num_layers + (size_t)layer) * (size_t)per_layer_dim;
+            for (int i = 0; i < per_layer_dim; ++i) {
+                token_vec[i] = ck_bf16_to_f32(tok_row[i]) * token_scale;
+            }
+
+            const uint16_t *model_proj_base = per_layer_model_proj + (size_t)layer * (size_t)per_layer_dim * (size_t)embed_dim;
+            for (int i = 0; i < per_layer_dim; ++i) {
+                const uint16_t *row = model_proj_base + (size_t)i * (size_t)embed_dim;
+                float acc = 0.0f;
+                for (int j = 0; j < embed_dim; ++j) {
+                    acc += ck_bf16_to_f32(row[j]) * h[j];
+                }
+                proj_vec[i] = acc * model_scale;
+            }
+            ck_gemma4_rmsnorm_tmp(proj_vec, per_layer_proj_norm, proj_normed, per_layer_dim, eps);
+            for (int i = 0; i < per_layer_dim; ++i) {
+                dst[i] = (token_vec[i] + proj_normed[i]) * mix_scale;
+            }
+        }
+    }
+}
+
 void gemma4_per_layer_embed_forward(float *hidden,
                                     const float *per_layer_input,
                                     const float *inp_gate,

@@ -1,0 +1,28 @@
+{
+  "id": "gemm_nt_bf16",
+  "op": "gemm",
+  "variant": "bf16_w_fp32_a_fp32_out",
+  "quant": {
+    "weight": "bf16",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {"name": "A", "dtype": "fp32", "shape": ["M", "K"], "desc": "Activation matrix [rows, cols] (FP32, rounded to BF16 inside kernel)"},
+    {"name": "B", "dtype": "bf16", "shape": ["N", "K"], "desc": "Weight matrix [output rows, input cols] BF16"},
+    {"name": "bias", "dtype": "fp32", "shape": ["N"], "optional": true, "desc": "Bias [N] (optional)"}
+  ],
+  "outputs": [
+    {"name": "C", "dtype": "fp32", "shape": ["M", "N"], "desc": "Result [M, N]"}
+  ],
+  "scratch": [],
+  "dims": ["M", "N", "K"],
+  "constraints": {},
+  "impl": {
+    "function": "gemm_nt_bf16",
+    "c_declaration": "void gemm_nt_bf16(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);",
+    "sources": ["src/kernels/gemm_kernels_bf16.c"]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "notes": "Exact safetensors/BUMP BF16 weight inference path for prefill. Activation rows are rounded to BF16 before multiply."
+}

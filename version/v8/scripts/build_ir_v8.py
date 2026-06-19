@@ -2540,6 +2540,7 @@ def _backfill_vision_contract_config(manifest: Dict[str, Any]) -> None:
         else vision_position_contract.get("rope_layout")
     )
     rope_mode = attention_contract.get("rope_mode")
+    rope_param_mode = attention_contract.get("rope_param_mode")
     position_rank = vision_position_contract.get("position_rank")
 
     if image_size > 0:
@@ -2551,6 +2552,8 @@ def _backfill_vision_contract_config(manifest: Dict[str, Any]) -> None:
         config.setdefault("rope_layout", str(rope_layout))
     if rope_mode is not None and str(rope_mode).strip():
         config.setdefault("rope_mode", str(rope_mode))
+    if rope_param_mode is not None and str(rope_param_mode).strip():
+        config.setdefault("rope_param_mode", str(rope_param_mode))
     if position_rank is not None:
         config.setdefault("position_rank", int(position_rank))
 
@@ -2728,7 +2731,10 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
     sliding_window = _config_layer_int(config, "layer_sliding_window", layer, int(config.get("sliding_window", 0) or 0))
     rope_kinds = config.get("layer_rope_kind")
     rope_kind = str(rope_kinds[layer]) if isinstance(rope_kinds, list) and 0 <= layer < len(rope_kinds) else ("swa" if sliding_window > 0 else "full")
-    rope_freq_base = float(config.get("rope_theta_swa" if rope_kind == "swa" else "rope_theta", config.get("rope_theta", 10000.0)) or 10000.0)
+    if rope_kind == "swa":
+        rope_freq_base = float(config.get("rope_theta_swa", 10000.0) or 10000.0)
+    else:
+        rope_freq_base = float(config.get("rope_theta", 1000000.0) or 1000000.0)
 
     if op_name == "q_proj":
         params["_output_dim"] = q_dim
@@ -2941,6 +2947,9 @@ def _normalize_manifest_config(config: Dict) -> Dict:
     rope_layout_value = _pick("rope_layout")
     if rope_layout_value is not None and str(rope_layout_value).strip():
         out["rope_layout"] = str(rope_layout_value)
+    rope_param_mode_value = _pick("rope_param_mode")
+    if rope_param_mode_value is not None and str(rope_param_mode_value).strip():
+        out["rope_param_mode"] = str(rope_param_mode_value)
     out["rope_original_context_length"] = int(
         _pick("rope_original_context_length", default=out.get("context_length", 0))
     )
@@ -3178,6 +3187,7 @@ def _normalize_rope_layout_value(value: Any) -> str:
     aliases = {
         "standard": "split",
         "cos_sin_split": "split",
+        "split_half": "split",
         "half": "split",
         "pairwise": "pairwise",
         "interleaved": "pairwise",
@@ -3191,6 +3201,7 @@ def _normalize_rope_layout_value(value: Any) -> str:
 
 def _resolve_rope_qk_kernel(config: Dict, template_kernels: Dict[str, Any]) -> str:
     rope_layout = _normalize_rope_layout_value(config.get("rope_layout"))
+    rope_param_mode = str(config.get("rope_param_mode", "") or "").strip().lower()
     override = str(template_kernels.get("rope_qk", "") or "").strip()
 
     if rope_layout == "pairwise":
@@ -3201,6 +3212,8 @@ def _resolve_rope_qk_kernel(config: Dict, template_kernels: Dict[str, Any]) -> s
     if rope_layout == "split":
         if override and "pairwise" not in override.lower():
             return override
+        if rope_param_mode in {"direct", "per_layer", "per_layer_direct"}:
+            return "rope_forward_qk_split_direct"
         return "rope_forward_qk"
 
     if rope_layout == "multi_section_1d":
@@ -4374,6 +4387,15 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             # The head-major attention projection kernel (ck_attention_project_head_major_quant)
             # was from ckernel_orchestration.c which is not used in v7.
             # Fall through to standard matmul handling below.
+
+            # Gemma4 per-layer prepare is a structured header op, not a
+            # dense projection. It owns BF16/quantized weights internally and
+            # must stay on its dedicated kernel regardless of source dtype.
+            if op == "gemma4_per_layer_prepare":
+                token_dtype = layer_quant.get("per_layer_token_emb", header_quant.get("per_layer_token_emb", ""))
+                if token_dtype == "bf16":
+                    return ["gemma4_per_layer_prepare_bf16_forward"]
+                return ["gemma4_per_layer_prepare_forward"]
 
             # Try fused kernel first (e.g., qkv_projection)
             weight_dtype = layer_quant.get(weight_info[0], "fp32")

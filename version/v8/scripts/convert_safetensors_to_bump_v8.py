@@ -397,7 +397,13 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
     cfg.setdefault("head_dim", text.get("head_dim") or (int(text.get("hidden_size", 0)) // max(1, int(text.get("num_attention_heads", 1)))))
     cfg.setdefault("vocab_size", text.get("vocab_size"))
     cfg.setdefault("context_length", text.get("max_position_embeddings") or text.get("sliding_window"))
-    cfg.setdefault("rope_theta", text.get("rope_theta", 1000000.0))
+    rope_params = text.get("rope_parameters") if isinstance(text.get("rope_parameters"), dict) else {}
+    full_rope = rope_params.get("full_attention") if isinstance(rope_params.get("full_attention"), dict) else {}
+    sliding_rope = rope_params.get("sliding_attention") if isinstance(rope_params.get("sliding_attention"), dict) else {}
+    cfg.setdefault("rope_theta", full_rope.get("rope_theta", text.get("rope_theta", 1000000.0)))
+    cfg.setdefault("rope_theta_swa", sliding_rope.get("rope_theta", 10000.0))
+    cfg.setdefault("rope_layout", "split")
+    cfg.setdefault("rope_param_mode", "per_layer_direct")
     cfg.setdefault("rms_eps", text.get("rms_norm_eps", text.get("rms_norm_epsilon", 1e-6)))
     cfg.setdefault("rms_norm_eps", cfg.get("rms_eps"))
     cfg.setdefault("tie_word_embeddings", bool(text.get("tie_word_embeddings", True)))

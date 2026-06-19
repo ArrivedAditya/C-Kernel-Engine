@@ -889,6 +889,41 @@ def emit_op(
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
 
+    if op_name in {"q_proj", "q_gate_proj", "k_proj", "v_proj"} and function == "gemv_bf16":
+        arg_expr_by_name = {}
+        for arg in args:
+            nm = str(arg.get("name", "")).lower()
+            ex = str(arg.get("expr", ""))
+            if nm and ex and nm not in arg_expr_by_name:
+                arg_expr_by_name[nm] = ex
+
+        y_expr = arg_expr_by_name.get("y")
+        w_expr = arg_expr_by_name.get("w")
+        x_expr = arg_expr_by_name.get("x")
+        m_expr = arg_expr_by_name.get("m")
+        k_expr = arg_expr_by_name.get("k")
+        if y_expr and w_expr and x_expr and m_expr and k_expr:
+            if profile:
+                lines.append("    CK_PROFILE_BEGIN();")
+            lines.append("    gemv_bf16(")
+            lines.append(f"        {y_expr},")
+            lines.append(f"        {w_expr},")
+            lines.append(f"        {x_expr},")
+            lines.append(f"        {m_expr},")
+            lines.append(f"        {k_expr}")
+            lines.append("    );")
+            if profile:
+                lines.append(f'    CK_PROFILE_END("decode", "gemv_bf16", "{op_name}", {layer});')
+            raw_expr = y_expr.replace("(float*)", "").replace("(void*)", "").strip()
+            hidden_label = "q_proj" if op_name == "q_gate_proj" else op_name
+            lines.append(
+                f'    ck_debug_export_hidden(model, {layer}, "{hidden_label}", '
+                f'(const float*){raw_expr}, {m_expr});'
+            )
+            if seq_idx is not None:
+                lines.append(f"    if (stop_seq == {seq_idx}) return;")
+            return "\n".join(lines)
+
     if op_name == "quantize_out_proj_input" and function == "quantize_row_q8_k":
         arg_expr_by_name = {}
         for arg in args:
@@ -1009,6 +1044,43 @@ def emit_op(
                 lines.append(f'    ck_dump_tensor((float*){raw_expr}, {layer}, "logits", {m_expr});')
                 lines.append("        #endif")
             lines.append("    }")
+            if seq_idx is not None:
+                lines.append(f"    if (stop_seq == {seq_idx}) return;")
+            return "\n".join(lines)
+
+    if op_name == "out_proj" and function == "gemv_bf16":
+        arg_expr_by_name = {}
+        for arg in args:
+            nm = str(arg.get("name", "")).lower()
+            ex = str(arg.get("expr", ""))
+            if nm and ex and nm not in arg_expr_by_name:
+                arg_expr_by_name[nm] = ex
+        y_expr = arg_expr_by_name.get("y")
+        w_expr = arg_expr_by_name.get("w")
+        x_expr = arg_expr_by_name.get("x")
+        m_expr = arg_expr_by_name.get("m")
+        k_expr = arg_expr_by_name.get("k")
+        if y_expr and w_expr and x_expr and m_expr and k_expr:
+            lines.append(
+                f"    ck_debug_export_hidden(model, {layer}, \"attn_out\", "
+                f"(const float*)({x_expr}), {k_expr});"
+            )
+            if profile:
+                lines.append("    CK_PROFILE_BEGIN();")
+            lines.append(f"    {function}(")
+            lines.append(f"        {y_expr},")
+            lines.append(f"        {w_expr},")
+            lines.append(f"        {x_expr},")
+            lines.append(f"        {m_expr},")
+            lines.append(f"        {k_expr}")
+            lines.append("    );")
+            if profile:
+                lines.append(f"    CK_PROFILE_END(\"decode\", \"{function}\", \"{op_name}\", {layer});")
+            raw_expr = y_expr.replace("(float*)", "").replace("(void*)", "").strip()
+            lines.append(
+                f"    ck_debug_export_hidden(model, {layer}, \"out_proj\", "
+                f"(const float*){raw_expr}, {m_expr});"
+            )
             if seq_idx is not None:
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)

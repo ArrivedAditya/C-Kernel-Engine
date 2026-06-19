@@ -1,0 +1,92 @@
+{
+  "id": "gemma4_per_layer_prepare_bf16_forward",
+  "op": "gemma4_per_layer_prepare",
+  "variant": "gemma4_bf16_scalar_correctness",
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "quant": {
+    "weight": "bf16",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "hidden",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "E"
+      ]
+    },
+    {
+      "name": "tokens",
+      "dtype": "i32",
+      "shape": [
+        "T"
+      ]
+    }
+  ],
+  "weights": [
+    {
+      "name": "per_layer_token_emb",
+      "dtype": "bf16",
+      "shape": [
+        "V",
+        "L",
+        "P"
+      ]
+    },
+    {
+      "name": "per_layer_model_proj",
+      "dtype": "bf16",
+      "shape": [
+        "L",
+        "P",
+        "E"
+      ]
+    },
+    {
+      "name": "per_layer_proj_norm",
+      "dtype": "fp32",
+      "shape": [
+        "P"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "per_layer_input",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "L",
+        "P"
+      ]
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "seq_len",
+    "num_layers",
+    "embed_dim",
+    "per_layer_dim",
+    "vocab_size"
+  ],
+  "params": [
+    {
+      "name": "eps",
+      "dtype": "float32"
+    }
+  ],
+  "impl": {
+    "function": "gemma4_per_layer_prepare_bf16_forward",
+    "c_declaration": "void gemma4_per_layer_prepare_bf16_forward(float *per_layer_input, const float *hidden, const int32_t *token_ids, const uint16_t *per_layer_token_emb, const uint16_t *per_layer_model_proj, const float *per_layer_proj_norm, int tokens, int num_layers, int embed_dim, int per_layer_dim, int vocab_size, float eps);",
+    "sources": [
+      "src/kernels/gemma4_per_layer_embed.c"
+    ]
+  },
+  "notes": "Prepare Gemma4 per-layer input stream from BF16 safetensors token embeddings and BF16 projection weights."
+}
