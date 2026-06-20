@@ -114,3 +114,67 @@ void relu_backward(const float *input,
         d_input[i] = (input[i] > 0.0f) ? d_output[i] : 0.0f;
     }
 }
+
+
+/* ReLU2 forward: y = max(0, x)^2 */
+void relu2_forward(const float *input, float *output, size_t n)
+{
+    size_t i = 0;
+
+#if defined(__AVX512F__)
+    const __m512 vzero = _mm512_setzero_ps();
+    for (; i + 15 < n; i += 16) {
+        const __m512 vx = _mm512_loadu_ps(input + i);
+        const __m512 vr = _mm512_max_ps(vx, vzero);
+        _mm512_storeu_ps(output + i, _mm512_mul_ps(vr, vr));
+    }
+#elif defined(__AVX2__) || defined(__AVX__)
+    const __m256 vzero = _mm256_setzero_ps();
+    for (; i + 7 < n; i += 8) {
+        const __m256 vx = _mm256_loadu_ps(input + i);
+        const __m256 vr = _mm256_max_ps(vx, vzero);
+        _mm256_storeu_ps(output + i, _mm256_mul_ps(vr, vr));
+    }
+#endif
+
+    for (; i < n; ++i) {
+        const float x = input[i];
+        output[i] = (x > 0.0f) ? x * x : 0.0f;
+    }
+}
+
+/* ReLU2 backward: dx = dy * 2*x when x > 0, else 0 */
+void relu2_backward(const float *input,
+                    const float *d_output,
+                    float *d_input,
+                    size_t n)
+{
+    size_t i = 0;
+
+#if defined(__AVX512F__)
+    const __m512 vzero = _mm512_setzero_ps();
+    const __m512 vtwo = _mm512_set1_ps(2.0f);
+    for (; i + 15 < n; i += 16) {
+        const __m512 vx = _mm512_loadu_ps(input + i);
+        const __m512 vdy = _mm512_loadu_ps(d_output + i);
+        const __mmask16 mask = _mm512_cmp_ps_mask(vx, vzero, _CMP_GT_OQ);
+        const __m512 vdx = _mm512_mul_ps(_mm512_mul_ps(vtwo, vx), vdy);
+        _mm512_storeu_ps(d_input + i, _mm512_maskz_mov_ps(mask, vdx));
+    }
+#elif defined(__AVX2__) || defined(__AVX__)
+    const __m256 vzero = _mm256_setzero_ps();
+    const __m256 vtwo = _mm256_set1_ps(2.0f);
+    for (; i + 7 < n; i += 8) {
+        const __m256 vx = _mm256_loadu_ps(input + i);
+        const __m256 vdy = _mm256_loadu_ps(d_output + i);
+        const __m256 mask = _mm256_cmp_ps(vx, vzero, _CMP_GT_OQ);
+        const __m256 vdx = _mm256_mul_ps(_mm256_mul_ps(vtwo, vx), vdy);
+        _mm256_storeu_ps(d_input + i, _mm256_and_ps(mask, vdx));
+    }
+#endif
+
+    for (; i < n; ++i) {
+        const float x = input[i];
+        d_input[i] = (x > 0.0f) ? d_output[i] * 2.0f * x : 0.0f;
+    }
+}
