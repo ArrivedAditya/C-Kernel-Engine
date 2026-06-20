@@ -356,6 +356,7 @@ SRCS    := src/backend_native.c \
 	           src/kernels/recurrent_state_kernels.c \
 	           src/kernels/recurrent_qk_norm_kernels.c \
 	           src/kernels/recurrent_norm_kernels.c \
+	           src/kernels/mamba2_kernels.c \
 	           src/kernels/deltanet_kernels.c \
 	           src/kernels/deepseek_kernels.c \
 	           src/kernels/gemma4_per_layer_embed.c \
@@ -1229,6 +1230,12 @@ test-moe-relu2-expert: $(LIB)
 
 test-moe-relu2-expert-perf: $(LIB)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_moe_relu2_expert.py --benchmark
+
+test-mamba2-reference: $(LIB)
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_mamba2_reference.py $(ARGS)
+
+test-mamba2-reference-perf: $(LIB)
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_mamba2_reference.py --benchmark
 
 test-recurrent-split-conv-qkv: $(LIB)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_recurrent_split_conv_qkv.py $(ARGS)
@@ -2986,6 +2993,7 @@ PARITY_SRCS := src/ck_parity_api.c \
 	               src/kernels/recurrent_state_kernels.c \
 	               src/kernels/recurrent_qk_norm_kernels.c \
 	               src/kernels/recurrent_norm_kernels.c \
+	               src/kernels/mamba2_kernels.c \
 	               src/kernels/deltanet_kernels.c \
                src/kernels/fused/prefill_fused_gemm.c \
                src/kernels/fused/mega_fused_outproj_mlp_prefill.c \

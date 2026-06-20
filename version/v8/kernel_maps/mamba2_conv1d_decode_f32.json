@@ -1,0 +1,129 @@
+{
+  "id": "mamba2_conv1d_decode_f32",
+  "op": "mamba_conv1d_state_update",
+  "variant": "fp32",
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "state_in",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "C",
+        "K"
+      ]
+    },
+    {
+      "name": "x",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "C"
+      ]
+    }
+  ],
+  "weights": [
+    {
+      "name": "weight",
+      "dtype": "fp32",
+      "shape": [
+        "C",
+        "K"
+      ]
+    },
+    {
+      "name": "bias",
+      "dtype": "fp32",
+      "shape": [
+        "C"
+      ]
+    }
+  ],
+  "activations": [],
+  "outputs": [
+    {
+      "name": "conv_out",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "C"
+      ]
+    },
+    {
+      "name": "state_out",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "C",
+        "K"
+      ]
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "R",
+    "C",
+    "K"
+  ],
+  "params": [],
+  "parallelization": {
+    "supported": [
+      "row"
+    ],
+    "preferred": {
+      "prefill": "row",
+      "decode": "row"
+    },
+    "strategies": [
+      {
+        "name": "row",
+        "partition_dim": "R",
+        "param_style": "range",
+        "range": {
+          "min_chunk": 1
+        }
+      }
+    ]
+  },
+  "impl": {
+    "function": "mamba2_conv1d_decode_f32",
+    "c_declaration": "void mamba2_conv1d_decode_f32(const float *state_in, const float *x, const float *weight, const float *bias, float *conv_out, float *state_out, int rows, int conv_dim, int kernel_size);",
+    "sources": [
+      "src/kernels/mamba2_kernels.c"
+    ],
+    "variants": [
+      {
+        "name": "scalar_ref",
+        "requires": [],
+        "compile_flags": []
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "unittest/test_mamba2_reference.py"
+    ],
+    "parity": [
+      {
+        "kind": "pytorch",
+        "command": ".venv/bin/python unittest/test_mamba2_reference.py",
+        "tolerance": "1e-6"
+      }
+    ],
+    "performance": [
+      {
+        "kind": "pytorch",
+        "command": "make test-mamba2-reference-perf"
+      }
+    ]
+  }
+}

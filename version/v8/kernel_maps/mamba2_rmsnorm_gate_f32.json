@@ -1,0 +1,111 @@
+{
+  "id": "mamba2_rmsnorm_gate_f32",
+  "op": "mamba_rmsnorm_gate",
+  "variant": "fp32",
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "I"
+      ]
+    },
+    {
+      "name": "gate",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "I"
+      ]
+    }
+  ],
+  "weights": [
+    {
+      "name": "weight",
+      "dtype": "fp32",
+      "shape": [
+        "I"
+      ]
+    }
+  ],
+  "activations": [],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "I"
+      ]
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "R",
+    "I",
+    "G"
+  ],
+  "params": [],
+  "parallelization": {
+    "supported": [
+      "row"
+    ],
+    "preferred": {
+      "prefill": "row",
+      "decode": "row"
+    },
+    "strategies": [
+      {
+        "name": "row",
+        "partition_dim": "R",
+        "param_style": "range",
+        "range": {
+          "min_chunk": 1
+        }
+      }
+    ]
+  },
+  "impl": {
+    "function": "mamba2_rmsnorm_gate_f32",
+    "c_declaration": "void mamba2_rmsnorm_gate_f32(const float *x, const float *gate, const float *weight, float *out, int rows, int inner_dim, int group_size, float eps);",
+    "sources": [
+      "src/kernels/mamba2_kernels.c"
+    ],
+    "variants": [
+      {
+        "name": "scalar_ref",
+        "requires": [],
+        "compile_flags": []
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "unittest/test_mamba2_reference.py"
+    ],
+    "parity": [
+      {
+        "kind": "pytorch",
+        "command": ".venv/bin/python unittest/test_mamba2_reference.py",
+        "tolerance": "1e-6"
+      }
+    ],
+    "performance": [
+      {
+        "kind": "pytorch",
+        "command": "make test-mamba2-reference-perf"
+      }
+    ]
+  }
+}

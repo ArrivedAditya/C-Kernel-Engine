@@ -1712,6 +1712,61 @@ void recurrent_norm_gate_backward(const float *d_out,
                                   int head_dim,
                                   float eps);
 
+// Nemotron-H/Mamba2 scalar reference kernels.
+// These cover the decode-state contract first; chunked prefill scan is a
+// separate scheduling contract and should not be hidden inside this API.
+void mamba2_in_proj_split_f32(const float *projected,
+                              float *gate,
+                              float *hidden_bc,
+                              float *dt,
+                              int rows,
+                              int d_mlp,
+                              int intermediate_dim,
+                              int conv_dim,
+                              int num_heads);
+
+void mamba2_conv1d_decode_f32(const float *state_in,
+                              const float *x,
+                              const float *weight,
+                              const float *bias,
+                              float *conv_out,
+                              float *state_out,
+                              int rows,
+                              int conv_dim,
+                              int kernel_size);
+
+void mamba2_dt_softplus_f32(const float *dt,
+                            const float *dt_bias,
+                            float *dt_out,
+                            int rows,
+                            int num_heads,
+                            float dt_min,
+                            float dt_max);
+
+void mamba2_selective_state_update_decode_f32(const float *state_in,
+                                              const float *x,
+                                              const float *dt,
+                                              const float *a,
+                                              const float *b,
+                                              const float *c,
+                                              const float *d,
+                                              float *state_out,
+                                              float *y,
+                                              int rows,
+                                              int num_heads,
+                                              int head_dim,
+                                              int state_dim,
+                                              int num_groups);
+
+void mamba2_rmsnorm_gate_f32(const float *x,
+                             const float *gate,
+                             const float *weight,
+                             float *out,
+                             int rows,
+                             int inner_dim,
+                             int group_size,
+                             float eps);
+
 // Apply sigmoid(gate) to the full-attention qwen3.5 gate path and multiply it
 // elementwise with the attention output before the output projection.
 // Layout:

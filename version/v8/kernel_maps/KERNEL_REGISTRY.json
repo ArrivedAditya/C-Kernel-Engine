@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "/opt/app-root/src/Ashivaku/C-Kernel-Engine/version/v8/kernel_maps",
     "counts": {
-      "total": 152,
+      "total": 157,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -36,6 +36,11 @@
         "kv_cache_store": 2,
         "layernorm": 2,
         "logits_store_indexed": 1,
+        "mamba_conv1d_state_update": 1,
+        "mamba_dt_softplus": 1,
+        "mamba_in_proj_split": 1,
+        "mamba_rmsnorm_gate": 1,
+        "mamba_selective_state_update_decode": 1,
         "moe_relu2_expert_mlp": 2,
         "optimizer": 4,
         "position_embeddings": 2,
@@ -9566,6 +9571,631 @@
       "notes": "Copy logits from scratch buffer to position-indexed location in logits buffer. Used in decode mode to place single-token logits at the correct sequence position. This allows codegen to be 'dumb' - just emit kernel calls, no runtime if-statements.",
       "name": "logits_copy_to_position",
       "_source_file": "logits_copy_to_position.json"
+    },
+    {
+      "id": "mamba2_conv1d_decode_f32",
+      "op": "mamba_conv1d_state_update",
+      "variant": "fp32",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "state_in",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C",
+            "K"
+          ]
+        },
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "weight",
+          "dtype": "fp32",
+          "shape": [
+            "C",
+            "K"
+          ]
+        },
+        {
+          "name": "bias",
+          "dtype": "fp32",
+          "shape": [
+            "C"
+          ]
+        }
+      ],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "conv_out",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ]
+        },
+        {
+          "name": "state_out",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C",
+            "K"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "R",
+        "C",
+        "K"
+      ],
+      "params": [],
+      "parallelization": {
+        "supported": [
+          "row"
+        ],
+        "preferred": {
+          "prefill": "row",
+          "decode": "row"
+        },
+        "strategies": [
+          {
+            "name": "row",
+            "partition_dim": "R",
+            "param_style": "range",
+            "range": {
+              "min_chunk": 1
+            }
+          }
+        ]
+      },
+      "impl": {
+        "function": "mamba2_conv1d_decode_f32",
+        "c_declaration": "void mamba2_conv1d_decode_f32(const float *state_in, const float *x, const float *weight, const float *bias, float *conv_out, float *state_out, int rows, int conv_dim, int kernel_size);",
+        "sources": [
+          "src/kernels/mamba2_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "scalar_ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_mamba2_reference.py"
+        ],
+        "parity": [
+          {
+            "kind": "pytorch",
+            "command": ".venv/bin/python unittest/test_mamba2_reference.py",
+            "tolerance": "1e-6"
+          }
+        ],
+        "performance": [
+          {
+            "kind": "pytorch",
+            "command": "make test-mamba2-reference-perf"
+          }
+        ]
+      },
+      "name": "mamba2_conv1d_decode_f32",
+      "_source_file": "mamba2_conv1d_decode_f32.json"
+    },
+    {
+      "id": "mamba2_dt_softplus_f32",
+      "op": "mamba_dt_softplus",
+      "variant": "fp32",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "dt",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "dt_bias",
+          "dtype": "fp32",
+          "shape": [
+            "H"
+          ]
+        }
+      ],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "dt_out",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "R",
+        "H"
+      ],
+      "params": [],
+      "parallelization": {
+        "supported": [
+          "row"
+        ],
+        "preferred": {
+          "prefill": "row",
+          "decode": "row"
+        },
+        "strategies": [
+          {
+            "name": "row",
+            "partition_dim": "R",
+            "param_style": "range",
+            "range": {
+              "min_chunk": 1
+            }
+          }
+        ]
+      },
+      "impl": {
+        "function": "mamba2_dt_softplus_f32",
+        "c_declaration": "void mamba2_dt_softplus_f32(const float *dt, const float *dt_bias, float *dt_out, int rows, int num_heads, float dt_min, float dt_max);",
+        "sources": [
+          "src/kernels/mamba2_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "scalar_ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_mamba2_reference.py"
+        ],
+        "parity": [
+          {
+            "kind": "pytorch",
+            "command": ".venv/bin/python unittest/test_mamba2_reference.py",
+            "tolerance": "1e-6"
+          }
+        ],
+        "performance": [
+          {
+            "kind": "pytorch",
+            "command": "make test-mamba2-reference-perf"
+          }
+        ]
+      },
+      "name": "mamba2_dt_softplus_f32",
+      "_source_file": "mamba2_dt_softplus_f32.json"
+    },
+    {
+      "id": "mamba2_in_proj_split_f32",
+      "op": "mamba_in_proj_split",
+      "variant": "fp32",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "projected",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "P"
+          ]
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "gate",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "I"
+          ]
+        },
+        {
+          "name": "hidden_bc",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "C"
+          ]
+        },
+        {
+          "name": "dt",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "R",
+        "DMLP",
+        "I",
+        "C",
+        "H"
+      ],
+      "params": [],
+      "parallelization": {
+        "supported": [
+          "row"
+        ],
+        "preferred": {
+          "prefill": "row",
+          "decode": "row"
+        },
+        "strategies": [
+          {
+            "name": "row",
+            "partition_dim": "R",
+            "param_style": "range",
+            "range": {
+              "min_chunk": 1
+            }
+          }
+        ]
+      },
+      "impl": {
+        "function": "mamba2_in_proj_split_f32",
+        "c_declaration": "void mamba2_in_proj_split_f32(const float *projected, float *gate, float *hidden_bc, float *dt, int rows, int d_mlp, int intermediate_dim, int conv_dim, int num_heads);",
+        "sources": [
+          "src/kernels/mamba2_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "scalar_ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_mamba2_reference.py"
+        ],
+        "parity": [
+          {
+            "kind": "pytorch",
+            "command": ".venv/bin/python unittest/test_mamba2_reference.py",
+            "tolerance": "1e-6"
+          }
+        ],
+        "performance": [
+          {
+            "kind": "pytorch",
+            "command": "make test-mamba2-reference-perf"
+          }
+        ]
+      },
+      "name": "mamba2_in_proj_split_f32",
+      "_source_file": "mamba2_in_proj_split_f32.json"
+    },
+    {
+      "id": "mamba2_rmsnorm_gate_f32",
+      "op": "mamba_rmsnorm_gate",
+      "variant": "fp32",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "I"
+          ]
+        },
+        {
+          "name": "gate",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "I"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "weight",
+          "dtype": "fp32",
+          "shape": [
+            "I"
+          ]
+        }
+      ],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "I"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "R",
+        "I",
+        "G"
+      ],
+      "params": [],
+      "parallelization": {
+        "supported": [
+          "row"
+        ],
+        "preferred": {
+          "prefill": "row",
+          "decode": "row"
+        },
+        "strategies": [
+          {
+            "name": "row",
+            "partition_dim": "R",
+            "param_style": "range",
+            "range": {
+              "min_chunk": 1
+            }
+          }
+        ]
+      },
+      "impl": {
+        "function": "mamba2_rmsnorm_gate_f32",
+        "c_declaration": "void mamba2_rmsnorm_gate_f32(const float *x, const float *gate, const float *weight, float *out, int rows, int inner_dim, int group_size, float eps);",
+        "sources": [
+          "src/kernels/mamba2_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "scalar_ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_mamba2_reference.py"
+        ],
+        "parity": [
+          {
+            "kind": "pytorch",
+            "command": ".venv/bin/python unittest/test_mamba2_reference.py",
+            "tolerance": "1e-6"
+          }
+        ],
+        "performance": [
+          {
+            "kind": "pytorch",
+            "command": "make test-mamba2-reference-perf"
+          }
+        ]
+      },
+      "name": "mamba2_rmsnorm_gate_f32",
+      "_source_file": "mamba2_rmsnorm_gate_f32.json"
+    },
+    {
+      "id": "mamba2_selective_state_update_decode_f32",
+      "op": "mamba_selective_state_update_decode",
+      "variant": "fp32",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "state_in",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H",
+            "D",
+            "S"
+          ]
+        },
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H",
+            "D"
+          ]
+        },
+        {
+          "name": "dt",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        },
+        {
+          "name": "B",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "G",
+            "S"
+          ]
+        },
+        {
+          "name": "C",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "G",
+            "S"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "A",
+          "dtype": "fp32",
+          "shape": [
+            "H"
+          ]
+        },
+        {
+          "name": "D",
+          "dtype": "fp32",
+          "shape": [
+            "H"
+          ]
+        }
+      ],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "state_out",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H",
+            "D",
+            "S"
+          ]
+        },
+        {
+          "name": "y",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H",
+            "D"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "R",
+        "H",
+        "D",
+        "S",
+        "G"
+      ],
+      "params": [],
+      "parallelization": {
+        "supported": [
+          "row"
+        ],
+        "preferred": {
+          "prefill": "row",
+          "decode": "row"
+        },
+        "strategies": [
+          {
+            "name": "row",
+            "partition_dim": "R",
+            "param_style": "range",
+            "range": {
+              "min_chunk": 1
+            }
+          }
+        ]
+      },
+      "impl": {
+        "function": "mamba2_selective_state_update_decode_f32",
+        "c_declaration": "void mamba2_selective_state_update_decode_f32(const float *state_in, const float *x, const float *dt, const float *a, const float *b, const float *c, const float *d, float *state_out, float *y, int rows, int num_heads, int head_dim, int state_dim, int num_groups);",
+        "sources": [
+          "src/kernels/mamba2_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "scalar_ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_mamba2_reference.py"
+        ],
+        "parity": [
+          {
+            "kind": "pytorch",
+            "command": ".venv/bin/python unittest/test_mamba2_reference.py",
+            "tolerance": "1e-6"
+          }
+        ],
+        "performance": [
+          {
+            "kind": "pytorch",
+            "command": "make test-mamba2-reference-perf"
+          }
+        ]
+      },
+      "name": "mamba2_selective_state_update_decode_f32",
+      "_source_file": "mamba2_selective_state_update_decode_f32.json"
     },
     {
       "id": "mega_fused_attention_decode",

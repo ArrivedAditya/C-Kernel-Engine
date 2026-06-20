@@ -1,0 +1,102 @@
+{
+  "id": "mamba2_dt_softplus_f32",
+  "op": "mamba_dt_softplus",
+  "variant": "fp32",
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "dt",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ]
+    }
+  ],
+  "weights": [
+    {
+      "name": "dt_bias",
+      "dtype": "fp32",
+      "shape": [
+        "H"
+      ]
+    }
+  ],
+  "activations": [],
+  "outputs": [
+    {
+      "name": "dt_out",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ]
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "R",
+    "H"
+  ],
+  "params": [],
+  "parallelization": {
+    "supported": [
+      "row"
+    ],
+    "preferred": {
+      "prefill": "row",
+      "decode": "row"
+    },
+    "strategies": [
+      {
+        "name": "row",
+        "partition_dim": "R",
+        "param_style": "range",
+        "range": {
+          "min_chunk": 1
+        }
+      }
+    ]
+  },
+  "impl": {
+    "function": "mamba2_dt_softplus_f32",
+    "c_declaration": "void mamba2_dt_softplus_f32(const float *dt, const float *dt_bias, float *dt_out, int rows, int num_heads, float dt_min, float dt_max);",
+    "sources": [
+      "src/kernels/mamba2_kernels.c"
+    ],
+    "variants": [
+      {
+        "name": "scalar_ref",
+        "requires": [],
+        "compile_flags": []
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "unittest/test_mamba2_reference.py"
+    ],
+    "parity": [
+      {
+        "kind": "pytorch",
+        "command": ".venv/bin/python unittest/test_mamba2_reference.py",
+        "tolerance": "1e-6"
+      }
+    ],
+    "performance": [
+      {
+        "kind": "pytorch",
+        "command": "make test-mamba2-reference-perf"
+      }
+    ]
+  }
+}

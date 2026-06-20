@@ -1,0 +1,113 @@
+{
+  "id": "mamba2_in_proj_split_f32",
+  "op": "mamba_in_proj_split",
+  "variant": "fp32",
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "projected",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "P"
+      ]
+    }
+  ],
+  "weights": [],
+  "activations": [],
+  "outputs": [
+    {
+      "name": "gate",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "I"
+      ]
+    },
+    {
+      "name": "hidden_bc",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "C"
+      ]
+    },
+    {
+      "name": "dt",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ]
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "R",
+    "DMLP",
+    "I",
+    "C",
+    "H"
+  ],
+  "params": [],
+  "parallelization": {
+    "supported": [
+      "row"
+    ],
+    "preferred": {
+      "prefill": "row",
+      "decode": "row"
+    },
+    "strategies": [
+      {
+        "name": "row",
+        "partition_dim": "R",
+        "param_style": "range",
+        "range": {
+          "min_chunk": 1
+        }
+      }
+    ]
+  },
+  "impl": {
+    "function": "mamba2_in_proj_split_f32",
+    "c_declaration": "void mamba2_in_proj_split_f32(const float *projected, float *gate, float *hidden_bc, float *dt, int rows, int d_mlp, int intermediate_dim, int conv_dim, int num_heads);",
+    "sources": [
+      "src/kernels/mamba2_kernels.c"
+    ],
+    "variants": [
+      {
+        "name": "scalar_ref",
+        "requires": [],
+        "compile_flags": []
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "unittest/test_mamba2_reference.py"
+    ],
+    "parity": [
+      {
+        "kind": "pytorch",
+        "command": ".venv/bin/python unittest/test_mamba2_reference.py",
+        "tolerance": "1e-6"
+      }
+    ],
+    "performance": [
+      {
+        "kind": "pytorch",
+        "command": "make test-mamba2-reference-perf"
+      }
+    ]
+  }
+}
