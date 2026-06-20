@@ -171,6 +171,59 @@ void mamba2_selective_state_update_decode_f32(const float *state_in,
     }
 }
 
+
+void mamba2_selective_scan_f32(const float *state_init,
+                               const float *x,
+                               const float *dt,
+                               const float *a,
+                               const float *b,
+                               const float *c,
+                               const float *d,
+                               float *state_out,
+                               float *y,
+                               int batch,
+                               int seq_len,
+                               int num_heads,
+                               int head_dim,
+                               int state_dim,
+                               int num_groups) {
+    if (!state_init || !x || !dt || !a || !b || !c || !d || !state_out || !y ||
+        batch <= 0 || seq_len <= 0 || num_heads <= 0 || head_dim <= 0 || state_dim <= 0 || num_groups <= 0) {
+        return;
+    }
+
+    const size_t state_per_batch = (size_t)num_heads * (size_t)head_dim * (size_t)state_dim;
+    memcpy(state_out, state_init, (size_t)batch * state_per_batch * sizeof(float));
+
+    for (int bs = 0; bs < batch; ++bs) {
+        float *state_batch = state_out + (size_t)bs * state_per_batch;
+        for (int t = 0; t < seq_len; ++t) {
+            for (int h = 0; h < num_heads; ++h) {
+                const int group = (int)(((long long)h * (long long)num_groups) / (long long)num_heads);
+                const float dt_h = dt[((size_t)bs * (size_t)seq_len + (size_t)t) * (size_t)num_heads + (size_t)h];
+                const float d_a = expf(dt_h * a[h]);
+                const float d_h = d[h];
+                const float *b_row = b + (((size_t)bs * (size_t)seq_len + (size_t)t) * (size_t)num_groups + (size_t)group) * (size_t)state_dim;
+                const float *c_row = c + (((size_t)bs * (size_t)seq_len + (size_t)t) * (size_t)num_groups + (size_t)group) * (size_t)state_dim;
+
+                for (int hd = 0; hd < head_dim; ++hd) {
+                    const size_t x_idx = (((size_t)bs * (size_t)seq_len + (size_t)t) * (size_t)num_heads + (size_t)h) * (size_t)head_dim + (size_t)hd;
+                    const float x_val = x[x_idx];
+                    const size_t state_base = ((size_t)h * (size_t)head_dim + (size_t)hd) * (size_t)state_dim;
+                    float acc = 0.0f;
+                    for (int st = 0; st < state_dim; ++st) {
+                        const size_t si = state_base + (size_t)st;
+                        const float new_state = state_batch[si] * d_a + dt_h * b_row[st] * x_val;
+                        state_batch[si] = new_state;
+                        acc += new_state * c_row[st];
+                    }
+                    y[x_idx] = acc + d_h * x_val;
+                }
+            }
+        }
+    }
+}
+
 void mamba2_rmsnorm_gate_f32(const float *x,
                              const float *gate,
                              const float *weight,

@@ -14,7 +14,7 @@ AUDIT_SCRIPT = REPO / "version/v8/scripts/audit_safetensors_index_v8.py"
 
 
 class ModelContractInspectorTests(unittest.TestCase):
-    def test_nemotron_h_reports_mamba_kernel_gap(self) -> None:
+    def test_nemotron_h_reports_supported_config_after_mamba2_reference_kernels(self) -> None:
         cfg = {
             "architectures": ["NemotronHForCausalLM"],
             "model_type": "nemotron_h",
@@ -40,12 +40,12 @@ class ModelContractInspectorTests(unittest.TestCase):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
         report = json.loads(proc.stdout)
         self.assertEqual(report["arch"], "nemotron_h")
-        self.assertEqual(report["status"], "bringup_required")
+        self.assertEqual(report["status"], "supported")
         self.assertEqual(report["layer_kind_counts"], {"attention": 1, "mamba": 5, "moe": 4})
-        self.assertIn("mamba_selective_scan", report["missing_ops"])
+        self.assertEqual(report["missing_ops"], [])
         self.assertNotIn("mamba_in_proj_split", report["missing_ops"])
         self.assertNotIn("mamba_conv1d_state_update", report["missing_ops"])
         self.assertNotIn("mamba_dt_softplus", report["missing_ops"])

@@ -1,0 +1,166 @@
+{
+  "id": "mamba2_selective_scan_f32",
+  "op": "mamba_selective_scan",
+  "variant": "fp32_scalar_reference",
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "state_init",
+      "dtype": "fp32",
+      "shape": [
+        "B",
+        "H",
+        "D",
+        "S"
+      ]
+    },
+    {
+      "name": "x",
+      "dtype": "fp32",
+      "shape": [
+        "B",
+        "T",
+        "H",
+        "D"
+      ]
+    },
+    {
+      "name": "dt",
+      "dtype": "fp32",
+      "shape": [
+        "B",
+        "T",
+        "H"
+      ]
+    },
+    {
+      "name": "B",
+      "dtype": "fp32",
+      "shape": [
+        "B",
+        "T",
+        "G",
+        "S"
+      ]
+    },
+    {
+      "name": "C",
+      "dtype": "fp32",
+      "shape": [
+        "B",
+        "T",
+        "G",
+        "S"
+      ]
+    }
+  ],
+  "weights": [
+    {
+      "name": "A",
+      "dtype": "fp32",
+      "shape": [
+        "H"
+      ]
+    },
+    {
+      "name": "D",
+      "dtype": "fp32",
+      "shape": [
+        "H"
+      ]
+    }
+  ],
+  "activations": [],
+  "outputs": [
+    {
+      "name": "state_out",
+      "dtype": "fp32",
+      "shape": [
+        "B",
+        "H",
+        "D",
+        "S"
+      ]
+    },
+    {
+      "name": "y",
+      "dtype": "fp32",
+      "shape": [
+        "B",
+        "T",
+        "H",
+        "D"
+      ]
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "B",
+    "T",
+    "H",
+    "D",
+    "S",
+    "G"
+  ],
+  "params": [],
+  "parallelization": {
+    "supported": [
+      "batch"
+    ],
+    "preferred": {
+      "prefill": "batch",
+      "decode": "batch"
+    },
+    "strategies": [
+      {
+        "name": "batch",
+        "partition_dim": "B",
+        "param_style": "range",
+        "range": {
+          "min_chunk": 1
+        }
+      }
+    ]
+  },
+  "impl": {
+    "function": "mamba2_selective_scan_f32",
+    "c_declaration": "void mamba2_selective_scan_f32(const float *state_init, const float *x, const float *dt, const float *a, const float *b, const float *c, const float *d, float *state_out, float *y, int batch, int seq_len, int num_heads, int head_dim, int state_dim, int num_groups);",
+    "sources": [
+      "src/kernels/mamba2_kernels.c"
+    ],
+    "variants": [
+      {
+        "name": "scalar_ref",
+        "requires": [],
+        "compile_flags": []
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "unittest/test_mamba2_reference.py"
+    ],
+    "parity": [
+      {
+        "kind": "pytorch",
+        "command": ".venv/bin/python unittest/test_mamba2_reference.py",
+        "tolerance": "1e-6"
+      }
+    ],
+    "performance": [
+      {
+        "kind": "pytorch",
+        "command": "make test-mamba2-reference-perf"
+      }
+    ]
+  }
+}
