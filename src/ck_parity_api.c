@@ -123,7 +123,8 @@ extern void recurrent_dt_gate_forward(
     const float *a,
     float *gate,
     int rows,
-    int dim);
+    int num_heads,
+    int state_dim);
 extern void recurrent_conv_state_update_forward(
     const float *state_in,
     const float *q,
@@ -783,7 +784,7 @@ void ck_test_recurrent_dt_gate(const float *alpha,
                                int rows,
                                int dim)
 {
-    recurrent_dt_gate_forward(alpha, dt_bias, a, gate, rows, dim);
+    recurrent_dt_gate_forward(alpha, dt_bias, a, gate, rows, 1, dim);
 }
 
 void ck_test_recurrent_conv_state_update(const float *state_in,
