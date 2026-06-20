@@ -1,0 +1,144 @@
+{
+  "version": 2,
+  "name": "nemotron_h",
+  "family": "nemotron_h",
+  "flags": {
+    "use_qkv_bias": false,
+    "attention_bias": false,
+    "activation": "relu2",
+    "rope": "rope",
+    "tokenizer": "bpe",
+    "has_qk_norm": false,
+    "prefill_policy": "batched",
+    "hybrid_block_pattern": "config.hybrid_override_pattern"
+  },
+  "contract": {
+    "tokenizer_contract": {
+      "tokenizer_type": "bpe",
+      "bos_policy": "model_defined",
+      "eos_policy": "model_defined",
+      "special_tokens": {
+        "source": "manifest_or_hf"
+      }
+    },
+    "chat_contract": {
+      "version": 1,
+      "name": "nemotron_h",
+      "raw_prompt_allowed": true,
+      "turn_prefix": "{role}: ",
+      "turn_suffix": "\n",
+      "assistant_generation_prefix": "assistant: ",
+      "role_labels": {
+        "system": "system",
+        "user": "user",
+        "assistant": "assistant"
+      },
+      "system_prompt_mode": "dedicated_turn",
+      "system_prompt_separator": "\n\n",
+      "default_system_prompt": "",
+      "inject_default_system_prompt": false,
+      "stop_text_markers": [],
+      "token_stop_markers": [],
+      "template_markers": [],
+      "min_response_tokens": 8
+    },
+    "attention_contract": {
+      "rope_layout": "split",
+      "rope_type": "rope",
+      "qk_norm": false,
+      "kv_layout": "layer_major_kv_cache",
+      "attn_variant": "hybrid_mamba_attention_moe",
+      "layer_policy_config_key": "layer_kinds",
+      "layer_kind_config_key": "layer_kinds",
+      "state_policy_config_key": "layer_state_policy",
+      "attention_policy_config_key": "layer_attention_policy",
+      "recurrent_policy_config_key": "layer_recurrent_policy",
+      "moe_policy_config_key": "layer_moe_policy",
+      "kv_policy_config_key": "layer_kv_policy"
+    },
+    "block_contract": {
+      "norm_type": "rmsnorm",
+      "block_norm": "pre_norm_then_residual_add",
+      "body_type": "hybrid_mamba_attention_moe",
+      "activation": "relu2",
+      "mlp_formula": "up -> relu2 -> down",
+      "moe_formula": "router(sigmoid) -> group_limited_topk -> routed_relu2_experts + shared_relu2_expert",
+      "mamba_formula": "in_proj -> conv1d/silu -> selective_scan -> gated_rmsnorm -> out_proj",
+      "qkv_bias": false
+    },
+    "logits_contract": {
+      "final_norm": "rmsnorm",
+      "lm_head": "output_weight",
+      "logits_layout": "auto"
+    },
+    "quant_contract": {
+      "kernel_select": "weight_dtype_registry",
+      "activation_dtype": "fp32_or_bf16_path",
+      "per_tensor_mixed_quant": true
+    },
+    "runtime_invariants": {
+      "required_call_args": {}
+    }
+  },
+  "sequence": [
+    "decoder"
+  ],
+  "block_types": {
+    "decoder": {
+      "sequence": [
+        "header",
+        "body",
+        "footer"
+      ],
+      "header": [
+        "bpe_tokenizer",
+        "dense_embedding_lookup"
+      ],
+      "body": {
+        "type": "hybrid_mamba_attention_moe",
+        "kind_config_key": "layer_kinds",
+        "ops_by_kind": {
+          "mamba": [
+            "block_rmsnorm",
+            "mamba_in_proj",
+            "mamba_conv1d_silu",
+            "mamba_selective_scan",
+            "mamba_rmsnorm_gate",
+            "mamba_out_proj",
+            "residual_add"
+          ],
+          "attention": [
+            "block_rmsnorm",
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "rope_qk",
+            "attn",
+            "out_proj",
+            "residual_add"
+          ],
+          "mlp": [
+            "block_rmsnorm",
+            "mlp_up",
+            "relu2",
+            "mlp_down",
+            "residual_add"
+          ],
+          "moe": [
+            "block_rmsnorm",
+            "moe_router",
+            "group_limited_topk_router",
+            "moe_relu2_expert_mlp",
+            "shared_relu2_expert_mlp",
+            "residual_add"
+          ]
+        }
+      },
+      "footer": [
+        "final_rmsnorm",
+        "lm_head",
+        "logits"
+      ]
+    }
+  }
+}

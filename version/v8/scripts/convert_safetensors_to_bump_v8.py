@@ -315,6 +315,91 @@ def _qwen35_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor]) 
     return refs
 
 
+def _parse_nemotron_h_pattern(pattern: str, num_layers: int) -> list[str]:
+    mapping = {"M": "mamba", "*": "attention", "-": "mlp", "E": "moe"}
+    chars = [ch for ch in str(pattern or "").strip() if not ch.isspace()]
+    if not chars:
+        return ["mamba"] * num_layers
+    if len(chars) != num_layers:
+        raise SystemExit(f"Nemotron-H hybrid_override_pattern length {len(chars)} != num_layers {num_layers}")
+    try:
+        return [mapping[ch] for ch in chars]
+    except KeyError as exc:
+        raise SystemExit(f"Unsupported Nemotron-H layer pattern character: {exc.args[0]!r}") from exc
+
+
+def _nemotron_h_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor]) -> list[TensorRef]:
+    text = config.get("text_config") if isinstance(config.get("text_config"), dict) else config
+    num_layers = int(text.get("num_hidden_layers") or config.get("num_layers") or 0)
+    hidden = int(text.get("hidden_size") or config.get("hidden_size") or 0)
+    intermediate = int(text.get("intermediate_size") or config.get("intermediate_size") or 0)
+    moe_intermediate = int(text.get("moe_intermediate_size") or intermediate)
+    shared_intermediate = int(text.get("moe_shared_expert_intermediate_size") or moe_intermediate)
+    n_experts = int(text.get("n_routed_experts") or 0)
+    layer_kinds = list(config.get("layer_kinds") or _parse_nemotron_h_pattern(str(text.get("hybrid_override_pattern") or ""), num_layers))
+    if num_layers <= 0 or hidden <= 0 or intermediate <= 0:
+        raise SystemExit("Nemotron-H config missing num_hidden_layers/hidden_size/intermediate_size")
+    if len(layer_kinds) != num_layers:
+        raise SystemExit(f"Nemotron-H layer_kinds length {len(layer_kinds)} != num_layers {num_layers}")
+
+    refs: list[TensorRef] = [
+        TensorRef("token_emb", (_require_existing(headers, ("backbone.embeddings.weight", "model.embed_tokens.weight"), "token_emb"),)),
+    ]
+
+    for layer, kind in enumerate(layer_kinds):
+        pfx = f"backbone.layers.{layer}"
+        refs.append(TensorRef(f"layer.{layer}.block_norm", (_require_existing(headers, (f"{pfx}.norm.weight",), f"layer {layer} block norm"),), dtype="fp32"))
+        mp = f"{pfx}.mixer"
+        if kind == "mamba":
+            refs.extend([
+                TensorRef(f"layer.{layer}.mamba_in_proj", (_require_existing(headers, (f"{mp}.in_proj.weight",), f"layer {layer} mamba in_proj"),)),
+                TensorRef(f"layer.{layer}.mamba_conv1d", (_require_existing(headers, (f"{mp}.conv1d.weight",), f"layer {layer} mamba conv1d"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.mamba_conv1d_bias", (_require_existing(headers, (f"{mp}.conv1d.bias",), f"layer {layer} mamba conv1d bias"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.mamba_dt_bias", (_require_existing(headers, (f"{mp}.dt_bias",), f"layer {layer} mamba dt_bias"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.mamba_a", (_require_existing(headers, (f"{mp}.A_log",), f"layer {layer} mamba A_log"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.mamba_d", (_require_existing(headers, (f"{mp}.D",), f"layer {layer} mamba D"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.mamba_norm", (_require_existing(headers, (f"{mp}.norm.weight",), f"layer {layer} mamba norm"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.mamba_out_proj", (_require_existing(headers, (f"{mp}.out_proj.weight",), f"layer {layer} mamba out_proj"),)),
+            ])
+        elif kind == "attention":
+            refs.extend([
+                TensorRef(f"layer.{layer}.attn_q", (_require_existing(headers, (f"{mp}.q_proj.weight",), f"layer {layer} q_proj"),)),
+                TensorRef(f"layer.{layer}.attn_k", (_require_existing(headers, (f"{mp}.k_proj.weight",), f"layer {layer} k_proj"),)),
+                TensorRef(f"layer.{layer}.attn_v", (_require_existing(headers, (f"{mp}.v_proj.weight",), f"layer {layer} v_proj"),)),
+                TensorRef(f"layer.{layer}.attn_o", (_require_existing(headers, (f"{mp}.o_proj.weight",), f"layer {layer} o_proj"),)),
+            ])
+        elif kind == "mlp":
+            refs.extend([
+                TensorRef(f"layer.{layer}.mlp_up", (_require_existing(headers, (f"{mp}.up_proj.weight",), f"layer {layer} mlp up_proj"),)),
+                TensorRef(f"layer.{layer}.mlp_down", (_require_existing(headers, (f"{mp}.down_proj.weight",), f"layer {layer} mlp down_proj"),)),
+            ])
+        elif kind == "moe":
+            if n_experts <= 0:
+                raise SystemExit("Nemotron-H MoE layer requires n_routed_experts")
+            refs.extend([
+                TensorRef(f"layer.{layer}.moe_router", (_require_existing(headers, (f"{mp}.gate.weight",), f"layer {layer} moe router"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.moe_router_bias", (_require_existing(headers, (f"{mp}.gate.e_score_correction_bias",), f"layer {layer} moe router correction bias"),), dtype="fp32"),
+            ])
+            for expert in range(n_experts):
+                refs.extend([
+                    TensorRef(f"layer.{layer}.moe_expert.{expert}.up", (_require_existing(headers, (f"{mp}.experts.{expert}.up_proj.weight",), f"layer {layer} expert {expert} up_proj"),)),
+                    TensorRef(f"layer.{layer}.moe_expert.{expert}.down", (_require_existing(headers, (f"{mp}.experts.{expert}.down_proj.weight",), f"layer {layer} expert {expert} down_proj"),)),
+                ])
+            refs.extend([
+                TensorRef(f"layer.{layer}.moe_shared_up", (_require_existing(headers, (f"{mp}.shared_experts.up_proj.weight",), f"layer {layer} shared expert up_proj"),)),
+                TensorRef(f"layer.{layer}.moe_shared_down", (_require_existing(headers, (f"{mp}.shared_experts.down_proj.weight",), f"layer {layer} shared expert down_proj"),)),
+            ])
+        else:
+            raise SystemExit(f"Unsupported Nemotron-H layer kind at {layer}: {kind}")
+
+    refs.append(TensorRef("final_ln_weight", (_require_existing(headers, ("backbone.norm_f.weight", "model.norm.weight"), "final norm"),), dtype="fp32"))
+    refs.append(TensorRef("final_ln_bias", (), dtype="fp32", synth="zeros_fp32", shape=(hidden,)))
+    lm_head = _first_existing(headers, ("lm_head.weight", "backbone.lm_head.weight"))
+    if lm_head is not None:
+        refs.append(TensorRef("output.weight", (lm_head,)))
+    return refs
+
+
 def _first_existing(headers: dict[str, HeaderTensor], names: Iterable[str]) -> str | None:
     for name in names:
         if name in headers:
@@ -431,6 +516,8 @@ def _infer_arch(hf: dict[str, Any]) -> str:
         return "qwen2"
     if "llama" in mt:
         return "llama"
+    if "nemotron_h" in mt or "nemotron-h" in mt:
+        return "nemotron_h"
     return mt
 
 
@@ -439,6 +526,8 @@ def _refs_for_arch(arch: str, config: dict[str, Any], headers: dict[str, HeaderT
         return _gemma4_text_refs(config, headers)
     if arch == "qwen35":
         return _qwen35_text_refs(config, headers)
+    if arch == "nemotron_h":
+        return _nemotron_h_text_refs(config, headers)
     if arch in {"llama", "qwen2", "qwen3", "gemma3"}:
         return _llama_family_text_refs(config, headers)
     raise SystemExit(f"Unsupported safetensors arch for v8 importer: {arch}")
@@ -479,6 +568,44 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
     cfg.setdefault("rms_eps", text.get("rms_norm_eps", text.get("rms_norm_epsilon", 1e-6)))
     cfg.setdefault("rms_norm_eps", cfg.get("rms_eps"))
     cfg.setdefault("tie_word_embeddings", bool(text.get("tie_word_embeddings", True)))
+    if arch == "nemotron_h":
+        layer_kinds = _parse_nemotron_h_pattern(str(text.get("hybrid_override_pattern") or ""), int(cfg.get("num_layers") or 0))
+        cfg.update({
+            "model": "nemotron_h",
+            "arch": "nemotron_h",
+            "model_type": "nemotron_h",
+            "layer_kinds": layer_kinds,
+            "hybrid_block_pattern": layer_kinds[:],
+            "layer_state_policy": ["mamba2" if k == "mamba" else "none" for k in layer_kinds],
+            "layer_attention_policy": ["full_attention" if k == "attention" else "none" for k in layer_kinds],
+            "layer_recurrent_policy": ["mamba2" if k == "mamba" else "none" for k in layer_kinds],
+            "layer_moe_policy": ["routed_relu2" if k == "moe" else "none" for k in layer_kinds],
+            "layer_mlp_policy": ["relu2" if k == "mlp" else "none" for k in layer_kinds],
+            "layer_kv_policy": ["attention_kv_cache" if k == "attention" else "none" for k in layer_kinds],
+            "intermediate_dim": int(text.get("intermediate_size") or 0),
+            "mamba_num_heads": int(text.get("mamba_num_heads") or 0),
+            "mamba_head_dim": int(text.get("mamba_head_dim") or 0),
+            "ssm_state_size": int(text.get("ssm_state_size") or 0),
+            "ssm_conv_kernel": int(text.get("conv_kernel") or 0),
+            "ssm_group_count": int(text.get("n_groups") or 0),
+            "chunk_size": int(text.get("chunk_size") or 0),
+            "mamba_conv_dim": int((text.get("mamba_num_heads") or 0) * (text.get("mamba_head_dim") or 0) + 2 * (text.get("n_groups") or 0) * (text.get("ssm_state_size") or 0)),
+            "mamba_projection_size": int(2 * (text.get("intermediate_size") or 0) + (text.get("mamba_num_heads") or 0) * (text.get("mamba_head_dim") or 0) + ((text.get("mamba_num_heads") or 0) * (text.get("mamba_head_dim") or 0) + 2 * (text.get("n_groups") or 0) * (text.get("ssm_state_size") or 0)) + (text.get("mamba_num_heads") or 0)),
+            "moe_intermediate_size": int(text.get("moe_intermediate_size") or 0),
+            "moe_shared_expert_intermediate_size": int(text.get("moe_shared_expert_intermediate_size") or 0),
+            "n_routed_experts": int(text.get("n_routed_experts") or 0),
+            "num_experts_per_tok": int(text.get("num_experts_per_tok") or 0),
+            "n_group": int(text.get("n_group") or text.get("n_groups") or 0),
+            "topk_group": int(text.get("topk_group") or 0),
+            "norm_topk_prob": bool(text.get("norm_topk_prob", True)),
+            "routed_scaling_factor": float(text.get("routed_scaling_factor") or 1.0),
+            "rope_layout": "split",
+            "rope_theta": float(text.get("rope_theta") or 10000.0),
+            "has_attention_biases": bool(text.get("attention_bias", False)),
+            "has_qk_norm": False,
+            "prefill_policy": "batched",
+        })
+
     if arch == "qwen35":
         headers = _load_safetensors_headers(model_dir)
         q_gate_proj_dim = 0
@@ -601,7 +728,7 @@ def _is_qwen35_shifted_norm_ref(ref: TensorRef) -> bool:
 
 
 def _ref_transform(ref: TensorRef) -> str | None:
-    if ref.ck_name.endswith(".ssm_a"):
+    if ref.ck_name.endswith(".ssm_a") or ref.ck_name.endswith(".mamba_a"):
         return "neg_exp_a_log"
     if _is_qwen35_shifted_norm_ref(ref):
         return "qwen35_norm_plus_one"
@@ -697,7 +824,7 @@ def main() -> int:
     ap.add_argument("--output", required=True, type=Path, help="output weights.bump")
     ap.add_argument("--config-out", required=True, type=Path)
     ap.add_argument("--manifest-out", required=True, type=Path)
-    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma3", "llama", "qwen2", "qwen3", "qwen35"])
+    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma3", "llama", "qwen2", "qwen3", "qwen35", "nemotron_h"])
     ap.add_argument("--config-template", type=Path, help="existing v8 config/manifest to reuse explicit runtime policy")
     ap.add_argument("--dtype", default="preserve", choices=["preserve", "bf16", "fp32"])
     ap.add_argument("--dry-run", action="store_true", help="validate mapping and write JSON reports only; do not write BUMP")
@@ -764,6 +891,9 @@ def main() -> int:
         else:
             quant_summary[e["name"]] = e["dtype"]
 
+    def _int_or_zero(value: Any) -> int:
+        return int(value or 0)
+
     manifest = {
         "version": 5,
         "model": arch,
@@ -776,14 +906,14 @@ def main() -> int:
         "config": config,
         "template": template,
         "quant_summary": quant_summary,
-        "num_layers": int(config.get("num_layers", 0)),
-        "embed_dim": int(config.get("embed_dim", 0)),
-        "num_heads": int(config.get("num_heads", 0)),
-        "num_kv_heads": int(config.get("num_kv_heads", 0)),
-        "head_dim": int(config.get("head_dim", 0)),
-        "intermediate_size": int(config.get("intermediate_size", 0)),
-        "vocab_size": int(config.get("vocab_size", 0)),
-        "context_length": int(config.get("context_length", 0) or 0),
+        "num_layers": _int_or_zero(config.get("num_layers")),
+        "embed_dim": _int_or_zero(config.get("embed_dim")),
+        "num_heads": _int_or_zero(config.get("num_heads")),
+        "num_kv_heads": _int_or_zero(config.get("num_kv_heads")),
+        "head_dim": _int_or_zero(config.get("head_dim")),
+        "intermediate_size": _int_or_zero(config.get("intermediate_size")),
+        "vocab_size": _int_or_zero(config.get("vocab_size")),
+        "context_length": _int_or_zero(config.get("context_length")),
         "has_attention_biases": False,
         "has_qk_norm": True,
         "source_audit": audit,
@@ -840,19 +970,19 @@ def main() -> int:
         f.write(b"BUMPWGT5")
         f.write(struct.pack("<I", BUMP_VERSION_V5))
         f.write(struct.pack("<I", 1))
-        f.write(struct.pack("<I", int(config.get("num_layers", 0))))
-        f.write(struct.pack("<I", int(config.get("vocab_size", 0))))
-        f.write(struct.pack("<I", int(config.get("embed_dim", 0))))
-        f.write(struct.pack("<I", int(config.get("intermediate_size", 0))))
-        f.write(struct.pack("<I", int(config.get("context_length", 0) or 0)))
-        f.write(struct.pack("<I", int(config.get("num_heads", 0))))
-        f.write(struct.pack("<I", int(config.get("num_kv_heads", 0))))
-        f.write(struct.pack("<I", int(config.get("head_dim", 0))))
+        f.write(struct.pack("<I", _int_or_zero(config.get("num_layers"))))
+        f.write(struct.pack("<I", _int_or_zero(config.get("vocab_size"))))
+        f.write(struct.pack("<I", _int_or_zero(config.get("embed_dim"))))
+        f.write(struct.pack("<I", _int_or_zero(config.get("intermediate_size"))))
+        f.write(struct.pack("<I", _int_or_zero(config.get("context_length"))))
+        f.write(struct.pack("<I", _int_or_zero(config.get("num_heads"))))
+        f.write(struct.pack("<I", _int_or_zero(config.get("num_kv_heads"))))
+        f.write(struct.pack("<I", _int_or_zero(config.get("head_dim"))))
         for value in (
-            int(config.get("embed_dim", 0)),
-            int(config.get("head_dim", 0)),
-            int(config.get("intermediate_size", 0)),
-            int(config.get("context_length", 0) or 0),
+            _int_or_zero(config.get("embed_dim")),
+            _int_or_zero(config.get("head_dim")),
+            _int_or_zero(config.get("intermediate_size")),
+            _int_or_zero(config.get("context_length")),
         ):
             f.write(struct.pack("<Q", value))
         f.write(struct.pack("<I", 0))

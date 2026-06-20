@@ -219,3 +219,132 @@ def test_qwen35_safetensors_to_bump_smoke(tmp_path: Path) -> None:
     assert "final_ln_weight" in names
     assert "output.weight" not in names
     assert (out / "weights.bump").stat().st_size > 0
+
+
+
+def test_nemotron_h_safetensors_to_bump_dry_run_maps_hybrid_mamba_attention_moe(tmp_path: Path) -> None:
+    torch, st = _require_torch_safetensors()
+    checkpoint = tmp_path / "nemotron_h"
+    out = tmp_path / "out_nemotron_h"
+    checkpoint.mkdir()
+    out.mkdir()
+
+    config = {
+        "architectures": ["NemotronHForCausalLM"],
+        "model_type": "nemotron_h",
+        "num_hidden_layers": 4,
+        "hidden_size": 8,
+        "intermediate_size": 6,
+        "moe_intermediate_size": 6,
+        "moe_shared_expert_intermediate_size": 12,
+        "num_attention_heads": 2,
+        "num_key_value_heads": 1,
+        "head_dim": 4,
+        "vocab_size": 32,
+        "max_position_embeddings": 128,
+        "hybrid_override_pattern": "M*E-",
+        "mamba_num_heads": 2,
+        "mamba_head_dim": 4,
+        "ssm_state_size": 3,
+        "conv_kernel": 4,
+        "n_groups": 2,
+        "chunk_size": 8,
+        "n_routed_experts": 4,
+        "num_experts_per_tok": 2,
+        "n_group": 1,
+        "topk_group": 1,
+        "norm_topk_prob": True,
+        "routed_scaling_factor": 2.5,
+        "mlp_hidden_act": "relu2",
+        "tie_word_embeddings": False,
+        "attention_bias": False,
+        "mlp_bias": False,
+        "rope_theta": 10000.0,
+        "layer_norm_epsilon": 1e-5,
+    }
+    (checkpoint / "config.json").write_text(json.dumps(config) + "\n", encoding="utf-8")
+
+    tensors = {
+        "backbone.embeddings.weight": torch.randn(32, 8, dtype=torch.bfloat16),
+        "backbone.norm_f.weight": torch.ones(8, dtype=torch.float32),
+        "lm_head.weight": torch.randn(32, 8, dtype=torch.bfloat16),
+    }
+    # Layer 0: Mamba2
+    tensors.update({
+        "backbone.layers.0.norm.weight": torch.ones(8, dtype=torch.float32),
+        "backbone.layers.0.mixer.in_proj.weight": torch.randn(34, 8, dtype=torch.bfloat16),
+        "backbone.layers.0.mixer.conv1d.weight": torch.randn(20, 1, 4, dtype=torch.float32),
+        "backbone.layers.0.mixer.conv1d.bias": torch.randn(20, dtype=torch.float32),
+        "backbone.layers.0.mixer.dt_bias": torch.randn(2, dtype=torch.float32),
+        "backbone.layers.0.mixer.A_log": torch.randn(2, dtype=torch.float32),
+        "backbone.layers.0.mixer.D": torch.randn(2, dtype=torch.float32),
+        "backbone.layers.0.mixer.norm.weight": torch.ones(8, dtype=torch.float32),
+        "backbone.layers.0.mixer.out_proj.weight": torch.randn(8, 8, dtype=torch.bfloat16),
+    })
+    # Layer 1: attention
+    tensors.update({
+        "backbone.layers.1.norm.weight": torch.ones(8, dtype=torch.float32),
+        "backbone.layers.1.mixer.q_proj.weight": torch.randn(8, 8, dtype=torch.bfloat16),
+        "backbone.layers.1.mixer.k_proj.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+        "backbone.layers.1.mixer.v_proj.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+        "backbone.layers.1.mixer.o_proj.weight": torch.randn(8, 8, dtype=torch.bfloat16),
+    })
+    # Layer 2: MoE
+    tensors.update({
+        "backbone.layers.2.norm.weight": torch.ones(8, dtype=torch.float32),
+        "backbone.layers.2.mixer.gate.weight": torch.randn(4, 8, dtype=torch.float32),
+        "backbone.layers.2.mixer.gate.e_score_correction_bias": torch.randn(4, dtype=torch.float32),
+        "backbone.layers.2.mixer.shared_experts.up_proj.weight": torch.randn(12, 8, dtype=torch.bfloat16),
+        "backbone.layers.2.mixer.shared_experts.down_proj.weight": torch.randn(8, 12, dtype=torch.bfloat16),
+    })
+    for expert in range(4):
+        tensors[f"backbone.layers.2.mixer.experts.{expert}.up_proj.weight"] = torch.randn(6, 8, dtype=torch.bfloat16)
+        tensors[f"backbone.layers.2.mixer.experts.{expert}.down_proj.weight"] = torch.randn(8, 6, dtype=torch.bfloat16)
+    # Layer 3: dense ReLU2 MLP
+    tensors.update({
+        "backbone.layers.3.norm.weight": torch.ones(8, dtype=torch.float32),
+        "backbone.layers.3.mixer.up_proj.weight": torch.randn(6, 8, dtype=torch.bfloat16),
+        "backbone.layers.3.mixer.down_proj.weight": torch.randn(8, 6, dtype=torch.bfloat16),
+    })
+
+    st.save_file(tensors, checkpoint / "model.safetensors")
+    script = Path("version/v8/scripts/convert_safetensors_to_bump_v8.py")
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--checkpoint",
+            str(checkpoint),
+            "--output",
+            str(out / "weights.bump"),
+            "--config-out",
+            str(out / "config.json"),
+            "--manifest-out",
+            str(out / "weights_manifest.json"),
+            "--arch",
+            "auto",
+            "--dry-run",
+        ],
+        check=True,
+    )
+
+    manifest = json.loads((out / "weights_manifest.json").read_text(encoding="utf-8"))
+    audit = json.loads((out / "conversion_audit.json").read_text(encoding="utf-8"))
+    cfg = json.loads((out / "config.json").read_text(encoding="utf-8"))
+    names = [entry["name"] for entry in manifest["entries"]]
+    assert manifest["model"] == "nemotron_h"
+    assert audit["verdict"] == "pass"
+    assert audit["unmapped_source_tensors"] == []
+    assert cfg["layer_kinds"] == ["mamba", "attention", "moe", "mlp"]
+    assert cfg["layer_state_policy"] == ["mamba2", "none", "none", "none"]
+    assert cfg["layer_moe_policy"] == ["none", "none", "routed_relu2", "none"]
+    assert "layer.0.mamba_in_proj" in names
+    assert "layer.0.mamba_conv1d" in names
+    assert "layer.1.attn_q" in names
+    assert "layer.2.moe_router" in names
+    assert "layer.2.moe_router_bias" in names
+    assert "layer.2.moe_expert.3.up" in names
+    assert "layer.2.moe_shared_up" in names
+    assert "layer.3.mlp_up" in names
+    assert "output.weight" in names
+    assert any(row["target"] == "layer.0.mamba_a" and row["transform"] == "neg_exp_a_log" for row in audit["transforms"])

@@ -18,7 +18,7 @@ from typing import Any
 
 
 SUPPORTED_DENSE_ARCHES = {"llama", "qwen2", "qwen3", "gemma3"}
-SUPPORTED_HYBRID_ARCHES = {"qwen35", "gemma4"}
+SUPPORTED_HYBRID_ARCHES = {"qwen35", "gemma4", "nemotron_h"}
 
 
 def _load_config(path: Path) -> dict[str, Any]:
@@ -149,10 +149,15 @@ def _required_ops(arch: str, config: dict[str, Any], layer_kinds: list[str]) -> 
 
 def _missing_ops(arch: str, required_ops: list[str]) -> list[str]:
     missing = []
+    mamba_decode_covered = {
+        "mamba_in_proj_split",
+        "mamba_conv1d_state_update",
+        "mamba_dt_softplus",
+        "mamba_rmsnorm_gate",
+        "mamba_out_proj",
+    }
     for op in required_ops:
-        if op.startswith("mamba_") or op == "relu2_mlp":
-            missing.append(op)
-        if op == "shared_expert_mlp":
+        if op.startswith("mamba_") and op not in mamba_decode_covered:
             missing.append(op)
     if arch == "cohere":
         missing.append("cohere_tensor_name_mapping_audit")
@@ -199,7 +204,8 @@ def _notes(arch: str, config: dict[str, Any], layer_kinds: list[str], missing_op
         notes.append("Nemotron-H is a hybrid Mamba/attention decoder; CK DeltaNet kernels are not a substitute for Mamba selective scan.")
         notes.append(f"hybrid_override_pattern={text.get('hybrid_override_pattern')}")
         notes.append(f"mamba heads={text.get('mamba_num_heads')} head_dim={text.get('mamba_head_dim')} state={text.get('ssm_state_size')} conv_kernel={text.get('conv_kernel')}")
-        notes.append(f"MLP activation={text.get('mlp_hidden_act')}; relu2 needs an explicit forward/backward contract.")
+        notes.append("Mamba2 decode split/conv/dt/state-update/gated-norm reference kernels exist; full chunked prefill selective scan remains separate.")
+        notes.append(f"MLP activation={text.get('mlp_hidden_act')}; ReLU2 primitive exists, dense/shared MLP lowering uses matmul -> relu2 -> matmul.")
     if arch == "cohere":
         notes.append("Cohere Command configs are gated in this environment; require config/weight access before mapping tensor names.")
         notes.append("Likely first target is dense decoder mapping/audit before any new math kernels.")
