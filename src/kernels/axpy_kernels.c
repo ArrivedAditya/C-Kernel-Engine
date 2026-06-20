@@ -260,3 +260,159 @@ void moe_accumulate_expert_f32(float *output,
 {
     axpy_f32(output, expert_output, routing_weight, hidden_dim);
 }
+
+
+/* =============================================================================
+ * Routed MoE expert MLP with ReLU2 activation.
+ *
+ * expert_up   layout: [n_experts, intermediate_dim, hidden_dim]
+ * expert_down layout: [n_experts, hidden_dim, intermediate_dim]
+ * output      layout: [rows, hidden_dim]
+ * ============================================================================= */
+static inline size_t ck_moe_up_idx(int e, int i, int h, int intermediate_dim, int hidden_dim)
+{
+    return ((size_t)e * (size_t)intermediate_dim + (size_t)i) * (size_t)hidden_dim + (size_t)h;
+}
+
+static inline size_t ck_moe_down_idx(int e, int h, int i, int hidden_dim, int intermediate_dim)
+{
+    return ((size_t)e * (size_t)hidden_dim + (size_t)h) * (size_t)intermediate_dim + (size_t)i;
+}
+
+void moe_relu2_expert_forward_f32(const float *hidden,
+                                  const int *indices,
+                                  const float *routing_weights,
+                                  const float *expert_up,
+                                  const float *expert_down,
+                                  float *output,
+                                  int rows,
+                                  int hidden_dim,
+                                  int intermediate_dim,
+                                  int n_experts,
+                                  int top_k)
+{
+    if (!hidden || !indices || !routing_weights || !expert_up || !expert_down || !output ||
+        rows <= 0 || hidden_dim <= 0 || intermediate_dim <= 0 || n_experts <= 0 || top_k <= 0) {
+        return;
+    }
+
+    const size_t out_count = (size_t)rows * (size_t)hidden_dim;
+    for (size_t p = 0; p < out_count; ++p) output[p] = 0.0f;
+
+    float pre[intermediate_dim];
+    float act[intermediate_dim];
+
+    for (int r = 0; r < rows; ++r) {
+        const float *x = hidden + (size_t)r * (size_t)hidden_dim;
+        float *y = output + (size_t)r * (size_t)hidden_dim;
+        for (int slot = 0; slot < top_k; ++slot) {
+            const int e = indices[(size_t)r * (size_t)top_k + (size_t)slot];
+            if (e < 0 || e >= n_experts) continue;
+            const float route_w = routing_weights[(size_t)r * (size_t)top_k + (size_t)slot];
+
+            for (int i = 0; i < intermediate_dim; ++i) {
+                float v = 0.0f;
+                for (int h = 0; h < hidden_dim; ++h) {
+                    v += expert_up[ck_moe_up_idx(e, i, h, intermediate_dim, hidden_dim)] * x[h];
+                }
+                pre[i] = v;
+                act[i] = (v > 0.0f) ? v * v : 0.0f;
+            }
+
+            for (int h = 0; h < hidden_dim; ++h) {
+                float v = 0.0f;
+                for (int i = 0; i < intermediate_dim; ++i) {
+                    v += expert_down[ck_moe_down_idx(e, h, i, hidden_dim, intermediate_dim)] * act[i];
+                }
+                y[h] += route_w * v;
+            }
+        }
+    }
+}
+
+void moe_relu2_expert_backward_f32(const float *d_output,
+                                   const float *hidden,
+                                   const int *indices,
+                                   const float *routing_weights,
+                                   const float *expert_up,
+                                   const float *expert_down,
+                                   float *d_hidden,
+                                   float *d_routing_weights,
+                                   float *d_expert_up,
+                                   float *d_expert_down,
+                                   int rows,
+                                   int hidden_dim,
+                                   int intermediate_dim,
+                                   int n_experts,
+                                   int top_k)
+{
+    if (!d_output || !hidden || !indices || !routing_weights || !expert_up || !expert_down ||
+        !d_hidden || !d_routing_weights || !d_expert_up || !d_expert_down ||
+        rows <= 0 || hidden_dim <= 0 || intermediate_dim <= 0 || n_experts <= 0 || top_k <= 0) {
+        return;
+    }
+
+    for (size_t p = 0; p < (size_t)rows * (size_t)hidden_dim; ++p) d_hidden[p] = 0.0f;
+    for (size_t p = 0; p < (size_t)rows * (size_t)top_k; ++p) d_routing_weights[p] = 0.0f;
+    for (size_t p = 0; p < (size_t)n_experts * (size_t)intermediate_dim * (size_t)hidden_dim; ++p) d_expert_up[p] = 0.0f;
+    for (size_t p = 0; p < (size_t)n_experts * (size_t)hidden_dim * (size_t)intermediate_dim; ++p) d_expert_down[p] = 0.0f;
+
+    float pre[intermediate_dim];
+    float act[intermediate_dim];
+    float d_act[intermediate_dim];
+    float d_pre[intermediate_dim];
+    float expert_out[hidden_dim];
+
+    for (int r = 0; r < rows; ++r) {
+        const float *x = hidden + (size_t)r * (size_t)hidden_dim;
+        const float *dy = d_output + (size_t)r * (size_t)hidden_dim;
+        float *dx = d_hidden + (size_t)r * (size_t)hidden_dim;
+
+        for (int slot = 0; slot < top_k; ++slot) {
+            const int e = indices[(size_t)r * (size_t)top_k + (size_t)slot];
+            if (e < 0 || e >= n_experts) continue;
+            const float route_w = routing_weights[(size_t)r * (size_t)top_k + (size_t)slot];
+
+            for (int i = 0; i < intermediate_dim; ++i) {
+                float v = 0.0f;
+                for (int h = 0; h < hidden_dim; ++h) {
+                    v += expert_up[ck_moe_up_idx(e, i, h, intermediate_dim, hidden_dim)] * x[h];
+                }
+                pre[i] = v;
+                act[i] = (v > 0.0f) ? v * v : 0.0f;
+                d_act[i] = 0.0f;
+            }
+
+            for (int h = 0; h < hidden_dim; ++h) {
+                float v = 0.0f;
+                for (int i = 0; i < intermediate_dim; ++i) {
+                    v += expert_down[ck_moe_down_idx(e, h, i, hidden_dim, intermediate_dim)] * act[i];
+                }
+                expert_out[h] = v;
+            }
+
+            float d_route = 0.0f;
+            for (int h = 0; h < hidden_dim; ++h) {
+                const float d_expert_out = dy[h] * route_w;
+                d_route += dy[h] * expert_out[h];
+                for (int i = 0; i < intermediate_dim; ++i) {
+                    d_expert_down[ck_moe_down_idx(e, h, i, hidden_dim, intermediate_dim)] += d_expert_out * act[i];
+                    d_act[i] += d_expert_out * expert_down[ck_moe_down_idx(e, h, i, hidden_dim, intermediate_dim)];
+                }
+            }
+            d_routing_weights[(size_t)r * (size_t)top_k + (size_t)slot] += d_route;
+
+            for (int i = 0; i < intermediate_dim; ++i) {
+                d_pre[i] = (pre[i] > 0.0f) ? d_act[i] * 2.0f * pre[i] : 0.0f;
+            }
+
+            for (int i = 0; i < intermediate_dim; ++i) {
+                const float dpi = d_pre[i];
+                for (int h = 0; h < hidden_dim; ++h) {
+                    d_expert_up[ck_moe_up_idx(e, i, h, intermediate_dim, hidden_dim)] += dpi * x[h];
+                    dx[h] += dpi * expert_up[ck_moe_up_idx(e, i, h, intermediate_dim, hidden_dim)];
+                }
+            }
+        }
+    }
+}

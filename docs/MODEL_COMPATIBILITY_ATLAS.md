@@ -55,7 +55,7 @@ Required new CK contracts before full Nematron-H inference:
 - `mamba_rmsnorm_gate`
 - `mamba_out_proj`
 - `relu2_mlp` forward and backward
-- `topk_router`, `topk_softmax`, expert dispatch/combine, and shared expert MLP contracts
+- group-limited top-k router and routed ReLU2 expert dispatch/combine are covered by scalar reference kernels; shared expert MLP wiring is still missing
 - Nematron-H safetensors-to-BUMP mapping with strict all-weight coverage
 - Nematron-H template/layer policy for `mamba` vs attention layers
 

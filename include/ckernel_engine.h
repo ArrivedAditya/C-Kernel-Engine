@@ -2137,6 +2137,35 @@ void moe_accumulate_expert_f32(float *output,
                                float routing_weight,
                                int hidden_dim);
 
+// Routed MoE expert MLP: output += weight * down(relu2(up(hidden))).
+void moe_relu2_expert_forward_f32(const float *hidden,
+                                  const int *indices,
+                                  const float *routing_weights,
+                                  const float *expert_up,
+                                  const float *expert_down,
+                                  float *output,
+                                  int rows,
+                                  int hidden_dim,
+                                  int intermediate_dim,
+                                  int n_experts,
+                                  int top_k);
+
+void moe_relu2_expert_backward_f32(const float *d_output,
+                                   const float *hidden,
+                                   const int *indices,
+                                   const float *routing_weights,
+                                   const float *expert_up,
+                                   const float *expert_down,
+                                   float *d_hidden,
+                                   float *d_routing_weights,
+                                   float *d_expert_up,
+                                   float *d_expert_down,
+                                   int rows,
+                                   int hidden_dim,
+                                   int intermediate_dim,
+                                   int n_experts,
+                                   int top_k);
+
 // =============================================================================
 // Top-K selection kernels (for MoE router dispatch)
 // =============================================================================
@@ -2171,6 +2200,19 @@ void topk_batched_f32(const float *scores,
                       int k,
                       int *indices,
                       float *weights);
+
+// Nemotron-H/DeepSeek-style group-limited MoE router over sigmoid scores.
+void nemotron_group_limited_topk_router_f32(const float *scores,
+                                            const float *correction_bias,
+                                            int *indices,
+                                            float *weights,
+                                            int rows,
+                                            int n_experts,
+                                            int top_k,
+                                            int n_group,
+                                            int topk_group,
+                                            int norm_topk_prob,
+                                            float routed_scaling_factor);
 
 // Argmax (top-1)
 int argmax_f32(const float *scores, int n);
