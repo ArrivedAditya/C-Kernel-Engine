@@ -340,3 +340,127 @@ int argmax_f32(const float *scores, int n)
 
     return max_idx;
 }
+
+
+/* =============================================================================
+ * Group-limited MoE router for Nemotron-H/DeepSeek-style routed experts.
+ *
+ * Contract:
+ *   scores          [rows, n_experts] sigmoid router scores
+ *   correction_bias [n_experts] optional score correction used only for choice
+ *   indices         [rows, top_k]
+ *   weights         [rows, top_k]
+ *
+ * Selection matches the HF/Nemotron policy:
+ *   choice_scores = scores + correction_bias
+ *   group_scores = sum(top2(choice_scores within group))
+ *   selected_groups = topk(group_scores, topk_group)
+ *   selected_experts = topk(choice_scores masked to selected groups, top_k)
+ *   weights = gather(scores, selected_experts)
+ *   if norm_topk_prob: weights /= sum(weights) + 1e-20
+ *   weights *= routed_scaling_factor
+ * ============================================================================= */
+static void ck_topk_insert_desc(int idx, float val, int *indices, float *values, int k)
+{
+    for (int pos = 0; pos < k; ++pos) {
+        if (indices[pos] < 0 || val > values[pos] || (val == values[pos] && idx < indices[pos])) {
+            for (int j = k - 1; j > pos; --j) {
+                indices[j] = indices[j - 1];
+                values[j] = values[j - 1];
+            }
+            indices[pos] = idx;
+            values[pos] = val;
+            return;
+        }
+    }
+}
+
+void nemotron_group_limited_topk_router_f32(const float *scores,
+                                            const float *correction_bias,
+                                            int *indices,
+                                            float *weights,
+                                            int rows,
+                                            int n_experts,
+                                            int top_k,
+                                            int n_group,
+                                            int topk_group,
+                                            int norm_topk_prob,
+                                            float routed_scaling_factor)
+{
+    if (!scores || !indices || !weights || rows <= 0 || n_experts <= 0 ||
+        top_k <= 0 || n_group <= 0 || topk_group <= 0) {
+        return;
+    }
+    if (top_k > n_experts) top_k = n_experts;
+    if (n_group > n_experts) n_group = n_experts;
+    if (topk_group > n_group) topk_group = n_group;
+    const int experts_per_group = n_experts / n_group;
+    if (experts_per_group <= 0 || experts_per_group * n_group != n_experts) {
+        return;
+    }
+
+    for (int r = 0; r < rows; ++r) {
+        const float *row_scores = scores + (size_t)r * (size_t)n_experts;
+        int *row_indices = indices + (size_t)r * (size_t)top_k;
+        float *row_weights = weights + (size_t)r * (size_t)top_k;
+
+        int selected_groups[topk_group];
+        float selected_group_scores[topk_group];
+        for (int i = 0; i < topk_group; ++i) {
+            selected_groups[i] = -1;
+            selected_group_scores[i] = -FLT_MAX;
+        }
+
+        for (int g = 0; g < n_group; ++g) {
+            float best0 = -FLT_MAX;
+            float best1 = -FLT_MAX;
+            const int start = g * experts_per_group;
+            for (int j = 0; j < experts_per_group; ++j) {
+                const int e = start + j;
+                const float v = row_scores[e] + (correction_bias ? correction_bias[e] : 0.0f);
+                if (v > best0) {
+                    best1 = best0;
+                    best0 = v;
+                } else if (v > best1) {
+                    best1 = v;
+                }
+            }
+            const float group_score = best0 + ((experts_per_group >= 2) ? best1 : 0.0f);
+            ck_topk_insert_desc(g, group_score, selected_groups, selected_group_scores, topk_group);
+        }
+
+        int out_idx[top_k];
+        float out_choice[top_k];
+        for (int i = 0; i < top_k; ++i) {
+            out_idx[i] = -1;
+            out_choice[i] = -FLT_MAX;
+        }
+
+        for (int sg = 0; sg < topk_group; ++sg) {
+            const int g = selected_groups[sg];
+            if (g < 0) continue;
+            const int start = g * experts_per_group;
+            for (int j = 0; j < experts_per_group; ++j) {
+                const int e = start + j;
+                const float v = row_scores[e] + (correction_bias ? correction_bias[e] : 0.0f);
+                ck_topk_insert_desc(e, v, out_idx, out_choice, top_k);
+            }
+        }
+
+        float denom = 1.0e-20f;
+        for (int i = 0; i < top_k; ++i) {
+            const int e = out_idx[i];
+            const float w = (e >= 0 && e < n_experts) ? row_scores[e] : 0.0f;
+            row_indices[i] = e;
+            row_weights[i] = w;
+            denom += w;
+        }
+        for (int i = 0; i < top_k; ++i) {
+            float w = row_weights[i];
+            if (norm_topk_prob) {
+                w /= denom;
+            }
+            row_weights[i] = w * routed_scaling_factor;
+        }
+    }
+}

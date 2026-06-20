@@ -1218,6 +1218,18 @@ test-relu2: $(LIB)
 test-relu2-perf: $(LIB)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_relu2.py --benchmark
 
+test-nemotron-router: $(LIB)
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_nemotron_router.py $(ARGS)
+
+test-nemotron-router-perf: $(LIB)
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_nemotron_router.py --benchmark
+
+test-moe-relu2-expert: $(LIB)
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_moe_relu2_expert.py $(ARGS)
+
+test-moe-relu2-expert-perf: $(LIB)
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_moe_relu2_expert.py --benchmark
+
 test-recurrent-split-conv-qkv: $(LIB)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_recurrent_split_conv_qkv.py $(ARGS)
 

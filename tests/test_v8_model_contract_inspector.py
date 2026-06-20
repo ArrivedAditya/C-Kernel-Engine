@@ -47,8 +47,9 @@ class ModelContractInspectorTests(unittest.TestCase):
         self.assertEqual(report["layer_kind_counts"], {"attention": 1, "mamba": 5, "moe": 4})
         self.assertIn("mamba_selective_scan", report["missing_ops"])
         self.assertIn("relu2_mlp", report["missing_ops"])
-        self.assertIn("topk_router", report["missing_ops"])
-        self.assertIn("moe_expert_dispatch", report["missing_ops"])
+        self.assertIn("shared_expert_mlp", report["missing_ops"])
+        self.assertNotIn("group_limited_topk_router", report["missing_ops"])
+        self.assertNotIn("moe_relu2_expert_mlp", report["missing_ops"])
         self.assertIn("safetensors_to_bump_mapping", report["missing_ops"])
 
     def test_safetensors_index_audit_classifies_nemotron_families(self) -> None:

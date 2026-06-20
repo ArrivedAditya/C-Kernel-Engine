@@ -133,10 +133,8 @@ def _required_ops(arch: str, config: dict[str, Any], layer_kinds: list[str]) -> 
         })
     if any(kind == "moe" for kind in layer_kinds):
         ops.update({
-            "topk_router",
-            "topk_softmax",
-            "moe_expert_dispatch",
-            "moe_expert_combine",
+            "group_limited_topk_router",
+            "moe_relu2_expert_mlp",
             "shared_expert_mlp",
         })
     act = str(_text_config(config).get("mlp_hidden_act") or _text_config(config).get("hidden_act") or "").lower()
@@ -154,7 +152,7 @@ def _missing_ops(arch: str, required_ops: list[str]) -> list[str]:
     for op in required_ops:
         if op.startswith("mamba_") or op == "relu2_mlp":
             missing.append(op)
-        if op in {"topk_router", "topk_softmax", "moe_expert_dispatch", "moe_expert_combine", "shared_expert_mlp"}:
+        if op == "shared_expert_mlp":
             missing.append(op)
     if arch == "cohere":
         missing.append("cohere_tensor_name_mapping_audit")
