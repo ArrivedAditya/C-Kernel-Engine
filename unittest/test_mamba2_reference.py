@@ -35,6 +35,8 @@ LIB.mamba2_dt_softplus_f32.argtypes = [fptr, fptr, fptr, ctypes.c_int, ctypes.c_
 LIB.mamba2_dt_softplus_f32.restype = None
 LIB.mamba2_selective_state_update_decode_f32.argtypes = [fptr, fptr, fptr, fptr, fptr, fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 LIB.mamba2_selective_state_update_decode_f32.restype = None
+LIB.mamba2_selective_scan_f32.argtypes = [fptr, fptr, fptr, fptr, fptr, fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+LIB.mamba2_selective_scan_f32.restype = None
 LIB.mamba2_rmsnorm_gate_f32.argtypes = [fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_float]
 LIB.mamba2_rmsnorm_gate_f32.restype = None
 
@@ -116,6 +118,66 @@ class TestMamba2Reference(unittest.TestCase):
         LIB.mamba2_selective_state_update_decode_f32(*map(_fptr, arrays), _fptr(state_out), _fptr(y), rows, heads, head_dim, state_dim, groups)
         np.testing.assert_allclose(state_out, _np(state_ref), atol=1e-6, rtol=0.0)
         np.testing.assert_allclose(y, _np(y_ref), atol=1e-6, rtol=0.0)
+
+
+    def test_selective_scan_matches_torch_sequence(self) -> None:
+        batch, seq, heads, head_dim, state_dim, groups = 2, 5, 6, 4, 3, 3
+        torch.manual_seed(6)
+        state0 = torch.randn(batch, heads, head_dim, state_dim, dtype=torch.float32) * 0.1
+        x = torch.randn(batch, seq, heads, head_dim, dtype=torch.float32) * 0.2
+        dt = torch.rand(batch, seq, heads, dtype=torch.float32) * 0.3 + 0.01
+        a = -(torch.rand(heads, dtype=torch.float32) * 0.5 + 0.1)
+        b = torch.randn(batch, seq, groups, state_dim, dtype=torch.float32) * 0.2
+        c = torch.randn(batch, seq, groups, state_dim, dtype=torch.float32) * 0.2
+        d = torch.randn(heads, dtype=torch.float32) * 0.05
+
+        state_ref = state0.clone()
+        y_ref = torch.empty_like(x)
+        for bs in range(batch):
+            for t in range(seq):
+                for h in range(heads):
+                    g = h * groups // heads
+                    decay = torch.exp(dt[bs, t, h] * a[h])
+                    for hd in range(head_dim):
+                        new_state = state_ref[bs, h, hd] * decay + dt[bs, t, h] * b[bs, t, g] * x[bs, t, h, hd]
+                        state_ref[bs, h, hd] = new_state
+                        y_ref[bs, t, h, hd] = (new_state * c[bs, t, g]).sum() + d[h] * x[bs, t, h, hd]
+
+        arrays = list(map(_np, (state0, x, dt, a, b, c, d)))
+        state_out = np.empty((batch, heads, head_dim, state_dim), dtype=np.float32)
+        y = np.empty((batch, seq, heads, head_dim), dtype=np.float32)
+        LIB.mamba2_selective_scan_f32(*map(_fptr, arrays), _fptr(state_out), _fptr(y), batch, seq, heads, head_dim, state_dim, groups)
+        np.testing.assert_allclose(state_out, _np(state_ref), atol=1e-6, rtol=0.0)
+        np.testing.assert_allclose(y, _np(y_ref), atol=1e-6, rtol=0.0)
+
+    def test_selective_scan_matches_repeated_decode_kernel(self) -> None:
+        batch, seq, heads, head_dim, state_dim, groups = 2, 4, 4, 3, 5, 2
+        rng = np.random.default_rng(77)
+        state0 = np.ascontiguousarray((0.1 * rng.standard_normal((batch, heads, head_dim, state_dim))).astype(np.float32))
+        x = np.ascontiguousarray((0.2 * rng.standard_normal((batch, seq, heads, head_dim))).astype(np.float32))
+        dt = np.ascontiguousarray((0.01 + 0.3 * rng.random((batch, seq, heads))).astype(np.float32))
+        a = np.ascontiguousarray((-(0.1 + 0.5 * rng.random(heads))).astype(np.float32))
+        b = np.ascontiguousarray((0.2 * rng.standard_normal((batch, seq, groups, state_dim))).astype(np.float32))
+        c = np.ascontiguousarray((0.2 * rng.standard_normal((batch, seq, groups, state_dim))).astype(np.float32))
+        d = np.ascontiguousarray((0.05 * rng.standard_normal(heads)).astype(np.float32))
+        scan_state = np.empty_like(state0)
+        scan_y = np.empty_like(x)
+        LIB.mamba2_selective_scan_f32(_fptr(state0), _fptr(x), _fptr(dt), _fptr(a), _fptr(b), _fptr(c), _fptr(d), _fptr(scan_state), _fptr(scan_y), batch, seq, heads, head_dim, state_dim, groups)
+
+        decode_state = state0.copy()
+        decode_y = np.empty_like(x)
+        for t in range(seq):
+            next_state = np.empty_like(decode_state)
+            y_t = np.empty((batch, heads, head_dim), dtype=np.float32)
+            LIB.mamba2_selective_state_update_decode_f32(
+                _fptr(decode_state), _fptr(np.ascontiguousarray(x[:, t])), _fptr(np.ascontiguousarray(dt[:, t])),
+                _fptr(a), _fptr(np.ascontiguousarray(b[:, t])), _fptr(np.ascontiguousarray(c[:, t])), _fptr(d),
+                _fptr(next_state), _fptr(y_t), batch, heads, head_dim, state_dim, groups,
+            )
+            decode_state = next_state
+            decode_y[:, t] = y_t
+        np.testing.assert_allclose(scan_state, decode_state, atol=0.0, rtol=0.0)
+        np.testing.assert_allclose(scan_y, decode_y, atol=1e-7, rtol=0.0)
 
     def test_rmsnorm_gate_matches_torch_grouped_after_gate(self) -> None:
         rows, inner_dim, group_size = 3, 24, 6

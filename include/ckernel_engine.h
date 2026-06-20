@@ -1758,6 +1758,22 @@ void mamba2_selective_state_update_decode_f32(const float *state_in,
                                               int state_dim,
                                               int num_groups);
 
+void mamba2_selective_scan_f32(const float *state_init,
+                               const float *x,
+                               const float *dt,
+                               const float *a,
+                               const float *b,
+                               const float *c,
+                               const float *d,
+                               float *state_out,
+                               float *y,
+                               int batch,
+                               int seq_len,
+                               int num_heads,
+                               int head_dim,
+                               int state_dim,
+                               int num_groups);
+
 void mamba2_rmsnorm_gate_f32(const float *x,
                              const float *gate,
                              const float *weight,

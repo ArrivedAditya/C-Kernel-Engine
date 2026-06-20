@@ -155,6 +155,7 @@ def _missing_ops(arch: str, required_ops: list[str]) -> list[str]:
         "mamba_dt_softplus",
         "mamba_rmsnorm_gate",
         "mamba_out_proj",
+        "mamba_selective_scan",
     }
     for op in required_ops:
         if op.startswith("mamba_") and op not in mamba_decode_covered:
@@ -204,7 +205,7 @@ def _notes(arch: str, config: dict[str, Any], layer_kinds: list[str], missing_op
         notes.append("Nemotron-H is a hybrid Mamba/attention decoder; CK DeltaNet kernels are not a substitute for Mamba selective scan.")
         notes.append(f"hybrid_override_pattern={text.get('hybrid_override_pattern')}")
         notes.append(f"mamba heads={text.get('mamba_num_heads')} head_dim={text.get('mamba_head_dim')} state={text.get('ssm_state_size')} conv_kernel={text.get('conv_kernel')}")
-        notes.append("Mamba2 decode split/conv/dt/state-update/gated-norm reference kernels exist; full chunked prefill selective scan remains separate.")
+        notes.append("Mamba2 decode split/conv/dt/state-update/gated-norm reference kernels exist; full selective scan has a scalar reference; chunk-optimized scan remains future performance work.")
         notes.append(f"MLP activation={text.get('mlp_hidden_act')}; ReLU2 primitive exists, dense/shared MLP lowering uses matmul -> relu2 -> matmul.")
     if arch == "cohere":
         notes.append("Cohere Command configs are gated in this environment; require config/weight access before mapping tensor names.")
