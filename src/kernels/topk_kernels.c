@@ -346,7 +346,7 @@ int argmax_f32(const float *scores, int n)
  * Group-limited MoE router for Nemotron-H/DeepSeek-style routed experts.
  *
  * Contract:
- *   scores          [rows, n_experts] raw router logits; sigmoid is applied internally
+ *   scores          [rows, n_experts] router probabilities after sigmoid
  *   correction_bias [n_experts] optional score correction used only for choice
  *   indices         [rows, top_k]
  *   weights         [rows, top_k]
@@ -356,20 +356,10 @@ int argmax_f32(const float *scores, int n)
  *   group_scores = sum(top2(choice_scores within group))
  *   selected_groups = topk(group_scores, topk_group)
  *   selected_experts = topk(choice_scores masked to selected groups, top_k)
- *   weights = gather(sigmoid(scores), selected_experts)
+ *   weights = gather(scores, selected_experts)
  *   if norm_topk_prob: weights /= sum(weights) + 1e-20
  *   weights *= routed_scaling_factor
  * ============================================================================= */
-
-static inline float ck_router_sigmoid_f32(float x)
-{
-    if (x >= 0.0f) {
-        const float z = expf(-x);
-        return 1.0f / (1.0f + z);
-    }
-    const float z = expf(x);
-    return z / (1.0f + z);
-}
 
 static void ck_topk_insert_desc(int idx, float val, int *indices, float *values, int k)
 {
@@ -411,10 +401,10 @@ void nemotron_group_limited_topk_router_f32(const float *scores,
     }
 
     for (int r = 0; r < rows; ++r) {
-        const float *row_logits = scores + (size_t)r * (size_t)n_experts;
+        const float *row_probs = scores + (size_t)r * (size_t)n_experts;
         float row_scores[n_experts];
         for (int e = 0; e < n_experts; ++e) {
-            row_scores[e] = ck_router_sigmoid_f32(row_logits[e]);
+            row_scores[e] = row_probs[e];
         }
         int *row_indices = indices + (size_t)r * (size_t)top_k;
         float *row_weights = weights + (size_t)r * (size_t)top_k;
