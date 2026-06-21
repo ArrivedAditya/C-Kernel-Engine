@@ -1626,7 +1626,9 @@ showtests:
 	@echo "  make nightly-kernels  Only kernel tests"
 	@echo "  make nightly-bf16     Only BF16 tests"
 	@echo "  make nightly-quant    Only quantization tests"
+	@echo "  make nightly-inference Only v8 inference/runtime contract tests"
 	@echo "  make nightly-parity   Only parity tests (PyTorch + llama.cpp + v7 visualizer E2E)"
+	@echo "  make nightly-archive  Historical/manual v6.6 compatibility checks"
 	@echo "  make visualizer       Run v7 IR visualizer E2E regression"
 	@echo "  make visualizer-full  Run visualizer E2E + train-runtime ASan artifact checks"
 	@echo ""
@@ -3580,11 +3582,19 @@ nightly-bf16:
 nightly-quant:
 	@$(PYTHON) scripts/nightly_runner.py --category quant
 
+nightly-inference:
+	@$(PYTHON) scripts/nightly_runner.py --category inference
+
 nightly-parity:
 	@$(PYTHON) scripts/nightly_runner.py --category parity
 
+nightly-archive:
+	@$(PYTHON) scripts/nightly_runner.py --category archive
+
 nightly-list:
 	@$(PYTHON) scripts/nightly_runner.py --list
+
+.PHONY: nightly nightly-quick nightly-json nightly-baseline nightly-kernels nightly-bf16 nightly-quant nightly-inference nightly-parity nightly-archive nightly-list
 
 # ============================================================================
 # Status Reports (reads from meta/kernel_meta.json)

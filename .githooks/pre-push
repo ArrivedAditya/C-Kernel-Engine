@@ -82,7 +82,6 @@ done
 
 ck_should_run_v7_regression_fast=0
 ck_should_run_v8_regression_fast=0
-ck_should_run_v66_gate=0
 case "${CK_PREPUSH_REGRESSION_FAST:-auto}" in
     1|true|TRUE|yes|YES|always)
         ck_should_run_v7_regression_fast=1
@@ -117,18 +116,6 @@ case "${CK_PREPUSH_REGRESSION_FAST:-auto}" in
         ;;
 esac
 
-case "${CK_PREPUSH_V66_GATE:-auto}" in
-    1|true|TRUE|yes|YES|always)
-        ck_should_run_v66_gate=1
-        ;;
-    0|false|FALSE|no|NO|never|auto)
-        ck_should_run_v66_gate=0
-        ;;
-    *)
-        ck_should_run_v66_gate=0
-        ;;
-esac
-
 if [ "$ck_should_run_v7_regression_fast" = "1" ]; then
     echo -e "${YELLOW}  ↳ v7-regression-fast enabled for pushed shared/v7 runtime changes${NC}"
 else
@@ -141,11 +128,7 @@ else
     echo -e "${YELLOW}  ↳ v8-regression-fast skipped${NC}"
 fi
 
-if [ "$ck_should_run_v66_gate" = "1" ]; then
-    echo -e "${YELLOW}  ↳ v6.6 legacy gate enabled by CK_PREPUSH_V66_GATE${NC}"
-else
-    echo -e "${YELLOW}  ↳ v6.6 legacy gate skipped by default (set CK_PREPUSH_V66_GATE=1 to run)${NC}"
-fi
+echo -e "${YELLOW}  ↳ v6.6 is archive/manual only (run make v6.6-gate explicitly if needed)${NC}"
 
 # =============================================================================
 # Test 0: Submodule pin sanity (prevents CI checkout breakage)
@@ -452,75 +435,28 @@ else
 fi
 
 # =============================================================================
-# Test 4: v6.6 legacy release gate
+# Test 4: v8 inference contracts
 # =============================================================================
-if [ "$ck_should_run_v66_gate" = "1" ]; then
-    echo -e "${YELLOW}[4/6]${NC} Running v6.6 legacy release gate..."
-    V66_PREPUSH_CACHE="${CK_V66_PREPUSH_CACHE_DIR:-$HOME/.cache/ck-engine-v6.6/models_prepush}"
-    V66_PREPUSH_CLEAN="${CK_V66_PREPUSH_CLEAN:-1}"
-    V66_PREPUSH_FULL_GATE="${CK_PREPUSH_V66_FULL_GATE:-0}"
-    V66_PY="$ROOT_DIR/.venv/bin/python"
-    if [ ! -x "$V66_PY" ]; then
-        V66_PY="$(command -v python3)"
-    fi
-    if [ "$V66_PREPUSH_CLEAN" = "1" ] && [ -d "$V66_PREPUSH_CACHE" ]; then
-        rm -rf "$V66_PREPUSH_CACHE"
-    fi
-    mkdir -p "$V66_PREPUSH_CACHE"
-
-    if [ "$V66_PREPUSH_FULL_GATE" = "1" ]; then
-        if CK_CACHE_DIR="$V66_PREPUSH_CACHE" make --no-print-directory v6.6-gate > /tmp/ck_v66_gate.log 2>&1; then
-            echo -e "${GREEN}  ✓ v6.6 gate passed (full gate)${NC}"
-        else
-            echo -e "${RED}  ✗ v6.6 gate failed${NC}"
-            echo "    See /tmp/ck_v66_gate.log for details"
-            failed=1
-        fi
-    else
-        # Stable pre-push v6.6 gate:
-        # - Keep full structural checks
-        # - Use build/artifact matrix (step [3/5] already does runtime smoke)
-        # - Avoid flaky stale-artifact smoke failures in shared caches
-        # - Treat legacy v6.6 parity as warning-only while v6.6 is being phased out
-        if (
-            make --no-print-directory v6.6-kernel-map-gate &&
-            "$V66_PY" version/v6.6/scripts/validate_tooling_contracts.py --strict --json-out version/v6.6/tools/contract_report_latest.json &&
-            CK_CACHE_DIR="$V66_PREPUSH_CACHE" "$V66_PY" version/v6.6/scripts/validate_model_matrix_v6_6.py --allow-download --require-all --skip-static-contracts --json-out version/v6.6/tools/model_matrix_report_latest.json &&
-            (
-                CK_CACHE_DIR="$V66_PREPUSH_CACHE" "$V66_PY" version/v6.6/scripts/validate_parity_matrix_v6_6.py --allow-download --json-out version/v6.6/tools/parity_matrix_report_latest.json ||
-                {
-                    echo "[warn] v6.6 parity matrix had issues; continuing because v6.6 parity is legacy/decommissioning"
-                    echo "[warn] See version/v6.6/tools/parity_matrix_report_latest.json for details"
-                }
-            ) &&
-            CK_CACHE_DIR="$V66_PREPUSH_CACHE" "$V66_PY" version/v6.6/scripts/validate_long_decode_stability_v6_6.py --allow-download --require-all --json-out version/v6.6/tools/long_decode_report_latest.json
-        ) > /tmp/ck_v66_gate.log 2>&1; then
-            echo -e "${GREEN}  ✓ v6.6 gate passed (stable pre-push profile)${NC}"
-        else
-            echo -e "${RED}  ✗ v6.6 gate failed${NC}"
-            echo "    See /tmp/ck_v66_gate.log for details"
-            failed=1
-        fi
-    fi
+echo -e "${YELLOW}[4/6]${NC} Running v8 inference contracts..."
+if make --no-print-directory v8-validate-contracts > /tmp/ck_v8_contracts.log 2>&1 \
+   && make --no-print-directory v8-kernel-map-contracts >> /tmp/ck_v8_contracts.log 2>&1; then
+    echo -e "${GREEN}  ✓ v8 inference contracts passed${NC}"
 else
-    echo -e "${YELLOW}[4/6]${NC} Skipping v6.6 legacy release gate..."
+    echo -e "${RED}  ✗ v8 inference contracts failed${NC}"
+    echo "    See /tmp/ck_v8_contracts.log for details"
+    failed=1
 fi
 
 # =============================================================================
-# Test 5: v7 inference gate (generate/compile smoke)
+# Test 5: v7 training contract smoke
 # =============================================================================
-echo -e "${YELLOW}[5/6]${NC} Running v7 inference gate..."
-V7_MODEL_PREPUSH="${CK_V7_MODEL:-Qwen/Qwen3-0.6B}"
-if make --no-print-directory v7-infer-gate V7_MODEL="$V7_MODEL_PREPUSH" > /tmp/ck_v7_infer_gate.log 2>&1; then
-    echo -e "${GREEN}  ✓ v7 inference gate passed (${V7_MODEL_PREPUSH})${NC}"
+echo -e "${YELLOW}[5/6]${NC} Running v7 training contract smoke..."
+if make --no-print-directory v7-train-ir-smoke > /tmp/ck_v7_train_contract.log 2>&1; then
+    echo -e "${GREEN}  ✓ v7 training contract smoke passed${NC}"
 else
-    if grep -qiE "timed out|Temporary failure in name resolution|Connection timed out|Could not resolve host|SSL|HTTP|No route to host|network" /tmp/ck_v7_infer_gate.log; then
-        echo -e "${YELLOW}  ⚠ v7 inference gate skipped (network unavailable). Set CK_V7_MODEL to a local cached model to enforce.${NC}"
-    else
-        echo -e "${RED}  ✗ v7 inference gate failed${NC}"
-        echo "    See /tmp/ck_v7_infer_gate.log for details"
-        failed=1
-    fi
+    echo -e "${RED}  ✗ v7 training contract smoke failed${NC}"
+    echo "    See /tmp/ck_v7_train_contract.log for details"
+    failed=1
 fi
 
 # =============================================================================

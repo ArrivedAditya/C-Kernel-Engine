@@ -13,6 +13,12 @@ on:
 
   # Allow manual trigger
   workflow_dispatch:
+    inputs:
+      run_v66_archive:
+        description: 'Run archived v6.6 compatibility jobs'
+        required: false
+        default: false
+        type: boolean
 
 # Need write access to push to gh-pages
 permissions:
@@ -147,7 +153,7 @@ jobs:
           echo "=== Disk after llama.cpp parity setup ==="
           df -h
 
-      - name: Determine v7 Fast Regression Scope
+      - name: Determine Fast Regression Scope
         id: regression_scope
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
@@ -520,7 +526,7 @@ jobs:
           data["backprop_regression"] = backprop_payload
           latest_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
           Path("build/nightly_report.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
-          print("Attached v7 nightly summaries to nightly latest.json")
+          print("Attached v8 inference and v7 training summaries to nightly latest.json")
           PY
 
       - name: Clean regression run artifacts
@@ -532,6 +538,7 @@ jobs:
           df -h
 
       - name: Run v6.6 E2E Tests
+        if: github.event_name == 'workflow_dispatch' && inputs.run_v66_archive
         run: |
           echo "=== Running v6.6 E2E Tests ==="
           echo "Tests the v6.6 pipeline: download -> convert -> IR -> codegen -> compile -> test"
@@ -546,6 +553,7 @@ jobs:
           echo "=== v6.6 E2E Test Complete ==="
 
       - name: Run v6.6 Strict Parity Matrix (runtime-required)
+        if: github.event_name == 'workflow_dispatch' && inputs.run_v66_archive
         run: |
           echo "=== Running v6.6 Strict Parity Matrix ==="
           echo "Enforces runtime-required parity checks (no SKIP pass-through)."
@@ -580,6 +588,7 @@ jobs:
             build/regression-reports/**
             version/v7/.cache/reports/kernel_map_validation_latest.json
             version/v7/.cache/reports/backprop_family_matrix/**
+            version/v8/.cache/reports/**
           retention-days: 7
 
       - name: Prepare nightly results for deployment
