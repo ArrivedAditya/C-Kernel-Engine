@@ -16,8 +16,10 @@ Categories:
     - kernels:  Core kernel tests (gemm, relu, softmax, etc.)
     - bf16:     BF16 precision tests
     - quant:    Quantization tests (Q4_K, Q6_K, etc.)
+    - inference: Inference/runtime contract tests
     - training: Training/backward pass tests
     - parity:   PyTorch parity tests
+    - archive:  Historical/manual compatibility checks
     - bench:    Benchmarks
     - all:      Everything (default)
 """
@@ -343,20 +345,20 @@ MAKE_TARGETS = {
         "timeout_sec": 300,
     },
     "v6_6_contracts": {
-        "name": "v6.6 Tooling Contracts",
-        "category": "parity",
+        "name": "v6.6 Tooling Contracts (archive)",
+        "category": "archive",
         "target": "v6.6-validate-contracts",
         "timeout_sec": 180,
     },
     "v6_6_kernel_map_gate": {
-        "name": "v6.6 Kernel Map Gate",
-        "category": "parity",
+        "name": "v6.6 Kernel Map Gate (archive)",
+        "category": "archive",
         "target": "v6.6-kernel-map-gate",
         "timeout_sec": 240,
     },
     "v6_6_model_matrix": {
-        "name": "v6.6 Model Matrix (Build)",
-        "category": "parity",
+        "name": "v6.6 Model Matrix (archive)",
+        "category": "archive",
         "target": "v6.6-validate-matrix-nightly",
         "timeout_sec": 2400,
     },
@@ -408,9 +410,33 @@ MAKE_TARGETS = {
         "target": "v7-stabilization-nightly",
         "timeout_sec": 7200,
     },
+    "v8_validate_contracts": {
+        "name": "v8 Inference Runtime Contracts",
+        "category": "inference",
+        "target": "v8-validate-contracts",
+        "timeout_sec": 600,
+    },
+    "v8_kernel_map_contracts": {
+        "name": "v8 Kernel Map Contracts",
+        "category": "inference",
+        "target": "v8-kernel-map-contracts",
+        "timeout_sec": 600,
+    },
+    "v8_regression_fast": {
+        "name": "v8 Inference Regression (fast)",
+        "category": "inference",
+        "target": "v8-regression-fast",
+        "timeout_sec": 5400,
+    },
+    "v8_decoder_matrix_quick": {
+        "name": "v8 Decoder Matrix (quick)",
+        "category": "inference",
+        "target": "test-v8-decoder-matrix-quick",
+        "timeout_sec": 3600,
+    },
     "v8_gemma4_highmem": {
         "name": "v8 Gemma4 High-Memory Smoke",
-        "category": "parity",
+        "category": "inference",
         "target": "test-v8-gemma4-highmem",
         "timeout_sec": 5400,
     },
@@ -951,7 +977,7 @@ def main():
     parser = argparse.ArgumentParser(description="C-Kernel-Engine Nightly Test Runner")
     parser.add_argument("--quick", action="store_true", help="Run quick subset only")
     parser.add_argument("--ci", action="store_true", help="CI mode: skip tests requiring full shared library")
-    parser.add_argument("--category", type=str, help="Run specific category (kernels, bf16, quant, training, parity, bench)")
+    parser.add_argument("--category", type=str, help="Run specific category (kernels, bf16, quant, inference, training, parity, archive, bench)")
     parser.add_argument("--json", type=str, metavar="FILE", help="Save JSON report to file")
     parser.add_argument("--save-baseline", action="store_true", help="Save current perf as baseline")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
@@ -993,7 +1019,7 @@ def main():
         bench_targets_to_run = [k for k, v in BENCH_TARGETS.items() if v["category"] == args.category]
     else:
         tests_to_run = list(TEST_SUITES.keys())
-        make_targets_to_run = list(MAKE_TARGETS.keys())
+        make_targets_to_run = [k for k, v in MAKE_TARGETS.items() if v["category"] != "archive"]
         bench_targets_to_run = list(BENCH_TARGETS.keys())
 
     # In CI mode, skip tests that require the full shared library

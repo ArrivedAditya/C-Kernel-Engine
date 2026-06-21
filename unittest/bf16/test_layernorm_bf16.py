@@ -68,6 +68,15 @@ lib.layernorm_backward_kernel_bf16.argtypes = [
 ]
 lib.layernorm_backward_kernel_bf16.restype = None
 
+FORWARD_TOL = 1e-2
+D_INPUT_TOL = 1e-2
+# BF16 parameter gradients are accumulated from BF16-rounded activations and
+# upstream gradients, then compared against PyTorch's CPU BF16 LayerNorm
+# backward. Different AVX-512 BF16 PyTorch builds can accumulate this path
+# slightly differently; keep the activation-gradient check tight and allow a
+# little extra slack only for d_gamma/d_beta.
+PARAM_GRAD_TOL = 2e-2
+
 
 def run_forward_tests(tokens=4, dim=16, eps=1e-5):
     np.random.seed(0)
@@ -124,9 +133,9 @@ def run_forward_tests(tokens=4, dim=16, eps=1e-5):
 
     report.add_result(TestResult(
         name="LayerNorm",
-        passed=diff <= 1e-2,
+        passed=diff <= FORWARD_TOL,
         max_diff=diff,
-        tolerance=1e-2,
+        tolerance=FORWARD_TOL,
         pytorch_time=pytorch_time,
         kernel_time=kernel_time,
     ))
@@ -195,23 +204,23 @@ def run_backward_tests(tokens=4, dim=16, eps=1e-5):
 
     report.add_result(TestResult(
         name="d_input",
-        passed=diff_input <= 1e-2,
+        passed=diff_input <= D_INPUT_TOL,
         max_diff=diff_input,
-        tolerance=1e-2,
+        tolerance=D_INPUT_TOL,
         pytorch_time=0.0,
         kernel_time=0.0,
     ))
     report.add_result(TestResult(
         name="d_gamma",
-        passed=diff_gamma <= 1e-2,
+        passed=diff_gamma <= PARAM_GRAD_TOL,
         max_diff=diff_gamma,
-        tolerance=1e-2,
+        tolerance=PARAM_GRAD_TOL,
     ))
     report.add_result(TestResult(
         name="d_beta",
-        passed=diff_beta <= 1e-2,
+        passed=diff_beta <= PARAM_GRAD_TOL,
         max_diff=diff_beta,
-        tolerance=1e-2,
+        tolerance=PARAM_GRAD_TOL,
     ))
 
     return report
