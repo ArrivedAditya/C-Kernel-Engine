@@ -124,6 +124,7 @@ EXT_METADATA_SIZE = 24                               # Extended metadata block (
 DATA_START = HEADER_SIZE + EXT_METADATA_SIZE         # = 152, where dtype_table begins
 
 CACHE_ALIGN = 64
+GGUF_CK_MAP_PATH = SCRIPT_DIR.parent / "model_maps" / "gguf_ck_map.json"
 
 # BUMP format versions
 BUMP_VERSION_V4 = 4
@@ -145,6 +146,62 @@ CK_DT_Q8_K = 10
 CK_DT_Q5_0 = 11
 CK_DT_Q5_1 = 12
 CK_DT_Q5_K = 13
+
+_GGUF_CK_MAP_CACHE: Optional[Dict[str, Any]] = None
+
+
+def load_gguf_ck_map() -> Dict[str, Any]:
+    """Load declarative GGUF model-name to CK-contract mappings.
+
+    This map is intentionally separate from kernel_maps: kernel_maps bind CK ops
+    to C functions, while this file binds external model artifact names to CK
+    logical tensor/config names.
+    """
+    global _GGUF_CK_MAP_CACHE
+    if _GGUF_CK_MAP_CACHE is not None:
+        return _GGUF_CK_MAP_CACHE
+    if not GGUF_CK_MAP_PATH.exists():
+        _GGUF_CK_MAP_CACHE = {"version": 0, "architectures": {}}
+        return _GGUF_CK_MAP_CACHE
+    with open(GGUF_CK_MAP_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise GGUFError(f"{GGUF_CK_MAP_PATH}: expected JSON object")
+    arch_map = data.get("architectures")
+    if arch_map is None:
+        data["architectures"] = {}
+    elif not isinstance(arch_map, dict):
+        raise GGUFError(f"{GGUF_CK_MAP_PATH}: 'architectures' must be an object")
+    _GGUF_CK_MAP_CACHE = data
+    return data
+
+
+def gguf_ck_arch_contract(arch: str) -> Dict[str, Any]:
+    arch_name = str(arch or "").lower()
+    contracts = load_gguf_ck_map().get("architectures") or {}
+    contract = contracts.get(arch_name, {})
+    return contract if isinstance(contract, dict) else {}
+
+
+def gguf_ck_template_arch(arch: str) -> str:
+    contract = gguf_ck_arch_contract(arch)
+    template = contract.get("template")
+    return str(template).lower() if template else str(arch).lower()
+
+
+def gguf_ck_layer_kind_from_map(arch: Optional[str], suffixes: set[str]) -> Optional[str]:
+    if not arch:
+        return None
+    layer_kinds = gguf_ck_arch_contract(arch).get("layer_kinds") or {}
+    if not isinstance(layer_kinds, dict):
+        return None
+    for kind, spec in layer_kinds.items():
+        if not isinstance(spec, dict):
+            continue
+        required = spec.get("required_suffixes") or []
+        if required and set(str(s) for s in required).issubset(suffixes):
+            return str(kind)
+    return None
 
 
 def align_up(n: int, a: int) -> int:
@@ -286,7 +343,7 @@ def _inject_runtime_config_defaults(config: dict, arch: str) -> dict:
         config.setdefault("prefer_q8_0_contract", True)
         _merge_activation_defaults(
             {
-                "recurrent_gate_proj": "fp32",
+                "recurrent_gate_proj": "q8_k",
                 "recurrent_alpha_proj": "q8_0",
                 "recurrent_beta_proj": "q8_0",
             }
@@ -306,10 +363,10 @@ def _inject_runtime_config_defaults(config: dict, arch: str) -> dict:
 
 
 def load_template_for_arch(arch: str) -> dict:
-    # Intentional contract: template selection is strict (arch -> templates/<arch>.json).
-    # We do not alias or guess here; supported models are explicit via templates.
-    # By design: unknown arch MUST fail so new families get their own templates.
-    template_name = str(arch).lower()
+    # Intentional contract: template selection is explicit. Most architectures use
+    # templates/<arch>.json directly; GGUF aliases must be declared in
+    # model_maps/gguf_ck_map.json rather than guessed in Python conditionals.
+    template_name = gguf_ck_template_arch(arch)
     base_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "templates"))
     template_path = os.path.join(base_dir, f"{template_name}.json")
     if not os.path.exists(template_path):
@@ -881,10 +938,14 @@ def _layer_tensor_suffixes(tensors: Dict[str, "TensorInfo"], layer: int) -> set[
     }
 
 
-def classify_layer_contract(tensors: Dict[str, "TensorInfo"], layer: int) -> str:
+def classify_layer_contract(tensors: Dict[str, "TensorInfo"], layer: int, arch: Optional[str] = None) -> str:
     names = _layer_tensor_suffixes(tensors, layer)
     if not names:
         return "missing"
+
+    mapped_kind = gguf_ck_layer_kind_from_map(arch, names)
+    if mapped_kind:
+        return f"mapped_{mapped_kind}"
 
     recurrent_qwen35 = {
         "attn_qkv.weight",
@@ -946,9 +1007,16 @@ def classify_layer_contract(tensors: Dict[str, "TensorInfo"], layer: int) -> str
 
 def describe_layer_contract(tensors: Dict[str, "TensorInfo"], layer: int, arch: Optional[str] = None) -> Optional[str]:
     names = _layer_tensor_suffixes(tensors, layer)
-    kind = classify_layer_contract(tensors, layer)
+    kind = classify_layer_contract(tensors, layer, arch=arch)
     arch_name = (arch or "").lower()
 
+    if kind.startswith("mapped_"):
+        mapped = kind[len("mapped_"):]
+        return (
+            f"Layer {layer}: GGUF map classifies this layer as '{mapped}' for arch '{arch_name}'. "
+            "The model contract is recognized, but converter/IR lowering for this mapped layer kind "
+            "is not fully implemented yet."
+        )
     if kind == "qwen35_recurrent_hybrid":
         return (
             f"Layer {layer}: found a qwen35 recurrent hybrid block "
@@ -2195,6 +2263,34 @@ def main() -> None:
         "qwen35.ssm.time_step_rank",
         "qwen35.ssm.inner_size",
         "qwen35.full_attention_interval",
+        # Nemotron-H MoE/Mamba hybrid keys
+        "nemotron_h_moe.block_count",
+        "nemotron_h_moe.context_length",
+        "nemotron_h_moe.embedding_length",
+        "nemotron_h_moe.feed_forward_length",
+        "nemotron_h_moe.vocab_size",
+        "nemotron_h_moe.attention.head_count",
+        "nemotron_h_moe.attention.head_count_kv",
+        "nemotron_h_moe.attention.key_length",
+        "nemotron_h_moe.attention.value_length",
+        "nemotron_h_moe.attention.layer_norm_rms_epsilon",
+        "nemotron_h_moe.attention.layer_norm_epsilon",
+        "nemotron_h_moe.rope.freq_base",
+        "nemotron_h_moe.rope.dimension_count",
+        "nemotron_h_moe.ssm.conv_kernel",
+        "nemotron_h_moe.ssm.state_size",
+        "nemotron_h_moe.ssm.group_count",
+        "nemotron_h_moe.ssm.inner_size",
+        "nemotron_h_moe.ssm.time_step_rank",
+        "nemotron_h_moe.expert_count",
+        "nemotron_h_moe.expert_used_count",
+        "nemotron_h_moe.expert_group_count",
+        "nemotron_h_moe.expert_group_used_count",
+        "nemotron_h_moe.expert_feed_forward_length",
+        "nemotron_h_moe.expert_shared_feed_forward_length",
+        "nemotron_h_moe.expert_shared_count",
+        "nemotron_h_moe.expert_weights_norm",
+        "nemotron_h_moe.expert_weights_scale",
         # Gemma3-style keys
         "gemma3.block_count",
         "gemma3.context_length",
@@ -2248,6 +2344,7 @@ def main() -> None:
         "qwen2.tie_word_embeddings",
         "qwen3.tie_word_embeddings",
         "qwen3vl.tie_word_embeddings",
+        "nemotron_h_moe.tie_word_embeddings",
         "gemma3.tie_word_embeddings",
         "mistral.tie_word_embeddings",
         "mistral3.tie_word_embeddings",
@@ -2258,6 +2355,7 @@ def main() -> None:
         "qwen2.embedding_weight_tying",
         "qwen3.embedding_weight_tying",
         "qwen3vl.embedding_weight_tying",
+        "nemotron_h_moe.embedding_weight_tying",
         "gemma3.embedding_weight_tying",
         "gemma4.tie_word_embeddings",
         "gemma4.embedding_weight_tying",
@@ -2488,6 +2586,19 @@ def main() -> None:
                         return int(v)
                     if isinstance(v, (int, np.integer)):
                         return int(v)
+            return None
+
+        def meta_int_or_list(*keys: str):
+            """Get integer or integer list from metadata, trying multiple keys in order."""
+            for key in keys:
+                v = meta.get(key)
+                if v is not None:
+                    if isinstance(v, bool):
+                        return int(v)
+                    if isinstance(v, (int, np.integer)):
+                        return int(v)
+                    if isinstance(v, list):
+                        return [int(x) for x in v]
             return None
 
         def meta_float(*keys: str) -> Optional[float]:
@@ -3082,7 +3193,7 @@ def main() -> None:
 
         num_layers = meta_int(
             "deepseek2.block_count", "mistral3.block_count", "mistral.block_count",
-            "llama.block_count", "qwen35.block_count", "qwen3vl.block_count", "qwen3.block_count", "qwen2.block_count",
+            "llama.block_count", "qwen35.block_count", "nemotron_h_moe.block_count", "qwen3vl.block_count", "qwen3.block_count", "qwen2.block_count",
             "gemma3.block_count", "gemma4.block_count"
         )
         if num_layers is None:
@@ -3098,11 +3209,14 @@ def main() -> None:
                 raise GGUFError("Could not infer num_layers (missing block_count and no blk.* tensors found)")
             num_layers = max(layer_ids) + 1
 
-        intermediate = meta_int(
+        intermediate = meta_int_or_list(
             "deepseek2.feed_forward_length", "mistral3.feed_forward_length", "mistral.feed_forward_length",
-            "llama.feed_forward_length", "qwen35.feed_forward_length", "qwen3vl.feed_forward_length", "qwen3.feed_forward_length", "qwen2.feed_forward_length",
+            "llama.feed_forward_length", "qwen35.feed_forward_length", "nemotron_h_moe.feed_forward_length", "qwen3vl.feed_forward_length", "qwen3.feed_forward_length", "qwen2.feed_forward_length",
             "gemma3.feed_forward_length", "gemma4.feed_forward_length"
         )
+        if isinstance(intermediate, list):
+            nz_intermediate = [int(x) for x in intermediate if int(x) > 0]
+            intermediate = max(nz_intermediate) if nz_intermediate else None
         if intermediate is None:
             gate0 = tensors.get("blk.0.ffn_gate.weight")
             if gate0 and len(gate0.dims) == 2:
@@ -3112,20 +3226,21 @@ def main() -> None:
 
         num_heads = meta_int(
             "deepseek2.attention.head_count", "mistral3.attention.head_count", "mistral.attention.head_count",
-            "llama.attention.head_count", "qwen35.attention.head_count", "qwen3vl.attention.head_count", "qwen3.attention.head_count", "qwen2.attention.head_count",
+            "llama.attention.head_count", "qwen35.attention.head_count", "nemotron_h_moe.attention.head_count", "qwen3vl.attention.head_count", "qwen3.attention.head_count", "qwen2.attention.head_count",
             "gemma3.attention.head_count", "gemma4.attention.head_count"
         )
         if num_heads is None:
             raise GGUFError("Missing attention.head_count (num_heads)")
-        num_kv_heads = meta_int(
+        num_kv_heads_meta = meta_int(
             "deepseek2.attention.head_count_kv", "mistral3.attention.head_count_kv", "mistral.attention.head_count_kv",
-            "llama.attention.head_count_kv", "qwen35.attention.head_count_kv", "qwen3vl.attention.head_count_kv", "qwen3.attention.head_count_kv", "qwen2.attention.head_count_kv",
+            "llama.attention.head_count_kv", "qwen35.attention.head_count_kv", "nemotron_h_moe.attention.head_count_kv", "qwen3vl.attention.head_count_kv", "qwen3.attention.head_count_kv", "qwen2.attention.head_count_kv",
             "gemma3.attention.head_count_kv", "gemma4.attention.head_count_kv"
-        ) or num_heads
+        )
+        num_kv_heads = num_kv_heads_meta if num_kv_heads_meta and num_kv_heads_meta > 0 else 0
 
         context_len = meta_int(
             "deepseek2.context_length", "mistral3.context_length", "mistral.context_length",
-            "llama.context_length", "qwen35.context_length", "qwen3vl.context_length", "qwen3.context_length", "qwen2.context_length",
+            "llama.context_length", "qwen35.context_length", "nemotron_h_moe.context_length", "qwen3vl.context_length", "qwen3.context_length", "qwen2.context_length",
             "gemma3.context_length", "gemma4.context_length"
         ) or 0
         if args.context is not None:
@@ -3152,6 +3267,7 @@ def main() -> None:
         # Q/K/V head dimensions (some models report explicit key/value lengths)
         key_length_meta = meta_int(
             "qwen35.attention.key_length",
+            "nemotron_h_moe.attention.key_length",
             "qwen3vl.attention.key_length",
             "qwen3.attention.key_length",
             "gemma3.attention.key_length",
@@ -3160,6 +3276,7 @@ def main() -> None:
         )
         value_length_meta = meta_int(
             "qwen35.attention.value_length",
+            "nemotron_h_moe.attention.value_length",
             "qwen3vl.attention.value_length",
             "qwen3.attention.value_length",
             "gemma3.attention.value_length",
@@ -3171,6 +3288,7 @@ def main() -> None:
         # Resolve after head_dim is known.
         rotary_dim_meta = meta_int(
             "qwen35.rope.dimension_count",
+            "nemotron_h_moe.rope.dimension_count",
             "llama.rope.dim",
             "attention.rotary_dim",
             "qwen2.rotary_dim",
@@ -3346,35 +3464,45 @@ def main() -> None:
             print(f"Warning: rotary_dim {rotary_dim} is odd, decrementing to make even")
             rotary_dim -= 1
 
-        # Infer correct dimensions from actual tensors if metadata doesn't match
-        # This handles non-standard architectures like Qwen3/Devstral
-        wq0 = tensors.get("blk.0.attn_q.weight")
-        wk0 = tensors.get("blk.0.attn_k.weight")
-        wo0 = tensors.get("blk.0.attn_output.weight")
-        if wq0 and wk0 and wo0:
-            # Check if actual dimensions match expected
-            q_dim1 = wq0.ne1
-            k_dim1 = wk0.ne1
-            o_dim0 = wo0.ne0
+        # Infer correct dimensions from the first actual attention tensors if metadata
+        # is missing or inconsistent. Hybrid models such as Nemotron can start with
+        # Mamba layers, so blk.0 is not necessarily an attention block.
+        wq0 = wk0 = wv0 = wo0 = None
+        for _layer in range(num_layers):
+            wq0 = tensors.get(f"blk.{_layer}.attn_q.weight")
+            wk0 = tensors.get(f"blk.{_layer}.attn_k.weight")
+            wv0 = tensors.get(f"blk.{_layer}.attn_v.weight")
+            wo0 = tensors.get(f"blk.{_layer}.attn_output.weight")
+            if wq0 and wk0 and wv0 and wo0:
+                break
+        else:
+            wq0 = wk0 = wv0 = wo0 = None
 
-            if q_dim1 != embed_dim or k_dim1 != embed_kv:
-                # Infer from actual tensor shapes
-                # Infer head dimensions
-                inferred_q_head_dim = q_dim1 // num_heads if q_dim1 % num_heads == 0 else q_dim1
-                # Update for consistency with actual tensors
-                embed_kv = k_dim1
+        embed_kv = int(num_kv_heads or 0) * int(head_dim)
+        if wq0 and wk0 and wo0:
+            q_dim1 = int(wq0.ne1)
+            k_dim1 = int(wk0.ne1)
+            if key_length_meta is None and q_dim1 > 0 and q_dim1 % int(num_heads) == 0:
+                inferred_q_head_dim = q_dim1 // int(num_heads)
                 head_dim = inferred_q_head_dim
-                # If rotary_dim was not explicitly provided, recompute from updated head_dim
                 if rotary_dim_meta is None:
                     rotary_dim = head_dim
+            if (not num_kv_heads or int(num_kv_heads) <= 0) and k_dim1 > 0 and int(head_dim) > 0:
+                if k_dim1 % int(head_dim) == 0:
+                    num_kv_heads = max(1, k_dim1 // int(head_dim))
+            embed_kv = int(num_kv_heads or 0) * int(head_dim)
+
+        if not num_kv_heads or int(num_kv_heads) <= 0:
+            num_kv_heads = num_heads
+            embed_kv = int(num_kv_heads) * int(head_dim)
 
         # Attention output dim (attn_out). For most models this == embed_dim,
-        # but some (e.g., Qwen3) use num_heads * head_dim.
-        attn_out_dim = num_heads * head_dim
+        # but grouped/packed attention models use num_heads * head_dim.
+        attn_out_dim = int(num_heads) * int(head_dim)
         if wq0 and len(wq0.dims) == 2:
-            attn_out_dim = wq0.ne1
+            attn_out_dim = int(wq0.ne1)
         elif wo0 and len(wo0.dims) == 2:
-            attn_out_dim = wo0.ne0
+            attn_out_dim = int(wo0.ne0)
 
 
         aligned_embed_dim = embed_dim
@@ -3665,6 +3793,7 @@ def main() -> None:
                 qwen35_config["ssm_time_step_rank"] = int(ssm_time_step_rank)
             if ssm_inner_size is not None:
                 qwen35_config["ssm_inner_size"] = int(ssm_inner_size)
+            qwen35_config = _inject_runtime_config_defaults(qwen35_config, arch)
 
             qwen35_quant_summary: Dict[str, Any] = {
                 "token_emb": next(entry["dtype"] for entry in qwen35_plan if entry["name"] == "token_emb"),
@@ -4064,6 +4193,380 @@ def main() -> None:
                 f"materialized_shared_kv={gemma4_materialized_shared_kv}, "
                 f"extra_projection_tensors={extra_tensors}."
             )
+
+        if arch == "nemotron_h_moe":
+            contract = gguf_ck_arch_contract(arch)
+            tensor_map = contract.get("tensor_map") or {}
+            if not isinstance(tensor_map, dict):
+                raise GGUFError(f"{GGUF_CK_MAP_PATH}: nemotron_h_moe tensor_map must be an object")
+
+            def _mapped_shape(info: TensorInfo) -> list[int]:
+                if len(info.dims) <= 1:
+                    return [int(info.ne0)]
+                return [int(d) for d in reversed(info.dims)]
+
+            def _mapped_entry(dst_name: str, info: TensorInfo, *, layer_kind: Optional[str] = None) -> Dict[str, Any]:
+                dt = weight_dtype(info, dst_name)
+                if info.ggml_type == GGML_TYPE_F16 and dst_name != "token_emb":
+                    raise GGUFError(
+                        f"{info.name}: FP16 nemotron_h_moe tensors are not supported yet outside token embeddings."
+                    )
+                entry = {
+                    "name": dst_name,
+                    "dtype": ck_dtype_name(dt).lower(),
+                    "shape": _mapped_shape(info),
+                    "source_dtype": ggml_type_name(info.ggml_type),
+                    "source_name": info.name,
+                    "_info": info,
+                    "_dtype_id": dt,
+                    "_size": int(np.prod(info.dims)) * 4 if info.ggml_type == GGML_TYPE_F16 else ggml_tensor_bytes(info),
+                }
+                if len(info.dims) > 1:
+                    entry["gguf_dims"] = [int(d) for d in info.dims]
+                if layer_kind:
+                    entry["layer_kind"] = layer_kind
+                return entry
+
+            def _add_mapped_entry(plan: list[Dict[str, Any]], consumed: set[str], dst_name: str, src_name: str, *, layer_kind: Optional[str] = None) -> TensorInfo:
+                info = tensors.get(src_name)
+                if info is None:
+                    raise GGUFError(f"nemotron_h_moe conversion missing required tensor: {src_name}")
+                plan.append(_mapped_entry(dst_name, info, layer_kind=layer_kind))
+                consumed.add(src_name)
+                return info
+
+            nemotron_plan: list[Dict[str, Any]] = []
+            consumed_sources: set[str] = set()
+            layer_kinds: list[str] = []
+            layer_quant_summary: dict[str, dict[str, str]] = {}
+
+            _add_mapped_entry(nemotron_plan, consumed_sources, "token_emb", "token_embd.weight")
+            if out_weight is not None:
+                _add_mapped_entry(nemotron_plan, consumed_sources, "output.weight", "output.weight")
+
+            mamba_projection_size = 0
+            mamba_intermediate_size = 0
+            mamba_conv_dim = int(meta_int("nemotron_h_moe.ssm.inner_size") or 0) + 2 * int(meta_int("nemotron_h_moe.ssm.group_count") or 0) * int(meta_int("nemotron_h_moe.ssm.state_size") or 0)
+            mamba_num_heads = int(meta_int("nemotron_h_moe.ssm.time_step_rank") or 0)
+            mamba_head_dim = 0
+            moe_intermediate_size = int(meta_int("nemotron_h_moe.expert_feed_forward_length") or intermediate)
+            moe_shared_intermediate_size = int(meta_int("nemotron_h_moe.expert_shared_feed_forward_length") or 0)
+            n_routed_experts = int(meta_int("nemotron_h_moe.expert_count") or 0)
+            experts_per_tok = int(meta_int("nemotron_h_moe.expert_used_count") or 0)
+
+            for layer in range(num_layers):
+                kind = classify_layer_contract(tensors, layer, arch=arch)
+                if not kind.startswith("mapped_"):
+                    detail = describe_layer_contract(tensors, layer, arch=arch)
+                    if detail:
+                        raise GGUFError(detail)
+                    raise GGUFError(f"Layer {layer}: unsupported nemotron_h_moe layer contract ({kind})")
+                layer_kind = kind[len("mapped_"):]
+                layer_kinds.append(layer_kind)
+                layer_key = f"layer.{layer}"
+                layer_quant_summary[layer_key] = {}
+
+                for src_pattern, dst_pattern in tensor_map.items():
+                    if "{L}" not in src_pattern:
+                        continue
+                    src_name = src_pattern.replace("{L}", str(layer))
+                    if src_name not in tensors:
+                        continue
+                    dst_name = str(dst_pattern).replace("{L}", str(layer))
+                    info = _add_mapped_entry(nemotron_plan, consumed_sources, dst_name, src_name, layer_kind=layer_kind)
+                    layer_quant_summary[layer_key][dst_name.split(".")[-1]] = ck_dtype_name(weight_dtype(info, dst_name)).lower()
+
+                if layer_kind == "mamba":
+                    in_proj = tensors.get(f"blk.{layer}.ssm_in.weight")
+                    out_proj = tensors.get(f"blk.{layer}.ssm_out.weight")
+                    conv_bias = tensors.get(f"blk.{layer}.ssm_conv1d.bias")
+                    if in_proj is None or out_proj is None or conv_bias is None:
+                        raise GGUFError(f"Layer {layer}: mamba layer missing ssm_in/ssm_out/conv bias")
+                    mamba_projection_size = max(mamba_projection_size, int(in_proj.ne1))
+                    inner = int(out_proj.ne0)
+                    if mamba_num_heads > 0:
+                        mamba_head_dim = max(mamba_head_dim, inner // mamba_num_heads)
+                    conv_dim = int(conv_bias.ne0)
+                    mamba_conv_dim = max(mamba_conv_dim, conv_dim)
+                    # Nemotron-H Mamba projects [gate/inner, conv_xbc, dt].
+                    # It does not use the optional d_mlp prefix handled by the
+                    # generic split helper, so the gate/intermediate width is
+                    # the SSM inner width, not a half-residual candidate.
+                    mamba_intermediate_size = max(mamba_intermediate_size, int(meta_int("nemotron_h_moe.ssm.inner_size") or inner))
+
+            _add_mapped_entry(nemotron_plan, consumed_sources, "final_ln_weight", "output_norm.weight")
+            nemotron_plan.append({
+                "name": "final_ln_bias",
+                "dtype": "fp32",
+                "shape": [int(embed_dim)],
+                "source_dtype": "synthetic",
+                "source_name": "synthetic:zeros_fp32",
+                "_info": None,
+                "_dtype_id": CK_DT_FP32,
+                "_size": int(embed_dim) * 4,
+                "synthetic": "zeros_fp32",
+            })
+
+            unconsumed_sources = sorted(set(tensors.keys()) - consumed_sources)
+            if unconsumed_sources:
+                raise GGUFError(
+                    f"nemotron_h_moe conversion plan left {len(unconsumed_sources)} source tensors unconsumed: "
+                    f"{unconsumed_sources[:16]}"
+                )
+            source_coverage = {
+                "arch": arch,
+                "total_source_tensors": len(tensors),
+                "consumed_source_tensors": len(consumed_sources),
+                "unconsumed_source_tensors": unconsumed_sources,
+                "pass": not unconsumed_sources,
+                "map_path": str(GGUF_CK_MAP_PATH),
+            }
+
+            if mamba_head_dim <= 0 and mamba_num_heads > 0:
+                mamba_head_dim = int((meta_int("nemotron_h_moe.ssm.inner_size") or 0) // mamba_num_heads)
+            if mamba_intermediate_size <= 0:
+                mamba_intermediate_size = int(meta_int("nemotron_h_moe.ssm.inner_size") or intermediate)
+            if mamba_projection_size <= 0:
+                mamba_projection_size = int(mamba_intermediate_size + mamba_conv_dim + mamba_num_heads)
+
+            nemotron_config = _inject_runtime_config_defaults({
+                "model": "nemotron_h",
+                "arch": "nemotron_h",
+                "source_arch": arch,
+                "model_type": "nemotron_h",
+                "embed_dim": int(embed_dim),
+                "attn_out_dim": int(num_heads * head_dim),
+                "num_layers": int(num_layers),
+                "num_heads": int(num_heads),
+                "num_kv_heads": int(num_kv_heads),
+                "head_dim": int(head_dim),
+                "intermediate_dim": int(intermediate),
+                "intermediate_size": int(intermediate),
+                "mamba_intermediate_size": int(mamba_intermediate_size),
+                "moe_intermediate_size": int(moe_intermediate_size),
+                "moe_shared_expert_intermediate_size": int(moe_shared_intermediate_size),
+                "n_routed_experts": int(n_routed_experts),
+                "experts_per_tok": int(experts_per_tok),
+                "num_experts_per_tok": int(experts_per_tok),
+                "router_num_groups": int(meta_int("nemotron_h_moe.expert_group_count") or meta_int("nemotron_h_moe.router_num_groups") or 8),
+                "router_topk_group": int(meta_int("nemotron_h_moe.expert_topk_group") or meta_int("nemotron_h_moe.router_topk_group") or 4),
+                "router_norm_topk_prob": int(meta_int("nemotron_h_moe.norm_topk_prob") or meta_int("nemotron_h_moe.router_norm_topk_prob") or 1),
+                "routed_scaling_factor": float(meta_float("nemotron_h_moe.routed_scaling_factor") or meta_float("nemotron_h_moe.expert_routed_scaling_factor") or 1.0),
+                "vocab_size": int(vocab_size),
+                "max_seq_len": int(context_len),
+                "context_length": int(context_len),
+                "rope_theta": float(rope_theta),
+                "rotary_dim": int(rotary_dim),
+                "rope_scaling_type": rope_scaling_type,
+                "rope_scaling_factor": float(rope_scaling_factor),
+                "rope_original_context_length": int(rope_original_context_length),
+                "rope_beta_fast": float(rope_beta_fast),
+                "rope_beta_slow": float(rope_beta_slow),
+                "rope_attn_factor": float(rope_attn_factor),
+                "rms_eps": float(rms_eps) if rms_eps else 1e-5,
+                "rms_norm_eps": float(rms_eps) if rms_eps else 1e-5,
+                "tie_word_embeddings": bool(tie_word_embeddings),
+                "layer_kinds": layer_kinds,
+                "hybrid_block_pattern": layer_kinds[:],
+                "layer_state_policy": ["mamba2" if k == "mamba" else "none" for k in layer_kinds],
+                "layer_attention_policy": ["full_attention" if k == "attention" else "none" for k in layer_kinds],
+                "layer_recurrent_policy": ["mamba2" if k == "mamba" else "none" for k in layer_kinds],
+                "layer_moe_policy": ["routed_relu2" if k == "moe" else "none" for k in layer_kinds],
+                "layer_mlp_policy": ["relu2" if k == "mlp" else "none" for k in layer_kinds],
+                "layer_kv_policy": ["attention_kv_cache" if k == "attention" else "none" for k in layer_kinds],
+                "mamba_num_heads": int(mamba_num_heads),
+                "mamba_head_dim": int(mamba_head_dim),
+                "ssm_state_size": int(meta_int("nemotron_h_moe.ssm.state_size") or 0),
+                "ssm_conv_kernel": int(meta_int("nemotron_h_moe.ssm.conv_kernel") or 0),
+                "ssm_group_count": int(meta_int("nemotron_h_moe.ssm.group_count") or 0),
+                "ssm_inner_size": int(meta_int("nemotron_h_moe.ssm.inner_size") or 0),
+                "ssm_time_step_rank": int(mamba_num_heads),
+                "ssm_conv_history": max(int(meta_int("nemotron_h_moe.ssm.conv_kernel") or 0), 0),
+                "ssm_conv_channels": int(mamba_conv_dim),
+                "mamba_conv_dim": int(mamba_conv_dim),
+                "mamba_projection_size": int(mamba_projection_size),
+                "gate_dim": int(mamba_intermediate_size),
+                "recurrent_num_heads": int(mamba_num_heads),
+                "recurrent_head_dim": int(mamba_head_dim),
+                "has_qk_norm": False,
+                "has_attention_biases": False,
+            }, "nemotron_h")
+            if tokenizer_contract:
+                nemotron_config["tokenizer_contract"] = tokenizer_contract
+            chat_template = meta.get("tokenizer.chat_template")
+            if isinstance(chat_template, str) and chat_template.strip():
+                nemotron_config["chat_template"] = chat_template
+            if template_data is None:
+                template_data = load_template_for_arch(arch)
+            template_data = apply_model_contract_overrides(template_data, tie_word_embeddings=bool(tie_word_embeddings), has_untied_output_weight=out_weight is not None)
+            if tokenizer_contract:
+                template_data = _apply_tokenizer_contract_overrides(template_data, str(tokenizer_contract.get("tokenizer_type") or "").strip().lower())
+            chat_contract = _extract_chat_contract(template_data, meta)
+            if chat_contract:
+                nemotron_config["chat_contract"] = chat_contract
+            special_tokens = _apply_special_tokenizer_overrides(_extract_special_tokens_from_meta(meta), tokenizer_contract)
+            quant_summary: dict[str, Any] = {
+                "source": "gguf",
+                "token_emb": get_quant_type_name(tok.ggml_type),
+                "lm_head": get_quant_type_name(out_weight.ggml_type) if out_weight is not None else get_quant_type_name(tok.ggml_type),
+            }
+            quant_summary.update(layer_quant_summary)
+            dtype_table = [int(entry["_dtype_id"]) for entry in nemotron_plan]
+            dtype_table_bytes = bytes(dtype_table)
+
+            os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+            manifest_entries: list[dict[str, Any]] = []
+            current_offset = DATA_START
+
+            def _record_mapped_entry(entry: Dict[str, Any], size: int, source_name: str) -> None:
+                nonlocal current_offset
+                out_entry = {
+                    "name": entry["name"],
+                    "dtype": entry["dtype"],
+                    "file_offset": current_offset,
+                    "size": int(size),
+                    "source_name": source_name,
+                    "shape": entry.get("shape") or [],
+                }
+                if entry.get("layer_kind"):
+                    out_entry["layer_kind"] = entry["layer_kind"]
+                if entry.get("gguf_dims"):
+                    out_entry["gguf_dims"] = entry["gguf_dims"]
+                manifest_entries.append(out_entry)
+                current_offset += int(size)
+
+            with open(args.output, "w+b") as out_f:
+                out_f.write(b"\x00" * HEADER_SIZE)
+                out_f.write(b"\x00" * EXT_METADATA_SIZE)
+                w = HashingWriter(out_f)
+                current_offset += 4 + len(dtype_table_bytes)
+                w.write(struct.pack("<I", len(dtype_table_bytes)))
+                w.write(dtype_table_bytes)
+                for entry in nemotron_plan:
+                    if entry.get("synthetic") == "zeros_fp32":
+                        size = int(entry["_size"])
+                        _record_mapped_entry(entry, size, str(entry.get("source_name") or "synthetic:zeros_fp32"))
+                        write_f32_zeros(w, size // 4)
+                        continue
+                    info = entry.get("_info")
+                    if info is None:
+                        raise GGUFError(f"Mapped entry {entry['name']} has no source tensor")
+                    if info.ggml_type == GGML_TYPE_F16:
+                        elems = int(np.prod(info.dims))
+                        size = elems * 4
+                        _record_mapped_entry(entry, size, info.name)
+                        copy_f16_to_f32_stream(f, data_start + info.offset, elems, w)
+                    else:
+                        size = int(entry["_size"])
+                        _record_mapped_entry(entry, size, info.name)
+                        copy_bytes_stream(f, data_start + info.offset, size, w)
+
+                if vocab_offsets is not None and vocab_strings is not None:
+                    offsets_bytes = struct.pack(f"<{len(vocab_offsets)}i", *vocab_offsets)
+                    tok_entry = {"name": "vocab_offsets", "dtype": "i32", "shape": [len(vocab_offsets)]}
+                    _record_mapped_entry(tok_entry, len(offsets_bytes), "gguf_tokenizer_metadata")
+                    w.write(offsets_bytes)
+                    tok_entry = {"name": "vocab_strings", "dtype": "u8", "shape": [len(vocab_strings)]}
+                    _record_mapped_entry(tok_entry, len(vocab_strings), "gguf_tokenizer_metadata")
+                    w.write(vocab_strings)
+                    if vocab_scores is not None:
+                        scores_bytes = struct.pack(f"<{len(vocab_scores)}f", *vocab_scores)
+                        tok_entry = {"name": "vocab_scores", "dtype": "f32", "shape": [len(vocab_scores)]}
+                        _record_mapped_entry(tok_entry, len(scores_bytes), "gguf_tokenizer_metadata")
+                        w.write(scores_bytes)
+                    if vocab_types is not None:
+                        types_bytes = struct.pack(f"<{len(vocab_types)}B", *vocab_types)
+                        tok_entry = {"name": "vocab_types", "dtype": "u8", "shape": [len(vocab_types)]}
+                        _record_mapped_entry(tok_entry, len(types_bytes), "gguf_tokenizer_metadata")
+                        w.write(types_bytes)
+                    merges_bytes = b""
+                    if vocab_merges:
+                        merges_bytes = struct.pack(f"<{len(vocab_merges)}i", *vocab_merges)
+                    tok_entry = {"name": "vocab_merges", "dtype": "i32", "shape": [len(vocab_merges or [])]}
+                    _record_mapped_entry(tok_entry, len(merges_bytes), "gguf_tokenizer_metadata")
+                    if merges_bytes:
+                        w.write(merges_bytes)
+
+                checksum = w.digest()
+                out_f.flush()
+                out_f.seek(0, os.SEEK_SET)
+                out_f.write(b"BUMPWGT5")
+                out_f.write(struct.pack("<I", BUMP_VERSION_V5))
+                out_f.write(struct.pack("<I", 1))
+                out_f.write(struct.pack("<I", int(num_layers)))
+                out_f.write(struct.pack("<I", int(vocab_size)))
+                out_f.write(struct.pack("<I", int(embed_dim)))
+                out_f.write(struct.pack("<I", int(intermediate)))
+                out_f.write(struct.pack("<I", int(context_len)))
+                out_f.write(struct.pack("<I", int(num_heads)))
+                out_f.write(struct.pack("<I", int(num_kv_heads)))
+                out_f.write(struct.pack("<I", int(head_dim)))
+                out_f.write(struct.pack("<Q", int(aligned_embed_dim)))
+                out_f.write(struct.pack("<Q", int(aligned_head_dim)))
+                out_f.write(struct.pack("<Q", int(aligned_intermediate)))
+                out_f.write(struct.pack("<Q", int(aligned_context)))
+                out_f.write(struct.pack("<I", int(num_merges)))
+                out_f.write(struct.pack("<I", int(total_vocab_bytes)))
+                out_f.write(checksum)
+
+                manifest_dict = {
+                    "version": 5,
+                    "model": "nemotron_h",
+                    "source_arch": arch,
+                    "source_format": "gguf",
+                    "bump_layout": {"header_size": HEADER_SIZE, "ext_metadata_size": EXT_METADATA_SIZE, "data_start": DATA_START},
+                    "config": nemotron_config,
+                    "template": template_data,
+                    "quant_summary": quant_summary,
+                    "special_tokens": special_tokens if special_tokens else None,
+                    "tokenizer_contract": tokenizer_contract if tokenizer_contract else None,
+                    "chat_contract": chat_contract if chat_contract else None,
+                    "source_tensor_coverage": source_coverage,
+                    "num_layers": num_layers,
+                    "embed_dim": embed_dim,
+                    "num_heads": num_heads,
+                    "num_kv_heads": num_kv_heads,
+                    "head_dim": head_dim,
+                    "intermediate_size": intermediate,
+                    "vocab_size": vocab_size,
+                    "context_length": context_len,
+                    "has_attention_biases": False,
+                    "has_qk_norm": False,
+                    "num_merges": num_merges,
+                    "total_vocab_bytes": total_vocab_bytes,
+                    "entries": manifest_entries,
+                }
+                manifest_hash = calculate_manifest_hash(manifest_dict)
+                metadata = build_bumpv5_metadata(template_data, nemotron_config, quant_summary, manifest_hash, "convert_gguf_to_bump_v8.py")
+                metadata["template_hash"] = calculate_template_hash(template_data)
+                metadata_bytes = _canonical_json_bytes(metadata)
+                meta_hash = calculate_metadata_hash(metadata)
+                out_f.seek(0, os.SEEK_END)
+                meta_offset = out_f.tell()
+                out_f.write(metadata_bytes)
+                write_bumpv5_footer(out_f, len(metadata_bytes), meta_hash)
+                print(f"[bumpv5] Metadata: {len(metadata_bytes)} bytes @ offset {meta_offset}")
+                print(f"[bumpv5] Template: {template_data.get('name', 'nemotron_h')}, mapped entries: {len(manifest_entries)}")
+
+            if args.config_out:
+                os.makedirs(os.path.dirname(args.config_out) or ".", exist_ok=True)
+                with open(args.config_out, "w", encoding="utf-8") as cf:
+                    json.dump(nemotron_config, cf, indent=2)
+                    cf.write("\n")
+            if args.manifest_out:
+                os.makedirs(os.path.dirname(args.manifest_out) or ".", exist_ok=True)
+                with open(args.manifest_out, "w", encoding="utf-8") as mf:
+                    json.dump(manifest_dict, mf, indent=2)
+                    mf.write("\n")
+                print(f"[manifest] Written: {args.manifest_out} ({len(manifest_entries)} entries)")
+
+            print(
+                f"[gguf->bump] version={args.bump_version} arch={arch}->nemotron_h layers={num_layers} "
+                f"hidden={embed_dim} heads={num_heads}/{num_kv_heads} ff={intermediate} "
+                f"mamba_proj={mamba_projection_size} entries={len(manifest_entries)} -> {args.output}"
+            )
+            print_generic_conversion_report(arch="nemotron_h", manifest_entries=manifest_entries, coverage_report=source_coverage)
+            return
 
         layer_infos = []
         dtype_table = [token_dtype]
@@ -4883,6 +5386,7 @@ def main() -> None:
             cfg["chat_contract"] = chat_contract
         if tokenizer_contract:
             cfg["tokenizer_contract"] = tokenizer_contract
+        cfg = _inject_runtime_config_defaults(cfg, arch)
         with open(args.config_out, "w", encoding="utf-8") as cf:
             json.dump(cfg, cf, indent=2)
             cf.write("\n")

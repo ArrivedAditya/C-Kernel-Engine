@@ -2221,6 +2221,39 @@ void moe_relu2_expert_forward_f32(const float *hidden,
                                   int n_experts,
                                   int top_k);
 
+void moe_relu2_expert_forward_q5_0_q8_0(const float *hidden,
+                                        const int *indices,
+                                        const float *routing_weights,
+                                        const void *expert_up,
+                                        const void *expert_down,
+                                        float *output,
+                                        int rows,
+                                        int hidden_dim,
+                                        int intermediate_dim,
+                                        int n_experts,
+                                        int top_k);
+
+void moe_relu2_expert_forward_q5_0_q5_0(const float *hidden,
+                                        const int *indices,
+                                        const float *routing_weights,
+                                        const void *expert_up,
+                                        const void *expert_down,
+                                        float *output,
+                                        int rows,
+                                        int hidden_dim,
+                                        int intermediate_dim,
+                                        int n_experts,
+                                        int top_k);
+
+void moe_relu2_shared_forward_q5_1_q8_0(const float *hidden,
+                                        const float *routed,
+                                        const void *shared_up,
+                                        const void *shared_down,
+                                        float *output,
+                                        int rows,
+                                        int hidden_dim,
+                                        int intermediate_dim);
+
 void moe_relu2_expert_backward_f32(const float *d_output,
                                    const float *hidden,
                                    const int *indices,
@@ -2793,6 +2826,17 @@ void embedding_forward(const int32_t *token_ids,
                        int add_pos);
 
 void embedding_forward_q4_k(const int32_t *token_ids,
+                            int token_count,
+                            int vocab_size,
+                            const void *token_embeddings,
+                            const float *pos_embeddings,
+                            float *output,
+                            int embed_dim,
+                            int aligned_embed_dim,
+                            int context_window,
+                            int add_pos);
+
+void embedding_forward_q5_0(const int32_t *token_ids,
                             int token_count,
                             int vocab_size,
                             const void *token_embeddings,

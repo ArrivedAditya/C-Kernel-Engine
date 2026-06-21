@@ -1,0 +1,85 @@
+{
+  "id": "moe_relu2_shared_forward_q5_1_q8_0",
+  "op": "shared_relu2_expert_mlp",
+  "variant": "q5_1_q8_0_scalar_ref",
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "quant": {
+    "weight": "q5_1|q8_0",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "hidden",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ]
+    },
+    {
+      "name": "routed",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ]
+    }
+  ],
+  "weights": [
+    {
+      "name": "shared_up",
+      "dtype": "q5_1",
+      "shape": [
+        "I",
+        "H"
+      ]
+    },
+    {
+      "name": "shared_down",
+      "dtype": "q8_0",
+      "shape": [
+        "H",
+        "I"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ]
+    }
+  ],
+  "dims": [
+    "R",
+    "H",
+    "I"
+  ],
+  "impl": {
+    "function": "moe_relu2_shared_forward_q5_1_q8_0",
+    "c_declaration": "void moe_relu2_shared_forward_q5_1_q8_0(const float *hidden, const float *routed, const void *shared_up, const void *shared_down, float *output, int rows, int hidden_dim, int intermediate_dim);",
+    "sources": [
+      "src/kernels/axpy_kernels.c"
+    ],
+    "variants": [
+      {
+        "name": "scalar_ref",
+        "requires": [],
+        "compile_flags": []
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "unittest/test_moe_relu2_expert.py"
+    ]
+  }
+}

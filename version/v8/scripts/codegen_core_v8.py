@@ -1297,7 +1297,7 @@ def emit_op(
                 f"{1 if force_mlp_gate_up_q8_contract else 0});"
             )
             lines.append(f"    if ({q8_contract_name} && ck_debug_mlp_gate_up_fp32_input != NULL) {{")
-            lines.append(f"    quantize_row_q8_k(ck_debug_mlp_gate_up_fp32_input, {x_expr}, {k_expr});")
+            lines.append(f"    quantize_row_q8_k(ck_debug_mlp_gate_up_fp32_input, (void*)({x_expr}), {k_expr});")
             lines.append(f"    {function}(")
             lines.append(f"        {gate_y_expr},")
             lines.append(f"        {gate_w_expr},")
@@ -1562,6 +1562,26 @@ def emit_op(
         if out_expr:
             lines.append(f'    ck_debug_export_hidden(model, {layer}, "mlp_down", (const float*){out_expr}, EMBED_DIM);')
             _emit_hidden_export_last_row(out_expr, "mlp_down", "EMBED_DIM")
+    elif op_name == "mamba_in_proj":
+        _emit_hidden_export(
+            _hidden_arg("output", "out", "c", "y"),
+            "mamba_in_proj",
+            _hidden_count("m", "M", "rows", "out_dim", default="0"),
+        )
+    elif op_name == "mamba_in_proj_split":
+        _emit_hidden_export(_hidden_arg("gate", "z"), "mamba_gate", _hidden_count("intermediate_dim", "inner_dim", default="INTERMEDIATE_SIZE"))
+        _emit_hidden_export(_hidden_arg("hidden_bc", "conv_qkv", "x"), "mamba_hidden_bc", _hidden_count("conv_dim", default="0"))
+        _emit_hidden_export(_hidden_arg("dt"), "mamba_dt_raw", _hidden_count("num_heads", default="0"))
+    elif op_name == "mamba_conv1d_silu":
+        _emit_hidden_export(_hidden_arg("conv_out", "out", "y"), "mamba_conv", _hidden_count("conv_dim", default="0"))
+    elif op_name == "mamba_dt_softplus":
+        _emit_hidden_export(_hidden_arg("dt_out", "out", "y"), "mamba_dt", _hidden_count("num_heads", default="0"))
+    elif op_name == "mamba_selective_scan":
+        _emit_hidden_export(_hidden_arg("y", "out"), "mamba_scan_y", _mul_expr(_hidden_arg("num_heads") or "0", _hidden_arg("head_dim") or "0"))
+    elif op_name == "mamba_rmsnorm_gate":
+        _emit_hidden_export(_hidden_arg("out", "y"), "mamba_normed", _hidden_count("inner_dim", "intermediate_dim", default="INTERMEDIATE_SIZE"))
+    elif op_name == "mamba_out_proj":
+        _emit_hidden_export(_hidden_arg("output", "out", "c", "y"), "mamba_out_proj", "EMBED_DIM")
     elif op_name == "gemma4_per_layer_prepare":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "per_layer_input", "y"))
         if out_expr:
