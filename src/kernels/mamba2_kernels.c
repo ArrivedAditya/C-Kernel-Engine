@@ -2,6 +2,40 @@
 
 #include <math.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+
+static int ck_mamba_debug_enabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *v = getenv("CK_DEBUG_MAMBA");
+        cached = (v && v[0] && v[0] != '0') ? 1 : 0;
+    }
+    return cached;
+}
+
+static void ck_mamba_debug_finite(const char *name, const float *x, size_t n) {
+    if (!ck_mamba_debug_enabled() || !x || n == 0) {
+        return;
+    }
+    size_t finite = 0, nan = 0, inf = 0;
+    float min_v = 0.0f, max_v = 0.0f;
+    for (size_t i = 0; i < n; ++i) {
+        const float v = x[i];
+        if (isnan(v)) {
+            ++nan;
+        } else if (!isfinite(v)) {
+            ++inf;
+        } else {
+            if (finite == 0 || v < min_v) min_v = v;
+            if (finite == 0 || v > max_v) max_v = v;
+            ++finite;
+        }
+    }
+    fprintf(stderr, "[CK_DEBUG_MAMBA] %s finite=%zu/%zu nan=%zu inf=%zu min=%g max=%g\n",
+            name, finite, n, nan, inf, finite ? (double)min_v : 0.0, finite ? (double)max_v : 0.0);
+}
 
 static inline float mamba2_sigmoid_f32(float x) {
     if (x >= 0.0f) {
@@ -47,6 +81,7 @@ void mamba2_in_proj_split_f32(const float *projected,
     const int hidden_bc_offset = gate_offset + intermediate_dim;
     const int dt_offset = hidden_bc_offset + conv_dim;
 
+    ck_mamba_debug_finite("split.projected[0]", projected, (size_t)projection_dim);
     for (int row = 0; row < rows; ++row) {
         const float *src = projected + (size_t)row * (size_t)projection_dim;
         memcpy(gate + (size_t)row * (size_t)intermediate_dim,
@@ -59,6 +94,9 @@ void mamba2_in_proj_split_f32(const float *projected,
                src + dt_offset,
                (size_t)num_heads * sizeof(float));
     }
+    ck_mamba_debug_finite("split.gate[0]", gate, (size_t)intermediate_dim);
+    ck_mamba_debug_finite("split.hidden_bc[0]", hidden_bc, (size_t)conv_dim);
+    ck_mamba_debug_finite("split.dt[0]", dt, (size_t)num_heads);
 }
 
 void mamba2_conv1d_decode_f32(const float *state_in,
@@ -75,23 +113,37 @@ void mamba2_conv1d_decode_f32(const float *state_in,
         return;
     }
 
+    ck_mamba_debug_finite("conv.state_in", state_in, (size_t)conv_dim * (size_t)kernel_size);
+    ck_mamba_debug_finite("conv.x[0]", x, (size_t)conv_dim);
+
+    /* State layout is [conv_dim, kernel_size]. Rows are time steps, not
+     * independent batch entries. Keep a local rolling state so prefill scans
+     * the prompt in order and decode (rows=1) is the same contract.
+     */
+    float state_work[(size_t)conv_dim * (size_t)kernel_size];
+    memcpy(state_work, state_in, (size_t)conv_dim * (size_t)kernel_size * sizeof(float));
+
     for (int row = 0; row < rows; ++row) {
         for (int ch = 0; ch < conv_dim; ++ch) {
-            const size_t base = ((size_t)row * (size_t)conv_dim + (size_t)ch) * (size_t)kernel_size;
+            const size_t base = (size_t)ch * (size_t)kernel_size;
             for (int k = 0; k < kernel_size - 1; ++k) {
-                state_out[base + (size_t)k] = state_in[base + (size_t)k + 1u];
+                state_work[base + (size_t)k] = state_work[base + (size_t)k + 1u];
             }
-            state_out[base + (size_t)kernel_size - 1u] =
+            state_work[base + (size_t)kernel_size - 1u] =
                 x[(size_t)row * (size_t)conv_dim + (size_t)ch];
 
             float acc = bias ? bias[ch] : 0.0f;
             for (int k = 0; k < kernel_size; ++k) {
-                acc += state_out[base + (size_t)k] *
+                acc += state_work[base + (size_t)k] *
                        weight[(size_t)ch * (size_t)kernel_size + (size_t)k];
             }
             conv_out[(size_t)row * (size_t)conv_dim + (size_t)ch] = mamba2_silu_f32(acc);
         }
     }
+
+    memcpy(state_out, state_work, (size_t)conv_dim * (size_t)kernel_size * sizeof(float));
+    ck_mamba_debug_finite("conv.out[0]", conv_out, (size_t)conv_dim);
+    ck_mamba_debug_finite("conv.state_out", state_out, (size_t)conv_dim * (size_t)kernel_size);
 }
 
 void mamba2_dt_softplus_f32(const float *dt,
@@ -105,6 +157,8 @@ void mamba2_dt_softplus_f32(const float *dt,
         return;
     }
 
+    ck_mamba_debug_finite("dt.in[0]", dt, (size_t)num_heads);
+    ck_mamba_debug_finite("dt.bias", dt_bias, (size_t)num_heads);
     for (int row = 0; row < rows; ++row) {
         for (int h = 0; h < num_heads; ++h) {
             float v = dt[(size_t)row * (size_t)num_heads + (size_t)h];
@@ -122,6 +176,7 @@ void mamba2_dt_softplus_f32(const float *dt,
             dt_out[(size_t)row * (size_t)num_heads + (size_t)h] = v;
         }
     }
+    ck_mamba_debug_finite("dt.out[0]", dt_out, (size_t)num_heads);
 }
 
 void mamba2_selective_state_update_decode_f32(const float *state_in,
@@ -193,22 +248,41 @@ void mamba2_selective_scan_f32(const float *state_init,
     }
 
     const size_t state_per_batch = (size_t)num_heads * (size_t)head_dim * (size_t)state_dim;
+    ck_mamba_debug_finite("scan.state_init", state_init, state_per_batch);
+    ck_mamba_debug_finite("scan.x[0]", x, (size_t)num_heads * (size_t)head_dim + 2u * (size_t)num_groups * (size_t)state_dim);
+    ck_mamba_debug_finite("scan.dt[0]", dt, (size_t)num_heads);
+    ck_mamba_debug_finite("scan.a", a, (size_t)num_heads);
+    ck_mamba_debug_finite("scan.d", d, (size_t)num_heads);
     memcpy(state_out, state_init, (size_t)batch * state_per_batch * sizeof(float));
 
     for (int bs = 0; bs < batch; ++bs) {
         float *state_batch = state_out + (size_t)bs * state_per_batch;
         for (int t = 0; t < seq_len; ++t) {
             for (int h = 0; h < num_heads; ++h) {
-                const int group = (int)(((long long)h * (long long)num_groups) / (long long)num_heads);
+                /* Nemotron-H no-cache/chunked prefill expands B/C with
+                 * repeat(..., num_heads / num_groups, ...), yielding a
+                 * repeating head->group mapping.  The separate decode state
+                 * update kernel keeps the cache-path contiguous mapping.
+                 */
+                const int group = h % num_groups;
                 const float dt_h = dt[((size_t)bs * (size_t)seq_len + (size_t)t) * (size_t)num_heads + (size_t)h];
                 const float d_a = expf(dt_h * a[h]);
                 const float d_h = d[h];
-                const float *b_row = b + (((size_t)bs * (size_t)seq_len + (size_t)t) * (size_t)num_groups + (size_t)group) * (size_t)state_dim;
-                const float *c_row = c + (((size_t)bs * (size_t)seq_len + (size_t)t) * (size_t)num_groups + (size_t)group) * (size_t)state_dim;
+                const int packed_xbc = (x == b && b == c);
+                const size_t inner_dim = (size_t)num_heads * (size_t)head_dim;
+                const size_t bc_dim = (size_t)num_groups * (size_t)state_dim;
+                const size_t packed_stride = inner_dim + 2u * bc_dim;
+                const float *packed_row = x + ((size_t)bs * (size_t)seq_len + (size_t)t) * packed_stride;
+                const float *b_row = packed_xbc
+                    ? (packed_row + inner_dim + (size_t)group * (size_t)state_dim)
+                    : (b + (((size_t)bs * (size_t)seq_len + (size_t)t) * (size_t)num_groups + (size_t)group) * (size_t)state_dim);
+                const float *c_row = packed_xbc
+                    ? (packed_row + inner_dim + bc_dim + (size_t)group * (size_t)state_dim)
+                    : (c + (((size_t)bs * (size_t)seq_len + (size_t)t) * (size_t)num_groups + (size_t)group) * (size_t)state_dim);
 
                 for (int hd = 0; hd < head_dim; ++hd) {
                     const size_t x_idx = (((size_t)bs * (size_t)seq_len + (size_t)t) * (size_t)num_heads + (size_t)h) * (size_t)head_dim + (size_t)hd;
-                    const float x_val = x[x_idx];
+                    const float x_val = packed_xbc ? packed_row[(size_t)h * (size_t)head_dim + (size_t)hd] : x[x_idx];
                     const size_t state_base = ((size_t)h * (size_t)head_dim + (size_t)hd) * (size_t)state_dim;
                     float acc = 0.0f;
                     for (int st = 0; st < state_dim; ++st) {
@@ -222,6 +296,8 @@ void mamba2_selective_scan_f32(const float *state_init,
             }
         }
     }
+    ck_mamba_debug_finite("scan.state_out", state_out, (size_t)batch * state_per_batch);
+    ck_mamba_debug_finite("scan.y[0]", y, (size_t)num_heads * (size_t)head_dim);
 }
 
 void mamba2_rmsnorm_gate_f32(const float *x,
@@ -236,6 +312,9 @@ void mamba2_rmsnorm_gate_f32(const float *x,
         return;
     }
 
+    ck_mamba_debug_finite("rmsgate.x[0]", x, (size_t)inner_dim);
+    ck_mamba_debug_finite("rmsgate.gate[0]", gate, (size_t)inner_dim);
+    ck_mamba_debug_finite("rmsgate.weight", weight, (size_t)inner_dim);
     for (int row = 0; row < rows; ++row) {
         const float *x_row = x + (size_t)row * (size_t)inner_dim;
         const float *gate_row = gate + (size_t)row * (size_t)inner_dim;
@@ -259,4 +338,5 @@ void mamba2_rmsnorm_gate_f32(const float *x,
             }
         }
     }
+    ck_mamba_debug_finite("rmsgate.out[0]", out, (size_t)inner_dim);
 }

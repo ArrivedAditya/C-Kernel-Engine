@@ -67,16 +67,20 @@ class TestMamba2Reference(unittest.TestCase):
     def test_conv1d_decode_matches_torch(self) -> None:
         rows, conv_dim, kernel = 2, 11, 4
         torch.manual_seed(2)
-        state = torch.randn(rows, conv_dim, kernel, dtype=torch.float32) * 0.2
+        state = torch.randn(conv_dim, kernel, dtype=torch.float32) * 0.2
         x = torch.randn(rows, conv_dim, dtype=torch.float32) * 0.2
         weight = torch.randn(conv_dim, kernel, dtype=torch.float32) * 0.3
         bias = torch.randn(conv_dim, dtype=torch.float32) * 0.1
-        state_ref = torch.roll(state, shifts=-1, dims=-1)
-        state_ref[:, :, -1] = x
-        conv_ref = torch.nn.functional.silu((state_ref * weight.unsqueeze(0)).sum(dim=-1) + bias)
+        state_ref = state.clone()
+        conv_rows = []
+        for row in range(rows):
+            state_ref = torch.roll(state_ref, shifts=-1, dims=-1)
+            state_ref[:, -1] = x[row]
+            conv_rows.append(torch.nn.functional.silu((state_ref * weight).sum(dim=-1) + bias))
+        conv_ref = torch.stack(conv_rows, dim=0)
         state_np, x_np, weight_np, bias_np = map(_np, (state, x, weight, bias))
         conv = np.empty((rows, conv_dim), dtype=np.float32)
-        state_out = np.empty((rows, conv_dim, kernel), dtype=np.float32)
+        state_out = np.empty((conv_dim, kernel), dtype=np.float32)
         LIB.mamba2_conv1d_decode_f32(_fptr(state_np), _fptr(x_np), _fptr(weight_np), _fptr(bias_np), _fptr(conv), _fptr(state_out), rows, conv_dim, kernel)
         np.testing.assert_allclose(state_out, _np(state_ref), atol=0.0, rtol=0.0)
         np.testing.assert_allclose(conv, _np(conv_ref), atol=1e-6, rtol=0.0)
@@ -136,7 +140,7 @@ class TestMamba2Reference(unittest.TestCase):
         for bs in range(batch):
             for t in range(seq):
                 for h in range(heads):
-                    g = h * groups // heads
+                    g = h % groups
                     decay = torch.exp(dt[bs, t, h] * a[h])
                     for hd in range(head_dim):
                         new_state = state_ref[bs, h, hd] * decay + dt[bs, t, h] * b[bs, t, g] * x[bs, t, h, hd]
@@ -150,10 +154,14 @@ class TestMamba2Reference(unittest.TestCase):
         np.testing.assert_allclose(state_out, _np(state_ref), atol=1e-6, rtol=0.0)
         np.testing.assert_allclose(y, _np(y_ref), atol=1e-6, rtol=0.0)
 
-    def test_selective_scan_matches_repeated_decode_kernel(self) -> None:
-        batch, seq, heads, head_dim, state_dim, groups = 2, 4, 4, 3, 5, 2
+    def test_selective_scan_prefill_group_mapping_differs_from_decode_cache_mapping(self) -> None:
+        # Nemotron-H no-cache/chunked prefill expands B/C with torch.repeat,
+        # giving h % groups. The cache decode path expands with contiguous group
+        # blocks. Keep this test as a contract guard so the two kernels are not
+        # accidentally forced back to the same mapping.
+        batch, seq, heads, head_dim, state_dim, groups = 1, 1, 8, 2, 3, 2
         rng = np.random.default_rng(77)
-        state0 = np.ascontiguousarray((0.1 * rng.standard_normal((batch, heads, head_dim, state_dim))).astype(np.float32))
+        state0 = np.zeros((batch, heads, head_dim, state_dim), dtype=np.float32)
         x = np.ascontiguousarray((0.2 * rng.standard_normal((batch, seq, heads, head_dim))).astype(np.float32))
         dt = np.ascontiguousarray((0.01 + 0.3 * rng.random((batch, seq, heads))).astype(np.float32))
         a = np.ascontiguousarray((-(0.1 + 0.5 * rng.random(heads))).astype(np.float32))
@@ -164,20 +172,13 @@ class TestMamba2Reference(unittest.TestCase):
         scan_y = np.empty_like(x)
         LIB.mamba2_selective_scan_f32(_fptr(state0), _fptr(x), _fptr(dt), _fptr(a), _fptr(b), _fptr(c), _fptr(d), _fptr(scan_state), _fptr(scan_y), batch, seq, heads, head_dim, state_dim, groups)
 
-        decode_state = state0.copy()
-        decode_y = np.empty_like(x)
-        for t in range(seq):
-            next_state = np.empty_like(decode_state)
-            y_t = np.empty((batch, heads, head_dim), dtype=np.float32)
-            LIB.mamba2_selective_state_update_decode_f32(
-                _fptr(decode_state), _fptr(np.ascontiguousarray(x[:, t])), _fptr(np.ascontiguousarray(dt[:, t])),
-                _fptr(a), _fptr(np.ascontiguousarray(b[:, t])), _fptr(np.ascontiguousarray(c[:, t])), _fptr(d),
-                _fptr(next_state), _fptr(y_t), batch, heads, head_dim, state_dim, groups,
-            )
-            decode_state = next_state
-            decode_y[:, t] = y_t
-        np.testing.assert_allclose(scan_state, decode_state, atol=0.0, rtol=0.0)
-        np.testing.assert_allclose(scan_y, decode_y, atol=1e-7, rtol=0.0)
+        ref = np.empty_like(scan_y)
+        for h in range(heads):
+            g = h % groups
+            for hd in range(head_dim):
+                new_state = dt[0, 0, h] * b[0, 0, g] * x[0, 0, h, hd]
+                ref[0, 0, h, hd] = float(np.dot(new_state, c[0, 0, g]) + d[h] * x[0, 0, h, hd])
+        np.testing.assert_allclose(scan_y, ref, atol=1e-6, rtol=0.0)
 
     def test_rmsnorm_gate_matches_torch_grouped_after_gate(self) -> None:
         rows, inner_dim, group_size = 3, 24, 6

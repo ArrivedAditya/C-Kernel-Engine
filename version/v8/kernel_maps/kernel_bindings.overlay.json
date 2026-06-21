@@ -1836,6 +1836,509 @@
           "source": "dim:rope_freq_base"
         }
       ]
+    },
+    "embedding_forward_q5_0": {
+      "params": [
+        {
+          "name": "token_ids",
+          "source": "activation:tokens",
+          "cast": "int32_t*"
+        },
+        {
+          "name": "token_count",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "vocab_size",
+          "source": "dim:vocab_size"
+        },
+        {
+          "name": "token_embeddings",
+          "source": "weight:token_emb"
+        },
+        {
+          "name": "pos_embeddings",
+          "source": "null"
+        },
+        {
+          "name": "output",
+          "source": "output:output",
+          "cast": "float*"
+        },
+        {
+          "name": "embed_dim",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "aligned_embed_dim",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "context_window",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "add_pos",
+          "source": "const:0"
+        }
+      ]
+    },
+    "mamba2_conv1d_decode_f32": {
+      "params": [
+        {
+          "name": "state_in",
+          "source": "activation:state_in",
+          "cast": "const float*"
+        },
+        {
+          "name": "x",
+          "source": "activation:x",
+          "cast": "const float*"
+        },
+        {
+          "name": "weight",
+          "source": "weight:mamba_conv1d",
+          "cast": "const float*"
+        },
+        {
+          "name": "bias",
+          "source": "weight_f:mamba_conv1d_bias",
+          "cast": "const float*"
+        },
+        {
+          "name": "conv_out",
+          "source": "output:conv_out",
+          "cast": "float*"
+        },
+        {
+          "name": "state_out",
+          "source": "output:state_out",
+          "cast": "float*"
+        },
+        {
+          "name": "rows",
+          "source": "dim:_m"
+        },
+        {
+          "name": "conv_dim",
+          "source": "dim:mamba_conv_dim"
+        },
+        {
+          "name": "kernel_size",
+          "source": "dim:ssm_conv_kernel"
+        }
+      ]
+    },
+    "mamba2_selective_scan_f32": {
+      "params": [
+        {
+          "name": "state_init",
+          "source": "activation:state_init",
+          "cast": "const float*"
+        },
+        {
+          "name": "x",
+          "source": "activation:x",
+          "cast": "const float*"
+        },
+        {
+          "name": "dt",
+          "source": "activation:dt",
+          "cast": "const float*"
+        },
+        {
+          "name": "a",
+          "source": "weight:mamba_a",
+          "cast": "const float*"
+        },
+        {
+          "name": "b",
+          "source": "activation:B",
+          "cast": "const float*"
+        },
+        {
+          "name": "c",
+          "source": "activation:C",
+          "cast": "const float*"
+        },
+        {
+          "name": "d",
+          "source": "weight:mamba_d",
+          "cast": "const float*"
+        },
+        {
+          "name": "state_out",
+          "source": "output:state_out",
+          "cast": "float*"
+        },
+        {
+          "name": "y",
+          "source": "output:y",
+          "cast": "float*"
+        },
+        {
+          "name": "batch",
+          "source": "const:1"
+        },
+        {
+          "name": "seq_len",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:mamba_num_heads"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:mamba_head_dim"
+        },
+        {
+          "name": "state_dim",
+          "source": "dim:ssm_state_size"
+        },
+        {
+          "name": "num_groups",
+          "source": "dim:ssm_group_count"
+        }
+      ]
+    },
+    "mamba2_rmsnorm_gate_f32": {
+      "params": [
+        {
+          "name": "x",
+          "source": "activation:x",
+          "cast": "const float*"
+        },
+        {
+          "name": "gate",
+          "source": "activation:gate",
+          "cast": "const float*"
+        },
+        {
+          "name": "weight",
+          "source": "weight:mamba_norm",
+          "cast": "const float*"
+        },
+        {
+          "name": "out",
+          "source": "output:out",
+          "cast": "float*"
+        },
+        {
+          "name": "rows",
+          "source": "dim:_m"
+        },
+        {
+          "name": "inner_dim",
+          "source": "dim:ssm_inner_size"
+        },
+        {
+          "name": "group_size",
+          "source": "dim:mamba_norm_group_size"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_norm_eps"
+        }
+      ]
+    },
+    "nemotron_group_limited_topk_router_f32": {
+      "params": [
+        {
+          "name": "scores",
+          "source": "activation:scores",
+          "cast": "const float*"
+        },
+        {
+          "name": "correction_bias",
+          "source": "weight:moe_router_bias",
+          "cast": "const float*"
+        },
+        {
+          "name": "indices",
+          "source": "output:indices",
+          "cast": "int*"
+        },
+        {
+          "name": "weights",
+          "source": "output:weights",
+          "cast": "float*"
+        },
+        {
+          "name": "rows",
+          "source": "dim:_m"
+        },
+        {
+          "name": "n_experts",
+          "source": "dim:n_routed_experts"
+        },
+        {
+          "name": "top_k",
+          "source": "dim:num_experts_per_tok"
+        },
+        {
+          "name": "n_group",
+          "source": "dim:router_num_groups"
+        },
+        {
+          "name": "topk_group",
+          "source": "dim:router_topk_group"
+        },
+        {
+          "name": "norm_topk_prob",
+          "source": "dim:router_norm_topk_prob"
+        },
+        {
+          "name": "routed_scaling_factor",
+          "source": "dim:routed_scaling_factor"
+        }
+      ]
+    },
+    "moe_relu2_expert_forward_q5_0_q8_0": {
+      "params": [
+        {
+          "name": "hidden",
+          "source": "activation:hidden",
+          "cast": "const float*"
+        },
+        {
+          "name": "indices",
+          "source": "activation:indices",
+          "cast": "const int*"
+        },
+        {
+          "name": "routing_weights",
+          "source": "activation:routing_weights",
+          "cast": "const float*"
+        },
+        {
+          "name": "expert_up",
+          "source": "weight:moe_expert_up",
+          "cast": "const void*"
+        },
+        {
+          "name": "expert_down",
+          "source": "weight:moe_expert_down",
+          "cast": "const void*"
+        },
+        {
+          "name": "output",
+          "source": "output:output",
+          "cast": "float*"
+        },
+        {
+          "name": "rows",
+          "source": "dim:_m"
+        },
+        {
+          "name": "hidden_dim",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "intermediate_dim",
+          "source": "dim:moe_intermediate_size"
+        },
+        {
+          "name": "n_experts",
+          "source": "dim:n_routed_experts"
+        },
+        {
+          "name": "top_k",
+          "source": "dim:num_experts_per_tok"
+        }
+      ]
+    },
+    "moe_relu2_shared_forward_q5_1_q8_0": {
+      "params": [
+        {
+          "name": "hidden",
+          "source": "activation:hidden",
+          "cast": "const float*"
+        },
+        {
+          "name": "routed",
+          "source": "activation:routed",
+          "cast": "const float*"
+        },
+        {
+          "name": "shared_up",
+          "source": "weight:moe_shared_up",
+          "cast": "const void*"
+        },
+        {
+          "name": "shared_down",
+          "source": "weight:moe_shared_down",
+          "cast": "const void*"
+        },
+        {
+          "name": "output",
+          "source": "output:output",
+          "cast": "float*"
+        },
+        {
+          "name": "rows",
+          "source": "dim:_m"
+        },
+        {
+          "name": "hidden_dim",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "intermediate_dim",
+          "source": "dim:moe_shared_expert_intermediate_size"
+        }
+      ]
+    },
+    "mamba2_in_proj_split_f32": {
+      "params": [
+        {
+          "name": "projected",
+          "source": "activation:projected",
+          "cast": "const float*"
+        },
+        {
+          "name": "gate",
+          "source": "output:gate",
+          "cast": "float*"
+        },
+        {
+          "name": "hidden_bc",
+          "source": "output:hidden_bc",
+          "cast": "float*"
+        },
+        {
+          "name": "dt",
+          "source": "output:dt",
+          "cast": "float*"
+        },
+        {
+          "name": "rows",
+          "source": "dim:_m"
+        },
+        {
+          "name": "d_mlp",
+          "source": "const:0"
+        },
+        {
+          "name": "intermediate_dim",
+          "source": "dim:ssm_inner_size"
+        },
+        {
+          "name": "conv_dim",
+          "source": "dim:mamba_conv_dim"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:mamba_num_heads"
+        }
+      ]
+    },
+    "mamba2_dt_softplus_f32": {
+      "params": [
+        {
+          "name": "dt",
+          "source": "activation:dt",
+          "cast": "const float*"
+        },
+        {
+          "name": "dt_bias",
+          "source": "weight:mamba_dt_bias",
+          "cast": "const float*"
+        },
+        {
+          "name": "dt_out",
+          "source": "output:dt_out",
+          "cast": "float*"
+        },
+        {
+          "name": "rows",
+          "source": "dim:_m"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:mamba_num_heads"
+        },
+        {
+          "name": "dt_min",
+          "source": "dim:mamba_dt_min"
+        },
+        {
+          "name": "dt_max",
+          "source": "dim:mamba_dt_max"
+        }
+      ]
+    },
+    "moe_relu2_expert_forward_q5_0_q5_0": {
+      "params": [
+        {
+          "name": "hidden",
+          "source": "activation:hidden",
+          "cast": "const float*"
+        },
+        {
+          "name": "indices",
+          "source": "activation:indices",
+          "cast": "const int*"
+        },
+        {
+          "name": "routing_weights",
+          "source": "activation:routing_weights",
+          "cast": "const float*"
+        },
+        {
+          "name": "expert_up",
+          "source": "weight:moe_expert_up",
+          "cast": "const void*"
+        },
+        {
+          "name": "expert_down",
+          "source": "weight:moe_expert_down",
+          "cast": "const void*"
+        },
+        {
+          "name": "output",
+          "source": "output:output",
+          "cast": "float*"
+        },
+        {
+          "name": "rows",
+          "source": "dim:_m"
+        },
+        {
+          "name": "hidden_dim",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "intermediate_dim",
+          "source": "dim:moe_intermediate_size"
+        },
+        {
+          "name": "n_experts",
+          "source": "dim:n_routed_experts"
+        },
+        {
+          "name": "top_k",
+          "source": "dim:num_experts_per_tok"
+        }
+      ]
+    },
+    "relu2_forward": {
+      "params": [
+        {
+          "name": "input",
+          "source": "activation:x",
+          "cast": "const float*"
+        },
+        {
+          "name": "output",
+          "source": "output:out",
+          "cast": "float*"
+        },
+        {
+          "name": "n",
+          "source": "dim:relu2_elems"
+        }
+      ]
     }
   }
 }

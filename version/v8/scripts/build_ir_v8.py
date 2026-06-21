@@ -401,6 +401,10 @@ OP_DATAFLOW = {
         "inputs": {"input": "main_stream"},
         "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
     },
+    "block_rmsnorm": {
+        "inputs": {"input": "main_stream"},
+        "outputs": {"output": {"slot": "layer_input", "dtype": "fp32"}},
+    },
     "post_attention_norm": {
         "inputs": {"input": "main_stream"},
         "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
@@ -645,6 +649,84 @@ OP_DATAFLOW = {
         },
         "outputs": {"out": {"slot": "main_stream", "dtype": "fp32"}},
     },
+    "moe_router": {
+        "inputs": {"x": "layer_input"},
+        "outputs": {"y": {"slot": "mlp_scratch", "dtype": "fp32"}},
+    },
+    "group_limited_topk_router": {
+        "inputs": {"scores": "mlp_scratch"},
+        "outputs": {
+            "indices": {"slot": "q_scratch", "dtype": "i32"},
+            "weights": {"slot": "k_scratch", "dtype": "fp32"},
+        },
+    },
+    "moe_relu2_expert_mlp": {
+        "inputs": {
+            "hidden": "layer_input",
+            "indices": "q_scratch",
+            "routing_weights": "k_scratch",
+        },
+        "outputs": {"output": {"slot": "mlp_scratch", "dtype": "fp32"}},
+    },
+    "shared_relu2_expert_mlp": {
+        "inputs": {
+            "hidden": "layer_input",
+            "routed": "mlp_scratch",
+        },
+        "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
+    },
+
+    "mamba_in_proj": {
+        "inputs": {"x": "main_stream_q8"},
+        "outputs": {"y": {"slot": "recurrent_packed", "dtype": "fp32"}},
+    },
+    "mamba_in_proj_split": {
+        "inputs": {"projected": "recurrent_packed"},
+        "outputs": {
+            "gate": {"slot": "recurrent_z", "dtype": "fp32"},
+            "hidden_bc": {"slot": "recurrent_conv_qkv", "dtype": "fp32"},
+            "dt": {"slot": "recurrent_g", "dtype": "fp32"},
+        },
+    },
+    "mamba_dt_softplus": {
+        "inputs": {"dt": "recurrent_g"},
+        "outputs": {"dt_out": {"slot": "recurrent_g", "dtype": "fp32"}},
+    },
+    "mamba_conv1d_silu": {
+        "inputs": {
+            "state_in": "recurrent_conv_state",
+            "x": "recurrent_conv_qkv",
+        },
+        "outputs": {
+            "conv_out": {"slot": "recurrent_conv_qkv", "dtype": "fp32"},
+            "state_out": {"slot": "recurrent_conv_state", "dtype": "fp32"},
+        },
+    },
+    "mamba_selective_scan": {
+        "inputs": {
+            "state_init": "recurrent_ssm_state",
+            "x": "recurrent_conv_qkv",
+            "dt": "recurrent_g",
+            "B": "recurrent_conv_qkv",
+            "C": "recurrent_conv_qkv",
+        },
+        "outputs": {
+            "state_out": {"slot": "recurrent_ssm_state", "dtype": "fp32"},
+            "y": {"slot": "recurrent_v", "dtype": "fp32"},
+        },
+    },
+    "mamba_rmsnorm_gate": {
+        "inputs": {"x": "recurrent_v", "gate": "recurrent_z"},
+        "outputs": {"out": {"slot": "recurrent_normed", "dtype": "fp32"}},
+    },
+    "quantize_mamba_out_proj_input": {
+        "inputs": {"input": "recurrent_normed"},
+        "outputs": {"output": {"slot": "main_stream_q8", "dtype": "q8_k"}},
+    },
+    "mamba_out_proj": {
+        "inputs": {"x": "recurrent_normed"},
+        "outputs": {"y": {"slot": "main_stream", "dtype": "fp32"}},
+    },
 
     # MLP block
     "mlp_gate_up": {
@@ -668,6 +750,10 @@ OP_DATAFLOW = {
         "outputs": {"out": {"slot": "mlp_scratch", "dtype": "fp32"}},  # In-place
     },
     "gelu": {
+        "inputs": {"x": "mlp_scratch"},
+        "outputs": {"out": {"slot": "mlp_scratch", "dtype": "fp32"}},  # In-place
+    },
+    "relu2": {
         "inputs": {"x": "mlp_scratch"},
         "outputs": {"out": {"slot": "mlp_scratch", "dtype": "fp32"}},  # In-place
     },
@@ -1750,7 +1836,7 @@ def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, 
         recurrent_q, recurrent_k, recurrent_v, recurrent_inner,
         recurrent_gate, recurrent_conv_channels, recurrent_state_size,
     )):
-        packed_dim = max(recurrent_q + recurrent_k + recurrent_v, recurrent_inner)
+        packed_dim = max(recurrent_q + recurrent_k + recurrent_v, recurrent_inner, int(config.get("mamba_projection_size", 0) or 0))
         packed_size = seq_len * packed_dim * 4
         recurrent_inner_size = seq_len * recurrent_inner * 4
         gate_size = seq_len * recurrent_gate * 4
@@ -1821,6 +1907,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "rmsnorm": "rmsnorm",
     "layernorm": "layernorm",
     "attn_norm": "rmsnorm",
+    "block_rmsnorm": "rmsnorm",
     "post_attention_norm": "rmsnorm",
     "ffn_norm": "rmsnorm",
     "post_ffn_norm": "rmsnorm",
@@ -1851,6 +1938,17 @@ TEMPLATE_TO_KERNEL_OP = {
     "recurrent_norm_gate": "recurrent_norm_gate",
     "attn_gate_sigmoid_mul": "attn_gate_sigmoid_mul",
     "recurrent_out_proj": "matmul",
+    "mamba_in_proj": "matmul",
+    "mamba_in_proj_split": "mamba_in_proj_split",
+    "mamba_dt_softplus": "mamba_dt_softplus",
+    "mamba_conv1d_silu": "mamba_conv1d_state_update",
+    "mamba_selective_scan": "mamba_selective_scan",
+    "mamba_rmsnorm_gate": "mamba_rmsnorm_gate",
+    "mamba_out_proj": "matmul",
+    "moe_router": "matmul",
+    "group_limited_topk_router": "group_limited_topk_router",
+    "moe_relu2_expert_mlp": "moe_relu2_expert_mlp",
+    "shared_relu2_expert_mlp": "shared_relu2_expert_mlp",
     "rope_qk": "rope",
     "mrope_qk": "rope",
     "kv_cache_store": "kv_cache_store",  # Store K,V to KV cache at pos
@@ -1867,6 +1965,7 @@ TEMPLATE_TO_KERNEL_OP = {
     # Use simple matmul for mlp_gate_up to avoid the mismatch.
     "mlp_gate_up": "matmul",  # gemv (decode) or gemm (prefill) - use unfused MLP
     "mlp_up": "matmul",
+    "relu2": "relu2",
     "silu_mul": "swiglu",
     "geglu": "geglu",
     "gelu": "gelu",
@@ -2006,14 +2105,14 @@ def _dedupe_preserve_order(items: List[str]) -> List[str]:
     return out
 
 
-PRE_NORM_OP_NAMES = {"rmsnorm", "layernorm", "attn_norm", "ffn_norm", "post_attention_norm"}
+PRE_NORM_OP_NAMES = {"rmsnorm", "layernorm", "attn_norm", "ffn_norm", "post_attention_norm", "block_rmsnorm"}
 RESIDUAL_SOURCE_BRANCH_STARTERS = {
     # Attention branches
     "q_proj", "q_gate_proj", "qkv_proj", "qkv_packed_proj",
     "recurrent_qkv_proj", "recurrent_gate_proj",
-    "recurrent_alpha_proj", "recurrent_beta_proj",
-    # Feed-forward branches
-    "mlp_gate_up", "mlp_gate", "mlp_up",
+    "recurrent_alpha_proj", "recurrent_beta_proj", "mamba_in_proj",
+    # Feed-forward / routed expert branches
+    "mlp_gate_up", "mlp_gate", "mlp_up", "moe_router",
 }
 PRE_NORM_Q8_DIRECT_CONSUMERS = RESIDUAL_SOURCE_BRANCH_STARTERS
 
@@ -2616,6 +2715,25 @@ def _apply_layer_quant_aliases(
         if dst not in effective and src in effective:
             effective[dst] = effective[src]
 
+    # Canonical IR weight slots are intentionally older/stable names (w1/w2/w3),
+    # while newer safetensors converters often emit semantic names
+    # (mlp_gate/mlp_down/mlp_up). Keep this fallback in the lowerer so templates
+    # do not need brittle per-source alias variants just to preserve dtype
+    # propagation.
+    canonical_aliases = {
+        "w1": ("ffn_gate", "mlp_gate"),
+        "w2": ("ffn_down", "mlp_down"),
+        "w3": ("ffn_up", "mlp_up"),
+        "wo": ("attn_o", "out_proj"),
+    }
+    for dst, candidates in canonical_aliases.items():
+        if dst in effective:
+            continue
+        for src in candidates:
+            if src in effective:
+                effective[dst] = effective[src]
+                break
+
     return effective
 
 def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Optional[int]]:
@@ -2660,6 +2778,16 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
         return embed, attn_out
     if op_name in ("recurrent_out_proj",):
         return embed, int(config.get("ssm_inner_size", attn_out))
+    if op_name in ("mamba_in_proj",):
+        return int(config.get("mamba_projection_size", 0) or 0) or None, embed
+    if op_name in ("mamba_out_proj",):
+        return embed, int(config.get("ssm_inner_size", config.get("mamba_intermediate_size", attn_out)) or attn_out)
+    if op_name in ("moe_router",):
+        return int(config.get("n_routed_experts", config.get("num_experts", 0)) or 0) or None, embed
+    if op_name in ("moe_relu2_expert_mlp",):
+        return int(config.get("moe_intermediate_size", inter) or inter), embed
+    if op_name in ("shared_relu2_expert_mlp",):
+        return int(config.get("moe_shared_expert_intermediate_size", inter) or inter), embed
     if op_name in ("mlp_gate_up",):
         return inter * 2, embed
     if op_name in ("mlp_up",):
@@ -2700,6 +2828,9 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
     if op_name in ("quantize_recurrent_out_proj_input",):
         recurrent_inner = int(config.get("ssm_inner_size", attn_out))
         return recurrent_inner, recurrent_inner
+    if op_name in ("quantize_mamba_out_proj_input",):
+        mamba_inner = int(config.get("mamba_intermediate_size", config.get("ssm_inner_size", attn_out)))
+        return mamba_inner, mamba_inner
     if op_name in ("quantize_mlp_down_input",):
         return inter, inter  # _input_dim = intermediate_size
     return None, None
@@ -2757,6 +2888,49 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
             params["n_dims"] = rotary_dim
             params["rope_freq_base"] = rope_freq_base
             params["use_rope_freq_factors"] = 1 if op_name == "rope_qk" else 0
+        return
+    if model_lc == "nemotron_h":
+        embed_dim = int(config.get("embed_dim", 0) or 0)
+        num_heads = int(config.get("num_heads", config.get("num_attention_heads", 1)) or 1)
+        num_kv_heads = int(config.get("num_kv_heads", config.get("num_key_value_heads", num_heads)) or num_heads)
+        head_dim = int(config.get("head_dim", 0) or 0)
+        q_dim = int(config.get("attn_out_dim", num_heads * head_dim) or (num_heads * head_dim))
+        k_dim = int(num_kv_heads * head_dim)
+        v_dim = int(num_kv_heads * head_dim)
+        rotary_dim = int(config.get("rotary_dim", head_dim) or head_dim)
+        rope_freq_base = float(config.get("rope_freq_base", config.get("rope_theta", 10000.0)) or 10000.0)
+        if op_name == "q_proj":
+            params["_output_dim"] = q_dim
+            params["_input_dim"] = embed_dim
+            params["output_dim"] = q_dim
+        elif op_name == "k_proj":
+            params["_output_dim"] = k_dim
+            params["_input_dim"] = embed_dim
+            params["output_dim"] = k_dim
+        elif op_name == "v_proj":
+            params["_output_dim"] = v_dim
+            params["_input_dim"] = embed_dim
+            params["output_dim"] = v_dim
+        elif op_name == "out_proj":
+            params["_output_dim"] = embed_dim
+            params["_input_dim"] = q_dim
+            params["input_dim"] = q_dim
+        elif op_name == "quantize_out_proj_input":
+            params["_output_dim"] = q_dim
+            params["_input_dim"] = q_dim
+            params["input_dim"] = q_dim
+        elif op_name in ("qk_norm", "rope_qk", "kv_cache_store", "attn", "attn_sliding"):
+            params["head_dim"] = head_dim
+            params["q_head_dim"] = head_dim
+            params["k_head_dim"] = head_dim
+            params["v_head_dim"] = head_dim
+            params["q_dim"] = q_dim
+            params["k_dim"] = k_dim
+            params["v_dim"] = v_dim
+            params["rotary_dim"] = rotary_dim
+            params["n_dims"] = rotary_dim
+            params["rope_freq_base"] = rope_freq_base
+            params["use_rope_freq_factors"] = int(config.get("use_rope_freq_factors", 0) or 0)
         return
     if model_lc != "gemma4":
         return
@@ -3008,29 +3182,72 @@ def _normalize_manifest_config(config: Dict) -> Dict:
     if q_gate_proj_dim is not None:
         out["q_gate_proj_dim"] = int(q_gate_proj_dim)
     ssm_state = _pick("ssm_state_size")
-    ssm_groups = _pick("ssm_group_count")
-    ssm_heads = _pick("ssm_time_step_rank")
+    ssm_groups = _pick("ssm_group_count", "n_groups")
+    ssm_heads = _pick("ssm_time_step_rank", "mamba_num_heads")
     ssm_inner = _pick("ssm_inner_size")
-    ssm_conv_kernel = _pick("ssm_conv_kernel")
+    mamba_head_dim_value = _pick("mamba_head_dim")
+    model_kind_for_ssm = str(out.get("model_type") or out.get("arch") or "").lower()
+    if ssm_inner is None and model_kind_for_ssm == "nemotron_h" and ssm_heads is not None and mamba_head_dim_value is not None:
+        ssm_inner = int(ssm_heads) * int(mamba_head_dim_value)
+    ssm_conv_kernel = _pick("ssm_conv_kernel", "conv_kernel")
     if ssm_state is not None:
         out["ssm_state_size"] = int(ssm_state)
     if ssm_groups is not None:
         out["ssm_group_count"] = int(ssm_groups)
     if ssm_heads is not None:
         out["ssm_time_step_rank"] = int(ssm_heads)
+        if model_kind_for_ssm == "nemotron_h":
+            out["mamba_num_heads"] = int(ssm_heads)
+    if mamba_head_dim_value is not None:
+        out["mamba_head_dim"] = int(mamba_head_dim_value)
     if ssm_inner is not None:
         out["ssm_inner_size"] = int(ssm_inner)
     if ssm_conv_kernel is not None:
         out["ssm_conv_kernel"] = int(ssm_conv_kernel)
-        out["ssm_conv_history"] = max(int(ssm_conv_kernel) - 1, 0)
+        out["ssm_conv_history"] = max(int(ssm_conv_kernel), 0) if model_kind_for_ssm == "nemotron_h" else max(int(ssm_conv_kernel) - 1, 0)
     if None not in (ssm_state, ssm_groups, ssm_heads, ssm_inner):
-        q_dim = int(ssm_state) * int(ssm_groups)
-        v_dim = int(ssm_inner)
-        out["q_dim"] = q_dim
-        out["k_dim"] = q_dim
-        out["v_dim"] = v_dim
-        out["gate_dim"] = int(ssm_heads)
-        out["ssm_conv_channels"] = q_dim + q_dim + v_dim
+        model_kind = str(out.get("model_type") or out.get("arch") or "").lower()
+        if model_kind == "nemotron_h":
+            # Runtime dt clamp follows time_step_limit. time_step_min/max are
+            # initialization ranges and must not clamp forward activations.
+            # Use (0, 0) to disable the CK clamp for PyTorch's default (0, inf).
+            limit = out.get("time_step_limit")
+            if isinstance(limit, (list, tuple)) and len(limit) >= 2:
+                dt_lo = float(limit[0] or 0.0)
+                try:
+                    dt_hi = float(limit[1])
+                except Exception:
+                    dt_hi = float("inf")
+                if dt_hi == float("inf"):
+                    dt_lo, dt_hi = 0.0, 0.0
+            else:
+                dt_lo, dt_hi = 0.0, 0.0
+            out["mamba_dt_min"] = dt_lo
+            out["mamba_dt_max"] = dt_hi
+            if int(ssm_groups) > 0:
+                out["mamba_norm_group_size"] = int(ssm_inner) // int(ssm_groups)
+            v_dim = int(ssm_inner)
+            q_dim = int(ssm_state) * int(ssm_groups)
+            conv_dim = v_dim + q_dim + q_dim
+            out["q_dim"] = q_dim
+            out["k_dim"] = q_dim
+            out["v_dim"] = v_dim
+            out["gate_dim"] = v_dim
+            out["mamba_intermediate_size"] = v_dim
+            out["mamba_conv_dim"] = conv_dim
+            out["mamba_projection_size"] = v_dim + conv_dim + int(ssm_heads)
+            out["ssm_conv_channels"] = conv_dim
+            out.setdefault("ssm_conv_history", max(int(out.get("ssm_conv_kernel", 0) or 0), 0))
+            out.setdefault("rope_freq_base", float(out.get("rope_theta", 10000.0) or 10000.0))
+            out.setdefault("use_rope_freq_factors", 0)
+        else:
+            q_dim = int(ssm_state) * int(ssm_groups)
+            v_dim = int(ssm_inner)
+            out["q_dim"] = q_dim
+            out["k_dim"] = q_dim
+            out["v_dim"] = v_dim
+            out["gate_dim"] = int(ssm_heads)
+            out["ssm_conv_channels"] = q_dim + q_dim + v_dim
         out["recurrent_num_heads"] = int(ssm_heads)
         out["recurrent_head_dim"] = int(v_dim // int(ssm_heads)) if int(ssm_heads) else int(ssm_state)
     attn_out = _pick("attn_out_dim", default=(out.get("num_heads", 0) * out.get("head_dim", 0)))
@@ -4191,7 +4408,9 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         if not kernel_id:
             return None
         act = kernel_act_dtype.get(kernel_id, "fp32")
-        if op_type in ("q_proj", "q_gate_proj", "k_proj", "v_proj", "qkv_packed_proj", "mlp_gate_up", "mlp_up", "projector_fc1"):
+        if op_type in ("q_proj", "q_gate_proj", "k_proj", "v_proj", "qkv_packed_proj", "mlp_gate_up", "mlp_up"):
+            return {"x": "layer_input" if act == "fp32" else "main_stream_q8"}
+        if op_type == "projector_fc1":
             return {"x": "main_stream" if act == "fp32" else "main_stream_q8"}
         if op_type == "out_proj":
             return {"x": "attn_scratch" if act == "fp32" else "main_stream_q8"}
@@ -4201,9 +4420,9 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             return {"x": "branch_normed" if act == "fp32" else "branch_normed"}
         if op_type == "branch_fc2":
             return {"x": "branch_mlp" if act == "fp32" else "branch_mlp"}
-        if op_type == "recurrent_gate_proj":
+        if op_type in ("recurrent_qkv_proj", "recurrent_gate_proj", "recurrent_alpha_proj", "recurrent_beta_proj", "mamba_in_proj"):
             return {"x": "main_stream" if act == "fp32" else "main_stream_q8"}
-        if op_type == "recurrent_out_proj":
+        if op_type in ("recurrent_out_proj", "mamba_out_proj"):
             return {"x": "recurrent_normed" if act == "fp32" else "main_stream_q8"}
         if op_type == "mlp_down":
             return {"x": "mlp_scratch" if act == "fp32" else "main_stream_q8"}
@@ -4270,6 +4489,17 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "recurrent_beta_proj": ["ssm_beta"],
         "recurrent_ssm_conv": ["ssm_conv1d"],
         "recurrent_out_proj": ["ssm_out"],
+    "mamba_in_proj": ["mamba_in_proj"],
+    "mamba_in_proj_split": [],
+    "mamba_dt_softplus": ["mamba_dt_bias"],
+    "mamba_conv1d_silu": ["mamba_conv1d", "mamba_conv1d_bias"],
+    "mamba_selective_scan": ["mamba_a", "mamba_d"],
+    "mamba_rmsnorm_gate": ["mamba_norm"],
+    "mamba_out_proj": ["mamba_out_proj"],
+    "moe_router": ["moe_router"],
+    "group_limited_topk_router": ["moe_router_bias"],
+    "moe_relu2_expert_mlp": ["moe_expert_up", "moe_expert_down"],
+    "shared_relu2_expert_mlp": ["moe_shared_up", "moe_shared_down"],
         "out_proj": ["wo"],
         "mlp_gate_up": ["w1"],
         "mlp_up": ["w3"],
@@ -4285,6 +4515,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "rmsnorm": None,  # gamma is always fp32
         "layernorm": None,  # gamma/beta are fp32
         "attn_norm": None,
+        "block_rmsnorm": None,
         "post_attention_norm": None,
         "ffn_norm": None,
         "post_ffn_norm": None,
@@ -4407,7 +4638,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         # Explicit no-weight math ops. These are real kernels, but they must not
         # flow through the header/footer weighted path below, which would invent
         # a q8_0 weight requirement and fail to bind kernels such as Gemma4 V RMSNorm.
-        if op in {"v_norm"}:
+        if op in {"v_norm", "group_limited_topk_router", "mamba_in_proj_split"}:
             kernel_id = find_kernel(
                 registry,
                 op=kernel_op,
@@ -4438,6 +4669,19 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                 if token_dtype == "bf16":
                     return ["gemma4_per_layer_prepare_bf16_forward"]
                 return ["gemma4_per_layer_prepare_forward"]
+
+            if op == "moe_relu2_expert_mlp":
+                up_dtype = str(layer_quant.get("moe_expert_up", "")).lower()
+                down_dtype = str(layer_quant.get("moe_expert_down", "")).lower()
+                if up_dtype == "q5_0" and down_dtype == "q8_0":
+                    return ["moe_relu2_expert_forward_q5_0_q8_0"]
+                if up_dtype == "q5_0" and down_dtype == "q5_0":
+                    return ["moe_relu2_expert_forward_q5_0_q5_0"]
+            if op == "shared_relu2_expert_mlp":
+                up_dtype = str(layer_quant.get("moe_shared_up", "")).lower()
+                down_dtype = str(layer_quant.get("moe_shared_down", "")).lower()
+                if up_dtype == "q5_1" and down_dtype == "q8_0":
+                    return ["moe_relu2_shared_forward_q5_1_q8_0"]
 
             # Try fused kernel first (e.g., qkv_projection)
             weight_dtype = layer_quant.get(weight_info[0], "fp32")
@@ -4798,7 +5042,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
 
                         # Check if we need to insert quantize op BEFORE out_proj or mlp_down
                         # v7 compatibility: quantize activation output before these projections
-                        if op in ("out_proj", "mlp_down", "recurrent_out_proj") and kernels:
+                        if op in ("out_proj", "mlp_down", "recurrent_out_proj", "mamba_out_proj") and kernels:
                             first_kernel = kernels[0]
                             fk_id = first_kernel[0] if isinstance(first_kernel, tuple) else first_kernel
                             if kernel_needs_q8_activation(registry, fk_id):
@@ -5056,6 +5300,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         ("layernorm", 0): ["ln1_gamma", "ln1_beta"],  # Pre-attention norm
         ("layernorm", 1): ["ln2_gamma", "ln2_beta"],  # Pre-MLP norm
         ("attn_norm", 0): ["ln1_gamma"],    # Pre-attention norm (Gemma)
+        ("block_rmsnorm", 0): ["ln1_gamma"], # Generic pre-block norm
         ("ffn_norm", 0): ["ln2_gamma"],     # Pre-MLP norm (Gemma)
         ("post_attention_norm", 0): ["post_attention_norm"],
         ("post_ffn_norm", 0): ["post_ffn_norm"],
@@ -6157,7 +6402,7 @@ def generate_ir_lower_1(
 # Maps: kernel weight ref → possible manifest entry patterns
 WEIGHT_PATTERNS = {
     # QKV projection weights and biases
-    "wq": ["layer.{L}.wq", "layers.{L}.attention.wq", "layer.{L}.attn_q_gate"],
+    "wq": ["layer.{L}.wq", "layers.{L}.attention.wq", "layer.{L}.attn_q_gate", "layer.{L}.attn_q"],
     "wk": ["layer.{L}.wk", "layers.{L}.attention.wk", "layer.{L}.attn_k"],
     "wv": ["layer.{L}.wv", "layers.{L}.attention.wv", "layer.{L}.attn_v"],
     "bq": ["layer.{L}.bq", "layers.{L}.attention.bq"],
@@ -6179,20 +6424,34 @@ WEIGHT_PATTERNS = {
     "ssm_a": ["layer.{L}.ssm_a"],
     "ssm_norm": ["layer.{L}.ssm_norm"],
     "ssm_out": ["layer.{L}.ssm_out"],
+    "mamba_in_proj": ["layer.{L}.mamba_in_proj"],
+    "mamba_conv1d": ["layer.{L}.mamba_conv1d"],
+    "mamba_conv1d_bias": ["layer.{L}.mamba_conv1d_bias"],
+    "mamba_dt_bias": ["layer.{L}.mamba_dt_bias"],
+    "mamba_a": ["layer.{L}.mamba_a"],
+    "mamba_d": ["layer.{L}.mamba_d"],
+    "mamba_norm": ["layer.{L}.mamba_norm"],
+    "mamba_out_proj": ["layer.{L}.mamba_out_proj"],
+    "moe_router": ["layer.{L}.moe_router"],
+    "moe_router_bias": ["layer.{L}.moe_router_bias"],
+    "moe_expert_up": ["layer.{L}.moe_expert_up", "layer.{L}.moe_expert.{E}.up"],
+    "moe_expert_down": ["layer.{L}.moe_expert_down", "layer.{L}.moe_expert.{E}.down"],
+    "moe_shared_up": ["layer.{L}.moe_shared_up"],
+    "moe_shared_down": ["layer.{L}.moe_shared_down"],
 
     # Output projection
-    "wo": ["layer.{L}.wo", "layers.{L}.attention.wo", "layer.{L}.attn_output"],
+    "wo": ["layer.{L}.wo", "layers.{L}.attention.wo", "layer.{L}.attn_output", "layer.{L}.attn_o"],
     "bo": ["layer.{L}.bo", "layers.{L}.attention.bo"],
 
     # MLP weights and biases
     "w1": ["layer.{L}.w1", "layers.{L}.feed_forward.w1", "layer.{L}.ffn_gate"],
-    "w2": ["layer.{L}.w2", "layers.{L}.feed_forward.w2", "layer.{L}.ffn_down"],
-    "w3": ["layer.{L}.w3", "layers.{L}.feed_forward.w3", "layer.{L}.ffn_up"],
+    "w2": ["layer.{L}.w2", "layers.{L}.feed_forward.w2", "layer.{L}.ffn_down", "layer.{L}.mlp_down"],
+    "w3": ["layer.{L}.w3", "layers.{L}.feed_forward.w3", "layer.{L}.ffn_up", "layer.{L}.mlp_up"],
     "b1": ["layer.{L}.b1", "layers.{L}.feed_forward.b1", "v.blk.{L}.ffn_up.bias"],
     "b2": ["layer.{L}.b2", "layers.{L}.feed_forward.b2", "v.blk.{L}.ffn_down.bias"],
 
     # Layer norms
-    "ln1_gamma": ["layer.{L}.ln1_gamma", "layers.{L}.attention_norm.weight", "layer.{L}.attn_norm"],
+    "ln1_gamma": ["layer.{L}.ln1_gamma", "layers.{L}.attention_norm.weight", "layer.{L}.attn_norm", "layer.{L}.block_norm"],
     "ln2_gamma": ["layer.{L}.ln2_gamma", "layers.{L}.ffn_norm.weight", "layer.{L}.post_attention_norm"],
     "ln1_beta": ["layer.{L}.ln1_beta", "layers.{L}.attention_norm.bias", "v.blk.{L}.ln1.bias"],
     "ln2_beta": ["layer.{L}.ln2_beta", "layers.{L}.ffn_norm.bias", "v.blk.{L}.ln2.bias"],
@@ -6243,15 +6502,15 @@ WEIGHT_PATTERNS = {
     "mm1_w": ["mm.2.weight"],
     "mm1_b": ["mm.2.bias"],
     "attn_qkv": ["layer.{L}.attn_qkv", "layer.{L}.attn_qkv.weight", "v.blk.{L}.attn_qkv.weight"],
-    "ln1_gamma": ["layer.{L}.ln1_gamma", "layers.{L}.attention_norm.weight", "layer.{L}.attn_norm", "v.blk.{L}.ln1.weight"],
+    "ln1_gamma": ["layer.{L}.ln1_gamma", "layers.{L}.attention_norm.weight", "layer.{L}.attn_norm", "layer.{L}.block_norm", "v.blk.{L}.ln1.weight"],
     "ln2_gamma": ["layer.{L}.ln2_gamma", "layers.{L}.ffn_norm.weight", "layer.{L}.post_attention_norm", "v.blk.{L}.ln2.weight"],
     "ln1_beta": ["layer.{L}.ln1_beta", "layers.{L}.attention_norm.bias", "v.blk.{L}.ln1.bias"],
     "ln2_beta": ["layer.{L}.ln2_beta", "layers.{L}.ffn_norm.bias", "v.blk.{L}.ln2.bias"],
-    "wo": ["layer.{L}.wo", "layers.{L}.attention.wo", "layer.{L}.attn_output", "v.blk.{L}.attn_out.weight"],
+    "wo": ["layer.{L}.wo", "layers.{L}.attention.wo", "layer.{L}.attn_output", "layer.{L}.attn_o", "v.blk.{L}.attn_out.weight"],
     "bo": ["layer.{L}.bo", "layers.{L}.attention.bo", "v.blk.{L}.attn_out.bias"],
     "w1": ["layer.{L}.w1", "layers.{L}.feed_forward.w1", "layer.{L}.ffn_gate", "v.blk.{L}.ffn_gate.weight"],
-    "w2": ["layer.{L}.w2", "layers.{L}.feed_forward.w2", "layer.{L}.ffn_down", "v.blk.{L}.ffn_down.weight"],
-    "w3": ["layer.{L}.w3", "layers.{L}.feed_forward.w3", "layer.{L}.ffn_up", "v.blk.{L}.ffn_up.weight"],
+    "w2": ["layer.{L}.w2", "layers.{L}.feed_forward.w2", "layer.{L}.ffn_down", "layer.{L}.mlp_down", "v.blk.{L}.ffn_down.weight"],
+    "w3": ["layer.{L}.w3", "layers.{L}.feed_forward.w3", "layer.{L}.ffn_up", "layer.{L}.mlp_up", "v.blk.{L}.ffn_up.weight"],
     "branch_norm_gamma": ["v.deepstack.{L}.norm.weight"],
     "branch_norm_beta": ["v.deepstack.{L}.norm.bias"],
     "branch_fc1_w": ["v.deepstack.{L}.fc1.weight"],
@@ -6283,6 +6542,7 @@ TEMPLATE_OP_WEIGHTS = {
     "rmsnorm": ["ln1_gamma", "ln2_gamma", "final_ln_weight", "final_ln_bias"],
     "layernorm": ["ln1_gamma", "ln1_beta", "ln2_gamma", "ln2_beta", "final_ln_weight", "final_ln_bias"],
     "attn_norm": ["ln1_gamma"],
+    "block_rmsnorm": ["ln1_gamma"],
     "post_attention_norm": ["post_attention_norm"],
     "ffn_norm": ["ln2_gamma"],
     "post_ffn_norm": ["post_ffn_norm"],
@@ -6323,6 +6583,17 @@ TEMPLATE_OP_WEIGHTS = {
     "recurrent_core": [],
     "recurrent_norm_gate": ["ssm_norm"],
     "recurrent_out_proj": ["ssm_out"],
+    "mamba_in_proj": ["mamba_in_proj"],
+    "mamba_in_proj_split": [],
+    "mamba_dt_softplus": ["mamba_dt_bias"],
+    "mamba_conv1d_silu": ["mamba_conv1d", "mamba_conv1d_bias"],
+    "mamba_selective_scan": ["mamba_a", "mamba_d"],
+    "mamba_rmsnorm_gate": ["mamba_norm"],
+    "mamba_out_proj": ["mamba_out_proj"],
+    "moe_router": ["moe_router"],
+    "group_limited_topk_router": ["moe_router_bias"],
+    "moe_relu2_expert_mlp": ["moe_expert_up", "moe_expert_down"],
+    "shared_relu2_expert_mlp": ["moe_shared_up", "moe_shared_down"],
     "qk_norm": ["q_norm", "k_norm"],  # Per-head RMSNorm gamma weights for Q and K
     "rope_qk": [],  # No model weights (uses precomputed tables)
     "mrope_qk": [],  # No model weights (runtime positions + RoPE params)
@@ -6903,7 +7174,7 @@ def generate_memory_layout(
         recurrent_q, recurrent_k, recurrent_v, recurrent_inner,
         recurrent_gate, recurrent_conv_channels, recurrent_state_size,
     )):
-        packed_dim = max(recurrent_q + recurrent_k + recurrent_v, recurrent_inner)
+        packed_dim = max(recurrent_q + recurrent_k + recurrent_v, recurrent_inner, int(config.get("mamba_projection_size", 0) or 0))
         packed_size = seq_len * packed_dim * 4
         recurrent_inner_size = seq_len * recurrent_inner * 4
         gate_size = seq_len * recurrent_gate * 4
@@ -7600,7 +7871,7 @@ def generate_ir_lower_2(
                             "ptr_expr": f"activations + {v_buf['offset'] if v_buf else 0}",
                         }
                         last_output_buffer = "v_scratch"
-        elif op_type in ("q_proj", "q_gate_proj", "k_proj", "v_proj", "recurrent_qkv_proj", "recurrent_gate_proj", "recurrent_alpha_proj", "recurrent_beta_proj"):
+        elif op_type in ("q_proj", "q_gate_proj", "k_proj", "v_proj", "recurrent_qkv_proj", "recurrent_gate_proj", "recurrent_alpha_proj", "recurrent_beta_proj", "mamba_in_proj"):
             # ═══════════════════════════════════════════════════════════════
             # USE MEMORY PLANNER for QKV input buffer assignment
             # The memory planner knows the correct buffer (main_stream_q8)
@@ -7614,8 +7885,12 @@ def generate_ir_lower_2(
             op_id = ir_op.get("idx", ir_op.get("op_id", -1))
             kernel_id = ir_op.get("kernel", "")
 
-            # Determine the correct input buffer based on kernel's activation dtype
-            # Default to layer_input (Q8 buffer), but use embedded_input (FP32) for fp32-activation kernels
+            # Determine the correct input buffer based on kernel's activation dtype.
+            # Body projections consume the pre-norm stream. Quantized kernels read
+            # the Q8 view planned for that stream; FP32/BF16 kernels must read the
+            # physical FP32 stream. This matters for Qwen3.5 recurrent_qkv_proj:
+            # gemv_q5_k consumes FP32 activations, while layer_input is also reused
+            # as the Q8 scratch for quantize_input_0 on this layout.
             needs_q8_input = kernel_needs_q8_activation(registry, kernel_id)
             default_buf_name = "layer_input" if needs_q8_input else "embedded_input"
             default_buf = activation_buffers.get(default_buf_name)
@@ -7625,30 +7900,28 @@ def generate_ir_lower_2(
                 if input_name in ir_op.get("weights", {}):
                     continue
 
-                # Buffer selection: kernel activation dtype takes priority
-                # FP32-activation kernels (e.g., gemm_nt_q5_1) MUST read FP32 buffer,
-                # even if the memory planner assigns Q8 buffer (planner is driven by
-                # OP_DATAFLOW which hardcodes main_stream_q8 for QKV inputs).
-                if not needs_q8_input:
-                    # FP32 kernel: always use embedded_input (FP32 buffer)
-                    buf_name = default_buf_name  # "embedded_input"
-                    buf = default_buf
-                else:
-                    # Q8 kernel: use memory planner assignment
+                # Use the planner/declared dataflow slot for both Q8 and FP32/BF16
+                # paths.  Older code forced FP32 kernels back to embedded_input,
+                # bypassing block_rmsnorm for safetensors models.
+                dataflow_name = {"A": "x", "x_q8": "x", "x": "x", "input": "x"}.get(input_name, input_name)
+                planned = get_planned_buffer(op_id, "inputs", dataflow_name)
+                if not planned:
                     planned = get_planned_buffer(op_id, "inputs", input_name)
-                    if planned:
-                        planner_buf = planned.get("buffer", default_buf_name)
-                        declared_slot = _get_declared_dataflow_slot(ir_op, "inputs", input_name, input_name)
-                        buf_name = _resolve_logical_buffer_name(
-                            planner_buf,
-                            declared_slot or input_info.get("slot"),
-                            activation_buffers,
-                            buffer_name_map,
-                        )
-                        buf = activation_buffers.get(buf_name)
-                    else:
-                        buf_name = default_buf_name  # "layer_input"
-                        buf = default_buf
+                if planned:
+                    planner_buf = planned.get("buffer", default_buf_name)
+                    declared_slot = _get_declared_dataflow_slot(ir_op, "inputs", dataflow_name, input_name)
+                    buf_name = _resolve_logical_buffer_name(
+                        planner_buf,
+                        declared_slot or input_info.get("slot"),
+                        activation_buffers,
+                        buffer_name_map,
+                    )
+                    if not needs_q8_input and buf_name in ("layer_input", "main_stream_q8"):
+                        buf_name = "embedded_input"
+                    buf = activation_buffers.get(buf_name)
+                else:
+                    buf_name = default_buf_name
+                    buf = default_buf
 
                 if buf:
                     # Set dtype based on kernel's activation requirement (q8_0 for Q8 kernels, fp32 for FP32 kernels)
@@ -7708,6 +7981,7 @@ def generate_ir_lower_2(
                     "recurrent_gate_proj": "recurrent_z",
                     "recurrent_alpha_proj": "recurrent_g",
                     "recurrent_beta_proj": "recurrent_beta",
+                    "mamba_in_proj": "recurrent_packed",
                 }
                 for output_name, output_info in ir_op.get("outputs", {}).items():
                     dataflow_slot = str(output_info.get("slot", ""))
@@ -8477,7 +8751,7 @@ def generate_ir_lower_2(
             merged_tokens = int(params.get("vision_merged_tokens", 0) or 0)
             hidden_dim = int(params.get("projector_hidden_dim", 0) or 0)
             params.setdefault("gelu_elems", merged_tokens * hidden_dim)
-        if op_type in ("quantize_input_0", "quantize_input_1", "quantize_input_2", "quantize_out_proj_input", "quantize_mlp_down_input", "quantize_recurrent_out_proj_input", "quantize_final_output"):
+        if op_type in ("quantize_input_0", "quantize_input_1", "quantize_input_2", "quantize_out_proj_input", "quantize_mlp_down_input", "quantize_recurrent_out_proj_input", "quantize_mamba_out_proj_input", "quantize_final_output"):
             default_quant_rows = int(params.get("_m", params.get("seq_len", 1)) or 1)
             params.setdefault("rows", default_quant_rows)
         if op_type == "quantize_final_output":
@@ -8590,7 +8864,7 @@ def generate_ir_lower_2(
             op_type == "rope_qk" and ir_op.get("kernel", "") == "mrope_qk_vision"
         ):
             params["_m"] = int(params.get("vision_num_patches", params.get("_m", 1)) or 1)
-        if op_type in ("quantize_input_0", "quantize_input_1", "quantize_input_2", "quantize_out_proj_input", "quantize_mlp_down_input", "quantize_recurrent_out_proj_input", "quantize_final_output"):
+        if op_type in ("quantize_input_0", "quantize_input_1", "quantize_input_2", "quantize_out_proj_input", "quantize_mlp_down_input", "quantize_recurrent_out_proj_input", "quantize_mamba_out_proj_input", "quantize_final_output"):
             inferred_quant_rows = int(params.get("_m", params.get("seq_len", params.get("rows", 1))) or 1)
             if int(params.get("rows", 0) or 0) <= 1 and inferred_quant_rows > 1:
                 params["rows"] = inferred_quant_rows
@@ -8601,6 +8875,11 @@ def generate_ir_lower_2(
             )
         if op_type == "gelu":
             params["gelu_elems"] = (
+                int(params.get("_m", params.get("seq_len", 0)) or 0)
+                * int(params.get("intermediate_size", 0) or 0)
+            )
+        if op_type == "relu2":
+            params["relu2_elems"] = (
                 int(params.get("_m", params.get("seq_len", 0)) or 0)
                 * int(params.get("intermediate_size", 0) or 0)
             )
@@ -8674,10 +8953,108 @@ def validate_buffer_assignments(lowered_ir: Dict) -> None:
     """
     ops = lowered_ir.get("operations", [])
     registry = load_kernel_registry()
+    kernel_quant = {
+        k.get("id"): k.get("quant", {})
+        for k in registry.get("kernels", [])
+        if k.get("id")
+    }
+
+    body_projection_ops = {
+        "q_proj",
+        "q_gate_proj",
+        "k_proj",
+        "v_proj",
+        "qkv_packed_proj",
+        "mlp_gate_up",
+        "mlp_up",
+        "mamba_in_proj",
+        "recurrent_gate_proj",
+    }
 
     for op in ops:
         op_name = op.get("op", op.get("kernel", "unknown"))
         layer = op.get("layer", -1)
+        kernel_id = op.get("kernel", "")
+
+        # ===== WEIGHT/KERNEL DTYPE CONTRACT =====
+        # Safetensors/BUMP BF16 weights must not silently fall through to FP32
+        # matmul kernels. That produces finite output but corrupts the graph by
+        # interpreting BF16 payload bytes as FP32 values.
+        if kernel_id:
+            kernel_weight_dtype = str(kernel_quant.get(kernel_id, {}).get("weight", "")).lower()
+            for weight_name, weight_info in op.get("weights", {}).items():
+                weight_dtype = str(weight_info.get("dtype", "")).lower()
+                if weight_dtype == "bf16" and kernel_weight_dtype != "bf16":
+                    raise RuntimeError(
+                        f"\n❌ HARD FAULT: Weight/kernel dtype mismatch\n"
+                        f"   op={op_name} layer={layer} kernel={kernel_id}\n"
+                        f"   weight={weight_name} dtype=bf16\n"
+                        f"   kernel weight dtype: {kernel_weight_dtype or '<missing>'}\n"
+                        f"   Fix: ensure quant_summary aliases select BF16 kernels for safetensors/BUMP weights\n"
+                    )
+
+        # ===== BODY PROJECTION INPUT STREAM =====
+        # Projections inside a transformer/recurrent block consume the normalized
+        # layer stream. They must not read the raw token embedding stream.
+        if op_name in body_projection_ops and str(op.get("expects_layer_input", "")).lower() in ("1", "true", "yes"):
+            activations = op.get("activations", {})
+            x_in = (
+                activations.get("x")
+                or activations.get("A")
+                or activations.get("x_q8")
+                or activations.get("input")
+            )
+            if x_in:
+                x_buf = x_in.get("buffer", "")
+                if x_buf != "layer_input":
+                    raise RuntimeError(
+                        f"\n❌ HARD FAULT: Invalid body projection input\n"
+                        f"   op={op_name} layer={layer} kernel={kernel_id}\n"
+                        f"   expected input: layer_input (post-norm stream)\n"
+                        f"   got: {x_buf}\n"
+                        f"   Fix: projection dataflow/lowering must preserve block norm output\n"
+                    )
+
+        # ===== MLP ACTIVATION SCRATCH CONTRACT =====
+        if op_name in ("relu2", "silu_mul", "geglu", "gelu"):
+            activations = op.get("activations", {})
+            outputs = op.get("outputs", {})
+            x_in = activations.get("x") or activations.get("input") or activations.get("a")
+            out = outputs.get("out") or outputs.get("y")
+            if x_in and x_in.get("buffer", "") != "mlp_scratch":
+                raise RuntimeError(
+                    f"\n❌ HARD FAULT: Invalid MLP activation input\n"
+                    f"   op={op_name} layer={layer}\n"
+                    f"   expected input: mlp_scratch\n"
+                    f"   got: {x_in.get('buffer', '')}\n"
+                )
+            if out and out.get("buffer", "") != "mlp_scratch":
+                raise RuntimeError(
+                    f"\n❌ HARD FAULT: Invalid MLP activation output\n"
+                    f"   op={op_name} layer={layer}\n"
+                    f"   expected output: mlp_scratch\n"
+                    f"   got: {out.get('buffer', '')}\n"
+                )
+
+        # Only enforce the scratch contract on lowered MLP-down kernels that
+        # are explicitly part of the activation/MoE scratch path. Existing
+        # transformer decode families can lower quantized mlp_down directly
+        # from the layer stream, and the v8 family regression suite relies on
+        # that contract for Qwen/Gemma/Nanbeige.
+        if op_name == "mlp_down" and (
+            "relu2" in str(kernel_id).lower()
+            or "moe" in str(kernel_id).lower()
+            or str(op.get("expects_mlp_scratch", "")).lower() in ("1", "true", "yes")
+        ):
+            activations = op.get("activations", {})
+            x_in = activations.get("x") or activations.get("A") or activations.get("x_q8")
+            if x_in and x_in.get("buffer", "") != "mlp_scratch":
+                raise RuntimeError(
+                    f"\n❌ HARD FAULT: Invalid MLP down input\n"
+                    f"   op={op_name} layer={layer} kernel={kernel_id}\n"
+                    f"   expected input: mlp_scratch\n"
+                    f"   got: {x_in.get('buffer', '')}\n"
+                )
 
         # ===== ATTENTION OPERATIONS =====
         if op_name in ("attn", "attention", "attn_sliding"):

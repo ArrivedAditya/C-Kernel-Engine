@@ -337,6 +337,8 @@ def test_nemotron_h_safetensors_to_bump_dry_run_maps_hybrid_mamba_attention_moe(
     assert audit["unmapped_source_tensors"] == []
     assert cfg["layer_kinds"] == ["mamba", "attention", "moe", "mlp"]
     assert cfg["layer_state_policy"] == ["mamba2", "none", "none", "none"]
+    assert cfg["ssm_conv_kernel"] == 4
+    assert cfg["ssm_conv_history"] == 4
     assert cfg["layer_moe_policy"] == ["none", "none", "routed_relu2", "none"]
     assert "layer.0.mamba_in_proj" in names
     assert "layer.0.mamba_conv1d" in names
@@ -348,3 +350,148 @@ def test_nemotron_h_safetensors_to_bump_dry_run_maps_hybrid_mamba_attention_moe(
     assert "layer.3.mlp_up" in names
     assert "output.weight" in names
     assert any(row["target"] == "layer.0.mamba_a" and row["transform"] == "neg_exp_a_log" for row in audit["transforms"])
+
+
+def test_nemotron_h_safetensors_to_bump_dry_run_maps_dense_mamba_attention_relu2_without_moe(tmp_path: Path) -> None:
+    torch, st = _require_torch_safetensors()
+    checkpoint = tmp_path / "nemotron_h_dense"
+    out = tmp_path / "out_nemotron_h_dense"
+    checkpoint.mkdir()
+    out.mkdir()
+
+    config = {
+        "architectures": ["NemotronHForCausalLM"],
+        "model_type": "nemotron_h",
+        "num_hidden_layers": 3,
+        "hidden_size": 8,
+        "intermediate_size": 6,
+        "num_attention_heads": 2,
+        "num_key_value_heads": 1,
+        "head_dim": 4,
+        "vocab_size": 32,
+        "max_position_embeddings": 128,
+        "hybrid_override_pattern": "M*-",
+        "mamba_num_heads": 2,
+        "mamba_head_dim": 4,
+        "ssm_state_size": 3,
+        "conv_kernel": 4,
+        "n_groups": 2,
+        "chunk_size": 8,
+        "mlp_hidden_act": "relu2",
+        "tie_word_embeddings": False,
+        "attention_bias": False,
+        "mlp_bias": False,
+        "rope_theta": 10000.0,
+        "layer_norm_epsilon": 1e-5,
+    }
+    (checkpoint / "config.json").write_text(json.dumps(config) + "\n", encoding="utf-8")
+
+    tensors = {
+        "backbone.embeddings.weight": torch.randn(32, 8, dtype=torch.bfloat16),
+        "backbone.norm_f.weight": torch.ones(8, dtype=torch.float32),
+        "lm_head.weight": torch.randn(32, 8, dtype=torch.bfloat16),
+        "backbone.layers.0.norm.weight": torch.ones(8, dtype=torch.float32),
+        "backbone.layers.0.mixer.in_proj.weight": torch.randn(34, 8, dtype=torch.bfloat16),
+        "backbone.layers.0.mixer.conv1d.weight": torch.randn(20, 1, 4, dtype=torch.float32),
+        "backbone.layers.0.mixer.conv1d.bias": torch.randn(20, dtype=torch.float32),
+        "backbone.layers.0.mixer.dt_bias": torch.randn(2, dtype=torch.float32),
+        "backbone.layers.0.mixer.A_log": torch.randn(2, dtype=torch.float32),
+        "backbone.layers.0.mixer.D": torch.randn(2, dtype=torch.float32),
+        "backbone.layers.0.mixer.norm.weight": torch.ones(8, dtype=torch.float32),
+        "backbone.layers.0.mixer.out_proj.weight": torch.randn(8, 8, dtype=torch.bfloat16),
+        "backbone.layers.1.norm.weight": torch.ones(8, dtype=torch.float32),
+        "backbone.layers.1.mixer.q_proj.weight": torch.randn(8, 8, dtype=torch.bfloat16),
+        "backbone.layers.1.mixer.k_proj.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+        "backbone.layers.1.mixer.v_proj.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+        "backbone.layers.1.mixer.o_proj.weight": torch.randn(8, 8, dtype=torch.bfloat16),
+        "backbone.layers.2.norm.weight": torch.ones(8, dtype=torch.float32),
+        "backbone.layers.2.mixer.up_proj.weight": torch.randn(6, 8, dtype=torch.bfloat16),
+        "backbone.layers.2.mixer.down_proj.weight": torch.randn(8, 6, dtype=torch.bfloat16),
+    }
+
+    st.save_file(tensors, checkpoint / "model.safetensors")
+    script = Path("version/v8/scripts/convert_safetensors_to_bump_v8.py")
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--checkpoint",
+            str(checkpoint),
+            "--output",
+            str(out / "weights.bump"),
+            "--config-out",
+            str(out / "config.json"),
+            "--manifest-out",
+            str(out / "weights_manifest.json"),
+            "--arch",
+            "auto",
+            "--dry-run",
+        ],
+        check=True,
+    )
+
+    manifest = json.loads((out / "weights_manifest.json").read_text(encoding="utf-8"))
+    audit = json.loads((out / "conversion_audit.json").read_text(encoding="utf-8"))
+    cfg = json.loads((out / "config.json").read_text(encoding="utf-8"))
+    names = [entry["name"] for entry in manifest["entries"]]
+    assert manifest["model"] == "nemotron_h"
+    assert audit["verdict"] == "pass"
+    assert audit["unmapped_source_tensors"] == []
+    assert cfg["layer_kinds"] == ["mamba", "attention", "mlp"]
+    assert cfg["layer_state_policy"] == ["mamba2", "none", "none"]
+    assert cfg["layer_moe_policy"] == ["none", "none", "none"]
+    assert cfg["layer_mlp_policy"] == ["none", "none", "relu2"]
+    assert cfg["ssm_conv_kernel"] == 4
+    assert cfg["ssm_conv_history"] == 4
+    assert "layer.0.mamba_in_proj" in names
+    assert "layer.1.attn_q" in names
+    assert "layer.2.mlp_up" in names
+    assert "layer.2.mlp_down" in names
+    assert "output.weight" in names
+    assert not any(".moe_" in name or name.endswith("moe_router") for name in names)
+    assert any(row["target"] == "layer.0.mamba_a" and row["transform"] == "neg_exp_a_log" for row in audit["transforms"])
+
+    build_ir = Path("version/v8/scripts/build_ir_v8.py")
+    lowered = out / "lowered_decode.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(build_ir),
+            "--manifest",
+            str(out / "weights_manifest.json"),
+            "--mode",
+            "decode",
+            "--output",
+            str(out / "ir1_decode.json"),
+            "--layout-output",
+            str(out / "layout_decode.json"),
+            "--lowered-output",
+            str(lowered),
+            "--call-output",
+            str(out / "lowered_decode_call.json"),
+            "--context-len",
+            "8",
+        ],
+        check=True,
+    )
+    layout = json.loads((out / "layout_decode.json").read_text(encoding="utf-8"))
+    conv_state = next(
+        buf for buf in layout["memory"]["activations"]["buffers"] if buf["name"] == "recurrent_conv_state"
+    )
+    assert conv_state["shape"] == "[3, 4, 20]"
+
+    lowered_ops = json.loads(lowered.read_text(encoding="utf-8"))["operations"]
+    by_op = {(op["layer"], op["op"]): op for op in lowered_ops}
+
+    mamba_in = by_op[(0, "mamba_in_proj")]
+    assert mamba_in["kernel"] == "gemv_bf16"
+    assert mamba_in["activations"]["x"]["buffer"] == "layer_input"
+
+    mlp_up = by_op[(2, "mlp_up")]
+    relu2 = by_op[(2, "relu2")]
+    mlp_down = by_op[(2, "mlp_down")]
+    assert mlp_up["kernel"] == "gemv_bf16"
+    assert mlp_up["activations"]["x"]["buffer"] == "layer_input"
+    assert relu2["activations"]["x"]["buffer"] == "mlp_scratch"
+    assert relu2["outputs"]["out"]["buffer"] == "mlp_scratch"
+    assert mlp_down["activations"]["x"]["buffer"] == "mlp_scratch"

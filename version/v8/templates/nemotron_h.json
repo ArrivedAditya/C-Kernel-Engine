@@ -101,7 +101,9 @@
           "mamba": [
             "block_rmsnorm",
             "mamba_in_proj",
+            "mamba_in_proj_split",
             "mamba_conv1d_silu",
+            "mamba_dt_softplus",
             "mamba_selective_scan",
             "mamba_rmsnorm_gate",
             "mamba_out_proj",
@@ -132,6 +134,20 @@
             "shared_relu2_expert_mlp",
             "residual_add"
           ]
+        },
+        "quant_aliases_common": {
+          "ln1_gamma": "block_norm",
+          "w1": "ffn_gate",
+          "w3": "ffn_up",
+          "w2": "ffn_down"
+        },
+        "quant_aliases_by_kind": {
+          "attention": {
+            "wq": "attn_q",
+            "wk": "attn_k",
+            "wv": "attn_v",
+            "wo": "attn_o"
+          }
         }
       },
       "footer": [

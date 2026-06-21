@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "description": "Declarative GGUF-to-CK model contract map. Keep model file tensor names here; keep kernel_maps focused on CK op-to-C-kernel bindings.",
+  "architectures": {
+    "nemotron_h_moe": {
+      "template": "nemotron_h",
+      "family": "nemotron_h",
+      "layer_kind_config_key": "layer_kinds",
+      "metadata_map": {
+        "block_count": "nemotron_h_moe.block_count",
+        "context_length": "nemotron_h_moe.context_length",
+        "embedding_length": "nemotron_h_moe.embedding_length",
+        "feed_forward_length": "nemotron_h_moe.feed_forward_length",
+        "vocab_size": "nemotron_h_moe.vocab_size",
+        "attention_head_count": "nemotron_h_moe.attention.head_count",
+        "attention_head_count_kv": "nemotron_h_moe.attention.head_count_kv",
+        "attention_key_length": "nemotron_h_moe.attention.key_length",
+        "attention_value_length": "nemotron_h_moe.attention.value_length",
+        "rope_freq_base": "nemotron_h_moe.rope.freq_base",
+        "rope_dimension_count": "nemotron_h_moe.rope.dimension_count",
+        "ssm_conv_kernel": "nemotron_h_moe.ssm.conv_kernel",
+        "ssm_state_size": "nemotron_h_moe.ssm.state_size",
+        "ssm_group_count": "nemotron_h_moe.ssm.group_count",
+        "ssm_inner_size": "nemotron_h_moe.ssm.inner_size",
+        "ssm_time_step_rank": "nemotron_h_moe.ssm.time_step_rank",
+        "expert_count": "nemotron_h_moe.expert_count",
+        "expert_used_count": "nemotron_h_moe.expert_used_count",
+        "expert_feed_forward_length": "nemotron_h_moe.expert_feed_forward_length",
+        "expert_shared_feed_forward_length": "nemotron_h_moe.expert_shared_feed_forward_length"
+      },
+      "layer_kinds": {
+        "mamba": {
+          "required_suffixes": [
+            "attn_norm.weight",
+            "ssm_in.weight",
+            "ssm_conv1d.weight",
+            "ssm_conv1d.bias",
+            "ssm_dt.bias",
+            "ssm_a",
+            "ssm_d",
+            "ssm_norm.weight",
+            "ssm_out.weight"
+          ]
+        },
+        "moe": {
+          "required_suffixes": [
+            "attn_norm.weight",
+            "ffn_gate_inp.weight",
+            "ffn_up_exps.weight",
+            "ffn_down_exps.weight",
+            "ffn_up_shexp.weight",
+            "ffn_down_shexp.weight"
+          ]
+        },
+        "attention": {
+          "required_suffixes": [
+            "attn_norm.weight",
+            "attn_q.weight",
+            "attn_k.weight",
+            "attn_v.weight",
+            "attn_output.weight"
+          ]
+        }
+      },
+      "tensor_map": {
+        "token_embd.weight": "token_emb",
+        "output_norm.weight": "final_ln_weight",
+        "output.weight": "output.weight",
+        "blk.{L}.attn_norm.weight": "layer.{L}.block_norm",
+        "blk.{L}.ssm_in.weight": "layer.{L}.mamba_in_proj",
+        "blk.{L}.ssm_conv1d.weight": "layer.{L}.mamba_conv1d",
+        "blk.{L}.ssm_conv1d.bias": "layer.{L}.mamba_conv1d_bias",
+        "blk.{L}.ssm_dt.bias": "layer.{L}.mamba_dt_bias",
+        "blk.{L}.ssm_a": "layer.{L}.mamba_a",
+        "blk.{L}.ssm_d": "layer.{L}.mamba_d",
+        "blk.{L}.ssm_norm.weight": "layer.{L}.mamba_norm",
+        "blk.{L}.ssm_out.weight": "layer.{L}.mamba_out_proj",
+        "blk.{L}.ffn_gate_inp.weight": "layer.{L}.moe_router",
+        "blk.{L}.exp_probs_b.bias": "layer.{L}.moe_router_bias",
+        "blk.{L}.ffn_up_exps.weight": "layer.{L}.moe_expert_up",
+        "blk.{L}.ffn_down_exps.weight": "layer.{L}.moe_expert_down",
+        "blk.{L}.ffn_up_shexp.weight": "layer.{L}.moe_shared_up",
+        "blk.{L}.ffn_down_shexp.weight": "layer.{L}.moe_shared_down",
+        "blk.{L}.attn_q.weight": "layer.{L}.attn_q",
+        "blk.{L}.attn_k.weight": "layer.{L}.attn_k",
+        "blk.{L}.attn_v.weight": "layer.{L}.attn_v",
+        "blk.{L}.attn_output.weight": "layer.{L}.attn_o"
+      }
+    }
+  }
+}

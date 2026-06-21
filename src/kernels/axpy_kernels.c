@@ -23,6 +23,12 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+
+#include "ckernel_engine.h"
+#include "ckernel_dtype.h"
 
 #ifdef __AVX512F__
 #include <immintrin.h>
@@ -279,6 +285,47 @@ static inline size_t ck_moe_down_idx(int e, int h, int i, int hidden_dim, int in
     return ((size_t)e * (size_t)hidden_dim + (size_t)h) * (size_t)intermediate_dim + (size_t)i;
 }
 
+static int ck_moe_debug_enabled(void)
+{
+    const char *v = getenv("CK_DEBUG_MOE");
+    return v && v[0] && v[0] != '0';
+}
+
+static void ck_moe_debug_finite(const char *name, const float *x, size_t n)
+{
+    if (!ck_moe_debug_enabled() || !x) {
+        return;
+    }
+    size_t finite = 0;
+    size_t nan = 0;
+    size_t inf = 0;
+    float min_v = 0.0f;
+    float max_v = 0.0f;
+    int have = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const float v = x[i];
+        if (isnan(v)) {
+            ++nan;
+        } else if (isinf(v)) {
+            ++inf;
+        } else {
+            ++finite;
+            if (!have || v < min_v) min_v = v;
+            if (!have || v > max_v) max_v = v;
+            have = 1;
+        }
+    }
+    fprintf(stderr,
+            "[CK_DEBUG_MOE] %s finite=%zu/%zu nan=%zu inf=%zu min=%g max=%g\n",
+            name,
+            finite,
+            n,
+            nan,
+            inf,
+            have ? min_v : 0.0f,
+            have ? max_v : 0.0f);
+}
+
 void moe_relu2_expert_forward_f32(const float *hidden,
                                   const int *indices,
                                   const float *routing_weights,
@@ -326,6 +373,238 @@ void moe_relu2_expert_forward_f32(const float *hidden,
                 }
                 y[h] += route_w * v;
             }
+        }
+    }
+}
+
+
+void moe_relu2_expert_forward_q5_0_q8_0(const float *hidden,
+                                        const int *indices,
+                                        const float *routing_weights,
+                                        const void *expert_up,
+                                        const void *expert_down,
+                                        float *output,
+                                        int rows,
+                                        int hidden_dim,
+                                        int intermediate_dim,
+                                        int n_experts,
+                                        int top_k)
+{
+    if (!hidden || !indices || !routing_weights || !expert_up || !expert_down || !output ||
+        rows <= 0 || hidden_dim <= 0 || intermediate_dim <= 0 || n_experts <= 0 || top_k <= 0) {
+        return;
+    }
+
+    const size_t out_count = (size_t)rows * (size_t)hidden_dim;
+    for (size_t p = 0; p < out_count; ++p) output[p] = 0.0f;
+
+    const size_t up_row_bytes = ck_dtype_row_bytes(CK_DT_Q5_0, (size_t)hidden_dim);
+    const size_t down_row_bytes = ck_dtype_row_bytes(CK_DT_Q8_0, (size_t)intermediate_dim);
+    const uint8_t *up_base = (const uint8_t *)expert_up;
+    const uint8_t *down_base = (const uint8_t *)expert_down;
+
+    float up_row[hidden_dim];
+    float down_row[intermediate_dim];
+    float act[intermediate_dim];
+
+    for (int r = 0; r < rows; ++r) {
+        const float *x = hidden + (size_t)r * (size_t)hidden_dim;
+        float *y = output + (size_t)r * (size_t)hidden_dim;
+        if (ck_moe_debug_enabled() && r == 0) {
+            fprintf(stderr,
+                    "[CK_DEBUG_MOE] routed_q5q8 rows=%d hidden=%d intermediate=%d experts=%d top_k=%d up_row_bytes=%zu down_row_bytes=%zu\n",
+                    rows,
+                    hidden_dim,
+                    intermediate_dim,
+                    n_experts,
+                    top_k,
+                    up_row_bytes,
+                    down_row_bytes);
+            fprintf(stderr, "[CK_DEBUG_MOE] routed slots:");
+            for (int dbg_slot = 0; dbg_slot < top_k; ++dbg_slot) {
+                fprintf(stderr,
+                        " (%d,%g)",
+                        indices[(size_t)r * (size_t)top_k + (size_t)dbg_slot],
+                        routing_weights[(size_t)r * (size_t)top_k + (size_t)dbg_slot]);
+            }
+            fprintf(stderr, "\n");
+            ck_moe_debug_finite("routed.hidden[0]", x, (size_t)hidden_dim);
+            ck_moe_debug_finite("routed.hidden_all", hidden, (size_t)rows * (size_t)hidden_dim);
+        }
+        for (int slot = 0; slot < top_k; ++slot) {
+            const int e = indices[(size_t)r * (size_t)top_k + (size_t)slot];
+            if (e < 0 || e >= n_experts) continue;
+            const float route_w = routing_weights[(size_t)r * (size_t)top_k + (size_t)slot];
+            const uint8_t *expert_up_base = up_base + (size_t)e * (size_t)intermediate_dim * up_row_bytes;
+            const uint8_t *expert_down_base = down_base + (size_t)e * (size_t)hidden_dim * down_row_bytes;
+
+            for (int i = 0; i < intermediate_dim; ++i) {
+                dequant_q5_0_row(expert_up_base + (size_t)i * up_row_bytes, up_row, (size_t)hidden_dim);
+                float v = 0.0f;
+                for (int h = 0; h < hidden_dim; ++h) v += up_row[h] * x[h];
+                act[i] = (v > 0.0f) ? v * v : 0.0f;
+            }
+
+            for (int h = 0; h < hidden_dim; ++h) {
+                dequant_q8_0_row(expert_down_base + (size_t)h * down_row_bytes, down_row, (size_t)intermediate_dim);
+                float v = 0.0f;
+                for (int i = 0; i < intermediate_dim; ++i) v += down_row[i] * act[i];
+                y[h] += route_w * v;
+            }
+        }
+        if (ck_moe_debug_enabled() && r == 0) {
+            ck_moe_debug_finite("routed.output[0]", y, (size_t)hidden_dim);
+            ck_moe_debug_finite("routed.output_all", output, (size_t)rows * (size_t)hidden_dim);
+        }
+    }
+}
+
+
+void moe_relu2_expert_forward_q5_0_q5_0(const float *hidden,
+                                        const int *indices,
+                                        const float *routing_weights,
+                                        const void *expert_up,
+                                        const void *expert_down,
+                                        float *output,
+                                        int rows,
+                                        int hidden_dim,
+                                        int intermediate_dim,
+                                        int n_experts,
+                                        int top_k)
+{
+    if (!hidden || !indices || !routing_weights || !expert_up || !expert_down || !output ||
+        rows <= 0 || hidden_dim <= 0 || intermediate_dim <= 0 || n_experts <= 0 || top_k <= 0) {
+        return;
+    }
+
+    const size_t out_count = (size_t)rows * (size_t)hidden_dim;
+    for (size_t p = 0; p < out_count; ++p) output[p] = 0.0f;
+
+    const size_t up_row_bytes = ck_dtype_row_bytes(CK_DT_Q5_0, (size_t)hidden_dim);
+    const size_t down_row_bytes = ck_dtype_row_bytes(CK_DT_Q5_0, (size_t)intermediate_dim);
+    const uint8_t *up_base = (const uint8_t *)expert_up;
+    const uint8_t *down_base = (const uint8_t *)expert_down;
+
+    float up_row[hidden_dim];
+    float down_row[intermediate_dim];
+    float act[intermediate_dim];
+
+    for (int r = 0; r < rows; ++r) {
+        const float *x = hidden + (size_t)r * (size_t)hidden_dim;
+        float *y = output + (size_t)r * (size_t)hidden_dim;
+        if (ck_moe_debug_enabled() && r == 0) {
+            fprintf(stderr,
+                    "[CK_DEBUG_MOE] routed_q5q5 rows=%d hidden=%d intermediate=%d experts=%d top_k=%d up_row_bytes=%zu down_row_bytes=%zu\n",
+                    rows,
+                    hidden_dim,
+                    intermediate_dim,
+                    n_experts,
+                    top_k,
+                    up_row_bytes,
+                    down_row_bytes);
+            fprintf(stderr, "[CK_DEBUG_MOE] routed slots:");
+            for (int dbg_slot = 0; dbg_slot < top_k; ++dbg_slot) {
+                fprintf(stderr,
+                        " (%d,%g)",
+                        indices[(size_t)r * (size_t)top_k + (size_t)dbg_slot],
+                        routing_weights[(size_t)r * (size_t)top_k + (size_t)dbg_slot]);
+            }
+            fprintf(stderr, "\n");
+            ck_moe_debug_finite("routed.hidden[0]", x, (size_t)hidden_dim);
+            ck_moe_debug_finite("routed.hidden_all", hidden, (size_t)rows * (size_t)hidden_dim);
+        }
+        for (int slot = 0; slot < top_k; ++slot) {
+            const int e = indices[(size_t)r * (size_t)top_k + (size_t)slot];
+            if (e < 0 || e >= n_experts) continue;
+            const float route_w = routing_weights[(size_t)r * (size_t)top_k + (size_t)slot];
+            const uint8_t *expert_up_base = up_base + (size_t)e * (size_t)intermediate_dim * up_row_bytes;
+            const uint8_t *expert_down_base = down_base + (size_t)e * (size_t)hidden_dim * down_row_bytes;
+
+            for (int i = 0; i < intermediate_dim; ++i) {
+                dequant_q5_0_row(expert_up_base + (size_t)i * up_row_bytes, up_row, (size_t)hidden_dim);
+                float v = 0.0f;
+                for (int h = 0; h < hidden_dim; ++h) v += up_row[h] * x[h];
+                act[i] = (v > 0.0f) ? v * v : 0.0f;
+            }
+
+            for (int h = 0; h < hidden_dim; ++h) {
+                dequant_q5_0_row(expert_down_base + (size_t)h * down_row_bytes, down_row, (size_t)intermediate_dim);
+                float v = 0.0f;
+                for (int i = 0; i < intermediate_dim; ++i) v += down_row[i] * act[i];
+                y[h] += route_w * v;
+            }
+        }
+        if (ck_moe_debug_enabled() && r == 0) {
+            ck_moe_debug_finite("routed.output[0]", y, (size_t)hidden_dim);
+            ck_moe_debug_finite("routed.output_all", output, (size_t)rows * (size_t)hidden_dim);
+        }
+    }
+}
+
+void moe_relu2_shared_forward_q5_1_q8_0(const float *hidden,
+                                        const float *routed,
+                                        const void *shared_up,
+                                        const void *shared_down,
+                                        float *output,
+                                        int rows,
+                                        int hidden_dim,
+                                        int intermediate_dim)
+{
+    if (!hidden || !shared_up || !shared_down || !output || rows <= 0 || hidden_dim <= 0 || intermediate_dim <= 0) {
+        return;
+    }
+
+    const size_t up_row_bytes = ck_dtype_row_bytes(CK_DT_Q5_1, (size_t)hidden_dim);
+    const size_t down_row_bytes = ck_dtype_row_bytes(CK_DT_Q8_0, (size_t)intermediate_dim);
+    const uint8_t *up_base = (const uint8_t *)shared_up;
+    const uint8_t *down_base = (const uint8_t *)shared_down;
+
+    float up_row[hidden_dim];
+    float down_row[intermediate_dim];
+    float act[intermediate_dim];
+
+    for (int r = 0; r < rows; ++r) {
+        const float *x = hidden + (size_t)r * (size_t)hidden_dim;
+        const float *route = routed ? (routed + (size_t)r * (size_t)hidden_dim) : NULL;
+        float *y = output + (size_t)r * (size_t)hidden_dim;
+        float x_alias[hidden_dim];
+        if (output == hidden) {
+            memcpy(x_alias, x, (size_t)hidden_dim * sizeof(float));
+            x = x_alias;
+        }
+
+        if (ck_moe_debug_enabled() && r == 0) {
+            fprintf(stderr,
+                    "[CK_DEBUG_MOE] shared_q5q8 rows=%d hidden=%d intermediate=%d up_row_bytes=%zu down_row_bytes=%zu alias=%d\n",
+                    rows,
+                    hidden_dim,
+                    intermediate_dim,
+                    up_row_bytes,
+                    down_row_bytes,
+                    output == hidden);
+            ck_moe_debug_finite("shared.hidden[0]", x, (size_t)hidden_dim);
+            ck_moe_debug_finite("shared.hidden_all", hidden, (size_t)rows * (size_t)hidden_dim);
+            ck_moe_debug_finite("shared.routed[0]", route, (size_t)hidden_dim);
+            if (routed) ck_moe_debug_finite("shared.routed_all", routed, (size_t)rows * (size_t)hidden_dim);
+        }
+
+        for (int i = 0; i < intermediate_dim; ++i) {
+            dequant_q5_1_row(up_base + (size_t)i * up_row_bytes, up_row, (size_t)hidden_dim);
+            float v = 0.0f;
+            for (int h = 0; h < hidden_dim; ++h) v += up_row[h] * x[h];
+            act[i] = (v > 0.0f) ? v * v : 0.0f;
+        }
+
+        for (int h = 0; h < hidden_dim; ++h) {
+            dequant_q8_0_row(down_base + (size_t)h * down_row_bytes, down_row, (size_t)intermediate_dim);
+            float v = route ? route[h] : 0.0f;
+            for (int i = 0; i < intermediate_dim; ++i) v += down_row[i] * act[i];
+            y[h] = v;
+        }
+
+        if (ck_moe_debug_enabled() && r == 0) {
+            ck_moe_debug_finite("shared.output[0]", y, (size_t)hidden_dim);
+            ck_moe_debug_finite("shared.output_all", output, (size_t)rows * (size_t)hidden_dim);
         }
     }
 }

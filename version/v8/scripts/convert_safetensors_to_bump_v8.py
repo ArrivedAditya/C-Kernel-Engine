@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import struct
 import sys
 from dataclasses import dataclass
@@ -328,6 +329,27 @@ def _parse_nemotron_h_pattern(pattern: str, num_layers: int) -> list[str]:
         raise SystemExit(f"Unsupported Nemotron-H layer pattern character: {exc.args[0]!r}") from exc
 
 
+
+
+def _nemotron_dt_limit(config: dict[str, Any]) -> tuple[float, float]:
+    """Return CK runtime dt clamp bounds for Nemotron-H.
+
+    Nemotron-H uses time_step_min/max for initialization only. Runtime forward
+    clamps softplus(dt + bias) with time_step_limit; the common (0, inf) limit
+    is represented as (0, 0) so the CK kernel disables clamping.
+    """
+    limit = config.get("time_step_limit")
+    if isinstance(limit, (list, tuple)) and len(limit) >= 2:
+        lo = float(limit[0] or 0.0)
+        try:
+            hi = float(limit[1])
+        except Exception:
+            hi = float("inf")
+        if hi == float("inf"):
+            return 0.0, 0.0
+        return lo, hi
+    return 0.0, 0.0
+
 def _nemotron_h_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor]) -> list[TensorRef]:
     text = config.get("text_config") if isinstance(config.get("text_config"), dict) else config
     num_layers = int(text.get("num_hidden_layers") or config.get("num_layers") or 0)
@@ -570,6 +592,14 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
     cfg.setdefault("tie_word_embeddings", bool(text.get("tie_word_embeddings", True)))
     if arch == "nemotron_h":
         layer_kinds = _parse_nemotron_h_pattern(str(text.get("hybrid_override_pattern") or ""), int(cfg.get("num_layers") or 0))
+        mamba_num_heads = int(text.get("mamba_num_heads") or 0)
+        mamba_head_dim = int(text.get("mamba_head_dim") or 0)
+        ssm_state_size = int(text.get("ssm_state_size") or 0)
+        ssm_group_count = int(text.get("n_groups") or 0)
+        ssm_conv_kernel = int(text.get("conv_kernel") or 0)
+        ssm_inner_size = mamba_num_heads * mamba_head_dim
+        mamba_conv_dim = ssm_inner_size + 2 * ssm_group_count * ssm_state_size
+        mamba_projection_size = ssm_inner_size + mamba_conv_dim + mamba_num_heads
         cfg.update({
             "model": "nemotron_h",
             "arch": "nemotron_h",
@@ -583,14 +613,20 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "layer_mlp_policy": ["relu2" if k == "mlp" else "none" for k in layer_kinds],
             "layer_kv_policy": ["attention_kv_cache" if k == "attention" else "none" for k in layer_kinds],
             "intermediate_dim": int(text.get("intermediate_size") or 0),
-            "mamba_num_heads": int(text.get("mamba_num_heads") or 0),
-            "mamba_head_dim": int(text.get("mamba_head_dim") or 0),
-            "ssm_state_size": int(text.get("ssm_state_size") or 0),
-            "ssm_conv_kernel": int(text.get("conv_kernel") or 0),
-            "ssm_group_count": int(text.get("n_groups") or 0),
+            "mamba_num_heads": mamba_num_heads,
+            "mamba_head_dim": mamba_head_dim,
+            "ssm_state_size": ssm_state_size,
+            "ssm_conv_kernel": ssm_conv_kernel,
+            "ssm_group_count": ssm_group_count,
+            "mamba_norm_group_size": int(ssm_inner_size // ssm_group_count) if ssm_group_count else int(mamba_head_dim),
             "chunk_size": int(text.get("chunk_size") or 0),
-            "mamba_conv_dim": int((text.get("mamba_num_heads") or 0) * (text.get("mamba_head_dim") or 0) + 2 * (text.get("n_groups") or 0) * (text.get("ssm_state_size") or 0)),
-            "mamba_projection_size": int(2 * (text.get("intermediate_size") or 0) + (text.get("mamba_num_heads") or 0) * (text.get("mamba_head_dim") or 0) + ((text.get("mamba_num_heads") or 0) * (text.get("mamba_head_dim") or 0) + 2 * (text.get("n_groups") or 0) * (text.get("ssm_state_size") or 0)) + (text.get("mamba_num_heads") or 0)),
+            "mamba_dt_min": _nemotron_dt_limit(text)[0],
+            "mamba_dt_max": _nemotron_dt_limit(text)[1],
+            "ssm_inner_size": ssm_inner_size,
+            "ssm_conv_channels": mamba_conv_dim,
+            "ssm_conv_history": max(ssm_conv_kernel, 0),
+            "mamba_conv_dim": mamba_conv_dim,
+            "mamba_projection_size": mamba_projection_size,
             "moe_intermediate_size": int(text.get("moe_intermediate_size") or 0),
             "moe_shared_expert_intermediate_size": int(text.get("moe_shared_expert_intermediate_size") or 0),
             "n_routed_experts": int(text.get("n_routed_experts") or 0),
@@ -601,6 +637,8 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "routed_scaling_factor": float(text.get("routed_scaling_factor") or 1.0),
             "rope_layout": "split",
             "rope_theta": float(text.get("rope_theta") or 10000.0),
+            "rope_freq_base": float(text.get("rope_theta") or 10000.0),
+            "use_rope_freq_factors": 0,
             "has_attention_biases": bool(text.get("attention_bias", False)),
             "has_qk_norm": False,
             "prefill_policy": "batched",
@@ -818,10 +856,53 @@ def _copy_tokenizer_sidecars(model_dir: Path, out_dir: Path) -> None:
                 dst.write_bytes(src.read_bytes())
 
 
+def _resolve_output_path(output: Path | None, *, ram_output: bool, ram_dir: Path, checkpoint: Path) -> Path:
+    if not ram_output:
+        if output is None:
+            raise SystemExit("--output is required unless --ram-output is used")
+        return output
+
+    ram_root = ram_dir.resolve()
+    if output is not None and output.is_absolute() and str(output.resolve()).startswith(str(ram_root)):
+        return output
+
+    name = checkpoint.resolve().name or "model"
+    base = ram_root / "ck-engine-v8" / name
+    if output is None:
+        return base / "weights.bump"
+    return base / output.name
+
+
+
+
+def _is_proc_fd_path(path: Path) -> bool:
+    text = str(path)
+    return text.startswith("/proc/self/fd/") or (text.startswith("/proc/") and "/fd/" in text)
+
+def _check_output_capacity(path: Path, estimated_bytes: int, *, ram_output: bool) -> None:
+    if _is_proc_fd_path(path):
+        return
+    probe = path.parent
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    usage = shutil.disk_usage(probe)
+    reserve = max(256 * 1024 * 1024, int(estimated_bytes * 0.02))
+    required = int(estimated_bytes) + reserve
+    if usage.free < required:
+        kind = "RAM/tmpfs" if ram_output else "filesystem"
+        raise SystemExit(
+            f"Not enough free space in {kind} for BUMP output: need about "
+            f"{required / 1024 / 1024 / 1024:.2f} GiB including reserve, "
+            f"free {usage.free / 1024 / 1024 / 1024:.2f} GiB at {path.parent}"
+        )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Convert HF safetensors language weights to v8 BUMPWGT5")
     ap.add_argument("--checkpoint", required=True, type=Path, help="HF safetensors model directory")
-    ap.add_argument("--output", required=True, type=Path, help="output weights.bump")
+    ap.add_argument("--output", type=Path, help="output weights.bump")
+    ap.add_argument("--ram-output", action="store_true", help="write weights.bump under a RAM-backed tmpfs path instead of the checkpoint/output directory")
+    ap.add_argument("--ram-dir", type=Path, default=Path("/dev/shm"), help="tmpfs directory for --ram-output; default: /dev/shm")
     ap.add_argument("--config-out", required=True, type=Path)
     ap.add_argument("--manifest-out", required=True, type=Path)
     ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma3", "llama", "qwen2", "qwen3", "qwen35", "nemotron_h"])
@@ -833,6 +914,7 @@ def main() -> int:
     args = ap.parse_args()
 
     model_dir = args.checkpoint.resolve()
+    args.output = _resolve_output_path(args.output, ram_output=bool(args.ram_output), ram_dir=args.ram_dir, checkpoint=model_dir)
     headers = _load_safetensors_headers(model_dir)
     hf = _hf_config(model_dir)
     arch = args.arch
@@ -920,18 +1002,24 @@ def main() -> int:
         "entries": entries_preview,
     }
 
+    print(f"[safetensors->bump] arch={arch} tensors={len(refs)} entries={len(entries_preview)} dry_run={args.dry_run}")
+    estimated_bytes = int(offset - DATA_START)
+    print(f"[safetensors->bump] output={args.output}")
+    if args.ram_output:
+        print(f"[safetensors->bump] ram_output=True ram_dir={args.ram_dir}")
+    print(f"[safetensors->bump] estimated weights payload={(offset - (DATA_START + 4 + len(refs))) / 1024 / 1024:.1f} MiB")
+
     args.config_out.parent.mkdir(parents=True, exist_ok=True)
     args.manifest_out.parent.mkdir(parents=True, exist_ok=True)
     args.config_out.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     args.manifest_out.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    _copy_tokenizer_sidecars(model_dir, args.output.parent)
-
-    print(f"[safetensors->bump] arch={arch} tensors={len(refs)} entries={len(entries_preview)} dry_run={args.dry_run}")
-    print(f"[safetensors->bump] estimated weights payload={(offset - (DATA_START + 4 + len(refs))) / 1024 / 1024:.1f} MiB")
     if args.dry_run:
         return 0
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
+    _check_output_capacity(args.output, estimated_bytes, ram_output=bool(args.ram_output))
+    if not _is_proc_fd_path(args.output):
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        _copy_tokenizer_sidecars(model_dir, args.output.parent)
     with args.output.open("w+b") as f:
         f.write(b"\x00" * HEADER_SIZE)
         f.write(b"\x00" * EXT_METADATA_SIZE)
