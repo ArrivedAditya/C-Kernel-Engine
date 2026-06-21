@@ -321,6 +321,66 @@ jobs:
               prev = repo_latest.get(key)
               return dict(prev) if isinstance(prev, dict) else None
 
+          def _expected_regression_families():
+              expected = []
+              seen = set()
+              manifest_path = Path("version/v8/regression/families.json")
+              if manifest_path.exists():
+                  try:
+                      manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                      for fam in manifest.get("families") or []:
+                          if not isinstance(fam, dict):
+                              continue
+                          fid = str(fam.get("id") or fam.get("family_id") or "").strip()
+                          if not fid or fid in seen:
+                              continue
+                          expected.append({
+                              "family_id": fid,
+                              "label": fam.get("label") or fid,
+                          })
+                          seen.add(fid)
+                  except Exception as exc:
+                      print(f"warning: could not load v8 regression manifest: {exc}")
+              if "gemma4" not in seen:
+                  expected.append({
+                      "family_id": "gemma4",
+                      "label": "Gemma4 E4B IT",
+                      "failure_detail": "high-memory smoke; skipped unless runner has enough RAM",
+                  })
+              return expected
+
+          def _normalize_regression_payload(payload):
+              expected = _expected_regression_families()
+              rows = [dict(row) for row in (payload.get("family_rows") or []) if isinstance(row, dict)]
+              by_id = {
+                  str(row.get("family_id") or row.get("family") or row.get("label") or ""): row
+                  for row in rows
+              }
+              for fam in expected:
+                  fid = fam["family_id"]
+                  if fid in by_id:
+                      continue
+                  row = {
+                      "family_id": fid,
+                      "label": fam.get("label") or fid,
+                      "status": "SKIP",
+                      "build_status": "SKIP",
+                      "smoke_status": "SKIP",
+                      "coherence_status": "SKIP",
+                      "contract_status": "SKIP",
+                      "first_token_status": "SKIP",
+                      "failure_detail": fam.get("failure_detail") or "configured v8 family; no row published in this workflow",
+                  }
+                  rows.append(row)
+                  by_id[fid] = row
+              order = {fam["family_id"]: i for i, fam in enumerate(expected)}
+              rows.sort(key=lambda row: order.get(str(row.get("family_id") or row.get("family") or ""), len(order)))
+              payload["family_rows"] = rows
+              payload["families_total"] = len(rows)
+              payload["families_passed"] = sum(1 for row in rows if str(row.get("status", "")).upper() == "PASS")
+              payload["families_failed"] = sum(1 for row in rows if str(row.get("status", "")).upper() == "FAIL")
+              return payload
+
           regression_payload = {
               "status": "not_run",
               "mode": "fast",
@@ -351,7 +411,6 @@ jobs:
                       "failure_reason": fam.get("failure_reason"),
                       "failure_detail": fam.get("failure_detail"),
                   })
-              families_passed = sum(1 for row in family_rows if row.get("status") == "PASS")
               regression_payload = {
                   "status": "pass" if str(summary.get("status", "")).upper() == "PASS" else "fail",
                   "mode": summary.get("mode", "fast"),
@@ -359,8 +418,8 @@ jobs:
                   "report_dir": summary.get("report_dir"),
                   "summary_path": str(latest_summary),
                   "families_total": len(family_rows),
-                  "families_passed": families_passed,
-                  "families_failed": max(0, len(family_rows) - families_passed),
+                  "families_passed": sum(1 for row in family_rows if row.get("status") == "PASS"),
+                  "families_failed": sum(1 for row in family_rows if row.get("status") == "FAIL"),
                   "failure_classes": summary.get("failure_classes", {}),
                   "family_rows": family_rows,
                   "note": f"Source: {latest_summary}",
@@ -387,6 +446,7 @@ jobs:
                       f"{prev.get('note', 'Preserved previous regression-fast snapshot.')} "
                       f"Preserved because this workflow skipped regression-fast ({reason})."
                   ).strip()
+          regression_payload = _normalize_regression_payload(regression_payload)
 
           kernel_map_report = Path("version/v7/.cache/reports/kernel_map_validation_latest.json")
           kernel_map_result = results_by_name.get("v7 Kernel Map Contracts")
