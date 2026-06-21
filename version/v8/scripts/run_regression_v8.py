@@ -25,7 +25,7 @@ import re
 import subprocess
 import tempfile
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -52,6 +52,7 @@ class PromptSpec:
     prompt: str
     max_tokens: int
     heuristics: dict[str, Any]
+    runtime_args: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -164,6 +165,7 @@ def load_prompts(path: Path) -> dict[str, PromptSpec]:
             prompt=str(row.get("prompt") or ""),
             max_tokens=int(row.get("max_tokens") or 96),
             heuristics=dict(row.get("heuristics") or {}),
+            runtime_args=[str(x) for x in row.get("runtime_args") or []],
         )
     return out
 
@@ -460,6 +462,7 @@ def run_prompt(
     if force_rebuild:
         cmd.extend(["--force-convert", "--force-compile"])
     cmd.extend(family.runtime_args)
+    cmd.extend(prompt.runtime_args)
     print(f"[{family.family_id}] smoke prompt={prompt.prompt_id} run={run_dir}", flush=True)
     env = os.environ.copy()
     env["CK_CACHE_DIR"] = str(cache_dir)

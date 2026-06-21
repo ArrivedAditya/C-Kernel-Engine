@@ -67,7 +67,12 @@ class RegressionHarnessV8Tests(unittest.TestCase):
         by_id = {family.family_id: family for family in families}
         self.assertIn("--thinking-mode", by_id["qwen3"].runtime_args)
         self.assertIn("suppressed", by_id["qwen3"].runtime_args)
-        self.assertIn("--image-path", by_id["qwen3vl"].runtime_args)
+        self.assertNotIn("--image-path", by_id["qwen3vl"].runtime_args)
+        self.assertEqual(by_id["qwen3vl"].smoke_prompts, ["vision_doc_card", "vision_mamba2_card"])
+        self.assertIn("--image-path", prompts["vision_doc_card"].runtime_args)
+        self.assertIn("v8_vision_doc_card_72.png", " ".join(prompts["vision_doc_card"].runtime_args))
+        self.assertIn("--image-path", prompts["vision_mamba2_card"].runtime_args)
+        self.assertIn("v8_vision_mamba2_card_144.png", " ".join(prompts["vision_mamba2_card"].runtime_args))
         self.assertEqual(by_id["qwen3vl"].runtime_expect.get("manifest", {}).get("config.model"), "qwen3vl")
         self.assertEqual(by_id["nanbeige"].runtime_expect.get("config", {}).get("chat_contract.name"), "llama_chatml")
         self.assertEqual(by_id["gemma"].runtime_expect.get("config", {}).get("rope_layout"), "split")
@@ -167,6 +172,51 @@ class RegressionHarnessV8Tests(unittest.TestCase):
 
         self.assertEqual(row["status"], regression.PASS)
         self.assertEqual(run_stream.call_args.kwargs["env"]["CK_CACHE_DIR"], str(cache_dir))
+
+    def test_run_prompt_appends_prompt_runtime_args(self) -> None:
+        family = regression.FamilySpec(
+            family_id="qwen3vl",
+            label="Qwen3-VL",
+            model="hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/Qwen3VL-8B-Instruct-Q4_K_M.gguf",
+            context_len=1024,
+            runtime_args=["--thinking-mode", "suppressed"],
+            smoke_prompts=["vision_doc_card"],
+            response_contract={"trim_whitespace": True},
+            coherence_gate=True,
+            runtime_expect={},
+        )
+        prompt = regression.PromptSpec(
+            prompt_id="vision_doc_card",
+            label="Vision Doc Card",
+            prompt="Explain this image.",
+            max_tokens=24,
+            heuristics={},
+            runtime_args=["--image-path", "version/v8/test_assets/v8_vision_doc_card_72.png"],
+        )
+
+        with mock.patch.object(
+            regression,
+            "_run_stream",
+            return_value=subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="Response: This image is a logo.\n",
+                stderr="",
+            ),
+        ) as run_stream:
+            row = regression.run_prompt(
+                family,
+                prompt,
+                Path("/tmp/ck-v8-test-run"),
+                force_rebuild=False,
+                cache_dir=Path("/tmp/ck-v8-test-cache/models"),
+            )
+
+        self.assertEqual(row["status"], regression.PASS)
+        cmd = run_stream.call_args.args[0]
+        self.assertIn("--thinking-mode", cmd)
+        self.assertIn("--image-path", cmd)
+        self.assertIn("version/v8/test_assets/v8_vision_doc_card_72.png", cmd)
 
     def test_run_prompt_prefers_multimodal_bridge_generated_text(self) -> None:
         family = regression.FamilySpec(

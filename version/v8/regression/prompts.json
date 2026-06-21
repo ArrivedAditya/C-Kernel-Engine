@@ -83,6 +83,10 @@
       "label": "Vision Doc Card",
       "prompt": "Explain this image.",
       "max_tokens": 24,
+      "runtime_args": [
+        "--image-path",
+        "version/v8/test_assets/v8_vision_doc_card_72.png"
+      ],
       "heuristics": {
         "min_chars": 24,
         "min_words": 6,
@@ -102,6 +106,36 @@
           "card"
         ],
         "min_keyword_hits": 2
+      }
+    },
+    "vision_mamba2_card": {
+      "label": "Vision Mamba2 Card",
+      "prompt": "Briefly describe this technical diagram.",
+      "max_tokens": 40,
+      "runtime_args": [
+        "--image-path",
+        "version/v8/test_assets/v8_vision_mamba2_card_144.png"
+      ],
+      "heuristics": {
+        "min_chars": 32,
+        "min_words": 6,
+        "max_chars": 260,
+        "max_words": 56,
+        "max_lines": 7,
+        "min_printable_ratio": 0.96,
+        "max_replacement_chars": 0,
+        "max_repeated_4gram": 2,
+        "max_duplicate_lines": 1,
+        "expected_keywords": [
+          "diagram",
+          "mamba",
+          "decode",
+          "reference",
+          "state",
+          "kernel",
+          "technical"
+        ],
+        "min_keyword_hits": 1
       }
     }
   }
