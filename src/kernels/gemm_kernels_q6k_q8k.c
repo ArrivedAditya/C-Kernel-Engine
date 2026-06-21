@@ -596,6 +596,24 @@ void gemv_q6_k_q8_k_avx(float *y,
 
 #if defined(__AVX2__)
 
+/* Q6_K optimization note:
+ * ----------------------
+ * llama.cpp's newer Q6_K AVX2 work inspired an experiment that separates the
+ * zero-point correction from the hot unpack/dot loop by using Q8_K block sums
+ * (bsums). That can reduce repeated subtract-32 work and improve some CPU
+ * layouts, but it also changes reduction order and instruction balance.
+ *
+ * On the local AVX2 i7-1260P test box, a direct port kept correctness but made
+ * focused single-core Q6_K GEMV slower. More importantly, Qwen3.5 long-decode
+ * parity is sensitive to borderline logit movement from reduction order. CK
+ * therefore keeps the public Q6_K path on the llama-compatible scalar reduction
+ * by default, while v8 threadpool dispatch may use the SIMD row worker for
+ * phase/shape-specific decode or prefill sweeps.
+ *
+ * Promotion rule: only make a Q6_K SIMD/packed path the default after the
+ * dispatch matrix shows a stable speedup and model-family long parity passes.
+ */
+
 /* Scale shuffle for AVX2 - 32-byte version */
 static const int8_t q6k_scale_shuffle_avx2[4][32] = {
     { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },

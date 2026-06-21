@@ -2317,14 +2317,15 @@ test-gemv-omp-verbose: $(GEMV_OMP_BIN)
 #   make test-threadpool-parity-verbose  Full test with detailed diff output
 
 THREADPOOL_BIN := $(BUILD_DIR)/test_threadpool_parity
+Q4K_DISPATCH_MATRIX_BIN := $(BUILD_DIR)/bench_q4k_dispatch_matrix
 V66_SRC_DIR    := version/v6.6/src
 V8_SRC_DIR     := version/v8/src
 
-$(THREADPOOL_BIN): $(LIB) tests/test_threadpool_parity.c $(V66_SRC_DIR)/ck_parallel_decode.c $(V8_SRC_DIR)/ck_parallel_prefill_v8.c
+$(THREADPOOL_BIN): $(LIB) tests/test_threadpool_parity.c $(V8_SRC_DIR)/ck_parallel_decode_v8.c $(V8_SRC_DIR)/ck_parallel_prefill_v8.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) -O3 -march=native -Iinclude -I$(V66_SRC_DIR) -I$(V8_SRC_DIR) \
 		tests/test_threadpool_parity.c \
-		$(V66_SRC_DIR)/ck_parallel_decode.c \
+		$(V8_SRC_DIR)/ck_parallel_decode_v8.c \
 		$(V8_SRC_DIR)/ck_parallel_prefill_v8.c \
 		-L$(BUILD_DIR) -lckernel_engine -lm -lpthread \
 		-Wl,-rpath,$(BUILD_DIR) \
@@ -2341,6 +2342,24 @@ test-threadpool-parity-quick: $(THREADPOOL_BIN)
 test-threadpool-parity-verbose: $(THREADPOOL_BIN)
 	@echo "Running Thread Pool GEMV parity + speed test (verbose)..."
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(THREADPOOL_BIN) --verbose
+
+$(Q4K_DISPATCH_MATRIX_BIN): $(LIB) benchmarks/bench_q4k_dispatch_matrix.c $(V8_SRC_DIR)/ck_parallel_decode_v8.c $(V8_SRC_DIR)/ck_parallel_prefill_v8.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 -march=native -Iinclude -I$(V8_SRC_DIR) \
+		benchmarks/bench_q4k_dispatch_matrix.c \
+		$(V8_SRC_DIR)/ck_parallel_decode_v8.c \
+		$(V8_SRC_DIR)/ck_parallel_prefill_v8.c \
+		-L$(BUILD_DIR) -lckernel_engine -lm -lpthread -ldl \
+		-Wl,-rpath,$(BUILD_DIR) \
+		-o $(Q4K_DISPATCH_MATRIX_BIN)
+
+bench-q4k-dispatch-matrix: $(Q4K_DISPATCH_MATRIX_BIN)
+	@echo "Running Q4_K dispatch matrix benchmark..."
+	LD_LIBRARY_PATH=$(BUILD_DIR):llama.cpp:$$LD_LIBRARY_PATH $(Q4K_DISPATCH_MATRIX_BIN)
+
+bench-q4k-dispatch-matrix-quick: $(Q4K_DISPATCH_MATRIX_BIN)
+	@echo "Running Q4_K dispatch matrix benchmark (quick)..."
+	LD_LIBRARY_PATH=$(BUILD_DIR):llama.cpp:$$LD_LIBRARY_PATH $(Q4K_DISPATCH_MATRIX_BIN) --quick
 
 # Representative Gemma4-sized Q6_K x Q8_K prefill dispatch benchmark.
 # This is benchmark/dispatch coverage, not a correctness gate for every PR.
@@ -2484,7 +2503,7 @@ profile-v8-prefill-ops-quick: ck-cli-v8
 		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
 		--json-out build/v8_prefill_ops_profile_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-128}.json
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-dispatch-sweep-quick test-q4-q5-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-gemma4-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-dispatch-sweep-quick test-q4-q5-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-gemma4-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

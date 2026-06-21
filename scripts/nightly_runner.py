@@ -452,6 +452,14 @@ BENCH_TARGETS = {
         "perf_pattern": r"(\d+\.?\d*)\s*GFLOPS",
         "perf_unit": "GFLOPS",
     },
+    "q4k_dispatch_matrix": {
+        "name": "Q4_K Dispatch Matrix",
+        "category": "bench",
+        "target": "bench-q4k-dispatch-matrix-quick",
+        "timeout_sec": 300,
+        "perf_pattern": r"qwen35_down\s+\d+\s+\d+\s+\d+\s+\d+\.?\d*\s+\d+\.?\d*\s+\d+\.?\d*\s+\d+\.?\d*\s+\S+\s+\d+\.?\d*x\s+(\d+\.?\d*)x",
+        "perf_unit": "packed-N speedup",
+    },
 }
 
 # Quick subset for fast validation
