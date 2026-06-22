@@ -415,8 +415,10 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         name = arg.get("name", "")
         name_lc = str(name).lower()
 
-        # Substitute num_tokens for token count parameters
-        if source == "const:1":
+        # Substitute num_tokens for token count parameters. Mamba selective
+        # scan is single-batch prompt prefill: batch stays 1, seq_len is the
+        # runtime token count.
+        if source == "const:1" and not (op_type == "mamba_selective_scan" and name_lc == "batch"):
             expr = "num_tokens"
         elif source == "dim:seq_len":
             expr = "num_tokens"
@@ -587,6 +589,63 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             )
             return "\n".join(lines)
 
+    if op_type == "mamba_in_proj" and func == "gemm_nt_q5_0_q8_0":
+        a_expr = arg_expr_by_name.get("a")
+        b_expr = arg_expr_by_name.get("b")
+        bias_expr = arg_expr_by_name.get("bias", "NULL")
+        c_expr = arg_expr_by_name.get("c")
+        m_expr = arg_expr_by_name.get("m", "num_tokens")
+        n_expr = arg_expr_by_name.get("n")
+        k_expr = arg_expr_by_name.get("k")
+        if a_expr and b_expr and c_expr and n_expr and k_expr:
+            lines.append("    if (debug_prefill_mamba_in_proj_row_gemv) {")
+            if profile:
+                lines.append("        CK_PROFILE_BEGIN();")
+            lines.extend([
+                f"        const int _ck_m = (int)({m_expr});",
+                f"        const int _ck_n = (int)({n_expr});",
+                f"        const int _ck_k = (int)({k_expr});",
+                "        const size_t _ck_a_row_bytes = (size_t)(_ck_k / QK8_0) * sizeof(block_q8_0);",
+                f"        const uint8_t *_ck_a_base = (const uint8_t*)({a_expr});",
+                f"        const uint8_t *_ck_w_base = (const uint8_t*)({b_expr});",
+                f"        const float *_ck_bias = (const float*)({bias_expr});",
+                f"        float *_ck_c_base = (float*)({c_expr});",
+                "        for (int _ck_t = 0; _ck_t < _ck_m; ++_ck_t) {",
+                "            const void *_ck_xq8 = (const void*)(_ck_a_base + (size_t)_ck_t * _ck_a_row_bytes);",
+                "            float *_ck_y = _ck_c_base + (size_t)_ck_t * (size_t)_ck_n;",
+                "            gemv_q5_0_q8_0(_ck_y, (const void*)_ck_w_base, _ck_xq8, _ck_n, _ck_k);",
+                "            if (_ck_bias != NULL) {",
+                "                for (int _ck_i = 0; _ck_i < _ck_n; ++_ck_i) _ck_y[_ck_i] += _ck_bias[_ck_i];",
+                "            }",
+                "        }",
+            ])
+            if profile:
+                lines.append(f'        CK_PROFILE_END("prefill", "gemv_q5_0_q8_0", "{op_type}_row_gemv", {layer});')
+            lines.append("    } else {")
+            if profile:
+                lines.append("        CK_PROFILE_BEGIN();")
+            lines.extend([
+                f"        {func}(",
+                f"            {a_expr},",
+                f"            {b_expr},",
+                f"            {bias_expr},",
+                f"            {c_expr},",
+                f"            {m_expr},",
+                f"            {n_expr},",
+                f"            {k_expr}",
+                "        );",
+            ])
+            if profile:
+                lines.append(f'        CK_PROFILE_END("prefill", "{func}", "{op_type}", {layer});')
+            lines.append("    }")
+            raw_expr = c_expr.replace("(float*)", "").replace("(void*)", "").strip()
+            lines.append(
+                f'    if (num_tokens > 1) ck_debug_export_hidden(model, {layer}, "mamba_in_proj_last", '
+                f'(const float*)(((const float*){raw_expr}) + (((size_t)num_tokens - 1u) * (size_t)({n_expr}))), '
+                f'(int)({n_expr}));'
+            )
+            return "\n".join(lines)
+
     # Format the function call / quantization loop
     if batch_quant_kind and len(args) >= 3:
         x_expr = args[0]
@@ -709,6 +768,8 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         _emit_head_major_last(_hidden_arg("k"), "rope_k", _hidden_arg("num_kv_heads") or "NUM_KV_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
     elif op_type == "out_proj":
         _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "out_proj", "EMBED_DIM")
+    elif op_type == "block_rmsnorm":
+        _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "block_rmsnorm", "EMBED_DIM")
     elif op_type == "post_attention_norm":
         _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "post_attn_norm", "EMBED_DIM")
     elif op_type == "ffn_norm":
@@ -736,8 +797,36 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             )
     elif op_type == "geglu":
         _emit_hidden_last(_hidden_arg("output", "out", "x", "y", "data"), "mlp_geglu", _hidden_arg("dim") or "INTERMEDIATE_DIM")
+    elif op_type == "mlp_up":
+        _emit_hidden_last(
+            _hidden_arg("output", "out", "c", "y"),
+            "mlp_up",
+            _hidden_arg("n", "out_dim") or "INTERMEDIATE_SIZE",
+        )
+    elif op_type == "relu2":
+        _emit_hidden_last(
+            _hidden_arg("output", "out", "x", "y", "data"),
+            "relu2",
+            _hidden_arg("dim", "intermediate_dim") or "INTERMEDIATE_SIZE",
+        )
     elif op_type == "mlp_down":
         _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "mlp_down", "EMBED_DIM")
+    elif op_type == "mamba_in_proj":
+        _emit_hidden_last(_hidden_arg("output", "out", "c", "y", "C"), "mamba_in_proj", _hidden_arg("N") or _hidden_arg("m", "M", "rows", "out_dim") or "0")
+    elif op_type == "mamba_in_proj_split":
+        _emit_hidden_last(_hidden_arg("gate", "z"), "mamba_gate", _hidden_arg("intermediate_dim", "inner_dim") or "INTERMEDIATE_SIZE")
+        _emit_hidden_last(_hidden_arg("hidden_bc", "conv_qkv", "x"), "mamba_hidden_bc", _hidden_arg("conv_dim") or "0")
+        _emit_hidden_last(_hidden_arg("dt"), "mamba_dt_raw", _hidden_arg("num_heads") or "0")
+    elif op_type == "mamba_conv1d_silu":
+        _emit_hidden_last(_hidden_arg("conv_out", "out", "y"), "mamba_conv", _hidden_arg("conv_dim") or "0")
+    elif op_type == "mamba_dt_softplus":
+        _emit_hidden_last(_hidden_arg("dt_out", "out", "y"), "mamba_dt", _hidden_arg("num_heads") or "0")
+    elif op_type == "mamba_selective_scan":
+        _emit_hidden_last(_hidden_arg("y", "out"), "mamba_scan_y", f"(({_hidden_arg('num_heads') or '0'}) * ({_hidden_arg('head_dim') or '0'}))")
+    elif op_type == "mamba_rmsnorm_gate":
+        _emit_hidden_last(_hidden_arg("out", "y"), "mamba_normed", _hidden_arg("inner_dim", "intermediate_dim") or "INTERMEDIATE_SIZE")
+    elif op_type == "mamba_out_proj":
+        _emit_hidden_last(_hidden_arg("output", "out", "c", "y", "C"), "mamba_out_proj", "EMBED_DIM")
     elif op_type == "gemma4_per_layer_embed":
         _emit_hidden_last(_hidden_arg("hidden", "output", "out", "x", "y"), "gemma4_per_layer_embed", "EMBED_DIM")
     elif op_type == "final_rmsnorm":
@@ -867,6 +956,8 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
     int debug_prefill_mlp_gate_up_row_gemv = debug_prefill_mlp_gate_up_row_gemv_env ? (atoi(debug_prefill_mlp_gate_up_row_gemv_env) != 0) : 0;
     const char *debug_prefill_mlp_gate_up_row_gemv_layer_env = getenv("CK_V8_DEBUG_PREFILL_MLP_GATE_UP_ROW_GEMV_LAYER");
     int debug_prefill_mlp_gate_up_row_gemv_layer = debug_prefill_mlp_gate_up_row_gemv_layer_env ? atoi(debug_prefill_mlp_gate_up_row_gemv_layer_env) : -1;
+    const char *debug_prefill_mamba_in_proj_row_gemv_env = getenv("CK_V8_DEBUG_PREFILL_MAMBA_IN_PROJ_ROW_GEMV");
+    int debug_prefill_mamba_in_proj_row_gemv = debug_prefill_mamba_in_proj_row_gemv_env ? (atoi(debug_prefill_mamba_in_proj_row_gemv_env) != 0) : 0;
 
     /* Copy input tokens to activation buffer (follow same pattern as decode) */
     memcpy((void*)(model->bump + A_TOKEN_IDS), tokens, (size_t)num_tokens * sizeof(int32_t));
@@ -1290,6 +1381,8 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
     int debug_prefill_mlp_gate_up_row_gemv = debug_prefill_mlp_gate_up_row_gemv_env ? (atoi(debug_prefill_mlp_gate_up_row_gemv_env) != 0) : 0;
     const char *debug_prefill_mlp_gate_up_row_gemv_layer_env = getenv("CK_V8_DEBUG_PREFILL_MLP_GATE_UP_ROW_GEMV_LAYER");
     int debug_prefill_mlp_gate_up_row_gemv_layer = debug_prefill_mlp_gate_up_row_gemv_layer_env ? atoi(debug_prefill_mlp_gate_up_row_gemv_layer_env) : -1;
+    const char *debug_prefill_mamba_in_proj_row_gemv_env = getenv("CK_V8_DEBUG_PREFILL_MAMBA_IN_PROJ_ROW_GEMV");
+    int debug_prefill_mamba_in_proj_row_gemv = debug_prefill_mamba_in_proj_row_gemv_env ? (atoi(debug_prefill_mamba_in_proj_row_gemv_env) != 0) : 0;
     const float *ck_debug_mlp_gate_up_fp32_input = NULL;
 """
     prologue = prologue.replace(

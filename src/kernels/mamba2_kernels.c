@@ -198,18 +198,30 @@ void mamba2_selective_state_update_decode_f32(const float *state_in,
         return;
     }
 
+    const int packed_xbc = (x == b && b == c);
+    const size_t inner_dim = (size_t)num_heads * (size_t)head_dim;
+    const size_t bc_dim = (size_t)num_groups * (size_t)state_dim;
+    const size_t packed_stride = inner_dim + 2u * bc_dim;
+
     for (int row = 0; row < rows; ++row) {
+        const float *packed_row = packed_xbc ? x + (size_t)row * packed_stride : NULL;
         for (int h = 0; h < num_heads; ++h) {
-            const int group = (int)(((long long)h * (long long)num_groups) / (long long)num_heads);
+            const int heads_per_group = (num_heads + num_groups - 1) / num_groups;
+            int group = h / heads_per_group;
+            if (group >= num_groups) group = num_groups - 1;
             const float dt_h = dt[(size_t)row * (size_t)num_heads + (size_t)h];
             const float d_a = expf(dt_h * a[h]);
             const float d_h = d[h];
-            const float *b_row = b + ((size_t)row * (size_t)num_groups + (size_t)group) * (size_t)state_dim;
-            const float *c_row = c + ((size_t)row * (size_t)num_groups + (size_t)group) * (size_t)state_dim;
+            const float *b_row = packed_xbc
+                ? (packed_row + inner_dim + (size_t)group * (size_t)state_dim)
+                : (b + ((size_t)row * (size_t)num_groups + (size_t)group) * (size_t)state_dim);
+            const float *c_row = packed_xbc
+                ? (packed_row + inner_dim + bc_dim + (size_t)group * (size_t)state_dim)
+                : (c + ((size_t)row * (size_t)num_groups + (size_t)group) * (size_t)state_dim);
 
             for (int hd = 0; hd < head_dim; ++hd) {
                 const size_t x_idx = ((size_t)row * (size_t)num_heads + (size_t)h) * (size_t)head_dim + (size_t)hd;
-                const float x_val = x[x_idx];
+                const float x_val = packed_xbc ? packed_row[(size_t)h * (size_t)head_dim + (size_t)hd] : x[x_idx];
                 const size_t state_base =
                     (((size_t)row * (size_t)num_heads + (size_t)h) * (size_t)head_dim + (size_t)hd) *
                     (size_t)state_dim;
@@ -259,12 +271,14 @@ void mamba2_selective_scan_f32(const float *state_init,
         float *state_batch = state_out + (size_t)bs * state_per_batch;
         for (int t = 0; t < seq_len; ++t) {
             for (int h = 0; h < num_heads; ++h) {
-                /* Nemotron-H no-cache/chunked prefill expands B/C with
-                 * repeat(..., num_heads / num_groups, ...), yielding a
-                 * repeating head->group mapping.  The separate decode state
-                 * update kernel keeps the cache-path contiguous mapping.
+                /* Nemotron-H prefill and decode both use the repeating
+                 * B/C group map from repeat_interleave semantics.  Keeping
+                 * this in sync is required for full-prefix and incremental
+                 * decode equivalence.
                  */
-                const int group = h % num_groups;
+                const int heads_per_group = (num_heads + num_groups - 1) / num_groups;
+                int group = h / heads_per_group;
+                if (group >= num_groups) group = num_groups - 1;
                 const float dt_h = dt[((size_t)bs * (size_t)seq_len + (size_t)t) * (size_t)num_heads + (size_t)h];
                 const float d_a = expf(dt_h * a[h]);
                 const float d_h = d[h];

@@ -369,7 +369,7 @@ def emit_memory_layout(layout: Dict, config: Dict) -> str:
     lines.append("};")
     lines.append("")
     if vocab_merges_size:
-        lines.append(f"#define VOCAB_MERGES_COUNT {vocab_merges_size // 4}")
+        lines.append(f"#define VOCAB_MERGES_COUNT {vocab_merges_size // (3 * 4)}")
     else:
         lines.append("#define VOCAB_MERGES_COUNT 0")
     if vocab_strings_size:
@@ -1416,6 +1416,37 @@ def emit_op(
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
 
+    if op_name == "mamba_selective_scan" and function == "mamba2_selective_scan_f32":
+        by_name = {str(arg.get("name", "")).lower(): str(arg.get("expr", "0")) for arg in args}
+        update_args = [
+            by_name.get("state_init", "0"),
+            by_name.get("x", "0"),
+            by_name.get("dt", "0"),
+            by_name.get("a", "0"),
+            by_name.get("b", "0"),
+            by_name.get("c", "0"),
+            by_name.get("d", "0"),
+            by_name.get("state_out", "0"),
+            by_name.get("y", "0"),
+            "1",
+            by_name.get("num_heads", "0"),
+            by_name.get("head_dim", "0"),
+            by_name.get("state_dim", "0"),
+            by_name.get("num_groups", "0"),
+        ]
+        if profile:
+            lines.append(f"    CK_PROFILE_BEGIN();")
+        lines.append("    mamba2_selective_state_update_decode_f32(")
+        for i, expr in enumerate(update_args):
+            comma = "," if i < len(update_args) - 1 else ""
+            lines.append(f"        {expr}{comma}")
+        lines.append("    );")
+        if profile:
+            lines.append(f'    CK_PROFILE_END("decode", "mamba2_selective_state_update_decode_f32", "{op_name}", {layer});')
+        if seq_idx is not None:
+            lines.append(f"    if (stop_seq == {seq_idx}) return;")
+        return "\n".join(lines)
+
     if profile:
         lines.append(f"    CK_PROFILE_BEGIN();")
     if not args:
@@ -1557,6 +1588,18 @@ def emit_op(
             count_expr = _hidden_count("dim", "n", "intermediate_dim", default="INTERMEDIATE_DIM")
             lines.append(f'    ck_debug_export_hidden(model, {layer}, "mlp_geglu", (const float*){out_expr}, {count_expr});')
             _emit_hidden_export_last_row(out_expr, "mlp_geglu", count_expr)
+    elif op_name == "mlp_up":
+        out_expr = _hidden_raw(_hidden_arg("output", "out", "c", "y"))
+        if out_expr:
+            count_expr = _hidden_count("m", "M", "rows", "out_dim", default="INTERMEDIATE_DIM")
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "mlp_up", (const float*){out_expr}, {count_expr});')
+            _emit_hidden_export_last_row(out_expr, "mlp_up", count_expr)
+    elif op_name == "relu2":
+        out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y"))
+        if out_expr:
+            count_expr = _hidden_count("n", "dim", "intermediate_dim", default="INTERMEDIATE_DIM")
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "relu2", (const float*){out_expr}, {count_expr});')
+            _emit_hidden_export_last_row(out_expr, "relu2", count_expr)
     elif op_name == "mlp_down":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "c", "y"))
         if out_expr:

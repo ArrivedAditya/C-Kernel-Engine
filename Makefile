@@ -590,6 +590,8 @@ PY_TESTS := unittest/test_layernorm.py \
             unittest/test_rmsnorm.py \
             unittest/test_qk_norm.py \
             tests/test_deltanet.py \
+            unittest/test_recurrent_conv_state_update.py \
+            unittest/test_mamba2_reference.py \
             unittest/test_deepseek_reference_kernels.py \
             unittest/test_swiglu.py \
             unittest/test_fused_swiglu_decode.py \
@@ -2460,6 +2462,11 @@ test-v8-decoder-matrix-quick: ck-cli-v8
 		--repeats $${CK_V8_DECODER_REPEATS:-1} \
 		--json-out build/v8_decoder_matrix_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_DECODER_PROMPT:-128}_n$${CK_V8_DECODER_DECODE:-32}.json
 
+test-v8-template-circuit-audit:
+	@echo "Running v8 template circuit artifact audit tests..."
+	@$(PYTHON) -m py_compile version/v8/scripts/audit_template_circuit_v8.py
+	@$(PYTHON) -m unittest tests.test_v8_template_circuit_audit -v
+
 test-v8-gemma4-highmem:
 	@avail_kb=$$(awk '/MemAvailable:/ {print $$2}' /proc/meminfo 2>/dev/null || echo 0); \
 	threshold_kb=$$(( $(V8_GEMMA4_MIN_MEM_GB) * 1024 * 1024 )); \
@@ -2503,7 +2510,7 @@ profile-v8-prefill-ops-quick: ck-cli-v8
 		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
 		--json-out build/v8_prefill_ops_profile_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-128}.json
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-dispatch-sweep-quick test-q4-q5-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-gemma4-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-dispatch-sweep-quick test-q4-q5-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit test-v8-gemma4-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

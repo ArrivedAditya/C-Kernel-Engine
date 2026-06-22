@@ -2263,7 +2263,25 @@ def main() -> None:
         "qwen35.ssm.time_step_rank",
         "qwen35.ssm.inner_size",
         "qwen35.full_attention_interval",
-        # Nemotron-H MoE/Mamba hybrid keys
+        # Nemotron-H Mamba/MLP/attention and MoE/Mamba hybrid keys
+        "nemotron_h.block_count",
+        "nemotron_h.context_length",
+        "nemotron_h.embedding_length",
+        "nemotron_h.feed_forward_length",
+        "nemotron_h.vocab_size",
+        "nemotron_h.attention.head_count",
+        "nemotron_h.attention.head_count_kv",
+        "nemotron_h.attention.key_length",
+        "nemotron_h.attention.value_length",
+        "nemotron_h.attention.layer_norm_rms_epsilon",
+        "nemotron_h.attention.layer_norm_epsilon",
+        "nemotron_h.rope.freq_base",
+        "nemotron_h.rope.dimension_count",
+        "nemotron_h.ssm.conv_kernel",
+        "nemotron_h.ssm.state_size",
+        "nemotron_h.ssm.group_count",
+        "nemotron_h.ssm.inner_size",
+        "nemotron_h.ssm.time_step_rank",
         "nemotron_h_moe.block_count",
         "nemotron_h_moe.context_length",
         "nemotron_h_moe.embedding_length",
@@ -2344,6 +2362,7 @@ def main() -> None:
         "qwen2.tie_word_embeddings",
         "qwen3.tie_word_embeddings",
         "qwen3vl.tie_word_embeddings",
+        "nemotron_h.tie_word_embeddings",
         "nemotron_h_moe.tie_word_embeddings",
         "gemma3.tie_word_embeddings",
         "mistral.tie_word_embeddings",
@@ -2355,6 +2374,7 @@ def main() -> None:
         "qwen2.embedding_weight_tying",
         "qwen3.embedding_weight_tying",
         "qwen3vl.embedding_weight_tying",
+        "nemotron_h.embedding_weight_tying",
         "nemotron_h_moe.embedding_weight_tying",
         "gemma3.embedding_weight_tying",
         "gemma4.tie_word_embeddings",
@@ -3138,7 +3158,7 @@ def main() -> None:
             raise GGUFError(f"{tok_name}: expected 2D, got dims={tok.dims}")
         embed_dim = meta_int(
             "deepseek2.embedding_length", "mistral3.embedding_length", "mistral.embedding_length",
-            "llama.embedding_length", "qwen3vl.embedding_length", "qwen3.embedding_length", "qwen2.embedding_length",
+            "llama.embedding_length", "nemotron_h.embedding_length", "nemotron_h_moe.embedding_length", "qwen3vl.embedding_length", "qwen3.embedding_length", "qwen2.embedding_length",
             "gemma3.embedding_length", "gemma4.embedding_length"
         ) or tok.ne0
         vocab_size = tok.ne1
@@ -3193,7 +3213,7 @@ def main() -> None:
 
         num_layers = meta_int(
             "deepseek2.block_count", "mistral3.block_count", "mistral.block_count",
-            "llama.block_count", "qwen35.block_count", "nemotron_h_moe.block_count", "qwen3vl.block_count", "qwen3.block_count", "qwen2.block_count",
+            "llama.block_count", "qwen35.block_count", "nemotron_h.block_count", "nemotron_h_moe.block_count", "qwen3vl.block_count", "qwen3.block_count", "qwen2.block_count",
             "gemma3.block_count", "gemma4.block_count"
         )
         if num_layers is None:
@@ -3211,7 +3231,7 @@ def main() -> None:
 
         intermediate = meta_int_or_list(
             "deepseek2.feed_forward_length", "mistral3.feed_forward_length", "mistral.feed_forward_length",
-            "llama.feed_forward_length", "qwen35.feed_forward_length", "nemotron_h_moe.feed_forward_length", "qwen3vl.feed_forward_length", "qwen3.feed_forward_length", "qwen2.feed_forward_length",
+            "llama.feed_forward_length", "qwen35.feed_forward_length", "nemotron_h.feed_forward_length", "nemotron_h_moe.feed_forward_length", "qwen3vl.feed_forward_length", "qwen3.feed_forward_length", "qwen2.feed_forward_length",
             "gemma3.feed_forward_length", "gemma4.feed_forward_length"
         )
         if isinstance(intermediate, list):
@@ -3226,21 +3246,24 @@ def main() -> None:
 
         num_heads = meta_int(
             "deepseek2.attention.head_count", "mistral3.attention.head_count", "mistral.attention.head_count",
-            "llama.attention.head_count", "qwen35.attention.head_count", "nemotron_h_moe.attention.head_count", "qwen3vl.attention.head_count", "qwen3.attention.head_count", "qwen2.attention.head_count",
+            "llama.attention.head_count", "qwen35.attention.head_count", "nemotron_h.attention.head_count", "nemotron_h_moe.attention.head_count", "qwen3vl.attention.head_count", "qwen3.attention.head_count", "qwen2.attention.head_count",
             "gemma3.attention.head_count", "gemma4.attention.head_count"
         )
         if num_heads is None:
             raise GGUFError("Missing attention.head_count (num_heads)")
-        num_kv_heads_meta = meta_int(
+        num_kv_heads_meta = meta_int_or_list(
             "deepseek2.attention.head_count_kv", "mistral3.attention.head_count_kv", "mistral.attention.head_count_kv",
-            "llama.attention.head_count_kv", "qwen35.attention.head_count_kv", "nemotron_h_moe.attention.head_count_kv", "qwen3vl.attention.head_count_kv", "qwen3.attention.head_count_kv", "qwen2.attention.head_count_kv",
+            "llama.attention.head_count_kv", "qwen35.attention.head_count_kv", "nemotron_h.attention.head_count_kv", "nemotron_h_moe.attention.head_count_kv", "qwen3vl.attention.head_count_kv", "qwen3.attention.head_count_kv", "qwen2.attention.head_count_kv",
             "gemma3.attention.head_count_kv", "gemma4.attention.head_count_kv"
         )
+        if isinstance(num_kv_heads_meta, list):
+            nz_kv_heads = [int(x) for x in num_kv_heads_meta if int(x) > 0]
+            num_kv_heads_meta = max(nz_kv_heads) if nz_kv_heads else 0
         num_kv_heads = num_kv_heads_meta if num_kv_heads_meta and num_kv_heads_meta > 0 else 0
 
         context_len = meta_int(
             "deepseek2.context_length", "mistral3.context_length", "mistral.context_length",
-            "llama.context_length", "qwen35.context_length", "nemotron_h_moe.context_length", "qwen3vl.context_length", "qwen3.context_length", "qwen2.context_length",
+            "llama.context_length", "qwen35.context_length", "nemotron_h.context_length", "nemotron_h_moe.context_length", "qwen3vl.context_length", "qwen3.context_length", "qwen2.context_length",
             "gemma3.context_length", "gemma4.context_length"
         ) or 0
         if args.context is not None:
@@ -3260,13 +3283,14 @@ def main() -> None:
 
         rope_theta = meta_float(
             "deepseek2.rope.freq_base", "mistral3.rope.freq_base", "mistral.rope.freq_base",
-            "llama.rope.freq_base", "qwen35.rope.freq_base", "qwen3vl.rope.freq_base", "qwen3.rope.freq_base", "qwen2.rope.freq_base",
+            "llama.rope.freq_base", "qwen35.rope.freq_base", "nemotron_h.rope.freq_base", "nemotron_h_moe.rope.freq_base", "qwen3vl.rope.freq_base", "qwen3.rope.freq_base", "qwen2.rope.freq_base",
             "gemma3.rope.freq_base", "gemma4.rope.freq_base"
         ) or 10000.0
 
         # Q/K/V head dimensions (some models report explicit key/value lengths)
         key_length_meta = meta_int(
             "qwen35.attention.key_length",
+            "nemotron_h.attention.key_length",
             "nemotron_h_moe.attention.key_length",
             "qwen3vl.attention.key_length",
             "qwen3.attention.key_length",
@@ -3276,6 +3300,7 @@ def main() -> None:
         )
         value_length_meta = meta_int(
             "qwen35.attention.value_length",
+            "nemotron_h.attention.value_length",
             "nemotron_h_moe.attention.value_length",
             "qwen3vl.attention.value_length",
             "qwen3.attention.value_length",
@@ -3288,6 +3313,7 @@ def main() -> None:
         # Resolve after head_dim is known.
         rotary_dim_meta = meta_int(
             "qwen35.rope.dimension_count",
+            "nemotron_h.rope.dimension_count",
             "nemotron_h_moe.rope.dimension_count",
             "llama.rope.dim",
             "attention.rotary_dim",
@@ -3384,6 +3410,7 @@ def main() -> None:
         rms_eps = meta_float(
             "deepseek2.attention.layer_norm_rms_epsilon", "mistral3.attention.layer_norm_rms_epsilon",
             "mistral.attention.layer_norm_rms_epsilon", "llama.norm_rms_eps",
+            "nemotron_h.attention.layer_norm_rms_epsilon", "nemotron_h_moe.attention.layer_norm_rms_epsilon",
             "qwen35.attention.layer_norm_rms_epsilon", "qwen3vl.attention.layer_norm_rms_epsilon", "qwen3.attention.layer_norm_rms_epsilon", "qwen2.attention.layer_norm_rms_epsilon",
             "gemma3.attention.layer_norm_rms_epsilon", "gemma4.attention.layer_norm_rms_epsilon"
         ) or 1e-5
@@ -3525,6 +3552,8 @@ def main() -> None:
             "qwen2.tie_word_embeddings",
             "qwen3.tie_word_embeddings",
             "qwen3vl.tie_word_embeddings",
+            "nemotron_h.tie_word_embeddings",
+            "nemotron_h_moe.tie_word_embeddings",
             "gemma3.tie_word_embeddings",
             "gemma4.tie_word_embeddings",
             "mistral.tie_word_embeddings",
@@ -3536,6 +3565,8 @@ def main() -> None:
             "qwen2.embedding_weight_tying",
             "qwen3.embedding_weight_tying",
             "qwen3vl.embedding_weight_tying",
+            "nemotron_h.embedding_weight_tying",
+            "nemotron_h_moe.embedding_weight_tying",
             "gemma3.embedding_weight_tying",
             "gemma4.embedding_weight_tying",
             "mistral.embedding_weight_tying",
@@ -4194,7 +4225,10 @@ def main() -> None:
                 f"extra_projection_tensors={extra_tensors}."
             )
 
-        if arch == "nemotron_h_moe":
+        if arch in {"nemotron_h", "nemotron_h_moe"}:
+            nemotron_meta_prefix = "nemotron_h_moe" if arch == "nemotron_h_moe" else "nemotron_h"
+            def nmeta(key: str) -> str:
+                return f"{nemotron_meta_prefix}.{key}"
             contract = gguf_ck_arch_contract(arch)
             tensor_map = contract.get("tensor_map") or {}
             if not isinstance(tensor_map, dict):
@@ -4209,7 +4243,7 @@ def main() -> None:
                 dt = weight_dtype(info, dst_name)
                 if info.ggml_type == GGML_TYPE_F16 and dst_name != "token_emb":
                     raise GGUFError(
-                        f"{info.name}: FP16 nemotron_h_moe tensors are not supported yet outside token embeddings."
+                        f"{info.name}: FP16 nemotron_h tensors are not supported yet outside token embeddings."
                     )
                 entry = {
                     "name": dst_name,
@@ -4230,7 +4264,7 @@ def main() -> None:
             def _add_mapped_entry(plan: list[Dict[str, Any]], consumed: set[str], dst_name: str, src_name: str, *, layer_kind: Optional[str] = None) -> TensorInfo:
                 info = tensors.get(src_name)
                 if info is None:
-                    raise GGUFError(f"nemotron_h_moe conversion missing required tensor: {src_name}")
+                    raise GGUFError(f"nemotron_h conversion missing required tensor: {src_name}")
                 plan.append(_mapped_entry(dst_name, info, layer_kind=layer_kind))
                 consumed.add(src_name)
                 return info
@@ -4246,13 +4280,13 @@ def main() -> None:
 
             mamba_projection_size = 0
             mamba_intermediate_size = 0
-            mamba_conv_dim = int(meta_int("nemotron_h_moe.ssm.inner_size") or 0) + 2 * int(meta_int("nemotron_h_moe.ssm.group_count") or 0) * int(meta_int("nemotron_h_moe.ssm.state_size") or 0)
-            mamba_num_heads = int(meta_int("nemotron_h_moe.ssm.time_step_rank") or 0)
+            mamba_conv_dim = int(meta_int(nmeta("ssm.inner_size")) or 0) + 2 * int(meta_int(nmeta("ssm.group_count")) or 0) * int(meta_int(nmeta("ssm.state_size")) or 0)
+            mamba_num_heads = int(meta_int(nmeta("ssm.time_step_rank")) or 0)
             mamba_head_dim = 0
-            moe_intermediate_size = int(meta_int("nemotron_h_moe.expert_feed_forward_length") or intermediate)
-            moe_shared_intermediate_size = int(meta_int("nemotron_h_moe.expert_shared_feed_forward_length") or 0)
-            n_routed_experts = int(meta_int("nemotron_h_moe.expert_count") or 0)
-            experts_per_tok = int(meta_int("nemotron_h_moe.expert_used_count") or 0)
+            moe_intermediate_size = int(meta_int(nmeta("expert_feed_forward_length")) or intermediate)
+            moe_shared_intermediate_size = int(meta_int(nmeta("expert_shared_feed_forward_length")) or 0)
+            n_routed_experts = int(meta_int(nmeta("expert_count")) or 0)
+            experts_per_tok = int(meta_int(nmeta("expert_used_count")) or 0)
 
             for layer in range(num_layers):
                 kind = classify_layer_contract(tensors, layer, arch=arch)
@@ -4260,7 +4294,7 @@ def main() -> None:
                     detail = describe_layer_contract(tensors, layer, arch=arch)
                     if detail:
                         raise GGUFError(detail)
-                    raise GGUFError(f"Layer {layer}: unsupported nemotron_h_moe layer contract ({kind})")
+                    raise GGUFError(f"Layer {layer}: unsupported nemotron_h layer contract ({kind})")
                 layer_kind = kind[len("mapped_"):]
                 layer_kinds.append(layer_kind)
                 layer_key = f"layer.{layer}"
@@ -4292,7 +4326,7 @@ def main() -> None:
                     # It does not use the optional d_mlp prefix handled by the
                     # generic split helper, so the gate/intermediate width is
                     # the SSM inner width, not a half-residual candidate.
-                    mamba_intermediate_size = max(mamba_intermediate_size, int(meta_int("nemotron_h_moe.ssm.inner_size") or inner))
+                    mamba_intermediate_size = max(mamba_intermediate_size, int(meta_int(nmeta("ssm.inner_size")) or inner))
 
             _add_mapped_entry(nemotron_plan, consumed_sources, "final_ln_weight", "output_norm.weight")
             nemotron_plan.append({
@@ -4310,7 +4344,7 @@ def main() -> None:
             unconsumed_sources = sorted(set(tensors.keys()) - consumed_sources)
             if unconsumed_sources:
                 raise GGUFError(
-                    f"nemotron_h_moe conversion plan left {len(unconsumed_sources)} source tensors unconsumed: "
+                    f"nemotron_h conversion plan left {len(unconsumed_sources)} source tensors unconsumed: "
                     f"{unconsumed_sources[:16]}"
                 )
             source_coverage = {
@@ -4323,9 +4357,9 @@ def main() -> None:
             }
 
             if mamba_head_dim <= 0 and mamba_num_heads > 0:
-                mamba_head_dim = int((meta_int("nemotron_h_moe.ssm.inner_size") or 0) // mamba_num_heads)
+                mamba_head_dim = int((meta_int(nmeta("ssm.inner_size")) or 0) // mamba_num_heads)
             if mamba_intermediate_size <= 0:
-                mamba_intermediate_size = int(meta_int("nemotron_h_moe.ssm.inner_size") or intermediate)
+                mamba_intermediate_size = int(meta_int(nmeta("ssm.inner_size")) or intermediate)
             if mamba_projection_size <= 0:
                 mamba_projection_size = int(mamba_intermediate_size + mamba_conv_dim + mamba_num_heads)
 
@@ -4348,10 +4382,10 @@ def main() -> None:
                 "n_routed_experts": int(n_routed_experts),
                 "experts_per_tok": int(experts_per_tok),
                 "num_experts_per_tok": int(experts_per_tok),
-                "router_num_groups": int(meta_int("nemotron_h_moe.expert_group_count") or meta_int("nemotron_h_moe.router_num_groups") or 8),
-                "router_topk_group": int(meta_int("nemotron_h_moe.expert_topk_group") or meta_int("nemotron_h_moe.router_topk_group") or 4),
-                "router_norm_topk_prob": int(meta_int("nemotron_h_moe.norm_topk_prob") or meta_int("nemotron_h_moe.router_norm_topk_prob") or 1),
-                "routed_scaling_factor": float(meta_float("nemotron_h_moe.routed_scaling_factor") or meta_float("nemotron_h_moe.expert_routed_scaling_factor") or 1.0),
+                "router_num_groups": int(meta_int(nmeta("expert_group_count")) or meta_int(nmeta("router_num_groups")) or 8),
+                "router_topk_group": int(meta_int(nmeta("expert_topk_group")) or meta_int(nmeta("router_topk_group")) or 4),
+                "router_norm_topk_prob": int(meta_int(nmeta("norm_topk_prob")) or meta_int(nmeta("router_norm_topk_prob")) or 1),
+                "routed_scaling_factor": float(meta_float(nmeta("routed_scaling_factor")) or meta_float(nmeta("expert_routed_scaling_factor")) or 1.0),
                 "vocab_size": int(vocab_size),
                 "max_seq_len": int(context_len),
                 "context_length": int(context_len),
@@ -4376,12 +4410,12 @@ def main() -> None:
                 "layer_kv_policy": ["attention_kv_cache" if k == "attention" else "none" for k in layer_kinds],
                 "mamba_num_heads": int(mamba_num_heads),
                 "mamba_head_dim": int(mamba_head_dim),
-                "ssm_state_size": int(meta_int("nemotron_h_moe.ssm.state_size") or 0),
-                "ssm_conv_kernel": int(meta_int("nemotron_h_moe.ssm.conv_kernel") or 0),
-                "ssm_group_count": int(meta_int("nemotron_h_moe.ssm.group_count") or 0),
-                "ssm_inner_size": int(meta_int("nemotron_h_moe.ssm.inner_size") or 0),
+                "ssm_state_size": int(meta_int(nmeta("ssm.state_size")) or 0),
+                "ssm_conv_kernel": int(meta_int(nmeta("ssm.conv_kernel")) or 0),
+                "ssm_group_count": int(meta_int(nmeta("ssm.group_count")) or 0),
+                "ssm_inner_size": int(meta_int(nmeta("ssm.inner_size")) or 0),
                 "ssm_time_step_rank": int(mamba_num_heads),
-                "ssm_conv_history": max(int(meta_int("nemotron_h_moe.ssm.conv_kernel") or 0), 0),
+                "ssm_conv_history": max(int(meta_int(nmeta("ssm.conv_kernel")) or 0), 0),
                 "ssm_conv_channels": int(mamba_conv_dim),
                 "mamba_conv_dim": int(mamba_conv_dim),
                 "mamba_projection_size": int(mamba_projection_size),

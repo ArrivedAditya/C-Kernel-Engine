@@ -188,6 +188,20 @@ python -m pip install -r requirements-v8.txt</pre>
     </div>
     <p class="mini-note">Use this as the current Gemma4 GGUF coherence smoke. A healthy run should produce a normal long answer and stop by EOS or <code>--max-tokens</code>, not by prompt-marker echo or language corruption. The tested local Q4_K_M run generated 1024 coherent C-code tokens; performance work remains separate.</p>
 
+    <h3>Nemotron Nano 9B v2</h3>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>.venv/bin/python version/v8/scripts/ck_run_v8.py run \
+  hf://bartowski/nvidia_NVIDIA-Nemotron-Nano-9B-v2-GGUF/nvidia_NVIDIA-Nemotron-Nano-9B-v2-Q4_K_M.gguf \
+  --context-len 2048 \
+  --force-convert --force-compile \
+  --prompt 'Give me a concise example of C code.' \
+  --chat-template auto \
+  --max-tokens 256 \
+  --temperature 0.0</pre>
+    </div>
+    <p class="mini-note">Use this as the current Nemotron-H / Mamba2 GGUF smoke. Native BPE text encode is enabled by default for generated BPE runtimes; set <code>CK_DISABLE_FULL_BPE_TOKENIZER=1</code> only when you intentionally want token-id prompts plus lightweight token display. A healthy run should produce normal instructional text, not token-zero collapse or repeated punctuation.</p>
+
     <h3>Qwen2 0.5B Instruct</h3>
     <div class="cmd-block">
         <button class="copy-btn" type="button">Copy</button>

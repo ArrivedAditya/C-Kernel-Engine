@@ -119,6 +119,7 @@ def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess
         cmd,
         cwd=str(cwd or ROOT),
         text=True,
+        errors="replace",
         capture_output=True,
         check=False,
     )

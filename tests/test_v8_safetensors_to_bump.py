@@ -14,6 +14,64 @@ def _require_torch_safetensors() -> tuple[object, object]:
     return torch, st
 
 
+
+
+def _write_tiny_bpe_tokenizer(checkpoint: Path, vocab_size: int) -> None:
+    vocab: dict[str, int] = {
+        "<unk>": 0,
+        "<s>": 1,
+        "</s>": 2,
+        "Hello": 3,
+        "world": 4,
+        "!": 5,
+        "Ġtest": 6,
+        "Ġcode": 7,
+        "Helloworld": 8,
+        "ĠtestĠcode": 9,
+    }
+    for idx in range(len(vocab), vocab_size):
+        vocab[f"<tok_{idx}>"] = idx
+
+    (checkpoint / "tokenizer.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "model": {
+                    "type": "BPE",
+                    "unk_token": "<unk>",
+                    "vocab": vocab,
+                    "merges": ["Hello world", "Ġtest Ġcode"],
+                },
+                "added_tokens": [
+                    {"id": 0, "content": "<unk>"},
+                    {"id": 1, "content": "<s>"},
+                    {"id": 2, "content": "</s>"},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (checkpoint / "tokenizer_config.json").write_text(
+        json.dumps(
+            {
+                "tokenizer_class": "PreTrainedTokenizerFast",
+                "bos_token": {"content": "<s>"},
+                "eos_token": {"content": "</s>"},
+                "unk_token": {"content": "<unk>"},
+                "add_bos_token": True,
+                "add_eos_token": False,
+                "added_tokens_decoder": {
+                    "0": {"content": "<unk>"},
+                    "1": {"content": "<s>"},
+                    "2": {"content": "</s>"},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
 def test_qwen3_safetensors_to_bump_smoke(tmp_path: Path) -> None:
     torch, st = _require_torch_safetensors()
     checkpoint = tmp_path / "qwen3"
@@ -41,6 +99,7 @@ def test_qwen3_safetensors_to_bump_smoke(tmp_path: Path) -> None:
         + "\n",
         encoding="utf-8",
     )
+    _write_tiny_bpe_tokenizer(checkpoint, vocab_size=32)
 
     tensors = {
         "model.embed_tokens.weight": torch.randn(32, 8, dtype=torch.bfloat16),
@@ -88,7 +147,27 @@ def test_qwen3_safetensors_to_bump_smoke(tmp_path: Path) -> None:
     assert names[0] == "token_emb"
     assert "layer.0.q_norm" in names
     assert "layer.0.k_norm" in names
-    assert names[-1] == "output.weight"
+    assert "output.weight" in names
+    assert {"vocab_offsets", "vocab_strings", "vocab_merges"}.issubset(set(names))
+    assert names[-3:] == ["vocab_offsets", "vocab_strings", "vocab_merges"]
+    entries = {entry["name"]: entry for entry in manifest["entries"]}
+    assert entries["vocab_offsets"]["dtype"] == "i32"
+    assert entries["vocab_strings"]["dtype"] == "u8"
+    assert entries["vocab_merges"]["dtype"] == "i32"
+    assert entries["vocab_offsets"]["shape"] == [32]
+    assert entries["vocab_strings"]["size"] > 0
+    assert entries["vocab_merges"]["shape"] == [6]
+    assert entries["vocab_merges"]["size"] == 24
+    assert manifest["tokenizer_contract"]["tokenizer_type"] == "bpe"
+    assert manifest["config"]["tokenizer_contract"]["tokenizer_type"] == "bpe"
+    assert manifest["special_tokens"]["bos_token"] == "<s>"
+    assert manifest["special_tokens"]["bos_token_id"] == 1
+    assert manifest["special_tokens"]["eos_token"] == "</s>"
+    assert manifest["special_tokens"]["eos_token_id"] == 2
+    assert manifest["special_tokens"]["unk_token"] == "<unk>"
+    assert manifest["special_tokens"]["unk_token_id"] == 0
+    assert manifest["template"]["flags"]["tokenizer"] == "bpe"
+    assert manifest["template"]["contract"]["tokenizer_contract"]["tokenizer_type"] == "bpe"
     assert (out / "weights.bump").stat().st_size > 0
 
 
@@ -441,8 +520,18 @@ def test_nemotron_h_safetensors_to_bump_dry_run_maps_dense_mamba_attention_relu2
     assert cfg["layer_state_policy"] == ["mamba2", "none", "none"]
     assert cfg["layer_moe_policy"] == ["none", "none", "none"]
     assert cfg["layer_mlp_policy"] == ["none", "none", "relu2"]
+    attention_ops = manifest["template"]["block_types"]["decoder"]["body"]["ops_by_kind"]["attention"]
+    assert "rope_qk" not in attention_ops
     assert cfg["ssm_conv_kernel"] == 4
     assert cfg["ssm_conv_history"] == 4
+    assert cfg["recurrent_num_heads"] == 2
+    assert cfg["recurrent_head_dim"] == 4
+    assert cfg["recurrent_state_heads"] == 2
+    assert cfg["recurrent_state_rows"] == 4
+    assert cfg["recurrent_state_cols"] == 3
+    assert manifest["config"]["recurrent_state_heads"] == 2
+    assert manifest["config"]["recurrent_state_rows"] == 4
+    assert manifest["config"]["recurrent_state_cols"] == 3
     assert "layer.0.mamba_in_proj" in names
     assert "layer.1.attn_q" in names
     assert "layer.2.mlp_up" in names
@@ -478,10 +567,31 @@ def test_nemotron_h_safetensors_to_bump_dry_run_maps_dense_mamba_attention_relu2
     conv_state = next(
         buf for buf in layout["memory"]["activations"]["buffers"] if buf["name"] == "recurrent_conv_state"
     )
+    ssm_state = next(
+        buf for buf in layout["memory"]["activations"]["buffers"] if buf["name"] == "recurrent_ssm_state"
+    )
     assert conv_state["shape"] == "[3, 4, 20]"
+    assert ssm_state["shape"] == "[3, 2, 4, 3]"
+
+    ir1_ops = json.loads((out / "ir1_decode.json").read_text(encoding="utf-8"))["ops"]
+    ir1_by_op = {(op["layer"], op["op"]): op for op in ir1_ops if "layer" in op}
+    ir1_mamba_in = ir1_by_op[(0, "mamba_in_proj")]
+    assert ir1_mamba_in["dataflow"]["inputs"]["x"]["slot"] == "layer_input"
+    assert ir1_mamba_in["dataflow"]["inputs"]["x"]["from_op"] == ir1_by_op[(0, "block_rmsnorm")]["op_id"]
 
     lowered_ops = json.loads(lowered.read_text(encoding="utf-8"))["operations"]
     by_op = {(op["layer"], op["op"]): op for op in lowered_ops}
+
+    attention_layer_ops = [op["op"] for op in lowered_ops if op.get("layer") == 1]
+    assert "rope_qk" not in attention_layer_ops
+    assert "kv_cache_store" in attention_layer_ops
+    assert attention_layer_ops.index("v_proj") < attention_layer_ops.index("kv_cache_store") < attention_layer_ops.index("attn")
+    attn = by_op[(1, "attn")]
+    assert attn["kernel"] == "attention_forward_decode_head_major_gqa_flash"
+    assert attn["_kv_cache_read_layer"] == 1
+    attn_inputs = attn.get("inputs") or attn.get("activations") or {}
+    assert attn_inputs["k_cache"]["buffer"] == "kv_cache"
+    assert attn_inputs["v_cache"]["buffer"] == "kv_cache"
 
     mamba_in = by_op[(0, "mamba_in_proj")]
     assert mamba_in["kernel"] == "gemv_bf16"
