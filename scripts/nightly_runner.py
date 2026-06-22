@@ -440,6 +440,12 @@ MAKE_TARGETS = {
         "target": "test-v8-gemma4-highmem",
         "timeout_sec": 5400,
     },
+    "v8_nemotron9_highmem": {
+        "name": "v8 Nemotron Nano 9B High-Memory Smoke",
+        "category": "inference",
+        "target": "test-v8-nemotron9-highmem",
+        "timeout_sec": 7200,
+    },
 }
 
 # Benchmark targets with perf extraction
