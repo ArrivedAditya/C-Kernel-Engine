@@ -605,3 +605,95 @@ def test_nemotron_h_safetensors_to_bump_dry_run_maps_dense_mamba_attention_relu2
     assert relu2["activations"]["x"]["buffer"] == "mlp_scratch"
     assert relu2["outputs"]["out"]["buffer"] == "mlp_scratch"
     assert mlp_down["activations"]["x"]["buffer"] == "mlp_scratch"
+
+
+def test_glm4_safetensors_to_bump_uses_declarative_source_map(tmp_path: Path) -> None:
+    torch, st = _require_torch_safetensors()
+    checkpoint = tmp_path / "glm4"
+    out = tmp_path / "out_glm4"
+    checkpoint.mkdir()
+    out.mkdir()
+
+    (checkpoint / "config.json").write_text(
+        json.dumps(
+            {
+                "architectures": ["Glm4ForCausalLM"],
+                "model_type": "glm4",
+                "num_hidden_layers": 1,
+                "hidden_size": 8,
+                "intermediate_size": 16,
+                "num_attention_heads": 2,
+                "num_key_value_heads": 1,
+                "head_dim": 4,
+                "partial_rotary_factor": 0.5,
+                "vocab_size": 32,
+                "max_position_embeddings": 64,
+                "rope_theta": 10000.0,
+                "rms_norm_eps": 1e-5,
+                "attention_bias": True,
+                "tie_word_embeddings": False,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_tiny_bpe_tokenizer(checkpoint, vocab_size=32)
+
+    tensors = {
+        "model.embed_tokens.weight": torch.randn(32, 8, dtype=torch.bfloat16),
+        "model.layers.0.input_layernorm.weight": torch.ones(8, dtype=torch.float32),
+        "model.layers.0.post_attention_layernorm.weight": torch.ones(8, dtype=torch.float32),
+        "model.layers.0.self_attn.q_proj.weight": torch.randn(8, 8, dtype=torch.bfloat16),
+        "model.layers.0.self_attn.q_proj.bias": torch.randn(8, dtype=torch.float32),
+        "model.layers.0.self_attn.k_proj.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+        "model.layers.0.self_attn.k_proj.bias": torch.randn(4, dtype=torch.float32),
+        "model.layers.0.self_attn.v_proj.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+        "model.layers.0.self_attn.v_proj.bias": torch.randn(4, dtype=torch.float32),
+        "model.layers.0.self_attn.o_proj.weight": torch.randn(8, 8, dtype=torch.bfloat16),
+        "model.layers.0.self_attn.o_proj.bias": torch.randn(8, dtype=torch.float32),
+        "model.layers.0.mlp.gate_proj.weight": torch.randn(16, 8, dtype=torch.bfloat16),
+        "model.layers.0.mlp.up_proj.weight": torch.randn(16, 8, dtype=torch.bfloat16),
+        "model.layers.0.mlp.down_proj.weight": torch.randn(8, 16, dtype=torch.bfloat16),
+        "model.norm.weight": torch.ones(8, dtype=torch.float32),
+        "lm_head.weight": torch.randn(32, 8, dtype=torch.bfloat16),
+    }
+    st.save_file(tensors, checkpoint / "model.safetensors")
+
+    script = Path("version/v8/scripts/convert_safetensors_to_bump_v8.py")
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--checkpoint",
+            str(checkpoint),
+            "--output",
+            str(out / "weights.bump"),
+            "--config-out",
+            str(out / "config.json"),
+            "--manifest-out",
+            str(out / "weights_manifest.json"),
+            "--arch",
+            "auto",
+        ],
+        check=True,
+    )
+
+    manifest = json.loads((out / "weights_manifest.json").read_text(encoding="utf-8"))
+    audit = json.loads((out / "conversion_audit.json").read_text(encoding="utf-8"))
+    names = [entry["name"] for entry in manifest["entries"]]
+    entries = {entry["name"]: entry for entry in manifest["entries"]}
+
+    assert manifest["model"] == "glm4"
+    assert manifest["template"]["name"] == "glm4"
+    assert manifest["template"]["contract"]["chat_contract"]["force_bos_text_if_tokenizer_add_bos_false"] == "[gMASK]"
+    assert manifest["has_attention_biases"] is True
+    assert manifest["has_qk_norm"] is False
+    assert manifest["config"]["rotary_dim"] == 2
+    assert manifest["config"]["partial_rotary_factor"] == 0.5
+    assert audit["verdict"] == "pass"
+    assert audit["unmapped_source_tensors"] == []
+    assert "layer.0.bq" in names and "layer.0.bo" in names
+    assert entries["layer.0.w1"]["source_name"].endswith("gate_proj.weight+model.layers.0.mlp.up_proj.weight")
+    assert entries["layer.0.w1"]["shape"] == [16, 8]
+    assert entries["layer.0.b1"]["shape"] == [32]
+    assert "output.weight" in names

@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "description": "Declarative safetensors-to-CK source tensor mapping. Source formats are not first-class CK runtime artifacts; they map into BUMP manifest names consumed by templates.",
+  "architectures": {
+    "glm4": {
+      "template": "glm4",
+      "family": "glm",
+      "aliases": [
+        "glm4",
+        "Glm4ForCausalLM"
+      ],
+      "config": {
+        "model": "glm4",
+        "arch": "glm4",
+        "model_type": "glm4",
+        "rope_layout": "split",
+        "rope_param_mode": "precomputed",
+        "has_qk_norm": false,
+        "has_attention_biases": true,
+        "prefill_policy": "batched",
+        "partial_rotary_factor_key": "partial_rotary_factor"
+      },
+      "tensor_refs": [
+        {
+          "target": "token_emb",
+          "sources": [
+            "model.embed_tokens.weight"
+          ]
+        },
+        {
+          "target": "layer.{L}.ln1_gamma",
+          "sources": [
+            "model.layers.{L}.input_layernorm.weight"
+          ],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.ln2_gamma",
+          "sources": [
+            "model.layers.{L}.post_attention_layernorm.weight",
+            "model.layers.{L}.pre_feedforward_layernorm.weight"
+          ],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.wq",
+          "sources": [
+            "model.layers.{L}.self_attn.q_proj.weight"
+          ]
+        },
+        {
+          "target": "layer.{L}.bq",
+          "sources": [
+            "model.layers.{L}.self_attn.q_proj.bias"
+          ],
+          "dtype": "fp32",
+          "fallback_synth": "zeros_fp32",
+          "shape": [
+            "q_dim"
+          ]
+        },
+        {
+          "target": "layer.{L}.wk",
+          "sources": [
+            "model.layers.{L}.self_attn.k_proj.weight"
+          ]
+        },
+        {
+          "target": "layer.{L}.bk",
+          "sources": [
+            "model.layers.{L}.self_attn.k_proj.bias"
+          ],
+          "dtype": "fp32",
+          "fallback_synth": "zeros_fp32",
+          "shape": [
+            "kv_dim"
+          ]
+        },
+        {
+          "target": "layer.{L}.wv",
+          "sources": [
+            "model.layers.{L}.self_attn.v_proj.weight"
+          ]
+        },
+        {
+          "target": "layer.{L}.bv",
+          "sources": [
+            "model.layers.{L}.self_attn.v_proj.bias"
+          ],
+          "dtype": "fp32",
+          "fallback_synth": "zeros_fp32",
+          "shape": [
+            "kv_dim"
+          ]
+        },
+        {
+          "target": "layer.{L}.wo",
+          "sources": [
+            "model.layers.{L}.self_attn.o_proj.weight"
+          ]
+        },
+        {
+          "target": "layer.{L}.bo",
+          "sources": [
+            "model.layers.{L}.self_attn.o_proj.bias"
+          ],
+          "dtype": "fp32",
+          "fallback_synth": "zeros_fp32",
+          "shape": [
+            "embed_dim"
+          ]
+        },
+        {
+          "target": "layer.{L}.w1",
+          "sources": [
+            "model.layers.{L}.mlp.gate_proj.weight",
+            "model.layers.{L}.mlp.up_proj.weight"
+          ],
+          "combine": "concat"
+        },
+        {
+          "target": "layer.{L}.b1",
+          "synth": "zeros_fp32",
+          "dtype": "fp32",
+          "shape": [
+            "2*intermediate_size"
+          ]
+        },
+        {
+          "target": "layer.{L}.w2",
+          "sources": [
+            "model.layers.{L}.mlp.down_proj.weight"
+          ]
+        },
+        {
+          "target": "layer.{L}.b2",
+          "synth": "zeros_fp32",
+          "dtype": "fp32",
+          "shape": [
+            "embed_dim"
+          ]
+        },
+        {
+          "target": "final_ln_weight",
+          "sources": [
+            "model.norm.weight"
+          ],
+          "dtype": "fp32"
+        },
+        {
+          "target": "final_ln_bias",
+          "synth": "zeros_fp32",
+          "dtype": "fp32",
+          "shape": [
+            "embed_dim"
+          ]
+        },
+        {
+          "target": "output.weight",
+          "sources": [
+            "lm_head.weight",
+            "model.lm_head.weight"
+          ],
+          "optional": true
+        }
+      ]
+    }
+  }
+}

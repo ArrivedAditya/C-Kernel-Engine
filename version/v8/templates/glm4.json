@@ -1,0 +1,137 @@
+{
+  "version": 2,
+  "name": "glm4",
+  "family": "glm",
+  "flags": {
+    "use_qkv_bias": true,
+    "activation": "swiglu",
+    "rope": "rope",
+    "tokenizer": "bpe",
+    "post_attention_norm": true,
+    "post_ffn_norm": true
+  },
+  "contract": {
+    "tokenizer_contract": {
+      "tokenizer_type": "bpe",
+      "bos_policy": "model_defined",
+      "eos_policy": "model_defined",
+      "special_tokens": {
+        "source": "manifest_or_gguf"
+      }
+    },
+    "chat_contract": {
+      "version": 1,
+      "name": "glm4",
+      "raw_prompt_allowed": false,
+      "turn_prefix": "<|{role}|>\n",
+      "turn_suffix": "\n",
+      "assistant_generation_prefix": "<|assistant|>\n",
+      "role_labels": {
+        "system": "system",
+        "user": "user",
+        "assistant": "assistant"
+      },
+      "system_prompt_mode": "dedicated_turn",
+      "system_prompt_separator": "\n\n",
+      "default_system_prompt": "",
+      "inject_default_system_prompt": false,
+      "force_bos_text_if_tokenizer_add_bos_false": "[gMASK]",
+      "last_user_prefix": "",
+      "last_user_prefix_suppression_markers": [],
+      "stop_text_markers": [
+        "<|user|>",
+        "<|observation|>",
+        "<|assistant|>"
+      ],
+      "token_stop_markers": [
+        "<|user|>",
+        "<|observation|>"
+      ],
+      "template_markers": [
+        "[gMASK]",
+        "<|system|>",
+        "<|user|>",
+        "<|assistant|>",
+        "<|observation|>"
+      ],
+      "min_response_tokens": 8
+    },
+    "attention_contract": {
+      "rope_layout": "split",
+      "rope_type": "rope",
+      "qk_norm": false,
+      "kv_layout": "layer_major_kv_cache",
+      "attn_variant": "dense",
+      "partial_rotary": true
+    },
+    "block_contract": {
+      "norm_type": "rmsnorm",
+      "mlp_formula": "gate_up -> silu_mul -> down",
+      "activation": "swiglu",
+      "qkv_bias": true
+    },
+    "logits_contract": {
+      "final_norm": "rmsnorm",
+      "lm_head": "weight_tying",
+      "logits_layout": "auto"
+    },
+    "quant_contract": {
+      "kernel_select": "weight_dtype_registry",
+      "activation_dtype": "fp32_or_q8_path",
+      "per_tensor_mixed_quant": true
+    },
+    "runtime_invariants": {
+      "required_call_args": {
+        "kv_cache_batch_copy": [
+          "activation:k_src",
+          "activation:v_src",
+          "output:k_dst",
+          "output:v_dst",
+          "dim:_kv_copy_bytes"
+        ]
+      }
+    }
+  },
+  "kernels": {
+    "rope_qk": "rope_forward_qk"
+  },
+  "sequence": [
+    "decoder"
+  ],
+  "block_types": {
+    "decoder": {
+      "sequence": [
+        "header",
+        "body",
+        "footer"
+      ],
+      "header": [
+        "bpe_tokenizer",
+        "dense_embedding_lookup"
+      ],
+      "body": {
+        "type": "dense",
+        "ops": [
+          "rmsnorm",
+          "qkv_proj",
+          "rope_qk",
+          "attn",
+          "out_proj",
+          "post_attention_norm",
+          "residual_add",
+          "rmsnorm",
+          "mlp_gate_up",
+          "silu_mul",
+          "mlp_down",
+          "post_ffn_norm",
+          "residual_add"
+        ]
+      },
+      "footer": [
+        "rmsnorm",
+        "weight_tying",
+        "logits"
+      ]
+    }
+  }
+}
