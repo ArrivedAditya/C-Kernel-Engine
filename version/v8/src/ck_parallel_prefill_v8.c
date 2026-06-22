@@ -532,17 +532,6 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
         }
     }
 
-    /* Q4_K prefill row-splitting is currently a benchmark path, not a default
-     * production path. On local i7 AVX2 testing it was parity-clean but slower
-     * for the Qwen/Qwen3.5 shapes measured by test_threadpool_parity and the
-     * v8 decoder matrix. Keep it opt-in until hardware sweeps show a stable win.
-     */
-    const char *enable_q4_pool = getenv("CK_ENABLE_Q4K_Q8K_PREFILL_POOL");
-    if (!enable_q4_pool || enable_q4_pool[0] == '\0' || enable_q4_pool[0] == '0') {
-        gemm_nt_q4_k_q8_k(A, B, bias, C, M, N, K);
-        return;
-    }
-
     if (!pool || ck_threadpool_n_threads(pool) <= 1 || M <= 1 || ck_should_run_gemm_serial(pool, M, N, K)) {
         gemm_nt_q4_k_q8_k(A, B, bias, C, M, N, K);
         return;
@@ -556,6 +545,14 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
         .M = M, .N = N, .K = K,
         .A_row_bytes = A_row_bytes
     };
+    /* Canonical fallback safety path:
+     * CK_DISABLE_Q4K_PACKED_META_PREFILL must be a reliable escape hatch for
+     * debugging a new packed layout. Do not fall back to the raw Q4_K GEMM for
+     * prefill M>1 here; that implementation can start its own internal
+     * scheduling for large Q4_K shapes. This v8 dispatcher already owns the
+     * active threadpool, so the safe canonical path is row splitting with the
+     * one-token Q4_K GEMV primitive in work_gemm_nt_q4_k_q8_k().
+     */
     ck_threadpool_dispatch_n(pool, ck_select_gemm_active_threads(pool, M, N, K), work_gemm_nt_q4_k_q8_k, &args);
 }
 
