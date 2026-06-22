@@ -24,6 +24,81 @@ def _ops(doc: dict[str, Any]) -> list[dict[str, Any]]:
     return ops if isinstance(ops, list) else []
 
 
+def _template_op_items(section: Any) -> list[dict[str, Any]]:
+    if not isinstance(section, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in section:
+        if isinstance(item, str):
+            out.append({"op": item})
+        elif isinstance(item, dict) and isinstance(item.get("op"), str):
+            out.append(item)
+    return out
+
+
+CRITICAL_TEMPLATE_INPUTS: dict[str, tuple[str, ...]] = {
+    "qkv_proj": ("x",),
+    "q_proj": ("x",),
+    "q_gate_proj": ("x",),
+    "k_proj": ("x",),
+    "v_proj": ("x",),
+    "mlp_gate_up": ("x",),
+    "mlp_up": ("x",),
+    "mamba_in_proj": ("x",),
+    "recurrent_qkv_proj": ("x",),
+    "recurrent_gate_proj": ("x",),
+    "recurrent_alpha_proj": ("x",),
+    "recurrent_beta_proj": ("x",),
+    "out_proj": ("x",),
+    "mlp_down": ("x",),
+    "mamba_out_proj": ("x",),
+    "recurrent_out_proj": ("x",),
+    "logits": ("x",),
+}
+
+
+def audit_template_explicit_edges(template: dict[str, Any]) -> dict[str, Any]:
+    missing: list[str] = []
+    explicit: list[str] = []
+    ignored: list[str] = []
+    blocks = template.get("block_types") if isinstance(template.get("block_types"), dict) else {}
+    for block_name, block in blocks.items():
+        if not isinstance(block, dict):
+            continue
+        sections: list[tuple[str, Any]] = [("header", block.get("header")), ("footer", block.get("footer"))]
+        body = block.get("body")
+        if isinstance(body, dict):
+            sections.append(("body", body.get("ops")))
+            ops_by_kind = body.get("ops_by_kind")
+            if isinstance(ops_by_kind, dict):
+                for kind, ops in ops_by_kind.items():
+                    sections.append((f"body:{kind}", ops))
+        else:
+            sections.append(("body", body))
+        for section_name, raw_ops in sections:
+            for index, item in enumerate(_template_op_items(raw_ops)):
+                op = str(item.get("op") or "")
+                required = CRITICAL_TEMPLATE_INPUTS.get(op)
+                if not required:
+                    ignored.append(f"{block_name}.{section_name}[{index}].{op}")
+                    continue
+                graph_slots = item.get("graph_slots") if isinstance(item.get("graph_slots"), dict) else {}
+                inputs = graph_slots.get("inputs") if isinstance(graph_slots.get("inputs"), dict) else {}
+                for input_name in required:
+                    label = f"{block_name}.{section_name}[{index}].{op}.{input_name}"
+                    if input_name in inputs:
+                        explicit.append(f"{label}={inputs[input_name]}")
+                    else:
+                        missing.append(label)
+    return {
+        "template": template.get("name"),
+        "explicit_count": len(explicit),
+        "missing_count": len(missing),
+        "explicit": explicit,
+        "missing": missing,
+    }
+
+
 def _op_id(op: dict[str, Any]) -> int:
     return int(op.get("op_id", op.get("idx", -1)))
 
@@ -225,6 +300,8 @@ def audit_c_source(c_path: Path) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--template", type=Path, help="v8 template JSON to audit for explicit circuit edges")
+    ap.add_argument("--require-explicit-template-edges", action="store_true", help="fail if critical template op inputs rely on implicit defaults")
     ap.add_argument("--ir1", type=Path, help="ir1_*.json artifact")
     ap.add_argument("--lowered", type=Path, help="lowered_*.json artifact")
     ap.add_argument("--c-source", type=Path, help="generated model_v8.c artifact")
@@ -232,6 +309,11 @@ def main() -> int:
     args = ap.parse_args()
     errors: list[str] = []
     checks: dict[str, Any] = {}
+    if args.template:
+        template_report = audit_template_explicit_edges(_load_json(args.template))
+        checks["template_explicit_edges"] = template_report
+        if args.require_explicit_template_edges and template_report["missing_count"]:
+            errors.extend([f"template missing explicit input edge: {item}" for item in template_report["missing"]])
     if args.ir1:
         e = audit_ir1(_load_json(args.ir1)); errors.extend(e); checks["ir1_errors"] = e
     if args.lowered:

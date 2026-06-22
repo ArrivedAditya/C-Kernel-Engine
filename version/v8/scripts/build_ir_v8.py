@@ -2154,6 +2154,16 @@ def _extract_template_ops(section: Any, include_inactive: bool = False) -> List[
     return [item["op"] for item in _normalize_template_op_items(section, include_inactive=include_inactive)]
 
 
+def _template_graph_slots(op_item: Dict[str, Any]) -> Dict[str, Any]:
+    graph_slots = op_item.get("graph_slots") if isinstance(op_item.get("graph_slots"), dict) else {}
+    out: Dict[str, Any] = {}
+    for section in ("inputs", "outputs"):
+        value = graph_slots.get(section)
+        if isinstance(value, dict) and value:
+            out[section] = copy.deepcopy(value)
+    return out
+
+
 def _dedupe_preserve_order(items: List[str]) -> List[str]:
     seen = set()
     out: List[str] = []
@@ -4475,7 +4485,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             return None
         act = kernel_act_dtype.get(kernel_id, "fp32")
         if op_type in ("q_proj", "q_gate_proj", "k_proj", "v_proj", "qkv_packed_proj", "mlp_gate_up", "mlp_up"):
-            return {"x": "layer_input" if act == "fp32" else "main_stream_q8"}
+            return {"x": "main_stream" if act == "fp32" else "main_stream_q8"}
         if op_type == "projector_fc1":
             return {"x": "main_stream" if act == "fp32" else "main_stream_q8"}
         if op_type == "out_proj":
@@ -4487,7 +4497,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         if op_type == "branch_fc2":
             return {"x": "branch_mlp" if act == "fp32" else "branch_mlp"}
         if op_type == "mamba_in_proj":
-            return {"x": "layer_input" if act == "fp32" else "main_stream_q8"}
+            return {"x": "main_stream" if act == "fp32" else "main_stream_q8"}
         if op_type in ("recurrent_qkv_proj", "recurrent_gate_proj", "recurrent_alpha_proj", "recurrent_beta_proj"):
             return {"x": "main_stream" if act == "fp32" else "main_stream_q8"}
         if op_type in ("recurrent_out_proj", "mamba_out_proj"):
@@ -5143,7 +5153,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                             # Get op_id and instance (data flow is handled in IR Lower)
                             op_info = get_op_info(split_op, "body", layer_idx)
 
-                            arranged_kernels.append({
+                            arranged = {
                                 "op_id": op_info["op_id"],
                                 "kernel": kernel_id,
                                 "op": split_op,
@@ -5154,7 +5164,11 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                                 "params": copy.deepcopy(
                                     op_item.get("params") if isinstance(op_item.get("params"), dict) else {}
                                 ),
-                            })
+                            }
+                            graph_slots = _template_graph_slots(op_item)
+                            if graph_slots:
+                                arranged["graph_slots"] = graph_slots
+                            arranged_kernels.append(arranged)
                             print(f"      [{op_info['op_id']:3d}] {split_op:20s} → {kernel_id}  (inst: {op_info['instance']})")
 
                         annotate_branch_taps(emitted_start, "body", layer_idx, op_item)
@@ -5290,7 +5304,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                         # Get op_id and instance (data flow is handled in IR Lower)
                         op_info = get_op_info(split_op, section_name, -1)
 
-                        arranged_kernels.append({
+                        arranged = {
                             "op_id": op_info["op_id"],
                             "kernel": kernel_id,
                             "op": split_op,
@@ -5301,7 +5315,11 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                             "params": copy.deepcopy(
                                 op_item.get("params") if isinstance(op_item.get("params"), dict) else {}
                             ),
-                        })
+                        }
+                        graph_slots = _template_graph_slots(op_item)
+                        if graph_slots:
+                            arranged["graph_slots"] = graph_slots
+                        arranged_kernels.append(arranged)
                         print(f"      [{op_info['op_id']:3d}] {split_op:20s} → {kernel_id}  (inst: {op_info['instance']})")
 
                     annotate_branch_taps(emitted_start, section_name, -1, op_item)
@@ -5339,8 +5357,14 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         graph_slots = ir_op.get("graph_slots", {}) if isinstance(ir_op.get("graph_slots"), dict) else {}
         explicit_input_override = graph_slots.get("inputs") if isinstance(graph_slots.get("inputs"), dict) else {}
         explicit_output_override = graph_slots.get("outputs") if isinstance(graph_slots.get("outputs"), dict) else {}
-        merged_input_override = dict(input_override or {})
-        merged_input_override.update(explicit_input_override)
+        # Template graph_slots describe the semantic producer/consumer edge.
+        # Kernel activation dtype decides the physical view of that edge. For
+        # example GLM4 q_proj semantically consumes main_stream, but a Q4_K x
+        # Q8_K kernel must read main_stream_q8 produced by quantize_input_0.
+        # Keep the kernel ABI override last so explicit circuit slots cannot
+        # accidentally wire a quantized kernel back to the FP32 stream.
+        merged_input_override = dict(explicit_input_override or {})
+        merged_input_override.update(input_override or {})
         dataflow_info = dataflow_tracker.record_op(
             op_id,
             op_type,

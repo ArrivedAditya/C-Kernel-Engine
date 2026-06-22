@@ -1232,7 +1232,7 @@ Examples:
     run_parser.add_argument("--repeat-last-n", type=int, default=None)
     run_parser.add_argument("--no-repeat-ngram-size", type=int, default=None)
     run_parser.add_argument("--prompt", default=None, help="Single prompt (non-interactive if set)")
-    run_parser.add_argument("--chat-template", choices=["auto", "none", "qwen", "qwen2", "qwen3", "qwen35", "qwen3vl", "gemma", "gemma3", "gemma4", "llama"], default="auto")
+    run_parser.add_argument("--chat-template", choices=["auto", "none", "qwen", "qwen2", "qwen3", "qwen35", "qwen3vl", "gemma", "gemma3", "gemma4", "glm4", "llama"], default="auto")
     run_parser.add_argument("--no-chat-template", action="store_true")
     run_parser.add_argument("--allow-raw-prompt", action="store_true")
     run_parser.add_argument("--thinking-mode", choices=["auto", "visible", "suppressed"], default="auto")

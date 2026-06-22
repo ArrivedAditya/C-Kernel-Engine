@@ -64,6 +64,38 @@ class TemplateCircuitAuditTests(unittest.TestCase):
         self.assertEqual(audit.audit_ir1(ir), [])
         self.assertEqual(audit.audit_lowered(lowered), [])
 
+    def test_template_explicit_edge_audit_reports_missing_and_present_edges(self) -> None:
+        audit = _load_module()
+        template = {
+            "name": "synthetic",
+            "block_types": {
+                "decoder": {
+                    "body": {
+                        "ops": [
+                            "rmsnorm",
+                            {"op": "qkv_proj", "graph_slots": {"inputs": {"x": "main_stream"}}},
+                            "mlp_gate_up",
+                        ]
+                    }
+                }
+            },
+        }
+        report = audit.audit_template_explicit_edges(template)
+        self.assertEqual(report["explicit"], ["decoder.body[1].qkv_proj.x=main_stream"])
+        self.assertEqual(report["missing"], ["decoder.body[2].mlp_gate_up.x"])
+
+    def test_glm4_template_declares_critical_projection_edges(self) -> None:
+        audit = _load_module()
+        template = json.loads((REPO / "version/v8/templates/glm4.json").read_text(encoding="utf-8"))
+        report = audit.audit_template_explicit_edges(template)
+        self.assertIn("decoder.body[1].qkv_proj.x=main_stream", report["explicit"])
+        self.assertIn("decoder.body[4].out_proj.x=attn_scratch", report["explicit"])
+        self.assertIn("decoder.body[8].mlp_gate_up.x=main_stream", report["explicit"])
+        self.assertIn("decoder.body[10].mlp_down.x=mlp_scratch", report["explicit"])
+        self.assertIn("decoder.footer[2].logits.x=main_stream", report["explicit"])
+        self.assertEqual(report["missing"], [])
+
+
     def test_cli_reports_generated_c_mamba_input_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             c_path = Path(td) / "model_v8.c"

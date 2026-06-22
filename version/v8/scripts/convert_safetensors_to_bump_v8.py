@@ -306,18 +306,17 @@ def _refs_from_safetensors_contract(arch: str, config: dict[str, Any], headers: 
             if synth:
                 refs.append(TensorRef(ck_name, (), dtype=dtype, synth=synth, shape=shape))
                 continue
-            if str(spec.get("combine") or "").strip().lower() == "concat":
-                resolved: list[str] = []
-                missing: list[str] = []
-                for src in sources_raw:
-                    name = str(src).replace("{L}", str(layer)) if layer is not None else str(src)
-                    if name not in headers:
-                        missing.append(name)
-                    else:
-                        resolved.append(name)
-                if missing:
-                    raise SystemExit(f"Missing required safetensors tensor for {ck_name}: tried {missing}")
-                refs.append(TensorRef(ck_name, tuple(resolved), dtype=dtype))
+            combine_mode = str(spec.get("combine") or "").strip().lower()
+            if combine_mode in {"concat", "concat_or_single"}:
+                named_sources = [str(src).replace("{L}", str(layer)) if layer is not None else str(src) for src in sources_raw]
+                if combine_mode == "concat_or_single" and named_sources and named_sources[0] in headers:
+                    refs.append(TensorRef(ck_name, (named_sources[0],), dtype=dtype))
+                    continue
+                concat_sources = named_sources[1:] if combine_mode == "concat_or_single" else named_sources
+                missing = [name for name in concat_sources if name not in headers]
+                if missing or not concat_sources:
+                    raise SystemExit(f"Missing required safetensors tensor for {ck_name}: tried {named_sources}")
+                refs.append(TensorRef(ck_name, tuple(concat_sources), dtype=dtype))
                 continue
             found = _first_existing_from_patterns(headers, (str(x) for x in sources_raw), layer)
             if found is not None:
@@ -948,10 +947,10 @@ def _is_qwen35_shifted_norm_ref(ref: TensorRef) -> bool:
     ))
 
 
-def _ref_transform(ref: TensorRef) -> str | None:
+def _ref_transform(arch: str, ref: TensorRef) -> str | None:
     if ref.ck_name.endswith(".ssm_a") or ref.ck_name.endswith(".mamba_a"):
         return "neg_exp_a_log"
-    if _is_qwen35_shifted_norm_ref(ref):
+    if arch == "qwen35" and _is_qwen35_shifted_norm_ref(ref):
         return "qwen35_norm_plus_one"
     return None
 
@@ -971,7 +970,7 @@ def _build_source_audit(arch: str, headers: dict[str, HeaderTensor], refs: list[
     synthetic: list[str] = []
     transforms: list[dict[str, str]] = []
     for ref in refs:
-        transform = _ref_transform(ref)
+        transform = _ref_transform(arch, ref)
         if ref.source_names:
             for src in ref.source_names:
                 consumed.setdefault(src, []).append(ref.ck_name)
@@ -1004,7 +1003,7 @@ def _build_source_audit(arch: str, headers: dict[str, HeaderTensor], refs: list[
     }
 
 
-def _write_ref(w: HashingWriter, model_dir: Path, headers: dict[str, HeaderTensor], ref: TensorRef, dtype_policy: str) -> tuple[str, int, list[int]]:
+def _write_ref(w: HashingWriter, model_dir: Path, headers: dict[str, HeaderTensor], ref: TensorRef, dtype_policy: str, arch: str) -> tuple[str, int, list[int]]:
     if ref.synth:
         data, dt, shape = _synth_bytes(ref.synth, ref.shape or (), dtype_policy)
         w.write(data)
@@ -1014,7 +1013,7 @@ def _write_ref(w: HashingWriter, model_dir: Path, headers: dict[str, HeaderTenso
     out_shape: list[int] = []
     for src in ref.source_names:
         t = _load_tensor(model_dir, headers, src)
-        transform = _ref_transform(ref)
+        transform = _ref_transform(arch, ref)
         if transform == "neg_exp_a_log":
             import torch
             t = -torch.exp(t.to(dtype=torch.float32))
@@ -1193,7 +1192,7 @@ def main() -> int:
             "source_name": "+".join(ref.source_names) if ref.source_names else f"synthetic:{ref.synth}",
             "shape": shape,
         }
-        transform = _ref_transform(ref)
+        transform = _ref_transform(arch, ref)
         if transform:
             preview_entry["transform"] = transform
         entries_preview.append(preview_entry)
@@ -1303,7 +1302,7 @@ def main() -> int:
         current_offset = DATA_START + 4 + len(dtype_table)
         for ref in refs:
             start = current_offset
-            dt, size, shape = _write_ref(w, model_dir, headers, ref, args.dtype)
+            dt, size, shape = _write_ref(w, model_dir, headers, ref, args.dtype, arch)
             current_offset += size
             entry = {
                 "name": ref.ck_name,
@@ -1313,7 +1312,7 @@ def main() -> int:
                 "source_name": "+".join(ref.source_names) if ref.source_names else f"synthetic:{ref.synth}",
                 "shape": shape,
             }
-            transform = _ref_transform(ref)
+            transform = _ref_transform(arch, ref)
             if transform:
                 entry["transform"] = transform
             entries.append(entry)
