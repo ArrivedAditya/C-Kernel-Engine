@@ -2309,6 +2309,21 @@ def main() -> None:
         "nemotron_h_moe.expert_shared_count",
         "nemotron_h_moe.expert_weights_norm",
         "nemotron_h_moe.expert_weights_scale",
+        # GLM4-style keys
+        "glm4.block_count",
+        "glm4.context_length",
+        "glm4.embedding_length",
+        "glm4.feed_forward_length",
+        "glm4.vocab_size",
+        "glm4.attention.head_count",
+        "glm4.attention.head_count_kv",
+        "glm4.attention.key_length",
+        "glm4.attention.value_length",
+        "glm4.attention.layer_norm_rms_epsilon",
+        "glm4.rope.freq_base",
+        "glm4.rope.dimension_count",
+        "glm4.tie_word_embeddings",
+        "glm4.embedding_weight_tying",
         # Gemma3-style keys
         "gemma3.block_count",
         "gemma3.context_length",
@@ -2378,7 +2393,9 @@ def main() -> None:
         "nemotron_h_moe.embedding_weight_tying",
         "gemma3.embedding_weight_tying",
         "gemma4.tie_word_embeddings",
+        "glm4.tie_word_embeddings",
         "gemma4.embedding_weight_tying",
+        "glm4.embedding_weight_tying",
         "mistral.embedding_weight_tying",
         "mistral3.embedding_weight_tying",
         "deepseek2.embedding_weight_tying",
@@ -3159,7 +3176,7 @@ def main() -> None:
         embed_dim = meta_int(
             "deepseek2.embedding_length", "mistral3.embedding_length", "mistral.embedding_length",
             "llama.embedding_length", "nemotron_h.embedding_length", "nemotron_h_moe.embedding_length", "qwen3vl.embedding_length", "qwen3.embedding_length", "qwen2.embedding_length",
-            "gemma3.embedding_length", "gemma4.embedding_length"
+            "gemma3.embedding_length", "gemma4.embedding_length", "glm4.embedding_length"
         ) or tok.ne0
         vocab_size = tok.ne1
 
@@ -3214,7 +3231,7 @@ def main() -> None:
         num_layers = meta_int(
             "deepseek2.block_count", "mistral3.block_count", "mistral.block_count",
             "llama.block_count", "qwen35.block_count", "nemotron_h.block_count", "nemotron_h_moe.block_count", "qwen3vl.block_count", "qwen3.block_count", "qwen2.block_count",
-            "gemma3.block_count", "gemma4.block_count"
+            "gemma3.block_count", "gemma4.block_count", "glm4.block_count"
         )
         if num_layers is None:
             # Infer from present blocks.
@@ -3232,7 +3249,7 @@ def main() -> None:
         intermediate = meta_int_or_list(
             "deepseek2.feed_forward_length", "mistral3.feed_forward_length", "mistral.feed_forward_length",
             "llama.feed_forward_length", "qwen35.feed_forward_length", "nemotron_h.feed_forward_length", "nemotron_h_moe.feed_forward_length", "qwen3vl.feed_forward_length", "qwen3.feed_forward_length", "qwen2.feed_forward_length",
-            "gemma3.feed_forward_length", "gemma4.feed_forward_length"
+            "gemma3.feed_forward_length", "gemma4.feed_forward_length", "glm4.feed_forward_length"
         )
         if isinstance(intermediate, list):
             nz_intermediate = [int(x) for x in intermediate if int(x) > 0]
@@ -3247,14 +3264,14 @@ def main() -> None:
         num_heads = meta_int(
             "deepseek2.attention.head_count", "mistral3.attention.head_count", "mistral.attention.head_count",
             "llama.attention.head_count", "qwen35.attention.head_count", "nemotron_h.attention.head_count", "nemotron_h_moe.attention.head_count", "qwen3vl.attention.head_count", "qwen3.attention.head_count", "qwen2.attention.head_count",
-            "gemma3.attention.head_count", "gemma4.attention.head_count"
+            "gemma3.attention.head_count", "gemma4.attention.head_count", "glm4.attention.head_count"
         )
         if num_heads is None:
             raise GGUFError("Missing attention.head_count (num_heads)")
         num_kv_heads_meta = meta_int_or_list(
             "deepseek2.attention.head_count_kv", "mistral3.attention.head_count_kv", "mistral.attention.head_count_kv",
             "llama.attention.head_count_kv", "qwen35.attention.head_count_kv", "nemotron_h.attention.head_count_kv", "nemotron_h_moe.attention.head_count_kv", "qwen3vl.attention.head_count_kv", "qwen3.attention.head_count_kv", "qwen2.attention.head_count_kv",
-            "gemma3.attention.head_count_kv", "gemma4.attention.head_count_kv"
+            "gemma3.attention.head_count_kv", "gemma4.attention.head_count_kv", "glm4.attention.head_count_kv"
         )
         if isinstance(num_kv_heads_meta, list):
             nz_kv_heads = [int(x) for x in num_kv_heads_meta if int(x) > 0]
@@ -3264,7 +3281,7 @@ def main() -> None:
         context_len = meta_int(
             "deepseek2.context_length", "mistral3.context_length", "mistral.context_length",
             "llama.context_length", "qwen35.context_length", "nemotron_h.context_length", "nemotron_h_moe.context_length", "qwen3vl.context_length", "qwen3.context_length", "qwen2.context_length",
-            "gemma3.context_length", "gemma4.context_length"
+            "gemma3.context_length", "gemma4.context_length", "glm4.context_length"
         ) or 0
         if args.context is not None:
             context_len = int(args.context)
@@ -3284,7 +3301,7 @@ def main() -> None:
         rope_theta = meta_float(
             "deepseek2.rope.freq_base", "mistral3.rope.freq_base", "mistral.rope.freq_base",
             "llama.rope.freq_base", "qwen35.rope.freq_base", "nemotron_h.rope.freq_base", "nemotron_h_moe.rope.freq_base", "qwen3vl.rope.freq_base", "qwen3.rope.freq_base", "qwen2.rope.freq_base",
-            "gemma3.rope.freq_base", "gemma4.rope.freq_base"
+            "gemma3.rope.freq_base", "gemma4.rope.freq_base", "glm4.rope.freq_base"
         ) or 10000.0
 
         # Q/K/V head dimensions (some models report explicit key/value lengths)
@@ -3296,6 +3313,7 @@ def main() -> None:
             "qwen3.attention.key_length",
             "gemma3.attention.key_length",
             "gemma4.attention.key_length",
+            "glm4.attention.key_length",
             "llama.attention.key_length",
         )
         value_length_meta = meta_int(
@@ -3306,6 +3324,7 @@ def main() -> None:
             "qwen3.attention.value_length",
             "gemma3.attention.value_length",
             "gemma4.attention.value_length",
+            "glm4.attention.value_length",
             "llama.attention.value_length",
         )
 
@@ -3323,6 +3342,7 @@ def main() -> None:
             "gemma.attention.key_length",
             "gemma3.attention.key_length",
             "gemma4.rope.dimension_count",
+            "glm4.rope.dimension_count",
         )
 
         # RoPE scaling (supports scalar and structured GGUF metadata)
@@ -3412,7 +3432,7 @@ def main() -> None:
             "mistral.attention.layer_norm_rms_epsilon", "llama.norm_rms_eps",
             "nemotron_h.attention.layer_norm_rms_epsilon", "nemotron_h_moe.attention.layer_norm_rms_epsilon",
             "qwen35.attention.layer_norm_rms_epsilon", "qwen3vl.attention.layer_norm_rms_epsilon", "qwen3.attention.layer_norm_rms_epsilon", "qwen2.attention.layer_norm_rms_epsilon",
-            "gemma3.attention.layer_norm_rms_epsilon", "gemma4.attention.layer_norm_rms_epsilon"
+            "gemma3.attention.layer_norm_rms_epsilon", "gemma4.attention.layer_norm_rms_epsilon", "glm4.attention.layer_norm_rms_epsilon"
         ) or 1e-5
 
         if embed_dim != tok.ne0:
@@ -4645,6 +4665,14 @@ def main() -> None:
             gate = tensors.get(f"blk.{layer}.ffn_gate.weight")
             up = tensors.get(f"blk.{layer}.ffn_up.weight")
             down = tensors.get(f"blk.{layer}.ffn_down.weight")
+            fused_gate_up = False
+            if arch == "glm4" and gate is None and up is not None:
+                # GLM4 GGUF stores the SwiGLU gate/up projection as a single
+                # concatenated ffn_up tensor. CK's runtime contract is already
+                # w1 = gate || up, so preserve the tensor verbatim.
+                if up.ne0 == embed_dim and up.ne1 == 2 * intermediate:
+                    gate = up
+                    fused_gate_up = True
             # Attention biases (optional - Qwen2 has them, LLaMA/Qwen3 don't)
             bq = tensors.get(f"blk.{layer}.attn_q.bias")
             bk = tensors.get(f"blk.{layer}.attn_k.bias")
@@ -4720,11 +4748,17 @@ def main() -> None:
             if wo.ne0 != wq.ne1:
                 raise GGUFError(f"{wo.name}: ne0 mismatch with Q ne1: expected {wq.ne1}, got {wo.ne0}")
 
-            for tensor, label in ((gate, "gate"), (up, "up")):
-                if tensor.ne0 != embed_dim or tensor.ne1 != intermediate:
+            if fused_gate_up:
+                if up.ne0 != embed_dim or up.ne1 != 2 * intermediate:
                     raise GGUFError(
-                        f"{tensor.name}: expected dims [ne0={embed_dim}, ne1={intermediate}] for {label}, got {tensor.dims}"
+                        f"{up.name}: expected fused dims [ne0={embed_dim}, ne1={2 * intermediate}] for gate||up, got {up.dims}"
                     )
+            else:
+                for tensor, label in ((gate, "gate"), (up, "up")):
+                    if tensor.ne0 != embed_dim or tensor.ne1 != intermediate:
+                        raise GGUFError(
+                            f"{tensor.name}: expected dims [ne0={embed_dim}, ne1={intermediate}] for {label}, got {tensor.dims}"
+                        )
             if down.ne0 != intermediate or down.ne1 != embed_dim:
                 raise GGUFError(
                     f"{down.name}: expected dims [ne0={intermediate}, ne1={embed_dim}] for down, got {down.dims}"
@@ -4798,6 +4832,7 @@ def main() -> None:
                 "gate": gate,
                 "up": up,
                 "down": down,
+                "fused_gate_up": fused_gate_up,
                 "bq": bq,  # Optional bias tensors (None if not present)
                 "bk": bk,
                 "bv": bv,
@@ -5069,12 +5104,19 @@ def main() -> None:
                 record_entry(f"layer.{layer}.bo", "fp32", bo_size)
                 write_f32_zeros(w, aligned_embed_dim)  # bo
 
-                # W1 (gate + up)
-                gate_size = ggml_tensor_bytes(info["gate"])
-                up_size = ggml_tensor_bytes(info["up"])
-                record_entry(f"layer.{layer}.w1", get_quant_type_name(info["gate"].ggml_type), gate_size + up_size)
-                copy_bytes_stream(f, data_start + info["gate"].offset, gate_size, w)
-                copy_bytes_stream(f, data_start + info["up"].offset, up_size, w)
+                # W1 (gate + up). Some GGUF writers already store this as
+                # one fused gate||up tensor (notably GLM4), while most store
+                # gate and up separately. CK consumes the concatenated layout.
+                if info.get("fused_gate_up"):
+                    up_size = ggml_tensor_bytes(info["up"])
+                    record_entry(f"layer.{layer}.w1", get_quant_type_name(info["up"].ggml_type), up_size)
+                    copy_bytes_stream(f, data_start + info["up"].offset, up_size, w)
+                else:
+                    gate_size = ggml_tensor_bytes(info["gate"])
+                    up_size = ggml_tensor_bytes(info["up"])
+                    record_entry(f"layer.{layer}.w1", get_quant_type_name(info["gate"].ggml_type), gate_size + up_size)
+                    copy_bytes_stream(f, data_start + info["gate"].offset, gate_size, w)
+                    copy_bytes_stream(f, data_start + info["up"].offset, up_size, w)
                 b1_size = 2 * intermediate * 4
                 record_entry(f"layer.{layer}.b1", "fp32", b1_size)
                 write_f32_zeros(w, 2 * intermediate)  # b1

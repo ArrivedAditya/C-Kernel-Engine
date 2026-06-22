@@ -61,6 +61,9 @@ DTYPE_TO_CK = {
     "float16": ("fp16", CK_DT_FP16, 2),
 }
 
+SAFETENSORS_CK_MAP_PATH = SCRIPT_DIR.parent / "model_maps" / "safetensors_ck_map.json"
+_SAFETENSORS_CK_MAP_CACHE: dict[str, Any] | None = None
+
 
 def align_up(n: int, a: int = CACHE_ALIGN) -> int:
     return ((int(n) + int(a) - 1) // int(a)) * int(a)
@@ -197,6 +200,137 @@ def _load_runtime_config_template(path: Path | None) -> dict[str, Any]:
         return dict(data["config"])
     return dict(data)
 
+
+
+def _load_safetensors_ck_map() -> dict[str, Any]:
+    global _SAFETENSORS_CK_MAP_CACHE
+    if _SAFETENSORS_CK_MAP_CACHE is not None:
+        return _SAFETENSORS_CK_MAP_CACHE
+    if not SAFETENSORS_CK_MAP_PATH.exists():
+        _SAFETENSORS_CK_MAP_CACHE = {"version": 0, "architectures": {}}
+        return _SAFETENSORS_CK_MAP_CACHE
+    data = json.loads(SAFETENSORS_CK_MAP_PATH.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise SystemExit(f"{SAFETENSORS_CK_MAP_PATH}: expected JSON object")
+    archs = data.get("architectures")
+    if archs is None:
+        data["architectures"] = {}
+    elif not isinstance(archs, dict):
+        raise SystemExit(f"{SAFETENSORS_CK_MAP_PATH}: architectures must be an object")
+    _SAFETENSORS_CK_MAP_CACHE = data
+    return data
+
+
+def _safetensors_arch_contract(arch: str) -> dict[str, Any]:
+    contracts = _load_safetensors_ck_map().get("architectures") or {}
+    row = contracts.get(str(arch or "").lower())
+    return row if isinstance(row, dict) else {}
+
+
+def _shape_symbol_value(name: str, config: dict[str, Any]) -> int:
+    key = str(name)
+    if key == "embed_dim":
+        return int(config.get("embed_dim") or config.get("hidden_size") or 0)
+    if key == "intermediate_size":
+        return int(config.get("intermediate_size") or 0)
+    if key == "q_dim":
+        return int(config.get("num_heads") or config.get("num_attention_heads") or 0) * int(config.get("head_dim") or 0)
+    if key == "kv_dim":
+        return int(config.get("num_kv_heads") or config.get("num_key_value_heads") or config.get("num_heads") or 0) * int(config.get("head_dim") or 0)
+    if key.isdigit():
+        return int(key)
+    raise SystemExit(f"Unsupported safetensors map shape symbol: {key}")
+
+
+def _shape_from_spec(spec: Any, config: dict[str, Any]) -> tuple[int, ...]:
+    if spec is None:
+        return ()
+    if not isinstance(spec, list):
+        raise SystemExit(f"safetensors map shape must be a list, got {type(spec).__name__}")
+    dims: list[int] = []
+    for item in spec:
+        if isinstance(item, int):
+            dims.append(int(item))
+            continue
+        text = str(item).strip()
+        if "*" in text:
+            total = 1
+            for part in text.split("*"):
+                total *= _shape_symbol_value(part.strip(), config)
+            dims.append(total)
+        else:
+            dims.append(_shape_symbol_value(text, config))
+    return tuple(dims)
+
+
+def _first_existing_from_patterns(headers: dict[str, HeaderTensor], patterns: Iterable[str], layer: int | None = None) -> str | None:
+    for pattern in patterns:
+        name = str(pattern)
+        if layer is not None:
+            name = name.replace("{L}", str(layer))
+        if name in headers:
+            return name
+    return None
+
+
+def _refs_from_safetensors_contract(arch: str, config: dict[str, Any], headers: dict[str, HeaderTensor]) -> list[TensorRef] | None:
+    contract = _safetensors_arch_contract(arch)
+    refs_spec = contract.get("tensor_refs") if isinstance(contract, dict) else None
+    if not isinstance(refs_spec, list):
+        return None
+    num_layers = int(config.get("num_layers") or config.get("num_hidden_layers") or 0)
+    refs: list[TensorRef] = []
+    for spec in refs_spec:
+        if not isinstance(spec, dict):
+            raise SystemExit(f"{SAFETENSORS_CK_MAP_PATH}: tensor_refs entries must be objects")
+        target = str(spec.get("target") or "")
+        if not target:
+            raise SystemExit(f"{SAFETENSORS_CK_MAP_PATH}: tensor_refs entry missing target")
+        layers: list[int | None]
+        if "{L}" in target:
+            layers = list(range(num_layers))
+        else:
+            layers = [None]
+        for layer in layers:
+            ck_name = target.replace("{L}", str(layer)) if layer is not None else target
+            dtype = spec.get("dtype")
+            dtype = str(dtype) if dtype is not None else None
+            synth = spec.get("synth")
+            synth = str(synth) if synth is not None else None
+            shape = _shape_from_spec(spec.get("shape"), config) if (synth or spec.get("fallback_synth")) else None
+            sources_raw = spec.get("sources") or []
+            if isinstance(sources_raw, str):
+                sources_raw = [sources_raw]
+            if not isinstance(sources_raw, list):
+                raise SystemExit(f"{SAFETENSORS_CK_MAP_PATH}: sources for {ck_name} must be a list")
+            if synth:
+                refs.append(TensorRef(ck_name, (), dtype=dtype, synth=synth, shape=shape))
+                continue
+            if str(spec.get("combine") or "").strip().lower() == "concat":
+                resolved: list[str] = []
+                missing: list[str] = []
+                for src in sources_raw:
+                    name = str(src).replace("{L}", str(layer)) if layer is not None else str(src)
+                    if name not in headers:
+                        missing.append(name)
+                    else:
+                        resolved.append(name)
+                if missing:
+                    raise SystemExit(f"Missing required safetensors tensor for {ck_name}: tried {missing}")
+                refs.append(TensorRef(ck_name, tuple(resolved), dtype=dtype))
+                continue
+            found = _first_existing_from_patterns(headers, (str(x) for x in sources_raw), layer)
+            if found is not None:
+                refs.append(TensorRef(ck_name, (found,), dtype=dtype))
+                continue
+            fallback = spec.get("fallback_synth")
+            if fallback:
+                refs.append(TensorRef(ck_name, (), dtype=dtype, synth=str(fallback), shape=shape))
+                continue
+            if bool(spec.get("optional", False)):
+                continue
+            raise SystemExit(f"Missing required safetensors tensor for {ck_name}: tried {sources_raw}")
+    return refs
 
 def _gemma4_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor]) -> list[TensorRef]:
     num_layers = int(config.get("num_layers") or config.get("num_hidden_layers") or 0)
@@ -529,6 +663,14 @@ def _llama_family_text_refs(config: dict[str, Any], headers: dict[str, HeaderTen
 def _infer_arch(hf: dict[str, Any]) -> str:
     text = hf.get("text_config") if isinstance(hf.get("text_config"), dict) else hf
     mt = str(text.get("model_type") or hf.get("model_type") or "").lower()
+    arch_names = [str(x).lower() for x in (text.get("architectures") or hf.get("architectures") or []) if isinstance(x, str)]
+    contracts = (_load_safetensors_ck_map().get("architectures") or {})
+    for ck_arch, contract in contracts.items():
+        aliases = [str(ck_arch).lower()]
+        if isinstance(contract, dict):
+            aliases.extend(str(x).lower() for x in contract.get("aliases", []) if isinstance(x, str))
+        if mt in aliases or any(name in aliases for name in arch_names):
+            return str(ck_arch).lower()
     if "gemma" in mt and "4" in mt:
         return "gemma4"
     if "gemma" in mt and "3" in mt:
@@ -539,6 +681,8 @@ def _infer_arch(hf: dict[str, Any]) -> str:
         return "qwen3"
     if "qwen2" in mt or mt == "qwen":
         return "qwen2"
+    if "glm" in mt:
+        return "glm4"
     if "llama" in mt:
         return "llama"
     if "nemotron_h" in mt or "nemotron-h" in mt:
@@ -547,6 +691,9 @@ def _infer_arch(hf: dict[str, Any]) -> str:
 
 
 def _refs_for_arch(arch: str, config: dict[str, Any], headers: dict[str, HeaderTensor]) -> list[TensorRef]:
+    mapped_refs = _refs_from_safetensors_contract(arch, config, headers)
+    if mapped_refs is not None:
+        return mapped_refs
     if arch == "gemma4":
         return _gemma4_text_refs(config, headers)
     if arch == "qwen35":
@@ -648,6 +795,34 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "rope_freq_base": float(text.get("rope_theta") or 10000.0),
             "use_rope_freq_factors": 0,
             "has_attention_biases": bool(text.get("attention_bias", False)),
+            "has_qk_norm": False,
+            "prefill_policy": "batched",
+        })
+
+    if arch == "glm4":
+        partial_key = "partial_rotary_factor"
+        contract = _safetensors_arch_contract("glm4")
+        contract_cfg = contract.get("config") if isinstance(contract.get("config"), dict) else {}
+        if isinstance(contract_cfg.get("partial_rotary_factor_key"), str):
+            partial_key = str(contract_cfg["partial_rotary_factor_key"])
+        partial = float(text.get(partial_key, text.get("partial_rotary_factor", 1.0)) or 1.0)
+        head_dim_value = int(cfg.get("head_dim") or 0)
+        rotary_dim = int(head_dim_value * partial) if head_dim_value > 0 else int(cfg.get("rotary_dim") or 0)
+        cfg.update({k: v for k, v in contract_cfg.items() if k != "partial_rotary_factor_key"})
+        cfg.update({
+            "model": "glm4",
+            "arch": "glm4",
+            "model_type": "glm4",
+            "intermediate_dim": int(cfg.get("intermediate_size") or 0),
+            "attn_out_dim": int(cfg.get("num_heads") or 0) * head_dim_value,
+            "rotary_dim": rotary_dim,
+            "partial_rotary_factor": partial,
+            "max_seq_len": int(cfg.get("context_length") or 0),
+            "rms_eps": float(text.get("rms_norm_eps", cfg.get("rms_eps", 1e-5)) or 1e-5),
+            "rms_norm_eps": float(text.get("rms_norm_eps", cfg.get("rms_eps", 1e-5)) or 1e-5),
+            "rope_theta": float(text.get("rope_theta", cfg.get("rope_theta", 10000.0)) or 10000.0),
+            "rope_freq_base": float(text.get("rope_theta", cfg.get("rope_theta", 10000.0)) or 10000.0),
+            "has_attention_biases": bool(text.get("attention_bias", True)),
             "has_qk_norm": False,
             "prefill_policy": "batched",
         })
@@ -980,7 +1155,7 @@ def main() -> int:
     ap.add_argument("--ram-dir", type=Path, default=Path("/dev/shm"), help="tmpfs directory for --ram-output; default: /dev/shm")
     ap.add_argument("--config-out", required=True, type=Path)
     ap.add_argument("--manifest-out", required=True, type=Path)
-    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma3", "llama", "qwen2", "qwen3", "qwen35", "nemotron_h"])
+    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma3", "llama", "qwen2", "qwen3", "qwen35", "nemotron_h", "glm4"])
     ap.add_argument("--config-template", type=Path, help="existing v8 config/manifest to reuse explicit runtime policy")
     ap.add_argument("--dtype", default="preserve", choices=["preserve", "bf16", "fp32"])
     ap.add_argument("--dry-run", action="store_true", help="validate mapping and write JSON reports only; do not write BUMP")
@@ -1092,8 +1267,8 @@ def main() -> int:
         "intermediate_size": _int_or_zero(config.get("intermediate_size")),
         "vocab_size": _int_or_zero(config.get("vocab_size")),
         "context_length": _int_or_zero(config.get("context_length")),
-        "has_attention_biases": False,
-        "has_qk_norm": True,
+        "has_attention_biases": bool(config.get("has_attention_biases", False)),
+        "has_qk_norm": bool(config.get("has_qk_norm", False)),
         "source_audit": audit,
         "special_tokens": special_tokens,
         "tokenizer_contract": tokenizer_contract if tokenizer_contract else None,
