@@ -59,6 +59,12 @@ extern void gemm_nt_q4_k_packed_meta_q8_k_threaded(const void *A_q8,
                                                     float *C,
                                                     int M, int N, int K,
                                                     int threads);
+extern void gemm_nt_q4_k_packed_meta_q8_k_threaded_nsplit(const void *A_q8,
+                                                          const void *B_packed,
+                                                          const float *bias,
+                                                          float *C,
+                                                          int M, int N, int K,
+                                                          int threads);
 extern void gemm_nt_q6_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q6_k_q8_k_tile(const void *A, const void *B, const float *bias,
@@ -159,8 +165,9 @@ static ck_q4k_packed_meta_cache_entry_t *ck_q4k_packed_meta_cache_head = NULL;
  *   - Standalone Qwen3.5-like Q4_K x Q8_K shapes (N=3584,K=1024) improved
  *     about 1.2x-1.4x across M=128..1024, depending on thread count.
  *   - Nanbeige-like large Q4_K shapes (N=10496,K=2560) usually improved, but
- *     N-split ownership regressed at some 12-thread M=512 cases. M-split was
- *     the safer policy on this machine.
+ *     N-split ownership regressed at some early 12-thread M=512 experiments,
+ *     but the later dispatch matrix showed it was the best measured candidate
+ *     for the Qwen3.5-like shapes used by the v8 prompt path.
  *   - Full-model Qwen3.5 prefill improved at prompt 128 and 256 tokens
  *     (roughly 1.10x-1.13x), while prompt 512 was only a small full-model win
  *     because other operators became the bottleneck.
@@ -228,17 +235,26 @@ static void *ck_get_q4k_packed_meta_cached(const void *B, int N, int K)
 
 static int ck_should_use_q4k_packed_meta_prefill(int M, int N, int K)
 {
-    if (!ck_env_enabled("CK_ENABLE_Q4K_PACKED_META_PREFILL")) return 0;
+    if (ck_env_enabled("CK_DISABLE_Q4K_PACKED_META_PREFILL")) return 0;
     if (M <= 1 || N <= 0 || K <= 0 || (K % QK_K) != 0) return 0;
 
-    const int min_m = ck_env_int_or2("CK_Q4K_PACKED_META_MIN_M", NULL, 256);
+    const int min_m = ck_env_int_or2("CK_Q4K_PACKED_META_MIN_M", NULL, 32);
     if (M < min_m) return 0;
 
-    /* Local i7 sweeps show packed-meta helps Qwen3.5-like Q4 prefill at
-     * larger prompt batches, but it can regress very wide synthetic shapes.
-     * Keep the production experiment shape-gated until hardware sweeps say
-     * otherwise. */
     if (getenv("CK_FORCE_Q4K_PACKED_META_PREFILL")) return 1;
+
+    /* The dispatch matrix benchmark tracks canonical serial, canonical pool,
+     * packed M-split, packed N-split, and a llama.cpp shim. Local AVX2 data
+     * shows packed N-split is the best measured Q4_K prefill candidate for
+     * Qwen-like shapes:
+     *   - M=32,N=1024,K=1024:  ~1.36x over canonical
+     *   - M=32,N=896,K=4864:   ~1.25x over canonical
+     *   - M=128,N=896,K=4864:  ~1.33x over canonical
+     *
+     * Keep decode on GEMV. This gate is prefill-only because M > 1 and is
+     * still shape-gated; use CK_DISABLE_Q4K_PACKED_META_PREFILL=1 to force
+     * canonical Q4_K while validating a new CPU. */
+    if (N >= 768 && K >= 1024) return 1;
     if (K <= 2048 && N >= 1024 && N <= 8192) return 1;
     return 0;
 }
@@ -508,23 +524,12 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
     if (pool && ck_should_use_q4k_packed_meta_prefill(M, N, K)) {
         void *packed = ck_get_q4k_packed_meta_cached(B, N, K);
         if (packed) {
-            gemm_nt_q4_k_packed_meta_q8_k_threaded(
+            gemm_nt_q4_k_packed_meta_q8_k_threaded_nsplit(
                 A, packed, bias, C, M, N, K,
                 ck_select_gemm_active_threads(pool, M, N, K)
             );
             return;
         }
-    }
-
-    /* Q4_K prefill row-splitting is currently a benchmark path, not a default
-     * production path. On local i7 AVX2 testing it was parity-clean but slower
-     * for the Qwen/Qwen3.5 shapes measured by test_threadpool_parity and the
-     * v8 decoder matrix. Keep it opt-in until hardware sweeps show a stable win.
-     */
-    const char *enable_q4_pool = getenv("CK_ENABLE_Q4K_Q8K_PREFILL_POOL");
-    if (!enable_q4_pool || enable_q4_pool[0] == '\0' || enable_q4_pool[0] == '0') {
-        gemm_nt_q4_k_q8_k(A, B, bias, C, M, N, K);
-        return;
     }
 
     if (!pool || ck_threadpool_n_threads(pool) <= 1 || M <= 1 || ck_should_run_gemm_serial(pool, M, N, K)) {
@@ -540,6 +545,14 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
         .M = M, .N = N, .K = K,
         .A_row_bytes = A_row_bytes
     };
+    /* Canonical fallback safety path:
+     * CK_DISABLE_Q4K_PACKED_META_PREFILL must be a reliable escape hatch for
+     * debugging a new packed layout. Do not fall back to the raw Q4_K GEMM for
+     * prefill M>1 here; that implementation can start its own internal
+     * scheduling for large Q4_K shapes. This v8 dispatcher already owns the
+     * active threadpool, so the safe canonical path is row splitting with the
+     * one-token Q4_K GEMV primitive in work_gemm_nt_q4_k_q8_k().
+     */
     ck_threadpool_dispatch_n(pool, ck_select_gemm_active_threads(pool, M, N, K), work_gemm_nt_q4_k_q8_k, &args);
 }
 

@@ -7,15 +7,17 @@
  * Decode (ck_parallel_decode.h) — GEMV:
  *   1. gemv_q8_0_q8_0       vs  gemv_q8_0_q8_0_parallel_dispatch       (logits)
  *   2. gemv_q5_0_q8_0       vs  gemv_q5_0_q8_0_parallel_dispatch       (mlp_down)
- *   3. gemv_fused_q5_0_bias vs  gemv_fused_q5_0_bias_parallel_dispatch  (fused: quantize+gemv+bias)
- *   4. Fused with NULL bias (edge case)
- *   5. Dispatch latency measurement
+ *   3. gemv_q6_k_q8_k       vs  gemv_q6_k_q8_k_parallel_dispatch       (Q6_K decode)
+ *   4. gemv_q4_k_q8_k       vs  gemv_q4_k_q8_k_parallel_dispatch       (Q4_K decode)
+ *   5. gemv_fused_q5_0_bias vs  gemv_fused_q5_0_bias_parallel_dispatch  (fused: quantize+gemv+bias)
+ *   6. Fused with NULL bias (edge case)
+ *   7. Dispatch latency measurement
  *
  * Prefill (ck_parallel_prefill.h) — GEMM:
- *   6. gemm_nt_q5_0_q8_0    vs  gemm_nt_q5_0_q8_0_parallel_dispatch    (Q/K proj, out proj, MLP gate+up)
- *   7. gemm_nt_q8_0_q8_0    vs  gemm_nt_q8_0_q8_0_parallel_dispatch    (V proj)
- *   8. gemm_nt_q6_k_q8_k    vs  gemm_nt_q6_k_q8_k_parallel_dispatch    (MLP down proj)
- *   9. gemm_nt_q4_k_q8_k    vs  gemm_nt_q4_k_q8_k_parallel_dispatch    (Q4_K proj)
+ *   8. gemm_nt_q5_0_q8_0    vs  gemm_nt_q5_0_q8_0_parallel_dispatch    (Q/K proj, out proj, MLP gate+up)
+ *   9. gemm_nt_q8_0_q8_0    vs  gemm_nt_q8_0_q8_0_parallel_dispatch    (V proj)
+ *  10. gemm_nt_q6_k_q8_k    vs  gemm_nt_q6_k_q8_k_parallel_dispatch    (MLP down proj)
+ *  11. gemm_nt_q4_k_q8_k    vs  gemm_nt_q4_k_q8_k_parallel_dispatch    (Q4_K proj)
  *
  * ADR: Thread pool vs OpenMP
  *   - OpenMP fork/join creates threads per #pragma region (~15-50us overhead)
@@ -154,6 +156,7 @@ static void quantize_to_q8_0(const float *src, void *dst, int M, int K) {
 extern void gemv_q8_0_q8_0(float *y, const void *W, const void *x_q8, int M, int K);
 extern void gemv_q5_0_q8_0(float *y, const void *W, const void *x_q8, int M, int K);
 extern void gemv_q6_k_q8_k(float *y, const void *W, const void *x_q8, int M, int K);
+extern void gemv_q4_k_q8_k(float *y, const void *W, const void *x_q8, int M, int K);
 extern void gemv_fused_q5_0_bias_dispatch(float *y, const void *W, const float *x,
                                            const float *bias, int M, int K);
 
@@ -161,6 +164,7 @@ extern void gemv_fused_q5_0_bias_dispatch(float *y, const void *W, const float *
 extern void gemv_q8_0_q8_0_parallel_dispatch(float *y, const void *W, const void *x_q8, int M, int K);
 extern void gemv_q5_0_q8_0_parallel_dispatch(float *y, const void *W, const void *x_q8, int M, int K);
 extern void gemv_q6_k_q8_k_parallel_dispatch(float *y, const void *W, const void *x_q8, int M, int K);
+extern void gemv_q4_k_q8_k_parallel_dispatch(float *y, const void *W, const void *x_q8, int M, int K);
 extern void gemv_fused_q5_0_bias_parallel_dispatch(float *y, const void *W, const float *x,
                                                      const float *bias, int M, int K);
 
@@ -233,6 +237,9 @@ static test_config_t configs_default[] = {
     {"mlp_gate_up",  9728,   896},
     {"mlp_down",     896,    4864},
     {"logits",       151936, 896},
+    {"qk_aligned",   896,    1024},
+    {"qk_mlp_down",  896,    4864},
+    {"qk_mlp_up",    4864,   1024},
     {NULL, 0, 0}
 };
 
@@ -240,6 +247,8 @@ static test_config_t configs_quick[] = {
     {"small",   256,  256},
     {"medium",  896,  896},
     {"mlp",     4864, 896},
+    {"qk_mid",  896,  1024},
+    {"qk_mlp",  896,  4864},
     {NULL, 0, 0}
 };
 
@@ -273,6 +282,18 @@ static gemm_test_config_t gemm_configs_quick[] = {
 
 typedef void (*gemv_q_fn)(float *, const void *, const void *, int, int);
 typedef void (*gemv_fused_fn)(float *, const void *, const float *, const float *, int, int);
+
+typedef enum {
+    GEMV_WEIGHT_Q8_0 = 0,
+    GEMV_WEIGHT_Q5_0,
+    GEMV_WEIGHT_Q6_K,
+    GEMV_WEIGHT_Q4_K
+} gemv_weight_kind_t;
+
+typedef enum {
+    GEMV_ACT_Q8_0 = 0,
+    GEMV_ACT_Q8_K
+} gemv_act_kind_t;
 
 static double bench_gemv_q(gemv_q_fn fn, float *y, const void *W,
                             const void *x, int M, int K,
@@ -553,7 +574,8 @@ static int run_gemm_test(const char *test_name,
 static int run_gemv_q_test(const char *test_name,
                             gemv_q_fn serial_fn, gemv_q_fn dispatch_fn,
                             int quant_block_size, size_t quant_block_bytes,
-                            int is_q5_weights,
+                            gemv_weight_kind_t weight_kind,
+                            gemv_act_kind_t act_kind,
                             test_config_t *configs,
                             int warmup, int iters, float abs_tol, int verbose) {
     int pass_count = 0, fail_count = 0;
@@ -566,7 +588,11 @@ static int run_gemv_q_test(const char *test_name,
     for (int c = 0; configs[c].name; c++) {
         int M = configs[c].M, K = configs[c].K;
         if (K % quant_block_size != 0) continue;
-        if (K % QK8_0 != 0) continue;
+        if (act_kind == GEMV_ACT_Q8_K) {
+            if (K % QK_K != 0) continue;
+        } else {
+            if (K % QK8_0 != 0) continue;
+        }
 
         /* Allocate */
         float *W_fp32   = (float *)malloc((size_t)M * K * sizeof(float));
@@ -576,18 +602,29 @@ static int run_gemv_q_test(const char *test_name,
 
         int bpr_w = K / quant_block_size;
         void *W_q = malloc((size_t)M * bpr_w * quant_block_bytes);
-        void *x_q8 = malloc((size_t)(K / QK8_0) * sizeof(block_q8_0));
+        void *x_q8 = (act_kind == GEMV_ACT_Q8_K)
+                         ? malloc((size_t)(K / QK_K) * sizeof(block_q8_K))
+                         : malloc((size_t)(K / QK8_0) * sizeof(block_q8_0));
 
         srand(42);
         fill_random_float(W_fp32, M * K, 0.1f);
         fill_random_float(x_fp32, K, 1.0f);
 
-        if (is_q5_weights) {
+        if (weight_kind == GEMV_WEIGHT_Q6_K) {
+            quantize_to_q6_K(W_fp32, W_q, M, K);
+        } else if (weight_kind == GEMV_WEIGHT_Q4_K) {
+            quantize_to_q4_K(W_fp32, W_q, M, K);
+        } else if (weight_kind == GEMV_WEIGHT_Q5_0) {
             quantize_to_q5_0(W_fp32, W_q, M, K);
         } else {
             quantize_to_q8_0(W_fp32, W_q, M, K);
         }
-        quantize_to_q8_0(x_fp32, x_q8, 1, K);
+
+        if (act_kind == GEMV_ACT_Q8_K) {
+            quantize_to_q8_K(x_fp32, x_q8, 1, K);
+        } else {
+            quantize_to_q8_0(x_fp32, x_q8, 1, K);
+        }
 
         /* Run serial */
         serial_fn(y_serial, W_q, x_q8, M, K);
@@ -674,7 +711,8 @@ int main(int argc, char **argv) {
         "q8_0",
         gemv_q8_0_q8_0, gemv_q8_0_q8_0_parallel_dispatch,
         QK8_0, sizeof(block_q8_0),
-        0, /* not q5 weights */
+        GEMV_WEIGHT_Q8_0,
+        GEMV_ACT_Q8_0,
         configs, warmup, iters, abs_tol, verbose
     );
 
@@ -690,16 +728,53 @@ int main(int argc, char **argv) {
         "q5_0",
         gemv_q5_0_q8_0, gemv_q5_0_q8_0_parallel_dispatch,
         QK5_0, sizeof(block_q5_0),
-        1, /* q5 weights */
+        GEMV_WEIGHT_Q5_0,
+        GEMV_ACT_Q8_0,
         configs, warmup, iters, abs_tol, verbose
     );
 
     /* =========================================================================
-     * Test 3: gemv_fused_q5_0_bias serial vs thread pool dispatch
+     * Test 3: gemv_q6_k_q8_k serial vs thread pool dispatch
+     *         (Q6_K weights x Q8_K activations — decode MLP down/logits)
      * ========================================================================= */
     printf("\n");
     printf("================================================================================\n");
-    printf("  TEST 3: gemv_fused_q5_0_bias_dispatch (serial) vs\n");
+    printf("  TEST 3: gemv_q6_k_q8_k (serial) vs gemv_q6_k_q8_k_parallel_dispatch (pool)\n");
+    printf("================================================================================\n");
+
+    total_fail += run_gemv_q_test(
+        "q6_k",
+        gemv_q6_k_q8_k, gemv_q6_k_q8_k_parallel_dispatch,
+        QK_K, sizeof(block_q6_K),
+        GEMV_WEIGHT_Q6_K,
+        GEMV_ACT_Q8_K,
+        configs, warmup, iters, abs_tol, verbose
+    );
+
+    /* =========================================================================
+     * Test 4: gemv_q4_k_q8_k serial vs thread pool dispatch
+     *         (Q4_K weights x Q8_K activations — decode projections)
+     * ========================================================================= */
+    printf("\n");
+    printf("================================================================================\n");
+    printf("  TEST 4: gemv_q4_k_q8_k (serial) vs gemv_q4_k_q8_k_parallel_dispatch (pool)\n");
+    printf("================================================================================\n");
+
+    total_fail += run_gemv_q_test(
+        "q4_k",
+        gemv_q4_k_q8_k, gemv_q4_k_q8_k_parallel_dispatch,
+        QK_K, sizeof(block_q4_K),
+        GEMV_WEIGHT_Q4_K,
+        GEMV_ACT_Q8_K,
+        configs, warmup, iters, abs_tol, verbose
+    );
+
+    /* =========================================================================
+     * Test 5: gemv_fused_q5_0_bias serial vs thread pool dispatch
+     * ========================================================================= */
+    printf("\n");
+    printf("================================================================================\n");
+    printf("  TEST 5: gemv_fused_q5_0_bias_dispatch (serial) vs\n");
     printf("          gemv_fused_q5_0_bias_parallel_dispatch (pool)\n");
     printf("================================================================================\n\n");
 
@@ -758,11 +833,11 @@ int main(int argc, char **argv) {
     }
 
     /* =========================================================================
-     * Test 4: Fused with NULL bias (edge case)
+     * Test 6: Fused with NULL bias (edge case)
      * ========================================================================= */
     printf("\n");
     printf("================================================================================\n");
-    printf("  TEST 4: gemv_fused_q5_0_bias_parallel_dispatch with NULL bias\n");
+    printf("  TEST 6: gemv_fused_q5_0_bias_parallel_dispatch with NULL bias\n");
     printf("================================================================================\n\n");
 
     {
@@ -795,11 +870,11 @@ int main(int argc, char **argv) {
     }
 
     /* =========================================================================
-     * Test 5: Dispatch latency (overhead of packing args + waking threads)
+     * Test 7: Dispatch latency (overhead of packing args + waking threads)
      * ========================================================================= */
     printf("\n");
     printf("================================================================================\n");
-    printf("  TEST 5: Thread pool dispatch latency (small M, overhead-dominated)\n");
+    printf("  TEST 7: Thread pool dispatch latency (small M, overhead-dominated)\n");
     printf("================================================================================\n\n");
 
     {
@@ -841,12 +916,12 @@ int main(int argc, char **argv) {
     gemm_test_config_t *gemm_cfgs = quick ? gemm_configs_quick : gemm_configs_default;
 
     /* =========================================================================
-     * Test 6: gemm_nt_q5_0_q8_0 serial vs thread pool dispatch
+     * Test 8: gemm_nt_q5_0_q8_0 serial vs thread pool dispatch
      *         (Q8_0 activations x Q5_0 weights — Q/K proj, out proj, MLP gate+up)
      * ========================================================================= */
     printf("\n");
     printf("================================================================================\n");
-    printf("  TEST 6: gemm_nt_q5_0_q8_0 (serial) vs\n");
+    printf("  TEST 8: gemm_nt_q5_0_q8_0 (serial) vs\n");
     printf("          gemm_nt_q5_0_q8_0_parallel_dispatch (pool) [prefill]\n");
     printf("================================================================================\n");
 
@@ -863,12 +938,12 @@ int main(int argc, char **argv) {
     );
 
     /* =========================================================================
-     * Test 7: gemm_nt_q8_0_q8_0 serial vs thread pool dispatch
+     * Test 9: gemm_nt_q8_0_q8_0 serial vs thread pool dispatch
      *         (Q8_0 activations x Q8_0 weights — V proj)
      * ========================================================================= */
     printf("\n");
     printf("================================================================================\n");
-    printf("  TEST 7: gemm_nt_q8_0_q8_0 (serial) vs\n");
+    printf("  TEST 9: gemm_nt_q8_0_q8_0 (serial) vs\n");
     printf("          gemm_nt_q8_0_q8_0_parallel_dispatch (pool) [prefill]\n");
     printf("================================================================================\n");
 
@@ -885,12 +960,12 @@ int main(int argc, char **argv) {
     );
 
     /* =========================================================================
-     * Test 8: gemm_nt_q6_k_q8_k serial vs thread pool dispatch
+     * Test 10: gemm_nt_q6_k_q8_k serial vs thread pool dispatch
      *         (Q8_K activations x Q6_K weights — MLP down proj)
      * ========================================================================= */
     printf("\n");
     printf("================================================================================\n");
-    printf("  TEST 8: gemm_nt_q6_k_q8_k (serial) vs\n");
+    printf("  TEST 10: gemm_nt_q6_k_q8_k (serial) vs\n");
     printf("          gemm_nt_q6_k_q8_k_parallel_dispatch (pool) [prefill]\n");
     printf("================================================================================\n");
 
@@ -924,12 +999,12 @@ int main(int argc, char **argv) {
     }
 
     /* =========================================================================
-     * Test 9: gemm_nt_q4_k_q8_k serial vs thread pool dispatch
+     * Test 11: gemm_nt_q4_k_q8_k serial vs thread pool dispatch
      *         (Q8_K activations x Q4_K weights — Q/K/out/MLP proj)
      * ========================================================================= */
     printf("\n");
     printf("================================================================================\n");
-    printf("  TEST 9: gemm_nt_q4_k_q8_k (serial) vs\n");
+    printf("  TEST 11: gemm_nt_q4_k_q8_k (serial) vs\n");
     printf("          gemm_nt_q4_k_q8_k_parallel_dispatch (pool) [prefill]\n");
     printf("================================================================================\n");
 
@@ -967,7 +1042,7 @@ int main(int argc, char **argv) {
     printf("  SUMMARY\n");
     printf("================================================================================\n");
     printf("  Thread pool:   %d threads\n", n_threads);
-    printf("  Tests:         GEMV decode (1-5) + GEMM prefill (6-9)\n");
+    printf("  Tests:         GEMV decode (1-7) + GEMM prefill (8-11)\n");
     printf("  Failed:        %d\n", total_fail);
     printf("================================================================================\n");
 
