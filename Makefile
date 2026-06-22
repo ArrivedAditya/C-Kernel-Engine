@@ -223,6 +223,11 @@ V8_GEMMA4_MIN_MEM_GB ?= 50
 V8_GEMMA4_CONTEXT ?= 2048
 V8_GEMMA4_MAX_TOKENS ?= 64
 V8_GEMMA4_PROMPT ?= Give me a short example of C code.
+V8_NEMOTRON9_MODEL ?= hf://bartowski/nvidia_NVIDIA-Nemotron-Nano-9B-v2-GGUF/nvidia_NVIDIA-Nemotron-Nano-9B-v2-Q4_K_M.gguf
+V8_NEMOTRON9_MIN_MEM_GB ?= 70
+V8_NEMOTRON9_CONTEXT ?= 2048
+V8_NEMOTRON9_MAX_TOKENS ?= 64
+V8_NEMOTRON9_PROMPT ?= Give me a concise example of C code.
 
 # =============================================================================
 # Intel oneAPI Integration (MKL / oneDNN)
@@ -590,6 +595,8 @@ PY_TESTS := unittest/test_layernorm.py \
             unittest/test_rmsnorm.py \
             unittest/test_qk_norm.py \
             tests/test_deltanet.py \
+            unittest/test_recurrent_conv_state_update.py \
+            unittest/test_mamba2_reference.py \
             unittest/test_deepseek_reference_kernels.py \
             unittest/test_swiglu.py \
             unittest/test_fused_swiglu_decode.py \
@@ -2460,6 +2467,11 @@ test-v8-decoder-matrix-quick: ck-cli-v8
 		--repeats $${CK_V8_DECODER_REPEATS:-1} \
 		--json-out build/v8_decoder_matrix_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_DECODER_PROMPT:-128}_n$${CK_V8_DECODER_DECODE:-32}.json
 
+test-v8-template-circuit-audit:
+	@echo "Running v8 template circuit artifact audit tests..."
+	@$(PYTHON) -m py_compile version/v8/scripts/audit_template_circuit_v8.py
+	@$(PYTHON) -m unittest tests.test_v8_template_circuit_audit -v
+
 test-v8-gemma4-highmem:
 	@avail_kb=$$(awk '/MemAvailable:/ {print $$2}' /proc/meminfo 2>/dev/null || echo 0); \
 	threshold_kb=$$(( $(V8_GEMMA4_MIN_MEM_GB) * 1024 * 1024 )); \
@@ -2475,6 +2487,24 @@ test-v8-gemma4-highmem:
 			--prompt "$(V8_GEMMA4_PROMPT)" \
 			--chat-template gemma4 \
 			--max-tokens $(V8_GEMMA4_MAX_TOKENS) \
+			--temperature 0.0; \
+	fi
+
+test-v8-nemotron9-highmem:
+	@avail_kb=$$(awk '/MemAvailable:/ {print $$2}' /proc/meminfo 2>/dev/null || echo 0); \
+	threshold_kb=$$(( $(V8_NEMOTRON9_MIN_MEM_GB) * 1024 * 1024 )); \
+	if [ "$$avail_kb" -lt "$$threshold_kb" ]; then \
+		avail_gb=$$(( $$avail_kb / 1024 / 1024 )); \
+		echo "SKIP: Nemotron Nano 9B v2 v8 smoke needs >=$(V8_NEMOTRON9_MIN_MEM_GB) GiB MemAvailable; found $${avail_gb} GiB"; \
+	else \
+		echo "Running v8 Nemotron Nano 9B v2 high-memory smoke..."; \
+		CK_NUM_THREADS=$${CK_NUM_THREADS:-24} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+			$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/ck_run_v8.py run "$(V8_NEMOTRON9_MODEL)" \
+			--context-len $(V8_NEMOTRON9_CONTEXT) \
+			--force-convert --force-compile \
+			--prompt "$(V8_NEMOTRON9_PROMPT)" \
+			--chat-template auto \
+			--max-tokens $(V8_NEMOTRON9_MAX_TOKENS) \
 			--temperature 0.0; \
 	fi
 
@@ -2503,7 +2533,7 @@ profile-v8-prefill-ops-quick: ck-cli-v8
 		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
 		--json-out build/v8_prefill_ops_profile_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-128}.json
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-dispatch-sweep-quick test-q4-q5-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-gemma4-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-dispatch-sweep-quick test-q4-q5-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit test-v8-gemma4-highmem test-v8-nemotron9-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

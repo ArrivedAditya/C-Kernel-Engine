@@ -45,7 +45,10 @@ from convert_gguf_to_bump_v8 import (  # type: ignore
     calculate_manifest_hash,
     calculate_metadata_hash,
     calculate_template_hash,
+    inspect_tokenizer_json,
     load_template_for_arch,
+    load_tokenizer_json,
+    _apply_tokenizer_contract_overrides,
     write_bumpv5_footer,
 )
 
@@ -625,6 +628,11 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "ssm_inner_size": ssm_inner_size,
             "ssm_conv_channels": mamba_conv_dim,
             "ssm_conv_history": max(ssm_conv_kernel, 0),
+            "recurrent_num_heads": mamba_num_heads,
+            "recurrent_head_dim": mamba_head_dim,
+            "recurrent_state_heads": mamba_num_heads,
+            "recurrent_state_rows": mamba_head_dim,
+            "recurrent_state_cols": ssm_state_size,
             "mamba_conv_dim": mamba_conv_dim,
             "mamba_projection_size": mamba_projection_size,
             "moe_intermediate_size": int(text.get("moe_intermediate_size") or 0),
@@ -847,6 +855,73 @@ def _write_ref(w: HashingWriter, model_dir: Path, headers: dict[str, HeaderTenso
     return out_dtype or "fp32", total, out_shape
 
 
+def _tokenizer_payloads_from_json(model_dir: Path, vocab_size: int) -> tuple[list[tuple[str, str, bytes, list[int], str]], dict[str, Any] | None, dict[str, Any]]:
+    tok_path = model_dir / "tokenizer.json"
+    if not tok_path.exists() or vocab_size <= 0:
+        return [], None, {}
+    info = inspect_tokenizer_json(str(tok_path))
+    tok_type = str(info.get("model_type") or "").strip().lower()
+    if tok_type not in {"bpe", "wordpiece"}:
+        return [], None, {}
+    offsets, strings_blob, merges, _scores, _types = load_tokenizer_json(str(tok_path), int(vocab_size))
+    offsets_bytes = struct.pack(f"<{len(offsets)}i", *offsets)
+    merges_bytes = struct.pack(f"<{len(merges)}i", *merges) if merges else b""
+    payloads = [
+        ("vocab_offsets", "i32", offsets_bytes, [len(offsets)], "tokenizer_json"),
+        ("vocab_strings", "u8", strings_blob, [len(strings_blob)], "tokenizer_json"),
+        ("vocab_merges", "i32", merges_bytes, [len(merges)], "tokenizer_json"),
+    ]
+    contract: dict[str, Any] = {
+        "tokenizer_type": tok_type,
+        "source": "tokenizer_json",
+        "path": str(tok_path),
+    }
+    special = _special_tokens_from_tokenizer_config(model_dir, tok_type)
+    return payloads, contract, special
+
+
+def _special_tokens_from_tokenizer_config(model_dir: Path, tokenizer_type: str) -> dict[str, Any]:
+    out: dict[str, Any] = {"tokenizer_model": tokenizer_type}
+    cfg_path = model_dir / "tokenizer_config.json"
+    if not cfg_path.exists():
+        return out
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except Exception:
+        return out
+
+    def _content(value: Any) -> str | None:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict) and isinstance(value.get("content"), str):
+            return str(value.get("content"))
+        return None
+
+    added = cfg.get("added_tokens_decoder") if isinstance(cfg.get("added_tokens_decoder"), dict) else {}
+    token_to_id: dict[str, int] = {}
+    for key, row in added.items():
+        if not isinstance(row, dict):
+            continue
+        content = row.get("content")
+        if not isinstance(content, str):
+            continue
+        try:
+            token_to_id[content] = int(key)
+        except Exception:
+            continue
+
+    for name, field in (("bos_token", "bos_token"), ("eos_token", "eos_token"), ("unk_token", "unk_token"), ("pad_token", "pad_token")):
+        tok = _content(cfg.get(field))
+        if tok is not None:
+            out[name] = tok
+            if tok in token_to_id:
+                out[f"{name}_id"] = token_to_id[tok]
+    for key, out_key in (("add_bos_token", "add_bos_token"), ("add_eos_token", "add_eos_token"), ("add_prefix_space", "add_space_prefix")):
+        if key in cfg:
+            out[out_key] = bool(cfg.get(key))
+    return out
+
+
 def _copy_tokenizer_sidecars(model_dir: Path, out_dir: Path) -> None:
     for name in ("tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "generation_config.json"):
         src = model_dir / name
@@ -952,6 +1027,8 @@ def main() -> int:
         uniq = sorted(set(missing))
         raise SystemExit("Missing required safetensors tensors:\n  " + "\n  ".join(uniq[:80]))
 
+    tokenizer_payloads, tokenizer_contract, special_tokens = _tokenizer_payloads_from_json(model_dir, int(config.get("vocab_size") or 0))
+
     audit = _build_source_audit(arch, headers, refs)
     audit_out = args.audit_out or (args.manifest_out.parent / "conversion_audit.json")
     audit_out.parent.mkdir(parents=True, exist_ok=True)
@@ -965,7 +1042,26 @@ def main() -> int:
         tie_word_embeddings=bool(config.get("tie_word_embeddings", True)),
         has_untied_output_weight=any(e["name"] == "output.weight" for e in entries_preview),
     )
+    if tokenizer_contract:
+        template = _apply_tokenizer_contract_overrides(
+            template,
+            str(tokenizer_contract.get("tokenizer_type") or "").strip().lower(),
+        )
+        config["tokenizer_contract"] = tokenizer_contract
+        config["special_tokens"] = special_tokens
     quant_summary: dict[str, Any] = {"source": "safetensors", "dtype_policy": args.dtype}
+    for name, dt, payload, shape, source in tokenizer_payloads:
+        dtype_table.append(CK_DT_FP32)
+        entries_preview.append({
+            "name": name,
+            "dtype": dt,
+            "file_offset": offset,
+            "size": len(payload),
+            "source_name": source,
+            "shape": shape,
+        })
+        offset += len(payload)
+
     for e in entries_preview:
         if e["name"].startswith("layer."):
             layer_key = ".".join(e["name"].split(".")[:2])
@@ -999,6 +1095,8 @@ def main() -> int:
         "has_attention_biases": False,
         "has_qk_norm": True,
         "source_audit": audit,
+        "special_tokens": special_tokens,
+        "tokenizer_contract": tokenizer_contract if tokenizer_contract else None,
         "entries": entries_preview,
     }
 
@@ -1044,6 +1142,18 @@ def main() -> int:
             if transform:
                 entry["transform"] = transform
             entries.append(entry)
+        for name, dt, payload, shape, source in tokenizer_payloads:
+            start = current_offset
+            w.write(payload)
+            current_offset += len(payload)
+            entries.append({
+                "name": name,
+                "dtype": dt,
+                "file_offset": start,
+                "size": len(payload),
+                "source_name": source,
+                "shape": shape,
+            })
         checksum = w.digest()
         manifest["entries"] = entries
         args.manifest_out.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")

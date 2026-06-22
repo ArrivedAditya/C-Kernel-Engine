@@ -214,6 +214,61 @@ class TestDeltaNetParity(unittest.TestCase):
     def test_wider_case(self) -> None:
         self._run_case(num_heads=3, state_dim=24, seed=19)
 
+    def test_sequence_rollout_matches_repeated_autoregressive_updates(self) -> None:
+        num_heads, state_dim, seq_len = 3, 12, 5
+        rng = np.random.default_rng(41)
+        q = (0.25 * rng.standard_normal((seq_len, num_heads, state_dim))).astype(np.float32)
+        k = (0.25 * rng.standard_normal((seq_len, num_heads, state_dim))).astype(np.float32)
+        v = (0.25 * rng.standard_normal((seq_len, num_heads, state_dim))).astype(np.float32)
+        g = (0.10 * rng.standard_normal((seq_len, num_heads))).astype(np.float32)
+        beta = (0.50 * rng.standard_normal((seq_len, num_heads))).astype(np.float32)
+        state = (0.20 * rng.standard_normal((num_heads, state_dim, state_dim))).astype(np.float32)
+
+        q /= np.linalg.norm(q, axis=-1, keepdims=True) + self.norm_eps
+        k /= np.linalg.norm(k, axis=-1, keepdims=True) + self.norm_eps
+
+        ck_state = state.copy()
+        ck_outs = []
+        ck_states = []
+        for t in range(seq_len):
+            next_state = np.zeros_like(ck_state)
+            out = np.zeros((num_heads, state_dim), dtype=np.float32)
+            LIB.gated_deltanet_autoregressive_forward(
+                _as_ptr(np.ascontiguousarray(q[t])),
+                _as_ptr(np.ascontiguousarray(k[t])),
+                _as_ptr(np.ascontiguousarray(v[t])),
+                _as_ptr(np.ascontiguousarray(g[t])),
+                _as_ptr(np.ascontiguousarray(beta[t])),
+                _as_ptr(ck_state),
+                _as_ptr(next_state),
+                _as_ptr(out),
+                num_heads,
+                state_dim,
+                ctypes.c_float(self.norm_eps),
+            )
+            ck_outs.append(out.copy())
+            ck_states.append(next_state.copy())
+            ck_state = next_state
+
+        torch_state = torch.tensor(state, dtype=torch.float32)
+        torch_outs = []
+        torch_states = []
+        for t in range(seq_len):
+            torch_state, torch_out = torch_deltanet(
+                torch.tensor(q[t], dtype=torch.float32),
+                torch.tensor(k[t], dtype=torch.float32),
+                torch.tensor(v[t], dtype=torch.float32),
+                torch.tensor(g[t], dtype=torch.float32),
+                torch.tensor(beta[t], dtype=torch.float32),
+                torch_state,
+                self.norm_eps,
+            )
+            torch_outs.append(torch_out.detach().numpy())
+            torch_states.append(torch_state.detach().numpy())
+
+        np.testing.assert_allclose(np.stack(ck_outs), np.stack(torch_outs), atol=self.atol_forward, rtol=0.0)
+        np.testing.assert_allclose(np.stack(ck_states), np.stack(torch_states), atol=self.atol_forward, rtol=0.0)
+
     def test_strict_parity_dispatches_ref(self) -> None:
         LIB.ck_set_strict_parity(1)
         try:

@@ -148,6 +148,44 @@ class TestRecurrentConvStateUpdate(unittest.TestCase):
     def test_qwen35_like_case(self) -> None:
         self._run_case(3, 1, 5, 128 * 16, 128 * 16, 2048, 13)
 
+    def test_multi_token_forward_matches_repeated_single_token_updates(self) -> None:
+        history_len, num_seqs, num_tokens = 3, 2, 5
+        q_dim, k_dim, v_dim = 7, 5, 6
+        channels = q_dim + k_dim + v_dim
+        rng = np.random.default_rng(31)
+        state_in = (0.20 * rng.standard_normal((num_seqs, channels, history_len))).astype(np.float32)
+        q = (0.25 * rng.standard_normal((num_seqs * num_tokens, q_dim))).astype(np.float32)
+        k = (0.25 * rng.standard_normal((num_seqs * num_tokens, k_dim))).astype(np.float32)
+        v = (0.25 * rng.standard_normal((num_seqs * num_tokens, v_dim))).astype(np.float32)
+
+        batch_conv = np.zeros((num_seqs, channels, history_len + num_tokens), dtype=np.float32)
+        batch_state = np.zeros((num_seqs, channels, history_len), dtype=np.float32)
+        LIB.recurrent_conv_state_update_forward(
+            _as_ptr(state_in), _as_ptr(q), _as_ptr(k), _as_ptr(v),
+            _as_ptr(batch_conv), _as_ptr(batch_state),
+            history_len, num_seqs, num_tokens, q_dim, k_dim, v_dim,
+        )
+
+        step_state = state_in.copy()
+        step_rows = []
+        for tok in range(num_tokens):
+            q_step = np.ascontiguousarray(q[tok::num_tokens])
+            k_step = np.ascontiguousarray(k[tok::num_tokens])
+            v_step = np.ascontiguousarray(v[tok::num_tokens])
+            step_conv = np.zeros((num_seqs, channels, history_len + 1), dtype=np.float32)
+            next_state = np.zeros_like(step_state)
+            LIB.recurrent_conv_state_update_forward(
+                _as_ptr(step_state), _as_ptr(q_step), _as_ptr(k_step), _as_ptr(v_step),
+                _as_ptr(step_conv), _as_ptr(next_state),
+                history_len, num_seqs, 1, q_dim, k_dim, v_dim,
+            )
+            step_rows.append(step_conv[:, :, -1:])
+            step_state = next_state
+
+        step_tail = np.concatenate(step_rows, axis=2)
+        np.testing.assert_allclose(step_tail, batch_conv[:, :, history_len:], atol=self.atol, rtol=0.0)
+        np.testing.assert_allclose(step_state, batch_state, atol=self.atol, rtol=0.0)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

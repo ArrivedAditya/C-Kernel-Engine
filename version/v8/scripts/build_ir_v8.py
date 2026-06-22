@@ -950,34 +950,40 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
             "include": '#include "tokenizer/true_bpe.h"',
             "struct_field": "CKTrueBPE *tokenizer;    /* BPE tokenizer */",
             "init": f"""
-    /* Initialize BPE tokenizer from bump data */
-    g_model->tokenizer = ck_true_bpe_create();
-    if (g_model->tokenizer) {{
-        ck_true_bpe_load_binary(
-            g_model->tokenizer,
-            {vocab_size},
-            (const int32_t*)(g_model->bump + W_VOCAB_OFFSETS),
-            (const char*)(g_model->bump + W_VOCAB_STRINGS),
-            {num_merges},
-            (const int32_t*)(g_model->bump + W_VOCAB_MERGES)
-        );
+    /* Full BPE encode-side tokenizer initialization is enabled by default so
+     * generated runtimes work end-to-end with raw text prompts. Large
+     * vocabularies can still run in token-id/display-only mode by setting
+     * CK_DISABLE_FULL_BPE_TOKENIZER=1 to skip encode-side merge/rank tables. */
+    const char *ck_disable_full_bpe = getenv("CK_DISABLE_FULL_BPE_TOKENIZER");
+    if (!ck_disable_full_bpe || strcmp(ck_disable_full_bpe, "0") == 0) {{
+        g_model->tokenizer = ck_true_bpe_create();
+        if (g_model->tokenizer) {{
+            ck_true_bpe_load_binary(
+                g_model->tokenizer,
+                {vocab_size},
+                (const int32_t*)(g_model->bump + W_VOCAB_OFFSETS),
+                (const char*)(g_model->bump + W_VOCAB_STRINGS),
+                {num_merges},
+                (const int32_t*)(g_model->bump + W_VOCAB_MERGES)
+            );
 {bpe_contract_block}
 
-        /* Register special tokens for pre-BPE matching.
-         * Without this, <|im_end|> gets broken into characters by BPE.
-         */
-        static const char *special_tokens[] = {{
+            /* Register special tokens for pre-BPE matching.
+             * Without this, <|im_end|> gets broken into characters by BPE.
+             */
+            static const char *special_tokens[] = {{
 {special_token_lines}
-            NULL
-        }};
-        for (int i = 0; special_tokens[i] != NULL; i++) {{
-            int32_t id = ck_true_bpe_lookup(g_model->tokenizer, special_tokens[i]);
-            const char *check = ck_true_bpe_id_to_token(g_model->tokenizer, id);
-            if (check && strcmp(check, special_tokens[i]) == 0) {{
-                ck_true_bpe_add_special_token(g_model->tokenizer, special_tokens[i], id);
-                #ifdef CK_DEBUG_TOKENIZER
-                printf("[Tokenizer] Registered special: %s -> %d\\n", special_tokens[i], id);
-                #endif
+                NULL
+            }};
+            for (int i = 0; special_tokens[i] != NULL; i++) {{
+                int32_t id = ck_true_bpe_lookup(g_model->tokenizer, special_tokens[i]);
+                const char *check = ck_true_bpe_id_to_token(g_model->tokenizer, id);
+                if (check && strcmp(check, special_tokens[i]) == 0) {{
+                    ck_true_bpe_add_special_token(g_model->tokenizer, special_tokens[i], id);
+                    #ifdef CK_DEBUG_TOKENIZER
+                    printf("[Tokenizer] Registered special: %s -> %d\n", special_tokens[i], id);
+                    #endif
+                }}
             }}
         }}
     }}""",
@@ -990,38 +996,86 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
 /* ============================================================================
  * TOKENIZER API - Encode text to tokens using C tokenizer
  * ============================================================================
- * Returns: number of tokens written to internal buffer
- * The tokens are written to the same buffer that prefill() reads from.
- * After encoding, call ck_model_prefill() with the returned count.
+ * Full native text encoding is enabled by default for end-to-end raw prompts.
+ * Token-id prompts and generated-token display can still use the lightweight
+ * BUMP vocab tables if CK_DISABLE_FULL_BPE_TOKENIZER=1 is set.
  */
 CK_EXPORT int ck_model_encode_text(const char *text, int text_len) {
     if (!g_model || !g_model->tokenizer || !text) return 0;
     if (text_len < 0) text_len = (int)strlen(text);
     if (text_len == 0) return 0;
 
-    /* Encode directly into the token_ids buffer that prefill uses */
     int32_t *token_buf = (int32_t*)(g_model->bump + A_TOKEN_IDS);
     int max_tokens = MAX_SEQ_LEN;
+    return ck_true_bpe_encode(g_model->tokenizer, text, text_len, token_buf, max_tokens);
+}
 
-    int num_tokens = ck_true_bpe_encode(
-        g_model->tokenizer,
-        text,
-        text_len,
-        token_buf,
-        max_tokens
-    );
+static const char *ck_model_vocab_piece(int32_t id, int *len_out) {
+#ifndef W_VOCAB_OFFSETS
+    (void)id; (void)len_out;
+    return NULL;
+#else
+    if (!g_model || id < 0 || id >= VOCAB_SIZE || !len_out) return NULL;
+    const int32_t *offsets = (const int32_t*)(g_model->bump + W_VOCAB_OFFSETS);
+    const char *strings = (const char*)(g_model->bump + W_VOCAB_STRINGS);
+    int start = offsets[id];
+    int end = (id + 1 < VOCAB_SIZE) ? offsets[id + 1] : VOCAB_STRINGS_SIZE;
+    if (start < 0 || end < start || end > VOCAB_STRINGS_SIZE) return NULL;
+    *len_out = end - start;
+    return strings + start;
+#endif
+}
 
-    return num_tokens;
+static int ck_model_append_vocab_piece(int32_t id, char *text, int pos, int max_len) {
+    int len = 0;
+    const unsigned char *piece = (const unsigned char*)ck_model_vocab_piece(id, &len);
+    if (!piece || max_len <= 0) return pos;
+    for (int i = 0; i < len && pos < max_len - 1; ) {
+        if (i + 1 < len && piece[i] == 0xC4 && piece[i + 1] == 0xA0) {
+            text[pos++] = ' ';
+            i += 2;
+        } else if (i + 1 < len && piece[i] == 0xC4 && piece[i + 1] == 0x8A) {
+            text[pos++] = '\\n';
+            i += 2;
+        } else if (i + 2 < len && piece[i] == 0xE2 && piece[i + 1] == 0x96 && piece[i + 2] == 0x81) {
+            text[pos++] = ' ';
+            i += 3;
+        } else {
+            text[pos++] = (char)piece[i++];
+        }
+    }
+    text[pos] = '\\0';
+    return pos;
 }
 
 /* Decode tokens back to text */
 CK_EXPORT int ck_model_decode_tokens(const int32_t *ids, int num_ids, char *text, int max_len) {
-    if (!g_model || !g_model->tokenizer || !ids || !text || max_len <= 0) return 0;
-    return ck_true_bpe_decode(g_model->tokenizer, ids, num_ids, text, max_len);
+    if (!g_model || !ids || !text || max_len <= 0) return 0;
+    if (g_model->tokenizer) {
+        return ck_true_bpe_decode(g_model->tokenizer, ids, num_ids, text, max_len);
+    }
+    int pos = 0;
+    text[0] = '\\0';
+    for (int i = 0; i < num_ids; i++) {
+        pos = ck_model_append_vocab_piece(ids[i], text, pos, max_len);
+    }
+    return pos;
 }
 
-/* Check if tokenizer is available */
+/* Check if tokenizer data is available */
 CK_EXPORT int ck_model_has_tokenizer(void) {
+#ifdef W_VOCAB_OFFSETS
+    return g_model ? 1 : 0;
+#else
+    return (g_model && g_model->tokenizer) ? 1 : 0;
+#endif
+}
+
+/* Check if raw text encoding is available.
+ * BPE models can decode from compact vocab tables without constructing the
+ * full tokenizer, but text encoding needs the tokenizer merge/rank state.
+ */
+CK_EXPORT int ck_model_can_encode_text(void) {
     return (g_model && g_model->tokenizer) ? 1 : 0;
 }
 
@@ -1030,22 +1084,23 @@ CK_EXPORT const int32_t* ck_model_get_token_buffer(void) {
     return g_model ? (const int32_t*)(g_model->bump + A_TOKEN_IDS) : NULL;
 }
 
-/* Lookup single token by text (returns token ID or -1 if not found)
- * Uses DIRECT vocabulary lookup, not encoding.
- * This is important for special tokens like <|im_end|> which should NOT
- * be encoded through BPE (which would break them into characters).
- */
+/* Lookup single token by text (returns token ID or -1 if not found) */
 CK_EXPORT int32_t ck_model_lookup_token(const char *text) {
-    if (!g_model || !g_model->tokenizer || !text) return -1;
-    /* Direct vocabulary lookup - returns token ID or unk_id if not found */
-    int32_t id = ck_true_bpe_lookup(g_model->tokenizer, text);
-    /* unk_id is 0 by default, but we want to return -1 for "not found" */
-    /* Check if the token is actually in vocab by verifying round-trip */
-    const char *token_str = ck_true_bpe_id_to_token(g_model->tokenizer, id);
-    if (token_str && strcmp(token_str, text) == 0) {
-        return id;  /* Found exact match */
+    if (!g_model || !text) return -1;
+    if (g_model->tokenizer) {
+        int32_t id = ck_true_bpe_lookup(g_model->tokenizer, text);
+        const char *token_str = ck_true_bpe_id_to_token(g_model->tokenizer, id);
+        return (token_str && strcmp(token_str, text) == 0) ? id : -1;
     }
-    return -1;  /* Not found or matched to different token */
+#ifdef W_VOCAB_OFFSETS
+    int text_len = (int)strlen(text);
+    for (int32_t id = 0; id < VOCAB_SIZE; id++) {
+        int piece_len = 0;
+        const char *piece = ck_model_vocab_piece(id, &piece_len);
+        if (piece && piece_len == text_len && memcmp(piece, text, (size_t)text_len) == 0) return id;
+    }
+#endif
+    return -1;
 }
 """
         }
@@ -1253,6 +1308,11 @@ CK_EXPORT int ck_model_decode_tokens(const int32_t *ids, int num_ids, char *text
 
 /* Check if tokenizer is available */
 CK_EXPORT int ck_model_has_tokenizer(void) {
+    return (g_model && g_model->tokenizer) ? 1 : 0;
+}
+
+/* Check if raw text encoding is available. */
+CK_EXPORT int ck_model_can_encode_text(void) {
     return (g_model && g_model->tokenizer) ? 1 : 0;
 }
 
@@ -3250,6 +3310,10 @@ def _normalize_manifest_config(config: Dict) -> Dict:
             out["ssm_conv_channels"] = q_dim + q_dim + v_dim
         out["recurrent_num_heads"] = int(ssm_heads)
         out["recurrent_head_dim"] = int(v_dim // int(ssm_heads)) if int(ssm_heads) else int(ssm_state)
+        if model_kind == "nemotron_h":
+            out["recurrent_state_heads"] = int(ssm_heads)
+            out["recurrent_state_rows"] = int(out["recurrent_head_dim"])
+            out["recurrent_state_cols"] = int(ssm_state)
     attn_out = _pick("attn_out_dim", default=(out.get("num_heads", 0) * out.get("head_dim", 0)))
     if attn_out is not None:
         out["attn_out_dim"] = int(attn_out)
@@ -3635,6 +3699,8 @@ def _recurrent_state_shape(config: Dict[str, Any]) -> Tuple[int, int, int]:
     The recurrent_core op contract owns this shape. Templates or inspectors may
     declare explicit recurrent_state_{heads,rows,cols} keys; otherwise we fall
     back to the common DeltaNet/KDA layout [num_heads, head_dim, head_dim].
+    Mamba2-style states must set cols explicitly because their state shape is
+    [num_heads, head_dim, state_dim], not square.
     """
     heads = int(
         config.get(
@@ -4420,7 +4486,9 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             return {"x": "branch_normed" if act == "fp32" else "branch_normed"}
         if op_type == "branch_fc2":
             return {"x": "branch_mlp" if act == "fp32" else "branch_mlp"}
-        if op_type in ("recurrent_qkv_proj", "recurrent_gate_proj", "recurrent_alpha_proj", "recurrent_beta_proj", "mamba_in_proj"):
+        if op_type == "mamba_in_proj":
+            return {"x": "layer_input" if act == "fp32" else "main_stream_q8"}
+        if op_type in ("recurrent_qkv_proj", "recurrent_gate_proj", "recurrent_alpha_proj", "recurrent_beta_proj"):
             return {"x": "main_stream" if act == "fp32" else "main_stream_q8"}
         if op_type in ("recurrent_out_proj", "mamba_out_proj"):
             return {"x": "recurrent_normed" if act == "fp32" else "main_stream_q8"}
@@ -5132,7 +5200,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                                             if quantize_kernel:
                                                 quant_op_name = f"quantize_input_{norm_instance}"
                                                 quant_op_info = get_op_info(quant_op_name, "body", layer_idx)
-                                                arranged_kernels.append({
+                                                quant_arranged = {
                                                     "op_id": quant_op_info["op_id"],
                                                     "kernel": quantize_kernel,
                                                     "op": quant_op_name,
@@ -5140,7 +5208,10 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                                                     "section": "body",
                                                     "layer": layer_idx,
                                                     "instance": norm_instance,
-                                                })
+                                                }
+                                                if op == "block_rmsnorm":
+                                                    quant_arranged["graph_slots"] = {"inputs": {"input": "layer_input"}}
+                                                arranged_kernels.append(quant_arranged)
                                                 print(f"      [{quant_op_info['op_id']:3d}] {quant_op_name:20s} → {quantize_kernel}  (inst: {norm_instance}) [AUTO-INSERTED]")
                                             break
                                     break
@@ -6137,7 +6208,9 @@ def generate_ir_lower_1(
     # ═══════════════════════════════════════════════════════════════════════════
     # AUTOMATIC KV CACHE INSERTION (decode only)
     # ═══════════════════════════════════════════════════════════════════════════
-    # Insert kv_cache_store ops after rope_qk to store K,V for use in subsequent decode.
+    # Insert kv_cache_store ops after the last K/V-transforming op to store K,V
+    # for subsequent decode. RoPE attention stores after rope_qk; no-RoPE
+    # attention (for example Nemotron-H) stores after v_proj.
     # For decode, also update attention to use the decode kernel with KV cache.
     print(f"\n  [{mode.capitalize()} mode] Inserting KV cache operations...")
     final_ops = []
@@ -6147,6 +6220,16 @@ def generate_ir_lower_1(
     decode_kv_cache_dtype = str(config.get("decode_kv_cache_dtype", "fp32") or "fp32").strip().lower()
     decode_uses_fp16_kv = decode_kv_cache_dtype in {"fp16", "f16"}
     layer_kv_source_cfg = config.get("layer_kv_source") if isinstance(config.get("layer_kv_source"), list) else []
+    decode_attention_layers = {
+        int(op.get("layer", 0))
+        for op in lowered_ops
+        if str(op.get("op", "")) in {"attn", "attn_sliding"}
+    }
+    decode_rope_layers = {
+        int(op.get("layer", 0))
+        for op in lowered_ops
+        if str(op.get("op", "")) in {"rope_qk", "mrope_qk"}
+    }
 
     def _kv_read_layer_for(layer: int) -> int:
         try:
@@ -6156,34 +6239,43 @@ def generate_ir_lower_1(
             pass
         return int(layer)
 
+    def _make_decode_kv_store_op(anchor_op: Dict[str, Any]) -> Dict[str, Any]:
+        layer = int(anchor_op["layer"])
+        return {
+            "idx": len(final_ops),  # Will be renumbered
+            "kernel": "kv_cache_store_f16" if decode_uses_fp16_kv else "kv_cache_store",
+            "op": "kv_cache_store",
+            "layer": layer,
+            "section": anchor_op["section"],
+            "function": "kv_cache_store_f16" if decode_uses_fp16_kv else "kv_cache_store",
+            "weights": {},
+            "inputs": {
+                "k": {"type": "scratch", "source": "k_scratch"},
+                "v": {"type": "scratch", "source": "v_scratch"},
+            },
+            "outputs": {
+                "kv_cache_k": {"type": "kv_cache", "buffer": f"kv_cache_k_L{layer}"},
+                "kv_cache_v": {"type": "kv_cache", "buffer": f"kv_cache_v_L{layer}"},
+            },
+            "params": copy.deepcopy(anchor_op.get("params", {})),
+            "scratch": [],
+            "_auto_inserted": True,
+        }
+
     for i, op in enumerate(lowered_ops):
         final_ops.append(op)
 
         if mode == "decode" and uses_kv_cache:
-            # After rope_qk, insert kv_cache_store
-            if op["op"] == "rope_qk":
-                layer = op["layer"]
-                kv_store_op = {
-                    "idx": len(final_ops),  # Will be renumbered
-                    "kernel": "kv_cache_store_f16" if decode_uses_fp16_kv else "kv_cache_store",
-                    "op": "kv_cache_store",
-                    "layer": layer,
-                    "section": op["section"],
-                    "function": "kv_cache_store_f16" if decode_uses_fp16_kv else "kv_cache_store",
-                    "weights": {},
-                    "inputs": {
-                        "k": {"type": "scratch", "source": "k_scratch"},
-                        "v": {"type": "scratch", "source": "v_scratch"},
-                    },
-                    "outputs": {
-                        "kv_cache_k": {"type": "kv_cache", "buffer": f"kv_cache_k_L{layer}"},
-                        "kv_cache_v": {"type": "kv_cache", "buffer": f"kv_cache_v_L{layer}"},
-                    },
-                    "params": copy.deepcopy(op.get("params", {})),
-                    "scratch": [],
-                    "_auto_inserted": True,
-                }
-                final_ops.append(kv_store_op)
+            layer = int(op.get("layer", 0))
+            op_name = str(op.get("op", ""))
+            should_store_after_rope = op_name in {"rope_qk", "mrope_qk"}
+            should_store_after_v = (
+                op_name == "v_proj"
+                and layer in decode_attention_layers
+                and layer not in decode_rope_layers
+            )
+            if should_store_after_rope or should_store_after_v:
+                final_ops.append(_make_decode_kv_store_op(op))
                 kv_store_count += 1
 
             # For decode mode, update attention ops to use decode kernel
@@ -7916,7 +8008,7 @@ def generate_ir_lower_2(
                         activation_buffers,
                         buffer_name_map,
                     )
-                    if not needs_q8_input and buf_name in ("layer_input", "main_stream_q8"):
+                    if not needs_q8_input and buf_name == "main_stream_q8":
                         buf_name = "embedded_input"
                     buf = activation_buffers.get(buf_name)
                 else:

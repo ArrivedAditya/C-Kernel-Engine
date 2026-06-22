@@ -114,7 +114,6 @@
             "q_proj",
             "k_proj",
             "v_proj",
-            "rope_qk",
             "attn",
             "out_proj",
             "residual_add"

@@ -101,6 +101,7 @@ typedef uintptr_t (*get_named_activation_ptr_t)(const char *name);
 typedef int (*encode_text_t)(const char *text, int text_len);
 typedef int (*decode_tokens_t)(const int32_t *ids, int num_ids, char *text, int max_len);
 typedef int (*has_tokenizer_t)(void);
+typedef int (*can_encode_text_t)(void);
 typedef int32_t (*lookup_token_t)(const char *text);
 typedef const char *(*id_to_token_t)(int32_t id);
 typedef const int32_t *(*get_token_buffer_t)(void);
@@ -141,6 +142,7 @@ typedef struct {
     encode_text_t encode_text;
     decode_tokens_t decode_tokens;
     has_tokenizer_t has_tokenizer;
+    can_encode_text_t can_encode_text;
     lookup_token_t lookup_token;
     id_to_token_t id_to_token;
     get_token_buffer_t get_token_buffer;
@@ -1659,6 +1661,7 @@ static bool load_model_api(const char *lib_path, ModelAPI *api) {
     resolve_symbol(api->handle, "ck_model_encode_text", (void **)&api->encode_text, false);
     resolve_symbol(api->handle, "ck_model_decode_tokens", (void **)&api->decode_tokens, false);
     resolve_symbol(api->handle, "ck_model_has_tokenizer", (void **)&api->has_tokenizer, false);
+    resolve_symbol(api->handle, "ck_model_can_encode_text", (void **)&api->can_encode_text, false);
     resolve_symbol(api->handle, "ck_model_lookup_token", (void **)&api->lookup_token, false);
     resolve_symbol(api->handle, "ck_model_get_token_buffer", (void **)&api->get_token_buffer, false);
 
@@ -2474,7 +2477,9 @@ static int run_prompt(ModelAPI *api, CLIOptions *opt, const char *input) {
 
     /* Tokenize raw user input to get user-only token count */
     int user_tokens = 0;
-    if (api->encode_text) {
+    const bool can_encode = api->encode_text &&
+        ((api->can_encode_text && api->can_encode_text()) || (!api->can_encode_text && api->has_tokenizer && api->has_tokenizer()));
+    if (can_encode) {
         int raw_n = api->encode_text(input, -1);
         if (raw_n > 0) user_tokens = raw_n;
     }
@@ -2500,7 +2505,7 @@ static int run_prompt(ModelAPI *api, CLIOptions *opt, const char *input) {
 
     /* Use model's built-in tokenizer (v7 pattern) */
     int n = -1;
-    if (api->encode_text) {
+    if (can_encode) {
         n = api->encode_text(formatted, -1);
         if (n > 0 && n <= ctx) {
             const int32_t *buf = api->get_token_buffer();
@@ -2510,7 +2515,11 @@ static int run_prompt(ModelAPI *api, CLIOptions *opt, const char *input) {
     free(formatted);
 
     if (n <= 0) {
-        fprintf(stderr, "[Tokenizer] failed to encode prompt\n");
+        if (!can_encode) {
+            fprintf(stderr, "[Tokenizer] raw text encoding is unavailable; unset CK_DISABLE_FULL_BPE_TOKENIZER or use --prompt-tokens\n");
+        } else {
+            fprintf(stderr, "[Tokenizer] failed to encode prompt\n");
+        }
         free(ids);
         return -1;
     }
@@ -4777,18 +4786,19 @@ int main(int argc, char **argv) {
         api.kv_enable(ctx);
     }
 
-    const bool has_tokenizer = api.has_tokenizer && api.has_tokenizer() &&
-                               api.encode_text && api.decode_tokens;
-    if (!has_tokenizer && !opt.prompt_tokens_csv && !opt.bridge_report_path) {
-        fprintf(stderr, "[Tokenizer] Model does not have built-in tokenizer\n");
-        fprintf(stderr, "            Use --prompt-tokens for tokenizer-free generated runtimes\n");
+    const bool has_decode_tokenizer = api.has_tokenizer && api.has_tokenizer() && api.decode_tokens;
+    const bool has_encode_tokenizer = api.encode_text &&
+        ((api.can_encode_text && api.can_encode_text()) || (!api.can_encode_text && has_decode_tokenizer));
+    if (!has_encode_tokenizer && !opt.prompt_tokens_csv && !opt.bridge_report_path) {
+        fprintf(stderr, "[Tokenizer] Model cannot encode raw text with the current tokenizer mode\n");
+        fprintf(stderr, "            Use --prompt-tokens, or unset CK_DISABLE_FULL_BPE_TOKENIZER when native BPE encode is supported\n");
         return 1;
     }
 
     int vocab_size = api.get_vocab_size ? api.get_vocab_size() : 0;
 
     /* Lookup EOS tokens using model's tokenizer */
-    if (has_tokenizer && api.lookup_token) {
+    if (has_decode_tokenizer && api.lookup_token) {
         static const char *eos_tokens[] = {
             "<|im_end|>", "<|endoftext|>", "<|im_start|>",  /* Qwen/ChatML */
             "<|eot_id|>", "<|end_of_text|>",  /* Llama 3 */
