@@ -428,6 +428,12 @@ MAKE_TARGETS = {
         "target": "test-v8-template-circuit-audit",
         "timeout_sec": 300,
     },
+    "v8_architecture_contracts": {
+        "name": "Architecture Contract Dashboard",
+        "category": "inference",
+        "target": "test-architecture-contracts",
+        "timeout_sec": 900,
+    },
     "v8_regression_fast": {
         "name": "v8 Inference Regression (fast)",
         "category": "inference",
@@ -502,6 +508,7 @@ MAKE_TARGET_FAILURE_ARTIFACTS = {
     "v7-visualizer-health": ROOT / "version" / "v7" / ".cache" / "reports" / "visualizer_health_latest.json",
     "v7-visualizer-generated-e2e": ROOT / "version" / "v7" / ".cache" / "reports" / "visualizer_generated_e2e_latest.json",
     "v7-stabilization-nightly": ROOT / "version" / "v7" / ".cache" / "reports" / "training_stabilization_scorecard_latest.json",
+    "test-architecture-contracts": ROOT / "version" / "v8" / ".cache" / "reports" / "architecture_contracts_latest.json",
 }
 
 
@@ -965,6 +972,12 @@ def save_json_report(results: list[TestResult], filepath: Path, start_time: date
         },
         "results": results_dicts,
     }
+    architecture_contracts = _load_json_if_fresh(
+        ROOT / "version" / "v8" / ".cache" / "reports" / "architecture_contracts_latest.json",
+        start_ts=start_time.timestamp(),
+    )
+    if architecture_contracts is not None:
+        report["architecture_contracts"] = architecture_contracts
     filepath.write_text(json.dumps(report, indent=2))
     print(f"\nJSON report saved to: {filepath}")
 

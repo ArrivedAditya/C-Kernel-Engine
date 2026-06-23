@@ -2504,6 +2504,10 @@ test-v8-template-circuit-audit:
 	@$(PYTHON) -m py_compile version/v8/scripts/audit_template_circuit_v8.py
 	@$(PYTHON) -m unittest tests.test_v8_template_circuit_audit -v
 
+test-architecture-contracts: test-v8-template-circuit-audit v8-kernel-map-contracts v8-validate-contracts
+	@echo "Collecting architecture contract dashboard summary..."
+	@$(PYTHON) version/v8/scripts/collect_architecture_contracts_v8.py --json-out "$(V8_ARCH_CONTRACT_JSON)"
+
 test-v8-gemma4-highmem:
 	@avail_kb=$$(awk '/MemAvailable:/ {print $$2}' /proc/meminfo 2>/dev/null || echo 0); \
 	threshold_kb=$$(( $(V8_GEMMA4_MIN_MEM_GB) * 1024 * 1024 )); \
@@ -4010,6 +4014,7 @@ V8_CAPTURE_CONTEXT ?= $(V7_CAPTURE_CONTEXT)
 V8_CAPTURE_PROMPT ?= $(V7_CAPTURE_PROMPT)
 V8_CAPTURE_MAX_TOKENS ?= $(V7_CAPTURE_MAX_TOKENS)
 V8_REPORT_DIR ?= version/v8/.cache/reports
+V8_ARCH_CONTRACT_JSON ?= $(V8_REPORT_DIR)/architecture_contracts_latest.json
 V8_CLI_TEMPLATE_ARGS = $(if $(filter none,$(V8_CHAT_TEMPLATE)),--no-chat-template,$(if $(findstring --chat-template none,$(V8_RUN_ARGS)),--no-chat-template,))
 V7_TRAIN_MANIFEST ?=
 V7_TRAIN_MAX_LAYERS ?= 2
