@@ -6142,6 +6142,54 @@
           }
         ]
       },
+      "phase_selection": {
+        "decode": {
+          "op_family": "gemv",
+          "default_kernel": "gemv_q4_k_q8_k",
+          "layout": "canonical_q4_k",
+          "notes": "Single-token decode lowers to GEMV, not GEMM. Keep decode on canonical Q4_K unless a decode-specific packed layout wins its own sweep."
+        },
+        "prefill": {
+          "op_family": "gemm",
+          "default_kernel": "gemm_nt_q4_k_q8_k",
+          "layout": "canonical_q4_k",
+          "candidates": [
+            {
+              "name": "canonical_serial",
+              "function": "gemm_nt_q4_k_q8_k",
+              "layout": "canonical_q4_k",
+              "promotion": "parity_fallback"
+            },
+            {
+              "name": "canonical_threadpool",
+              "function": "gemm_nt_q4_k_q8_k_parallel_dispatch",
+              "layout": "canonical_q4_k",
+              "promotion": "sweep_gated"
+            },
+            {
+              "name": "packed_meta_msplit",
+              "function": "gemm_nt_q4_k_packed_meta_q8_k_threaded",
+              "layout": "q4_k_packed_meta",
+              "promotion": "sweep_gated",
+              "requires": [
+                "packed_weight_layout",
+                "prefill_phase"
+              ]
+            },
+            {
+              "name": "packed_meta_nsplit",
+              "function": "gemm_nt_q4_k_packed_meta_q8_k_threaded_nsplit",
+              "layout": "q4_k_packed_meta",
+              "promotion": "sweep_gated",
+              "requires": [
+                "packed_weight_layout",
+                "prefill_phase"
+              ]
+            }
+          ],
+          "selection_policy": "Use canonical serial as the correctness fallback. Promote packed-meta candidates only when the circuit/template lowering has a packed weight layout available and the hardware sweep policy selects that candidate for the model shape."
+        }
+      },
       "constraints": {
         "alignment": {
           "K": 256
@@ -6191,55 +6239,7 @@
       },
       "notes": "General matrix multiplication with Q4_K weights and Q8_K activations. Used for W2 (down) projection in MLP. High compression ratio.",
       "name": "gemm_nt_q4_k_q8_k",
-      "_source_file": "gemm_nt_q4_k_q8_k.json",
-      "phase_selection": {
-        "decode": {
-          "op_family": "gemv",
-          "default_kernel": "gemv_q4_k_q8_k",
-          "layout": "canonical_q4_k",
-          "notes": "Single-token decode lowers to GEMV, not GEMM. Keep decode on canonical Q4_K unless a decode-specific packed layout wins its own sweep."
-        },
-        "prefill": {
-          "op_family": "gemm",
-          "default_kernel": "gemm_nt_q4_k_q8_k",
-          "layout": "canonical_q4_k",
-          "candidates": [
-            {
-              "name": "canonical_serial",
-              "function": "gemm_nt_q4_k_q8_k",
-              "layout": "canonical_q4_k",
-              "promotion": "parity_fallback"
-            },
-            {
-              "name": "canonical_threadpool",
-              "function": "gemm_nt_q4_k_q8_k_parallel_dispatch",
-              "layout": "canonical_q4_k",
-              "promotion": "sweep_gated"
-            },
-            {
-              "name": "packed_meta_msplit",
-              "function": "gemm_nt_q4_k_packed_meta_q8_k_threaded",
-              "layout": "q4_k_packed_meta",
-              "promotion": "sweep_gated",
-              "requires": [
-                "packed_weight_layout",
-                "prefill_phase"
-              ]
-            },
-            {
-              "name": "packed_meta_nsplit",
-              "function": "gemm_nt_q4_k_packed_meta_q8_k_threaded_nsplit",
-              "layout": "q4_k_packed_meta",
-              "promotion": "sweep_gated",
-              "requires": [
-                "packed_weight_layout",
-                "prefill_phase"
-              ]
-            }
-          ],
-          "selection_policy": "Use canonical serial as the correctness fallback. Promote packed-meta candidates only when the circuit/template lowering has a packed weight layout available and the hardware sweep policy selects that candidate for the model shape."
-        }
-      }
+      "_source_file": "gemm_nt_q4_k_q8_k.json"
     },
     {
       "id": "gemm_nt_q5_0",

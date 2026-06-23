@@ -24,6 +24,8 @@ PRESET_ALIASES = {
     "gemma": "gemma3",
     "gemma3": "gemma3",
     "gemma4": "gemma4",
+    "glm4": "glm4",
+    "glm": "glm4",
 }
 
 KNOWN_TEMPLATE_MARKERS = (
@@ -35,6 +37,12 @@ KNOWN_TEMPLATE_MARKERS = (
     "<|im_end|>",
     "<think>",
     "</think>",
+    "[gMASK]",
+    "<sop>",
+    "<|system|>",
+    "<|user|>",
+    "<|assistant|>",
+    "<|observation|>",
 )
 
 
@@ -101,6 +109,9 @@ def looks_like_instruction_chat_model(
         or model_type_lc.startswith("gemma")
         or model_type_lc.startswith("gemma4")
         or model_type_lc.startswith("qwen")
+        or model_type_lc.startswith("glm")
+        or "glm" in model_name_lc
+        or "glm" in template
     )
 
 
@@ -250,6 +261,10 @@ def _infer_explicit_contract_name(
         return "gemma"
     if "<|turn>" in template and "<turn|>" in template:
         return "gemma4"
+    if "[gMASK]" in template and "<sop>" in template and "<|assistant|>" in template:
+        return "glm4"
+    if model_type_lc.startswith("glm") or template_name_lc.startswith("glm"):
+        return "glm4"
     if "<|im_start|>" in template and "<|im_end|>" in template:
         if model_type_lc == "qwen35" or template_name_lc == "qwen35":
             return "qwen35"

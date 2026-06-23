@@ -13,7 +13,7 @@
         "model": "glm4",
         "arch": "glm4",
         "model_type": "glm4",
-        "rope_layout": "split",
+        "rope_layout": "pairwise",
         "rope_param_mode": "precomputed",
         "has_qk_norm": false,
         "has_attention_biases": true,
@@ -100,6 +100,13 @@
           ]
         },
         {
+          "target": "layer.{L}.post_attention_norm",
+          "sources": [
+            "model.layers.{L}.post_self_attn_layernorm.weight"
+          ],
+          "dtype": "fp32"
+        },
+        {
           "target": "layer.{L}.bo",
           "sources": [
             "model.layers.{L}.self_attn.o_proj.bias"
@@ -113,10 +120,11 @@
         {
           "target": "layer.{L}.w1",
           "sources": [
+            "model.layers.{L}.mlp.gate_up_proj.weight",
             "model.layers.{L}.mlp.gate_proj.weight",
             "model.layers.{L}.mlp.up_proj.weight"
           ],
-          "combine": "concat"
+          "combine": "concat_or_single"
         },
         {
           "target": "layer.{L}.b1",
@@ -131,6 +139,13 @@
           "sources": [
             "model.layers.{L}.mlp.down_proj.weight"
           ]
+        },
+        {
+          "target": "layer.{L}.post_ffn_norm",
+          "sources": [
+            "model.layers.{L}.post_mlp_layernorm.weight"
+          ],
+          "dtype": "fp32"
         },
         {
           "target": "layer.{L}.b2",

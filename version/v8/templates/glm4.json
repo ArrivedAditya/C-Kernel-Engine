@@ -35,7 +35,7 @@
       "system_prompt_separator": "\n\n",
       "default_system_prompt": "",
       "inject_default_system_prompt": false,
-      "force_bos_text_if_tokenizer_add_bos_false": "[gMASK]",
+      "force_bos_text_if_tokenizer_add_bos_false": "[gMASK]<sop>\n",
       "last_user_prefix": "",
       "last_user_prefix_suppression_markers": [],
       "stop_text_markers": [
@@ -57,7 +57,7 @@
       "min_response_tokens": 8
     },
     "attention_contract": {
-      "rope_layout": "split",
+      "rope_layout": "pairwise",
       "rope_type": "rope",
       "qk_norm": false,
       "kv_layout": "layer_major_kv_cache",
@@ -93,7 +93,7 @@
     }
   },
   "kernels": {
-    "rope_qk": "rope_forward_qk"
+    "rope_qk": "rope_forward_qk_pairwise"
   },
   "sequence": [
     "decoder"
@@ -113,16 +113,44 @@
         "type": "dense",
         "ops": [
           "rmsnorm",
-          "qkv_proj",
+          {
+            "op": "qkv_proj",
+            "graph_slots": {
+              "inputs": {
+                "x": "main_stream"
+              }
+            }
+          },
           "rope_qk",
           "attn",
-          "out_proj",
+          {
+            "op": "out_proj",
+            "graph_slots": {
+              "inputs": {
+                "x": "attn_scratch"
+              }
+            }
+          },
           "post_attention_norm",
           "residual_add",
           "rmsnorm",
-          "mlp_gate_up",
+          {
+            "op": "mlp_gate_up",
+            "graph_slots": {
+              "inputs": {
+                "x": "main_stream"
+              }
+            }
+          },
           "silu_mul",
-          "mlp_down",
+          {
+            "op": "mlp_down",
+            "graph_slots": {
+              "inputs": {
+                "x": "mlp_scratch"
+              }
+            }
+          },
           "post_ffn_norm",
           "residual_add"
         ]
@@ -130,7 +158,14 @@
       "footer": [
         "rmsnorm",
         "weight_tying",
-        "logits"
+        {
+          "op": "logits",
+          "graph_slots": {
+            "inputs": {
+              "x": "main_stream"
+            }
+          }
+        }
       ]
     }
   }
