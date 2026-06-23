@@ -36,5 +36,7 @@ Canonical vision bring-up example:
 
 Notes:
 - For the validated Qwen3-VL 8B path, omitting `--mmproj` now auto-resolves the matching HF companion projector.
+- The `.ppm` regression image is a Portable Pixmap file. CK uses it in CI because the format is simple enough to parse directly: a short header plus raw RGB pixels. That removes PNG/JPEG decoder dependency differences from the vision smoke. It is a test-fixture format, not a requirement for normal use; user-facing runs can still use PNG/JPEG when the local image stack is available.
+- Qwen3-VL is an 8B multimodal lane. `make v8-regression-fast` stays text-family focused, while `make test-v8-qwen3vl-e2e-smoke` runs the cached vision E2E path when the decoder and mmproj artifacts are present.
 
 That keeps `v8` small and honest: the version split now includes the inference runner, local kernel registry/maps, multimodal bridge entrypoint, and the `v8`-named operator tooling surface used by the visualizer, hub, and regression entrypoints.

@@ -1,0 +1,170 @@
+{
+  "version": 3,
+  "name": "gemma4_vision",
+  "family": "vision_transformer",
+  "flags": {
+    "patch_frontend": "patch_proj",
+    "activation": "geglu",
+    "normalization": "layernorm",
+    "projector": "single_linear"
+  },
+  "contract": {
+    "vision_contract": {
+      "input_modality": "image",
+      "position_encoding": "absolute_2d",
+      "output": "vision_embeddings",
+      "projector": "gemma4v"
+    },
+    "attention_contract": {
+      "rope_layout": "none",
+      "position_encoding": "absolute_2d",
+      "kv_layout": "ephemeral_full_context",
+      "attn_variant": "dense_bidirectional",
+      "causal": false
+    },
+    "block_contract": {
+      "norm_type": "layernorm",
+      "mlp_formula": "gate_up -> geglu -> down",
+      "activation": "geglu",
+      "qkv_bias": false,
+      "qk_norm": true,
+      "post_attention_norm": true,
+      "post_ffn_norm": true,
+      "body_type": "dense_bidirectional"
+    },
+    "logits_contract": {
+      "final_norm": "none",
+      "lm_head": "none",
+      "logits_layout": "none"
+    },
+    "quant_contract": {
+      "kernel_select": "weight_dtype_registry",
+      "activation_dtype": "fp32_or_q8_path",
+      "per_tensor_mixed_quant": true
+    },
+    "runtime_invariants": {
+      "required_call_args": {
+        "image_input": true
+      }
+    }
+  },
+  "kernels": {
+    "patch_proj": "gemm_nt_fp32_exact",
+    "position_embeddings": "position_embeddings_add",
+    "layernorm": "layernorm_fp32_exact",
+    "geglu": "geglu_forward_exact",
+    "spatial_merge": "spatial_merge_contiguous_tiled",
+    "projector_fc2": "gemm_nt_f16",
+    "attn_prefill": "attention_forward_full_head_major_gqa_ggml_strided"
+  },
+  "sequence": [
+    "vision_encoder"
+  ],
+  "block_types": {
+    "vision_encoder": {
+      "sequence": [
+        "header",
+        "body",
+        "footer"
+      ],
+      "header": [
+        {
+          "id": "patchify",
+          "op": "patchify"
+        },
+        {
+          "id": "patch_proj",
+          "op": "patch_proj"
+        },
+        {
+          "id": "position_embeddings",
+          "op": "position_embeddings",
+          "params": {
+            "merge_size_from_config": "spatial_merge_size"
+          }
+        }
+      ],
+      "body": {
+        "type": "dense",
+        "ops": [
+          {
+            "id": "attn_norm",
+            "op": "layernorm"
+          },
+          {
+            "id": "q_proj",
+            "op": "q_proj"
+          },
+          {
+            "id": "k_proj",
+            "op": "k_proj"
+          },
+          {
+            "id": "v_proj",
+            "op": "v_proj"
+          },
+          {
+            "id": "qk_norm",
+            "op": "qk_norm"
+          },
+          {
+            "id": "attn",
+            "op": "attn"
+          },
+          {
+            "id": "attn_out_proj",
+            "op": "out_proj"
+          },
+          {
+            "id": "attn_post_norm",
+            "op": "post_attention_norm"
+          },
+          {
+            "id": "attn_residual",
+            "op": "residual_add"
+          },
+          {
+            "id": "ffn_norm",
+            "op": "layernorm"
+          },
+          {
+            "id": "mlp_gate_up",
+            "op": "mlp_gate_up"
+          },
+          {
+            "id": "mlp_geglu",
+            "op": "geglu"
+          },
+          {
+            "id": "mlp_down",
+            "op": "mlp_down"
+          },
+          {
+            "id": "ffn_post_norm",
+            "op": "post_ffn_norm"
+          },
+          {
+            "id": "mlp_residual",
+            "op": "residual_add"
+          }
+        ]
+      },
+      "footer": [
+        {
+          "id": "merge_main",
+          "op": "spatial_merge",
+          "params": {
+            "merge_size_from_config": "spatial_merge_size"
+          }
+        },
+        {
+          "id": "projector",
+          "op": "projector_fc2",
+          "params": {
+            "single_linear_projector": true
+          }
+        }
+      ]
+    }
+  }
+}

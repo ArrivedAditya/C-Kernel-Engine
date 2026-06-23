@@ -2158,8 +2158,9 @@ def main() -> None:
         "general.alignment",
         "general.name",
         "general.finetune",
-        # CLIP/Qwen3-VL vision projector keys
+        # CLIP/Qwen3-VL/Gemma4 vision projector keys
         "clip.projector_type",
+        "clip.vision.projector_type",
         "clip.has_vision_encoder",
         "clip.vision.image_size",
         "clip.vision.patch_size",
@@ -2473,6 +2474,8 @@ def main() -> None:
         template_probe_arch = arch
         if arch == "clip" and str(meta.get("clip.projector_type") or "").strip().lower() == "qwen3vl_merger":
             template_probe_arch = "qwen3_vl_vision"
+        if arch == "clip" and str(meta.get("clip.vision.projector_type") or "").strip().lower() == "gemma4v":
+            template_probe_arch = "gemma4_vision"
 
         # Load template early to check for RoPE (determines if pos_emb is needed)
         template_data = None
@@ -2716,6 +2719,342 @@ def main() -> None:
                 # Upcast FP16 weights to FP32 in bump output (runtime is FP32-only for dense weights).
                 return CK_DT_FP32
             return ck_dtype_from_ggml_type(info.ggml_type)
+
+        clip_vision_projector_type = (meta_str("clip.vision.projector_type") or "").strip().lower()
+        if arch == "clip" and clip_vision_projector_type == "gemma4v":
+            vision_arch = "gemma4_vision"
+
+            image_size = meta_int("clip.vision.image_size")
+            patch_size = meta_int("clip.vision.patch_size")
+            embed_dim = meta_int("clip.vision.embedding_length")
+            num_layers = meta_int("clip.vision.block_count")
+            intermediate = meta_int("clip.vision.feed_forward_length")
+            num_heads = meta_int("clip.vision.attention.head_count")
+            projection_dim = meta_int("clip.vision.projection_dim")
+            image_mean = meta_float_list("clip.vision.image_mean") or [0.0, 0.0, 0.0]
+            image_std = meta_float_list("clip.vision.image_std") or [1.0, 1.0, 1.0]
+            has_vision_encoder = bool(meta_bool("clip.has_vision_encoder"))
+
+            required_meta = {
+                "clip.vision.image_size": image_size,
+                "clip.vision.patch_size": patch_size,
+                "clip.vision.embedding_length": embed_dim,
+                "clip.vision.block_count": num_layers,
+                "clip.vision.feed_forward_length": intermediate,
+                "clip.vision.attention.head_count": num_heads,
+                "clip.vision.projection_dim": projection_dim,
+            }
+            missing_meta = [k for k, v in required_meta.items() if v is None]
+            if missing_meta:
+                raise GGUFError(f"Missing required CLIP/Gemma4 vision metadata: {missing_meta}")
+            if patch_size <= 0 or image_size <= 0:
+                raise GGUFError(f"Invalid CLIP/Gemma4 patch/image size: patch={patch_size}, image={image_size}")
+            if embed_dim % num_heads != 0:
+                raise GGUFError(f"CLIP/Gemma4 embed_dim {embed_dim} not divisible by num_heads {num_heads}")
+
+            head_dim = embed_dim // num_heads
+            vision_grid_h = image_size // patch_size
+            vision_grid_w = image_size // patch_size
+            vision_num_patches = vision_grid_h * vision_grid_w
+            spatial_merge_size = 1
+            spatial_merge_factor = 1
+            vision_merged_tokens = vision_num_patches
+            context_len = vision_num_patches
+            vocab_size = 1
+            num_kv_heads = num_heads
+            aligned_embed_dim = embed_dim
+            aligned_head_dim = head_dim
+            aligned_intermediate = intermediate
+            aligned_context = align_up_elems(context_len, 4, CACHE_ALIGN)
+            projector_type = clip_vision_projector_type
+
+            def clip_weight_dtype(info: TensorInfo, label: str) -> int:
+                supported_types = (
+                    GGML_TYPE_Q4_0, GGML_TYPE_Q4_1,
+                    GGML_TYPE_Q4_K, GGML_TYPE_Q6_K,
+                    GGML_TYPE_Q5_0, GGML_TYPE_Q5_1,
+                    GGML_TYPE_Q5_K,
+                    GGML_TYPE_Q8_0, GGML_TYPE_F16, GGML_TYPE_F32,
+                )
+                if info.ggml_type not in supported_types:
+                    raise GGUFError(
+                        f"{info.name}: expected Q4_0/Q4_1/Q4_K/Q5_0/Q5_1/Q5_K/Q6_K/Q8_0/F16/F32 for {label}, "
+                        f"got {ggml_type_name(info.ggml_type)}"
+                    )
+                return ck_dtype_from_ggml_type(info.ggml_type)
+
+            def clip_shape(info: TensorInfo) -> list[int]:
+                if len(info.dims) <= 1:
+                    return [int(info.ne0)]
+                return [int(d) for d in reversed(info.dims)]
+
+            def clip_plan_entry(src_name: str, *, dst_name: Optional[str] = None, label: Optional[str] = None) -> Dict[str, Any]:
+                info = tensors.get(src_name)
+                if info is None:
+                    raise GGUFError(f"{vision_arch} conversion missing required tensor: {src_name}")
+                dt = clip_weight_dtype(info, label or src_name)
+                entry: Dict[str, Any] = {
+                    "name": dst_name or src_name,
+                    "dtype": ck_dtype_name(dt).lower(),
+                    "shape": clip_shape(info),
+                    "source_dtype": ggml_type_name(info.ggml_type),
+                    "source_name": info.name,
+                    "_info": info,
+                    "_dtype_id": dt,
+                    "_size": ggml_tensor_bytes(info),
+                }
+                if len(info.dims) > 1:
+                    entry["gguf_dims"] = [int(d) for d in info.dims]
+                return entry
+
+            vision_plan: list[Dict[str, Any]] = []
+            consumed_sources: set[str] = set()
+
+            def add_vision_entry(src_name: str, *, dst_name: Optional[str] = None, label: Optional[str] = None) -> None:
+                vision_plan.append(clip_plan_entry(src_name, dst_name=dst_name, label=label))
+                consumed_sources.add(src_name)
+
+            def maybe_add_vision_entry(src_name: str, *, dst_name: Optional[str] = None, label: Optional[str] = None) -> None:
+                if src_name in tensors and src_name not in consumed_sources:
+                    add_vision_entry(src_name, dst_name=dst_name, label=label)
+
+            add_vision_entry("v.patch_embd.weight", label="v.patch_embd.weight")
+            add_vision_entry("v.position_embd.weight", label="v.position_embd.weight")
+            add_vision_entry("mm.input_projection.weight", label="mm.input_projection.weight")
+
+            quant_summary: Dict[str, Any] = {}
+            quant_summary["patch_emb"] = ck_dtype_name(
+                clip_weight_dtype(tensors["v.patch_embd.weight"], "v.patch_embd.weight")
+            ).lower()
+            quant_summary["mm1_w"] = ck_dtype_name(
+                clip_weight_dtype(tensors["mm.input_projection.weight"], "mm.input_projection.weight")
+            ).lower()
+
+            for layer in range(num_layers):
+                layer_key = f"layer.{layer}"
+                q: Dict[str, str] = {}
+                for ck_name, src_name in (
+                    ("wq", f"v.blk.{layer}.attn_q.weight"),
+                    ("wk", f"v.blk.{layer}.attn_k.weight"),
+                    ("wv", f"v.blk.{layer}.attn_v.weight"),
+                    ("wo", f"v.blk.{layer}.attn_out.weight"),
+                    ("w1", f"v.blk.{layer}.ffn_gate.weight"),
+                    ("w2", f"v.blk.{layer}.ffn_down.weight"),
+                    ("w3", f"v.blk.{layer}.ffn_up.weight"),
+                ):
+                    info = tensors.get(src_name)
+                    if info is not None:
+                        q[ck_name] = ck_dtype_name(clip_weight_dtype(info, src_name)).lower()
+                quant_summary[layer_key] = q
+
+                for src_name, dst_name in (
+                    (f"v.blk.{layer}.ln1.weight", f"layer.{layer}.ln1_gamma"),
+                    (f"v.blk.{layer}.ln2.weight", f"layer.{layer}.ln2_gamma"),
+                    (f"v.blk.{layer}.attn_q_norm.weight", f"layer.{layer}.q_norm"),
+                    (f"v.blk.{layer}.attn_k_norm.weight", f"layer.{layer}.k_norm"),
+                    (f"v.blk.{layer}.attn_q.weight", f"layer.{layer}.wq"),
+                    (f"v.blk.{layer}.attn_k.weight", f"layer.{layer}.wk"),
+                    (f"v.blk.{layer}.attn_v.weight", f"layer.{layer}.wv"),
+                    (f"v.blk.{layer}.attn_out.weight", f"layer.{layer}.wo"),
+                    (f"v.blk.{layer}.attn_post_norm.weight", f"layer.{layer}.post_attention_norm"),
+                    (f"v.blk.{layer}.ffn_gate.weight", f"layer.{layer}.w1"),
+                    (f"v.blk.{layer}.ffn_up.weight", f"layer.{layer}.w3"),
+                    (f"v.blk.{layer}.ffn_down.weight", f"layer.{layer}.w2"),
+                    (f"v.blk.{layer}.ffn_post_norm.weight", f"layer.{layer}.post_ffn_norm"),
+                ):
+                    add_vision_entry(src_name, dst_name=dst_name, label=src_name)
+
+            ignored_sources = sorted(
+                name for name in set(tensors.keys()) - consumed_sources
+                if not name.startswith("a.") and not name.startswith("mm.a.")
+            )
+            source_coverage = {
+                "arch": arch,
+                "conversion_arch": vision_arch,
+                "projector_type": projector_type,
+                "total_source_tensors": len([name for name in tensors if not name.startswith("a.") and not name.startswith("mm.a.")]),
+                "consumed_source_tensors": len(consumed_sources),
+                "unconsumed_source_tensors": ignored_sources,
+                "ignored_audio_tensors": len([name for name in tensors if name.startswith("a.") or name.startswith("mm.a.")]),
+                "pass": len(ignored_sources) == 0,
+            }
+
+            projector_info = tensors["mm.input_projection.weight"]
+            projector_in_dim = int(projector_info.ne0)
+            projector_out_dim = int(projector_info.ne1)
+
+            vision_config = _inject_runtime_config_defaults({
+                "model": vision_arch,
+                "arch": vision_arch,
+                "model_type": vision_arch,
+                "image_size": int(image_size),
+                "image_height": int(image_size),
+                "image_width": int(image_size),
+                "patch_size": int(patch_size),
+                "vision_channels": 3,
+                "patch_dim": int(patch_size * patch_size * 3),
+                "vision_grid_h": int(vision_grid_h),
+                "vision_grid_w": int(vision_grid_w),
+                "vision_num_patches": int(vision_num_patches),
+                "image_mean": [float(v) for v in image_mean[:3]],
+                "image_std": [float(v) for v in image_std[:3]],
+                "spatial_merge_size": int(spatial_merge_size),
+                "spatial_merge_factor": int(spatial_merge_factor),
+                "vision_merged_tokens": int(vision_merged_tokens),
+                "embed_dim": int(embed_dim),
+                "attn_out_dim": int(embed_dim),
+                "num_layers": int(num_layers),
+                "num_heads": int(num_heads),
+                "num_kv_heads": int(num_kv_heads),
+                "head_dim": int(head_dim),
+                "q_dim": int(embed_dim),
+                "k_dim": int(embed_dim),
+                "v_dim": int(embed_dim),
+                "intermediate_dim": int(intermediate),
+                "intermediate_size": int(intermediate),
+                "context_length": int(context_len),
+                "max_seq_len": int(context_len),
+                "vocab_size": int(vocab_size),
+                "n_vocab": int(vocab_size),
+                "projector_in_dim": int(projector_in_dim),
+                "projector_hidden_dim": int(projector_in_dim),
+                "projector_out_dim": int(projector_out_dim),
+                "projector_total_out_dim": int(projector_out_dim),
+                "projection_dim": int(projection_dim),
+                "prefer_q8_activation": False,
+                "single_linear_projector": True,
+                "has_vision_encoder": has_vision_encoder,
+                "has_audio_encoder": bool(meta_bool("clip.has_audio_encoder")),
+                "dtype": "fp32",
+            }, vision_arch)
+
+            template_data = load_template_for_arch(vision_arch)
+
+            if args.config_out:
+                os.makedirs(os.path.dirname(args.config_out) or ".", exist_ok=True)
+                with open(args.config_out, "w", encoding="utf-8") as cf:
+                    json.dump(vision_config, cf, indent=2)
+                    cf.write("\n")
+
+            dtype_table_bytes = bytes(int(entry["_dtype_id"]) for entry in vision_plan)
+            os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+            manifest_entries = []
+            current_offset = DATA_START
+            manifest_dict = None
+            num_merges = 0
+            total_vocab_bytes = 0
+
+            def record_vision_entry(plan_entry: Dict[str, Any]) -> None:
+                nonlocal current_offset
+                out_entry = {k: v for k, v in plan_entry.items() if not k.startswith("_")}
+                out_entry["file_offset"] = current_offset
+                out_entry["size"] = int(plan_entry["_size"])
+                manifest_entries.append(out_entry)
+                current_offset += int(plan_entry["_size"])
+
+            with open(args.output, "w+b") as out_f:
+                out_f.write(b"\x00" * HEADER_SIZE)
+                out_f.write(b"\x00" * EXT_METADATA_SIZE)
+                w = HashingWriter(out_f)
+
+                dtype_table_header_size = 4 + len(dtype_table_bytes)
+                current_offset += dtype_table_header_size
+                w.write(struct.pack("<I", len(dtype_table_bytes)))
+                w.write(dtype_table_bytes)
+
+                for plan_entry in vision_plan:
+                    info = plan_entry["_info"]
+                    record_vision_entry(plan_entry)
+                    copy_bytes_stream(f, data_start + info.offset, int(plan_entry["_size"]), w)
+
+                checksum = w.digest()
+                out_f.flush()
+                out_f.seek(0, os.SEEK_SET)
+
+                manifest_dict = {
+                    "version": 5,
+                    "model": vision_arch,
+                    "bump_layout": {
+                        "header_size": HEADER_SIZE,
+                        "ext_metadata_size": EXT_METADATA_SIZE,
+                        "data_start": DATA_START,
+                        "description": "Offsets: [0..header_size) header, [header_size..data_start) ext_metadata, [data_start..] dtype_table + weights"
+                    },
+                    "config": vision_config,
+                    "template": template_data,
+                    "quant_summary": quant_summary,
+                    "num_layers": num_layers,
+                    "embed_dim": embed_dim,
+                    "num_heads": num_heads,
+                    "num_kv_heads": num_kv_heads,
+                    "head_dim": head_dim,
+                    "intermediate_size": intermediate,
+                    "vocab_size": vocab_size,
+                    "context_length": context_len,
+                    "projector_type": projector_type,
+                    "has_vision_encoder": has_vision_encoder,
+                    "source_tensor_coverage": source_coverage,
+                    "entries": manifest_entries,
+                }
+
+                manifest_hash = calculate_manifest_hash(manifest_dict)
+                template_hash = calculate_template_hash(template_data)
+                created_by = f"convert_gguf_to_bump_v8.py v{BUMP_VERSION_V5}"
+                metadata = build_bumpv5_metadata(
+                    template_data=template_data,
+                    config=vision_config,
+                    quant_summary=quant_summary,
+                    manifest_hash=manifest_hash,
+                    created_by=created_by,
+                )
+                metadata["template_hash"] = template_hash
+                metadata_bytes = _canonical_json_bytes(metadata)
+                meta_size = len(metadata_bytes)
+                meta_hash = calculate_metadata_hash(metadata)
+
+                out_f.write(b"BUMPWGT5")
+                out_f.write(struct.pack("<I", 5))
+                out_f.write(struct.pack("<I", 1))
+                out_f.write(struct.pack("<I", int(num_layers)))
+                out_f.write(struct.pack("<I", int(vocab_size)))
+                out_f.write(struct.pack("<I", int(embed_dim)))
+                out_f.write(struct.pack("<I", int(intermediate)))
+                out_f.write(struct.pack("<I", int(context_len)))
+                out_f.write(struct.pack("<I", int(num_heads)))
+                out_f.write(struct.pack("<I", int(num_kv_heads)))
+                out_f.write(struct.pack("<I", int(head_dim)))
+                out_f.write(struct.pack("<Q", int(aligned_embed_dim)))
+                out_f.write(struct.pack("<Q", int(aligned_head_dim)))
+                out_f.write(struct.pack("<Q", int(aligned_intermediate)))
+                out_f.write(struct.pack("<Q", int(aligned_context)))
+                out_f.write(struct.pack("<I", int(num_merges)))
+                out_f.write(struct.pack("<I", int(total_vocab_bytes)))
+                out_f.write(checksum)
+
+                out_f.seek(0, os.SEEK_END)
+                meta_offset = out_f.tell()
+                out_f.write(metadata_bytes)
+                write_bumpv5_footer(out_f, meta_size, meta_hash)
+                print(f"[bumpv5] Metadata: {meta_size} bytes @ offset {meta_offset}")
+                print(f"[bumpv5] Template: {template_data.get('name', vision_arch)}, quant_summary: {len(quant_summary)} items")
+
+            print(
+                f"[gguf->bump] version={args.bump_version} arch={arch}->{vision_arch} layers={num_layers} "
+                f"hidden={embed_dim} heads={num_heads}/{num_kv_heads} ff={intermediate} "
+                f"patches={vision_num_patches} projector={projector_type} -> {args.output}"
+            )
+            print_generic_conversion_report(
+                arch=vision_arch,
+                manifest_entries=manifest_entries,
+                coverage_report=source_coverage,
+            )
+            if args.manifest_out:
+                os.makedirs(os.path.dirname(args.manifest_out) or ".", exist_ok=True)
+                manifest = manifest_dict
+                with open(args.manifest_out, "w", encoding="utf-8") as mf:
+                    json.dump(manifest, mf, indent=2)
+                    mf.write("\n")
+            return
 
         clip_projector_type = (meta_str("clip.projector_type") or "").strip().lower()
         if arch == "clip" and clip_projector_type == "qwen3vl_merger":

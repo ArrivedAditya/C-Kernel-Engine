@@ -175,6 +175,17 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
     args_list = op.get("args", [])
 
     # Handle special auto-inserted ops
+    if op_type == "final_logit_softcap" and str(config.get("logits_layout", "auto")).lower() == "last":
+        vocab_size = int(config.get("vocab_size", 151936))
+        cap = float(config.get("final_logit_softcapping", 0.0) or 0.0)
+        return f"""    /* Op {seq_idx}: {func} ({op_type}) layer={layer} */
+    {func}(
+        (float*)(model->bump + A_LOGITS),
+        1,
+        {vocab_size},
+        {cap}
+    );"""
+
     if op_type == "copy_last_logits":
         vocab_size = config.get("vocab_size", 151936)
         return f"""    /* Op {seq_idx}: copy_last_logits (prefill fixup) */
@@ -455,6 +466,29 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
     batch_quant_kind = None
     if func in ("quantize_row_q8_0", "quantize_row_q8_k"):
         batch_quant_kind = func
+
+    if batch_quant_kind:
+        x_expr = arg_expr_by_name.get("x") or arg_expr_by_name.get("input")
+        y_expr = arg_expr_by_name.get("y") or arg_expr_by_name.get("output")
+        k_expr = arg_expr_by_name.get("k") or str(config.get("embed_dim", "EMBED_DIM"))
+        if x_expr and y_expr and k_expr:
+            row_bytes_expr = "(size_t)(_k / QK_K) * sizeof(block_q8_K)" if batch_quant_kind == "quantize_row_q8_k" else "(size_t)(_k / QK8_0) * sizeof(block_q8_0)"
+            lines.append("    {")
+            if profile:
+                lines.append("        CK_PROFILE_BEGIN();")
+            lines.extend([
+                f"        const float *_x_base = (const float*)({x_expr});",
+                f"        uint8_t *_y_base = (uint8_t*)({y_expr});",
+                f"        const int _k = (int)({k_expr});",
+                f"        const size_t _row_bytes = {row_bytes_expr};",
+                "        for (int _t = 0; _t < num_tokens; ++_t) {",
+                f"            {batch_quant_kind}(_x_base + (size_t)_t * (size_t)_k, (void*)(_y_base + (size_t)_t * _row_bytes), _k);",
+                "        }",
+            ])
+            if profile:
+                lines.append(f'        CK_PROFILE_END("prefill", "{batch_quant_kind}", "{op_type}", {layer});')
+            lines.append("    }")
+            return "\n".join(lines)
 
     if op_type == "out_proj" and func in ("gemm_nt_q4_k_q8_k", "gemm_nt_q6_k_q8_k"):
         a_expr = arg_expr_by_name.get("a")
@@ -1186,6 +1220,40 @@ static void ck_qwen3vl_prefill_deepstack_add(CKModel *model, int layer, int num_
 """
 
 
+def _emit_prefill_quant_rows(op: Dict, seq_idx: int, *, debug_inputs: list[str] | None = None, profile: bool = False) -> str:
+    func = str(op.get("function", "") or "")
+    if func not in {"quantize_row_q8_0", "quantize_row_q8_k"}:
+        raise RuntimeError(f"unsupported prefill quant func={func}")
+    args_list = op.get("args", [])
+    x_expr = _find_arg_expr(args_list, arg_name="x") or _find_arg_expr(args_list, arg_name="input")
+    y_expr = _find_arg_expr(args_list, arg_name="y") or _find_arg_expr(args_list, arg_name="output")
+    k_expr = _find_arg_expr(args_list, arg_name="k")
+    if not x_expr or not y_expr or not k_expr:
+        raise RuntimeError(f"prefill quant rows missing x/y/k args for op={op.get('op')}")
+    row_bytes_expr = "(size_t)(_k / QK_K) * sizeof(block_q8_K)" if func == "quantize_row_q8_k" else "(size_t)(_k / QK8_0) * sizeof(block_q8_0)"
+    lines = [
+        f"    /* Op {seq_idx}: {func} ({op.get('op', 'unknown')}) layer={op.get('layer', -1)} section={op.get('section', 'body')} */",
+    ]
+    for name in debug_inputs or []:
+        lines.append(f"    {name} = (const float*)({x_expr});")
+    lines.append("    {")
+    if profile:
+        lines.append("        CK_PROFILE_BEGIN();")
+    lines.extend([
+        f"        const float *_x_base = (const float*)({x_expr});",
+        f"        uint8_t *_y_base = (uint8_t*)({y_expr});",
+        f"        const int _k = (int)({k_expr});",
+        f"        const size_t _row_bytes = {row_bytes_expr};",
+        "        for (int _t = 0; _t < num_tokens; ++_t) {",
+        f"            {func}(_x_base + (size_t)_t * (size_t)_k, (void*)(_y_base + (size_t)_t * _row_bytes), _k);",
+        "        }",
+    ])
+    if profile:
+        lines.append(f'        CK_PROFILE_END("prefill", "{func}", "{op.get("op", "unknown")}", {int(op.get("layer", -1) or -1)});')
+    lines.append("    }")
+    return "\n".join(lines)
+
+
 def _emit_prefill_quant_debug_override(op: Dict, seq_idx: int, config: Dict, *, debug_flag_name: str, debug_input_name: str, profile: bool = False) -> str:
     func = str(op.get("function", "") or "")
     if func not in {"quantize_row_q8_0", "quantize_row_q8_k"}:
@@ -1429,7 +1497,13 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
                 lines.append("")
             continue
 
-        if op_type == "quantize_input_2" and str(op.get("function", "")) in {"quantize_row_q8_0", "quantize_row_q8_k"}:
+        if op_type == "quantize_input_0" and str(op.get("function", "")) in {"quantize_row_q8_0", "quantize_row_q8_k"}:
+            op_code = _emit_prefill_quant_rows(
+                op,
+                seq_idx,
+                profile=profile,
+            )
+        elif op_type == "quantize_input_2" and str(op.get("function", "")) in {"quantize_row_q8_0", "quantize_row_q8_k"}:
             op_code = _emit_prefill_quant_debug_override(
                 op,
                 seq_idx,
