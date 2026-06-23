@@ -70,7 +70,7 @@ class RegressionHarnessV8Tests(unittest.TestCase):
         self.assertNotIn("--image-path", by_id["qwen3vl"].runtime_args)
         self.assertEqual(by_id["qwen3vl"].smoke_prompts, ["vision_doc_card", "vision_mamba2_card"])
         self.assertIn("--image-path", prompts["vision_doc_card"].runtime_args)
-        self.assertIn("v8_vision_doc_card_72.png", " ".join(prompts["vision_doc_card"].runtime_args))
+        self.assertIn("v8_vision_doc_card_72.ppm", " ".join(prompts["vision_doc_card"].runtime_args))
         self.assertIn("--image-path", prompts["vision_mamba2_card"].runtime_args)
         self.assertIn("v8_vision_mamba2_card_144.png", " ".join(prompts["vision_mamba2_card"].runtime_args))
         self.assertEqual(by_id["qwen3vl"].runtime_expect.get("manifest", {}).get("config.model"), "qwen3vl")
@@ -191,7 +191,7 @@ class RegressionHarnessV8Tests(unittest.TestCase):
             prompt="Explain this image.",
             max_tokens=24,
             heuristics={},
-            runtime_args=["--image-path", "version/v8/test_assets/v8_vision_doc_card_72.png"],
+            runtime_args=["--image-path", "version/v8/test_assets/v8_vision_doc_card_72.ppm"],
         )
 
         with mock.patch.object(
@@ -216,7 +216,7 @@ class RegressionHarnessV8Tests(unittest.TestCase):
         cmd = run_stream.call_args.args[0]
         self.assertIn("--thinking-mode", cmd)
         self.assertIn("--image-path", cmd)
-        self.assertIn("version/v8/test_assets/v8_vision_doc_card_72.png", cmd)
+        self.assertIn("version/v8/test_assets/v8_vision_doc_card_72.ppm", cmd)
 
     def test_run_prompt_prefers_multimodal_bridge_generated_text(self) -> None:
         family = regression.FamilySpec(
@@ -224,7 +224,7 @@ class RegressionHarnessV8Tests(unittest.TestCase):
             label="Qwen3-VL",
             model="hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/Qwen3VL-8B-Instruct-Q4_K_M.gguf",
             context_len=1024,
-            runtime_args=["--image-path", "version/v8/test_assets/v8_vision_doc_card_72.png"],
+            runtime_args=["--image-path", "version/v8/test_assets/v8_vision_doc_card_72.ppm"],
             smoke_prompts=["vision_doc_card"],
             response_contract={"trim_whitespace": True},
             coherence_gate=True,
