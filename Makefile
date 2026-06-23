@@ -217,7 +217,13 @@ BENCH_CXX ?= $(CXX)
 
 BUILD_DIR := build
 BUILD_STAMP := $(BUILD_DIR)/.ck_build_flags
+V8_QWEN3VL_MODEL ?= hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/Qwen3VL-8B-Instruct-Q4_K_M.gguf
 V8_QWEN3VL_MMPROJ ?= $(CURDIR)/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
+V8_QWEN3VL_CACHE_DIR ?= /opt/app-root/src/.cache/ck-engine-v8/models/Qwen--Qwen3-VL-8B-Instruct-GGUF
+V8_QWEN3VL_CACHED_MODEL ?= $(V8_QWEN3VL_CACHE_DIR)/Qwen3VL-8B-Instruct-Q4_K_M.gguf
+V8_QWEN3VL_CACHED_MMPROJ ?= $(V8_QWEN3VL_CACHE_DIR)/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
+V8_QWEN3VL_IMAGE ?= version/v8/test_assets/v8_vision_doc_card_72.ppm
+V8_QWEN3VL_MAX_TOKENS ?= 32
 V8_GEMMA4_MODEL ?= hf://unsloth/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf
 V8_GEMMA4_MIN_MEM_GB ?= 50
 V8_GEMMA4_CONTEXT ?= 2048
@@ -1191,6 +1197,27 @@ test-head-major-q5-outproj-quick: $(LIB)
 
 test-v8-qwen3vl: $(LIB_VISION)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) tests/test_v8_qwen3vl_template.py
+
+test-v8-qwen3vl-e2e-smoke:
+	@if [ ! -f "$(V8_QWEN3VL_CACHED_MODEL)" ] || [ ! -f "$(V8_QWEN3VL_CACHED_MMPROJ)" ]; then \
+		echo "SKIP: Qwen3-VL cached decoder/mmproj not found under $(V8_QWEN3VL_CACHE_DIR)"; \
+	else \
+		echo "Running cached v8 Qwen3-VL image -> mmproj -> decoder smoke..."; \
+		CK_NUM_THREADS=$${CK_NUM_THREADS:-24} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+			$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/ck_run_v8.py run "$(V8_QWEN3VL_MODEL)" \
+			--mmproj "hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf" \
+			--image-path "$(V8_QWEN3VL_IMAGE)" \
+			--prompt "Explain this image." \
+			--context-len 1024 \
+			--force-compile \
+			--thinking-mode suppressed \
+			--max-tokens $(V8_QWEN3VL_MAX_TOKENS) \
+			--temperature 0.0; \
+	fi
+
+test-v8-vision-smoke: test-v8-vision-kernels test-v8-qwen3vl test-v8-qwen3vl-e2e-smoke
+
+test-v8-model-smoke: test-v8-template-circuit-audit v8-regression-fast test-v8-gemma4-highmem test-v8-nemotron9-highmem
 
 parity-v8-qwen3vl-mmproj:
 	@if [ ! -f "$(V8_QWEN3VL_MMPROJ)" ]; then \
@@ -2533,7 +2560,7 @@ profile-v8-prefill-ops-quick: ck-cli-v8
 		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
 		--json-out build/v8_prefill_ops_profile_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-128}.json
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-dispatch-sweep-quick test-q4-q5-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit test-v8-gemma4-highmem test-v8-nemotron9-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-dispatch-sweep-quick test-q4-q5-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit test-v8-qwen3vl-e2e-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

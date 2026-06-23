@@ -422,6 +422,12 @@ MAKE_TARGETS = {
         "target": "v8-kernel-map-contracts",
         "timeout_sec": 600,
     },
+    "v8_template_circuit_audit": {
+        "name": "v8 Template Circuit/Dataflow Audit",
+        "category": "inference",
+        "target": "test-v8-template-circuit-audit",
+        "timeout_sec": 300,
+    },
     "v8_regression_fast": {
         "name": "v8 Inference Regression (fast)",
         "category": "inference",
