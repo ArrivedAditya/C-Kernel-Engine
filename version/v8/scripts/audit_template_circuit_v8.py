@@ -141,6 +141,36 @@ def _output_buffer(op: dict[str, Any], name: str) -> str:
     return str((_lookup_tensor(op.get("outputs") or {}, names).get("buffer") or ""))
 
 
+SEMANTIC_FP32_BUFFERS = {
+    "embedded_input",
+    "main_stream",
+    "residual",
+    "layer_output",
+    "attn_scratch",
+    "mlp_scratch",
+    "logits",
+}
+
+
+def _audit_physical_activation_views(ops: list[dict[str, Any]]) -> list[str]:
+    errors: list[str] = []
+    for op in ops:
+        idx = op.get("idx", op.get("op_id", "?"))
+        op_name = str(op.get("op") or "")
+        layer = op.get("layer", "?")
+        for arg_name, spec in (op.get("activations") or {}).items():
+            if not isinstance(spec, dict):
+                continue
+            dtype = str(spec.get("dtype") or "")
+            buffer = str(spec.get("buffer") or "")
+            if dtype.startswith("q") and buffer in SEMANTIC_FP32_BUFFERS:
+                errors.append(
+                    f"op {idx} layer {layer} {op_name}.{arg_name}: quantized activation dtype={dtype} "
+                    f"is bound to semantic FP32 buffer={buffer}; expected a quantized physical view such as layer_input/main_stream_q8"
+                )
+    return errors
+
+
 def _by_layer_name(ops: list[dict[str, Any]]) -> dict[tuple[int, str], dict[str, Any]]:
     out: dict[tuple[int, str], dict[str, Any]] = {}
     for op in ops:
@@ -252,6 +282,7 @@ def audit_ir1(ir1: dict[str, Any]) -> list[str]:
 def audit_lowered(lowered: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     ops = _ops(lowered)
+    errors.extend(_audit_physical_activation_views(ops))
     by = _by_layer_name(ops)
     layers = sorted({layer for layer, _ in by})
     for layer in layers:

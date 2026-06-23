@@ -96,6 +96,37 @@ class TemplateCircuitAuditTests(unittest.TestCase):
         self.assertEqual(report["missing"], [])
 
 
+    def test_lowered_rejects_quantized_activation_bound_to_fp32_stream(self) -> None:
+        audit = _load_module()
+        lowered = {
+            "operations": [
+                {
+                    "idx": 4,
+                    "layer": 0,
+                    "op": "q_proj",
+                    "activations": {"x": {"dtype": "q8_k", "buffer": "embedded_input"}},
+                    "outputs": {"y": {"buffer": "q_scratch"}},
+                }
+            ]
+        }
+        errors = audit.audit_lowered(lowered)
+        self.assertTrue(any("quantized activation" in e and "embedded_input" in e for e in errors), errors)
+
+    def test_lowered_allows_quantized_activation_bound_to_physical_q8_view(self) -> None:
+        audit = _load_module()
+        lowered = {
+            "operations": [
+                {
+                    "idx": 4,
+                    "layer": 0,
+                    "op": "q_proj",
+                    "activations": {"x": {"dtype": "q8_k", "buffer": "layer_input"}},
+                    "outputs": {"y": {"buffer": "q_scratch"}},
+                }
+            ]
+        }
+        self.assertEqual(audit.audit_lowered(lowered), [])
+
     def test_cli_reports_generated_c_mamba_input_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             c_path = Path(td) / "model_v8.c"
