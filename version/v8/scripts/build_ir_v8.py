@@ -6615,7 +6615,7 @@ WEIGHT_PATTERNS = {
     "bqkv": ["layer.{L}.attn_qkv.bias", "v.blk.{L}.attn_qkv.bias"],
     "mm0_w": ["mm.0.weight"],
     "mm0_b": ["mm.0.bias"],
-    "mm1_w": ["mm.2.weight"],
+    "mm1_w": ["mm.2.weight", "mm.input_projection.weight"],
     "mm1_b": ["mm.2.bias"],
     "attn_qkv": ["layer.{L}.attn_qkv", "layer.{L}.attn_qkv.weight", "v.blk.{L}.attn_qkv.weight"],
     "ln1_gamma": ["layer.{L}.ln1_gamma", "layers.{L}.attention_norm.weight", "layer.{L}.attn_norm", "layer.{L}.block_norm", "v.blk.{L}.ln1.weight"],
@@ -8315,11 +8315,13 @@ def generate_ir_lower_2(
                 raise RuntimeError(
                     "projector_fc2 selected a q8-activation kernel without an explicit quantize stage"
                 )
-            src_buf = activation_buffers.get("mlp_scratch")
+            single_linear_projector = bool(config.get("single_linear_projector") or ir_op.get("params", {}).get("single_linear_projector"))
+            src_buf_name = (last_output_buffer or "embedded_input") if single_linear_projector else "mlp_scratch"
+            src_buf = activation_buffers.get(src_buf_name)
             dst_buf = activation_buffers.get("embedded_input")
             if src_buf:
                 lowered_op["activations"]["A"] = {
-                    "buffer": "mlp_scratch",
+                    "buffer": src_buf_name,
                     "activation_offset": src_buf["offset"],
                     "dtype": "fp32",
                     "ptr_expr": f"activations + {src_buf['offset']}",
@@ -9074,6 +9076,18 @@ def validate_buffer_assignments(lowered_ir: Dict) -> None:
         for k in registry.get("kernels", [])
         if k.get("id")
     }
+    kernel_weight_contract = {}
+    for k in registry.get("kernels", []):
+        kid = k.get("id")
+        if not kid:
+            continue
+        weights = k.get("weights", [])
+        if isinstance(weights, list):
+            kernel_weight_contract[kid] = {
+                str(w.get("name", "")): str(w.get("dtype", "")).lower()
+                for w in weights
+                if isinstance(w, dict) and w.get("name")
+            }
 
     body_projection_ops = {
         "q_proj",
@@ -9098,14 +9112,16 @@ def validate_buffer_assignments(lowered_ir: Dict) -> None:
         # interpreting BF16 payload bytes as FP32 values.
         if kernel_id:
             kernel_weight_dtype = str(kernel_quant.get(kernel_id, {}).get("weight", "")).lower()
+            per_weight_contract = kernel_weight_contract.get(kernel_id, {})
             for weight_name, weight_info in op.get("weights", {}).items():
                 weight_dtype = str(weight_info.get("dtype", "")).lower()
-                if weight_dtype == "bf16" and kernel_weight_dtype != "bf16":
+                expected_weight_dtype = str(per_weight_contract.get(weight_name, kernel_weight_dtype)).lower()
+                if weight_dtype == "bf16" and expected_weight_dtype != "bf16":
                     raise RuntimeError(
                         f"\n❌ HARD FAULT: Weight/kernel dtype mismatch\n"
                         f"   op={op_name} layer={layer} kernel={kernel_id}\n"
                         f"   weight={weight_name} dtype=bf16\n"
-                        f"   kernel weight dtype: {kernel_weight_dtype or '<missing>'}\n"
+                        f"   kernel weight dtype: {expected_weight_dtype or '<missing>'}\n"
                         f"   Fix: ensure quant_summary aliases select BF16 kernels for safetensors/BUMP weights\n"
                     )
 

@@ -61,6 +61,21 @@ _CHAT_TEMPLATE_ALIASES = {
     "gemma": "gemma3",
 }
 
+_CHAT_TEMPLATE_CHOICES = [
+    "auto",
+    "none",
+    "qwen",
+    "qwen2",
+    "qwen3",
+    "qwen35",
+    "qwen3vl",
+    "gemma",
+    "gemma3",
+    "gemma4",
+    "glm4",
+    "llama",
+]
+
 
 def _parse_activation_preference_overrides(values: list[str] | None) -> dict[str, str]:
     overrides: dict[str, str] = {}
@@ -1035,13 +1050,16 @@ def _format_prompt_with_chat_contract(
     return formatted if formatted else user_text
 
 
-def _resolve_multimodal_image_markers(contract: dict[str, Any] | None) -> tuple[str, str] | None:
+def _resolve_multimodal_image_markers(contract: dict[str, Any] | None) -> tuple[str, str, bool] | None:
     if not isinstance(contract, dict):
         return None
     image_begin = str(contract.get("image_begin_marker") or "")
     image_end = str(contract.get("image_end_marker") or "")
     if image_begin and image_end:
-        return image_begin, image_end
+        return image_begin, image_end, False
+    single_marker = str(contract.get("image_marker") or contract.get("image_placeholder_marker") or "")
+    if single_marker:
+        return single_marker, "", True
     return None
 
 
@@ -1086,12 +1104,17 @@ def _format_multimodal_prompt_segments(
             "image_end_marker": "",
         }
 
-    image_begin, image_end = markers
+    image_begin, image_end, single_image_marker = markers
     sentinel = "<<CK_IMAGE_EMBED_CHUNK>>"
     if sentinel in str(prompt or ""):
         raise ValueError("prompt contains reserved multimodal bridge sentinel")
+    prompt_with_image = (
+        f"{sentinel}{str(prompt or '')}"
+        if single_image_marker
+        else f"{image_begin}{sentinel}{image_end}{str(prompt or '')}"
+    )
     formatted = _format_prompt_with_chat_contract(
-        f"{image_begin}{sentinel}{image_end}{str(prompt or '')}",
+        prompt_with_image,
         contract,
         thinking_mode=thinking_mode,
         system_prompt=system_prompt,
@@ -1759,6 +1782,8 @@ def _prepare_decoder_runtime(
         str(manifest_path),
         "--mode",
         "prefill",
+        "--logits-layout",
+        "last",
         "--output",
         str(prefill_ir1),
         "--layout-output",
@@ -2097,16 +2122,11 @@ def _run_decoder(
     stream_output: bool = False,
     generation_progress_every: int = 0,
 ) -> dict[str, Any]:
-    # Keep mixed prefix replay on the decode-layout runtime.
-    #
-    # The standalone prefill runtime is useful for batched prefill entrypoints,
-    # but its generated ck_decode() still follows the prefill layout and can
-    # replay full-sequence GEMM/transposes when used for continuation. That
-    # breaks token 2+ after an external prefix. The decode-layout runtime's
-    # ck_model_forward_mixed already stages prefix rows through the true
-    # single-token decode path, which is the correctness-first contract we need
-    # for multimodal bridge parity.
-    model_so = Path(runtime["so_path"])
+    # Mixed image/text prefill must use the prefill-layout runtime: it owns
+    # batched token-major activation rows and last-logits emission. The decode
+    # runtime only has single-token activation buffers, so its mixed helper can
+    # silently collapse multi-row prefixes.
+    model_so = Path(runtime.get("prefill_so_path") or runtime["so_path"])
     lib = _load_decoder_lib(model_so)
     _log_progress("decoder: init start")
     rc = lib.ck_model_init_with_manifest(
@@ -2241,9 +2261,54 @@ def _run_decoder(
                     _log_progress(f"decoder: generation progress tokens={len(generated_token_ids)}")
                 if step + 1 >= int(effective_max_tokens):
                     break
-                rc = lib.ck_model_decode(ctypes.c_int32(int(next_token)), logits)
-                if rc != 0:
-                    raise RuntimeError(f"decoder decode failed with rc={rc} at generated_step={step}")
+                if model_so == Path(runtime.get("prefill_so_path") or ""):
+                    replay_after_ids = after_token_ids + generated_token_ids
+                    replay_after_arr = (ctypes.c_int32 * len(replay_after_ids))(*replay_after_ids) if replay_after_ids else None
+                    if before_token_ids and hasattr(lib, "ck_model_forward_segments_grid_ex"):
+                        grid_x, grid_y = prefix_grid if prefix_grid is not None else (0, 0)
+                        default_text_pos = (
+                            len(before_token_ids) + max(int(grid_x), int(grid_y))
+                            if prefix_grid is not None
+                            else len(before_token_ids) + max(0, int(prefix_tokens))
+                        )
+                        resolved_text_pos = int(prefix_text_pos or default_text_pos)
+                        rc = lib.ck_model_forward_segments_grid_ex(
+                            before_token_arr,
+                            len(before_token_ids),
+                            prefix_ptr,
+                            prefix_tokens,
+                            resolved_prefix_dim,
+                            int(grid_x),
+                            int(grid_y),
+                            resolved_text_pos,
+                            replay_after_arr,
+                            len(replay_after_ids),
+                            logits,
+                        )
+                    elif hasattr(lib, "ck_model_forward_mixed_grid_ex") and prefix_grid is not None:
+                        grid_x, grid_y = prefix_grid
+                        resolved_text_pos = int(prefix_text_pos or max(int(grid_x), int(grid_y), int(prefix_tokens)))
+                        rc = lib.ck_model_forward_mixed_grid_ex(
+                            prefix_ptr,
+                            prefix_tokens,
+                            resolved_prefix_dim,
+                            int(grid_x),
+                            int(grid_y),
+                            resolved_text_pos,
+                            replay_after_arr,
+                            len(replay_after_ids),
+                            logits,
+                        )
+                    elif hasattr(lib, "ck_model_forward_mixed_ex"):
+                        rc = lib.ck_model_forward_mixed_ex(prefix_ptr, prefix_tokens, resolved_prefix_dim, replay_after_arr, len(replay_after_ids), logits)
+                    else:
+                        rc = lib.ck_model_forward_mixed(prefix_ptr, prefix_tokens, replay_after_arr, len(replay_after_ids), logits)
+                    if rc != 0:
+                        raise RuntimeError(f"decoder mixed replay failed with rc={rc} at generated_step={step}")
+                else:
+                    rc = lib.ck_model_decode(ctypes.c_int32(int(next_token)), logits)
+                    if rc != 0:
+                        raise RuntimeError(f"decoder decode failed with rc={rc} at generated_step={step}")
                 current_logits = logits
             if stream_output and generated_token_ids:
                 print("", flush=True)
@@ -2485,7 +2550,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--encoder-gguf", type=Path, default=None, help="Optional vision encoder/mmproj GGUF")
     ap.add_argument("--workdir", type=Path, required=True, help="Artifact/output directory")
     ap.add_argument("--prompt", type=str, default="Describe the image.", help="Prompt text for decoder tokenization")
-    ap.add_argument("--chat-template", choices=["auto", "none", "qwen", "qwen2", "qwen3", "qwen35", "qwen3vl", "gemma", "gemma3"], default="auto")
+    ap.add_argument("--chat-template", choices=_CHAT_TEMPLATE_CHOICES, default="auto")
     ap.add_argument("--no-chat-template", action="store_true")
     ap.add_argument("--allow-raw-prompt", action="store_true", help="Acknowledge raw prompt formatting when chat templates are disabled")
     ap.add_argument("--thinking-mode", choices=["auto", "visible", "suppressed"], default="auto")

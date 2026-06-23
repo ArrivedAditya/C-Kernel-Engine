@@ -234,6 +234,11 @@ V8_NEMOTRON9_MIN_MEM_GB ?= 70
 V8_NEMOTRON9_CONTEXT ?= 2048
 V8_NEMOTRON9_MAX_TOKENS ?= 64
 V8_NEMOTRON9_PROMPT ?= Give me a concise example of C code.
+V8_GLM4_MODEL ?= hf://unsloth/GLM-4-9B-0414-GGUF/GLM-4-9B-0414-Q4_K_M.gguf
+V8_GLM4_MIN_MEM_GB ?= 70
+V8_GLM4_CONTEXT ?= 1024
+V8_GLM4_MAX_TOKENS ?= 64
+V8_GLM4_PROMPT ?= Give me a concise example of C, Python, and SQL code.
 
 # =============================================================================
 # Intel oneAPI Integration (MKL / oneDNN)
@@ -1217,7 +1222,7 @@ test-v8-qwen3vl-e2e-smoke:
 
 test-v8-vision-smoke: test-v8-vision-kernels test-v8-qwen3vl test-v8-qwen3vl-e2e-smoke
 
-test-v8-model-smoke: test-v8-template-circuit-audit v8-regression-fast test-v8-gemma4-highmem test-v8-nemotron9-highmem
+test-v8-model-smoke: test-v8-template-circuit-audit v8-regression-fast test-v8-gemma4-highmem test-v8-nemotron9-highmem test-v8-glm4-highmem
 
 parity-v8-qwen3vl-mmproj:
 	@if [ ! -f "$(V8_QWEN3VL_MMPROJ)" ]; then \
@@ -2532,6 +2537,24 @@ test-v8-nemotron9-highmem:
 			--prompt "$(V8_NEMOTRON9_PROMPT)" \
 			--chat-template auto \
 			--max-tokens $(V8_NEMOTRON9_MAX_TOKENS) \
+			--temperature 0.0; \
+	fi
+
+test-v8-glm4-highmem:
+	@avail_kb=$$(awk '/MemAvailable:/ {print $$2}' /proc/meminfo 2>/dev/null || echo 0); \
+	threshold_kb=$$(( $(V8_GLM4_MIN_MEM_GB) * 1024 * 1024 )); \
+	if [ "$$avail_kb" -lt "$$threshold_kb" ]; then \
+		avail_gb=$$(( $$avail_kb / 1024 / 1024 )); \
+		echo "SKIP: GLM-4 9B v8 smoke needs >=$(V8_GLM4_MIN_MEM_GB) GiB MemAvailable; found $${avail_gb} GiB"; \
+	else \
+		echo "Running v8 GLM-4 9B high-memory smoke..."; \
+		CK_NUM_THREADS=$${CK_NUM_THREADS:-24} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+			$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/ck_run_v8.py run "$(V8_GLM4_MODEL)" \
+			--context-len $(V8_GLM4_CONTEXT) \
+			--force-convert --force-compile \
+			--prompt "$(V8_GLM4_PROMPT)" \
+			--chat-template auto \
+			--max-tokens $(V8_GLM4_MAX_TOKENS) \
 			--temperature 0.0; \
 	fi
 

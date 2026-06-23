@@ -46,9 +46,11 @@
       "token_stop_markers": [
         "<turn|>"
       ],
+      "image_marker": "<|image|>",
       "template_markers": [
         "<|turn>",
-        "<turn|>"
+        "<turn|>",
+        "<|image|>"
       ],
       "min_response_tokens": 8
     },

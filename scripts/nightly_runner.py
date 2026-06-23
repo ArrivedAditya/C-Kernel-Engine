@@ -434,6 +434,12 @@ MAKE_TARGETS = {
         "target": "v8-regression-fast",
         "timeout_sec": 5400,
     },
+    "v8_qwen3vl_vision_smoke": {
+        "name": "v8 Qwen3-VL Vision Smoke",
+        "category": "inference",
+        "target": "test-v8-qwen3vl-e2e-smoke",
+        "timeout_sec": 5400,
+    },
     "v8_decoder_matrix_quick": {
         "name": "v8 Decoder Matrix (quick)",
         "category": "inference",
@@ -450,6 +456,12 @@ MAKE_TARGETS = {
         "name": "v8 Nemotron Nano 9B High-Memory Smoke",
         "category": "inference",
         "target": "test-v8-nemotron9-highmem",
+        "timeout_sec": 7200,
+    },
+    "v8_glm4_highmem": {
+        "name": "v8 GLM-4 9B High-Memory Smoke",
+        "category": "inference",
+        "target": "test-v8-glm4-highmem",
         "timeout_sec": 7200,
     },
 }
