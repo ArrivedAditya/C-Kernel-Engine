@@ -163,6 +163,11 @@ def run(json_out: Path) -> int:
             assert isinstance(embedded_vision, dict), "HTML missing vision_artifacts"
             assert embedded_vision.get("patch_grid", {}).get("expected_prefix_tokens") == 4, embedded_vision.get("patch_grid")
             assert "files.full_network_graph || files.multimodal_dataflow_graph" in html, "visualizer fallback not present"
+            helper_pos = html.find("function getEmbeddedFiles()")
+            multimodal_pos = html.find("function renderMultimodal()")
+            assert helper_pos >= 0, "main visualizer getEmbeddedFiles helper not present"
+            assert multimodal_pos >= 0, "multimodal renderer not present"
+            assert helper_pos < multimodal_pos, "getEmbeddedFiles must be defined before renderMultimodal"
             checks.append({"name": "html_embedding", "status": "pass", "detail": str(html_path)})
         except AssertionError as exc:
             checks.append({"name": "html_embedding", "status": "fail", "detail": str(exc)})

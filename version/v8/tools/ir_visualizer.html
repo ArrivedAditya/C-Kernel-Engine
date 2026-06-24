@@ -3814,6 +3814,12 @@ python3 trace_divergence.py --model "$MODEL_DIR" --token 25 --threads 1 --contex
             return n.includes('prefill') ? 'prefill' : 'decode';
         }
 
+        function getEmbeddedFiles() {
+            const embedded = window.EMBEDDED_IR_DATA;
+            if (!embedded || typeof embedded !== 'object') return {};
+            return embedded.files && typeof embedded.files === 'object' ? embedded.files : {};
+        }
+
         function getFullNetworkGraph() {
             const files = getEmbeddedFiles();
             const payload = files && (files.full_network_graph || files.multimodal_dataflow_graph);
