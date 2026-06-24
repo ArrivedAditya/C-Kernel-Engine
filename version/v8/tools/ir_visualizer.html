@@ -3816,7 +3816,7 @@ python3 trace_divergence.py --model "$MODEL_DIR" --token 25 --threads 1 --contex
 
         function getFullNetworkGraph() {
             const files = getEmbeddedFiles();
-            const payload = files && files.full_network_graph;
+            const payload = files && (files.full_network_graph || files.multimodal_dataflow_graph);
             return (payload && typeof payload === 'object') ? payload : null;
         }
 
@@ -5356,7 +5356,9 @@ python3 trace_divergence.py --model "$MODEL_DIR" --token 25 --threads 1 --contex
             const files = embedded.files;
             const fullNetworkGraph = (files.full_network_graph && typeof files.full_network_graph === 'object')
                 ? files.full_network_graph
-                : null;
+                : ((files.multimodal_dataflow_graph && typeof files.multimodal_dataflow_graph === 'object')
+                    ? files.multimodal_dataflow_graph
+                    : null);
             const fullNetworkLayout = (fullNetworkGraph && typeof fullNetworkGraph.layout === 'object')
                 ? fullNetworkGraph.layout
                 : null;
@@ -5474,7 +5476,10 @@ python3 trace_divergence.py --model "$MODEL_DIR" --token 25 --threads 1 --contex
             updateFileList();
             renderTensorList();
 
-            currentMode = modeHasAnyData('decode') ? 'decode' : (modeHasAnyData('prefill') ? 'prefill' : currentMode);
+            const preferMultimodalPrefill = Boolean(fullNetworkGraph || files.multimodal_bridge_report);
+            currentMode = (preferMultimodalPrefill && modeHasAnyData('prefill'))
+                ? 'prefill'
+                : (modeHasAnyData('decode') ? 'decode' : (modeHasAnyData('prefill') ? 'prefill' : currentMode));
             const select = document.getElementById('modeSelect');
             if (select) select.value = currentMode;
 

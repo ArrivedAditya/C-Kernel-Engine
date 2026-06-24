@@ -779,6 +779,11 @@ def _enrich_multimodal_bridge_payload(
 def _ops_from_payload(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, dict):
         return []
+    nested_ir1 = payload.get("ir1")
+    if isinstance(nested_ir1, dict):
+        nested_ops = _ops_from_payload(nested_ir1)
+        if nested_ops:
+            return nested_ops
     for key in ("operations", "ops"):
         rows = payload.get(key)
         if isinstance(rows, list):
@@ -809,6 +814,177 @@ def _count_ops_by_kind(ops: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
+def _clone_multimodal_op(
+    op: dict[str, Any],
+    *,
+    op_id: int,
+    stage: str,
+    stage_label: str,
+    layer_prefix: str,
+    from_offset: int = 0,
+) -> dict[str, Any]:
+    out = json.loads(json.dumps(op))
+    old_id = out.get("op_id")
+    out["op_id"] = op_id
+    out["network_stage"] = stage
+    out["network_stage_label"] = stage_label
+    out["source_op_id"] = old_id
+    layer = out.get("layer")
+    section = str(out.get("section") or "").lower()
+    if section == "header" or layer == -1:
+        out["unified_layer_key"] = f"{stage}:header"
+        out["unified_layer_label"] = f"{stage_label} Header"
+    elif section == "footer":
+        out["unified_layer_key"] = f"{stage}:footer"
+        out["unified_layer_label"] = f"{stage_label} Footer"
+    elif layer is not None:
+        out["unified_layer_key"] = f"{stage}:layer:{layer}"
+        out["unified_layer_label"] = f"{layer_prefix} {layer}"
+    else:
+        out["unified_layer_key"] = f"{stage}:ops"
+        out["unified_layer_label"] = stage_label
+
+    dataflow = out.get("dataflow")
+    if isinstance(dataflow, dict) and from_offset:
+        for inputs in [dataflow.get("inputs")]:
+            if not isinstance(inputs, dict):
+                continue
+            for info in inputs.values():
+                if not isinstance(info, dict) or info.get("from_op") is None:
+                    continue
+                try:
+                    info["from_op"] = int(info["from_op"]) + from_offset
+                except (TypeError, ValueError):
+                    pass
+    return out
+
+
+def _build_multimodal_dataflow_graph(files: dict[str, Any]) -> dict[str, Any] | None:
+    bridge = files.get("multimodal_bridge_report")
+    if not isinstance(bridge, dict):
+        return None
+    full_graph = files.get("full_network_graph")
+    if isinstance(full_graph, dict):
+        return full_graph
+
+    encoder_ir1 = files.get("bridge_encoder_ir1") if isinstance(files.get("bridge_encoder_ir1"), dict) else {}
+    encoder_layout = files.get("bridge_encoder_layout") if isinstance(files.get("bridge_encoder_layout"), dict) else {}
+    encoder_call = files.get("bridge_encoder_call") if isinstance(files.get("bridge_encoder_call"), dict) else {}
+    decoder_ir1 = files.get("ir1_prefill") if isinstance(files.get("ir1_prefill"), dict) else {}
+    decoder_layout = files.get("layout_prefill") if isinstance(files.get("layout_prefill"), dict) else {}
+    decoder_call = files.get("lowered_prefill_call") if isinstance(files.get("lowered_prefill_call"), dict) else files.get("lowered_prefill")
+    if not isinstance(decoder_call, dict):
+        decoder_call = {}
+
+    encoder_ops = _ops_from_payload(encoder_ir1)
+    decoder_ops = _ops_from_payload(decoder_ir1)
+    if not encoder_ops and not decoder_ops:
+        return None
+
+    ops: list[dict[str, Any]] = []
+    for idx, op in enumerate(encoder_ops):
+        ops.append(
+            _clone_multimodal_op(
+                op,
+                op_id=idx,
+                stage="vision_encoder",
+                stage_label="Vision Encoder",
+                layer_prefix="Encoder Layer",
+            )
+        )
+
+    bridge_op_id = len(ops)
+    encoder_last_id = int(ops[-1]["op_id"]) if ops else None
+    bridge_op: dict[str, Any] = {
+        "op_id": bridge_op_id,
+        "op": "vision_bridge_prefix",
+        "kernel": "multimodal_bridge",
+        "kernel_id": "multimodal_bridge",
+        "section": "bridge",
+        "layer": -1,
+        "network_stage": "bridge",
+        "network_stage_label": "Vision/Text Bridge",
+        "unified_layer_key": "bridge:prefix",
+        "unified_layer_label": "Vision/Text Bridge",
+        "params": {
+            "prefix_tokens": bridge.get("prefix_tokens"),
+            "prefix_grid_x": bridge.get("prefix_grid_x"),
+            "prefix_grid_y": bridge.get("prefix_grid_y"),
+            "text_position": bridge.get("prefix_text_pos"),
+            "prefix_source": bridge.get("prefix_source"),
+        },
+        "dataflow": {
+            "inputs": {},
+            "outputs": {
+                "prefix": {
+                    "tensor": "vision_bridge.prefix_embeddings",
+                    "dtype": "fp32",
+                    "slot": "vision_prefix",
+                }
+            },
+        },
+        "weights": {},
+    }
+    if encoder_last_id is not None:
+        bridge_op["dataflow"]["inputs"]["encoder_out"] = {
+            "from_op": encoder_last_id,
+            "from_output": "out",
+            "tensor": "vision_encoder.output",
+            "dtype": "fp32",
+            "slot": "vision_encoder_out",
+        }
+    ops.append(bridge_op)
+
+    decoder_offset = len(ops)
+    for idx, op in enumerate(decoder_ops):
+        cloned = _clone_multimodal_op(
+            op,
+            op_id=decoder_offset + idx,
+            stage="decoder_prefill",
+            stage_label="Decoder Prefill",
+            layer_prefix="Decoder Layer",
+            from_offset=decoder_offset,
+        )
+        if idx == 0:
+            dataflow = cloned.setdefault("dataflow", {})
+            if isinstance(dataflow, dict):
+                inputs = dataflow.setdefault("inputs", {})
+                if isinstance(inputs, dict):
+                    inputs["vision_prefix"] = {
+                        "from_op": bridge_op_id,
+                        "from_output": "prefix",
+                        "tensor": "vision_bridge.prefix_embeddings",
+                        "dtype": "fp32",
+                        "slot": "vision_prefix",
+                    }
+        ops.append(cloned)
+
+    ir1 = {
+        "format": "ir1-multimodal-dataflow",
+        "version": max(
+            int(encoder_ir1.get("version") or 0) if isinstance(encoder_ir1, dict) else 0,
+            int(decoder_ir1.get("version") or 0) if isinstance(decoder_ir1, dict) else 0,
+            1,
+        ),
+        "mode": "prefill",
+        "schema": "ck.v8.multimodal_dataflow_graph.v1",
+        "ops": ops,
+    }
+    return {
+        "schema": "ck.v8.multimodal_dataflow_graph.v1",
+        "source": "derived_from_bridge_encoder_and_decoder_prefill",
+        "ir1": ir1,
+        "layout": decoder_layout or encoder_layout,
+        "call": decoder_call or encoder_call,
+        "stats": {
+            "encoder_ops": len(encoder_ops),
+            "bridge_ops": 1,
+            "decoder_prefill_ops": len(decoder_ops),
+            "total_ops": len(ops),
+        },
+    }
+
+
 def _build_vision_artifacts_payload(files: dict[str, Any]) -> dict[str, Any] | None:
     bridge = files.get("multimodal_bridge_report")
     if not isinstance(bridge, dict):
@@ -818,7 +994,9 @@ def _build_vision_artifacts_payload(files: dict[str, Any]) -> dict[str, Any] | N
     encoder_layout = files.get("bridge_encoder_layout") if isinstance(files.get("bridge_encoder_layout"), dict) else {}
     encoder_call = files.get("bridge_encoder_call") if isinstance(files.get("bridge_encoder_call"), dict) else {}
     encoder_lowered = files.get("bridge_encoder_lowered") if isinstance(files.get("bridge_encoder_lowered"), dict) else {}
-    full_graph = files.get("full_network_graph") if isinstance(files.get("full_network_graph"), dict) else {}
+    full_graph = files.get("full_network_graph") if isinstance(files.get("full_network_graph"), dict) else files.get("multimodal_dataflow_graph")
+    if not isinstance(full_graph, dict):
+        full_graph = {}
     decoder_prefill = files.get("lowered_prefill_call") if isinstance(files.get("lowered_prefill_call"), dict) else files.get("lowered_prefill")
 
     encoder_ops = _ops_from_payload(encoder_call) or _ops_from_payload(encoder_lowered) or _ops_from_payload(encoder_ir1)
@@ -4275,6 +4453,10 @@ def load_model_data(
         )
         data["files"]["multimodal_bridge_report"] = enriched_bridge
         data["meta"]["multimodal_mode"] = str(enriched_bridge.get("bridge_mode") or "encoder_decoder")
+        multimodal_dataflow = _build_multimodal_dataflow_graph(data["files"])
+        if isinstance(multimodal_dataflow, dict) and "full_network_graph" not in data["files"]:
+            data["files"]["multimodal_dataflow_graph"] = multimodal_dataflow
+            loaded.append("multimodal_dataflow_graph(derived)")
         vision_artifacts = _build_vision_artifacts_payload(data["files"])
         if isinstance(vision_artifacts, dict):
             data["files"]["vision_artifacts"] = vision_artifacts
