@@ -1,0 +1,30 @@
+{
+  "id": "position_embeddings_add_gemma4v_xy",
+  "op": "position_embeddings",
+  "family": "vision",
+  "description": "Add Gemma4V learned 2D x/y positional embeddings to patch embeddings.",
+  "inputs": [
+    {
+      "name": "x",
+      "type": "float*",
+      "shape": "[grid_h*grid_w, embed_dim]"
+    },
+    {
+      "name": "position_embd",
+      "type": "const float*",
+      "shape": "[2, source_grid_size, embed_dim]"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "x",
+      "type": "float*",
+      "shape": "[grid_h*grid_w, embed_dim]"
+    }
+  ],
+  "c_function": {
+    "name": "position_embeddings_add_gemma4v_xy",
+    "header": "include/ckernel_engine.h",
+    "source": "src/kernels/vision_kernels.c"
+  }
+}

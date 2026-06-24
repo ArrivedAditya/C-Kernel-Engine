@@ -727,6 +727,32 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             )
             lines.append("        }")
             lines.append("    }")
+    elif (
+        op_type in {"attn", "attn_sliding"}
+        and func in {
+            "attention_forward_causal_head_major_gqa_flash_strided_gemma4",
+            "attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4",
+        }
+    ):
+        mixed_func = "attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4"
+        mixed_args = args[:10]
+        lines.append("    if (bridge_noncausal_visual_chunk && bridge_visual_start >= 0 && bridge_visual_tokens > 0) {")
+        lines.append(f"        {mixed_func}(")
+        for i, arg in enumerate(mixed_args):
+            lines.append(f"            {arg},")
+        lines.append("            bridge_visual_start,")
+        lines.append("            bridge_visual_tokens")
+        lines.append("        );")
+        lines.append("    } else {")
+        if len(args) <= 3:
+            lines.append(f"        {func}({', '.join(args)});")
+        else:
+            lines.append(f"        {func}(")
+            for i, arg in enumerate(args):
+                comma = "," if i < len(args) - 1 else ""
+                lines.append(f"            {arg}{comma}")
+            lines.append("        );")
+        lines.append("    }")
     else:
         if len(args) <= 3:
             # Short call on one line
@@ -978,6 +1004,12 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
 
     const char *stop_env = getenv("CK_STOP_OP");
     int stop_seq = stop_env ? atoi(stop_env) : -1;
+    const char *bridge_noncausal_env = getenv("CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK");
+    int bridge_noncausal_visual_chunk = bridge_noncausal_env ? (atoi(bridge_noncausal_env) != 0) : 0;
+    const char *bridge_visual_start_env = getenv("CK_BRIDGE_VISUAL_START");
+    int bridge_visual_start = bridge_visual_start_env ? atoi(bridge_visual_start_env) : -1;
+    const char *bridge_visual_tokens_env = getenv("CK_BRIDGE_VISUAL_TOKENS");
+    int bridge_visual_tokens = bridge_visual_tokens_env ? atoi(bridge_visual_tokens_env) : 0;
     const char *debug_outproj_env = getenv("CK_V7_DEBUG_OUTPROJ_FP32");
     int debug_outproj_fp32 = debug_outproj_env ? (atoi(debug_outproj_env) != 0) : 0;
     const float *ck_debug_outproj_fp32_input = NULL;
@@ -1061,17 +1093,28 @@ def _find_embedding_header_op(ops: List[Dict]) -> Optional[Dict]:
 def _emit_embedding_scale_block(num_tokens_expr: str, dump: bool) -> str:
     lines: List[str] = [
         """    /* Gemma embedding contract:
-     * llama.cpp applies inp_scaled = inp_embd * sqrt(n_embd) before layer-0.
-     * Without this, residual path parity diverges at sa_out even if q/k/v look close.
+     * llama.cpp scales token embeddings by sqrt(n_embd), but raw multimodal
+     * embedding chunks are not scaled.  In the mixed bridge path, the visual
+     * segment is marked by CK_BRIDGE_VISUAL_START/TOKENS.
      */
     {
         const float emb_scale = sqrtf((float)EMBED_DIM);
         float *emb = (float*)(model->bump + A_EMBEDDED_INPUT);
-        const int n = """
+        const int rows = """
         + num_tokens_expr
-        + """ * EMBED_DIM;
-        for (int i = 0; i < n; ++i) {
-            emb[i] *= emb_scale;
+        + """;
+        const int visual_begin = (bridge_noncausal_visual_chunk && bridge_visual_start >= 0 && bridge_visual_tokens > 0)
+            ? bridge_visual_start
+            : -1;
+        const int visual_end = (visual_begin >= 0) ? (visual_begin + bridge_visual_tokens) : -1;
+        for (int row = 0; row < rows; ++row) {
+            if (visual_begin >= 0 && row >= visual_begin && row < visual_end) {
+                continue;
+            }
+            float *dst = emb + (size_t)row * (size_t)EMBED_DIM;
+            for (int i = 0; i < EMBED_DIM; ++i) {
+                dst[i] *= emb_scale;
+            }
         }
     }"""
     ]
@@ -1437,6 +1480,12 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
 
     const char *stop_env = getenv("CK_STOP_OP");
     int stop_seq = stop_env ? atoi(stop_env) : -1;
+    const char *bridge_noncausal_env = getenv("CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK");
+    int bridge_noncausal_visual_chunk = bridge_noncausal_env ? (atoi(bridge_noncausal_env) != 0) : 0;
+    const char *bridge_visual_start_env = getenv("CK_BRIDGE_VISUAL_START");
+    int bridge_visual_start = bridge_visual_start_env ? atoi(bridge_visual_start_env) : -1;
+    const char *bridge_visual_tokens_env = getenv("CK_BRIDGE_VISUAL_TOKENS");
+    int bridge_visual_tokens = bridge_visual_tokens_env ? atoi(bridge_visual_tokens_env) : 0;
     const char *debug_outproj_env = getenv("CK_V7_DEBUG_OUTPROJ_FP32");
     int debug_outproj_fp32 = debug_outproj_env ? (atoi(debug_outproj_env) != 0) : 0;
     const float *ck_debug_outproj_fp32_input = NULL;

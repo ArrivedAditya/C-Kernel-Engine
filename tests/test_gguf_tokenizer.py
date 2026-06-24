@@ -46,6 +46,36 @@ class GGUFTokenizerTests(unittest.TestCase):
 
         self.assertEqual(tok.encode("\n", add_bos=False), [1])
 
+    def test_encode_does_not_cross_special_token_boundary(self) -> None:
+        tok = GGUFTokenizer(
+            {
+                "tokenizer.ggml.tokens": [
+                    "<unk>",
+                    ".",
+                    "Explain",
+                    " this",
+                    " image",
+                    ".<",
+                    "<turn|>",
+                    "\n",
+                    "<|turn>",
+                    "model",
+                ],
+                "tokenizer.ggml.model": "spm",
+                "tokenizer.ggml.bos_token_id": 99,
+                "tokenizer.ggml.eos_token_id": 100,
+                "tokenizer.ggml.unknown_token_id": 0,
+                "tokenizer.ggml.padding_token_id": 101,
+                "tokenizer.ggml.add_bos_token": False,
+                "tokenizer.ggml.special_token_ids": [6, 8],
+            }
+        )
+
+        ids = tok.encode("Explain this image.<turn|>\n<|turn>model\n", add_bos=False)
+
+        self.assertEqual(ids, [2, 3, 4, 1, 6, 7, 8, 9, 7])
+        self.assertNotIn(5, ids)
+
     def test_from_json_bytelevel_disables_implicit_bos(self) -> None:
         with tempfile.TemporaryDirectory(prefix="gguf_tok_json_") as td:
             path = Path(td) / "tokenizer.json"

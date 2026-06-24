@@ -1,0 +1,99 @@
+{
+  "id": "gemm_nt_f16_clipped",
+  "op": "gemm",
+  "variant": "f16_w_fp32_a_fp32_out_clipped",
+  "quant": {
+    "weight": "fp16|f16",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "A",
+      "dtype": "fp32",
+      "shape": [
+        "M",
+        "K"
+      ],
+      "desc": "Activation matrix [M,K], clamped before FP16 rounding"
+    },
+    {
+      "name": "B",
+      "dtype": "fp16",
+      "shape": [
+        "N",
+        "K"
+      ],
+      "desc": "Weight matrix [N,K] FP16"
+    },
+    {
+      "name": "bias",
+      "dtype": "fp32",
+      "shape": [
+        "N"
+      ],
+      "optional": true
+    },
+    {
+      "name": "input_min",
+      "dtype": "fp32",
+      "shape": [
+        1
+      ],
+      "optional": true
+    },
+    {
+      "name": "input_max",
+      "dtype": "fp32",
+      "shape": [
+        1
+      ],
+      "optional": true
+    },
+    {
+      "name": "output_min",
+      "dtype": "fp32",
+      "shape": [
+        1
+      ],
+      "optional": true
+    },
+    {
+      "name": "output_max",
+      "dtype": "fp32",
+      "shape": [
+        1
+      ],
+      "optional": true
+    }
+  ],
+  "outputs": [
+    {
+      "name": "C",
+      "dtype": "fp32",
+      "shape": [
+        "M",
+        "N"
+      ]
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "M",
+    "N",
+    "K"
+  ],
+  "impl": {
+    "function": "gemm_nt_f16_clipped",
+    "c_declaration": "void gemm_nt_f16_clipped(const float *A, const void *B, const float *bias, const float *input_min, const float *input_max, const float *output_min, const float *output_max, float *C, int M, int N, int K);",
+    "sources": [
+      "src/kernels/gemm_kernels_f16.c"
+    ]
+  },
+  "tests": {
+    "unit": [
+      "tests/test_v8_native_bridge_host.py"
+    ]
+  },
+  "notes": "Gemma4V ClippableLinear: clamp input, F16 matmul, clamp output."
+}

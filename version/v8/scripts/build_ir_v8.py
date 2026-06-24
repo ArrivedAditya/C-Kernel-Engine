@@ -769,6 +769,10 @@ OP_DATAFLOW = {
         "inputs": {"input": "main_stream"},
         "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
     },
+    "projector_prep": {
+        "inputs": {"input": "main_stream"},
+        "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
+    },
     "branch_spatial_merge": {
         "inputs": {"input": "main_stream"},
         "outputs": {"output": {"slot": "branch_stream", "dtype": "fp32"}},
@@ -2031,6 +2035,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "gelu": "gelu",
     "mlp_down": "matmul",  # gemv (decode) or gemm (prefill)
     "spatial_merge": "spatial_merge",
+    "projector_prep": "projector_prep",
     "branch_spatial_merge": "spatial_merge",
     "branch_layernorm": "layernorm",
     "projector_fc1": "matmul",
@@ -4583,6 +4588,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "mlp_up": ["w3"],
         "mlp_down": ["w2"],
         "projector_fc1": ["mm0_w"],
+        "projector_prep": [],
         "projector_fc2": ["mm1_w"],
         "branch_fc1": ["branch_fc1_w"],
         "branch_fc2": ["branch_fc2_w"],
@@ -4639,6 +4645,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "silu_mul": None,
         "geglu": None,
         "spatial_merge": None,
+        "projector_prep": None,
         "branch_spatial_merge": None,
         "branch_layernorm": None,
         "projector_gelu": None,
@@ -4716,7 +4723,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         # Explicit no-weight math ops. These are real kernels, but they must not
         # flow through the header/footer weighted path below, which would invent
         # a q8_0 weight requirement and fail to bind kernels such as Gemma4 V RMSNorm.
-        if op in {"v_norm", "group_limited_topk_router", "mamba_in_proj_split"}:
+        if op in {"v_norm", "projector_prep", "group_limited_topk_router", "mamba_in_proj_split"}:
             kernel_id = find_kernel(
                 registry,
                 op=kernel_op,
@@ -6678,10 +6685,10 @@ TEMPLATE_OP_WEIGHTS = {
     "final_rmsnorm": ["final_ln_weight", "final_ln_bias"],
     "qkv_proj": ["wq", "wk", "wv", "bq", "bk", "bv"],  # QKV + optional biases (for fused kernel)
     "qkv_packed_proj": ["attn_qkv", "bqkv"],
-    "q_proj": ["wq", "bq"],  # Q projection only (when split)
+    "q_proj": ["wq", "bq", "wq_input_min", "wq_input_max", "wq_output_min", "wq_output_max"],  # Q projection only (when split)
     "q_gate_proj": ["wq", "bq"],  # Joint Q + gate projection
-    "k_proj": ["wk", "bk"],  # K projection only (when split)
-    "v_proj": ["wv", "bv"],  # V projection only (when split)
+    "k_proj": ["wk", "bk", "wk_input_min", "wk_input_max", "wk_output_min", "wk_output_max"],  # K projection only (when split)
+    "v_proj": ["wv", "bv", "wv_input_min", "wv_input_max", "wv_output_min", "wv_output_max"],  # V projection only (when split)
     "split_q_gate": [],
     "recurrent_packed_proj": ["attn_qkv", "attn_gate", "ssm_alpha", "ssm_beta"],
     "recurrent_qkv_proj": ["attn_qkv"],
@@ -6716,23 +6723,24 @@ TEMPLATE_OP_WEIGHTS = {
     "attn": [],  # No model weights
     "attn_sliding": [],  # No model weights (kernel op handles windowing)
     "attn_gate_sigmoid_mul": [],  # No model weights
-    "out_proj": ["wo", "bo"],  # Output projection + optional bias
+    "out_proj": ["wo", "bo", "wo_input_min", "wo_input_max", "wo_output_min", "wo_output_max"],  # Output projection + optional bias
     "residual_add": [],  # No model weights
     "add_stream": [],
 
     # MLP block
-    "mlp_gate_up": ["w1", "w3", "b1"],  # Gate + up projection
+    "mlp_gate_up": ["w1", "w3", "b1", "w1_input_min", "w1_input_max", "w1_output_min", "w1_output_max", "w3_input_min", "w3_input_max", "w3_output_min", "w3_output_max"],  # Gate + up projection
     "mlp_up": ["w3", "b1"],  # Plain up projection
     "silu_mul": [],  # No model weights
     "geglu": [],  # No model weights
     "gelu": [],  # No model weights
-    "mlp_down": ["w2", "b2"],  # Down projection
+    "mlp_down": ["w2", "b2", "w2_input_min", "w2_input_max", "w2_output_min", "w2_output_max"],  # Down projection
     "spatial_merge": [],
+    "projector_prep": [],
     "branch_spatial_merge": [],
     "branch_layernorm": ["branch_norm_gamma", "branch_norm_beta"],
     "projector_fc1": ["mm0_w", "mm0_b"],
     "projector_gelu": [],
-    "projector_fc2": ["mm1_w", "mm1_b"],
+    "projector_fc2": ["mm1_w", "mm1_b", "mm1_w_input_min", "mm1_w_input_max", "mm1_w_output_min", "mm1_w_output_max"],
     "branch_fc1": ["branch_fc1_w", "branch_fc1_b"],
     "branch_gelu": [],
     "branch_fc2": ["branch_fc2_w", "branch_fc2_b"],
@@ -8274,6 +8282,28 @@ def generate_ir_lower_2(
                 last_output_buffer = output_buf_name
                 current_input_buffer = output_buf_name
                 current_output_buffer = "embedded_input" if output_buf_name == "layer_input" else "layer_input"
+        elif op_type == "projector_prep":
+            input_buf_name = last_output_buffer or current_input_buffer
+            output_buf_name = "layer_input" if input_buf_name == "embedded_input" else "embedded_input"
+            src_buf = activation_buffers.get(input_buf_name)
+            dst_buf = activation_buffers.get(output_buf_name)
+            if src_buf:
+                lowered_op["activations"]["input"] = {
+                    "buffer": input_buf_name,
+                    "activation_offset": src_buf["offset"],
+                    "dtype": "fp32",
+                    "ptr_expr": f"activations + {src_buf['offset']}",
+                }
+            if dst_buf:
+                lowered_op["outputs"]["output"] = {
+                    "buffer": output_buf_name,
+                    "activation_offset": dst_buf["offset"],
+                    "dtype": "fp32",
+                    "ptr_expr": f"activations + {dst_buf['offset']}",
+                }
+                last_output_buffer = output_buf_name
+                current_input_buffer = output_buf_name
+                current_output_buffer = "embedded_input" if output_buf_name == "layer_input" else "layer_input"
         elif op_type == "projector_fc1":
             input_buf_name = last_output_buffer or "embedded_input"
             src_buf = activation_buffers.get(input_buf_name)
@@ -8318,7 +8348,8 @@ def generate_ir_lower_2(
             single_linear_projector = bool(config.get("single_linear_projector") or ir_op.get("params", {}).get("single_linear_projector"))
             src_buf_name = (last_output_buffer or "embedded_input") if single_linear_projector else "mlp_scratch"
             src_buf = activation_buffers.get(src_buf_name)
-            dst_buf = activation_buffers.get("embedded_input")
+            dst_buf_name = "vision_output" if "vision_output" in activation_buffers else "embedded_input"
+            dst_buf = activation_buffers.get(dst_buf_name)
             if src_buf:
                 lowered_op["activations"]["A"] = {
                     "buffer": src_buf_name,
@@ -8328,12 +8359,12 @@ def generate_ir_lower_2(
                 }
             if dst_buf:
                 lowered_op["outputs"]["C"] = {
-                    "buffer": "embedded_input",
+                    "buffer": dst_buf_name,
                     "activation_offset": dst_buf["offset"],
                     "dtype": "fp32",
                     "ptr_expr": f"activations + {dst_buf['offset']}",
                 }
-                last_output_buffer = "embedded_input"
+                last_output_buffer = dst_buf_name
         elif op_type == "logits":
             # Footer logits projection: input buffer must match kernel activation dtype.
             # - fp32 activation kernels (gemv_q8_0 / gemm_nt_q8_0) read embedded_input
@@ -8815,11 +8846,13 @@ def generate_ir_lower_2(
             "position_embeddings",
             "patch_bias_add",
             "spatial_merge",
+            "projector_prep",
             "branch_spatial_merge",
             "branch_layernorm",
             "mrope_qk",
             "projector_fc1",
             "projector_gelu",
+            "projector_prep",
             "projector_fc2",
             "branch_fc1",
             "branch_gelu",
@@ -8865,6 +8898,11 @@ def generate_ir_lower_2(
                 params.setdefault("source_grid_size", source_grid_size)
         if op_type in ("spatial_merge", "branch_spatial_merge"):
             params["merge_size"] = _required_template_int_param(params, "merge_size", config, op_type)
+        if op_type == "projector_prep":
+            params.setdefault("rows", int(config.get("vision_merged_tokens", params.get("seq_len", 0)) or 0))
+            params.setdefault("dim", int(config.get("projector_in_dim", config.get("embed_dim", 0)) or 0))
+            params.setdefault("scale", float(config.get("gemma4_vision_pool_scale", 1.0) or 1.0))
+            params.setdefault("eps", float(config.get("gemma4_vision_projector_eps", config.get("rms_eps", 1.0e-6)) or 1.0e-6))
         if op_type in ("projector_gelu", "branch_gelu"):
             merged_tokens = int(params.get("vision_merged_tokens", 0) or 0)
             hidden_dim = int(params.get("projector_hidden_dim", 0) or 0)
@@ -8893,6 +8931,14 @@ def generate_ir_lower_2(
                 "num_branch_slices",
                 _template_int_param(params, "num_branch_slices", config, int(params.get("num_deepstack_layers", 0) or 0)),
             )
+        if op_type == "rope_qk" and ir_op.get("kernel", "") == "rope_forward_qk_gemma4v_vision_xy":
+            params.setdefault("vision_grid_w", int(config.get("vision_grid_w", 0) or config.get("image_grid_w", 0) or 0))
+            if int(params.get("vision_grid_w", 0) or 0) <= 0:
+                params["vision_grid_w"] = int(max(1, round(float(config.get("vision_num_patches", 1) or 1) ** 0.5)))
+            params.setdefault("rotary_dim", int(config.get("rotary_dim", params.get("head_dim", 0)) or params.get("head_dim", 0) or 0))
+            gemma4v_freq_base = float(config.get("vision_rope_theta", 100.0) or 100.0)
+            params["freq_base"] = gemma4v_freq_base
+            params["rope_freq_base"] = gemma4v_freq_base
         if op_type == "mrope_qk" or (op_type == "rope_qk" and ir_op.get("kernel", "") == "mrope_qk_vision"):
             sections = config.get("vision_mrope_sections")
             if not isinstance(sections, list) or len(sections) != 4:
@@ -9025,7 +9071,7 @@ def generate_ir_lower_2(
             current_output_buffer = "layer_input"
         elif op_type in ("q_proj", "q_gate_proj", "split_q_gate", "split_qkv_packed", "attn_gate_sigmoid_mul", "k_proj", "v_proj", "qkv_proj", "qkv_packed_proj", "rope_qk", "mrope_qk",
                          "recurrent_qk_l2_norm",
-                         "mlp_gate_up", "mlp_up", "silu_mul", "geglu", "gelu", "mlp_down", "projector_fc1", "projector_gelu", "projector_fc2", "branch_fc1", "branch_gelu", "branch_fc2", "branch_concat", "spatial_merge", "bias_add") or \
+                         "mlp_gate_up", "mlp_up", "silu_mul", "geglu", "gelu", "mlp_down", "projector_fc1", "projector_gelu", "projector_prep", "projector_fc2", "branch_fc1", "branch_gelu", "branch_fc2", "branch_concat", "spatial_merge", "bias_add") or \
                 (ir_op.get("section", "") == "branch" and op_type == "layernorm") or \
                 (mode == "prefill" and op_type in ("attn", "attn_sliding")):
             # Ops that don't advance the token-major stream, don't ping-pong

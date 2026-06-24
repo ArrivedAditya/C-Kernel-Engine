@@ -2339,6 +2339,241 @@
           "source": "dim:relu2_elems"
         }
       ]
+    },
+    "spatial_average_pool_contiguous": {
+      "note": "Average-pool merge_size x merge_size spatial tiles while preserving embedding width.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "input",
+          "source": "activation:input"
+        },
+        {
+          "cast": "float*",
+          "name": "output",
+          "source": "output:output"
+        },
+        {
+          "name": "grid_h",
+          "source": "dim:vision_grid_h"
+        },
+        {
+          "name": "grid_w",
+          "source": "dim:vision_grid_w"
+        },
+        {
+          "name": "embed_dim",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "merge_size",
+          "source": "dim:merge_size"
+        }
+      ]
+    },
+    "gemma4_vision_projector_prep_forward": {
+      "note": "Gemma4V scale + unit-RMSNorm before projector.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "input",
+          "source": "activation:input"
+        },
+        {
+          "cast": "float*",
+          "name": "output",
+          "source": "output:output"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:rows"
+        },
+        {
+          "name": "dim",
+          "source": "dim:dim"
+        },
+        {
+          "name": "scale",
+          "source": "param:scale"
+        },
+        {
+          "name": "eps",
+          "source": "param:eps"
+        }
+      ]
+    },
+    "position_embeddings_add_gemma4v_xy": {
+      "note": "Gemma4V learned 2D positional embeddings: add x-table[col] plus y-table[row] from [2, source_grid, dim].",
+      "params": [
+        {
+          "name": "x",
+          "source": "output:x",
+          "cast": "float*"
+        },
+        {
+          "name": "position_embd",
+          "source": "weight:pos_emb",
+          "cast": "const float*"
+        },
+        {
+          "name": "grid_h",
+          "source": "dim:vision_grid_h"
+        },
+        {
+          "name": "grid_w",
+          "source": "dim:vision_grid_w"
+        },
+        {
+          "name": "embed_dim",
+          "source": "dim:embed_dim"
+        },
+        {
+          "name": "source_grid_size",
+          "source": "dim:source_grid_size"
+        }
+      ]
+    },
+    "rope_forward_qk_gemma4v_vision_xy": {
+      "note": "Gemma4V vision 2D NEOX RoPE: first half uses x patch position, second half uses y patch position.",
+      "params": [
+        {
+          "name": "q",
+          "source": "scratch:q_scratch",
+          "cast": "float*"
+        },
+        {
+          "name": "k",
+          "source": "scratch:k_scratch",
+          "cast": "float*"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "grid_w",
+          "source": "dim:vision_grid_w"
+        },
+        {
+          "name": "rotary_dim",
+          "source": "dim:rotary_dim"
+        },
+        {
+          "name": "freq_base",
+          "source": "dim:freq_base"
+        }
+      ]
+    },
+    "gemm_nt_f16_clipped": {
+      "note": "Gemma4V clippable FP16 dense GEMM. The alt lists select the clamp scalars matching the projection weight present on this op.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "A",
+          "source": "activation:a"
+        },
+        {
+          "name": "B",
+          "source": "weight:_first_weight"
+        },
+        {
+          "name": "bias",
+          "source": "weight_f:_bias"
+        },
+        {
+          "cast": "const float*",
+          "name": "input_min",
+          "source": "weight_f:_input_min",
+          "alt": [
+            "wq_input_min",
+            "wk_input_min",
+            "wv_input_min",
+            "wo_input_min",
+            "w1_input_min",
+            "w2_input_min",
+            "w3_input_min",
+            "mm1_w_input_min"
+          ]
+        },
+        {
+          "cast": "const float*",
+          "name": "input_max",
+          "source": "weight_f:_input_max",
+          "alt": [
+            "wq_input_max",
+            "wk_input_max",
+            "wv_input_max",
+            "wo_input_max",
+            "w1_input_max",
+            "w2_input_max",
+            "w3_input_max",
+            "mm1_w_input_max"
+          ]
+        },
+        {
+          "cast": "const float*",
+          "name": "output_min",
+          "source": "weight_f:_output_min",
+          "alt": [
+            "wq_output_min",
+            "wk_output_min",
+            "wv_output_min",
+            "wo_output_min",
+            "w1_output_min",
+            "w2_output_min",
+            "w3_output_min",
+            "mm1_w_output_min"
+          ]
+        },
+        {
+          "cast": "const float*",
+          "name": "output_max",
+          "source": "weight_f:_output_max",
+          "alt": [
+            "wq_output_max",
+            "wk_output_max",
+            "wv_output_max",
+            "wo_output_max",
+            "w1_output_max",
+            "w2_output_max",
+            "w3_output_max",
+            "mm1_w_output_max"
+          ]
+        },
+        {
+          "cast": "float*",
+          "name": "C",
+          "source": "output:c"
+        },
+        {
+          "name": "M",
+          "source": "dim:_m"
+        },
+        {
+          "name": "N",
+          "source": "dim:_output_dim"
+        },
+        {
+          "name": "K",
+          "source": "dim:_input_dim"
+        }
+      ]
     }
   }
 }

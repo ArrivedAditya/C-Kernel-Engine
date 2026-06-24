@@ -49,6 +49,14 @@
       "required_call_args": {
         "image_input": true
       }
+    },
+    "multimodal_bridge": {
+      "producer_activation": "vision_output",
+      "position_policy": "mrope_2d",
+      "decode_policy": "causal_mixed_prefix",
+      "grid_policy": "merged_hw",
+      "image_begin_marker": "<|vision_start|>",
+      "image_end_marker": "<|vision_end|>"
     }
   },
   "kernels": {

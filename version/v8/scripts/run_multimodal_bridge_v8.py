@@ -9,6 +9,7 @@ import heapq
 import importlib.util
 import json
 import math
+import os
 import random
 import subprocess
 import sys
@@ -75,6 +76,53 @@ _CHAT_TEMPLATE_CHOICES = [
     "glm4",
     "llama",
 ]
+
+
+def _vision_bridge_contract(layout_cfg: dict[str, Any]) -> dict[str, Any]:
+    contract = layout_cfg.get("contract")
+    if isinstance(contract, dict):
+        bridge = contract.get("multimodal_bridge")
+        if isinstance(bridge, dict):
+            return bridge
+    bridge = layout_cfg.get("multimodal_bridge")
+    if isinstance(bridge, dict):
+        return bridge
+    return {}
+
+
+def _vision_prefix_position_policy(layout_cfg: dict[str, Any]) -> str:
+    """Return how visual prefix rows advance decoder text positions."""
+    bridge = _vision_bridge_contract(layout_cfg)
+    policy = str(bridge.get("position_policy") or "").strip().lower()
+    if policy:
+        return policy
+    model = str(layout_cfg.get("model", layout_cfg.get("arch", "")) or "").lower()
+    if model in {"qwen3_vl_vision", "qwen2_vl_vision"}:
+        return "mrope_2d"
+    return "linear"
+
+
+def _vision_prefix_decode_policy(layout_cfg: dict[str, Any]) -> str:
+    """Return how decoder should replay encoder-produced visual prefix rows."""
+    bridge = _vision_bridge_contract(layout_cfg)
+    policy = str(bridge.get("decode_policy") or "").strip().lower()
+    if policy:
+        return policy
+    model = str(layout_cfg.get("model", layout_cfg.get("arch", "")) or "").lower()
+    if model in {"gemma3_vision", "gemma4_vision"}:
+        return "non_causal_visual_chunk"
+    return "causal_mixed_prefix"
+
+
+def _local_prefix_text_pos_for_policy(
+    policy: str,
+    prefix_tokens: int,
+    grid_x: int,
+    grid_y: int,
+) -> int:
+    if policy == "mrope_2d" and grid_x > 0 and grid_y > 0:
+        return max(int(grid_x), int(grid_y))
+    return max(0, int(prefix_tokens))
 
 
 def _parse_activation_preference_overrides(values: list[str] | None) -> dict[str, str]:
@@ -826,6 +874,8 @@ def _runtime_fingerprint(
         "parity_dump": bool(parity_dump),
         "build_ir_script": _path_identity(SCRIPT_DIR / "build_ir_v8.py", hash_content=True),
         "codegen_script": _path_identity(SCRIPT_DIR / "codegen_v8.py", hash_content=True),
+        "codegen_prefill_script": _path_identity(SCRIPT_DIR / "codegen_prefill_v8.py", hash_content=True),
+        "bridge_script": _path_identity(SCRIPT_DIR / "run_multimodal_bridge_v8.py", hash_content=True),
     }
 
 
@@ -1139,6 +1189,24 @@ def _format_multimodal_prompt_segments(
     }
 
 
+def _segment_text_has_bos_prefix(text: str) -> bool:
+    stripped = str(text or "").lstrip()
+    return stripped.startswith(("<bos>", "<s>", "<|begin_of_text|>"))
+
+
+def _encode_prompt_segment(tokenizer: Any, text: str, *, add_bos: bool) -> list[int]:
+    if not text:
+        return []
+    try:
+        return [int(tok) for tok in tokenizer.encode(text, add_bos=bool(add_bos))]
+    except TypeError:
+        ids = [int(tok) for tok in tokenizer.encode(text)]
+        bos_id = int(getattr(tokenizer, "bos_id", -1) or -1)
+        if not add_bos and bos_id >= 0 and ids and int(ids[0]) == bos_id:
+            ids = ids[1:]
+        return ids
+
+
 def _ensure_engine_lib(openmp: bool = False) -> None:
     cmd = ["make"]
     if openmp:
@@ -1335,16 +1403,16 @@ def _resize_rgb8_bilinear(
         ]
 
     out: list[tuple[int, int, int]] = []
-    scale_x = float(src_width) / float(dst_width)
-    scale_y = float(src_height) / float(dst_height)
+    x_ratio = float(src_width - 1) / float(dst_width - 1) if dst_width > 1 else 0.0
+    y_ratio = float(src_height - 1) / float(dst_height - 1) if dst_height > 1 else 0.0
     for y in range(dst_height):
-        src_y = ((float(y) + 0.5) * scale_y) - 0.5
-        y0 = max(0, min(src_height - 1, int(math.floor(src_y))))
+        src_y = float(y) * y_ratio
+        y0 = max(0, min(src_height - 1, int(src_y)))
         y1 = max(0, min(src_height - 1, y0 + 1))
         wy = max(0.0, min(1.0, src_y - float(y0)))
         for x in range(dst_width):
-            src_x = ((float(x) + 0.5) * scale_x) - 0.5
-            x0 = max(0, min(src_width - 1, int(math.floor(src_x))))
+            src_x = float(x) * x_ratio
+            x0 = max(0, min(src_width - 1, int(src_x)))
             x1 = max(0, min(src_width - 1, x0 + 1))
             wx = max(0.0, min(1.0, src_x - float(x0)))
 
@@ -1365,7 +1433,7 @@ def _resize_rgb8_bilinear(
                 top = c00 * (1.0 - wx) + c10 * wx
                 bot = c01 * (1.0 - wx) + c11 * wx
                 value = top * (1.0 - wy) + bot * wy
-                return int(max(0, min(255, round(value))))
+                return int(max(0, min(255, value)))
 
             out.append(
                 (
@@ -1420,6 +1488,59 @@ def _qwen3vl_geometry_overrides(config: dict[str, Any], image_path: Path) -> dic
         "max_seq_len": int(vision_num_patches),
         "merged_grid_x": int(merged_grid_x),
         "merged_grid_y": int(merged_grid_y),
+        "image_source_width": int(source_width),
+        "image_source_height": int(source_height),
+    }
+
+
+def _gemma4_geometry_overrides(config: dict[str, Any], image_path: Path) -> dict[str, Any]:
+    source_width, source_height = _image_source_size(image_path)
+    patch_size = int(config.get("patch_size", 0) or 0)
+    merge_size = int(config.get("spatial_merge_size", 3) or 3)
+    if patch_size <= 0 or merge_size <= 0:
+        raise RuntimeError(f"invalid Gemma4V patch/merge config patch={patch_size} merge={merge_size}")
+
+    # llama.cpp's Gemma4V projector average-pools merge_size x merge_size patch
+    # tiles before the decoder prefix. For small images, it upsizes to satisfy
+    # the projector's minimum visual-token budget; keep the bridge geometry in
+    # the same pooled-token contract instead of exposing raw patch rows.
+    min_tokens = int(config.get("image_min_tokens", config.get("vision_min_tokens", 40)) or 40)
+    max_tokens = int(config.get("image_max_tokens", config.get("vision_max_tokens", 280)) or 280)
+    min_tokens = max(1, min_tokens)
+    max_tokens = max(min_tokens, max_tokens)
+
+    aspect = float(source_width) / max(1.0, float(source_height))
+    pooled_h = max(1, int(round(math.sqrt(float(min_tokens) / max(aspect, 1.0e-6)))))
+    pooled_w = max(1, int(math.ceil(float(min_tokens) / float(pooled_h))))
+    if pooled_w * pooled_h < min_tokens:
+        pooled_w += 1
+    while pooled_w * pooled_h > max_tokens and pooled_w > 1:
+        pooled_w -= 1
+    while pooled_w * pooled_h > max_tokens and pooled_h > 1:
+        pooled_h -= 1
+    if source_width == source_height:
+        side = max(1, int(math.ceil(math.sqrt(float(min_tokens)))))
+        pooled_w = pooled_h = side
+
+    vision_grid_w = pooled_w * merge_size
+    vision_grid_h = pooled_h * merge_size
+    image_width = vision_grid_w * patch_size
+    image_height = vision_grid_h * patch_size
+    vision_num_patches = vision_grid_w * vision_grid_h
+    vision_merged_tokens = pooled_w * pooled_h
+    return {
+        "image_width": int(image_width),
+        "image_height": int(image_height),
+        "vision_grid_w": int(vision_grid_w),
+        "vision_grid_h": int(vision_grid_h),
+        "vision_num_patches": int(vision_num_patches),
+        "vision_merged_tokens": int(vision_merged_tokens),
+        "spatial_merge_size": int(merge_size),
+        "spatial_merge_factor": int(merge_size * merge_size),
+        "context_length": int(vision_num_patches),
+        "max_seq_len": int(vision_num_patches),
+        "merged_grid_x": int(pooled_w),
+        "merged_grid_y": int(pooled_h),
         "image_source_width": int(source_width),
         "image_source_height": int(source_height),
     }
@@ -1583,12 +1704,18 @@ def _prepare_encoder_runtime(
 ) -> dict[str, Any]:
     manifest, manifest_path, bump_path, config_path = _run_converter(gguf_path, output_dir)
     config = dict(manifest.get("config", {}) or {})
-    if str(config.get("model", config.get("arch", ""))).lower() == "qwen3_vl_vision":
+    encoder_model = str(config.get("model", config.get("arch", ""))).lower()
+    if encoder_model == "qwen3_vl_vision":
         base_image = int(config.get("image_size", 0) or 0)
         config.setdefault("image_height", base_image)
         config.setdefault("image_width", base_image)
         if image_path is not None:
             config.update(_qwen3vl_geometry_overrides(config, image_path))
+    elif encoder_model == "gemma4_vision":
+        config.setdefault("spatial_merge_size", 3)
+        config.setdefault("spatial_merge_factor", int(config.get("spatial_merge_size", 3) or 3) ** 2)
+        if image_path is not None:
+            config.update(_gemma4_geometry_overrides(config, image_path))
     config = _apply_activation_preference_overrides(config, activation_overrides)
     manifest["config"] = config
     _json_write(manifest_path, manifest)
@@ -2016,6 +2143,8 @@ def _run_encoder(runtime: dict[str, Any], image_mode: str, image_path: Path | No
         merge_size = int(layout_cfg.get("spatial_merge_size", 1) or 1)
         merged_grid_x = int(layout_cfg.get("merged_grid_x", 0) or 0)
         merged_grid_y = int(layout_cfg.get("merged_grid_y", 0) or 0)
+        prefix_position_policy = _vision_prefix_position_policy(layout_cfg)
+        prefix_decode_policy = _vision_prefix_decode_policy(layout_cfg)
 
         if image_path is not None:
             image_report = _load_image_file(
@@ -2072,17 +2201,25 @@ def _run_encoder(runtime: dict[str, Any], image_mode: str, image_path: Path | No
         output_len = output_nbytes // ctypes.sizeof(ctypes.c_float)
         if output_ptr == 0 or output_len <= 0 or output_len % embed_dim != 0:
             raise RuntimeError(f"invalid encoder bridge output: output_len={output_len} embed_dim={embed_dim}")
+        prefix_tokens = output_len // embed_dim
+        prefix_grid_x = int(merged_grid_x or max(1, int(layout_cfg.get("vision_grid_w", 0) or 0) // max(1, merge_size)))
+        prefix_grid_y = int(merged_grid_y or max(1, int(layout_cfg.get("vision_grid_h", 0) or 0) // max(1, merge_size)))
+        local_prefix_text_pos = _local_prefix_text_pos_for_policy(
+            prefix_position_policy,
+            prefix_tokens,
+            prefix_grid_x,
+            prefix_grid_y,
+        )
         output_arr = (ctypes.c_float * output_len).from_address(output_ptr)
         return {
             "embed_dim": embed_dim,
-            "prefix_tokens": output_len // embed_dim,
+            "prefix_tokens": prefix_tokens,
             "embeddings": array("f", output_arr),
-            "prefix_grid_x": int(merged_grid_x or max(1, int(layout_cfg.get("vision_grid_w", 0) or 0) // max(1, merge_size))),
-            "prefix_grid_y": int(merged_grid_y or max(1, int(layout_cfg.get("vision_grid_h", 0) or 0) // max(1, merge_size))),
-            "prefix_text_pos": int(max(
-                int(merged_grid_x or max(1, int(layout_cfg.get("vision_grid_w", 0) or 0) // max(1, merge_size))),
-                int(merged_grid_y or max(1, int(layout_cfg.get("vision_grid_h", 0) or 0) // max(1, merge_size))),
-            )),
+            "prefix_grid_x": prefix_grid_x,
+            "prefix_grid_y": prefix_grid_y,
+            "prefix_text_pos": int(local_prefix_text_pos),
+            "prefix_position_policy": prefix_position_policy,
+            "prefix_decode_policy": prefix_decode_policy,
             "bridge_activation": bridge_name or str(bridge["fallback_buffer_name"]),
             "bridge_reason": str(bridge["reason"]),
             "image_source": str(image_report["image_source"]),
@@ -2108,6 +2245,7 @@ def _run_decoder(
     prefix_embed_dim: int | None = None,
     prefix_grid: tuple[int, int] | None = None,
     prefix_text_pos: int | None = None,
+    prefix_decode_policy: str = "causal_mixed_prefix",
     strict_parity: bool = False,
     tokenizer: GGUFTokenizer | Any | None = None,
     stop_token_ids: list[int] | None = None,
@@ -2139,6 +2277,17 @@ def _run_decoder(
         _log_progress("decoder: init done")
         if hasattr(lib, "ck_set_strict_parity"):
             lib.ck_set_strict_parity(1 if strict_parity else 0)
+        old_bridge_noncausal_env = os.environ.get("CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK")
+        old_bridge_visual_start_env = os.environ.get("CK_BRIDGE_VISUAL_START")
+        old_bridge_visual_tokens_env = os.environ.get("CK_BRIDGE_VISUAL_TOKENS")
+        if str(prefix_decode_policy or "").strip().lower() == "non_causal_visual_chunk":
+            os.environ["CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK"] = "1"
+            os.environ["CK_BRIDGE_VISUAL_START"] = str(len(tokens_before or []))
+            os.environ["CK_BRIDGE_VISUAL_TOKENS"] = str(int(prefix_tokens))
+        else:
+            os.environ.pop("CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK", None)
+            os.environ.pop("CK_BRIDGE_VISUAL_START", None)
+            os.environ.pop("CK_BRIDGE_VISUAL_TOKENS", None)
         vocab_size = int(lib.ck_model_get_vocab_size())
         if vocab_size <= 0:
             vocab_size = int(runtime["vocab_size"])
@@ -2167,7 +2316,7 @@ def _run_decoder(
             "decoder: forward_mixed start "
             f"prefix_tokens={prefix_tokens} prefix_dim={resolved_prefix_dim} "
             f"prompt_tokens_before={len(before_token_ids)} prompt_tokens_after={len(after_token_ids)} "
-            f"grid={prefix_grid}"
+            f"grid={prefix_grid} prefix_decode_policy={prefix_decode_policy}"
         )
         forward_t0 = time.perf_counter()
         if before_token_ids and hasattr(lib, "ck_model_forward_segments_grid_ex"):
@@ -2333,6 +2482,19 @@ def _run_decoder(
             "streamed_output": bool(stream_output and tokenizer is not None and max_tokens > 0),
         }
     finally:
+        if 'old_bridge_noncausal_env' in locals():
+            if old_bridge_noncausal_env is None:
+                os.environ.pop("CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK", None)
+            else:
+                os.environ["CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK"] = old_bridge_noncausal_env
+            if old_bridge_visual_start_env is None:
+                os.environ.pop("CK_BRIDGE_VISUAL_START", None)
+            else:
+                os.environ["CK_BRIDGE_VISUAL_START"] = old_bridge_visual_start_env
+            if old_bridge_visual_tokens_env is None:
+                os.environ.pop("CK_BRIDGE_VISUAL_TOKENS", None)
+            else:
+                os.environ["CK_BRIDGE_VISUAL_TOKENS"] = old_bridge_visual_tokens_env
         if hasattr(lib, "ck_set_strict_parity"):
             lib.ck_set_strict_parity(0)
         lib.ck_model_free()
@@ -2559,6 +2721,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--synthetic-prefix-tokens", type=int, default=0, help="Use zero prefix embeddings when a real encoder bridge is unavailable")
     ap.add_argument("--decoder-context-len", type=int, default=None, help="Override decoder context length; default is prompt+prefix budget with small headroom")
     ap.add_argument("--dump-prefix-f32", type=Path, default=None, help="Optional output path for resolved float32 prefix embeddings")
+    ap.add_argument("--dump-logits-f32", type=Path, default=None, help="Optional output path for first mixed-prefill logits as float32")
     ap.add_argument("--max-tokens", type=int, default=0, help="Generate up to N tokens after multimodal prefill; 0 reports first-token logits only")
     ap.add_argument("--report-top-k", "--top-k", dest="report_top_k", type=int, default=8, help="How many top logits to report in bridge_report.json")
     ap.add_argument("--print-json-report", action="store_true", help="Print the full bridge_report.json payload to stdout instead of concise operator output")
@@ -2599,8 +2762,22 @@ def main(argv: list[str] | None = None) -> int:
         thinking_mode=args.thinking_mode,
     )
     formatted_prompt = str(prompt_segments["formatted_prompt"])
-    prompt_prefix_token_ids = tokenizer.encode(str(prompt_segments["before_text"])) if str(prompt_segments["before_text"]) else []
-    token_ids = tokenizer.encode(str(prompt_segments["after_text"])) if str(prompt_segments["after_text"]) else []
+    prompt_before_text = str(prompt_segments["before_text"])
+    prompt_after_text = str(prompt_segments["after_text"])
+    before_add_bos = not _segment_text_has_bos_prefix(prompt_before_text)
+    prompt_prefix_token_ids = _encode_prompt_segment(
+        tokenizer,
+        prompt_before_text,
+        add_bos=bool(before_add_bos),
+    ) if prompt_before_text else []
+    after_add_bos = not bool(prompt_prefix_token_ids or prompt_segments["uses_image_chunks"])
+    if after_add_bos and _segment_text_has_bos_prefix(prompt_after_text):
+        after_add_bos = False
+    token_ids = _encode_prompt_segment(
+        tokenizer,
+        prompt_after_text,
+        add_bos=bool(after_add_bos),
+    ) if prompt_after_text else []
     total_text_prompt_tokens = len(prompt_prefix_token_ids) + len(token_ids)
     contract_name = str((chat_contract or {}).get("name") or "none")
     _log_progress(
@@ -2614,6 +2791,8 @@ def main(argv: list[str] | None = None) -> int:
     prefix_embeddings = array("f")
     prefix_grid: tuple[int, int] | None = None
     prefix_text_pos: int | None = None
+    prefix_position_policy = "linear" if chat_template_mode in {"gemma3", "gemma4"} else "mrope_2d"
+    prefix_decode_policy = "non_causal_visual_chunk" if chat_template_mode in {"gemma3", "gemma4"} else "causal_mixed_prefix"
     encoder_report: dict[str, Any] | None = None
     dim_mismatch: dict[str, int] | None = None
 
@@ -2672,9 +2851,19 @@ def main(argv: list[str] | None = None) -> int:
             grid_x = int(encoder_report.get("prefix_grid_x", 0) or 0)
             grid_y = int(encoder_report.get("prefix_grid_y", 0) or 0)
             if grid_x > 0 and grid_y > 0:
-                prefix_grid = (grid_x, grid_y)
+                policy = str(encoder_report.get("prefix_position_policy", prefix_position_policy) or prefix_position_policy)
+                prefix_position_policy = policy
+                prefix_decode_policy = str(encoder_report.get("prefix_decode_policy", prefix_decode_policy) or prefix_decode_policy)
+                if policy == "mrope_2d":
+                    prefix_grid = (grid_x, grid_y)
+                default_local_text_pos = _local_prefix_text_pos_for_policy(
+                    policy,
+                    prefix_tokens,
+                    grid_x,
+                    grid_y,
+                )
                 local_prefix_text_pos = int(
-                    encoder_report.get("prefix_text_pos", max(grid_x, grid_y)) or max(grid_x, grid_y)
+                    encoder_report.get("prefix_text_pos", default_local_text_pos) or default_local_text_pos
                 )
                 prefix_text_pos = len(prompt_prefix_token_ids) + local_prefix_text_pos
         else:
@@ -2691,8 +2880,15 @@ def main(argv: list[str] | None = None) -> int:
         prefix_embeddings = array("f", [0.0] * (prefix_tokens * prefix_embed_dim))
         side = int(math.isqrt(int(prefix_tokens)))
         if prefix_tokens > 0 and side > 0 and side * side == int(prefix_tokens):
-            prefix_grid = (side, side)
-            prefix_text_pos = len(prompt_prefix_token_ids) + side
+            if prefix_position_policy == "mrope_2d":
+                prefix_grid = (side, side)
+            local_prefix_text_pos = _local_prefix_text_pos_for_policy(
+                prefix_position_policy,
+                prefix_tokens,
+                side,
+                side,
+            )
+            prefix_text_pos = len(prompt_prefix_token_ids) + local_prefix_text_pos
 
     if prefix_source == "none":
         raise SystemExit(
@@ -2720,6 +2916,7 @@ def main(argv: list[str] | None = None) -> int:
         prefix_embed_dim=prefix_embed_dim,
         prefix_grid=prefix_grid,
         prefix_text_pos=prefix_text_pos,
+        prefix_decode_policy=prefix_decode_policy,
         tokenizer=tokenizer,
         stop_token_ids=list(stop_policy["stop_ids"]),
         max_tokens=max(0, int(args.max_tokens)),
@@ -2733,6 +2930,10 @@ def main(argv: list[str] | None = None) -> int:
         stream_output=bool(args.max_tokens) and not bool(args.no_stream_output),
         generation_progress_every=int(args.generation_progress_every),
     )
+    if args.dump_logits_f32 is not None:
+        args.dump_logits_f32.parent.mkdir(parents=True, exist_ok=True)
+        with args.dump_logits_f32.open("wb") as f:
+            decoder_report["logits"].tofile(f)
     _log_progress("report assembly start")
     top = _topk(decoder_report["logits"], max(1, args.report_top_k))
     top_tokens = [
@@ -2767,6 +2968,7 @@ def main(argv: list[str] | None = None) -> int:
         "prefix_grid_x": None if prefix_grid is None else int(prefix_grid[0]),
         "prefix_grid_y": None if prefix_grid is None else int(prefix_grid[1]),
         "prefix_text_pos": None if prefix_text_pos is None else int(prefix_text_pos),
+        "prefix_decode_policy": str(prefix_decode_policy),
         "prefix_dump_path": dumped_prefix_path,
         "total_prefill_tokens": len(prompt_prefix_token_ids) + prefix_tokens + len(token_ids),
         "decoder_runtime": {
@@ -2804,9 +3006,12 @@ def main(argv: list[str] | None = None) -> int:
             "prefix_grid_x": int(encoder_report.get("prefix_grid_x", 0) or 0),
             "prefix_grid_y": int(encoder_report.get("prefix_grid_y", 0) or 0),
             "prefix_text_pos": int(encoder_report.get("prefix_text_pos", 0) or 0),
+            "prefix_position_policy": str(encoder_report.get("prefix_position_policy", "") or ""),
+            "prefix_decode_policy": str(encoder_report.get("prefix_decode_policy", "") or ""),
             "activation_preference_overrides": dict(vision_activation_overrides),
         } if encoder_report is not None else None,
         "dim_mismatch": dim_mismatch,
+        "logits_dump_path": str(args.dump_logits_f32.resolve()) if args.dump_logits_f32 is not None else None,
         "top_logits": top_tokens,
         "generated_token_ids": [int(tok) for tok in decoder_report.get("generated_token_ids", [])],
         "generated_token_count": int(len(decoder_report.get("generated_token_ids", []) or [])),

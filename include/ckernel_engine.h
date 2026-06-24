@@ -188,6 +188,16 @@ void gemm_nt_f16(const float *A,
                  float *C,
                  int M, int N, int K);
 
+void gemm_nt_f16_clipped(const float *A,
+                         const void *B,
+                         const float *bias,
+                         const float *input_min,
+                         const float *input_max,
+                         const float *output_min,
+                         const float *output_max,
+                         float *C,
+                         int M, int N, int K);
+
 void gemv_bf16(float *y,
                const void *W,
                const float *x,
@@ -1288,6 +1298,19 @@ void attention_forward_full_head_major_gqa_flash_strided_gemma4(const float *q,
                                                                 int aligned_head_dim,
                                                                 int kv_stride_tokens);
 
+void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4(const float *q,
+                                                                              const float *k,
+                                                                              const float *v,
+                                                                              float *output,
+                                                                              int num_heads,
+                                                                              int num_kv_heads,
+                                                                              int num_tokens,
+                                                                              int head_dim,
+                                                                              int aligned_head_dim,
+                                                                              int kv_stride_tokens,
+                                                                              int visual_start,
+                                                                              int visual_tokens);
+
 // Regular exact full / bidirectional attention for encoder-style prefill.
 // This matches the non-flash CPU reference path more closely than the online
 // flash reduction used by the causal kernels.
@@ -1353,6 +1376,21 @@ void attention_forward_decode_head_major_gqa_flash_gemma4(const float *q_token,
                                                           int cache_capacity,
                                                           int head_dim,
                                                           int aligned_head_dim);
+
+// Chunk decode attention: q_chunk/out_chunk use compact head-major
+// [num_heads, q_tokens, aligned_head_dim] layout while K/V are stored in the
+// persistent cache [num_kv_heads, cache_capacity, aligned_head_dim].
+void attention_forward_chunk_head_major_gqa_flash_gemma4(const float *q_chunk,
+                                                         const float *k_cache,
+                                                         const float *v_cache,
+                                                         float *out_chunk,
+                                                         int num_heads,
+                                                         int num_kv_heads,
+                                                         int q_tokens,
+                                                         int kv_tokens,
+                                                         int cache_capacity,
+                                                         int head_dim,
+                                                         int aligned_head_dim);
 
 // Llama-parity decode flash attention variant that rounds K/V through FP16 before use.
 void attention_forward_decode_head_major_gqa_flash_f16kv(const float *q_token,
@@ -2678,6 +2716,17 @@ void mrope_qk_vision(float *q,
                      float beta_fast,
                      float beta_slow);
 
+void rope_forward_qk_gemma4v_vision_xy(float *q,
+                                       float *k,
+                                       int num_heads,
+                                       int num_kv_heads,
+                                       int num_tokens,
+                                       int head_dim,
+                                       int aligned_head_dim,
+                                       int grid_w,
+                                       int rotary_dim,
+                                       float freq_base);
+
 void mrope_qk_imrope_positions(float *q,
                                float *k,
                                const int32_t *positions,
@@ -2972,6 +3021,12 @@ void embedding_forward_bf16_fp32(const int32_t *token_ids,
 	                                      int embed_dim,
 	                                      int merge_size,
 	                                      int source_grid_size);
+	void position_embeddings_add_gemma4v_xy(float *x,
+	                                       const float *position_embd,
+	                                       int grid_h,
+	                                       int grid_w,
+	                                       int embed_dim,
+	                                       int source_grid_size);
 	void vision_position_ids_2d_merge(int32_t *positions,
 	                                 int grid_h,
 	                                 int grid_w,
@@ -3000,6 +3055,12 @@ void embedding_forward_bf16_fp32(const int32_t *token_ids,
 	                                    int grid_w,
 	                                    int embed_dim,
 	                                    int merge_size);
+	void spatial_average_pool_contiguous(const float *input,
+	                                     float *output,
+	                                     int grid_h,
+	                                     int grid_w,
+	                                     int embed_dim,
+	                                     int merge_size);
 	void feature_concat_2way(const float *main_input,
 	                         const float *branch_input,
 	                         float *output,
@@ -3007,6 +3068,13 @@ void embedding_forward_bf16_fp32(const int32_t *token_ids,
 	                         int main_dim,
 	                         int branch_slice_dim,
 	                         int num_branch_slices);
+void gemma4_vision_projector_prep_forward(const float *input,
+                                           float *output,
+                                           int tokens,
+                                           int dim,
+                                           float scale,
+                                           float eps);
+
 
 	void im2patch_bf16(const uint16_t *image,
 	                   uint16_t *patches,

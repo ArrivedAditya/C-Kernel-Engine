@@ -1,0 +1,69 @@
+{
+  "id": "rope_forward_qk_gemma4v_vision_xy",
+  "op": "rope",
+  "variant": "fp32_head_major_gemma4v_vision_xy_neox",
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "T",
+        "D"
+      ],
+      "desc": "Query tensor rotated in-place"
+    },
+    {
+      "name": "k",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "T",
+        "D"
+      ],
+      "desc": "Key tensor rotated in-place"
+    }
+  ],
+  "weights": [],
+  "outputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "T",
+        "D"
+      ]
+    },
+    {
+      "name": "k",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "T",
+        "D"
+      ]
+    }
+  ],
+  "dims": [
+    "H",
+    "KV",
+    "T",
+    "D",
+    "grid_w",
+    "rotary_dim"
+  ],
+  "impl": {
+    "function": "rope_forward_qk_gemma4v_vision_xy",
+    "c_declaration": "void rope_forward_qk_gemma4v_vision_xy(float *q, float *k, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int grid_w, int rotary_dim, float freq_base);",
+    "sources": [
+      "src/kernels/rope_kernels.c"
+    ]
+  },
+  "notes": "Gemma4V vision tower Q/K RoPE matching llama.cpp: x-position rotation on first half of the rotary span and y-position rotation on the second half, using NEOX split-half layout inside each half."
+}

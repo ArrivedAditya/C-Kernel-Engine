@@ -5,7 +5,7 @@
   "flags": {
     "patch_frontend": "patch_proj",
     "activation": "geglu",
-    "normalization": "layernorm",
+    "normalization": "rmsnorm",
     "projector": "single_linear"
   },
   "contract": {
@@ -16,14 +16,15 @@
       "projector": "gemma4v"
     },
     "attention_contract": {
-      "rope_layout": "none",
-      "position_encoding": "absolute_2d",
+      "rope_layout": "gemma4v_xy_neox",
+      "position_encoding": "absolute_2d_plus_qk_rope_xy",
       "kv_layout": "ephemeral_full_context",
       "attn_variant": "dense_bidirectional",
-      "causal": false
+      "causal": false,
+      "attention_scale": 1.0
     },
     "block_contract": {
-      "norm_type": "layernorm",
+      "norm_type": "rmsnorm",
       "mlp_formula": "gate_up -> geglu -> down",
       "activation": "geglu",
       "qkv_bias": false,
@@ -46,16 +47,37 @@
       "required_call_args": {
         "image_input": true
       }
+    },
+    "multimodal_bridge": {
+      "producer_activation": "vision_output",
+      "position_policy": "linear",
+      "decode_policy": "non_causal_visual_chunk",
+      "grid_policy": "pooled_hw",
+      "image_begin_marker": "<|image>",
+      "image_end_marker": "<image|>"
+    },
+    "chat_contract": {
+      "image_begin_marker": "<|image>",
+      "image_end_marker": "<image|>"
     }
   },
   "kernels": {
-    "patch_proj": "gemm_nt_fp32_exact",
-    "position_embeddings": "position_embeddings_add",
+    "patch_proj": "gemm_nt_f16",
+    "position_embeddings": "position_embeddings_add_gemma4v_xy",
     "layernorm": "layernorm_fp32_exact",
     "geglu": "geglu_forward_exact",
-    "spatial_merge": "spatial_merge_contiguous_tiled",
-    "projector_fc2": "gemm_nt_f16",
-    "attn_prefill": "attention_forward_full_head_major_gqa_ggml_strided"
+    "spatial_merge": "spatial_average_pool_contiguous",
+    "projector_prep": "gemma4_vision_projector_prep_forward",
+    "projector_fc2": "gemm_nt_f16_clipped",
+    "attn_prefill": "attention_forward_full_head_major_gqa_flash_strided_gemma4",
+    "rope_qk": "rope_forward_qk_gemma4v_vision_xy",
+    "rmsnorm": "rmsnorm_forward",
+    "q_proj": "gemm_nt_f16_clipped",
+    "k_proj": "gemm_nt_f16_clipped",
+    "v_proj": "gemm_nt_f16_clipped",
+    "out_proj": "gemm_nt_f16_clipped",
+    "mlp_gate_up": "gemm_nt_f16_clipped",
+    "mlp_down": "gemm_nt_f16_clipped"
   },
   "sequence": [
     "vision_encoder"
@@ -89,7 +111,7 @@
         "ops": [
           {
             "id": "attn_norm",
-            "op": "layernorm"
+            "op": "rmsnorm"
           },
           {
             "id": "q_proj",
@@ -104,8 +126,16 @@
             "op": "v_proj"
           },
           {
+            "id": "v_norm",
+            "op": "v_norm"
+          },
+          {
             "id": "qk_norm",
             "op": "qk_norm"
+          },
+          {
+            "id": "rope_qk",
+            "op": "rope_qk"
           },
           {
             "id": "attn",
@@ -125,7 +155,7 @@
           },
           {
             "id": "ffn_norm",
-            "op": "layernorm"
+            "op": "rmsnorm"
           },
           {
             "id": "mlp_gate_up",
@@ -156,6 +186,10 @@
           "params": {
             "merge_size_from_config": "spatial_merge_size"
           }
+        },
+        {
+          "id": "projector_prep",
+          "op": "projector_prep"
         },
         {
           "id": "projector",

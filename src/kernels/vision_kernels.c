@@ -155,6 +155,38 @@ void position_embeddings_add(float *x,
     }
 }
 
+void position_embeddings_add_gemma4v_xy(float *x,
+                                       const float *position_embd,
+                                       int grid_h,
+                                       int grid_w,
+                                       int embed_dim,
+                                       int source_grid_size)
+{
+    if (x == NULL || position_embd == NULL || grid_h <= 0 || grid_w <= 0 || embed_dim <= 0) {
+        return;
+    }
+    if (source_grid_size <= 0) {
+        source_grid_size = grid_w > grid_h ? grid_w : grid_h;
+    }
+
+    const size_t table_stride = (size_t) source_grid_size * (size_t) embed_dim;
+    const float *table_x = position_embd;
+    const float *table_y = position_embd + table_stride;
+
+    for (int y = 0; y < grid_h; ++y) {
+        const int yy = y < source_grid_size ? y : (source_grid_size - 1);
+        const float *row_y = table_y + (size_t) yy * (size_t) embed_dim;
+        for (int x_pos = 0; x_pos < grid_w; ++x_pos) {
+            const int xx = x_pos < source_grid_size ? x_pos : (source_grid_size - 1);
+            const float *row_x = table_x + (size_t) xx * (size_t) embed_dim;
+            float *dst = x + ((size_t) y * (size_t) grid_w + (size_t) x_pos) * (size_t) embed_dim;
+            for (int d = 0; d < embed_dim; ++d) {
+                dst[d] += row_x[d] + row_y[d];
+            }
+        }
+    }
+}
+
 void position_embeddings_add_tiled_2d(float *x,
                                       const float *position_embd,
                                       int grid_h,
@@ -349,6 +381,69 @@ void spatial_merge_contiguous_tiled(const float *input,
     const size_t merge_factor = (size_t) merge_size * (size_t) merge_size;
     const size_t merged_tokens = num_tokens / merge_factor;
     memcpy(output, input, merged_tokens * (size_t) embed_dim * merge_factor * sizeof(float));
+}
+
+void gemma4_vision_projector_prep_forward(const float *input,
+                                          float *output,
+                                          int tokens,
+                                          int dim,
+                                          float scale,
+                                          float eps)
+{
+    if (input == NULL || output == NULL || tokens <= 0 || dim <= 0) return;
+    if (eps <= 0.0f) eps = 1.0e-6f;
+    for (int t = 0; t < tokens; ++t) {
+        const float *src = input + (size_t)t * (size_t)dim;
+        float *dst = output + (size_t)t * (size_t)dim;
+        double ss = 0.0;
+        for (int i = 0; i < dim; ++i) {
+            const float v = src[i] * scale;
+            ss += (double)v * (double)v;
+        }
+        const float inv_rms = 1.0f / sqrtf((float)(ss / (double)dim) + eps);
+        for (int i = 0; i < dim; ++i) {
+            dst[i] = (src[i] * scale) * inv_rms;
+        }
+    }
+}
+
+void spatial_average_pool_contiguous(const float *input,
+                                     float *output,
+                                     int grid_h,
+                                     int grid_w,
+                                     int embed_dim,
+                                     int merge_size)
+{
+    if (input == NULL || output == NULL || grid_h <= 0 || grid_w <= 0 || embed_dim <= 0 || merge_size <= 0) {
+        return;
+    }
+
+    const int out_h = grid_h / merge_size;
+    const int out_w = grid_w / merge_size;
+    if (out_h <= 0 || out_w <= 0) {
+        return;
+    }
+
+    const float inv_area = 1.0f / (float)(merge_size * merge_size);
+    for (int oy = 0; oy < out_h; ++oy) {
+        for (int ox = 0; ox < out_w; ++ox) {
+            float *dst = output + ((size_t)oy * (size_t)out_w + (size_t)ox) * (size_t)embed_dim;
+            memset(dst, 0, (size_t)embed_dim * sizeof(float));
+            for (int dy = 0; dy < merge_size; ++dy) {
+                const int iy = oy * merge_size + dy;
+                for (int dx = 0; dx < merge_size; ++dx) {
+                    const int ix = ox * merge_size + dx;
+                    const float *src = input + ((size_t)iy * (size_t)grid_w + (size_t)ix) * (size_t)embed_dim;
+                    for (int c = 0; c < embed_dim; ++c) {
+                        dst[c] += src[c];
+                    }
+                }
+            }
+            for (int c = 0; c < embed_dim; ++c) {
+                dst[c] *= inv_area;
+            }
+        }
+    }
 }
 
 void rowwise_bias_add(float *x,

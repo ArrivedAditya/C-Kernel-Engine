@@ -446,6 +446,12 @@ MAKE_TARGETS = {
         "target": "test-v8-qwen3vl-e2e-smoke",
         "timeout_sec": 5400,
     },
+    "v8_gemma4_vision_smoke": {
+        "name": "v8 Gemma4 Vision Smoke",
+        "category": "inference",
+        "target": "test-v8-gemma4-vision-smoke",
+        "timeout_sec": 5400,
+    },
     "v8_decoder_matrix_quick": {
         "name": "v8 Decoder Matrix (quick)",
         "category": "inference",

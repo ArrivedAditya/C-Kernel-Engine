@@ -257,6 +257,106 @@ def _build_tiny_decoder_runtime(workdir: Path) -> tuple[Path, Path, Path]:
 
 
 class V8NativeBridgeHostTests(unittest.TestCase):
+    def test_vision_prefix_position_policy_keeps_qwen_mrope_but_gemma_linear(self) -> None:
+        self.assertEqual(
+            bridge_runner_v8._vision_prefix_position_policy({"model": "qwen3_vl_vision"}),
+            "mrope_2d",
+        )
+        self.assertEqual(
+            bridge_runner_v8._local_prefix_text_pos_for_policy("mrope_2d", 196, 14, 14),
+            14,
+        )
+        self.assertEqual(
+            bridge_runner_v8._vision_prefix_position_policy({"model": "gemma4_vision"}),
+            "linear",
+        )
+        self.assertEqual(
+            bridge_runner_v8._local_prefix_text_pos_for_policy("linear", 196, 14, 14),
+            196,
+        )
+
+    def test_vision_prefix_decode_policy_marks_gemma_visual_chunk_non_causal(self) -> None:
+        self.assertEqual(
+            bridge_runner_v8._vision_prefix_decode_policy({"model": "qwen3_vl_vision"}),
+            "causal_mixed_prefix",
+        )
+        self.assertEqual(
+            bridge_runner_v8._vision_prefix_decode_policy({"model": "gemma4_vision"}),
+            "non_causal_visual_chunk",
+        )
+        self.assertEqual(
+            bridge_runner_v8._vision_prefix_decode_policy({"model": "gemma3_vision"}),
+            "non_causal_visual_chunk",
+        )
+
+    def test_vision_prefix_policy_prefers_template_bridge_contract(self) -> None:
+        layout_cfg = {
+            "model": "qwen3_vl_vision",
+            "contract": {
+                "multimodal_bridge": {
+                    "position_policy": "linear",
+                    "decode_policy": "non_causal_visual_chunk",
+                }
+            },
+        }
+        self.assertEqual(bridge_runner_v8._vision_prefix_position_policy(layout_cfg), "linear")
+        self.assertEqual(
+            bridge_runner_v8._vision_prefix_decode_policy(layout_cfg),
+            "non_causal_visual_chunk",
+        )
+
+    def test_vision_templates_declare_multimodal_bridge_contracts(self) -> None:
+        gemma = build_ir_v8._load_builtin_template_doc("gemma4_vision")
+        qwen = build_ir_v8._load_builtin_template_doc("qwen3_vl_vision")
+        self.assertIsNotNone(gemma)
+        self.assertIsNotNone(qwen)
+
+        gemma_bridge = gemma["contract"]["multimodal_bridge"]
+        self.assertEqual(gemma_bridge["producer_activation"], "vision_output")
+        self.assertEqual(gemma_bridge["position_policy"], "linear")
+        self.assertEqual(gemma_bridge["decode_policy"], "non_causal_visual_chunk")
+        self.assertEqual(gemma_bridge["image_begin_marker"], "<|image>")
+        self.assertEqual(gemma_bridge["image_end_marker"], "<image|>")
+        self.assertNotIn("image_marker", gemma_bridge)
+
+        qwen_bridge = qwen["contract"]["multimodal_bridge"]
+        self.assertEqual(qwen_bridge["producer_activation"], "vision_output")
+        self.assertEqual(qwen_bridge["position_policy"], "mrope_2d")
+        self.assertEqual(qwen_bridge["decode_policy"], "causal_mixed_prefix")
+        self.assertEqual(qwen_bridge["grid_policy"], "merged_hw")
+
+    def test_gemma4_vision_patch_projection_uses_fp16_weight_kernel(self) -> None:
+        gemma = build_ir_v8._load_builtin_template_doc("gemma4_vision")
+        self.assertIsNotNone(gemma)
+        self.assertEqual(gemma["kernels"]["patch_proj"], "gemm_nt_f16")
+
+    def test_gemma4_vision_rope_theta_overrides_common_rope_default(self) -> None:
+        source = V8_BUILD_PATH.read_text(encoding="utf-8")
+        marker = 'ir_op.get("kernel", "") == "rope_forward_qk_gemma4v_vision_xy"'
+        self.assertIn(marker, source)
+        block = source[source.index(marker):source.index(marker) + 700]
+        self.assertIn('config.get("vision_rope_theta", 100.0)', block)
+        self.assertIn('params["freq_base"] = gemma4v_freq_base', block)
+        self.assertIn('params["rope_freq_base"] = gemma4v_freq_base', block)
+        self.assertNotIn('params.setdefault("freq_base"', block)
+
+    def test_gemma4_geometry_override_uses_pooled_projector_tokens(self) -> None:
+        with mock.patch.object(bridge_runner_v8, "_image_source_size", return_value=(72, 72)):
+            overrides = bridge_runner_v8._gemma4_geometry_overrides(
+                {"patch_size": 16, "spatial_merge_size": 3},
+                Path("tiny.ppm"),
+            )
+
+        self.assertEqual(overrides["image_width"], 336)
+        self.assertEqual(overrides["image_height"], 336)
+        self.assertEqual(overrides["vision_grid_w"], 21)
+        self.assertEqual(overrides["vision_grid_h"], 21)
+        self.assertEqual(overrides["vision_num_patches"], 441)
+        self.assertEqual(overrides["vision_merged_tokens"], 49)
+        self.assertEqual(overrides["merged_grid_x"], 7)
+        self.assertEqual(overrides["merged_grid_y"], 7)
+        self.assertEqual(overrides["spatial_merge_factor"], 9)
+
     def test_ck_run_v8_step_run_chat_uses_detected_default_threads(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_step_run_chat_threads_") as tmpdir:
             tmp = Path(tmpdir)
@@ -509,6 +609,51 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             segments["formatted_prompt"],
             "<|im_start|>user\n<|vision_start|><image_embeds><|vision_end|>Describe the image.<|im_end|>\n<|im_start|>assistant\n",
         )
+
+    def test_format_multimodal_prompt_segments_wraps_gemma4v_image_chunk(self) -> None:
+        template_doc = build_ir_v8._load_builtin_template_doc("gemma4")
+        self.assertIsNotNone(template_doc)
+        contract = template_doc["contract"]["chat_contract"]
+
+        segments = bridge_runner_v8._format_multimodal_prompt_segments(
+            "Explain this image.",
+            contract,
+            include_image=True,
+        )
+
+        self.assertTrue(segments["uses_image_chunks"])
+        self.assertEqual(segments["before_text"], "<bos><|turn>user\n<|image>")
+        self.assertEqual(segments["after_text"], "<image|>Explain this image.<turn|>\n<|turn>model\n")
+        self.assertEqual(
+            segments["formatted_prompt"],
+            "<bos><|turn>user\n<|image><image_embeds><image|>Explain this image.<turn|>\n<|turn>model\n",
+        )
+
+    def test_prompt_segment_encoding_does_not_add_bos_after_image(self) -> None:
+        class FakeTokenizer:
+            bos_id = 2
+
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, bool]] = []
+
+            def encode(self, text: str, add_bos: bool = True) -> list[int]:
+                self.calls.append((text, bool(add_bos)))
+                ids = [100 + len(self.calls)]
+                return ([self.bos_id] if add_bos else []) + ids
+
+        tokenizer = FakeTokenizer()
+        before = "<bos><|turn>user\n"
+        after = "Explain this image.<turn|>\n<|turn>model\n"
+        before_ids = bridge_runner_v8._encode_prompt_segment(
+            tokenizer,
+            before,
+            add_bos=not bridge_runner_v8._segment_text_has_bos_prefix(before),
+        )
+        after_ids = bridge_runner_v8._encode_prompt_segment(tokenizer, after, add_bos=False)
+
+        self.assertEqual(before_ids, [101])
+        self.assertEqual(after_ids, [102])
+        self.assertEqual(tokenizer.calls, [(before, False), (after, False)])
 
     def test_fallback_chat_contract_from_template_text_preserves_vision_markers(self) -> None:
         template = (
@@ -1201,7 +1346,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 [1, 2],
             )
 
-        self.assertEqual(used_paths, [ROOT / "decode_runtime.so"])
+        self.assertEqual(used_paths, [ROOT / "prefill_runtime.so"])
         self.assertEqual(result["runtime_mode"], "decode")
         self.assertEqual(result["vocab_size"], 4)
 
