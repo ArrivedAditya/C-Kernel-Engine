@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spec19 Textbook Routing Mixture  | C-Kernel-Engine</title>
+    <title>Prefill Performance Roadmap  | C-Kernel-Engine</title>
     <meta name="description" content="C-Kernel-Engine documentation for a CPU-native AI runtime, kernels, code generation, training, and inference on Linux systems.">
     <meta name="robots" content="index,follow">
-    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/spec19-textbook-routing-mixture.html">
-    <meta property="og:title" content="Spec19 Textbook Routing Mixture  | C-Kernel-Engine">
+    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/prefill-performance-roadmap.html">
+    <meta property="og:title" content="Prefill Performance Roadmap  | C-Kernel-Engine">
     <meta property="og:description" content="C-Kernel-Engine documentation for a CPU-native AI runtime, kernels, code generation, training, and inference on Linux systems.">
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/spec19-textbook-routing-mixture.html">
+    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/prefill-performance-roadmap.html">
     <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
     <style>
         :root {
@@ -940,419 +940,191 @@
     </header>
     <main>
 
-<style>
-.spec19-callout {
-    margin: 1.2rem 0;
-    padding: 1rem 1.1rem;
-    border-radius: 12px;
-    background: linear-gradient(145deg, rgba(255,180,0,0.10), rgba(7,173,248,0.07));
-    border: 1px solid rgba(255,180,0,0.22);
-}
+<div class="container">
+  <h1>Prefill Performance Roadmap</h1>
+  <p class="lead">
+    The current CK prefill path is correct and auditable, but the Q4_K_M gap against llama.cpp is now mostly a layout and microkernel problem.
+  </p>
 
-.spec19-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 1rem;
-    margin: 1.4rem 0;
-}
+  <div class="alert alert-info">
+    <strong>Current signal:</strong>
+    Qwen3.5 0.8B Q4_K_M decode is close enough to be useful for model bring-up. The first safe perf lane showed
+    canonical CK prefill around <code>31 tok/s</code> while llama.cpp was around <code>78 tok/s</code> on the local i7.
+    After x8 testing, the dispatch matrix showed x8 winning for short/medium prefill shapes and losing for the
+    longer <code>M=128,N=896,K=4864</code> compact-down shape. Treat the exact numbers as host-local; the durable
+    signal is that layout and shape-gated dispatch, not math, are the bottlenecks.
+  </div>
 
-.spec19-card {
-    border-radius: 12px;
-    padding: 1rem 1.1rem;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.08);
-}
+  <h2>Why Prefill Is Different</h2>
+  <p>
+    Decode is mostly GEMV: one activation vector times many weight rows. Prefill is GEMM: many token rows times many output rows.
+    A fast decode kernel can still leave prefill slow because prefill needs to reuse both activation rows and weight blocks across a two-dimensional tile.
+  </p>
+  <p>
+    The key mistake is to treat prefill as many independent GEMV calls. That preserves correctness, but it reloads metadata and activation blocks too often.
+    llama.cpp's faster path uses repacked/interleaved layouts so the hot loop computes a block of rows and columns together.
+  </p>
 
-.spec19-card h3 {
-    margin-top: 0;
-}
-</style>
-
-<h1>Spec19 Textbook Routing Mixture</h1>
-
-<p>
-    <code>spec19</code> is the recommended next branch after the bounded-intent experiments on top of the frozen
-    <code>spec16</code> scene-bundle winner. The point is not to keep churning near-identical routing rungs.
-    The point is to change the data philosophy in a controlled way: explicit named mixture buckets, denser
-    textbook-style routing coverage, cleaner minimal pairs, and capacity as a separate fallback lever instead of
-    a hidden curriculum tweak.
-</p>
-
-<div class="spec19-callout">
-    <strong>Current branch decision:</strong> <code>spec17</code> was a useful diagnostic bridge and <code>spec18</code>
-    proved the routing-first launcher path end to end, but <code>spec18 r1</code> still ended with zero held-out exactness.
-    That blocks <code>spec18 r2</code> on the same recipe. The next public recommendation is a new branch:
-    <code>spec19</code>.
-</div>
-
-<h2>Why Spec19 Exists</h2>
-
-<div class="spec19-grid">
-    <div class="spec19-card">
-        <h3>Spec17 Fixed The Question</h3>
-        <p>
-            <code>spec17</code> established the real problem: bounded intent is a planning task, not just a syntax task.
-            It also forced better audits and cleaner contrast coverage.
-        </p>
-    </div>
-    <div class="spec19-card">
-        <h3>Spec18 Fixed The Launch Shape</h3>
-        <p>
-            <code>spec18</code> kept the same compiler, renderer, tokenizer, and shared <code>[bundle]</code> contract while
-            testing a routing-first curriculum. The run path was correct and reproducible.
-        </p>
-    </div>
-    <div class="spec19-card">
-        <h3>Held-Out Routing Still Failed</h3>
-        <p>
-            <code>spec18 r1</code> ended with overall exactness around <code>4.8%</code>, but visible and hidden held-out exactness
-            stayed at <code>0%</code>. That means the remaining problem is not a missing guardrail. It is still a data and capacity question.
-        </p>
-    </div>
-</div>
-
-<h2>What To Copy From The Papers And The NVIDIA Dataset Lesson</h2>
-
-<div class="spec19-grid">
-    <div class="spec19-card">
-        <h3>Named Mixtures, Not One Blob</h3>
-        <p>
-            The useful lesson from NVIDIA's large public pretraining collections is organizational: split the corpus into named
-            components with explicit provenance and mixture control. For CK-native training, that means versioned bucket ids,
-            row counts, token counts, and stage weights.
-        </p>
-    </div>
-    <div class="spec19-card">
-        <h3>phi-1: Increase Structural Density</h3>
-        <p>
-            Prefer clean, compiler-validated, textbook-style teaching rows over more noisy coverage. The next branch should spend
-            more mass on direct routing supervision and minimal pairs than on broad scaffold language.
-        </p>
-    </div>
-    <div class="spec19-card">
-        <h3>Grokking: Stop Same-Shape Churn</h3>
-        <p>
-            If loss moves and held-out exactness stays flat, that is a block on repeating the same training style. Another
-            <code>spec18</code> rung with the same recipe would likely add cost without adding clarity.
-        </p>
-    </div>
-    <div class="spec19-card">
-        <h3>HumanEval / Codex: Measure Correctness</h3>
-        <p>
-            Renderable-but-wrong rows are semantic failures, not wins. Promotion should still depend on held-out exactness.
-            Sidecar best-of-<code>k</code> analysis can help diagnose whether the model knows more than greedy decode shows.
-        </p>
-    </div>
-    <div class="spec19-card">
-        <h3>CodeT5: Score Fields, Not Just Strings</h3>
-        <p>
-            Bundle tags behave like code identifiers with constrained semantics. That means evaluation should separate syntax from
-            family, form, style, and topology errors instead of collapsing everything into one exact-match bucket.
-        </p>
-    </div>
-    <div class="spec19-card">
-        <h3>AlphaCode: Generate Then Filter</h3>
-        <p>
-            The compiler is a structural oracle. Best-of-<code>k</code> decode plus compiler filtering is a valid sidecar metric
-            and practical inference path when syntax is close but greedy decode is brittle.
-        </p>
-    </div>
-    <div class="spec19-card">
-        <h3>Nemotron: Curate The Mixture Explicitly</h3>
-        <p>
-            The dataset lesson is operational, not mystical: keep named buckets, provenance, dedupe discipline, and measured
-            mix ratios. The run artifact directory should record those manifests so the branch can be replayed or shipped.
-        </p>
-    </div>
-</div>
-
-<h2>Hard Boundary</h2>
-
-<div class="spec19-grid">
-    <div class="spec19-card">
-        <h3>Keep Fixed</h3>
-        <ul>
-            <li>Seed from frozen <code>spec16 r9</code>.</li>
-            <li>Freeze the tokenizer unless a tokenizer branch is the explicit axis.</li>
-            <li>Keep the same shared <code>[bundle] ... [/bundle]</code> output contract.</li>
-            <li>Keep the same deterministic renderer and compiler boundary.</li>
-        </ul>
-    </div>
-    <div class="spec19-card">
-        <h3>Change One Main Thing</h3>
-        <ul>
-            <li>Change the dataset philosophy, not the whole stack at once.</li>
-            <li>Move to named mixture buckets.</li>
-            <li>Increase direct routebook density and minimal-pair coverage.</li>
-            <li>Separate any later capacity step into its own branch decision.</li>
-        </ul>
-    </div>
-    <div class="spec19-card">
-        <h3>Do Not Regress Into</h3>
-        <ul>
-            <li>warning-language repair rows</li>
-            <li>raw SVG targets</li>
-            <li>prompt-contamination teaching</li>
-            <li>blurry runs that change curriculum and capacity together</li>
-        </ul>
-    </div>
-</div>
-
-<h2>Named Mixture Buckets</h2>
-
-<table class="axis-table">
+  <h2>Optimization Ladder</h2>
+  <table>
     <thead>
-        <tr>
-            <th>Bucket</th>
-            <th>Purpose</th>
-            <th>Typical contents</th>
-        </tr>
+      <tr>
+        <th>Step</th>
+        <th>What Changed</th>
+        <th>Why It Matters</th>
+        <th>Status</th>
+      </tr>
     </thead>
     <tbody>
-        <tr>
-            <td><code>Anchor Replay</code></td>
-            <td>Preserve closure and exact bundle syntax.</td>
-            <td>Explicit bundle anchors, clean-stop anchors, permuted explicit anchors.</td>
-        </tr>
-        <tr>
-            <td><code>Routebook Direct</code></td>
-            <td>Teach <code>topic + goal + audience -&gt; family + form</code>.</td>
-            <td>Short direct prompts with deterministic lexical templates and canonical targets.</td>
-        </tr>
-        <tr>
-            <td><code>Form Minimal Pairs</code></td>
-            <td>Separate sibling forms inside one family.</td>
-            <td>Near-neighbor prompts with one controlled form-changing difference.</td>
-        </tr>
-        <tr>
-            <td><code>Family Minimal Pairs</code></td>
-            <td>Separate similar intents across different families.</td>
-            <td>Cross-family contrasts with explicit distractor structure when needed.</td>
-        </tr>
-        <tr>
-            <td><code>Routebook Paraphrase</code></td>
-            <td>Strengthen prompt-surface robustness after the direct route is learned.</td>
-            <td>Reordered tags, plain-language paraphrases, and small lexical alternations.</td>
-        </tr>
-        <tr>
-            <td><code>Style/Topology Bridge</code></td>
-            <td>Widen to style and count inference only after routing rows exist in mass.</td>
-            <td>Bounded <code>emphasis</code>, <code>constraint</code>, and <code>content_pack</code> hints.</td>
-        </tr>
-        <tr>
-            <td><code>Repair Hygiene</code></td>
-            <td>Keep narrow closure cleanup separate from semantic teaching.</td>
-            <td>Stop-boundary and singleton cleanup only, no broad warning prose.</td>
-        </tr>
-        <tr>
-            <td><code>Holdout / Hidden</code></td>
-            <td>Evaluation only.</td>
-            <td>Visible routing holdouts, hidden paraphrase, hidden recombination.</td>
-        </tr>
+      <tr>
+        <td>Q8 activation contract</td>
+        <td>Quantize prefill activations to <code>Q8_K</code> before mixed-quant GEMM.</td>
+        <td>Stops repeatedly feeding FP32 into quantized weights and aligns CK with llama-style quantized dot products.</td>
+        <td>Active</td>
+      </tr>
+      <tr>
+        <td>Persistent threadpool</td>
+        <td>Use CK's pthread pool instead of creating OpenMP regions around every kernel.</td>
+        <td>Reduces launch overhead and gives the runtime explicit control over active threads, row splitting, and phase-specific dispatch.</td>
+        <td>Active</td>
+      </tr>
+      <tr>
+        <td>Shape-gated dispatch</td>
+        <td>Choose serial, row-split, N-split, or 2D dispatch based on <code>M,N,K</code> and thread count.</td>
+        <td>Small shapes can regress when parallel overhead or activation rereads dominate; wide shapes need more jobs to fill cores.</td>
+        <td>Active for Q6; experimental for Q4</td>
+      </tr>
+      <tr>
+        <td>Packed Q4_K metadata</td>
+        <td>Pre-unpack Q4_K scales/mins into a cached packed-meta layout.</td>
+        <td>Moves repeated metadata decoding out of the hottest dot-product path.</td>
+        <td>Active, but not enough</td>
+      </tr>
+      <tr>
+        <td>Q4_K 8x8 repacked GEMM</td>
+        <td>Pack eight Q4_K output rows together and compute an output-row tile for each Q8_K token row.</td>
+        <td>This captures the first llama.cpp-style layout win: each Q8 activation load is reused across multiple output lanes instead of one row at a time.</td>
+        <td>Shape-gated default for measured short/medium Q4_K prefill shapes</td>
+      </tr>
+      <tr>
+        <td>Token-tile x output-tile GEMM</td>
+        <td>Add an opt-in <code>x8mt</code> lane that schedules small token tiles against eight-row output tiles.</td>
+        <td>This reuses the same packed Q4_K group across multiple Q8_K token rows and is the first step toward a true register-blocked GEMM microkernel.</td>
+        <td>Experimental benchmark/runtime lane</td>
+      </tr>
+      <tr>
+        <td>Fused MLP kernels</td>
+        <td>Fuse norm/projection/SwiGLU/down or similar sequences after the base GEMM is competitive.</td>
+        <td>Useful, but premature while the Q4_K prefill GEMM itself is still the dominant gap.</td>
+        <td>Later</td>
+      </tr>
     </tbody>
-</table>
+  </table>
 
-<h2>Stage Mix</h2>
+  <h2>The Q4_K Repack Target</h2>
+  <p>
+    The current CK packed-meta path is shaped like this:
+  </p>
+  <pre><code>for each token m:
+  for each output row n:
+    for each Q4_K block b:
+      dot_one_q4k_block_with_one_q8k_block()</code></pre>
 
-<h3>Stage A: Route Lock</h3>
+  <p>
+    That is simple and auditable, but it is still scalar at the tile level. The next target is shaped more like this:
+  </p>
+  <pre><code>for token tile Mx4 or Mx8:
+  pack Q8_K activations into an interleaved tile
+  for output tile Nx8:
+    read one interleaved Q4_K weight tile
+    accumulate an MxN output tile in registers
+    apply Q4_K scale/min metadata once per tile lane</code></pre>
 
-<table class="axis-table">
-    <thead>
-        <tr>
-            <th>Surface family</th>
-            <th>Weight</th>
-            <th>Reason</th>
-        </tr>
-    </thead>
-    <tbody>
-        <tr>
-            <td>anchors</td>
-            <td><code>20%</code></td>
-            <td>Keep the solved shared bundle contract alive.</td>
-        </tr>
-        <tr>
-            <td><code>routebook_direct</code></td>
-            <td><code>25%</code></td>
-            <td>Make direct routing the center of mass.</td>
-        </tr>
-        <tr>
-            <td><code>form_minimal_pairs</code></td>
-            <td><code>20%</code></td>
-            <td>Force sibling-form discrimination.</td>
-        </tr>
-        <tr>
-            <td><code>family_minimal_pairs</code></td>
-            <td><code>15%</code></td>
-            <td>Force cross-family discrimination.</td>
-        </tr>
-        <tr>
-            <td><code>routebook_paraphrase</code></td>
-            <td><code>10%</code></td>
-            <td>Improve robustness without widening semantics too early.</td>
-        </tr>
-        <tr>
-            <td><code>style_topology_bridge</code> + hygiene</td>
-            <td><code>10%</code></td>
-            <td>Keep widening pressure present, but subordinate to routing.</td>
-        </tr>
-    </tbody>
-</table>
+  <p>
+    This mirrors the idea behind llama.cpp's <code>ggml_gemm_q4_K_8x8_q8_K</code>: the math is the same, but the memory layout changes so the CPU hot loop does less bookkeeping per useful multiply.
+    The important part is not copying llama.cpp blindly; the important part is matching the dataflow: interleave weights, interleave activations, compute a small output tile, and keep metadata close to the SIMD lanes.
+  </p>
+  <p>
+    CK keeps the canonical <code>for token -> for output row -> dot()</code> kernel as the reliable fallback.
+    The <code>packed-x8</code> lane groups eight Q4_K output rows per K block and uses a SIMD tile accumulator that loads each Q8 activation chunk once, then reuses it across the active output lanes.
+    It is now the default for measured short/medium Qwen/Nemotron-family Q4_K prefill shapes, with
+    <code>CK_DISABLE_Q4K_PACKED_META_X8_PREFILL=1</code> as the escape hatch and
+    <code>CK_FORCE_Q4K_PACKED_META_X8_PREFILL=1</code> for new hardware sweeps.
+  </p>
+  <p>
+    The current x8 shape is still closer to:
+  </p>
+  <pre><code>for token:
+  for output_row_group_of_8:
+    compute 8 output rows for one Q8_K token row</code></pre>
+  <p>
+    The stronger target remains:
+  </p>
+  <pre><code>for token_tile:
+  for output_tile:
+    compute multiple tokens x multiple output rows together</code></pre>
 
-<h3>Stage B: Controlled Widening</h3>
+  <p>
+    The current experimental <code>x8mt</code> path takes the first step:
+  </p>
+  <pre><code>CK_ENABLE_Q4K_PACKED_META_X8MT_PREFILL=1 \
+CK_Q4K_PACKED_META_X8MT_TILE_M=2 \
+make profile-v8-prefill-perf-stat</code></pre>
 
-<table class="axis-table">
-    <thead>
-        <tr>
-            <th>Surface family</th>
-            <th>Weight</th>
-            <th>Reason</th>
-        </tr>
-    </thead>
-    <tbody>
-        <tr>
-            <td>anchors</td>
-            <td><code>20%</code></td>
-            <td>Preserve non-regression on the solved contract.</td>
-        </tr>
-        <tr>
-            <td>direct + minimal-pair routing</td>
-            <td><code>45%</code></td>
-            <td>Routing stays dominant even while the target space widens.</td>
-        </tr>
-        <tr>
-            <td><code>routebook_paraphrase</code></td>
-            <td><code>10%</code></td>
-            <td>Keep surface robustness under the same semantic contract.</td>
-        </tr>
-        <tr>
-            <td><code>style_topology_bridge</code></td>
-            <td><code>20%</code></td>
-            <td>Add style and topology only after stronger routing coverage exists.</td>
-        </tr>
-        <tr>
-            <td>recombination + hygiene</td>
-            <td><code>5%</code></td>
-            <td>Probe whether routing survives slightly broader combinations.</td>
-        </tr>
-    </tbody>
-</table>
+  <p>
+    In the local dispatch matrix, <code>x8mt</code> with <code>tile_m=2</code> edged out plain x8 on the measured
+    Q4_K shapes, including the longer <code>M=128,N=896,K=4864</code> compact-down shape. It remains opt-in because
+    end-to-end Qwen2 timings on the laptop were noisy and not yet a stable promotion signal. The next real kernel
+    improvement is to keep the tile accumulators in registers across the token tile instead of using x8mt mostly as
+    a scheduling/data-reuse step.
+  </p>
 
-<h2>Recommended Run Sequence</h2>
+  <h2>Why 2D Scheduling Was Not Enough</h2>
+  <p>
+    CK now has an opt-in Q4_K packed-meta 2D scheduler:
+  </p>
+  <pre><code>CK_ENABLE_Q4K_PACKED_META_2D_PREFILL=1 \
+CK_FORCE_Q4K_PACKED_META_2D_PREFILL=1 \
+CK_Q4K_PACKED_META_TILE_M=8 \
+CK_Q4K_PACKED_META_TILE_N=512 \
+CK_V8_PREFILL_PERF_ENGINE=ck \
+make profile-v8-prefill-perf-stat</code></pre>
 
-<div class="spec19-grid">
-    <div class="spec19-card">
-        <h3>Spec19 R1 Canary</h3>
-        <p>
-            Keep the current architecture first. The question is whether the routebook mixture changes held-out exactness
-            without introducing new stack risk.
-        </p>
-        <ul>
-            <li>same frozen tokenizer</li>
-            <li>same <code>spec16 r9</code> seed</li>
-            <li>same shared bundle contract</li>
-            <li>full-pass canary only</li>
-        </ul>
-    </div>
-    <div class="spec19-card">
-        <h3>Gate For Promotion</h3>
-        <p>
-            Require nonzero exactness on both visible held-out splits and at least one hidden split. Renderability alone
-            is not enough.
-        </p>
-    </div>
-    <div class="spec19-card">
-        <h3>If It Is Still Zero</h3>
-        <p>
-            Treat that as a clean signal that the current model size may be the limit. Run a separate capacity canary on
-            the same <code>spec19</code> dataset recipe instead of silently changing data and model size together.
-        </p>
-    </div>
-</div>
+  <p>
+    Local tests showed only a small and noisy improvement. That is expected: 2D scheduling creates better work distribution, but the hot loop still computes one output value at a time.
+    The x8 layout fixed the more important part first: reuse one activation chunk across multiple output lanes.
+    The next step is a true token-tile/output-tile microkernel.
+  </p>
 
-<h2>How To Read The Spec19 Rungs</h2>
+  <h2>Measurement Contract</h2>
+  <p>
+    Use the safe perf lane for routine iteration:
+  </p>
+  <pre><code>make profile-v8-prefill-perf-stat</code></pre>
 
-<p>
-    By 2026-04-02, <code>spec19</code> is no longer a reset line. It is a learnable rung line. The main question is no longer
-    “does this branch work at all?” but “which curriculum regions are still under-covered?”
-</p>
+  <p>
+    The report records prefill/decode tok/s, milliseconds, cycles, instructions, IPC, cache misses, cache miss rate, and context switches.
+    This is the default lane because VTune/Advisor deep collection can load kernel drivers that destabilized the local Linux profiling host.
+  </p>
 
-<table class="axis-table">
-    <thead>
-        <tr>
-            <th>Rung</th>
-            <th>What changed</th>
-            <th>What it taught</th>
-        </tr>
-    </thead>
-    <tbody>
-        <tr>
-            <td><code>r2</code></td>
-            <td>Expanded corpus, stronger compiler smoke gating, longer real training budget.</td>
-            <td>First real bounded-intent success. Held-out exactness crossed above zero on every split, proving the branch is learnable.</td>
-        </tr>
-        <tr>
-            <td><code>r3b</code></td>
-            <td>Coherent replay union of prior train corpora with clean eval collision filtering.</td>
-            <td>Replay-heavy cumulative data improved aggregate exactness, but visible <code>test</code> regressed. That showed replay helps, but the coverage was still unbalanced.</td>
-        </tr>
-        <tr>
-            <td><code>r3c</code></td>
-            <td><code>r3b</code> replay base plus broader neighbor coverage around persistent miss classes.</td>
-            <td>Visible <code>test</code> recovered to <code>10/10</code> and the <code>family</code> miss class disappeared entirely. Aggregate exactness did not rise because the remaining pressure moved into <code>style</code> and <code>syntax</code>.</td>
-        </tr>
-    </tbody>
-</table>
+  <h2>Promotion Rule</h2>
+  <ol>
+    <li>Keep every new layout behind a shape gate and an escape hatch.</li>
+    <li>Prove parity against canonical CK for synthetic Q4_K/Q8_K blocks.</li>
+    <li>Benchmark micro-shapes: Qwen3.5 gate/up, down, qkv/out, compact MLP, and wider MLP shapes.</li>
+    <li>Benchmark end-to-end Qwen3.5 v8 prefill against llama.cpp with the same cached GGUF.</li>
+    <li>Promote only the shapes where the sweep wins; keep canonical dispatch as the fallback.</li>
+  </ol>
 
-<div class="spec19-callout">
-    <strong>Interpretation:</strong> this is now a curriculum-coverage problem, not another branch-reset problem. A rung should teach
-    which regions are under-supported, not which exact prompts to memorize. The next additions should widen coverage around the
-    surviving miss classes while keeping strong replay from the winning corpus.
-</div>
-
-<h3>Current Error-Class Shift</h3>
-
-<table class="axis-table">
-    <thead>
-        <tr>
-            <th>Rung</th>
-            <th>Failure mix</th>
-        </tr>
-    </thead>
-    <tbody>
-        <tr>
-            <td><code>r3b</code></td>
-            <td><code>family 1, form 3, style 2, syntax 2</code></td>
-        </tr>
-        <tr>
-            <td><code>r3c</code></td>
-            <td><code>family 0, form 2, style 3, syntax 3</code></td>
-        </tr>
-    </tbody>
-</table>
-
-<p>
-    That is a deterministic signal. The branch is progressing in meaningful areas and regressing in a few structured areas. The
-    right response is broader balanced curriculum support around those unstable regions, not narrow prompt patches and not a new spec.
-</p>
-
-<h2>Related Pages</h2>
-
-<div class="spec19-grid">
-    <div class="spec19-card">
-        <h3>Spec Training Method</h3>
-        <p>The broader method for one-axis runs, deterministic repair boundaries, and branch decisions.</p>
-        <p><a href="spec-training-method.html">Open spec-training-method.html</a></p>
-    </div>
-    <div class="spec19-card">
-        <h3>Training Curriculum</h3>
-        <p>The long-range CK-native roadmap that places <code>spec19</code> inside the wider version ladder.</p>
-        <p><a href="training-curriculum.html">Open training-curriculum.html</a></p>
-    </div>
-    <div class="spec19-card">
-        <h3>Spec17 Curriculum Blueprint</h3>
-        <p>The bounded-intent predecessor that made the problem visible and established the family structure.</p>
-        <p><a href="spec17-curriculum-blueprint.html">Open spec17-curriculum-blueprint.html</a></p>
-    </div>
+  <h2>Related Files</h2>
+  <ul>
+    <li><code>src/kernels/gemm_kernels_q4k_q8k_vnni.c</code> - Q4_K x Q8_K packed-meta kernels.</li>
+    <li><code>version/v8/src/ck_parallel_prefill_v8.c</code> - v8 prefill dispatch policy.</li>
+    <li><code>scripts/perf_stat_v8_prefill_compare.py</code> - safe CK-vs-llama perf counter lane.</li>
+    <li><code>benchmarks/compare_ck_llama_v8.py</code> - standardized v8 model-family comparison.</li>
+    <li><a href="q6-prefill-roofline.html">Q6_K Prefill Roofline Notes</a> - shape-gating precedent for Q6_K.</li>
+    <li><a href="profiling.html">Profiling Guide</a> - safe profiling commands and VTune/Advisor warning.</li>
+  </ul>
 </div>
     </main>
 
