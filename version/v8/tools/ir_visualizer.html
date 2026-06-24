@@ -7247,6 +7247,123 @@ python3 trace_divergence.py --model "$MODEL_DIR" --token 25 --threads 1 --contex
             return (payload && typeof payload === 'object') ? payload : null;
         }
 
+        function getVisionArtifactsPayload() {
+            const files = getEmbeddedFiles();
+            const payload = files && files.vision_artifacts;
+            return (payload && typeof payload === 'object') ? payload : null;
+        }
+
+        function renderVisionPatchGridSvg(vision) {
+            const grid = (vision && vision.patch_grid && typeof vision.patch_grid === 'object') ? vision.patch_grid : {};
+            const gx = Math.max(0, Number(grid.grid_x || 0));
+            const gy = Math.max(0, Number(grid.grid_y || 0));
+            if (!Number.isFinite(gx) || !Number.isFinite(gy) || gx <= 0 || gy <= 0) {
+                return '<div style="color:var(--text-muted);">No patch grid coordinates recorded.</div>';
+            }
+            const cols = Math.min(16, gx);
+            const rows = Math.min(16, gy);
+            const cell = 14;
+            const gap = 2;
+            const width = cols * cell + Math.max(0, cols - 1) * gap;
+            const height = rows * cell + Math.max(0, rows - 1) * gap;
+            const cells = [];
+            for (let y = 0; y < rows; y++) {
+                for (let x = 0; x < cols; x++) {
+                    const alpha = 0.24 + 0.46 * ((x + y) / Math.max(1, cols + rows - 2));
+                    cells.push(`<rect x="${x * (cell + gap)}" y="${y * (cell + gap)}" width="${cell}" height="${cell}" rx="3" fill="rgba(7,173,248,${alpha.toFixed(3)})" stroke="rgba(86,199,245,0.48)"/>`);
+                }
+            }
+            const truncated = gx > cols || gy > rows
+                ? `<div style="margin-top:0.35rem;color:var(--text-muted);font-size:0.76rem;">Preview shows ${cols}×${rows} of ${gx}×${gy} grid.</div>`
+                : '';
+            return `
+                <svg viewBox="0 0 ${width} ${height}" width="100%" style="max-width:${Math.max(width, 180)}px;background:rgba(7,173,248,0.05);border:1px solid var(--grey);border-radius:8px;padding:0.55rem;box-sizing:border-box;">
+                    ${cells.join('')}
+                </svg>
+                ${truncated}
+            `;
+        }
+
+        function renderVisionArtifactsPanel(vision) {
+            if (!vision || typeof vision !== 'object') return '';
+            const image = (vision.image && typeof vision.image === 'object') ? vision.image : {};
+            const grid = (vision.patch_grid && typeof vision.patch_grid === 'object') ? vision.patch_grid : {};
+            const bridge = (vision.bridge && typeof vision.bridge === 'object') ? vision.bridge : {};
+            const ops = (vision.ops && typeof vision.ops === 'object') ? vision.ops : {};
+            const stages = Array.isArray(vision.stages) ? vision.stages : [];
+            const checks = Array.isArray(vision.checks) ? vision.checks : [];
+            const dataUri = String(image.data_uri || '');
+            const sourceSize = Array.isArray(image.source_size) && image.source_size.length === 2
+                ? `${image.source_size[0]} × ${image.source_size[1]}`
+                : '-';
+            const processedSize = image.image_width || image.image_height
+                ? `${image.image_width || '-'} × ${image.image_height || '-'}`
+                : '-';
+            const stageRows = stages.map((stage) => `
+                <tr>
+                    <td>${stage.ready ? '<span class="badge badge-green">ready</span>' : '<span class="badge badge-orange">missing</span>'}</td>
+                    <td>${escapeHtml(String(stage.label || stage.key || '-'))}</td>
+                    <td>${escapeHtml(String(stage.ops ?? stage.tokens ?? (stage.bytes ? formatBytes(Number(stage.bytes)) : stage.detail || '-')))}</td>
+                </tr>
+            `).join('');
+            const checkRows = checks.map((check) => `
+                <tr>
+                    <td>${String(check.status || '').toLowerCase() === 'pass' ? '<span class="badge badge-green">pass</span>' : '<span class="badge badge-orange">warn</span>'}</td>
+                    <td>${escapeHtml(String(check.name || '-'))}</td>
+                    <td>${escapeHtml(String(check.detail || '-'))}</td>
+                </tr>
+            `).join('');
+            const encoderKinds = ops.encoder_by_kind && typeof ops.encoder_by_kind === 'object'
+                ? Object.entries(ops.encoder_by_kind).slice(0, 8).map(([name, count]) => `<span class="flow-item flow-weight">${escapeHtml(name)}: ${escapeHtml(String(count))}</span>`).join('')
+                : '';
+            return `
+                <div class="parity-section">
+                    <h3><span class="badge badge-green">Vision Artifacts</span> Patch Grid, Bridge Rows, and Contract Health</h3>
+                    <div class="subnote" style="margin-bottom:0.8rem;">
+                        Normalized artifact: <code>vision_artifacts</code> (${escapeHtml(String(vision.schema || 'unknown'))}). This is derived from the bridge report plus encoder IR/layout/call files so the viewer can render vision without knowing model-family quirks.
+                    </div>
+                    <div style="display:grid;grid-template-columns:minmax(220px,0.75fr) minmax(320px,1.25fr);gap:0.9rem;align-items:start;">
+                        <div>
+                            ${dataUri ? `<img src="${dataUri}" alt="Vision input" style="width:100%;max-width:300px;border-radius:8px;border:1px solid var(--grey);margin-bottom:0.7rem;display:block;">` : renderVisionPatchGridSvg(vision)}
+                            ${dataUri ? `<div style="margin-top:0.55rem;">${renderVisionPatchGridSvg(vision)}</div>` : ''}
+                        </div>
+                        <div>
+                            <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));margin-bottom:0.75rem;">
+                                <div class="stat-card"><div class="stat-value">${escapeHtml(String(grid.grid_x ?? '-'))}×${escapeHtml(String(grid.grid_y ?? '-'))}</div><div class="stat-label">Patch / Prefix Grid</div></div>
+                                <div class="stat-card"><div class="stat-value">${escapeHtml(String(grid.prefix_tokens ?? '-'))}</div><div class="stat-label">Prefix Rows</div></div>
+                                <div class="stat-card"><div class="stat-value">${escapeHtml(String(grid.expected_prefix_tokens ?? '-'))}</div><div class="stat-label">Grid Product</div></div>
+                                <div class="stat-card"><div class="stat-value">${escapeHtml(String(grid.text_position ?? '-'))}</div><div class="stat-label">Text Position</div></div>
+                                <div class="stat-card"><div class="stat-value">${escapeHtml(String(ops.encoder ?? '-'))}</div><div class="stat-label">Encoder Ops</div></div>
+                                <div class="stat-card"><div class="stat-value">${escapeHtml(String(ops.full_network ?? '-'))}</div><div class="stat-label">Unified Ops</div></div>
+                            </div>
+                            <table>
+                                <tbody>
+                                    <tr><th>Image Source</th><td>${escapeHtml(String(image.source || '-'))}</td></tr>
+                                    <tr><th>Source Size</th><td>${escapeHtml(sourceSize)}</td></tr>
+                                    <tr><th>Processed Size</th><td>${escapeHtml(processedSize)}</td></tr>
+                                    <tr><th>Patch Size</th><td>${escapeHtml(String(image.patch_size || '-'))}</td></tr>
+                                    <tr><th>Preprocess</th><td>${escapeHtml(String(image.preprocess || '-'))}</td></tr>
+                                    <tr><th>Position Policy</th><td>${escapeHtml(String(grid.position_policy || '-'))}</td></tr>
+                                    <tr><th>Prefix Source</th><td>${escapeHtml(String(bridge.prefix_source || '-'))}</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    ${encoderKinds ? `<div class="data-flow" style="margin-top:0.8rem;">${encoderKinds}</div>` : ''}
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:0.9rem;margin-top:0.9rem;">
+                        <div>
+                            <h4 style="margin:0 0 0.45rem;color:var(--text-secondary);">Stage Coverage</h4>
+                            <table><thead><tr><th>Status</th><th>Stage</th><th>Detail</th></tr></thead><tbody>${stageRows || '<tr><td colspan="3">No stages</td></tr>'}</tbody></table>
+                        </div>
+                        <div>
+                            <h4 style="margin:0 0 0.45rem;color:var(--text-secondary);">Contract Checks</h4>
+                            <table><thead><tr><th>Status</th><th>Check</th><th>Detail</th></tr></thead><tbody>${checkRows || '<tr><td colspan="3">No checks</td></tr>'}</tbody></table>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function multimodalOpCount(payload) {
             if (!payload || typeof payload !== 'object') return null;
             const ops = Array.isArray(payload.operations)
@@ -7289,6 +7406,7 @@ python3 trace_divergence.py --model "$MODEL_DIR" --token 25 --threads 1 --contex
                 `;
                 return;
             }
+            const visionArtifacts = getVisionArtifactsPayload();
 
             const encoderReport = (bridge.encoder_report && typeof bridge.encoder_report === 'object') ? bridge.encoder_report : {};
             const fullNetworkGraph = (files.full_network_graph && typeof files.full_network_graph === 'object') ? files.full_network_graph : {};
@@ -7372,6 +7490,8 @@ python3 trace_divergence.py --model "$MODEL_DIR" --token 25 --threads 1 --contex
                         <div class="stat-card"><div class="stat-value">${escapeHtml(String(bridge.multimodal_prompt_segmented ? 'segmented' : 'flat'))}</div><div class="stat-label">Prompt Segmentation</div></div>
                     </div>
                 </div>
+
+                ${renderVisionArtifactsPanel(visionArtifacts)}
 
                 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:0.9rem;">
                     <div class="parity-section">

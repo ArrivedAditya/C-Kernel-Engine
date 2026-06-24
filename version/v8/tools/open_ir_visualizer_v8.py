@@ -776,6 +776,195 @@ def _enrich_multimodal_bridge_payload(
     return out
 
 
+def _ops_from_payload(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    for key in ("operations", "ops"):
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def _layout_total_bytes(payload: Any) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    memory = payload.get("memory") if isinstance(payload.get("memory"), dict) else {}
+    arena = memory.get("arena") if isinstance(memory.get("arena"), dict) else {}
+    for raw in (arena.get("total_size"), memory.get("total_size"), payload.get("total_bytes")):
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def _count_ops_by_kind(ops: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for op in ops:
+        key = str(op.get("op") or op.get("kernel_id") or op.get("function") or "unknown")
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def _build_vision_artifacts_payload(files: dict[str, Any]) -> dict[str, Any] | None:
+    bridge = files.get("multimodal_bridge_report")
+    if not isinstance(bridge, dict):
+        return None
+    encoder_report = bridge.get("encoder_report") if isinstance(bridge.get("encoder_report"), dict) else {}
+    encoder_ir1 = files.get("bridge_encoder_ir1") if isinstance(files.get("bridge_encoder_ir1"), dict) else {}
+    encoder_layout = files.get("bridge_encoder_layout") if isinstance(files.get("bridge_encoder_layout"), dict) else {}
+    encoder_call = files.get("bridge_encoder_call") if isinstance(files.get("bridge_encoder_call"), dict) else {}
+    encoder_lowered = files.get("bridge_encoder_lowered") if isinstance(files.get("bridge_encoder_lowered"), dict) else {}
+    full_graph = files.get("full_network_graph") if isinstance(files.get("full_network_graph"), dict) else {}
+    decoder_prefill = files.get("lowered_prefill_call") if isinstance(files.get("lowered_prefill_call"), dict) else files.get("lowered_prefill")
+
+    encoder_ops = _ops_from_payload(encoder_call) or _ops_from_payload(encoder_lowered) or _ops_from_payload(encoder_ir1)
+    full_ops = _ops_from_payload(full_graph)
+    decoder_ops = _ops_from_payload(decoder_prefill)
+
+    prefix_tokens = bridge.get("prefix_tokens")
+    grid_x = bridge.get("prefix_grid_x", encoder_report.get("prefix_grid_x"))
+    grid_y = bridge.get("prefix_grid_y", encoder_report.get("prefix_grid_y"))
+    patch_size = encoder_report.get("patch_size") or encoder_report.get("vision_patch_size")
+    image_w = encoder_report.get("image_width") or encoder_report.get("image_size")
+    image_h = encoder_report.get("image_height") or encoder_report.get("image_size")
+    source_size = encoder_report.get("source_image_size") if isinstance(encoder_report.get("source_image_size"), list) else None
+
+    expected_prefix_from_grid = None
+    try:
+        gx = int(grid_x)
+        gy = int(grid_y)
+        if gx > 0 and gy > 0:
+            expected_prefix_from_grid = gx * gy
+    except (TypeError, ValueError):
+        pass
+
+    checks: list[dict[str, Any]] = []
+    def add_check(name: str, ok: bool, detail: str) -> None:
+        checks.append({"name": name, "status": "pass" if ok else "warn", "detail": detail})
+
+    add_check(
+        "bridge_report",
+        True,
+        "multimodal_bridge/bridge_report.json loaded",
+    )
+    add_check(
+        "encoder_graph",
+        len(encoder_ops) > 0,
+        f"{len(encoder_ops)} encoder ops loaded",
+    )
+    add_check(
+        "full_network_graph",
+        len(full_ops) > 0,
+        f"{len(full_ops)} unified ops loaded" if full_ops else "full_network_graph.json not loaded",
+    )
+    add_check(
+        "prefix_grid",
+        expected_prefix_from_grid is not None,
+        f"grid={grid_x}x{grid_y}",
+    )
+    if expected_prefix_from_grid is not None and prefix_tokens is not None:
+        try:
+            prefix_ok = int(prefix_tokens) == int(expected_prefix_from_grid)
+        except (TypeError, ValueError):
+            prefix_ok = False
+        add_check(
+            "prefix_rows_match_grid",
+            prefix_ok,
+            f"prefix_tokens={prefix_tokens}, grid product={expected_prefix_from_grid}",
+        )
+
+    status = "pass" if all(row.get("status") == "pass" for row in checks) else "warn"
+    return {
+        "schema": "ck.v8.vision_artifacts.v1",
+        "status": status,
+        "image": {
+            "source": encoder_report.get("image_source"),
+            "path": encoder_report.get("image_path"),
+            "path_resolved": encoder_report.get("image_path_resolved"),
+            "data_uri": encoder_report.get("image_data_uri"),
+            "source_size": source_size,
+            "preprocess": encoder_report.get("preprocess"),
+            "image_width": image_w,
+            "image_height": image_h,
+            "patch_size": patch_size,
+        },
+        "patch_grid": {
+            "grid_x": grid_x,
+            "grid_y": grid_y,
+            "prefix_tokens": prefix_tokens,
+            "expected_prefix_tokens": expected_prefix_from_grid,
+            "text_position": bridge.get("prefix_text_pos", encoder_report.get("prefix_text_pos")),
+            "position_policy": bridge.get("position_policy") or encoder_report.get("position_policy"),
+        },
+        "bridge": {
+            "mode": bridge.get("bridge_mode"),
+            "prefix_source": bridge.get("prefix_source"),
+            "decoder_input_embed_dim": bridge.get("decoder_input_embed_dim"),
+            "encoder_embed_dim": encoder_report.get("embed_dim"),
+            "prompt_tokens_before_image": len(bridge.get("prompt_tokens_before_image") or []),
+            "prompt_tokens_after_image": len(bridge.get("prompt_tokens_after_image") or []),
+            "total_prefill_tokens": bridge.get("total_prefill_tokens"),
+            "generated_token_count": bridge.get("generated_token_count"),
+            "stop_reason": bridge.get("generation_stop_reason"),
+        },
+        "stages": [
+            {
+                "key": "image",
+                "label": "Image ingest",
+                "ready": True,
+                "detail": str(encoder_report.get("image_source") or "image input"),
+            },
+            {
+                "key": "encoder_ir",
+                "label": "Encoder IR",
+                "ready": len(_ops_from_payload(encoder_ir1)) > 0,
+                "ops": len(_ops_from_payload(encoder_ir1)),
+            },
+            {
+                "key": "encoder_layout",
+                "label": "Encoder layout",
+                "ready": _layout_total_bytes(encoder_layout) is not None,
+                "bytes": _layout_total_bytes(encoder_layout),
+            },
+            {
+                "key": "encoder_call",
+                "label": "Encoder call",
+                "ready": len(encoder_ops) > 0,
+                "ops": len(encoder_ops),
+            },
+            {
+                "key": "bridge",
+                "label": "Bridge prefix",
+                "ready": prefix_tokens is not None,
+                "tokens": prefix_tokens,
+            },
+            {
+                "key": "decoder_prefill",
+                "label": "Decoder prefill",
+                "ready": len(decoder_ops) > 0,
+                "ops": len(decoder_ops),
+            },
+            {
+                "key": "full_graph",
+                "label": "Unified graph",
+                "ready": len(full_ops) > 0,
+                "ops": len(full_ops),
+            },
+        ],
+        "ops": {
+            "encoder": len(encoder_ops),
+            "decoder_prefill": len(decoder_ops),
+            "full_network": len(full_ops),
+            "encoder_by_kind": _count_ops_by_kind(encoder_ops),
+        },
+        "checks": checks,
+    }
+
+
 def _trim_memory_signoff_payload(payload: dict, max_items: int = 120) -> dict:
     """Trim very large warning/error arrays to keep standalone report size manageable."""
     out = dict(payload)
@@ -4086,6 +4275,10 @@ def load_model_data(
         )
         data["files"]["multimodal_bridge_report"] = enriched_bridge
         data["meta"]["multimodal_mode"] = str(enriched_bridge.get("bridge_mode") or "encoder_decoder")
+        vision_artifacts = _build_vision_artifacts_payload(data["files"])
+        if isinstance(vision_artifacts, dict):
+            data["files"]["vision_artifacts"] = vision_artifacts
+            loaded.append("vision_artifacts(derived)")
 
     print(f"  Loaded {len(loaded)} files")
     return data
