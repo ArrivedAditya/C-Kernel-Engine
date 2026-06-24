@@ -1172,7 +1172,12 @@ def run_pipeline(args: argparse.Namespace) -> int:
         context_len=args.context_len,
         logits_layout=args.logits_layout,
     )
-    model_c_path = step_codegen(work_dir, ir_paths, force=args.force_compile, profile=args.profile)
+    model_c_path = step_codegen(
+        work_dir,
+        ir_paths,
+        force=args.force_compile,
+        profile=getattr(args, "profile", False),
+    )
     lib_path = step_compile(model_c_path, work_dir, force=args.force_compile)
 
     if getattr(args, "sweep_kernels", False):

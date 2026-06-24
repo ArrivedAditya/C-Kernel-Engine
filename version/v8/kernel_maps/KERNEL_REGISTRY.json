@@ -18535,6 +18535,112 @@
       "notes": "Build merged vision position IDs for 2D M-RoPE style encoders.",
       "name": "vision_position_ids_2d_merge",
       "_source_file": "vision_position_ids_2d_merge.json"
+    },
+    {
+      "id": "spatial_average_pool_contiguous",
+      "op": "spatial_merge",
+      "variant": "fp32_spatial_average_pool",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ],
+          "desc": "Token-major activation stream arranged as a dense HxW patch grid"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T/(M*M)",
+            "E"
+          ],
+          "desc": "Pooled stream formed by averaging each merge_size x merge_size patch tile"
+        }
+      ],
+      "dims": [
+        "grid_h",
+        "grid_w",
+        "embed_dim",
+        "merge_size"
+      ],
+      "impl": {
+        "function": "spatial_average_pool_contiguous",
+        "c_declaration": "void spatial_average_pool_contiguous(const float *input, float *output, int grid_h, int grid_w, int embed_dim, int merge_size);",
+        "sources": [
+          "src/kernels/vision_kernels.c"
+        ]
+      },
+      "notes": "Average-pool merge_size x merge_size spatial tiles while preserving embedding width; used by Gemma4V before the projector.",
+      "name": "spatial_average_pool_contiguous",
+      "_source_file": "spatial_average_pool_contiguous.json"
+    },
+    {
+      "id": "gemma4_vision_projector_prep_forward",
+      "op": "projector_prep",
+      "variant": "fp32_scale_unit_rmsnorm",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ],
+          "desc": "Pooled Gemma4V visual tokens"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ],
+          "desc": "Scaled and unit-RMS-normalized projector input"
+        }
+      ],
+      "dims": [
+        "tokens",
+        "dim"
+      ],
+      "params": [
+        {
+          "name": "scale",
+          "dtype": "float32",
+          "desc": "Pre-RMS scale, usually sqrt(vision_embed_dim)"
+        },
+        {
+          "name": "eps",
+          "dtype": "float32",
+          "desc": "RMSNorm epsilon"
+        }
+      ],
+      "impl": {
+        "function": "gemma4_vision_projector_prep_forward",
+        "c_declaration": "void gemma4_vision_projector_prep_forward(const float *input, float *output, int tokens, int dim, float scale, float eps);",
+        "sources": [
+          "src/kernels/vision_kernels.c"
+        ]
+      },
+      "notes": "Gemma4V projector preparation: pool output is scaled by sqrt(embed_dim), then unit-gamma RMSNorm is applied before mm.input_projection.weight.",
+      "name": "gemma4_vision_projector_prep_forward",
+      "_source_file": "gemma4_vision_projector_prep_forward.json"
     }
   ]
 }

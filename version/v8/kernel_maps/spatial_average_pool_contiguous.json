@@ -1,0 +1,47 @@
+{
+  "id": "spatial_average_pool_contiguous",
+  "op": "spatial_merge",
+  "variant": "fp32_spatial_average_pool",
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "E"
+      ],
+      "desc": "Token-major activation stream arranged as a dense HxW patch grid"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "T/(M*M)",
+        "E"
+      ],
+      "desc": "Pooled stream formed by averaging each merge_size x merge_size patch tile"
+    }
+  ],
+  "dims": [
+    "grid_h",
+    "grid_w",
+    "embed_dim",
+    "merge_size"
+  ],
+  "impl": {
+    "function": "spatial_average_pool_contiguous",
+    "c_declaration": "void spatial_average_pool_contiguous(const float *input, float *output, int grid_h, int grid_w, int embed_dim, int merge_size);",
+    "sources": [
+      "src/kernels/vision_kernels.c"
+    ]
+  },
+  "notes": "Average-pool merge_size x merge_size spatial tiles while preserving embedding width; used by Gemma4V before the projector.",
+  "name": "spatial_average_pool_contiguous"
+}

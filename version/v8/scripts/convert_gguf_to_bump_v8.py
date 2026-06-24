@@ -2756,9 +2756,11 @@ def main() -> None:
             vision_grid_h = image_size // patch_size
             vision_grid_w = image_size // patch_size
             vision_num_patches = vision_grid_h * vision_grid_w
-            spatial_merge_size = 1
-            spatial_merge_factor = 1
-            vision_merged_tokens = vision_num_patches
+            spatial_merge_size = meta_int("clip.vision.spatial_merge_size") or meta_int("clip.vision.proj_scale_factor") or 3
+            spatial_merge_factor = spatial_merge_size * spatial_merge_size
+            vision_merged_tokens = (vision_grid_h // spatial_merge_size) * (vision_grid_w // spatial_merge_size)
+            vision_projector_scale = float(embed_dim) ** 0.5
+            vision_projector_eps = float(meta_float("clip.vision.attention.layer_norm_epsilon") or 1.0e-6)
             context_len = vision_num_patches
             vocab_size = 1
             num_kv_heads = num_heads
@@ -2818,9 +2820,27 @@ def main() -> None:
                 if src_name in tensors and src_name not in consumed_sources:
                     add_vision_entry(src_name, dst_name=dst_name, label=label)
 
+            def maybe_add_gemma4v_clamps(weight_src: str, dst_prefix: str) -> None:
+                if vision_arch != "gemma4_vision":
+                    return
+                if not weight_src.endswith(".weight"):
+                    return
+                clamp_suffixes = (
+                    ("input_min", "input_min"),
+                    ("input_max", "input_max"),
+                    ("output_min", "output_min"),
+                    ("output_max", "output_max"),
+                )
+                base = weight_src[:-len(".weight")]
+                for src_suffix, dst_suffix in clamp_suffixes:
+                    src = f"{base}.{src_suffix}"
+                    if src in tensors:
+                        add_vision_entry(src, dst_name=f"{dst_prefix}_{dst_suffix}", label=src)
+
             add_vision_entry("v.patch_embd.weight", label="v.patch_embd.weight")
             add_vision_entry("v.position_embd.weight", label="v.position_embd.weight")
             add_vision_entry("mm.input_projection.weight", label="mm.input_projection.weight")
+            maybe_add_gemma4v_clamps("mm.input_projection.weight", "mm1_w")
 
             quant_summary: Dict[str, Any] = {}
             quant_summary["patch_emb"] = ck_dtype_name(
@@ -2863,6 +2883,56 @@ def main() -> None:
                     (f"v.blk.{layer}.ffn_post_norm.weight", f"layer.{layer}.post_ffn_norm"),
                 ):
                     add_vision_entry(src_name, dst_name=dst_name, label=src_name)
+                    clamp_prefix = None
+                    if dst_name:
+                        if dst_name.endswith(".wq"):
+                            clamp_prefix = f"layer.{layer}.wq"
+                        elif dst_name.endswith(".wk"):
+                            clamp_prefix = f"layer.{layer}.wk"
+                        elif dst_name.endswith(".wv"):
+                            clamp_prefix = f"layer.{layer}.wv"
+                        elif dst_name.endswith(".wo"):
+                            clamp_prefix = f"layer.{layer}.wo"
+                        elif dst_name.endswith(".w1"):
+                            clamp_prefix = f"layer.{layer}.w1"
+                        elif dst_name.endswith(".w2"):
+                            clamp_prefix = f"layer.{layer}.w2"
+                        elif dst_name.endswith(".w3"):
+                            clamp_prefix = f"layer.{layer}.w3"
+                    if clamp_prefix is not None:
+                        maybe_add_gemma4v_clamps(src_name, clamp_prefix)
+
+            if vision_arch == "gemma4_vision":
+                # The Gemma4V template currently computes gate/up as one fused
+                # mlp_gate_up GEMM rooted at w1 with output_dim=2*ffn_dim. That
+                # requires w1 bytes to be immediately followed by w3 bytes in
+                # BUMP. Keep clippable-linear scalar tensors after the fused
+                # weight payload so the implicit physical packing is not broken.
+                by_name = {str(e.get("name")): e for e in vision_plan}
+                reordered: list[Dict[str, Any]] = []
+                moved: set[str] = set()
+                for entry in vision_plan:
+                    name = str(entry.get("name"))
+                    if name in moved:
+                        continue
+                    if name.endswith(".w1"):
+                        prefix = name[:-len(".w1")]
+                        reordered.append(entry)
+                        w3_name = f"{prefix}.w3"
+                        w3_entry = by_name.get(w3_name)
+                        if w3_entry is not None:
+                            reordered.append(w3_entry)
+                            moved.add(w3_name)
+                        for stem in ("w1", "w3"):
+                            for suffix in ("input_min", "input_max", "output_min", "output_max"):
+                                clamp_name = f"{prefix}.{stem}_{suffix}"
+                                clamp_entry = by_name.get(clamp_name)
+                                if clamp_entry is not None:
+                                    reordered.append(clamp_entry)
+                                    moved.add(clamp_name)
+                        continue
+                    reordered.append(entry)
+                vision_plan = reordered
 
             ignored_sources = sorted(
                 name for name in set(tensors.keys()) - consumed_sources
@@ -2882,6 +2952,15 @@ def main() -> None:
             projector_info = tensors["mm.input_projection.weight"]
             projector_in_dim = int(projector_info.ne0)
             projector_out_dim = int(projector_info.ne1)
+            position_info = tensors.get("v.position_embd.weight")
+            position_grid_size = int(position_info.ne1) if position_info is not None and len(position_info.dims) >= 2 else 0
+
+            if vision_arch == "gemma4_vision":
+                # llama.cpp Gemma4V applies inp_raw = inp_raw * 2 - 1 inside the graph.
+                # CK performs image normalization before patchify, so encode the same
+                # contract as mean/std = 0.5/0.5 for RGB inputs.
+                image_mean = [0.5, 0.5, 0.5]
+                image_std = [0.5, 0.5, 0.5]
 
             vision_config = _inject_runtime_config_defaults({
                 "model": vision_arch,
@@ -2896,11 +2975,16 @@ def main() -> None:
                 "vision_grid_h": int(vision_grid_h),
                 "vision_grid_w": int(vision_grid_w),
                 "vision_num_patches": int(vision_num_patches),
+                "position_grid_size": int(position_grid_size),
                 "image_mean": [float(v) for v in image_mean[:3]],
                 "image_std": [float(v) for v in image_std[:3]],
                 "spatial_merge_size": int(spatial_merge_size),
                 "spatial_merge_factor": int(spatial_merge_factor),
                 "vision_merged_tokens": int(vision_merged_tokens),
+                "gemma4_vision_pool_scale": float(vision_projector_scale),
+                "gemma4_vision_projector_eps": float(vision_projector_eps),
+                "rms_eps": float(vision_projector_eps),
+                "rms_norm_eps": float(vision_projector_eps),
                 "embed_dim": int(embed_dim),
                 "attn_out_dim": int(embed_dim),
                 "num_layers": int(num_layers),
@@ -2929,6 +3013,8 @@ def main() -> None:
             }, vision_arch)
 
             template_data = load_template_for_arch(vision_arch)
+            if isinstance(template_data.get("contract"), dict):
+                vision_config["contract"] = copy.deepcopy(template_data["contract"])
 
             if args.config_out:
                 os.makedirs(os.path.dirname(args.config_out) or ".", exist_ok=True)
@@ -3285,6 +3371,13 @@ def main() -> None:
             projector_hidden_dim = int(mm0.ne1)
             projector_out_dim = int(mm1.ne1)
 
+            if vision_arch == "gemma4_vision":
+                # llama.cpp Gemma4V applies inp_raw = inp_raw * 2 - 1 inside the graph.
+                # CK performs image normalization before patchify, so encode the same
+                # contract as mean/std = 0.5/0.5 for RGB inputs.
+                image_mean = [0.5, 0.5, 0.5]
+                image_std = [0.5, 0.5, 0.5]
+
             vision_config = _inject_runtime_config_defaults({
                 "model": vision_arch,
                 "arch": vision_arch,
@@ -3298,6 +3391,7 @@ def main() -> None:
                 "vision_grid_h": int(vision_grid_h),
                 "vision_grid_w": int(vision_grid_w),
                 "vision_num_patches": int(vision_num_patches),
+                "position_grid_size": int(position_grid_size),
                 "image_mean": [float(v) for v in image_mean[:3]],
                 "image_std": [float(v) for v in image_std[:3]],
                 "image_min_pixels": int(image_min_pixels),
@@ -3335,6 +3429,8 @@ def main() -> None:
             }, vision_arch)
 
             template_data = load_template_for_arch(vision_arch)
+            if isinstance(template_data.get("contract"), dict):
+                vision_config["contract"] = copy.deepcopy(template_data["contract"])
 
             if args.config_out:
                 os.makedirs(os.path.dirname(args.config_out) or ".", exist_ok=True)

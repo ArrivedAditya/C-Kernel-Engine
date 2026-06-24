@@ -929,6 +929,89 @@ void rope_forward_qk_gemma4_direct(float *q,
                                     rotary_dim, freq_base);
 }
 
+
+static void rope_forward_gemma4v_vision_xy_one(float *x,
+                                               int num_heads,
+                                               int num_tokens,
+                                               int head_dim,
+                                               int aligned_head_dim,
+                                               int grid_w,
+                                               int rotary_dim,
+                                               float freq_base)
+{
+    if (!x || num_heads <= 0 || num_tokens <= 0 || head_dim <= 0 || aligned_head_dim <= 0) {
+        return;
+    }
+    if (grid_w <= 0) {
+        grid_w = num_tokens;
+    }
+    if (rotary_dim <= 0 || rotary_dim > head_dim) {
+        rotary_dim = head_dim;
+    }
+    if (freq_base <= 0.0f) {
+        freq_base = 100.0f;
+    }
+
+    /* Gemma4V vision uses llama.cpp's 2D NEOX RoPE contract:
+     * rotate the first half of the rotary span by patch x, and the second
+     * half by patch y. Each half is itself split-half/NEOX rotated.
+     */
+    const int half_span = rotary_dim / 2;
+    const int segment_half = half_span / 2;
+    if (segment_half <= 0) {
+        return;
+    }
+    const size_t head_stride = (size_t)num_tokens * (size_t)aligned_head_dim;
+    const float theta_scale = powf(freq_base, -2.0f / (float)half_span);
+
+    for (int h = 0; h < num_heads; ++h) {
+        float *head = x + (size_t)h * head_stride;
+        for (int t = 0; t < num_tokens; ++t) {
+            const int pos_x = t % grid_w;
+            const int pos_y = t / grid_w;
+            float *row = head + (size_t)t * (size_t)aligned_head_dim;
+            for (int i = 0; i < segment_half; ++i) {
+                const float inv_freq = powf(theta_scale, (float)i);
+
+                const float theta_x = (float)pos_x * inv_freq;
+                const float cx = cosf(theta_x);
+                const float sx = sinf(theta_x);
+                const int x0i = i;
+                const int x1i = i + segment_half;
+                const float x0 = row[x0i];
+                const float x1 = row[x1i];
+                row[x0i] = x0 * cx - x1 * sx;
+                row[x1i] = x1 * cx + x0 * sx;
+
+                const float theta_y = (float)pos_y * inv_freq;
+                const float cy = cosf(theta_y);
+                const float sy = sinf(theta_y);
+                const int y0i = half_span + i;
+                const int y1i = half_span + i + segment_half;
+                const float y0 = row[y0i];
+                const float y1 = row[y1i];
+                row[y0i] = y0 * cy - y1 * sy;
+                row[y1i] = y1 * cy + y0 * sy;
+            }
+        }
+    }
+}
+
+void rope_forward_qk_gemma4v_vision_xy(float *q,
+                                       float *k,
+                                       int num_heads,
+                                       int num_kv_heads,
+                                       int num_tokens,
+                                       int head_dim,
+                                       int aligned_head_dim,
+                                       int grid_w,
+                                       int rotary_dim,
+                                       float freq_base)
+{
+    rope_forward_gemma4v_vision_xy_one(q, num_heads, num_tokens, head_dim, aligned_head_dim, grid_w, rotary_dim, freq_base);
+    rope_forward_gemma4v_vision_xy_one(k, num_kv_heads, num_tokens, head_dim, aligned_head_dim, grid_w, rotary_dim, freq_base);
+}
+
 void rope_forward_qk_with_rotary_dim_cache_stride(float *q,
                                                   float *k,
                                                   const float *cos_cache,

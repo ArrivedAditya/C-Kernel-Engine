@@ -15,7 +15,7 @@ import struct
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Any, BinaryIO, Tuple
+from typing import Dict, List, Optional, Any, Tuple, BinaryIO
 
 # GGUF type constants
 GGUF_TYPE_UINT8 = 0
@@ -200,6 +200,8 @@ class GGUFTokenizer:
         self.scores: List[float] = []
         self.token_to_id: Dict[str, int] = {}
         self.special_ids: set[int] = set()
+        self.special_token_to_id: Dict[str, int] = {}
+        self._special_token_strings_sorted: List[str] = []
         self.bos_id: int = 1
         self.eos_id: int = 2
         self.unk_id: int = 0
@@ -237,6 +239,31 @@ class GGUFTokenizer:
         else:
             self.special_ids = set()
         self.special_ids.update({self.bos_id, self.eos_id, self.pad_id, self.unk_id})
+        self._rebuild_special_token_lookup()
+
+    def _rebuild_special_token_lookup(self) -> None:
+        self.special_token_to_id = {}
+        for tid, token in enumerate(self.tokens):
+            if not isinstance(token, str) or not token:
+                continue
+            is_declared_special = tid in self.special_ids
+            is_control_like = (
+                len(token) >= 3
+                and token.startswith("<")
+                and token.endswith(">")
+                and ("|" in token or token in {"<bos>", "<eos>", "<pad>", "<unk>", "<mask>", "<s>", "</s>"})
+            )
+            if is_declared_special or is_control_like:
+                self.special_token_to_id[token] = int(tid)
+        self._special_token_strings_sorted = sorted(self.special_token_to_id, key=len, reverse=True)
+
+    def _match_special_token(self, text: str, pos: int) -> Optional[Tuple[str, int]]:
+        if not self._special_token_strings_sorted or pos >= len(text) or text[pos] != "<":
+            return None
+        for token in self._special_token_strings_sorted:
+            if text.startswith(token, pos):
+                return token, self.special_token_to_id[token]
+        return None
 
     @classmethod
     def from_gguf(cls, gguf_path: str) -> "GGUFTokenizer":
@@ -429,22 +456,41 @@ class GGUFTokenizer:
         is_gpt2 = self.model_type.lower() in {"gpt2", "bpe"} or "\u0120" in "".join(self.tokens[:1000])
 
         if is_gpt2:
-            mapped = "".join(self._byte_encoder[b] for b in text.encode("utf-8"))
+            def _encode_bytelevel_segment(segment: str) -> list[int]:
+                mapped = "".join(self._byte_encoder[b] for b in segment.encode("utf-8"))
+                out: list[int] = []
+                j = 0
+                while j < len(mapped):
+                    best_len = 0
+                    best_id = self.unk_id
+                    for length in range(min(len(mapped) - j, 128), 0, -1):
+                        chunk = mapped[j:j + length]
+                        if chunk in self.token_to_id:
+                            best_len = length
+                            best_id = self.token_to_id[chunk]
+                            break
+                    if best_len == 0:
+                        best_id = self.token_to_id.get(mapped[j], self.unk_id)
+                        best_len = 1
+                    out.append(best_id)
+                    j += best_len
+                return out
+
+            raw_start = 0
             i = 0
-            while i < len(mapped):
-                best_len = 0
-                best_id = self.unk_id
-                for length in range(min(len(mapped) - i, 128), 0, -1):
-                    chunk = mapped[i:i + length]
-                    if chunk in self.token_to_id:
-                        best_len = length
-                        best_id = self.token_to_id[chunk]
-                        break
-                if best_len == 0:
-                    best_id = self.token_to_id.get(mapped[i], self.unk_id)
-                    best_len = 1
-                ids.append(best_id)
-                i += best_len
+            while i < len(text):
+                match = self._match_special_token(text, i)
+                if match is None:
+                    i += 1
+                    continue
+                token, token_id = match
+                if raw_start < i:
+                    ids.extend(_encode_bytelevel_segment(text[raw_start:i]))
+                ids.append(int(token_id))
+                i += len(token)
+                raw_start = i
+            if raw_start < len(text):
+                ids.extend(_encode_bytelevel_segment(text[raw_start:]))
 
             if add_eos:
                 ids.append(self.eos_id)
@@ -452,6 +498,13 @@ class GGUFTokenizer:
 
         i = 0
         while i < len(text):
+            special_match = self._match_special_token(text, i)
+            if special_match is not None:
+                special_token, special_id = special_match
+                ids.append(int(special_id))
+                i += len(special_token)
+                continue
+
             best_len = 0
             best_id = self.unk_id
 
@@ -463,8 +516,16 @@ class GGUFTokenizer:
                 )
             )
 
-            # Try different lengths, longest first
-            for length in range(min(len(text) - i, 32), 0, -1):
+            max_match_len = min(len(text) - i, 32)
+            if self._special_token_strings_sorted:
+                for probe in range(i + 1, min(len(text), i + max_match_len) + 1):
+                    if self._match_special_token(text, probe) is not None:
+                        max_match_len = probe - i
+                        break
+
+            # Try different lengths, longest first, without crossing a known
+            # special/control token boundary.
+            for length in range(max_match_len, 0, -1):
                 chunk = text[i:i + length]
 
                 # Skip leading space in chunk (it becomes prefix)

@@ -225,10 +225,18 @@ V8_QWEN3VL_CACHED_MMPROJ ?= $(V8_QWEN3VL_CACHE_DIR)/mmproj-Qwen3VL-8B-Instruct-Q
 V8_QWEN3VL_IMAGE ?= version/v8/test_assets/v8_vision_doc_card_72.ppm
 V8_QWEN3VL_MAX_TOKENS ?= 32
 V8_GEMMA4_MODEL ?= hf://unsloth/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf
+V8_GEMMA4_MMPROJ ?= hf://unsloth/gemma-4-E4B-it-GGUF/mmproj-F16.gguf
+V8_GEMMA4_CACHE_DIR ?= /opt/app-root/src/.cache/ck-engine-v8/models/unsloth--gemma-4-E4B-it-GGUF
+V8_GEMMA4_CACHED_MODEL ?= $(V8_GEMMA4_CACHE_DIR)/gemma-4-E4B-it-Q4_K_M.gguf
+V8_GEMMA4_CACHED_MMPROJ ?= $(V8_GEMMA4_CACHE_DIR)/mmproj-F16.gguf
 V8_GEMMA4_MIN_MEM_GB ?= 50
 V8_GEMMA4_CONTEXT ?= 2048
 V8_GEMMA4_MAX_TOKENS ?= 64
 V8_GEMMA4_PROMPT ?= Give me a short example of C code.
+V8_GEMMA4_VISION_CONTEXT ?= 1024
+V8_GEMMA4_VISION_MAX_TOKENS ?= 8
+V8_GEMMA4_VISION_IMAGE ?= version/v8/test_assets/v8_vision_doc_card_72.ppm
+V8_GEMMA4_VISION_PROMPT ?= Explain this image.
 V8_NEMOTRON9_MODEL ?= hf://bartowski/nvidia_NVIDIA-Nemotron-Nano-9B-v2-GGUF/nvidia_NVIDIA-Nemotron-Nano-9B-v2-Q4_K_M.gguf
 V8_NEMOTRON9_MIN_MEM_GB ?= 70
 V8_NEMOTRON9_CONTEXT ?= 2048
@@ -1220,7 +1228,29 @@ test-v8-qwen3vl-e2e-smoke:
 			--temperature 0.0; \
 	fi
 
-test-v8-vision-smoke: test-v8-vision-kernels test-v8-qwen3vl test-v8-qwen3vl-e2e-smoke
+test-v8-gemma4-vision-smoke:
+	@avail_kb=$$(awk '/MemAvailable:/ {print $$2}' /proc/meminfo 2>/dev/null || echo 0); \
+	threshold_kb=$$(( $(V8_GEMMA4_MIN_MEM_GB) * 1024 * 1024 )); \
+	if [ "$$avail_kb" -lt "$$threshold_kb" ]; then \
+		avail_gb=$$(( $$avail_kb / 1024 / 1024 )); \
+		echo "SKIP: Gemma4 vision smoke needs >=$(V8_GEMMA4_MIN_MEM_GB) GiB MemAvailable; found $${avail_gb} GiB"; \
+	elif [ ! -f "$(V8_GEMMA4_CACHED_MODEL)" ] || [ ! -f "$(V8_GEMMA4_CACHED_MMPROJ)" ]; then \
+		echo "SKIP: Gemma4 cached decoder/mmproj not found under $(V8_GEMMA4_CACHE_DIR)"; \
+	else \
+		echo "Running cached v8 Gemma4 image -> mmproj -> decoder smoke..."; \
+		CK_NUM_THREADS=$${CK_NUM_THREADS:-24} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+			version/v8/scripts/cks-v8-run run "$(V8_GEMMA4_CACHED_MODEL)" \
+			--mmproj "$(V8_GEMMA4_CACHED_MMPROJ)" \
+			--image-path "$(V8_GEMMA4_VISION_IMAGE)" \
+			--prompt "$(V8_GEMMA4_VISION_PROMPT)" \
+			--context-len $(V8_GEMMA4_VISION_CONTEXT) \
+			--force-compile \
+			--chat-template gemma4 \
+			--max-tokens $(V8_GEMMA4_VISION_MAX_TOKENS) \
+			--temperature 0.0; \
+	fi
+
+test-v8-vision-smoke: test-v8-vision-kernels test-v8-qwen3vl test-v8-qwen3vl-e2e-smoke test-v8-gemma4-vision-smoke
 
 test-v8-model-smoke: test-v8-template-circuit-audit v8-regression-fast test-v8-gemma4-highmem test-v8-nemotron9-highmem test-v8-glm4-highmem
 
@@ -2587,7 +2617,7 @@ profile-v8-prefill-ops-quick: ck-cli-v8
 		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
 		--json-out build/v8_prefill_ops_profile_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-128}.json
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-dispatch-sweep-quick test-q4-q5-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit test-v8-qwen3vl-e2e-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-dispatch-sweep-quick test-q4-q5-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit test-v8-qwen3vl-e2e-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

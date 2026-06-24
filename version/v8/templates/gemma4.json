@@ -46,13 +46,14 @@
       "token_stop_markers": [
         "<turn|>"
       ],
-      "image_marker": "<|image|>",
       "template_markers": [
         "<|turn>",
         "<turn|>",
         "<|image|>"
       ],
-      "min_response_tokens": 8
+      "min_response_tokens": 8,
+      "image_begin_marker": "<|image>",
+      "image_end_marker": "<image|>"
     },
     "attention_contract": {
       "rope_layout": "split",
@@ -95,6 +96,10 @@
           "dim:_kv_copy_bytes"
         ]
       }
+    },
+    "multimodal_bridge": {
+      "image_begin_marker": "<|image>",
+      "image_end_marker": "<image|>"
     }
   },
   "kernels": {

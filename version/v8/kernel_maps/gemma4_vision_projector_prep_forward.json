@@ -1,0 +1,57 @@
+{
+  "id": "gemma4_vision_projector_prep_forward",
+  "op": "projector_prep",
+  "variant": "fp32_scale_unit_rmsnorm",
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "E"
+      ],
+      "desc": "Pooled Gemma4V visual tokens"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "E"
+      ],
+      "desc": "Scaled and unit-RMS-normalized projector input"
+    }
+  ],
+  "dims": [
+    "tokens",
+    "dim"
+  ],
+  "params": [
+    {
+      "name": "scale",
+      "dtype": "float32",
+      "desc": "Pre-RMS scale, usually sqrt(vision_embed_dim)"
+    },
+    {
+      "name": "eps",
+      "dtype": "float32",
+      "desc": "RMSNorm epsilon"
+    }
+  ],
+  "impl": {
+    "function": "gemma4_vision_projector_prep_forward",
+    "c_declaration": "void gemma4_vision_projector_prep_forward(const float *input, float *output, int tokens, int dim, float scale, float eps);",
+    "sources": [
+      "src/kernels/vision_kernels.c"
+    ]
+  },
+  "notes": "Gemma4V projector preparation: pool output is scaled by sqrt(embed_dim), then unit-gamma RMSNorm is applied before mm.input_projection.weight.",
+  "name": "gemma4_vision_projector_prep_forward"
+}

@@ -1527,7 +1527,47 @@ def emit_op(
                 f'{row_count_expr});'
             )
 
-    if op_name == "residual_add":
+    if op_name == "patchify":
+        patch_h = f"(({_hidden_arg('H')}) / ({_hidden_arg('P')}))" if _hidden_arg("H") and _hidden_arg("P") else None
+        patch_w = f"(({_hidden_arg('W')}) / ({_hidden_arg('P')}))" if _hidden_arg("W") and _hidden_arg("P") else None
+        patch_dim = _mul_expr(_hidden_arg("C"), _hidden_arg("P"), _hidden_arg("P"))
+        _emit_hidden_export(_hidden_arg("patches", "output", "out"), "vision_patchify", _mul_expr(patch_h, patch_w, patch_dim))
+    elif op_name in ("patch_proj", "patch_proj_aux"):
+        out_expr = _hidden_arg("output", "out", "c", "y")
+        count_expr = _mul_expr(_hidden_arg("M", "rows", "tokens"), _hidden_arg("N", "out_dim", "embed_dim"))
+        label = "vision_patch_proj_aux" if op_name == "patch_proj_aux" else "vision_patch_proj"
+        _emit_hidden_export(out_expr, label, count_expr)
+        _emit_hidden_export_last_row(out_expr, label, _hidden_arg("N", "out_dim", "embed_dim"))
+    elif op_name in ("position_embeddings", "patch_bias_add", "add_stream"):
+        out_expr = _hidden_arg("x", "main_inout", "output", "out", "c", "y")
+        count_expr = _mul_expr(_hidden_arg("grid_h", "rows", "tokens"), _hidden_arg("grid_w"), _hidden_arg("embed_dim"))
+        if count_expr is None:
+            count_expr = _mul_expr(_hidden_arg("rows", "tokens", "num_tokens"), _hidden_arg("dim", "embed_dim"))
+        label = {
+            "position_embeddings": "vision_position_embeddings",
+            "patch_bias_add": "vision_patch_bias",
+            "add_stream": "vision_patch_sum",
+        }.get(op_name, op_name)
+        _emit_hidden_export(out_expr, label, count_expr)
+    elif op_name == "spatial_merge":
+        out_expr = _hidden_arg("output", "out", "c", "y")
+        grid_h = _hidden_arg("grid_h")
+        grid_w = _hidden_arg("grid_w")
+        merge = _hidden_arg("merge_size") or "1"
+        count_expr = f"(({grid_h}) / ({merge})) * (({grid_w}) / ({merge})) * ({_hidden_arg('embed_dim')})" if grid_h and grid_w and _hidden_arg("embed_dim") else None
+        _emit_hidden_export(out_expr, "vision_spatial_merge", count_expr)
+    elif op_name == "projector_prep":
+        out_expr = _hidden_arg("output", "out", "c", "y")
+        count_expr = _mul_expr(_hidden_arg("tokens", "rows", "M"), _hidden_arg("dim", "embed_dim", "K"))
+        _emit_hidden_export(out_expr, "vision_projector_prep", count_expr)
+        _emit_hidden_export_last_row(out_expr, "vision_projector_prep", _hidden_arg("dim", "embed_dim", "K"))
+    elif op_name in ("projector_fc1", "projector_fc2"):
+        out_expr = _hidden_arg("output", "out", "c", "y")
+        count_expr = _mul_expr(_hidden_arg("M", "rows", "tokens"), _hidden_arg("N", "out_dim", "embed_dim"))
+        label = "vision_projector_out" if op_name == "projector_fc2" else "vision_projector_fc1"
+        _emit_hidden_export(out_expr, label, count_expr)
+        _emit_hidden_export_last_row(out_expr, label, _hidden_arg("N", "out_dim", "embed_dim"))
+    elif op_name == "residual_add":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "c", "y"))
         residual_expr = _hidden_raw(_hidden_arg("b"))
         if op_instance_idx == 0 and residual_expr:
