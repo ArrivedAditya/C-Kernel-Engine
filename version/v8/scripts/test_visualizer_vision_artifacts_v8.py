@@ -52,6 +52,38 @@ def _op(op_id: int, op: str, *, layer: int = -1, section: str = "body", from_op:
     }
 
 
+def _layout(total_size: int, *, prefix: str) -> dict:
+    return {
+        "memory": {
+            "weights": {
+                "size": 256,
+                "entries": [
+                    {
+                        "name": f"{prefix}.weight",
+                        "dtype": "fp32",
+                        "size": 128,
+                        "offset": 0,
+                        "abs_offset": 0,
+                    }
+                ],
+            },
+            "activations": {
+                "size": 512,
+                "buffers": [
+                    {
+                        "name": f"{prefix}.activation",
+                        "dtype": "fp32",
+                        "size": 256,
+                        "offset": 0,
+                        "abs_offset": 256,
+                    }
+                ],
+            },
+            "arena": {"total_size": total_size},
+        }
+    }
+
+
 def _make_fixture_run(root: Path) -> tuple[int, int, int]:
     bridge = root / "multimodal_bridge"
     encoder = bridge / "encoder"
@@ -76,13 +108,13 @@ def _make_fixture_run(root: Path) -> tuple[int, int, int]:
     _write_json(encoder / "ir1.json", {"format": "ir1-dataflow", "version": 3, "mode": "encoder", "ops": encoder_ops})
     _write_json(encoder / "call.json", {"operations": encoder_ops})
     _write_json(encoder / "lowered.json", {"operations": encoder_ops})
-    _write_json(encoder / "layout.json", {"memory": {"arena": {"total_size": 4096}}})
+    _write_json(encoder / "layout.json", _layout(4096, prefix="encoder"))
     _write_json(decoder / "ir1_prefill.json", {"format": "ir1-dataflow", "version": 3, "mode": "prefill", "ops": decoder_ops})
     _write_json(decoder / "ir1_decode.json", {"format": "ir1-dataflow", "version": 3, "mode": "decode", "ops": decoder_ops[:2]})
     _write_json(decoder / "lowered_prefill.json", {"operations": decoder_ops})
     _write_json(decoder / "lowered_decode.json", {"operations": decoder_ops[:2]})
-    _write_json(decoder / "layout_prefill.json", {"memory": {"arena": {"total_size": 8192}}})
-    _write_json(decoder / "layout_decode.json", {"memory": {"arena": {"total_size": 2048}}})
+    _write_json(decoder / "layout_prefill.json", _layout(8192, prefix="decoder_prefill"))
+    _write_json(decoder / "layout_decode.json", _layout(2048, prefix="decoder_decode"))
     _write_json(decoder / "config.json", {"model": "synthetic_qwen3vl_visualizer", "mode": "prefill"})
     _write_json(decoder / "weights_manifest.json", {"weights": []})
     _write_json(
@@ -144,6 +176,17 @@ def run(json_out: Path) -> int:
             assert stats.get("bridge_ops") == expected_bridge, stats
             assert stats.get("decoder_prefill_ops") == expected_decoder, stats
             assert stats.get("total_ops") == expected_total, stats
+            call_ops = ((graph.get("call") or {}).get("operations") or [])
+            assert len(call_ops) == expected_total, f"unified call ops missing: {len(call_ops)} != {expected_total}"
+            call_stages = {row.get("network_stage") for row in call_ops if isinstance(row, dict)}
+            assert {"vision_encoder", "bridge", "decoder_prefill"}.issubset(call_stages), call_stages
+            layout_memory = ((graph.get("layout") or {}).get("memory") or {})
+            weight_entries = ((layout_memory.get("weights") or {}).get("entries") or [])
+            activation_buffers = ((layout_memory.get("activations") or {}).get("buffers") or [])
+            weight_stages = {row.get("network_stage") for row in weight_entries if isinstance(row, dict)}
+            activation_stages = {row.get("network_stage") for row in activation_buffers if isinstance(row, dict)}
+            assert {"vision_encoder", "decoder_prefill"}.issubset(weight_stages), weight_stages
+            assert {"vision_encoder", "decoder_prefill"}.issubset(activation_stages), activation_stages
             assert isinstance(vision, dict), "missing derived vision_artifacts"
             assert (vision.get("ops") or {}).get("full_network") == expected_total, vision.get("ops")
             checks.append({"name": "derived_payload", "status": "pass", "detail": f"{expected_total} multimodal ops"})

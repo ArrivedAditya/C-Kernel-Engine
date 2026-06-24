@@ -859,44 +859,14 @@ def _clone_multimodal_op(
     return out
 
 
-def _build_multimodal_dataflow_graph(files: dict[str, Any]) -> dict[str, Any] | None:
-    bridge = files.get("multimodal_bridge_report")
-    if not isinstance(bridge, dict):
-        return None
-    full_graph = files.get("full_network_graph")
-    if isinstance(full_graph, dict):
-        return full_graph
-
-    encoder_ir1 = files.get("bridge_encoder_ir1") if isinstance(files.get("bridge_encoder_ir1"), dict) else {}
-    encoder_layout = files.get("bridge_encoder_layout") if isinstance(files.get("bridge_encoder_layout"), dict) else {}
-    encoder_call = files.get("bridge_encoder_call") if isinstance(files.get("bridge_encoder_call"), dict) else {}
-    decoder_ir1 = files.get("ir1_prefill") if isinstance(files.get("ir1_prefill"), dict) else {}
-    decoder_layout = files.get("layout_prefill") if isinstance(files.get("layout_prefill"), dict) else {}
-    decoder_call = files.get("lowered_prefill_call") if isinstance(files.get("lowered_prefill_call"), dict) else files.get("lowered_prefill")
-    if not isinstance(decoder_call, dict):
-        decoder_call = {}
-
-    encoder_ops = _ops_from_payload(encoder_ir1)
-    decoder_ops = _ops_from_payload(decoder_ir1)
-    if not encoder_ops and not decoder_ops:
-        return None
-
-    ops: list[dict[str, Any]] = []
-    for idx, op in enumerate(encoder_ops):
-        ops.append(
-            _clone_multimodal_op(
-                op,
-                op_id=idx,
-                stage="vision_encoder",
-                stage_label="Vision Encoder",
-                layer_prefix="Encoder Layer",
-            )
-        )
-
-    bridge_op_id = len(ops)
-    encoder_last_id = int(ops[-1]["op_id"]) if ops else None
+def _build_multimodal_bridge_op(
+    *,
+    op_id: int,
+    bridge: dict[str, Any],
+    encoder_last_id: int | None,
+) -> dict[str, Any]:
     bridge_op: dict[str, Any] = {
-        "op_id": bridge_op_id,
+        "op_id": op_id,
         "op": "vision_bridge_prefix",
         "kernel": "multimodal_bridge",
         "kernel_id": "multimodal_bridge",
@@ -933,7 +903,30 @@ def _build_multimodal_dataflow_graph(files: dict[str, Any]) -> dict[str, Any] | 
             "dtype": "fp32",
             "slot": "vision_encoder_out",
         }
-    ops.append(bridge_op)
+    return bridge_op
+
+
+def _build_unified_multimodal_ops(
+    *,
+    bridge: dict[str, Any],
+    encoder_ops: list[dict[str, Any]],
+    decoder_ops: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    ops: list[dict[str, Any]] = []
+    for idx, op in enumerate(encoder_ops):
+        ops.append(
+            _clone_multimodal_op(
+                op,
+                op_id=idx,
+                stage="vision_encoder",
+                stage_label="Vision Encoder",
+                layer_prefix="Encoder Layer",
+            )
+        )
+
+    bridge_op_id = len(ops)
+    encoder_last_id = int(ops[-1]["op_id"]) if ops else None
+    ops.append(_build_multimodal_bridge_op(op_id=bridge_op_id, bridge=bridge, encoder_last_id=encoder_last_id))
 
     decoder_offset = len(ops)
     for idx, op in enumerate(decoder_ops):
@@ -958,6 +951,133 @@ def _build_multimodal_dataflow_graph(files: dict[str, Any]) -> dict[str, Any] | 
                         "slot": "vision_prefix",
                     }
         ops.append(cloned)
+    return ops
+
+
+def _copy_memory_entries(rows: Any, *, stage: str, base_offset: int) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        entry = json.loads(json.dumps(row))
+        entry["network_stage"] = stage
+        entry["source_name"] = entry.get("name")
+        entry["name"] = f"{stage}.{entry.get('name', 'unnamed')}"
+        for key in ("offset", "abs_offset"):
+            try:
+                entry[key] = int(entry.get(key) or 0) + base_offset
+            except (TypeError, ValueError):
+                pass
+        out.append(entry)
+    return out
+
+
+def _build_multimodal_layout(
+    *,
+    encoder_layout: dict[str, Any],
+    decoder_layout: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(encoder_layout, dict):
+        encoder_layout = {}
+    if not isinstance(decoder_layout, dict):
+        decoder_layout = {}
+    if not encoder_layout:
+        return decoder_layout
+    if not decoder_layout:
+        return encoder_layout
+
+    encoder_memory = encoder_layout.get("memory") if isinstance(encoder_layout.get("memory"), dict) else {}
+    decoder_memory = decoder_layout.get("memory") if isinstance(decoder_layout.get("memory"), dict) else {}
+    encoder_weights = encoder_memory.get("weights") if isinstance(encoder_memory.get("weights"), dict) else {}
+    decoder_weights = decoder_memory.get("weights") if isinstance(decoder_memory.get("weights"), dict) else {}
+    encoder_acts = encoder_memory.get("activations") if isinstance(encoder_memory.get("activations"), dict) else {}
+    decoder_acts = decoder_memory.get("activations") if isinstance(decoder_memory.get("activations"), dict) else {}
+
+    encoder_weight_size = int(encoder_weights.get("size") or 0)
+    decoder_weight_size = int(decoder_weights.get("size") or 0)
+    encoder_act_size = int(encoder_acts.get("size") or 0)
+    decoder_act_size = int(decoder_acts.get("size") or 0)
+    decoder_weight_base = encoder_weight_size
+    decoder_act_base = encoder_act_size
+
+    weights_entries = (
+        _copy_memory_entries(encoder_weights.get("entries"), stage="vision_encoder", base_offset=0)
+        + _copy_memory_entries(decoder_weights.get("entries"), stage="decoder_prefill", base_offset=decoder_weight_base)
+    )
+    activation_buffers = (
+        _copy_memory_entries(encoder_acts.get("buffers"), stage="vision_encoder", base_offset=0)
+        + _copy_memory_entries(decoder_acts.get("buffers"), stage="decoder_prefill", base_offset=decoder_act_base)
+    )
+
+    return {
+        "format": "layout-multimodal-logical",
+        "version": max(int(encoder_layout.get("version") or 0), int(decoder_layout.get("version") or 0), 1),
+        "mode": "prefill",
+        "schema": "ck.v8.multimodal_layout.v1",
+        "source": "logical_concat_encoder_decoder_prefill",
+        "source_layouts": {
+            "vision_encoder": {
+                "total_size": _layout_total_bytes(encoder_layout),
+                "weights_size": encoder_weight_size,
+                "activations_size": encoder_act_size,
+            },
+            "decoder_prefill": {
+                "total_size": _layout_total_bytes(decoder_layout),
+                "weights_size": decoder_weight_size,
+                "activations_size": decoder_act_size,
+            },
+        },
+        "memory": {
+            "weights": {
+                "size": encoder_weight_size + decoder_weight_size,
+                "entries": weights_entries,
+            },
+            "activations": {
+                "size": encoder_act_size + decoder_act_size,
+                "buffers": activation_buffers,
+            },
+            "arena": {
+                "mode": "logical_multimodal",
+                "total_size": (_layout_total_bytes(encoder_layout) or 0) + (_layout_total_bytes(decoder_layout) or 0),
+                "encoder_total_size": _layout_total_bytes(encoder_layout),
+                "decoder_prefill_total_size": _layout_total_bytes(decoder_layout),
+            },
+        },
+    }
+
+
+def _build_multimodal_dataflow_graph(files: dict[str, Any]) -> dict[str, Any] | None:
+    bridge = files.get("multimodal_bridge_report")
+    if not isinstance(bridge, dict):
+        return None
+    full_graph = files.get("full_network_graph")
+    if isinstance(full_graph, dict):
+        return full_graph
+
+    encoder_ir1 = files.get("bridge_encoder_ir1") if isinstance(files.get("bridge_encoder_ir1"), dict) else {}
+    encoder_layout = files.get("bridge_encoder_layout") if isinstance(files.get("bridge_encoder_layout"), dict) else {}
+    encoder_call = files.get("bridge_encoder_call") if isinstance(files.get("bridge_encoder_call"), dict) else {}
+    decoder_ir1 = files.get("ir1_prefill") if isinstance(files.get("ir1_prefill"), dict) else {}
+    decoder_layout = files.get("layout_prefill") if isinstance(files.get("layout_prefill"), dict) else {}
+    decoder_call = files.get("lowered_prefill_call") if isinstance(files.get("lowered_prefill_call"), dict) else files.get("lowered_prefill")
+    if not isinstance(decoder_call, dict):
+        decoder_call = {}
+
+    encoder_ops = _ops_from_payload(encoder_ir1)
+    decoder_ops = _ops_from_payload(decoder_ir1)
+    if not encoder_ops and not decoder_ops:
+        return None
+
+    ops = _build_unified_multimodal_ops(bridge=bridge, encoder_ops=encoder_ops, decoder_ops=decoder_ops)
+    encoder_call_ops = _ops_from_payload(encoder_call)
+    decoder_call_ops = _ops_from_payload(decoder_call)
+    unified_call_ops = _build_unified_multimodal_ops(
+        bridge=bridge,
+        encoder_ops=encoder_call_ops or encoder_ops,
+        decoder_ops=decoder_call_ops or decoder_ops,
+    )
 
     ir1 = {
         "format": "ir1-multimodal-dataflow",
@@ -970,17 +1090,26 @@ def _build_multimodal_dataflow_graph(files: dict[str, Any]) -> dict[str, Any] | 
         "schema": "ck.v8.multimodal_dataflow_graph.v1",
         "ops": ops,
     }
+    call = {
+        "schema": "ck.v8.multimodal_call_graph.v1",
+        "mode": "prefill",
+        "source": "derived_from_bridge_encoder_call_and_decoder_prefill_call",
+        "operations": unified_call_ops,
+    }
     return {
         "schema": "ck.v8.multimodal_dataflow_graph.v1",
         "source": "derived_from_bridge_encoder_and_decoder_prefill",
         "ir1": ir1,
-        "layout": decoder_layout or encoder_layout,
-        "call": decoder_call or encoder_call,
+        "layout": _build_multimodal_layout(encoder_layout=encoder_layout, decoder_layout=decoder_layout),
+        "call": call,
         "stats": {
             "encoder_ops": len(encoder_ops),
             "bridge_ops": 1,
             "decoder_prefill_ops": len(decoder_ops),
             "total_ops": len(ops),
+            "encoder_call_ops": len(encoder_call_ops),
+            "decoder_prefill_call_ops": len(decoder_call_ops),
+            "total_call_ops": len(unified_call_ops),
         },
     }
 
