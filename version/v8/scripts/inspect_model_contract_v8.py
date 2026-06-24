@@ -18,7 +18,7 @@ from typing import Any
 
 
 SUPPORTED_DENSE_ARCHES = {"llama", "qwen2", "qwen3", "gemma3"}
-SUPPORTED_HYBRID_ARCHES = {"qwen35", "gemma4", "nemotron_h"}
+SUPPORTED_HYBRID_ARCHES = {"qwen35", "gemma4", "nemotron_h", "kimi_vl"}
 
 
 def _load_config(path: Path) -> dict[str, Any]:
@@ -42,6 +42,8 @@ def _infer_arch(config: dict[str, Any]) -> str:
         return "qwen35"
     if "nemotron_h" in model_type or "nemotronh" in architectures:
         return "nemotron_h"
+    if "kimi_vl" in model_type or "kimivl" in architectures or "kimi" in architectures:
+        return "kimi_vl"
     if "cohere" in model_type or "cohere" in architectures or "command" in model_type:
         return "cohere"
     if "gemma" in model_type and "4" in model_type:
@@ -98,6 +100,20 @@ def _gemma4_layers(config: dict[str, Any]) -> list[str]:
     return ["attention_or_sliding_attention"] * n
 
 
+def _kimi_vl_layers(config: dict[str, Any]) -> list[str]:
+    text = _text_config(config)
+    n = int(text.get("num_hidden_layers") or 0)
+    first_dense = int(text.get("first_k_dense_replace") or 0)
+    moe_freq = max(1, int(text.get("moe_layer_freq") or 1))
+    kinds: list[str] = []
+    for layer in range(n):
+        if layer < first_dense or (layer - first_dense) % moe_freq != 0:
+            kinds.append("mla_dense_mlp")
+        else:
+            kinds.append("mla_moe")
+    return kinds
+
+
 def _layer_kinds(arch: str, config: dict[str, Any]) -> list[str]:
     text = _text_config(config)
     if arch == "nemotron_h":
@@ -106,6 +122,8 @@ def _layer_kinds(arch: str, config: dict[str, Any]) -> list[str]:
         return _qwen35_layers(config)
     if arch == "gemma4":
         return _gemma4_layers(config)
+    if arch == "kimi_vl":
+        return _kimi_vl_layers(config)
     return _generic_dense_layers(config)
 
 
@@ -113,6 +131,13 @@ def _required_ops(arch: str, config: dict[str, Any], layer_kinds: list[str]) -> 
     ops = {"embedding", "rmsnorm", "matmul", "residual_add", "logits"}
     if any(kind in {"attention", "full_attention", "sliding_attention", "attention_or_sliding_attention"} for kind in layer_kinds):
         ops.update({"attention", "rope"})
+    if any(kind in {"mla_dense_mlp", "mla_moe"} for kind in layer_kinds):
+        ops.update({
+            "mla_attention",
+            "rope",
+            "kv_lora_decompress",
+            "partial_rope_concat",
+        })
     if any(kind == "deltanet" for kind in layer_kinds):
         ops.update({
             "recurrent_dt_gate",
@@ -137,6 +162,13 @@ def _required_ops(arch: str, config: dict[str, Any], layer_kinds: list[str]) -> 
             "moe_relu2_expert_mlp",
             "shared_expert_mlp",
         })
+    if any(kind == "mla_moe" for kind in layer_kinds):
+        ops.update({
+            "group_limited_topk_router",
+            "sigmoid_router_scores",
+            "moe_swiglu_expert_mlp",
+            "shared_swiglu_expert_mlp",
+        })
     act = str(_text_config(config).get("mlp_hidden_act") or _text_config(config).get("hidden_act") or "").lower()
     if act == "relu2":
         ops.add("relu2_mlp")
@@ -144,6 +176,8 @@ def _required_ops(arch: str, config: dict[str, Any], layer_kinds: list[str]) -> 
         ops.add("swiglu_or_geglu")
     if arch == "gemma4":
         ops.update({"gemma4_per_layer_embed", "gemma4_final_logit_softcap"})
+    if arch == "kimi_vl":
+        ops.update({"moonvit_encoder", "moonvit_projector", "media_placeholder_merge", "tiktoken_tokenizer"})
     return sorted(ops)
 
 
@@ -162,6 +196,13 @@ def _missing_ops(arch: str, required_ops: list[str]) -> list[str]:
             missing.append(op)
     if arch == "cohere":
         missing.append("cohere_tensor_name_mapping_audit")
+    if arch == "kimi_vl":
+        missing.extend([
+            "kimi_vl_safetensors_to_bump_mapping",
+            "mla_attention_contract",
+            "tiktoken_tokenizer_contract",
+            "moonvit_bridge_contract",
+        ])
     if arch not in SUPPORTED_DENSE_ARCHES | SUPPORTED_HYBRID_ARCHES:
         missing.append("v8_template_contract")
         missing.append("safetensors_to_bump_mapping")
@@ -210,6 +251,21 @@ def _notes(arch: str, config: dict[str, Any], layer_kinds: list[str], missing_op
     if arch == "cohere":
         notes.append("Cohere Command configs are gated in this environment; require config/weight access before mapping tensor names.")
         notes.append("Likely first target is dense decoder mapping/audit before any new math kernels.")
+    if arch == "kimi_vl":
+        notes.append("Kimi-VL text uses DeepSeek-V3-style MLA: q_proj plus compressed KV, kv_a_layernorm, kv_b_proj, qk_nope/qk_rope split, and RoPE only on the rope slice.")
+        notes.append(
+            f"MoE policy: first_k_dense_replace={text.get('first_k_dense_replace')} "
+            f"moe_layer_freq={text.get('moe_layer_freq')} routed_experts={text.get('n_routed_experts')} "
+            f"top_k={text.get('num_experts_per_tok')} shared_experts={text.get('n_shared_experts')} "
+            f"router={text.get('scoring_func')}/{text.get('topk_method')} scale={text.get('routed_scaling_factor')}."
+        )
+        notes.append("Existing group_limited_topk_router plus routed/shared SwiGLU expert kernels cover the scalar MoE math; scalar KV LoRA decompress and partial-RoPE concat helpers cover the first MLA sub-ops. Kimi still needs full MLA lowering, template wiring, tokenizer, and safetensors mapping.")
+        if isinstance(config.get("vision_config"), dict):
+            vision = config["vision_config"]
+            notes.append(
+                f"Vision path is MoonViT: layers={vision.get('num_hidden_layers')} hidden={vision.get('hidden_size')} "
+                f"patch={vision.get('patch_size')} merge={vision.get('merge_kernel_size')}; defer until text MLA+MoE parity is stamped."
+            )
     if not missing_ops:
         notes.append("Config-level contract has no known missing op, but weight-name audit and hidden parity are still required.")
     return notes

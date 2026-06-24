@@ -42,7 +42,14 @@ CRITICAL_TEMPLATE_INPUTS: dict[str, tuple[str, ...]] = {
     "q_gate_proj": ("x",),
     "k_proj": ("x",),
     "v_proj": ("x",),
+    "kv_a_proj": ("x",),
+    "kv_a_layernorm": ("x",),
+    "kv_lora_decompress": ("compressed_kv", "kv_b"),
+    "partial_rope_concat": ("q_nope", "q_pe", "k_nope", "k_pe"),
+    "mla_attention": ("query", "key", "value"),
     "mlp_gate_up": ("x",),
+    "moe_swiglu_expert_mlp": ("hidden", "indices", "routing_weights"),
+    "shared_swiglu_expert_mlp": ("hidden", "routed"),
     "mlp_up": ("x",),
     "mamba_in_proj": ("x",),
     "recurrent_qkv_proj": ("x",),
@@ -209,7 +216,7 @@ def audit_ir1(ir1: dict[str, Any]) -> list[str]:
         if norm is None:
             continue
         label = f"layer {layer}"
-        for proj_name in ("mamba_in_proj", "q_proj", "q_gate_proj", "k_proj", "v_proj", "mlp_up", "mlp_gate_up", "moe_router"):
+        for proj_name in ("mamba_in_proj", "q_proj", "q_gate_proj", "k_proj", "v_proj", "kv_a_proj", "mlp_up", "mlp_gate_up", "moe_router"):
             proj = by.get((layer, proj_name))
             if proj is not None:
                 _same_producer(errors, proj, "x", norm, f"{label} pre-norm projection")
@@ -248,13 +255,37 @@ def audit_ir1(ir1: dict[str, Any]) -> list[str]:
         if mlp_down is not None and relu2 is not None:
             _same_producer(errors, mlp_down, "x", relu2, f"{label} mlp down")
         q = by.get((layer, "q_proj")); k = by.get((layer, "k_proj")); v = by.get((layer, "v_proj"))
+        kv_a = by.get((layer, "kv_a_proj"))
+        kv_norm = by.get((layer, "kv_a_layernorm"))
+        kv_decomp = by.get((layer, "kv_lora_decompress"))
+        partial = by.get((layer, "partial_rope_concat"))
+        mla = by.get((layer, "mla_attention"))
+        if kv_a is not None:
+            _same_producer(errors, kv_a, "x", norm, f"{label} MLA kv_a")
+            _slot(errors, kv_a, "x", "layer_input", f"{label} MLA kv_a")
+        if kv_norm is not None and kv_a is not None:
+            _same_producer(errors, kv_norm, "x", kv_a, f"{label} MLA kv_a norm")
+        if kv_decomp is not None and kv_norm is not None:
+            _same_producer(errors, kv_decomp, "compressed_kv", kv_norm, f"{label} MLA kv decompress")
+        if partial is not None:
+            if q is not None:
+                for input_name in ("q_nope", "q_pe"):
+                    _same_producer(errors, partial, input_name, q, f"{label} MLA partial rope")
+            if kv_decomp is not None:
+                _same_producer(errors, partial, "k_nope", kv_decomp, f"{label} MLA partial rope")
+        if mla is not None:
+            if partial is not None:
+                _same_producer(errors, mla, "query", partial, f"{label} MLA attention")
+                _same_producer(errors, mla, "key", partial, f"{label} MLA attention")
+            if kv_decomp is not None:
+                _same_producer(errors, mla, "value", kv_decomp, f"{label} MLA attention")
         rope = by.get((layer, "rope_qk"))
         if rope is not None:
             if q is not None:
                 _same_producer(errors, rope, "q", q, f"{label} rope")
             if k is not None:
                 _same_producer(errors, rope, "k", k, f"{label} rope")
-        attn = by.get((layer, "attn")) or by.get((layer, "attn_sliding"))
+        attn = by.get((layer, "attn")) or by.get((layer, "attn_sliding")) or by.get((layer, "mla_attention"))
         if attn is not None:
             if rope is not None:
                 _same_producer(errors, attn, "q", rope, f"{label} attention")
@@ -287,7 +318,7 @@ def audit_lowered(lowered: dict[str, Any]) -> list[str]:
     layers = sorted({layer for layer, _ in by})
     for layer in layers:
         label = f"layer {layer}"
-        for proj_name in ("mamba_in_proj", "q_proj", "q_gate_proj", "k_proj", "v_proj", "mlp_up", "mlp_gate_up", "moe_router"):
+        for proj_name in ("mamba_in_proj", "q_proj", "q_gate_proj", "k_proj", "v_proj", "kv_a_proj", "mlp_up", "mlp_gate_up", "moe_router"):
             proj = by.get((layer, proj_name))
             if proj is not None:
                 buf = _input_buffer(proj, "x")

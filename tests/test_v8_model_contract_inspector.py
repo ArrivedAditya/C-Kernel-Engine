@@ -99,6 +99,131 @@ class ModelContractInspectorTests(unittest.TestCase):
         self.assertEqual(report["families"]["moe_shared_expert"], 2)
         self.assertEqual(report["layers"]["2"]["expert_count"], 1)
 
+
+    def test_kimi_vl_reports_mla_moe_bringup_contract(self) -> None:
+        cfg = {
+            "architectures": ["KimiVLForConditionalGeneration"],
+            "model_type": "kimi_vl",
+            "vision_config": {
+                "model_type": "moonvit",
+                "patch_size": 14,
+                "num_attention_heads": 16,
+                "num_hidden_layers": 27,
+                "hidden_size": 1152,
+                "intermediate_size": 4304,
+                "merge_kernel_size": [2, 2],
+            },
+            "text_config": {
+                "vocab_size": 163840,
+                "max_position_embeddings": 131072,
+                "hidden_size": 2048,
+                "intermediate_size": 11264,
+                "moe_intermediate_size": 1408,
+                "num_hidden_layers": 4,
+                "num_attention_heads": 16,
+                "num_key_value_heads": 16,
+                "n_shared_experts": 2,
+                "n_routed_experts": 64,
+                "kv_lora_rank": 512,
+                "q_lora_rank": None,
+                "qk_rope_head_dim": 64,
+                "v_head_dim": 128,
+                "qk_nope_head_dim": 128,
+                "topk_method": "noaux_tc",
+                "n_group": 1,
+                "topk_group": 1,
+                "num_experts_per_tok": 6,
+                "moe_layer_freq": 1,
+                "first_k_dense_replace": 1,
+                "norm_topk_prob": True,
+                "scoring_func": "sigmoid",
+                "routed_scaling_factor": 2.446,
+                "hidden_act": "silu",
+                "rope_theta": 800000.0,
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            path.write_text(json.dumps(cfg), encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), str(path)],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["arch"], "kimi_vl")
+        self.assertEqual(report["status"], "bringup_required")
+        self.assertEqual(report["layer_kind_counts"], {"mla_dense_mlp": 1, "mla_moe": 3})
+        for op in (
+            "mla_attention",
+            "kv_lora_decompress",
+            "group_limited_topk_router",
+            "moe_swiglu_expert_mlp",
+            "shared_swiglu_expert_mlp",
+            "moonvit_encoder",
+            "tiktoken_tokenizer",
+        ):
+            self.assertIn(op, report["required_ops"])
+        for missing in (
+            "kimi_vl_safetensors_to_bump_mapping",
+            "mla_attention_contract",
+            "tiktoken_tokenizer_contract",
+            "moonvit_bridge_contract",
+        ):
+            self.assertIn(missing, report["missing_ops"])
+        self.assertNotIn("moe_swiglu_expert_mlp", report["missing_ops"])
+        self.assertNotIn("shared_swiglu_expert_mlp", report["missing_ops"])
+        self.assertNotIn("kv_lora_decompress_contract", report["missing_ops"])
+        self.assertNotIn("kimi_vl_template_contract", report["missing_ops"])
+        self.assertNotIn("v8_template_contract", report["missing_ops"])
+
+    def test_safetensors_index_audit_classifies_kimi_mla_moe_families(self) -> None:
+        index = {
+            "metadata": {"total_parameters": 123, "total_size": 456},
+            "weight_map": {
+                "language_model.lm_head.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.embed_tokens.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.input_layernorm.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.q_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.kv_a_layernorm.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.kv_a_proj_with_mqa.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.kv_b_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.mlp.gate_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.mlp.up_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.mlp.down_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.gate.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.gate.e_score_correction_bias": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.experts.0.gate_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.experts.0.up_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.experts.0.down_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.shared_experts.gate_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.shared_experts.up_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.shared_experts.down_proj.weight": "model-00001-of-00001.safetensors",
+                "vision_tower.encoder.layers.0.self_attn.q_proj.weight": "model-00001-of-00001.safetensors",
+                "multi_modal_projector.linear_1.weight": "model-00001-of-00001.safetensors",
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "model.safetensors.index.json"
+            path.write_text(json.dumps(index), encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, str(AUDIT_SCRIPT), str(path)],
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+            )
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["families"]["mla_attention"], 3)
+        self.assertEqual(report["families"]["moe_router"], 2)
+        self.assertEqual(report["families"]["moe_expert"], 3)
+        self.assertEqual(report["families"]["moe_shared_expert"], 3)
+        self.assertEqual(report["families"]["vision_tower"], 1)
+        self.assertEqual(report["families"]["multimodal_projector"], 1)
+        self.assertEqual(report["layers"]["1"]["expert_count"], 1)
+
     def test_qwen3_dense_config_is_supported_at_contract_level(self) -> None:
         cfg = {
             "architectures": ["Qwen3ForCausalLM"],

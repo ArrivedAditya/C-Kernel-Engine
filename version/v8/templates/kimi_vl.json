@@ -1,0 +1,318 @@
+{
+  "version": 2,
+  "name": "kimi_vl",
+  "family": "kimi",
+  "flags": {
+    "use_qkv_bias": false,
+    "activation": "swiglu",
+    "rope": "partial_rope_concat",
+    "tokenizer": "tiktoken",
+    "prefill_policy": "batched",
+    "hybrid_block_pattern": "config.layer_kinds"
+  },
+  "contract": {
+    "tokenizer_contract": {
+      "tokenizer_type": "tiktoken",
+      "bos_policy": "model_defined",
+      "eos_policy": "model_defined",
+      "special_tokens": {
+        "source": "manifest_or_hf"
+      }
+    },
+    "chat_contract": {
+      "version": 1,
+      "name": "kimi_vl",
+      "raw_prompt_allowed": false,
+      "turn_prefix": "<|im_{role}|>",
+      "turn_suffix": "<|im_middle|>",
+      "assistant_generation_prefix": "<|im_assistant|>",
+      "role_labels": {
+        "system": "system",
+        "user": "user",
+        "assistant": "assistant"
+      },
+      "system_prompt_mode": "dedicated_turn",
+      "system_prompt_separator": "\n\n",
+      "default_system_prompt": "",
+      "inject_default_system_prompt": false,
+      "stop_text_markers": [
+        "<|im_user|>",
+        "<|im_system|>"
+      ],
+      "token_stop_markers": [
+        "<|im_user|>",
+        "<|im_system|>"
+      ],
+      "template_markers": [
+        "<|im_user|>",
+        "<|im_assistant|>",
+        "<|im_middle|>",
+        "<|media_start|>",
+        "<|media_content|>",
+        "<|media_pad|>",
+        "<|media_end|>"
+      ],
+      "min_response_tokens": 8
+    },
+    "attention_contract": {
+      "attn_variant": "mla",
+      "rope_layout": "partial_pairwise_concat",
+      "qk_norm": false,
+      "kv_layout": "compressed_kv_then_expanded_cache",
+      "layer_policy_config_key": "layer_kinds",
+      "kv_lora_rank_key": "kv_lora_rank",
+      "qk_nope_head_dim_key": "qk_nope_head_dim",
+      "qk_rope_head_dim_key": "qk_rope_head_dim",
+      "v_head_dim_key": "v_head_dim"
+    },
+    "block_contract": {
+      "norm_type": "rmsnorm",
+      "body_type": "mla_dense_mlp_or_moe",
+      "attention_formula": "q_proj + kv_a_proj_with_mqa -> kv_a_layernorm -> kv_b_proj split(k_nope,value); partial_rope(q_pe,k_pe); mla_attention -> o_proj",
+      "dense_mlp_formula": "gate_proj/up_proj -> silu_mul -> down_proj",
+      "moe_formula": "router(sigmoid) -> group_limited_topk -> routed_swiglu_experts + shared_swiglu_experts",
+      "qkv_bias": false
+    },
+    "vision_contract": {
+      "encoder": "moonvit",
+      "projector": "kimi_vl",
+      "placeholder_policy": "media_placeholder_merge"
+    },
+    "logits_contract": {
+      "final_norm": "rmsnorm",
+      "lm_head": "output_weight",
+      "logits_layout": "auto"
+    },
+    "quant_contract": {
+      "kernel_select": "weight_dtype_registry",
+      "activation_policy": "manifest_defined",
+      "per_tensor_mixed_quant": true
+    }
+  },
+  "kernels": {
+    "kv_lora_decompress": "deepseek_mla_kv_decompress_f32",
+    "partial_rope_concat": "deepseek_mla_partial_rope_concat_f32",
+    "router": "nemotron_group_limited_topk_router_f32",
+    "moe_swiglu_expert": "moe_swiglu_expert_forward_f32",
+    "moe_swiglu_shared": "moe_swiglu_shared_forward_f32"
+  },
+  "sequence": [
+    "decoder"
+  ],
+  "block_types": {
+    "decoder": {
+      "sequence": [
+        "header",
+        "body",
+        "footer"
+      ],
+      "header": [
+        "tiktoken_tokenizer",
+        "dense_embedding_lookup"
+      ],
+      "body": {
+        "type": "kimi_mla_moe",
+        "kind_config_key": "layer_kinds",
+        "ops_by_kind": {
+          "mla_dense_mlp": [
+            "residual_save",
+            "block_rmsnorm",
+            {
+              "op": "q_proj",
+              "graph_slots": {
+                "inputs": {
+                  "x": "layer_input"
+                }
+              }
+            },
+            {
+              "op": "kv_a_proj",
+              "graph_slots": {
+                "inputs": {
+                  "x": "layer_input"
+                }
+              }
+            },
+            {
+              "op": "kv_a_layernorm",
+              "graph_slots": {
+                "inputs": {
+                  "x": "compressed_kv"
+                }
+              }
+            },
+            {
+              "op": "kv_lora_decompress",
+              "graph_slots": {
+                "inputs": {
+                  "compressed_kv": "compressed_kv_normed",
+                  "kv_b": "layer_kv_b_proj"
+                }
+              }
+            },
+            {
+              "op": "partial_rope_concat",
+              "graph_slots": {
+                "inputs": {
+                  "q_nope": "q_nope",
+                  "q_pe": "q_pe",
+                  "k_nope": "k_nope",
+                  "k_pe": "k_pe"
+                }
+              }
+            },
+            {
+              "op": "mla_attention",
+              "graph_slots": {
+                "inputs": {
+                  "query": "mla_query",
+                  "key": "mla_key",
+                  "value": "mla_value"
+                }
+              }
+            },
+            {
+              "op": "out_proj",
+              "graph_slots": {
+                "inputs": {
+                  "x": "attn_scratch"
+                }
+              }
+            },
+            "residual_add",
+            "residual_save",
+            "block_rmsnorm",
+            {
+              "op": "mlp_gate_up",
+              "graph_slots": {
+                "inputs": {
+                  "x": "layer_input"
+                }
+              }
+            },
+            "silu_mul",
+            {
+              "op": "mlp_down",
+              "graph_slots": {
+                "inputs": {
+                  "x": "mlp_scratch"
+                }
+              }
+            },
+            "residual_add"
+          ],
+          "mla_moe": [
+            "residual_save",
+            "block_rmsnorm",
+            {
+              "op": "q_proj",
+              "graph_slots": {
+                "inputs": {
+                  "x": "layer_input"
+                }
+              }
+            },
+            {
+              "op": "kv_a_proj",
+              "graph_slots": {
+                "inputs": {
+                  "x": "layer_input"
+                }
+              }
+            },
+            {
+              "op": "kv_a_layernorm",
+              "graph_slots": {
+                "inputs": {
+                  "x": "compressed_kv"
+                }
+              }
+            },
+            {
+              "op": "kv_lora_decompress",
+              "graph_slots": {
+                "inputs": {
+                  "compressed_kv": "compressed_kv_normed",
+                  "kv_b": "layer_kv_b_proj"
+                }
+              }
+            },
+            {
+              "op": "partial_rope_concat",
+              "graph_slots": {
+                "inputs": {
+                  "q_nope": "q_nope",
+                  "q_pe": "q_pe",
+                  "k_nope": "k_nope",
+                  "k_pe": "k_pe"
+                }
+              }
+            },
+            {
+              "op": "mla_attention",
+              "graph_slots": {
+                "inputs": {
+                  "query": "mla_query",
+                  "key": "mla_key",
+                  "value": "mla_value"
+                }
+              }
+            },
+            {
+              "op": "out_proj",
+              "graph_slots": {
+                "inputs": {
+                  "x": "attn_scratch"
+                }
+              }
+            },
+            "residual_add",
+            "residual_save",
+            "block_rmsnorm",
+            {
+              "op": "moe_router",
+              "graph_slots": {
+                "inputs": {
+                  "x": "layer_input"
+                }
+              }
+            },
+            "group_limited_topk_router",
+            {
+              "op": "moe_swiglu_expert_mlp",
+              "graph_slots": {
+                "inputs": {
+                  "hidden": "layer_input",
+                  "indices": "router_indices",
+                  "routing_weights": "router_weights"
+                }
+              }
+            },
+            {
+              "op": "shared_swiglu_expert_mlp",
+              "graph_slots": {
+                "inputs": {
+                  "hidden": "layer_input",
+                  "routed": "moe_routed"
+                }
+              }
+            },
+            "residual_add"
+          ]
+        }
+      },
+      "footer": [
+        "final_rmsnorm",
+        "lm_head",
+        {
+          "op": "logits",
+          "graph_slots": {
+            "inputs": {
+              "x": "main_stream"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
