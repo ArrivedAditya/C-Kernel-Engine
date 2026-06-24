@@ -165,6 +165,113 @@ void deepseek_dsa_topk_softmax_backward_f32(const int *indices,
                               top_k);
 }
 
+
+static inline size_t ds_mla_tok_idx(int t, int d, int dim)
+{
+    return (size_t)t * (size_t)dim + (size_t)d;
+}
+
+static inline size_t ds_mla_thd_idx(int t, int h, int d, int heads, int dim)
+{
+    return ((size_t)t * (size_t)heads + (size_t)h) * (size_t)dim + (size_t)d;
+}
+
+void deepseek_mla_kv_decompress_f32(const float *compressed_kv,
+                                    const float *kv_b_proj,
+                                    float *k_nope,
+                                    float *value,
+                                    int tokens,
+                                    int heads,
+                                    int kv_lora_rank,
+                                    int qk_nope_dim,
+                                    int v_dim)
+{
+    if (!compressed_kv || !kv_b_proj || !k_nope || !value ||
+        tokens <= 0 || heads <= 0 || kv_lora_rank <= 0 || qk_nope_dim <= 0 || v_dim <= 0) {
+        return;
+    }
+
+    const int out_per_head = qk_nope_dim + v_dim;
+    for (int t = 0; t < tokens; ++t) {
+        for (int h = 0; h < heads; ++h) {
+            for (int d = 0; d < qk_nope_dim; ++d) {
+                const int out_col = h * out_per_head + d;
+                float acc = 0.0f;
+                for (int r = 0; r < kv_lora_rank; ++r) {
+                    acc += kv_b_proj[(size_t)out_col * (size_t)kv_lora_rank + (size_t)r] *
+                           compressed_kv[ds_mla_tok_idx(t, r, kv_lora_rank)];
+                }
+                k_nope[ds_mla_thd_idx(t, h, d, heads, qk_nope_dim)] = acc;
+            }
+            for (int d = 0; d < v_dim; ++d) {
+                const int out_col = h * out_per_head + qk_nope_dim + d;
+                float acc = 0.0f;
+                for (int r = 0; r < kv_lora_rank; ++r) {
+                    acc += kv_b_proj[(size_t)out_col * (size_t)kv_lora_rank + (size_t)r] *
+                           compressed_kv[ds_mla_tok_idx(t, r, kv_lora_rank)];
+                }
+                value[ds_mla_thd_idx(t, h, d, heads, v_dim)] = acc;
+            }
+        }
+    }
+}
+
+static void ds_mla_apply_kimi_rope(const float *src,
+                                   float *dst,
+                                   const float *cos_row,
+                                   const float *sin_row,
+                                   int dim)
+{
+    const int half = dim / 2;
+    for (int i = 0; i < half; ++i) {
+        const float x_first = src[2 * i];
+        const float x_second = src[2 * i + 1];
+        const float c = cos_row[i];
+        const float s = sin_row[i];
+        dst[i] = x_first * c - x_second * s;
+        dst[half + i] = x_second * c + x_first * s;
+    }
+}
+
+void deepseek_mla_partial_rope_concat_f32(const float *q_nope,
+                                          const float *q_pe,
+                                          const float *k_nope,
+                                          const float *k_pe,
+                                          const float *cos,
+                                          const float *sin,
+                                          float *query,
+                                          float *key,
+                                          int tokens,
+                                          int heads,
+                                          int qk_nope_dim,
+                                          int qk_rope_dim)
+{
+    if (!q_nope || !q_pe || !k_nope || !k_pe || !cos || !sin || !query || !key ||
+        tokens <= 0 || heads <= 0 || qk_nope_dim <= 0 || qk_rope_dim <= 0 || (qk_rope_dim % 2) != 0) {
+        return;
+    }
+
+    const int q_head_dim = qk_nope_dim + qk_rope_dim;
+    for (int t = 0; t < tokens; ++t) {
+        const float *cos_row = cos + (size_t)t * (size_t)(qk_rope_dim / 2);
+        const float *sin_row = sin + (size_t)t * (size_t)(qk_rope_dim / 2);
+        for (int h = 0; h < heads; ++h) {
+            float *q_out = query + ds_mla_thd_idx(t, h, 0, heads, q_head_dim);
+            float *k_out = key + ds_mla_thd_idx(t, h, 0, heads, q_head_dim);
+            const float *qn = q_nope + ds_mla_thd_idx(t, h, 0, heads, qk_nope_dim);
+            const float *qp = q_pe + ds_mla_thd_idx(t, h, 0, heads, qk_rope_dim);
+            const float *kn = k_nope + ds_mla_thd_idx(t, h, 0, heads, qk_nope_dim);
+            const float *kp = k_pe + ds_mla_tok_idx(t, 0, qk_rope_dim);
+            for (int d = 0; d < qk_nope_dim; ++d) {
+                q_out[d] = qn[d];
+                k_out[d] = kn[d];
+            }
+            ds_mla_apply_kimi_rope(qp, q_out + qk_nope_dim, cos_row, sin_row, qk_rope_dim);
+            ds_mla_apply_kimi_rope(kp, k_out + qk_nope_dim, cos_row, sin_row, qk_rope_dim);
+        }
+    }
+}
+
 static inline size_t ds_qkv_idx(int token, int head, int d, int heads, int dim)
 {
     return ((size_t)token * (size_t)heads + (size_t)head) * (size_t)dim + (size_t)d;

@@ -1,0 +1,133 @@
+{
+  "id": "moe_swiglu_shared_backward_f32",
+  "op": "shared_swiglu_expert_mlp",
+  "variant": "fp32",
+  "modes": {
+    "inference": false,
+    "training": true,
+    "backward": true
+  },
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "d_output",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ]
+    },
+    {
+      "name": "hidden",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ]
+    }
+  ],
+  "weights": [
+    {
+      "name": "shared_gate",
+      "dtype": "fp32",
+      "shape": [
+        "I",
+        "H"
+      ]
+    },
+    {
+      "name": "shared_up",
+      "dtype": "fp32",
+      "shape": [
+        "I",
+        "H"
+      ]
+    },
+    {
+      "name": "shared_down",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "I"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "d_hidden",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ]
+    },
+    {
+      "name": "d_routed",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ]
+    },
+    {
+      "name": "d_shared_gate",
+      "dtype": "fp32",
+      "shape": [
+        "I",
+        "H"
+      ]
+    },
+    {
+      "name": "d_shared_up",
+      "dtype": "fp32",
+      "shape": [
+        "I",
+        "H"
+      ]
+    },
+    {
+      "name": "d_shared_down",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "I"
+      ]
+    }
+  ],
+  "dims": [
+    "R",
+    "H",
+    "I"
+  ],
+  "impl": {
+    "sources": [
+      "src/kernels/axpy_kernels.c"
+    ],
+    "variants": [
+      {
+        "name": "scalar_ref",
+        "requires": [],
+        "compile_flags": []
+      }
+    ],
+    "function": "moe_swiglu_shared_backward_f32",
+    "c_declaration": "void moe_swiglu_shared_backward_f32(const float *d_output, const float *hidden, const float *shared_gate, const float *shared_up, const float *shared_down, float *d_hidden, float *d_routed, float *d_shared_gate, float *d_shared_up, float *d_shared_down, int rows, int hidden_dim, int intermediate_dim);"
+  },
+  "tests": {
+    "unit": [
+      "unittest/test_moe_swiglu_expert.py"
+    ],
+    "parity": [
+      {
+        "kind": "pytorch",
+        "command": ".venv/bin/python unittest/test_moe_swiglu_expert.py",
+        "tolerance": "3e-6"
+      }
+    ]
+  },
+  "notes": "Backward pass for shared SwiGLU expert reference kernel."
+}

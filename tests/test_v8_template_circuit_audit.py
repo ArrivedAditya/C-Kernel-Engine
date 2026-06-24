@@ -96,6 +96,54 @@ class TemplateCircuitAuditTests(unittest.TestCase):
         self.assertEqual(report["missing"], [])
 
 
+    def test_kimi_vl_template_declares_mla_and_moe_edges(self) -> None:
+        audit = _load_module()
+        template = json.loads((REPO / "version/v8/templates/kimi_vl.json").read_text(encoding="utf-8"))
+        report = audit.audit_template_explicit_edges(template)
+        explicit = set(report["explicit"])
+        self.assertIn("decoder.body:mla_dense_mlp[2].q_proj.x=layer_input", explicit)
+        self.assertIn("decoder.body:mla_dense_mlp[3].kv_a_proj.x=layer_input", explicit)
+        self.assertIn("decoder.body:mla_dense_mlp[5].kv_lora_decompress.compressed_kv=compressed_kv_normed", explicit)
+        self.assertIn("decoder.body:mla_dense_mlp[6].partial_rope_concat.q_pe=q_pe", explicit)
+        self.assertIn("decoder.body:mla_dense_mlp[7].mla_attention.query=mla_query", explicit)
+        self.assertIn("decoder.body:mla_moe[14].moe_swiglu_expert_mlp.routing_weights=router_weights", explicit)
+        self.assertIn("decoder.body:mla_moe[15].shared_swiglu_expert_mlp.routed=moe_routed", explicit)
+        self.assertIn("decoder.footer[2].logits.x=main_stream", explicit)
+        self.assertEqual(report["missing"], [])
+
+    def test_mla_dataflow_must_consume_normed_compressed_kv(self) -> None:
+        audit = _load_module()
+        ir = {
+            "ops": [
+                _op(0, -1, "dense_embedding_lookup", {}, {"out": {"slot": "main_stream", "dtype": "fp32"}}),
+                _op(1, 0, "residual_save", {"src": {"from_op": 0, "slot": "main_stream"}}, {"dst": {"slot": "residual", "dtype": "fp32"}}),
+                _op(2, 0, "block_rmsnorm", {"input": {"from_op": 0, "slot": "main_stream"}}, {"output": {"slot": "layer_input", "dtype": "fp32"}}),
+                _op(3, 0, "q_proj", {"x": {"from_op": 2, "slot": "layer_input"}}, {"y": {"slot": "q_proj", "dtype": "fp32"}}),
+                _op(4, 0, "kv_a_proj", {"x": {"from_op": 2, "slot": "layer_input"}}, {"y": {"slot": "compressed_kv", "dtype": "fp32"}}),
+                _op(5, 0, "kv_a_layernorm", {"x": {"from_op": 4, "slot": "compressed_kv"}}, {"y": {"slot": "compressed_kv_normed", "dtype": "fp32"}}),
+                _op(6, 0, "kv_lora_decompress", {"compressed_kv": {"from_op": 4, "slot": "compressed_kv"}}, {"k_nope": {"slot": "k_nope"}, "value": {"slot": "mla_value"}}),
+            ]
+        }
+        errors = audit.audit_ir1(ir)
+        self.assertTrue(any("kv_lora_decompress.compressed_kv" in e and "expected kv_a_layernorm" in e for e in errors), errors)
+
+    def test_mla_dataflow_passes_for_normed_kv_and_partial_rope(self) -> None:
+        audit = _load_module()
+        ir = {
+            "ops": [
+                _op(0, -1, "dense_embedding_lookup", {}, {"out": {"slot": "main_stream", "dtype": "fp32"}}),
+                _op(1, 0, "residual_save", {"src": {"from_op": 0, "slot": "main_stream"}}, {"dst": {"slot": "residual", "dtype": "fp32"}}),
+                _op(2, 0, "block_rmsnorm", {"input": {"from_op": 0, "slot": "main_stream"}}, {"output": {"slot": "layer_input", "dtype": "fp32"}}),
+                _op(3, 0, "q_proj", {"x": {"from_op": 2, "slot": "layer_input"}}, {"y": {"slot": "q_proj", "dtype": "fp32"}}),
+                _op(4, 0, "kv_a_proj", {"x": {"from_op": 2, "slot": "layer_input"}}, {"y": {"slot": "compressed_kv", "dtype": "fp32"}}),
+                _op(5, 0, "kv_a_layernorm", {"x": {"from_op": 4, "slot": "compressed_kv"}}, {"y": {"slot": "compressed_kv_normed", "dtype": "fp32"}}),
+                _op(6, 0, "kv_lora_decompress", {"compressed_kv": {"from_op": 5, "slot": "compressed_kv_normed"}}, {"k_nope": {"slot": "k_nope"}, "value": {"slot": "mla_value"}}),
+                _op(7, 0, "partial_rope_concat", {"q_nope": {"from_op": 3, "slot": "q_nope"}, "q_pe": {"from_op": 3, "slot": "q_pe"}, "k_nope": {"from_op": 6, "slot": "k_nope"}}, {"query": {"slot": "mla_query"}, "key": {"slot": "mla_key"}}),
+                _op(8, 0, "mla_attention", {"query": {"from_op": 7, "slot": "mla_query"}, "key": {"from_op": 7, "slot": "mla_key"}, "value": {"from_op": 6, "slot": "mla_value"}}, {"out": {"slot": "attn_scratch"}}),
+            ]
+        }
+        self.assertEqual(audit.audit_ir1(ir), [])
+
     def test_lowered_rejects_quantized_activation_bound_to_fp32_stream(self) -> None:
         audit = _load_module()
         lowered = {

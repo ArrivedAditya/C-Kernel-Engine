@@ -25,24 +25,51 @@ def _load_index(path: Path) -> dict[str, Any]:
 
 
 def _family(name: str) -> str:
-    if name in {"lm_head.weight", "backbone.embeddings.weight", "model.embed_tokens.weight"}:
+    if name in {
+        "lm_head.weight",
+        "language_model.lm_head.weight",
+        "backbone.embeddings.weight",
+        "model.embed_tokens.weight",
+        "language_model.model.embed_tokens.weight",
+    }:
         return name
-    if ".mixer." not in name:
-        return "other"
-    tail = name.split(".mixer.", 1)[1]
-    if tail.startswith("self_attn.") or tail in {"q_proj.weight", "k_proj.weight", "v_proj.weight", "o_proj.weight"}:
+    if name.startswith("vision_tower."):
+        return "vision_tower"
+    if name.startswith("multi_modal_projector."):
+        return "multimodal_projector"
+    if ".mixer." in name:
+        tail = name.split(".mixer.", 1)[1]
+        if tail.startswith("self_attn.") or tail in {"q_proj.weight", "k_proj.weight", "v_proj.weight", "o_proj.weight"}:
+            return "attention"
+        if tail.startswith("experts."):
+            return "moe_expert"
+        if tail.startswith("shared_experts."):
+            return "moe_shared_expert"
+        if tail.startswith("gate."):
+            return "moe_router"
+        if tail in {"up_proj.weight", "down_proj.weight"}:
+            return "dense_mlp"
+        if tail.startswith(("in_proj.", "out_proj.", "conv1d.", "dt_bias", "A_log", "D", "norm.")):
+            return "mamba"
+        return "mixer_other"
+    if ".self_attn." in name:
+        tail = name.split(".self_attn.", 1)[1]
+        if tail in {"q_proj.weight", "o_proj.weight", "rotary_emb.inv_freq"}:
+            return "attention"
+        if tail.startswith(("kv_a_proj_with_mqa.", "kv_a_layernorm.", "kv_b_proj.")):
+            return "mla_attention"
         return "attention"
-    if tail.startswith("experts."):
+    if ".mlp.experts." in name:
         return "moe_expert"
-    if tail.startswith("shared_experts."):
+    if ".mlp.shared_experts." in name:
         return "moe_shared_expert"
-    if tail.startswith("gate."):
+    if ".mlp.gate." in name:
         return "moe_router"
-    if tail in {"up_proj.weight", "down_proj.weight"}:
+    if ".mlp." in name:
         return "dense_mlp"
-    if tail.startswith(("in_proj.", "out_proj.", "conv1d.", "dt_bias", "A_log", "D", "norm.")):
-        return "mamba"
-    return "mixer_other"
+    if name.endswith(("input_layernorm.weight", "post_attention_layernorm.weight", "model.norm.weight")):
+        return "norm"
+    return "other"
 
 
 def audit_index(path: Path) -> dict[str, Any]:

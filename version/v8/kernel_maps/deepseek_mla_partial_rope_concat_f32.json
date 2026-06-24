@@ -1,0 +1,121 @@
+{
+  "id": "deepseek_mla_partial_rope_concat_f32",
+  "op": "partial_rope_concat",
+  "variant": "fp32",
+  "modes": {
+    "inference": true,
+    "training": true,
+    "backward": false
+  },
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "q_nope",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "H",
+        "Dk"
+      ]
+    },
+    {
+      "name": "q_pe",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "H",
+        "Dr"
+      ]
+    },
+    {
+      "name": "k_nope",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "H",
+        "Dk"
+      ]
+    },
+    {
+      "name": "k_pe",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "Dr"
+      ]
+    },
+    {
+      "name": "cos",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "Dr/2"
+      ]
+    },
+    {
+      "name": "sin",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "Dr/2"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "query",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "H",
+        "Dk+Dr"
+      ]
+    },
+    {
+      "name": "key",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "H",
+        "Dk+Dr"
+      ]
+    }
+  ],
+  "dims": [
+    "T",
+    "H",
+    "Dk",
+    "Dr"
+  ],
+  "impl": {
+    "sources": [
+      "src/kernels/deepseek_kernels.c"
+    ],
+    "variants": [
+      {
+        "name": "scalar_ref",
+        "requires": [],
+        "compile_flags": []
+      }
+    ],
+    "function": "deepseek_mla_partial_rope_concat_f32",
+    "c_declaration": "void deepseek_mla_partial_rope_concat_f32(const float *q_nope, const float *q_pe, const float *k_nope, const float *k_pe, const float *cos, const float *sin, float *query, float *key, int tokens, int heads, int qk_nope_dim, int qk_rope_dim);"
+  },
+  "tests": {
+    "unit": [
+      "unittest/test_deepseek_reference_kernels.py"
+    ],
+    "parity": [
+      {
+        "kind": "pytorch",
+        "command": ".venv/bin/python unittest/test_deepseek_reference_kernels.py",
+        "tolerance": "1e-6"
+      }
+    ]
+  },
+  "notes": "Scalar reference for MLA partial RoPE assembly: copy q/k no-PE slices, apply Kimi/DeepSeek pair layout RoPE to q_pe and shared k_pe, then concatenate."
+}

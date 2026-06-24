@@ -32,6 +32,10 @@ lib.deepseek_csa_attention_backward_f32.argtypes = [fptr, fptr, fptr, fptr, iptr
 lib.deepseek_csa_attention_backward_f32.restype = None
 lib.deepseek_hybrid_attention_f32.argtypes = [fptr, fptr, fptr, iptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_float, ctypes.c_int]
 lib.deepseek_hybrid_attention_f32.restype = None
+lib.deepseek_mla_kv_decompress_f32.argtypes = [fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+lib.deepseek_mla_kv_decompress_f32.restype = None
+lib.deepseek_mla_partial_rope_concat_f32.argtypes = [fptr, fptr, fptr, fptr, fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+lib.deepseek_mla_partial_rope_concat_f32.restype = None
 
 
 def ptr(a):
@@ -110,6 +114,68 @@ class TestDeepSeekReferenceKernels(unittest.TestCase):
         d_scores = np.empty((tokens, heads, keys), dtype=np.float32)
         lib.deepseek_dsa_topk_softmax_backward_f32(iptr_np(idx_np), ptr(weights_np), ptr(d_weights_np), ptr(d_scores), tokens, heads, keys, top_k)
         np.testing.assert_allclose(d_scores, scores.grad.numpy(), rtol=1e-6, atol=1e-6)
+
+
+    def test_mla_kv_decompress_matches_pytorch(self):
+        torch.manual_seed(19)
+        tokens, heads, rank, nope_dim, v_dim = 3, 4, 5, 6, 7
+        compressed = torch.randn(tokens, rank, dtype=torch.float32)
+        kv_b = torch.randn(heads * (nope_dim + v_dim), rank, dtype=torch.float32)
+        kv = torch.matmul(compressed, kv_b.T).view(tokens, heads, nope_dim + v_dim)
+        ref_k = kv[:, :, :nope_dim].contiguous()
+        ref_v = kv[:, :, nope_dim:].contiguous()
+
+        compressed_np = np.ascontiguousarray(compressed.numpy())
+        kv_b_np = np.ascontiguousarray(kv_b.numpy())
+        k_np = np.empty((tokens, heads, nope_dim), dtype=np.float32)
+        v_np = np.empty((tokens, heads, v_dim), dtype=np.float32)
+        lib.deepseek_mla_kv_decompress_f32(ptr(compressed_np), ptr(kv_b_np), ptr(k_np), ptr(v_np), tokens, heads, rank, nope_dim, v_dim)
+        np.testing.assert_allclose(k_np, ref_k.numpy(), rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(v_np, ref_v.numpy(), rtol=1e-6, atol=1e-6)
+
+    def test_mla_partial_rope_concat_matches_kimi_layout(self):
+        torch.manual_seed(23)
+        tokens, heads, nope_dim, rope_dim = 3, 2, 5, 6
+        q_nope = torch.randn(tokens, heads, nope_dim, dtype=torch.float32)
+        q_pe = torch.randn(tokens, heads, rope_dim, dtype=torch.float32)
+        k_nope = torch.randn(tokens, heads, nope_dim, dtype=torch.float32)
+        k_pe = torch.randn(tokens, rope_dim, dtype=torch.float32)
+        base = torch.randn(tokens, rope_dim // 2, dtype=torch.float32)
+        cos_half = base.cos()
+        sin_half = base.sin()
+        cos = torch.cat([cos_half, cos_half], dim=-1)
+        sin = torch.cat([sin_half, sin_half], dim=-1)
+
+        def apply_kimi_rope(x):
+            b = x.reshape(*x.shape[:-1], rope_dim // 2, 2).transpose(-1, -2).reshape(*x.shape[:-1], rope_dim)
+            first, second = b[..., : rope_dim // 2], b[..., rope_dim // 2 :]
+            rotated = torch.cat([-second, first], dim=-1)
+            c = cos.reshape(tokens, 1, rope_dim)
+            ss = sin.reshape(tokens, 1, rope_dim)
+            return b * c + rotated * ss
+
+        q_ref = torch.cat([q_nope, apply_kimi_rope(q_pe)], dim=-1)
+        k_pe_heads = k_pe[:, None, :].expand(tokens, heads, rope_dim).contiguous()
+        k_ref = torch.cat([k_nope, apply_kimi_rope(k_pe_heads)], dim=-1)
+
+        query = np.empty((tokens, heads, nope_dim + rope_dim), dtype=np.float32)
+        key = np.empty_like(query)
+        lib.deepseek_mla_partial_rope_concat_f32(
+            ptr(np.ascontiguousarray(q_nope.numpy())),
+            ptr(np.ascontiguousarray(q_pe.numpy())),
+            ptr(np.ascontiguousarray(k_nope.numpy())),
+            ptr(np.ascontiguousarray(k_pe.numpy())),
+            ptr(np.ascontiguousarray(cos_half.numpy())),
+            ptr(np.ascontiguousarray(sin_half.numpy())),
+            ptr(query),
+            ptr(key),
+            tokens,
+            heads,
+            nope_dim,
+            rope_dim,
+        )
+        np.testing.assert_allclose(query, q_ref.numpy(), rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(key, k_ref.numpy(), rtol=1e-6, atol=1e-6)
 
     def test_csa_attention_forward_backward(self):
         torch.manual_seed(13)

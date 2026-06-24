@@ -124,6 +124,9 @@ class TestNemotronRouter(unittest.TestCase):
     def test_no_norm_scaled_router(self) -> None:
         self._run_case(rows=5, n_experts=16, top_k=4, n_group=4, topk_group=2, norm=False, scale=0.7, seed=31)
 
+    def test_kimi_vl_like_router(self) -> None:
+        self._run_case(rows=9, n_experts=64, top_k=6, n_group=1, topk_group=1, norm=True, scale=2.446, seed=41)
+
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()

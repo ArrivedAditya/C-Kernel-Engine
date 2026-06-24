@@ -1,0 +1,102 @@
+{
+  "id": "moe_swiglu_shared_forward_f32",
+  "op": "shared_swiglu_expert_mlp",
+  "variant": "fp32",
+  "modes": {
+    "inference": true,
+    "training": true,
+    "backward": false
+  },
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "hidden",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ]
+    },
+    {
+      "name": "routed",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ],
+      "optional": true
+    }
+  ],
+  "weights": [
+    {
+      "name": "shared_gate",
+      "dtype": "fp32",
+      "shape": [
+        "I",
+        "H"
+      ]
+    },
+    {
+      "name": "shared_up",
+      "dtype": "fp32",
+      "shape": [
+        "I",
+        "H"
+      ]
+    },
+    {
+      "name": "shared_down",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "I"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "R",
+        "H"
+      ]
+    }
+  ],
+  "dims": [
+    "R",
+    "H",
+    "I"
+  ],
+  "impl": {
+    "sources": [
+      "src/kernels/axpy_kernels.c"
+    ],
+    "variants": [
+      {
+        "name": "scalar_ref",
+        "requires": [],
+        "compile_flags": []
+      }
+    ],
+    "function": "moe_swiglu_shared_forward_f32",
+    "c_declaration": "void moe_swiglu_shared_forward_f32(const float *hidden, const float *routed, const float *shared_gate, const float *shared_up, const float *shared_down, float *output, int rows, int hidden_dim, int intermediate_dim);"
+  },
+  "tests": {
+    "unit": [
+      "unittest/test_moe_swiglu_expert.py"
+    ],
+    "parity": [
+      {
+        "kind": "pytorch",
+        "command": ".venv/bin/python unittest/test_moe_swiglu_expert.py",
+        "tolerance": "3e-6"
+      }
+    ]
+  },
+  "notes": "Shared SwiGLU expert branch used by Kimi/DeepSeek-style MoE; output = routed + shared_down(silu(shared_gate(x))*shared_up(x))."
+}

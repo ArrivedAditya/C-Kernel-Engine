@@ -1,0 +1,89 @@
+{
+  "id": "deepseek_mla_kv_decompress_f32",
+  "op": "kv_lora_decompress",
+  "variant": "fp32",
+  "modes": {
+    "inference": true,
+    "training": true,
+    "backward": false
+  },
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "compressed_kv",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "R"
+      ]
+    }
+  ],
+  "weights": [
+    {
+      "name": "kv_b_proj",
+      "dtype": "fp32",
+      "shape": [
+        "H*(Dk+Dv)",
+        "R"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "k_nope",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "H",
+        "Dk"
+      ]
+    },
+    {
+      "name": "value",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "H",
+        "Dv"
+      ]
+    }
+  ],
+  "dims": [
+    "T",
+    "H",
+    "R",
+    "Dk",
+    "Dv"
+  ],
+  "impl": {
+    "sources": [
+      "src/kernels/deepseek_kernels.c"
+    ],
+    "variants": [
+      {
+        "name": "scalar_ref",
+        "requires": [],
+        "compile_flags": []
+      }
+    ],
+    "function": "deepseek_mla_kv_decompress_f32",
+    "c_declaration": "void deepseek_mla_kv_decompress_f32(const float *compressed_kv, const float *kv_b_proj, float *k_nope, float *value, int tokens, int heads, int kv_lora_rank, int qk_nope_dim, int v_dim);"
+  },
+  "tests": {
+    "unit": [
+      "unittest/test_deepseek_reference_kernels.py"
+    ],
+    "parity": [
+      {
+        "kind": "pytorch",
+        "command": ".venv/bin/python unittest/test_deepseek_reference_kernels.py",
+        "tolerance": "1e-5"
+      }
+    ]
+  },
+  "notes": "Scalar reference for DeepSeek/Kimi MLA KV LoRA decompress after kv_a_layernorm: kv_b_proj expands compressed KV, then splits into k_nope and value heads."
+}

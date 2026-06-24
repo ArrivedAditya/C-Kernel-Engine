@@ -179,6 +179,37 @@
           "optional": true
         }
       ]
+    },
+    "kimi_vl": {
+      "template": "kimi_vl",
+      "family": "kimi",
+      "aliases": [
+        "kimi_vl",
+        "KimiVLForConditionalGeneration"
+      ],
+      "status": "bringup_required",
+      "config": {
+        "model": "kimi_vl",
+        "arch": "kimi_vl",
+        "model_type": "kimi_vl",
+        "rope_layout": "partial_pairwise_concat",
+        "prefill_policy": "batched",
+        "attention_variant": "mla",
+        "moe_formula": "sigmoid_router_topk6_routed_and_shared_swiglu"
+      },
+      "required_tensor_families": [
+        "language_model.model.layers.{L}.self_attn.q_proj.weight",
+        "language_model.model.layers.{L}.self_attn.kv_a_proj_with_mqa.weight",
+        "language_model.model.layers.{L}.self_attn.kv_a_layernorm.weight",
+        "language_model.model.layers.{L}.self_attn.kv_b_proj.weight",
+        "language_model.model.layers.{L}.self_attn.o_proj.weight",
+        "language_model.model.layers.{L}.mlp.gate.weight",
+        "language_model.model.layers.{L}.mlp.experts.{E}.gate_proj.weight",
+        "language_model.model.layers.{L}.mlp.shared_experts.gate_proj.weight",
+        "vision_tower.*",
+        "multi_modal_projector.*"
+      ],
+      "notes": "Declared mapping contract only. Full tensor_refs are intentionally absent until Kimi MLA/MoE packing and MoonViT bridge lowering are implemented."
     }
   }
 }

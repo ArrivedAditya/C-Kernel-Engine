@@ -32,6 +32,7 @@ PROMOTED_TEMPLATES = [
     "gemma4_vision",
     "glm4",
     "nemotron_h",
+    "kimi_vl",
     "llama",
 ]
 
@@ -74,6 +75,7 @@ MODEL_COVERAGE = [
     {"family": "gemma4", "template": "pass", "ir": "pass", "generated_c": "pass", "runtime": "partial", "model": "pass", "notes": "text coherent; vision bridge early"},
     {"family": "glm4", "template": "pass", "ir": "pass", "generated_c": "pass", "runtime": "partial", "model": "pass", "notes": "partial pairwise RoPE + GGUF smoke"},
     {"family": "nemotron-h", "template": "pass", "ir": "pass", "generated_c": "pass", "runtime": "partial", "model": "pass", "notes": "Mamba2 path equivalence monitored"},
+    {"family": "kimi-vl", "template": "pass", "ir": "partial", "generated_c": "partial", "runtime": "partial", "model": "partial", "notes": "MLA/MoE scalar contracts added; full template lowering/tokenizer/vision bridge in bring-up"},
     {"family": "llama/nanbeige", "template": "pass", "ir": "pass", "generated_c": "pass", "runtime": "partial", "model": "partial", "notes": "Nanbeige active bring-up lane"},
 ]
 
