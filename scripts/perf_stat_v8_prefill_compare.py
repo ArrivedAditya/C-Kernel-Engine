@@ -239,6 +239,10 @@ def main() -> int:
                 "CK_ENABLE_Q4K_PACKED_META_X8_PREFILL": env.get("CK_ENABLE_Q4K_PACKED_META_X8_PREFILL", ""),
                 "CK_FORCE_Q4K_PACKED_META_X8_PREFILL": env.get("CK_FORCE_Q4K_PACKED_META_X8_PREFILL", ""),
                 "CK_DISABLE_Q4K_PACKED_META_X8_PREFILL": env.get("CK_DISABLE_Q4K_PACKED_META_X8_PREFILL", ""),
+                "CK_ENABLE_Q4K_PACKED_META_X8MT_PREFILL": env.get("CK_ENABLE_Q4K_PACKED_META_X8MT_PREFILL", ""),
+                "CK_FORCE_Q4K_PACKED_META_X8MT_PREFILL": env.get("CK_FORCE_Q4K_PACKED_META_X8MT_PREFILL", ""),
+                "CK_DISABLE_Q4K_PACKED_META_X8MT_PREFILL": env.get("CK_DISABLE_Q4K_PACKED_META_X8MT_PREFILL", ""),
+                "CK_Q4K_PACKED_META_X8MT_TILE_M": env.get("CK_Q4K_PACKED_META_X8MT_TILE_M", ""),
             },
         },
         "runs": {},
@@ -277,6 +281,10 @@ def main() -> int:
         f"- CK Q4 packed-x8: `{env.get('CK_ENABLE_Q4K_PACKED_META_X8_PREFILL', '')}` "
         f"force=`{env.get('CK_FORCE_Q4K_PACKED_META_X8_PREFILL', '')}` "
         f"disabled=`{env.get('CK_DISABLE_Q4K_PACKED_META_X8_PREFILL', '')}`",
+        f"- CK Q4 packed-x8mt: `{env.get('CK_ENABLE_Q4K_PACKED_META_X8MT_PREFILL', '')}` "
+        f"force=`{env.get('CK_FORCE_Q4K_PACKED_META_X8MT_PREFILL', '')}` "
+        f"disabled=`{env.get('CK_DISABLE_Q4K_PACKED_META_X8MT_PREFILL', '')}` "
+        f"tile_m=`{env.get('CK_Q4K_PACKED_META_X8MT_TILE_M', '') or 'default'}`",
         "",
         "| Engine | prefill tok/s | prefill ms | decode tok/s | decode ms | cycles | instructions | IPC | cache misses | cache miss rate | ctx switches |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",

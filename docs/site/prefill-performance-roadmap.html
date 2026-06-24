@@ -1008,9 +1008,9 @@
       </tr>
       <tr>
         <td>Token-tile x output-tile GEMM</td>
-        <td>Extend x8 into a true <code>token_tile x output_tile</code> microkernel.</td>
-        <td>This should reuse both activation rows and weight metadata across a two-dimensional tile, not just eight output rows for one token row.</td>
-        <td>Next target</td>
+        <td>Add an opt-in <code>x8mt</code> lane that schedules small token tiles against eight-row output tiles.</td>
+        <td>This reuses the same packed Q4_K group across multiple Q8_K token rows and is the first step toward a true register-blocked GEMM microkernel.</td>
+        <td>Experimental benchmark/runtime lane</td>
       </tr>
       <tr>
         <td>Fused MLP kernels</td>
@@ -1063,6 +1063,21 @@
   <pre><code>for token_tile:
   for output_tile:
     compute multiple tokens x multiple output rows together</code></pre>
+
+  <p>
+    The current experimental <code>x8mt</code> path takes the first step:
+  </p>
+  <pre><code>CK_ENABLE_Q4K_PACKED_META_X8MT_PREFILL=1 \
+CK_Q4K_PACKED_META_X8MT_TILE_M=2 \
+make profile-v8-prefill-perf-stat</code></pre>
+
+  <p>
+    In the local dispatch matrix, <code>x8mt</code> with <code>tile_m=2</code> edged out plain x8 on the measured
+    Q4_K shapes, including the longer <code>M=128,N=896,K=4864</code> compact-down shape. It remains opt-in because
+    end-to-end Qwen2 timings on the laptop were noisy and not yet a stable promotion signal. The next real kernel
+    improvement is to keep the tile accumulators in registers across the token tile instead of using x8mt mostly as
+    a scheduling/data-reuse step.
+  </p>
 
   <h2>Why 2D Scheduling Was Not Enough</h2>
   <p>

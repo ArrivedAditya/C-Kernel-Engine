@@ -7,6 +7,7 @@
  *   - CK packed-meta M-split threadpool
  *   - CK packed-meta N-split threadpool
  *   - CK experimental packed-meta x8 N-tile threadpool
+ *   - CK experimental packed-meta x8 MxN-tile threadpool
  *   - llama.cpp test shim, when llama.cpp/libggml_kernel_test.so is available
  *
  * The llama.cpp shim currently accepts FP32 activations and quantizes them to
@@ -54,6 +55,13 @@ extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_nsplit(const void *A_q8,
                                                              float *C,
                                                              int M, int N, int K,
                                                              int threads);
+extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(const void *A_q8,
+                                                            const void *B_packed_x8,
+                                                            const float *bias,
+                                                            float *C,
+                                                            int M, int N, int K,
+                                                            int tile_m,
+                                                            int threads);
 
 typedef void (*llama_gemm_q4_k_fn)(const void *, const float *, float *, int, int, int);
 
@@ -146,6 +154,7 @@ typedef struct {
     int N;
     int K;
     int threads;
+    int x8mt_tile_m;
     llama_gemm_q4_k_fn llama_fn;
 } bench_ctx_t;
 
@@ -172,6 +181,11 @@ static void call_ck_packed_nsplit(void *p) {
 static void call_ck_packed_x8_nsplit(void *p) {
     bench_ctx_t *c = (bench_ctx_t *)p;
     gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_nsplit(c->A_q8, c->W_packed_x8, c->bias, c->C, c->M, c->N, c->K, c->threads);
+}
+
+static void call_ck_packed_x8_mtile(void *p) {
+    bench_ctx_t *c = (bench_ctx_t *)p;
+    gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(c->A_q8, c->W_packed_x8, c->bias, c->C, c->M, c->N, c->K, c->x8mt_tile_m, c->threads);
 }
 
 static void call_llama(void *p) {
@@ -204,6 +218,13 @@ static int parse_threads(void) {
     return n > 0 ? n : 0;
 }
 
+static int parse_env_int(const char *name, int fallback) {
+    const char *v = getenv(name);
+    if (!v || !v[0]) return fallback;
+    const int n = atoi(v);
+    return n > 0 ? n : fallback;
+}
+
 int main(int argc, char **argv) {
     int quick = 0;
     int iters = 20;
@@ -221,6 +242,7 @@ int main(int argc, char **argv) {
     ck_threadpool_t *pool = ck_threadpool_global();
     const int pool_threads = pool ? ck_threadpool_n_threads(pool) : 1;
     const int threads = parse_threads() > 0 ? parse_threads() : pool_threads;
+    const int x8mt_tile_m = parse_env_int("CK_Q4K_PACKED_META_X8MT_TILE_M", 2);
     llama_gemm_q4_k_fn llama_fn = load_llama_gemm();
 
     const shape_t quick_shapes[] = {
@@ -246,10 +268,10 @@ int main(int argc, char **argv) {
     const shape_t *shapes = quick ? quick_shapes : full_shapes;
 
     printf("Q4_K x Q8_K prefill dispatch matrix; lower ms is better\n");
-    printf("threads=%d warmup=%d iters=%d llama=%s\n", threads, warmup, iters, llama_fn ? "yes" : "no");
-    printf("%-14s %5s %6s %6s %10s %10s %10s %10s %10s %10s %8s %8s %8s %9s %9s %9s %9s\n",
-           "shape", "M", "N", "K", "serial", "pool", "packed-M", "packed-N", "packed-x8", "llama*",
-           "pool/x", "packN/x", "x8/x", "d_pool", "d_packN", "d_x8", "d_llama");
+    printf("threads=%d warmup=%d iters=%d x8mt_tile_m=%d llama=%s\n", threads, warmup, iters, x8mt_tile_m, llama_fn ? "yes" : "no");
+    printf("%-14s %5s %6s %6s %10s %10s %10s %10s %10s %10s %10s %8s %8s %8s %8s %9s %9s %9s %9s %9s\n",
+           "shape", "M", "N", "K", "serial", "pool", "packed-M", "packed-N", "packed-x8", "x8mt", "llama*",
+           "pool/x", "packN/x", "x8/x", "x8mt/x", "d_pool", "d_packN", "d_x8", "d_x8mt", "d_llama");
 
     for (int s = 0; shapes[s].name; ++s) {
         const int M = shapes[s].M;
@@ -297,6 +319,7 @@ int main(int argc, char **argv) {
             .N = N,
             .K = K,
             .threads = threads,
+            .x8mt_tile_m = x8mt_tile_m,
             .llama_fn = llama_fn,
         };
 
@@ -322,6 +345,10 @@ int main(int argc, char **argv) {
         const double t_packed_x8 = bench_ms(call_ck_packed_x8_nsplit, &ctx, warmup, iters);
         const float d_packed_x8 = max_abs_diff(C_ref, C, out_elems);
 
+        memset(C, 0, out_elems * sizeof(float));
+        const double t_packed_x8mt = bench_ms(call_ck_packed_x8_mtile, &ctx, warmup, iters);
+        const float d_packed_x8mt = max_abs_diff(C_ref, C, out_elems);
+
         double t_llama = 0.0;
         float d_llama = 0.0f;
         if (llama_fn) {
@@ -330,20 +357,22 @@ int main(int argc, char **argv) {
             d_llama = max_abs_diff(C_ref, C_llama, out_elems);
         }
 
-        printf("%-14s %5d %6d %6d %10.3f %10.3f %10.3f %10.3f %10.3f ",
-               shapes[s].name, M, N, K, t_serial, t_pool, t_packed_m, t_packed_n, t_packed_x8);
+        printf("%-14s %5d %6d %6d %10.3f %10.3f %10.3f %10.3f %10.3f %10.3f ",
+               shapes[s].name, M, N, K, t_serial, t_pool, t_packed_m, t_packed_n, t_packed_x8, t_packed_x8mt);
         if (llama_fn) {
             printf("%10.3f ", t_llama);
         } else {
             printf("%10s ", "n/a");
         }
-        printf("%8.2fx %8.2fx %8.2fx %9.2g %9.2g %9.2g %9.2g\n",
+        printf("%8.2fx %8.2fx %8.2fx %8.2fx %9.2g %9.2g %9.2g %9.2g %9.2g\n",
                t_serial / t_pool,
                t_serial / t_packed_n,
                t_serial / t_packed_x8,
+               t_serial / t_packed_x8mt,
                d_pool,
                d_packed_n,
                d_packed_x8,
+               d_packed_x8mt,
                d_llama);
 
         free(A);

@@ -73,6 +73,13 @@ extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_nsplit(const void *A_q8,
                                                              float *C,
                                                              int M, int N, int K,
                                                              int threads);
+extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(const void *A_q8,
+                                                            const void *B_packed_x8,
+                                                            const float *bias,
+                                                            float *C,
+                                                            int M, int N, int K,
+                                                            int tile_m,
+                                                            int threads);
 extern void gemm_nt_q4_k_packed_meta_q8_k_tile(const void *A_q8,
                                                const void *B_packed,
                                                const float *bias,
@@ -347,6 +354,23 @@ static int ck_should_use_q4k_packed_meta_x8_prefill(int M, int N, int K)
      *
      * Keep the gate on measured short/medium Qwen/Nemotron-family prefill shapes and retain
      * CK_DISABLE_Q4K_PACKED_META_X8_PREFILL as the production escape hatch. */
+    if (N >= 768 && K >= 1024) return 1;
+    return 0;
+}
+
+static int ck_should_use_q4k_packed_meta_x8mt_prefill(int M, int N, int K)
+{
+    if (ck_env_enabled("CK_DISABLE_Q4K_PACKED_META_X8MT_PREFILL")) return 0;
+    if (!ck_env_enabled("CK_ENABLE_Q4K_PACKED_META_X8MT_PREFILL") &&
+        !ck_env_enabled("CK_FORCE_Q4K_PACKED_META_X8MT_PREFILL")) return 0;
+    if (M <= 1 || N <= 0 || K <= 0 || (K % QK_K) != 0) return 0;
+
+    const int min_m = ck_env_int_or2("CK_Q4K_PACKED_META_X8MT_MIN_M", NULL, 16);
+    if (M < min_m) return 0;
+    if (ck_env_enabled("CK_FORCE_Q4K_PACKED_META_X8MT_PREFILL")) return 1;
+
+    /* Token-tile x output-tile path is still experimental. It is measured via
+     * the dispatch matrix and model perf-stat lane before shape promotion. */
     if (N >= 768 && K >= 1024) return 1;
     return 0;
 }
@@ -660,6 +684,20 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
     int M, int N, int K)
 {
     ck_threadpool_t *pool = ck_threadpool_global();
+    if (pool && ck_should_use_q4k_packed_meta_x8mt_prefill(M, N, K)) {
+        void *packed_x8 = ck_get_q4k_packed_meta_x8_cached(B, N, K);
+        if (packed_x8) {
+            const int active = ck_select_gemm_active_threads(pool, M, N, K);
+            const int tile_m = ck_env_int_or2("CK_Q4K_PACKED_META_X8MT_TILE_M", "CK_PREFILL_TILE_M", 2);
+            gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(
+                A, packed_x8, bias, C, M, N, K,
+                tile_m,
+                active
+            );
+            return;
+        }
+    }
+
     if (pool && ck_should_use_q4k_packed_meta_x8_prefill(M, N, K)) {
         void *packed_x8 = ck_get_q4k_packed_meta_x8_cached(B, N, K);
         if (packed_x8) {

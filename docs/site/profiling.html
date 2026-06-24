@@ -1006,6 +1006,16 @@ load across multiple output lanes. Force it explicitly for new sweeps with
 <code>CK_FORCE_Q4K_PACKED_META_X8_PREFILL=1</code>. See
 <a href="prefill-performance-roadmap.html">Prefill Performance Roadmap</a> for the optimization ladder and promotion rules.</p>
 
+<p>The token-tile/output-tile experiment is separate from the default x8 path:</p>
+
+<pre><code>CK_ENABLE_Q4K_PACKED_META_X8MT_PREFILL=1 \
+CK_Q4K_PACKED_META_X8MT_TILE_M=2 \
+CK_V8_PREFILL_PERF_ENGINE=ck \
+make profile-v8-prefill-perf-stat</code></pre>
+
+<p>Use this to test the first two-dimensional Q4_K prefill path. It is intentionally opt-in until model-level
+timings are stable across hardware and prompt lengths.</p>
+
 <nav class="toc">
     <h3>Contents</h3>
     <ul>

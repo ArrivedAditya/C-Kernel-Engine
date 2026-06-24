@@ -533,6 +533,8 @@ typedef struct {
     int blocks_per_vec;
     int blocks_per_row;
     int groups;
+    int tile_m;
+    int jobs;
 } gemm_q4_packed_meta_x8_thread_work_t;
 
 static void gemm_q4_packed_meta_thread_fn(int ith, int nth, void *args)
@@ -731,6 +733,98 @@ void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_nsplit(const void *A_q8,
         .groups = groups,
     };
     ck_threadpool_dispatch_n(pool, active_threads, gemm_q4_packed_meta_x8_nsplit_thread_fn, &work);
+}
+
+static void gemm_q4_packed_meta_x8_mtile_thread_fn(int ith, int nth, void *args)
+{
+    gemm_q4_packed_meta_x8_thread_work_t *a = (gemm_q4_packed_meta_x8_thread_work_t *)args;
+    if (!a || ith < 0 || nth <= 0 || ith >= nth) {
+        return;
+    }
+    int tile_m = a->tile_m > 0 ? a->tile_m : 4;
+    if (tile_m > 8) tile_m = 8;
+    const int mt = (a->M + tile_m - 1) / tile_m;
+    const int total = mt * a->groups;
+
+    for (int job = ith; job < total; job += nth) {
+        const int g = job / mt;
+        const int tm = job - g * mt;
+        const int m0 = tm * tile_m;
+        const int m1 = (m0 + tile_m < a->M) ? (m0 + tile_m) : a->M;
+        const int n0 = g * 8;
+        const int active = (n0 + 8 <= a->N) ? 8 : (a->N - n0);
+        if (m0 >= a->M || g >= a->groups) {
+            continue;
+        }
+
+        float acc[8][8];
+        for (int mt_lane = 0; mt_lane < m1 - m0; ++mt_lane) {
+            for (int lane = 0; lane < active; ++lane) {
+                acc[mt_lane][lane] = a->bias ? a->bias[n0 + lane] : 0.0f;
+            }
+        }
+
+        for (int b = 0; b < a->blocks_per_row; ++b) {
+            const block_q4_K_packed_meta_x8 *w_group =
+                a->W + (size_t)g * (size_t)a->blocks_per_row + (size_t)b;
+            for (int m = m0; m < m1; ++m) {
+                const block_q8_K *a_row = a->A + (size_t)m * (size_t)a->blocks_per_vec;
+                accum_q4_k_packed_meta_x8_q8_k_block(acc[m - m0], w_group, active, &a_row[b]);
+            }
+        }
+
+        for (int m = m0; m < m1; ++m) {
+            float *c_row = a->C + (size_t)m * (size_t)a->N;
+            for (int lane = 0; lane < active; ++lane) {
+                c_row[n0 + lane] = acc[m - m0][lane];
+            }
+        }
+    }
+}
+
+void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(const void *A_q8,
+                                                      const void *B_packed_x8,
+                                                      const float *bias,
+                                                      float *C,
+                                                      int M, int N, int K,
+                                                      int tile_m,
+                                                      int active_threads)
+{
+    if (!A_q8 || !B_packed_x8 || !C || M <= 0 || N <= 0 || K <= 0 || (K % QK_K) != 0) {
+        return;
+    }
+    ck_threadpool_t *pool = ck_threadpool_global();
+    const int pool_threads = pool ? ck_threadpool_n_threads(pool) : 1;
+    const int groups = (N + 7) / 8;
+    int tm = tile_m > 0 ? tile_m : 4;
+    if (tm > 8) tm = 8;
+    const int mt = (M + tm - 1) / tm;
+    const int jobs = mt * groups;
+    if (active_threads <= 0 || active_threads > pool_threads) {
+        active_threads = pool_threads;
+    }
+    if (active_threads > jobs) {
+        active_threads = jobs;
+    }
+    if (active_threads <= 1) {
+        gemm_nt_q4_k_packed_meta_x8_q8_k(A_q8, B_packed_x8, bias, C, M, N, K);
+        return;
+    }
+    gemm_q4_packed_meta_x8_thread_work_t work = {
+        .A = (const block_q8_K *)A_q8,
+        .W = (const block_q4_K_packed_meta_x8 *)B_packed_x8,
+        .bias = bias,
+        .C = C,
+        .M = M,
+        .N = N,
+        .K = K,
+        .blocks_per_vec = K / QK_K,
+        .blocks_per_row = K / QK_K,
+        .groups = groups,
+        .tile_m = tm,
+        .jobs = jobs,
+    };
+    ck_threadpool_dispatch_n(pool, active_threads, gemm_q4_packed_meta_x8_mtile_thread_fn, &work);
 }
 
 
