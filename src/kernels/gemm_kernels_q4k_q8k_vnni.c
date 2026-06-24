@@ -33,7 +33,7 @@
 #include "ck_threadpool.h"
 #include "ckernel_quant.h"
 
-#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+#if (defined(__AVX512VNNI__) && defined(__AVX512VL__)) || defined(__AVX2__)
 #include <immintrin.h>
 #endif
 
@@ -47,7 +47,7 @@ void gemv_q4_k_q8_k_avx2(float *y,
                          const void *x_q8,
                          int M, int K);
 
-#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+#if (defined(__AVX512VNNI__) && defined(__AVX512VL__)) || defined(__AVX2__)
 static inline int32_t hsum256_epi32(__m256i v) {
     __m128i lo = _mm256_castsi256_si128(v);
     __m128i hi = _mm256_extracti128_si256(v, 1);
@@ -56,16 +56,31 @@ static inline int32_t hsum256_epi32(__m256i v) {
     sum = _mm_hadd_epi32(sum, sum);
     return _mm_cvtsi128_si32(sum);
 }
+#endif
 
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
 static inline int32_t dot_q4_k_q8_k_32_vnni(const uint8_t *q4_packed_32,
                                             const int8_t *q8_32,
                                             int high_nibble) {
+    const __m256i q8_bytes = _mm256_loadu_si256((const __m256i *)q8_32);
     const __m256i packed = _mm256_loadu_si256((const __m256i *)q4_packed_32);
     const __m256i mask4 = _mm256_set1_epi8(0x0F);
     const __m256i q4_bytes = high_nibble
         ? _mm256_and_si256(_mm256_srli_epi16(packed, 4), mask4)
         : _mm256_and_si256(packed, mask4);
-    const __m256i q8_bytes = _mm256_loadu_si256((const __m256i *)q8_32);
+    __m256i acc = _mm256_setzero_si256();
+    acc = _mm256_dpbusd_epi32(acc, q4_bytes, q8_bytes);
+    return hsum256_epi32(acc);
+}
+
+static inline int32_t dot_q4_k_q8_k_32_vnni_q8v(const uint8_t *q4_packed_32,
+                                                 __m256i q8_bytes,
+                                                 int high_nibble) {
+    const __m256i packed = _mm256_loadu_si256((const __m256i *)q4_packed_32);
+    const __m256i mask4 = _mm256_set1_epi8(0x0F);
+    const __m256i q4_bytes = high_nibble
+        ? _mm256_and_si256(_mm256_srli_epi16(packed, 4), mask4)
+        : _mm256_and_si256(packed, mask4);
     __m256i acc = _mm256_setzero_si256();
     acc = _mm256_dpbusd_epi32(acc, q4_bytes, q8_bytes);
     return hsum256_epi32(acc);
@@ -106,6 +121,22 @@ static inline float dot_q4_k_q8_k_vnni_block(const block_q4_K *w,
 }
 #endif
 
+#if defined(__AVX2__) && !(defined(__AVX512VNNI__) && defined(__AVX512VL__))
+static inline int32_t dot_q4_k_q8_k_32_avx2_q8v(const uint8_t *q4_packed_32,
+                                                 __m256i q8_bytes,
+                                                 int high_nibble) {
+    const __m256i packed = _mm256_loadu_si256((const __m256i *)q4_packed_32);
+    const __m256i mask4 = _mm256_set1_epi8(0x0F);
+    const __m256i q4_bytes = high_nibble
+        ? _mm256_and_si256(_mm256_srli_epi16(packed, 4), mask4)
+        : _mm256_and_si256(packed, mask4);
+    const __m256i pair_sums_i16 = _mm256_maddubs_epi16(q4_bytes, q8_bytes);
+    const __m256i ones = _mm256_set1_epi16(1);
+    const __m256i sums_i32 = _mm256_madd_epi16(pair_sums_i16, ones);
+    return hsum256_epi32(sums_i32);
+}
+#endif
+
 
 typedef struct {
     ck_half d;
@@ -123,6 +154,16 @@ typedef struct {
     uint8_t qs[QK_K / 2];
 } block_q4_K_packed_meta;
 
+typedef struct {
+    ck_half d[8];
+    ck_half dmin[8];
+    uint8_t sc[8][8];
+    uint8_t m[8][8];
+    uint8_t qs[8][QK_K / 2];
+    uint8_t active;
+    uint8_t reserved[7];
+} block_q4_K_packed_meta_x8;
+
 size_t q4_k_packed_u8_block_size(void)
 {
     return sizeof(block_q4_K_packed_u8);
@@ -131,6 +172,11 @@ size_t q4_k_packed_u8_block_size(void)
 size_t q4_k_packed_meta_block_size(void)
 {
     return sizeof(block_q4_K_packed_meta);
+}
+
+size_t q4_k_packed_meta_x8_block_size(void)
+{
+    return sizeof(block_q4_K_packed_meta_x8);
 }
 
 void pack_q4_k_to_packed_u8(const void *src, void *dst, int N, int K)
@@ -175,6 +221,34 @@ void pack_q4_k_to_packed_meta(const void *src, void *dst, int N, int K)
             pb->dmin = sb->dmin;
             unpack_q4_k_scales(sb->scales, pb->sc, pb->m);
             memcpy(pb->qs, sb->qs, sizeof(pb->qs));
+        }
+    }
+}
+
+void pack_q4_k_to_packed_meta_x8(const void *src, void *dst, int N, int K)
+{
+    if (!src || !dst || N <= 0 || K <= 0 || (K % QK_K) != 0) {
+        return;
+    }
+    const block_q4_K *in = (const block_q4_K *)src;
+    block_q4_K_packed_meta_x8 *out = (block_q4_K_packed_meta_x8 *)dst;
+    const int blocks_per_row = K / QK_K;
+    const int groups = (N + 7) / 8;
+    memset(out, 0, (size_t)groups * (size_t)blocks_per_row * sizeof(*out));
+
+    for (int g = 0; g < groups; ++g) {
+        const int n0 = g * 8;
+        const int active = (n0 + 8 <= N) ? 8 : (N - n0);
+        for (int b = 0; b < blocks_per_row; ++b) {
+            block_q4_K_packed_meta_x8 *pb = out + (size_t)g * (size_t)blocks_per_row + (size_t)b;
+            pb->active = (uint8_t)active;
+            for (int lane = 0; lane < active; ++lane) {
+                const block_q4_K *sb = in + (size_t)(n0 + lane) * (size_t)blocks_per_row + (size_t)b;
+                pb->d[lane] = sb->d;
+                pb->dmin[lane] = sb->dmin;
+                unpack_q4_k_scales(sb->scales, pb->sc[lane], pb->m[lane]);
+                memcpy(pb->qs[lane], sb->qs, sizeof(pb->qs[lane]));
+            }
         }
     }
 }
@@ -258,6 +332,54 @@ static inline float dot_q4_k_packed_meta_q8_k_block(const block_q4_K_packed_meta
     return sumf;
 }
 
+static inline void accum_q4_k_packed_meta_x8_q8_k_block(float acc[8],
+                                                         const block_q4_K_packed_meta_x8 *w,
+                                                         int active,
+                                                         const block_q8_K *x)
+{
+    const float xd = x->d;
+    for (int j = 0, is = 0, q_offset = 0; j < QK_K; j += 64, is += 2, q_offset += 32) {
+        const int8_t *q8_lo_ptr = &x->qs[j];
+        const int8_t *q8_hi_ptr = &x->qs[j + 32];
+        const int32_t bsum_lo = (int32_t)x->bsums[j / 16] +
+                                (int32_t)x->bsums[j / 16 + 1];
+        const int32_t bsum_hi = (int32_t)x->bsums[(j + 32) / 16] +
+                                (int32_t)x->bsums[(j + 32) / 16 + 1];
+
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+        const __m256i q8_lo = _mm256_loadu_si256((const __m256i *)q8_lo_ptr);
+        const __m256i q8_hi = _mm256_loadu_si256((const __m256i *)q8_hi_ptr);
+#elif defined(__AVX2__)
+        const __m256i q8_lo = _mm256_loadu_si256((const __m256i *)q8_lo_ptr);
+        const __m256i q8_hi = _mm256_loadu_si256((const __m256i *)q8_hi_ptr);
+#endif
+
+        for (int lane = 0; lane < active; ++lane) {
+            const uint8_t *qs = &w->qs[lane][q_offset];
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+            const int32_t sum_lo = dot_q4_k_q8_k_32_vnni_q8v(qs, q8_lo, 0);
+            const int32_t sum_hi = dot_q4_k_q8_k_32_vnni_q8v(qs, q8_hi, 1);
+#elif defined(__AVX2__)
+            const int32_t sum_lo = dot_q4_k_q8_k_32_avx2_q8v(qs, q8_lo, 0);
+            const int32_t sum_hi = dot_q4_k_q8_k_32_avx2_q8v(qs, q8_hi, 1);
+#else
+            int32_t sum_lo = 0;
+            int32_t sum_hi = 0;
+            for (int l = 0; l < 32; ++l) {
+                sum_lo += (int32_t)(qs[l] & 0x0F) * (int32_t)q8_lo_ptr[l];
+                sum_hi += (int32_t)(qs[l] >> 4) * (int32_t)q8_hi_ptr[l];
+            }
+#endif
+            const float d = CK_FP16_TO_FP32(w->d[lane]) * xd;
+            const float dmin = CK_FP16_TO_FP32(w->dmin[lane]) * xd;
+            acc[lane] += d * (float)w->sc[lane][is] * (float)sum_lo;
+            acc[lane] -= dmin * (float)w->m[lane][is] * (float)bsum_lo;
+            acc[lane] += d * (float)w->sc[lane][is + 1] * (float)sum_hi;
+            acc[lane] -= dmin * (float)w->m[lane][is + 1] * (float)bsum_hi;
+        }
+    }
+}
+
 void gemm_nt_q4_k_packed_u8_q8_k(const void *A_q8,
                                   const void *B_packed,
                                   const float *bias,
@@ -313,6 +435,80 @@ void gemm_nt_q4_k_packed_meta_q8_k(const void *A_q8,
     }
 }
 
+void gemm_nt_q4_k_packed_meta_q8_k_tile(const void *A_q8,
+                                         const void *B_packed,
+                                         const float *bias,
+                                         float *C,
+                                         int M, int N, int K,
+                                         int m0, int m1, int n0, int n1)
+{
+    if (!A_q8 || !B_packed || !C || M <= 0 || N <= 0 || K <= 0 || (K % QK_K) != 0) {
+        return;
+    }
+    if (m0 < 0) m0 = 0;
+    if (n0 < 0) n0 = 0;
+    if (m1 > M) m1 = M;
+    if (n1 > N) n1 = N;
+    if (m0 >= m1 || n0 >= n1) {
+        return;
+    }
+
+    const block_q8_K *A = (const block_q8_K *)A_q8;
+    const block_q4_K_packed_meta *W = (const block_q4_K_packed_meta *)B_packed;
+    const int blocks_per_vec = K / QK_K;
+    const int blocks_per_row = K / QK_K;
+
+    for (int m = m0; m < m1; ++m) {
+        const block_q8_K *a_row = A + (size_t)m * (size_t)blocks_per_vec;
+        float *c_row = C + (size_t)m * (size_t)N;
+        for (int n = n0; n < n1; ++n) {
+            const block_q4_K_packed_meta *w_row = W + (size_t)n * (size_t)blocks_per_row;
+            float sum = bias ? bias[n] : 0.0f;
+            for (int b = 0; b < blocks_per_row; ++b) {
+                sum += dot_q4_k_packed_meta_q8_k_block(&w_row[b], &a_row[b]);
+            }
+            c_row[n] = sum;
+        }
+    }
+}
+
+void gemm_nt_q4_k_packed_meta_x8_q8_k(const void *A_q8,
+                                       const void *B_packed_x8,
+                                       const float *bias,
+                                       float *C,
+                                       int M, int N, int K)
+{
+    if (!A_q8 || !B_packed_x8 || !C || M <= 0 || N <= 0 || K <= 0 || (K % QK_K) != 0) {
+        return;
+    }
+    const block_q8_K *A = (const block_q8_K *)A_q8;
+    const block_q4_K_packed_meta_x8 *W = (const block_q4_K_packed_meta_x8 *)B_packed_x8;
+    const int blocks_per_vec = K / QK_K;
+    const int blocks_per_row = K / QK_K;
+    const int groups = (N + 7) / 8;
+
+    for (int m = 0; m < M; ++m) {
+        const block_q8_K *a_row = A + (size_t)m * (size_t)blocks_per_vec;
+        float *c_row = C + (size_t)m * (size_t)N;
+        for (int g = 0; g < groups; ++g) {
+            const int n0 = g * 8;
+            const int active = (n0 + 8 <= N) ? 8 : (N - n0);
+            float acc[8];
+            for (int lane = 0; lane < active; ++lane) {
+                acc[lane] = bias ? bias[n0 + lane] : 0.0f;
+            }
+            for (int b = 0; b < blocks_per_row; ++b) {
+                const block_q4_K_packed_meta_x8 *w_group =
+                    W + (size_t)g * (size_t)blocks_per_row + (size_t)b;
+                accum_q4_k_packed_meta_x8_q8_k_block(acc, w_group, active, &a_row[b]);
+            }
+            for (int lane = 0; lane < active; ++lane) {
+                c_row[n0 + lane] = acc[lane];
+            }
+        }
+    }
+}
+
 
 typedef struct {
     const block_q8_K *A;
@@ -325,6 +521,19 @@ typedef struct {
     int blocks_per_vec;
     int blocks_per_row;
 } gemm_q4_packed_meta_thread_work_t;
+
+typedef struct {
+    const block_q8_K *A;
+    const block_q4_K_packed_meta_x8 *W;
+    const float *bias;
+    float *C;
+    int M;
+    int N;
+    int K;
+    int blocks_per_vec;
+    int blocks_per_row;
+    int groups;
+} gemm_q4_packed_meta_x8_thread_work_t;
 
 static void gemm_q4_packed_meta_thread_fn(int ith, int nth, void *args)
 {
@@ -449,6 +658,79 @@ void gemm_nt_q4_k_packed_meta_q8_k_threaded_nsplit(const void *A_q8,
         .blocks_per_row = K / QK_K,
     };
     ck_threadpool_dispatch_n(pool, active_threads, gemm_q4_packed_meta_nsplit_thread_fn, &work);
+}
+
+static void gemm_q4_packed_meta_x8_nsplit_thread_fn(int ith, int nth, void *args)
+{
+    gemm_q4_packed_meta_x8_thread_work_t *a = (gemm_q4_packed_meta_x8_thread_work_t *)args;
+    if (!a || ith < 0 || nth <= 0 || ith >= nth) {
+        return;
+    }
+    const int dg = (a->groups + nth - 1) / nth;
+    const int g0 = dg * ith;
+    const int g1 = (g0 + dg < a->groups) ? (g0 + dg) : a->groups;
+    if (g0 >= a->groups) {
+        return;
+    }
+
+    for (int m = 0; m < a->M; ++m) {
+        const block_q8_K *a_row = a->A + (size_t)m * (size_t)a->blocks_per_vec;
+        float *c_row = a->C + (size_t)m * (size_t)a->N;
+        for (int g = g0; g < g1; ++g) {
+            const int n0 = g * 8;
+            const int active = (n0 + 8 <= a->N) ? 8 : (a->N - n0);
+            float acc[8];
+            for (int lane = 0; lane < active; ++lane) {
+                acc[lane] = a->bias ? a->bias[n0 + lane] : 0.0f;
+            }
+            for (int b = 0; b < a->blocks_per_row; ++b) {
+                const block_q4_K_packed_meta_x8 *w_group =
+                    a->W + (size_t)g * (size_t)a->blocks_per_row + (size_t)b;
+                accum_q4_k_packed_meta_x8_q8_k_block(acc, w_group, active, &a_row[b]);
+            }
+            for (int lane = 0; lane < active; ++lane) {
+                c_row[n0 + lane] = acc[lane];
+            }
+        }
+    }
+}
+
+void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_nsplit(const void *A_q8,
+                                                       const void *B_packed_x8,
+                                                       const float *bias,
+                                                       float *C,
+                                                       int M, int N, int K,
+                                                       int active_threads)
+{
+    if (!A_q8 || !B_packed_x8 || !C || M <= 0 || N <= 0 || K <= 0 || (K % QK_K) != 0) {
+        return;
+    }
+    ck_threadpool_t *pool = ck_threadpool_global();
+    const int pool_threads = pool ? ck_threadpool_n_threads(pool) : 1;
+    const int groups = (N + 7) / 8;
+    if (active_threads <= 0 || active_threads > pool_threads) {
+        active_threads = pool_threads;
+    }
+    if (active_threads > groups) {
+        active_threads = groups;
+    }
+    if (active_threads <= 1) {
+        gemm_nt_q4_k_packed_meta_x8_q8_k(A_q8, B_packed_x8, bias, C, M, N, K);
+        return;
+    }
+    gemm_q4_packed_meta_x8_thread_work_t work = {
+        .A = (const block_q8_K *)A_q8,
+        .W = (const block_q4_K_packed_meta_x8 *)B_packed_x8,
+        .bias = bias,
+        .C = C,
+        .M = M,
+        .N = N,
+        .K = K,
+        .blocks_per_vec = K / QK_K,
+        .blocks_per_row = K / QK_K,
+        .groups = groups,
+    };
+    ck_threadpool_dispatch_n(pool, active_threads, gemm_q4_packed_meta_x8_nsplit_thread_fn, &work);
 }
 
 

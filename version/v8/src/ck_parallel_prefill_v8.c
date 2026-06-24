@@ -52,7 +52,9 @@ extern void gemm_nt_q4_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemv_q4_k_q8_k(float *y, const void *W, const void *x_q8, int M, int K);
 extern size_t q4_k_packed_meta_block_size(void);
+extern size_t q4_k_packed_meta_x8_block_size(void);
 extern void pack_q4_k_to_packed_meta(const void *src, void *dst, int N, int K);
+extern void pack_q4_k_to_packed_meta_x8(const void *src, void *dst, int N, int K);
 extern void gemm_nt_q4_k_packed_meta_q8_k_threaded(const void *A_q8,
                                                     const void *B_packed,
                                                     const float *bias,
@@ -65,6 +67,18 @@ extern void gemm_nt_q4_k_packed_meta_q8_k_threaded_nsplit(const void *A_q8,
                                                           float *C,
                                                           int M, int N, int K,
                                                           int threads);
+extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_nsplit(const void *A_q8,
+                                                             const void *B_packed_x8,
+                                                             const float *bias,
+                                                             float *C,
+                                                             int M, int N, int K,
+                                                             int threads);
+extern void gemm_nt_q4_k_packed_meta_q8_k_tile(const void *A_q8,
+                                               const void *B_packed,
+                                               const float *bias,
+                                               float *C,
+                                               int M, int N, int K,
+                                               int m0, int m1, int n0, int n1);
 extern void gemm_nt_q6_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q6_k_q8_k_tile(const void *A, const void *B, const float *bias,
@@ -154,6 +168,17 @@ typedef struct ck_q4k_packed_meta_cache_entry {
 static pthread_mutex_t ck_q4k_packed_meta_cache_mu = PTHREAD_MUTEX_INITIALIZER;
 static ck_q4k_packed_meta_cache_entry_t *ck_q4k_packed_meta_cache_head = NULL;
 
+typedef struct ck_q4k_packed_meta_x8_cache_entry {
+    const void *src;
+    int N;
+    int K;
+    void *packed;
+    struct ck_q4k_packed_meta_x8_cache_entry *next;
+} ck_q4k_packed_meta_x8_cache_entry_t;
+
+static pthread_mutex_t ck_q4k_packed_meta_x8_cache_mu = PTHREAD_MUTEX_INITIALIZER;
+static ck_q4k_packed_meta_x8_cache_entry_t *ck_q4k_packed_meta_x8_cache_head = NULL;
+
 /* Q4_K packed-meta prefill experiment
  * -----------------------------------
  * This is intentionally kept in the v8 prefill dispatcher for now instead of
@@ -233,6 +258,43 @@ static void *ck_get_q4k_packed_meta_cached(const void *B, int N, int K)
     return packed;
 }
 
+static void *ck_get_q4k_packed_meta_x8_cached(const void *B, int N, int K)
+{
+    if (!B || N <= 0 || K <= 0 || (K % QK_K) != 0) return NULL;
+
+    pthread_mutex_lock(&ck_q4k_packed_meta_x8_cache_mu);
+    for (ck_q4k_packed_meta_x8_cache_entry_t *e = ck_q4k_packed_meta_x8_cache_head; e; e = e->next) {
+        if (e->src == B && e->N == N && e->K == K) {
+            void *packed = e->packed;
+            pthread_mutex_unlock(&ck_q4k_packed_meta_x8_cache_mu);
+            return packed;
+        }
+    }
+
+    const size_t groups = (size_t)((N + 7) / 8);
+    const size_t blocks = groups * (size_t)(K / QK_K);
+    const size_t bytes = blocks * q4_k_packed_meta_x8_block_size();
+    void *packed = malloc(bytes);
+    ck_q4k_packed_meta_x8_cache_entry_t *entry =
+        (ck_q4k_packed_meta_x8_cache_entry_t *)malloc(sizeof(*entry));
+    if (!packed || !entry) {
+        free(packed);
+        free(entry);
+        pthread_mutex_unlock(&ck_q4k_packed_meta_x8_cache_mu);
+        return NULL;
+    }
+
+    pack_q4_k_to_packed_meta_x8(B, packed, N, K);
+    entry->src = B;
+    entry->N = N;
+    entry->K = K;
+    entry->packed = packed;
+    entry->next = ck_q4k_packed_meta_x8_cache_head;
+    ck_q4k_packed_meta_x8_cache_head = entry;
+    pthread_mutex_unlock(&ck_q4k_packed_meta_x8_cache_mu);
+    return packed;
+}
+
 static int ck_should_use_q4k_packed_meta_prefill(int M, int N, int K)
 {
     if (ck_env_enabled("CK_DISABLE_Q4K_PACKED_META_PREFILL")) return 0;
@@ -254,8 +316,62 @@ static int ck_should_use_q4k_packed_meta_prefill(int M, int N, int K)
      * Keep decode on GEMV. This gate is prefill-only because M > 1 and is
      * still shape-gated; use CK_DISABLE_Q4K_PACKED_META_PREFILL=1 to force
      * canonical Q4_K while validating a new CPU. */
-    if (N >= 768 && K >= 1024) return 1;
+    /* Local i7 sweeps show that narrow output projections do not reliably
+     * recover the packed-meta scheduling cost:
+     *   - N=512,K=1024 regresses/slightly loses at M=128.
+     *   - N=896,K=4864 was slower than canonical pool in the dispatch matrix.
+     * Keep packed-meta on the wider Qwen3.5 gate/up style shapes that win, and
+     * let force/env tuning override this when collecting new hardware data. */
+    if (N >= 1024 && K >= 1024) return 1;
     if (K <= 2048 && N >= 1024 && N <= 8192) return 1;
+    return 0;
+}
+
+static int ck_should_use_q4k_packed_meta_x8_prefill(int M, int N, int K)
+{
+    if (ck_env_enabled("CK_DISABLE_Q4K_PACKED_META_X8_PREFILL")) return 0;
+    if (M <= 1 || N <= 0 || K <= 0 || (K % QK_K) != 0) return 0;
+
+    const int min_m = ck_env_int_or2("CK_Q4K_PACKED_META_X8_MIN_M", NULL, 16);
+    if (M < min_m) return 0;
+    if (getenv("CK_FORCE_Q4K_PACKED_META_X8_PREFILL")) return 1;
+    const int max_m = ck_env_int_or2("CK_Q4K_PACKED_META_X8_MAX_M", NULL, 64);
+    if (max_m > 0 && M > max_m) return 0;
+
+    /* Experimental x8 prefill gate, derived from the dispatch matrix:
+     *   small:        M=8,  N=256,  K=256   -> useful microbench, not model-critical
+     *   qwen35_qkv:   M=32, N=1024, K=1024  -> x8 wins over packed-N locally
+     *   qwen35_down:  M=32, N=896,  K=4864  -> x8 wins over packed-N locally
+     *   wide:         M=64, N=1024, K=2560  -> x8 wins over packed-N locally
+     *   prefill128:   M=128,N=896,  K=4864  -> x8 loses locally; use canonical pool
+     *
+     * Keep the gate on measured short/medium Qwen/Nemotron-family prefill shapes and retain
+     * CK_DISABLE_Q4K_PACKED_META_X8_PREFILL as the production escape hatch. */
+    if (N >= 768 && K >= 1024) return 1;
+    return 0;
+}
+
+static int ck_should_use_q4k_packed_meta_2d_prefill(const ck_threadpool_t *pool,
+                                                     int M, int N, int K,
+                                                     int tile_m, int tile_n)
+{
+    if (!ck_env_enabled("CK_ENABLE_Q4K_PACKED_META_2D_PREFILL")) return 0;
+    if (!pool || ck_threadpool_n_threads(pool) <= 1) return 0;
+    if (M <= 1 || N <= 0 || K <= 0 || (K % QK_K) != 0) return 0;
+
+    const int tm = tile_m > 0 ? tile_m : 16;
+    const int tn = tile_n > 0 ? tile_n : 256;
+    const int mt = ck_ceil_div_int(M, tm);
+    const int nt = ck_ceil_div_int(N, tn);
+    const int jobs = mt * nt;
+    const int active = ck_select_gemm_active_threads(pool, M, N, K);
+
+    if (jobs < active * 2) return 0;
+    if (getenv("CK_FORCE_Q4K_PACKED_META_2D_PREFILL")) return 1;
+
+    /* Experimental path: measure before promotion. The current packed-meta dot
+     * loop still computes one output at a time, so 2D scheduling improves job
+     * balance but can reread activation tiles. */
     return 0;
 }
 
@@ -433,6 +549,29 @@ static void work_gemm_nt_q6_k_q8_k_2d(int ith, int nth, void *args)
     }
 }
 
+static void work_gemm_nt_q4_k_packed_meta_q8_k_2d(int ith, int nth, void *args)
+{
+    const gemm_args_t *a = (const gemm_args_t *)args;
+    if (!a || ith < 0 || nth <= 0 || ith >= nth) return;
+
+    const int tile_m = a->tile_m > 0 ? a->tile_m : 16;
+    const int tile_n = a->tile_n > 0 ? a->tile_n : 256;
+    const int mt = ck_ceil_div_int(a->M, tile_m);
+    const int nt = ck_ceil_div_int(a->N, tile_n);
+    const int total = mt * nt;
+
+    for (int job = ith; job < total; job += nth) {
+        const int jm = job % mt;
+        const int jn = job / mt;
+        const int m0 = jm * tile_m;
+        const int m1 = ck_min_int(m0 + tile_m, a->M);
+        const int n0 = jn * tile_n;
+        const int n1 = ck_min_int(n0 + tile_n, a->N);
+        gemm_nt_q4_k_packed_meta_q8_k_tile(a->A, a->B, a->bias, a->C,
+                                           a->M, a->N, a->K, m0, m1, n0, n1);
+    }
+}
+
 static void work_gemm_nt_q5_1_q8_1(int ith, int nth, void *args)
 {
     const gemm_args_t *a = (const gemm_args_t *)args;
@@ -521,12 +660,36 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
     int M, int N, int K)
 {
     ck_threadpool_t *pool = ck_threadpool_global();
+    if (pool && ck_should_use_q4k_packed_meta_x8_prefill(M, N, K)) {
+        void *packed_x8 = ck_get_q4k_packed_meta_x8_cached(B, N, K);
+        if (packed_x8) {
+            const int active = ck_select_gemm_active_threads(pool, M, N, K);
+            gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_nsplit(
+                A, packed_x8, bias, C, M, N, K,
+                active
+            );
+            return;
+        }
+    }
+
     if (pool && ck_should_use_q4k_packed_meta_prefill(M, N, K)) {
         void *packed = ck_get_q4k_packed_meta_cached(B, N, K);
         if (packed) {
+            const int active = ck_select_gemm_active_threads(pool, M, N, K);
+            gemm_args_t args = {
+                .A = A, .B = packed, .bias = bias, .C = C,
+                .M = M, .N = N, .K = K,
+                .A_row_bytes = (size_t)(K / QK_K) * sizeof(block_q8_K),
+                .tile_m = ck_env_int_or2("CK_Q4K_PACKED_META_TILE_M", "CK_PREFILL_TILE_M", 16),
+                .tile_n = ck_env_int_or2("CK_Q4K_PACKED_META_TILE_N", "CK_PREFILL_TILE_N", 256)
+            };
+            if (ck_should_use_q4k_packed_meta_2d_prefill(pool, M, N, K, args.tile_m, args.tile_n)) {
+                ck_threadpool_dispatch_n(pool, active, work_gemm_nt_q4_k_packed_meta_q8_k_2d, &args);
+                return;
+            }
             gemm_nt_q4_k_packed_meta_q8_k_threaded_nsplit(
                 A, packed, bias, C, M, N, K,
-                ck_select_gemm_active_threads(pool, M, N, K)
+                active
             );
             return;
         }

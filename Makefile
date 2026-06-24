@@ -2507,6 +2507,15 @@ test-q4-q5-prefill-thread-sweep-quick: $(LIB)
 		--engine-lib build/libckernel_engine.so \
 		--json-out build/q4_q5_prefill_$${CK_Q4_Q5_SWEEP_SHAPE:-qwen35_gate_up_q4_k}_thread_sweep.json
 
+profile-v8-prefill-perf-stat: ck-cli-v8
+	@echo "Collecting safe perf stat comparison for v8 prefill (CK vs llama.cpp)..."
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) scripts/perf_stat_v8_prefill_compare.py \
+		--engine $${CK_V8_PREFILL_PERF_ENGINE:-both} \
+		--prompt $${CK_V8_PREFILL_PERF_PROMPT:-128} \
+		--decode $${CK_V8_PREFILL_PERF_DECODE:-1} \
+		--threads $${CK_NUM_THREADS:-12}
+
 test-v8-decoder-matrix: ck-cli-v8
 	@echo "Running v8 decoder matrix benchmark (CKE vs llama.cpp)..."
 	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
@@ -2617,7 +2626,7 @@ profile-v8-prefill-ops-quick: ck-cli-v8
 		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
 		--json-out build/v8_prefill_ops_profile_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-128}.json
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-dispatch-sweep-quick test-q4-q5-prefill-thread-sweep-quick test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit test-v8-qwen3vl-e2e-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-dispatch-sweep-quick test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit test-v8-qwen3vl-e2e-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

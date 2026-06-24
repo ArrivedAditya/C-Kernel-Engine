@@ -6,6 +6,7 @@
  *   - CK canonical v8 threadpool dispatch
  *   - CK packed-meta M-split threadpool
  *   - CK packed-meta N-split threadpool
+ *   - CK experimental packed-meta x8 N-tile threadpool
  *   - llama.cpp test shim, when llama.cpp/libggml_kernel_test.so is available
  *
  * The llama.cpp shim currently accepts FP32 activations and quantizes them to
@@ -32,7 +33,9 @@ extern void gemm_nt_q4_k_q8_k_parallel_dispatch(const void *A, const void *B,
                                                 const float *bias, float *C,
                                                 int M, int N, int K);
 extern size_t q4_k_packed_meta_block_size(void);
+extern size_t q4_k_packed_meta_x8_block_size(void);
 extern void pack_q4_k_to_packed_meta(const void *src, void *dst, int N, int K);
+extern void pack_q4_k_to_packed_meta_x8(const void *src, void *dst, int N, int K);
 extern void gemm_nt_q4_k_packed_meta_q8_k_threaded(const void *A_q8,
                                                    const void *B_packed,
                                                    const float *bias,
@@ -45,6 +48,12 @@ extern void gemm_nt_q4_k_packed_meta_q8_k_threaded_nsplit(const void *A_q8,
                                                           float *C,
                                                           int M, int N, int K,
                                                           int threads);
+extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_nsplit(const void *A_q8,
+                                                             const void *B_packed_x8,
+                                                             const float *bias,
+                                                             float *C,
+                                                             int M, int N, int K,
+                                                             int threads);
 
 typedef void (*llama_gemm_q4_k_fn)(const void *, const float *, float *, int, int, int);
 
@@ -53,6 +62,7 @@ typedef struct {
     int M;
     int N;
     int K;
+    const char *comment;
 } shape_t;
 
 static double now_ms(void) {
@@ -128,6 +138,7 @@ typedef struct {
     const uint8_t *A_q8;
     const uint8_t *W_q4;
     const uint8_t *W_packed;
+    const uint8_t *W_packed_x8;
     const float *A_fp32;
     const float *bias;
     float *C;
@@ -156,6 +167,11 @@ static void call_ck_packed_msplit(void *p) {
 static void call_ck_packed_nsplit(void *p) {
     bench_ctx_t *c = (bench_ctx_t *)p;
     gemm_nt_q4_k_packed_meta_q8_k_threaded_nsplit(c->A_q8, c->W_packed, c->bias, c->C, c->M, c->N, c->K, c->threads);
+}
+
+static void call_ck_packed_x8_nsplit(void *p) {
+    bench_ctx_t *c = (bench_ctx_t *)p;
+    gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_nsplit(c->A_q8, c->W_packed_x8, c->bias, c->C, c->M, c->N, c->K, c->threads);
 }
 
 static void call_llama(void *p) {
@@ -208,24 +224,32 @@ int main(int argc, char **argv) {
     llama_gemm_q4_k_fn llama_fn = load_llama_gemm();
 
     const shape_t quick_shapes[] = {
-        {"small", 8, 256, 256},
-        {"qwen35_down", 32, 896, 4864},
-        {"wide", 64, 1024, 2560},
-        {NULL, 0, 0, 0},
+        /* Tiny smoke shape: validates dispatch overhead and tail handling. */
+        {"small", 8, 256, 256, "tiny smoke"},
+        /* Qwen3.5/Nemotron-style compact MLP-down projection: smaller N, large K. */
+        {"qwen35_down", 32, 896, 4864, "compact down"},
+        /* Medium/wide prefill projection: enough N to expose output-tile layout wins. */
+        {"wide", 64, 1024, 2560, "medium wide"},
+        {NULL, 0, 0, 0, NULL},
     };
     const shape_t full_shapes[] = {
-        {"qwen35_qkv", 32, 1024, 1024},
-        {"qwen35_down", 32, 896, 4864},
-        {"prefill128", 128, 896, 4864},
-        {"wide_mlp", 64, 2560, 10240},
-        {NULL, 0, 0, 0},
+        /* Qwen3.5 attention projection scale: square-ish, bandwidth sensitive. */
+        {"qwen35_qkv", 32, 1024, 1024, "attention proj"},
+        /* Qwen3.5/Nemotron compact down projection: hot prefill MLP shape. */
+        {"qwen35_down", 32, 896, 4864, "compact down"},
+        /* Longer-prompt version of the compact down shape. */
+        {"prefill128", 128, 896, 4864, "long compact down"},
+        /* Wide MLP shape: stresses output tiling and thread occupancy. */
+        {"wide_mlp", 64, 2560, 10240, "wide mlp"},
+        {NULL, 0, 0, 0, NULL},
     };
     const shape_t *shapes = quick ? quick_shapes : full_shapes;
 
     printf("Q4_K x Q8_K prefill dispatch matrix; lower ms is better\n");
     printf("threads=%d warmup=%d iters=%d llama=%s\n", threads, warmup, iters, llama_fn ? "yes" : "no");
-    printf("%-14s %5s %6s %6s %10s %10s %10s %10s %10s %8s %8s %9s %9s %9s\n",
-           "shape", "M", "N", "K", "serial", "pool", "packed-M", "packed-N", "llama*", "pool/x", "packN/x", "d_pool", "d_packN", "d_llama");
+    printf("%-14s %5s %6s %6s %10s %10s %10s %10s %10s %10s %8s %8s %8s %9s %9s %9s %9s\n",
+           "shape", "M", "N", "K", "serial", "pool", "packed-M", "packed-N", "packed-x8", "llama*",
+           "pool/x", "packN/x", "x8/x", "d_pool", "d_packN", "d_x8", "d_llama");
 
     for (int s = 0; shapes[s].name; ++s) {
         const int M = shapes[s].M;
@@ -237,16 +261,18 @@ int main(int argc, char **argv) {
         const size_t q4_bytes = (size_t)N * (size_t)(K / QK_K) * sizeof(block_q4_K);
         const size_t q8_bytes = (size_t)M * (size_t)(K / QK_K) * sizeof(block_q8_K);
         const size_t packed_bytes = (size_t)N * (size_t)(K / QK_K) * q4_k_packed_meta_block_size();
+        const size_t packed_x8_bytes = (size_t)((N + 7) / 8) * (size_t)(K / QK_K) * q4_k_packed_meta_x8_block_size();
 
         float *A = (float *)malloc((size_t)M * (size_t)K * sizeof(float));
         uint8_t *A_q8 = (uint8_t *)malloc(q8_bytes);
         uint8_t *W = (uint8_t *)malloc(q4_bytes);
         uint8_t *W_packed = (uint8_t *)malloc(packed_bytes);
+        uint8_t *W_packed_x8 = (uint8_t *)malloc(packed_x8_bytes);
         float *bias = (float *)malloc((size_t)N * sizeof(float));
         float *C_ref = (float *)calloc(out_elems, sizeof(float));
         float *C = (float *)calloc(out_elems, sizeof(float));
         float *C_llama = (float *)calloc(out_elems, sizeof(float));
-        if (!A || !A_q8 || !W || !W_packed || !bias || !C_ref || !C || !C_llama) {
+        if (!A || !A_q8 || !W || !W_packed || !W_packed_x8 || !bias || !C_ref || !C || !C_llama) {
             fprintf(stderr, "allocation failed for %s\n", shapes[s].name);
             return 2;
         }
@@ -257,11 +283,13 @@ int main(int argc, char **argv) {
         fill_q4k(W, N, K);
         quantize_acts_q8k(A, A_q8, M, K);
         pack_q4_k_to_packed_meta(W, W_packed, N, K);
+        pack_q4_k_to_packed_meta_x8(W, W_packed_x8, N, K);
 
         bench_ctx_t ctx = {
             .A_q8 = A_q8,
             .W_q4 = W,
             .W_packed = W_packed,
+            .W_packed_x8 = W_packed_x8,
             .A_fp32 = A,
             .bias = bias,
             .C = C,
@@ -290,6 +318,10 @@ int main(int argc, char **argv) {
         const double t_packed_n = bench_ms(call_ck_packed_nsplit, &ctx, warmup, iters);
         const float d_packed_n = max_abs_diff(C_ref, C, out_elems);
 
+        memset(C, 0, out_elems * sizeof(float));
+        const double t_packed_x8 = bench_ms(call_ck_packed_x8_nsplit, &ctx, warmup, iters);
+        const float d_packed_x8 = max_abs_diff(C_ref, C, out_elems);
+
         double t_llama = 0.0;
         float d_llama = 0.0f;
         if (llama_fn) {
@@ -298,24 +330,27 @@ int main(int argc, char **argv) {
             d_llama = max_abs_diff(C_ref, C_llama, out_elems);
         }
 
-        printf("%-14s %5d %6d %6d %10.3f %10.3f %10.3f %10.3f ",
-               shapes[s].name, M, N, K, t_serial, t_pool, t_packed_m, t_packed_n);
+        printf("%-14s %5d %6d %6d %10.3f %10.3f %10.3f %10.3f %10.3f ",
+               shapes[s].name, M, N, K, t_serial, t_pool, t_packed_m, t_packed_n, t_packed_x8);
         if (llama_fn) {
             printf("%10.3f ", t_llama);
         } else {
             printf("%10s ", "n/a");
         }
-        printf("%8.2fx %8.2fx %9.2g %9.2g %9.2g\n",
+        printf("%8.2fx %8.2fx %8.2fx %9.2g %9.2g %9.2g %9.2g\n",
                t_serial / t_pool,
                t_serial / t_packed_n,
+               t_serial / t_packed_x8,
                d_pool,
                d_packed_n,
+               d_packed_x8,
                d_llama);
 
         free(A);
         free(A_q8);
         free(W);
         free(W_packed);
+        free(W_packed_x8);
         free(bias);
         free(C_ref);
         free(C);
@@ -324,5 +359,6 @@ int main(int argc, char **argv) {
 
     ck_threadpool_global_destroy();
     printf("\n* llama column uses the local llama.cpp parity shim and includes FP32->Q8_K activation quantization.\n");
+    printf("* shapes: small=tiny overhead smoke; qwen35_qkv=attention projection; qwen35_down/prefill128=compact MLP-down; wide/wide_mlp=wide output-tile stress.\n");
     return 0;
 }
