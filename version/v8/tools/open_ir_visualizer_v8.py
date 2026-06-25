@@ -776,6 +776,502 @@ def _enrich_multimodal_bridge_payload(
     return out
 
 
+def _ops_from_payload(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    nested_ir1 = payload.get("ir1")
+    if isinstance(nested_ir1, dict):
+        nested_ops = _ops_from_payload(nested_ir1)
+        if nested_ops:
+            return nested_ops
+    for key in ("operations", "ops"):
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def _layout_total_bytes(payload: Any) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    memory = payload.get("memory") if isinstance(payload.get("memory"), dict) else {}
+    arena = memory.get("arena") if isinstance(memory.get("arena"), dict) else {}
+    for raw in (arena.get("total_size"), memory.get("total_size"), payload.get("total_bytes")):
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            return value
+    return None
+
+
+def _count_ops_by_kind(ops: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for op in ops:
+        key = str(op.get("op") or op.get("kernel_id") or op.get("function") or "unknown")
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def _clone_multimodal_op(
+    op: dict[str, Any],
+    *,
+    op_id: int,
+    stage: str,
+    stage_label: str,
+    layer_prefix: str,
+    from_offset: int = 0,
+) -> dict[str, Any]:
+    out = json.loads(json.dumps(op))
+    old_id = out.get("op_id")
+    out["op_id"] = op_id
+    out["network_stage"] = stage
+    out["network_stage_label"] = stage_label
+    out["source_op_id"] = old_id
+    layer = out.get("layer")
+    section = str(out.get("section") or "").lower()
+    if section == "header" or layer == -1:
+        out["unified_layer_key"] = f"{stage}:header"
+        out["unified_layer_label"] = f"{stage_label} Header"
+    elif section == "footer":
+        out["unified_layer_key"] = f"{stage}:footer"
+        out["unified_layer_label"] = f"{stage_label} Footer"
+    elif layer is not None:
+        out["unified_layer_key"] = f"{stage}:layer:{layer}"
+        out["unified_layer_label"] = f"{layer_prefix} {layer}"
+    else:
+        out["unified_layer_key"] = f"{stage}:ops"
+        out["unified_layer_label"] = stage_label
+
+    dataflow = out.get("dataflow")
+    if isinstance(dataflow, dict) and from_offset:
+        for inputs in [dataflow.get("inputs")]:
+            if not isinstance(inputs, dict):
+                continue
+            for info in inputs.values():
+                if not isinstance(info, dict) or info.get("from_op") is None:
+                    continue
+                try:
+                    info["from_op"] = int(info["from_op"]) + from_offset
+                except (TypeError, ValueError):
+                    pass
+    return out
+
+
+def _build_multimodal_bridge_op(
+    *,
+    op_id: int,
+    bridge: dict[str, Any],
+    encoder_last_id: int | None,
+) -> dict[str, Any]:
+    bridge_op: dict[str, Any] = {
+        "op_id": op_id,
+        "op": "vision_bridge_prefix",
+        "kernel": "multimodal_bridge",
+        "kernel_id": "multimodal_bridge",
+        "section": "bridge",
+        "layer": -1,
+        "network_stage": "bridge",
+        "network_stage_label": "Vision/Text Bridge",
+        "unified_layer_key": "bridge:prefix",
+        "unified_layer_label": "Vision/Text Bridge",
+        "params": {
+            "prefix_tokens": bridge.get("prefix_tokens"),
+            "prefix_grid_x": bridge.get("prefix_grid_x"),
+            "prefix_grid_y": bridge.get("prefix_grid_y"),
+            "text_position": bridge.get("prefix_text_pos"),
+            "prefix_source": bridge.get("prefix_source"),
+        },
+        "dataflow": {
+            "inputs": {},
+            "outputs": {
+                "prefix": {
+                    "tensor": "vision_bridge.prefix_embeddings",
+                    "dtype": "fp32",
+                    "slot": "vision_prefix",
+                }
+            },
+        },
+        "weights": {},
+    }
+    if encoder_last_id is not None:
+        bridge_op["dataflow"]["inputs"]["encoder_out"] = {
+            "from_op": encoder_last_id,
+            "from_output": "out",
+            "tensor": "vision_encoder.output",
+            "dtype": "fp32",
+            "slot": "vision_encoder_out",
+        }
+    return bridge_op
+
+
+def _build_unified_multimodal_ops(
+    *,
+    bridge: dict[str, Any],
+    encoder_ops: list[dict[str, Any]],
+    decoder_ops: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    ops: list[dict[str, Any]] = []
+    for idx, op in enumerate(encoder_ops):
+        ops.append(
+            _clone_multimodal_op(
+                op,
+                op_id=idx,
+                stage="vision_encoder",
+                stage_label="Vision Encoder",
+                layer_prefix="Encoder Layer",
+            )
+        )
+
+    bridge_op_id = len(ops)
+    encoder_last_id = int(ops[-1]["op_id"]) if ops else None
+    ops.append(_build_multimodal_bridge_op(op_id=bridge_op_id, bridge=bridge, encoder_last_id=encoder_last_id))
+
+    decoder_offset = len(ops)
+    for idx, op in enumerate(decoder_ops):
+        cloned = _clone_multimodal_op(
+            op,
+            op_id=decoder_offset + idx,
+            stage="decoder_prefill",
+            stage_label="Decoder Prefill",
+            layer_prefix="Decoder Layer",
+            from_offset=decoder_offset,
+        )
+        if idx == 0:
+            dataflow = cloned.setdefault("dataflow", {})
+            if isinstance(dataflow, dict):
+                inputs = dataflow.setdefault("inputs", {})
+                if isinstance(inputs, dict):
+                    inputs["vision_prefix"] = {
+                        "from_op": bridge_op_id,
+                        "from_output": "prefix",
+                        "tensor": "vision_bridge.prefix_embeddings",
+                        "dtype": "fp32",
+                        "slot": "vision_prefix",
+                    }
+        ops.append(cloned)
+    return ops
+
+
+def _copy_memory_entries(rows: Any, *, stage: str, base_offset: int) -> list[dict[str, Any]]:
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        entry = json.loads(json.dumps(row))
+        entry["network_stage"] = stage
+        entry["source_name"] = entry.get("name")
+        entry["name"] = f"{stage}.{entry.get('name', 'unnamed')}"
+        for key in ("offset", "abs_offset"):
+            try:
+                entry[key] = int(entry.get(key) or 0) + base_offset
+            except (TypeError, ValueError):
+                pass
+        out.append(entry)
+    return out
+
+
+def _build_multimodal_layout(
+    *,
+    encoder_layout: dict[str, Any],
+    decoder_layout: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(encoder_layout, dict):
+        encoder_layout = {}
+    if not isinstance(decoder_layout, dict):
+        decoder_layout = {}
+    if not encoder_layout:
+        return decoder_layout
+    if not decoder_layout:
+        return encoder_layout
+
+    encoder_memory = encoder_layout.get("memory") if isinstance(encoder_layout.get("memory"), dict) else {}
+    decoder_memory = decoder_layout.get("memory") if isinstance(decoder_layout.get("memory"), dict) else {}
+    encoder_weights = encoder_memory.get("weights") if isinstance(encoder_memory.get("weights"), dict) else {}
+    decoder_weights = decoder_memory.get("weights") if isinstance(decoder_memory.get("weights"), dict) else {}
+    encoder_acts = encoder_memory.get("activations") if isinstance(encoder_memory.get("activations"), dict) else {}
+    decoder_acts = decoder_memory.get("activations") if isinstance(decoder_memory.get("activations"), dict) else {}
+
+    encoder_weight_size = int(encoder_weights.get("size") or 0)
+    decoder_weight_size = int(decoder_weights.get("size") or 0)
+    encoder_act_size = int(encoder_acts.get("size") or 0)
+    decoder_act_size = int(decoder_acts.get("size") or 0)
+    decoder_weight_base = encoder_weight_size
+    decoder_act_base = encoder_act_size
+
+    weights_entries = (
+        _copy_memory_entries(encoder_weights.get("entries"), stage="vision_encoder", base_offset=0)
+        + _copy_memory_entries(decoder_weights.get("entries"), stage="decoder_prefill", base_offset=decoder_weight_base)
+    )
+    activation_buffers = (
+        _copy_memory_entries(encoder_acts.get("buffers"), stage="vision_encoder", base_offset=0)
+        + _copy_memory_entries(decoder_acts.get("buffers"), stage="decoder_prefill", base_offset=decoder_act_base)
+    )
+
+    return {
+        "format": "layout-multimodal-logical",
+        "version": max(int(encoder_layout.get("version") or 0), int(decoder_layout.get("version") or 0), 1),
+        "mode": "prefill",
+        "schema": "ck.v8.multimodal_layout.v1",
+        "source": "logical_concat_encoder_decoder_prefill",
+        "source_layouts": {
+            "vision_encoder": {
+                "total_size": _layout_total_bytes(encoder_layout),
+                "weights_size": encoder_weight_size,
+                "activations_size": encoder_act_size,
+            },
+            "decoder_prefill": {
+                "total_size": _layout_total_bytes(decoder_layout),
+                "weights_size": decoder_weight_size,
+                "activations_size": decoder_act_size,
+            },
+        },
+        "memory": {
+            "weights": {
+                "size": encoder_weight_size + decoder_weight_size,
+                "entries": weights_entries,
+            },
+            "activations": {
+                "size": encoder_act_size + decoder_act_size,
+                "buffers": activation_buffers,
+            },
+            "arena": {
+                "mode": "logical_multimodal",
+                "total_size": (_layout_total_bytes(encoder_layout) or 0) + (_layout_total_bytes(decoder_layout) or 0),
+                "encoder_total_size": _layout_total_bytes(encoder_layout),
+                "decoder_prefill_total_size": _layout_total_bytes(decoder_layout),
+            },
+        },
+    }
+
+
+def _build_multimodal_dataflow_graph(files: dict[str, Any]) -> dict[str, Any] | None:
+    bridge = files.get("multimodal_bridge_report")
+    if not isinstance(bridge, dict):
+        return None
+    full_graph = files.get("full_network_graph")
+    if isinstance(full_graph, dict):
+        return full_graph
+
+    encoder_ir1 = files.get("bridge_encoder_ir1") if isinstance(files.get("bridge_encoder_ir1"), dict) else {}
+    encoder_layout = files.get("bridge_encoder_layout") if isinstance(files.get("bridge_encoder_layout"), dict) else {}
+    encoder_call = files.get("bridge_encoder_call") if isinstance(files.get("bridge_encoder_call"), dict) else {}
+    decoder_ir1 = files.get("ir1_prefill") if isinstance(files.get("ir1_prefill"), dict) else {}
+    decoder_layout = files.get("layout_prefill") if isinstance(files.get("layout_prefill"), dict) else {}
+    decoder_call = files.get("lowered_prefill_call") if isinstance(files.get("lowered_prefill_call"), dict) else files.get("lowered_prefill")
+    if not isinstance(decoder_call, dict):
+        decoder_call = {}
+
+    encoder_ops = _ops_from_payload(encoder_ir1)
+    decoder_ops = _ops_from_payload(decoder_ir1)
+    if not encoder_ops and not decoder_ops:
+        return None
+
+    ops = _build_unified_multimodal_ops(bridge=bridge, encoder_ops=encoder_ops, decoder_ops=decoder_ops)
+    encoder_call_ops = _ops_from_payload(encoder_call)
+    decoder_call_ops = _ops_from_payload(decoder_call)
+    unified_call_ops = _build_unified_multimodal_ops(
+        bridge=bridge,
+        encoder_ops=encoder_call_ops or encoder_ops,
+        decoder_ops=decoder_call_ops or decoder_ops,
+    )
+
+    ir1 = {
+        "format": "ir1-multimodal-dataflow",
+        "version": max(
+            int(encoder_ir1.get("version") or 0) if isinstance(encoder_ir1, dict) else 0,
+            int(decoder_ir1.get("version") or 0) if isinstance(decoder_ir1, dict) else 0,
+            1,
+        ),
+        "mode": "prefill",
+        "schema": "ck.v8.multimodal_dataflow_graph.v1",
+        "ops": ops,
+    }
+    call = {
+        "schema": "ck.v8.multimodal_call_graph.v1",
+        "mode": "prefill",
+        "source": "derived_from_bridge_encoder_call_and_decoder_prefill_call",
+        "operations": unified_call_ops,
+    }
+    return {
+        "schema": "ck.v8.multimodal_dataflow_graph.v1",
+        "source": "derived_from_bridge_encoder_and_decoder_prefill",
+        "ir1": ir1,
+        "layout": _build_multimodal_layout(encoder_layout=encoder_layout, decoder_layout=decoder_layout),
+        "call": call,
+        "stats": {
+            "encoder_ops": len(encoder_ops),
+            "bridge_ops": 1,
+            "decoder_prefill_ops": len(decoder_ops),
+            "total_ops": len(ops),
+            "encoder_call_ops": len(encoder_call_ops),
+            "decoder_prefill_call_ops": len(decoder_call_ops),
+            "total_call_ops": len(unified_call_ops),
+        },
+    }
+
+
+def _build_vision_artifacts_payload(files: dict[str, Any]) -> dict[str, Any] | None:
+    bridge = files.get("multimodal_bridge_report")
+    if not isinstance(bridge, dict):
+        return None
+    encoder_report = bridge.get("encoder_report") if isinstance(bridge.get("encoder_report"), dict) else {}
+    encoder_ir1 = files.get("bridge_encoder_ir1") if isinstance(files.get("bridge_encoder_ir1"), dict) else {}
+    encoder_layout = files.get("bridge_encoder_layout") if isinstance(files.get("bridge_encoder_layout"), dict) else {}
+    encoder_call = files.get("bridge_encoder_call") if isinstance(files.get("bridge_encoder_call"), dict) else {}
+    encoder_lowered = files.get("bridge_encoder_lowered") if isinstance(files.get("bridge_encoder_lowered"), dict) else {}
+    full_graph = files.get("full_network_graph") if isinstance(files.get("full_network_graph"), dict) else files.get("multimodal_dataflow_graph")
+    if not isinstance(full_graph, dict):
+        full_graph = {}
+    decoder_prefill = files.get("lowered_prefill_call") if isinstance(files.get("lowered_prefill_call"), dict) else files.get("lowered_prefill")
+
+    encoder_ops = _ops_from_payload(encoder_call) or _ops_from_payload(encoder_lowered) or _ops_from_payload(encoder_ir1)
+    full_ops = _ops_from_payload(full_graph)
+    decoder_ops = _ops_from_payload(decoder_prefill)
+
+    prefix_tokens = bridge.get("prefix_tokens")
+    grid_x = bridge.get("prefix_grid_x", encoder_report.get("prefix_grid_x"))
+    grid_y = bridge.get("prefix_grid_y", encoder_report.get("prefix_grid_y"))
+    patch_size = encoder_report.get("patch_size") or encoder_report.get("vision_patch_size")
+    image_w = encoder_report.get("image_width") or encoder_report.get("image_size")
+    image_h = encoder_report.get("image_height") or encoder_report.get("image_size")
+    source_size = encoder_report.get("source_image_size") if isinstance(encoder_report.get("source_image_size"), list) else None
+
+    expected_prefix_from_grid = None
+    try:
+        gx = int(grid_x)
+        gy = int(grid_y)
+        if gx > 0 and gy > 0:
+            expected_prefix_from_grid = gx * gy
+    except (TypeError, ValueError):
+        pass
+
+    checks: list[dict[str, Any]] = []
+    def add_check(name: str, ok: bool, detail: str) -> None:
+        checks.append({"name": name, "status": "pass" if ok else "warn", "detail": detail})
+
+    add_check(
+        "bridge_report",
+        True,
+        "multimodal_bridge/bridge_report.json loaded",
+    )
+    add_check(
+        "encoder_graph",
+        len(encoder_ops) > 0,
+        f"{len(encoder_ops)} encoder ops loaded",
+    )
+    add_check(
+        "full_network_graph",
+        len(full_ops) > 0,
+        f"{len(full_ops)} unified ops loaded" if full_ops else "full_network_graph.json not loaded",
+    )
+    add_check(
+        "prefix_grid",
+        expected_prefix_from_grid is not None,
+        f"grid={grid_x}x{grid_y}",
+    )
+    if expected_prefix_from_grid is not None and prefix_tokens is not None:
+        try:
+            prefix_ok = int(prefix_tokens) == int(expected_prefix_from_grid)
+        except (TypeError, ValueError):
+            prefix_ok = False
+        add_check(
+            "prefix_rows_match_grid",
+            prefix_ok,
+            f"prefix_tokens={prefix_tokens}, grid product={expected_prefix_from_grid}",
+        )
+
+    status = "pass" if all(row.get("status") == "pass" for row in checks) else "warn"
+    return {
+        "schema": "ck.v8.vision_artifacts.v1",
+        "status": status,
+        "image": {
+            "source": encoder_report.get("image_source"),
+            "path": encoder_report.get("image_path"),
+            "path_resolved": encoder_report.get("image_path_resolved"),
+            "data_uri": encoder_report.get("image_data_uri"),
+            "source_size": source_size,
+            "preprocess": encoder_report.get("preprocess"),
+            "image_width": image_w,
+            "image_height": image_h,
+            "patch_size": patch_size,
+        },
+        "patch_grid": {
+            "grid_x": grid_x,
+            "grid_y": grid_y,
+            "prefix_tokens": prefix_tokens,
+            "expected_prefix_tokens": expected_prefix_from_grid,
+            "text_position": bridge.get("prefix_text_pos", encoder_report.get("prefix_text_pos")),
+            "position_policy": bridge.get("position_policy") or encoder_report.get("position_policy"),
+        },
+        "bridge": {
+            "mode": bridge.get("bridge_mode"),
+            "prefix_source": bridge.get("prefix_source"),
+            "decoder_input_embed_dim": bridge.get("decoder_input_embed_dim"),
+            "encoder_embed_dim": encoder_report.get("embed_dim"),
+            "prompt_tokens_before_image": len(bridge.get("prompt_tokens_before_image") or []),
+            "prompt_tokens_after_image": len(bridge.get("prompt_tokens_after_image") or []),
+            "total_prefill_tokens": bridge.get("total_prefill_tokens"),
+            "generated_token_count": bridge.get("generated_token_count"),
+            "stop_reason": bridge.get("generation_stop_reason"),
+        },
+        "stages": [
+            {
+                "key": "image",
+                "label": "Image ingest",
+                "ready": True,
+                "detail": str(encoder_report.get("image_source") or "image input"),
+            },
+            {
+                "key": "encoder_ir",
+                "label": "Encoder IR",
+                "ready": len(_ops_from_payload(encoder_ir1)) > 0,
+                "ops": len(_ops_from_payload(encoder_ir1)),
+            },
+            {
+                "key": "encoder_layout",
+                "label": "Encoder layout",
+                "ready": _layout_total_bytes(encoder_layout) is not None,
+                "bytes": _layout_total_bytes(encoder_layout),
+            },
+            {
+                "key": "encoder_call",
+                "label": "Encoder call",
+                "ready": len(encoder_ops) > 0,
+                "ops": len(encoder_ops),
+            },
+            {
+                "key": "bridge",
+                "label": "Bridge prefix",
+                "ready": prefix_tokens is not None,
+                "tokens": prefix_tokens,
+            },
+            {
+                "key": "decoder_prefill",
+                "label": "Decoder prefill",
+                "ready": len(decoder_ops) > 0,
+                "ops": len(decoder_ops),
+            },
+            {
+                "key": "full_graph",
+                "label": "Unified graph",
+                "ready": len(full_ops) > 0,
+                "ops": len(full_ops),
+            },
+        ],
+        "ops": {
+            "encoder": len(encoder_ops),
+            "decoder_prefill": len(decoder_ops),
+            "full_network": len(full_ops),
+            "encoder_by_kind": _count_ops_by_kind(encoder_ops),
+        },
+        "checks": checks,
+    }
+
+
 def _trim_memory_signoff_payload(payload: dict, max_items: int = 120) -> dict:
     """Trim very large warning/error arrays to keep standalone report size manageable."""
     out = dict(payload)
@@ -4086,6 +4582,14 @@ def load_model_data(
         )
         data["files"]["multimodal_bridge_report"] = enriched_bridge
         data["meta"]["multimodal_mode"] = str(enriched_bridge.get("bridge_mode") or "encoder_decoder")
+        multimodal_dataflow = _build_multimodal_dataflow_graph(data["files"])
+        if isinstance(multimodal_dataflow, dict) and "full_network_graph" not in data["files"]:
+            data["files"]["multimodal_dataflow_graph"] = multimodal_dataflow
+            loaded.append("multimodal_dataflow_graph(derived)")
+        vision_artifacts = _build_vision_artifacts_payload(data["files"])
+        if isinstance(vision_artifacts, dict):
+            data["files"]["vision_artifacts"] = vision_artifacts
+            loaded.append("vision_artifacts(derived)")
 
     print(f"  Loaded {len(loaded)} files")
     return data

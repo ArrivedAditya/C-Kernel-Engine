@@ -440,6 +440,12 @@ MAKE_TARGETS = {
         "target": "v8-regression-fast",
         "timeout_sec": 5400,
     },
+    "v8_vision_visualizer_artifacts": {
+        "name": "v8 Vision Visualizer Artifacts",
+        "category": "inference",
+        "target": "v8-visualizer-vision-artifacts",
+        "timeout_sec": 120,
+    },
     "v8_qwen3vl_vision_smoke": {
         "name": "v8 Qwen3-VL Vision Smoke",
         "category": "inference",
@@ -515,6 +521,7 @@ MAKE_TARGET_FAILURE_ARTIFACTS = {
     "v7-visualizer-generated-e2e": ROOT / "version" / "v7" / ".cache" / "reports" / "visualizer_generated_e2e_latest.json",
     "v7-stabilization-nightly": ROOT / "version" / "v7" / ".cache" / "reports" / "training_stabilization_scorecard_latest.json",
     "test-architecture-contracts": ROOT / "version" / "v8" / ".cache" / "reports" / "architecture_contracts_latest.json",
+    "v8-visualizer-vision-artifacts": ROOT / "version" / "v8" / ".cache" / "reports" / "vision_visualizer_latest.json",
 }
 
 
@@ -984,6 +991,12 @@ def save_json_report(results: list[TestResult], filepath: Path, start_time: date
     )
     if architecture_contracts is not None:
         report["architecture_contracts"] = architecture_contracts
+    vision_visualizer = _load_json_if_fresh(
+        ROOT / "version" / "v8" / ".cache" / "reports" / "vision_visualizer_latest.json",
+        start_ts=start_time.timestamp(),
+    )
+    if vision_visualizer is not None:
+        report["vision_visualizer"] = vision_visualizer
     filepath.write_text(json.dumps(report, indent=2))
     print(f"\nJSON report saved to: {filepath}")
 

@@ -112,6 +112,9 @@
       "renderDataflow",
       "renderOperatorMathIntuition",
       "renderMultimodal",
+      "getVisionArtifactsPayload",
+      "renderVisionPatchGridSvg",
+      "renderVisionArtifactsPanel",
       "renderProfile",
       "renderDataPipeline",
       "renderParityCockpit"

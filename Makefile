@@ -3844,7 +3844,7 @@ report-md:
 .PHONY: v7-profile-training-spec19-qwen3-prepare v7-profile-training-spec19-qwen3-parity
 .PHONY: v7-profile-training-spec19-qwen3-perf v7-profile-training-spec19-qwen3-vtune v7-profile-training-spec19-qwen3-advisor
 .PHONY: v7-backprop-long-epoch v7-backprop-long-epoch-nightly
-.PHONY: visualizer visualizer-full v7-ir-visualizer-e2e v7-ir-visualizer-e2e-nightly
+.PHONY: visualizer visualizer-full v7-ir-visualizer-e2e v7-ir-visualizer-e2e-nightly v8-visualizer-vision-artifacts
 .PHONY: v7-visualizer-health v7-visualizer-generated-e2e
 .PHONY: v7-dataset-normalize v7-dataset-classify v7-dataset-embeddings v7-dataset-attention v7-dataset-viewer v7-dataset-all
 .PHONY: ck-cli-v7 ck-cli-v8 ck-bpe-train
@@ -5399,6 +5399,12 @@ v8-visualizer-generated-e2e:
 	@$(PYTHON) version/v8/scripts/test_visualizer_generated_e2e_v8.py \
 		$(if $(RUN),--run $(RUN),) \
 		--json-out $(V8_REPORT_DIR)/visualizer_generated_e2e_latest.json
+
+v8-visualizer-vision-artifacts:
+	@echo "Running v8 vision visualizer artifact harness..."
+	@mkdir -p $(V8_REPORT_DIR)
+	@$(PYTHON) version/v8/scripts/test_visualizer_vision_artifacts_v8.py \
+		--json-out $(V8_REPORT_DIR)/vision_visualizer_latest.json
 
 # ── Dataset Pipeline Targets ─────────────────────────────────────────────────
 # Usage: make v7-dataset-all RUN=~/.cache/ck-engine-v7/models/train/<run_name>
