@@ -272,6 +272,60 @@ void deepseek_mla_partial_rope_concat_f32(const float *q_nope,
     }
 }
 
+void deepseek_mla_partial_rope_concat_packed_f32(const float *q_packed,
+                                             const float *k_nope,
+                                             const float *kv_a_packed,
+                                             const float *cos,
+                                             const float *sin,
+                                             float *query,
+                                             float *key,
+                                             int tokens,
+                                             int heads,
+                                             int kv_lora_rank,
+                                             int qk_nope_dim,
+                                             int qk_rope_dim)
+{
+    if (!q_packed || !k_nope || !kv_a_packed || !cos || !sin || !query || !key ||
+        tokens <= 0 || heads <= 0 || kv_lora_rank <= 0 || qk_nope_dim <= 0 ||
+        qk_rope_dim <= 0 || (qk_rope_dim % 2) != 0) {
+        return;
+    }
+
+    const int q_head_dim = qk_nope_dim + qk_rope_dim;
+    const int kv_a_dim = kv_lora_rank + qk_rope_dim;
+    const int half = qk_rope_dim / 2;
+    for (int t = 0; t < tokens; ++t) {
+        const float *cos_row = cos + (size_t)t * (size_t)half;
+        const float *sin_row = sin + (size_t)t * (size_t)half;
+        const float *kp = kv_a_packed + (size_t)t * (size_t)kv_a_dim + (size_t)kv_lora_rank;
+        for (int h = 0; h < heads; ++h) {
+            const float *q_in = q_packed + ds_mla_thd_idx(t, h, 0, heads, q_head_dim);
+            const float *kn = k_nope + ds_mla_thd_idx(t, h, 0, heads, qk_nope_dim);
+            float *q_out = query + ds_mla_thd_idx(t, h, 0, heads, q_head_dim);
+            float *k_out = key + ds_mla_thd_idx(t, h, 0, heads, q_head_dim);
+
+            for (int d = 0; d < qk_nope_dim; ++d) {
+                q_out[d] = q_in[d];
+                k_out[d] = kn[d];
+            }
+
+            const float *qp = q_in + qk_nope_dim;
+            for (int i = 0; i < half; ++i) {
+                const float q_first = qp[2 * i];
+                const float q_second = qp[2 * i + 1];
+                const float k_first = kp[2 * i];
+                const float k_second = kp[2 * i + 1];
+                const float c = cos_row[i];
+                const float ss = sin_row[i];
+                q_out[qk_nope_dim + i] = q_first * c - q_second * ss;
+                q_out[qk_nope_dim + half + i] = q_second * c + q_first * ss;
+                k_out[qk_nope_dim + i] = k_first * c - k_second * ss;
+                k_out[qk_nope_dim + half + i] = k_second * c + k_first * ss;
+            }
+        }
+    }
+}
+
 static inline size_t ds_qkv_idx(int token, int head, int d, int heads, int dim)
 {
     return ((size_t)token * (size_t)heads + (size_t)head) * (size_t)dim + (size_t)d;

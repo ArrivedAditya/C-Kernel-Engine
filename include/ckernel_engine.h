@@ -2292,6 +2292,30 @@ void moe_relu2_shared_forward_q5_1_q8_0(const float *hidden,
                                         int hidden_dim,
                                         int intermediate_dim);
 
+// Routed MoE SwiGLU expert MLP: output += weight * down(silu(gate(hidden)) * up(hidden)).
+void moe_swiglu_expert_forward_f32(const float *hidden,
+                                   const int *indices,
+                                   const float *routing_weights,
+                                   const float *expert_gate,
+                                   const float *expert_up,
+                                   const float *expert_down,
+                                   float *output,
+                                   int rows,
+                                   int hidden_dim,
+                                   int intermediate_dim,
+                                   int n_experts,
+                                   int top_k);
+
+void moe_swiglu_shared_forward_f32(const float *hidden,
+                                   const float *routed,
+                                   const float *shared_gate,
+                                   const float *shared_up,
+                                   const float *shared_down,
+                                   float *output,
+                                   int rows,
+                                   int hidden_dim,
+                                   int intermediate_dim);
+
 void moe_relu2_expert_backward_f32(const float *d_output,
                                    const float *hidden,
                                    const int *indices,
@@ -2438,6 +2462,42 @@ void deepseek_hybrid_attention_f32(const float *q,
                                    int top_k,
                                    float scale,
                                    int mode);
+
+void deepseek_mla_kv_decompress_f32(const float *compressed_kv,
+                                    const float *kv_b_proj,
+                                    float *k_nope,
+                                    float *value,
+                                    int tokens,
+                                    int heads,
+                                    int kv_lora_rank,
+                                    int qk_nope_dim,
+                                    int v_dim);
+
+void deepseek_mla_partial_rope_concat_f32(const float *q_nope,
+                                          const float *q_pe,
+                                          const float *k_nope,
+                                          const float *k_pe,
+                                          const float *cos,
+                                          const float *sin,
+                                          float *query,
+                                          float *key,
+                                          int tokens,
+                                          int heads,
+                                          int qk_nope_dim,
+                                          int qk_rope_dim);
+
+void deepseek_mla_partial_rope_concat_packed_f32(const float *q_packed,
+                                             const float *k_nope,
+                                             const float *kv_a_packed,
+                                             const float *cos,
+                                             const float *sin,
+                                             float *query,
+                                             float *key,
+                                             int tokens,
+                                             int heads,
+                                             int kv_lora_rank,
+                                             int qk_nope_dim,
+                                             int qk_rope_dim);
 
 // Attention backward (GQA-aware): computes d_q, d_k, d_v.
 void attention_backward_causal_head_major_gqa(

@@ -224,6 +224,71 @@ class ModelContractInspectorTests(unittest.TestCase):
         self.assertEqual(report["families"]["multimodal_projector"], 1)
         self.assertEqual(report["layers"]["1"]["expert_count"], 1)
 
+
+    def test_kimi_safetensors_index_validates_required_model_map_patterns(self) -> None:
+        index = {
+            "metadata": {"total_parameters": 123, "total_size": 456},
+            "weight_map": {
+                "language_model.model.layers.0.self_attn.q_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.kv_a_proj_with_mqa.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.kv_a_layernorm.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.kv_b_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.o_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.gate.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.experts.0.gate_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.shared_experts.gate_proj.weight": "model-00001-of-00001.safetensors",
+                "vision_tower.encoder.layers.0.self_attn.q_proj.weight": "model-00001-of-00001.safetensors",
+                "multi_modal_projector.linear_1.weight": "model-00001-of-00001.safetensors",
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "model.safetensors.index.json"
+            path.write_text(json.dumps(index), encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, str(AUDIT_SCRIPT), str(path), "--arch", "kimi_vl"],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["model_map_status"], "known")
+        self.assertEqual(report["required_tensor_patterns"]["missing"], [])
+        expert_row = next(row for row in report["required_tensor_patterns"]["patterns"] if "experts.{E}.gate_proj" in row["pattern"])
+        self.assertEqual(expert_row["expert_counts"], {"1": 1})
+
+    def test_kimi_safetensors_index_fails_when_required_mla_tensor_missing(self) -> None:
+        index = {
+            "metadata": {"total_parameters": 123, "total_size": 456},
+            "weight_map": {
+                "language_model.model.layers.0.self_attn.q_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.kv_a_proj_with_mqa.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.kv_a_layernorm.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.o_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.gate.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.experts.0.gate_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.shared_experts.gate_proj.weight": "model-00001-of-00001.safetensors",
+                "vision_tower.encoder.layers.0.self_attn.q_proj.weight": "model-00001-of-00001.safetensors",
+                "multi_modal_projector.linear_1.weight": "model-00001-of-00001.safetensors",
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "model.safetensors.index.json"
+            path.write_text(json.dumps(index), encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, str(AUDIT_SCRIPT), str(path), "--arch", "kimi_vl"],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["status"], "fail")
+        self.assertIn("language_model.model.layers.{L}.self_attn.kv_b_proj.weight", report["required_tensor_patterns"]["missing"])
+
     def test_qwen3_dense_config_is_supported_at_contract_level(self) -> None:
         cfg = {
             "architectures": ["Qwen3ForCausalLM"],

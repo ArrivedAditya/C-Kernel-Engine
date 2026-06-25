@@ -467,6 +467,96 @@ def _parse_nemotron_h_pattern(pattern: str, num_layers: int) -> list[str]:
 
 
 
+
+def _kimi_vl_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor]) -> list[TensorRef]:
+    text = config.get("text_config") if isinstance(config.get("text_config"), dict) else config
+    num_layers = int(text.get("num_hidden_layers") or config.get("num_layers") or 0)
+    hidden = int(text.get("hidden_size") or config.get("hidden_size") or 0)
+    intermediate = int(text.get("intermediate_size") or config.get("intermediate_size") or 0)
+    moe_intermediate = int(text.get("moe_intermediate_size") or config.get("moe_intermediate_size") or 0)
+    n_experts = int(text.get("n_routed_experts") or config.get("n_routed_experts") or 0)
+    n_shared = int(text.get("n_shared_experts") or config.get("n_shared_experts") or 0)
+    layer_kinds = list(config.get("layer_kinds") or [])
+    if not layer_kinds:
+        first_dense = int(text.get("first_k_dense_replace") or 0)
+        moe_freq = int(text.get("moe_layer_freq") or 1)
+        layer_kinds = ["mla_dense_mlp" if layer < first_dense or (moe_freq > 0 and layer % moe_freq != 0) else "mla_moe" for layer in range(num_layers)]
+    if num_layers <= 0 or hidden <= 0 or intermediate <= 0:
+        raise SystemExit("Kimi-VL config missing num_hidden_layers/hidden_size/intermediate_size")
+    if len(layer_kinds) != num_layers:
+        raise SystemExit(f"Kimi-VL layer_kinds length {len(layer_kinds)} != num_layers {num_layers}")
+
+    refs: list[TensorRef] = [
+        TensorRef("token_emb", (_require_existing(headers, ("language_model.model.embed_tokens.weight", "model.embed_tokens.weight"), "token_emb"),)),
+    ]
+
+    for layer, kind in enumerate(layer_kinds):
+        pfx = f"language_model.model.layers.{layer}"
+        refs.extend([
+            TensorRef(f"layer.{layer}.block_norm", (_require_existing(headers, (f"{pfx}.input_layernorm.weight",), f"layer {layer} input norm"),), dtype="fp32"),
+            TensorRef(f"layer.{layer}.post_attention_norm", (_require_existing(headers, (f"{pfx}.post_attention_layernorm.weight",), f"layer {layer} post attention norm"),), dtype="fp32"),
+            TensorRef(f"layer.{layer}.mla_q_proj", (_require_existing(headers, (f"{pfx}.self_attn.q_proj.weight",), f"layer {layer} MLA q_proj"),)),
+            TensorRef(f"layer.{layer}.mla_kv_a_proj", (_require_existing(headers, (f"{pfx}.self_attn.kv_a_proj_with_mqa.weight",), f"layer {layer} MLA kv_a_proj_with_mqa"),)),
+            TensorRef(f"layer.{layer}.mla_kv_a_norm", (_require_existing(headers, (f"{pfx}.self_attn.kv_a_layernorm.weight",), f"layer {layer} MLA kv_a_layernorm"),), dtype="fp32"),
+            TensorRef(f"layer.{layer}.mla_kv_b_proj", (_require_existing(headers, (f"{pfx}.self_attn.kv_b_proj.weight",), f"layer {layer} MLA kv_b_proj"),), dtype="fp32"),
+            TensorRef(f"layer.{layer}.mla_out_proj", (_require_existing(headers, (f"{pfx}.self_attn.o_proj.weight",), f"layer {layer} MLA o_proj"),)),
+        ])
+        mlp = f"{pfx}.mlp"
+        if kind == "mla_dense_mlp":
+            refs.extend([
+                TensorRef(f"layer.{layer}.mlp_gate", (_require_existing(headers, (f"{mlp}.gate_proj.weight",), f"layer {layer} dense gate_proj"),)),
+                TensorRef(f"layer.{layer}.mlp_up", (_require_existing(headers, (f"{mlp}.up_proj.weight",), f"layer {layer} dense up_proj"),)),
+                TensorRef(f"layer.{layer}.mlp_down", (_require_existing(headers, (f"{mlp}.down_proj.weight",), f"layer {layer} dense down_proj"),)),
+            ])
+        elif kind == "mla_moe":
+            if n_experts <= 0:
+                raise SystemExit("Kimi-VL MoE layer requires n_routed_experts")
+            refs.append(TensorRef(f"layer.{layer}.moe_router", (_require_existing(headers, (f"{mlp}.gate.weight",), f"layer {layer} moe router"),), dtype="fp32"))
+            correction = _maybe_tensor_ref(headers, f"layer.{layer}.moe_router_bias", (f"{mlp}.gate.e_score_correction_bias",), dtype="fp32")
+            if correction is not None:
+                refs.append(correction)
+            expert_gate_sources: list[str] = []
+            expert_up_sources: list[str] = []
+            expert_down_sources: list[str] = []
+            expert_gate_shape: tuple[int, ...] | None = None
+            expert_up_shape: tuple[int, ...] | None = None
+            expert_down_shape: tuple[int, ...] | None = None
+            for expert in range(n_experts):
+                ep = f"{mlp}.experts.{expert}"
+                gate = _require_existing(headers, (f"{ep}.gate_proj.weight",), f"layer {layer} expert {expert} gate_proj")
+                up = _require_existing(headers, (f"{ep}.up_proj.weight",), f"layer {layer} expert {expert} up_proj")
+                down = _require_existing(headers, (f"{ep}.down_proj.weight",), f"layer {layer} expert {expert} down_proj")
+                expert_gate_sources.append(gate)
+                expert_up_sources.append(up)
+                expert_down_sources.append(down)
+                if expert_gate_shape is None:
+                    expert_gate_shape = tuple([n_experts] + list(headers[gate].shape))
+                if expert_up_shape is None:
+                    expert_up_shape = tuple([n_experts] + list(headers[up].shape))
+                if expert_down_shape is None:
+                    expert_down_shape = tuple([n_experts] + list(headers[down].shape))
+            refs.extend([
+                TensorRef(f"layer.{layer}.moe_expert_gate", tuple(expert_gate_sources), dtype="fp32", shape=expert_gate_shape),
+                TensorRef(f"layer.{layer}.moe_expert_up", tuple(expert_up_sources), dtype="fp32", shape=expert_up_shape),
+                TensorRef(f"layer.{layer}.moe_expert_down", tuple(expert_down_sources), dtype="fp32", shape=expert_down_shape),
+            ])
+            sp = f"{mlp}.shared_experts"
+            refs.extend([
+                TensorRef(f"layer.{layer}.moe_shared_gate", (_require_existing(headers, (f"{sp}.gate_proj.weight",), f"layer {layer} shared gate_proj"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.moe_shared_up", (_require_existing(headers, (f"{sp}.up_proj.weight",), f"layer {layer} shared up_proj"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.moe_shared_down", (_require_existing(headers, (f"{sp}.down_proj.weight",), f"layer {layer} shared down_proj"),), dtype="fp32"),
+            ])
+        else:
+            raise SystemExit(f"Unsupported Kimi-VL layer kind at {layer}: {kind}")
+
+    refs.append(TensorRef("final_ln_weight", (_require_existing(headers, ("language_model.model.norm.weight", "model.norm.weight"), "final norm"),), dtype="fp32"))
+    refs.append(TensorRef("final_ln_bias", (), dtype="fp32", synth="zeros_fp32", shape=(hidden,)))
+    lm_head = _first_existing(headers, ("language_model.lm_head.weight", "lm_head.weight", "model.lm_head.weight"))
+    if lm_head is not None:
+        refs.append(TensorRef("output.weight", (lm_head,)))
+    return refs
+
+
 def _nemotron_dt_limit(config: dict[str, Any]) -> tuple[float, float]:
     """Return CK runtime dt clamp bounds for Nemotron-H.
 
@@ -699,6 +789,8 @@ def _refs_for_arch(arch: str, config: dict[str, Any], headers: dict[str, HeaderT
         return _qwen35_text_refs(config, headers)
     if arch == "nemotron_h":
         return _nemotron_h_text_refs(config, headers)
+    if arch == "kimi_vl":
+        return _kimi_vl_text_refs(config, headers)
     if arch in {"llama", "qwen2", "qwen3", "gemma3"}:
         return _llama_family_text_refs(config, headers)
     raise SystemExit(f"Unsupported safetensors arch for v8 importer: {arch}")
@@ -794,6 +886,61 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "rope_freq_base": float(text.get("rope_theta") or 10000.0),
             "use_rope_freq_factors": 0,
             "has_attention_biases": bool(text.get("attention_bias", False)),
+            "has_qk_norm": False,
+            "prefill_policy": "batched",
+        })
+
+    if arch == "kimi_vl":
+        first_dense = int(text.get("first_k_dense_replace") or 0)
+        moe_freq = int(text.get("moe_layer_freq") or 1)
+        num_layers = int(cfg.get("num_layers") or 0)
+        layer_kinds = []
+        for layer in range(num_layers):
+            if layer < first_dense or (moe_freq > 0 and layer % moe_freq != 0):
+                layer_kinds.append("mla_dense_mlp")
+            else:
+                layer_kinds.append("mla_moe")
+        qk_nope = int(text.get("qk_nope_head_dim") or 0)
+        qk_rope = int(text.get("qk_rope_head_dim") or 0)
+        v_head = int(text.get("v_head_dim") or 0)
+        cfg.update({
+            "model": "kimi_vl",
+            "arch": "kimi_vl",
+            "model_type": "kimi_vl",
+            "layer_kinds": layer_kinds,
+            "hybrid_block_pattern": layer_kinds[:],
+            "layer_attention_policy": ["mla" for _ in layer_kinds],
+            "layer_moe_policy": ["routed_swiglu" if k == "mla_moe" else "none" for k in layer_kinds],
+            "layer_mlp_policy": ["swiglu" if k == "mla_dense_mlp" else "none" for k in layer_kinds],
+            "layer_kv_policy": ["compressed_mla_kv" for _ in layer_kinds],
+            "intermediate_dim": int(text.get("intermediate_size") or cfg.get("intermediate_size") or 0),
+            "moe_intermediate_size": int(text.get("moe_intermediate_size") or 0),
+            "n_shared_experts": int(text.get("n_shared_experts") or 0),
+            "n_routed_experts": int(text.get("n_routed_experts") or 0),
+            "num_experts_per_tok": int(text.get("num_experts_per_tok") or 0),
+            "n_group": int(text.get("n_group") or 0),
+            "topk_group": int(text.get("topk_group") or 0),
+            "norm_topk_prob": bool(text.get("norm_topk_prob", True)),
+            "router_num_groups": int(text.get("n_group") or 0),
+            "router_topk_group": int(text.get("topk_group") or 0),
+            "router_norm_topk_prob": 1 if bool(text.get("norm_topk_prob", True)) else 0,
+            "routed_scaling_factor": float(text.get("routed_scaling_factor") or 1.0),
+            "scoring_func": str(text.get("scoring_func") or "sigmoid"),
+            "topk_method": str(text.get("topk_method") or "noaux_tc"),
+            "kv_lora_rank": int(text.get("kv_lora_rank") or 0),
+            "q_lora_rank": text.get("q_lora_rank"),
+            "qk_nope_head_dim": qk_nope,
+            "qk_rope_head_dim": qk_rope,
+            "v_head_dim": v_head,
+            "head_dim": qk_nope + qk_rope,
+            "rotary_dim": qk_rope,
+            "mla_q_head_dim": qk_nope + qk_rope,
+            "mla_k_head_dim": qk_nope + qk_rope,
+            "mla_v_head_dim": v_head,
+            "rope_layout": "partial_pairwise_concat",
+            "rope_theta": float(text.get("rope_theta") or 10000.0),
+            "rope_freq_base": float(text.get("rope_theta") or 10000.0),
+            "has_attention_biases": False,
             "has_qk_norm": False,
             "prefill_policy": "batched",
         })
@@ -926,6 +1073,8 @@ def _entry_size_from_header(ref: TensorRef, headers: dict[str, HeaderTensor], dt
         total += int(np.prod(shape, dtype=np.int64)) * elem
         out_dtype = out_dtype or dtype
         out_shape = shape if not out_shape else out_shape
+    if ref.shape is not None:
+        out_shape = [int(x) for x in ref.shape]
     return out_dtype or "fp32", total, out_shape
 
 
@@ -1026,6 +1175,8 @@ def _write_ref(w: HashingWriter, model_dir: Path, headers: dict[str, HeaderTenso
         total += len(data)
         out_dtype = out_dtype or dt
         out_shape = shape if not out_shape else out_shape
+    if ref.shape is not None:
+        out_shape = [int(x) for x in ref.shape]
     return out_dtype or "fp32", total, out_shape
 
 
@@ -1154,7 +1305,7 @@ def main() -> int:
     ap.add_argument("--ram-dir", type=Path, default=Path("/dev/shm"), help="tmpfs directory for --ram-output; default: /dev/shm")
     ap.add_argument("--config-out", required=True, type=Path)
     ap.add_argument("--manifest-out", required=True, type=Path)
-    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma3", "llama", "qwen2", "qwen3", "qwen35", "nemotron_h", "glm4"])
+    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma3", "llama", "qwen2", "qwen3", "qwen35", "nemotron_h", "glm4", "kimi_vl"])
     ap.add_argument("--config-template", type=Path, help="existing v8 config/manifest to reuse explicit runtime policy")
     ap.add_argument("--dtype", default="preserve", choices=["preserve", "bf16", "fp32"])
     ap.add_argument("--dry-run", action="store_true", help="validate mapping and write JSON reports only; do not write BUMP")

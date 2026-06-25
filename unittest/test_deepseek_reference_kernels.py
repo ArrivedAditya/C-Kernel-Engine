@@ -36,6 +36,8 @@ lib.deepseek_mla_kv_decompress_f32.argtypes = [fptr, fptr, fptr, fptr, ctypes.c_
 lib.deepseek_mla_kv_decompress_f32.restype = None
 lib.deepseek_mla_partial_rope_concat_f32.argtypes = [fptr, fptr, fptr, fptr, fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 lib.deepseek_mla_partial_rope_concat_f32.restype = None
+lib.deepseek_mla_partial_rope_concat_packed_f32.argtypes = [fptr, fptr, fptr, fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+lib.deepseek_mla_partial_rope_concat_packed_f32.restype = None
 
 
 def ptr(a):
@@ -171,6 +173,52 @@ class TestDeepSeekReferenceKernels(unittest.TestCase):
             ptr(key),
             tokens,
             heads,
+            nope_dim,
+            rope_dim,
+        )
+        np.testing.assert_allclose(query, q_ref.numpy(), rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(key, k_ref.numpy(), rtol=1e-6, atol=1e-6)
+
+    def test_mla_partial_rope_concat_packed_q_matches_kimi_layout(self):
+        torch.manual_seed(29)
+        tokens, heads, rank, nope_dim, rope_dim = 3, 2, 4, 5, 6
+        q_packed = torch.randn(tokens, heads, nope_dim + rope_dim, dtype=torch.float32)
+        k_nope = torch.randn(tokens, heads, nope_dim, dtype=torch.float32)
+        k_pe = torch.randn(tokens, rope_dim, dtype=torch.float32)
+        kv_a_packed = torch.cat([torch.randn(tokens, rank, dtype=torch.float32), k_pe], dim=-1).contiguous()
+        base = torch.randn(tokens, rope_dim // 2, dtype=torch.float32)
+        cos_half = base.cos()
+        sin_half = base.sin()
+        cos = torch.cat([cos_half, cos_half], dim=-1)
+        sin = torch.cat([sin_half, sin_half], dim=-1)
+
+        def apply_kimi_rope(x):
+            b = x.reshape(*x.shape[:-1], rope_dim // 2, 2).transpose(-1, -2).reshape(*x.shape[:-1], rope_dim)
+            first, second = b[..., : rope_dim // 2], b[..., rope_dim // 2 :]
+            rotated = torch.cat([-second, first], dim=-1)
+            c = cos.reshape(tokens, 1, rope_dim)
+            ss = sin.reshape(tokens, 1, rope_dim)
+            return b * c + rotated * ss
+
+        q_nope = q_packed[:, :, :nope_dim].contiguous()
+        q_pe = q_packed[:, :, nope_dim:].contiguous()
+        q_ref = torch.cat([q_nope, apply_kimi_rope(q_pe)], dim=-1)
+        k_pe_heads = k_pe[:, None, :].expand(tokens, heads, rope_dim).contiguous()
+        k_ref = torch.cat([k_nope, apply_kimi_rope(k_pe_heads)], dim=-1)
+
+        query = np.empty((tokens, heads, nope_dim + rope_dim), dtype=np.float32)
+        key = np.empty_like(query)
+        lib.deepseek_mla_partial_rope_concat_packed_f32(
+            ptr(np.ascontiguousarray(q_packed.numpy())),
+            ptr(np.ascontiguousarray(k_nope.numpy())),
+            ptr(np.ascontiguousarray(kv_a_packed.numpy())),
+            ptr(np.ascontiguousarray(cos_half.numpy())),
+            ptr(np.ascontiguousarray(sin_half.numpy())),
+            ptr(query),
+            ptr(key),
+            tokens,
+            heads,
+            rank,
             nope_dim,
             rope_dim,
         )

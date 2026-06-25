@@ -19578,6 +19578,121 @@
       "notes": "Build merged vision position IDs for 2D M-RoPE style encoders.",
       "name": "vision_position_ids_2d_merge",
       "_source_file": "vision_position_ids_2d_merge.json"
+    },
+    {
+      "id": "deepseek_mla_partial_rope_concat_packed_f32",
+      "op": "partial_rope_concat",
+      "variant": "fp32",
+      "modes": {
+        "inference": true,
+        "training": true,
+        "backward": false
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q_packed",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "Dk+Dr"
+          ]
+        },
+        {
+          "name": "k_nope",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "Dk"
+          ]
+        },
+        {
+          "name": "kv_a_packed",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "R+Dr"
+          ]
+        },
+        {
+          "name": "cos",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "Dr/2"
+          ]
+        },
+        {
+          "name": "sin",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "Dr/2"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "query",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "Dk+Dr"
+          ]
+        },
+        {
+          "name": "key",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "Dk+Dr"
+          ]
+        }
+      ],
+      "dims": [
+        "T",
+        "H",
+        "R",
+        "Dk",
+        "Dr"
+      ],
+      "impl": {
+        "sources": [
+          "src/kernels/deepseek_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "scalar_ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ],
+        "function": "deepseek_mla_partial_rope_concat_packed_f32",
+        "c_declaration": "void deepseek_mla_partial_rope_concat_packed_f32(const float *q_packed, const float *k_nope, const float *kv_a_packed, const float *cos, const float *sin, float *query, float *key, int tokens, int heads, int kv_lora_rank, int qk_nope_dim, int qk_rope_dim);"
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_deepseek_reference_kernels.py"
+        ],
+        "parity": [
+          {
+            "kind": "pytorch",
+            "command": ".venv/bin/python unittest/test_deepseek_reference_kernels.py",
+            "tolerance": "1e-6"
+          }
+        ]
+      },
+      "notes": "Scalar reference for MLA partial RoPE assembly from packed q_proj [q_nope|q_pe] and packed kv_a_proj [compressed_kv|k_pe]. This preserves the Kimi/DeepSeek circuit without inventing compact q_pe/k_pe activation buffers.",
+      "name": "deepseek_mla_partial_rope_concat_packed_f32",
+      "_source_file": "deepseek_mla_partial_rope_concat_packed_f32.json"
     }
   ]
 }

@@ -697,3 +697,145 @@ def test_glm4_safetensors_to_bump_uses_declarative_source_map(tmp_path: Path) ->
     assert entries["layer.0.w1"]["shape"] == [16, 8]
     assert entries["layer.0.b1"]["shape"] == [32]
     assert "output.weight" in names
+
+def test_kimi_vl_safetensors_to_bump_dry_run_maps_text_decoder(tmp_path: Path) -> None:
+    torch, st = _require_torch_safetensors()
+    checkpoint = tmp_path / "kimi_vl"
+    out = tmp_path / "out_kimi_vl"
+    checkpoint.mkdir()
+    out.mkdir()
+
+    config = {
+        "architectures": ["KimiVLForConditionalGeneration"],
+        "model_type": "kimi_vl",
+        "text_config": {
+            "num_hidden_layers": 2,
+            "hidden_size": 8,
+            "intermediate_size": 16,
+            "moe_intermediate_size": 4,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 2,
+            "vocab_size": 32,
+            "max_position_embeddings": 128,
+            "kv_lora_rank": 4,
+            "q_lora_rank": None,
+            "qk_nope_head_dim": 2,
+            "qk_rope_head_dim": 2,
+            "v_head_dim": 2,
+            "n_shared_experts": 1,
+            "n_routed_experts": 2,
+            "num_experts_per_tok": 1,
+            "first_k_dense_replace": 1,
+            "moe_layer_freq": 1,
+            "n_group": 1,
+            "topk_group": 1,
+            "norm_topk_prob": True,
+            "routed_scaling_factor": 2.446,
+            "scoring_func": "sigmoid",
+            "topk_method": "noaux_tc",
+            "rope_theta": 800000.0,
+            "tie_word_embeddings": False,
+        },
+        "vision_config": {
+            "model_type": "moonvit",
+            "hidden_size": 8,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "patch_size": 14,
+        },
+    }
+    (checkpoint / "config.json").write_text(json.dumps(config) + "\n", encoding="utf-8")
+
+    tensors = {
+        "language_model.model.embed_tokens.weight": torch.randn(32, 8, dtype=torch.bfloat16),
+        "language_model.model.norm.weight": torch.ones(8, dtype=torch.float32),
+        "language_model.lm_head.weight": torch.randn(32, 8, dtype=torch.bfloat16),
+    }
+    for layer in range(2):
+        pfx = f"language_model.model.layers.{layer}"
+        tensors.update(
+            {
+                f"{pfx}.input_layernorm.weight": torch.ones(8, dtype=torch.float32),
+                f"{pfx}.post_attention_layernorm.weight": torch.ones(8, dtype=torch.float32),
+                f"{pfx}.self_attn.q_proj.weight": torch.randn(8, 8, dtype=torch.bfloat16),
+                f"{pfx}.self_attn.kv_a_proj_with_mqa.weight": torch.randn(6, 8, dtype=torch.bfloat16),
+                f"{pfx}.self_attn.kv_a_layernorm.weight": torch.ones(4, dtype=torch.float32),
+                f"{pfx}.self_attn.kv_b_proj.weight": torch.randn(8, 4, dtype=torch.bfloat16),
+                f"{pfx}.self_attn.o_proj.weight": torch.randn(8, 8, dtype=torch.bfloat16),
+            }
+        )
+    tensors.update(
+        {
+            "language_model.model.layers.0.mlp.gate_proj.weight": torch.randn(16, 8, dtype=torch.bfloat16),
+            "language_model.model.layers.0.mlp.up_proj.weight": torch.randn(16, 8, dtype=torch.bfloat16),
+            "language_model.model.layers.0.mlp.down_proj.weight": torch.randn(8, 16, dtype=torch.bfloat16),
+            "language_model.model.layers.1.mlp.gate.weight": torch.randn(2, 8, dtype=torch.float32),
+            "language_model.model.layers.1.mlp.gate.e_score_correction_bias": torch.randn(2, dtype=torch.float32),
+            "language_model.model.layers.1.mlp.shared_experts.gate_proj.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+            "language_model.model.layers.1.mlp.shared_experts.up_proj.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+            "language_model.model.layers.1.mlp.shared_experts.down_proj.weight": torch.randn(8, 4, dtype=torch.bfloat16),
+        }
+    )
+    for expert in range(2):
+        tensors.update(
+            {
+                f"language_model.model.layers.1.mlp.experts.{expert}.gate_proj.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+                f"language_model.model.layers.1.mlp.experts.{expert}.up_proj.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+                f"language_model.model.layers.1.mlp.experts.{expert}.down_proj.weight": torch.randn(8, 4, dtype=torch.bfloat16),
+            }
+        )
+    st.save_file(tensors, checkpoint / "model.safetensors")
+
+    script = Path("version/v8/scripts/convert_safetensors_to_bump_v8.py")
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--checkpoint",
+            str(checkpoint),
+            "--output",
+            str(out / "weights.bump"),
+            "--config-out",
+            str(out / "config.json"),
+            "--manifest-out",
+            str(out / "weights_manifest.json"),
+            "--arch",
+            "auto",
+            "--dry-run",
+        ],
+        check=True,
+    )
+
+    manifest = json.loads((out / "weights_manifest.json").read_text(encoding="utf-8"))
+    audit = json.loads((out / "conversion_audit.json").read_text(encoding="utf-8"))
+    names = {entry["name"] for entry in manifest["entries"]}
+    entries = {entry["name"]: entry for entry in manifest["entries"]}
+
+    assert manifest["model"] == "kimi_vl"
+    assert manifest["template"]["name"] == "kimi_vl"
+    assert manifest["config"]["layer_kinds"] == ["mla_dense_mlp", "mla_moe"]
+    assert manifest["config"]["rotary_dim"] == 2
+    assert manifest["config"]["mla_q_head_dim"] == 4
+    assert manifest["config"]["layer_moe_policy"] == ["none", "routed_swiglu"]
+    assert audit["verdict"] == "pass"
+    assert audit["unmapped_source_tensors"] == []
+    assert entries["layer.1.moe_expert_gate"]["shape"] == [2, 4, 8]
+    assert entries["layer.1.moe_expert_up"]["shape"] == [2, 4, 8]
+    assert entries["layer.1.moe_expert_down"]["shape"] == [2, 8, 4]
+    assert {
+        "token_emb",
+        "layer.0.mla_q_proj",
+        "layer.0.mla_kv_a_proj",
+        "layer.0.mla_kv_a_norm",
+        "layer.0.mla_kv_b_proj",
+        "layer.0.mlp_gate",
+        "layer.1.moe_router",
+        "layer.1.moe_router_bias",
+        "layer.1.moe_expert_gate",
+        "layer.1.moe_expert_up",
+        "layer.1.moe_expert_down",
+        "layer.1.moe_shared_gate",
+        "final_ln_weight",
+        "final_ln_bias",
+        "output.weight",
+    }.issubset(names)

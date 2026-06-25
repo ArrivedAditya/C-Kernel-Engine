@@ -2645,7 +2645,19 @@ static int do_init(const char *weights_path) {{
     g_model->activations = (float*)(g_model->bump + BUMP_ACT_OFFSET);
     g_model->kv_cache = (float*)(g_model->bump + A_KV_CACHE);
     g_model->kv_cache_f16 = (uint16_t*)(g_model->bump + A_KV_CACHE);
+#ifdef A_ROPE_CACHE
     g_model->rope_cos = (float*)(g_model->bump + A_ROPE_CACHE);
+#else
+    size_t rope_cache_elems = (size_t)MAX_SEQ_LEN * (size_t)ROTARY_DIM;
+    g_model->rope_cos = (float*)calloc(rope_cache_elems, sizeof(float));
+    if (!g_model->rope_cos) {{
+        fprintf(stderr, "ck_model_init: failed to allocate RoPE cache (%zu floats)\\n", rope_cache_elems);
+        ck_bump_alloc_free(&g_model->bump_alloc);
+        free(g_model);
+        g_model = NULL;
+        return -1;
+    }}
+#endif
     g_model->rope_sin = g_model->rope_cos + MAX_SEQ_LEN * ROTARY_DIM / 2;
     g_model->logits = (float*)(g_model->bump + A_LOGITS);
     g_model->pos = 0;
@@ -2759,6 +2771,9 @@ CK_EXPORT void ck_model_free(void) {{
         ck_unload_manifest_map(g_manifest);
         g_manifest = NULL;
     }}
+#ifndef A_ROPE_CACHE
+    free(g_model->rope_cos);
+#endif
     ck_bump_alloc_free(&g_model->bump_alloc);
     free(g_model);
     g_model = NULL;
