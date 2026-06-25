@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any
 
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_SAFETENSORS_CK_MAP = SCRIPT_DIR.parent / "model_maps" / "safetensors_ck_map.json"
+
+
 LAYER_RE = re.compile(r"(?:^|\.)layers\.(\d+)\.")
 EXPERT_RE = re.compile(r"\.experts\.(\d+)\.")
 
@@ -72,9 +76,88 @@ def _family(name: str) -> str:
     return "other"
 
 
-def audit_index(path: Path) -> dict[str, Any]:
+
+def _pattern_regex(pattern: str) -> re.Pattern[str]:
+    sentinel_star = "<<<STAR>>>"
+    text = re.escape(pattern.replace("*", sentinel_star))
+    text = text.replace(r"\{L\}", r"(?P<L>\d+)")
+    text = text.replace(r"\{E\}", r"(?P<E>\d+)")
+    text = text.replace(sentinel_star, r".*")
+    return re.compile(r"^" + text + r"$")
+
+
+def _load_model_map(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"architectures": {}}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else {"architectures": {}}
+
+
+def _arch_contract(model_map: dict[str, Any], arch: str | None) -> dict[str, Any]:
+    if not arch:
+        return {}
+    contracts = model_map.get("architectures") if isinstance(model_map.get("architectures"), dict) else {}
+    key = str(arch).lower()
+    row = contracts.get(key)
+    if isinstance(row, dict):
+        return row
+    for candidate, contract in contracts.items():
+        if not isinstance(contract, dict):
+            continue
+        aliases = [str(candidate).lower()]
+        aliases.extend(str(x).lower() for x in contract.get("aliases", []) if isinstance(x, str))
+        if key in aliases:
+            return contract
+    return {}
+
+
+def _validate_required_patterns(weight_names: list[str], contract: dict[str, Any]) -> dict[str, Any]:
+    patterns = contract.get("required_tensor_patterns")
+    if patterns is None:
+        patterns = contract.get("required_tensor_families")
+    if not isinstance(patterns, list):
+        patterns = []
+    rows: list[dict[str, Any]] = []
+    missing: list[str] = []
+    for raw in patterns:
+        pattern = str(raw)
+        rx = _pattern_regex(pattern)
+        matched = []
+        layers: set[int] = set()
+        experts: dict[int, set[int]] = defaultdict(set)
+        for name in weight_names:
+            m = rx.match(name)
+            if not m:
+                continue
+            matched.append(name)
+            gd = m.groupdict()
+            if gd.get("L") is not None:
+                layer = int(gd["L"])
+                layers.add(layer)
+                if gd.get("E") is not None:
+                    experts[layer].add(int(gd["E"]))
+        if not matched:
+            missing.append(pattern)
+        row: dict[str, Any] = {
+            "pattern": pattern,
+            "count": len(matched),
+            "layers": sorted(layers),
+        }
+        if experts:
+            row["expert_counts"] = {str(layer): len(ids) for layer, ids in sorted(experts.items())}
+        rows.append(row)
+    return {
+        "status": "pass" if not missing else "fail",
+        "required_count": len(rows),
+        "missing_count": len(missing),
+        "missing": missing,
+        "patterns": rows,
+    }
+
+def audit_index(path: Path, arch: str | None = None, model_map_path: Path = DEFAULT_SAFETENSORS_CK_MAP) -> dict[str, Any]:
     data = _load_index(path)
     wm = data["weight_map"]
+    weight_names = sorted(str(name) for name in wm)
     families = Counter(_family(name) for name in wm)
     layers: dict[int, Counter[str]] = defaultdict(Counter)
     expert_ids: dict[int, set[int]] = defaultdict(set)
@@ -96,7 +179,10 @@ def audit_index(path: Path) -> dict[str, Any]:
         }
         for layer, counter in sorted(layers.items())
     }
-    return {
+    model_map = _load_model_map(model_map_path)
+    contract = _arch_contract(model_map, arch)
+    required = _validate_required_patterns(weight_names, contract) if contract else None
+    report = {
         "metadata": data.get("metadata", {}),
         "tensor_count": len(wm),
         "shard_count": len(shards),
@@ -105,20 +191,33 @@ def audit_index(path: Path) -> dict[str, Any]:
         "layer_count": len(layers),
         "layers": layer_summary,
     }
+    if arch:
+        report["arch"] = str(arch)
+        report["model_map_status"] = "known" if contract else "unknown"
+        if required is not None:
+            report["required_tensor_patterns"] = required
+            report["status"] = required["status"]
+        elif contract:
+            report["status"] = "pass"
+        else:
+            report["status"] = "fail"
+    return report
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Audit safetensors index tensor families without loading shards")
     ap.add_argument("index", type=Path, help="model.safetensors.index.json or directory")
+    ap.add_argument("--arch", help="optional CK architecture key or alias to validate against model_maps/safetensors_ck_map.json")
+    ap.add_argument("--model-map", type=Path, default=DEFAULT_SAFETENSORS_CK_MAP, help="safetensors CK model map JSON")
     ap.add_argument("--json-out", type=Path)
     args = ap.parse_args()
-    report = audit_index(args.index)
+    report = audit_index(args.index, arch=args.arch, model_map_path=args.model_map)
     text = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(text, encoding="utf-8")
     print(text, end="")
-    return 0
+    return 0 if report.get("status", "pass") != "fail" else 2
 
 
 if __name__ == "__main__":

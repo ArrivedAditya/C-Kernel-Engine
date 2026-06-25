@@ -43,9 +43,9 @@ CRITICAL_TEMPLATE_INPUTS: dict[str, tuple[str, ...]] = {
     "k_proj": ("x",),
     "v_proj": ("x",),
     "kv_a_proj": ("x",),
-    "kv_a_layernorm": ("x",),
-    "kv_lora_decompress": ("compressed_kv", "kv_b"),
-    "partial_rope_concat": ("q_nope", "q_pe", "k_nope", "k_pe"),
+    "kv_a_layernorm": ("input",),
+    "kv_lora_decompress": ("compressed_kv",),
+    "partial_rope_concat": ("q_packed", "k_nope", "k_pe"),
     "mla_attention": ("query", "key", "value"),
     "mlp_gate_up": ("x",),
     "moe_swiglu_expert_mlp": ("hidden", "indices", "routing_weights"),
@@ -269,10 +269,11 @@ def audit_ir1(ir1: dict[str, Any]) -> list[str]:
             _same_producer(errors, kv_decomp, "compressed_kv", kv_norm, f"{label} MLA kv decompress")
         if partial is not None:
             if q is not None:
-                for input_name in ("q_nope", "q_pe"):
-                    _same_producer(errors, partial, input_name, q, f"{label} MLA partial rope")
+                _same_producer(errors, partial, "q_packed", q, f"{label} MLA partial rope")
             if kv_decomp is not None:
                 _same_producer(errors, partial, "k_nope", kv_decomp, f"{label} MLA partial rope")
+            if kv_a is not None:
+                _same_producer(errors, partial, "k_pe", kv_a, f"{label} MLA partial rope")
         if mla is not None:
             if partial is not None:
                 _same_producer(errors, mla, "query", partial, f"{label} MLA attention")

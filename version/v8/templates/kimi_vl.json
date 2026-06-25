@@ -91,7 +91,7 @@
   },
   "kernels": {
     "kv_lora_decompress": "deepseek_mla_kv_decompress_f32",
-    "partial_rope_concat": "deepseek_mla_partial_rope_concat_f32",
+    "partial_rope_concat": "deepseek_mla_partial_rope_concat_packed_f32",
     "router": "nemotron_group_limited_topk_router_f32",
     "moe_swiglu_expert": "moe_swiglu_expert_forward_f32",
     "moe_swiglu_shared": "moe_swiglu_shared_forward_f32"
@@ -122,6 +122,9 @@
               "graph_slots": {
                 "inputs": {
                   "x": "layer_input"
+                },
+                "outputs": {
+                  "y": "q_scratch"
                 }
               }
             },
@@ -130,6 +133,9 @@
               "graph_slots": {
                 "inputs": {
                   "x": "layer_input"
+                },
+                "outputs": {
+                  "y": "compressed_kv"
                 }
               }
             },
@@ -137,7 +143,11 @@
               "op": "kv_a_layernorm",
               "graph_slots": {
                 "inputs": {
-                  "x": "compressed_kv"
+                  "x": "compressed_kv",
+                  "input": "compressed_kv"
+                },
+                "outputs": {
+                  "output": "compressed_kv_normed"
                 }
               }
             },
@@ -145,8 +155,11 @@
               "op": "kv_lora_decompress",
               "graph_slots": {
                 "inputs": {
-                  "compressed_kv": "compressed_kv_normed",
-                  "kv_b": "layer_kv_b_proj"
+                  "compressed_kv": "compressed_kv_normed"
+                },
+                "outputs": {
+                  "k_nope": "k_nope",
+                  "value": "v_scratch"
                 }
               }
             },
@@ -154,10 +167,13 @@
               "op": "partial_rope_concat",
               "graph_slots": {
                 "inputs": {
-                  "q_nope": "q_nope",
-                  "q_pe": "q_pe",
+                  "q_packed": "q_scratch",
                   "k_nope": "k_nope",
-                  "k_pe": "k_pe"
+                  "k_pe": "compressed_kv"
+                },
+                "outputs": {
+                  "query": "q_scratch",
+                  "key": "k_scratch"
                 }
               }
             },
@@ -165,9 +181,9 @@
               "op": "mla_attention",
               "graph_slots": {
                 "inputs": {
-                  "query": "mla_query",
-                  "key": "mla_key",
-                  "value": "mla_value"
+                  "query": "q_scratch",
+                  "key": "k_scratch",
+                  "value": "v_scratch"
                 }
               }
             },
@@ -209,6 +225,9 @@
               "graph_slots": {
                 "inputs": {
                   "x": "layer_input"
+                },
+                "outputs": {
+                  "y": "q_scratch"
                 }
               }
             },
@@ -217,6 +236,9 @@
               "graph_slots": {
                 "inputs": {
                   "x": "layer_input"
+                },
+                "outputs": {
+                  "y": "compressed_kv"
                 }
               }
             },
@@ -224,7 +246,11 @@
               "op": "kv_a_layernorm",
               "graph_slots": {
                 "inputs": {
-                  "x": "compressed_kv"
+                  "x": "compressed_kv",
+                  "input": "compressed_kv"
+                },
+                "outputs": {
+                  "output": "compressed_kv_normed"
                 }
               }
             },
@@ -232,8 +258,11 @@
               "op": "kv_lora_decompress",
               "graph_slots": {
                 "inputs": {
-                  "compressed_kv": "compressed_kv_normed",
-                  "kv_b": "layer_kv_b_proj"
+                  "compressed_kv": "compressed_kv_normed"
+                },
+                "outputs": {
+                  "k_nope": "k_nope",
+                  "value": "v_scratch"
                 }
               }
             },
@@ -241,10 +270,13 @@
               "op": "partial_rope_concat",
               "graph_slots": {
                 "inputs": {
-                  "q_nope": "q_nope",
-                  "q_pe": "q_pe",
+                  "q_packed": "q_scratch",
                   "k_nope": "k_nope",
-                  "k_pe": "k_pe"
+                  "k_pe": "compressed_kv"
+                },
+                "outputs": {
+                  "query": "q_scratch",
+                  "key": "k_scratch"
                 }
               }
             },
@@ -252,9 +284,9 @@
               "op": "mla_attention",
               "graph_slots": {
                 "inputs": {
-                  "query": "mla_query",
-                  "key": "mla_key",
-                  "value": "mla_value"
+                  "query": "q_scratch",
+                  "key": "k_scratch",
+                  "value": "v_scratch"
                 }
               }
             },
@@ -283,8 +315,11 @@
               "graph_slots": {
                 "inputs": {
                   "hidden": "layer_input",
-                  "indices": "router_indices",
-                  "routing_weights": "router_weights"
+                  "indices": "q_scratch",
+                  "routing_weights": "k_scratch"
+                },
+                "outputs": {
+                  "output": "mlp_scratch"
                 }
               }
             },
@@ -293,7 +328,10 @@
               "graph_slots": {
                 "inputs": {
                   "hidden": "layer_input",
-                  "routed": "moe_routed"
+                  "routed": "mlp_scratch"
+                },
+                "outputs": {
+                  "output": "main_stream"
                 }
               }
             },

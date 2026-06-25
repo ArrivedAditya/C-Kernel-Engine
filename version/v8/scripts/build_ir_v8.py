@@ -675,6 +675,47 @@ OP_DATAFLOW = {
         },
         "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
     },
+    "kv_a_proj": {
+        "inputs": {"x": "main_stream_q8"},
+        "outputs": {"y": {"slot": "compressed_kv", "dtype": "fp32"}},
+    },
+    "kv_a_layernorm": {
+        "inputs": {"input": "compressed_kv"},
+        "outputs": {"output": {"slot": "compressed_kv_normed", "dtype": "fp32"}},
+    },
+    "kv_lora_decompress": {
+        "inputs": {"compressed_kv": "compressed_kv_normed"},
+        "outputs": {
+            "k_nope": {"slot": "k_nope", "dtype": "fp32"},
+            "value": {"slot": "v_scratch", "dtype": "fp32"},
+        },
+    },
+    "partial_rope_concat": {
+        "inputs": {"q_packed": "q_scratch", "k_nope": "k_nope", "k_pe": "compressed_kv"},
+        "outputs": {
+            "query": {"slot": "q_scratch", "dtype": "fp32"},
+            "key": {"slot": "k_scratch", "dtype": "fp32"},
+        },
+    },
+    "mla_attention": {
+        "inputs": {"q": "q_scratch", "k": "k_scratch", "v": "v_scratch"},
+        "outputs": {"out": {"slot": "attn_scratch", "dtype": "fp32"}},
+    },
+    "moe_swiglu_expert_mlp": {
+        "inputs": {
+            "hidden": "layer_input",
+            "indices": "q_scratch",
+            "routing_weights": "k_scratch",
+        },
+        "outputs": {"output": {"slot": "mlp_scratch", "dtype": "fp32"}},
+    },
+    "shared_swiglu_expert_mlp": {
+        "inputs": {
+            "hidden": "layer_input",
+            "routed": "mlp_scratch",
+        },
+        "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
+    },
 
     "mamba_in_proj": {
         "inputs": {"x": "main_stream_q8"},
@@ -1858,6 +1899,15 @@ def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, 
     add("attn_gate", attn_gate_size, f"[{seq_len}, {attn_gate_dim}]")
     add("attn_scratch", attn_out_size, f"[{num_heads}, {seq_len}, {max_q_head_dim}]")
 
+    kv_lora_rank = int(config.get("kv_lora_rank", 0) or 0)
+    qk_nope_dim = int(config.get("qk_nope_head_dim", 0) or 0)
+    qk_rope_dim = int(config.get("qk_rope_head_dim", 0) or 0)
+    if kv_lora_rank > 0 and qk_rope_dim > 0:
+        add("compressed_kv", seq_len * (kv_lora_rank + qk_rope_dim) * 4, f"[{seq_len}, {kv_lora_rank + qk_rope_dim}]")
+        add("compressed_kv_normed", seq_len * kv_lora_rank * 4, f"[{seq_len}, {kv_lora_rank}]")
+        if qk_nope_dim > 0:
+            add("k_nope", num_heads * seq_len * qk_nope_dim * 4, f"[{num_heads}, {seq_len}, {qk_nope_dim}]")
+
     if bool(config.get("gemma4_per_layer_embedding", False)):
         per_layer_dim = int(config.get("per_layer_dim", 0) or 0)
         if per_layer_dim > 0 and num_layers > 0:
@@ -1955,6 +2005,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "tokenizer": None,  # Metadata op - no kernel (deprecated, use bpe_tokenizer)
     "bpe_tokenizer": None,  # BPE tokenizer - init handled separately
     "wordpiece_tokenizer": None,  # WordPiece tokenizer - init handled separately
+    "tiktoken_tokenizer": None,  # TikToken tokenizer - init handled separately
     "patch_embeddings": None,  # Vision model patches - init handled separately
     "patchify": "vision_patchify",
     "patch_proj": "matmul",
@@ -1965,6 +2016,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "position_ids_2d": "position_ids",
     "patch_bias_add": "rowwise_bias_add",
     "dense_embedding_lookup": "embedding",  # Token embedding lookup
+    "residual_save": "residual_save",
     "embedding": "embedding",
 
     # Attention block
@@ -2013,6 +2065,13 @@ TEMPLATE_TO_KERNEL_OP = {
     "group_limited_topk_router": "group_limited_topk_router",
     "moe_relu2_expert_mlp": "moe_relu2_expert_mlp",
     "shared_relu2_expert_mlp": "shared_relu2_expert_mlp",
+    "moe_swiglu_expert_mlp": "moe_swiglu_expert_mlp",
+    "shared_swiglu_expert_mlp": "shared_swiglu_expert_mlp",
+    "kv_a_proj": "matmul",
+    "kv_a_layernorm": "rmsnorm",
+    "kv_lora_decompress": "kv_lora_decompress",
+    "partial_rope_concat": "partial_rope_concat",
+    "mla_attention": "attention",
     "rope_qk": "rope",
     "mrope_qk": "rope",
     "kv_cache_store": "kv_cache_store",  # Store K,V to KV cache at pos
@@ -2208,6 +2267,8 @@ def should_insert_residual_save(layer_ops: List[str], op_idx: int) -> bool:
     if layer_ops[op_idx] not in PRE_NORM_OP_NAMES:
         return False
     if op_idx + 1 >= len(layer_ops):
+        return False
+    if op_idx > 0 and layer_ops[op_idx - 1] == "residual_save":
         return False
     return layer_ops[op_idx + 1] in RESIDUAL_SOURCE_BRANCH_STARTERS
 
@@ -2796,10 +2857,20 @@ def _apply_layer_quant_aliases(
     # do not need brittle per-source alias variants just to preserve dtype
     # propagation.
     canonical_aliases = {
+        "wq": ("attn_q", "mla_q_proj"),
         "w1": ("ffn_gate", "mlp_gate"),
         "w2": ("ffn_down", "mlp_down"),
         "w3": ("ffn_up", "mlp_up"),
-        "wo": ("attn_o", "out_proj"),
+        "wo": ("attn_o", "out_proj", "mla_out_proj"),
+        "mla_kv_a_proj": ("kv_a_proj",),
+        "mla_kv_a_norm": ("kv_a_norm",),
+        "mla_kv_b_proj": ("kv_b_proj",),
+        "moe_expert_gate": ("expert_gate",),
+        "moe_expert_up": ("expert_up",),
+        "moe_expert_down": ("expert_down",),
+        "moe_shared_gate": ("shared_gate",),
+        "moe_shared_up": ("shared_up",),
+        "moe_shared_down": ("shared_down",),
     }
     for dst, candidates in canonical_aliases.items():
         if dst in effective:
@@ -2859,10 +2930,12 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
         return embed, int(config.get("ssm_inner_size", config.get("mamba_intermediate_size", attn_out)) or attn_out)
     if op_name in ("moe_router",):
         return int(config.get("n_routed_experts", config.get("num_experts", 0)) or 0) or None, embed
-    if op_name in ("moe_relu2_expert_mlp",):
+    if op_name in ("kv_a_proj",):
+        return int(config.get("kv_lora_rank", 0) or 0) + int(config.get("qk_rope_head_dim", 0) or 0), embed
+    if op_name in ("moe_relu2_expert_mlp", "moe_swiglu_expert_mlp"):
         return int(config.get("moe_intermediate_size", inter) or inter), embed
-    if op_name in ("shared_relu2_expert_mlp",):
-        return int(config.get("moe_shared_expert_intermediate_size", inter) or inter), embed
+    if op_name in ("shared_relu2_expert_mlp", "shared_swiglu_expert_mlp"):
+        return int(config.get("moe_shared_expert_intermediate_size", config.get("moe_intermediate_size", inter)) or inter), embed
     if op_name in ("mlp_gate_up",):
         return inter * 2, embed
     if op_name in ("mlp_up",):
@@ -4583,6 +4656,13 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     "group_limited_topk_router": ["moe_router_bias"],
     "moe_relu2_expert_mlp": ["moe_expert_up", "moe_expert_down"],
     "shared_relu2_expert_mlp": ["moe_shared_up", "moe_shared_down"],
+    "moe_swiglu_expert_mlp": ["moe_expert_gate", "moe_expert_up", "moe_expert_down"],
+    "shared_swiglu_expert_mlp": ["moe_shared_gate", "moe_shared_up", "moe_shared_down"],
+    "kv_a_proj": ["mla_kv_a_proj"],
+    "kv_a_layernorm": ["mla_kv_a_norm"],
+    "kv_lora_decompress": ["mla_kv_b_proj"],
+    "partial_rope_concat": [],
+    "mla_attention": [],
         "out_proj": ["wo"],
         "mlp_gate_up": ["w1"],
         "mlp_up": ["w3"],
@@ -4656,6 +4736,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "tokenizer": "metadata",  # Deprecated, use bpe_tokenizer
         "bpe_tokenizer": "metadata",  # BPE tokenizer init
         "wordpiece_tokenizer": "metadata",  # WordPiece tokenizer init
+        "tiktoken_tokenizer": "metadata",  # TikToken tokenizer init
         "patch_embeddings": "metadata",  # Vision model patches
         "weight_tying": "metadata",
         "lm_head": "metadata",  # Signals separate lm_head weight (not tied)
@@ -4723,7 +4804,11 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         # Explicit no-weight math ops. These are real kernels, but they must not
         # flow through the header/footer weighted path below, which would invent
         # a q8_0 weight requirement and fail to bind kernels such as Gemma4 V RMSNorm.
-        if op in {"v_norm", "projector_prep", "group_limited_topk_router", "mamba_in_proj_split"}:
+        if op == "residual_save":
+            return ["memcpy"]
+        if op == "partial_rope_concat":
+            return ["deepseek_mla_partial_rope_concat_packed_f32"]
+        if op in {"v_norm", "projector_prep", "group_limited_topk_router", "mamba_in_proj_split", "mla_attention"}:
             kernel_id = find_kernel(
                 registry,
                 op=kernel_op,
@@ -4749,6 +4834,13 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             # Gemma4 per-layer prepare is a structured header op, not a
             # dense projection. It owns BF16/quantized weights internally and
             # must stay on its dedicated kernel regardless of source dtype.
+            if op == "kv_lora_decompress":
+                return ["deepseek_mla_kv_decompress_f32"]
+            if op == "moe_swiglu_expert_mlp":
+                return ["moe_swiglu_expert_forward_f32"]
+            if op == "shared_swiglu_expert_mlp":
+                return ["moe_swiglu_shared_forward_f32"]
+
             if op == "gemma4_per_layer_prepare":
                 token_dtype = layer_quant.get("per_layer_token_emb", header_quant.get("per_layer_token_emb", ""))
                 if token_dtype == "bf16":
@@ -5371,7 +5463,14 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         # Keep the kernel ABI override last so explicit circuit slots cannot
         # accidentally wire a quantized kernel back to the FP32 stream.
         merged_input_override = dict(explicit_input_override or {})
-        merged_input_override.update(input_override or {})
+        kernel_act = str(kernel_act_dtype.get(kernel_id, "fp32") or "fp32").lower() if kernel_id else "fp32"
+        if input_override:
+            # Explicit template graph slots are the semantic edge. For FP32-activation
+            # kernels no physical view remap is needed, so preserve explicit sources
+            # such as Kimi's block_rmsnorm -> layer_input. Quantized kernels still
+            # override to the Q8 physical view produced by an inserted quantize op.
+            if not (explicit_input_override and kernel_act == "fp32"):
+                merged_input_override.update(input_override)
         dataflow_info = dataflow_tracker.record_op(
             op_id,
             op_type,
@@ -5403,6 +5502,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         ("layernorm", 1): ["ln2_gamma", "ln2_beta"],  # Pre-MLP norm
         ("attn_norm", 0): ["ln1_gamma"],    # Pre-attention norm (Gemma)
         ("block_rmsnorm", 0): ["ln1_gamma"], # Generic pre-block norm
+        ("block_rmsnorm", 1): ["post_attention_norm"], # Second Kimi MLA block norm before MLP/MoE
         ("ffn_norm", 0): ["ln2_gamma"],     # Pre-MLP norm (Gemma)
         ("post_attention_norm", 0): ["post_attention_norm"],
         ("post_ffn_norm", 0): ["post_ffn_norm"],
@@ -5582,6 +5682,7 @@ def _check_ir1_completeness(manifest: Dict, ir1_ops: List[Dict]) -> None:
     NON_KERNEL_OPS = {
         "bpe_tokenizer",
         "wordpiece_tokenizer",
+        "tiktoken_tokenizer",
         "tokenizer",
         "weight_tying",
         "lm_head",
@@ -6525,7 +6626,7 @@ def generate_ir_lower_1(
 # Maps: kernel weight ref → possible manifest entry patterns
 WEIGHT_PATTERNS = {
     # QKV projection weights and biases
-    "wq": ["layer.{L}.wq", "layers.{L}.attention.wq", "layer.{L}.attn_q_gate", "layer.{L}.attn_q"],
+    "wq": ["layer.{L}.wq", "layers.{L}.attention.wq", "layer.{L}.attn_q_gate", "layer.{L}.attn_q", "layer.{L}.mla_q_proj"],
     "wk": ["layer.{L}.wk", "layers.{L}.attention.wk", "layer.{L}.attn_k"],
     "wv": ["layer.{L}.wv", "layers.{L}.attention.wv", "layer.{L}.attn_v"],
     "bq": ["layer.{L}.bq", "layers.{L}.attention.bq"],
@@ -6555,19 +6656,24 @@ WEIGHT_PATTERNS = {
     "mamba_d": ["layer.{L}.mamba_d"],
     "mamba_norm": ["layer.{L}.mamba_norm"],
     "mamba_out_proj": ["layer.{L}.mamba_out_proj"],
+    "mla_kv_a_proj": ["layer.{L}.mla_kv_a_proj"],
+    "mla_kv_a_norm": ["layer.{L}.mla_kv_a_norm"],
+    "mla_kv_b_proj": ["layer.{L}.mla_kv_b_proj"],
     "moe_router": ["layer.{L}.moe_router"],
     "moe_router_bias": ["layer.{L}.moe_router_bias"],
+    "moe_expert_gate": ["layer.{L}.moe_expert_gate", "layer.{L}.moe_expert.{E}.gate"],
     "moe_expert_up": ["layer.{L}.moe_expert_up", "layer.{L}.moe_expert.{E}.up"],
     "moe_expert_down": ["layer.{L}.moe_expert_down", "layer.{L}.moe_expert.{E}.down"],
+    "moe_shared_gate": ["layer.{L}.moe_shared_gate"],
     "moe_shared_up": ["layer.{L}.moe_shared_up"],
     "moe_shared_down": ["layer.{L}.moe_shared_down"],
 
     # Output projection
-    "wo": ["layer.{L}.wo", "layers.{L}.attention.wo", "layer.{L}.attn_output", "layer.{L}.attn_o"],
+    "wo": ["layer.{L}.wo", "layers.{L}.attention.wo", "layer.{L}.attn_output", "layer.{L}.attn_o", "layer.{L}.mla_out_proj"],
     "bo": ["layer.{L}.bo", "layers.{L}.attention.bo"],
 
     # MLP weights and biases
-    "w1": ["layer.{L}.w1", "layers.{L}.feed_forward.w1", "layer.{L}.ffn_gate"],
+    "w1": ["layer.{L}.w1", "layers.{L}.feed_forward.w1", "layer.{L}.ffn_gate", "layer.{L}.mlp_gate"],
     "w2": ["layer.{L}.w2", "layers.{L}.feed_forward.w2", "layer.{L}.ffn_down", "layer.{L}.mlp_down"],
     "w3": ["layer.{L}.w3", "layers.{L}.feed_forward.w3", "layer.{L}.ffn_up", "layer.{L}.mlp_up"],
     "b1": ["layer.{L}.b1", "layers.{L}.feed_forward.b1", "v.blk.{L}.ffn_up.bias"],
@@ -6629,9 +6735,9 @@ WEIGHT_PATTERNS = {
     "ln2_gamma": ["layer.{L}.ln2_gamma", "layers.{L}.ffn_norm.weight", "layer.{L}.post_attention_norm", "v.blk.{L}.ln2.weight"],
     "ln1_beta": ["layer.{L}.ln1_beta", "layers.{L}.attention_norm.bias", "v.blk.{L}.ln1.bias"],
     "ln2_beta": ["layer.{L}.ln2_beta", "layers.{L}.ffn_norm.bias", "v.blk.{L}.ln2.bias"],
-    "wo": ["layer.{L}.wo", "layers.{L}.attention.wo", "layer.{L}.attn_output", "layer.{L}.attn_o", "v.blk.{L}.attn_out.weight"],
+    "wo": ["layer.{L}.wo", "layers.{L}.attention.wo", "layer.{L}.attn_output", "layer.{L}.attn_o", "layer.{L}.mla_out_proj", "v.blk.{L}.attn_out.weight"],
     "bo": ["layer.{L}.bo", "layers.{L}.attention.bo", "v.blk.{L}.attn_out.bias"],
-    "w1": ["layer.{L}.w1", "layers.{L}.feed_forward.w1", "layer.{L}.ffn_gate", "v.blk.{L}.ffn_gate.weight"],
+    "w1": ["layer.{L}.w1", "layers.{L}.feed_forward.w1", "layer.{L}.ffn_gate", "layer.{L}.mlp_gate", "v.blk.{L}.ffn_gate.weight"],
     "w2": ["layer.{L}.w2", "layers.{L}.feed_forward.w2", "layer.{L}.ffn_down", "layer.{L}.mlp_down", "v.blk.{L}.ffn_down.weight"],
     "w3": ["layer.{L}.w3", "layers.{L}.feed_forward.w3", "layer.{L}.ffn_up", "layer.{L}.mlp_up", "v.blk.{L}.ffn_up.weight"],
     "branch_norm_gamma": ["v.deepstack.{L}.norm.weight"],
@@ -6665,7 +6771,7 @@ TEMPLATE_OP_WEIGHTS = {
     "rmsnorm": ["ln1_gamma", "ln2_gamma", "final_ln_weight", "final_ln_bias"],
     "layernorm": ["ln1_gamma", "ln1_beta", "ln2_gamma", "ln2_beta", "final_ln_weight", "final_ln_bias"],
     "attn_norm": ["ln1_gamma"],
-    "block_rmsnorm": ["ln1_gamma"],
+    "block_rmsnorm": ["ln1_gamma", "post_attention_norm"],
     "post_attention_norm": ["post_attention_norm"],
     "ffn_norm": ["ln2_gamma"],
     "post_ffn_norm": ["post_ffn_norm"],
@@ -6717,6 +6823,13 @@ TEMPLATE_OP_WEIGHTS = {
     "group_limited_topk_router": ["moe_router_bias"],
     "moe_relu2_expert_mlp": ["moe_expert_up", "moe_expert_down"],
     "shared_relu2_expert_mlp": ["moe_shared_up", "moe_shared_down"],
+    "moe_swiglu_expert_mlp": ["moe_expert_gate", "moe_expert_up", "moe_expert_down"],
+    "shared_swiglu_expert_mlp": ["moe_shared_gate", "moe_shared_up", "moe_shared_down"],
+    "kv_a_proj": ["mla_kv_a_proj"],
+    "kv_a_layernorm": ["mla_kv_a_norm"],
+    "kv_lora_decompress": ["mla_kv_b_proj"],
+    "partial_rope_concat": [],
+    "mla_attention": [],
     "qk_norm": ["q_norm", "k_norm"],  # Per-head RMSNorm gamma weights for Q and K
     "rope_qk": [],  # No model weights (uses precomputed tables)
     "mrope_qk": [],  # No model weights (runtime positions + RoPE params)
@@ -7242,6 +7355,15 @@ def generate_memory_layout(
     add_buffer("attn_q_gate_packed", seq_len * q_gate_proj_dim * 4, f"[{seq_len}, {q_gate_proj_dim}]")
     add_buffer("attn_gate", seq_len * attn_gate_dim * 4, f"[{seq_len}, {attn_gate_dim}]")
     add_buffer("attn_scratch", attn_out_size, f"[{num_heads}, {seq_len}, {max_q_head_dim}]")
+
+    kv_lora_rank = int(config.get("kv_lora_rank", 0) or 0)
+    qk_nope_dim = int(config.get("qk_nope_head_dim", 0) or 0)
+    qk_rope_dim = int(config.get("qk_rope_head_dim", 0) or 0)
+    if kv_lora_rank > 0 and qk_rope_dim > 0:
+        add_buffer("compressed_kv", seq_len * (kv_lora_rank + qk_rope_dim) * 4, f"[{seq_len}, {kv_lora_rank + qk_rope_dim}]")
+        add_buffer("compressed_kv_normed", seq_len * kv_lora_rank * 4, f"[{seq_len}, {kv_lora_rank}]")
+        if qk_nope_dim > 0:
+            add_buffer("k_nope", num_heads * seq_len * qk_nope_dim * 4, f"[{num_heads}, {seq_len}, {qk_nope_dim}]")
 
     if bool(config.get("gemma4_per_layer_embedding", False)):
         per_layer_dim = int(config.get("per_layer_dim", 0) or 0)
@@ -7832,6 +7954,9 @@ def generate_ir_lower_2(
         "A_ATTN_SCRATCH": "attn_scratch",
         "A_ATTN_Q_GATE_PACKED": "attn_q_gate_packed",
         "A_ATTN_GATE": "attn_gate",
+        "A_COMPRESSED_KV": "compressed_kv",
+        "A_COMPRESSED_KV_NORMED": "compressed_kv_normed",
+        "A_K_NOPE": "k_nope",
         "A_MLP_SCRATCH": "mlp_scratch",
         "A_LAYER_OUTPUT": "layer_output",
         "A_BRANCH_STREAM": "branch_stream",
@@ -8056,12 +8181,22 @@ def generate_ir_lower_2(
                         "dtype": input_info.get("dtype", act_dtype),
                         "ptr_expr": f"activations + {buf['offset']}",
                     }
-            # Q writes to q_scratch
+            # Q writes to the template-declared output slot. Standard attention
+            # uses q_scratch; Kimi/DeepSeek MLA keeps packed [q_nope|q_pe]
+            # in q_scratch for the packed partial-RoPE helper.
             if op_type == "q_proj":
-                q_buf = activation_buffers.get("q_scratch")
                 for output_name, output_info in ir_op.get("outputs", {}).items():
+                    planned = get_planned_buffer(op_id, "outputs", output_name) or get_planned_buffer(op_id, "outputs", "y")
+                    declared_slot = _get_declared_dataflow_slot(ir_op, "outputs", output_name, "y")
+                    buf_name = _resolve_logical_buffer_name(
+                        planned.get("buffer", "q_scratch") if planned else "q_scratch",
+                        declared_slot or output_info.get("slot"),
+                        activation_buffers,
+                        buffer_name_map,
+                    )
+                    q_buf = activation_buffers.get(buf_name)
                     lowered_op["outputs"][output_name] = {
-                        "buffer": "q_scratch",
+                        "buffer": buf_name,
                         "activation_offset": q_buf["offset"] if q_buf else 0,
                         "dtype": output_info.get("dtype", "fp32"),
                         "ptr_expr": f"activations + {q_buf['offset'] if q_buf else 0}",
@@ -8535,6 +8670,7 @@ def generate_ir_lower_2(
                     "q_token": "q",
                     "k_cache": "k",
                     "v_cache": "v",
+                    "kv_a_packed": "k_pe",
                 }
                 dataflow_name = _resolve_planner_io_name(
                     input_name,
