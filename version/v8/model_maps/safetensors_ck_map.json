@@ -2,6 +2,159 @@
   "version": 1,
   "description": "Declarative safetensors-to-CK source tensor mapping. Source formats are not first-class CK runtime artifacts; they map into BUMP manifest names consumed by templates.",
   "architectures": {
+    "gemma4_assistant": {
+      "template": "gemma4_assistant",
+      "family": "gemma4",
+      "aliases": [
+        "gemma4_assistant",
+        "Gemma4AssistantForCausalLM"
+      ],
+      "status": "bump_mapping_first_pass",
+      "config": {
+        "model": "gemma4_assistant",
+        "arch": "gemma4_assistant",
+        "model_type": "gemma4_assistant",
+        "rope_layout": "split",
+        "rope_param_mode": "per_layer_direct",
+        "has_qk_norm": true,
+        "attention_k_eq_v": true,
+        "prefill_policy": "batched",
+        "assistant_role": "mtp_drafter"
+      },
+      "required_tensor_families": [
+        "model.embed_tokens.weight",
+        "model.layers.{L}.input_layernorm.weight",
+        "model.layers.{L}.self_attn.q_proj.weight",
+        "model.layers.{L}.self_attn.q_norm.weight",
+        "model.layers.{L}.self_attn.o_proj.weight",
+        "model.layers.{L}.mlp.gate_proj.weight",
+        "model.layers.{L}.mlp.up_proj.weight",
+        "model.layers.{L}.mlp.down_proj.weight",
+        "model.norm.weight",
+        "pre_projection.weight",
+        "post_projection.weight"
+      ],
+      "tensor_refs": [
+        {
+          "target": "token_emb",
+          "sources": [
+            "model.embed_tokens.weight"
+          ]
+        },
+        {
+          "target": "layer.{L}.ln1_gamma",
+          "sources": [
+            "model.layers.{L}.input_layernorm.weight"
+          ],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.ln2_gamma",
+          "sources": [
+            "model.layers.{L}.pre_feedforward_layernorm.weight"
+          ],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.post_attention_norm",
+          "sources": [
+            "model.layers.{L}.post_attention_layernorm.weight"
+          ],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.post_ffn_norm",
+          "sources": [
+            "model.layers.{L}.post_feedforward_layernorm.weight"
+          ],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.wq",
+          "sources": [
+            "model.layers.{L}.self_attn.q_proj.weight"
+          ]
+        },
+        {
+          "target": "layer.{L}.q_norm",
+          "sources": [
+            "model.layers.{L}.self_attn.q_norm.weight"
+          ],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.wo",
+          "sources": [
+            "model.layers.{L}.self_attn.o_proj.weight"
+          ]
+        },
+        {
+          "target": "layer.{L}.w1",
+          "sources": [
+            "model.layers.{L}.mlp.gate_proj.weight",
+            "model.layers.{L}.mlp.up_proj.weight"
+          ],
+          "combine": "concat"
+        },
+        {
+          "target": "layer.{L}.b1",
+          "synth": "zeros_fp32",
+          "dtype": "fp32",
+          "shape": [
+            "2*intermediate_size"
+          ]
+        },
+        {
+          "target": "layer.{L}.w2",
+          "sources": [
+            "model.layers.{L}.mlp.down_proj.weight"
+          ]
+        },
+        {
+          "target": "layer.{L}.b2",
+          "synth": "zeros_fp32",
+          "dtype": "fp32",
+          "shape": [
+            "embed_dim"
+          ]
+        },
+        {
+          "target": "layer.{L}.layer_output_scale",
+          "sources": [
+            "model.layers.{L}.layer_scalar"
+          ],
+          "dtype": "fp32"
+        },
+        {
+          "target": "final_ln_weight",
+          "sources": [
+            "model.norm.weight"
+          ],
+          "dtype": "fp32"
+        },
+        {
+          "target": "final_ln_bias",
+          "synth": "zeros_fp32",
+          "dtype": "fp32",
+          "shape": [
+            "embed_dim"
+          ]
+        },
+        {
+          "target": "assistant.pre_projection",
+          "sources": [
+            "pre_projection.weight"
+          ]
+        },
+        {
+          "target": "assistant.post_projection",
+          "sources": [
+            "post_projection.weight"
+          ]
+        }
+      ],
+      "notes": "Gemma4 assistant is a small MTP/speculative drafter, not the full Gemma4 31B decoder. It has q-only attention_k_eq_v tensors and assistant pre/post projection tensors; first-pass support maps safetensors into BUMP without inventing K/V tensors."
+    },
     "glm4": {
       "template": "glm4",
       "family": "glm",

@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "name": "gemma4_assistant",
+  "family": "gemma4",
+  "status": "bump_mapping_first_pass",
+  "flags": {
+    "use_qkv_bias": false,
+    "activation": "gelu_pytorch_tanh",
+    "rope": "rope",
+    "tokenizer": "sentencepiece",
+    "scale_embeddings_sqrt_dim": true,
+    "has_qk_norm": true,
+    "attention": "q_only_k_eq_v_hybrid_sliding_window",
+    "assistant_role": "mtp_drafter"
+  },
+  "contract": {
+    "tokenizer_contract": {
+      "tokenizer_type": "sentencepiece",
+      "bos_policy": "model_defined",
+      "eos_policy": "model_defined",
+      "special_tokens": {
+        "source": "manifest_or_hf"
+      }
+    },
+    "chat_contract": {
+      "version": 1,
+      "name": "gemma4_assistant",
+      "raw_prompt_allowed": false,
+      "turn_prefix": "<|turn>{role}\n",
+      "turn_suffix": "<turn|>\n",
+      "assistant_generation_prefix": "<|turn>model\n",
+      "role_labels": {
+        "system": "system",
+        "user": "user",
+        "assistant": "model"
+      },
+      "system_prompt_mode": "dedicated_turn",
+      "system_prompt_separator": "\n\n",
+      "default_system_prompt": "",
+      "inject_default_system_prompt": false,
+      "force_bos_text_if_tokenizer_add_bos_false": "<bos>",
+      "last_user_prefix": "",
+      "last_user_prefix_suppression_markers": [],
+      "stop_text_markers": [
+        "<turn|>"
+      ],
+      "token_stop_markers": [
+        "<turn|>"
+      ],
+      "template_markers": [
+        "<|turn>",
+        "<turn|>",
+        "<|image|>",
+        "<|audio|>",
+        "<|think|>"
+      ],
+      "min_response_tokens": 8,
+      "image_begin_marker": "<|image>",
+      "image_end_marker": "<image|>"
+    },
+    "attention_contract": {
+      "rope_layout": "split",
+      "rope_type": "rope",
+      "qk_norm": "q_only",
+      "kv_layout": "q_equals_k_equals_v",
+      "attn_variant": "q_only_k_eq_v_hybrid_sliding_attention",
+      "layer_policy_config_key": "layer_attention_plan",
+      "layer_kind_config_key": "layer_kinds",
+      "kv_policy_config_key": "layer_kv_policy",
+      "sliding_window_config_key": "layer_sliding_window",
+      "rope_kind_config_key": "layer_rope_kind",
+      "rope_param_mode": "per_layer_direct"
+    },
+    "block_contract": {
+      "norm_type": "rmsnorm",
+      "mlp_formula": "gate_up -> gelu_pytorch_tanh -> down",
+      "activation": "gelu_pytorch_tanh",
+      "qkv_bias": false,
+      "body_type": "q_only_k_eq_v_hybrid_sliding_attention"
+    },
+    "assistant_contract": {
+      "role": "mtp_drafter",
+      "pre_projection_weight": "assistant.pre_projection",
+      "post_projection_weight": "assistant.post_projection",
+      "target_backbone_hidden_size_config_key": "backbone_hidden_size",
+      "attention_k_eq_v": true
+    },
+    "logits_contract": {
+      "final_norm": "rmsnorm",
+      "lm_head": "weight_tying",
+      "logits_layout": "auto"
+    },
+    "quant_contract": {
+      "kernel_select": "weight_dtype_registry",
+      "activation_dtype": "fp32_or_q8_path",
+      "per_tensor_mixed_quant": true
+    }
+  },
+  "kernels": {
+    "rope_qk": "rope_forward_qk_split_direct",
+    "rope_init": "rope_precompute_cache_split",
+    "attn": "attention_forward_causal_head_major_gqa_flash_strided_gemma4",
+    "attn_sliding": "attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4",
+    "attn_decode": "attention_forward_decode_head_major_gqa_flash_gemma4",
+    "attn_sliding_decode": "attention_forward_decode_head_major_gqa_flash_sliding_gemma4"
+  },
+  "sequence": [
+    "decoder"
+  ],
+  "block_types": {
+    "decoder": {
+      "sequence": [
+        "header",
+        "body",
+        "footer"
+      ],
+      "header": [
+        "bpe_tokenizer",
+        "dense_embedding_lookup"
+      ],
+      "body": {
+        "type": "hybrid_sliding_attention",
+        "kind_config_key": "layer_kinds",
+        "default_kind": "sliding_attention_q_only_k_eq_v",
+        "quant_aliases_common": {
+          "ln1_gamma": "attn_norm",
+          "ln2_gamma": "ffn_norm",
+          "post_attention_norm": "attn_post_norm",
+          "post_ffn_norm": "ffn_post_norm",
+          "w1": "ffn_gate",
+          "w3": "ffn_up",
+          "w2": "ffn_down"
+        },
+        "quant_aliases_by_kind": {
+          "sliding_attention_q_only_k_eq_v": {
+            "wq": "attn_q",
+            "wo": "attn_output",
+            "q_norm": "attn_q_norm"
+          },
+          "full_attention_q_only_k_eq_v": {
+            "wq": "attn_q",
+            "wo": "attn_output",
+            "q_norm": "attn_q_norm"
+          }
+        },
+        "ops_by_kind": {
+          "sliding_attention_q_only_k_eq_v": [
+            "attn_norm",
+            "q_proj",
+            "q_norm",
+            "rope_q",
+            "attn_sliding_shared_kv",
+            "out_proj",
+            "post_attention_norm",
+            "residual_add",
+            "ffn_norm",
+            "mlp_gate_up",
+            "gelu",
+            "mlp_down",
+            "post_ffn_norm",
+            "residual_add"
+          ],
+          "full_attention_q_only_k_eq_v": [
+            "attn_norm",
+            "q_proj",
+            "q_norm",
+            "rope_q",
+            "attn_shared_kv",
+            "out_proj",
+            "post_attention_norm",
+            "residual_add",
+            "ffn_norm",
+            "mlp_gate_up",
+            "gelu",
+            "mlp_down",
+            "post_ffn_norm",
+            "residual_add"
+          ]
+        }
+      },
+      "footer": [
+        "final_rmsnorm",
+        "weight_tying",
+        "logits"
+      ]
+    }
+  }
+}

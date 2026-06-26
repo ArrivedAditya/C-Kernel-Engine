@@ -698,6 +698,131 @@ def test_glm4_safetensors_to_bump_uses_declarative_source_map(tmp_path: Path) ->
     assert entries["layer.0.b1"]["shape"] == [32]
     assert "output.weight" in names
 
+
+def test_gemma4_assistant_safetensors_to_bump_maps_q_only_drafter(tmp_path: Path) -> None:
+    torch, st = _require_torch_safetensors()
+    checkpoint = tmp_path / "gemma4_assistant"
+    out = tmp_path / "out_gemma4_assistant"
+    checkpoint.mkdir()
+    out.mkdir()
+
+    (checkpoint / "config.json").write_text(
+        json.dumps(
+            {
+                "architectures": ["Gemma4AssistantForCausalLM"],
+                "model_type": "gemma4_assistant",
+                "backbone_hidden_size": 16,
+                "tie_word_embeddings": True,
+                "use_ordered_embeddings": False,
+                "text_config": {
+                    "model_type": "gemma4_text",
+                    "attention_bias": False,
+                    "attention_k_eq_v": True,
+                    "bos_token_id": 2,
+                    "eos_token_id": 1,
+                    "global_head_dim": 8,
+                    "head_dim": 4,
+                    "hidden_activation": "gelu_pytorch_tanh",
+                    "hidden_size": 8,
+                    "intermediate_size": 16,
+                    "layer_types": ["sliding_attention", "full_attention"],
+                    "max_position_embeddings": 128,
+                    "num_attention_heads": 2,
+                    "num_global_key_value_heads": 1,
+                    "num_hidden_layers": 2,
+                    "num_key_value_heads": 2,
+                    "num_kv_shared_layers": 2,
+                    "rms_norm_eps": 1e-6,
+                    "rope_parameters": {
+                        "full_attention": {
+                            "partial_rotary_factor": 0.25,
+                            "rope_theta": 1000000.0,
+                            "rope_type": "proportional",
+                        },
+                        "sliding_attention": {
+                            "rope_theta": 10000.0,
+                            "rope_type": "default",
+                        },
+                    },
+                    "sliding_window": 32,
+                    "tie_word_embeddings": True,
+                    "vocab_size": 32,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_tiny_bpe_tokenizer(checkpoint, vocab_size=32)
+
+    tensors = {
+        "model.embed_tokens.weight": torch.randn(32, 8, dtype=torch.bfloat16),
+        "model.norm.weight": torch.ones(8, dtype=torch.bfloat16),
+        "pre_projection.weight": torch.randn(8, 16, dtype=torch.bfloat16),
+        "post_projection.weight": torch.randn(16, 8, dtype=torch.bfloat16),
+    }
+    q_dims = [8, 16]
+    for layer, q_dim in enumerate(q_dims):
+        pfx = f"model.layers.{layer}"
+        tensors.update(
+            {
+                f"{pfx}.input_layernorm.weight": torch.ones(8, dtype=torch.bfloat16),
+                f"{pfx}.pre_feedforward_layernorm.weight": torch.ones(8, dtype=torch.bfloat16),
+                f"{pfx}.post_attention_layernorm.weight": torch.ones(8, dtype=torch.bfloat16),
+                f"{pfx}.post_feedforward_layernorm.weight": torch.ones(8, dtype=torch.bfloat16),
+                f"{pfx}.layer_scalar": torch.ones(1, dtype=torch.bfloat16),
+                f"{pfx}.self_attn.q_proj.weight": torch.randn(q_dim, 8, dtype=torch.bfloat16),
+                f"{pfx}.self_attn.q_norm.weight": torch.ones(q_dim // 2, dtype=torch.bfloat16),
+                f"{pfx}.self_attn.o_proj.weight": torch.randn(8, q_dim, dtype=torch.bfloat16),
+                f"{pfx}.mlp.gate_proj.weight": torch.randn(16, 8, dtype=torch.bfloat16),
+                f"{pfx}.mlp.up_proj.weight": torch.randn(16, 8, dtype=torch.bfloat16),
+                f"{pfx}.mlp.down_proj.weight": torch.randn(8, 16, dtype=torch.bfloat16),
+            }
+        )
+    st.save_file(tensors, checkpoint / "model.safetensors")
+
+    script = Path("version/v8/scripts/convert_safetensors_to_bump_v8.py")
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--checkpoint",
+            str(checkpoint),
+            "--output",
+            str(out / "weights.bump"),
+            "--config-out",
+            str(out / "config.json"),
+            "--manifest-out",
+            str(out / "weights_manifest.json"),
+            "--arch",
+            "auto",
+            "--dry-run",
+        ],
+        check=True,
+    )
+
+    manifest = json.loads((out / "weights_manifest.json").read_text(encoding="utf-8"))
+    audit = json.loads((out / "conversion_audit.json").read_text(encoding="utf-8"))
+    cfg = json.loads((out / "config.json").read_text(encoding="utf-8"))
+    names = {entry["name"] for entry in manifest["entries"]}
+
+    assert manifest["model"] == "gemma4_assistant"
+    assert manifest["template"]["name"] == "gemma4_assistant"
+    assert audit["verdict"] == "pass"
+    assert audit["unmapped_source_tensors"] == []
+    assert cfg["attention_k_eq_v"] is True
+    assert cfg["assistant_role"] == "mtp_drafter"
+    assert cfg["layer_kinds"] == ["sliding_attention_q_only_k_eq_v", "full_attention_q_only_k_eq_v"]
+    assert cfg["layer_q_dim"] == [8, 16]
+    assert cfg["layer_q_norm_dim"] == [4, 8]
+    assert "assistant.pre_projection" in names
+    assert "assistant.post_projection" in names
+    assert "layer.0.wq" in names
+    assert "layer.0.q_norm" in names
+    assert "layer.0.wk" not in names
+    assert "layer.0.wv" not in names
+
+
 def test_kimi_vl_safetensors_to_bump_dry_run_maps_text_decoder(tmp_path: Path) -> None:
     torch, st = _require_torch_safetensors()
     checkpoint = tmp_path / "kimi_vl"

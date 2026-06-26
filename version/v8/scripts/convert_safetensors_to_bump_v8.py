@@ -751,6 +751,9 @@ def _llama_family_text_refs(config: dict[str, Any], headers: dict[str, HeaderTen
 
 def _infer_arch(hf: dict[str, Any]) -> str:
     text = hf.get("text_config") if isinstance(hf.get("text_config"), dict) else hf
+    root_mt = str(hf.get("model_type") or "").lower()
+    if root_mt == "gemma4_assistant":
+        return "gemma4_assistant"
     mt = str(text.get("model_type") or hf.get("model_type") or "").lower()
     arch_names = [str(x).lower() for x in (text.get("architectures") or hf.get("architectures") or []) if isinstance(x, str)]
     contracts = (_load_safetensors_ck_map().get("architectures") or {})
@@ -783,6 +786,8 @@ def _refs_for_arch(arch: str, config: dict[str, Any], headers: dict[str, HeaderT
     mapped_refs = _refs_from_safetensors_contract(arch, config, headers)
     if mapped_refs is not None:
         return mapped_refs
+    if arch == "gemma4_assistant":
+        return _refs_from_safetensors_contract("gemma4_assistant", config, headers) or _llama_family_text_refs(config, headers)
     if arch == "gemma4":
         return _gemma4_text_refs(config, headers)
     if arch == "qwen35":
@@ -943,6 +948,74 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "has_attention_biases": False,
             "has_qk_norm": False,
             "prefill_policy": "batched",
+        })
+
+    if arch == "gemma4_assistant":
+        headers = _load_safetensors_headers(model_dir)
+        num_layers = int(cfg.get("num_layers") or 0)
+        layer_types = [str(x) for x in (text.get("layer_types") or [])]
+        if not layer_types and num_layers > 0:
+            layer_types = ["full_attention" if layer == num_layers - 1 else "sliding_attention" for layer in range(num_layers)]
+        layer_kinds = [
+            "full_attention_q_only_k_eq_v" if kind == "full_attention" else "sliding_attention_q_only_k_eq_v"
+            for kind in layer_types
+        ]
+        layer_q_dim: list[int] = []
+        layer_o_input_dim: list[int] = []
+        layer_q_norm_dim: list[int] = []
+        for layer in range(num_layers):
+            q = headers.get(f"model.layers.{layer}.self_attn.q_proj.weight")
+            o = headers.get(f"model.layers.{layer}.self_attn.o_proj.weight")
+            qn = headers.get(f"model.layers.{layer}.self_attn.q_norm.weight")
+            layer_q_dim.append(int(q.shape[0]) if q and q.shape else int(cfg.get("num_heads") or 0) * int(cfg.get("head_dim") or 0))
+            layer_o_input_dim.append(int(o.shape[1]) if o and len(o.shape) >= 2 else layer_q_dim[-1])
+            layer_q_norm_dim.append(int(qn.shape[0]) if qn and qn.shape else int(cfg.get("head_dim") or 0))
+        rope_params = text.get("rope_parameters") if isinstance(text.get("rope_parameters"), dict) else {}
+        full_rope = rope_params.get("full_attention") if isinstance(rope_params.get("full_attention"), dict) else {}
+        sliding_rope = rope_params.get("sliding_attention") if isinstance(rope_params.get("sliding_attention"), dict) else {}
+        cfg.update({
+            "model": "gemma4_assistant",
+            "arch": "gemma4_assistant",
+            "model_type": "gemma4_assistant",
+            "assistant_role": "mtp_drafter",
+            "backbone_hidden_size": int(hf.get("backbone_hidden_size") or 0),
+            "attention_k_eq_v": bool(text.get("attention_k_eq_v", True)),
+            "hidden_activation": str(text.get("hidden_activation") or "gelu_pytorch_tanh"),
+            "intermediate_dim": int(cfg.get("intermediate_size") or 0),
+            "max_seq_len": int(cfg.get("context_length") or 0),
+            "global_head_dim": int(text.get("global_head_dim") or cfg.get("head_dim") or 0),
+            "num_global_key_value_heads": int(text.get("num_global_key_value_heads") or 0),
+            "num_kv_shared_layers": int(text.get("num_kv_shared_layers") or num_layers),
+            "layer_types": layer_types,
+            "layer_kinds": layer_kinds,
+            "hybrid_block_pattern": layer_kinds[:],
+            "layer_attention_policy": [
+                "q_only_full_attention" if kind.startswith("full") else "q_only_sliding_attention"
+                for kind in layer_kinds
+            ],
+            "layer_kv_policy": ["q_equals_k_equals_v" for _ in layer_kinds],
+            "layer_recurrent_policy": ["none" for _ in layer_kinds],
+            "layer_state_policy": ["none" for _ in layer_kinds],
+            "layer_moe_policy": ["none" for _ in layer_kinds],
+            "layer_mlp_policy": ["gelu_pytorch_tanh" for _ in layer_kinds],
+            "layer_rope_kind": ["full" if kind.startswith("full") else "sliding" for kind in layer_kinds],
+            "layer_sliding_window": [int(text.get("sliding_window") or 0) if not kind.startswith("full") else 0 for kind in layer_kinds],
+            "layer_q_dim": layer_q_dim,
+            "layer_o_input_dim": layer_o_input_dim,
+            "layer_q_norm_dim": layer_q_norm_dim,
+            "rope_layout": "split",
+            "rope_param_mode": "per_layer_direct",
+            "rope_theta": float(full_rope.get("rope_theta", cfg.get("rope_theta", 1000000.0)) or 1000000.0),
+            "rope_theta_swa": float(sliding_rope.get("rope_theta", cfg.get("rope_theta_swa", 10000.0)) or 10000.0),
+            "rope_partial_rotary_factor": float(full_rope.get("partial_rotary_factor", 1.0) or 1.0),
+            "has_attention_biases": bool(text.get("attention_bias", False)),
+            "has_qk_norm": True,
+            "has_k_norm": False,
+            "prefill_policy": "batched",
+            "tie_word_embeddings": bool(hf.get("tie_word_embeddings", text.get("tie_word_embeddings", True))),
+            "use_ordered_embeddings": bool(hf.get("use_ordered_embeddings", False)),
+            "assistant_pre_projection": True,
+            "assistant_post_projection": True,
         })
 
     if arch == "glm4":
@@ -1305,7 +1378,7 @@ def main() -> int:
     ap.add_argument("--ram-dir", type=Path, default=Path("/dev/shm"), help="tmpfs directory for --ram-output; default: /dev/shm")
     ap.add_argument("--config-out", required=True, type=Path)
     ap.add_argument("--manifest-out", required=True, type=Path)
-    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma3", "llama", "qwen2", "qwen3", "qwen35", "nemotron_h", "glm4", "kimi_vl"])
+    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma4_assistant", "gemma3", "llama", "qwen2", "qwen3", "qwen35", "nemotron_h", "glm4", "kimi_vl"])
     ap.add_argument("--config-template", type=Path, help="existing v8 config/manifest to reuse explicit runtime policy")
     ap.add_argument("--dtype", default="preserve", choices=["preserve", "bf16", "fp32"])
     ap.add_argument("--dry-run", action="store_true", help="validate mapping and write JSON reports only; do not write BUMP")
