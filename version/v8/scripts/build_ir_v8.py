@@ -348,6 +348,10 @@ OP_DATAFLOW = {
         "inputs": {"token_ids": "external:token_ids"},
         "outputs": {"out": {"slot": "main_stream", "dtype": "fp32"}},
     },
+    "assistant_pre_projection": {
+        "inputs": {"x": "backbone_stream"},
+        "outputs": {"y": {"slot": "main_stream", "dtype": "fp32"}},
+    },
     "gemma4_per_layer_prepare": {
         "inputs": {"input": "main_stream", "tokens": "external:token_ids"},
         "outputs": {"per_layer_input": {"slot": "gemma4_per_layer_stream", "dtype": "fp32"}},
@@ -421,6 +425,10 @@ OP_DATAFLOW = {
         "inputs": {"hidden": "main_stream", "per_layer_input": "gemma4_per_layer_stream"},
         "outputs": {"hidden": {"slot": "main_stream", "dtype": "fp32"}},
     },
+    "assistant_layer_scale": {
+        "inputs": {"hidden": "main_stream"},
+        "outputs": {"hidden": {"slot": "main_stream", "dtype": "fp32"}},
+    },
     "v_norm": {
         "inputs": {"input": "v_scratch"},
         "outputs": {"output": {"slot": "v_scratch", "dtype": "fp32"}},
@@ -428,6 +436,10 @@ OP_DATAFLOW = {
     "final_rmsnorm": {
         "inputs": {"input": "main_stream"},
         "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
+    },
+    "assistant_post_projection": {
+        "inputs": {"x": "main_stream"},
+        "outputs": {"y": {"slot": "backbone_stream", "dtype": "fp32"}},
     },
     "final_logit_softcap": {
         "inputs": {"logits": "logits"},
@@ -584,12 +596,20 @@ OP_DATAFLOW = {
             "k": {"slot": "k_scratch", "dtype": "fp32"},
         },
     },
+    "q_norm": {
+        "inputs": {"q": "q_scratch"},
+        "outputs": {"q": {"slot": "q_scratch", "dtype": "fp32"}},
+    },
     "rope_qk": {
         "inputs": {"q": "q_scratch", "k": "k_scratch"},
         "outputs": {
             "q": {"slot": "q_scratch", "dtype": "fp32"},
             "k": {"slot": "k_scratch", "dtype": "fp32"},
         },
+    },
+    "rope_q": {
+        "inputs": {"q": "q_scratch"},
+        "outputs": {"q": {"slot": "q_scratch", "dtype": "fp32"}},
     },
     "mrope_qk": {
         "inputs": {"q": "q_scratch", "k": "k_scratch", "positions": "vision_positions"},
@@ -605,12 +625,27 @@ OP_DATAFLOW = {
             "v_cache": {"slot": "kv_cache", "dtype": "fp32"},
         },
     },
+    "kv_cache_store_shared_q": {
+        "inputs": {"q": "q_scratch"},
+        "outputs": {
+            "k_cache": {"slot": "kv_cache", "dtype": "fp32"},
+            "v_cache": {"slot": "kv_cache", "dtype": "fp32"},
+        },
+    },
     "attn": {
         "inputs": {"q": "q_scratch", "k": "kv_cache", "v": "kv_cache"},
         "outputs": {"out": {"slot": "attn_scratch", "dtype": "fp32"}},
     },
     "attn_sliding": {
         "inputs": {"q": "q_scratch", "k": "kv_cache", "v": "kv_cache"},
+        "outputs": {"out": {"slot": "attn_scratch", "dtype": "fp32"}},
+    },
+    "attn_shared_kv": {
+        "inputs": {"q": "q_scratch"},
+        "outputs": {"out": {"slot": "attn_scratch", "dtype": "fp32"}},
+    },
+    "attn_sliding_shared_kv": {
+        "inputs": {"q": "q_scratch"},
         "outputs": {"out": {"slot": "attn_scratch", "dtype": "fp32"}},
     },
     "attn_gate_sigmoid_mul": {
@@ -1856,6 +1891,9 @@ def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, 
 
     # Embedding + layer buffers
     embedded_size = seq_len * embed_dim * 4
+    backbone_hidden_size = int(config.get("backbone_hidden_size", 0) or 0)
+    if backbone_hidden_size > 0:
+        add("backbone_stream", seq_len * backbone_hidden_size * 4, f"[{seq_len}, {backbone_hidden_size}]")
     add("embedded_input", embedded_size, f"[{seq_len}, {embed_dim}]")
     add("layer_input", embedded_size, f"[{seq_len}, {embed_dim}]")
     add("residual", embedded_size, f"[{seq_len}, {embed_dim}]")
@@ -2034,6 +2072,9 @@ TEMPLATE_TO_KERNEL_OP = {
     "qkv_proj": "qkv_projection",  # Or fallback to 3x matmul
     "qkv_packed_proj": "matmul",
     "q_proj": "matmul",
+    "assistant_pre_projection": "matmul",
+    "assistant_post_projection": "matmul",
+    "assistant_layer_scale": "assistant_layer_scale",
     "q_gate_proj": "matmul",
     "k_proj": "matmul",
     "v_proj": "matmul",
@@ -2107,6 +2148,12 @@ TEMPLATE_TO_KERNEL_OP = {
 
     # QK norm (Qwen3-style: per-head RMSNorm on Q and K after projection)
     "qk_norm": "qk_norm",  # Dedicated kernel wrapping rmsnorm_forward twice
+    "q_norm": "q_norm",  # Gemma4 assistant q-only RMSNorm before RoPE
+
+    "rope_q": "rope",
+    "attn_shared_kv": "attention",
+    "attn_sliding_shared_kv": "attention_sliding",
+    "kv_cache_store_shared_q": "kv_cache_store",
 
     # Footer ops
     "final_rmsnorm": "rmsnorm",
@@ -2126,6 +2173,8 @@ WEIGHT_TO_KERNEL_INPUT = {
     "ssm_alpha": "W", "ssm_beta": "W", "ssm_out": "W",
     "patch_emb": "W", "patch_emb_aux": "W",
     "mm0_w": "W", "mm1_w": "W",
+    "assistant_pre_projection": "W", "assistant_post_projection": "W",
+    "layer_output_scale": "scale",
     "branch_fc1_w": "W", "branch_fc2_w": "W",
     # Biases → bias (if kernel has it)
     "bq": "bias", "bk": "bias", "bv": "bias", "bo": "bias",
@@ -2717,7 +2766,7 @@ def _template_uses_rope(template: Dict[str, Any], config: Optional[Dict[str, Any
     if rope_layout in {"split", "pairwise", "multi_section_1d", "multi_section_2d"}:
         return True
     template_ops = _collect_template_ops(template, config)
-    return "rope_qk" in template_ops or "mrope_qk" in template_ops
+    return "rope_qk" in template_ops or "rope_q" in template_ops or "mrope_qk" in template_ops
 
 
 def _template_uses_kv_cache(template: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> bool:
@@ -2728,7 +2777,8 @@ def _template_uses_kv_cache(template: Dict[str, Any], config: Optional[Dict[str,
         return False
     if kv_layout:
         return True
-    return "attn" in _collect_template_ops(template, config) or "attn_sliding" in _collect_template_ops(template, config)
+    template_ops = _collect_template_ops(template, config)
+    return bool({"attn", "attn_sliding", "attn_shared_kv", "attn_sliding_shared_kv"} & set(template_ops))
 
 
 def _resolve_decode_kv_cache_dtype(template: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> str:
@@ -2899,6 +2949,10 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
     attn_gate_dim = int(config.get("attn_gate_dim", 0) or 0)
     if op_name in ("q_proj",):
         return heads * head_dim, embed
+    if op_name in ("assistant_pre_projection",):
+        return embed, int(config.get("backbone_hidden_size", embed) or embed)
+    if op_name in ("assistant_post_projection",):
+        return int(config.get("backbone_hidden_size", embed) or embed), embed
     if op_name in ("qkv_packed_proj",):
         return (heads * head_dim) + 2 * (kv_heads * head_dim), embed
     if op_name in ("q_gate_proj",):
@@ -3080,7 +3134,7 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
             params["rope_freq_base"] = rope_freq_base
             params["use_rope_freq_factors"] = int(config.get("use_rope_freq_factors", 0) or 0)
         return
-    if model_lc != "gemma4":
+    if model_lc not in ("gemma4", "gemma4_assistant"):
         return
 
     embed_dim = int(config.get("embed_dim", 0) or 0)
@@ -3120,18 +3174,33 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
         params["_output_dim"] = q_dim
         params["_input_dim"] = q_dim
         params["input_dim"] = q_dim
-    elif op_name in ("qk_norm", "rope_qk", "kv_cache_store", "attn", "attn_sliding"):
+    elif op_name in (
+        "qk_norm",
+        "q_norm",
+        "rope_qk",
+        "rope_q",
+        "kv_cache_store",
+        "attn",
+        "attn_sliding",
+        "attn_shared_kv",
+        "attn_sliding_shared_kv",
+    ):
         params["head_dim"] = q_head_dim
         params["q_head_dim"] = q_head_dim
         params["k_head_dim"] = k_head_dim
         params["v_head_dim"] = v_head_dim
         params["q_dim"] = q_dim
-        params["k_dim"] = k_dim
-        params["v_dim"] = v_dim
+        if op_name in ("q_norm", "rope_q", "attn_shared_kv", "attn_sliding_shared_kv"):
+            params["k_dim"] = q_dim
+            params["v_dim"] = q_dim
+            params["num_kv_heads"] = int(config.get("num_heads", 1) or 1)
+        else:
+            params["k_dim"] = k_dim
+            params["v_dim"] = v_dim
         params["rotary_dim"] = rotary_dim
         params["n_dims"] = rotary_dim
         params["rope_freq_base"] = rope_freq_base
-        params["use_rope_freq_factors"] = 1 if (op_name == "rope_qk" and rope_kind == "full") else 0
+        params["use_rope_freq_factors"] = 1 if (op_name in ("rope_qk", "rope_q") and rope_kind == "full") else 0
         if sliding_window > 0:
             params["sliding_window"] = sliding_window
     elif op_name == "v_norm":
@@ -4310,6 +4379,14 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         )
         if patch_entry:
             header_quant["patch_emb"] = patch_entry
+    if "assistant_pre_projection" not in header_quant:
+        pre_proj_entry = entry_dtype.get("assistant.pre_projection")
+        if pre_proj_entry:
+            header_quant["assistant_pre_projection"] = pre_proj_entry
+    if "assistant_post_projection" not in header_quant:
+        post_proj_entry = entry_dtype.get("assistant.post_projection")
+        if post_proj_entry:
+            header_quant["assistant_post_projection"] = post_proj_entry
     config = manifest.get("config", {})
     template_flags = template.get("flags", {}) if isinstance(template.get("flags"), dict) else {}
     logits_weight_source = _resolve_logits_weight_source(config, weight_index)
@@ -4636,6 +4713,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "qkv_packed_proj": ["attn_qkv"],
         "qkv_proj": ["wq", "wk", "wv"],  # Split into 3 matmuls if no fused kernel
         "q_proj": ["wq"],
+        "assistant_pre_projection": ["assistant_pre_projection"],
+        "assistant_post_projection": ["assistant_post_projection"],
         "q_gate_proj": ["wq"],
         "k_proj": ["wk"],
         "v_proj": ["wv"],
@@ -4694,10 +4773,12 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             "per_layer_post_norm",
             "layer_output_scale",
         ],
+        "assistant_layer_scale": None,
         "final_logit_softcap": None,
         "v_norm": [],
         "final_rmsnorm": None,
         "qk_norm": None,  # Per-head RMSNorm gamma is always fp32
+        "q_norm": None,  # Gemma4 assistant per-head Q RMSNorm gamma is fp32
 
         # Ops without weights (compute-only)
         "patchify": None,
@@ -4707,9 +4788,13 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "split_qkv_packed": None,
         "mrope_qk": None,
         "rope_qk": None,
+        "rope_q": None,
         "kv_cache_store": None,  # Store K,V to KV cache (no weights)
+        "kv_cache_store_shared_q": None,
         "attn": None,
         "attn_sliding": None,
+        "attn_shared_kv": None,
+        "attn_sliding_shared_kv": None,
         "split_q_gate": None,
         "recurrent_split_qkv": None,
         "recurrent_dt_gate": None,
@@ -4767,9 +4852,42 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         # Template-specified kernel overrides (keeps IR dumb and data-driven)
         if op == "rope_qk":
             return [_resolve_rope_qk_kernel(config, template_kernels)]
+        if op == "rope_q":
+            override = str(template_kernels.get("rope_q", "") or "").strip()
+            return [override or "rope_forward_q_gemma4"]
         if op == "mrope_qk":
             override = str(template_kernels.get("mrope_qk", "") or "").strip()
             return [override or "mrope_qk_vision"]
+        if op == "kv_cache_store_shared_q":
+            return ["kv_cache_store_shared_q"]
+        if op == "assistant_layer_scale":
+            return ["assistant_layer_scale_forward"]
+
+        if op in ("attn_shared_kv", "attn_sliding_shared_kv"):
+            if op == "attn_sliding_shared_kv":
+                mode_key = f"attn_sliding_shared_kv_{mode}"
+                attn_kernel = (
+                    template_kernels.get(mode_key)
+                    or template_kernels.get("attn_sliding_shared_kv")
+                    or (
+                        "attention_forward_causal_head_major_shared_kv_sliding_gemma4"
+                        if mode == "prefill"
+                        else "attention_forward_decode_head_major_shared_kv_sliding_gemma4"
+                    )
+                )
+            else:
+                mode_key = f"attn_shared_kv_{mode}"
+                attn_kernel = (
+                    template_kernels.get(mode_key)
+                    or template_kernels.get("attn_shared_kv")
+                    or (
+                        "attention_forward_causal_head_major_shared_kv_gemma4"
+                        if mode == "prefill"
+                        else "attention_forward_decode_head_major_shared_kv_gemma4"
+                    )
+                )
+            if attn_kernel:
+                return [attn_kernel]
 
         if op in ("attn", "attn_sliding"):
             mode_key = f"{op}_{mode}"
@@ -6355,12 +6473,12 @@ def generate_ir_lower_1(
     decode_attention_layers = {
         int(op.get("layer", 0))
         for op in lowered_ops
-        if str(op.get("op", "")) in {"attn", "attn_sliding"}
+        if str(op.get("op", "")) in {"attn", "attn_sliding", "attn_shared_kv", "attn_sliding_shared_kv"}
     }
     decode_rope_layers = {
         int(op.get("layer", 0))
         for op in lowered_ops
-        if str(op.get("op", "")) in {"rope_qk", "mrope_qk"}
+        if str(op.get("op", "")) in {"rope_qk", "rope_q", "mrope_qk"}
     }
 
     def _kv_read_layer_for(layer: int) -> int:
@@ -6394,6 +6512,28 @@ def generate_ir_lower_1(
             "_auto_inserted": True,
         }
 
+    def _make_decode_shared_q_kv_store_op(anchor_op: Dict[str, Any]) -> Dict[str, Any]:
+        layer = int(anchor_op["layer"])
+        return {
+            "idx": len(final_ops),  # Will be renumbered
+            "kernel": "kv_cache_store_shared_q",
+            "op": "kv_cache_store_shared_q",
+            "layer": layer,
+            "section": anchor_op["section"],
+            "function": "kv_cache_store_shared_q",
+            "weights": {},
+            "inputs": {
+                "q": {"type": "scratch", "source": "q_scratch"},
+            },
+            "outputs": {
+                "kv_cache_k": {"type": "kv_cache", "buffer": f"kv_cache_k_L{layer}"},
+                "kv_cache_v": {"type": "kv_cache", "buffer": f"kv_cache_v_L{layer}"},
+            },
+            "params": copy.deepcopy(anchor_op.get("params", {})),
+            "scratch": [],
+            "_auto_inserted": True,
+        }
+
     for i, op in enumerate(lowered_ops):
         final_ops.append(op)
 
@@ -6401,6 +6541,10 @@ def generate_ir_lower_1(
             layer = int(op.get("layer", 0))
             op_name = str(op.get("op", ""))
             should_store_after_rope = op_name in {"rope_qk", "mrope_qk"}
+            should_store_after_q_rope = (
+                op_name == "rope_q"
+                and layer in decode_attention_layers
+            )
             should_store_after_v = (
                 op_name == "v_proj"
                 and layer in decode_attention_layers
@@ -6408,6 +6552,9 @@ def generate_ir_lower_1(
             )
             if should_store_after_rope or should_store_after_v:
                 final_ops.append(_make_decode_kv_store_op(op))
+                kv_store_count += 1
+            elif should_store_after_q_rope:
+                final_ops.append(_make_decode_shared_q_kv_store_op(op))
                 kv_store_count += 1
 
             # For decode mode, update attention ops to use decode kernel
@@ -6433,6 +6580,18 @@ def generate_ir_lower_1(
                 # Remove scratch K/V references if present
                 op["inputs"].pop("k", None)
                 op["inputs"].pop("v", None)
+            elif op["op"] in ("attn_shared_kv", "attn_sliding_shared_kv") and "attention" in op["kernel"]:
+                if op["op"] == "attn_sliding_shared_kv":
+                    decode_kernel = template_kernels.get("attn_sliding_shared_kv_decode") or "attention_forward_decode_head_major_shared_kv_sliding_gemma4"
+                else:
+                    decode_kernel = template_kernels.get("attn_shared_kv_decode") or "attention_forward_decode_head_major_shared_kv_gemma4"
+                op["kernel"] = decode_kernel
+                op["function"] = decode_kernel
+                kv_read_layer = _kv_read_layer_for(int(op.get("layer", 0)))
+                op["_kv_cache_read_layer"] = kv_read_layer
+                op.setdefault("inputs", {})
+                op["inputs"]["k_cache"] = {"type": "kv_cache", "source": f"kv_cache_k_L{kv_read_layer}"}
+                op["inputs"]["v_cache"] = {"type": "kv_cache", "source": f"kv_cache_v_L{kv_read_layer}"}
 
         elif mode == "prefill":
             # Prefill layout bridges are a graph contract, not a decoder/KV-cache
@@ -6501,7 +6660,7 @@ def generate_ir_lower_1(
             # projection/residual path consumes token-major [T, H*D]. Emit the
             # bridge for all prefill graphs, regardless of whether a KV cache
             # also exists.
-            if op["op"] in ("attn", "attn_sliding"):
+            if op["op"] in ("attn", "attn_sliding", "attn_shared_kv", "attn_sliding_shared_kv"):
                 layer = op["layer"]
                 transpose_attn_out_op = {
                     "idx": len(final_ops),
@@ -6521,6 +6680,8 @@ def generate_ir_lower_1(
                     # TODO(contract): validate this op against runtime_invariants contract:
                     # _kv_copy_bytes must exist and match
                     # (num_kv_heads * head_dim * seq_len * sizeof(fp32)).
+                    shared_q_prefill = op["op"] in ("attn_shared_kv", "attn_sliding_shared_kv")
+                    copy_src = "q_scratch" if shared_q_prefill else "k_scratch"
                     kv_batch_copy_op = {
                         "idx": len(final_ops),
                         "kernel": "kv_cache_batch_copy",
@@ -6530,8 +6691,8 @@ def generate_ir_lower_1(
                         "function": "kv_cache_batch_copy",  # Codegen emits two memcpy calls (K and V)
                         "weights": {},
                         "inputs": {
-                            "k_src": {"type": "scratch", "source": "k_scratch"},
-                            "v_src": {"type": "scratch", "source": "v_scratch"},
+                            "k_src": {"type": "scratch", "source": copy_src},
+                            "v_src": {"type": "scratch", "source": "q_scratch" if shared_q_prefill else "v_scratch"},
                         },
                         "outputs": {
                             "k_dst": {"type": "kv_cache", "buffer": f"kv_cache_k_L{layer}"},
@@ -6692,6 +6853,7 @@ WEIGHT_PATTERNS = {
     "per_layer_inp_gate": ["layer.{L}.per_layer_inp_gate"],
     "per_layer_proj": ["layer.{L}.per_layer_proj"],
     "per_layer_post_norm": ["layer.{L}.per_layer_post_norm"],
+    "layer_output_scale": ["layer.{L}.layer_output_scale"],
     "patch_emb": [
         "patch_emb.weight",
         "patch_embeddings.weight",
@@ -6730,6 +6892,8 @@ WEIGHT_PATTERNS = {
     "mm0_b": ["mm.0.bias"],
     "mm1_w": ["mm.2.weight", "mm.input_projection.weight"],
     "mm1_b": ["mm.2.bias"],
+    "assistant_pre_projection": ["assistant.pre_projection"],
+    "assistant_post_projection": ["assistant.post_projection"],
     "attn_qkv": ["layer.{L}.attn_qkv", "layer.{L}.attn_qkv.weight", "v.blk.{L}.attn_qkv.weight"],
     "ln1_gamma": ["layer.{L}.ln1_gamma", "layers.{L}.attention_norm.weight", "layer.{L}.attn_norm", "layer.{L}.block_norm", "v.blk.{L}.ln1.weight"],
     "ln2_gamma": ["layer.{L}.ln2_gamma", "layers.{L}.ffn_norm.weight", "layer.{L}.post_attention_norm", "v.blk.{L}.ln2.weight"],
@@ -6764,6 +6928,7 @@ TEMPLATE_OP_WEIGHTS = {
     "vision_position_ids": [],
     "position_ids_2d": [],
     "dense_embedding_lookup": ["token_emb"],  # Token embeddings only (pos_emb for non-RoPE)
+    "assistant_pre_projection": ["assistant_pre_projection"],
 
     # Attention block (body + footer)
     # Body: uses ln1_gamma, ln2_gamma (per-layer)
@@ -6786,6 +6951,7 @@ TEMPLATE_OP_WEIGHTS = {
         "per_layer_post_norm",
         "layer_output_scale",
     ],
+    "assistant_layer_scale": ["layer_output_scale"],
     "final_logit_softcap": [],
     "v_norm": [],
     "final_rmsnorm": ["final_ln_weight", "final_ln_bias"],
@@ -6831,10 +6997,15 @@ TEMPLATE_OP_WEIGHTS = {
     "partial_rope_concat": [],
     "mla_attention": [],
     "qk_norm": ["q_norm", "k_norm"],  # Per-head RMSNorm gamma weights for Q and K
+    "q_norm": ["q_norm"],  # Per-head RMSNorm gamma weights for Q-only shared-KV attention
     "rope_qk": [],  # No model weights (uses precomputed tables)
+    "rope_q": [],  # No model weights (uses direct RoPE params/frequency factors)
     "mrope_qk": [],  # No model weights (runtime positions + RoPE params)
     "attn": [],  # No model weights
     "attn_sliding": [],  # No model weights (kernel op handles windowing)
+    "attn_shared_kv": [],  # No model weights; q_scratch is used as Q/K/V
+    "attn_sliding_shared_kv": [],  # No model weights; q_scratch is used as Q/K/V with SWA
+    "kv_cache_store_shared_q": [],  # No model weights; writes q_scratch to K/V cache
     "attn_gate_sigmoid_mul": [],  # No model weights
     "out_proj": ["wo", "bo", "wo_input_min", "wo_input_max", "wo_output_min", "wo_output_max"],  # Output projection + optional bias
     "residual_add": [],  # No model weights
@@ -6861,6 +7032,7 @@ TEMPLATE_OP_WEIGHTS = {
 
     # Footer
     "weight_tying": [],  # Metadata only
+    "assistant_post_projection": ["assistant_post_projection"],
     # logits source is resolved at runtime contract time:
     # - tied -> token_emb
     # - untied -> lm_head/output.weight
@@ -7091,6 +7263,37 @@ def generate_memory_layout(
                 "because V RMSNorm is unweighted"
             )
 
+    if model_family == "gemma4_assistant":
+        projection_mode = str(config.get("assistant_projection_mode", "") or "").strip().lower()
+        layer_scalar_mode = str(config.get("assistant_layer_scalar_mode", "") or "").strip().lower()
+        if projection_mode == "external_backbone_bridge":
+            # The Gemma4 assistant checkpoint is a drafter/assistant model.  Its
+            # pre/post projection tensors bridge the large backbone hidden width
+            # to the smaller assistant hidden width. They are not part of the
+            # standalone token decoder graph, where forcing them into the normal
+            # embedding stream would make the dimensions wrong.
+            ignored_assistant_bridge = {
+                w for w in model_weights
+                if w in {"assistant.pre_projection", "assistant.post_projection"}
+            }
+            if ignored_assistant_bridge:
+                model_weights -= ignored_assistant_bridge
+                print(
+                    f"  Ignoring {len(ignored_assistant_bridge)} Gemma4 assistant bridge tensors "
+                    "for standalone decoder lowering"
+                )
+        if layer_scalar_mode == "external_backbone_bridge":
+            ignored_layer_scalar = {
+                w for w in model_weights
+                if w.startswith("layer.") and w.endswith(".layer_output_scale")
+            }
+            if ignored_layer_scalar:
+                model_weights -= ignored_layer_scalar
+                print(
+                    f"  Ignoring {len(ignored_layer_scalar)} Gemma4 assistant layer scalar tensors "
+                    "for standalone decoder lowering"
+                )
+
     # Weights expected but not used by IR1
     unused_by_ir1 = expected_weights - ir1_used_weights
 
@@ -7293,6 +7496,9 @@ def generate_memory_layout(
     # Embedded input: embedding lookup output [seq_len, embed_dim]
     # For decode: [1, embed_dim], for prefill: [context_len, embed_dim]
     embedded_size = seq_len * embed_dim * 4
+    backbone_hidden_size = int(config.get("backbone_hidden_size", 0) or 0)
+    if backbone_hidden_size > 0:
+        add_buffer("backbone_stream", seq_len * backbone_hidden_size * 4, f"[{seq_len}, {backbone_hidden_size}]")
     add_buffer("embedded_input", embedded_size, f"[{seq_len}, {embed_dim}]")
 
     # Layer input buffer (for ping-pong)
@@ -7709,6 +7915,9 @@ def generate_memory_layout_packed(
             alloc_act("q_scratch")
             alloc_act("k_scratch")
             alloc_act("rope_cache")
+        if op_type == "rope_q":
+            alloc_act("q_scratch")
+            alloc_act("rope_cache")
         if op_type == "mrope_qk" or (op_type == "rope_qk" and kernel_type == "mrope_qk_vision"):
             alloc_act("q_scratch")
             alloc_act("k_scratch")
@@ -7719,6 +7928,9 @@ def generate_memory_layout_packed(
         if op_type == "kv_cache_store":
             alloc_act("k_scratch")
             alloc_act("v_scratch")
+            alloc_act("kv_cache")
+        if op_type == "kv_cache_store_shared_q":
+            alloc_act("q_scratch")
             alloc_act("kv_cache")
 
         if op_type == "attn" or "attention" in kernel_type:
@@ -7741,8 +7953,8 @@ def generate_memory_layout_packed(
         if "embedding" in kernel_type.lower():
             current_input_buffer = "embedded_input"
             current_output_buffer = "layer_input"
-        elif op_type in ("q_proj", "q_gate_proj", "split_q_gate", "attn_gate_sigmoid_mul", "k_proj", "v_proj", "qkv_proj", "rope_qk", "mrope_qk", "vision_position_ids", "position_ids_2d", "bias_add") or \
-                (mode == "prefill" and op_type in ("attn", "attn_sliding")):
+        elif op_type in ("q_proj", "q_gate_proj", "split_q_gate", "attn_gate_sigmoid_mul", "k_proj", "v_proj", "qkv_proj", "q_norm", "rope_qk", "rope_q", "mrope_qk", "vision_position_ids", "position_ids_2d", "bias_add") or \
+                (mode == "prefill" and op_type in ("attn", "attn_sliding", "attn_shared_kv", "attn_sliding_shared_kv")):
             pass
         else:
             current_input_buffer, current_output_buffer = current_output_buffer, current_input_buffer
@@ -7964,6 +8176,8 @@ def generate_ir_lower_2(
         "A_BRANCH_MLP": "branch_mlp",
         "A_BRANCH_COLLECT": "branch_collect",
         "A_VISION_OUTPUT": "vision_output",
+        "A_BACKBONE_STREAM": "backbone_stream",
+        "backbone_stream": "backbone_stream",
         "A_LOGITS": "logits",
         "A_RECURRENT_PACKED": "recurrent_packed",
         "A_RECURRENT_Z": "recurrent_z",
@@ -8500,6 +8714,60 @@ def generate_ir_lower_2(
                     "ptr_expr": f"activations + {dst_buf['offset']}",
                 }
                 last_output_buffer = dst_buf_name
+        elif op_type == "assistant_pre_projection":
+            src_buf = activation_buffers.get("backbone_stream")
+            dst_buf = activation_buffers.get("embedded_input")
+            if src_buf:
+                lowered_op["activations"]["A"] = {
+                    "buffer": "backbone_stream",
+                    "activation_offset": src_buf["offset"],
+                    "dtype": "fp32",
+                    "ptr_expr": f"activations + {src_buf['offset']}",
+                }
+            if dst_buf:
+                lowered_op["outputs"]["C"] = {
+                    "buffer": "embedded_input",
+                    "activation_offset": dst_buf["offset"],
+                    "dtype": "fp32",
+                    "ptr_expr": f"activations + {dst_buf['offset']}",
+                }
+                last_output_buffer = "embedded_input"
+                current_input_buffer = "embedded_input"
+                current_output_buffer = "layer_input"
+        elif op_type == "assistant_post_projection":
+            src_buf = activation_buffers.get("embedded_input")
+            dst_buf = activation_buffers.get("backbone_stream")
+            if src_buf:
+                lowered_op["activations"]["A"] = {
+                    "buffer": "embedded_input",
+                    "activation_offset": src_buf["offset"],
+                    "dtype": "fp32",
+                    "ptr_expr": f"activations + {src_buf['offset']}",
+                }
+            if dst_buf:
+                lowered_op["outputs"]["C"] = {
+                    "buffer": "backbone_stream",
+                    "activation_offset": dst_buf["offset"],
+                    "dtype": "fp32",
+                    "ptr_expr": f"activations + {dst_buf['offset']}",
+                }
+                last_output_buffer = "embedded_input"
+        elif op_type == "assistant_layer_scale":
+            stream_buf = activation_buffers.get("embedded_input")
+            if stream_buf:
+                lowered_op["activations"]["hidden"] = {
+                    "buffer": "embedded_input",
+                    "activation_offset": stream_buf["offset"],
+                    "dtype": "fp32",
+                    "ptr_expr": f"activations + {stream_buf['offset']}",
+                }
+                lowered_op["outputs"]["hidden"] = {
+                    "buffer": "embedded_input",
+                    "activation_offset": stream_buf["offset"],
+                    "dtype": "fp32",
+                    "ptr_expr": f"activations + {stream_buf['offset']}",
+                }
+                last_output_buffer = "embedded_input"
         elif op_type == "logits":
             # Footer logits projection: input buffer must match kernel activation dtype.
             # - fp32 activation kernels (gemv_q8_0 / gemm_nt_q8_0) read embedded_input
@@ -8788,7 +9056,7 @@ def generate_ir_lower_2(
                     # Fallback to legacy logic for unplanned ops
                     if "embedding" in ir_op.get("kernel", "").lower():
                         output_buf_name = "embedded_input"
-                    elif ir_op.get("op") in ("attn", "attn_sliding"):
+                    elif ir_op.get("op") in ("attn", "attn_sliding", "attn_shared_kv", "attn_sliding_shared_kv"):
                         output_buf_name = "attn_scratch"
                     elif ir_op.get("op") == "logits":
                         output_buf_name = "logits"
@@ -8828,10 +9096,11 @@ def generate_ir_lower_2(
                     "ptr_expr": f"activations + {scratch_offset}",
                 })
 
-        # Special handling for QK norm: add q_scratch and k_scratch buffers
-        # QK norm operates in-place on scratch buffers between QKV projection and RoPE
-        if ir_op.get("op", "") == "qk_norm":
-            for scratch_name in ["q_scratch", "k_scratch"]:
+        # Special handling for QK/Q-only norm: operate in-place on scratch buffers
+        # between projection and RoPE.
+        if ir_op.get("op", "") in ("qk_norm", "q_norm"):
+            scratch_names = ["q_scratch", "k_scratch"] if ir_op.get("op", "") == "qk_norm" else ["q_scratch"]
+            for scratch_name in scratch_names:
                 buf = activation_buffers.get(scratch_name)
                 if buf:
                     lowered_op["scratch"].append({
@@ -8845,7 +9114,7 @@ def generate_ir_lower_2(
         # Special handling for RoPE: add q_scratch and k_scratch buffers
         # RoPE always uses the scratch buffers (where k_proj/v_proj just wrote)
         # in both decode and prefill modes
-        if ir_op.get("op", "") == "rope_qk":
+        if ir_op.get("op", "") in ("rope_qk", "rope_q"):
             q_buf = activation_buffers.get("q_scratch")
             if q_buf:
                 lowered_op["scratch"].append({
@@ -8856,15 +9125,16 @@ def generate_ir_lower_2(
                     "ptr_expr": f"activations + {q_buf['offset']}",
                 })
 
-            k_buf = activation_buffers.get("k_scratch")
-            if k_buf:
-                lowered_op["scratch"].append({
-                    "name": "k_scratch",
-                    "scratch_offset": k_buf["offset"],
-                    "size": k_buf["size"],
-                    "dtype": "fp32",
-                    "ptr_expr": f"activations + {k_buf['offset']}",
-                })
+            if ir_op.get("op", "") == "rope_qk":
+                k_buf = activation_buffers.get("k_scratch")
+                if k_buf:
+                    lowered_op["scratch"].append({
+                        "name": "k_scratch",
+                        "scratch_offset": k_buf["offset"],
+                        "size": k_buf["size"],
+                        "dtype": "fp32",
+                        "ptr_expr": f"activations + {k_buf['offset']}",
+                    })
         if ir_op.get("op", "") == "mrope_qk" or (
             ir_op.get("op", "") == "rope_qk" and ir_op.get("kernel", "") == "mrope_qk_vision"
         ):
@@ -8891,6 +9161,17 @@ def generate_ir_lower_2(
                         "dtype": "fp32",
                         "ptr_expr": f"activations + {buf['offset']}",
                     })
+
+        if ir_op.get("op", "") == "kv_cache_store_shared_q":
+            q_buf = activation_buffers.get("q_scratch")
+            if q_buf:
+                lowered_op["scratch"].append({
+                    "name": "q_scratch",
+                    "scratch_offset": q_buf["offset"],
+                    "size": q_buf["size"],
+                    "dtype": "fp32",
+                    "ptr_expr": f"activations + {q_buf['offset']}",
+                })
 
         # Special handling for attention: add q_scratch, k_scratch, v_scratch buffers
         # Note: op type is "attn" but kernel contains "attention"
@@ -9205,11 +9486,11 @@ def generate_ir_lower_2(
         elif op_type in ("patch_proj", "patch_proj_aux", "position_embeddings", "patch_bias_add", "vision_position_ids", "position_ids_2d", "add_stream"):
             current_input_buffer = "embedded_input"
             current_output_buffer = "layer_input"
-        elif op_type in ("q_proj", "q_gate_proj", "split_q_gate", "split_qkv_packed", "attn_gate_sigmoid_mul", "k_proj", "v_proj", "qkv_proj", "qkv_packed_proj", "rope_qk", "mrope_qk",
+        elif op_type in ("q_proj", "q_gate_proj", "split_q_gate", "split_qkv_packed", "attn_gate_sigmoid_mul", "k_proj", "v_proj", "qkv_proj", "qkv_packed_proj", "q_norm", "rope_qk", "rope_q", "mrope_qk",
                          "recurrent_qk_l2_norm",
                          "mlp_gate_up", "mlp_up", "silu_mul", "geglu", "gelu", "mlp_down", "projector_fc1", "projector_gelu", "projector_prep", "projector_fc2", "branch_fc1", "branch_gelu", "branch_fc2", "branch_concat", "spatial_merge", "bias_add") or \
                 (ir_op.get("section", "") == "branch" and op_type == "layernorm") or \
-                (mode == "prefill" and op_type in ("attn", "attn_sliding")):
+                (mode == "prefill" and op_type in ("attn", "attn_sliding", "attn_shared_kv", "attn_sliding_shared_kv")):
             # Ops that don't advance the token-major stream, don't ping-pong
             pass
         else:
@@ -9371,7 +9652,7 @@ def validate_buffer_assignments(lowered_ir: Dict) -> None:
                 )
 
         # ===== ATTENTION OPERATIONS =====
-        if op_name in ("attn", "attention", "attn_sliding"):
+        if op_name in ("attn", "attention", "attn_sliding", "attn_shared_kv", "attn_sliding_shared_kv"):
             outputs = op.get("outputs", {})
             activations = op.get("activations", {})
 
@@ -9392,11 +9673,12 @@ def validate_buffer_assignments(lowered_ir: Dict) -> None:
             k_cache = activations.get("k_cache") or activations.get("k")
             if k_cache:
                 k_buf = k_cache.get("buffer", "")
-                if k_buf not in ("kv_cache",):
+                allowed_k = ("q_scratch", "kv_cache") if op_name in ("attn_shared_kv", "attn_sliding_shared_kv") else ("kv_cache",)
+                if k_buf not in allowed_k:
                     raise RuntimeError(
                         f"\n❌ HARD FAULT: Invalid buffer assignment\n"
                         f"   op={op_name} layer={layer}\n"
-                        f"   expected k_cache input: kv_cache\n"
+                        f"   expected k_cache input: {'/'.join(allowed_k)}\n"
                         f"   got: {k_buf}\n"
                         f"   Fix: Add kernel I/O -> dataflow name mapping in generate_ir_lower_2()\n"
                     )
@@ -9404,17 +9686,18 @@ def validate_buffer_assignments(lowered_ir: Dict) -> None:
             v_cache = activations.get("v_cache") or activations.get("v")
             if v_cache:
                 v_buf = v_cache.get("buffer", "")
-                if v_buf not in ("kv_cache",):
+                allowed_v = ("q_scratch", "kv_cache") if op_name in ("attn_shared_kv", "attn_sliding_shared_kv") else ("kv_cache",)
+                if v_buf not in allowed_v:
                     raise RuntimeError(
                         f"\n❌ HARD FAULT: Invalid buffer assignment\n"
                         f"   op={op_name} layer={layer}\n"
-                        f"   expected v_cache input: kv_cache\n"
+                        f"   expected v_cache input: {'/'.join(allowed_v)}\n"
                         f"   got: {v_buf}\n"
                         f"   Fix: Add kernel I/O -> dataflow name mapping in generate_ir_lower_2()\n"
                     )
 
         # ===== ROPE QK =====
-        elif op_name in ("rope_qk", "rope", "mrope_qk"):
+        elif op_name in ("rope_qk", "rope_q", "rope", "mrope_qk"):
             outputs = op.get("outputs", {})
             activations = op.get("activations", {})
 

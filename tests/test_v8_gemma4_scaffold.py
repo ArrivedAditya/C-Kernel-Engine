@@ -144,6 +144,46 @@ class V8Gemma4ScaffoldTests(unittest.TestCase):
         self.assertNotIn("k_proj", shared_ops)
         self.assertNotIn("v_proj", shared_ops)
 
+    def test_gemma4_assistant_q_only_ops_are_lowerable(self) -> None:
+        import json
+        import build_ir_v8  # type: ignore
+
+        template_path = REPO_ROOT / "version" / "v8" / "templates" / "gemma4_assistant.json"
+        template = json.loads(template_path.read_text(encoding="utf-8"))
+        ops = build_ir_v8._collect_template_ops(
+            template,
+            {
+                "num_layers": 2,
+                "layer_kinds": [
+                    "sliding_attention_q_only_k_eq_v",
+                    "full_attention_q_only_k_eq_v",
+                ],
+            },
+        )
+        self.assertEqual(build_ir_v8.validate_template_ops(ops), [])
+        for op in (
+            "assistant_pre_projection",
+            "q_norm",
+            "rope_q",
+            "attn_sliding_shared_kv",
+            "attn_shared_kv",
+            "assistant_layer_scale",
+            "assistant_post_projection",
+        ):
+            self.assertIn(op, ops)
+
+        for kernel_id in (
+            "assistant_layer_scale_forward",
+            "q_norm_forward",
+            "rope_forward_q_gemma4",
+            "kv_cache_store_shared_q",
+            "attention_forward_causal_head_major_shared_kv_gemma4",
+            "attention_forward_causal_head_major_shared_kv_sliding_gemma4",
+            "attention_forward_decode_head_major_shared_kv_gemma4",
+            "attention_forward_decode_head_major_shared_kv_sliding_gemma4",
+        ):
+            self.assertTrue((REPO_ROOT / "version" / "v8" / "kernel_maps" / f"{kernel_id}.json").exists())
+
     def test_gemma4_kv_layers_use_supported_paired_qk_ops_for_first_bringup(self) -> None:
         template_path = REPO_ROOT / "version" / "v8" / "templates" / "gemma4.json"
         import json

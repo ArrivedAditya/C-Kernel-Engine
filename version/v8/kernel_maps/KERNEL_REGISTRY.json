@@ -5,13 +5,14 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "/home/antshiv/Workspace/C-Kernel-Engine/version/v8/kernel_maps",
     "counts": {
-      "total": 173,
+      "total": 182,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
-        "attention": 13,
+        "assistant_layer_scale": 1,
+        "attention": 15,
         "attention_projection": 1,
-        "attention_sliding": 4,
+        "attention_sliding": 6,
         "attn_gate_sigmoid_mul": 1,
         "attn_gate_sigmoid_mul_backward": 1,
         "bias_add": 1,
@@ -33,7 +34,7 @@
         "gemma4_per_layer_prepare": 2,
         "gemv": 14,
         "group_limited_topk_router": 1,
-        "kv_cache_store": 2,
+        "kv_cache_store": 3,
         "kv_lora_decompress": 1,
         "layernorm": 2,
         "logits_store_indexed": 1,
@@ -46,10 +47,11 @@
         "moe_relu2_expert_mlp": 4,
         "moe_swiglu_expert_mlp": 2,
         "optimizer": 4,
-        "partial_rope_concat": 1,
+        "partial_rope_concat": 2,
         "position_embeddings": 3,
         "position_ids": 1,
         "projector_prep": 1,
+        "q_norm": 1,
         "qk_norm": 1,
         "qk_norm_backward": 1,
         "qkv_projection": 1,
@@ -68,7 +70,7 @@
         "residual_add": 1,
         "residual_save": 1,
         "rmsnorm": 2,
-        "rope": 8,
+        "rope": 9,
         "rope_backward": 2,
         "rope_init": 2,
         "rowwise_bias_add": 1,
@@ -354,6 +356,73 @@
       "notes": "Sum two token-major streams and reorder them into merged-tile traversal using the auxiliary stream as scratch.",
       "name": "add_stream_reorder_2d",
       "_source_file": "add_stream_reorder_2d.json"
+    },
+    {
+      "id": "assistant_layer_scale_forward",
+      "op": "assistant_layer_scale",
+      "variant": "fp32_inplace",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "hidden",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ],
+          "desc": "Assistant/MTP hidden stream, scaled in place."
+        }
+      ],
+      "weights": [
+        {
+          "name": "scale",
+          "dtype": "fp32",
+          "shape": [
+            1
+          ],
+          "desc": "Per-layer assistant output scalar."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "hidden",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ],
+          "desc": "Scaled assistant/MTP hidden stream."
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "T",
+        "E"
+      ],
+      "params": [],
+      "impl": {
+        "function": "assistant_layer_scale_forward",
+        "c_declaration": "void assistant_layer_scale_forward(float *hidden, const float *scale, int tokens, int embed_dim);",
+        "sources": [
+          "src/kernels/gemma4_per_layer_embed.c"
+        ]
+      },
+      "tests": {
+        "parity": [
+          {
+            "kind": "numpy",
+            "command": ".venv/bin/python unittest/test_gemma4_assistant_kernels.py",
+            "tolerance": "1e-7"
+          }
+        ]
+      },
+      "notes": "Gemma4 assistant/MTP drafter layer scalar. This is intentionally separate from the main Gemma4 per-layer embedding kernel because the assistant path bridges from/to the backbone hidden stream.",
+      "name": "assistant_layer_scale_forward",
+      "_source_file": "assistant_layer_scale_forward.json"
     },
     {
       "id": "attention_backward_causal_head_major_gqa",
@@ -1633,6 +1702,131 @@
       "_source_file": "attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4.json"
     },
     {
+      "id": "attention_forward_causal_head_major_shared_kv_gemma4",
+      "op": "attention",
+      "variant": "fp32_prefill_head_major_shared_kv",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor used as Q, K, and V for q-only shared-KV attention"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Attention output in head-major layout"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "T",
+        "D"
+      ],
+      "params": [],
+      "impl": {
+        "function": "attention_forward_causal_head_major_shared_kv_gemma4",
+        "c_declaration": "void attention_forward_causal_head_major_shared_kv_gemma4(const float *q, float *output, int num_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens);",
+        "sources": [
+          "src/kernels/attention_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "parity": [
+          {
+            "kind": "numpy",
+            "command": ".venv/bin/python unittest/test_gemma4_assistant_kernels.py",
+            "tolerance": "2e-5"
+          }
+        ]
+      },
+      "notes": "Prefill-only correctness wrapper for Gemma4 assistant q-only shared-KV attention.",
+      "name": "attention_forward_causal_head_major_shared_kv_gemma4",
+      "_source_file": "attention_forward_causal_head_major_shared_kv_gemma4.json"
+    },
+    {
+      "id": "attention_forward_causal_head_major_shared_kv_sliding_gemma4",
+      "op": "attention_sliding",
+      "variant": "fp32_prefill_head_major_shared_kv_sliding",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor used as Q, K, and V for q-only shared-KV sliding attention"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Attention output in head-major layout"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "T",
+        "D"
+      ],
+      "params": [],
+      "impl": {
+        "function": "attention_forward_causal_head_major_shared_kv_sliding_gemma4",
+        "c_declaration": "void attention_forward_causal_head_major_shared_kv_sliding_gemma4(const float *q, float *output, int num_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens, int sliding_window);",
+        "sources": [
+          "src/kernels/attention_kernels_sliding.c"
+        ],
+        "variants": [
+          {
+            "name": "ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "notes": "Prefill-only correctness wrapper for Gemma4 assistant q-only sliding shared-KV attention.",
+      "name": "attention_forward_causal_head_major_shared_kv_sliding_gemma4",
+      "_source_file": "attention_forward_causal_head_major_shared_kv_sliding_gemma4.json"
+    },
+    {
       "id": "attention_forward_decode_head_major_gqa_flash_f16cache",
       "op": "attention",
       "variant": "decode_head_major_gqa_flash_f16cache",
@@ -1977,6 +2171,145 @@
       "notes": "Regular decode attention for head-major KV cache: single query token attends to all KV cache entries (0..kv_tokens-1).",
       "name": "attention_forward_decode_head_major_gqa_regular",
       "_source_file": "attention_forward_decode_head_major_gqa_regular.json"
+    },
+    {
+      "id": "attention_forward_decode_head_major_shared_kv_gemma4",
+      "op": "attention",
+      "variant": "fp32_decode_head_major_shared_kv",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q_token",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "D"
+          ]
+        },
+        {
+          "name": "k_cache",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "v_cache",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out_token",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "D"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "T",
+        "D"
+      ],
+      "params": [],
+      "impl": {
+        "function": "attention_forward_decode_head_major_shared_kv_gemma4",
+        "c_declaration": "void attention_forward_decode_head_major_shared_kv_gemma4(const float *q_token, const float *k_cache, const float *v_cache, float *out_token, int num_heads, int kv_tokens, int cache_capacity, int head_dim, int aligned_head_dim);",
+        "sources": [
+          "src/kernels/attention_kernels.c"
+        ]
+      },
+      "tests": {
+        "parity": [
+          {
+            "kind": "numpy",
+            "command": ".venv/bin/python unittest/test_gemma4_assistant_kernels.py",
+            "tolerance": "2e-5"
+          }
+        ]
+      },
+      "notes": "Gemma4 assistant decode attention over a cache populated from the q-only stream.",
+      "name": "attention_forward_decode_head_major_shared_kv_gemma4",
+      "_source_file": "attention_forward_decode_head_major_shared_kv_gemma4.json"
+    },
+    {
+      "id": "attention_forward_decode_head_major_shared_kv_sliding_gemma4",
+      "op": "attention_sliding",
+      "variant": "fp32_decode_head_major_shared_kv_sliding",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q_token",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "D"
+          ]
+        },
+        {
+          "name": "k_cache",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "v_cache",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out_token",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "D"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "T",
+        "D"
+      ],
+      "params": [],
+      "impl": {
+        "function": "attention_forward_decode_head_major_shared_kv_sliding_gemma4",
+        "c_declaration": "void attention_forward_decode_head_major_shared_kv_sliding_gemma4(const float *q_token, const float *k_cache, const float *v_cache, float *out_token, int num_heads, int kv_tokens, int cache_capacity, int head_dim, int aligned_head_dim, int sliding_window);",
+        "sources": [
+          "src/kernels/attention_kernels_sliding.c"
+        ]
+      },
+      "notes": "Gemma4 assistant sliding decode attention over a cache populated from the q-only stream.",
+      "name": "attention_forward_decode_head_major_shared_kv_sliding_gemma4",
+      "_source_file": "attention_forward_decode_head_major_shared_kv_sliding_gemma4.json"
     },
     {
       "id": "attention_forward_full_head_major_gqa_exact_strided",
@@ -3608,6 +3941,121 @@
       "notes": "Scalar reference for MLA partial RoPE assembly: copy q/k no-PE slices, apply Kimi/DeepSeek pair layout RoPE to q_pe and shared k_pe, then concatenate.",
       "name": "deepseek_mla_partial_rope_concat_f32",
       "_source_file": "deepseek_mla_partial_rope_concat_f32.json"
+    },
+    {
+      "id": "deepseek_mla_partial_rope_concat_packed_f32",
+      "op": "partial_rope_concat",
+      "variant": "fp32",
+      "modes": {
+        "inference": true,
+        "training": true,
+        "backward": false
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q_packed",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "Dk+Dr"
+          ]
+        },
+        {
+          "name": "k_nope",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "Dk"
+          ]
+        },
+        {
+          "name": "kv_a_packed",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "R+Dr"
+          ]
+        },
+        {
+          "name": "cos",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "Dr/2"
+          ]
+        },
+        {
+          "name": "sin",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "Dr/2"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "query",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "Dk+Dr"
+          ]
+        },
+        {
+          "name": "key",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "Dk+Dr"
+          ]
+        }
+      ],
+      "dims": [
+        "T",
+        "H",
+        "R",
+        "Dk",
+        "Dr"
+      ],
+      "impl": {
+        "sources": [
+          "src/kernels/deepseek_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "scalar_ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ],
+        "function": "deepseek_mla_partial_rope_concat_packed_f32",
+        "c_declaration": "void deepseek_mla_partial_rope_concat_packed_f32(const float *q_packed, const float *k_nope, const float *kv_a_packed, const float *cos, const float *sin, float *query, float *key, int tokens, int heads, int kv_lora_rank, int qk_nope_dim, int qk_rope_dim);"
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_deepseek_reference_kernels.py"
+        ],
+        "parity": [
+          {
+            "kind": "pytorch",
+            "command": ".venv/bin/python unittest/test_deepseek_reference_kernels.py",
+            "tolerance": "1e-6"
+          }
+        ]
+      },
+      "notes": "Scalar reference for MLA partial RoPE assembly from packed q_proj [q_nope|q_pe] and packed kv_a_proj [compressed_kv|k_pe]. This preserves the Kimi/DeepSeek circuit without inventing compact q_pe/k_pe activation buffers.",
+      "name": "deepseek_mla_partial_rope_concat_packed_f32",
+      "_source_file": "deepseek_mla_partial_rope_concat_packed_f32.json"
     },
     {
       "id": "dense_embedding_lookup",
@@ -9892,6 +10340,73 @@
       "_source_file": "kv_cache_store_f16.json"
     },
     {
+      "id": "kv_cache_store_shared_q",
+      "op": "kv_cache_store",
+      "variant": "fp32_shared_q",
+      "quant": {
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "num_heads",
+            "head_dim"
+          ],
+          "desc": "Post-RoPE Q tensor used as both K and V for the current decode token"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "kv_cache_k",
+          "dtype": "fp32",
+          "shape": [
+            "num_layers",
+            "num_heads",
+            "max_seq_len",
+            "head_dim"
+          ]
+        },
+        {
+          "name": "kv_cache_v",
+          "dtype": "fp32",
+          "shape": [
+            "num_layers",
+            "num_heads",
+            "max_seq_len",
+            "head_dim"
+          ]
+        }
+      ],
+      "dims": [
+        "num_heads",
+        "head_dim",
+        "num_layers",
+        "max_seq_len"
+      ],
+      "impl": {
+        "function": "kv_cache_store_shared_q",
+        "c_declaration": "void kv_cache_store_shared_q(float *kv_cache_k, float *kv_cache_v, const float *q, int layer, int pos, int num_heads, int head_dim, int max_seq_len);",
+        "sources": [
+          "src/kernels/kv_cache_kernels.c"
+        ]
+      },
+      "tests": {
+        "parity": [
+          {
+            "kind": "numpy",
+            "command": ".venv/bin/python unittest/test_gemma4_assistant_kernels.py",
+            "tolerance": "0"
+          }
+        ]
+      },
+      "notes": "Gemma4 assistant q-only decode cache store. The same post-RoPE Q row is written into K and V cache.",
+      "name": "kv_cache_store_shared_q",
+      "_source_file": "kv_cache_store_shared_q.json"
+    },
+    {
       "id": "layernorm_forward",
       "op": "layernorm",
       "variant": "fp32",
@@ -13700,6 +14215,89 @@
       "_source_file": "position_embeddings_add_tiled_2d.json"
     },
     {
+      "id": "q_norm_forward",
+      "op": "q_norm",
+      "variant": "fp32",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor [num_heads, num_tokens, head_dim] to be normalized in-place"
+        }
+      ],
+      "weights": [
+        {
+          "name": "q_gamma",
+          "dtype": "fp32",
+          "shape": [
+            "D"
+          ],
+          "desc": "Q norm gamma weights [head_dim], shared across all heads"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor after per-head RMSNorm (in-place)"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "T",
+        "D"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float",
+          "desc": "RMSNorm epsilon"
+        }
+      ],
+      "impl": {
+        "function": "q_norm_forward",
+        "c_declaration": "void q_norm_forward(float *q, const float *q_gamma, int num_heads, int num_tokens, int head_dim, float eps);",
+        "sources": [
+          "src/kernels/qk_norm_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "tests": {
+        "parity": [
+          {
+            "kind": "numpy",
+            "command": ".venv/bin/python unittest/test_gemma4_assistant_kernels.py",
+            "tolerance": "2e-6"
+          }
+        ]
+      },
+      "notes": "Gemma4 assistant q-only shared-KV attention normalizes Q without a separate K projection.",
+      "name": "q_norm_forward",
+      "_source_file": "q_norm_forward.json"
+    },
+    {
       "id": "qk_norm_backward_f32",
       "op": "qk_norm_backward",
       "variant": "fp32_reference",
@@ -17022,6 +17620,93 @@
       "_source_file": "rope_backward_qk_pairwise_f32.json"
     },
     {
+      "id": "rope_forward_q_gemma4",
+      "op": "rope",
+      "variant": "fp32_head_major_q_only",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor [heads, tokens, head_dim] to be rotated in-place"
+        }
+      ],
+      "weights": [
+        {
+          "name": "rope_freqs",
+          "dtype": "fp32",
+          "shape": [
+            "rotary_dim/2"
+          ],
+          "desc": "Gemma4 full-attention proportional RoPE frequency factors; ignored for sliding layers"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor after RoPE application (in-place)"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "T",
+        "D",
+        "rotary_dim"
+      ],
+      "params": [
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32"
+        },
+        {
+          "name": "pos_offset",
+          "dtype": "int32"
+        },
+        {
+          "name": "rotary_dim",
+          "dtype": "int32"
+        },
+        {
+          "name": "cache_rotary_dim",
+          "dtype": "int32",
+          "source": "dim:max_rotary_dim"
+        }
+      ],
+      "impl": {
+        "function": "rope_forward_q_split_direct_f32",
+        "c_declaration": "void rope_forward_q_split_direct_f32(float *q, const float *freq_factors, int use_freq_factors, int num_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int rotary_dim, float freq_base);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "notes": "Gemma4 assistant q-only RoPE. The Q stream later acts as the shared K/V stream.",
+      "name": "rope_forward_q_gemma4",
+      "_source_file": "rope_forward_q_gemma4.json"
+    },
+    {
       "id": "rope_forward_qk",
       "op": "rope",
       "variant": "fp32_head_major",
@@ -19578,121 +20263,6 @@
       "notes": "Build merged vision position IDs for 2D M-RoPE style encoders.",
       "name": "vision_position_ids_2d_merge",
       "_source_file": "vision_position_ids_2d_merge.json"
-    },
-    {
-      "id": "deepseek_mla_partial_rope_concat_packed_f32",
-      "op": "partial_rope_concat",
-      "variant": "fp32",
-      "modes": {
-        "inference": true,
-        "training": true,
-        "backward": false
-      },
-      "quant": {
-        "weight": "none",
-        "activation": "fp32",
-        "output": "fp32"
-      },
-      "inputs": [
-        {
-          "name": "q_packed",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "H",
-            "Dk+Dr"
-          ]
-        },
-        {
-          "name": "k_nope",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "H",
-            "Dk"
-          ]
-        },
-        {
-          "name": "kv_a_packed",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "R+Dr"
-          ]
-        },
-        {
-          "name": "cos",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "Dr/2"
-          ]
-        },
-        {
-          "name": "sin",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "Dr/2"
-          ]
-        }
-      ],
-      "outputs": [
-        {
-          "name": "query",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "H",
-            "Dk+Dr"
-          ]
-        },
-        {
-          "name": "key",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "H",
-            "Dk+Dr"
-          ]
-        }
-      ],
-      "dims": [
-        "T",
-        "H",
-        "R",
-        "Dk",
-        "Dr"
-      ],
-      "impl": {
-        "sources": [
-          "src/kernels/deepseek_kernels.c"
-        ],
-        "variants": [
-          {
-            "name": "scalar_ref",
-            "requires": [],
-            "compile_flags": []
-          }
-        ],
-        "function": "deepseek_mla_partial_rope_concat_packed_f32",
-        "c_declaration": "void deepseek_mla_partial_rope_concat_packed_f32(const float *q_packed, const float *k_nope, const float *kv_a_packed, const float *cos, const float *sin, float *query, float *key, int tokens, int heads, int kv_lora_rank, int qk_nope_dim, int qk_rope_dim);"
-      },
-      "tests": {
-        "unit": [
-          "unittest/test_deepseek_reference_kernels.py"
-        ],
-        "parity": [
-          {
-            "kind": "pytorch",
-            "command": ".venv/bin/python unittest/test_deepseek_reference_kernels.py",
-            "tolerance": "1e-6"
-          }
-        ]
-      },
-      "notes": "Scalar reference for MLA partial RoPE assembly from packed q_proj [q_nope|q_pe] and packed kv_a_proj [compressed_kv|k_pe]. This preserves the Kimi/DeepSeek circuit without inventing compact q_pe/k_pe activation buffers.",
-      "name": "deepseek_mla_partial_rope_concat_packed_f32",
-      "_source_file": "deepseek_mla_partial_rope_concat_packed_f32.json"
     }
   ]
 }

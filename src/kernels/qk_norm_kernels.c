@@ -304,6 +304,24 @@ void qk_norm_forward(float *q, float *k,
 }
 
 /**
+ * Forward pass for Gemma4-assistant q-only per-head RMSNorm.
+ *
+ * Some Gemma4 assistant/drafter checkpoints project only Q and then reuse Q as
+ * the shared K/V stream. This wrapper keeps that public kernel contract explicit
+ * while reusing the same row-wise RMSNorm implementation as qk_norm_forward.
+ */
+void q_norm_forward(float *q,
+                    const float *q_gamma,
+                    int num_heads,
+                    int num_tokens,
+                    int head_dim,
+                    float eps)
+{
+    rmsnorm_forward(q, q_gamma, q, NULL,
+                    num_heads * num_tokens, head_dim, head_dim, eps);
+}
+
+/**
  * Backward pass for per-head QK RMSNorm.
  *
  * This computes:

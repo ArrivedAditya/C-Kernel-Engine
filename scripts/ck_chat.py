@@ -25,6 +25,14 @@ from typing import Optional, List
 
 import numpy as np
 
+
+class SpeculativeConfig:
+    """Runtime controls for greedy speculative decoding."""
+
+    def __init__(self, draft_model: "CKModel", draft_tokens: int = 4):
+        self.draft_model = draft_model
+        self.draft_tokens = max(1, int(draft_tokens))
+
 # Auto-validation support
 AUTO_VALIDATE_AVAILABLE = False
 try:
@@ -1927,7 +1935,8 @@ def generate(model: CKModel, prompt: str, max_tokens: int = 50,
              repeat_last_n: int = 64,
              no_repeat_ngram_size: int = 0,
              min_new_tokens: int = 0,
-             stop_on_text: Optional[List[str]] = None) -> str:
+             stop_on_text: Optional[List[str]] = None,
+             speculative: Optional[SpeculativeConfig] = None) -> str:
     """Generate text from prompt.
 
     Args:
@@ -1954,8 +1963,21 @@ def generate(model: CKModel, prompt: str, max_tokens: int = 50,
     generated = []
     sample_times = []
     decode_times = []
+    draft_times = []
+    speculative_stats = {
+        "drafted": 0,
+        "accepted": 0,
+        "rejected": 0,
+        "batches": 0,
+    }
     prefill_time = 0.0
     start_time = time.time()
+
+    if speculative is not None:
+        if temperature != 0:
+            raise ValueError("speculative decoding currently requires greedy mode: set --temperature 0")
+        if not model.has_kv_decode or not speculative.draft_model.has_kv_decode:
+            raise ValueError("speculative decoding requires KV decode support on both target and draft models")
 
     def _first_text_stop() -> Optional[tuple[int, str]]:
         hit_index: Optional[int] = None
@@ -2086,6 +2108,66 @@ def generate(model: CKModel, prompt: str, max_tokens: int = 50,
             min_p=min_p,
         )
 
+    def _append_generated_token(next_token: int, step_idx: int) -> bool:
+        nonlocal generated_text, stop_reason, gibberish_detected
+        if model.is_eos_token(next_token):
+            stop_reason = f"eos token {int(next_token)}"
+            return True
+        generated.append(next_token)
+        generated_tokens.append(next_token)
+        token_ids.append(next_token)
+        token_text = model.decode([next_token])
+        generated_text = model.decode(generated_tokens)
+        if _check_repetition_stop():
+            return True
+        if show_token_ids:
+            display_text = _escape_text_for_display(
+                token_text, ascii_only=ascii_display, escape_newlines=escape_newlines
+            ) if safe_display else token_text
+            if show_token_pieces:
+                piece = model.token_piece(next_token)
+                piece_txt = _piece_for_debug(piece if piece is not None else "?")
+                print(f"<{next_token}|{piece_txt}:{display_text}>", end='', flush=True)
+            else:
+                print(f"<{next_token}:{display_text}>", end='', flush=True)
+        else:
+            _flush_text_output(force=False)
+        if _check_text_stop():
+            return True
+
+        if validator and (step_idx + 1) % check_every_n == 0 and len(generated_tokens) >= 10:
+            if AUTO_VALIDATE_AVAILABLE and quick_check(generated_text):
+                result = detect_gibberish(tokens=generated_tokens, text=generated_text,
+                                         vocab_size=model.vocab_size)
+                if result.is_gibberish and result.confidence > 0.5:
+                    gibberish_detected = True
+                    print(f"\n\033[91m[GIBBERISH DETECTED at token {step_idx+1}]\033[0m")
+                    return True
+
+        if len(token_ids) >= model.context_window - 1:
+            stop_reason = "context window reached"
+            return True
+        return False
+
+    def _draft_tokens_from_current_prefix(draft_model: CKModel, prefix_tokens: List[int], count: int) -> List[int]:
+        """Return greedy draft tokens from a fresh draft KV state."""
+        if not prefix_tokens:
+            return []
+        draft_model.kv_cache_reset()
+        t0 = time.time()
+        logits = draft_model.prefill(prefix_tokens)
+        out: List[int] = []
+        for _ in range(max(1, int(count))):
+            token_id = int(np.argmax(logits))
+            if draft_model.is_eos_token(token_id):
+                break
+            out.append(token_id)
+            if len(prefix_tokens) + len(out) >= min(model.context_window, draft_model.context_window) - 1:
+                break
+            logits = draft_model.decode_step(token_id)
+        draft_times.append(time.time() - t0)
+        return out
+
     if model.has_kv_decode and model.kv_cache_enable():
         use_sequential_prefill = bool(
             no_prefill or str(getattr(model, "prefill_policy", "batched")).strip().lower() == "sequential_decode"
@@ -2106,49 +2188,69 @@ def generate(model: CKModel, prompt: str, max_tokens: int = 50,
             logits = model.prefill(token_ids)
         prefill_time = time.time() - t0
 
-        for i in range(max_tokens):
+        i = 0
+        while i < max_tokens:
+            if speculative is not None:
+                draft_count = min(speculative.draft_tokens, int(max_tokens) - i)
+                speculative_stats["batches"] += 1
+                draft_tokens = _draft_tokens_from_current_prefix(speculative.draft_model, list(token_ids), draft_count)
+                speculative_stats["drafted"] += len(draft_tokens)
+                rejected = False
+
+                for draft_token in draft_tokens:
+                    t_sample = time.time()
+                    verifier_token = _sample_next_token(logits, i)
+                    sample_times.append(time.time() - t_sample)
+                    if int(draft_token) == int(verifier_token):
+                        speculative_stats["accepted"] += 1
+                        if _append_generated_token(int(draft_token), i):
+                            rejected = True
+                            break
+                        model.set_parity_token_index(prompt_tokens + i)
+                        t_decode = time.time()
+                        logits = model.decode_step(int(draft_token))
+                        decode_times.append(time.time() - t_decode)
+                        i += 1
+                        continue
+
+                    speculative_stats["rejected"] += 1
+                    rejected = True
+                    if _append_generated_token(int(verifier_token), i):
+                        i += 1
+                        break
+                    model.set_parity_token_index(prompt_tokens + i)
+                    t_decode = time.time()
+                    logits = model.decode_step(int(verifier_token))
+                    decode_times.append(time.time() - t_decode)
+                    i += 1
+                    break
+
+                if stop_reason is not None or gibberish_detected or len(token_ids) >= model.context_window - 1:
+                    break
+
+                if not draft_tokens:
+                    rejected = True
+
+                if not rejected and i < max_tokens:
+                    t_sample = time.time()
+                    verifier_token = _sample_next_token(logits, i)
+                    sample_times.append(time.time() - t_sample)
+                    if _append_generated_token(int(verifier_token), i):
+                        i += 1
+                        break
+                    model.set_parity_token_index(prompt_tokens + i)
+                    t_decode = time.time()
+                    logits = model.decode_step(int(verifier_token))
+                    decode_times.append(time.time() - t_decode)
+                    i += 1
+                continue
+
             # Sample
             t_sample = time.time()
             next_token = _sample_next_token(logits, i)
             sample_times.append(time.time() - t_sample)
 
-            if model.is_eos_token(next_token):
-                stop_reason = f"eos token {int(next_token)}"
-                break
-            generated.append(next_token)
-            generated_tokens.append(next_token)
-            token_ids.append(next_token)
-            token_text = model.decode([next_token])
-            generated_text = model.decode(generated_tokens)
-            if _check_repetition_stop():
-                break
-            if show_token_ids:
-                display_text = _escape_text_for_display(
-                    token_text, ascii_only=ascii_display, escape_newlines=escape_newlines
-                ) if safe_display else token_text
-                if show_token_pieces:
-                    piece = model.token_piece(next_token)
-                    piece_txt = _piece_for_debug(piece if piece is not None else "?")
-                    print(f"<{next_token}|{piece_txt}:{display_text}>", end='', flush=True)
-                else:
-                    print(f"<{next_token}:{display_text}>", end='', flush=True)
-            else:
-                _flush_text_output(force=False)
-            if _check_text_stop():
-                break
-
-            # Periodic gibberish check
-            if validator and (i + 1) % check_every_n == 0 and len(generated_tokens) >= 10:
-                if AUTO_VALIDATE_AVAILABLE and quick_check(generated_text):
-                    result = detect_gibberish(tokens=generated_tokens, text=generated_text,
-                                             vocab_size=model.vocab_size)
-                    if result.is_gibberish and result.confidence > 0.5:
-                        gibberish_detected = True
-                        print(f"\n\033[91m[GIBBERISH DETECTED at token {i+1}]\033[0m")
-                        break
-
-            if len(token_ids) >= model.context_window - 1:
-                stop_reason = "context window reached"
+            if _append_generated_token(next_token, i):
                 break
 
             # Set parity token index before decode
@@ -2158,6 +2260,7 @@ def generate(model: CKModel, prompt: str, max_tokens: int = 50,
             t_decode = time.time()
             logits = model.decode_step(next_token)
             decode_times.append(time.time() - t_decode)
+            i += 1
     else:
         for i in range(max_tokens):
             # Forward pass (first is prefill, rest are decode)
@@ -2175,48 +2278,7 @@ def generate(model: CKModel, prompt: str, max_tokens: int = 50,
             next_token = _sample_next_token(logits, i)
             sample_times.append(time.time() - t_sample)
 
-            # Check for EOS token
-            if model.is_eos_token(next_token):
-                stop_reason = f"eos token {int(next_token)}"
-                break
-
-            generated.append(next_token)
-            generated_tokens.append(next_token)
-            token_ids.append(next_token)
-
-            # Decode and print incrementally
-            token_text = model.decode([next_token])
-            generated_text = model.decode(generated_tokens)
-            if _check_repetition_stop():
-                break
-            if show_token_ids:
-                display_text = _escape_text_for_display(
-                    token_text, ascii_only=ascii_display, escape_newlines=escape_newlines
-                ) if safe_display else token_text
-                if show_token_pieces:
-                    piece = model.token_piece(next_token)
-                    piece_txt = _piece_for_debug(piece if piece is not None else "?")
-                    print(f"<{next_token}|{piece_txt}:{display_text}>", end='', flush=True)
-                else:
-                    print(f"<{next_token}:{display_text}>", end='', flush=True)
-            else:
-                _flush_text_output(force=False)
-            if _check_text_stop():
-                break
-
-            # Periodic gibberish check
-            if validator and (i + 1) % check_every_n == 0 and len(generated_tokens) >= 10:
-                if AUTO_VALIDATE_AVAILABLE and quick_check(generated_text):
-                    result = detect_gibberish(tokens=generated_tokens, text=generated_text,
-                                             vocab_size=model.vocab_size)
-                    if result.is_gibberish and result.confidence > 0.5:
-                        gibberish_detected = True
-                        print(f"\n\033[91m[GIBBERISH DETECTED at token {i+1}]\033[0m")
-                        break
-
-            # Check context limit
-            if len(token_ids) >= model.context_window - 1:
-                stop_reason = "context window reached"
+            if _append_generated_token(next_token, i):
                 break
 
     total_time = time.time() - start_time
@@ -2263,6 +2325,16 @@ def generate(model: CKModel, prompt: str, max_tokens: int = 50,
         sample_ms = total_sample_time * 1000
         sample_count = len(sample_times)
         sample_ms_per_token = sample_ms / sample_count if sample_count > 0 else 0
+        draft_ms = sum(draft_times) * 1000
+        draft_line = ""
+        if speculative is not None:
+            drafted = int(speculative_stats["drafted"])
+            accepted = int(speculative_stats["accepted"])
+            accept_rate = (accepted / drafted * 100.0) if drafted > 0 else 0.0
+            draft_line = (
+                f"\n speculative: {draft_ms:8.2f} ms / {int(speculative_stats['batches']):4d} batches "
+                f"({accepted}/{drafted} accepted, {accept_rate:5.1f}%, {int(speculative_stats['rejected'])} rejected)"
+            )
 
         # Total stats
         total_ms = total_time * 1000
@@ -2272,7 +2344,9 @@ def generate(model: CKModel, prompt: str, max_tokens: int = 50,
               f"prompt eval: {prefill_ms:8.2f} ms / {prompt_tokens:4d} tokens ({prefill_ms_per_token:7.2f} ms/tok, {prefill_tps:7.2f} tok/s)\n" +
               f"      decode: {decode_ms:8.2f} ms / {decode_count:4d} runs   ({decode_ms_per_token:7.2f} ms/tok, {decode_tps:7.2f} tok/s)\n" +
               f"      sample: {sample_ms:8.2f} ms / {sample_count:4d} runs   ({sample_ms_per_token:7.2f} ms/tok)\n" +
-              f"       total: {total_ms:8.2f} ms / {total_tokens:4d} tokens\033[0m")
+              f"       total: {total_ms:8.2f} ms / {total_tokens:4d} tokens" +
+              draft_line +
+              f"\033[0m")
 
     elif verbose:
         tokens_per_sec = gen_count / total_time if total_time > 0 else 0
@@ -2298,7 +2372,8 @@ def chat_loop(model: CKModel, temperature: float = 0.7, max_tokens: int = 100,
               repeat_last_n: int = 64,
               no_repeat_ngram_size: int = 0,
               memory_enabled: bool = False,
-              stop_on_text: Optional[List[str]] = None):
+              stop_on_text: Optional[List[str]] = None,
+              speculative: Optional[SpeculativeConfig] = None):
     """Interactive chat loop."""
     print("\n" + "=" * 60)
     print("  C-Kernel-Engine Chat")
@@ -2372,7 +2447,8 @@ def chat_loop(model: CKModel, temperature: float = 0.7, max_tokens: int = 100,
                           repeat_last_n=repeat_last_n,
                           no_repeat_ngram_size=no_repeat_ngram_size,
                           min_new_tokens=model.default_min_new_tokens() if model.use_chat_template else 0,
-                          stop_on_text=stop_on_text)
+                          stop_on_text=stop_on_text,
+                          speculative=speculative)
         print()
         if memory_enabled:
             conversation.append(("assistant", response))
@@ -2432,6 +2508,10 @@ def main():
                        help="Override contract thinking mode for chat-capable models (auto, visible, or suppressed)")
     parser.add_argument("--memory", action="store_true",
                        help="Keep previous prompts/responses in interactive chat (default: off)")
+    parser.add_argument("--speculative-draft-model-dir",
+                       help="Path to a compiled draft model directory for greedy speculative decoding")
+    parser.add_argument("--speculative-draft-tokens", type=int, default=4,
+                       help="Number of draft tokens to propose per speculative batch (default: 4)")
     args = parser.parse_args()
 
     # Determine parity directory
@@ -2469,6 +2549,32 @@ def main():
                       allow_raw_prompt=args.allow_raw_prompt):
         sys.exit(1)
     model.thinking_mode = str(args.thinking_mode or "auto")
+
+    draft_model = None
+    speculative = None
+    if args.speculative_draft_model_dir:
+        if args.temperature != 0:
+            print("Error: speculative decoding currently requires --temperature 0")
+            model.free()
+            sys.exit(1)
+        print(f"Loading speculative draft model from {args.speculative_draft_model_dir}...")
+        draft_model = CKModel(args.speculative_draft_model_dir)
+        if not draft_model.load(gguf_path=args.gguf, force_python_tokenizer=args.python_tokenizer,
+                                chat_template=chat_template,
+                                allow_raw_prompt=args.allow_raw_prompt):
+            model.free()
+            sys.exit(1)
+        draft_model.thinking_mode = model.thinking_mode
+        if model.vocab_size != draft_model.vocab_size:
+            print(
+                "Error: speculative draft and target vocab sizes differ "
+                f"({draft_model.vocab_size} != {model.vocab_size})"
+            )
+            draft_model.free()
+            model.free()
+            sys.exit(1)
+        speculative = SpeculativeConfig(draft_model, draft_tokens=args.speculative_draft_tokens)
+
     runtime_contract = model._load_runtime_contract()
     sampler_defaults = runtime_contract.get("sampler_defaults") if isinstance(runtime_contract, dict) else None
     if not isinstance(sampler_defaults, dict):
@@ -2520,7 +2626,8 @@ def main():
                     repeat_last_n=args.repeat_last_n,
                     no_repeat_ngram_size=args.no_repeat_ngram_size,
                     min_new_tokens=model.default_min_new_tokens() if model.use_chat_template else 0,
-                    stop_on_text=stop_markers)
+                    stop_on_text=stop_markers,
+                    speculative=speculative)
             print()
         else:
             # Interactive chat mode
@@ -2551,13 +2658,16 @@ def main():
                      repeat_last_n=args.repeat_last_n,
                      no_repeat_ngram_size=args.no_repeat_ngram_size,
                      memory_enabled=args.memory,
-                     stop_on_text=stop_markers)
+                     stop_on_text=stop_markers,
+                     speculative=speculative)
     finally:
         if tty_stdin is not None:
             try:
                 tty_stdin.close()
             except Exception:
                 pass
+        if draft_model is not None:
+            draft_model.free()
         model.free()
 
 

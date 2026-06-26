@@ -590,6 +590,22 @@ void attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4(
 #undef SLIDING_FLASH_IMPL_GEMMA4
 }
 
+void attention_forward_causal_head_major_shared_kv_sliding_gemma4(
+    const float *q,
+    float *output,
+    int num_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int kv_stride_tokens,
+    int sliding_window)
+{
+    attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4(
+        q, q, q, output, num_heads, num_heads, num_tokens,
+        head_dim, aligned_head_dim, kv_stride_tokens, sliding_window
+    );
+}
+
 void attention_forward_decode_head_major_gqa_flash_sliding(
     const float *q_token,
     const float *k_cache,
@@ -747,4 +763,22 @@ void attention_forward_decode_head_major_gqa_flash_sliding_gemma4(
     }
 
 #undef SLIDING_DECODE_IMPL_GEMMA4
+}
+
+void attention_forward_decode_head_major_shared_kv_sliding_gemma4(
+    const float *q_token,
+    const float *k_cache,
+    const float *v_cache,
+    float *out_token,
+    int num_heads,
+    int kv_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    int sliding_window)
+{
+    attention_forward_decode_head_major_gqa_flash_sliding_gemma4(
+        q_token, k_cache, v_cache, out_token, num_heads, num_heads,
+        kv_tokens, cache_capacity, head_dim, aligned_head_dim, sliding_window
+    );
 }

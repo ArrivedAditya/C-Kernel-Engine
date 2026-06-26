@@ -963,6 +963,8 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         layer_q_dim: list[int] = []
         layer_o_input_dim: list[int] = []
         layer_q_norm_dim: list[int] = []
+        layer_q_head_dim: list[int] = []
+        layer_rotary_dim: list[int] = []
         for layer in range(num_layers):
             q = headers.get(f"model.layers.{layer}.self_attn.q_proj.weight")
             o = headers.get(f"model.layers.{layer}.self_attn.o_proj.weight")
@@ -970,6 +972,9 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             layer_q_dim.append(int(q.shape[0]) if q and q.shape else int(cfg.get("num_heads") or 0) * int(cfg.get("head_dim") or 0))
             layer_o_input_dim.append(int(o.shape[1]) if o and len(o.shape) >= 2 else layer_q_dim[-1])
             layer_q_norm_dim.append(int(qn.shape[0]) if qn and qn.shape else int(cfg.get("head_dim") or 0))
+            q_head = layer_q_norm_dim[-1]
+            layer_q_head_dim.append(q_head)
+            layer_rotary_dim.append(q_head)
         rope_params = text.get("rope_parameters") if isinstance(text.get("rope_parameters"), dict) else {}
         full_rope = rope_params.get("full_attention") if isinstance(rope_params.get("full_attention"), dict) else {}
         sliding_rope = rope_params.get("sliding_attention") if isinstance(rope_params.get("sliding_attention"), dict) else {}
@@ -980,6 +985,8 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "assistant_role": "mtp_drafter",
             "backbone_hidden_size": int(hf.get("backbone_hidden_size") or 0),
             "attention_k_eq_v": bool(text.get("attention_k_eq_v", True)),
+            "num_kv_heads": int(cfg.get("num_heads") or text.get("num_attention_heads") or 0),
+            "num_key_value_heads": int(cfg.get("num_heads") or text.get("num_attention_heads") or 0),
             "hidden_activation": str(text.get("hidden_activation") or "gelu_pytorch_tanh"),
             "intermediate_dim": int(cfg.get("intermediate_size") or 0),
             "max_seq_len": int(cfg.get("context_length") or 0),
@@ -1003,6 +1010,10 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "layer_q_dim": layer_q_dim,
             "layer_o_input_dim": layer_o_input_dim,
             "layer_q_norm_dim": layer_q_norm_dim,
+            "layer_q_head_dim": layer_q_head_dim,
+            "layer_k_head_dim": layer_q_head_dim[:],
+            "layer_v_head_dim": layer_q_head_dim[:],
+            "layer_rotary_dim": layer_rotary_dim,
             "rope_layout": "split",
             "rope_param_mode": "per_layer_direct",
             "rope_theta": float(full_rope.get("rope_theta", cfg.get("rope_theta", 1000000.0)) or 1000000.0),
@@ -1016,6 +1027,9 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "use_ordered_embeddings": bool(hf.get("use_ordered_embeddings", False)),
             "assistant_pre_projection": True,
             "assistant_post_projection": True,
+            "assistant_projection_mode": "mtp_bridge",
+            "assistant_layer_scalar_mode": "layer_output_scale",
+            "standalone_text_inference_supported": False,
         })
 
     if arch == "glm4":

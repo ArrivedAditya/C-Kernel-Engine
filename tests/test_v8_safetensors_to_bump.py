@@ -812,9 +812,16 @@ def test_gemma4_assistant_safetensors_to_bump_maps_q_only_drafter(tmp_path: Path
     assert audit["unmapped_source_tensors"] == []
     assert cfg["attention_k_eq_v"] is True
     assert cfg["assistant_role"] == "mtp_drafter"
+    assert cfg["assistant_projection_mode"] == "mtp_bridge"
+    assert cfg["assistant_layer_scalar_mode"] == "layer_output_scale"
+    assert cfg["standalone_text_inference_supported"] is False
     assert cfg["layer_kinds"] == ["sliding_attention_q_only_k_eq_v", "full_attention_q_only_k_eq_v"]
     assert cfg["layer_q_dim"] == [8, 16]
     assert cfg["layer_q_norm_dim"] == [4, 8]
+    assert cfg["layer_q_head_dim"] == [4, 8]
+    assert cfg["layer_k_head_dim"] == [4, 8]
+    assert cfg["layer_v_head_dim"] == [4, 8]
+    assert cfg["layer_rotary_dim"] == [4, 8]
     assert "assistant.pre_projection" in names
     assert "assistant.post_projection" in names
     assert "layer.0.wq" in names

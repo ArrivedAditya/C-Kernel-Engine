@@ -128,6 +128,25 @@ void kv_cache_store(float *__restrict kv_cache_k,
                               head_dim);
 }
 
+void kv_cache_store_shared_q(float *__restrict kv_cache_k,
+                             float *__restrict kv_cache_v,
+                             const float *__restrict q,
+                             int layer,
+                             int pos,
+                             int num_heads,
+                             int head_dim,
+                             int max_seq_len)
+{
+    (void)layer;
+    kv_cache_write_head_major(q, q,
+                              kv_cache_k, kv_cache_v,
+                              num_heads,
+                              pos,
+                              max_seq_len,
+                              head_dim,
+                              head_dim);
+}
+
 void kv_cache_store_f16(uint16_t *__restrict kv_cache_k,
                         uint16_t *__restrict kv_cache_v,
                         const float *__restrict k,

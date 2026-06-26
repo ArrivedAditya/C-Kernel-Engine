@@ -263,6 +263,22 @@ void gemma4_per_layer_embed_forward(float *hidden,
     }
 }
 
+void assistant_layer_scale_forward(float *hidden,
+                                   const float *scale,
+                                   int tokens,
+                                   int embed_dim)
+{
+    if (!hidden || !scale || tokens <= 0 || embed_dim <= 0) {
+        return;
+    }
+
+    const float s = scale[0];
+    const size_t n = (size_t)tokens * (size_t)embed_dim;
+    for (size_t i = 0; i < n; ++i) {
+        hidden[i] *= s;
+    }
+}
+
 void gemma4_final_logit_softcap_forward(float *logits,
                                         int tokens,
                                         int vocab_size,

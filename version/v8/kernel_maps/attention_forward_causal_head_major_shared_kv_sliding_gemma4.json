@@ -1,0 +1,38 @@
+{
+  "id": "attention_forward_causal_head_major_shared_kv_sliding_gemma4",
+  "op": "attention_sliding",
+  "variant": "fp32_prefill_head_major_shared_kv_sliding",
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": ["H", "T", "D"],
+      "desc": "Query tensor used as Q, K, and V for q-only shared-KV sliding attention"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "fp32",
+      "shape": ["H", "T", "D"],
+      "desc": "Attention output in head-major layout"
+    }
+  ],
+  "scratch": [],
+  "dims": ["H", "T", "D"],
+  "params": [],
+  "impl": {
+    "function": "attention_forward_causal_head_major_shared_kv_sliding_gemma4",
+    "c_declaration": "void attention_forward_causal_head_major_shared_kv_sliding_gemma4(const float *q, float *output, int num_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens, int sliding_window);",
+    "sources": ["src/kernels/attention_kernels_sliding.c"],
+    "variants": [
+      {"name": "ref", "requires": [], "compile_flags": []}
+    ]
+  },
+  "notes": "Prefill-only correctness wrapper for Gemma4 assistant q-only sliding shared-KV attention."
+}

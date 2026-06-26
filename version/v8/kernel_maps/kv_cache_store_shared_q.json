@@ -1,0 +1,45 @@
+{
+  "id": "kv_cache_store_shared_q",
+  "op": "kv_cache_store",
+  "variant": "fp32_shared_q",
+  "quant": {
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": ["num_heads", "head_dim"],
+      "desc": "Post-RoPE Q tensor used as both K and V for the current decode token"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "kv_cache_k",
+      "dtype": "fp32",
+      "shape": ["num_layers", "num_heads", "max_seq_len", "head_dim"]
+    },
+    {
+      "name": "kv_cache_v",
+      "dtype": "fp32",
+      "shape": ["num_layers", "num_heads", "max_seq_len", "head_dim"]
+    }
+  ],
+  "dims": ["num_heads", "head_dim", "num_layers", "max_seq_len"],
+  "impl": {
+    "function": "kv_cache_store_shared_q",
+    "c_declaration": "void kv_cache_store_shared_q(float *kv_cache_k, float *kv_cache_v, const float *q, int layer, int pos, int num_heads, int head_dim, int max_seq_len);",
+    "sources": ["src/kernels/kv_cache_kernels.c"]
+  },
+  "tests": {
+    "parity": [
+      {
+        "kind": "numpy",
+        "command": ".venv/bin/python unittest/test_gemma4_assistant_kernels.py",
+        "tolerance": "0"
+      }
+    ]
+  },
+  "notes": "Gemma4 assistant q-only decode cache store. The same post-RoPE Q row is written into K and V cache."
+}
