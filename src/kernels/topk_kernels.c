@@ -341,6 +341,87 @@ int argmax_f32(const float *scores, int n)
     return max_idx;
 }
 
+/* =============================================================================
+ * Speculative decode verifier
+ * ============================================================================= */
+
+/**
+ * @brief Greedy one-token speculative verification.
+ *
+ * The draft model proposes draft_token. The target model is authoritative:
+ * if draft_token equals argmax(target_logits), the candidate is accepted and
+ * emitted. Otherwise the target argmax is emitted and the draft path must be
+ * reset or rewound by the runtime loop.
+ *
+ * @param target_logits Target/backbone logits [vocab_size]
+ * @param vocab_size Number of logits
+ * @param draft_token Candidate token from draft/assistant model
+ * @param accepted Output scalar: 1 if accepted, 0 otherwise
+ * @param verified_token Output scalar: accepted draft token or target argmax
+ */
+void speculative_verify_greedy_f32(const float *target_logits,
+                                   int vocab_size,
+                                   int draft_token,
+                                   int *accepted,
+                                   int *verified_token)
+{
+    const int target_token = argmax_f32(target_logits, vocab_size);
+    const int ok = (target_token >= 0 && draft_token == target_token) ? 1 : 0;
+
+    if (accepted) {
+        *accepted = ok;
+    }
+    if (verified_token) {
+        *verified_token = ok ? draft_token : target_token;
+    }
+}
+
+/**
+ * @brief Commit one verified speculative token and update decode counters.
+ *
+ * This is the minimal state transition for the first Gemma4 assistant bridge:
+ * greedy, one draft token, target remains authoritative. For this milestone the
+ * draft cache is kept synchronized with the target position after each token.
+ * Multi-token speculative decoding can later replace this with prefix accept
+ * and partial draft-cache rollback.
+ */
+void speculative_commit_one_i32(int accepted,
+                                int verified_token,
+                                int *token_buffer,
+                                int *token_count,
+                                int max_tokens,
+                                int *target_position,
+                                int *draft_position,
+                                int *accepted_count,
+                                int *rejected_count)
+{
+    int next_count = token_count ? *token_count : 0;
+    if (token_buffer && token_count && next_count >= 0 && next_count < max_tokens) {
+        token_buffer[next_count] = verified_token;
+        next_count += 1;
+        *token_count = next_count;
+    }
+
+    if (target_position) {
+        *target_position += 1;
+        if (draft_position) {
+            *draft_position = *target_position;
+        }
+    } else if (draft_position) {
+        *draft_position += 1;
+    }
+
+    if (accepted) {
+        if (accepted_count) {
+            *accepted_count += 1;
+        }
+    } else {
+        if (rejected_count) {
+            *rejected_count += 1;
+        }
+    }
+}
+
 
 /* =============================================================================
  * Group-limited MoE router for Nemotron-H/DeepSeek-style routed experts.

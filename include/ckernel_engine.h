@@ -2438,6 +2438,27 @@ void nemotron_group_limited_topk_router_f32(const float *scores,
 // Argmax (top-1)
 int argmax_f32(const float *scores, int n);
 
+// Greedy speculative verification for one candidate token.
+// accepted=1 when draft_token equals argmax(target_logits), otherwise 0.
+void speculative_verify_greedy_f32(const float *target_logits,
+                                   int vocab_size,
+                                   int draft_token,
+                                   int *accepted,
+                                   int *verified_token);
+
+// Greedy one-token speculative commit state update.
+// Appends verified_token when capacity allows, advances target_position, and
+// keeps draft_position synchronized for the one-token verifier milestone.
+void speculative_commit_one_i32(int accepted,
+                                int verified_token,
+                                int *token_buffer,
+                                int *token_count,
+                                int max_tokens,
+                                int *target_position,
+                                int *draft_position,
+                                int *accepted_count,
+                                int *rejected_count);
+
 // =============================================================================
 // DeepSeek-style scalar reference kernels
 // =============================================================================

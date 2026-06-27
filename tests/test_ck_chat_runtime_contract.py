@@ -22,7 +22,51 @@ import chat_contract  # type: ignore
 import compare_first_token_logits as first_token  # type: ignore
 
 
+class _FakeCFunc:
+    def __init__(self, fn):
+        self.fn = fn
+        self.argtypes = None
+        self.restype = None
+
+    def __call__(self, *args):
+        return self.fn(*args)
+
+
 class TestCKChatRuntimeContract(unittest.TestCase):
+    def test_ck_model_reads_named_activation_f32_when_runtime_exports_api(self) -> None:
+        data = np.array([1.25, -2.5, 3.75, 4.5], dtype=np.float32)
+        data_ptr = data.ctypes.data
+
+        class FakeLib:
+            def __init__(self) -> None:
+                self.ck_model_get_named_activation_ptr = _FakeCFunc(
+                    lambda name: data_ptr if name == b"target_hidden_stream" else 0
+                )
+                self.ck_model_get_named_activation_nbytes = _FakeCFunc(
+                    lambda name: data.nbytes if name == b"target_hidden_stream" else -1
+                )
+                self.ck_model_get_named_activation_runtime_offset = _FakeCFunc(
+                    lambda name: 4096 if name == b"target_hidden_stream" else -1
+                )
+
+        model = ck_chat.CKModel("/tmp/nonexistent")
+        model.lib = FakeLib()
+        model._setup_named_activation_api()
+
+        self.assertTrue(model.has_named_activations)
+        self.assertEqual(model.named_activation_nbytes("target_hidden_stream"), data.nbytes)
+        self.assertEqual(model.named_activation_runtime_offset("target_hidden_stream"), 4096)
+        self.assertEqual(model.named_activation_nbytes("missing"), -1)
+        self.assertIsNone(model.read_named_activation_f32("missing"))
+        np.testing.assert_allclose(
+            model.read_named_activation_f32("target_hidden_stream"),
+            data,
+        )
+        np.testing.assert_allclose(
+            model.read_named_activation_f32("target_hidden_stream", max_floats=2),
+            data[:2],
+        )
+
     def test_load_model_meta_preserves_non_null_config_fields(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ck_chat_meta_") as td:
             run_dir = Path(td)

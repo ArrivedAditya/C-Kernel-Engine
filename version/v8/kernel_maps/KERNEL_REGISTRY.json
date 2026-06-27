@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "/home/antshiv/Workspace/C-Kernel-Engine/version/v8/kernel_maps",
     "counts": {
-      "total": 182,
+      "total": 184,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -78,6 +78,8 @@
         "shared_swiglu_expert_mlp": 2,
         "softmax": 1,
         "spatial_merge": 3,
+        "speculative_commit_or_reject": 1,
+        "speculative_verify_greedy": 1,
         "split_q_gate": 1,
         "split_q_gate_backward": 1,
         "split_qkv_packed_head_major": 1,
@@ -19172,6 +19174,176 @@
       "notes": "Merge contiguous groups of merge_size^2 tokens from an activation stream that already uses merged-tile traversal order.",
       "name": "spatial_merge_contiguous_tiled",
       "_source_file": "spatial_merge_contiguous_tiled.json"
+    },
+    {
+      "id": "speculative_commit_one_i32",
+      "op": "speculative_commit_or_reject",
+      "variant": "greedy_one_token",
+      "quant": {
+        "activation": "i32",
+        "output": "i32"
+      },
+      "inputs": [
+        {
+          "name": "accepted",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "desc": "Acceptance flag produced by speculative_verify_greedy_f32."
+        },
+        {
+          "name": "verified_token",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "desc": "Token to emit: accepted draft token or authoritative target token."
+        },
+        {
+          "name": "token_buffer",
+          "dtype": "i32",
+          "shape": [
+            "max_tokens"
+          ],
+          "desc": "Output token buffer updated in-place when capacity allows."
+        },
+        {
+          "name": "token_count",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "desc": "Number of committed output tokens, updated in-place."
+        },
+        {
+          "name": "target_position",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "desc": "Authoritative target decode position, advanced by one."
+        },
+        {
+          "name": "draft_position",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "desc": "Draft position synchronized to target position for the one-token milestone."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "accepted_count",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "desc": "Number of accepted draft tokens, updated in-place."
+        },
+        {
+          "name": "rejected_count",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "desc": "Number of rejected draft tokens, updated in-place."
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "max_tokens"
+      ],
+      "params": [],
+      "impl": {
+        "function": "speculative_commit_one_i32",
+        "c_declaration": "void speculative_commit_one_i32(int accepted, int verified_token, int *token_buffer, int *token_count, int max_tokens, int *target_position, int *draft_position, int *accepted_count, int *rejected_count);",
+        "sources": [
+          "src/kernels/topk_kernels.c"
+        ]
+      },
+      "tests": {
+        "parity": [
+          {
+            "kind": "ctypes",
+            "command": ".venv/bin/python unittest/test_topk.py",
+            "tolerance": "0"
+          }
+        ]
+      },
+      "notes": "First-stage speculative decode commit kernel. It commits exactly one verified token and keeps draft/target positions synchronized. Multi-token acceptance and KV rollback should be introduced as a separate widened contract.",
+      "name": "speculative_commit_one_i32",
+      "_source_file": "speculative_commit_one_i32.json"
+    },
+    {
+      "id": "speculative_verify_greedy_f32",
+      "op": "speculative_verify_greedy",
+      "variant": "greedy_one_token",
+      "quant": {
+        "activation": "fp32",
+        "output": "i32"
+      },
+      "inputs": [
+        {
+          "name": "target_logits",
+          "dtype": "fp32",
+          "shape": [
+            "vocab_size"
+          ],
+          "desc": "Authoritative target/backbone logits for the candidate position."
+        },
+        {
+          "name": "draft_token",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "desc": "Candidate token proposed by the assistant/draft model."
+        }
+      ],
+      "outputs": [
+        {
+          "name": "accepted",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "desc": "1 when draft_token equals argmax(target_logits), otherwise 0."
+        },
+        {
+          "name": "verified_token",
+          "dtype": "i32",
+          "shape": [
+            1
+          ],
+          "desc": "The emitted token: draft_token when accepted, otherwise the target argmax."
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "vocab_size"
+      ],
+      "params": [],
+      "impl": {
+        "function": "speculative_verify_greedy_f32",
+        "c_declaration": "void speculative_verify_greedy_f32(const float *target_logits, int vocab_size, int draft_token, int *accepted, int *verified_token);",
+        "sources": [
+          "src/kernels/topk_kernels.c"
+        ]
+      },
+      "tests": {
+        "parity": [
+          {
+            "kind": "ctypes",
+            "command": ".venv/bin/python unittest/test_topk.py",
+            "tolerance": "0"
+          }
+        ]
+      },
+      "notes": "First-stage speculative decode verifier. It is intentionally greedy-only and one-token-only so the target model remains authoritative while the Gemma4 assistant bridge is hardened.",
+      "name": "speculative_verify_greedy_f32",
+      "_source_file": "speculative_verify_greedy_f32.json"
     },
     {
       "id": "split_q_gate_backward_f32",

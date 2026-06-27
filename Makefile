@@ -2543,6 +2543,21 @@ test-v8-template-circuit-audit:
 	@$(PYTHON) -m py_compile version/v8/scripts/audit_template_circuit_v8.py
 	@$(PYTHON) -m unittest tests.test_v8_template_circuit_audit -v
 
+v8-model-kernel-inspect:
+	@target="$${MODEL:-$${CONFIG:-}}"; \
+	if [ -z "$$target" ]; then \
+		echo "Usage: make v8-model-kernel-inspect MODEL=/path/to/model-dir-or-config.json"; \
+		echo "   or: make v8-model-kernel-inspect CONFIG=/path/to/config.json"; \
+		exit 2; \
+	fi; \
+	$(PYTHON) version/v8/scripts/inspect_model_contract_v8.py "$$target" $${ARGS:-}; \
+	rc=$$?; \
+	if [ "$$rc" -ne 0 ] && [ "$$rc" -ne 2 ]; then exit "$$rc"; fi
+
+test-v8-gemma4-assistant-e2e:
+	@echo "Running v8 Gemma4 assistant synthetic safetensors -> runtime E2E..."
+	@$(PYTHON) -m unittest tests.test_v8_gemma4_scaffold.V8Gemma4ScaffoldTests.test_gemma4_assistant_synthetic_checkpoint_generates_runtime -v
+
 test-architecture-contracts: test-v8-template-circuit-audit v8-kernel-map-contracts v8-validate-contracts
 	@echo "Collecting architecture contract dashboard summary..."
 	@$(PYTHON) version/v8/scripts/collect_architecture_contracts_v8.py --json-out "$(V8_ARCH_CONTRACT_JSON)"
@@ -2626,7 +2641,7 @@ profile-v8-prefill-ops-quick: ck-cli-v8
 		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
 		--json-out build/v8_prefill_ops_profile_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-128}.json
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-dispatch-sweep-quick test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit test-v8-qwen3vl-e2e-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

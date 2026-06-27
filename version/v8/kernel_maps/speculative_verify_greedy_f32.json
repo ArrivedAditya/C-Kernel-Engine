@@ -1,0 +1,55 @@
+{
+  "id": "speculative_verify_greedy_f32",
+  "op": "speculative_verify_greedy",
+  "variant": "greedy_one_token",
+  "quant": {
+    "activation": "fp32",
+    "output": "i32"
+  },
+  "inputs": [
+    {
+      "name": "target_logits",
+      "dtype": "fp32",
+      "shape": ["vocab_size"],
+      "desc": "Authoritative target/backbone logits for the candidate position."
+    },
+    {
+      "name": "draft_token",
+      "dtype": "i32",
+      "shape": [1],
+      "desc": "Candidate token proposed by the assistant/draft model."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "accepted",
+      "dtype": "i32",
+      "shape": [1],
+      "desc": "1 when draft_token equals argmax(target_logits), otherwise 0."
+    },
+    {
+      "name": "verified_token",
+      "dtype": "i32",
+      "shape": [1],
+      "desc": "The emitted token: draft_token when accepted, otherwise the target argmax."
+    }
+  ],
+  "scratch": [],
+  "dims": ["vocab_size"],
+  "params": [],
+  "impl": {
+    "function": "speculative_verify_greedy_f32",
+    "c_declaration": "void speculative_verify_greedy_f32(const float *target_logits, int vocab_size, int draft_token, int *accepted, int *verified_token);",
+    "sources": ["src/kernels/topk_kernels.c"]
+  },
+  "tests": {
+    "parity": [
+      {
+        "kind": "ctypes",
+        "command": ".venv/bin/python unittest/test_topk.py",
+        "tolerance": "0"
+      }
+    ]
+  },
+  "notes": "First-stage speculative decode verifier. It is intentionally greedy-only and one-token-only so the target model remains authoritative while the Gemma4 assistant bridge is hardened."
+}

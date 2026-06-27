@@ -1,4 +1,7 @@
+import json
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -15,6 +18,61 @@ from convert_gguf_to_bump_v8 import (  # type: ignore
     describe_layer_contract,
     _inject_runtime_config_defaults,
 )
+
+
+def _write_tiny_bpe_tokenizer(checkpoint: Path, vocab_size: int) -> None:
+    vocab = {
+        "<unk>": 0,
+        "<s>": 1,
+        "</s>": 2,
+        "Hello": 3,
+        "world": 4,
+        "!": 5,
+        " test": 6,
+        " code": 7,
+    }
+    for idx in range(len(vocab), vocab_size):
+        vocab[f"<tok_{idx}>"] = idx
+
+    (checkpoint / "tokenizer.json").write_text(
+        json.dumps(
+            {
+                "version": "1.0",
+                "model": {
+                    "type": "BPE",
+                    "unk_token": "<unk>",
+                    "vocab": vocab,
+                    "merges": ["Hello world", " test  code"],
+                },
+                "added_tokens": [
+                    {"id": 0, "content": "<unk>"},
+                    {"id": 1, "content": "<s>"},
+                    {"id": 2, "content": "</s>"},
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (checkpoint / "tokenizer_config.json").write_text(
+        json.dumps(
+            {
+                "tokenizer_class": "PreTrainedTokenizerFast",
+                "bos_token": {"content": "<s>"},
+                "eos_token": {"content": "</s>"},
+                "unk_token": {"content": "<unk>"},
+                "add_bos_token": True,
+                "add_eos_token": False,
+                "added_tokens_decoder": {
+                    "0": {"content": "<unk>"},
+                    "1": {"content": "<s>"},
+                    "2": {"content": "</s>"},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _tensor(name: str, dims: tuple[int, ...]) -> TensorInfo:
@@ -183,6 +241,172 @@ class V8Gemma4ScaffoldTests(unittest.TestCase):
             "attention_forward_decode_head_major_shared_kv_sliding_gemma4",
         ):
             self.assertTrue((REPO_ROOT / "version" / "v8" / "kernel_maps" / f"{kernel_id}.json").exists())
+
+    def test_gemma4_speculative_pair_template_declares_bridge_and_verifier(self) -> None:
+        template_path = REPO_ROOT / "version" / "v8" / "templates" / "gemma4_speculative_pair.json"
+        template = json.loads(template_path.read_text(encoding="utf-8"))
+        self.assertTrue(template["experimental"])
+        self.assertEqual(template["contract"]["target"]["template"], "gemma4")
+        self.assertEqual(template["contract"]["draft"]["template"], "gemma4_assistant")
+        self.assertEqual(template["contract"]["bridge"]["source"], "target_hidden_stream")
+        self.assertEqual(template["contract"]["bridge"]["dest"], "draft_backbone_stream")
+        self.assertEqual(template["contract"]["verifier"]["kernel"], "speculative_verify_greedy_f32")
+        self.assertEqual(template["contract"]["committer"]["kernel"], "speculative_commit_one_i32")
+
+        ops = template["block_types"]["speculative_decode"]["ops"]
+        self.assertEqual(
+            [op["op"] for op in ops],
+            [
+                "target_decode_step",
+                "target_hidden_to_draft_backbone_stream",
+                "draft_decode_step",
+                "speculative_verify_greedy",
+                "speculative_commit_or_reject",
+            ],
+        )
+        verify = ops[3]["graph_slots"]
+        self.assertEqual(verify["inputs"]["target_logits"], "target_logits")
+        self.assertEqual(verify["inputs"]["draft_token"], "draft_candidate_token")
+        self.assertEqual(verify["outputs"]["accepted"], "accepted_flag")
+        self.assertEqual(verify["outputs"]["verified_token"], "verified_token")
+        commit = ops[4]["graph_slots"]
+        self.assertEqual(ops[4]["kernel"], "speculative_commit_one_i32")
+        self.assertEqual(commit["inputs"]["accepted"], "accepted_flag")
+        self.assertEqual(commit["inputs"]["verified_token"], "verified_token")
+        self.assertEqual(commit["inputs"]["token_count"], "token_count")
+        self.assertEqual(commit["outputs"]["draft_position"], "draft_position")
+        self.assertTrue((REPO_ROOT / "version" / "v8" / "kernel_maps" / "speculative_verify_greedy_f32.json").exists())
+        self.assertTrue((REPO_ROOT / "version" / "v8" / "kernel_maps" / "speculative_commit_one_i32.json").exists())
+
+    def test_gemma4_speculative_pair_probe_script_exists(self) -> None:
+        script = REPO_ROOT / "version" / "v8" / "scripts" / "run_gemma4_speculative_pair_probe_v8.py"
+        self.assertTrue(script.exists())
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("target_hidden_stream", text)
+        self.assertIn("draft_backbone_stream", text)
+        self.assertIn("speculative_verify_greedy_f32", text)
+        self.assertIn("speculative_commit_one_i32", text)
+
+    def test_gemma4_assistant_synthetic_checkpoint_generates_runtime(self) -> None:
+        try:
+            import torch  # type: ignore
+            import safetensors.torch as st  # type: ignore
+        except Exception as exc:
+            self.skipTest(f"torch/safetensors unavailable: {exc}")
+
+        with tempfile.TemporaryDirectory(prefix="ck_gemma4_assistant_e2e_") as td:
+            root = Path(td)
+            checkpoint = root / "gemma4_assistant"
+            runtime = root / "runtime"
+            checkpoint.mkdir()
+            runtime.mkdir()
+
+            (checkpoint / "config.json").write_text(
+                json.dumps(
+                    {
+                        "architectures": ["Gemma4AssistantForCausalLM"],
+                        "model_type": "gemma4_assistant",
+                        "backbone_hidden_size": 16,
+                        "tie_word_embeddings": True,
+                        "use_ordered_embeddings": True,
+                        "text_config": {
+                            "model_type": "gemma4_text",
+                            "attention_bias": False,
+                            "attention_k_eq_v": True,
+                            "bos_token_id": 2,
+                            "eos_token_id": 1,
+                            "global_head_dim": 8,
+                            "head_dim": 4,
+                            "hidden_activation": "gelu_pytorch_tanh",
+                            "hidden_size": 8,
+                            "intermediate_size": 16,
+                            "layer_types": ["sliding_attention", "full_attention"],
+                            "max_position_embeddings": 128,
+                            "num_attention_heads": 2,
+                            "num_global_key_value_heads": 1,
+                            "num_hidden_layers": 2,
+                            "num_key_value_heads": 2,
+                            "num_kv_shared_layers": 2,
+                            "rms_norm_eps": 1e-6,
+                            "rope_parameters": {
+                                "full_attention": {
+                                    "partial_rotary_factor": 0.25,
+                                    "rope_theta": 1000000.0,
+                                    "rope_type": "proportional",
+                                },
+                                "sliding_attention": {
+                                    "rope_theta": 10000.0,
+                                    "rope_type": "default",
+                                },
+                            },
+                            "sliding_window": 32,
+                            "tie_word_embeddings": True,
+                            "vocab_size": 32,
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            _write_tiny_bpe_tokenizer(checkpoint, vocab_size=32)
+
+            tensors = {
+                "model.embed_tokens.weight": torch.randn(32, 8, dtype=torch.bfloat16),
+                "model.norm.weight": torch.ones(8, dtype=torch.bfloat16),
+                "masked_embedding.centroids.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+                "masked_embedding.token_ordering": torch.arange(32, dtype=torch.int64),
+                "pre_projection.weight": torch.randn(8, 16, dtype=torch.bfloat16),
+                "post_projection.weight": torch.randn(16, 8, dtype=torch.bfloat16),
+            }
+            for layer, q_dim in enumerate((8, 16)):
+                pfx = f"model.layers.{layer}"
+                tensors.update(
+                    {
+                        f"{pfx}.input_layernorm.weight": torch.ones(8, dtype=torch.bfloat16),
+                        f"{pfx}.pre_feedforward_layernorm.weight": torch.ones(8, dtype=torch.bfloat16),
+                        f"{pfx}.post_attention_layernorm.weight": torch.ones(8, dtype=torch.bfloat16),
+                        f"{pfx}.post_feedforward_layernorm.weight": torch.ones(8, dtype=torch.bfloat16),
+                        f"{pfx}.layer_scalar": torch.ones(1, dtype=torch.bfloat16),
+                        f"{pfx}.self_attn.q_proj.weight": torch.randn(q_dim, 8, dtype=torch.bfloat16),
+                        f"{pfx}.self_attn.q_norm.weight": torch.ones(q_dim // 2, dtype=torch.bfloat16),
+                        f"{pfx}.self_attn.o_proj.weight": torch.randn(8, q_dim, dtype=torch.bfloat16),
+                        f"{pfx}.mlp.gate_proj.weight": torch.randn(16, 8, dtype=torch.bfloat16),
+                        f"{pfx}.mlp.up_proj.weight": torch.randn(16, 8, dtype=torch.bfloat16),
+                        f"{pfx}.mlp.down_proj.weight": torch.randn(8, 16, dtype=torch.bfloat16),
+                    }
+                )
+            st.save_file(tensors, checkpoint / "model.safetensors")
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO_ROOT / "version" / "v8" / "scripts" / "ck_run_v8.py"),
+                    "run",
+                    str(checkpoint),
+                    "--run",
+                    str(runtime),
+                    "--context-len",
+                    "16",
+                    "--force-convert",
+                    "--force-compile",
+                    "--generate-only",
+                    "--chat-template",
+                    "none",
+                    "--allow-raw-prompt",
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+            )
+
+            cfg = json.loads((runtime / "config.json").read_text(encoding="utf-8"))
+            build_dir = runtime
+            self.assertEqual(cfg["model"], "gemma4_assistant")
+            self.assertFalse(cfg["standalone_text_inference_supported"])
+            self.assertEqual(cfg["layer_kinds"], ["sliding_attention_q_only_k_eq_v", "full_attention_q_only_k_eq_v"])
+            self.assertTrue((build_dir / "model_v8.c").exists())
+            self.assertTrue((build_dir / "libmodel.so").exists())
+            self.assertIn("assistant_pre_projection", (build_dir / "model_v8.c").read_text(encoding="utf-8"))
+            self.assertIn("attn_shared_kv", (build_dir / "lowered_decode_call.json").read_text(encoding="utf-8"))
 
     def test_gemma4_kv_layers_use_supported_paired_qk_ops_for_first_bringup(self) -> None:
         template_path = REPO_ROOT / "version" / "v8" / "templates" / "gemma4.json"

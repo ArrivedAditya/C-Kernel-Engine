@@ -801,6 +801,148 @@ def _refs_for_arch(arch: str, config: dict[str, Any], headers: dict[str, HeaderT
     raise SystemExit(f"Unsupported safetensors arch for v8 importer: {arch}")
 
 
+def _build_gemma4_attention_plan_from_hf(text: dict[str, Any], headers: dict[str, HeaderTensor]) -> dict[str, Any]:
+    num_layers = int(text.get("num_hidden_layers") or 0)
+    if num_layers <= 0:
+        raise SystemExit("Gemma4 config missing num_hidden_layers")
+
+    layer_types = [str(x) for x in (text.get("layer_types") or [])]
+    if not layer_types:
+        interval = int(text.get("full_attention_interval") or 5)
+        layer_types = ["full_attention" if (layer + 1) % interval == 0 else "sliding_attention" for layer in range(num_layers)]
+    if len(layer_types) != num_layers:
+        raise SystemExit(f"Gemma4 layer_types length {len(layer_types)} != num_layers {num_layers}")
+
+    shared_kv_layers = int(text.get("num_kv_shared_layers") or 0)
+    if shared_kv_layers < 0 or shared_kv_layers > num_layers:
+        raise SystemExit(
+            f"Gemma4 num_kv_shared_layers must be between 0 and num_layers "
+            f"(got {shared_kv_layers}, num_layers={num_layers})"
+        )
+    first_shared_kv_layer = num_layers - shared_kv_layers
+    full_kv_producer = first_shared_kv_layer - 1
+    sliding_kv_producer = first_shared_kv_layer - 2
+
+    sliding_window = int(text.get("sliding_window") or 0)
+    num_heads = int(text.get("num_attention_heads") or 0)
+    num_kv_heads = int(text.get("num_key_value_heads") or 0)
+    default_head_dim = int(text.get("head_dim") or 0)
+
+    rope_params = text.get("rope_parameters") if isinstance(text.get("rope_parameters"), dict) else {}
+    full_rope = rope_params.get("full_attention") if isinstance(rope_params.get("full_attention"), dict) else {}
+    sliding_rope = rope_params.get("sliding_attention") if isinstance(rope_params.get("sliding_attention"), dict) else {}
+    full_partial = float(full_rope.get("partial_rotary_factor", 1.0) or 1.0)
+    sliding_partial = float(sliding_rope.get("partial_rotary_factor", 1.0) or 1.0)
+
+    layer_kinds: list[str] = []
+    layer_kv_policy: list[str] = []
+    layer_kv_source: list[int] = []
+    layer_sliding_window: list[int] = []
+    layer_rope_kind: list[str] = []
+    layer_q_head_dim: list[int] = []
+    layer_k_head_dim: list[int] = []
+    layer_v_head_dim: list[int] = []
+    layer_rotary_dim: list[int] = []
+    layer_q_dim: list[int] = []
+    layer_kv_dim: list[int] = []
+    layer_attention_plan: list[dict[str, Any]] = []
+
+    for layer, raw_kind in enumerate(layer_types):
+        attention_kind = "full" if raw_kind == "full_attention" else "sliding"
+        owns_kv = layer < first_shared_kv_layer
+        if owns_kv:
+            kv_source = layer
+        elif attention_kind == "sliding":
+            kv_source = sliding_kv_producer
+        else:
+            kv_source = full_kv_producer
+        if kv_source < 0:
+            raise SystemExit("Gemma4 shared-KV plan has no producer layer to reuse")
+
+        prefix = f"model.language_model.layers.{layer}.self_attn"
+        q = headers.get(f"{prefix}.q_proj.weight")
+        k = headers.get(f"{prefix}.k_proj.weight")
+        v = headers.get(f"{prefix}.v_proj.weight")
+        q_dim = int(q.shape[0]) if q and q.shape else num_heads * default_head_dim
+        k_dim = int(k.shape[0]) if k and k.shape else num_kv_heads * default_head_dim
+        v_dim = int(v.shape[0]) if v and v.shape else k_dim
+        q_head_dim = int(q_dim // max(1, num_heads)) if q_dim else default_head_dim
+        k_head_dim = int(k_dim // max(1, num_kv_heads)) if k_dim else default_head_dim
+        v_head_dim = int(v_dim // max(1, num_kv_heads)) if v_dim else k_head_dim
+        partial = full_partial if attention_kind == "full" else sliding_partial
+        rotary_dim = int(q_head_dim * partial)
+
+        kind = f"{attention_kind}_attention_kv" if owns_kv else f"{attention_kind}_attention_shared_kv"
+        layer_kinds.append(kind)
+        layer_kv_policy.append("produce" if owns_kv else "reuse")
+        layer_kv_source.append(kv_source)
+        layer_sliding_window.append(sliding_window if attention_kind == "sliding" else 0)
+        layer_rope_kind.append("full" if attention_kind == "full" else "swa")
+        layer_q_head_dim.append(q_head_dim)
+        layer_k_head_dim.append(k_head_dim)
+        layer_v_head_dim.append(v_head_dim)
+        layer_rotary_dim.append(rotary_dim)
+        layer_q_dim.append(q_dim)
+        layer_kv_dim.append(k_dim)
+        layer_attention_plan.append({
+            "layer": layer,
+            "kind": kind,
+            "attention_kind": attention_kind,
+            "kv_policy": "produce" if owns_kv else "reuse",
+            "kv_source_layer": kv_source,
+            "sliding_window": sliding_window if attention_kind == "sliding" else 0,
+            "rope_kind": "full" if attention_kind == "full" else "swa",
+            "q_head_dim": q_head_dim,
+            "k_head_dim": k_head_dim,
+            "v_head_dim": v_head_dim,
+            "rotary_dim": rotary_dim,
+            "q_dim": q_dim,
+            "kv_dim": k_dim,
+        })
+
+    layer_k_cache_offset: list[int] = []
+    layer_v_cache_offset: list[int] = []
+    kv_cache_token_stride_total = 0
+    for k_head, v_head in zip(layer_k_head_dim, layer_v_head_dim):
+        k_elems = num_kv_heads * int(k_head)
+        v_elems = num_kv_heads * int(v_head)
+        layer_k_cache_offset.append(kv_cache_token_stride_total)
+        kv_cache_token_stride_total += k_elems
+        layer_v_cache_offset.append(kv_cache_token_stride_total)
+        kv_cache_token_stride_total += v_elems
+
+    return {
+        "layer_types": layer_types,
+        "layer_kinds": layer_kinds,
+        "hybrid_block_pattern": layer_kinds[:],
+        "layer_attention_plan": layer_attention_plan,
+        "layer_kv_policy": layer_kv_policy,
+        "layer_kv_source": layer_kv_source,
+        "layer_sliding_window": layer_sliding_window,
+        "layer_rope_kind": layer_rope_kind,
+        "layer_q_head_dim": layer_q_head_dim,
+        "layer_k_head_dim": layer_k_head_dim,
+        "layer_v_head_dim": layer_v_head_dim,
+        "layer_rotary_dim": layer_rotary_dim,
+        "layer_q_dim": layer_q_dim,
+        "layer_kv_dim": layer_kv_dim,
+        "layer_k_cache_offset": layer_k_cache_offset,
+        "layer_v_cache_offset": layer_v_cache_offset,
+        "kv_cache_layer_stride_variable": True,
+        "kv_cache_token_stride_total": kv_cache_token_stride_total,
+        "max_q_head_dim": max(layer_q_head_dim) if layer_q_head_dim else 0,
+        "max_k_head_dim": max(layer_k_head_dim) if layer_k_head_dim else 0,
+        "max_v_head_dim": max(layer_v_head_dim) if layer_v_head_dim else 0,
+        "kv_cache_head_dim": max(
+            max(layer_k_head_dim) if layer_k_head_dim else 0,
+            max(layer_v_head_dim) if layer_v_head_dim else 0,
+        ),
+        "max_rotary_dim": max(layer_rotary_dim) if layer_rotary_dim else 0,
+        "shared_kv_layers": shared_kv_layers,
+        "first_shared_kv_layer": first_shared_kv_layer,
+    }
+
+
 def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> dict[str, Any]:
     hf = _hf_config(model_dir)
     base = _load_runtime_config_template(config_template)
@@ -1032,6 +1174,26 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "standalone_text_inference_supported": False,
         })
 
+    if arch == "gemma4":
+        headers = _load_safetensors_headers(model_dir)
+        attention_plan = _build_gemma4_attention_plan_from_hf(text, headers)
+        cfg.update({
+            "model": "gemma4",
+            "arch": "gemma4",
+            "model_type": "gemma4",
+            "intermediate_dim": int(cfg.get("intermediate_size") or 0),
+            "max_seq_len": int(cfg.get("context_length") or 0),
+            "has_attention_biases": bool(text.get("attention_bias", False)),
+            "has_qk_norm": True,
+            "prefill_policy": "batched",
+            "gemma4_per_layer_embedding": True,
+            "rope_layout": "split",
+            "rope_param_mode": "per_layer_direct",
+            "num_kv_shared_layers": int(text.get("num_kv_shared_layers") or 0),
+            "sampler_defaults": {"repeat_penalty": 1.05, "repeat_last_n": 64},
+        })
+        cfg.update(attention_plan)
+
     if arch == "glm4":
         partial_key = "partial_rotary_factor"
         contract = _safetensors_arch_contract("glm4")
@@ -1194,6 +1356,8 @@ def _ref_transform(arch: str, ref: TensorRef) -> str | None:
 def _ignored_source_tensor(arch: str, name: str) -> str | None:
     if name.startswith("mtp.") or name.startswith("model.mtp."):
         return "mtp_decoder_block_not_in_main_pass"
+    if arch == "gemma4_assistant" and name.startswith("masked_embedding."):
+        return "ordered_embedding_sidecar_not_in_current_runtime"
     if arch == "qwen35" and (name.startswith("model.visual.") or name.startswith("visual.")):
         return "vision_tower_not_in_decoder_pass"
     if arch == "qwen35" and name.startswith("model.vision_model."):

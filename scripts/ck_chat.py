@@ -414,6 +414,7 @@ class CKModel:
         self.context_window = 0
         self.has_kv_decode = False
         self.has_parity = False
+        self.has_named_activations = False
         self.eos_tokens = set()  # Will be populated during load
         self.logits_stride = None  # Optional: logits stride in floats (0 = last-only)
         self.use_chat_template = True
@@ -428,6 +429,61 @@ class CKModel:
         self.default_system_prompt = "You are a helpful assistant."
         self.prefill_policy = "batched"
         self.thinking_mode = "auto"
+
+    def _setup_named_activation_api(self) -> None:
+        """Bind optional v8 named-activation lookup symbols."""
+        self.has_named_activations = False
+        if self.lib is None:
+            return
+        try:
+            self.lib.ck_model_get_named_activation_ptr.argtypes = [ctypes.c_char_p]
+            self.lib.ck_model_get_named_activation_ptr.restype = ctypes.c_void_p
+            self.lib.ck_model_get_named_activation_nbytes.argtypes = [ctypes.c_char_p]
+            self.lib.ck_model_get_named_activation_nbytes.restype = ctypes.c_ssize_t
+            self.lib.ck_model_get_named_activation_runtime_offset.argtypes = [ctypes.c_char_p]
+            self.lib.ck_model_get_named_activation_runtime_offset.restype = ctypes.c_ssize_t
+            self.has_named_activations = True
+        except AttributeError:
+            self.has_named_activations = False
+
+    def named_activation_nbytes(self, name: str) -> int:
+        """Return byte size for a generated runtime activation, or -1 if absent."""
+        if not self.has_named_activations or self.lib is None:
+            return -1
+        return int(self.lib.ck_model_get_named_activation_nbytes(str(name).encode()))
+
+    def named_activation_runtime_offset(self, name: str) -> int:
+        """Return runtime byte offset for a generated activation, or -1 if absent."""
+        if not self.has_named_activations or self.lib is None:
+            return -1
+        return int(self.lib.ck_model_get_named_activation_runtime_offset(str(name).encode()))
+
+    def named_activation_ptr(self, name: str) -> int:
+        """Return raw pointer for a generated runtime activation, or 0 if absent."""
+        if not self.has_named_activations or self.lib is None:
+            return 0
+        ptr = self.lib.ck_model_get_named_activation_ptr(str(name).encode())
+        return int(ptr or 0)
+
+    def read_named_activation_f32(self, name: str, max_floats: Optional[int] = None) -> Optional[np.ndarray]:
+        """Copy a named activation as float32.
+
+        v8 codegen emits this API for external bridge hosts. It gives the Python
+        runtime a deterministic way to inspect buffers such as main_stream,
+        backbone_stream, vision_output, or future target_hidden_stream without
+        hard-coding memory offsets.
+        """
+        nbytes = self.named_activation_nbytes(name)
+        ptr = self.named_activation_ptr(name)
+        if nbytes <= 0 or ptr == 0:
+            return None
+        count = nbytes // ctypes.sizeof(ctypes.c_float)
+        if max_floats is not None:
+            count = min(count, max(0, int(max_floats)))
+        if count <= 0:
+            return np.zeros((0,), dtype=np.float32)
+        c_arr = (ctypes.c_float * count).from_address(ptr)
+        return np.ctypeslib.as_array(c_arr).copy()
 
     def _load_chat_contract(self) -> Optional[dict]:
         if self._chat_contract_loaded:
@@ -562,6 +618,7 @@ class CKModel:
 
         self.lib.ck_model_get_active_tokens.argtypes = []
         self.lib.ck_model_get_active_tokens.restype = ctypes.c_int
+        self._setup_named_activation_api()
         # Optional logits stride API (newer v6.6 models)
         try:
             self.lib.ck_model_get_logits_stride.argtypes = []

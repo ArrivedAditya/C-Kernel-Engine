@@ -58,6 +58,28 @@ lib.argmax_f32.argtypes = [
 ]
 lib.argmax_f32.restype = ctypes.c_int
 
+lib.speculative_verify_greedy_f32.argtypes = [
+    ctypes.POINTER(ctypes.c_float),  # target_logits
+    ctypes.c_int,                     # vocab_size
+    ctypes.c_int,                     # draft_token
+    ctypes.POINTER(ctypes.c_int),    # accepted
+    ctypes.POINTER(ctypes.c_int),    # verified_token
+]
+lib.speculative_verify_greedy_f32.restype = None
+
+lib.speculative_commit_one_i32.argtypes = [
+    ctypes.c_int,                    # accepted
+    ctypes.c_int,                    # verified_token
+    ctypes.POINTER(ctypes.c_int),    # token_buffer
+    ctypes.POINTER(ctypes.c_int),    # token_count
+    ctypes.c_int,                    # max_tokens
+    ctypes.POINTER(ctypes.c_int),    # target_position
+    ctypes.POINTER(ctypes.c_int),    # draft_position
+    ctypes.POINTER(ctypes.c_int),    # accepted_count
+    ctypes.POINTER(ctypes.c_int),    # rejected_count
+]
+lib.speculative_commit_one_i32.restype = None
+
 
 # =============================================================================
 # Helper functions
@@ -252,6 +274,127 @@ def run_argmax_tests(n=1024, warmup=10, iterations=1000):
     return report
 
 
+def run_speculative_verify_tests(n=1024, warmup=10, iterations=1000):
+    """Run one-token greedy speculative verification tests."""
+    np.random.seed(48)
+
+    logits_np = np.random.randn(n).astype(np.float32)
+    logits_np[17] = 100.0
+    logits_ptr = numpy_to_ptr(logits_np)
+
+    accepted_np = np.zeros(1, dtype=np.int32)
+    verified_np = np.zeros(1, dtype=np.int32)
+    accepted_ptr = numpy_int_ptr(accepted_np)
+    verified_ptr = numpy_int_ptr(verified_np)
+
+    report = TestReport(
+        test_name="Speculative Verify Greedy",
+        dtype="fp32",
+        shape=f"n={n}",
+        cpu_info=get_cpu_info()
+    )
+
+    def c_verify(draft_token: int):
+        accepted_np[0] = -1
+        verified_np[0] = -1
+        lib.speculative_verify_greedy_f32(logits_ptr, n, draft_token, accepted_ptr, verified_ptr)
+        return int(accepted_np[0]), int(verified_np[0])
+
+    accept_result = c_verify(17)
+    reject_result = c_verify(7)
+    passed = accept_result == (1, 17) and reject_result == (0, 17)
+
+    def c_verify_accept():
+        lib.speculative_verify_greedy_f32(logits_ptr, n, 17, accepted_ptr, verified_ptr)
+
+    c_time = time_function(c_verify_accept, warmup=warmup, iterations=iterations, name="C speculative verify")
+
+    report.add_result(TestResult(
+        name="speculative_verify_greedy_f32",
+        passed=passed,
+        max_diff=0.0 if passed else 1.0,
+        tolerance=0.0,
+        pytorch_time=None,
+        kernel_time=c_time
+    ))
+
+    return report
+
+
+def run_speculative_commit_tests(warmup=10, iterations=1000):
+    """Run one-token speculative commit state transition tests."""
+    max_tokens = 4
+    tokens_np = np.full(max_tokens, -1, dtype=np.int32)
+    token_count_np = np.zeros(1, dtype=np.int32)
+    target_pos_np = np.zeros(1, dtype=np.int32)
+    draft_pos_np = np.zeros(1, dtype=np.int32)
+    accepted_count_np = np.zeros(1, dtype=np.int32)
+    rejected_count_np = np.zeros(1, dtype=np.int32)
+
+    report = TestReport(
+        test_name="Speculative Commit One",
+        dtype="i32",
+        shape=f"max_tokens={max_tokens}",
+        cpu_info=get_cpu_info()
+    )
+
+    def c_commit(accepted: int, token: int):
+        lib.speculative_commit_one_i32(
+            accepted,
+            token,
+            numpy_int_ptr(tokens_np),
+            numpy_int_ptr(token_count_np),
+            max_tokens,
+            numpy_int_ptr(target_pos_np),
+            numpy_int_ptr(draft_pos_np),
+            numpy_int_ptr(accepted_count_np),
+            numpy_int_ptr(rejected_count_np),
+        )
+
+    c_commit(1, 17)
+    c_commit(0, 23)
+    passed = (
+        tokens_np[:2].tolist() == [17, 23] and
+        int(token_count_np[0]) == 2 and
+        int(target_pos_np[0]) == 2 and
+        int(draft_pos_np[0]) == 2 and
+        int(accepted_count_np[0]) == 1 and
+        int(rejected_count_np[0]) == 1
+    )
+
+    def c_commit_bench():
+        local_tokens = np.full(max_tokens, -1, dtype=np.int32)
+        local_count = np.zeros(1, dtype=np.int32)
+        local_target = np.zeros(1, dtype=np.int32)
+        local_draft = np.zeros(1, dtype=np.int32)
+        local_accepts = np.zeros(1, dtype=np.int32)
+        local_rejects = np.zeros(1, dtype=np.int32)
+        lib.speculative_commit_one_i32(
+            1,
+            17,
+            numpy_int_ptr(local_tokens),
+            numpy_int_ptr(local_count),
+            max_tokens,
+            numpy_int_ptr(local_target),
+            numpy_int_ptr(local_draft),
+            numpy_int_ptr(local_accepts),
+            numpy_int_ptr(local_rejects),
+        )
+
+    c_time = time_function(c_commit_bench, warmup=warmup, iterations=iterations, name="C speculative commit")
+
+    report.add_result(TestResult(
+        name="speculative_commit_one_i32",
+        passed=passed,
+        max_diff=0.0 if passed else 1.0,
+        tolerance=0.0,
+        pytorch_time=None,
+        kernel_time=c_time
+    ))
+
+    return report
+
+
 def run_batched_topk_tests(num_tokens=32, n_experts=8, k=2, warmup=10, iterations=1000):
     """Run batched top-K tests (MoE-style routing)."""
     np.random.seed(45)
@@ -346,6 +489,14 @@ if __name__ == "__main__":
     argmax_report = run_argmax_tests(n=1024, warmup=10, iterations=1000)
     argmax_report.print_report()
 
+    # Greedy speculative verifier
+    speculative_report = run_speculative_verify_tests(n=1024, warmup=10, iterations=1000)
+    speculative_report.print_report()
+
+    # Greedy speculative commit state transition
+    speculative_commit_report = run_speculative_commit_tests(warmup=10, iterations=1000)
+    speculative_commit_report.print_report()
+
     # Batched (MoE-style)
     batched_report = run_batched_topk_tests(num_tokens=32, n_experts=8, k=2, warmup=10, iterations=1000)
     batched_report.print_report()
@@ -355,6 +506,8 @@ if __name__ == "__main__":
         topk_report.all_passed() and
         softmax_report.all_passed() and
         argmax_report.all_passed() and
+        speculative_report.all_passed() and
+        speculative_commit_report.all_passed() and
         batched_report.all_passed()
     )
     if not all_passed:
