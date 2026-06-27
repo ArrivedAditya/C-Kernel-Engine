@@ -1,0 +1,79 @@
+{
+  "id": "speculative_commit_one_i32",
+  "op": "speculative_commit_or_reject",
+  "variant": "greedy_one_token",
+  "quant": {
+    "activation": "i32",
+    "output": "i32"
+  },
+  "inputs": [
+    {
+      "name": "accepted",
+      "dtype": "i32",
+      "shape": [1],
+      "desc": "Acceptance flag produced by speculative_verify_greedy_f32."
+    },
+    {
+      "name": "verified_token",
+      "dtype": "i32",
+      "shape": [1],
+      "desc": "Token to emit: accepted draft token or authoritative target token."
+    },
+    {
+      "name": "token_buffer",
+      "dtype": "i32",
+      "shape": ["max_tokens"],
+      "desc": "Output token buffer updated in-place when capacity allows."
+    },
+    {
+      "name": "token_count",
+      "dtype": "i32",
+      "shape": [1],
+      "desc": "Number of committed output tokens, updated in-place."
+    },
+    {
+      "name": "target_position",
+      "dtype": "i32",
+      "shape": [1],
+      "desc": "Authoritative target decode position, advanced by one."
+    },
+    {
+      "name": "draft_position",
+      "dtype": "i32",
+      "shape": [1],
+      "desc": "Draft position synchronized to target position for the one-token milestone."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "accepted_count",
+      "dtype": "i32",
+      "shape": [1],
+      "desc": "Number of accepted draft tokens, updated in-place."
+    },
+    {
+      "name": "rejected_count",
+      "dtype": "i32",
+      "shape": [1],
+      "desc": "Number of rejected draft tokens, updated in-place."
+    }
+  ],
+  "scratch": [],
+  "dims": ["max_tokens"],
+  "params": [],
+  "impl": {
+    "function": "speculative_commit_one_i32",
+    "c_declaration": "void speculative_commit_one_i32(int accepted, int verified_token, int *token_buffer, int *token_count, int max_tokens, int *target_position, int *draft_position, int *accepted_count, int *rejected_count);",
+    "sources": ["src/kernels/topk_kernels.c"]
+  },
+  "tests": {
+    "parity": [
+      {
+        "kind": "ctypes",
+        "command": ".venv/bin/python unittest/test_topk.py",
+        "tolerance": "0"
+      }
+    ]
+  },
+  "notes": "First-stage speculative decode commit kernel. It commits exactly one verified token and keeps draft/target positions synchronized. Multi-token acceptance and KV rollback should be introduced as a separate widened contract."
+}

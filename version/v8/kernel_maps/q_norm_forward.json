@@ -1,0 +1,61 @@
+{
+  "id": "q_norm_forward",
+  "op": "q_norm",
+  "variant": "fp32",
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": ["H", "T", "D"],
+      "desc": "Query tensor [num_heads, num_tokens, head_dim] to be normalized in-place"
+    }
+  ],
+  "weights": [
+    {
+      "name": "q_gamma",
+      "dtype": "fp32",
+      "shape": ["D"],
+      "desc": "Q norm gamma weights [head_dim], shared across all heads"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": ["H", "T", "D"],
+      "desc": "Query tensor after per-head RMSNorm (in-place)"
+    }
+  ],
+  "scratch": [],
+  "dims": ["H", "T", "D"],
+  "params": [
+    {
+      "name": "eps",
+      "dtype": "float",
+      "desc": "RMSNorm epsilon"
+    }
+  ],
+  "impl": {
+    "function": "q_norm_forward",
+    "c_declaration": "void q_norm_forward(float *q, const float *q_gamma, int num_heads, int num_tokens, int head_dim, float eps);",
+    "sources": ["src/kernels/qk_norm_kernels.c"],
+    "variants": [
+      {"name": "ref", "requires": [], "compile_flags": []}
+    ]
+  },
+  "tests": {
+    "parity": [
+      {
+        "kind": "numpy",
+        "command": ".venv/bin/python unittest/test_gemma4_assistant_kernels.py",
+        "tolerance": "2e-6"
+      }
+    ]
+  },
+  "notes": "Gemma4 assistant q-only shared-KV attention normalizes Q without a separate K projection."
+}

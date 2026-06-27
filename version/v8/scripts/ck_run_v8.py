@@ -1011,6 +1011,10 @@ def step_run_chat(work_dir: Path, args: argparse.Namespace, *, gguf_path: Path |
         cmd.append("--python-tokenizer")
     if args.memory:
         cmd.append("--memory")
+    if getattr(args, "speculative_draft_model_dir", None):
+        cmd.extend(["--speculative-draft-model-dir", str(args.speculative_draft_model_dir)])
+    if getattr(args, "speculative_draft_tokens", None) is not None:
+        cmd.extend(["--speculative-draft-tokens", str(int(args.speculative_draft_tokens))])
 
     os.execvpe(sys.executable, cmd, env)
 
@@ -1243,6 +1247,10 @@ Examples:
     run_parser.add_argument("--thinking-mode", choices=["auto", "visible", "suppressed"], default="auto")
     run_parser.add_argument("--python-tokenizer", action="store_true")
     run_parser.add_argument("--memory", action="store_true")
+    run_parser.add_argument("--speculative-draft-model-dir", default=None,
+                            help="Path to a compiled draft model directory for greedy speculative decoding")
+    run_parser.add_argument("--speculative-draft-tokens", type=int, default=4,
+                            help="Number of draft tokens to propose per speculative batch")
     run_parser.add_argument("--force-download", action="store_true")
     run_parser.add_argument("--force-convert", action="store_true")
     run_parser.add_argument("--force-compile", action="store_true")

@@ -46,6 +46,10 @@ class ModelContractInspectorTests(unittest.TestCase):
         self.assertEqual(report["status"], "supported")
         self.assertEqual(report["layer_kind_counts"], {"attention": 1, "mamba": 5, "moe": 4})
         self.assertEqual(report["missing_ops"], [])
+        self.assertEqual(report["kernel_registry"]["missing_kernel_ops"], [])
+        self.assertEqual(report["template_suggestion"]["candidate_template"], "nemotron_h.json")
+        self.assertIn("mamba", report["template_suggestion"]["block_sketch"]["body"]["ops_by_kind"])
+        self.assertIn("moe", report["template_suggestion"]["block_sketch"]["body"]["ops_by_kind"])
         self.assertNotIn("mamba_in_proj_split", report["missing_ops"])
         self.assertNotIn("mamba_conv1d_state_update", report["missing_ops"])
         self.assertNotIn("mamba_dt_softplus", report["missing_ops"])
@@ -157,6 +161,9 @@ class ModelContractInspectorTests(unittest.TestCase):
         self.assertEqual(report["arch"], "kimi_vl")
         self.assertEqual(report["status"], "bringup_required")
         self.assertEqual(report["layer_kind_counts"], {"mla_dense_mlp": 1, "mla_moe": 3})
+        self.assertEqual(report["template_suggestion"]["candidate_template"], "kimi_vl.json")
+        self.assertEqual(report["template_suggestion"]["modalities"], ["text", "vision"])
+        self.assertIn("mla_moe", report["template_suggestion"]["block_sketch"]["body"]["ops_by_kind"])
         for op in (
             "mla_attention",
             "kv_lora_decompress",
@@ -174,6 +181,16 @@ class ModelContractInspectorTests(unittest.TestCase):
             "moonvit_bridge_contract",
         ):
             self.assertIn(missing, report["missing_ops"])
+        missing_kernel_ops = {
+            row["op"] for row in report["kernel_registry"]["missing_kernel_ops"]
+        }
+        self.assertIn("moonvit_encoder", missing_kernel_ops)
+        self.assertIn("moonvit_projector", missing_kernel_ops)
+        self.assertIn("media_placeholder_merge", missing_kernel_ops)
+        self.assertIn("tiktoken_tokenizer", missing_kernel_ops)
+        self.assertNotIn("group_limited_topk_router", missing_kernel_ops)
+        self.assertNotIn("moe_swiglu_expert_mlp", missing_kernel_ops)
+        self.assertNotIn("shared_swiglu_expert_mlp", missing_kernel_ops)
         self.assertNotIn("moe_swiglu_expert_mlp", report["missing_ops"])
         self.assertNotIn("shared_swiglu_expert_mlp", report["missing_ops"])
         self.assertNotIn("kv_lora_decompress_contract", report["missing_ops"])
@@ -313,6 +330,58 @@ class ModelContractInspectorTests(unittest.TestCase):
         self.assertEqual(report["status"], "supported")
         self.assertEqual(report["layer_kind_counts"], {"attention": 4})
         self.assertEqual(report["missing_ops"], [])
+        self.assertEqual(report["kernel_registry"]["missing_kernel_ops"], [])
+        self.assertEqual(report["template_suggestion"]["candidate_template"], "qwen3.json")
+        self.assertIn("attention", report["template_suggestion"]["block_sketch"]["body"]["ops_by_kind"])
+
+    def test_inspector_weights_audit_reads_safetensors_index_from_model_dir(self) -> None:
+        cfg = {
+            "architectures": ["KimiVLForConditionalGeneration"],
+            "model_type": "kimi_vl",
+            "vision_config": {"model_type": "moonvit", "num_hidden_layers": 1},
+            "text_config": {
+                "hidden_size": 2048,
+                "intermediate_size": 11264,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 16,
+                "num_key_value_heads": 16,
+                "first_k_dense_replace": 1,
+                "moe_layer_freq": 1,
+                "hidden_act": "silu",
+            },
+        }
+        index = {
+            "metadata": {"total_parameters": 123, "total_size": 456},
+            "weight_map": {
+                "language_model.model.layers.0.self_attn.q_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.kv_a_proj_with_mqa.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.kv_a_layernorm.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.kv_b_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.0.self_attn.o_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.gate.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.experts.0.gate_proj.weight": "model-00001-of-00001.safetensors",
+                "language_model.model.layers.1.mlp.shared_experts.gate_proj.weight": "model-00001-of-00001.safetensors",
+                "vision_tower.encoder.layers.0.self_attn.q_proj.weight": "model-00001-of-00001.safetensors",
+                "multi_modal_projector.linear_1.weight": "model-00001-of-00001.safetensors",
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+            (root / "model.safetensors.index.json").write_text(json.dumps(index), encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), str(root), "--weights-audit"],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["weights_audit"]["status"], "pass")
+        self.assertEqual(report["weights_audit"]["model_map_status"], "known")
+        self.assertEqual(report["weights_audit"]["families"]["mla_attention"], 3)
+        self.assertEqual(report["weights_audit"]["required_tensor_patterns"]["missing"], [])
 
 
 if __name__ == "__main__":

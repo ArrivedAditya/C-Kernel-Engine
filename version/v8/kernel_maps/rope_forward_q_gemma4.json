@@ -1,0 +1,51 @@
+{
+  "id": "rope_forward_q_gemma4",
+  "op": "rope",
+  "variant": "fp32_head_major_q_only",
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": ["H", "T", "D"],
+      "desc": "Query tensor [heads, tokens, head_dim] to be rotated in-place"
+    }
+  ],
+  "weights": [
+    {
+      "name": "rope_freqs",
+      "dtype": "fp32",
+      "shape": ["rotary_dim/2"],
+      "desc": "Gemma4 full-attention proportional RoPE frequency factors; ignored for sliding layers"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": ["H", "T", "D"],
+      "desc": "Query tensor after RoPE application (in-place)"
+    }
+  ],
+  "scratch": [],
+  "dims": ["H", "T", "D", "rotary_dim"],
+  "params": [
+    {"name": "aligned_head_dim", "dtype": "int32"},
+    {"name": "pos_offset", "dtype": "int32"},
+    {"name": "rotary_dim", "dtype": "int32"},
+    {"name": "cache_rotary_dim", "dtype": "int32", "source": "dim:max_rotary_dim"}
+  ],
+  "impl": {
+    "function": "rope_forward_q_split_direct_f32",
+    "c_declaration": "void rope_forward_q_split_direct_f32(float *q, const float *freq_factors, int use_freq_factors, int num_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int rotary_dim, float freq_base);",
+    "sources": ["src/kernels/rope_kernels.c"],
+    "variants": [
+      {"name": "ref", "requires": [], "compile_flags": []}
+    ]
+  },
+  "notes": "Gemma4 assistant q-only RoPE. The Q stream later acts as the shared K/V stream."
+}

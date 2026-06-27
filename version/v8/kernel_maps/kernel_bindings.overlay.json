@@ -31,6 +31,174 @@
         }
       ]
     },
+    "attention_forward_causal_head_major_shared_kv_gemma4": {
+      "note": "Gemma4 assistant prefill q-only attention. q_scratch is used as Q/K/V.",
+      "params": [
+        {
+          "cast": "float*",
+          "name": "q",
+          "source": "scratch:q_scratch"
+        },
+        {
+          "cast": "float*",
+          "name": "output",
+          "source": "output:out"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "kv_stride_tokens",
+          "source": "dim:max_seq_len"
+        }
+      ]
+    },
+    "attention_forward_causal_head_major_shared_kv_sliding_gemma4": {
+      "note": "Gemma4 assistant prefill q-only sliding attention. q_scratch is used as Q/K/V.",
+      "params": [
+        {
+          "cast": "float*",
+          "name": "q",
+          "source": "scratch:q_scratch"
+        },
+        {
+          "cast": "float*",
+          "name": "output",
+          "source": "output:out"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "kv_stride_tokens",
+          "source": "dim:max_seq_len"
+        },
+        {
+          "name": "sliding_window",
+          "source": "dim:sliding_window"
+        }
+      ]
+    },
+    "attention_forward_decode_head_major_shared_kv_gemma4": {
+      "note": "Gemma4 assistant decode q-only attention over shared-Q KV cache.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "q_token",
+          "source": "scratch:q_scratch"
+        },
+        {
+          "cast": "const float*",
+          "name": "k_cache",
+          "source": "runtime:kv_cache_k_layer"
+        },
+        {
+          "cast": "const float*",
+          "name": "v_cache",
+          "source": "runtime:kv_cache_v_layer"
+        },
+        {
+          "cast": "float*",
+          "name": "out_token",
+          "source": "output:out"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "kv_tokens",
+          "source": "runtime:kv_tokens"
+        },
+        {
+          "name": "cache_capacity",
+          "source": "dim:max_seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        }
+      ]
+    },
+    "attention_forward_decode_head_major_shared_kv_sliding_gemma4": {
+      "note": "Gemma4 assistant sliding decode q-only attention over shared-Q KV cache.",
+      "params": [
+        {
+          "cast": "const float*",
+          "name": "q_token",
+          "source": "scratch:q_scratch"
+        },
+        {
+          "cast": "const float*",
+          "name": "k_cache",
+          "source": "runtime:kv_cache_k_layer"
+        },
+        {
+          "cast": "const float*",
+          "name": "v_cache",
+          "source": "runtime:kv_cache_v_layer"
+        },
+        {
+          "cast": "float*",
+          "name": "out_token",
+          "source": "output:out"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "kv_tokens",
+          "source": "runtime:kv_tokens"
+        },
+        {
+          "name": "cache_capacity",
+          "source": "dim:max_seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "sliding_window",
+          "source": "dim:sliding_window"
+        }
+      ]
+    },
     "attention_forward_causal_head_major_gqa_flash_strided_gemma4": {
       "note": "Prefill: all tokens process together with causal mask Gemma4 variant uses attention score scale 1.0 to match llama.cpp.",
       "params": [
@@ -733,6 +901,29 @@
         {
           "name": "cap",
           "source": "dim:final_logit_softcapping"
+        }
+      ]
+    },
+    "assistant_layer_scale_forward": {
+      "note": "Apply Gemma4 assistant/MTP per-layer scalar to the assistant hidden stream.",
+      "params": [
+        {
+          "cast": "float*",
+          "name": "hidden",
+          "source": "activation:hidden"
+        },
+        {
+          "cast": "const float*",
+          "name": "scale",
+          "source": "weight_f:layer_output_scale"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "embed_dim",
+          "source": "dim:embed_dim"
         }
       ]
     },
@@ -1778,6 +1969,124 @@
         {
           "name": "merge_size",
           "source": "dim:merge_size"
+        }
+      ]
+    },
+    "q_norm_forward": {
+      "note": "Gemma4 assistant q-only per-head RMSNorm. In-place on q_scratch.",
+      "params": [
+        {
+          "cast": "float*",
+          "name": "q",
+          "source": "scratch:q_scratch"
+        },
+        {
+          "cast": "const float*",
+          "name": "q_gamma",
+          "source": "weight_f:q_norm"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps"
+        }
+      ]
+    },
+    "kv_cache_store_shared_q": {
+      "note": "Gemma4 assistant decode cache store. Writes post-RoPE Q into both K and V cache.",
+      "params": [
+        {
+          "cast": "float*",
+          "name": "kv_cache_k",
+          "source": "runtime:kv_cache_k_layer"
+        },
+        {
+          "cast": "float*",
+          "name": "kv_cache_v",
+          "source": "runtime:kv_cache_v_layer"
+        },
+        {
+          "cast": "const float*",
+          "name": "q",
+          "source": "scratch:q_scratch"
+        },
+        {
+          "name": "layer",
+          "source": "runtime:layer"
+        },
+        {
+          "name": "pos",
+          "source": "runtime:pos"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "max_seq_len",
+          "source": "dim:max_seq_len"
+        }
+      ]
+    },
+    "rope_forward_q_split_direct_f32": {
+      "note": "Gemma4 assistant q-only split-half direct RoPE with per-layer theta/rotary_dim and optional frequency factors.",
+      "params": [
+        {
+          "cast": "float*",
+          "name": "q",
+          "source": "scratch:q_scratch"
+        },
+        {
+          "cast": "const float*",
+          "name": "freq_factors",
+          "source": "weight_f:rope_freqs"
+        },
+        {
+          "name": "use_freq_factors",
+          "source": "dim:use_rope_freq_factors"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "pos_offset",
+          "source": "runtime:pos"
+        },
+        {
+          "name": "rotary_dim",
+          "source": "dim:rotary_dim"
+        },
+        {
+          "name": "freq_base",
+          "source": "dim:rope_freq_base"
         }
       ]
     },

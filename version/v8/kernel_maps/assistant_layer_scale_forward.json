@@ -1,0 +1,65 @@
+{
+  "id": "assistant_layer_scale_forward",
+  "op": "assistant_layer_scale",
+  "variant": "fp32_inplace",
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "hidden",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "E"
+      ],
+      "desc": "Assistant/MTP hidden stream, scaled in place."
+    }
+  ],
+  "weights": [
+    {
+      "name": "scale",
+      "dtype": "fp32",
+      "shape": [
+        1
+      ],
+      "desc": "Per-layer assistant output scalar."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "hidden",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "E"
+      ],
+      "desc": "Scaled assistant/MTP hidden stream."
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "T",
+    "E"
+  ],
+  "params": [],
+  "impl": {
+    "function": "assistant_layer_scale_forward",
+    "c_declaration": "void assistant_layer_scale_forward(float *hidden, const float *scale, int tokens, int embed_dim);",
+    "sources": [
+      "src/kernels/gemma4_per_layer_embed.c"
+    ]
+  },
+  "tests": {
+    "parity": [
+      {
+        "kind": "numpy",
+        "command": ".venv/bin/python unittest/test_gemma4_assistant_kernels.py",
+        "tolerance": "1e-7"
+      }
+    ]
+  },
+  "notes": "Gemma4 assistant/MTP drafter layer scalar. This is intentionally separate from the main Gemma4 per-layer embedding kernel because the assistant path bridges from/to the backbone hidden stream."
+}

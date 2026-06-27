@@ -907,6 +907,12 @@ void qk_norm_forward(float *q,
                      int num_tokens,
                      int head_dim,
                      float eps);
+void q_norm_forward(float *q,
+                    const float *q_gamma,
+                    int num_heads,
+                    int num_tokens,
+                    int head_dim,
+                    float eps);
 
 
 void gemma4_per_layer_prepare_forward(float *per_layer_input,
@@ -947,6 +953,11 @@ void gemma4_per_layer_embed_forward(float *hidden,
                                     int embed_dim,
                                     int per_layer_dim,
                                     float eps);
+
+void assistant_layer_scale_forward(float *hidden,
+                                   const float *scale,
+                                   int tokens,
+                                   int embed_dim);
 
 void gemma4_final_logit_softcap_forward(float *logits,
                                         int tokens,
@@ -1286,6 +1297,13 @@ void attention_forward_causal_head_major_gqa_flash_strided_gemma4(const float *q
                                                                   int head_dim,
                                                                   int aligned_head_dim,
                                                                   int kv_stride_tokens);
+void attention_forward_causal_head_major_shared_kv_gemma4(const float *q,
+                                                          float *output,
+                                                          int num_heads,
+                                                          int num_tokens,
+                                                          int head_dim,
+                                                          int aligned_head_dim,
+                                                          int kv_stride_tokens);
 
 void attention_forward_full_head_major_gqa_flash_strided_gemma4(const float *q,
                                                                 const float *k,
@@ -1376,6 +1394,15 @@ void attention_forward_decode_head_major_gqa_flash_gemma4(const float *q_token,
                                                           int cache_capacity,
                                                           int head_dim,
                                                           int aligned_head_dim);
+void attention_forward_decode_head_major_shared_kv_gemma4(const float *q_token,
+                                                          const float *k_cache,
+                                                          const float *v_cache,
+                                                          float *out_token,
+                                                          int num_heads,
+                                                          int kv_tokens,
+                                                          int cache_capacity,
+                                                          int head_dim,
+                                                          int aligned_head_dim);
 
 // Chunk decode attention: q_chunk/out_chunk use compact head-major
 // [num_heads, q_tokens, aligned_head_dim] layout while K/V are stored in the
@@ -1454,6 +1481,15 @@ void attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4(
     float *output,
     int num_heads,
     int num_kv_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int kv_stride_tokens,
+    int sliding_window);
+void attention_forward_causal_head_major_shared_kv_sliding_gemma4(
+    const float *q,
+    float *output,
+    int num_heads,
     int num_tokens,
     int head_dim,
     int aligned_head_dim,
@@ -1910,6 +1946,17 @@ void attention_forward_decode_head_major_gqa_flash_sliding_gemma4(
     int head_dim,
     int aligned_head_dim,
     int sliding_window);
+void attention_forward_decode_head_major_shared_kv_sliding_gemma4(
+    const float *q_token,
+    const float *k_cache,
+    const float *v_cache,
+    float *out_token,
+    int num_heads,
+    int kv_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    int sliding_window);
 
 // TRUE Flash Attention (O(1) for decode) - Tri Dao's algorithm
 //   out: [T_q, H, D_h]
@@ -1967,6 +2014,14 @@ void kv_cache_store(float *__restrict kv_cache_k,
                     int num_kv_heads,
                     int head_dim,
                     int max_seq_len);
+void kv_cache_store_shared_q(float *__restrict kv_cache_k,
+                             float *__restrict kv_cache_v,
+                             const float *__restrict q,
+                             int layer,
+                             int pos,
+                             int num_heads,
+                             int head_dim,
+                             int max_seq_len);
 
 void kv_cache_store_f16(uint16_t *__restrict kv_cache_k,
                         uint16_t *__restrict kv_cache_v,
@@ -2383,6 +2438,27 @@ void nemotron_group_limited_topk_router_f32(const float *scores,
 // Argmax (top-1)
 int argmax_f32(const float *scores, int n);
 
+// Greedy speculative verification for one candidate token.
+// accepted=1 when draft_token equals argmax(target_logits), otherwise 0.
+void speculative_verify_greedy_f32(const float *target_logits,
+                                   int vocab_size,
+                                   int draft_token,
+                                   int *accepted,
+                                   int *verified_token);
+
+// Greedy one-token speculative commit state update.
+// Appends verified_token when capacity allows, advances target_position, and
+// keeps draft_position synchronized for the one-token verifier milestone.
+void speculative_commit_one_i32(int accepted,
+                                int verified_token,
+                                int *token_buffer,
+                                int *token_count,
+                                int max_tokens,
+                                int *target_position,
+                                int *draft_position,
+                                int *accepted_count,
+                                int *rejected_count);
+
 // =============================================================================
 // DeepSeek-style scalar reference kernels
 // =============================================================================
@@ -2696,6 +2772,16 @@ void rope_forward_qk_split_direct_f32(float *q,
                                       int pos_offset,
                                       int rotary_dim,
                                       float freq_base);
+void rope_forward_q_split_direct_f32(float *q,
+                                     const float *freq_factors,
+                                     int use_freq_factors,
+                                     int num_heads,
+                                     int num_tokens,
+                                     int head_dim,
+                                     int aligned_head_dim,
+                                     int pos_offset,
+                                     int rotary_dim,
+                                     float freq_base);
 
 void rope_forward_qk_gemma4_direct(float *q,
                                    float *k,

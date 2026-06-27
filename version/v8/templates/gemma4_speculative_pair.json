@@ -1,0 +1,168 @@
+{
+  "version": 1,
+  "name": "gemma4_speculative_pair",
+  "family": "gemma4",
+  "experimental": true,
+  "description": "Composite Gemma4 target + Gemma4 assistant/MTP drafter speculative circuit. This is a circuit contract scaffold; full codegen lowering is hardened on Xeon.",
+  "flags": {
+    "composite_runtime": true,
+    "target_template": "gemma4",
+    "draft_template": "gemma4_assistant",
+    "verify_mode": "greedy",
+    "draft_tokens_initial": 1
+  },
+  "contract": {
+    "target": {
+      "role": "authoritative_decoder",
+      "template": "gemma4",
+      "weight_namespace": "target",
+      "hidden_export": "target_hidden_stream",
+      "hidden_size": 2560
+    },
+    "draft": {
+      "role": "mtp_drafter",
+      "template": "gemma4_assistant",
+      "weight_namespace": "draft",
+      "backbone_hidden_input": "draft_backbone_stream",
+      "hidden_size": 256,
+      "backbone_hidden_size": 2560,
+      "standalone_text_inference_supported": false
+    },
+    "bridge": {
+      "op": "target_hidden_to_draft_backbone_stream",
+      "source": "target_hidden_stream",
+      "dest": "draft_backbone_stream",
+      "shape": ["T", 2560],
+      "dtype": "fp32"
+    },
+    "verifier": {
+      "op": "speculative_verify_greedy",
+      "kernel": "speculative_verify_greedy_f32",
+      "inputs": {
+        "target_logits": "target_logits",
+        "draft_token": "draft_candidate_token"
+      },
+      "outputs": {
+        "accepted": "accepted_flag",
+        "verified_token": "verified_token"
+      }
+    },
+    "committer": {
+      "op": "speculative_commit_or_reject",
+      "kernel": "speculative_commit_one_i32",
+      "inputs": {
+        "accepted": "accepted_flag",
+        "verified_token": "verified_token"
+      },
+      "state": {
+        "token_buffer": "token_buffer",
+        "token_count": "token_count",
+        "target_position": "target_position",
+        "draft_position": "draft_position",
+        "accepted_count": "accepted_count",
+        "rejected_count": "rejected_count"
+      }
+    }
+  },
+  "sequence": [
+    "target_prefill",
+    "speculative_decode"
+  ],
+  "block_types": {
+    "target_prefill": {
+      "type": "composite_ref",
+      "template": "gemma4",
+      "outputs": [
+        "target_kv_cache",
+        "target_hidden_stream",
+        "target_logits"
+      ]
+    },
+    "speculative_decode": {
+      "type": "composite_sequence",
+      "ops": [
+        {
+          "op": "target_decode_step",
+          "template": "gemma4",
+          "graph_slots": {
+            "outputs": {
+              "logits": "target_logits",
+              "hidden": "target_hidden_stream",
+              "kv_cache": "target_kv_cache"
+            }
+          }
+        },
+        {
+          "op": "target_hidden_to_draft_backbone_stream",
+          "kernel": "memcpy",
+          "graph_slots": {
+            "inputs": {
+              "src": "target_hidden_stream"
+            },
+            "outputs": {
+              "dst": "draft_backbone_stream"
+            }
+          }
+        },
+        {
+          "op": "draft_decode_step",
+          "template": "gemma4_assistant",
+          "graph_slots": {
+            "inputs": {
+              "backbone_stream": "draft_backbone_stream"
+            },
+            "outputs": {
+              "logits": "draft_logits",
+              "candidate_token": "draft_candidate_token",
+              "kv_cache": "draft_kv_cache"
+            }
+          }
+        },
+        {
+          "op": "speculative_verify_greedy",
+          "kernel": "speculative_verify_greedy_f32",
+          "graph_slots": {
+            "inputs": {
+              "target_logits": "target_logits",
+              "draft_token": "draft_candidate_token"
+            },
+            "outputs": {
+              "accepted": "accepted_flag",
+              "verified_token": "verified_token"
+            }
+          }
+        },
+        {
+          "op": "speculative_commit_or_reject",
+          "kernel": "speculative_commit_one_i32",
+          "graph_slots": {
+            "inputs": {
+              "accepted": "accepted_flag",
+              "verified_token": "verified_token",
+              "token_buffer": "token_buffer",
+              "token_count": "token_count",
+              "target_position": "target_position",
+              "draft_position": "draft_position",
+              "accepted_count": "accepted_count",
+              "rejected_count": "rejected_count"
+            },
+            "outputs": {
+              "token_buffer": "token_buffer",
+              "token_count": "token_count",
+              "target_position": "target_position",
+              "draft_position": "draft_position",
+              "accepted_count": "accepted_count",
+              "rejected_count": "rejected_count"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "notes": [
+    "First implementation is greedy one-token speculative verification.",
+    "The target/backbone remains authoritative; assistant output is accepted only after target verification.",
+    "The target decoder is not an encoder, but the bridge is encoder-like: it exports hidden state consumed by the assistant decoder.",
+    "Keep target and draft BUMP files separate for the first implementation; merge later only after correctness is proven."
+  ]
+}

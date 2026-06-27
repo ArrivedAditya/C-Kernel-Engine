@@ -22,7 +22,51 @@ import chat_contract  # type: ignore
 import compare_first_token_logits as first_token  # type: ignore
 
 
+class _FakeCFunc:
+    def __init__(self, fn):
+        self.fn = fn
+        self.argtypes = None
+        self.restype = None
+
+    def __call__(self, *args):
+        return self.fn(*args)
+
+
 class TestCKChatRuntimeContract(unittest.TestCase):
+    def test_ck_model_reads_named_activation_f32_when_runtime_exports_api(self) -> None:
+        data = np.array([1.25, -2.5, 3.75, 4.5], dtype=np.float32)
+        data_ptr = data.ctypes.data
+
+        class FakeLib:
+            def __init__(self) -> None:
+                self.ck_model_get_named_activation_ptr = _FakeCFunc(
+                    lambda name: data_ptr if name == b"target_hidden_stream" else 0
+                )
+                self.ck_model_get_named_activation_nbytes = _FakeCFunc(
+                    lambda name: data.nbytes if name == b"target_hidden_stream" else -1
+                )
+                self.ck_model_get_named_activation_runtime_offset = _FakeCFunc(
+                    lambda name: 4096 if name == b"target_hidden_stream" else -1
+                )
+
+        model = ck_chat.CKModel("/tmp/nonexistent")
+        model.lib = FakeLib()
+        model._setup_named_activation_api()
+
+        self.assertTrue(model.has_named_activations)
+        self.assertEqual(model.named_activation_nbytes("target_hidden_stream"), data.nbytes)
+        self.assertEqual(model.named_activation_runtime_offset("target_hidden_stream"), 4096)
+        self.assertEqual(model.named_activation_nbytes("missing"), -1)
+        self.assertIsNone(model.read_named_activation_f32("missing"))
+        np.testing.assert_allclose(
+            model.read_named_activation_f32("target_hidden_stream"),
+            data,
+        )
+        np.testing.assert_allclose(
+            model.read_named_activation_f32("target_hidden_stream", max_floats=2),
+            data[:2],
+        )
+
     def test_load_model_meta_preserves_non_null_config_fields(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ck_chat_meta_") as td:
             run_dir = Path(td)
@@ -562,6 +606,128 @@ class TestCKChatRuntimeContract(unittest.TestCase):
 
         self.assertEqual(out, "Paris")
         self.assertIn("stop: eos token 0", buf.getvalue())
+
+    def test_greedy_speculative_decode_accepts_matching_draft_tokens(self) -> None:
+        class FakeKVModel:
+            has_kv_decode = True
+            eos_tokens = {0}
+            vocab_size = 16
+            context_window = 32
+
+            def __init__(self, argmax_tokens):
+                self.argmax_tokens = list(argmax_tokens)
+                self.pos = 0
+                self.decode_calls = []
+                self.reset_calls = 0
+
+            def encode(self, text: str):
+                return [9]
+
+            def kv_cache_enable(self):
+                return True
+
+            def kv_cache_reset(self):
+                self.pos = 0
+                self.reset_calls += 1
+
+            def set_parity_token_index(self, idx: int):
+                pass
+
+            def is_eos_token(self, token_id: int) -> bool:
+                return int(token_id) == 0
+
+            def _logits(self):
+                token = self.argmax_tokens[min(self.pos, len(self.argmax_tokens) - 1)]
+                out = np.zeros((self.vocab_size,), dtype=np.float32)
+                out[int(token)] = 10.0
+                return out
+
+            def prefill(self, token_ids):
+                self.pos = 0
+                return self._logits()
+
+            def decode_step(self, token_id: int):
+                self.decode_calls.append(int(token_id))
+                self.pos += 1
+                return self._logits()
+
+            def decode(self, token_ids):
+                return "".join({1: "A", 2: "B", 3: "C"}.get(int(t), "") for t in token_ids)
+
+        target = FakeKVModel([1, 2, 3, 0])
+        draft = FakeKVModel([1, 2, 3, 0])
+        with redirect_stdout(io.StringIO()) as buf:
+            out = ck_chat.generate(
+                target,
+                "hi",
+                max_tokens=3,
+                temperature=0,
+                show_stats=True,
+                speculative=ck_chat.SpeculativeConfig(draft, draft_tokens=3),
+            )
+
+        self.assertEqual(out, "ABC")
+        self.assertEqual(target.decode_calls, [1, 2, 3])
+        self.assertIn("3/3 accepted", buf.getvalue())
+
+    def test_greedy_speculative_decode_rejects_mismatch_and_uses_verifier_token(self) -> None:
+        class FakeKVModel:
+            has_kv_decode = True
+            eos_tokens = {0}
+            vocab_size = 16
+            context_window = 32
+
+            def __init__(self, argmax_tokens):
+                self.argmax_tokens = list(argmax_tokens)
+                self.pos = 0
+
+            def encode(self, text: str):
+                return [9]
+
+            def kv_cache_enable(self):
+                return True
+
+            def kv_cache_reset(self):
+                self.pos = 0
+
+            def set_parity_token_index(self, idx: int):
+                pass
+
+            def is_eos_token(self, token_id: int) -> bool:
+                return int(token_id) == 0
+
+            def _logits(self):
+                token = self.argmax_tokens[min(self.pos, len(self.argmax_tokens) - 1)]
+                out = np.zeros((self.vocab_size,), dtype=np.float32)
+                out[int(token)] = 10.0
+                return out
+
+            def prefill(self, token_ids):
+                self.pos = 0
+                return self._logits()
+
+            def decode_step(self, token_id: int):
+                self.pos += 1
+                return self._logits()
+
+            def decode(self, token_ids):
+                return "".join({1: "A", 2: "B", 5: "V"}.get(int(t), "") for t in token_ids)
+
+        target = FakeKVModel([1, 5, 0])
+        draft = FakeKVModel([1, 2, 0])
+        with redirect_stdout(io.StringIO()) as buf:
+            out = ck_chat.generate(
+                target,
+                "hi",
+                max_tokens=2,
+                temperature=0,
+                show_stats=True,
+                speculative=ck_chat.SpeculativeConfig(draft, draft_tokens=2),
+            )
+
+        self.assertEqual(out, "AV")
+        self.assertIn("1/2 accepted", buf.getvalue())
+        self.assertIn("1 rejected", buf.getvalue())
 
     def test_decode_preserves_special_tokens_on_python_tokenizer_path(self) -> None:
         class FakeTokenizer:

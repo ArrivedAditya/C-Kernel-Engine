@@ -1,0 +1,27 @@
+{
+  "id": "attention_forward_decode_head_major_shared_kv_sliding_gemma4",
+  "op": "attention_sliding",
+  "variant": "fp32_decode_head_major_shared_kv_sliding",
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {"name": "q_token", "dtype": "fp32", "shape": ["H", "D"]},
+    {"name": "k_cache", "dtype": "fp32", "shape": ["H", "T", "D"]},
+    {"name": "v_cache", "dtype": "fp32", "shape": ["H", "T", "D"]}
+  ],
+  "outputs": [
+    {"name": "out_token", "dtype": "fp32", "shape": ["H", "D"]}
+  ],
+  "scratch": [],
+  "dims": ["H", "T", "D"],
+  "params": [],
+  "impl": {
+    "function": "attention_forward_decode_head_major_shared_kv_sliding_gemma4",
+    "c_declaration": "void attention_forward_decode_head_major_shared_kv_sliding_gemma4(const float *q_token, const float *k_cache, const float *v_cache, float *out_token, int num_heads, int kv_tokens, int cache_capacity, int head_dim, int aligned_head_dim, int sliding_window);",
+    "sources": ["src/kernels/attention_kernels_sliding.c"]
+  },
+  "notes": "Gemma4 assistant sliding decode attention over a cache populated from the q-only stream."
+}

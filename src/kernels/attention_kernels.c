@@ -3034,6 +3034,20 @@ void attention_forward_causal_head_major_gqa_flash_strided_gemma4(const float *q
                                                 1.0f);
 }
 
+void attention_forward_causal_head_major_shared_kv_gemma4(const float *q,
+                                                          float *output,
+                                                          int num_heads,
+                                                          int num_tokens,
+                                                          int head_dim,
+                                                          int aligned_head_dim,
+                                                          int kv_stride_tokens)
+{
+    attention_forward_causal_head_major_gqa_flash_strided_gemma4(
+        q, q, q, output, num_heads, num_heads, num_tokens,
+        head_dim, aligned_head_dim, kv_stride_tokens
+    );
+}
+
 void attention_forward_full_head_major_gqa_flash_strided_gemma4(const float *q,
                                                                 const float *k,
                                                                 const float *v,
@@ -3644,6 +3658,22 @@ void attention_forward_chunk_head_major_gqa_flash_gemma4(const float *q_chunk,
                                    scale);
         }
     }
+}
+
+void attention_forward_decode_head_major_shared_kv_gemma4(const float *q_token,
+                                                          const float *k_cache,
+                                                          const float *v_cache,
+                                                          float *out_token,
+                                                          int num_heads,
+                                                          int kv_tokens,
+                                                          int cache_capacity,
+                                                          int head_dim,
+                                                          int aligned_head_dim)
+{
+    attention_forward_decode_head_major_gqa_flash_gemma4(
+        q_token, k_cache, v_cache, out_token, num_heads, num_heads,
+        kv_tokens, cache_capacity, head_dim, aligned_head_dim
+    );
 }
 
 void attention_forward_decode_head_major_gqa_flash_f16kv(const float *q_token,
