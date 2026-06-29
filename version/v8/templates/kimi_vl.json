@@ -63,7 +63,34 @@
       "kv_lora_rank_key": "kv_lora_rank",
       "qk_nope_head_dim_key": "qk_nope_head_dim",
       "qk_rope_head_dim_key": "qk_rope_head_dim",
-      "v_head_dim_key": "v_head_dim"
+      "v_head_dim_key": "v_head_dim",
+      "decode_cache_contract": {
+        "type": "mla",
+        "state_writes": {
+          "k_cache": {
+            "source": "k_scratch",
+            "index": "runtime.position"
+          },
+          "v_cache": {
+            "source": "v_scratch",
+            "index": "runtime.position"
+          }
+        },
+        "state_reads": {
+          "k_cache": {
+            "range": "0:runtime.cache_len"
+          },
+          "v_cache": {
+            "range": "0:runtime.cache_len"
+          }
+        },
+        "params": {
+          "cache_len": "runtime.position + 1",
+          "qk_head_dim": "qk_nope_head_dim + qk_rope_head_dim",
+          "v_head_dim": "v_head_dim",
+          "cache_stride": "kv_cache_head_dim"
+        }
+      }
     },
     "block_contract": {
       "norm_type": "rmsnorm",

@@ -1,0 +1,99 @@
+{
+  "id": "deepseek_mla_attention_decode_f32",
+  "op": "mla_attention",
+  "variant": "decode_cache_ref_f32",
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "QK"
+      ],
+      "desc": "Current-token MLA query"
+    },
+    {
+      "name": "k_cache",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "T",
+        "S"
+      ],
+      "desc": "MLA key cache"
+    },
+    {
+      "name": "v_cache",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "T",
+        "S"
+      ],
+      "desc": "MLA value cache"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "V"
+      ],
+      "desc": "Current-token MLA attention output"
+    }
+  ],
+  "dims": [
+    "H",
+    "KV",
+    "T",
+    "QK",
+    "V",
+    "S"
+  ],
+  "params": [
+    {
+      "name": "num_heads",
+      "dtype": "int32"
+    },
+    {
+      "name": "num_kv_heads",
+      "dtype": "int32"
+    },
+    {
+      "name": "cache_len",
+      "dtype": "int32"
+    },
+    {
+      "name": "qk_head_dim",
+      "dtype": "int32"
+    },
+    {
+      "name": "v_head_dim",
+      "dtype": "int32"
+    },
+    {
+      "name": "max_seq_len",
+      "dtype": "int32"
+    },
+    {
+      "name": "cache_stride",
+      "dtype": "int32"
+    }
+  ],
+  "impl": {
+    "function": "deepseek_mla_attention_decode_f32",
+    "c_declaration": "void deepseek_mla_attention_decode_f32(const float *q, const float *k_cache, const float *v_cache, float *output, int num_heads, int num_kv_heads, int cache_len, int qk_head_dim, int v_head_dim, int max_seq_len, int cache_stride);",
+    "sources": [
+      "src/kernels/deepseek_kernels.c"
+    ]
+  },
+  "notes": "Reference MLA decode attention over persistent K/V cache. K uses qk_head_dim; V uses v_head_dim; both use cache_stride.",
+  "name": "deepseek_mla_attention_decode_f32"
+}

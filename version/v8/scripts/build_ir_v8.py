@@ -1449,7 +1449,7 @@ def generate_init_ops(manifest: Dict, config: Dict) -> List[Dict]:
     # ROPE INIT: Precompute cos/sin tables if model uses RoPE
     # ═══════════════════════════════════════════════════════════
     rope_type = flags.get("rope", None)
-    if rope_type in ("rope", "rope_qk", True):
+    if rope_type in ("rope", "rope_qk", "partial_rope_concat", "partial_pairwise_concat", True):
         # Get config values
         rope_theta = config["rope_theta"]
         head_dim = max(int(config["head_dim"]), int(config.get("max_rotary_dim", config["rotary_dim"]) or config["rotary_dim"]))
@@ -2763,10 +2763,14 @@ def _template_uses_rope(template: Dict[str, Any], config: Optional[Dict[str, Any
     rope_layout = _normalize_rope_layout_value(attention_contract.get("rope_layout"))
     if rope_layout == "none":
         return False
-    if rope_layout in {"split", "pairwise", "multi_section_1d", "multi_section_2d"}:
+    if rope_layout in {"split", "pairwise", "partial_pairwise_concat", "multi_section_1d", "multi_section_2d"}:
+        return True
+    flags = template.get("flags", {}) if isinstance(template.get("flags"), dict) else {}
+    rope_flag = str(flags.get("rope", "") or "").strip().lower()
+    if rope_flag in {"rope", "rope_qk", "partial_rope_concat", "partial_pairwise_concat"}:
         return True
     template_ops = _collect_template_ops(template, config)
-    return "rope_qk" in template_ops or "rope_q" in template_ops or "mrope_qk" in template_ops
+    return bool({"rope_qk", "rope_q", "mrope_qk", "partial_rope_concat"} & set(template_ops))
 
 
 def _template_uses_kv_cache(template: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> bool:
@@ -2974,6 +2978,8 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
     if op_name in ("recurrent_alpha_proj", "recurrent_beta_proj"):
         return (recurrent_gate or None), embed
     attn_out = config.get("attn_out_dim", heads * head_dim)
+    if int(config.get("kv_lora_rank", 0) or 0) > 0 and int(config.get("v_head_dim", 0) or 0) > 0:
+        attn_out = heads * int(config.get("v_head_dim", 0) or 0)
     if op_name in ("out_proj", "attn_proj"):
         return embed, attn_out
     if op_name in ("recurrent_out_proj",):
@@ -4789,6 +4795,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "mrope_qk": None,
         "rope_qk": None,
         "rope_q": None,
+        "mla_kv_cache_batch_store": None,
+        "mla_kv_cache_store": None,
         "kv_cache_store": None,  # Store K,V to KV cache (no weights)
         "kv_cache_store_shared_q": None,
         "attn": None,
@@ -4905,6 +4913,16 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             if op == "attn" and mode == "prefill" and not _attention_contract_is_causal(template, config):
                 return ["attention_forward_full_head_major_gqa_flash_strided"]
 
+        # Kimi/DeepSeek MLA decompression has the same semantic template op for
+        # FP32 and BF16 weights, but the C ABI differs for kv_b_proj.  Resolve it
+        # from the manifest-derived layer_quant before honoring a generic template
+        # default, otherwise BF16 weights can be cast as float*.
+        if op == "kv_lora_decompress":
+            kv_b_dtype = str(layer_quant.get("mla_kv_b_proj", "") or "").strip().lower()
+            if kv_b_dtype == "bf16":
+                return ["deepseek_mla_kv_decompress_bf16"]
+            return ["deepseek_mla_kv_decompress_f32"]
+
         explicit_kernel = str(template_kernels.get(op, "") or "").strip()
         if explicit_kernel:
             return [explicit_kernel]
@@ -4926,7 +4944,13 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             return ["memcpy"]
         if op == "partial_rope_concat":
             return ["deepseek_mla_partial_rope_concat_packed_f32"]
-        if op in {"v_norm", "projector_prep", "group_limited_topk_router", "mamba_in_proj_split", "mla_attention"}:
+        if op == "mla_kv_cache_batch_store":
+            return ["deepseek_mla_kv_cache_batch_store_f32"]
+        if op == "mla_kv_cache_store":
+            return ["deepseek_mla_kv_cache_store_f32"]
+        if op == "mla_attention":
+            return ["deepseek_mla_attention_f32"]
+        if op in {"v_norm", "projector_prep", "group_limited_topk_router", "mamba_in_proj_split"}:
             kernel_id = find_kernel(
                 registry,
                 op=kernel_op,
@@ -4952,11 +4976,28 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             # Gemma4 per-layer prepare is a structured header op, not a
             # dense projection. It owns BF16/quantized weights internally and
             # must stay on its dedicated kernel regardless of source dtype.
+            if op == "kv_a_layernorm":
+                return ["rmsnorm_forward_kv_lora"]
             if op == "kv_lora_decompress":
+                kv_b_dtype = str(layer_quant.get("mla_kv_b_proj", "")).lower()
+                if isinstance(weight_info, list) and weight_info:
+                    kv_b_dtype = str(weight_info[0].get("dtype", kv_b_dtype)).lower()
+                if kv_b_dtype == "bf16":
+                    return ["deepseek_mla_kv_decompress_bf16"]
                 return ["deepseek_mla_kv_decompress_f32"]
             if op == "moe_swiglu_expert_mlp":
+                gate_dtype = str(layer_quant.get("moe_expert_gate", "")).lower()
+                up_dtype = str(layer_quant.get("moe_expert_up", "")).lower()
+                down_dtype = str(layer_quant.get("moe_expert_down", "")).lower()
+                if gate_dtype == "bf16" and up_dtype == "bf16" and down_dtype == "bf16":
+                    return ["moe_swiglu_expert_forward_bf16"]
                 return ["moe_swiglu_expert_forward_f32"]
             if op == "shared_swiglu_expert_mlp":
+                gate_dtype = str(layer_quant.get("moe_shared_gate", "")).lower()
+                up_dtype = str(layer_quant.get("moe_shared_up", "")).lower()
+                down_dtype = str(layer_quant.get("moe_shared_down", "")).lower()
+                if gate_dtype == "bf16" and up_dtype == "bf16" and down_dtype == "bf16":
+                    return ["moe_swiglu_shared_forward_bf16"]
                 return ["moe_swiglu_shared_forward_f32"]
 
             if op == "gemma4_per_layer_prepare":
@@ -6289,6 +6330,10 @@ def generate_ir_lower_1(
     logits_layout = _resolve_logits_layout(config, mode)
     template = manifest.get("template", {}) if isinstance(manifest.get("template"), dict) else {}
     template_kernels = template.get("kernels", {}) if isinstance(template.get("kernels"), dict) else {}
+    template_contract = template.get("contract") if isinstance(template.get("contract"), dict) else {}
+    attention_contract = template_contract.get("attention_contract") if isinstance(template_contract.get("attention_contract"), dict) else {}
+    decode_cache_contract = attention_contract.get("decode_cache_contract") if isinstance(attention_contract.get("decode_cache_contract"), dict) else {}
+    explicit_mla_decode_cache = str(decode_cache_contract.get("type", "") or "").strip().lower() == "mla"
     uses_kv_cache = bool(config.get("_template_uses_kv_cache", _template_uses_kv_cache(template, config)))
     has_logits = bool(config.get("_template_has_logits", _template_declares_logits(template, config)))
 
@@ -6480,6 +6525,11 @@ def generate_ir_lower_1(
         for op in lowered_ops
         if str(op.get("op", "")) in {"rope_qk", "rope_q", "mrope_qk"}
     }
+    decode_mla_layers = {
+        int(op.get("layer", 0))
+        for op in lowered_ops
+        if str(op.get("op", "")) == "mla_attention"
+    }
 
     def _kv_read_layer_for(layer: int) -> int:
         try:
@@ -6534,6 +6584,36 @@ def generate_ir_lower_1(
             "_auto_inserted": True,
         }
 
+    def _make_mla_kv_store_op(anchor_op: Dict[str, Any], *, batch: bool) -> Dict[str, Any]:
+        layer = int(anchor_op["layer"])
+        function = "deepseek_mla_kv_cache_batch_store_f32" if batch else "deepseek_mla_kv_cache_store_f32"
+        return {
+            "idx": len(final_ops),  # Will be renumbered
+            "kernel": function,
+            "op": "mla_kv_cache_batch_store" if batch else "mla_kv_cache_store",
+            "layer": layer,
+            "section": anchor_op["section"],
+            "function": function,
+            "weights": {},
+            "inputs": {
+                "k": {"type": "scratch", "source": "k_scratch"},
+                "v": {"type": "scratch", "source": "v_scratch"},
+            },
+            "outputs": {
+                "kv_cache_k": {"type": "kv_cache", "buffer": f"kv_cache_k_L{layer}"},
+                "kv_cache_v": {"type": "kv_cache", "buffer": f"kv_cache_v_L{layer}"},
+            },
+            "params": copy.deepcopy(anchor_op.get("params", {})),
+            "scratch": [],
+            "_auto_inserted": True,
+        }
+
+    mla_prefill_layers = {
+        int(x.get("layer", 0))
+        for x in lowered_ops
+        if str(x.get("op", "")) in {"partial_rope_concat", "mla_attention", "kv_lora_decompress"}
+    }
+
     for i, op in enumerate(lowered_ops):
         final_ops.append(op)
 
@@ -6556,9 +6636,23 @@ def generate_ir_lower_1(
             elif should_store_after_q_rope:
                 final_ops.append(_make_decode_shared_q_kv_store_op(op))
                 kv_store_count += 1
+            elif explicit_mla_decode_cache and op_name == "partial_rope_concat" and layer in decode_mla_layers:
+                final_ops.append(_make_mla_kv_store_op(op, batch=False))
+                kv_store_count += 1
 
             # For decode mode, update attention ops to use decode kernel
-            if op["op"] in ("attn", "attn_sliding") and "attention" in op["kernel"]:
+            if explicit_mla_decode_cache and op["op"] == "mla_attention" and "mla_attention" in op["kernel"]:
+                decode_kernel = "deepseek_mla_attention_decode_f32"
+                op["kernel"] = decode_kernel
+                op["function"] = decode_kernel
+                kv_read_layer = _kv_read_layer_for(int(op.get("layer", 0)))
+                op["_kv_cache_read_layer"] = kv_read_layer
+                op.setdefault("inputs", {})
+                op["inputs"]["k_cache"] = {"type": "kv_cache", "source": f"kv_cache_k_L{kv_read_layer}"}
+                op["inputs"]["v_cache"] = {"type": "kv_cache", "source": f"kv_cache_v_L{kv_read_layer}"}
+                op["inputs"].pop("k", None)
+                op["inputs"].pop("v", None)
+            elif op["op"] in ("attn", "attn_sliding") and "attention" in op["kernel"]:
                 # Switch to decode attention kernel (sliding vs non-sliding)
                 if op["op"] == "attn_sliding":
                     decode_kernel = template_kernels.get("attn_sliding_decode") or "attention_forward_decode_head_major_gqa_flash_sliding"
@@ -6602,8 +6696,13 @@ def generate_ir_lower_1(
             # Standard q/k/v GEMM projections write token-major [T, H*D] while
             # flash attention consumes head-major [H, T, D]. Packed split paths
             # that already emit head-major simply never trigger these bridges.
+            if explicit_mla_decode_cache and op.get("op") == "partial_rope_concat" and int(op.get("layer", 0)) in mla_prefill_layers:
+                final_ops.append(_make_mla_kv_store_op(op, batch=True))
+
             if op["op"] in ("q_proj", "split_q_gate"):
                 layer = op["layer"]
+                if int(layer) in mla_prefill_layers:
+                    continue
                 transpose_q_op = {
                     "idx": len(final_ops),
                     "kernel": "transpose_qkv_to_head_major",
@@ -7005,6 +7104,8 @@ TEMPLATE_OP_WEIGHTS = {
     "attn_sliding": [],  # No model weights (kernel op handles windowing)
     "attn_shared_kv": [],  # No model weights; q_scratch is used as Q/K/V
     "attn_sliding_shared_kv": [],  # No model weights; q_scratch is used as Q/K/V with SWA
+    "mla_kv_cache_batch_store": [],
+    "mla_kv_cache_store": [],
     "kv_cache_store_shared_q": [],  # No model weights; writes q_scratch to K/V cache
     "attn_gate_sigmoid_mul": [],  # No model weights
     "out_proj": ["wo", "bo", "wo_input_min", "wo_input_max", "wo_output_min", "wo_output_max"],  # Output projection + optional bias
@@ -7925,7 +8026,7 @@ def generate_memory_layout_packed(
         if op_type in ("vision_position_ids", "position_ids_2d"):
             alloc_act("vision_positions")
 
-        if op_type == "kv_cache_store":
+        if op_type in ("kv_cache_store", "mla_kv_cache_store", "mla_kv_cache_batch_store"):
             alloc_act("k_scratch")
             alloc_act("v_scratch")
             alloc_act("kv_cache")
@@ -9150,7 +9251,7 @@ def generate_ir_lower_2(
                     })
 
         # Special handling for kv_cache_store: add k_scratch and v_scratch buffers
-        if ir_op.get("op", "") == "kv_cache_store":
+        if ir_op.get("op", "") in ("kv_cache_store", "mla_kv_cache_store", "mla_kv_cache_batch_store"):
             for scratch_name in ["k_scratch", "v_scratch"]:
                 buf = activation_buffers.get(scratch_name)
                 if buf:
@@ -10133,6 +10234,18 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     else:
                         op_errors.append(f"{func}.{name}: missing dim '{key}'")
                         expr = "0"
+                elif key == "kv_lora_input_dim":
+                    expr = str(int(config.get("kv_lora_rank", 0) or 0) + int(config.get("qk_rope_head_dim", 0) or 0))
+                elif key == "kv_cache_head_dim":
+                    k_head = int(config.get("mla_k_head_dim", config.get("max_k_head_dim", config.get("head_dim", 1))) or config.get("head_dim", 1) or 1)
+                    v_head = int(config.get("mla_v_head_dim", config.get("max_v_head_dim", config.get("v_head_dim", config.get("head_dim", 1)))) or config.get("v_head_dim", config.get("head_dim", 1)) or 1)
+                    base = int(config.get("head_dim", 1) or 1)
+                    expr = str(max(k_head, v_head, base))
+                elif key == "moe_shared_expert_intermediate_size":
+                    if key in config:
+                        expr = str(config[key])
+                    else:
+                        expr = str(int(config.get("moe_intermediate_size", 0) or 0) * max(1, int(config.get("n_shared_experts", 1) or 1)))
                 elif key in config:
                     expr = str(config[key])
                 elif key == "intermediate_size" and "intermediate_dim" in config:
@@ -10197,6 +10310,18 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     expr = "model->rope_cos"
                 elif key == "rope_sin":
                     expr = "model->rope_sin"
+                elif key == "rope_cos_mla_positioned":
+                    rope_half = max(1, int(config.get("qk_rope_head_dim", config.get("head_dim", 2)) or 2) // 2)
+                    if mode == "decode":
+                        expr = f"(model->rope_cos + (size_t)model->pos * (size_t){rope_half})"
+                    else:
+                        expr = "model->rope_cos"
+                elif key == "rope_sin_mla_positioned":
+                    rope_half = max(1, int(config.get("qk_rope_head_dim", config.get("head_dim", 2)) or 2) // 2)
+                    if mode == "decode":
+                        expr = f"(model->rope_sin + (size_t)model->pos * (size_t){rope_half})"
+                    else:
+                        expr = "model->rope_sin"
                 elif key == "pos":
                     expr = "model->rope_pos" if name == "pos_offset" else "model->pos"
                 elif key == "seq_len":
