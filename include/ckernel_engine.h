@@ -872,6 +872,14 @@ void rmsnorm_forward(const float *input,
                      int d_model,
                      int aligned_embed_dim,
                      float eps);
+void rmsnorm_forward_kv_lora(const float *input,
+                             const float *gamma,
+                             float *output,
+                             float *rstd_cache,
+                             int tokens,
+                             int d_model,
+                             int aligned_embed_dim,
+                             float eps);
 void rmsnorm_forward_no_weight(const float *input,
                                float *output,
                                float *rstd_cache,
@@ -1264,6 +1272,51 @@ void attention_forward_full_head_major_gqa_flash(const float *q,
                                                  int num_tokens,
                                                  int head_dim,
                                                  int aligned_head_dim);
+
+
+void deepseek_mla_attention_f32(const float *q,
+                                const float *k,
+                                const float *v,
+                                float *output,
+                                int num_heads,
+                                int num_kv_heads,
+                                int num_tokens,
+                                int qk_head_dim,
+                                int v_head_dim);
+
+void deepseek_mla_kv_cache_batch_store_f32(float *k_cache,
+                                           float *v_cache,
+                                           const float *k,
+                                           const float *v,
+                                           int num_tokens,
+                                           int num_kv_heads,
+                                           int qk_head_dim,
+                                           int v_head_dim,
+                                           int max_seq_len,
+                                           int cache_stride);
+
+void deepseek_mla_kv_cache_store_f32(float *k_cache,
+                                     float *v_cache,
+                                     const float *k,
+                                     const float *v,
+                                     int pos,
+                                     int num_kv_heads,
+                                     int qk_head_dim,
+                                     int v_head_dim,
+                                     int max_seq_len,
+                                     int cache_stride);
+
+void deepseek_mla_attention_decode_f32(const float *q,
+                                       const float *k_cache,
+                                       const float *v_cache,
+                                       float *output,
+                                       int num_heads,
+                                       int num_kv_heads,
+                                       int cache_len,
+                                       int qk_head_dim,
+                                       int v_head_dim,
+                                       int max_seq_len,
+                                       int cache_stride);
 
 void attention_forward_causal_head_major_gqa_flash_strided(const float *q,
                                                            const float *k,
@@ -2371,6 +2424,29 @@ void moe_swiglu_shared_forward_f32(const float *hidden,
                                    int hidden_dim,
                                    int intermediate_dim);
 
+void moe_swiglu_expert_forward_bf16(const float *hidden,
+                                    const int *indices,
+                                    const float *routing_weights,
+                                    const uint16_t *expert_gate,
+                                    const uint16_t *expert_up,
+                                    const uint16_t *expert_down,
+                                    float *output,
+                                    int rows,
+                                    int hidden_dim,
+                                    int intermediate_dim,
+                                    int n_experts,
+                                    int top_k);
+
+void moe_swiglu_shared_forward_bf16(const float *hidden,
+                                    const float *routed,
+                                    const uint16_t *shared_gate,
+                                    const uint16_t *shared_up,
+                                    const uint16_t *shared_down,
+                                    float *output,
+                                    int rows,
+                                    int hidden_dim,
+                                    int intermediate_dim);
+
 void moe_relu2_expert_backward_f32(const float *d_output,
                                    const float *hidden,
                                    const int *indices,
@@ -2548,6 +2624,16 @@ void deepseek_mla_kv_decompress_f32(const float *compressed_kv,
                                     int kv_lora_rank,
                                     int qk_nope_dim,
                                     int v_dim);
+
+void deepseek_mla_kv_decompress_bf16(const float *compressed_kv,
+                                     const uint16_t *kv_b_proj,
+                                     float *k_nope,
+                                     float *value,
+                                     int tokens,
+                                     int heads,
+                                     int kv_lora_rank,
+                                     int qk_nope_dim,
+                                     int v_dim);
 
 void deepseek_mla_partial_rope_concat_f32(const float *q_nope,
                                           const float *q_pe,

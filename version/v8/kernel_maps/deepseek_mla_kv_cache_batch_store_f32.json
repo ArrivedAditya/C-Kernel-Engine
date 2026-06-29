@@ -1,0 +1,93 @@
+{
+  "id": "deepseek_mla_kv_cache_batch_store_f32",
+  "op": "mla_kv_cache_batch_store",
+  "variant": "prefill_cache_store_f32",
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "k",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "KV",
+        "QK"
+      ]
+    },
+    {
+      "name": "v",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "KV",
+        "V"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "k_cache",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "MAX_T",
+        "S"
+      ]
+    },
+    {
+      "name": "v_cache",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "MAX_T",
+        "S"
+      ]
+    }
+  ],
+  "dims": [
+    "T",
+    "KV",
+    "QK",
+    "V",
+    "MAX_T",
+    "S"
+  ],
+  "params": [
+    {
+      "name": "num_tokens",
+      "dtype": "int32"
+    },
+    {
+      "name": "num_kv_heads",
+      "dtype": "int32"
+    },
+    {
+      "name": "qk_head_dim",
+      "dtype": "int32"
+    },
+    {
+      "name": "v_head_dim",
+      "dtype": "int32"
+    },
+    {
+      "name": "max_seq_len",
+      "dtype": "int32"
+    },
+    {
+      "name": "cache_stride",
+      "dtype": "int32"
+    }
+  ],
+  "impl": {
+    "function": "deepseek_mla_kv_cache_batch_store_f32",
+    "c_declaration": "void deepseek_mla_kv_cache_batch_store_f32(float *k_cache, float *v_cache, const float *k, const float *v, int num_tokens, int num_kv_heads, int qk_head_dim, int v_head_dim, int max_seq_len, int cache_stride);",
+    "sources": [
+      "src/kernels/deepseek_kernels.c"
+    ]
+  },
+  "notes": "MLA prefill cache store from token-major K/V tensors into persistent head-major cache with separate logical K/V widths.",
+  "name": "deepseek_mla_kv_cache_batch_store_f32"
+}

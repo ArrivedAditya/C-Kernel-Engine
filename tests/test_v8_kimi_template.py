@@ -140,10 +140,10 @@ class V8KimiTemplateTests(unittest.TestCase):
         self.assertEqual([op["op"] for op in ops].count("residual_save"), 4)
         self.assertEqual(by_layer_op[(0, "q_proj", 0)]["kernel"], "gemv_bf16")
         self.assertEqual(by_layer_op[(0, "kv_a_proj", 0)]["kernel"], "gemv_bf16")
-        self.assertEqual(by_layer_op[(0, "kv_lora_decompress", 0)]["kernel"], "deepseek_mla_kv_decompress_f32")
+        self.assertEqual(by_layer_op[(0, "kv_lora_decompress", 0)]["kernel"], "deepseek_mla_kv_decompress_bf16")
         self.assertEqual(by_layer_op[(0, "partial_rope_concat", 0)]["kernel"], "deepseek_mla_partial_rope_concat_packed_f32")
-        self.assertEqual(by_layer_op[(1, "moe_swiglu_expert_mlp", 0)]["kernel"], "moe_swiglu_expert_forward_f32")
-        self.assertEqual(by_layer_op[(1, "shared_swiglu_expert_mlp", 0)]["kernel"], "moe_swiglu_shared_forward_f32")
+        self.assertEqual(by_layer_op[(1, "moe_swiglu_expert_mlp", 0)]["kernel"], "moe_swiglu_expert_forward_bf16")
+        self.assertEqual(by_layer_op[(1, "shared_swiglu_expert_mlp", 0)]["kernel"], "moe_swiglu_shared_forward_bf16")
 
         q_source = by_layer_op[(0, "q_proj", 0)]["dataflow"]["inputs"]["x"]
         kv_source = by_layer_op[(0, "kv_a_proj", 0)]["dataflow"]["inputs"]["x"]
