@@ -400,6 +400,11 @@ def detect_input_type(model_input: str) -> tuple[str, dict[str, Any]]:
         if len(parts) >= 3:
             return "hf_gguf", {"repo_id": f"{parts[0]}/{parts[1]}", "filename": "/".join(parts[2:])}
 
+    if text.startswith("hf://"):
+        repo_id = text[5:].strip("/")
+        if repo_id:
+            return "hf_id", {"model_id": repo_id}
+
     if path.is_file() and path.suffix.lower() == ".gguf":
         return "gguf", {"path": path.resolve()}
 
@@ -485,7 +490,11 @@ def step_download(model_id: str, cache_dir: Path, force: bool = False) -> Path:
         repo_dir = model_id.replace("/", "--")
         for root in _cache_roots():
             candidate_dir = root / repo_dir
-            if candidate_dir.exists() and any(candidate_dir.glob("*.gguf")):
+            if candidate_dir.exists() and (
+                any(candidate_dir.glob("*.gguf"))
+                or any(candidate_dir.glob("*.safetensors"))
+                or (candidate_dir / "model.safetensors.index.json").exists()
+            ):
                 if root == cache_dir:
                     log(f"  Using cached model at {candidate_dir}", C_DIM)
                 else:
@@ -648,6 +657,17 @@ def _find_local_gguf(model_dir: Path) -> Optional[Path]:
     return pool[0]
 
 
+def _is_safetensors_checkpoint_dir(path: Path) -> bool:
+    return (
+        path.is_dir()
+        and (path / "config.json").exists()
+        and (
+            any(path.glob("*.safetensors"))
+            or (path / "model.safetensors.index.json").exists()
+        )
+    )
+
+
 def _is_runtime_dir(path: Path) -> bool:
     return (
         path.is_dir()
@@ -686,6 +706,47 @@ def _prepare_runtime_dir_from_local_artifacts(model_dir: Path, work_dir: Path) -
         dst_manifest = src_manifest
         dst_config = src_config
     return dst_bump, dst_config, dst_manifest
+
+
+def step_convert_safetensors(
+    checkpoint_dir: Path,
+    output_dir: Path,
+    *,
+    force: bool = False,
+) -> tuple[Path, Path, Path]:
+    log_step(2, "Converting safetensors checkpoint to bump format")
+    weights_path = output_dir / "weights.bump"
+    config_path = output_dir / "config.json"
+    manifest_path = output_dir / "weights_manifest.json"
+    if weights_path.exists() and config_path.exists() and manifest_path.exists() and not force:
+        log(f"  Using cached weights at {weights_path}", C_DIM)
+        return weights_path, config_path, manifest_path
+    output_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        sys.executable,
+        str(SCRIPTS_DIR / "convert_safetensors_to_bump_v8.py"),
+        "--checkpoint",
+        str(checkpoint_dir),
+        "--output",
+        str(weights_path),
+        "--config-out",
+        str(config_path),
+        "--manifest-out",
+        str(manifest_path),
+        "--arch",
+        "auto",
+    ]
+    run_cmd(cmd, cwd=PROJECT_ROOT)
+    for name in (
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "generation_config.json",
+    ):
+        _copy_optional(checkpoint_dir / name, output_dir / name)
+    if (checkpoint_dir / "tokenizer_bin").is_dir() and not (output_dir / "tokenizer_bin").exists():
+        shutil.copytree(checkpoint_dir / "tokenizer_bin", output_dir / "tokenizer_bin")
+    return weights_path, config_path, manifest_path
 
 
 def step_convert_gguf(
@@ -1148,6 +1209,12 @@ def run_pipeline(args: argparse.Namespace) -> int:
         local_gguf = _find_local_gguf(info["path"])
         if local_gguf is not None:
             gguf_path = local_gguf
+    elif input_type == "local_dir" and _is_safetensors_checkpoint_dir(info["path"]):
+        weights_path, config_path, manifest_path = step_convert_safetensors(
+            info["path"],
+            work_dir,
+            force=args.force_convert,
+        )
     elif input_type == "local_config":
         model_dir = info["path"].parent
         if not _is_runtime_dir(model_dir):
@@ -1158,6 +1225,30 @@ def run_pipeline(args: argparse.Namespace) -> int:
         local_gguf = _find_local_gguf(model_dir)
         if local_gguf is not None:
             gguf_path = local_gguf
+    elif input_type == "hf_id":
+        model_dir = step_download(info["model_id"], CACHE_DIR, force=args.force_download)
+        if _is_safetensors_checkpoint_dir(model_dir):
+            weights_path, config_path, manifest_path = step_convert_safetensors(
+                model_dir,
+                work_dir,
+                force=args.force_convert,
+            )
+        else:
+            local_gguf = _find_local_gguf(model_dir)
+            if local_gguf is None:
+                raise RuntimeError(
+                    f"HF repo {info['model_id']} has no GGUF or safetensors checkpoint artifacts. "
+                    "Expected *.gguf, *.safetensors, or model.safetensors.index.json."
+                )
+            gguf_path = local_gguf
+            repo_id_for_tokenizer = info["model_id"]
+            ensure_tokenizer_files(repo_id_for_tokenizer, work_dir)
+            weights_path, config_path, manifest_path = step_convert_gguf(
+                gguf_path,
+                work_dir,
+                force=args.force_convert,
+                context_len=args.context_len,
+            )
     else:
         gguf_path, repo_id_for_tokenizer = _resolve_gguf_input(model_input, force_download=args.force_download)
         if repo_id_for_tokenizer:
