@@ -1194,6 +1194,10 @@ def run_pipeline(args: argparse.Namespace) -> int:
             cmd.extend(["--encoder-gguf", str(encoder_gguf)])
         if args.image_path is not None:
             cmd.extend(["--image-path", str(Path(args.image_path).expanduser().resolve())])
+        if args.image_min_tokens is not None:
+            cmd.extend(["--image-min-tokens", str(int(args.image_min_tokens))])
+        if args.image_max_tokens is not None:
+            cmd.extend(["--image-max-tokens", str(int(args.image_max_tokens))])
         if args.synthetic_prefix_tokens > 0:
             cmd.extend(["--synthetic-prefix-tokens", str(int(args.synthetic_prefix_tokens))])
         if args.context_len is not None:
@@ -1357,6 +1361,8 @@ Examples:
         help="Optional encoder/mmproj GGUF for vision runs; accepts local paths or hf://repo/file.gguf",
     )
     run_parser.add_argument("--image-path", default=None, help="Optional real image path for multimodal runs")
+    run_parser.add_argument("--image-min-tokens", type=int, default=None, help="Minimum merged visual tokens for smart-resized Qwen3-VL images")
+    run_parser.add_argument("--image-max-tokens", type=int, default=None, help="Maximum merged visual tokens for smart-resized Qwen3-VL images")
     run_parser.add_argument("--image-mode", choices=["checker", "gradient", "gray"], default="checker")
     run_parser.add_argument("--synthetic-prefix-tokens", type=int, default=0)
     run_parser.add_argument("--vision-top-k", type=int, default=8)

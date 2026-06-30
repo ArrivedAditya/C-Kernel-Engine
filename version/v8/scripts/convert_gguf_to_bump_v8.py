@@ -91,6 +91,7 @@ import argparse
 import copy
 import hashlib
 import json
+import math
 import os
 import struct
 import sys
@@ -324,6 +325,16 @@ def _validate_template_runtime_metadata(template_data: dict, *, source: str) -> 
         f"Template '{source}' declares dtype/quant policy that must not live in templates: {details}. "
         "Keep templates to graph/order metadata; derive weight dtypes from the weights file and runtime config."
     )
+
+
+def _derive_position_grid_size(position_info: Any) -> int:
+    if position_info is None or len(getattr(position_info, "dims", [])) < 2:
+        return 0
+    rows = int(getattr(position_info, "ne1", 0) or 0)
+    if rows <= 0:
+        return 0
+    side = math.isqrt(rows)
+    return side if side * side == rows else rows
 
 
 def _inject_runtime_config_defaults(config: dict, arch: str) -> dict:
@@ -2953,7 +2964,7 @@ def main() -> None:
             projector_in_dim = int(projector_info.ne0)
             projector_out_dim = int(projector_info.ne1)
             position_info = tensors.get("v.position_embd.weight")
-            position_grid_size = int(position_info.ne1) if position_info is not None and len(position_info.dims) >= 2 else 0
+            position_grid_size = _derive_position_grid_size(position_info)
 
             if vision_arch == "gemma4_vision":
                 # llama.cpp Gemma4V applies inp_raw = inp_raw * 2 - 1 inside the graph.
@@ -3370,6 +3381,8 @@ def main() -> None:
             projector_in_dim = int(mm0.ne0)
             projector_hidden_dim = int(mm0.ne1)
             projector_out_dim = int(mm1.ne1)
+            position_info = tensors.get("v.position_embd.weight")
+            position_grid_size = _derive_position_grid_size(position_info)
 
             if vision_arch == "gemma4_vision":
                 # llama.cpp Gemma4V applies inp_raw = inp_raw * 2 - 1 inside the graph.

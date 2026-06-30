@@ -1,4 +1,5 @@
 #include "clip.h"
+#include "clip-impl.h"
 
 #include "ggml-backend.h"
 #include "ggml.h"
@@ -361,11 +362,49 @@ int ck_mtmd_clip_n_mmproj_embd(void *handle_ptr) {
 }
 
 size_t ck_mtmd_clip_embd_nbytes_by_img(void *handle_ptr, int img_w, int img_h) {
-    return clip_embd_nbytes_by_img(unwrap_ctx(handle_ptr), img_w, img_h);
+    clip_ctx *ctx = unwrap_ctx(handle_ptr);
+    if (!ctx || img_w <= 0 || img_h <= 0) {
+        return 0;
+    }
+    clip_image_f32 *image = clip_image_f32_init();
+    if (!image) {
+        return 0;
+    }
+    image->set_size({img_w, img_h}, false, false);
+    const int n_tokens = clip_n_output_tokens(ctx, image);
+    const int n_embd = clip_n_mmproj_embd(ctx);
+    clip_image_f32_free(image);
+    if (n_tokens <= 0 || n_embd <= 0) {
+        return 0;
+    }
+    return (size_t)n_tokens * (size_t)n_embd * sizeof(float);
 }
 
 int ck_mtmd_clip_encode_float_image(void *handle_ptr, int n_threads, float *img, int h, int w, float *vec) {
-    return clip_encode_float_image(unwrap_ctx(handle_ptr), n_threads, img, h, w, vec) ? 1 : 0;
+    clip_ctx *ctx = unwrap_ctx(handle_ptr);
+    if (!ctx || !img || !vec || h <= 0 || w <= 0) {
+        return 0;
+    }
+    clip_image_f32 *image = clip_image_f32_init();
+    if (!image) {
+        return 0;
+    }
+    image->set_size({w, h}, false, false);
+    image->cpy_buf(std::vector<float>(img, img + (size_t)h * (size_t)w * 3));
+    const int n_tokens = clip_n_output_tokens(ctx, image);
+    const int n_embd = clip_n_mmproj_embd(ctx);
+    if (n_tokens <= 0 || n_embd <= 0) {
+        clip_image_f32_free(image);
+        return 0;
+    }
+    std::vector<float> out((size_t)n_tokens * (size_t)n_embd);
+    const bool ok = clip_image_encode(ctx, n_threads, image, out);
+    clip_image_f32_free(image);
+    if (!ok || out.empty()) {
+        return 0;
+    }
+    std::memcpy(vec, out.data(), out.size() * sizeof(float));
+    return 1;
 }
 
 }
