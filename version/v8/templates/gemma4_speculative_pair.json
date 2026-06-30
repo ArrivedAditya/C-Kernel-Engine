@@ -62,6 +62,39 @@
         "accepted_count": "accepted_count",
         "rejected_count": "rejected_count"
       }
+    },
+    "speculative_contract": {
+      "enabled": true,
+      "mode": "target_draft_verify",
+      "draft_length": 1,
+      "verify_policy": "greedy",
+      "commit_policy": "accept_one_or_target_fallback",
+      "target_circuit": "target_prefill",
+      "draft_circuit": "draft_decode_step",
+      "bridge": {
+        "source": "target_hidden_stream",
+        "dest": "draft_backbone_stream"
+      },
+      "token_source": "speculative_commit_or_reject.verified_token",
+      "count_source": "constant_1",
+      "state_policy": {
+        "target": "advance_by_committed_count",
+        "draft": "sync_to_target_position"
+      },
+      "invariants": [
+        "target_is_authoritative",
+        "speculative_tokens_match_target_only_greedy",
+        "accepted_count_plus_rejected_count_equals_committed_count"
+      ]
+    },
+    "autoregressive_contract": {
+      "enabled": true,
+      "mode": "speculative",
+      "stream": "main_generation",
+      "position_source": "target_position",
+      "token_source": "speculative_commit_or_reject.verified_token",
+      "count_source": "constant_1",
+      "stop_policy": "eos_or_max_tokens"
     }
   },
   "sequence": [
