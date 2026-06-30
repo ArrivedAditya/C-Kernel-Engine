@@ -910,6 +910,22 @@ void rope_forward_qk_split_direct_f32(float *q,
                                   pos_offset, rotary_dim, freq_base);
 }
 
+void rope_forward_q_split_direct_f32(float *q,
+                                     const float *freq_factors,
+                                     int use_freq_factors,
+                                     int num_heads,
+                                     int num_tokens,
+                                     int head_dim,
+                                     int aligned_head_dim,
+                                     int pos_offset,
+                                     int rotary_dim,
+                                     float freq_base)
+{
+    rope_forward_split_direct_one(q, freq_factors, use_freq_factors,
+                                  num_heads, num_tokens, head_dim, aligned_head_dim,
+                                  pos_offset, rotary_dim, freq_base);
+}
+
 void rope_forward_qk_gemma4_direct(float *q,
                                    float *k,
                                    const float *freq_factors,

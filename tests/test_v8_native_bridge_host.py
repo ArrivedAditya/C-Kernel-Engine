@@ -1806,6 +1806,148 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         self.assertIn("--encoder-gguf", cmd)
         self.assertIn(str(encoder), cmd)
 
+    def test_ck_run_v8_routes_local_safetensors_dir_through_safetensors_converter(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_local_safetensors_") as tmpdir:
+            tmp = Path(tmpdir)
+            checkpoint = tmp / "checkpoint"
+            checkpoint.mkdir()
+            (checkpoint / "config.json").write_text("{}", encoding="utf-8")
+            (checkpoint / "model.safetensors").write_bytes(b"stub")
+
+            work_dir = tmp / "run"
+            weights_path = work_dir / "weights.bump"
+            config_path = work_dir / "config.json"
+            manifest_path = work_dir / "weights_manifest.json"
+            model_c_path = work_dir / "model_v8.c"
+            lib_path = work_dir / "libmodel.so"
+            ir_paths = {
+                "prefill_ir": work_dir / "ir1_prefill.json",
+                "prefill_layout": work_dir / "layout_prefill.json",
+                "prefill_lowered": work_dir / "lowered_prefill.json",
+                "prefill_call": work_dir / "lowered_prefill_call.json",
+                "decode_ir": work_dir / "ir1_decode.json",
+                "decode_layout": work_dir / "layout_decode.json",
+                "decode_lowered": work_dir / "lowered_decode.json",
+                "decode_call": work_dir / "lowered_decode_call.json",
+                "manifest_map": work_dir / "weights_manifest.map",
+            }
+            args = argparse.Namespace(
+                model=str(checkpoint),
+                run_dir=str(work_dir),
+                mmproj=None,
+                image_path=None,
+                synthetic_prefix_tokens=0,
+                force_download=False,
+                prompt=None,
+                image_mode="checker",
+                vision_top_k=8,
+                max_tokens=16,
+                no_chat_template=False,
+                chat_template="auto",
+                allow_raw_prompt=False,
+                thinking_mode="auto",
+                context_len=1024,
+                temperature=0.7,
+                top_k=40,
+                top_p=1.0,
+                min_p=0.0,
+                repeat_penalty=1.0,
+                repeat_last_n=64,
+                force_convert=False,
+                force_compile=False,
+                memory=False,
+                python_tokenizer=False,
+                generate_visualizer=False,
+                generate_only=True,
+                logits_layout="auto",
+                profile=False,
+                sweep_kernels=False,
+                sweep_kernels_full=False,
+            )
+
+            with mock.patch.object(ck_run_v8, "step_convert_safetensors", return_value=(weights_path, config_path, manifest_path)) as convert_safe, \
+                 mock.patch.object(ck_run_v8, "step_convert_gguf") as convert_gguf, \
+                 mock.patch.object(ck_run_v8, "step_build_ir", return_value=ir_paths), \
+                 mock.patch.object(ck_run_v8, "step_codegen", return_value=model_c_path), \
+                 mock.patch.object(ck_run_v8, "step_compile", return_value=lib_path):
+                rc = ck_run_v8.run_pipeline(args)
+
+        self.assertEqual(rc, 0)
+        convert_safe.assert_called_once_with(checkpoint.resolve(), work_dir, force=False)
+        convert_gguf.assert_not_called()
+
+    def test_ck_run_v8_routes_hf_safetensors_repo_through_safetensors_converter(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_hf_safetensors_") as tmpdir:
+            tmp = Path(tmpdir)
+            checkpoint = tmp / "google--gemma-4-E4B-it-assistant"
+            checkpoint.mkdir()
+            (checkpoint / "config.json").write_text("{}", encoding="utf-8")
+            (checkpoint / "model.safetensors.index.json").write_text("{}", encoding="utf-8")
+
+            work_dir = tmp / "run"
+            weights_path = work_dir / "weights.bump"
+            config_path = work_dir / "config.json"
+            manifest_path = work_dir / "weights_manifest.json"
+            model_c_path = work_dir / "model_v8.c"
+            lib_path = work_dir / "libmodel.so"
+            ir_paths = {
+                "prefill_ir": work_dir / "ir1_prefill.json",
+                "prefill_layout": work_dir / "layout_prefill.json",
+                "prefill_lowered": work_dir / "lowered_prefill.json",
+                "prefill_call": work_dir / "lowered_prefill_call.json",
+                "decode_ir": work_dir / "ir1_decode.json",
+                "decode_layout": work_dir / "layout_decode.json",
+                "decode_lowered": work_dir / "lowered_decode.json",
+                "decode_call": work_dir / "lowered_decode_call.json",
+                "manifest_map": work_dir / "weights_manifest.map",
+            }
+            args = argparse.Namespace(
+                model="hf://google/gemma-4-E4B-it-assistant",
+                run_dir=str(work_dir),
+                mmproj=None,
+                image_path=None,
+                synthetic_prefix_tokens=0,
+                force_download=False,
+                prompt=None,
+                image_mode="checker",
+                vision_top_k=8,
+                max_tokens=16,
+                no_chat_template=False,
+                chat_template="auto",
+                allow_raw_prompt=False,
+                thinking_mode="auto",
+                context_len=1024,
+                temperature=0.7,
+                top_k=40,
+                top_p=1.0,
+                min_p=0.0,
+                repeat_penalty=1.0,
+                repeat_last_n=64,
+                force_convert=True,
+                force_compile=False,
+                memory=False,
+                python_tokenizer=False,
+                generate_visualizer=False,
+                generate_only=True,
+                logits_layout="auto",
+                profile=False,
+                sweep_kernels=False,
+                sweep_kernels_full=False,
+            )
+
+            with mock.patch.object(ck_run_v8, "step_download", return_value=checkpoint) as download, \
+                 mock.patch.object(ck_run_v8, "step_convert_safetensors", return_value=(weights_path, config_path, manifest_path)) as convert_safe, \
+                 mock.patch.object(ck_run_v8, "step_convert_gguf") as convert_gguf, \
+                 mock.patch.object(ck_run_v8, "step_build_ir", return_value=ir_paths), \
+                 mock.patch.object(ck_run_v8, "step_codegen", return_value=model_c_path), \
+                 mock.patch.object(ck_run_v8, "step_compile", return_value=lib_path):
+                rc = ck_run_v8.run_pipeline(args)
+
+        self.assertEqual(rc, 0)
+        download.assert_called_once_with("google/gemma-4-E4B-it-assistant", ck_run_v8.CACHE_DIR, force=False)
+        convert_safe.assert_called_once_with(checkpoint, work_dir, force=True)
+        convert_gguf.assert_not_called()
+
     def test_ck_run_v8_generate_visualizer_refreshes_report_for_text_run(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_generate_visualizer_") as tmpdir:
             tmp = Path(tmpdir)

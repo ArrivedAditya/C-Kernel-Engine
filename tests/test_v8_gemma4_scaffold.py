@@ -252,6 +252,23 @@ class V8Gemma4ScaffoldTests(unittest.TestCase):
         self.assertEqual(template["contract"]["bridge"]["dest"], "draft_backbone_stream")
         self.assertEqual(template["contract"]["verifier"]["kernel"], "speculative_verify_greedy_f32")
         self.assertEqual(template["contract"]["committer"]["kernel"], "speculative_commit_one_i32")
+        speculative = template["contract"]["speculative_contract"]
+        self.assertTrue(speculative["enabled"])
+        self.assertEqual(speculative["mode"], "target_draft_verify")
+        self.assertEqual(speculative["draft_length"], 1)
+        self.assertEqual(speculative["verify_policy"], "greedy")
+        self.assertEqual(speculative["commit_policy"], "accept_one_or_target_fallback")
+        self.assertEqual(speculative["bridge"]["source"], "target_hidden_stream")
+        self.assertEqual(speculative["bridge"]["dest"], "draft_backbone_stream")
+        self.assertEqual(speculative["token_source"], "speculative_commit_or_reject.verified_token")
+        self.assertEqual(speculative["count_source"], "constant_1")
+        self.assertIn("speculative_tokens_match_target_only_greedy", speculative["invariants"])
+        autoregressive = template["contract"]["autoregressive_contract"]
+        self.assertTrue(autoregressive["enabled"])
+        self.assertEqual(autoregressive["mode"], "speculative")
+        self.assertEqual(autoregressive["stream"], "main_generation")
+        self.assertEqual(autoregressive["position_source"], "target_position")
+        self.assertEqual(autoregressive["token_source"], "speculative_commit_or_reject.verified_token")
 
         ops = template["block_types"]["speculative_decode"]["ops"]
         self.assertEqual(
