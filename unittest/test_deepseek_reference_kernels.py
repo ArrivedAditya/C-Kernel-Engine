@@ -38,6 +38,12 @@ lib.deepseek_mla_partial_rope_concat_f32.argtypes = [fptr, fptr, fptr, fptr, fpt
 lib.deepseek_mla_partial_rope_concat_f32.restype = None
 lib.deepseek_mla_partial_rope_concat_packed_f32.argtypes = [fptr, fptr, fptr, fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 lib.deepseek_mla_partial_rope_concat_packed_f32.restype = None
+lib.deepseek_mla_kv_cache_batch_store_f32.argtypes = [fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+lib.deepseek_mla_kv_cache_batch_store_f32.restype = None
+lib.deepseek_mla_kv_cache_store_f32.argtypes = [fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+lib.deepseek_mla_kv_cache_store_f32.restype = None
+lib.deepseek_mla_attention_decode_f32.argtypes = [fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+lib.deepseek_mla_attention_decode_f32.restype = None
 
 
 def ptr(a):
@@ -224,6 +230,82 @@ class TestDeepSeekReferenceKernels(unittest.TestCase):
         )
         np.testing.assert_allclose(query, q_ref.numpy(), rtol=1e-6, atol=1e-6)
         np.testing.assert_allclose(key, k_ref.numpy(), rtol=1e-6, atol=1e-6)
+
+    def test_mla_kv_cache_batch_store_uses_head_major_padded_layout(self):
+        rng = np.random.default_rng(31)
+        tokens, kv_heads, qk_dim, v_dim, max_seq, stride = 3, 2, 4, 3, 5, 6
+        k = np.ascontiguousarray(rng.normal(scale=0.2, size=(tokens, kv_heads, qk_dim)).astype(np.float32))
+        v = np.ascontiguousarray(rng.normal(scale=0.2, size=(tokens, kv_heads, v_dim)).astype(np.float32))
+        k_cache = np.full((kv_heads, max_seq, stride), -7.0, dtype=np.float32)
+        v_cache = np.full((kv_heads, max_seq, stride), -8.0, dtype=np.float32)
+
+        lib.deepseek_mla_kv_cache_batch_store_f32(
+            ptr(k_cache), ptr(v_cache), ptr(k), ptr(v),
+            tokens, kv_heads, qk_dim, v_dim, max_seq, stride,
+        )
+
+        for t in range(tokens):
+            for h in range(kv_heads):
+                np.testing.assert_allclose(k_cache[h, t, :qk_dim], k[t, h], rtol=0.0, atol=0.0)
+                np.testing.assert_allclose(v_cache[h, t, :v_dim], v[t, h], rtol=0.0, atol=0.0)
+                np.testing.assert_allclose(k_cache[h, t, qk_dim:], 0.0, rtol=0.0, atol=0.0)
+                np.testing.assert_allclose(v_cache[h, t, v_dim:], 0.0, rtol=0.0, atol=0.0)
+        np.testing.assert_allclose(k_cache[:, tokens:, :], -7.0, rtol=0.0, atol=0.0)
+        np.testing.assert_allclose(v_cache[:, tokens:, :], -8.0, rtol=0.0, atol=0.0)
+
+    def test_mla_kv_cache_decode_store_writes_only_requested_position(self):
+        rng = np.random.default_rng(37)
+        kv_heads, qk_dim, v_dim, max_seq, stride = 3, 4, 2, 6, 5
+        pos = 4
+        k = np.ascontiguousarray(rng.normal(scale=0.2, size=(kv_heads, qk_dim)).astype(np.float32))
+        v = np.ascontiguousarray(rng.normal(scale=0.2, size=(kv_heads, v_dim)).astype(np.float32))
+        k_cache = np.full((kv_heads, max_seq, stride), -3.0, dtype=np.float32)
+        v_cache = np.full((kv_heads, max_seq, stride), -4.0, dtype=np.float32)
+
+        lib.deepseek_mla_kv_cache_store_f32(
+            ptr(k_cache), ptr(v_cache), ptr(k), ptr(v),
+            pos, kv_heads, qk_dim, v_dim, max_seq, stride,
+        )
+
+        for h in range(kv_heads):
+            np.testing.assert_allclose(k_cache[h, pos, :qk_dim], k[h], rtol=0.0, atol=0.0)
+            np.testing.assert_allclose(v_cache[h, pos, :v_dim], v[h], rtol=0.0, atol=0.0)
+            np.testing.assert_allclose(k_cache[h, pos, qk_dim:], 0.0, rtol=0.0, atol=0.0)
+            np.testing.assert_allclose(v_cache[h, pos, v_dim:], 0.0, rtol=0.0, atol=0.0)
+        mask = np.ones((kv_heads, max_seq), dtype=bool)
+        mask[:, pos] = False
+        np.testing.assert_allclose(k_cache[mask], -3.0, rtol=0.0, atol=0.0)
+        np.testing.assert_allclose(v_cache[mask], -4.0, rtol=0.0, atol=0.0)
+
+    def test_mla_decode_attention_matches_reference_cache_read(self):
+        rng = np.random.default_rng(41)
+        heads, kv_heads, cache_len, qk_dim, v_dim, max_seq, stride = 4, 2, 3, 5, 3, 6, 7
+        q = np.ascontiguousarray(rng.normal(scale=0.12, size=(heads, qk_dim)).astype(np.float32))
+        k_cache = np.zeros((kv_heads, max_seq, stride), dtype=np.float32)
+        v_cache = np.zeros((kv_heads, max_seq, stride), dtype=np.float32)
+        k_cache[:, :cache_len, :qk_dim] = rng.normal(scale=0.11, size=(kv_heads, cache_len, qk_dim)).astype(np.float32)
+        v_cache[:, :cache_len, :v_dim] = rng.normal(scale=0.09, size=(kv_heads, cache_len, v_dim)).astype(np.float32)
+        out = np.empty((heads, v_dim), dtype=np.float32)
+
+        ref = np.zeros_like(out)
+        scale = 1.0 / math.sqrt(qk_dim)
+        for h in range(heads):
+            kv_h = h * kv_heads // heads
+            scores = np.array(
+                [float(np.dot(q[h], k_cache[kv_h, j, :qk_dim])) * scale for j in range(cache_len)],
+                dtype=np.float64,
+            )
+            weights = np.exp(scores - np.max(scores))
+            weights /= np.sum(weights)
+            for j, w in enumerate(weights):
+                ref[h] += (w * v_cache[kv_h, j, :v_dim]).astype(np.float32)
+
+        lib.deepseek_mla_attention_decode_f32(
+            ptr(q), ptr(k_cache), ptr(v_cache), ptr(out),
+            heads, kv_heads, cache_len, qk_dim, v_dim, max_seq, stride,
+        )
+
+        np.testing.assert_allclose(out, ref, rtol=1e-6, atol=1e-6)
 
     def test_csa_attention_forward_backward(self):
         torch.manual_seed(13)

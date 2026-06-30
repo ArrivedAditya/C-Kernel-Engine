@@ -12,6 +12,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 LIB = ROOT / "build" / "libckernel_engine.so"
 F32P = ctypes.POINTER(ctypes.c_float)
+I32P = ctypes.POINTER(ctypes.c_int)
 
 
 def load_lib():
@@ -26,6 +27,10 @@ def as_f32(values):
 
 def ptr(array):
     return array.ctypes.data_as(F32P)
+
+
+def iptr(array):
+    return array.ctypes.data_as(I32P)
 
 
 def rmsnorm_rows(x, gamma, eps):
@@ -125,6 +130,24 @@ class TestGemma4AssistantKernels(unittest.TestCase):
             ctypes.c_int,
             ctypes.c_int,
         ]
+        cls.lib.speculative_verify_greedy_f32.argtypes = [
+            F32P,
+            ctypes.c_int,
+            ctypes.c_int,
+            I32P,
+            I32P,
+        ]
+        cls.lib.speculative_commit_one_i32.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            I32P,
+            I32P,
+            ctypes.c_int,
+            I32P,
+            I32P,
+            I32P,
+            I32P,
+        ]
 
     def test_assistant_layer_scale_forward_matches_numpy(self):
         hidden = as_f32(np.arange(15, dtype=np.float32).reshape(3, 5) - 4.0)
@@ -187,6 +210,80 @@ class TestGemma4AssistantKernels(unittest.TestCase):
         )
 
         np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-5)
+
+    def test_speculative_verify_accepts_matching_draft_token(self):
+        logits = as_f32([-0.5, 0.25, 2.0, 1.25])
+        accepted = np.array([-1], dtype=np.int32)
+        verified = np.array([-1], dtype=np.int32)
+
+        self.lib.speculative_verify_greedy_f32(ptr(logits), 4, 2, iptr(accepted), iptr(verified))
+
+        self.assertEqual(int(accepted[0]), 1)
+        self.assertEqual(int(verified[0]), 2)
+
+    def test_speculative_verify_rejects_and_uses_target_argmax(self):
+        logits = as_f32([-0.5, 0.25, 2.0, 1.25])
+        accepted = np.array([-1], dtype=np.int32)
+        verified = np.array([-1], dtype=np.int32)
+
+        self.lib.speculative_verify_greedy_f32(ptr(logits), 4, 1, iptr(accepted), iptr(verified))
+
+        self.assertEqual(int(accepted[0]), 0)
+        self.assertEqual(int(verified[0]), 2)
+
+    def test_speculative_commit_updates_buffer_positions_and_counters(self):
+        token_buffer = np.full(4, -99, dtype=np.int32)
+        token_count = np.array([1], dtype=np.int32)
+        target_position = np.array([7], dtype=np.int32)
+        draft_position = np.array([3], dtype=np.int32)
+        accepted_count = np.array([2], dtype=np.int32)
+        rejected_count = np.array([5], dtype=np.int32)
+
+        self.lib.speculative_commit_one_i32(
+            1,
+            42,
+            iptr(token_buffer),
+            iptr(token_count),
+            4,
+            iptr(target_position),
+            iptr(draft_position),
+            iptr(accepted_count),
+            iptr(rejected_count),
+        )
+
+        self.assertEqual(token_buffer.tolist(), [-99, 42, -99, -99])
+        self.assertEqual(int(token_count[0]), 2)
+        self.assertEqual(int(target_position[0]), 8)
+        self.assertEqual(int(draft_position[0]), 8)
+        self.assertEqual(int(accepted_count[0]), 3)
+        self.assertEqual(int(rejected_count[0]), 5)
+
+    def test_speculative_commit_reject_counter_and_full_buffer_guard(self):
+        token_buffer = np.array([7, 8], dtype=np.int32)
+        token_count = np.array([2], dtype=np.int32)
+        target_position = np.array([4], dtype=np.int32)
+        draft_position = np.array([4], dtype=np.int32)
+        accepted_count = np.array([0], dtype=np.int32)
+        rejected_count = np.array([0], dtype=np.int32)
+
+        self.lib.speculative_commit_one_i32(
+            0,
+            11,
+            iptr(token_buffer),
+            iptr(token_count),
+            2,
+            iptr(target_position),
+            iptr(draft_position),
+            iptr(accepted_count),
+            iptr(rejected_count),
+        )
+
+        self.assertEqual(token_buffer.tolist(), [7, 8])
+        self.assertEqual(int(token_count[0]), 2)
+        self.assertEqual(int(target_position[0]), 5)
+        self.assertEqual(int(draft_position[0]), 5)
+        self.assertEqual(int(accepted_count[0]), 0)
+        self.assertEqual(int(rejected_count[0]), 1)
 
 
 if __name__ == "__main__":
