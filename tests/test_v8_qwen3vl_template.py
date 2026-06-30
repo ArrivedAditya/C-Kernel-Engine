@@ -176,6 +176,33 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             self.assertEqual(out["merged_grid_y"], 8)
             self.assertEqual(out["vision_merged_tokens"], 128)
 
+    def test_qwen3vl_decoder_declares_bridge_generation_contract(self) -> None:
+        doc = build_ir_v8._load_builtin_template_doc("qwen3vl")
+        bridge = doc["contract"]["multimodal_bridge"]
+        self.assertEqual(bridge["prefix_policy"], "mixed_visual_text_prefill")
+        self.assertEqual(bridge["generation_policy"], "incremental_decode_after_prefill")
+        self.assertEqual(bridge["position_policy"], "mrope_2d")
+        self.assertEqual(bridge["cache_policy"], "persistent_decoder_kv")
+        self.assertEqual(bridge["runtime_policy"], "decode_staged")
+        self.assertEqual(
+            run_multimodal_bridge_v8._bridge_runtime_from_policy(bridge),
+            "decode-staged",
+        )
+        self.assertEqual(
+            run_multimodal_bridge_v8._bridge_generation_mode_from_policy(bridge),
+            "incremental-decode",
+        )
+
+    def test_unknown_bridge_contract_defaults_to_safe_replay(self) -> None:
+        self.assertEqual(
+            run_multimodal_bridge_v8._bridge_runtime_from_policy({}, fallback="prefill"),
+            "prefill",
+        )
+        self.assertEqual(
+            run_multimodal_bridge_v8._bridge_generation_mode_from_policy({}, fallback="mixed-replay"),
+            "mixed-replay",
+        )
+
     def test_builtin_template_declares_qwen3vl_vision_contract(self) -> None:
         doc = build_ir_v8._load_builtin_template_doc("qwen3_vl_vision")
         self.assertIsNotNone(doc)

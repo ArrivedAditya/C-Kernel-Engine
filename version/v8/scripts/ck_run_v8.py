@@ -1200,6 +1200,10 @@ def run_pipeline(args: argparse.Namespace) -> int:
             cmd.extend(["--image-max-tokens", str(int(args.image_max_tokens))])
         if args.synthetic_prefix_tokens > 0:
             cmd.extend(["--synthetic-prefix-tokens", str(int(args.synthetic_prefix_tokens))])
+        if args.bridge_runtime is not None:
+            cmd.extend(["--bridge-runtime", str(args.bridge_runtime)])
+        if args.bridge_generation_mode is not None:
+            cmd.extend(["--bridge-generation-mode", str(args.bridge_generation_mode)])
         if args.context_len is not None:
             cmd.extend(["--decoder-context-len", str(int(args.context_len))])
         run_cmd(cmd, cwd=PROJECT_ROOT)
@@ -1365,6 +1369,8 @@ Examples:
     run_parser.add_argument("--image-max-tokens", type=int, default=None, help="Maximum merged visual tokens for smart-resized Qwen3-VL images")
     run_parser.add_argument("--image-mode", choices=["checker", "gradient", "gray"], default="checker")
     run_parser.add_argument("--synthetic-prefix-tokens", type=int, default=0)
+    run_parser.add_argument("--bridge-runtime", choices=["prefill", "decode-staged"], default=None, help="Multimodal bridge decoder runtime; decode-staged enables incremental generation diagnostics")
+    run_parser.add_argument("--bridge-generation-mode", choices=["incremental-decode", "mixed-replay"], default=None, help="Multimodal generation mode after visual/text prefill")
     run_parser.add_argument("--vision-top-k", type=int, default=8)
     run_parser.add_argument(
         "--vision-activation-pref",

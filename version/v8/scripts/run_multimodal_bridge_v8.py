@@ -929,6 +929,61 @@ def _load_builtin_chat_contract(template_name: str | None) -> dict[str, Any] | N
     return chat_contract
 
 
+def _load_builtin_bridge_contract(template_name: str | None) -> dict[str, Any] | None:
+    doc = build_ir_v8._load_builtin_template_doc(_normalize_chat_template_choice(template_name))
+    if not isinstance(doc, dict):
+        return None
+    contract_doc = doc.get("contract") if isinstance(doc.get("contract"), dict) else None
+    if not isinstance(contract_doc, dict):
+        return None
+    bridge_contract = contract_doc.get("multimodal_bridge")
+    if not isinstance(bridge_contract, dict):
+        return None
+    return bridge_contract
+
+
+def _bridge_runtime_from_policy(contract: dict[str, Any] | None, fallback: str = "prefill") -> str:
+    bridge = contract if isinstance(contract, dict) else {}
+    runtime_policy = str(bridge.get("runtime_policy") or "").strip().lower().replace("-", "_")
+    generation_policy = str(bridge.get("generation_policy") or "").strip().lower().replace("-", "_")
+    cache_policy = str(bridge.get("cache_policy") or "").strip().lower().replace("-", "_")
+    if runtime_policy in {"decode_staged", "decode", "staged"}:
+        return "decode-staged"
+    if generation_policy == "incremental_decode_after_prefill" and cache_policy == "persistent_decoder_kv":
+        return "decode-staged"
+    return fallback
+
+
+def _bridge_generation_mode_from_policy(contract: dict[str, Any] | None, fallback: str = "mixed-replay") -> str:
+    bridge = contract if isinstance(contract, dict) else {}
+    generation_policy = str(bridge.get("generation_policy") or "").strip().lower().replace("-", "_")
+    if generation_policy == "incremental_decode_after_prefill":
+        return "incremental-decode"
+    if generation_policy in {"mixed_replay", "replay_mixed_prefix"}:
+        return "mixed-replay"
+    return fallback
+
+
+def _resolve_decoder_bridge_contract(
+    decoder_gguf: Path,
+    *,
+    chat_template_mode: str = "auto",
+) -> dict[str, Any]:
+    resolved_mode = _normalize_chat_template_choice(chat_template_mode)
+    if resolved_mode not in {"", "auto", "none"}:
+        explicit = _load_builtin_bridge_contract(resolved_mode)
+        if explicit is not None:
+            return dict(explicit)
+
+    meta = _read_gguf_metadata(decoder_gguf, {"general.architecture"})
+    arch = str(meta.get("general.architecture") or "").strip().lower()
+    if arch:
+        contract = _load_builtin_bridge_contract(arch)
+        if contract is not None:
+            return dict(contract)
+    return {}
+
+
 def _fallback_chat_contract_from_template_text(chat_template: str | None) -> dict[str, Any] | None:
     template = str(chat_template or "")
     if "<|im_start|>" in template and "<|im_end|>" in template:
@@ -2279,6 +2334,7 @@ def _run_decoder(
     prefix_text_pos: int | None = None,
     prefix_decode_policy: str = "causal_mixed_prefix",
     bridge_runtime: str = "prefill",
+    bridge_generation_mode: str = "mixed-replay",
     strict_parity: bool = False,
     tokenizer: GGUFTokenizer | Any | None = None,
     stop_token_ids: list[int] | None = None,
@@ -2298,6 +2354,9 @@ def _run_decoder(
     # runtime remains available as an explicit staged replay diagnostic/escape
     # hatch for architecture work.
     bridge_runtime_name = str(bridge_runtime or "prefill").strip().lower()
+    generation_mode = str(bridge_generation_mode or "mixed-replay").strip().lower().replace("-", "_")
+    if generation_mode not in {"incremental_decode", "mixed_replay"}:
+        raise ValueError(f"unsupported bridge_generation_mode={bridge_generation_mode!r}")
     if bridge_runtime_name in {"decode", "staged", "decode-staged"}:
         model_so = Path(runtime["so_path"])
     else:
@@ -2397,7 +2456,8 @@ def _run_decoder(
             rc = lib.ck_model_forward_mixed(prefix_ptr, prefix_tokens, after_token_arr, len(after_token_ids), logits)
         if rc != 0:
             raise RuntimeError(f"decoder forward_mixed failed with rc={rc}")
-        _log_progress(f"decoder: forward_mixed done elapsed={time.perf_counter() - forward_t0:.2f}s")
+        forward_elapsed = time.perf_counter() - forward_t0
+        _log_progress(f"decoder: forward_mixed done elapsed={forward_elapsed:.2f}s")
         logits_arr = array("f", logits)
         stop_ids = {int(token_id) for token_id in list(stop_token_ids or [])}
         generated_token_ids: list[int] = []
@@ -2447,7 +2507,7 @@ def _run_decoder(
                     _log_progress(f"decoder: generation progress tokens={len(generated_token_ids)}")
                 if step + 1 >= int(effective_max_tokens):
                     break
-                if model_so == Path(runtime.get("prefill_so_path") or ""):
+                if model_so == Path(runtime.get("prefill_so_path") or "") and generation_mode == "mixed_replay":
                     replay_after_ids = after_token_ids + generated_token_ids
                     replay_after_arr = (ctypes.c_int32 * len(replay_after_ids))(*replay_after_ids) if replay_after_ids else None
                     if before_token_ids and hasattr(lib, "ck_model_forward_segments_grid_ex"):
@@ -2498,11 +2558,14 @@ def _run_decoder(
                 current_logits = logits
             if stream_output and generated_token_ids:
                 print("", flush=True)
+            generation_elapsed = time.perf_counter() - gen_t0
             _log_progress(
                 "decoder: generation done "
-                f"elapsed={time.perf_counter() - gen_t0:.2f}s generated_tokens={len(generated_token_ids)} "
+                f"elapsed={generation_elapsed:.2f}s generated_tokens={len(generated_token_ids)} "
                 f"stop={generation_stop_reason}"
             )
+        else:
+            generation_elapsed = 0.0
         generated_text = ""
         generated_text_raw = ""
         if tokenizer is not None and generated_token_ids:
@@ -2517,6 +2580,17 @@ def _run_decoder(
             "generated_text_raw": generated_text_raw,
             "generation_stop_reason": generation_stop_reason,
             "streamed_output": bool(stream_output and tokenizer is not None and max_tokens > 0),
+            "timings": {
+                "decoder_forward_mixed_ms": float(forward_elapsed * 1000.0),
+                "decoder_generation_ms": float(generation_elapsed * 1000.0),
+                "decoder_generated_tokens": int(len(generated_token_ids)),
+                "decoder_generation_tok_s": (
+                    float(len(generated_token_ids) / generation_elapsed)
+                    if generation_elapsed > 0.0 and generated_token_ids
+                    else 0.0
+                ),
+                "decoder_bridge_generation_mode": generation_mode,
+            },
         }
     finally:
         if 'old_bridge_noncausal_env' in locals():
@@ -2767,7 +2841,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--generation-progress-every", type=int, default=0, help="Emit generation heartbeat every N tokens; 0 disables periodic progress logs")
     ap.add_argument("--no-stream-output", action="store_true", help="Disable live text streaming during generation and print only the final response")
     ap.add_argument("--strict-parity", action="store_true", help="Enable strict/reference parity paths in bridge decoder kernels")
-    ap.add_argument("--bridge-runtime", choices=["prefill", "decode-staged"], default="prefill", help="Decoder bridge runtime to use; decode-staged is a diagnostic fallback")
+    ap.add_argument("--bridge-runtime", choices=["prefill", "decode-staged"], default=None, help="Override template multimodal bridge runtime; decode-staged enables incremental generation after mixed prefill")
+    ap.add_argument(
+        "--bridge-generation-mode",
+        choices=["incremental-decode", "mixed-replay"],
+        default=None,
+        help="Override template multimodal bridge generation policy after mixed visual/text prefill",
+    )
     ap.add_argument("--temperature", type=float, default=0.0, help="Decode temperature; 0 keeps greedy generation")
     ap.add_argument("--sample-top-k", type=int, default=40, help="Top-k sampling cutoff used during bridge generation")
     ap.add_argument("--top-p", type=float, default=1.0, help="Nucleus top-p used during bridge generation")
@@ -2795,6 +2875,12 @@ def main(argv: list[str] | None = None) -> int:
     tokenizer = GGUFTokenizer.from_gguf(str(args.decoder_gguf.resolve()))
     chat_template_mode = "none" if args.no_chat_template else args.chat_template
     chat_contract = _resolve_decoder_chat_contract(args.decoder_gguf.resolve(), chat_template_mode=chat_template_mode)
+    bridge_contract = _resolve_decoder_bridge_contract(args.decoder_gguf.resolve(), chat_template_mode=chat_template_mode)
+    resolved_bridge_runtime = str(args.bridge_runtime or _bridge_runtime_from_policy(bridge_contract, fallback="prefill"))
+    resolved_bridge_generation_mode = str(
+        args.bridge_generation_mode
+        or _bridge_generation_mode_from_policy(bridge_contract, fallback="mixed-replay")
+    )
     include_image_chunks = bool(args.encoder_gguf is not None or int(args.synthetic_prefix_tokens) > 0)
     prompt_segments = _format_multimodal_prompt_segments(
         args.prompt,
@@ -2832,10 +2918,16 @@ def main(argv: list[str] | None = None) -> int:
     prefix_embeddings = array("f")
     prefix_grid: tuple[int, int] | None = None
     prefix_text_pos: int | None = None
-    prefix_position_policy = "linear" if chat_template_mode in {"gemma3", "gemma4"} else "mrope_2d"
-    prefix_decode_policy = "non_causal_visual_chunk" if chat_template_mode in {"gemma3", "gemma4"} else "causal_mixed_prefix"
+    prefix_position_policy = str(bridge_contract.get("position_policy") or "linear").strip().lower() or "linear"
+    prefix_decode_policy = str(bridge_contract.get("decode_policy") or "causal_mixed_prefix").strip().lower() or "causal_mixed_prefix"
     encoder_report: dict[str, Any] | None = None
     dim_mismatch: dict[str, int] | None = None
+    timing_t0 = time.perf_counter()
+    timings: dict[str, float | int] = {
+        "prompt_tokens_before": int(len(prompt_prefix_token_ids)),
+        "prompt_tokens_after": int(len(token_ids)),
+        "text_prompt_tokens": int(total_text_prompt_tokens),
+    }
 
     if args.encoder_gguf is not None:
         _log_progress(f"encoder runtime prepare start gguf={args.encoder_gguf.resolve()}")
@@ -2848,13 +2940,17 @@ def main(argv: list[str] | None = None) -> int:
             image_min_tokens=args.image_min_tokens,
             image_max_tokens=args.image_max_tokens,
         )
-        _log_progress(f"encoder runtime prepare done elapsed={time.perf_counter() - encoder_prep_t0:.2f}s")
+        encoder_prepare_elapsed = time.perf_counter() - encoder_prep_t0
+        timings["encoder_prepare_ms"] = encoder_prepare_elapsed * 1000.0
+        _log_progress(f"encoder runtime prepare done elapsed={encoder_prepare_elapsed:.2f}s")
         _log_progress("encoder execution start")
+        encoder_exec_t0 = time.perf_counter()
         encoder_report = _run_encoder(
             encoder_runtime,
             args.image_mode,
             image_path=args.image_path.resolve() if args.image_path is not None else None,
         )
+        timings["encoder_execute_ms"] = (time.perf_counter() - encoder_exec_t0) * 1000.0
         _log_progress(
             "encoder execution done "
             f"prefix_tokens={int(encoder_report['prefix_tokens'])} embed_dim={int(encoder_report['embed_dim'])}"
@@ -2880,7 +2976,9 @@ def main(argv: list[str] | None = None) -> int:
         decoder_dir,
         context_override=decoder_context_len,
     )
-    _log_progress(f"decoder runtime prepare done elapsed={time.perf_counter() - decoder_prep_t0:.2f}s")
+    decoder_prepare_elapsed = time.perf_counter() - decoder_prep_t0
+    timings["decoder_prepare_ms"] = decoder_prepare_elapsed * 1000.0
+    _log_progress(f"decoder runtime prepare done elapsed={decoder_prepare_elapsed:.2f}s")
 
     prefix_embed_dim = int(decoder_runtime["embed_dim"])
     if encoder_report is not None:
@@ -2960,7 +3058,8 @@ def main(argv: list[str] | None = None) -> int:
         prefix_grid=prefix_grid,
         prefix_text_pos=prefix_text_pos,
         prefix_decode_policy=prefix_decode_policy,
-        bridge_runtime=str(args.bridge_runtime),
+        bridge_runtime=resolved_bridge_runtime,
+        bridge_generation_mode=resolved_bridge_generation_mode,
         strict_parity=bool(args.strict_parity),
         tokenizer=tokenizer,
         stop_token_ids=list(stop_policy["stop_ids"]),
@@ -2979,6 +3078,12 @@ def main(argv: list[str] | None = None) -> int:
         args.dump_logits_f32.parent.mkdir(parents=True, exist_ok=True)
         with args.dump_logits_f32.open("wb") as f:
             decoder_report["logits"].tofile(f)
+    decoder_timings = decoder_report.get("timings")
+    if isinstance(decoder_timings, dict):
+        timings.update({str(k): v for k, v in decoder_timings.items()})
+    timings["prefix_tokens"] = int(prefix_tokens)
+    timings["total_prefill_tokens"] = int(len(prompt_prefix_token_ids) + prefix_tokens + len(token_ids))
+    timings["runner_total_ms"] = (time.perf_counter() - timing_t0) * 1000.0
     _log_progress("report assembly start")
     top = _topk(decoder_report["logits"], max(1, args.report_top_k))
     top_tokens = [
@@ -3014,6 +3119,10 @@ def main(argv: list[str] | None = None) -> int:
         "prefix_grid_y": None if prefix_grid is None else int(prefix_grid[1]),
         "prefix_text_pos": None if prefix_text_pos is None else int(prefix_text_pos),
         "prefix_decode_policy": str(prefix_decode_policy),
+        "bridge_runtime": resolved_bridge_runtime,
+        "bridge_generation_mode": resolved_bridge_generation_mode,
+        "bridge_contract": dict(bridge_contract),
+        "bridge_runtime_policy": resolved_bridge_runtime,
         "prefix_dump_path": dumped_prefix_path,
         "total_prefill_tokens": len(prompt_prefix_token_ids) + prefix_tokens + len(token_ids),
         "decoder_runtime": {
@@ -3063,6 +3172,10 @@ def main(argv: list[str] | None = None) -> int:
         "generated_text": str(decoder_report.get("generated_text") or ""),
         "generated_text_raw": str(decoder_report.get("generated_text_raw") or ""),
         "generation_stop_reason": str(decoder_report.get("generation_stop_reason") or "disabled"),
+        "timings": {
+            str(k): (float(v) if isinstance(v, float) else int(v) if isinstance(v, int) else str(v))
+            for k, v in timings.items()
+        },
         "generation_config": {
             "temperature": float(args.temperature),
             "sample_top_k": int(args.sample_top_k),
