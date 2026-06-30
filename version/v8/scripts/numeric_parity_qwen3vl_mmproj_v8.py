@@ -41,6 +41,7 @@ from vision_bridge_runtime_v8 import (  # type: ignore  # noqa: E402
     resolve_vision_bridge_contract,
     try_named_activation_view,
 )
+from run_multimodal_bridge_v8 import _qwen3vl_geometry_overrides  # type: ignore  # noqa: E402
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -64,7 +65,7 @@ def _restore_env_var(name: str, old: str | None) -> None:
 
 
 def _ensure_engine_lib() -> None:
-    _run(["make", "-B", "CK_ENABLE_OPENMP=1", "build/libckernel_engine.so"])
+    _run(["make", "CK_ENABLE_OPENMP=1", "build/libckernel_engine.so"])
 
 
 def _load_runtime_metadata(report: dict[str, Any], output_dir: Path) -> dict[str, Any]:
@@ -93,7 +94,75 @@ def _load_runtime_metadata(report: dict[str, Any], output_dir: Path) -> dict[str
     return result
 
 
-def _ensure_runtime_artifacts(gguf_path: Path, output_dir: Path) -> dict[str, Any]:
+def _write_json(path: Path, obj: Any) -> None:
+    path.write_text(json.dumps(obj, indent=2), encoding="utf-8")
+
+
+def _apply_qwen3vl_geometry_to_runtime_manifest(
+    output_dir: Path,
+    image_path: Path | None,
+    image_min_tokens: int | None,
+    image_max_tokens: int | None,
+) -> bool:
+    if image_path is None:
+        return False
+    if (image_min_tokens is None or int(image_min_tokens) <= 0) and (image_max_tokens is None or int(image_max_tokens) <= 0):
+        return False
+    runtime_manifest_path = output_dir / "weights_manifest.runtime.json"
+    config_path = output_dir / "config.json"
+    report_path = output_dir / "report.json"
+    if not runtime_manifest_path.exists():
+        return False
+    runtime_manifest = json.loads(runtime_manifest_path.read_text(encoding="utf-8"))
+    cfg = runtime_manifest.get("config")
+    if not isinstance(cfg, dict):
+        cfg = {}
+        runtime_manifest["config"] = cfg
+    overrides = _qwen3vl_geometry_overrides(
+        dict(cfg),
+        image_path,
+        image_min_tokens=image_min_tokens,
+        image_max_tokens=image_max_tokens,
+    )
+    changed = any(cfg.get(k) != v for k, v in overrides.items())
+    if not changed:
+        return False
+    cfg.update(overrides)
+    _write_json(runtime_manifest_path, runtime_manifest)
+    if config_path.exists():
+        config_obj = json.loads(config_path.read_text(encoding="utf-8"))
+        if isinstance(config_obj, dict):
+            config_obj.update(overrides)
+            _write_json(config_path, config_obj)
+    if report_path.exists():
+        report_obj = json.loads(report_path.read_text(encoding="utf-8"))
+        if isinstance(report_obj, dict):
+            report_cfg = report_obj.get("config")
+            if isinstance(report_cfg, dict):
+                report_cfg.update(overrides)
+            _write_json(report_path, report_obj)
+    for name in (
+        "ir1.json",
+        "layout.json",
+        "lowered.json",
+        "call.json",
+        "weights_manifest.map",
+        "qwen3_vl_mmproj_v8.c",
+        "libqwen3vl_mmproj_v8.so",
+    ):
+        path = output_dir / name
+        if path.exists():
+            path.unlink()
+    return True
+
+
+def _ensure_runtime_artifacts(
+    gguf_path: Path,
+    output_dir: Path,
+    image_path: Path | None = None,
+    image_min_tokens: int | None = None,
+    image_max_tokens: int | None = None,
+) -> dict[str, Any]:
     report_path = output_dir / "report.json"
     if not report_path.exists():
         parity_harness.run_harness(gguf_path, output_dir)
@@ -104,6 +173,8 @@ def _ensure_runtime_artifacts(gguf_path: Path, output_dir: Path) -> dict[str, An
     lowered = output_dir / "lowered.json"
     call = output_dir / "call.json"
     manifest_map = output_dir / "weights_manifest.map"
+
+    _apply_qwen3vl_geometry_to_runtime_manifest(output_dir, image_path, image_min_tokens, image_max_tokens)
 
     if not manifest_map.exists():
         rc = build_ir_v8.main(
@@ -119,6 +190,16 @@ def _ensure_runtime_artifacts(gguf_path: Path, output_dir: Path) -> dict[str, An
         )
         if rc != 0:
             raise RuntimeError(f"build_ir_v8 failed with rc={rc}")
+
+    c_path = output_dir / "qwen3_vl_mmproj_v8.c"
+    if not c_path.exists() or c_path.stat().st_mtime < call.stat().st_mtime:
+        _run([
+            sys.executable,
+            str(SCRIPT_DIR / "codegen_v8.py"),
+            "--ir", str(call),
+            "--layout", str(layout),
+            "--output", str(c_path),
+        ])
 
     with report_path.open("r", encoding="utf-8") as f:
         report = json.load(f)
@@ -428,17 +509,80 @@ def _load_mtmd_shim(shim_so: Path) -> ctypes.CDLL:
     return lib
 
 
+def _parse_named_dump_selector(selector: str) -> tuple[str, int | None]:
+    name = str(selector).strip()
+    if "@" not in name:
+        return name, None
+    op_name, layer_text = name.rsplit("@", 1)
+    op_name = op_name.strip()
+    layer_text = layer_text.strip()
+    if not op_name or not layer_text:
+        raise RuntimeError(f"invalid llama dump selector {selector!r}; expected op or op@layer")
+    try:
+        layer_id = int(layer_text)
+    except ValueError as exc:
+        raise RuntimeError(f"invalid llama dump selector {selector!r}; layer must be an integer") from exc
+    return op_name, layer_id
+
+
+def _llama_raw_dump_name(op_name: str) -> str:
+    reverse_aliases = {
+        "q_proj": "Qcur",
+        "k_proj": "Kcur",
+        "v_proj": "Vcur",
+        "attn_output": "attn_out",
+    }
+    return reverse_aliases.get(op_name, op_name)
+
+
 def _read_named_llama_dump_tensor(dump_path: Path, op_name: str) -> array:
+    requested_op, requested_layer = _parse_named_dump_selector(op_name)
     dumps = parity_test.read_dump_file(dump_path)
-    matches = [dump for dump in dumps if dump.op_name == op_name]
+    matches = [
+        dump for dump in dumps
+        if dump.op_name == requested_op and (requested_layer is None or dump.layer_id == requested_layer)
+    ]
     if not matches:
-        available = sorted({dump.op_name for dump in dumps})
+        available = sorted({f"{dump.op_name}@{dump.layer_id}" for dump in dumps})
+        suffix = f" at layer {requested_layer}" if requested_layer is not None else ""
         raise RuntimeError(
-            f"llama parity dump {dump_path} missing {op_name}; "
+            f"llama parity dump {dump_path} missing {requested_op}{suffix}; "
             f"available ops: {', '.join(available) if available else '(none)'}"
         )
     flat = matches[-1].data.reshape(-1)
     return array("f", (float(v) for v in flat))
+
+
+def _ck_hidden_dump_path(hidden_dir: Path, selector: str) -> Path:
+    requested_name, requested_layer = _parse_named_dump_selector(selector)
+    if requested_layer is None:
+        pattern = f"tok_*_layer_*_{requested_name}.f32"
+    else:
+        pattern = f"tok_*_layer_{requested_layer:03d}_{requested_name}.f32"
+    matches = sorted(hidden_dir.glob(pattern))
+    if not matches and requested_layer == -1:
+        matches = sorted(hidden_dir.glob(f"tok_*_layer_-01_{requested_name}.f32"))
+    if not matches:
+        available = sorted(path.name for path in hidden_dir.glob("tok_*_layer_*.f32"))
+        preview = ", ".join(available[:32])
+        if len(available) > 32:
+            preview += ", ..."
+        suffix = f" at layer {requested_layer}" if requested_layer is not None else ""
+        raise RuntimeError(
+            f"CK hidden dump missing {requested_name}{suffix}; "
+            f"available dumps: {preview if preview else '(none)'}"
+        )
+    return matches[-1]
+
+
+def _read_ck_hidden_dump_tensor(hidden_dir: Path, selector: str) -> array:
+    dump_path = _ck_hidden_dump_path(hidden_dir, selector)
+    data = dump_path.read_bytes()
+    if len(data) % ctypes.sizeof(ctypes.c_float) != 0:
+        raise RuntimeError(f"CK hidden dump {dump_path} has invalid byte length {len(data)}")
+    out = array("f")
+    out.frombytes(data)
+    return out
 
 
 def _normalize_output_name(name: str | None) -> str:
@@ -513,6 +657,20 @@ def _run_generated_encoder(
 ) -> array:
     lib = _load_generated_lib(model_so)
     restore_env: dict[str, str | None] = {}
+    hidden_dir_ctx: tempfile.TemporaryDirectory[str] | None = None
+    requested_output = _normalize_output_name(output_name)
+    if requested_output not in {"auto", "vision_bridge_output"}:
+        layout_for_dump = _load_layout(layout_path)
+        offsets_for_dump = _load_activation_offsets(layout_path)
+        if requested_output not in offsets_for_dump:
+            named_contract = _resolve_ck_output_contract(layout_for_dump, offsets_for_dump, requested_output)
+            named_view_available = bool(str(named_contract.get("named_activation") or ""))
+            # Generated debug seams such as layer_out@24 and vision_projector_out are
+            # written to CK_DEBUG_EXPORT_HIDDEN, not exposed through named activations.
+            if "@" in requested_output or not named_view_available:
+                hidden_dir_ctx = tempfile.TemporaryDirectory(prefix="v8_ck_mmproj_hidden_")
+                restore_env["CK_DEBUG_EXPORT_HIDDEN"] = os.environ.get("CK_DEBUG_EXPORT_HIDDEN")
+                os.environ["CK_DEBUG_EXPORT_HIDDEN"] = hidden_dir_ctx.name
     if strict_mtmd_oracle:
         if gguf_path is None or shim_so is None:
             raise RuntimeError("strict mtmd oracle requested without gguf/shim paths")
@@ -566,6 +724,9 @@ def _run_generated_encoder(
         if rc != 0:
             raise RuntimeError(f"ck_model_decode failed with rc={rc}")
 
+        if hidden_dir_ctx is not None:
+            return _read_ck_hidden_dump_tensor(Path(hidden_dir_ctx.name), requested_output)
+
         output_ptr = 0
         output_nbytes = 0
         bridge_name = str(bridge.get("named_activation") or "")
@@ -590,6 +751,8 @@ def _run_generated_encoder(
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = prior
+        if hidden_dir_ctx is not None:
+            hidden_dir_ctx.cleanup()
 
 
 def _run_llamacpp_encoder(
@@ -600,19 +763,30 @@ def _run_llamacpp_encoder(
     width: int,
     n_threads: int,
     named_dump_output: str | None = None,
+    image_min_tokens: int | None = None,
+    image_max_tokens: int | None = None,
 ) -> array:
     lib = _load_mtmd_shim(shim_so)
     dump_dir_ctx: tempfile.TemporaryDirectory[str] | None = None
     dump_path: Path | None = None
     restore_env: dict[str, str | None] = {}
     if named_dump_output is not None:
+        dump_op_name, _dump_layer = _parse_named_dump_selector(named_dump_output)
+        dump_op_name = _llama_raw_dump_name(dump_op_name)
         dump_dir_ctx = tempfile.TemporaryDirectory(prefix="v8_llama_mmproj_dump_")
         dump_path = Path(dump_dir_ctx.name) / "dump.bin"
         restore_env["CK_LLAMA_PARITY_DIR"] = _with_env_var("CK_LLAMA_PARITY_DIR", str(Path(dump_dir_ctx.name)))
         restore_env["CK_LLAMA_PARITY_ALL"] = _with_env_var("CK_LLAMA_PARITY_ALL", None)
-        restore_env["CK_LLAMA_PARITY_NAMES"] = _with_env_var("CK_LLAMA_PARITY_NAMES", named_dump_output)
+        restore_env["CK_LLAMA_PARITY_NAMES"] = _with_env_var("CK_LLAMA_PARITY_NAMES", dump_op_name)
         restore_env["CK_LLAMA_PARITY_LAYER"] = _with_env_var("CK_LLAMA_PARITY_LAYER", None)
-    ctx = lib.ck_mtmd_clip_init(str(gguf_path).encode(), 0, 0, 0, 0, 0)
+    ctx = lib.ck_mtmd_clip_init(
+        str(gguf_path).encode(),
+        0,
+        0,
+        int(image_min_tokens or 0),
+        int(image_max_tokens or 0),
+        0,
+    )
     if not ctx:
         for key, prior in restore_env.items():
             _restore_env_var(key, prior)
@@ -710,6 +884,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--output-dir", type=Path, default=Path("/tmp/qwen3vl_mmproj_v8_numeric"), help="Workspace for generated artifacts")
     ap.add_argument("--image-mode", choices=("gradient", "gray", "checker"), default="gradient")
     ap.add_argument("--image-path", type=Path, default=None, help="Optional real image path; overrides --image-mode")
+    ap.add_argument("--image-min-tokens", type=int, default=None, help="Override minimum merged visual tokens for dynamic-resolution Qwen3-VL images")
+    ap.add_argument("--image-max-tokens", type=int, default=None, help="Override maximum merged visual tokens for dynamic-resolution Qwen3-VL images")
     ap.add_argument("--threads", type=int, default=1)
     ap.add_argument("--ck-threads", type=int, default=None, help="Thread count for generated CK runtime; defaults to --threads")
     ap.add_argument("--strict-parity", action="store_true", help="Enable parity-only strict mode in CK and load ggml CPU helpers for full-attention replay")
@@ -727,14 +903,20 @@ def main(argv: list[str] | None = None) -> int:
 
     t0 = time.perf_counter()
     _ensure_engine_lib()
-    report = _ensure_runtime_artifacts(args.gguf, output_dir)
+    report = _ensure_runtime_artifacts(
+        args.gguf,
+        output_dir,
+        image_path=args.image_path.resolve() if args.image_path is not None else None,
+        image_min_tokens=args.image_min_tokens,
+        image_max_tokens=args.image_max_tokens,
+    )
     model_so = _compile_generated_model(output_dir)
     shim_so = _compile_mtmd_shim(output_dir)
     t_artifacts = time.perf_counter()
 
     config = report["config"]
-    height = int(config["image_size"])
-    width = int(config["image_size"])
+    height = int(config.get("image_height", config.get("image_size")))
+    width = int(config.get("image_width", config.get("image_size")))
     layout_path = output_dir / "layout.json"
     layout = _load_layout(layout_path)
     offsets = _load_activation_offsets(layout_path)
@@ -779,6 +961,8 @@ def main(argv: list[str] | None = None) -> int:
         width=width,
         n_threads=args.threads,
         named_dump_output=llama_reference_output,
+        image_min_tokens=args.image_min_tokens,
+        image_max_tokens=args.image_max_tokens,
     )
     t_llama = time.perf_counter()
 
@@ -799,7 +983,7 @@ def main(argv: list[str] | None = None) -> int:
             f"llama.cpp numeric parity is pinned to the dumped {llama_reference_output} seam instead of the public image-encode output."
         )
     if not lowering.get("has_vision_mrope", False):
-        notes.append("Vision multi-section RoPE is still not lowered in the current v8 path, so parity is expected to fail.")
+        notes.append("Qwen3-VL vision multi-section M-RoPE is lowered; remaining deltas should be interpreted from the reported tensor metrics.")
     result = {
         "gguf": str(args.gguf),
         "output_dir": str(output_dir),
@@ -810,6 +994,9 @@ def main(argv: list[str] | None = None) -> int:
         "preprocess": str(image_report["preprocess"]),
         "height": height,
         "width": width,
+        "image_min_tokens": args.image_min_tokens,
+        "image_max_tokens": args.image_max_tokens,
+        "merged_grid": [int(config.get("merged_grid_x", 0) or 0), int(config.get("merged_grid_y", 0) or 0)],
         "threads": {
             "llama_cpp": args.threads,
             "ck_runtime": ck_threads,
