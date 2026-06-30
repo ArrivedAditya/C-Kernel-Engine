@@ -1170,6 +1170,13 @@ static int ck_qwen3vl_prefill_bridge_text_pos(void) {{
     return g_qwen3vl_prefill_text_pos;
 }}
 
+static int ck_qwen3vl_prefill_bridge_next_text_pos(void) {{
+    if (!g_qwen3vl_prefill_bridge_active || g_qwen3vl_prefill_prefix_tokens <= 0) return g_qwen3vl_prefill_text_pos;
+    const int prefix_end = g_qwen3vl_prefill_prefix_start + g_qwen3vl_prefill_prefix_tokens;
+    const int suffix_tokens = g_qwen3vl_prefill_total_tokens > prefix_end ? (g_qwen3vl_prefill_total_tokens - prefix_end) : 0;
+    return g_qwen3vl_prefill_text_pos + suffix_tokens;
+}}
+
 static int ck_qwen3vl_prefill_bridge_is_active(void) {{
     return g_qwen3vl_prefill_bridge_active;
 }}
@@ -1238,13 +1245,15 @@ static int ck_qwen3vl_prefill_bridge_prepare(const float *rows,
 
 static void ck_qwen3vl_prefill_mrope_qk(float *q, float *k, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int n_dims, int section_0, int section_1, int section_2, int section_3, int n_ctx_orig, float freq_base, float freq_scale, float ext_factor, float attn_factor, float beta_fast, float beta_slow) {{
     if (g_qwen3vl_prefill_bridge_active && g_qwen3vl_prefill_positions && g_qwen3vl_prefill_total_tokens == num_tokens) {{
-        mrope_qk_vision(q, k, g_qwen3vl_prefill_positions, num_heads, num_kv_heads, num_tokens, head_dim, aligned_head_dim, n_dims, section_0, section_1, section_2, section_3, n_ctx_orig, freq_base, freq_scale, ext_factor, attn_factor, beta_fast, beta_slow);
+        mrope_qk_imrope_positions(q, k, g_qwen3vl_prefill_positions, num_heads, num_kv_heads, num_tokens, head_dim, aligned_head_dim, n_dims, section_0, section_1, section_2, section_3, n_ctx_orig, freq_base, freq_scale, ext_factor, attn_factor, beta_fast, beta_slow);
         return;
     }}
     mrope_qk_text(q, k, num_heads, num_kv_heads, num_tokens, head_dim, aligned_head_dim, pos_offset, n_dims, section_0, section_1, section_2, section_3, n_ctx_orig, freq_base, freq_scale, ext_factor, attn_factor, beta_fast, beta_slow);
 }}
 
 static void ck_qwen3vl_prefill_deepstack_add(CKModel *model, int layer, int num_tokens) {{
+    const char *disable_env = getenv("CK_QWEN3VL_DISABLE_PREFILL_DEEPSTACK");
+    if (disable_env && atoi(disable_env) != 0) return;
     if (!model || !g_qwen3vl_prefill_bridge_active || !g_qwen3vl_prefill_rows) return;
     if (layer < 0 || layer >= {num_deepstack_layers}) return;
     if (g_qwen3vl_prefill_prefix_tokens <= 0) return;
@@ -1604,7 +1613,7 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
 
     lines.append("    model->pos = num_tokens;")
     if is_qwen3vl:
-        lines.append("    model->rope_pos = ck_qwen3vl_prefill_bridge_is_active() ? ck_qwen3vl_prefill_bridge_text_pos() : num_tokens;")
+        lines.append("    model->rope_pos = ck_qwen3vl_prefill_bridge_is_active() ? ck_qwen3vl_prefill_bridge_next_text_pos() : num_tokens;")
         lines.append("    ck_qwen3vl_prefill_bridge_clear();")
     else:
         lines.append("    model->rope_pos = num_tokens;")

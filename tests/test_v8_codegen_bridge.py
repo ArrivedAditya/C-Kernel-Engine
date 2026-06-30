@@ -379,23 +379,12 @@ class V8CodegenBridgeTests(unittest.TestCase):
             self.assertIn("if (prefix_grid_x > 0 && prefix_grid_y > 0 && prefix_grid_x * prefix_grid_y != prefix_tokens) return -10;", text)
             self.assertIn("ck_qwen3vl_prefill_bridge_prepare", text)
             self.assertIn("ck_qwen3vl_prefill_mrope_qk", text)
+            self.assertIn("mrope_qk_imrope_positions", text)
             self.assertIn("ck_qwen3vl_prefill_deepstack_add(CKModel *model, int layer, int num_tokens)", text)
             self.assertIn("ck_qwen3vl_prefill_deepstack_add(model, 0, num_tokens);", text)
-            self.assertIn(
-                """    /* Op 24: gemm_nt_q6_k_q8_k (mlp_down) layer=0 */
-    if (debug_mlp_down_fp32 && ck_debug_mlp_down_fp32_input != NULL) {
-        gemm_nt_q6_k(
-            ck_debug_mlp_down_fp32_input,
-            (const void*)(model->bump + W_LAYER_0_W2),
-            NULL,
-            (float*)(model->bump + A_EMBEDDED_INPUT),
-            num_tokens,
-            16,
-            32
-        );
-    } else {""",
-                text,
-            )
+            self.assertIn("else if (debug_mlp_down_fp32 && ck_debug_mlp_down_fp32_input != NULL) {", text)
+            self.assertIn("gemm_nt_q6_k(\n            ck_debug_mlp_down_fp32_input,", text)
+            self.assertIn("gemm_nt_q6_k_q8_k(\n            (const void*)(model->bump + A_LAYER_INPUT),", text)
             self.assertIn('const char *bridge_fp32_env = getenv("CK_V8_QWEN3VL_PREFILL_FP32");', text)
             self.assertIn("int bridge_force_fp32 = bridge_fp32_env ? (atoi(bridge_fp32_env) != 0) : 0;", text)
             self.assertIn("if (ck_qwen3vl_prefill_bridge_is_active() && bridge_force_fp32) {", text)
@@ -419,7 +408,7 @@ class V8CodegenBridgeTests(unittest.TestCase):
             self.assertNotIn("static void ck_decode_embedded(CKModel *model)", text)
             self.assertNotIn("static int ck_bridge_forward_staged", text)
 
-    def test_qwen3vl_decoder_codegen_without_prefill_layout_uses_staged_decode_bridge(self) -> None:
+    def test_qwen3vl_decoder_codegen_without_prefill_layout_keeps_prefill_bridge_api(self) -> None:
         manifest = _make_qwen3vl_decoder_manifest()
 
         with tempfile.TemporaryDirectory(prefix="v8_codegen_qwen3vl_decode_bridge_") as tmpdir:
@@ -480,15 +469,17 @@ class V8CodegenBridgeTests(unittest.TestCase):
 
             text = c_path.read_text(encoding="utf-8")
             self.assertIn("static void ck_prefill_from_embedded", text)
+            self.assertIn("CK_EXPORT int ck_model_forward_segments_grid_ex", text)
+            self.assertIn("CK_EXPORT int ck_model_forward_mixed_grid_ex", text)
+            self.assertIn("ck_qwen3vl_prefill_bridge_prepare", text)
+            self.assertIn("ck_qwen3vl_prefill_bridge_next_text_pos", text)
+            self.assertIn("ck_qwen3vl_prefill_mrope_qk", text)
+            self.assertIn("mrope_qk_imrope_positions", text)
+            self.assertIn("ck_qwen3vl_prefill_deepstack_add(model, 0, num_tokens);", text)
             self.assertIn("static void ck_decode_embedded(CKModel *model)", text)
-            self.assertIn("static int ck_bridge_forward_staged(CKModel *model, int total_tokens)", text)
-            self.assertIn("CK_BRIDGE_ROW_EMBED = 1", text)
-            self.assertIn("ck_decode_embedded(model);", text)
-            self.assertIn("static void ck_qwen3vl_runtime_mrope_qk(CKModel *model, float *q, float *k,", text)
-            self.assertIn("if (model && model->bridge_has_explicit_positions)", text)
+            self.assertIn("static int ck_bridge_forward_staged", text)
             self.assertIn("g_bridge_deepstack_slices", text)
-            self.assertIn("int rc = ck_bridge_forward_staged(g_model, total_tokens);", text)
-            self.assertNotIn("ck_prefill_from_embedded(g_model, prefix_tokens);", text)
+            self.assertIn("ck_bridge_forward_staged(g_model, total_tokens);", text)
 
             make_result = subprocess.run(
                 ["make", "build/libckernel_engine.so"],
@@ -739,6 +730,8 @@ class V8CodegenBridgeTests(unittest.TestCase):
             self.assertIn("transpose_v_to_head_major layer=0", text)
             self.assertIn("float *buf = (float*)(model->bump + A_V_SCRATCH);", text)
             self.assertIn("ck_qwen3vl_prefill_bridge_prepare", text)
+            self.assertIn("ck_qwen3vl_prefill_bridge_next_text_pos", text)
+            self.assertIn("model->rope_pos = ck_qwen3vl_prefill_bridge_is_active() ? ck_qwen3vl_prefill_bridge_next_text_pos() : num_tokens;", text)
             self.assertIn("ck_prefill_from_embedded(g_model, total_tokens);", text)
             self.assertIn("ck_decode(g_model, tokens[i]);", text)
 

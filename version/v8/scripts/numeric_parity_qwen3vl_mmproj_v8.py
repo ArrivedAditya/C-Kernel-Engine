@@ -25,7 +25,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[2]
 V8_TOOLS = REPO_ROOT / "version" / "v8" / "tools"
 BUILD_DIR = REPO_ROOT / "build"
-LLAMA_CPP_ROOT = REPO_ROOT / "llama.cpp"
+LLAMA_CPP_ROOT = Path(os.environ.get("CK_LLAMA_CPP_ROOT", str(REPO_ROOT / "llama.cpp"))).resolve()
 V7_SCRIPTS = REPO_ROOT / "version" / "v7" / "scripts"
 
 if str(SCRIPT_DIR) not in sys.path:
@@ -167,11 +167,11 @@ def _compile_mtmd_shim(output_dir: Path) -> Path:
         "-fPIC",
         "-O2",
         "-std=c++17",
-        "-Illama.cpp/tools/mtmd",
-        "-Illama.cpp/ggml/include",
-        "-Illama.cpp/include",
+        f"-I{LLAMA_CPP_ROOT / 'tools' / 'mtmd'}",
+        f"-I{LLAMA_CPP_ROOT / 'ggml' / 'include'}",
+        f"-I{LLAMA_CPP_ROOT / 'include'}",
         str(shim_src),
-        "-Lllama.cpp/build/bin",
+        f"-L{LLAMA_CPP_ROOT / 'build' / 'bin'}",
         "-lmtmd",
         f"-Wl,-rpath,{LLAMA_CPP_ROOT / 'build' / 'bin'}",
         "-o",
@@ -240,21 +240,97 @@ def _build_test_image(height: int, width: int, mode: str) -> tuple[list[float], 
     return interleaved, planar
 
 
+
+def _ppm_skip_ws_and_comments(data: bytes, idx: int) -> int:
+    while idx < len(data):
+        b = data[idx]
+        if b in b" \t\r\n":
+            idx += 1
+            continue
+        if b == ord("#"):
+            while idx < len(data) and data[idx] not in b"\r\n":
+                idx += 1
+            continue
+        break
+    return idx
+
+
+def _ppm_next_token(data: bytes, idx: int) -> tuple[str, int]:
+    idx = _ppm_skip_ws_and_comments(data, idx)
+    start = idx
+    while idx < len(data) and data[idx] not in b" \t\r\n#":
+        idx += 1
+    if idx == start:
+        raise ValueError("malformed PPM header")
+    return data[start:idx].decode("ascii"), idx
+
+
+def _read_ppm_rgb8(path: Path) -> tuple[int, int, list[tuple[int, int, int]]]:
+    data = path.read_bytes()
+    magic, idx = _ppm_next_token(data, 0)
+    width_s, idx = _ppm_next_token(data, idx)
+    height_s, idx = _ppm_next_token(data, idx)
+    maxval_s, idx = _ppm_next_token(data, idx)
+    width = int(width_s)
+    height = int(height_s)
+    maxval = int(maxval_s)
+    if width <= 0 or height <= 0 or maxval <= 0 or maxval > 255:
+        raise ValueError(f"unsupported PPM shape/maxval: {width}x{height} max={maxval}")
+    pixels: list[tuple[int, int, int]] = []
+    if magic == "P6":
+        idx = _ppm_skip_ws_and_comments(data, idx)
+        if idx < len(data) and data[idx] in b" \t\r\n":
+            idx += 1
+        payload = data[idx:]
+        expected = width * height * 3
+        if len(payload) < expected:
+            raise ValueError(f"PPM payload too short: {len(payload)} < {expected}")
+        for i in range(0, expected, 3):
+            pixels.append((payload[i], payload[i + 1], payload[i + 2]))
+    elif magic == "P3":
+        for _ in range(width * height):
+            r, idx = _ppm_next_token(data, idx)
+            g, idx = _ppm_next_token(data, idx)
+            b, idx = _ppm_next_token(data, idx)
+            pixels.append((int(r), int(g), int(b)))
+    else:
+        raise ValueError(f"unsupported PPM magic: {magic}")
+    if maxval != 255:
+        pixels = [tuple(int(round(c * 255.0 / maxval)) for c in px) for px in pixels]
+    return width, height, pixels
+
+
+def _resize_pixels_nearest(pixels: list[tuple[int, int, int]], src_w: int, src_h: int, dst_w: int, dst_h: int) -> list[tuple[int, int, int]]:
+    if (src_w, src_h) == (dst_w, dst_h):
+        return pixels
+    out: list[tuple[int, int, int]] = []
+    for y in range(dst_h):
+        sy = min(src_h - 1, int((y + 0.5) * src_h / dst_h))
+        row = sy * src_w
+        for x in range(dst_w):
+            sx = min(src_w - 1, int((x + 0.5) * src_w / dst_w))
+            out.append(pixels[row + sx])
+    return out
+
 def _load_image_file(image_path: Path, height: int, width: int) -> dict[str, Any]:
-    if Image is None:
-        raise RuntimeError("Pillow is required for --image-path support")
     if not image_path.exists():
         raise FileNotFoundError(f"image file not found: {image_path}")
 
-    with Image.open(image_path) as src:
-        source_width, source_height = src.size
-        rgb = src.convert("RGB")
-        if rgb.size != (width, height):
-            if hasattr(Image, "Resampling"):
-                rgb = rgb.resize((width, height), Image.Resampling.BILINEAR)
-            else:  # pragma: no cover - compatibility with older Pillow.
-                rgb = rgb.resize((width, height), Image.BILINEAR)
-        pixels = list(rgb.getdata())
+    if image_path.suffix.lower() == ".ppm":
+        source_width, source_height, pixels = _read_ppm_rgb8(image_path)
+        pixels = _resize_pixels_nearest(pixels, source_width, source_height, width, height)
+    else:
+        if Image is None:
+            raise RuntimeError("Pillow is required for non-PPM --image-path support")
+        with Image.open(image_path) as src:
+            source_width, source_height = src.size
+            rgb = src.convert("RGB")
+            if rgb.size != (width, height):
+                if hasattr(Image, "Resampling"):
+                    rgb = rgb.resize((width, height), Image.Resampling.BILINEAR)
+                else:  # pragma: no cover - compatibility with older Pillow.
+                    rgb = rgb.resize((width, height), Image.BILINEAR)
+            pixels = list(rgb.getdata())
 
     interleaved = [0.0] * (height * width * 3)
     planar = [0.0] * (height * width * 3)

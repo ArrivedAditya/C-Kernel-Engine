@@ -13,6 +13,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 V8_BUILD_PATH = ROOT / "version" / "v8" / "scripts" / "build_ir_v8.py"
 V8_CODEGEN_PATH = ROOT / "version" / "v8" / "scripts" / "codegen_v8.py"
+V8_CONVERT_PATH = ROOT / "version" / "v8" / "scripts" / "convert_gguf_to_bump_v8.py"
+V8_BRIDGE_PATH = ROOT / "version" / "v8" / "scripts" / "run_multimodal_bridge_v8.py"
 
 
 def _load_module(name: str, path: Path):
@@ -28,6 +30,8 @@ def _load_module(name: str, path: Path):
 
 
 build_ir_v8 = _load_module("build_ir_v8_qwen3vl_tests", V8_BUILD_PATH)
+convert_gguf_to_bump_v8 = _load_module("convert_gguf_to_bump_v8_qwen3vl_tests", V8_CONVERT_PATH)
+run_multimodal_bridge_v8 = _load_module("run_multimodal_bridge_v8_qwen3vl_tests", V8_BRIDGE_PATH)
 
 
 def _entry(name: str, dtype: str, shape: list[int], offset: int) -> dict:
@@ -135,6 +139,43 @@ def _make_qwen3vl_manifest() -> dict:
 
 
 class V8Qwen3VLTemplateTests(unittest.TestCase):
+
+    def test_qwen3vl_mmproj_position_grid_size_uses_square_side(self) -> None:
+        class FakeTensor:
+            dims = [2304, 1152]
+            ne1 = 2304
+
+        self.assertEqual(convert_gguf_to_bump_v8._derive_position_grid_size(FakeTensor()), 48)
+
+    def test_qwen3vl_mmproj_position_grid_size_keeps_non_square_rows(self) -> None:
+        class FakeTensor:
+            dims = [2305, 1152]
+            ne1 = 2305
+
+        self.assertEqual(convert_gguf_to_bump_v8._derive_position_grid_size(FakeTensor()), 2305)
+
+
+    def test_qwen3vl_geometry_override_ignores_stale_cached_min_pixels(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_qwen3vl_geometry_") as td:
+            image_path = Path(td) / "ocr.ppm"
+            image_path.write_bytes(b"P6\n512 256\n255\n" + bytes([255, 255, 255]) * 512 * 256)
+            cfg = {
+                "patch_size": 16,
+                "spatial_merge_size": 2,
+                "image_min_pixels": 1024 * 16 * 16 * 2 * 2,
+                "image_max_pixels": 4096 * 16 * 16 * 2 * 2,
+            }
+            out = run_multimodal_bridge_v8._qwen3vl_geometry_overrides(
+                cfg,
+                image_path,
+                image_min_tokens=128,
+            )
+            self.assertEqual(out["image_width"], 512)
+            self.assertEqual(out["image_height"], 256)
+            self.assertEqual(out["merged_grid_x"], 16)
+            self.assertEqual(out["merged_grid_y"], 8)
+            self.assertEqual(out["vision_merged_tokens"], 128)
+
     def test_builtin_template_declares_qwen3vl_vision_contract(self) -> None:
         doc = build_ir_v8._load_builtin_template_doc("qwen3_vl_vision")
         self.assertIsNotNone(doc)

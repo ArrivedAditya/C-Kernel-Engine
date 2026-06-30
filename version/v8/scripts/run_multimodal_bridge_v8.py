@@ -1445,7 +1445,13 @@ def _resize_rgb8_bilinear(
     return out
 
 
-def _qwen3vl_geometry_overrides(config: dict[str, Any], image_path: Path) -> dict[str, Any]:
+def _qwen3vl_geometry_overrides(
+    config: dict[str, Any],
+    image_path: Path,
+    *,
+    image_min_tokens: int | None = None,
+    image_max_tokens: int | None = None,
+) -> dict[str, Any]:
     source_width, source_height = _image_source_size(image_path)
     patch_size = int(config.get("patch_size", 0) or 0)
     merge_size = int(config.get("spatial_merge_size", 2) or 2)
@@ -1453,8 +1459,17 @@ def _qwen3vl_geometry_overrides(config: dict[str, Any], image_path: Path) -> dic
     if patch_size <= 0 or align_size <= 0:
         raise RuntimeError(f"invalid Qwen3-VL patch/merge config patch={patch_size} merge={merge_size}")
     patch_area = patch_size * patch_size * merge_size * merge_size
-    min_pixels = int(config.get("image_min_pixels", 8 * patch_area) or (8 * patch_area))
-    max_pixels = int(config.get("image_max_pixels", 4096 * patch_area) or (4096 * patch_area))
+    # Keep runtime geometry deterministic even if a previous bridge run wrote
+    # resized image fields into the cached manifest. Qwen3-VL GGUF metadata uses
+    # 8..4096 merged visual tokens as the native smart-resize envelope.
+    min_pixels = 8 * patch_area
+    max_pixels = 4096 * patch_area
+    if image_min_tokens is not None and int(image_min_tokens) > 0:
+        min_pixels = int(image_min_tokens) * patch_area
+    if image_max_tokens is not None and int(image_max_tokens) > 0:
+        max_pixels = int(image_max_tokens) * patch_area
+    if max_pixels < min_pixels:
+        max_pixels = min_pixels
     image_width, image_height = _calc_qwen_vl_smart_resize(
         int(source_width),
         int(source_height),
@@ -1490,6 +1505,10 @@ def _qwen3vl_geometry_overrides(config: dict[str, Any], image_path: Path) -> dic
         "merged_grid_y": int(merged_grid_y),
         "image_source_width": int(source_width),
         "image_source_height": int(source_height),
+        "image_min_pixels": int(min_pixels),
+        "image_max_pixels": int(max_pixels),
+        "image_min_tokens": int(min_pixels // patch_area),
+        "image_max_tokens": int(max_pixels // patch_area),
     }
 
 
@@ -1543,6 +1562,10 @@ def _gemma4_geometry_overrides(config: dict[str, Any], image_path: Path) -> dict
         "merged_grid_y": int(pooled_h),
         "image_source_width": int(source_width),
         "image_source_height": int(source_height),
+        "image_min_pixels": int(min_pixels),
+        "image_max_pixels": int(max_pixels),
+        "image_min_tokens": int(min_pixels // patch_area),
+        "image_max_tokens": int(max_pixels // patch_area),
     }
 
 
@@ -1701,6 +1724,8 @@ def _prepare_encoder_runtime(
     image_path: Path | None = None,
     *,
     activation_overrides: dict[str, str] | None = None,
+    image_min_tokens: int | None = None,
+    image_max_tokens: int | None = None,
 ) -> dict[str, Any]:
     manifest, manifest_path, bump_path, config_path = _run_converter(gguf_path, output_dir)
     config = dict(manifest.get("config", {}) or {})
@@ -1710,7 +1735,14 @@ def _prepare_encoder_runtime(
         config.setdefault("image_height", base_image)
         config.setdefault("image_width", base_image)
         if image_path is not None:
-            config.update(_qwen3vl_geometry_overrides(config, image_path))
+            config.update(
+                _qwen3vl_geometry_overrides(
+                    config,
+                    image_path,
+                    image_min_tokens=image_min_tokens,
+                    image_max_tokens=image_max_tokens,
+                )
+            )
     elif encoder_model == "gemma4_vision":
         config.setdefault("spatial_merge_size", 3)
         config.setdefault("spatial_merge_factor", int(config.get("spatial_merge_size", 3) or 3) ** 2)
@@ -2246,6 +2278,7 @@ def _run_decoder(
     prefix_grid: tuple[int, int] | None = None,
     prefix_text_pos: int | None = None,
     prefix_decode_policy: str = "causal_mixed_prefix",
+    bridge_runtime: str = "prefill",
     strict_parity: bool = False,
     tokenizer: GGUFTokenizer | Any | None = None,
     stop_token_ids: list[int] | None = None,
@@ -2260,11 +2293,15 @@ def _run_decoder(
     stream_output: bool = False,
     generation_progress_every: int = 0,
 ) -> dict[str, Any]:
-    # Mixed image/text prefill must use the prefill-layout runtime: it owns
+    # Mixed image/text prefill normally uses the prefill-layout runtime: it owns
     # batched token-major activation rows and last-logits emission. The decode
-    # runtime only has single-token activation buffers, so its mixed helper can
-    # silently collapse multi-row prefixes.
-    model_so = Path(runtime.get("prefill_so_path") or runtime["so_path"])
+    # runtime remains available as an explicit staged replay diagnostic/escape
+    # hatch for architecture work.
+    bridge_runtime_name = str(bridge_runtime or "prefill").strip().lower()
+    if bridge_runtime_name in {"decode", "staged", "decode-staged"}:
+        model_so = Path(runtime["so_path"])
+    else:
+        model_so = Path(runtime.get("prefill_so_path") or runtime["so_path"])
     lib = _load_decoder_lib(model_so)
     _log_progress("decoder: init start")
     rc = lib.ck_model_init_with_manifest(
@@ -2718,6 +2755,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--thinking-mode", choices=["auto", "visible", "suppressed"], default="auto")
     ap.add_argument("--image-mode", choices=["checker", "gradient", "gray"], default="checker", help="Synthetic image generator to use when --image-path is not provided")
     ap.add_argument("--image-path", type=Path, default=None, help="Optional real image path for encoder input; overrides --image-mode")
+    ap.add_argument("--image-min-tokens", type=int, default=None, help="Minimum merged visual tokens for smart-resized Qwen3-VL images")
+    ap.add_argument("--image-max-tokens", type=int, default=None, help="Maximum merged visual tokens for smart-resized Qwen3-VL images")
     ap.add_argument("--synthetic-prefix-tokens", type=int, default=0, help="Use zero prefix embeddings when a real encoder bridge is unavailable")
     ap.add_argument("--decoder-context-len", type=int, default=None, help="Override decoder context length; default is prompt+prefix budget with small headroom")
     ap.add_argument("--dump-prefix-f32", type=Path, default=None, help="Optional output path for resolved float32 prefix embeddings")
@@ -2727,6 +2766,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--print-json-report", action="store_true", help="Print the full bridge_report.json payload to stdout instead of concise operator output")
     ap.add_argument("--generation-progress-every", type=int, default=0, help="Emit generation heartbeat every N tokens; 0 disables periodic progress logs")
     ap.add_argument("--no-stream-output", action="store_true", help="Disable live text streaming during generation and print only the final response")
+    ap.add_argument("--strict-parity", action="store_true", help="Enable strict/reference parity paths in bridge decoder kernels")
+    ap.add_argument("--bridge-runtime", choices=["prefill", "decode-staged"], default="prefill", help="Decoder bridge runtime to use; decode-staged is a diagnostic fallback")
     ap.add_argument("--temperature", type=float, default=0.0, help="Decode temperature; 0 keeps greedy generation")
     ap.add_argument("--sample-top-k", type=int, default=40, help="Top-k sampling cutoff used during bridge generation")
     ap.add_argument("--top-p", type=float, default=1.0, help="Nucleus top-p used during bridge generation")
@@ -2804,6 +2845,8 @@ def main(argv: list[str] | None = None) -> int:
             encoder_dir,
             image_path=args.image_path.resolve() if args.image_path is not None else None,
             activation_overrides=vision_activation_overrides,
+            image_min_tokens=args.image_min_tokens,
+            image_max_tokens=args.image_max_tokens,
         )
         _log_progress(f"encoder runtime prepare done elapsed={time.perf_counter() - encoder_prep_t0:.2f}s")
         _log_progress("encoder execution start")
@@ -2917,6 +2960,8 @@ def main(argv: list[str] | None = None) -> int:
         prefix_grid=prefix_grid,
         prefix_text_pos=prefix_text_pos,
         prefix_decode_policy=prefix_decode_policy,
+        bridge_runtime=str(args.bridge_runtime),
+        strict_parity=bool(args.strict_parity),
         tokenizer=tokenizer,
         stop_token_ids=list(stop_policy["stop_ids"]),
         max_tokens=max(0, int(args.max_tokens)),
