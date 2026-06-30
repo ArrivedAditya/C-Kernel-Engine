@@ -615,8 +615,11 @@ PY_TESTS := unittest/test_layernorm.py \
             unittest/test_qk_norm.py \
             tests/test_deltanet.py \
             unittest/test_recurrent_conv_state_update.py \
+            unittest/test_nemotron_router.py \
+            unittest/test_moe_relu2_expert.py \
             unittest/test_mamba2_reference.py \
             unittest/test_deepseek_reference_kernels.py \
+            unittest/test_gemma4_assistant_kernels.py \
             unittest/test_swiglu.py \
             unittest/test_fused_swiglu_decode.py \
             unittest/test_fused_attention_decode.py \
