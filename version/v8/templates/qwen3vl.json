@@ -87,6 +87,15 @@
           "dim:_kv_copy_bytes"
         ]
       }
+    },
+    "multimodal_bridge": {
+      "prefix_policy": "mixed_visual_text_prefill",
+      "generation_policy": "incremental_decode_after_prefill",
+      "position_policy": "mrope_2d",
+      "cache_policy": "persistent_decoder_kv",
+      "runtime_policy": "decode_staged",
+      "image_begin_marker": "<|vision_start|>",
+      "image_end_marker": "<|vision_end|>"
     }
   },
   "kernels": {

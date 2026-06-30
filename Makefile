@@ -1254,6 +1254,27 @@ test-v8-qwen3vl-ocr-smoke:
 			--temperature 0.0; \
 	fi
 
+bench-v8-qwen3vl-ocr-quick:
+	@$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/generate_ocr_assets_v8.py
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-24} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_v8_qwen3vl_ocr.py \
+		--images "$(V8_QWEN3VL_OCR_IMAGE)" \
+		--threads $${CK_NUM_THREADS:-24} \
+		--max-tokens $(V8_QWEN3VL_OCR_MAX_TOKENS) \
+		--context-len 1024 \
+		--image-min-tokens $(V8_QWEN3VL_OCR_IMAGE_MIN_TOKENS) \
+		--json-out build/v8_qwen3vl_ocr_quick_t$${CK_NUM_THREADS:-24}.json
+
+bench-v8-qwen3vl-ocr:
+	@$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/generate_ocr_assets_v8.py
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-24} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_v8_qwen3vl_ocr.py \
+		--threads $${CK_NUM_THREADS:-24} \
+		--max-tokens $(V8_QWEN3VL_OCR_MAX_TOKENS) \
+		--context-len 1024 \
+		--image-min-tokens $(V8_QWEN3VL_OCR_IMAGE_MIN_TOKENS) \
+		--json-out build/v8_qwen3vl_ocr_t$${CK_NUM_THREADS:-24}.json
+
 test-v8-gemma4-vision-smoke:
 	@avail_kb=$$(awk '/MemAvailable:/ {print $$2}' /proc/meminfo 2>/dev/null || echo 0); \
 	threshold_kb=$$(( $(V8_GEMMA4_MIN_MEM_GB) * 1024 * 1024 )); \
@@ -2667,7 +2688,7 @@ profile-v8-prefill-ops-quick: ck-cli-v8
 		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
 		--json-out build/v8_prefill_ops_profile_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-128}.json
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem profile-v8-prefill-ops profile-v8-prefill-ops-quick
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick profile-v8-prefill-ops profile-v8-prefill-ops-quick
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

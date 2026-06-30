@@ -56,7 +56,11 @@
       "decode_policy": "causal_mixed_prefix",
       "grid_policy": "merged_hw",
       "image_begin_marker": "<|vision_start|>",
-      "image_end_marker": "<|vision_end|>"
+      "image_end_marker": "<|vision_end|>",
+      "prefix_policy": "mixed_visual_text_prefill",
+      "generation_policy": "incremental_decode_after_prefill",
+      "cache_policy": "persistent_decoder_kv",
+      "runtime_policy": "decode_staged"
     }
   },
   "kernels": {
