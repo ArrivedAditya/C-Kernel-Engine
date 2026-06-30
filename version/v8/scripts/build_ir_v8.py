@@ -9053,7 +9053,14 @@ def generate_ir_lower_2(
                 if not planned:
                     planned = get_planned_buffer(op_id, "inputs", input_name)
 
-                if planned:
+                if op_type == "branch_concat" and input_name == "main_input" and last_output_buffer in activation_buffers:
+                    # branch_concat's main side is an explicit producer edge
+                    # (usually projector_fc2.out).  The logical slot is still
+                    # main_stream, but resolving that slot would incorrectly
+                    # reopen the pre-projector embedded_input buffer.
+                    buf_name = last_output_buffer
+                    buf = activation_buffers.get(buf_name)
+                elif planned:
                     # Use memory planner's assignment
                     planner_buf = planned.get("buffer", "embedded_input")
                     declared_slot = _get_declared_dataflow_slot(ir_op, "inputs", dataflow_name, input_name)

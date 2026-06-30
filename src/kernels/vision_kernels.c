@@ -569,12 +569,17 @@ void feature_concat(const float *main_input,
     const int branch_total_dim = branch_slice_dim * num_branch_slices;
     const int out_dim = main_dim + branch_total_dim;
 
-    for (int row = 0; row < rows; ++row) {
+    const int in_place_expand = (main_input == output) && (out_dim > main_dim);
+    const int row_start = in_place_expand ? rows - 1 : 0;
+    const int row_end = in_place_expand ? -1 : rows;
+    const int row_step = in_place_expand ? -1 : 1;
+
+    for (int row = row_start; row != row_end; row += row_step) {
         const float *src_main = main_input + (size_t) row * (size_t) main_dim;
         float *dst_row = output + (size_t) row * (size_t) out_dim;
 
         if (main_dim > 0) {
-            memcpy(dst_row, src_main, (size_t) main_dim * sizeof(float));
+            memmove(dst_row, src_main, (size_t) main_dim * sizeof(float));
         }
 
         for (int slice = 0; slice < num_branch_slices; ++slice) {

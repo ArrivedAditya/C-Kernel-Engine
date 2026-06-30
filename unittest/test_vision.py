@@ -706,6 +706,38 @@ def test_feature_concat(rows=5, main_dim=3, branch_slice_dim=2, num_branch_slice
         raise AssertionError("feature_concat mismatch!")
 
 
+def test_feature_concat_inplace_expand(rows=5, main_dim=3, branch_slice_dim=2, num_branch_slices=3):
+    print(
+        f"\n--- Testing feature_concat in-place expand ({rows} rows, main {main_dim}, "
+        f"branch {branch_slice_dim} x {num_branch_slices}) ---"
+    )
+    torch.manual_seed(50)
+    main_input = torch.randn(rows, main_dim, dtype=torch.float32)
+    branch_slices = [
+        torch.randn(rows, branch_slice_dim, dtype=torch.float32)
+        for _ in range(num_branch_slices)
+    ]
+    ref = torch.cat([main_input] + branch_slices, dim=1)
+    branch_input = torch.stack(branch_slices, dim=0).contiguous()
+    output = torch.empty_like(ref)
+    output.view(-1)[: main_input.numel()] = main_input.reshape(-1)
+
+    lib.feature_concat(
+        tensor_to_ptr(output),
+        tensor_to_ptr(branch_input),
+        tensor_to_ptr(output),
+        rows,
+        main_dim,
+        branch_slice_dim,
+        num_branch_slices,
+    )
+
+    diff = max_diff(output, ref)
+    print(f"Max diff: {diff:.2e}")
+    if diff > 1e-7:
+        raise AssertionError("feature_concat in-place expand mismatch!")
+
+
 def _ref_vision_position_ids(grid_h: int, grid_w: int, merge_size: int) -> torch.Tensor:
     num_tokens = grid_h * grid_w
     out = torch.zeros((4, num_tokens), dtype=torch.int32)
@@ -826,6 +858,7 @@ if __name__ == "__main__":
     test_spatial_merge_contiguous_tiled()
     test_feature_slice_copy()
     test_feature_concat()
+    test_feature_concat_inplace_expand()
     test_mrope_qk_vision()
     
     # Test a non-multiple size just in case (though ViT usually uses multiples)
