@@ -228,6 +228,7 @@ V8_QWEN3VL_OCR_IMAGE ?= version/v8/test_assets/v8_ocr_clean_text.ppm
 V8_QWEN3VL_OCR_PROMPT ?= Read the text in this image. Return only the visible text.
 V8_QWEN3VL_OCR_MAX_TOKENS ?= 8
 V8_QWEN3VL_OCR_IMAGE_MIN_TOKENS ?= 128
+V8_QWEN3VL_OCR_IMAGE_MAX_TOKENS ?=
 V8_GEMMA4_MODEL ?= hf://unsloth/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf
 V8_GEMMA4_MMPROJ ?= hf://unsloth/gemma-4-E4B-it-GGUF/mmproj-F16.gguf
 V8_GEMMA4_CACHE_DIR ?= /opt/app-root/src/.cache/ck-engine-v8/models/unsloth--gemma-4-E4B-it-GGUF
@@ -1246,6 +1247,7 @@ test-v8-qwen3vl-ocr-smoke:
 			--mmproj "hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf" \
 			--image-path "$(V8_QWEN3VL_OCR_IMAGE)" \
 			--image-min-tokens $(V8_QWEN3VL_OCR_IMAGE_MIN_TOKENS) \
+			$(if $(V8_QWEN3VL_OCR_IMAGE_MAX_TOKENS),--image-max-tokens $(V8_QWEN3VL_OCR_IMAGE_MAX_TOKENS),) \
 			--prompt "$(V8_QWEN3VL_OCR_PROMPT)" \
 			--context-len 1024 \
 			--force-compile \
@@ -1263,7 +1265,21 @@ bench-v8-qwen3vl-ocr-quick:
 		--max-tokens $(V8_QWEN3VL_OCR_MAX_TOKENS) \
 		--context-len 1024 \
 		--image-min-tokens $(V8_QWEN3VL_OCR_IMAGE_MIN_TOKENS) \
+		$(if $(V8_QWEN3VL_OCR_IMAGE_MAX_TOKENS),--image-max-tokens $(V8_QWEN3VL_OCR_IMAGE_MAX_TOKENS),) \
+		$${V8_QWEN3VL_OCR_EXTRA_ARGS:-} \
 		--json-out build/v8_qwen3vl_ocr_quick_t$${CK_NUM_THREADS:-24}.json
+
+bench-v8-qwen3vl-ocr-fast:
+	@$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/generate_ocr_assets_v8.py
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-24} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_v8_qwen3vl_ocr.py \
+		--threads $${CK_NUM_THREADS:-24} \
+		--max-tokens $(V8_QWEN3VL_OCR_MAX_TOKENS) \
+		--context-len 1024 \
+		--image-min-tokens 64 \
+		--image-max-tokens 64 \
+		$${V8_QWEN3VL_OCR_EXTRA_ARGS:-} \
+		--json-out build/v8_qwen3vl_ocr_fast_t$${CK_NUM_THREADS:-24}.json
 
 bench-v8-qwen3vl-ocr:
 	@$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/generate_ocr_assets_v8.py
@@ -1273,6 +1289,8 @@ bench-v8-qwen3vl-ocr:
 		--max-tokens $(V8_QWEN3VL_OCR_MAX_TOKENS) \
 		--context-len 1024 \
 		--image-min-tokens $(V8_QWEN3VL_OCR_IMAGE_MIN_TOKENS) \
+		$(if $(V8_QWEN3VL_OCR_IMAGE_MAX_TOKENS),--image-max-tokens $(V8_QWEN3VL_OCR_IMAGE_MAX_TOKENS),) \
+		$${V8_QWEN3VL_OCR_EXTRA_ARGS:-} \
 		--json-out build/v8_qwen3vl_ocr_t$${CK_NUM_THREADS:-24}.json
 
 test-v8-gemma4-vision-smoke:
@@ -2688,7 +2706,7 @@ profile-v8-prefill-ops-quick: ck-cli-v8
 		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
 		--json-out build/v8_prefill_ops_profile_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-128}.json
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick profile-v8-prefill-ops profile-v8-prefill-ops-quick
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

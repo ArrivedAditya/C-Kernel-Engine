@@ -77,10 +77,12 @@ def _run_one(
     max_tokens: int,
     context_len: int,
     image_min_tokens: int,
+    image_max_tokens: int | None,
     force_compile: bool,
     force_convert: bool,
     bridge_runtime: str,
     bridge_generation_mode: str,
+    vision_activation_prefs: list[str],
     timeout: int,
 ) -> dict[str, Any]:
     env = os.environ.copy()
@@ -108,10 +110,14 @@ def _run_one(
         "--temperature",
         "0.0",
     ]
+    if image_max_tokens is not None:
+        cmd.extend(["--image-max-tokens", str(image_max_tokens)])
     if bridge_runtime:
         cmd.extend(["--bridge-runtime", bridge_runtime])
     if bridge_generation_mode:
         cmd.extend(["--bridge-generation-mode", bridge_generation_mode])
+    for pref in vision_activation_prefs:
+        cmd.extend(["--vision-activation-pref", pref])
     if force_compile:
         cmd.append("--force-compile")
     if force_convert:
@@ -200,9 +206,17 @@ def main() -> int:
     parser.add_argument("--max-tokens", type=int, default=8)
     parser.add_argument("--context-len", type=int, default=1024)
     parser.add_argument("--image-min-tokens", type=int, default=128)
+    parser.add_argument("--image-max-tokens", type=int, default=None)
     parser.add_argument("--timeout", type=int, default=1800)
     parser.add_argument("--bridge-runtime", choices=["prefill", "decode-staged"], default=None, help="Override template bridge runtime policy")
     parser.add_argument("--bridge-generation-mode", choices=["incremental-decode", "mixed-replay"], default=None, help="Override template bridge generation policy")
+    parser.add_argument(
+        "--vision-activation-pref",
+        action="append",
+        default=[],
+        metavar="OP=PREF",
+        help="Forward a vision activation preference override to ck_run_v8.py, for example out_proj=q8_0",
+    )
     parser.add_argument("--force-compile", action="store_true")
     parser.add_argument("--force-convert", action="store_true")
     parser.add_argument("--json-out", type=Path, default=ROOT / "build" / "v8_qwen3vl_ocr_bench.json")
@@ -225,10 +239,12 @@ def main() -> int:
                 max_tokens=int(args.max_tokens),
                 context_len=int(args.context_len),
                 image_min_tokens=int(args.image_min_tokens),
+                image_max_tokens=None if args.image_max_tokens is None else int(args.image_max_tokens),
                 force_compile=bool(args.force_compile),
                 force_convert=bool(args.force_convert),
                 bridge_runtime=args.bridge_runtime,
                 bridge_generation_mode=args.bridge_generation_mode,
+                vision_activation_prefs=list(args.vision_activation_pref or []),
                 timeout=int(args.timeout),
             )
         )
@@ -243,8 +259,10 @@ def main() -> int:
             "max_tokens": int(args.max_tokens),
             "context_len": int(args.context_len),
             "image_min_tokens": int(args.image_min_tokens),
+            "image_max_tokens": None if args.image_max_tokens is None else int(args.image_max_tokens),
             "bridge_runtime": args.bridge_runtime,
             "bridge_generation_mode": args.bridge_generation_mode,
+            "vision_activation_pref": list(args.vision_activation_pref or []),
         },
         "results": rows,
     }

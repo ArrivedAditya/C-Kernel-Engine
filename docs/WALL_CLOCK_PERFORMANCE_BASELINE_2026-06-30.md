@@ -10,9 +10,42 @@ VTune, Advisor, or sudo access for this baseline.
 | Field | Value |
 |---|---|
 | Branch base | `nemotron-mamba2-reference` / PR #77 stack |
-| Patch scope | Qwen3-VL OCR bridge contract, staged-decode reporting, and wall-clock benchmark harness |
-| Expected speed impact | Low; this patch makes bridge/runtime timing measurable; hot-kernel speed work remains separate |
+| Patch scope | Qwen3-VL OCR bridge contract, staged-prefill/decode reporting, wall-clock benchmark harness |
+| Expected speed impact | Medium for Qwen3-VL OCR bridge prefill; hot-kernel GEMM speed work remains separate |
 | Timing method | Runtime-reported prompt/decode timing and CK per-op wall-clock CSV |
+
+## Qwen3-VL OCR Bridge Speed Snapshot
+
+The current Qwen3-VL bridge no longer runs the visual/text prefix through a
+pure decode-shaped activation plan.  `decode-staged` now prepares a hybrid
+decoder runtime: decode IR plus prefill-sized activations.  The mixed visual
+prefix runs batched, then generation continues through incremental decode.
+
+Latest Xeon run, 24 threads, 64 image tokens, 8 decode tokens:
+
+| Image | Encoder | Mixed prefix | Generation | Generation rate | Steady rate |
+|---|---:|---:|---:|---:|---:|
+| Clean text | 4779 ms | 3870 ms | 774 ms | 10.33 tok/s | 0.849 tok/s |
+| Table | 4719 ms | 3882 ms | 800 ms | 10.00 tok/s | 0.851 tok/s |
+| Receipt | 4780 ms | 3864 ms | 802 ms | 9.97 tok/s | 0.847 tok/s |
+| Paragraph | 5312 ms | 4029 ms | 801 ms | 9.99 tok/s | 0.789 tok/s |
+
+Read: the previous mixed-prefill path was roughly 6.8-7.2 seconds on this
+shape.  The hybrid staged path is now roughly 3.86-4.03 seconds, so the bridge
+scheduling problem is materially improved.
+
+The profiler says the next bottleneck is ordinary quantized projection work,
+not attention or bridge scheduling:
+
+| Rank | Kernel/op | Approx time |
+|---:|---|---:|
+| 1 | `gemm_nt_q4_k_q8_k` / `mlp_gate_up` | 1.81 s |
+| 2 | `gemm_nt_q4_k_q8_k` / `mlp_down` | 0.46 s |
+| 3 | `gemm_nt_q4_k_q8_k` / `q_proj` | 0.33 s |
+| 4 | `gemm_nt_q4_k_q8_k` / `out_proj` | 0.32 s |
+| 5 | attention | 0.13 s |
+
+Next target: packed/reused Q4_K/Q6_K x Q8_K batched GEMM for decoder prefill.
 
 ## Model-Level Speed Snapshot
 
@@ -61,7 +94,7 @@ build/v8_prefill_profile_gemma4-e4b-q4_k_m_p512_t24.csv
 | Qwen3.5 decode | Usually behind llama.cpp, roughly 0.6x in the documented direct comparison. |
 | Prompt/prefill | Main gap.  CKE is often 0.1x-0.3x of llama.cpp on larger or hybrid models. |
 | Gemma4 text | Correctness is much stronger now, but speed remains weak. |
-| Qwen3-VL OCR bridge | Correctness improved; speed still needs a separate controlled CK-vs-llama vision sweep. |
+| Qwen3-VL OCR bridge | Correctness improved and the staged mixed-prefix path is now about 1.7x faster on the 64-image-token OCR sweep.  Remaining gap is projection GEMM. |
 
 ## Aggregated CKE Wall-Clock Hot Spots
 
@@ -131,7 +164,7 @@ Recommended sweep dimensions:
 | 2 | Gemma4 `geglu_forward_exact` and per-layer embed/prepare | Gemma4 profiles show large scalar/glue overhead. |
 | 3 | Head-major/final logits paths | Large vocab projections dominate decode for some models. |
 | 4 | Threadpool/orchestrator tuning | Useful only after hot kernels are not decode-style row loops. |
-| 5 | Vision bridge timing split | Needed for Qwen3-VL/Gemma4V OCR: encoder, projector, replay, mixed prefill, decode. |
+| 5 | Vision bridge timing split | Now available for Qwen3-VL OCR; keep extending it to Gemma4V and larger image-token sweeps. |
 
 ## Rule For Future Updates
 

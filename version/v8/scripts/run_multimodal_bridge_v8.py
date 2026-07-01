@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import csv
 import ctypes
 import hashlib
 import heapq
@@ -146,13 +147,26 @@ def _parse_activation_preference_overrides(values: list[str] | None) -> dict[str
     return overrides
 
 
+def _clean_activation_preference_baseline(config: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(config)
+    model = str(updated.get("model", updated.get("arch", "")) or "").strip().lower()
+    if model == "qwen3_vl_vision":
+        updated["activation_preference_by_op"] = {
+            "mlp_down": "fp32",
+            "out_proj": "q8_0",
+            "branch_fc1": "fp32",
+            "branch_fc2": "fp32",
+        }
+    return updated
+
+
 def _apply_activation_preference_overrides(
     config: dict[str, Any],
     overrides: dict[str, str] | None,
 ) -> dict[str, Any]:
+    updated = _clean_activation_preference_baseline(config)
     if not overrides:
-        return config
-    updated = dict(config)
+        return updated
     prefs = updated.get("activation_preference_by_op")
     if not isinstance(prefs, dict):
         prefs = {}
@@ -865,6 +879,7 @@ def _runtime_fingerprint(
     mode: str,
     context_override: int | None = None,
     parity_dump: bool = False,
+    profile: bool = False,
 ) -> dict[str, Any]:
     return {
         "version": 1,
@@ -872,6 +887,7 @@ def _runtime_fingerprint(
         "manifest": _path_identity(manifest_path, hash_content=True),
         "context_override": int(context_override) if context_override is not None else None,
         "parity_dump": bool(parity_dump),
+        "profile": bool(profile),
         "build_ir_script": _path_identity(SCRIPT_DIR / "build_ir_v8.py", hash_content=True),
         "codegen_script": _path_identity(SCRIPT_DIR / "codegen_v8.py", hash_content=True),
         "codegen_prefill_script": _path_identity(SCRIPT_DIR / "codegen_prefill_v8.py", hash_content=True),
@@ -1624,7 +1640,7 @@ def _gemma4_geometry_overrides(config: dict[str, Any], image_path: Path) -> dict
     }
 
 
-def _compile_generated_model(c_path: Path, so_path: Path) -> Path:
+def _compile_generated_model(c_path: Path, so_path: Path, *, profile: bool = False) -> Path:
     stamp_path = so_path.with_suffix(so_path.suffix + ".build.json")
     source_hash = hashlib.sha256(c_path.read_bytes()).hexdigest()
     source_size = int(c_path.stat().st_size)
@@ -1633,6 +1649,7 @@ def _compile_generated_model(c_path: Path, so_path: Path) -> Path:
         "source_path": str(c_path.resolve()),
         "source_sha256": source_hash,
         "source_size": source_size,
+        "profile": bool(profile),
     }
     if so_path.exists():
         cached = _json_read(stamp_path)
@@ -1644,6 +1661,7 @@ def _compile_generated_model(c_path: Path, so_path: Path) -> Path:
         "-fPIC",
         "-O3",
         "-fopenmp",
+        *( ["-DCK_PROFILE=1"] if profile else [] ),
         "-Iinclude",
         "-Iversion/v8/src",
         str(c_path),
@@ -1905,6 +1923,7 @@ def _prepare_decoder_runtime(
     output_dir: Path,
     parity_dump: bool = False,
     context_override: int | None = None,
+    profile: bool = False,
 ) -> dict[str, Any]:
     manifest, manifest_path, bump_path, config_path = _run_converter(
         gguf_path,
@@ -1931,6 +1950,7 @@ def _prepare_decoder_runtime(
         mode="decoder_hybrid",
         context_override=context_override,
         parity_dump=parity_dump,
+        profile=profile,
     )
     reusable_outputs = [
         manifest_path,
@@ -1953,8 +1973,8 @@ def _prepare_decoder_runtime(
         _log_progress(
             f"decoder runtime reuse workdir={output_dir} parity_dump={int(bool(parity_dump))}"
         )
-        _compile_generated_model(c_path, so_path)
-        _compile_generated_model(prefill_c_path, prefill_so_path)
+        _compile_generated_model(c_path, so_path, profile=profile)
+        _compile_generated_model(prefill_c_path, prefill_so_path, profile=profile)
         layout = _load_layout(decode_layout)
         if context_override is not None:
             decode_cfg = layout.get("config", {}) if isinstance(layout.get("config"), dict) else {}
@@ -2048,18 +2068,22 @@ def _prepare_decoder_runtime(
             str(prefill_call),
             "--layout",
             str(decode_layout),
+            "--prefill-layout",
+            str(prefill_layout),
             "--output",
             str(c_path),
         ]
         if parity_dump:
             sys.argv.append("--parity-dump")
+        if profile:
+            sys.argv.append("--profile")
         codegen_rc = codegen_v8.main()
     finally:
         sys.argv = old_argv
     if codegen_rc != 0:
         raise RuntimeError(f"codegen_v8 decoder failed with rc={codegen_rc}")
 
-    _compile_generated_model(c_path, so_path)
+    _compile_generated_model(c_path, so_path, profile=profile)
     old_argv = sys.argv[:]
     try:
         sys.argv = [
@@ -2073,13 +2097,15 @@ def _prepare_decoder_runtime(
         ]
         if parity_dump:
             sys.argv.append("--parity-dump")
+        if profile:
+            sys.argv.append("--profile")
         prefill_codegen_rc = codegen_v8.main()
     finally:
         sys.argv = old_argv
     if prefill_codegen_rc != 0:
         raise RuntimeError(f"codegen_v8 decoder prefill bridge failed with rc={prefill_codegen_rc}")
 
-    _compile_generated_model(prefill_c_path, prefill_so_path)
+    _compile_generated_model(prefill_c_path, prefill_so_path, profile=profile)
     _json_write(runtime_stamp, runtime_fingerprint)
     layout = _load_layout(decode_layout)
     if context_override is not None:
@@ -2322,6 +2348,44 @@ def _run_encoder(runtime: dict[str, Any], image_mode: str, image_path: Path | No
         lib.ck_model_free()
 
 
+def _summarize_profile_csv(path: Path, *, top_n: int = 12) -> dict[str, Any]:
+    if not path.exists() or path.stat().st_size <= 0:
+        return {"path": str(path), "total_ms": 0.0, "by_op": [], "by_kernel_op": []}
+    by_op: dict[str, float] = {}
+    by_kernel_op: dict[tuple[str, str], float] = {}
+    total_us = 0.0
+    with path.open("r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                time_us = float(row.get("time_us") or 0.0)
+            except (TypeError, ValueError):
+                time_us = 0.0
+            op = str(row.get("op") or "")
+            kernel = str(row.get("kernel") or "")
+            total_us += time_us
+            by_op[op] = by_op.get(op, 0.0) + time_us
+            key = (kernel, op)
+            by_kernel_op[key] = by_kernel_op.get(key, 0.0) + time_us
+
+    def top_map(values: dict[Any, float], *, kernel_op: bool = False) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for key, time_us in sorted(values.items(), key=lambda item: -item[1])[:top_n]:
+            if kernel_op:
+                kernel, op = key
+                rows.append({"kernel": kernel, "op": op, "time_ms": time_us / 1000.0})
+            else:
+                rows.append({"op": str(key), "time_ms": time_us / 1000.0})
+        return rows
+
+    return {
+        "path": str(path),
+        "total_ms": total_us / 1000.0,
+        "by_op": top_map(by_op),
+        "by_kernel_op": top_map(by_kernel_op, kernel_op=True),
+    }
+
+
 def _run_decoder(
     runtime: dict[str, Any],
     prefix_embeddings: array,
@@ -2348,11 +2412,12 @@ def _run_decoder(
     min_response_tokens: int = 0,
     stream_output: bool = False,
     generation_progress_every: int = 0,
+    profile_csv_path: Path | None = None,
 ) -> dict[str, Any]:
-    # Mixed image/text prefill normally uses the prefill-layout runtime: it owns
-    # batched token-major activation rows and last-logits emission. The decode
-    # runtime remains available as an explicit staged replay diagnostic/escape
-    # hatch for architecture work.
+    # Mixed image/text prefill normally uses the prefill-capable staged decoder:
+    # decode IR plus prefill-sized activations.  That gives one model instance
+    # for batched bridge prefill followed by safe incremental ck_model_decode.
+    # The standalone prefill runtime remains available for diagnostics.
     bridge_runtime_name = str(bridge_runtime or "prefill").strip().lower()
     generation_mode = str(bridge_generation_mode or "mixed-replay").strip().lower().replace("-", "_")
     if generation_mode not in {"incremental_decode", "mixed_replay"}:
@@ -2414,48 +2479,71 @@ def _run_decoder(
             f"prompt_tokens_before={len(before_token_ids)} prompt_tokens_after={len(after_token_ids)} "
             f"grid={prefix_grid} prefix_decode_policy={prefix_decode_policy}"
         )
+        old_profile_csv_env = os.environ.get("CK_PROFILE_CSV")
+        old_profile_json_env = os.environ.get("CK_PROFILE_JSON")
+        profile_summary: dict[str, Any] | None = None
+        if profile_csv_path is not None:
+            profile_csv_path.parent.mkdir(parents=True, exist_ok=True)
+            profile_csv_path.unlink(missing_ok=True)
+            os.environ["CK_PROFILE_CSV"] = str(profile_csv_path)
+            os.environ.pop("CK_PROFILE_JSON", None)
         forward_t0 = time.perf_counter()
-        if before_token_ids and hasattr(lib, "ck_model_forward_segments_grid_ex"):
-            grid_x, grid_y = prefix_grid if prefix_grid is not None else (0, 0)
-            default_text_pos = (
-                len(before_token_ids) + max(int(grid_x), int(grid_y))
-                if prefix_grid is not None
-                else len(before_token_ids) + max(0, int(prefix_tokens))
-            )
-            resolved_text_pos = int(prefix_text_pos or default_text_pos)
-            rc = lib.ck_model_forward_segments_grid_ex(
-                before_token_arr,
-                len(before_token_ids),
-                prefix_ptr,
-                prefix_tokens,
-                resolved_prefix_dim,
-                int(grid_x),
-                int(grid_y),
-                resolved_text_pos,
-                after_token_arr,
-                len(after_token_ids),
-                logits,
-            )
-        elif hasattr(lib, "ck_model_forward_mixed_grid_ex") and prefix_grid is not None:
-            grid_x, grid_y = prefix_grid
-            resolved_text_pos = int(prefix_text_pos or max(int(grid_x), int(grid_y), int(prefix_tokens)))
-            rc = lib.ck_model_forward_mixed_grid_ex(
-                prefix_ptr,
-                prefix_tokens,
-                resolved_prefix_dim,
-                int(grid_x),
-                int(grid_y),
-                resolved_text_pos,
-                after_token_arr,
-                len(after_token_ids),
-                logits,
-            )
-        elif hasattr(lib, "ck_model_forward_mixed_ex"):
-            rc = lib.ck_model_forward_mixed_ex(prefix_ptr, prefix_tokens, resolved_prefix_dim, after_token_arr, len(after_token_ids), logits)
-        else:
-            rc = lib.ck_model_forward_mixed(prefix_ptr, prefix_tokens, after_token_arr, len(after_token_ids), logits)
-        if rc != 0:
-            raise RuntimeError(f"decoder forward_mixed failed with rc={rc}")
+        try:
+            if before_token_ids and hasattr(lib, "ck_model_forward_segments_grid_ex"):
+                grid_x, grid_y = prefix_grid if prefix_grid is not None else (0, 0)
+                default_text_pos = (
+                    len(before_token_ids) + max(int(grid_x), int(grid_y))
+                    if prefix_grid is not None
+                    else len(before_token_ids) + max(0, int(prefix_tokens))
+                )
+                resolved_text_pos = int(prefix_text_pos or default_text_pos)
+                rc = lib.ck_model_forward_segments_grid_ex(
+                    before_token_arr,
+                    len(before_token_ids),
+                    prefix_ptr,
+                    prefix_tokens,
+                    resolved_prefix_dim,
+                    int(grid_x),
+                    int(grid_y),
+                    resolved_text_pos,
+                    after_token_arr,
+                    len(after_token_ids),
+                    logits,
+                )
+            elif hasattr(lib, "ck_model_forward_mixed_grid_ex") and prefix_grid is not None:
+                grid_x, grid_y = prefix_grid
+                resolved_text_pos = int(prefix_text_pos or max(int(grid_x), int(grid_y), int(prefix_tokens)))
+                rc = lib.ck_model_forward_mixed_grid_ex(
+                    prefix_ptr,
+                    prefix_tokens,
+                    resolved_prefix_dim,
+                    int(grid_x),
+                    int(grid_y),
+                    resolved_text_pos,
+                    after_token_arr,
+                    len(after_token_ids),
+                    logits,
+                )
+            elif hasattr(lib, "ck_model_forward_mixed_ex"):
+                rc = lib.ck_model_forward_mixed_ex(prefix_ptr, prefix_tokens, resolved_prefix_dim, after_token_arr, len(after_token_ids), logits)
+            else:
+                rc = lib.ck_model_forward_mixed(prefix_ptr, prefix_tokens, after_token_arr, len(after_token_ids), logits)
+            if rc != 0:
+                raise RuntimeError(f"decoder forward_mixed failed with rc={rc}")
+            if profile_csv_path is not None:
+                if hasattr(lib, "ck_model_profile_dump"):
+                    lib.ck_model_profile_dump()
+                profile_summary = _summarize_profile_csv(profile_csv_path)
+        finally:
+            if profile_csv_path is not None:
+                if old_profile_csv_env is None:
+                    os.environ.pop("CK_PROFILE_CSV", None)
+                else:
+                    os.environ["CK_PROFILE_CSV"] = old_profile_csv_env
+                if old_profile_json_env is None:
+                    os.environ.pop("CK_PROFILE_JSON", None)
+                else:
+                    os.environ["CK_PROFILE_JSON"] = old_profile_json_env
         forward_elapsed = time.perf_counter() - forward_t0
         _log_progress(f"decoder: forward_mixed done elapsed={forward_elapsed:.2f}s")
         logits_arr = array("f", logits)
@@ -2580,6 +2668,7 @@ def _run_decoder(
             "generated_text_raw": generated_text_raw,
             "generation_stop_reason": generation_stop_reason,
             "streamed_output": bool(stream_output and tokenizer is not None and max_tokens > 0),
+            "decoder_profile": profile_summary or {},
             "timings": {
                 "decoder_forward_mixed_ms": float(forward_elapsed * 1000.0),
                 "decoder_generation_ms": float(generation_elapsed * 1000.0),
@@ -2841,6 +2930,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--generation-progress-every", type=int, default=0, help="Emit generation heartbeat every N tokens; 0 disables periodic progress logs")
     ap.add_argument("--no-stream-output", action="store_true", help="Disable live text streaming during generation and print only the final response")
     ap.add_argument("--strict-parity", action="store_true", help="Enable strict/reference parity paths in bridge decoder kernels")
+    ap.add_argument("--profile-decoder", action="store_true", help="Compile decoder with CK_PROFILE and include mixed-prefill per-op timings")
     ap.add_argument("--bridge-runtime", choices=["prefill", "decode-staged"], default=None, help="Override template multimodal bridge runtime; decode-staged enables incremental generation after mixed prefill")
     ap.add_argument(
         "--bridge-generation-mode",
@@ -2975,6 +3065,7 @@ def main(argv: list[str] | None = None) -> int:
         args.decoder_gguf.resolve(),
         decoder_dir,
         context_override=decoder_context_len,
+        profile=bool(args.profile_decoder),
     )
     decoder_prepare_elapsed = time.perf_counter() - decoder_prep_t0
     timings["decoder_prepare_ms"] = decoder_prepare_elapsed * 1000.0
@@ -3073,6 +3164,7 @@ def main(argv: list[str] | None = None) -> int:
         min_response_tokens=min_response_tokens,
         stream_output=bool(args.max_tokens) and not bool(args.no_stream_output),
         generation_progress_every=int(args.generation_progress_every),
+        profile_csv_path=(decoder_dir / "decoder_mixed_prefill_profile.csv") if bool(args.profile_decoder) else None,
     )
     if args.dump_logits_f32 is not None:
         args.dump_logits_f32.parent.mkdir(parents=True, exist_ok=True)
@@ -3123,6 +3215,7 @@ def main(argv: list[str] | None = None) -> int:
         "bridge_generation_mode": resolved_bridge_generation_mode,
         "bridge_contract": dict(bridge_contract),
         "bridge_runtime_policy": resolved_bridge_runtime,
+        "decoder_profile": decoder_report.get("decoder_profile") or {},
         "prefix_dump_path": dumped_prefix_path,
         "total_prefill_tokens": len(prompt_prefix_token_ids) + prefix_tokens + len(token_ids),
         "decoder_runtime": {
