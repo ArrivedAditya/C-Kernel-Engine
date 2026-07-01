@@ -75,7 +75,7 @@
     "gelu": "gelu_ggml_inplace",
     "projector_gelu": "gelu_ggml_inplace",
     "branch_gelu": "gelu_ggml_inplace",
-    "attn_prefill": "attention_forward_full_head_major_gqa_ggml_strided"
+    "attn_prefill": "attention_forward_full_head_major_gqa_flash_strided"
   },
   "sequence": [
     "vision_encoder"

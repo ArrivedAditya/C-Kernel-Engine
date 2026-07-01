@@ -245,7 +245,7 @@ def _inject_runtime_config_defaults(config: Dict[str, Any], arch: str) -> Dict[s
     elif arch_lc == "qwen3_vl_vision":
         _merge_activation_defaults({
             "mlp_down": "fp32",
-            "out_proj": "fp32",
+            "out_proj": "q8_0",
             "branch_fc1": "fp32",
             "branch_fc2": "fp32",
         })

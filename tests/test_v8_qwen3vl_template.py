@@ -289,7 +289,7 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             vision_cfg["activation_preference_by_op"],
             {
                 "mlp_down": "fp32",
-                "out_proj": "fp32",
+                "out_proj": "q8_0",
                 "branch_fc1": "fp32",
                 "branch_fc2": "fp32",
             },
@@ -438,15 +438,15 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             quantize_input_rows = next(arg for arg in quantize_input_0.get("args", []) if arg.get("name") == "rows")
             self.assertEqual(quantize_input_rows.get("expr"), str(manifest["config"]["context_length"]))
             attn = next(op for op in call_ops if op.get("op") == "attn")
-            self.assertEqual(attn.get("function"), "attention_forward_full_head_major_gqa_ggml_strided")
+            self.assertEqual(attn.get("function"), "attention_forward_full_head_major_gqa_flash_strided")
             attn_idx = next(i for i, op in enumerate(call_ops) if op.get("op") == "attn")
             transpose_idx = next(i for i, op in enumerate(call_ops) if op.get("op") == "transpose_attn_out_to_token_major")
             out_proj_idx = next(i for i, op in enumerate(call_ops) if op.get("op") == "out_proj")
             self.assertLess(attn_idx, transpose_idx)
             self.assertLess(transpose_idx, out_proj_idx)
             out_proj = next(op for op in call_ops if op.get("op") == "out_proj")
-            self.assertEqual(out_proj.get("function"), "gemm_nt_q8_0")
-            self.assertNotIn("quantize_out_proj_input", [op.get("op") for op in call_ops])
+            self.assertEqual(out_proj.get("function"), "gemm_nt_q8_0_q8_0")
+            self.assertIn("quantize_out_proj_input", [op.get("op") for op in call_ops])
             self.assertNotIn("kv_cache_batch_copy", [op.get("op") for op in call_ops])
             projector_fc1 = next(op for op in call_ops if op.get("op") == "projector_fc1")
             self.assertEqual(projector_fc1.get("function"), "gemm_nt_q8_0_q8_0")
