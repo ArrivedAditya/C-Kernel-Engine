@@ -246,6 +246,8 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         num_kv_heads = op.get("_num_kv_heads", config.get("num_kv_heads", 2))
         head_dim = op.get("_head_dim", config.get("head_dim", 64))
         context_len = config.get("context_len", config.get("context_length", 1024))
+        decode_kv_cache_dtype = str(config.get("decode_kv_cache_dtype", "fp32") or "fp32").strip().lower()
+        decode_uses_fp16_kv = decode_kv_cache_dtype in {"fp16", "f16"}
         k_offsets = config.get("layer_k_cache_offset") or []
         v_offsets = config.get("layer_v_cache_offset") or []
         if isinstance(k_offsets, list) and layer < len(k_offsets) and k_offsets[layer] is not None:
@@ -256,6 +258,33 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             v_base_expr = f"kv_cache + ({int(v_offsets[layer])}ULL*cache_stride)"
         else:
             v_base_expr = f"kv_cache + (1ULL*({layer}*2+1)*Hkv*cache_stride*D)"
+        if decode_uses_fp16_kv:
+            return f"""    /* Op {seq_idx}: kv_cache_batch_copy layer={layer} */
+    /* Copy K/V from head-major scratch to FP16 KV cache for subsequent decode */
+    {{
+        const int Hkv = {num_kv_heads};
+        const int D = {head_dim};
+        const int cache_stride = {context_len};
+        float *k_scratch = (float*)(model->bump + A_K_SCRATCH);
+        float *v_scratch = (float*)(model->bump + A_V_SCRATCH);
+        uint16_t *kv_cache = (uint16_t*)model->kv_cache_f16;
+        for (int h = 0; h < Hkv; h++) {{
+            uint16_t *k_dst = {k_base_expr} + (size_t)h*cache_stride*D;
+            uint16_t *v_dst = {v_base_expr} + (size_t)h*cache_stride*D;
+            const float *k_src = k_scratch + h*num_tokens*D;
+            const float *v_src = v_scratch + h*num_tokens*D;
+            for (int t = 0; t < num_tokens; ++t) {{
+                uint16_t *kd = k_dst + (size_t)t*D;
+                uint16_t *vd = v_dst + (size_t)t*D;
+                const float *ks = k_src + (size_t)t*D;
+                const float *vs = v_src + (size_t)t*D;
+                for (int d = 0; d < D; ++d) {{
+                    kd[d] = ck_fp32_to_fp16_soft(ks[d]);
+                    vd[d] = ck_fp32_to_fp16_soft(vs[d]);
+                }}
+            }}
+        }}
+    }}"""
         return f"""    /* Op {seq_idx}: kv_cache_batch_copy layer={layer} */
     /* Copy K/V from head-major scratch to KV cache for subsequent decode */
     {{
