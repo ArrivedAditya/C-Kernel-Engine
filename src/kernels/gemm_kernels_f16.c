@@ -28,6 +28,7 @@
 #include <stdbool.h>
 #include "ckernel_quant.h"  /* For ck_fp16_to_fp32 */
 #include "ckernel_engine.h"
+#include "ck_threadpool.h"
 #include "ggml_runtime_compat.h"
 
 #include <dlfcn.h>
@@ -474,6 +475,95 @@ static void gemm_f16_input_fp16_ref(float *Y,
     }
 }
 
+typedef struct {
+    float *Y;
+    const uint16_t *W;
+    const float *X;
+    int M;
+    int N;
+    int K;
+} ck_gemm_f16_input_fp16_args_t;
+
+static void ck_gemm_f16_input_fp16_work(int ith, int nth, void *opaque)
+{
+    ck_gemm_f16_input_fp16_args_t *args = (ck_gemm_f16_input_fp16_args_t *) opaque;
+    const int M = args->M;
+    const int N = args->N;
+    const int K = args->K;
+
+    for (int n = ith; n < N; n += nth) {
+        const float *x_row = args->X + (size_t)n * (size_t)K;
+        uint16_t x_f16[K];
+
+        for (int k = 0; k < K; ++k) {
+            x_f16[k] = fp32_to_fp16(x_row[k]);
+        }
+
+        for (int row = 0; row < M; ++row) {
+            float sum = 0.0f;
+            const uint16_t *w_row = args->W + (size_t)row * (size_t)K;
+
+            for (int k = 0; k < K; ++k) {
+                sum += fp16_to_fp32(w_row[k]) * fp16_to_fp32(x_f16[k]);
+            }
+
+            args->Y[(size_t)n * (size_t)M + (size_t)row] = sum;
+        }
+    }
+}
+
+static int ck_gemm_f16_threadpool_enabled(int M, int N, int K)
+{
+    const char *disable = getenv("CK_DISABLE_F16_GEMM_THREADPOOL");
+    if (disable && disable[0] && strcmp(disable, "0") != 0) return 0;
+    if (M < 256 || N < 16 || K < 256) return 0;
+    return 1;
+}
+
+static int ck_gemm_f16_pick_active_threads(const ck_threadpool_t *pool, int M, int N, int K)
+{
+    int nth = pool ? ck_threadpool_n_threads(pool) : 1;
+    if (nth <= 1) return 1;
+
+    const char *cap_env = getenv("CK_F16_GEMM_THREAD_CAP");
+    int cap = cap_env && cap_env[0] ? atoi(cap_env) : 24;
+    if (cap < 1) cap = 1;
+    if (cap > nth) cap = nth;
+
+    int active = N;
+    if (M >= 1024 && K >= 1024 && active < 8) active = 8;
+    if (active > cap) active = cap;
+    if (active > nth) active = nth;
+    return active < 1 ? 1 : active;
+}
+
+static int gemm_f16_input_fp16_threadpool(float *Y,
+                                          const uint16_t *W,
+                                          const float *X,
+                                          int M, int N, int K)
+{
+    if (!ck_gemm_f16_threadpool_enabled(M, N, K)) {
+        return 0;
+    }
+
+    ck_threadpool_t *pool = ck_threadpool_global();
+    const int active = ck_gemm_f16_pick_active_threads(pool, M, N, K);
+    if (!pool || active <= 1) {
+        return 0;
+    }
+
+    ck_gemm_f16_input_fp16_args_t args = {
+        .Y = Y,
+        .W = W,
+        .X = X,
+        .M = M,
+        .N = N,
+        .K = K,
+    };
+    ck_threadpool_dispatch_n(pool, active, ck_gemm_f16_input_fp16_work, &args);
+    return 1;
+}
+
 /**
  * @brief NT GEMM wrapper for FP16 weights with the engine's standard ABI.
  *
@@ -498,7 +588,9 @@ void gemm_nt_f16(const float *A,
         return;
     }
 
-    gemm_f16_input_fp16_ref(C, (const uint16_t *)B, A, N, M, K);
+    if (!gemm_f16_input_fp16_threadpool(C, (const uint16_t *)B, A, N, M, K)) {
+        gemm_f16_input_fp16_ref(C, (const uint16_t *)B, A, N, M, K);
+    }
 
     if (!bias) {
         return;
