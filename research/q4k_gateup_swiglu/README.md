@@ -98,3 +98,22 @@ python3 research/q4k_gateup_swiglu/cache_model.py --M 79 --D 12288 --K 4096
 ```
 
 This computes `tile_m` and `active_threads` from L1/L2/L3 and physical-core topology. Benchmark sweeps validate the model, but defaults should come from this deterministic cache calculation rather than a single noisy OpenShift timing run.
+
+## 2026-07-02 Qwen3-VL OCR x16 Notes
+
+A companion summary is tracked at:
+
+```text
+docs/notes/QWEN3VL_OCR_Q4Q8_SPEED_RESEARCH_2026-07-02.md
+```
+
+Important result from the Xeon/OpenShift run: more active threads were not always
+better. For the real Qwen3-VL OCR gate/up shape (`M=1028, D=12288, K=4096`),
+20 physical threads beat 24 and 48. This matches the cache/core-ratio model from
+the BC server validation package: the bottleneck is effective cache and memory
+bandwidth per active worker, not just total visible hardware threads.
+
+The dual gate/up accumulator idea was numerically clean but slower on this Xeon
+(~442 ms versus ~428 ms for the best x16 variant), likely due to register and
+instruction pressure. Keep it as a retest candidate for Ryzen/X3D, EPYC, and
+larger-cache Xeon systems before discarding it globally.
