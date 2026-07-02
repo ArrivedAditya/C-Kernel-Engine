@@ -11,6 +11,12 @@
 # Optional body (required for key change types):
 #   Why: explain intent and impact
 #   Test: list verification commands
+#
+# Knowledge trail (soft prompt for runtime/kernel/perf changes):
+#   Docs: updated docs path, or "not needed; <reason>"
+#   Nightly: added/updated test surface, or "not needed; <reason>"
+#   Research: added notes/analysis, or "not needed; <reason>"
+#   Blog: source material for blog agent, or "not needed; <reason>"
 
 set -eu
 
@@ -127,6 +133,41 @@ MSG
   if ! printf '%s\n' "$BODY_NONEMPTY" | grep -Eq '^(Test|Tests|Validation): '; then
     echo "Body must include a 'Test:' (or Tests:/Validation:) line." >&2
     exit 1
+  fi
+fi
+
+# Soft knowledge-trail prompts. These do not block commits; they make the
+# operator-facing/documentation impact explicit for humans and blog agents.
+STAGED_FILES="$(git diff --cached --name-only 2>/dev/null || true)"
+KNOWLEDGE_RELEVANT=0
+case "$TYPE" in
+  feat|fix|refactor|perf)
+    KNOWLEDGE_RELEVANT=1
+    ;;
+esac
+if printf '%s\n' "$STAGED_FILES" | grep -Eq '^(src/kernels/|version/v[0-9.]+/(scripts|templates|kernel_maps|model_maps)/|Makefile|scripts/nightly_runner.py|benchmarks/|research/)'; then
+  KNOWLEDGE_RELEVANT=1
+fi
+
+if [ "$KNOWLEDGE_RELEVANT" -eq 1 ] && [ -n "$BODY_NONEMPTY" ]; then
+  HAS_DOCS=0
+  HAS_NIGHTLY=0
+  HAS_RESEARCH=0
+  HAS_BLOG=0
+  printf '%s\n' "$BODY_NONEMPTY" | grep -Eq '^(Docs|Documentation): ' && HAS_DOCS=1 || true
+  printf '%s\n' "$BODY_NONEMPTY" | grep -Eq '^(Nightly|CI): ' && HAS_NIGHTLY=1 || true
+  printf '%s\n' "$BODY_NONEMPTY" | grep -Eq '^(Research|Analysis): ' && HAS_RESEARCH=1 || true
+  printf '%s\n' "$BODY_NONEMPTY" | grep -Eq '^(Blog|Blog-Agent|Blog Agent): ' && HAS_BLOG=1 || true
+
+  if [ "$HAS_DOCS" -eq 0 ] || [ "$HAS_NIGHTLY" -eq 0 ] || [ "$HAS_RESEARCH" -eq 0 ] || [ "$HAS_BLOG" -eq 0 ]; then
+    cat >&2 <<'MSG'
+Knowledge trail prompt (non-blocking):
+  For runtime/kernel/perf/command changes, consider adding:
+    Docs: <updated doc path> OR not needed; <reason>
+    Nightly: <new/updated CI or make target> OR not needed; <reason>
+    Research: <notes/analysis path> OR not needed; <reason>
+    Blog: <what a blog agent should read/extract> OR not needed; <reason>
+MSG
   fi
 fi
 
