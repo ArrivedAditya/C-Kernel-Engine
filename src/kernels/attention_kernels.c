@@ -22,6 +22,7 @@
 #include "bf16_utils.h"
 #include "attention_oracle_ggml.h"
 #include "ckernel_engine.h"
+#include "ck_threadpool.h"
 #if CK_ENABLE_LLAMA_CPP_PARITY
 #include "../../llama.cpp/ggml/include/ggml.h"
 #endif
@@ -2849,6 +2850,98 @@ static CK_NOINLINE CK_OPTNONE void attention_forward_full_head_major_gqa_ggml_ti
  *
  * After changes: make test && make llamacpp-parity-full
  */
+
+typedef struct {
+    const float *q;
+    const float *k;
+    const float *v;
+    float *output;
+    int num_heads;
+    int num_kv_heads;
+    int num_tokens;
+    int head_dim;
+    int aligned_head_dim;
+    int kv_stride_tokens;
+    int causal;
+    float scale;
+} ck_attention_parallel_args_t;
+
+static inline void ck_attention_flash_query_auto(const float *q_vec,
+                                                 const float *k_head,
+                                                 const float *v_head,
+                                                 int kv_tokens,
+                                                 int head_dim,
+                                                 int aligned_head_dim,
+                                                 float scale,
+                                                 float *out_vec)
+{
+#if defined(__AVX512F__)
+    attention_flash_query_causal_avx512(q_vec, k_head, v_head,
+                                        kv_tokens, head_dim, aligned_head_dim,
+                                        scale, out_vec);
+#elif defined(__AVX2__)
+    attention_flash_query_causal_avx2(q_vec, k_head, v_head,
+                                      kv_tokens, head_dim, aligned_head_dim,
+                                      scale, out_vec);
+#elif defined(__AVX__)
+    attention_flash_query_causal_avx(q_vec, k_head, v_head,
+                                     kv_tokens, head_dim, aligned_head_dim,
+                                     scale, out_vec);
+#else
+    attention_flash_query_causal(q_vec, k_head, v_head,
+                                 kv_tokens, head_dim, aligned_head_dim,
+                                 scale, out_vec);
+#endif
+}
+
+static void ck_attention_full_grid_work(int ith, int nth, void *opaque)
+{
+    ck_attention_parallel_args_t *args = (ck_attention_parallel_args_t *) opaque;
+    const int T = args->num_tokens;
+    const int total = args->num_heads * T;
+    const size_t kv_head_stride = (size_t) args->kv_stride_tokens * (size_t) args->aligned_head_dim;
+
+    for (int idx = ith; idx < total; idx += nth) {
+        const int h = idx / T;
+        const int i = idx - h * T;
+        const int kv_head = (int) ((long long) h * (long long) args->num_kv_heads / (long long) args->num_heads);
+        const float *k_head = args->k + (size_t) kv_head * kv_head_stride;
+        const float *v_head = args->v + (size_t) kv_head * kv_head_stride;
+        const float *q_vec = args->q + qkv_index(h, i, 0, T, args->aligned_head_dim);
+        float *out_vec = args->output + qkv_index(h, i, 0, T, args->aligned_head_dim);
+        const int kv_tokens = args->causal ? (i + 1) : T;
+        ck_attention_flash_query_auto(q_vec, k_head, v_head,
+                                      kv_tokens,
+                                      args->head_dim,
+                                      args->aligned_head_dim,
+                                      args->scale,
+                                      out_vec);
+    }
+}
+
+static int ck_attention_parallel_enabled(int total_queries, int num_tokens, int head_dim)
+{
+    const char *disable = getenv("CK_DISABLE_ATTENTION_THREADPOOL");
+    if (disable && disable[0] && strcmp(disable, "0") != 0) return 0;
+    if (total_queries < 2048 || num_tokens < 128 || head_dim <= 0) return 0;
+    return 1;
+}
+
+static int ck_attention_pick_active_threads(const ck_threadpool_t *pool, int total_queries, int num_tokens)
+{
+    int nth = pool ? ck_threadpool_n_threads(pool) : 1;
+    if (nth <= 1) return 1;
+    const char *cap_env = getenv("CK_ATTENTION_THREAD_CAP");
+    int cap = cap_env && cap_env[0] ? atoi(cap_env) : 24;
+    if (cap < 1) cap = 1;
+    if (cap > nth) cap = nth;
+    int active = (total_queries + 127) / 128;
+    if (num_tokens >= 1024 && active < 8) active = 8;
+    if (active > cap) active = cap;
+    if (active > nth) active = nth;
+    return active < 1 ? 1 : active;
+}
+
 static void attention_forward_head_major_gqa_flash_impl(const float *q,
                                                         const float *k,
                                                         const float *v,
@@ -2904,6 +2997,30 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
 #else
     #define FLASH_QUERY_IMPL attention_flash_query_causal
 #endif
+
+    const int total_queries = num_heads * T;
+    if (ck_attention_parallel_enabled(total_queries, T, head_dim)) {
+        ck_threadpool_t *pool = ck_threadpool_global();
+        const int active = ck_attention_pick_active_threads(pool, total_queries, T);
+        if (pool && active > 1) {
+            ck_attention_parallel_args_t args = {
+                .q = q,
+                .k = k,
+                .v = v,
+                .output = output,
+                .num_heads = num_heads,
+                .num_kv_heads = num_kv_heads,
+                .num_tokens = num_tokens,
+                .head_dim = head_dim,
+                .aligned_head_dim = aligned_head_dim,
+                .kv_stride_tokens = kv_stride_tokens,
+                .causal = causal,
+                .scale = scale,
+            };
+            ck_threadpool_dispatch_n(pool, active, ck_attention_full_grid_work, &args);
+            return;
+        }
+    }
 
     for (int h = 0; h < num_heads; ++h) {
         int kv_head = (int)((long long)h * (long long)num_kv_heads / (long long)num_heads);

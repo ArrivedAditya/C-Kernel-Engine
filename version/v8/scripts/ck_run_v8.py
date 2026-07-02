@@ -1204,6 +1204,9 @@ def run_pipeline(args: argparse.Namespace) -> int:
             cmd.extend(["--bridge-runtime", str(args.bridge_runtime)])
         if args.bridge_generation_mode is not None:
             cmd.extend(["--bridge-generation-mode", str(args.bridge_generation_mode)])
+        if getattr(args, "profile", False):
+            cmd.append("--profile-decoder")
+            cmd.append("--profile-encoder")
         if args.context_len is not None:
             cmd.extend(["--decoder-context-len", str(int(args.context_len))])
         run_cmd(cmd, cwd=PROJECT_ROOT)
