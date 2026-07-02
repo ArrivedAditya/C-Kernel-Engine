@@ -1799,6 +1799,7 @@ def _prepare_encoder_runtime(
     activation_overrides: dict[str, str] | None = None,
     image_min_tokens: int | None = None,
     image_max_tokens: int | None = None,
+    profile: bool = False,
 ) -> dict[str, Any]:
     manifest, manifest_path, bump_path, config_path = _run_converter(gguf_path, output_dir)
     config = dict(manifest.get("config", {}) or {})
@@ -1830,12 +1831,14 @@ def _prepare_encoder_runtime(
     lowered_path = output_dir / "lowered.json"
     ir1_path = output_dir / "ir1.json"
     manifest_map = output_dir / "weights_manifest.map"
-    c_path = output_dir / "encoder_v8.c"
-    so_path = output_dir / "libencoder_v8.so"
-    runtime_stamp = output_dir / "encoder_runtime.cache.json"
+    suffix = "_profile" if profile else ""
+    c_path = output_dir / f"encoder_v8{suffix}.c"
+    so_path = output_dir / f"libencoder_v8{suffix}.so"
+    runtime_stamp = output_dir / f"encoder_runtime{suffix}.cache.json"
     runtime_fingerprint = _runtime_fingerprint(
         manifest_path=manifest_path,
         mode="encoder_prefill",
+        profile=profile,
     )
     reusable_outputs = [
         manifest_path,
@@ -1849,8 +1852,8 @@ def _prepare_encoder_runtime(
     ]
 
     if _artifacts_match_fingerprint(runtime_stamp, runtime_fingerprint, reusable_outputs):
-        _log_progress(f"encoder runtime reuse workdir={output_dir}")
-        _compile_generated_model(c_path, so_path)
+        _log_progress(f"encoder runtime reuse workdir={output_dir} profile={int(bool(profile))}")
+        _compile_generated_model(c_path, so_path, profile=profile)
         layout = _load_layout(layout_path)
         return {
             "gguf": str(gguf_path),
@@ -1896,13 +1899,15 @@ def _prepare_encoder_runtime(
             "--output",
             str(c_path),
         ]
+        if profile:
+            sys.argv.append("--profile")
         codegen_rc = codegen_v8.main()
     finally:
         sys.argv = old_argv
     if codegen_rc != 0:
         raise RuntimeError(f"codegen_v8 encoder failed with rc={codegen_rc}")
 
-    _compile_generated_model(c_path, so_path)
+    _compile_generated_model(c_path, so_path, profile=profile)
     _json_write(runtime_stamp, runtime_fingerprint)
     layout = _load_layout(layout_path)
     return {
@@ -2228,15 +2233,32 @@ def _load_decoder_lib(model_so: Path) -> ctypes.CDLL:
     return lib
 
 
-def _run_encoder(runtime: dict[str, Any], image_mode: str, image_path: Path | None = None) -> dict[str, Any]:
+def _run_encoder(
+    runtime: dict[str, Any],
+    image_mode: str,
+    image_path: Path | None = None,
+    profile_csv_path: Path | None = None,
+) -> dict[str, Any]:
+    encoder_t0 = time.perf_counter()
+    old_profile_csv_env = os.environ.get("CK_PROFILE_CSV")
+    old_profile_json_env = os.environ.get("CK_PROFILE_JSON")
+    if profile_csv_path is not None:
+        profile_csv_path.parent.mkdir(parents=True, exist_ok=True)
+        profile_csv_path.unlink(missing_ok=True)
+        os.environ["CK_PROFILE_CSV"] = str(profile_csv_path)
+        os.environ.pop("CK_PROFILE_JSON", None)
+    lib_load_t0 = time.perf_counter()
     lib = _load_encoder_lib(runtime["so_path"])
+    lib_load_ms = (time.perf_counter() - lib_load_t0) * 1000.0
     _log_progress("encoder: init start")
+    init_t0 = time.perf_counter()
     rc = lib.ck_model_init_with_manifest(
         str(runtime["weights_bump"]).encode(),
         str(runtime["manifest_map"]).encode(),
     )
     if rc != 0:
         raise RuntimeError(f"encoder init failed with rc={rc}")
+    init_ms = (time.perf_counter() - init_t0) * 1000.0
     try:
         _log_progress("encoder: init done")
         layout = _load_layout(runtime["layout_path"])
@@ -2259,6 +2281,7 @@ def _run_encoder(runtime: dict[str, Any], image_mode: str, image_path: Path | No
         prefix_position_policy = _vision_prefix_position_policy(layout_cfg)
         prefix_decode_policy = _vision_prefix_decode_policy(layout_cfg)
 
+        image_prepare_t0 = time.perf_counter()
         if image_path is not None:
             image_report = _load_image_file(
                 image_path,
@@ -2278,14 +2301,17 @@ def _run_encoder(runtime: dict[str, Any], image_mode: str, image_path: Path | No
                 "source_image_size": [image_width, image_height],
                 "preprocess": "synthetic_generator",
             }
+        image_prepare_ms = (time.perf_counter() - image_prepare_t0) * 1000.0
         image_len = _buffer_nbytes(image_buf) // ctypes.sizeof(ctypes.c_float)
         if len(planar) != image_len:
             raise RuntimeError(f"encoder planar image length mismatch: {len(planar)} != {image_len}")
 
+        image_copy_t0 = time.perf_counter()
         image_arr = (ctypes.c_float * image_len).from_address(
             base_ptr + _activation_runtime_offset(layout, image_buf)
         )
         image_arr[:] = planar
+        image_copy_ms = (time.perf_counter() - image_copy_t0) * 1000.0
         _log_progress(
             f"encoder: decode start image={image_width}x{image_height} prefix_activation={bridge.get('fallback_buffer_name')}"
         )
@@ -2293,12 +2319,14 @@ def _run_encoder(runtime: dict[str, Any], image_mode: str, image_path: Path | No
         rc = lib.ck_model_decode(0, None)
         if rc != 0:
             raise RuntimeError(f"encoder decode failed with rc={rc}")
-        _log_progress(f"encoder: decode done elapsed={time.perf_counter() - decode_t0:.2f}s")
+        decode_ms = (time.perf_counter() - decode_t0) * 1000.0
+        _log_progress(f"encoder: decode done elapsed={decode_ms / 1000.0:.2f}s")
 
         embed_dim = int(bridge["embed_dim"])
         if embed_dim <= 0:
             raise RuntimeError("encoder bridge embed_dim is not available")
 
+        output_copy_t0 = time.perf_counter()
         output_ptr = 0
         output_nbytes = 0
         bridge_name = str(bridge.get("named_activation") or "")
@@ -2324,10 +2352,12 @@ def _run_encoder(runtime: dict[str, Any], image_mode: str, image_path: Path | No
             prefix_grid_y,
         )
         output_arr = (ctypes.c_float * output_len).from_address(output_ptr)
+        embeddings = array("f", output_arr)
+        output_copy_ms = (time.perf_counter() - output_copy_t0) * 1000.0
         return {
             "embed_dim": embed_dim,
             "prefix_tokens": prefix_tokens,
-            "embeddings": array("f", output_arr),
+            "embeddings": embeddings,
             "prefix_grid_x": prefix_grid_x,
             "prefix_grid_y": prefix_grid_y,
             "prefix_text_pos": int(local_prefix_text_pos),
@@ -2343,9 +2373,28 @@ def _run_encoder(runtime: dict[str, Any], image_mode: str, image_path: Path | No
             "image_height": image_height,
             "image_width": image_width,
             "interleaved_image": interleaved,
+            "profile_csv_path": None if profile_csv_path is None else str(profile_csv_path),
+            "timings": {
+                "lib_load_ms": lib_load_ms,
+                "init_ms": init_ms,
+                "image_prepare_ms": image_prepare_ms,
+                "image_copy_ms": image_copy_ms,
+                "decode_ms": decode_ms,
+                "output_copy_ms": output_copy_ms,
+                "total_ms": (time.perf_counter() - encoder_t0) * 1000.0,
+            },
         }
     finally:
         lib.ck_model_free()
+        if profile_csv_path is not None:
+            if old_profile_csv_env is None:
+                os.environ.pop("CK_PROFILE_CSV", None)
+            else:
+                os.environ["CK_PROFILE_CSV"] = old_profile_csv_env
+            if old_profile_json_env is None:
+                os.environ.pop("CK_PROFILE_JSON", None)
+            else:
+                os.environ["CK_PROFILE_JSON"] = old_profile_json_env
 
 
 def _summarize_profile_csv(path: Path, *, top_n: int = 12) -> dict[str, Any]:
@@ -2931,6 +2980,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-stream-output", action="store_true", help="Disable live text streaming during generation and print only the final response")
     ap.add_argument("--strict-parity", action="store_true", help="Enable strict/reference parity paths in bridge decoder kernels")
     ap.add_argument("--profile-decoder", action="store_true", help="Compile decoder with CK_PROFILE and include mixed-prefill per-op timings")
+    ap.add_argument("--profile-encoder", action="store_true", help="Compile encoder with CK_PROFILE and include encoder per-op timings")
     ap.add_argument("--bridge-runtime", choices=["prefill", "decode-staged"], default=None, help="Override template multimodal bridge runtime; decode-staged enables incremental generation after mixed prefill")
     ap.add_argument(
         "--bridge-generation-mode",
@@ -3029,16 +3079,19 @@ def main(argv: list[str] | None = None) -> int:
             activation_overrides=vision_activation_overrides,
             image_min_tokens=args.image_min_tokens,
             image_max_tokens=args.image_max_tokens,
+            profile=bool(args.profile_encoder),
         )
         encoder_prepare_elapsed = time.perf_counter() - encoder_prep_t0
         timings["encoder_prepare_ms"] = encoder_prepare_elapsed * 1000.0
         _log_progress(f"encoder runtime prepare done elapsed={encoder_prepare_elapsed:.2f}s")
         _log_progress("encoder execution start")
         encoder_exec_t0 = time.perf_counter()
+        encoder_profile_csv_path = (encoder_dir / "encoder_profile_current.csv") if bool(args.profile_encoder) else None
         encoder_report = _run_encoder(
             encoder_runtime,
             args.image_mode,
             image_path=args.image_path.resolve() if args.image_path is not None else None,
+            profile_csv_path=encoder_profile_csv_path,
         )
         timings["encoder_execute_ms"] = (time.perf_counter() - encoder_exec_t0) * 1000.0
         _log_progress(
@@ -3256,6 +3309,9 @@ def main(argv: list[str] | None = None) -> int:
             "prefix_position_policy": str(encoder_report.get("prefix_position_policy", "") or ""),
             "prefix_decode_policy": str(encoder_report.get("prefix_decode_policy", "") or ""),
             "activation_preference_overrides": dict(vision_activation_overrides),
+            "timings": dict(encoder_report.get("timings", {}) or {}),
+            "profile": _summarize_profile_csv(Path(str(encoder_report.get("profile_csv_path"))))
+            if encoder_report.get("profile_csv_path") else {},
         } if encoder_report is not None else None,
         "dim_mismatch": dim_mismatch,
         "logits_dump_path": str(args.dump_logits_f32.resolve()) if args.dump_logits_f32 is not None else None,

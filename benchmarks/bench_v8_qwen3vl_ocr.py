@@ -83,6 +83,7 @@ def _run_one(
     bridge_runtime: str,
     bridge_generation_mode: str,
     vision_activation_prefs: list[str],
+    profile_decoder: bool,
     timeout: int,
 ) -> dict[str, Any]:
     env = os.environ.copy()
@@ -116,6 +117,8 @@ def _run_one(
         cmd.extend(["--bridge-runtime", bridge_runtime])
     if bridge_generation_mode:
         cmd.extend(["--bridge-generation-mode", bridge_generation_mode])
+    if profile_decoder:
+        cmd.append("--profile")
     for pref in vision_activation_prefs:
         cmd.extend(["--vision-activation-pref", pref])
     if force_compile:
@@ -137,6 +140,7 @@ def _run_one(
         return row
     report = json.loads(report_path.read_text(encoding="utf-8"))
     timings = report.get("timings") if isinstance(report.get("timings"), dict) else {}
+    decoder_profile = report.get("decoder_profile") if isinstance(report.get("decoder_profile"), dict) else {}
     encoder_execute_ms = _num(timings, "encoder_execute_ms")
     decoder_forward_ms = _num(timings, "decoder_forward_mixed_ms")
     decoder_generation_ms = _num(timings, "decoder_generation_ms")
@@ -158,6 +162,7 @@ def _run_one(
             "decoder_generation_ms": decoder_generation_ms,
             "decoder_generation_tok_s": _num(timings, "decoder_generation_tok_s"),
             "steady_generated_tok_s": (generated_tokens / (steady_state_ms / 1000.0)) if steady_state_ms > 0 and generated_tokens > 0 else 0.0,
+            "decoder_profile": decoder_profile,
         }
     )
     return row
@@ -217,6 +222,11 @@ def main() -> int:
         metavar="OP=PREF",
         help="Forward a vision activation preference override to ck_run_v8.py, for example out_proj=q8_0",
     )
+    parser.add_argument(
+        "--profile-decoder",
+        action="store_true",
+        help="Compile the decoder with CK_PROFILE and include mixed-prefill top ops in the JSON report",
+    )
     parser.add_argument("--force-compile", action="store_true")
     parser.add_argument("--force-convert", action="store_true")
     parser.add_argument("--json-out", type=Path, default=ROOT / "build" / "v8_qwen3vl_ocr_bench.json")
@@ -245,6 +255,7 @@ def main() -> int:
                 bridge_runtime=args.bridge_runtime,
                 bridge_generation_mode=args.bridge_generation_mode,
                 vision_activation_prefs=list(args.vision_activation_pref or []),
+                profile_decoder=bool(args.profile_decoder),
                 timeout=int(args.timeout),
             )
         )
@@ -263,6 +274,7 @@ def main() -> int:
             "bridge_runtime": args.bridge_runtime,
             "bridge_generation_mode": args.bridge_generation_mode,
             "vision_activation_pref": list(args.vision_activation_pref or []),
+            "profile_decoder": bool(args.profile_decoder),
         },
         "results": rows,
     }

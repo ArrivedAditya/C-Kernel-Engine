@@ -395,6 +395,9 @@ class V8CodegenBridgeTests(unittest.TestCase):
             self.assertIn("g_qwen3vl_prefill_prefix_tokens = prefix_tokens;", text)
             self.assertIn("int rc = ck_embed_tokens_at(g_model, tokens_after, tokens_after_count, tokens_before_count + prefix_tokens);", text)
             self.assertIn("ck_prefill_from_embedded(g_model, total_tokens);", text)
+            self.assertIn("uint16_t *kv_cache = (uint16_t*)model->kv_cache_f16;", text)
+            self.assertIn("ck_fp32_to_fp16_soft(ks[d])", text)
+            self.assertIn("ck_fp32_to_fp16_soft(vs[d])", text)
             self.assertIn(
                 "int debug_outproj_fp32 = debug_outproj_env ? (atoi(debug_outproj_env) != 0) : 0;",
                 text,
@@ -663,9 +666,6 @@ class V8CodegenBridgeTests(unittest.TestCase):
             self.assertIn("rope_precompute_cache(", text)
             self.assertNotIn("/* No pre-weights init ops */", text)
             self.assertIn("logits (last-only)", text)
-            self.assertIn("uint16_t *kv_cache = (uint16_t*)model->kv_cache_f16;", text)
-            self.assertIn("ck_fp32_to_fp16_soft(ks[d])", text)
-            self.assertIn("ck_fp32_to_fp16_soft(vs[d])", text)
             self.assertNotIn("copy_last_logits (prefill fixup)", text)
             self.assertNotIn("static void ck_decode_embedded", text)
             self.assertNotIn("static int ck_bridge_forward_staged", text)
