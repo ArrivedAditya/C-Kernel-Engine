@@ -1024,6 +1024,8 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
     int debug_prefill_mlp_gate_up_row_gemv_layer = debug_prefill_mlp_gate_up_row_gemv_layer_env ? atoi(debug_prefill_mlp_gate_up_row_gemv_layer_env) : -1;
     const char *debug_prefill_mamba_in_proj_row_gemv_env = getenv("CK_V8_DEBUG_PREFILL_MAMBA_IN_PROJ_ROW_GEMV");
     int debug_prefill_mamba_in_proj_row_gemv = debug_prefill_mamba_in_proj_row_gemv_env ? (atoi(debug_prefill_mamba_in_proj_row_gemv_env) != 0) : 0;
+    const char *q4k_gateup_swiglu_x16_env = getenv("CK_ENABLE_Q4K_GATEUP_SWIGLU_X16");
+    int ck_enable_q4k_gateup_swiglu_x16 = q4k_gateup_swiglu_x16_env ? (atoi(q4k_gateup_swiglu_x16_env) != 0) : 0;
 
     /* Copy input tokens to activation buffer (follow same pattern as decode) */
     memcpy((void*)(model->bump + A_TOKEN_IDS), tokens, (size_t)num_tokens * sizeof(int32_t));
@@ -1454,6 +1456,84 @@ def _emit_prefill_gemm_fp32_override(op: Dict, seq_idx: int, *, debug_flag_name:
     return "\n".join(lines)
 
 
+
+def _emit_prefill_q4_gateup_swiglu_x16(
+    gate_op: Dict,
+    swiglu_op: Dict,
+    seq_idx: int,
+    fused_var: str,
+    *,
+    debug_flag_name: str,
+    debug_input_name: str,
+    profile: bool = False,
+) -> str:
+    args_list = gate_op.get("args", [])
+    m_arg = next(
+        (
+            arg
+            for arg in args_list
+            if isinstance(arg, dict) and str(arg.get("name", "")).lower() == "m"
+        ),
+        None,
+    )
+    a_expr = _find_arg_expr(args_list, arg_name="A") or _find_arg_expr(args_list, arg_name="a")
+    b_expr = _find_arg_expr(args_list, arg_name="B") or _find_arg_expr(args_list, arg_name="b")
+    bias_expr = _find_arg_expr(args_list, arg_name="bias") or "NULL"
+    m_expr = _find_arg_expr(args_list, arg_name="M") or _find_arg_expr(args_list, arg_name="m") or "num_tokens"
+    if isinstance(m_arg, dict) and str(m_arg.get("source", "")).lower() == "dim:_m":
+        # Embedded-prefix prefill only replays the active prefix rows.
+        m_expr = "num_tokens"
+    n_expr = _find_arg_expr(args_list, arg_name="N") or _find_arg_expr(args_list, arg_name="n")
+    k_expr = _find_arg_expr(args_list, arg_name="K") or _find_arg_expr(args_list, arg_name="k")
+    swiglu_args = swiglu_op.get("args", [])
+    out_expr = (
+        _find_arg_expr(swiglu_args, arg_name="output")
+        or _find_arg_expr(swiglu_args, arg_name="out")
+        or _find_arg_expr(swiglu_args, arg_name="y")
+        or _find_arg_expr(swiglu_args, arg_name="C")
+        or _find_arg_expr(swiglu_args, arg_name="c")
+        or _find_arg_expr(swiglu_args, arg_name="data")
+    )
+    if not a_expr or not b_expr or not out_expr or not n_expr or not k_expr:
+        raise RuntimeError("prefill q4 gate/up swiglu fusion missing args")
+
+    layer_value = gate_op.get("layer", -1)
+    layer = int(layer_value) if layer_value is not None else -1
+    d_expr = f"(({n_expr}) / 2)"
+    lines = [
+        f"    /* Op {seq_idx}: fused gemm_nt_q4_k_q8_k + swiglu (mlp_gate_up) layer={layer} */",
+        f"    int {fused_var} = 0;",
+        f"    if (ck_enable_q4k_gateup_swiglu_x16 && !{debug_flag_name}) {{",
+    ]
+    if profile:
+        lines.append("        CK_PROFILE_BEGIN();")
+    lines.extend([
+        "        gemm_nt_q4_k_q8_k_gateup_swiglu_x16_parallel_dispatch(",
+        f"            {a_expr},",
+        f"            {b_expr},",
+        f"            {bias_expr},",
+        f"            {out_expr},",
+        f"            {m_expr},",
+        f"            {d_expr},",
+        f"            {k_expr}",
+        "        );",
+        f"        {fused_var} = 1;",
+    ])
+    if profile:
+        lines.append(f'        CK_PROFILE_END("prefill", "gemm_nt_q4_k_q8_k_gateup_swiglu_x16", "mlp_gate_up_swiglu", {layer});')
+    lines.append("    } else {")
+    old_code = _emit_prefill_gemm_fp32_override(
+        gate_op,
+        seq_idx,
+        debug_flag_name=debug_flag_name,
+        debug_input_name=debug_input_name,
+        profile=profile,
+        dump=False,
+    )
+    lines.extend("    " + line if line else line for line in old_code.splitlines())
+    lines.append("    }")
+    return "\n".join(lines)
+
 def emit_prefill_from_embedded_function(
     ops: List[Dict],
     config: Dict,
@@ -1509,6 +1589,8 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
     int debug_prefill_mlp_gate_up_row_gemv_layer = debug_prefill_mlp_gate_up_row_gemv_layer_env ? atoi(debug_prefill_mlp_gate_up_row_gemv_layer_env) : -1;
     const char *debug_prefill_mamba_in_proj_row_gemv_env = getenv("CK_V8_DEBUG_PREFILL_MAMBA_IN_PROJ_ROW_GEMV");
     int debug_prefill_mamba_in_proj_row_gemv = debug_prefill_mamba_in_proj_row_gemv_env ? (atoi(debug_prefill_mamba_in_proj_row_gemv_env) != 0) : 0;
+    const char *q4k_gateup_swiglu_x16_env = getenv("CK_ENABLE_Q4K_GATEUP_SWIGLU_X16");
+    int ck_enable_q4k_gateup_swiglu_x16 = q4k_gateup_swiglu_x16_env ? (atoi(q4k_gateup_swiglu_x16_env) != 0) : 0;
     const float *ck_debug_mlp_gate_up_fp32_input = NULL;
 """
     prologue = prologue.replace(
@@ -1535,8 +1617,11 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
     residual_add_count_total = 0
     residual_add_counts_by_layer: Dict[int, int] = {}
 
+    skip_swiglu_guard: Optional[str] = None
     for seq_idx, op in enumerate(ops):
         op_type = str(op.get("op", ""))
+        if skip_swiglu_guard and op_type not in {"silu_mul", "swiglu"}:
+            skip_swiglu_guard = None
         if op_type == "residual_add" and "op_instance_idx" not in op and "instance" not in op:
             layer_for_instance = int(op.get("layer", -1))
             inst = residual_add_counts_by_layer.get(layer_for_instance, 0)
@@ -1571,14 +1656,32 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
                 profile=profile,
             )
         elif op_type == "mlp_gate_up" and str(op.get("function", "")) in {"gemm_nt_q4_k_q8_k", "gemm_nt_q6_k_q8_k"}:
-            op_code = _emit_prefill_gemm_fp32_override(
-                op,
-                seq_idx,
-                debug_flag_name="debug_mlp_gate_up_fp32",
-                debug_input_name="ck_debug_mlp_gate_up_fp32_input",
-                profile=profile,
-                dump=dump,
-            )
+            next_op = ops[seq_idx + 1] if seq_idx + 1 < len(ops) else None
+            if (
+                str(op.get("function", "")) == "gemm_nt_q4_k_q8_k"
+                and isinstance(next_op, dict)
+                and str(next_op.get("op", "")) in {"silu_mul", "swiglu"}
+            ):
+                fused_var = f"ck_q4_gateup_swiglu_x16_fused_{seq_idx}"
+                op_code = _emit_prefill_q4_gateup_swiglu_x16(
+                    op,
+                    next_op,
+                    seq_idx,
+                    fused_var,
+                    debug_flag_name="debug_mlp_gate_up_fp32",
+                    debug_input_name="ck_debug_mlp_gate_up_fp32_input",
+                    profile=profile,
+                )
+                skip_swiglu_guard = fused_var
+            else:
+                op_code = _emit_prefill_gemm_fp32_override(
+                    op,
+                    seq_idx,
+                    debug_flag_name="debug_mlp_gate_up_fp32",
+                    debug_input_name="ck_debug_mlp_gate_up_fp32_input",
+                    profile=profile,
+                    dump=dump,
+                )
         elif is_qwen3vl and op_type == "quantize_mlp_down_input" and str(op.get("function", "")) in {"quantize_row_q8_0", "quantize_row_q8_k"}:
             op_code = _emit_prefill_quant_debug_override(
                 op,
@@ -1601,6 +1704,9 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
             op_code = emit_prefill_op(op, seq_idx, config, profile=profile, dump=dump)
             if is_qwen3vl and op_type == "rope_qk":
                 op_code = op_code.replace("mrope_qk_text(", "ck_qwen3vl_prefill_mrope_qk(")
+        if skip_swiglu_guard and op_type in {"silu_mul", "swiglu"}:
+            op_code = f"    if (!{skip_swiglu_guard}) {{\n" + "\n".join("    " + line if line else line for line in op_code.splitlines()) + "\n    }"
+            skip_swiglu_guard = None
         lines.append(op_code)
         lines.append(f"    if (stop_seq == {seq_idx}) return;")
         if is_qwen3vl and op_type == "residual_add":

@@ -53,8 +53,10 @@ extern void gemm_nt_q4_k_q8_k(const void *A, const void *B, const float *bias,
 extern void gemv_q4_k_q8_k(float *y, const void *W, const void *x_q8, int M, int K);
 extern size_t q4_k_packed_meta_block_size(void);
 extern size_t q4_k_packed_meta_x8_block_size(void);
+extern size_t q4_k_packed_meta_x16_block_size(void);
 extern void pack_q4_k_to_packed_meta(const void *src, void *dst, int N, int K);
 extern void pack_q4_k_to_packed_meta_x8(const void *src, void *dst, int N, int K);
+extern void pack_q4_k_to_packed_meta_x16(const void *src, void *dst, int N, int K);
 extern void gemm_nt_q4_k_packed_meta_q8_k_threaded(const void *A_q8,
                                                     const void *B_packed,
                                                     const float *bias,
@@ -80,6 +82,13 @@ extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(const void *A_q8,
                                                             int M, int N, int K,
                                                             int tile_m,
                                                             int threads);
+extern void gemm_nt_q4_k_packed_meta_x16_gateup_swiglu_fused_vnni(const void *A_q8,
+                                                                   const void *B_packed_x16,
+                                                                   const float *bias,
+                                                                   float *C,
+                                                                   int M, int D, int K,
+                                                                   int tile_m,
+                                                                   int active_threads);
 extern void gemm_nt_q4_k_packed_meta_q8_k_tile(const void *A_q8,
                                                const void *B_packed,
                                                const float *bias,
@@ -88,6 +97,7 @@ extern void gemm_nt_q4_k_packed_meta_q8_k_tile(const void *A_q8,
                                                int m0, int m1, int n0, int n1);
 extern void gemm_nt_q6_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
+extern void swiglu_forward_exact(const float *input, float *output, int tokens, int dim);
 extern void gemm_nt_q6_k_q8_k_tile(const void *A, const void *B, const float *bias,
                                     float *C, int M, int N, int K,
                                     int m0, int m1, int n0, int n1);
@@ -185,6 +195,18 @@ typedef struct ck_q4k_packed_meta_x8_cache_entry {
 
 static pthread_mutex_t ck_q4k_packed_meta_x8_cache_mu = PTHREAD_MUTEX_INITIALIZER;
 static ck_q4k_packed_meta_x8_cache_entry_t *ck_q4k_packed_meta_x8_cache_head = NULL;
+
+
+typedef struct ck_q4k_packed_meta_x16_cache_entry {
+    const void *src;
+    int N;
+    int K;
+    void *packed;
+    struct ck_q4k_packed_meta_x16_cache_entry *next;
+} ck_q4k_packed_meta_x16_cache_entry_t;
+
+static pthread_mutex_t ck_q4k_packed_meta_x16_cache_mu = PTHREAD_MUTEX_INITIALIZER;
+static ck_q4k_packed_meta_x16_cache_entry_t *ck_q4k_packed_meta_x16_cache_head = NULL;
 
 /* Q4_K packed-meta prefill experiment
  * -----------------------------------
@@ -302,6 +324,44 @@ static void *ck_get_q4k_packed_meta_x8_cached(const void *B, int N, int K)
     return packed;
 }
 
+
+static void *ck_get_q4k_packed_meta_x16_cached(const void *B, int N, int K)
+{
+    if (!B || N <= 0 || K <= 0 || (K % QK_K) != 0) return NULL;
+
+    pthread_mutex_lock(&ck_q4k_packed_meta_x16_cache_mu);
+    for (ck_q4k_packed_meta_x16_cache_entry_t *e = ck_q4k_packed_meta_x16_cache_head; e; e = e->next) {
+        if (e->src == B && e->N == N && e->K == K) {
+            void *packed = e->packed;
+            pthread_mutex_unlock(&ck_q4k_packed_meta_x16_cache_mu);
+            return packed;
+        }
+    }
+
+    const size_t groups = (size_t)((N + 15) / 16);
+    const size_t blocks = groups * (size_t)(K / QK_K);
+    const size_t bytes = blocks * q4_k_packed_meta_x16_block_size();
+    void *packed = malloc(bytes);
+    ck_q4k_packed_meta_x16_cache_entry_t *entry =
+        (ck_q4k_packed_meta_x16_cache_entry_t *)malloc(sizeof(*entry));
+    if (!packed || !entry) {
+        free(packed);
+        free(entry);
+        pthread_mutex_unlock(&ck_q4k_packed_meta_x16_cache_mu);
+        return NULL;
+    }
+
+    pack_q4_k_to_packed_meta_x16(B, packed, N, K);
+    entry->src = B;
+    entry->N = N;
+    entry->K = K;
+    entry->packed = packed;
+    entry->next = ck_q4k_packed_meta_x16_cache_head;
+    ck_q4k_packed_meta_x16_cache_head = entry;
+    pthread_mutex_unlock(&ck_q4k_packed_meta_x16_cache_mu);
+    return packed;
+}
+
 static int ck_should_use_q4k_packed_meta_prefill(int M, int N, int K)
 {
     if (ck_env_enabled("CK_DISABLE_Q4K_PACKED_META_PREFILL")) return 0;
@@ -311,6 +371,13 @@ static int ck_should_use_q4k_packed_meta_prefill(int M, int N, int K)
     if (M < min_m) return 0;
 
     if (getenv("CK_FORCE_Q4K_PACKED_META_PREFILL")) return 1;
+
+    /* On the 24-physical-core Xeon Qwen3-VL OCR path, short-prefix wide
+     * projections such as M=79,N=24576,K=4096 and N=4096,K=4096 are faster
+     * through the canonical output-row Q4_K schedule than the lazy packed-meta
+     * N-split cache path. Keep packed-meta available through FORCE/env, but do
+     * not select it by default for this wide short-prefix family. */
+    if (M < 128 && N >= 4096 && K >= 4096) return 0;
 
     /* The dispatch matrix benchmark tracks canonical serial, canonical pool,
      * packed M-split, packed N-split, and a llama.cpp shim. Local AVX2 data
@@ -679,6 +746,35 @@ void gemm_nt_q8_0_q8_0_parallel_dispatch(
     ck_threadpool_dispatch_n(pool, ck_select_gemm_active_threads(pool, M, N, K), work_gemm_nt_q8_0_q8_0, &args);
 }
 
+
+void gemm_nt_q4_k_q8_k_gateup_swiglu_x16_parallel_dispatch(
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int D, int K)
+{
+    if (!A || !B || !C || M <= 0 || D <= 0 || K <= 0 || (K % QK_K) != 0) return;
+
+    const int N = D * 2;
+    ck_threadpool_t *pool = ck_threadpool_global();
+    void *packed = ck_get_q4k_packed_meta_x16_cached(B, N, K);
+    if (packed) {
+        const int tile_m = ck_env_int_or2("CK_Q4K_GATEUP_SWIGLU_X16_TILE_M", "CK_PREFILL_TILE_M", 8);
+        int active = pool ? ck_threadpool_n_threads(pool) : 1;
+        const int cap = ck_env_int_or2("CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP", "CK_GEMM_THREAD_CAP", 20);
+        if (cap > 0 && active > cap) active = cap;
+        gemm_nt_q4_k_packed_meta_x16_gateup_swiglu_fused_vnni(
+            A, packed, bias, C, M, D, K, tile_m, active);
+        return;
+    }
+
+    /* Correctness fallback for allocation/packing failure. This path is not
+     * performance-critical because the fused call is env-gated by codegen. */
+    float *tmp = (float *)malloc((size_t)M * (size_t)N * sizeof(float));
+    if (!tmp) return;
+    gemm_nt_q4_k_q8_k_parallel_dispatch(A, B, bias, tmp, M, N, K);
+    swiglu_forward_exact(tmp, C, M, D);
+    free(tmp);
+}
+
 void gemm_nt_q4_k_q8_k_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
     int M, int N, int K)
@@ -746,6 +842,7 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
         .M = M, .N = N, .K = K,
         .A_row_bytes = A_row_bytes
     };
+
     /* Canonical fallback safety path:
      * CK_DISABLE_Q4K_PACKED_META_PREFILL must be a reliable escape hatch for
      * debugging a new packed layout. Do not fall back to the raw Q4_K GEMM for

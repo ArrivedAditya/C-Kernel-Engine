@@ -2452,6 +2452,8 @@ test-gemv-omp-verbose: $(GEMV_OMP_BIN)
 
 THREADPOOL_BIN := $(BUILD_DIR)/test_threadpool_parity
 Q4K_DISPATCH_MATRIX_BIN := $(BUILD_DIR)/bench_q4k_dispatch_matrix
+Q4K_GATEUP_SWIGLU_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu
+Q4K_GATEUP_SWIGLU_OMP_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu_omp_standalone
 V66_SRC_DIR    := version/v6.6/src
 V8_SRC_DIR     := version/v8/src
 
@@ -2494,6 +2496,30 @@ bench-q4k-dispatch-matrix: $(Q4K_DISPATCH_MATRIX_BIN)
 bench-q4k-dispatch-matrix-quick: $(Q4K_DISPATCH_MATRIX_BIN)
 	@echo "Running Q4_K dispatch matrix benchmark (quick)..."
 	LD_LIBRARY_PATH=$(BUILD_DIR):llama.cpp:$$LD_LIBRARY_PATH $(Q4K_DISPATCH_MATRIX_BIN) --quick
+
+$(Q4K_GATEUP_SWIGLU_BIN): $(LIB) benchmarks/bench_q4k_gateup_swiglu.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 -march=native -Iinclude -I$(V8_SRC_DIR) \
+		benchmarks/bench_q4k_gateup_swiglu.c \
+		-L$(BUILD_DIR) -lckernel_engine -lm -lpthread \
+		-Wl,-rpath,$(BUILD_DIR) \
+		-o $(Q4K_GATEUP_SWIGLU_BIN)
+
+bench-q4k-gateup-swiglu: $(Q4K_GATEUP_SWIGLU_BIN)
+	@echo "Running Q4_K gate_up+SwiGLU fused benchmark..."
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(Q4K_GATEUP_SWIGLU_BIN)
+
+$(Q4K_GATEUP_SWIGLU_OMP_BIN): $(LIB) research/q4k_gateup_swiglu/bench_q4k_gateup_swiglu_omp_standalone.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 -march=native -fopenmp -Iinclude -I$(V8_SRC_DIR) \
+		research/q4k_gateup_swiglu/bench_q4k_gateup_swiglu_omp_standalone.c \
+		-L$(BUILD_DIR) -lckernel_engine -lm -lpthread \
+		-Wl,-rpath,$(BUILD_DIR) \
+		-o $(Q4K_GATEUP_SWIGLU_OMP_BIN)
+
+bench-q4k-gateup-swiglu-omp: $(Q4K_GATEUP_SWIGLU_OMP_BIN)
+	@echo "Running standalone OpenMP Q4_K gate_up+SwiGLU benchmark..."
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(Q4K_GATEUP_SWIGLU_OMP_BIN)
 
 # Representative Gemma4-sized Q6_K x Q8_K prefill dispatch benchmark.
 # This is benchmark/dispatch coverage, not a correctness gate for every PR.
