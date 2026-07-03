@@ -108,12 +108,15 @@ docs/notes/QWEN3VL_OCR_Q4Q8_SPEED_RESEARCH_2026-07-02.md
 ```
 
 Important result from the Xeon/OpenShift run: more active threads were not always
-better. For the real Qwen3-VL OCR gate/up shape (`M=1028, D=12288, K=4096`),
-20 physical threads beat 24 and 48. This matches the cache/core-ratio model from
-the BC server validation package: the bottleneck is effective cache and memory
-bandwidth per active worker, not just total visible hardware threads.
+better. Earlier noisy sweeps made 20 physical threads look clearly better than
+24, but after the final SwiGLU lane-loop cleanup clean sequential runs on the
+real Qwen3-VL OCR gate/up shape (`M=1028, D=12288, K=4096`) are effectively tied
+for 16/20/24 physical threads at about 351-353 ms, with rel diff ~5.7e-7 and
+cosine 1.0. This matches the cache/core-ratio model from the BC server
+validation package: use physical cores, avoid SMT for this kernel, and do not
+overfit one noisy OpenShift sweep.
 
 The dual gate/up accumulator idea was numerically clean but slower on this Xeon
-(~442 ms versus ~428 ms for the best x16 variant), likely due to register and
-instruction pressure. Keep it as a retest candidate for Ryzen/X3D, EPYC, and
-larger-cache Xeon systems before discarding it globally.
+(~442 ms versus ~428 ms for the best x16 variant before output-loop cleanup),
+likely due to register and instruction pressure. Keep it as a retest candidate
+for Ryzen/X3D, EPYC, and larger-cache Xeon systems before discarding it globally.

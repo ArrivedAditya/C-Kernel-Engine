@@ -75,18 +75,27 @@ CK_NUM_THREADS=20 LD_LIBRARY_PATH=build:$LD_LIBRARY_PATH \
   --M 1028 --D 12288 --K 4096 --tile-m 8 --mode x16 --warmup 1 --iters 3
 ```
 
-Measured Xeon/OpenShift examples:
+Measured Xeon/OpenShift examples before the final output-loop cleanup were noisy:
 
 | Threads | x16 Time | Observation |
 |---:|---:|---|
 | 12 | ~535 ms | Underuses available physical cores for this shape. |
 | 16 | ~444 ms | Strong. |
-| 20 | ~428 ms | Best observed point. |
-| 24 | ~574 ms | Regresses from cache/bandwidth pressure. |
+| 20 | ~428 ms | Best observed point in that sweep. |
+| 24 | ~574 ms | Regressed in that noisy sweep. |
 
-The 20-thread result lines up with the BC server validation argument: the limiter
-is core-to-cache/core-to-memory ratio, not just visible thread count. SMT/48
-threads is not appropriate for this kernel on the current Xeon/OpenShift setup.
+After the vectorization-friendly final SwiGLU loop, a clean sequential CK-threadpool
+run on the same real OCR shape produced near-tied results:
+
+| Threads | x16 Time | Parity |
+|---:|---:|---|
+| 16 | ~352.4 ms | rel diff ~5.7e-7, cosine 1.0 |
+| 20 | ~351.2 ms | rel diff ~5.7e-7, cosine 1.0 |
+| 24 | ~352.7 ms | rel diff ~5.7e-7, cosine 1.0 |
+
+The updated result is better interpreted as: use physical cores, avoid SMT for this
+kernel, and do not overfit the cap to one noisy OpenShift run. The limiter is still
+core-to-cache/core-to-memory ratio, not just visible thread count.
 
 ## Experiments Kept vs Rejected
 
@@ -97,7 +106,8 @@ Kept:
 - Q4_K x16 final SwiGLU output loop made vectorization-friendly:
   - same math: `gate / (1 + expf(-gate)) * up`
   - removes scalar helper call from the hot lane loop
-  - modest model-level gain: about 1.6 s on the tested SDPR image
+  - real-shape standalone timing improved into the ~351-353 ms region on 16-24 physical threads
+  - previous model-level run showed a modest gain of about 1.6 s on the tested SDPR image
 
 Rejected on this Xeon, but should be retested on larger-cache CPUs:
 
@@ -109,6 +119,27 @@ Rejected on this Xeon, but should be retested on larger-cache CPUs:
 - Likely reason: register/instruction pressure outweighed saved Q8 traversal.
 - Retest on Ryzen/X3D or other CPUs with different cache hierarchy and register
   scheduling behavior before permanently discarding the idea.
+
+## Generic Q4 Projection x16 Opt-In Check
+
+A generic packed-meta x16 projection dispatch is available behind:
+
+```bash
+CK_ENABLE_Q4K_PACKED_META_X16_PREFILL=1
+```
+
+It is intentionally opt-in. On the generated fast OCR clean-text asset, enabling
+it together with gate/up x16 did not improve mixed prefill:
+
+| Run | Encoder | Mixed Prefill | Decode | Text |
+|---|---:|---:|---:|---|
+| gate/up x16 only | 2740.7 ms | 4279.4 ms | 960.2 ms | `CK OCR TEST\nTOTAL 42` |
+| gate/up x16 + generic projection x16 | 2729.1 ms | 4308.5 ms | 878.6 ms | `CK OCR TEST\nTOTAL 42` |
+
+Standalone projection microbenchmarks still show small wins for some q/out-style
+shapes, so keep the path for CPU-family sweeps, but do not enable it by default.
+The next default-quality speed work is a better projection/down microkernel or
+conversion-time prepacking, not simply routing every Q4 projection through x16.
 
 ## Retest Matrix for Other CPUs
 

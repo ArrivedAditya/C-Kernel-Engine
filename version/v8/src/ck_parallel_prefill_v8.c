@@ -82,6 +82,20 @@ extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(const void *A_q8,
                                                             int M, int N, int K,
                                                             int tile_m,
                                                             int threads);
+extern void gemm_nt_q4_k_packed_meta_x16_q8_k_threaded_mreuse(const void *A_q8,
+                                                              const void *B_packed_x16,
+                                                              const float *bias,
+                                                              float *C,
+                                                              int M, int N, int K,
+                                                              int tile_m,
+                                                              int active_threads);
+extern void gemm_nt_q4_k_packed_meta_x16_q8_k_threaded_mtile(const void *A_q8,
+                                                             const void *B_packed_x16,
+                                                             const float *bias,
+                                                             float *C,
+                                                             int M, int N, int K,
+                                                             int tile_m,
+                                                             int active_threads);
 extern void gemm_nt_q4_k_packed_meta_x16_gateup_swiglu_fused_vnni(const void *A_q8,
                                                                    const void *B_packed_x16,
                                                                    const float *bias,
@@ -398,6 +412,24 @@ static int ck_should_use_q4k_packed_meta_prefill(int M, int N, int K)
      * let force/env tuning override this when collecting new hardware data. */
     if (N >= 1024 && K >= 1024) return 1;
     if (K <= 2048 && N >= 1024 && N <= 8192) return 1;
+    return 0;
+}
+
+static int ck_should_use_q4k_packed_meta_x16_prefill(int M, int N, int K)
+{
+    if (ck_env_enabled("CK_DISABLE_Q4K_PACKED_META_X16_PREFILL")) return 0;
+    if (!ck_env_enabled("CK_ENABLE_Q4K_PACKED_META_X16_PREFILL") &&
+        !ck_env_enabled("CK_FORCE_Q4K_PACKED_META_X16_PREFILL")) return 0;
+    if (M <= 1 || N <= 0 || K <= 0 || (K % QK_K) != 0) return 0;
+
+    const int min_m = ck_env_int_or2("CK_Q4K_PACKED_META_X16_MIN_M", NULL, 16);
+    if (M < min_m) return 0;
+    if (ck_env_enabled("CK_FORCE_Q4K_PACKED_META_X16_PREFILL")) return 1;
+
+    /* Experimental generic projection path. It wins on Qwen3-VL q/out style
+     * shapes and is marginal on Q4 MLP-down on this Xeon, so keep it opt-in
+     * until model-level sweeps by CPU family justify default promotion. */
+    if (N >= 1024 && K >= 1024) return 1;
     return 0;
 }
 
@@ -780,6 +812,30 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
     int M, int N, int K)
 {
     ck_threadpool_t *pool = ck_threadpool_global();
+    if (pool && ck_should_use_q4k_packed_meta_x16_prefill(M, N, K)) {
+        void *packed_x16 = ck_get_q4k_packed_meta_x16_cached(B, N, K);
+        if (packed_x16) {
+            int active = ck_select_gemm_active_threads(pool, M, N, K);
+            const int cap = ck_env_int_or2("CK_Q4K_PACKED_META_X16_THREAD_CAP", "CK_GEMM_THREAD_CAP", 20);
+            if (cap > 0 && active > cap) active = cap;
+            const int tile_m = ck_env_int_or2("CK_Q4K_PACKED_META_X16_TILE_M", "CK_PREFILL_TILE_M", 8);
+            if (ck_env_enabled("CK_Q4K_PACKED_META_X16_MTILE")) {
+                gemm_nt_q4_k_packed_meta_x16_q8_k_threaded_mtile(
+                    A, packed_x16, bias, C, M, N, K,
+                    tile_m,
+                    active
+                );
+            } else {
+                gemm_nt_q4_k_packed_meta_x16_q8_k_threaded_mreuse(
+                    A, packed_x16, bias, C, M, N, K,
+                    tile_m,
+                    active
+                );
+            }
+            return;
+        }
+    }
+
     if (pool && ck_should_use_q4k_packed_meta_x8mt_prefill(M, N, K)) {
         void *packed_x8 = ck_get_q4k_packed_meta_x8_cached(B, N, K);
         if (packed_x8) {
