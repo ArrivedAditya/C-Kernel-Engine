@@ -169,6 +169,40 @@ Net: mixed prefill improved by about 3.3 s on this large-prefix OCR check. This
 reduces the dominant Q4 gate/up cost, but CK is still slower than llama.cpp due
 to remaining encoder cost plus Q4/Q6 down/projection work.
 
+Encoder activation-policy follow-up: forcing Qwen3-VL vision `branch_fc1` and
+`branch_fc2` from fp32 activation to Q8_0 activation made the encoder much
+faster, but it broke OCR output on the clean-text image. Split tests showed both
+`branch_fc1=q8_0` and `branch_fc2=q8_0` individually degraded the answer. Keep
+the branch FC path fp32-activation until a parity-clean fp32 x Q8_0 kernel or
+more precise activation policy is available.
+
+## 2026-07-03 Opt-In FP32 x Q8_0 M4N4 Encoder GEMM
+
+Because Qwen3-VL branch FC layers are not correctness-clean with Q8_0
+activations, the safe speed path is a better fp32-activation x Q8_0-weight GEMM.
+An opt-in AVX512 M4xN4 kernel behind `CK_ENABLE_Q80_FP32_M4N4=1` keeps four FP32
+activation rows and four Q8_0 weight rows live together, reducing repeated
+weight dequant/reduction work while preserving the fp32 activation contract.
+
+Focused benchmark (`M=1028, N=4096, K=4096`):
+
+| Variant | Time | Parity |
+|---|---:|---|
+| existing row-GEMV fp32 x Q8_0 | ~3084 ms | reference |
+| opt-in M4N4 fp32 x Q8_0 | ~366 ms | max diff 0, cosine 1.0 |
+
+Large-prefix Qwen3-VL OCR with `CK_ENABLE_Q80_FP32_M4N4=1` plus gate/up x16:
+
+| Run | Encoder | Mixed Prefill | Decode | Output |
+|---|---:|---:|---:|---|
+| hsum + gate/up x16 baseline | 60881.0 ms | 39578.6 ms | 1324.1 ms | `CK OCR TEST\nTOTAL 42` |
+| + fp32 x Q8_0 M4N4 | 37419.3 ms | 38479.5 ms | 1299.6 ms | `CK OCR TEST\nTOTAL 42` |
+
+Net: the heavy 1024-visual-token clean OCR check improved from about 101.8 s to
+about 77.2 s steady-state while preserving the OCR answer. The new encoder top
+bottleneck is visual attention (`attention_forward_full_head_major_gqa_flash_strided`,
+about 15.0 s), followed by Q8_0/Q8_0 MLP/QKV and remaining fp32 branch FC work.
+
 ## Retest Matrix for Other CPUs
 
 Run this matrix on Ryzen, AVX2-only i7, and any larger-cache Xeon/EPYC host:

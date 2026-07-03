@@ -503,6 +503,14 @@ BENCH_TARGETS = {
         "perf_pattern": r"qwen35_down\s+\d+\s+\d+\s+\d+\s+\d+\.?\d*\s+\d+\.?\d*\s+\d+\.?\d*\s+\d+\.?\d*\s+\S+\s+\d+\.?\d*x\s+(\d+\.?\d*)x",
         "perf_unit": "packed-N speedup",
     },
+    "q8_0_fp32_gemm": {
+        "name": "Q8_0 FP32 GEMM",
+        "category": "bench",
+        "target": "bench-q8-0-fp32-gemm-quick",
+        "timeout_sec": 300,
+        "perf_pattern": r"speedup\s+(\d+\.?\d*)x",
+        "perf_unit": "speedup",
+    },
 }
 
 # Quick subset for fast validation

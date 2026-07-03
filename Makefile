@@ -2454,6 +2454,7 @@ THREADPOOL_BIN := $(BUILD_DIR)/test_threadpool_parity
 Q4K_DISPATCH_MATRIX_BIN := $(BUILD_DIR)/bench_q4k_dispatch_matrix
 Q4K_GATEUP_SWIGLU_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu
 Q4K_GATEUP_SWIGLU_OMP_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu_omp_standalone
+Q80_FP32_GEMM_BIN := $(BUILD_DIR)/bench_q8_0_fp32_gemm
 V66_SRC_DIR    := version/v6.6/src
 V8_SRC_DIR     := version/v8/src
 
@@ -2520,6 +2521,22 @@ $(Q4K_GATEUP_SWIGLU_OMP_BIN): $(LIB) research/q4k_gateup_swiglu/bench_q4k_gateup
 bench-q4k-gateup-swiglu-omp: $(Q4K_GATEUP_SWIGLU_OMP_BIN)
 	@echo "Running standalone OpenMP Q4_K gate_up+SwiGLU benchmark..."
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(Q4K_GATEUP_SWIGLU_OMP_BIN)
+
+$(Q80_FP32_GEMM_BIN): $(LIB) benchmarks/bench_q8_0_fp32_gemm.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 -march=native -Iinclude -I$(V8_SRC_DIR) \
+		benchmarks/bench_q8_0_fp32_gemm.c \
+		-L$(BUILD_DIR) -lckernel_engine -lm -lpthread \
+		-Wl,-rpath,$(BUILD_DIR) \
+		-o $(Q80_FP32_GEMM_BIN)
+
+bench-q8-0-fp32-gemm: $(Q80_FP32_GEMM_BIN)
+	@echo "Running fp32 x Q8_0 GEMM benchmark..."
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(Q80_FP32_GEMM_BIN)
+
+bench-q8-0-fp32-gemm-quick: $(Q80_FP32_GEMM_BIN)
+	@echo "Running fp32 x Q8_0 GEMM benchmark (quick)..."
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(Q80_FP32_GEMM_BIN) --M 128 --N 1024 --K 1024 --iters 2 --warmup 1
 
 # Representative Gemma4-sized Q6_K x Q8_K prefill dispatch benchmark.
 # This is benchmark/dispatch coverage, not a correctness gate for every PR.
@@ -2732,7 +2749,29 @@ profile-v8-prefill-ops-quick: ck-cli-v8
 		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
 		--json-out build/v8_prefill_ops_profile_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-128}.json
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick
+qwen3vl-ocr-perf-pipeline:
+	@echo "Running deterministic Qwen3-VL OCR perf pipeline..."
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-20} OMP_NUM_THREADS=1 \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/qwen3vl_ocr_perf_pipeline.py \
+		--threads $${CK_NUM_THREADS:-20} \
+		--image-tokens $${CK_QWEN3VL_OCR_IMAGE_TOKENS:-1024} \
+		--context-len $${CK_QWEN3VL_OCR_CONTEXT:-1536} \
+		--max-tokens $${CK_QWEN3VL_OCR_MAX_TOKENS:-8} \
+		$${CK_ENABLE_Q80_FP32_M4N4:+--enable-q80-m4n4} \
+		$${CK_ENABLE_Q4K_GATEUP_SWIGLU_X16:+--enable-q4-gateup-x16} \
+		$${CK_QWEN3VL_OCR_BASELINE:+--baseline $$CK_QWEN3VL_OCR_BASELINE} \
+		--json-out build/qwen3vl_ocr_perf_pipeline.json \
+		--md-out build/qwen3vl_ocr_perf_pipeline.md
+
+qwen3vl-ocr-perf-analyze:
+	@echo "Analyzing existing Qwen3-VL OCR perf JSON..."
+	$(PYTHON) $(PYTHONFLAGS) benchmarks/qwen3vl_ocr_perf_pipeline.py \
+		--analyze-existing $${CK_QWEN3VL_OCR_ANALYZE_JSON:-build/v8_qwen3vl_ocr_large_q80m4n4_gatex16_t20.json} \
+		$${CK_QWEN3VL_OCR_BASELINE:+--baseline $$CK_QWEN3VL_OCR_BASELINE} \
+		--json-out build/qwen3vl_ocr_perf_pipeline.json \
+		--md-out build/qwen3vl_ocr_perf_pipeline.md
+
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick qwen3vl-ocr-perf-pipeline qwen3vl-ocr-perf-analyze
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)
