@@ -1315,10 +1315,6 @@ typedef struct {
     int jobs;
 } gemm_q4_gateup_swiglu_x16_work_t;
 
-static inline float ck_silu_f32(float x)
-{
-    return x / (1.0f + expf(-x));
-}
 
 static void gemm_q4_gateup_swiglu_x16_thread_fn(int ith, int nth, void *args)
 {
@@ -1365,8 +1361,15 @@ static void gemm_q4_gateup_swiglu_x16_thread_fn(int ith, int nth, void *args)
 
         for (int m = m0; m < m1; ++m) {
             float *c_row = a->C + (size_t)m * (size_t)a->D;
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
+#pragma clang loop vectorize(enable) interleave(enable)
+#elif defined(__GNUC__)
+#pragma GCC ivdep
+#endif
             for (int lane = 0; lane < active; ++lane) {
-                c_row[d0 + lane] = ck_silu_f32(acc_gate[m - m0][lane]) * acc_up[m - m0][lane];
+                const float gate = acc_gate[m - m0][lane];
+                const float up = acc_up[m - m0][lane];
+                c_row[d0 + lane] = (gate / (1.0f + expf(-gate))) * up;
             }
         }
     }
