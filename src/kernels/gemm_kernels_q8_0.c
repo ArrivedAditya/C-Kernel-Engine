@@ -62,6 +62,16 @@ static int ck_q8_0_q8_0_debug_ref(void)
     return cached;
 }
 
+static int ck_q8_0_fp32_m4n4_enabled(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        const char *env = getenv("CK_ENABLE_Q80_FP32_M4N4");
+        cached = (env && env[0] && env[0] != '0') ? 1 : 0;
+    }
+    return cached;
+}
+
 static inline int ck_nearest_int_q8_0(float fval) {
     /* Match llama.cpp's deterministic nearest-even helper. */
     float val = fval + 12582912.f;
@@ -706,43 +716,148 @@ void gemm_q8_0(float *Y,
  * @param N Output dimension (number of rows in B)
  * @param K Input dimension
  */
+static void gemm_nt_q8_0_rowloop(const float *A,
+                                  const void *B,
+                                  const float *bias,
+                                  float *C,
+                                  int M, int N, int K)
+{
+    for (int m = 0; m < M; m++) {
+        gemv_q8_0(&C[(size_t)m * N], B, &A[(size_t)m * K], N, K);
+        if (bias) {
+            for (int n = 0; n < N; n++) C[(size_t)m * N + n] += bias[n];
+        }
+    }
+}
+
+#if defined(__AVX512F__)
+static inline float hsum512_ps_q80(__m512 v)
+{
+    return _mm512_reduce_add_ps(v);
+}
+
+static void gemm_nt_q8_0_m4n4_avx512(const float *A,
+                                      const void *B,
+                                      const float *bias,
+                                      float *C,
+                                      int M, int N, int K)
+{
+    const block_q8_0 *blocks = (const block_q8_0 *)B;
+    const int blocks_per_row = K / QK8_0;
+    const int M4 = M & ~3;
+    const int N4 = N & ~3;
+
+    for (int m = 0; m < M4; m += 4) {
+        for (int n = 0; n < N4; n += 4) {
+            __m512 acc00 = _mm512_setzero_ps(), acc01 = _mm512_setzero_ps();
+            __m512 acc02 = _mm512_setzero_ps(), acc03 = _mm512_setzero_ps();
+            __m512 acc10 = _mm512_setzero_ps(), acc11 = _mm512_setzero_ps();
+            __m512 acc12 = _mm512_setzero_ps(), acc13 = _mm512_setzero_ps();
+            __m512 acc20 = _mm512_setzero_ps(), acc21 = _mm512_setzero_ps();
+            __m512 acc22 = _mm512_setzero_ps(), acc23 = _mm512_setzero_ps();
+            __m512 acc30 = _mm512_setzero_ps(), acc31 = _mm512_setzero_ps();
+            __m512 acc32 = _mm512_setzero_ps(), acc33 = _mm512_setzero_ps();
+
+            const block_q8_0 *b0 = blocks + (size_t)(n + 0) * blocks_per_row;
+            const block_q8_0 *b1 = blocks + (size_t)(n + 1) * blocks_per_row;
+            const block_q8_0 *b2 = blocks + (size_t)(n + 2) * blocks_per_row;
+            const block_q8_0 *b3 = blocks + (size_t)(n + 3) * blocks_per_row;
+            const float *a0 = A + (size_t)(m + 0) * K;
+            const float *a1 = A + (size_t)(m + 1) * K;
+            const float *a2 = A + (size_t)(m + 2) * K;
+            const float *a3 = A + (size_t)(m + 3) * K;
+
+            for (int ib = 0; ib < blocks_per_row; ++ib) {
+                const int k0 = ib * QK8_0;
+                for (int chunk = 0; chunk < 2; ++chunk) {
+                    const int off = chunk * 16;
+                    const __m512 x0 = _mm512_loadu_ps(a0 + k0 + off);
+                    const __m512 x1 = _mm512_loadu_ps(a1 + k0 + off);
+                    const __m512 x2 = _mm512_loadu_ps(a2 + k0 + off);
+                    const __m512 x3 = _mm512_loadu_ps(a3 + k0 + off);
+
+                    __m128i q0 = _mm_loadu_si128((const __m128i *)&b0[ib].qs[off]);
+                    __m128i q1 = _mm_loadu_si128((const __m128i *)&b1[ib].qs[off]);
+                    __m128i q2 = _mm_loadu_si128((const __m128i *)&b2[ib].qs[off]);
+                    __m128i q3 = _mm_loadu_si128((const __m128i *)&b3[ib].qs[off]);
+
+                    __m512 w0 = _mm512_mul_ps(_mm512_cvtepi32_ps(_mm512_cvtepi8_epi32(q0)),
+                                              _mm512_set1_ps(CK_FP16_TO_FP32(b0[ib].d)));
+                    __m512 w1 = _mm512_mul_ps(_mm512_cvtepi32_ps(_mm512_cvtepi8_epi32(q1)),
+                                              _mm512_set1_ps(CK_FP16_TO_FP32(b1[ib].d)));
+                    __m512 w2 = _mm512_mul_ps(_mm512_cvtepi32_ps(_mm512_cvtepi8_epi32(q2)),
+                                              _mm512_set1_ps(CK_FP16_TO_FP32(b2[ib].d)));
+                    __m512 w3 = _mm512_mul_ps(_mm512_cvtepi32_ps(_mm512_cvtepi8_epi32(q3)),
+                                              _mm512_set1_ps(CK_FP16_TO_FP32(b3[ib].d)));
+
+                    acc00 = _mm512_fmadd_ps(w0, x0, acc00);
+                    acc01 = _mm512_fmadd_ps(w1, x0, acc01);
+                    acc02 = _mm512_fmadd_ps(w2, x0, acc02);
+                    acc03 = _mm512_fmadd_ps(w3, x0, acc03);
+                    acc10 = _mm512_fmadd_ps(w0, x1, acc10);
+                    acc11 = _mm512_fmadd_ps(w1, x1, acc11);
+                    acc12 = _mm512_fmadd_ps(w2, x1, acc12);
+                    acc13 = _mm512_fmadd_ps(w3, x1, acc13);
+                    acc20 = _mm512_fmadd_ps(w0, x2, acc20);
+                    acc21 = _mm512_fmadd_ps(w1, x2, acc21);
+                    acc22 = _mm512_fmadd_ps(w2, x2, acc22);
+                    acc23 = _mm512_fmadd_ps(w3, x2, acc23);
+                    acc30 = _mm512_fmadd_ps(w0, x3, acc30);
+                    acc31 = _mm512_fmadd_ps(w1, x3, acc31);
+                    acc32 = _mm512_fmadd_ps(w2, x3, acc32);
+                    acc33 = _mm512_fmadd_ps(w3, x3, acc33);
+                }
+            }
+
+            const float b00 = bias ? bias[n + 0] : 0.0f;
+            const float b01 = bias ? bias[n + 1] : 0.0f;
+            const float b02 = bias ? bias[n + 2] : 0.0f;
+            const float b03 = bias ? bias[n + 3] : 0.0f;
+            C[(size_t)(m + 0) * N + n + 0] = hsum512_ps_q80(acc00) + b00;
+            C[(size_t)(m + 0) * N + n + 1] = hsum512_ps_q80(acc01) + b01;
+            C[(size_t)(m + 0) * N + n + 2] = hsum512_ps_q80(acc02) + b02;
+            C[(size_t)(m + 0) * N + n + 3] = hsum512_ps_q80(acc03) + b03;
+            C[(size_t)(m + 1) * N + n + 0] = hsum512_ps_q80(acc10) + b00;
+            C[(size_t)(m + 1) * N + n + 1] = hsum512_ps_q80(acc11) + b01;
+            C[(size_t)(m + 1) * N + n + 2] = hsum512_ps_q80(acc12) + b02;
+            C[(size_t)(m + 1) * N + n + 3] = hsum512_ps_q80(acc13) + b03;
+            C[(size_t)(m + 2) * N + n + 0] = hsum512_ps_q80(acc20) + b00;
+            C[(size_t)(m + 2) * N + n + 1] = hsum512_ps_q80(acc21) + b01;
+            C[(size_t)(m + 2) * N + n + 2] = hsum512_ps_q80(acc22) + b02;
+            C[(size_t)(m + 2) * N + n + 3] = hsum512_ps_q80(acc23) + b03;
+            C[(size_t)(m + 3) * N + n + 0] = hsum512_ps_q80(acc30) + b00;
+            C[(size_t)(m + 3) * N + n + 1] = hsum512_ps_q80(acc31) + b01;
+            C[(size_t)(m + 3) * N + n + 2] = hsum512_ps_q80(acc32) + b02;
+            C[(size_t)(m + 3) * N + n + 3] = hsum512_ps_q80(acc33) + b03;
+        }
+    }
+
+    if (N4 < N) {
+        gemm_nt_q8_0_rowloop(A, B, bias, C, M, N, K);
+        return;
+    }
+    for (int m = M4; m < M; ++m) {
+        gemv_q8_0(&C[(size_t)m * N], B, &A[(size_t)m * K], N, K);
+        if (bias) {
+            for (int n = 0; n < N; ++n) C[(size_t)m * N + n] += bias[n];
+        }
+    }
+}
+#endif
+
 void gemm_nt_q8_0(const float *A,
                   const void *B,
                   const float *bias,
                   float *C,
                   int M, int N, int K)
 {
-    /* Use GEMV dispatch which selects AVX/SSE/scalar based on CPU */
-    for (int m = 0; m < M; m++) {
-        gemv_q8_0(&C[m * N], B, &A[m * K], N, K);
-        if (bias) {
-            for (int n = 0; n < N; n++) C[m * N + n] += bias[n];
-        }
+#if defined(__AVX512F__)
+    if (ck_q8_0_fp32_m4n4_enabled() && M >= 4 && N >= 4 && K % QK8_0 == 0) {
+        gemm_nt_q8_0_m4n4_avx512(A, B, bias, C, M, N, K);
+        return;
     }
-    return;
-
-    const block_q8_0 *blocks = (const block_q8_0 *)B;
-    const int blocks_per_row = K / QK8_0;
-
-    for (int m = 0; m < M; m++) {
-        const float *a_row = &A[m * K];
-
-        for (int n = 0; n < N; n++) {
-            float sum = 0.0f;
-
-            for (int b = 0; b < blocks_per_row; b++) {
-                const block_q8_0 *block = &blocks[n * blocks_per_row + b];
-                const float d = CK_FP16_TO_FP32(block->d);
-                const float *ap = &a_row[b * QK8_0];
-
-                for (int i = 0; i < QK8_0; i++) {
-                    sum += d * (float)block->qs[i] * ap[i];
-                }
-            }
-
-            C[m * N + n] = sum + (bias ? bias[n] : 0.0f);
-        }
-    }
+#endif
+    gemm_nt_q8_0_rowloop(A, B, bias, C, M, N, K);
 }
 
 /* ============================================================================
