@@ -120,3 +120,15 @@ The dual gate/up accumulator idea was numerically clean but slower on this Xeon
 (~442 ms versus ~428 ms for the best x16 variant before output-loop cleanup),
 likely due to register and instruction pressure. Keep it as a retest candidate
 for Ryzen/X3D, EPYC, and larger-cache Xeon systems before discarding it globally.
+
+## 2026-07-03 Shared VNNI hsum Fix
+
+The standalone research harness was faster than the shared-library x16 path until
+`hsum256_epi32` in `src/kernels/gemm_kernels_q4k_q8k_vnni.c` was changed from
+`_mm_hadd_epi32` reductions to shuffle/add reductions. On the real OCR gate/up
+shape (`M=1028, D=12288, K=4096`, 20 threads), the library-backed x16 benchmark
+now reports about 348 ms with rel diff ~5.7e-7 and cosine 1.0.
+
+Large-prefix Qwen3-VL OCR mixed prefill improved from about 42.9 s to about 39.6 s
+on the generated clean-text 1024-image-token check. The improvement lands mostly
+in `mlp_gate_up_swiglu` (`~21.1 s -> ~17.4 s`).

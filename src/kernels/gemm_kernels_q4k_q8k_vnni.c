@@ -53,8 +53,8 @@ static inline int32_t hsum256_epi32(__m256i v) {
     __m128i lo = _mm256_castsi256_si128(v);
     __m128i hi = _mm256_extracti128_si256(v, 1);
     __m128i sum = _mm_add_epi32(lo, hi);
-    sum = _mm_hadd_epi32(sum, sum);
-    sum = _mm_hadd_epi32(sum, sum);
+    sum = _mm_add_epi32(sum, _mm_shuffle_epi32(sum, 0x4e));
+    sum = _mm_add_epi32(sum, _mm_shuffle_epi32(sum, 0xb1));
     return _mm_cvtsi128_si32(sum);
 }
 #endif

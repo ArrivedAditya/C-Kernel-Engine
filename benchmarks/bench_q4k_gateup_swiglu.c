@@ -31,6 +31,17 @@ extern void gemm_nt_q4_k_q8_k_gateup_swiglu_fused_vnni(const void *A_q8,
                                                         int D,
                                                         int K,
                                                         int threads);
+extern size_t q4_k_packed_meta_x16_block_size(void);
+extern void pack_q4_k_to_packed_meta_x16(const void *src, void *dst, int N, int K);
+extern void gemm_nt_q4_k_packed_meta_x16_gateup_swiglu_fused_vnni(const void *A_q8,
+                                                                   const void *B_packed_x16,
+                                                                   const float *bias,
+                                                                   float *C,
+                                                                   int M,
+                                                                   int D,
+                                                                   int K,
+                                                                   int tile_m,
+                                                                   int active_threads);
 
 static double now_ms(void) {
     struct timespec ts;
@@ -105,6 +116,7 @@ static double bench_ms(bench_fn fn, void *ctx, int warmup, int iters) {
 typedef struct {
     const uint8_t *A_q8;
     const uint8_t *W;
+    const void *W_x16;
     const float *bias;
     float *gate_up;
     float *out;
@@ -112,6 +124,7 @@ typedef struct {
     int D;
     int K;
     int threads;
+    int tile_m;
 } ctx_t;
 
 static void run_unfused(void *p) {
@@ -123,6 +136,11 @@ static void run_fused(void *p) {
     ctx_t *c = (ctx_t *)p;
     gemm_nt_q4_k_q8_k_gateup_swiglu_fused_vnni(c->A_q8, c->W, c->bias, c->out, c->M, c->D, c->K, c->threads);
 }
+static void run_x16(void *p) {
+    ctx_t *c = (ctx_t *)p;
+    gemm_nt_q4_k_packed_meta_x16_gateup_swiglu_fused_vnni(
+        c->A_q8, c->W_x16, c->bias, c->out, c->M, c->D, c->K, c->tile_m, c->threads);
+}
 
 int main(int argc, char **argv) {
     int M = 79;
@@ -130,17 +148,20 @@ int main(int argc, char **argv) {
     int K = 4096;
     int iters = 8;
     int warmup = 2;
-    int mode = 0; /* 0=both, 1=unfused, 2=fused */
+    int mode = 0; /* 0=both, 1=unfused, 2=fused, 3=x16 */
+    int tile_m = 8;
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--iters") == 0 && i + 1 < argc) iters = atoi(argv[++i]);
         else if (strcmp(argv[i], "--warmup") == 0 && i + 1 < argc) warmup = atoi(argv[++i]);
         else if (strcmp(argv[i], "--M") == 0 && i + 1 < argc) M = atoi(argv[++i]);
         else if (strcmp(argv[i], "--D") == 0 && i + 1 < argc) D = atoi(argv[++i]);
         else if (strcmp(argv[i], "--K") == 0 && i + 1 < argc) K = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--tile-m") == 0 && i + 1 < argc) tile_m = atoi(argv[++i]);
         else if (strcmp(argv[i], "--mode") == 0 && i + 1 < argc) {
             const char *m = argv[++i];
             if (strcmp(m, "unfused") == 0) mode = 1;
             else if (strcmp(m, "fused") == 0) mode = 2;
+            else if (strcmp(m, "x16") == 0) mode = 3;
             else mode = 0;
         }
     }
@@ -152,15 +173,18 @@ int main(int argc, char **argv) {
     const size_t q4_bytes = (size_t)(2 * D) * (size_t)(K / QK_K) * sizeof(block_q4_K);
     const size_t gateup_elems = (size_t)M * (size_t)(2 * D);
     const size_t out_elems = (size_t)M * (size_t)D;
+    const size_t x16_blocks = (size_t)((2 * D + 15) / 16) * (size_t)(K / QK_K);
+    const size_t x16_bytes = x16_blocks * q4_k_packed_meta_x16_block_size();
 
     float *A = (float *)malloc((size_t)M * (size_t)K * sizeof(float));
     uint8_t *A_q8 = (uint8_t *)malloc(q8_bytes);
     uint8_t *W = (uint8_t *)malloc(q4_bytes);
+    void *W_x16 = aligned_alloc(64, (x16_bytes + 63u) & ~63u);
     float *bias = (float *)malloc((size_t)(2 * D) * sizeof(float));
     float *gate_up = (float *)malloc(gateup_elems * sizeof(float));
     float *out_ref = (float *)malloc(out_elems * sizeof(float));
     float *out = (float *)malloc(out_elems * sizeof(float));
-    if (!A || !A_q8 || !W || !bias || !gate_up || !out_ref || !out) {
+    if (!A || !A_q8 || !W || !W_x16 || !bias || !gate_up || !out_ref || !out) {
         fprintf(stderr, "allocation failed\n");
         return 2;
     }
@@ -169,20 +193,25 @@ int main(int argc, char **argv) {
     fill_f32(bias, (size_t)(2 * D), 0.01f);
     fill_q4k(W, 2 * D, K);
     quantize_acts_q8k(A, A_q8, M, K);
+    const double pack_t0 = now_ms();
+    pack_q4_k_to_packed_meta_x16(W, W_x16, 2 * D, K);
+    const double pack_ms = now_ms() - pack_t0;
 
-    ctx_t ctx = {.A_q8 = A_q8, .W = W, .bias = bias, .gate_up = gate_up, .out = out_ref,
-                 .M = M, .D = D, .K = K, .threads = threads};
+    ctx_t ctx = {.A_q8 = A_q8, .W = W, .W_x16 = W_x16, .bias = bias, .gate_up = gate_up, .out = out_ref,
+                 .M = M, .D = D, .K = K, .threads = threads, .tile_m = tile_m};
     run_unfused(&ctx);
 
     ctx.out = out;
     memset(out, 0, out_elems * sizeof(float));
-    run_fused(&ctx);
+    if (mode == 3) run_x16(&ctx);
+    else run_fused(&ctx);
     const float diff = max_abs_diff(out_ref, out, out_elems);
     const float max_ref = max_abs_val(out_ref, out_elems);
     const double cos = cosine_sim(out_ref, out, out_elems);
 
     double unfused = 0.0;
     double fused = 0.0;
+    double x16 = 0.0;
     if (mode == 0 || mode == 1) {
         ctx.out = out_ref;
         unfused = bench_ms(run_unfused, &ctx, warmup, iters);
@@ -191,21 +220,30 @@ int main(int argc, char **argv) {
         ctx.out = out;
         fused = bench_ms(run_fused, &ctx, warmup, iters);
     }
+    if (mode == 3) {
+        ctx.out = out;
+        x16 = bench_ms(run_x16, &ctx, warmup, iters);
+    }
 
     const double w_mib = (double)q4_bytes / (1024.0 * 1024.0);
     const double scratch_mib = (double)(gateup_elems * sizeof(float)) / (1024.0 * 1024.0);
-    printf("Q4_K gate_up+SwiGLU M=%d D=%d K=%d threads=%d warmup=%d iters=%d mode=%s\n", M, D, K, threads, warmup, iters, mode == 1 ? "unfused" : (mode == 2 ? "fused" : "both"));
-    printf("weights=%.1f MiB gate_up_scratch=%.1f MiB output=%.1f MiB\n",
-           w_mib, scratch_mib, (double)(out_elems * sizeof(float)) / (1024.0 * 1024.0));
+    printf("Q4_K gate_up+SwiGLU M=%d D=%d K=%d threads=%d warmup=%d iters=%d mode=%s tile_m=%d\n",
+           M, D, K, threads, warmup, iters,
+           mode == 1 ? "unfused" : (mode == 2 ? "fused" : (mode == 3 ? "x16" : "both")), tile_m);
+    printf("weights=%.1f MiB packed_x16=%.1f MiB pack_ms=%.3f gate_up_scratch=%.1f MiB output=%.1f MiB\n",
+           w_mib, (double)x16_bytes / (1024.0 * 1024.0), pack_ms, scratch_mib,
+           (double)(out_elems * sizeof(float)) / (1024.0 * 1024.0));
     printf("unfused_ms %.3f\n", unfused);
     printf("fused_ms   %.3f\n", fused);
-    if (unfused > 0.0 && fused > 0.0) printf("speedup    %.3fx\n", unfused / fused);
+    printf("x16_ms     %.3f\n", x16);
+    if (unfused > 0.0 && fused > 0.0) printf("speedup_fused %.3fx\n", unfused / fused);
+    if (unfused > 0.0 && x16 > 0.0) printf("speedup_x16   %.3fx\n", unfused / x16);
     printf("max_diff   %.6g\n", diff);
     printf("max_ref    %.6g\n", max_ref);
     printf("rel_diff   %.6g\n", max_ref > 0.0f ? diff / max_ref : 0.0f);
     printf("cosine     %.9f\n", cos);
 
-    free(A); free(A_q8); free(W); free(bias); free(gate_up); free(out_ref); free(out);
+    free(A); free(A_q8); free(W); free(W_x16); free(bias); free(gate_up); free(out_ref); free(out);
     ck_threadpool_global_destroy();
     return (diff < 1e-3f || (max_ref > 0.0f && diff / max_ref < 1e-5f) || cos > 0.999999) ? 0 : 1;
 }

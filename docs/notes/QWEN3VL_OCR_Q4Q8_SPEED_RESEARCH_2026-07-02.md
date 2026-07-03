@@ -141,6 +141,34 @@ shapes, so keep the path for CPU-family sweeps, but do not enable it by default.
 The next default-quality speed work is a better projection/down microkernel or
 conversion-time prepacking, not simply routing every Q4 projection through x16.
 
+## 2026-07-03 VNNI Horizontal-Sum Fix
+
+A VTune software-hotspots run on the packed x16 gate/up path showed the hot work
+was not SiLU/`expf`; it was the Q4_K/Q8_K VNNI dot/accumulation loop. The shared
+`hsum256_epi32` helper in `gemm_kernels_q4k_q8k_vnni.c` used two
+`_mm_hadd_epi32` reductions. Switching it to the standalone research harness'
+shuffle/add reduction closed the gap between the research x16 path and the actual
+shared-library x16 path.
+
+Focused gate/up benchmark, real OCR shape (`M=1028, D=12288, K=4096`, 20 threads):
+
+| Variant | Time | Parity |
+|---|---:|---|
+| library x16 before hsum fix | ~452 ms | rel diff ~5.7e-7, cosine 1.0 |
+| library x16 after hsum fix | ~348 ms | rel diff ~5.7e-7, cosine 1.0 |
+
+Large-prefix OCR A/B on generated clean-text image (`image_tokens=1024`, gate/up
+x16 enabled, generic projection x16 disabled):
+
+| Run | Encoder | Mixed Prefill | Decode | Top improvement |
+|---|---:|---:|---:|---|
+| before hsum fix | 61444.7 ms | 42908.0 ms | 1239.9 ms | `mlp_gate_up_swiglu` 21086.0 ms |
+| after hsum fix | 60881.0 ms | 39578.6 ms | 1324.1 ms | `mlp_gate_up_swiglu` 17390.7 ms |
+
+Net: mixed prefill improved by about 3.3 s on this large-prefix OCR check. This
+reduces the dominant Q4 gate/up cost, but CK is still slower than llama.cpp due
+to remaining encoder cost plus Q4/Q6 down/projection work.
+
 ## Retest Matrix for Other CPUs
 
 Run this matrix on Ryzen, AVX2-only i7, and any larger-cache Xeon/EPYC host:
