@@ -2749,7 +2749,29 @@ profile-v8-prefill-ops-quick: ck-cli-v8
 		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
 		--json-out build/v8_prefill_ops_profile_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-128}.json
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick
+qwen3vl-ocr-perf-pipeline:
+	@echo "Running deterministic Qwen3-VL OCR perf pipeline..."
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-20} OMP_NUM_THREADS=1 \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/qwen3vl_ocr_perf_pipeline.py \
+		--threads $${CK_NUM_THREADS:-20} \
+		--image-tokens $${CK_QWEN3VL_OCR_IMAGE_TOKENS:-1024} \
+		--context-len $${CK_QWEN3VL_OCR_CONTEXT:-1536} \
+		--max-tokens $${CK_QWEN3VL_OCR_MAX_TOKENS:-8} \
+		$${CK_ENABLE_Q80_FP32_M4N4:+--enable-q80-m4n4} \
+		$${CK_ENABLE_Q4K_GATEUP_SWIGLU_X16:+--enable-q4-gateup-x16} \
+		$${CK_QWEN3VL_OCR_BASELINE:+--baseline $$CK_QWEN3VL_OCR_BASELINE} \
+		--json-out build/qwen3vl_ocr_perf_pipeline.json \
+		--md-out build/qwen3vl_ocr_perf_pipeline.md
+
+qwen3vl-ocr-perf-analyze:
+	@echo "Analyzing existing Qwen3-VL OCR perf JSON..."
+	$(PYTHON) $(PYTHONFLAGS) benchmarks/qwen3vl_ocr_perf_pipeline.py \
+		--analyze-existing $${CK_QWEN3VL_OCR_ANALYZE_JSON:-build/v8_qwen3vl_ocr_large_q80m4n4_gatex16_t20.json} \
+		$${CK_QWEN3VL_OCR_BASELINE:+--baseline $$CK_QWEN3VL_OCR_BASELINE} \
+		--json-out build/qwen3vl_ocr_perf_pipeline.json \
+		--md-out build/qwen3vl_ocr_perf_pipeline.md
+
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick qwen3vl-ocr-perf-pipeline qwen3vl-ocr-perf-analyze
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)
