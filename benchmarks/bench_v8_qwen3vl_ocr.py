@@ -83,6 +83,7 @@ def _apply_qwen3vl_ocr_fast_defaults(env: dict[str, str]) -> None:
     env.setdefault("CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP", "20")
     env.setdefault("CK_Q4K_X16_CHUNK4", "1")
     env.setdefault("CK_ATTENTION_QBLOCK4", "1")
+    env.setdefault("CK_ATTENTION_THREAD_CAP", "16")
     env.setdefault("CK_Q4K_PACKED_META_X8_MAX_M", "2048")
     env.setdefault("CK_NUM_THREADS", "20")
     env.setdefault("OMP_NUM_THREADS", "1")
@@ -163,6 +164,8 @@ def _run_one(
     report = json.loads(report_path.read_text(encoding="utf-8"))
     timings = report.get("timings") if isinstance(report.get("timings"), dict) else {}
     decoder_profile = report.get("decoder_profile") if isinstance(report.get("decoder_profile"), dict) else {}
+    encoder_report = report.get("encoder_report") if isinstance(report.get("encoder_report"), dict) else {}
+    encoder_profile = encoder_report.get("profile") if isinstance(encoder_report.get("profile"), dict) else {}
     encoder_execute_ms = _num(timings, "encoder_execute_ms")
     decoder_forward_ms = _num(timings, "decoder_forward_mixed_ms")
     decoder_generation_ms = _num(timings, "decoder_generation_ms")
@@ -185,6 +188,7 @@ def _run_one(
             "decoder_generation_tok_s": _num(timings, "decoder_generation_tok_s"),
             "steady_generated_tok_s": (generated_tokens / (steady_state_ms / 1000.0)) if steady_state_ms > 0 and generated_tokens > 0 else 0.0,
             "decoder_profile": decoder_profile,
+            "encoder_profile": encoder_profile,
         }
     )
     return row

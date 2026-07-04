@@ -425,3 +425,26 @@ set in the benchmark command after applying profile defaults consistently:
 
 Final mixed-prefill delta: about -2.31 s on this generated OCR check. The main
 wins were Q4 `mlp_down` (-1.02 s), `out_proj` (-0.91 s), and `q_proj` (-0.72 s).
+
+## 2026-07-04 Attention Thread-Cap Sweep
+
+After exposing the nested encoder profile in the OCR benchmark JSON, the fresh
+Qwen3-VL OCR profile showed encoder full attention as the largest single
+remaining encoder op. The speed profile already enables the AVX512 qblock4 path
+with `CK_ATTENTION_QBLOCK4=1`, so the next low-risk A/B was active-thread
+capping for attention only.
+
+Generated clean OCR image, `CK_SPEED_PROFILE=qwen3vl_ocr_xeon_avx512`, 20 CK
+threads, 1024 image tokens:
+
+| Attention Cap | Encoder | Mixed Prefill | Encoder Attention | Decoder Attention | Output |
+|---:|---:|---:|---:|---:|---|
+| default/profile | 37992.6 ms | 31277.2 ms | 12748.6 ms | 1732.3 ms | `CK OCR TEST\nTOTAL 42` |
+| 16 | 37900.0 ms | 30919.4 ms | 12516.7 ms | 2185.8 ms | `CK OCR TEST\nTOTAL 42` |
+| 12 | 39307.2 ms | 31345.7 ms | 13496.2 ms | 2605.7 ms | `CK OCR TEST\nTOTAL 42` |
+
+Cap 16 is the best measured point in this small sweep. It is now part of the
+Qwen3-VL OCR speed profile defaults as `CK_ATTENTION_THREAD_CAP=16`, while
+normal runs and explicit user env settings remain unchanged. This is a modest
+contention/cache tuning win, not a replacement for a better encoder attention
+microkernel.
