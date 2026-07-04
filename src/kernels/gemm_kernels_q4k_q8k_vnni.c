@@ -33,13 +33,13 @@
 #include "ckernel_engine.h"
 #include "ck_threadpool.h"
 #include "ckernel_quant.h"
+#include "ck_speed_profiles.h"
 
 static int ck_q4k_x16_chunk4_enabled(void)
 {
     static int cached = -1;
     if (cached < 0) {
-        const char *env = getenv("CK_Q4K_X16_CHUNK4");
-        cached = (env && env[0] && env[0] != '0') ? 1 : 0;
+        cached = ck_env_truthy_or_qwen3vl_ocr_profile("CK_Q4K_X16_CHUNK4");
     }
     return cached;
 }

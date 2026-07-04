@@ -31,6 +31,7 @@
 #include <string.h>
 #include "ckernel_quant.h"
 #include "ck_features.h"
+#include "ck_speed_profiles.h"
 
 /* Include SIMD headers based on available extensions */
 #if defined(__AVX512F__) || defined(__AVX2__) || defined(__AVX__) || defined(__SSE4_1__)
@@ -66,8 +67,7 @@ static int ck_q8_0_fp32_m4n4_enabled(void)
 {
     static int cached = -1;
     if (cached < 0) {
-        const char *env = getenv("CK_ENABLE_Q80_FP32_M4N4");
-        cached = (env && env[0] && env[0] != '0') ? 1 : 0;
+        cached = ck_env_truthy_or_qwen3vl_ocr_profile("CK_ENABLE_Q80_FP32_M4N4");
     }
     return cached;
 }

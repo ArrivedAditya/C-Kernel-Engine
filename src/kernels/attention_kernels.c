@@ -33,6 +33,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "ck_speed_profiles.h"
 #include <string.h>
 
 #if defined(__AVX__) || defined(__AVX2__) || defined(__AVX512F__) || defined(__SSE2__)
@@ -2895,17 +2896,16 @@ static inline void ck_attention_flash_query_auto(const float *q_vec,
 }
 
 
+#if defined(__AVX512F__)
 static int ck_attention_qblock4_enabled(void)
 {
     static int cached = -1;
     if (cached < 0) {
-        const char *env = getenv("CK_ATTENTION_QBLOCK4");
-        cached = (env && env[0] && env[0] != '0') ? 1 : 0;
+        cached = ck_env_truthy_or_qwen3vl_ocr_profile("CK_ATTENTION_QBLOCK4");
     }
     return cached;
 }
 
-#if defined(__AVX512F__)
 static inline float ck_attention_dot72_avx512(const float *q_vec, const float *k_vec)
 {
     __m512 acc = _mm512_setzero_ps();

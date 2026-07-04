@@ -268,6 +268,72 @@ node, saving about 4.7 s on the clean OCR workload. The next measured bottleneck
 moves back to decoder mixed prefill, especially `mlp_gate_up_swiglu` through
 `gemm_nt_q4_k_q8_k_gateup_swiglu_x16` at about 12.2 s in the latest profile.
 
+## 2026-07-04 Speed Profile Flag Collapse
+
+The tuned Xeon/OpenShift OCR stack can now be enabled with one high-level speed
+profile instead of listing every low-level kernel flag:
+
+```bash
+CK_SPEED_PROFILE=qwen3vl_ocr_xeon_avx512
+```
+
+Equivalent short alias:
+
+```bash
+CK_QWEN3VL_OCR_FAST=1
+```
+
+`CK_PROFILE` is intentionally not used here because it already means
+profiling/timing instrumentation in CK scripts and Make targets. Speed policy is
+kept separate as `CK_SPEED_PROFILE`, so OCR tuning can coexist with `CK_PROFILE=1`
+or `--profile` runs.
+
+The speed profile defaults these settings when they are not explicitly set:
+
+| Setting | Profile default |
+|---|---|
+| `CK_ENABLE_Q80_FP32_M4N4` | `1` |
+| `CK_ENABLE_Q4K_GATEUP_SWIGLU_X16` | `1` |
+| `CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP` | `20` |
+| `CK_Q4K_X16_CHUNK4` | `1` |
+| `CK_ATTENTION_QBLOCK4` | `1` |
+| `CK_NUM_THREADS` | `20` in `ck_run_v8.py` if unset |
+| `OMP_NUM_THREADS` | `1` in `ck_run_v8.py` if unset |
+
+Explicit low-level env values still override the profile, so individual kernels
+can be disabled for A/B testing, for example `CK_ATTENTION_QBLOCK4=0`.
+
+Validation on this Xeon node after rebasing onto `accec0fa`:
+
+| Check | Result |
+|---|---|
+| Native AVX512 build | passed |
+| AVX2-only build with `AVX_FLAGS='-mavx2 -mfma'` | passed; AVX512 qblock4 compiles out |
+| Q4 gate/up profile-only microbench | rel diff ~1.0e-6, cosine 1.0 |
+| Attention profile-only microbench | max diff 0, cosine 1.0 |
+| Rebased `CK_SPEED_PROFILE` clean OCR E2E | `CK OCR TEST\nTOTAL 42`; encoder 33865.4 ms, mixed 33591.0 ms, gen 1461.5 ms |
+
+Clean OCR E2E default-vs-profile check, same image/prompt/settings and both
+`--force-compile`:
+
+| Stage | Default ms | Speed profile ms | Speedup | Delta ms |
+|---|---:|---:|---:|---:|
+| Encoder execute | 60300.1 | 34328.0 | 1.76x | 25972.1 |
+| Mixed prefill | 48907.7 | 33295.4 | 1.47x | 15612.3 |
+| Generation | 1395.6 | 1331.8 | 1.05x | 63.8 |
+| Steady total | 110603.4 | 68955.3 | 1.60x | 41648.2 |
+
+Correctness output for both runs:
+
+```text
+CK OCR TEST
+TOTAL 42
+```
+
+This is still a profile, not a universal default. Promote it to automatic behavior
+only after CPU-family sweeps confirm that the same choices are neutral or
+positive on AVX2-only laptops, Ryzen/EPYC, and other Xeon cache/core ratios.
+
 ## Retest Matrix for Other CPUs
 
 Run this matrix on Ryzen, AVX2-only i7, and any larger-cache Xeon/EPYC host:

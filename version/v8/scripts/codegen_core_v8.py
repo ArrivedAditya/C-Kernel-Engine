@@ -3048,6 +3048,7 @@ def generate(
 #include "ckernel_alloc.h"
 #include "ckernel_model_load_v8.h"
 #include "ckernel_engine.h"  /* Kernel declarations */
+#include "ck_speed_profiles.h"
 {tokenizer_include}
 
 /* Parity dump instrumentation for llama.cpp comparison */
