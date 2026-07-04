@@ -2894,6 +2894,148 @@ static inline void ck_attention_flash_query_auto(const float *q_vec,
 #endif
 }
 
+
+static int ck_attention_qblock4_enabled(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        const char *env = getenv("CK_ATTENTION_QBLOCK4");
+        cached = (env && env[0] && env[0] != '0') ? 1 : 0;
+    }
+    return cached;
+}
+
+#if defined(__AVX512F__)
+static inline float ck_attention_dot72_avx512(const float *q_vec, const float *k_vec)
+{
+    __m512 acc = _mm512_setzero_ps();
+    acc = _mm512_fmadd_ps(_mm512_loadu_ps(q_vec + 0),  _mm512_loadu_ps(k_vec + 0),  acc);
+    acc = _mm512_fmadd_ps(_mm512_loadu_ps(q_vec + 16), _mm512_loadu_ps(k_vec + 16), acc);
+    acc = _mm512_fmadd_ps(_mm512_loadu_ps(q_vec + 32), _mm512_loadu_ps(k_vec + 32), acc);
+    acc = _mm512_fmadd_ps(_mm512_loadu_ps(q_vec + 48), _mm512_loadu_ps(k_vec + 48), acc);
+    float dot = _mm512_reduce_add_ps(acc);
+    for (int d = 64; d < 72; ++d) {
+        dot += q_vec[d] * k_vec[d];
+    }
+    return dot;
+}
+
+static void attention_flash_query4_full_avx512(const float *q_head,
+                                                const float *k_head,
+                                                const float *v_head,
+                                                int q0,
+                                                int q_count,
+                                                int kv_tokens,
+                                                int aligned_head_dim,
+                                                float scale,
+                                                float *out_head)
+{
+    float m[4] = { -INFINITY, -INFINITY, -INFINITY, -INFINITY };
+    float ssum[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    float out[4][72];
+    for (int r = 0; r < q_count; ++r) {
+        for (int d = 0; d < 72; ++d) out[r][d] = 0.0f;
+    }
+
+    const float *qv[4] = { NULL, NULL, NULL, NULL };
+    for (int r = 0; r < q_count; ++r) {
+        qv[r] = q_head + (size_t)(q0 + r) * (size_t)aligned_head_dim;
+    }
+
+    for (int j = 0; j < kv_tokens; ++j) {
+        const float *k_vec = k_head + (size_t)j * (size_t)aligned_head_dim;
+        const float *v_vec = v_head + (size_t)j * (size_t)aligned_head_dim;
+        float score[4];
+        float scale_old[4];
+        float scale_v[4];
+
+        for (int r = 0; r < q_count; ++r) {
+            score[r] = ck_attention_dot72_avx512(qv[r], k_vec) * scale;
+            if (score[r] > m[r]) {
+                scale_old[r] = (m[r] == -INFINITY) ? 0.0f : expf(m[r] - score[r]);
+                scale_v[r] = 1.0f;
+                ssum[r] *= scale_old[r];
+                ssum[r] += 1.0f;
+                m[r] = score[r];
+            } else {
+                scale_old[r] = 1.0f;
+                scale_v[r] = expf(score[r] - m[r]);
+                ssum[r] += scale_v[r];
+            }
+        }
+
+        for (int d = 0; d < 72; d += 16) {
+            const int width = (d + 16 <= 72) ? 16 : (72 - d);
+            if (width == 16) {
+                const __m512 vv = _mm512_loadu_ps(v_vec + d);
+                for (int r = 0; r < q_count; ++r) {
+                    __m512 ov = _mm512_loadu_ps(out[r] + d);
+                    ov = _mm512_fmadd_ps(ov, _mm512_set1_ps(scale_old[r]), _mm512_mul_ps(_mm512_set1_ps(scale_v[r]), vv));
+                    _mm512_storeu_ps(out[r] + d, ov);
+                }
+            } else {
+                for (int r = 0; r < q_count; ++r) {
+                    for (int t = 0; t < width; ++t) {
+                        out[r][d + t] = out[r][d + t] * scale_old[r] + scale_v[r] * v_vec[d + t];
+                    }
+                }
+            }
+        }
+    }
+
+    for (int r = 0; r < q_count; ++r) {
+        float *dst = out_head + (size_t)(q0 + r) * (size_t)aligned_head_dim;
+        const float inv = ssum[r] == 0.0f ? 0.0f : (1.0f / ssum[r]);
+        const __m512 invv = _mm512_set1_ps(inv);
+        for (int d = 0; d + 16 <= 72; d += 16) {
+            _mm512_storeu_ps(dst + d, _mm512_mul_ps(_mm512_loadu_ps(out[r] + d), invv));
+        }
+        for (int d = 64; d < 72; ++d) dst[d] = out[r][d] * inv;
+        for (int d = 72; d < aligned_head_dim; ++d) dst[d] = 0.0f;
+    }
+}
+
+typedef struct {
+    const float *q;
+    const float *k;
+    const float *v;
+    float *output;
+    int num_heads;
+    int num_kv_heads;
+    int num_tokens;
+    int aligned_head_dim;
+    int kv_stride_tokens;
+    float scale;
+} ck_attention_qblock4_args_t;
+
+static void ck_attention_full_qblock4_work(int ith, int nth, void *opaque)
+{
+    ck_attention_qblock4_args_t *args = (ck_attention_qblock4_args_t *) opaque;
+    const int T = args->num_tokens;
+    const int q_blocks = (T + 3) / 4;
+    const int total = args->num_heads * q_blocks;
+    const size_t head_stride = (size_t)T * (size_t)args->aligned_head_dim;
+    const size_t kv_head_stride = (size_t)args->kv_stride_tokens * (size_t)args->aligned_head_dim;
+
+    for (int idx = ith; idx < total; idx += nth) {
+        const int h = idx / q_blocks;
+        const int qb = idx - h * q_blocks;
+        const int q0 = qb * 4;
+        const int q_count = (q0 + 4 <= T) ? 4 : (T - q0);
+        const int kv_head = (int)((long long)h * (long long)args->num_kv_heads / (long long)args->num_heads);
+        const float *q_head = args->q + (size_t)h * head_stride;
+        const float *k_head = args->k + (size_t)kv_head * kv_head_stride;
+        const float *v_head = args->v + (size_t)kv_head * kv_head_stride;
+        float *out_head = args->output + (size_t)h * head_stride;
+        attention_flash_query4_full_avx512(q_head, k_head, v_head,
+                                           q0, q_count, T,
+                                           args->aligned_head_dim,
+                                           args->scale,
+                                           out_head);
+    }
+}
+#endif
+
 static void ck_attention_full_grid_work(int ith, int nth, void *opaque)
 {
     ck_attention_parallel_args_t *args = (ck_attention_parallel_args_t *) opaque;
@@ -2999,6 +3141,30 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
 #endif
 
     const int total_queries = num_heads * T;
+#if defined(__AVX512F__)
+    if (!causal && head_dim == 72 && aligned_head_dim >= 72 && ck_attention_qblock4_enabled()) {
+        ck_threadpool_t *pool = ck_threadpool_global();
+        const int q_blocks = (T + 3) / 4;
+        const int total_blocks = num_heads * q_blocks;
+        int active = ck_attention_pick_active_threads(pool, total_blocks, T);
+        if (pool && active > 1) {
+            ck_attention_qblock4_args_t args = {
+                .q = q,
+                .k = k,
+                .v = v,
+                .output = output,
+                .num_heads = num_heads,
+                .num_kv_heads = num_kv_heads,
+                .num_tokens = num_tokens,
+                .aligned_head_dim = aligned_head_dim,
+                .kv_stride_tokens = kv_stride_tokens,
+                .scale = scale,
+            };
+            ck_threadpool_dispatch_n(pool, active, ck_attention_full_qblock4_work, &args);
+            return;
+        }
+    }
+#endif
     if (ck_attention_parallel_enabled(total_queries, T, head_dim)) {
         ck_threadpool_t *pool = ck_threadpool_global();
         const int active = ck_attention_pick_active_threads(pool, total_queries, T);

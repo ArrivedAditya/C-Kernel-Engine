@@ -511,6 +511,14 @@ BENCH_TARGETS = {
         "perf_pattern": r"speedup\s+(\d+\.?\d*)x",
         "perf_unit": "speedup",
     },
+    "q4k_gateup_x16_chunk4": {
+        "name": "Q4_K Gate/Up x16 Chunk4",
+        "category": "bench",
+        "target": "bench-q4k-gateup-swiglu-x16-chunk4-quick",
+        "timeout_sec": 300,
+        "perf_pattern": r"speedup_x16\s+(\d+\.?\d*)x",
+        "perf_unit": "speedup",
+    },
 }
 
 # Quick subset for fast validation

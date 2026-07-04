@@ -59,13 +59,29 @@ If correctness fails, stop performance work and debug stitching/kernel parity fi
 Optimized flags currently used for the heavy 1024 visual-token smoke:
 
 ```bash
-CK_ENABLE_Q80_FP32_M4N4=1 CK_ENABLE_Q4K_GATEUP_SWIGLU_X16=1 CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP=20 CK_NUM_THREADS=20 OMP_NUM_THREADS=1
+CK_ENABLE_Q80_FP32_M4N4=1 \
+CK_ENABLE_Q4K_GATEUP_SWIGLU_X16=1 \
+CK_Q4K_X16_CHUNK4=1 \
+CK_ATTENTION_QBLOCK4=1 \
+CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP=20 \
+CK_NUM_THREADS=20 \
+OMP_NUM_THREADS=1
 ```
 
 Pipeline command:
 
 ```bash
-.venv/bin/python -B benchmarks/qwen3vl_ocr_perf_pipeline.py   --image version/v8/test_assets/v8_ocr_clean_text.ppm   --threads 20   --image-tokens 1024   --context-len 1536   --max-tokens 8   --enable-q80-m4n4   --enable-q4-gateup-x16   --emit-vtune
+.venv/bin/python -B benchmarks/qwen3vl_ocr_perf_pipeline.py \
+  --image version/v8/test_assets/v8_ocr_clean_text.ppm \
+  --threads 20 \
+  --image-tokens 1024 \
+  --context-len 1536 \
+  --max-tokens 8 \
+  --enable-q80-m4n4 \
+  --enable-q4-gateup-x16 \
+  --enable-q4-chunk4 \
+  --enable-attention-qblock4 \
+  --emit-vtune
 ```
 
 Expected text:
@@ -77,16 +93,57 @@ TOTAL 42
 
 Current optimized reference from this Xeon/OpenShift host:
 
-- Encoder: about 37.4 s
-- Decoder mixed prefill: about 38.5 s
+- Encoder: about 33.8 s
+- Decoder mixed prefill: about 34.3 s
 - Generation: about 1.3 s
-- Steady total: about 77.2 s
+- Steady total: about 69.4 s
 
-The current pipeline recommendation after the fp32 x Q8_0 M4N4 encoder fix is:
+The current pipeline recommendation after Q4 chunk4 reuse and attention qblock4 is:
 
 ```text
 decoder mlp_gate_up_swiglu / gemm_nt_q4_k_q8_k_gateup_swiglu_x16
 ```
+
+That op is still the largest measured mixed-prefill hotspot at about 12.2 s in
+the latest profile. The next work should improve Q4_K/Q8_K prefill reuse or
+prepacking, not enable the opt-in AVX512 paths globally without shape and host
+sweeps.
+
+## Local and Nightly Coverage
+
+The lightweight gate for the current Q4_K opt-in speed path is:
+
+```bash
+CK_Q4K_X16_CHUNK4=1 CK_NUM_THREADS=4 make bench-q4k-gateup-swiglu-x16-chunk4-quick
+```
+
+The chunk4 benchmark emits `speedup_x16`, so nightly can render it as a
+performance lane.
+
+The full OCR pipeline is the model-level proof:
+
+```bash
+CK_ENABLE_Q80_FP32_M4N4=1 \
+CK_ENABLE_Q4K_GATEUP_SWIGLU_X16=1 \
+CK_Q4K_X16_CHUNK4=1 \
+CK_ATTENTION_QBLOCK4=1 \
+CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP=20 \
+CK_NUM_THREADS=20 \
+OMP_NUM_THREADS=1 \
+make qwen3vl-ocr-perf-pipeline
+```
+
+Keep the full pipeline on high-memory runners or dedicated Xeon boxes with the
+Qwen3-VL artifacts cached. It is too expensive for every default CI pass, but it
+is the contract that proves the quick kernel gates translate into end-to-end OCR
+speed without text corruption.
+
+`CK_ATTENTION_QBLOCK4=1` is intentionally validated through the full OCR pipeline
+for now. The existing standalone `unittest/test_attention_full.py` flash tests
+currently fail their strict PyTorch tolerance on this AVX2 laptop even without
+qblock4 enabled, so promoting that suite as a qblock4 nightly gate would add
+noise rather than signal. Add a dedicated qblock4 parity microbench before making
+that dispatch a default nightly correctness lane.
 
 ## Current Known Rejections
 
