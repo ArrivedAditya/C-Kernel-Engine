@@ -1035,6 +1035,7 @@ def _apply_qwen3vl_ocr_fast_defaults(env: dict[str, str]) -> None:
     env.setdefault("CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP", "20")
     env.setdefault("CK_Q4K_X16_CHUNK4", "1")
     env.setdefault("CK_ATTENTION_QBLOCK4", "1")
+    env.setdefault("CK_Q4K_PACKED_META_X8_MAX_M", "2048")
     env.setdefault("CK_NUM_THREADS", "20")
     env.setdefault("OMP_NUM_THREADS", "1")
     env.setdefault("OMP_DYNAMIC", "FALSE")

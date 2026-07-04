@@ -35,8 +35,10 @@ extern void gemm_nt_q4_k_q8_k_parallel_dispatch(const void *A, const void *B,
                                                 int M, int N, int K);
 extern size_t q4_k_packed_meta_block_size(void);
 extern size_t q4_k_packed_meta_x8_block_size(void);
+extern size_t q4_k_packed_meta_x16_block_size(void);
 extern void pack_q4_k_to_packed_meta(const void *src, void *dst, int N, int K);
 extern void pack_q4_k_to_packed_meta_x8(const void *src, void *dst, int N, int K);
+extern void pack_q4_k_to_packed_meta_x16(const void *src, void *dst, int N, int K);
 extern void gemm_nt_q4_k_packed_meta_q8_k_threaded(const void *A_q8,
                                                    const void *B_packed,
                                                    const float *bias,
@@ -62,6 +64,20 @@ extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(const void *A_q8,
                                                             int M, int N, int K,
                                                             int tile_m,
                                                             int threads);
+extern void gemm_nt_q4_k_packed_meta_x16_q8_k_threaded_mreuse(const void *A_q8,
+                                                              const void *B_packed_x16,
+                                                              const float *bias,
+                                                              float *C,
+                                                              int M, int N, int K,
+                                                              int tile_m,
+                                                              int threads);
+extern void gemm_nt_q4_k_packed_meta_x16_q8_k_threaded_mtile(const void *A_q8,
+                                                             const void *B_packed_x16,
+                                                             const float *bias,
+                                                             float *C,
+                                                             int M, int N, int K,
+                                                             int tile_m,
+                                                             int threads);
 
 typedef void (*llama_gemm_q4_k_fn)(const void *, const float *, float *, int, int, int);
 
@@ -147,6 +163,7 @@ typedef struct {
     const uint8_t *W_q4;
     const uint8_t *W_packed;
     const uint8_t *W_packed_x8;
+    const uint8_t *W_packed_x16;
     const float *A_fp32;
     const float *bias;
     float *C;
@@ -155,6 +172,7 @@ typedef struct {
     int K;
     int threads;
     int x8mt_tile_m;
+    int x16_tile_m;
     llama_gemm_q4_k_fn llama_fn;
 } bench_ctx_t;
 
@@ -186,6 +204,16 @@ static void call_ck_packed_x8_nsplit(void *p) {
 static void call_ck_packed_x8_mtile(void *p) {
     bench_ctx_t *c = (bench_ctx_t *)p;
     gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(c->A_q8, c->W_packed_x8, c->bias, c->C, c->M, c->N, c->K, c->x8mt_tile_m, c->threads);
+}
+
+static void call_ck_packed_x16_mreuse(void *p) {
+    bench_ctx_t *c = (bench_ctx_t *)p;
+    gemm_nt_q4_k_packed_meta_x16_q8_k_threaded_mreuse(c->A_q8, c->W_packed_x16, c->bias, c->C, c->M, c->N, c->K, c->x16_tile_m, c->threads);
+}
+
+static void call_ck_packed_x16_mtile(void *p) {
+    bench_ctx_t *c = (bench_ctx_t *)p;
+    gemm_nt_q4_k_packed_meta_x16_q8_k_threaded_mtile(c->A_q8, c->W_packed_x16, c->bias, c->C, c->M, c->N, c->K, c->x16_tile_m, c->threads);
 }
 
 static void call_llama(void *p) {
@@ -243,6 +271,7 @@ int main(int argc, char **argv) {
     const int pool_threads = pool ? ck_threadpool_n_threads(pool) : 1;
     const int threads = parse_threads() > 0 ? parse_threads() : pool_threads;
     const int x8mt_tile_m = parse_env_int("CK_Q4K_PACKED_META_X8MT_TILE_M", 2);
+    const int x16_tile_m = parse_env_int("CK_Q4K_PACKED_META_X16_TILE_M", 8);
     llama_gemm_q4_k_fn llama_fn = load_llama_gemm();
 
     const shape_t quick_shapes[] = {
@@ -263,15 +292,18 @@ int main(int argc, char **argv) {
         {"prefill128", 128, 896, 4864, "long compact down"},
         /* Wide MLP shape: stresses output tiling and thread occupancy. */
         {"wide_mlp", 64, 2560, 10240, "wide mlp"},
+        /* Qwen3-VL OCR mixed-prefill projection/down shapes. */
+        {"qwen3vl_proj", 1028, 4096, 4096, "Qwen3-VL q/out proj"},
+        {"qwen3vl_down", 1028, 4096, 11008, "Qwen3-VL mlp down"},
         {NULL, 0, 0, 0, NULL},
     };
     const shape_t *shapes = quick ? quick_shapes : full_shapes;
 
     printf("Q4_K x Q8_K prefill dispatch matrix; lower ms is better\n");
-    printf("threads=%d warmup=%d iters=%d x8mt_tile_m=%d llama=%s\n", threads, warmup, iters, x8mt_tile_m, llama_fn ? "yes" : "no");
-    printf("%-14s %5s %6s %6s %10s %10s %10s %10s %10s %10s %10s %8s %8s %8s %8s %9s %9s %9s %9s %9s\n",
-           "shape", "M", "N", "K", "serial", "pool", "packed-M", "packed-N", "packed-x8", "x8mt", "llama*",
-           "pool/x", "packN/x", "x8/x", "x8mt/x", "d_pool", "d_packN", "d_x8", "d_x8mt", "d_llama");
+    printf("threads=%d warmup=%d iters=%d x8mt_tile_m=%d x16_tile_m=%d llama=%s\n", threads, warmup, iters, x8mt_tile_m, x16_tile_m, llama_fn ? "yes" : "no");
+    printf("%-14s %5s %6s %6s %10s %10s %10s %10s %10s %10s %10s %10s %10s %8s %8s %8s %8s %8s %8s %9s %9s %9s %9s %9s %9s %9s\n",
+           "shape", "M", "N", "K", "serial", "pool", "packed-M", "packed-N", "packed-x8", "x8mt", "x16reuse", "x16mt", "llama*",
+           "pool/x", "packN/x", "x8/x", "x8mt/x", "x16r/x", "x16mt/x", "d_pool", "d_packN", "d_x8", "d_x8mt", "d_x16r", "d_x16mt", "d_llama");
 
     for (int s = 0; shapes[s].name; ++s) {
         const int M = shapes[s].M;
@@ -284,17 +316,19 @@ int main(int argc, char **argv) {
         const size_t q8_bytes = (size_t)M * (size_t)(K / QK_K) * sizeof(block_q8_K);
         const size_t packed_bytes = (size_t)N * (size_t)(K / QK_K) * q4_k_packed_meta_block_size();
         const size_t packed_x8_bytes = (size_t)((N + 7) / 8) * (size_t)(K / QK_K) * q4_k_packed_meta_x8_block_size();
+        const size_t packed_x16_bytes = (size_t)((N + 15) / 16) * (size_t)(K / QK_K) * q4_k_packed_meta_x16_block_size();
 
         float *A = (float *)malloc((size_t)M * (size_t)K * sizeof(float));
         uint8_t *A_q8 = (uint8_t *)malloc(q8_bytes);
         uint8_t *W = (uint8_t *)malloc(q4_bytes);
         uint8_t *W_packed = (uint8_t *)malloc(packed_bytes);
         uint8_t *W_packed_x8 = (uint8_t *)malloc(packed_x8_bytes);
+        uint8_t *W_packed_x16 = (uint8_t *)malloc(packed_x16_bytes);
         float *bias = (float *)malloc((size_t)N * sizeof(float));
         float *C_ref = (float *)calloc(out_elems, sizeof(float));
         float *C = (float *)calloc(out_elems, sizeof(float));
         float *C_llama = (float *)calloc(out_elems, sizeof(float));
-        if (!A || !A_q8 || !W || !W_packed || !W_packed_x8 || !bias || !C_ref || !C || !C_llama) {
+        if (!A || !A_q8 || !W || !W_packed || !W_packed_x8 || !W_packed_x16 || !bias || !C_ref || !C || !C_llama) {
             fprintf(stderr, "allocation failed for %s\n", shapes[s].name);
             return 2;
         }
@@ -306,12 +340,14 @@ int main(int argc, char **argv) {
         quantize_acts_q8k(A, A_q8, M, K);
         pack_q4_k_to_packed_meta(W, W_packed, N, K);
         pack_q4_k_to_packed_meta_x8(W, W_packed_x8, N, K);
+        pack_q4_k_to_packed_meta_x16(W, W_packed_x16, N, K);
 
         bench_ctx_t ctx = {
             .A_q8 = A_q8,
             .W_q4 = W,
             .W_packed = W_packed,
             .W_packed_x8 = W_packed_x8,
+            .W_packed_x16 = W_packed_x16,
             .A_fp32 = A,
             .bias = bias,
             .C = C,
@@ -320,6 +356,7 @@ int main(int argc, char **argv) {
             .K = K,
             .threads = threads,
             .x8mt_tile_m = x8mt_tile_m,
+            .x16_tile_m = x16_tile_m,
             .llama_fn = llama_fn,
         };
 
@@ -349,6 +386,14 @@ int main(int argc, char **argv) {
         const double t_packed_x8mt = bench_ms(call_ck_packed_x8_mtile, &ctx, warmup, iters);
         const float d_packed_x8mt = max_abs_diff(C_ref, C, out_elems);
 
+        memset(C, 0, out_elems * sizeof(float));
+        const double t_packed_x16reuse = bench_ms(call_ck_packed_x16_mreuse, &ctx, warmup, iters);
+        const float d_packed_x16reuse = max_abs_diff(C_ref, C, out_elems);
+
+        memset(C, 0, out_elems * sizeof(float));
+        const double t_packed_x16mt = bench_ms(call_ck_packed_x16_mtile, &ctx, warmup, iters);
+        const float d_packed_x16mt = max_abs_diff(C_ref, C, out_elems);
+
         double t_llama = 0.0;
         float d_llama = 0.0f;
         if (llama_fn) {
@@ -357,22 +402,26 @@ int main(int argc, char **argv) {
             d_llama = max_abs_diff(C_ref, C_llama, out_elems);
         }
 
-        printf("%-14s %5d %6d %6d %10.3f %10.3f %10.3f %10.3f %10.3f %10.3f ",
-               shapes[s].name, M, N, K, t_serial, t_pool, t_packed_m, t_packed_n, t_packed_x8, t_packed_x8mt);
+        printf("%-14s %5d %6d %6d %10.3f %10.3f %10.3f %10.3f %10.3f %10.3f %10.3f %10.3f ",
+               shapes[s].name, M, N, K, t_serial, t_pool, t_packed_m, t_packed_n, t_packed_x8, t_packed_x8mt, t_packed_x16reuse, t_packed_x16mt);
         if (llama_fn) {
             printf("%10.3f ", t_llama);
         } else {
             printf("%10s ", "n/a");
         }
-        printf("%8.2fx %8.2fx %8.2fx %8.2fx %9.2g %9.2g %9.2g %9.2g %9.2g\n",
+        printf("%8.2fx %8.2fx %8.2fx %8.2fx %8.2fx %8.2fx %9.2g %9.2g %9.2g %9.2g %9.2g %9.2g %9.2g\n",
                t_serial / t_pool,
                t_serial / t_packed_n,
                t_serial / t_packed_x8,
                t_serial / t_packed_x8mt,
+               t_serial / t_packed_x16reuse,
+               t_serial / t_packed_x16mt,
                d_pool,
                d_packed_n,
                d_packed_x8,
                d_packed_x8mt,
+               d_packed_x16reuse,
+               d_packed_x16mt,
                d_llama);
 
         free(A);
@@ -380,6 +429,7 @@ int main(int argc, char **argv) {
         free(W);
         free(W_packed);
         free(W_packed_x8);
+        free(W_packed_x16);
         free(bias);
         free(C_ref);
         free(C);
