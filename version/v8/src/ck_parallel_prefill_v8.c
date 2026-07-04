@@ -37,6 +37,7 @@
 #include "ck_parallel_prefill_v8.h"
 #include "ck_threadpool.h"
 #include "ckernel_quant.h"
+#include "ck_speed_profiles.h"
 
 #include <stdio.h>
 #include <string.h>

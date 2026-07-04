@@ -1017,6 +1017,28 @@ def step_sweep_kernels(work_dir: Path, ir_paths: dict[str, Path], *, quick: bool
     return report_path
 
 
+
+def _qwen3vl_ocr_fast_profile_enabled(env: dict[str, str] | None = None) -> bool:
+    env = env or os.environ
+    alias = env.get("CK_QWEN3VL_OCR_FAST", "")
+    if alias and alias != "0":
+        return True
+    profile = env.get("CK_SPEED_PROFILE", "")
+    return profile in {"qwen3vl_ocr_xeon_avx512", "qwen3vl_ocr_fast", "qwen3vl_ocr"}
+
+
+def _apply_qwen3vl_ocr_fast_defaults(env: dict[str, str]) -> None:
+    if not _qwen3vl_ocr_fast_profile_enabled(env):
+        return
+    env.setdefault("CK_ENABLE_Q80_FP32_M4N4", "1")
+    env.setdefault("CK_ENABLE_Q4K_GATEUP_SWIGLU_X16", "1")
+    env.setdefault("CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP", "20")
+    env.setdefault("CK_Q4K_X16_CHUNK4", "1")
+    env.setdefault("CK_ATTENTION_QBLOCK4", "1")
+    env.setdefault("CK_NUM_THREADS", "20")
+    env.setdefault("OMP_NUM_THREADS", "1")
+    env.setdefault("OMP_DYNAMIC", "FALSE")
+
 def step_run_chat(work_dir: Path, args: argparse.Namespace, *, gguf_path: Path | None) -> None:
     log_step(6, "Starting chat")
     kernel_lib = BUILD_DIR / "libckernel_engine.so"
@@ -1029,6 +1051,7 @@ def step_run_chat(work_dir: Path, args: argparse.Namespace, *, gguf_path: Path |
     if env.get("LD_LIBRARY_PATH"):
         ld_items.append(env["LD_LIBRARY_PATH"])
     env["LD_LIBRARY_PATH"] = ":".join(ld_items)
+    _apply_qwen3vl_ocr_fast_defaults(env)
     env.setdefault("CK_NUM_THREADS", str(_detect_default_ck_threads()))
     env.setdefault("OMP_NUM_THREADS", "1")
     env.setdefault("OMP_DYNAMIC", "FALSE")
