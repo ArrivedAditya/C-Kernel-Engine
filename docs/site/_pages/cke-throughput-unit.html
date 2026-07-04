@@ -139,6 +139,42 @@
     CKE cares about the measured active path: which weights are actually read, which activations are produced, which cache/state buffers are updated, and which bytes cross sockets or nodes.
 </p>
 
+<h2>Lifecycle Envelope and Concurrency</h2>
+
+<p>
+    CKU is first a <strong>single-stream lifecycle unit</strong>.
+    It asks what the runtime must cycle for one model instance serving one token
+    path at the model's intended operating envelope.
+    If a model advertises a 1 million token context length with an 8K embedding
+    dimension, the lifecycle envelope should include the memory behavior needed
+    to support that context: the active weights, the full KV/cache or recurrent
+    state footprint, the activations needed by prefill/decode, and the load/store
+    traffic required to keep the token path moving.
+</p>
+
+<p>
+    That does not mean every CKU number automatically includes every concurrent
+    user. Concurrency is a separate service-level multiplier.
+    A single-user CKU report answers, "Can this system run one full-context model
+    stream at this token rate?"
+    A service report then asks, "How many such streams can the cluster run at the
+    same time, and what token rate does each user receive?"
+</p>
+
+<pre><code>single_user_cku = active_lifecycle_bytes_per_token / seconds_per_token
+
+service_cku     = single_user_cku * concurrent_streams
+
+per_user_rate   = total_generated_tokens_per_second / concurrent_streams</code></pre>
+
+<p>
+    For example, a cluster might target 1 token/sec for 1000 concurrent users on
+    a very large model. That is a different operating point from 1000 tokens/sec
+    for one user, even if both produce 1000 aggregate tokens/sec.
+    CKU should make both cases explicit: the active lifecycle bytes per user, the
+    concurrency count, the total aggregate byte rate, and the per-user token rate.
+</p>
+
 <table>
     <thead>
         <tr>
