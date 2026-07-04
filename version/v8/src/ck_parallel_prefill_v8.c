@@ -442,7 +442,8 @@ static int ck_should_use_q4k_packed_meta_x8_prefill(int M, int N, int K)
     const int min_m = ck_env_int_or2("CK_Q4K_PACKED_META_X8_MIN_M", NULL, 16);
     if (M < min_m) return 0;
     if (getenv("CK_FORCE_Q4K_PACKED_META_X8_PREFILL")) return 1;
-    const int max_m = ck_env_int_or2("CK_Q4K_PACKED_META_X8_MAX_M", NULL, 64);
+    const int x8_max_m_default = ck_speed_profile_qwen3vl_ocr_fast() ? 2048 : 64;
+    const int max_m = ck_env_int_or2("CK_Q4K_PACKED_META_X8_MAX_M", NULL, x8_max_m_default);
     if (max_m > 0 && M > max_m) return 0;
 
     /* Experimental x8 prefill gate, derived from the dispatch matrix:

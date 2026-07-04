@@ -67,6 +67,27 @@ def _num(obj: dict[str, Any], key: str) -> float:
         return 0.0
 
 
+
+def _qwen3vl_ocr_fast_profile_enabled(env: dict[str, str]) -> bool:
+    alias = env.get("CK_QWEN3VL_OCR_FAST", "")
+    if alias and alias != "0":
+        return True
+    return env.get("CK_SPEED_PROFILE", "") in {"qwen3vl_ocr_xeon_avx512", "qwen3vl_ocr_fast", "qwen3vl_ocr"}
+
+
+def _apply_qwen3vl_ocr_fast_defaults(env: dict[str, str]) -> None:
+    if not _qwen3vl_ocr_fast_profile_enabled(env):
+        return
+    env.setdefault("CK_ENABLE_Q80_FP32_M4N4", "1")
+    env.setdefault("CK_ENABLE_Q4K_GATEUP_SWIGLU_X16", "1")
+    env.setdefault("CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP", "20")
+    env.setdefault("CK_Q4K_X16_CHUNK4", "1")
+    env.setdefault("CK_ATTENTION_QBLOCK4", "1")
+    env.setdefault("CK_Q4K_PACKED_META_X8_MAX_M", "2048")
+    env.setdefault("CK_NUM_THREADS", "20")
+    env.setdefault("OMP_NUM_THREADS", "1")
+    env.setdefault("OMP_DYNAMIC", "FALSE")
+
 def _run_one(
     *,
     model: str,
@@ -87,6 +108,7 @@ def _run_one(
     timeout: int,
 ) -> dict[str, Any]:
     env = os.environ.copy()
+    _apply_qwen3vl_ocr_fast_defaults(env)
     env["CK_NUM_THREADS"] = str(threads)
     env["OMP_NUM_THREADS"] = env.get("OMP_NUM_THREADS", "1")
     cmd = [

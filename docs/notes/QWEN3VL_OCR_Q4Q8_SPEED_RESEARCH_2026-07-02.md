@@ -367,3 +367,61 @@ CK is now close enough that the next improvements should be kernel-specific:
 2. Load/conversion-time prepacking instead of lazy runtime packing.
 3. Cache-derived active-thread defaults with env overrides.
 4. Separate results by CPU family; do not tune only for this OpenShift Xeon.
+
+## 2026-07-04 Q4_K x8 Large-M Projection/Down Profile
+
+The mixed-prefill profile after the encoder and gate/up fixes showed the next
+Q4-heavy costs were ordinary projection/down GEMMs rather than the fused
+`mlp_gate_up_swiglu` path:
+
+| Op | Baseline Time | Notes |
+|---|---:|---|
+| `mlp_down` / `gemm_nt_q4_k_q8_k` | ~5.3 s | Q4 projection/down family |
+| `out_proj` / `gemm_nt_q4_k_q8_k` | ~3.8 s | decoder output projection |
+| `q_proj` / `gemm_nt_q4_k_q8_k` | ~3.3 s | decoder Q projection |
+
+The dispatch matrix benchmark was extended to include the generic packed-meta
+x16 path and Qwen3-VL OCR-shaped rows. At `M=1028`, `N=4096`, `K=4096/11008`,
+the existing x8/x16 packed paths were faster than the current threadpool
+fallback in isolation:
+
+| Shape | Pool | x8 | x16 reuse | Best Read |
+|---|---:|---:|---:|---|
+| `qwen3vl_proj` (`1028x4096x4096`) | ~104.5 ms | ~78.5 ms | ~71.3 ms | x16 best, x8 still useful |
+| `qwen3vl_down` (`1028x4096x11008`) | ~289.4 ms | ~173.5 ms | ~179.8 ms | x8 best |
+
+A full OCR A/B then raised only the x8 max-M gate for the Qwen3-VL OCR speed
+profile (`CK_Q4K_PACKED_META_X8_MAX_M=2048`). The answer stayed correct
+(`CK OCR TEST\nTOTAL 42`) and mixed prefill improved:
+
+| Run | Encoder | Mixed Prefill | Decode | Output |
+|---|---:|---:|---:|---|
+| profile baseline | 34910.5 ms | 33006.0 ms | 1329.1 ms | `CK OCR TEST\nTOTAL 42` |
+| + x8 max-M 2048 | 38408.5 ms | 31648.5 ms | 1390.2 ms | `CK OCR TEST\nTOTAL 42` |
+
+Kernel/op deltas from that run:
+
+| Kernel/Op | Delta |
+|---|---:|
+| `gemm_nt_q4_k_q8_k` / `out_proj` | -863 ms |
+| `gemm_nt_q4_k_q8_k` / `mlp_down` | -593 ms |
+| `gemm_nt_q4_k_q8_k` / `q_proj` | -574 ms |
+| `gemm_nt_q4_k_q8_k` / `k_proj` | -117 ms |
+| `gemm_nt_q4_k_q8_k` / `v_proj` | -72 ms |
+| `gemm_nt_q4_k_q8_k_gateup_swiglu_x16` / `mlp_gate_up_swiglu` | +820 ms |
+
+Net: this is a real mixed-prefill win despite gate/up noise in the full run. The
+setting is profile-scoped, not global: normal Q4_K x8 dispatch remains capped at
+`M<=64`, while `CK_SPEED_PROFILE=qwen3vl_ocr_*` uses `M<=2048` unless explicitly
+overridden.
+
+Final wrapper verification, with only `CK_SPEED_PROFILE=qwen3vl_ocr_xeon_avx512`
+set in the benchmark command after applying profile defaults consistently:
+
+| Run | Encoder | Mixed Prefill | Decode | Output |
+|---|---:|---:|---:|---|
+| profile baseline | 34910.5 ms | 33006.0 ms | 1329.1 ms | `CK OCR TEST\nTOTAL 42` |
+| profile + x8 max-M default | 38107.6 ms | 30695.1 ms | 1390.6 ms | `CK OCR TEST\nTOTAL 42` |
+
+Final mixed-prefill delta: about -2.31 s on this generated OCR check. The main
+wins were Q4 `mlp_down` (-1.02 s), `out_proj` (-0.91 s), and `q_proj` (-0.72 s).
