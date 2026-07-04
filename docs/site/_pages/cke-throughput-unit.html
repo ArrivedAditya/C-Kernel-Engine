@@ -212,6 +212,77 @@ per_user_rate   = total_generated_tokens_per_second / concurrent_streams</code><
     </tbody>
 </table>
 
+<h2>Node Roofline Math</h2>
+
+<p>
+    CKU is not only a memory-bandwidth number and it is not only a FLOPS number.
+    A CPU node can only contribute the useful part of the slowest roof: memory
+    bandwidth, compute throughput, or network movement when the run is
+    distributed. This is why CKU belongs next to roofline analysis.
+</p>
+
+<pre><code>required_service_cku =
+    active_lifecycle_bytes_per_token
+  * tokens_per_second_per_user
+  * concurrent_streams
+
+node_memory_roof =
+    sockets
+  * memory_channels_per_socket
+  * transfer_rate_MTps
+  * 8 bytes_per_channel_transfer
+
+node_compute_roof_bytes =
+    useful_flops_per_second / arithmetic_intensity_flops_per_byte
+
+effective_node_cku =
+    min(node_memory_roof, node_compute_roof_bytes, node_network_roof)
+  * runtime_efficiency
+
+nodes_needed =
+    required_service_cku / effective_node_cku</code></pre>
+
+<p>
+    For DDR memory, a practical first-pass estimate is:
+    <code>channel_GBps = MT/s * 8 bytes / 1000</code>.
+    DDR5-6600 is about 52.8 GB/s per channel.
+    A 12-channel socket is therefore about 633.6 GB/s theoretical, and a
+    dual-socket system is about 1.27 TB/s theoretical before NUMA effects,
+    memory-controller efficiency, page placement, and OS noise.
+    At 8800 MT/s, the same 12-channel socket is about 844.8 GB/s, or about
+    1.69 TB/s for two sockets.
+</p>
+
+<p>
+    Compute has its own roof. For an AVX-512 FP32 FMA path, a rough dense-core
+    estimate is:
+    <code>cores * GHz * FMA_units_per_core * lanes_per_vector * 2 FLOPs_per_FMA</code>.
+    That estimate changes for BF16, INT8, AMX tile paths, VNNI, SVE, or Neon.
+    Quantized Q4/Q6 kernels are often limited by unpacking, metadata,
+    reductions, cache reuse, and memory traffic, so AMX is not automatically the
+    answer. In many CKE paths, AVX-512/VNNI-style layout work is the more direct
+    lever.
+</p>
+
+<p>
+    This also keeps the 1 PB/s north star honest. If a dual-socket CPU node can
+    deliver 1.2 TB/s of useful lifecycle movement, then 1 PB/s requires roughly
+    833 such nodes in the perfect case. At 60-70% useful efficiency, the number
+    is closer to 1200-1400 nodes. If quantization, MoE routing, locality, and
+    cache reuse reduce the active path to 100 GB/token at 100 tokens/sec, the
+    requirement becomes 10 TB/s, which is a very different cluster shape.
+</p>
+
+<p>
+    The CPU thesis is not that one socket beats an H100 at dense tensor math.
+    The thesis is that commodity capacity, many memory channels, many physical
+    cores, SIMD/matrix units, Linux tuning, MPI/RDMA placement, and generated C
+    scheduling can combine into a measurable aggregate byte machine. GPUs can
+    also reach enormous aggregate bandwidth, but a 1 TB resident model may need
+    many expensive HBM devices just for capacity before it even starts serving
+    traffic.
+</p>
+
 <h2>What CKE Optimizes</h2>
 
 <p>
