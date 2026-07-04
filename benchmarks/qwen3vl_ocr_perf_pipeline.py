@@ -255,6 +255,8 @@ def _vtune_commands(args: argparse.Namespace) -> list[str]:
     env_prefix = [
         f"CK_ENABLE_Q80_FP32_M4N4={int(bool(args.enable_q80_m4n4))}",
         f"CK_ENABLE_Q4K_GATEUP_SWIGLU_X16={int(bool(args.enable_q4_gateup_x16))}",
+        f"CK_Q4K_X16_CHUNK4={int(bool(args.enable_q4_chunk4))}",
+        f"CK_ATTENTION_QBLOCK4={int(bool(args.enable_attention_qblock4))}",
         f"CK_NUM_THREADS={args.threads}",
         "OMP_NUM_THREADS=1",
     ]
@@ -291,6 +293,8 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=1800)
     ap.add_argument("--enable-q80-m4n4", action="store_true")
     ap.add_argument("--enable-q4-gateup-x16", action="store_true")
+    ap.add_argument("--enable-q4-chunk4", action="store_true")
+    ap.add_argument("--enable-attention-qblock4", action="store_true")
     ap.add_argument("--emit-vtune", action="store_true")
     args = ap.parse_args()
 
@@ -302,6 +306,10 @@ def main() -> int:
     if args.enable_q4_gateup_x16:
         env["CK_ENABLE_Q4K_GATEUP_SWIGLU_X16"] = "1"
         env.setdefault("CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP", str(args.threads))
+    if args.enable_q4_chunk4:
+        env["CK_Q4K_X16_CHUNK4"] = "1"
+    if args.enable_attention_qblock4:
+        env["CK_ATTENTION_QBLOCK4"] = "1"
 
     if args.analyze_existing is None:
         cmd = [
@@ -355,6 +363,8 @@ def main() -> int:
             "max_tokens": int(args.max_tokens),
             "enable_q80_m4n4": bool(args.enable_q80_m4n4),
             "enable_q4_gateup_x16": bool(args.enable_q4_gateup_x16),
+            "enable_q4_chunk4": bool(args.enable_q4_chunk4),
+            "enable_attention_qblock4": bool(args.enable_attention_qblock4),
         },
         **summary,
         "comparison": comparison,

@@ -212,7 +212,7 @@ int main(int argc, char **argv) {
     double unfused = 0.0;
     double fused = 0.0;
     double x16 = 0.0;
-    if (mode == 0 || mode == 1) {
+    if (mode == 0 || mode == 1 || mode == 3) {
         ctx.out = out_ref;
         unfused = bench_ms(run_unfused, &ctx, warmup, iters);
     }

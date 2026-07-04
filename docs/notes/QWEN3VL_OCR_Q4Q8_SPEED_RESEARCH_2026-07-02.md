@@ -203,6 +203,71 @@ about 77.2 s steady-state while preserving the OCR answer. The new encoder top
 bottleneck is visual attention (`attention_forward_full_head_major_gqa_flash_strided`,
 about 15.0 s), followed by Q8_0/Q8_0 MLP/QKV and remaining fp32 branch FC work.
 
+
+## 2026-07-03 Q4_K Gate/Up x16 Chunk4 Reuse
+
+After the fp32 x Q8_0 M4N4 encoder fix, the largest decoder-side mixed-prefill
+projection remained `mlp_gate_up_swiglu`. The x16 packed Q4_K path still loaded
+the same Q8_K activation block once per output lane. An opt-in chunked reuse path
+behind `CK_Q4K_X16_CHUNK4=1` processes up to four x16 lanes per activation load,
+so the Q8_K row stays hot while several Q4_K output lanes consume it.
+
+Focused gate/up benchmark (`M=1028, D=12288, K=4096`, 20 CK threads):
+
+| Variant | Time | Parity |
+|---|---:|---|
+| x16 baseline | ~403 ms | reference |
+| x16 chunk4 | ~274 ms | rel diff ~1.0e-6, cosine 1.0 |
+
+Large-prefix Qwen3-VL OCR with `CK_ENABLE_Q80_FP32_M4N4=1`,
+`CK_ENABLE_Q4K_GATEUP_SWIGLU_X16=1`, and `CK_Q4K_X16_CHUNK4=1`:
+
+| Run | Encoder | Mixed Prefill | Decode | Steady | Output |
+|---|---:|---:|---:|---:|---|
+| M4N4 + gate/up x16 | 37419.3 ms | 38479.5 ms | 1299.6 ms | 77198.3 ms | `CK OCR TEST\nTOTAL 42` |
+| + Q4 chunk4 reuse | 37474.0 ms | 35169.9 ms | 1285.7 ms | 73929.6 ms | `CK OCR TEST\nTOTAL 42` |
+
+Net: chunk4 is a correctness-clean opt-in improvement for this workload, reducing
+mixed prefill by about 3.3 s and the steady OCR run by about 4.4%. The next
+measured bottleneck moves to Qwen3-VL encoder full attention
+(`attention_forward_full_head_major_gqa_flash_strided`, about 15.0 s). A quick
+attention-thread-cap sweep did not produce a stable scheduler-only win, and the
+existing tiled/ggml full-attention path is much slower at the real encoder shape
+(`T=4232, H=16, D=72`).
+
+
+## 2026-07-03 AVX512 Full-Attention QBlock4 Reuse
+
+After Q4 chunk4 reuse, the largest encoder-side cost was full visual attention
+at the real Qwen3-VL encoder shape (`T=4232, H=16, D=72`). The existing full
+attention path computes one query row at a time, so each nearby query rereads the
+same K/V rows. An opt-in AVX512 path behind `CK_ATTENTION_QBLOCK4=1` processes
+four query rows together for non-causal full attention with `head_dim=72`,
+keeping K/V rows hotter across the four query accumulators. The path is guarded
+by shape and ISA checks and falls back to the existing kernel otherwise.
+
+Focused exact-shape attention benchmark (`T=4232, H=16, KV=16, D=72`, 20 CK
+threads):
+
+| Variant | Time | Parity |
+|---|---:|---|
+| existing full attention | ~622.9 ms | reference |
+| opt-in qblock4 | ~598.0 ms | max diff 0, cosine 1.0 |
+
+Large-prefix Qwen3-VL OCR with `CK_ENABLE_Q80_FP32_M4N4=1`,
+`CK_ENABLE_Q4K_GATEUP_SWIGLU_X16=1`, `CK_Q4K_X16_CHUNK4=1`, and
+`CK_ATTENTION_QBLOCK4=1`:
+
+| Run | Encoder | Mixed Prefill | Decode | Steady | Output |
+|---|---:|---:|---:|---:|---|
+| chunk4 baseline | 37908.6 ms | 34832.3 ms | 1370.4 ms | 74111.4 ms | `CK OCR TEST\nTOTAL 42` |
+| + attention qblock4 | 33803.1 ms | 34260.0 ms | 1328.2 ms | 69391.3 ms | `CK OCR TEST\nTOTAL 42` |
+
+Net: qblock4 is a correctness-clean opt-in model-level win on this Xeon/OpenShift
+node, saving about 4.7 s on the clean OCR workload. The next measured bottleneck
+moves back to decoder mixed prefill, especially `mlp_gate_up_swiglu` through
+`gemm_nt_q4_k_q8_k_gateup_swiglu_x16` at about 12.2 s in the latest profile.
+
 ## Retest Matrix for Other CPUs
 
 Run this matrix on Ryzen, AVX2-only i7, and any larger-cache Xeon/EPYC host:
