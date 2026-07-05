@@ -2454,6 +2454,7 @@ THREADPOOL_BIN := $(BUILD_DIR)/test_threadpool_parity
 Q4K_DISPATCH_MATRIX_BIN := $(BUILD_DIR)/bench_q4k_dispatch_matrix
 Q4K_GATEUP_SWIGLU_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu
 Q4K_GATEUP_SWIGLU_OMP_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu_omp_standalone
+QWEN3VL_ENCODER_ATTN_BIN := $(BUILD_DIR)/bench_qwen3vl_encoder_attention
 Q80_FP32_GEMM_BIN := $(BUILD_DIR)/bench_q8_0_fp32_gemm
 V66_SRC_DIR    := version/v6.6/src
 V8_SRC_DIR     := version/v8/src
@@ -2527,6 +2528,20 @@ $(Q4K_GATEUP_SWIGLU_OMP_BIN): $(LIB) research/q4k_gateup_swiglu/bench_q4k_gateup
 bench-q4k-gateup-swiglu-omp: $(Q4K_GATEUP_SWIGLU_OMP_BIN)
 	@echo "Running standalone OpenMP Q4_K gate_up+SwiGLU benchmark..."
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(Q4K_GATEUP_SWIGLU_OMP_BIN)
+
+$(QWEN3VL_ENCODER_ATTN_BIN): $(LIB) benchmarks/bench_qwen3vl_encoder_attention.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 -march=native $(AVX_FLAGS) $(SSSE3_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		benchmarks/bench_qwen3vl_encoder_attention.c \
+		-L$(BUILD_DIR) -lckernel_engine -lm -lpthread \
+		-Wl,-rpath,$(BUILD_DIR) \
+		-o $(QWEN3VL_ENCODER_ATTN_BIN)
+
+bench-qwen3vl-encoder-attention: $(QWEN3VL_ENCODER_ATTN_BIN)
+	@echo "Running Qwen3-VL encoder full-attention benchmark..."
+	CK_SPEED_PROFILE=qwen3vl_ocr_xeon_avx512 CK_NUM_THREADS=$${CK_NUM_THREADS:-20} \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH \
+		$(QWEN3VL_ENCODER_ATTN_BIN) --threads $${CK_NUM_THREADS:-20} --iters $${CK_ATTN_ITERS:-3} --warmup $${CK_ATTN_WARMUP:-1} --tokens $${CK_ATTN_TOKENS:-4232}
 
 $(Q80_FP32_GEMM_BIN): $(LIB) benchmarks/bench_q8_0_fp32_gemm.c
 	@mkdir -p $(BUILD_DIR)
@@ -2779,7 +2794,7 @@ qwen3vl-ocr-perf-analyze:
 		--json-out build/qwen3vl_ocr_perf_pipeline.json \
 		--md-out build/qwen3vl_ocr_perf_pipeline.md
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q4k-gateup-swiglu-x16-chunk4-quick bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick qwen3vl-ocr-perf-pipeline qwen3vl-ocr-perf-analyze
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q4k-gateup-swiglu-x16-chunk4-quick bench-qwen3vl-encoder-attention bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick qwen3vl-ocr-perf-pipeline qwen3vl-ocr-perf-analyze
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

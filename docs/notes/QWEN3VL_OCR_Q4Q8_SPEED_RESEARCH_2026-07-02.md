@@ -448,3 +448,82 @@ Qwen3-VL OCR speed profile defaults as `CK_ATTENTION_THREAD_CAP=16`, while
 normal runs and explicit user env settings remain unchanged. This is a modest
 contention/cache tuning win, not a replacement for a better encoder attention
 microkernel.
+
+## 2026-07-05 Q4_K x8 M-Reuse Prefill Microkernel
+
+The next mixed-prefill pass added an experimental packed-meta x8 M-reuse
+microkernel for ordinary Q4_K x Q8_K prefill GEMM. The kernel keeps one x8
+packed output group hot across a small token tile before moving to the next
+output group. It is exposed separately in `bench_q4k_dispatch_matrix` as
+`x8reuse` and routed only through explicit/profile-gated dispatch:
+
+- `CK_ENABLE_Q4K_PACKED_META_X8_MREUSE_PREFILL=1`, or
+- `CK_SPEED_PROFILE=qwen3vl_ocr_xeon_avx512` / `CK_QWEN3VL_OCR_FAST=1`
+
+The gate is intentionally large-prefill scoped: default `M>=128`, `N>=768`,
+`K>=1024`, valid Q4_K block alignment, and a default thread cap of 20.
+
+Focused dispatch matrix, 20 CK threads, `CK_Q4K_PACKED_META_X8_MREUSE_TILE_M=4`:
+
+| Shape | packed-x8 | x8reuse | Delta | Max diff |
+|---|---:|---:|---:|---:|
+| `qwen3vl_proj` (`1028x4096x4096`) | 55.808 ms | 52.024 ms | -6.8% | 0.00043 |
+| `qwen3vl_down` (`1028x4096x11008`) | 230.857 ms | 164.415 ms | -28.8% | 0.0016 |
+
+Profile-routed dispatch verification, `CK_SPEED_PROFILE=qwen3vl_ocr_xeon_avx512`,
+20 CK threads:
+
+| Shape | Serial | Dispatch pool | x8reuse | Read |
+|---|---:|---:|---:|---|
+| `qwen3vl_proj` | 83.587 ms | 55.569 ms | 55.928 ms | dispatcher selects the fast path |
+| `qwen3vl_down` | 248.488 ms | 138.448 ms | 138.707 ms | dispatcher selects the fast path |
+
+End-to-end large clean OCR pipeline, 1024 image tokens, 20 CK threads:
+
+| Run | Encoder | Mixed Prefill | Decode | Steady | Output |
+|---|---:|---:|---:|---:|---|
+| x8 M-reuse profile | 33507.3 ms | 28628.8 ms | 1355.2 ms | 63491.2 ms | `CK OCR TEST\nTOTAL 42` |
+
+This moves the large OCR profile below the earlier ~30.7-33.0 s mixed-prefill
+range while preserving the expected generated text. The next reported bottleneck
+is now encoder attention: `attention_forward_full_head_major_gqa_flash_strided`
+at about 11.2 s in the same pipeline report.
+
+
+## 2026-07-05 Encoder Attention QBlock8
+
+The next pass targeted the Qwen3-VL vision encoder full-attention hot path. A
+focused benchmark was added for the real encoder shape:
+
+- `T=4232`
+- `H=16`
+- `HKV=16`
+- `head_dim=72`
+- `aligned_head_dim=80`
+
+The benchmark calls the same public kernel used by generated v8 code:
+`attention_forward_full_head_major_gqa_flash_strided`.
+
+Serial benchmark, 20 CK threads, `CK_SPEED_PROFILE=qwen3vl_ocr_xeon_avx512`,
+`CK_ATTENTION_THREAD_CAP=20`:
+
+| Attention Path | Avg Time | Approx Dot GFLOP/s | Checksum |
+|---|---:|---:|---:|
+| qblock8 disabled, qblock4 fallback | 388.422 ms | 106.24 | 0.01810321 |
+| qblock8 profile default | 281.344 ms | 146.67 | 0.01810321 |
+
+The checksum is identical, so this is a scheduling/microkernel improvement, not
+a numerical shortcut. The qblock8 path is enabled by the Qwen3-VL OCR speed
+profile and can be disabled explicitly with `CK_ATTENTION_QBLOCK8=0`.
+
+End-to-end large clean OCR pipeline with the speed profile only:
+
+| Run | Encoder | Mixed Prefill | Decode | Steady | Output |
+|---|---:|---:|---:|---:|---|
+| qblock8 profile default | 34077.3 ms | 28925.9 ms | 1333.0 ms | 64336.2 ms | `CK OCR TEST\nTOTAL 42` |
+
+The full-pipeline wall time remains noisy on the shared OpenShift node, but the
+reported next bottleneck improved from about 11.2 s to about 10.95 s for
+`attention_forward_full_head_major_gqa_flash_strided`. The focused benchmark is
+the cleaner read: qblock8 gives about a 1.38x speedup for the isolated encoder
+attention shape while preserving output correctness.
