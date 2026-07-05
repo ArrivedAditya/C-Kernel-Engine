@@ -64,6 +64,13 @@ extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(const void *A_q8,
                                                             int M, int N, int K,
                                                             int tile_m,
                                                             int threads);
+extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mreuse(const void *A_q8,
+                                                             const void *B_packed_x8,
+                                                             const float *bias,
+                                                             float *C,
+                                                             int M, int N, int K,
+                                                             int tile_m,
+                                                             int threads);
 extern void gemm_nt_q4_k_packed_meta_x16_q8_k_threaded_mreuse(const void *A_q8,
                                                               const void *B_packed_x16,
                                                               const float *bias,
@@ -206,6 +213,11 @@ static void call_ck_packed_x8_mtile(void *p) {
     gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(c->A_q8, c->W_packed_x8, c->bias, c->C, c->M, c->N, c->K, c->x8mt_tile_m, c->threads);
 }
 
+static void call_ck_packed_x8_mreuse(void *p) {
+    bench_ctx_t *c = (bench_ctx_t *)p;
+    gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mreuse(c->A_q8, c->W_packed_x8, c->bias, c->C, c->M, c->N, c->K, c->x8mt_tile_m, c->threads);
+}
+
 static void call_ck_packed_x16_mreuse(void *p) {
     bench_ctx_t *c = (bench_ctx_t *)p;
     gemm_nt_q4_k_packed_meta_x16_q8_k_threaded_mreuse(c->A_q8, c->W_packed_x16, c->bias, c->C, c->M, c->N, c->K, c->x16_tile_m, c->threads);
@@ -301,9 +313,9 @@ int main(int argc, char **argv) {
 
     printf("Q4_K x Q8_K prefill dispatch matrix; lower ms is better\n");
     printf("threads=%d warmup=%d iters=%d x8mt_tile_m=%d x16_tile_m=%d llama=%s\n", threads, warmup, iters, x8mt_tile_m, x16_tile_m, llama_fn ? "yes" : "no");
-    printf("%-14s %5s %6s %6s %10s %10s %10s %10s %10s %10s %10s %10s %10s %8s %8s %8s %8s %8s %8s %9s %9s %9s %9s %9s %9s %9s\n",
-           "shape", "M", "N", "K", "serial", "pool", "packed-M", "packed-N", "packed-x8", "x8mt", "x16reuse", "x16mt", "llama*",
-           "pool/x", "packN/x", "x8/x", "x8mt/x", "x16r/x", "x16mt/x", "d_pool", "d_packN", "d_x8", "d_x8mt", "d_x16r", "d_x16mt", "d_llama");
+    printf("%-14s %5s %6s %6s %10s %10s %10s %10s %10s %10s %10s %10s %10s %10s %8s %8s %8s %8s %8s %8s %8s %9s %9s %9s %9s %9s %9s %9s %9s\n",
+           "shape", "M", "N", "K", "serial", "pool", "packed-M", "packed-N", "packed-x8", "x8mt", "x8reuse", "x16reuse", "x16mt", "llama*",
+           "pool/x", "packN/x", "x8/x", "x8mt/x", "x8r/x", "x16r/x", "x16mt/x", "d_pool", "d_packN", "d_x8", "d_x8mt", "d_x8r", "d_x16r", "d_x16mt", "d_llama");
 
     for (int s = 0; shapes[s].name; ++s) {
         const int M = shapes[s].M;
@@ -387,6 +399,10 @@ int main(int argc, char **argv) {
         const float d_packed_x8mt = max_abs_diff(C_ref, C, out_elems);
 
         memset(C, 0, out_elems * sizeof(float));
+        const double t_packed_x8reuse = bench_ms(call_ck_packed_x8_mreuse, &ctx, warmup, iters);
+        const float d_packed_x8reuse = max_abs_diff(C_ref, C, out_elems);
+
+        memset(C, 0, out_elems * sizeof(float));
         const double t_packed_x16reuse = bench_ms(call_ck_packed_x16_mreuse, &ctx, warmup, iters);
         const float d_packed_x16reuse = max_abs_diff(C_ref, C, out_elems);
 
@@ -402,24 +418,26 @@ int main(int argc, char **argv) {
             d_llama = max_abs_diff(C_ref, C_llama, out_elems);
         }
 
-        printf("%-14s %5d %6d %6d %10.3f %10.3f %10.3f %10.3f %10.3f %10.3f %10.3f %10.3f ",
-               shapes[s].name, M, N, K, t_serial, t_pool, t_packed_m, t_packed_n, t_packed_x8, t_packed_x8mt, t_packed_x16reuse, t_packed_x16mt);
+        printf("%-14s %5d %6d %6d %10.3f %10.3f %10.3f %10.3f %10.3f %10.3f %10.3f %10.3f %10.3f ",
+               shapes[s].name, M, N, K, t_serial, t_pool, t_packed_m, t_packed_n, t_packed_x8, t_packed_x8mt, t_packed_x8reuse, t_packed_x16reuse, t_packed_x16mt);
         if (llama_fn) {
             printf("%10.3f ", t_llama);
         } else {
             printf("%10s ", "n/a");
         }
-        printf("%8.2fx %8.2fx %8.2fx %8.2fx %8.2fx %8.2fx %9.2g %9.2g %9.2g %9.2g %9.2g %9.2g %9.2g\n",
+        printf("%8.2fx %8.2fx %8.2fx %8.2fx %8.2fx %8.2fx %8.2fx %9.2g %9.2g %9.2g %9.2g %9.2g %9.2g %9.2g %9.2g\n",
                t_serial / t_pool,
                t_serial / t_packed_n,
                t_serial / t_packed_x8,
                t_serial / t_packed_x8mt,
+               t_serial / t_packed_x8reuse,
                t_serial / t_packed_x16reuse,
                t_serial / t_packed_x16mt,
                d_pool,
                d_packed_n,
                d_packed_x8,
                d_packed_x8mt,
+               d_packed_x8reuse,
                d_packed_x16reuse,
                d_packed_x16mt,
                d_llama);

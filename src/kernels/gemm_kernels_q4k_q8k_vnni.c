@@ -508,6 +508,70 @@ static inline void accum_q4_k_packed_meta_x8_q8_k_block(float acc[8],
 
 
 
+
+static inline void accum_q4_k_packed_meta_x8_q8_k_block_mreuse(float acc[8][8],
+                                                                const block_q4_K_packed_meta_x8 *w,
+                                                                int active,
+                                                                const block_q8_K *A,
+                                                                int blocks_per_vec,
+                                                                int block_index,
+                                                                int m0,
+                                                                int m_count)
+{
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+    for (int j = 0, is = 0, q_offset = 0; j < QK_K; j += 64, is += 2, q_offset += 32) {
+        for (int lane0 = 0; lane0 < active; lane0 += 4) {
+            const int lanes = (lane0 + 4 <= active) ? 4 : (active - lane0);
+            __m256i q4_lo[4];
+            __m256i q4_hi[4];
+            float wd[4], wdmin[4], sc_lo[4], sc_hi[4], min_lo[4], min_hi[4];
+
+            for (int l = 0; l < lanes; ++l) {
+                const int lane = lane0 + l;
+                const uint8_t *qs = &w->qs[lane][q_offset];
+                const __m256i packed = _mm256_loadu_si256((const __m256i *)qs);
+                q4_lo[l] = q4_k_unpack_32_vnni_bytes(packed, 0);
+                q4_hi[l] = q4_k_unpack_32_vnni_bytes(packed, 1);
+                wd[l] = CK_FP16_TO_FP32(w->d[lane]);
+                wdmin[l] = CK_FP16_TO_FP32(w->dmin[lane]);
+                sc_lo[l] = (float)w->sc[lane][is];
+                sc_hi[l] = (float)w->sc[lane][is + 1];
+                min_lo[l] = (float)w->m[lane][is];
+                min_hi[l] = (float)w->m[lane][is + 1];
+            }
+
+            for (int mt = 0; mt < m_count; ++mt) {
+                const block_q8_K *x = A + (size_t)(m0 + mt) * (size_t)blocks_per_vec + (size_t)block_index;
+                const int32_t bsum_lo = (int32_t)x->bsums[j / 16] +
+                                        (int32_t)x->bsums[j / 16 + 1];
+                const int32_t bsum_hi = (int32_t)x->bsums[(j + 32) / 16] +
+                                        (int32_t)x->bsums[(j + 32) / 16 + 1];
+                const __m256i q8_lo = _mm256_loadu_si256((const __m256i *)&x->qs[j]);
+                const __m256i q8_hi = _mm256_loadu_si256((const __m256i *)&x->qs[j + 32]);
+                const float xd = x->d;
+                for (int l = 0; l < lanes; ++l) {
+                    const int lane = lane0 + l;
+                    const int32_t sum_lo = dot_q4_k_q8_k_32_vnni_q4v_q8v(q4_lo[l], q8_lo);
+                    const int32_t sum_hi = dot_q4_k_q8_k_32_vnni_q4v_q8v(q4_hi[l], q8_hi);
+                    const float d = wd[l] * xd;
+                    const float dmin = wdmin[l] * xd;
+                    acc[mt][lane] += d * sc_lo[l] * (float)sum_lo;
+                    acc[mt][lane] -= dmin * min_lo[l] * (float)bsum_lo;
+                    acc[mt][lane] += d * sc_hi[l] * (float)sum_hi;
+                    acc[mt][lane] -= dmin * min_hi[l] * (float)bsum_hi;
+                }
+            }
+        }
+    }
+#else
+    for (int mt = 0; mt < m_count; ++mt) {
+        const block_q8_K *x = A + (size_t)(m0 + mt) * (size_t)blocks_per_vec + (size_t)block_index;
+        accum_q4_k_packed_meta_x8_q8_k_block(acc[mt], w, active, x);
+    }
+#endif
+}
+
+
 static inline void accum_q4_k_packed_u8_x16_q8_k_block(float acc[16],
                                                         const block_q4_K_packed_u8_x16 *w,
                                                         int active,
@@ -1138,6 +1202,53 @@ static void gemm_q4_packed_meta_x8_mtile_thread_fn(int ith, int nth, void *args)
     }
 }
 
+
+static void gemm_q4_packed_meta_x8_mreuse_thread_fn(int ith, int nth, void *args)
+{
+    gemm_q4_packed_meta_x8_thread_work_t *a = (gemm_q4_packed_meta_x8_thread_work_t *)args;
+    if (!a || ith < 0 || nth <= 0 || ith >= nth) {
+        return;
+    }
+    int tile_m = a->tile_m > 0 ? a->tile_m : 4;
+    if (tile_m > 8) tile_m = 8;
+    const int mt = (a->M + tile_m - 1) / tile_m;
+    const int total = mt * a->groups;
+
+    for (int job = ith; job < total; job += nth) {
+        const int g = job / mt;
+        const int tm = job - g * mt;
+        const int m0 = tm * tile_m;
+        const int m1 = (m0 + tile_m < a->M) ? (m0 + tile_m) : a->M;
+        const int m_count = m1 - m0;
+        const int n0 = g * 8;
+        const int active = (n0 + 8 <= a->N) ? 8 : (a->N - n0);
+        if (m0 >= a->M || g >= a->groups || m_count <= 0) {
+            continue;
+        }
+
+        float acc[8][8];
+        for (int mt_lane = 0; mt_lane < m_count; ++mt_lane) {
+            for (int lane = 0; lane < active; ++lane) {
+                acc[mt_lane][lane] = a->bias ? a->bias[n0 + lane] : 0.0f;
+            }
+        }
+
+        for (int b = 0; b < a->blocks_per_row; ++b) {
+            const block_q4_K_packed_meta_x8 *w_group =
+                a->W + (size_t)g * (size_t)a->blocks_per_row + (size_t)b;
+            accum_q4_k_packed_meta_x8_q8_k_block_mreuse(acc, w_group, active, a->A,
+                                                         a->blocks_per_vec, b, m0, m_count);
+        }
+
+        for (int m = m0; m < m1; ++m) {
+            float *c_row = a->C + (size_t)m * (size_t)a->N;
+            for (int lane = 0; lane < active; ++lane) {
+                c_row[n0 + lane] = acc[m - m0][lane];
+            }
+        }
+    }
+}
+
 void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(const void *A_q8,
                                                       const void *B_packed_x8,
                                                       const float *bias,
@@ -1181,6 +1292,52 @@ void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(const void *A_q8,
         .jobs = jobs,
     };
     ck_threadpool_dispatch_n(pool, active_threads, gemm_q4_packed_meta_x8_mtile_thread_fn, &work);
+}
+
+
+void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mreuse(const void *A_q8,
+                                                       const void *B_packed_x8,
+                                                       const float *bias,
+                                                       float *C,
+                                                       int M, int N, int K,
+                                                       int tile_m,
+                                                       int active_threads)
+{
+    if (!A_q8 || !B_packed_x8 || !C || M <= 0 || N <= 0 || K <= 0 || (K % QK_K) != 0) {
+        return;
+    }
+    ck_threadpool_t *pool = ck_threadpool_global();
+    const int pool_threads = pool ? ck_threadpool_n_threads(pool) : 1;
+    const int groups = (N + 7) / 8;
+    int tm = tile_m > 0 ? tile_m : 4;
+    if (tm > 8) tm = 8;
+    const int mt = (M + tm - 1) / tm;
+    const int jobs = mt * groups;
+    if (active_threads <= 0 || active_threads > pool_threads) {
+        active_threads = pool_threads;
+    }
+    if (active_threads > jobs) {
+        active_threads = jobs;
+    }
+    gemm_q4_packed_meta_x8_thread_work_t work = {
+        .A = (const block_q8_K *)A_q8,
+        .W = (const block_q4_K_packed_meta_x8 *)B_packed_x8,
+        .bias = bias,
+        .C = C,
+        .M = M,
+        .N = N,
+        .K = K,
+        .blocks_per_vec = K / QK_K,
+        .blocks_per_row = K / QK_K,
+        .groups = groups,
+        .tile_m = tm,
+        .jobs = jobs,
+    };
+    if (active_threads <= 1) {
+        gemm_q4_packed_meta_x8_mreuse_thread_fn(0, 1, &work);
+        return;
+    }
+    ck_threadpool_dispatch_n(pool, active_threads, gemm_q4_packed_meta_x8_mreuse_thread_fn, &work);
 }
 
 

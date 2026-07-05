@@ -83,6 +83,13 @@ extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(const void *A_q8,
                                                             int M, int N, int K,
                                                             int tile_m,
                                                             int threads);
+extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mreuse(const void *A_q8,
+                                                             const void *B_packed_x8,
+                                                             const float *bias,
+                                                             float *C,
+                                                             int M, int N, int K,
+                                                             int tile_m,
+                                                             int threads);
 extern void gemm_nt_q4_k_packed_meta_x16_q8_k_threaded_mreuse(const void *A_q8,
                                                               const void *B_packed_x16,
                                                               const float *bias,
@@ -431,6 +438,26 @@ static int ck_should_use_q4k_packed_meta_x16_prefill(int M, int N, int K)
      * shapes and is marginal on Q4 MLP-down on this Xeon, so keep it opt-in
      * until model-level sweeps by CPU family justify default promotion. */
     if (N >= 1024 && K >= 1024) return 1;
+    return 0;
+}
+
+static int ck_should_use_q4k_packed_meta_x8_mreuse_prefill(int M, int N, int K)
+{
+    if (ck_env_enabled("CK_DISABLE_Q4K_PACKED_META_X8_MREUSE_PREFILL")) return 0;
+    if (!ck_env_enabled("CK_ENABLE_Q4K_PACKED_META_X8_MREUSE_PREFILL") &&
+        !ck_env_enabled("CK_FORCE_Q4K_PACKED_META_X8_MREUSE_PREFILL") &&
+        !ck_speed_profile_qwen3vl_ocr_fast()) return 0;
+    if (M <= 1 || N <= 0 || K <= 0 || (K % QK_K) != 0) return 0;
+
+    const int min_m = ck_env_int_or2("CK_Q4K_PACKED_META_X8_MREUSE_MIN_M", NULL, 128);
+    if (M < min_m) return 0;
+    if (ck_env_enabled("CK_FORCE_Q4K_PACKED_META_X8_MREUSE_PREFILL")) return 1;
+
+    /* Measured on Qwen3-VL OCR mixed-prefill shapes:
+     *   proj/down M ~= 1028, N=4096, K=4096/11008.
+     * The M-reuse path keeps one x8 packed output group hot across a small
+     * token tile and avoids the large-shape reread cost of plain N-split. */
+    if (N >= 768 && K >= 1024) return 1;
     return 0;
 }
 
@@ -834,6 +861,22 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
                     active
                 );
             }
+            return;
+        }
+    }
+
+    if (pool && ck_should_use_q4k_packed_meta_x8_mreuse_prefill(M, N, K)) {
+        void *packed_x8 = ck_get_q4k_packed_meta_x8_cached(B, N, K);
+        if (packed_x8) {
+            int active = ck_select_gemm_active_threads(pool, M, N, K);
+            const int cap = ck_env_int_or2("CK_Q4K_PACKED_META_X8_MREUSE_THREAD_CAP", "CK_GEMM_THREAD_CAP", 20);
+            if (cap > 0 && active > cap) active = cap;
+            const int tile_m = ck_env_int_or2("CK_Q4K_PACKED_META_X8_MREUSE_TILE_M", "CK_PREFILL_TILE_M", 4);
+            gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mreuse(
+                A, packed_x8, bias, C, M, N, K,
+                tile_m,
+                active
+            );
             return;
         }
     }
