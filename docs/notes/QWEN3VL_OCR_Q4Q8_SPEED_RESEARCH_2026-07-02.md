@@ -527,3 +527,63 @@ reported next bottleneck improved from about 11.2 s to about 10.95 s for
 `attention_forward_full_head_major_gqa_flash_strided`. The focused benchmark is
 the cleaner read: qblock8 gives about a 1.38x speedup for the isolated encoder
 attention shape while preserving output correctness.
+
+## 2026-07-05 QBlock16 Rejection And Q6 Thread Cap
+
+A qblock16 encoder-attention candidate was tested as an explicit-only path after
+qblock8. It preserved the checksum but was slower on this Xeon shape:
+
+| Path | Avg Time | Checksum | Read |
+|---|---:|---:|---|
+| qblock8 profile default | 289.564 ms | 0.01810321 | keep |
+| qblock16 explicit candidate | 301.966 ms | 0.01810321 | reject |
+
+The qblock16 experiment was removed. The qblock8 thread sweep also confirmed the
+existing attention cap direction:
+
+| Threads | Avg Time | Checksum |
+|---:|---:|---:|
+| 12 | 305.845 ms | 0.01810321 |
+| 16 | 279.521 ms | 0.01810321 |
+| 20 | 281.027 ms | 0.01810321 |
+| 24 | 321.124 ms | 0.01810321 |
+
+For mixed prefill, the exact Qwen3-VL Q6_K `mlp_down` shape was extracted from
+`lowered_prefill.json`: runtime `M=1082`, `N=4096`, `K=12288`. The existing 2D
+Q6 scheduler is not a stable win for this shape, so it was not promoted:
+
+| Threads | Row Split | 2D Tile | Checksum |
+|---:|---:|---:|---:|
+| 16 | 137.00 ms | 132.10 ms best / 160.98 ms avg | match |
+| 20 | 161.41 ms | 176.13 ms | match |
+
+The useful action was a narrow Qwen3-VL OCR profile cap for this Q6 shape:
+`CK_Q6K_Q8K_THREAD_CAP` defaults to 16 only for large Q6_K x Q8_K OCR prefill
+(`M>=512`, `N=4096`, `K=12288`). Explicit `CK_GEMM_THREAD_CAP` and
+`CK_Q6K_Q8K_THREAD_CAP` still override this policy.
+
+Verification with a 20-thread pool and the speed profile:
+
+| Case | Best Time | Checksum |
+|---|---:|---:|
+| before cap, row split | 161.41 ms | -157.749893 |
+| after cap, row split | 142.18 ms | -157.749893 |
+
+Latest end-to-end large clean OCR pipeline, profile only, 20 CK threads:
+
+| Encoder | Mixed Prefill | Decode | Steady | Output |
+|---:|---:|---:|---:|---|
+| 32780.8 ms | 27410.7 ms | 1373.3 ms | 61564.8 ms | `CK OCR TEST\nTOTAL 42` |
+
+Latest top ops after this pass:
+
+| Area | Op / Kernel | Time |
+|---|---|---:|
+| encoder | `attn` / `attention_forward_full_head_major_gqa_flash_strided` | 10464.9 ms |
+| decoder | `mlp_gate_up_swiglu` / `gemm_nt_q4_k_q8_k_gateup_swiglu_x16` | 11594.0 ms |
+| decoder | `mlp_down` / `gemm_nt_q6_k_q8_k` | 3493.3 ms |
+| decoder | `mlp_down` / `gemm_nt_q4_k_q8_k` | 3095.9 ms |
+
+Next target remains split between encoder full attention and decoder Q4 gate/up.
+The qblock16 result suggests the next encoder-attention win needs a different
+algorithmic implementation, not just a larger query block.

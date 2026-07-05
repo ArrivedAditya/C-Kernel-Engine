@@ -975,7 +975,12 @@ void gemm_nt_q6_k_q8_k_parallel_dispatch(
         .tile_m = ck_env_int_or2("CK_PREFILL_TILE_M", NULL, 16),
         .tile_n = ck_env_int_or2("CK_PREFILL_TILE_N", NULL, 256)
     };
-    const int active = ck_select_gemm_active_threads(pool, M, N, K);
+    int active = ck_select_gemm_active_threads(pool, M, N, K);
+    if (!getenv("CK_GEMM_THREAD_CAP") && !getenv("CK_GEMV_THREAD_CAP")) {
+        const int q6_profile_cap = (ck_speed_profile_qwen3vl_ocr_fast() && M >= 512 && N == 4096 && K == 12288) ? 16 : active;
+        const int q6_cap = ck_env_int_or2("CK_Q6K_Q8K_THREAD_CAP", NULL, q6_profile_cap);
+        active = ck_min_int(active, q6_cap);
+    }
     if (ck_should_use_q6k_q8k_2d_prefill(pool, M, N, K, args.tile_m, args.tile_n)) {
         ck_threadpool_dispatch_n(pool, active, work_gemm_nt_q6_k_q8_k_2d, &args);
     } else {
