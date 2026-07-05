@@ -587,3 +587,57 @@ Latest top ops after this pass:
 Next target remains split between encoder full attention and decoder Q4 gate/up.
 The qblock16 result suggests the next encoder-attention win needs a different
 algorithmic implementation, not just a larger query block.
+
+## 2026-07-05 Gate/Up Thread-Cap Rejection
+
+The decoder `mlp_gate_up_swiglu` path is still one of the largest remaining
+costs, so the actual OCR shape was swept in the focused gate/up benchmark:
+`M=1082`, `D=12288`, `K=4096`. Synthetic best was 16 threads with `tile_m=8`:
+
+| Threads | Tile M | x16 Time | Checksum/Parity |
+|---:|---:|---:|---|
+| 12 | 12 | 522.595 ms | cosine 1.0 |
+| 16 | 8 | 427.632 ms | cosine 1.0 |
+| 20 | 16 | 474.729 ms | cosine 1.0 |
+| 24 | 16 | 533.730 ms | cosine 1.0 |
+
+A Qwen3-VL profile cap of 16 was then tried in the full OCR pipeline. The output
+remained correct, but the model-level decoder `mlp_gate_up_swiglu` time did not
+improve (`~11.59s` before, `~11.76s` after in the noisy full run). The cap was
+therefore rejected and removed. This path needs a real gate/up microkernel or
+layout improvement, not another thread-cap change.
+
+## 2026-07-05 QBlock Fast Exp Profile Default
+
+The encoder qblock4/qblock8 attention paths still spent meaningful time in the
+softmax exponentials after the query-block reuse work. A profile-scoped fast
+`expf` approximation was added only inside the qblock attention implementations:
+
+- enabled by `CK_SPEED_PROFILE=qwen3vl_ocr_xeon_avx512` or
+  `CK_QWEN3VL_OCR_FAST=1`
+- disabled explicitly with `CK_ATTENTION_QBLOCK_FAST_EXP=0`
+- not used by the scalar/reference full-attention path
+
+Focused exact-shape benchmark, 16 CK threads, `T=4232`, `H=16`, `D=72`,
+`CK_ATTENTION_THREAD_CAP=16`:
+
+| Case | Avg Time | Checksum |
+|---|---:|---:|
+| speed profile default | 267.266 ms | 0.01810321 |
+| `CK_ATTENTION_QBLOCK_FAST_EXP=0` | 276.934 ms | 0.01810321 |
+
+The checksum stayed identical for this benchmark accumulator, so the profile
+change is treated as a speed-path implementation detail rather than a visible
+model-output change.
+
+Latest end-to-end clean OCR pipeline with only the speed profile enabled,
+20 CK threads, 1024 image tokens:
+
+| Encoder | Mixed Prefill | Decode | Steady | Output |
+|---:|---:|---:|---:|---|
+| 30755.7 ms | 28202.7 ms | 1405.0 ms | 60363.4 ms | `CK OCR TEST\nTOTAL 42` |
+
+The runner's next-target summary now reports encoder attention at about
+`8025.4 ms`. Compared with the earlier profile-only pass before this section
+(`61564.8 ms` steady, encoder attention `10464.9 ms`), this is a small but real
+end-to-end improvement on the shared OpenShift Xeon node.

@@ -2915,6 +2915,44 @@ static int ck_attention_qblock8_enabled(void)
     return cached;
 }
 
+static int ck_attention_qblock_fast_exp_enabled(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        cached = ck_env_truthy_or_qwen3vl_ocr_profile("CK_ATTENTION_QBLOCK_FAST_EXP");
+    }
+    return cached;
+}
+
+static inline float ck_attention_qblock_fast_expf(float x)
+{
+    if (x > 88.0f) x = 88.0f;
+    else if (x < -88.0f) x = -88.0f;
+
+    const float log2e = 1.4426950408889634f;
+    const float z = x * log2e;
+    const float zf = nearbyintf(z);
+    const float f = z - zf;
+
+    const float c0 = 1.0f;
+    const float c1 = 0.6931471805599453f;
+    const float c2 = 0.2402265069591007f;
+    const float c3 = 0.05550410866482158f;
+    const float c4 = 0.009618129107628478f;
+
+    float poly = ((c4 * f + c3) * f + c2) * f + c1;
+    poly = poly * f + c0;
+
+    union { uint32_t i; float f; } u;
+    u.i = (uint32_t)((int32_t)zf + 127) << 23;
+    return poly * u.f;
+}
+
+static inline float ck_attention_qblock_expf(float x)
+{
+    return ck_attention_qblock_fast_exp_enabled() ? ck_attention_qblock_fast_expf(x) : expf(x);
+}
+
 static inline float ck_attention_dot72_avx512(const float *q_vec, const float *k_vec)
 {
     __m512 acc = _mm512_setzero_ps();
@@ -2961,14 +2999,14 @@ static void attention_flash_query4_full_avx512(const float *q_head,
         for (int r = 0; r < q_count; ++r) {
             score[r] = ck_attention_dot72_avx512(qv[r], k_vec) * scale;
             if (score[r] > m[r]) {
-                scale_old[r] = (m[r] == -INFINITY) ? 0.0f : expf(m[r] - score[r]);
+                scale_old[r] = (m[r] == -INFINITY) ? 0.0f : ck_attention_qblock_expf(m[r] - score[r]);
                 scale_v[r] = 1.0f;
                 ssum[r] *= scale_old[r];
                 ssum[r] += 1.0f;
                 m[r] = score[r];
             } else {
                 scale_old[r] = 1.0f;
-                scale_v[r] = expf(score[r] - m[r]);
+                scale_v[r] = ck_attention_qblock_expf(score[r] - m[r]);
                 ssum[r] += scale_v[r];
             }
         }
@@ -3035,14 +3073,14 @@ static void attention_flash_query8_full_avx512(const float *q_head,
         for (int r = 0; r < q_count; ++r) {
             score[r] = ck_attention_dot72_avx512(qv[r], k_vec) * scale;
             if (score[r] > m[r]) {
-                scale_old[r] = (m[r] == -INFINITY) ? 0.0f : expf(m[r] - score[r]);
+                scale_old[r] = (m[r] == -INFINITY) ? 0.0f : ck_attention_qblock_expf(m[r] - score[r]);
                 scale_v[r] = 1.0f;
                 ssum[r] *= scale_old[r];
                 ssum[r] += 1.0f;
                 m[r] = score[r];
             } else {
                 scale_old[r] = 1.0f;
-                scale_v[r] = expf(score[r] - m[r]);
+                scale_v[r] = ck_attention_qblock_expf(score[r] - m[r]);
                 ssum[r] += scale_v[r];
             }
         }
@@ -3077,7 +3115,6 @@ static void attention_flash_query8_full_avx512(const float *q_head,
         for (int d = 72; d < aligned_head_dim; ++d) dst[d] = 0.0f;
     }
 }
-
 
 typedef struct {
     const float *q;
