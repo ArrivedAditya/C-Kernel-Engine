@@ -24,6 +24,12 @@ The code generator (`build/ck_ir_demo`) can emit a `libmodel.so` that supports:
 
 ## Git Hooks (Recommended)
 
+Bootstrap a development machine:
+
+```bash
+./scripts/setup-dev-env.sh
+```
+
 Enable repo hooks:
 
 ```bash
