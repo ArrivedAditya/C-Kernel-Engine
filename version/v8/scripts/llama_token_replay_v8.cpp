@@ -23,6 +23,7 @@ struct Args {
     std::string prompt;
     std::string prefix_f32_path;
     std::string logits_out_path;
+    std::string logits_seq_out_path;
     std::string embeddings_out_path;
     std::string dump_dir;
     std::vector<std::string> dump_names;
@@ -35,7 +36,9 @@ struct Args {
     int prefix_grid_y = 0;
     int prefix_row_dim = 0;
     int prefix_text_pos = -1;
+    int greedy_steps = 0;
     bool no_repack = false;
+    bool dump_list_only = false;
 };
 
 struct DumpState {
@@ -44,6 +47,7 @@ struct DumpState {
     std::unordered_set<std::string> names;
     bool dump_all = false;
     int dumped = 0;
+    bool list_only = false;
     int32_t current_token_id = 0;
     std::unordered_map<std::string, int> occurrences;
 };
@@ -185,6 +189,18 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
             args.logits_out_path = v;
             continue;
         }
+        if (a == "--logits-seq-out") {
+            const char * v = need_value("--logits-seq-out");
+            if (!v) return false;
+            args.logits_seq_out_path = v;
+            continue;
+        }
+        if (a == "--greedy-steps") {
+            const char * v = need_value("--greedy-steps");
+            if (!v) return false;
+            args.greedy_steps = std::max(0, std::atoi(v));
+            continue;
+        }
         if (a == "--embeddings-out") {
             const char * v = need_value("--embeddings-out");
             if (!v) return false;
@@ -201,6 +217,10 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
             const char * v = need_value("--dump-names");
             if (!v) return false;
             args.dump_names = split_csv(v);
+            continue;
+        }
+        if (a == "--dump-list-only") {
+            args.dump_list_only = true;
             continue;
         }
         if (a == "--decode-mode") {
@@ -231,10 +251,10 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
             std::cout
                 << "Usage: llama_token_replay --model <path.gguf> "
                 << "(--tokens <id,id,...> | --prompt <text> | [--tokens-before <id,id,...>] [--tokens-after <id,id,...>]) "
-                << "--logits-out <path.bin> [--embeddings-out <path.f32>] [--prefix-f32 <path.f32>] "
+                << "--logits-out <path.bin> [--logits-seq-out <path.bin> --greedy-steps N] [--embeddings-out <path.f32>] [--prefix-f32 <path.f32>] "
                 << "[--prefix-grid-x N --prefix-grid-y N] [--prefix-row-dim N] [--prefix-text-pos N] [--ctx N] [--top-k K] [--threads N] "
                 << "[--decode-mode batched|sequential] [--prefix-decode-mode batched|sequential] "
-                << "[--dump-dir dir --dump-names a,b,c] [--no-repack]\n";
+                << "[--dump-dir dir --dump-names a,b,c] [--dump-list-only] [--no-repack]\n";
             std::exit(0);
         }
         err = "unknown arg: " + a;
@@ -464,22 +484,23 @@ static bool dump_eval_callback(struct ggml_tensor * t, bool ask, void * user_dat
         return true;
     }
 
-    std::vector<uint8_t> raw(static_cast<size_t>(nbytes));
-    ggml_backend_tensor_get(t, raw.data(), 0, static_cast<size_t>(nbytes));
-
     DumpState * mut = static_cast<DumpState *>(user_data);
     const int occurrence = mut->occurrences[base_name]++;
     const std::string dump_name = make_dump_name(base_name, mut->current_token_id, occurrence);
 
     std::filesystem::create_directories(mut->dump_dir);
-    const std::filesystem::path bin_path = mut->dump_dir / (dump_name + ".bin");
-    std::ofstream f(bin_path, std::ios::binary | std::ios::trunc);
-    if (!f) {
-        return false;
-    }
-    f.write(reinterpret_cast<const char *>(raw.data()), static_cast<std::streamsize>(raw.size()));
-    if (!f.good()) {
-        return false;
+    if (!mut->list_only) {
+        std::vector<uint8_t> raw(static_cast<size_t>(nbytes));
+        ggml_backend_tensor_get(t, raw.data(), 0, static_cast<size_t>(nbytes));
+        const std::filesystem::path bin_path = mut->dump_dir / (dump_name + ".bin");
+        std::ofstream f(bin_path, std::ios::binary | std::ios::trunc);
+        if (!f) {
+            return false;
+        }
+        f.write(reinterpret_cast<const char *>(raw.data()), static_cast<std::streamsize>(raw.size()));
+        if (!f.good()) {
+            return false;
+        }
     }
 
     const std::filesystem::path meta_path = mut->dump_dir / (dump_name + ".json");
@@ -771,6 +792,7 @@ int main(int argc, char ** argv) {
     if (!args.dump_dir.empty()) {
         dump_state.dump_dir = args.dump_dir;
         dump_state.index_path = dump_state.dump_dir / "index.json";
+        dump_state.list_only = args.dump_list_only;
         dump_state.dump_all = args.dump_names.empty();
         for (const std::string & name : args.dump_names) {
             if (!name.empty()) {
@@ -921,6 +943,64 @@ int main(int argc, char ** argv) {
         }
     }
 
+    std::vector<llama_token> greedy_generated;
+    if (!args.logits_seq_out_path.empty() && args.greedy_steps > 0) {
+        std::ofstream seq(args.logits_seq_out_path, std::ios::binary | std::ios::trunc);
+        if (!seq) {
+            print_json_error("failed opening logits-seq-out file");
+            llama_free(ctx);
+            llama_model_free(model);
+            llama_backend_free();
+            return 18;
+        }
+        for (int step = 0; step < args.greedy_steps; ++step) {
+            seq.write(reinterpret_cast<const char *>(logits), static_cast<std::streamsize>(n_vocab) * sizeof(float));
+            if (!seq.good()) {
+                print_json_error("failed writing logits-seq-out file");
+                llama_free(ctx);
+                llama_model_free(model);
+                llama_backend_free();
+                return 19;
+            }
+            const float * best_it = std::max_element(logits, logits + n_vocab);
+            llama_token next = static_cast<llama_token>(best_it - logits);
+            greedy_generated.push_back(next);
+            if (step + 1 >= args.greedy_steps) {
+                break;
+            }
+            begin_dump_batch(dump_state.dump_dir.empty() ? nullptr : &dump_state, prefix_text_pos + static_cast<int32_t>(tokens_after.size()) + step);
+            llama_batch batch = llama_batch_init(1, 0, 1);
+            batch.n_tokens = 1;
+            batch.token[0] = next;
+            batch.pos[0] = prefix_text_pos + static_cast<int32_t>(tokens_after.size()) + step;
+            batch.n_seq_id[0] = 1;
+            batch.seq_id[0][0] = 0;
+            batch.logits[0] = 1;
+            const int32_t rc = llama_decode(ctx, batch);
+            llama_batch_free(batch);
+            if (rc != 0) {
+                std::ostringstream oss;
+                oss << "llama_decode failed rc=" << rc << " during greedy step " << step;
+                print_json_error(oss.str());
+                llama_free(ctx);
+                llama_model_free(model);
+                llama_backend_free();
+                return 20;
+            }
+            logits = llama_get_logits_ith(ctx, -1);
+            if (!logits) {
+                logits = llama_get_logits(ctx);
+            }
+            if (!logits) {
+                print_json_error("llama logits pointer is null during greedy replay");
+                llama_free(ctx);
+                llama_model_free(model);
+                llama_backend_free();
+                return 21;
+            }
+        }
+    }
+
     {
         std::ofstream f(args.logits_out_path, std::ios::binary | std::ios::trunc);
         if (!f) {
@@ -984,6 +1064,13 @@ int main(int argc, char ** argv) {
     }
     std::cout << "],";
     std::cout << "\"decode_mode\":\"" << args.decode_mode << "\",";
+    std::cout << "\"greedy_steps\":" << args.greedy_steps << ",";
+    std::cout << "\"greedy_generated\":[";
+    for (size_t i = 0; i < greedy_generated.size(); ++i) {
+        if (i) std::cout << ",";
+        std::cout << greedy_generated[i];
+    }
+    std::cout << "],";
     std::cout << "\"dumped\":" << dump_state.dumped << ",";
     std::cout << "\"topk\":[";
     for (int i = 0; i < k; ++i) {

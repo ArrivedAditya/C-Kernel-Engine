@@ -241,6 +241,7 @@ def _run_llama_capture(
     decode_mode: str = "batched",
     dump_dir: Path | None = None,
     dump_names: str | None = None,
+    no_repack: bool = False,
 ) -> dict[str, Any]:
     helper = compare_first_token_logits_v7.ensure_llama_helper()
     if dump_dir is not None:
@@ -283,6 +284,8 @@ def _run_llama_capture(
             cmd.extend(["--prefix-text-pos", str(int(prefix_text_pos))])
         if threads > 0:
             cmd.extend(["--threads", str(int(threads))])
+        if no_repack:
+            cmd.append("--no-repack")
         if dump_dir is not None:
             cmd.extend(["--dump-dir", str(dump_dir)])
             if dump_names:
@@ -990,6 +993,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--ck-strict-parity", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--json-out", type=Path, default=None, help="Optional explicit JSON report path")
     args = ap.parse_args(argv)
+
+    if int(args.threads) > 0:
+        os.environ["CK_NUM_THREADS"] = str(int(args.threads))
+        os.environ["OMP_NUM_THREADS"] = str(int(args.threads))
 
     bridge_report = _load_bridge_report(args.bridge_report.resolve()) if args.bridge_report is not None else None
     if args.gguf is not None:
