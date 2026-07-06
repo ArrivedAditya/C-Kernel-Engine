@@ -464,24 +464,28 @@ fi
 # =============================================================================
 if [ "$ck_should_run_v7_regression_fast" = "1" ] || [ "$ck_should_run_v8_regression_fast" = "1" ]; then
     echo -e "${YELLOW}[5.5/6]${NC} Running fast regression..."
+    regression_pids=()
+    regression_names=()
     if [ "$ck_should_run_v7_regression_fast" = "1" ]; then
-        if make --no-print-directory v7-regression-fast REGRESSION_ARGS="--run-root /tmp/ck-prepush-regression/runs/v7 --report-root /tmp/ck-prepush-regression/reports/v7" > /tmp/ck_regression_fast_v7.log 2>&1; then
-            echo -e "${GREEN}  ✓ v7 fast regression passed${NC}"
-        else
-            echo -e "${RED}  ✗ v7 fast regression failed${NC}"
-            echo "    See /tmp/ck_regression_fast_v7.log for details"
-            failed=1
-        fi
+        make --no-print-directory v7-regression-fast REGRESSION_ARGS="--run-root /tmp/ck-prepush-regression/runs/v7 --report-root /tmp/ck-prepush-regression/reports/v7" > /tmp/ck_regression_fast_v7.log 2>&1 &
+        regression_pids+=("$!")
+        regression_names+=("v7")
     fi
     if [ "$ck_should_run_v8_regression_fast" = "1" ]; then
-        if make --no-print-directory v8-regression-fast REGRESSION_ARGS="--run-root /tmp/ck-prepush-regression/runs/v8 --report-root /tmp/ck-prepush-regression/reports/v8" > /tmp/ck_regression_fast_v8.log 2>&1; then
-            echo -e "${GREEN}  ✓ v8 fast regression passed${NC}"
+        make --no-print-directory v8-regression-fast REGRESSION_ARGS="--run-root /tmp/ck-prepush-regression/runs/v8 --report-root /tmp/ck-prepush-regression/reports/v8" > /tmp/ck_regression_fast_v8.log 2>&1 &
+        regression_pids+=("$!")
+        regression_names+=("v8")
+    fi
+    for idx in "${!regression_pids[@]}"; do
+        regression_name="${regression_names[$idx]}"
+        if wait "${regression_pids[$idx]}"; then
+            echo -e "${GREEN}  ✓ ${regression_name} fast regression passed${NC}"
         else
-            echo -e "${RED}  ✗ v8 fast regression failed${NC}"
-            echo "    See /tmp/ck_regression_fast_v8.log for details"
+            echo -e "${RED}  ✗ ${regression_name} fast regression failed${NC}"
+            echo "    See /tmp/ck_regression_fast_${regression_name}.log for details"
             failed=1
         fi
-    fi
+    done
 fi
 
 
