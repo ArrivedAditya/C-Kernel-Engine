@@ -1306,7 +1306,7 @@ def _align_up(value: int, align: int) -> int:
 
 def _resolve_logits_layout(config: Dict[str, Any], mode: str) -> str:
     """Resolve logits layout policy for this mode: 'last' or 'full'."""
-    layout = str(config.get("logits_layout", "auto")).lower()
+    layout = str(config.get("logits_layout", "auto") or "auto").lower()
     if layout not in {"auto", "last", "full"}:
         layout = "auto"
     if layout == "auto":
@@ -7141,8 +7141,8 @@ def main(args: List[str]) -> int:
     parser.add_argument(
         "--logits-layout",
         choices=["auto", "last", "full"],
-        default="auto",
-        help="Logits buffer layout (auto=decode last/prefill full)"
+        default=None,
+        help="Override logits buffer layout (default: manifest/template policy)"
     )
     parser.add_argument(
         "--no-fusion",
@@ -7209,8 +7209,9 @@ def main(args: List[str]) -> int:
     manifest["config"] = _normalize_manifest_config(manifest.get("config", {}))
     if parsed_args.prefer_q8_activation:
         manifest.setdefault("config", {})["prefer_q8_activation"] = True
-    # Override logits layout if requested (propagates into layout + codegen config)
-    manifest.setdefault("config", {})["logits_layout"] = parsed_args.logits_layout
+    # Override logits layout only when requested; otherwise preserve manifest/template policy.
+    if parsed_args.logits_layout is not None:
+        manifest.setdefault("config", {})["logits_layout"] = parsed_args.logits_layout
 
     # Build IR1
     registry = load_kernel_registry()

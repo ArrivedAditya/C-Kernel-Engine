@@ -24,11 +24,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 /* Serial GEMM kernels (defined in src/kernels/) */
 extern void gemm_nt_q5_0_q8_0(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q8_0_q8_0(const void *A, const void *B, const float *bias,
+                                float *C, int M, int N, int K);
+extern void gemm_nt_q4_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q6_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
@@ -36,6 +39,23 @@ extern void gemm_nt_q5_1_q8_1(const float *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q5_k(const float *A, const void *B, const float *bias,
                           float *C, int M, int N, int K);
+
+extern size_t q4_k_packed_meta_x8_block_size(void);
+extern void pack_q4_k_to_packed_meta_x8(const void *src, void *dst, int N, int K);
+extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_nsplit(
+    const void *A_q8, const void *B_packed_x8, const float *bias, float *C,
+    int M, int N, int K, int threads);
+
+typedef struct ck_q4k_packed_x8_cache_entry {
+    const void *src;
+    int N;
+    int K;
+    void *packed;
+    struct ck_q4k_packed_x8_cache_entry *next;
+} ck_q4k_packed_x8_cache_entry_t;
+
+static pthread_mutex_t ck_q4k_packed_x8_cache_mu = PTHREAD_MUTEX_INITIALIZER;
+static ck_q4k_packed_x8_cache_entry_t *ck_q4k_packed_x8_cache_head = NULL;
 
 /* ============================================================================
  * Lifecycle
@@ -78,6 +98,49 @@ static int ck_env_enabled(const char *name)
 {
     const char *v = getenv(name);
     return v && v[0] && strcmp(v, "0") != 0;
+}
+
+static void *ck_get_q4k_packed_x8_cached(const void *B, int N, int K)
+{
+    if (!B || N <= 0 || K <= 0 || (K % QK_K) != 0) return NULL;
+
+    pthread_mutex_lock(&ck_q4k_packed_x8_cache_mu);
+    for (ck_q4k_packed_x8_cache_entry_t *e = ck_q4k_packed_x8_cache_head; e; e = e->next) {
+        if (e->src == B && e->N == N && e->K == K) {
+            pthread_mutex_unlock(&ck_q4k_packed_x8_cache_mu);
+            return e->packed;
+        }
+    }
+
+    const size_t blocks = (size_t)((N + 7) / 8) * (size_t)(K / QK_K);
+    const size_t bytes = blocks * q4_k_packed_meta_x8_block_size();
+    ck_q4k_packed_x8_cache_entry_t *entry =
+        (ck_q4k_packed_x8_cache_entry_t *)malloc(sizeof(*entry));
+    void *packed = malloc(bytes);
+    if (!entry || !packed) {
+        free(entry);
+        free(packed);
+        pthread_mutex_unlock(&ck_q4k_packed_x8_cache_mu);
+        return NULL;
+    }
+
+    pack_q4_k_to_packed_meta_x8(B, packed, N, K);
+    entry->src = B;
+    entry->N = N;
+    entry->K = K;
+    entry->packed = packed;
+    entry->next = ck_q4k_packed_x8_cache_head;
+    ck_q4k_packed_x8_cache_head = entry;
+    pthread_mutex_unlock(&ck_q4k_packed_x8_cache_mu);
+    return packed;
+}
+
+static int ck_should_use_q4k_packed_x8_prefill(int M, int N, int K)
+{
+    if (!ck_env_enabled("CK_ENABLE_Q4K_PACKED_X8_PREFILL")) return 0;
+    if (ck_env_enabled("CK_DISABLE_Q4K_PACKED_X8_PREFILL")) return 0;
+    if (M <= 1 || N < 1024 || K < QK_K || (K % QK_K) != 0) return 0;
+    return (size_t)M * (size_t)N >= 4096u;
 }
 
 static int ck_env_int_or2(const char *primary, const char *secondary, int fallback)
@@ -253,6 +316,25 @@ void gemm_nt_q8_0_q8_0_parallel_dispatch(
         .A_row_bytes = A_row_bytes
     };
     ck_threadpool_dispatch_n(pool, ck_select_gemm_active_threads(pool, M, N, K), work_gemm_nt_q8_0_q8_0, &args);
+}
+
+void gemm_nt_q4_k_q8_k_parallel_dispatch(
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K)
+{
+    ck_threadpool_t *pool = ck_threadpool_global();
+    if (pool && ck_should_use_q4k_packed_x8_prefill(M, N, K)) {
+        void *packed = ck_get_q4k_packed_x8_cached(B, N, K);
+        if (packed) {
+            int active = ck_select_gemm_active_threads(pool, M, N, K);
+            const int cap = ck_env_int_or2("CK_Q4K_PACKED_X8_THREAD_CAP", "CK_GEMM_THREAD_CAP", 24);
+            if (cap > 0 && active > cap) active = cap;
+            gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_nsplit(A, packed, bias, C, M, N, K, active);
+            return;
+        }
+    }
+
+    gemm_nt_q4_k_q8_k(A, B, bias, C, M, N, K);
 }
 
 void gemm_nt_q6_k_q8_k_parallel_dispatch(

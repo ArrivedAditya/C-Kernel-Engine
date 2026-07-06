@@ -1016,6 +1016,12 @@ def _merge_template_defaults(
     for key, value in override_doc.items():
         if value is None:
             continue
+        if (
+            key == "logits_layout"
+            and str(value).strip().lower() == "auto"
+            and str(merged.get(key, "")).strip().lower() in {"last", "full"}
+        ):
+            continue
         if isinstance(merged.get(key), dict) and isinstance(value, dict):
             merged[key] = _merge_template_defaults(merged[key], value)
         else:
@@ -1091,6 +1097,25 @@ def _normalize_manifest_template_contract(
     return patched
 
 
+def _apply_template_logits_layout(cfg: dict[str, Any], template_doc: dict[str, Any] | None) -> dict[str, Any]:
+    """Use the template logits layout unless the manifest/CLI already set one."""
+    current = str(cfg.get("logits_layout", "") or "").strip().lower()
+    if current and current != "auto":
+        return cfg
+    if not isinstance(template_doc, dict):
+        return cfg
+    contract = template_doc.get("contract")
+    if not isinstance(contract, dict):
+        return cfg
+    logits_contract = contract.get("logits_contract")
+    if not isinstance(logits_contract, dict):
+        return cfg
+    layout = str(logits_contract.get("logits_layout", "") or "").strip().lower()
+    if layout in {"last", "full"} or (layout == "auto" and not current):
+        cfg["logits_layout"] = layout
+    return cfg
+
+
 def _normalize_manifest_for_inference(src_manifest: dict) -> dict:
     """
     Normalize train/runtime manifests into build_ir_v7-compatible shape.
@@ -1163,6 +1188,8 @@ def _normalize_manifest_for_inference(src_manifest: dict) -> dict:
         out["template"] = template
     if isinstance(template, dict):
         out["template"] = _normalize_manifest_template_contract(template, cfg, entry_names)
+        cfg = _apply_template_logits_layout(cfg, out["template"])
+        out["config"] = cfg
 
     quant_summary = out.get("quant_summary")
     if not isinstance(quant_summary, dict) or not quant_summary:
@@ -10711,8 +10738,8 @@ Examples:
     run_parser.add_argument('--context-len', type=int, default=None,
                            help='Context length for generation (default: from model config, max 32768). '
                                 'All buffers (KV cache, activations, RoPE) sized accordingly.')
-    run_parser.add_argument('--logits-layout', choices=['auto', 'last', 'full'], default='auto',
-                           help='Logits buffer layout (auto=decode last/prefill full)')
+    run_parser.add_argument('--logits-layout', choices=['auto', 'last', 'full'], default=None,
+                           help='Override logits buffer layout (default: template policy)')
     run_parser.add_argument('--temperature', type=float, default=0.7,
                            help='Sampling temperature (default: 0.7)')
     run_parser.add_argument('--max-tokens', type=int, default=512,
