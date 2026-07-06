@@ -56,6 +56,12 @@ MODELS: dict[str, dict[str, str]] = {
         "run": "Qwen3.5-0.8B-Q4_K_M",
         "gguf": "unsloth--Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-Q4_K_M.gguf",
     },
+    "nanbeige4.1-3b-q4_k_m": {
+        "label": "Nanbeige 4.1 3B",
+        "quant": "Q4_K_M",
+        "run": "mradermacher--Nanbeige4.1-3B-GGUF/.ck_build_v8",
+        "gguf": "mradermacher--Nanbeige4.1-3B-GGUF/Nanbeige4.1-3B.Q4_K_M.gguf",
+    },
     "gemma4-e4b-q4_k_m": {
         "label": "Gemma4 E4B",
         "quant": "Q4_K_M",
