@@ -35,7 +35,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef __AVX512F__
+#if defined(__AVX512F__) || defined(__AVX__) || defined(__F16C__)
 #include <immintrin.h>
 #endif
 
@@ -278,6 +278,85 @@ static inline uint16_t fp32_to_fp16(float f) {
 }
 #endif
 
+static inline void ck_f32_to_f16_row_local(uint16_t *dst, const float *src, int n)
+{
+#ifdef __AVX512F__
+    int i = 0;
+    const int n16 = (n / 16) * 16;
+    for (; i < n16; i += 16) {
+        const __m512 v = _mm512_loadu_ps(src + i);
+        const __m256i h = _mm512_cvtps_ph(v, 0);
+        _mm256_storeu_si256((__m256i *)(dst + i), h);
+    }
+    for (; i < n; ++i) {
+        dst[i] = fp32_to_fp16(src[i]);
+    }
+#elif defined(__F16C__) && defined(__AVX__)
+    int i = 0;
+    const int n8 = (n / 8) * 8;
+    for (; i < n8; i += 8) {
+        const __m256 v = _mm256_loadu_ps(src + i);
+        const __m128i h = _mm256_cvtps_ph(v, 0);
+        _mm_storeu_si128((__m128i *)(dst + i), h);
+    }
+    for (; i < n; ++i) {
+        dst[i] = fp32_to_fp16(src[i]);
+    }
+#else
+    for (int i = 0; i < n; ++i) {
+        dst[i] = fp32_to_fp16(src[i]);
+    }
+#endif
+}
+
+#if defined(__F16C__) && defined(__AVX__)
+static inline float ck_hsum256_ps(__m256 v)
+{
+    __m128 lo = _mm256_castps256_ps128(v);
+    __m128 hi = _mm256_extractf128_ps(v, 1);
+    __m128 sum = _mm_add_ps(lo, hi);
+    sum = _mm_hadd_ps(sum, sum);
+    sum = _mm_hadd_ps(sum, sum);
+    return _mm_cvtss_f32(sum);
+}
+
+static inline float ck_dot_f16_f16_avx(const uint16_t *w, const uint16_t *x, int k)
+{
+    int i = 0;
+    const int k8 = (k / 8) * 8;
+    __m256 acc = _mm256_setzero_ps();
+    for (; i < k8; i += 8) {
+        const __m128i wh = _mm_loadu_si128((const __m128i *)(w + i));
+        const __m128i xh = _mm_loadu_si128((const __m128i *)(x + i));
+        const __m256 wf = _mm256_cvtph_ps(wh);
+        const __m256 xf = _mm256_cvtph_ps(xh);
+#ifdef __FMA__
+        acc = _mm256_fmadd_ps(wf, xf, acc);
+#else
+        acc = _mm256_add_ps(acc, _mm256_mul_ps(wf, xf));
+#endif
+    }
+    float sum = ck_hsum256_ps(acc);
+    for (; i < k; ++i) {
+        sum += fp16_to_fp32(w[i]) * fp16_to_fp32(x[i]);
+    }
+    return sum;
+}
+#endif
+
+static inline float ck_dot_f16_f16_local(const uint16_t *w, const uint16_t *x, int k)
+{
+#if defined(__F16C__) && defined(__AVX__)
+    return ck_dot_f16_f16_avx(w, x, k);
+#else
+    float sum = 0.0f;
+    for (int i = 0; i < k; ++i) {
+        sum += fp16_to_fp32(w[i]) * fp16_to_fp32(x[i]);
+    }
+    return sum;
+#endif
+}
+
 /* ============================================================================
  * GEMV: y = W @ x  (W is FP16, x and y are FP32)
  * ============================================================================ */
@@ -458,18 +537,11 @@ static void gemm_f16_input_fp16_ref(float *Y,
         const float *x_row = &X[(size_t)n * (size_t)K];
         uint16_t x_f16[K];
 
-        for (int k = 0; k < K; ++k) {
-            x_f16[k] = fp32_to_fp16(x_row[k]);
-        }
+        ck_f32_to_f16_row_local(x_f16, x_row, K);
 
         for (int row = 0; row < M; ++row) {
-            float sum = 0.0f;
             const uint16_t *w_row = &W[(size_t)row * (size_t)K];
-
-            for (int k = 0; k < K; ++k) {
-                sum += fp16_to_fp32(w_row[k]) * fp16_to_fp32(x_f16[k]);
-            }
-
+            const float sum = ck_dot_f16_f16_local(w_row, x_f16, K);
             Y[(size_t)n * (size_t)M + (size_t)row] = sum;
         }
     }
@@ -495,18 +567,11 @@ static void ck_gemm_f16_input_fp16_work(int ith, int nth, void *opaque)
         const float *x_row = args->X + (size_t)n * (size_t)K;
         uint16_t x_f16[K];
 
-        for (int k = 0; k < K; ++k) {
-            x_f16[k] = fp32_to_fp16(x_row[k]);
-        }
+        ck_f32_to_f16_row_local(x_f16, x_row, K);
 
         for (int row = 0; row < M; ++row) {
-            float sum = 0.0f;
             const uint16_t *w_row = args->W + (size_t)row * (size_t)K;
-
-            for (int k = 0; k < K; ++k) {
-                sum += fp16_to_fp32(w_row[k]) * fp16_to_fp32(x_f16[k]);
-            }
-
+            const float sum = ck_dot_f16_f16_local(w_row, x_f16, K);
             args->Y[(size_t)n * (size_t)M + (size_t)row] = sum;
         }
     }
