@@ -17,6 +17,10 @@ def _candidates_from_glob(base: Path) -> List[Path]:
     for p in sorted(base.glob("*/weights_manifest.json")):
         if p.is_file():
             paths.append(p)
+    train_root = base / "train"
+    for p in sorted(train_root.glob("*/weights_manifest.json")):
+        if p.is_file():
+            paths.append(p)
     return paths
 
 
@@ -57,6 +61,9 @@ def resolve(explicit_manifest: str, model_dir: str) -> Path:
 
     home = Path.home()
     pools: List[Path] = []
+    cache_dir = os.getenv("CK_CACHE_DIR", "").strip()
+    if cache_dir:
+        pools.extend(_candidates_from_glob(Path(cache_dir).expanduser()))
     pools.extend(_candidates_from_glob(home / ".cache" / "ck-engine-v7" / "models"))
     pools.extend(_candidates_from_glob(home / ".cache" / "ck-engine-v6.6" / "models"))
 
