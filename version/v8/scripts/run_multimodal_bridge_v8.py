@@ -1474,8 +1474,10 @@ def _resize_rgb8_bilinear(
         ]
 
     out: list[tuple[int, int, int]] = []
-    x_ratio = float(src_width - 1) / float(dst_width - 1) if dst_width > 1 else 0.0
-    y_ratio = float(src_height - 1) / float(dst_height - 1) if dst_height > 1 else 0.0
+    # Match llama.cpp mtmd's Qwen-VL preprocessing exactly. It intentionally
+    # uses dst size in the denominator rather than align-corners semantics.
+    x_ratio = float(src_width - 1) / float(dst_width)
+    y_ratio = float(src_height - 1) / float(dst_height)
     for y in range(dst_height):
         src_y = float(y) * y_ratio
         y0 = max(0, min(src_height - 1, int(src_y)))
@@ -1760,12 +1762,8 @@ def _load_image_file(
         with Image.open(image_path) as src:
             source_width, source_height = src.size
             rgb = src.convert("RGB")
-            if rgb.size != (width, height):
-                if hasattr(Image, "Resampling"):
-                    rgb = rgb.resize((width, height), Image.Resampling.BILINEAR)
-                else:  # pragma: no cover - compatibility with older Pillow.
-                    rgb = rgb.resize((width, height), Image.BILINEAR)
-            pixels = list(rgb.getdata())
+            src_rgb = rgb.tobytes()
+            pixels = _resize_rgb8_bilinear(src_rgb, source_width, source_height, width, height)
         preprocess_prefix = "rgb_bilinear_resize"
 
     interleaved = [0.0] * (height * width * 3)
