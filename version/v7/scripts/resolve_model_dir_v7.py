@@ -2,7 +2,7 @@
 """
 Resolve v7 model input into concrete model cache directory.
 
-This is used by Make targets that need direct paths for ck-cli-v7:
+This is used by Make targets that need direct paths for generated v7 artifacts:
   <model_dir>/libmodel.so
   <model_dir>/weights.bump
 """
@@ -25,7 +25,12 @@ def resolve_model_dir(model_input: str) -> Path:
     if input_type == "gguf":
         return CACHE_DIR / info["path"].stem
     if input_type == "local_dir":
-        return Path(info["path"]).resolve()
+        local_dir = Path(info["path"]).resolve()
+        if (local_dir / "weights.bump").exists() and (local_dir / "weights_manifest.json").exists():
+            return local_dir
+        # ck_run_v7.py builds local directory inputs into <local_dir>/.ck_build
+        # unless an explicit --run directory is supplied.
+        return local_dir / ".ck_build"
     if input_type == "local_config":
         return Path(info["path"]).resolve().parent
 
@@ -44,4 +49,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

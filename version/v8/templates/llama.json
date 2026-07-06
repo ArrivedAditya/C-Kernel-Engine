@@ -33,7 +33,7 @@
     "logits_contract": {
       "final_norm": "rmsnorm",
       "lm_head": "weight_tying",
-      "logits_layout": "auto"
+      "logits_layout": "last"
     },
     "quant_contract": {
       "kernel_select": "weight_dtype_registry",

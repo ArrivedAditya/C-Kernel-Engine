@@ -269,6 +269,7 @@ int main(int argc, char **argv) {
     int quick = 0;
     int iters = 20;
     int warmup = 3;
+    shape_t custom_shape = {NULL, 0, 0, 0, NULL};
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--quick") == 0) {
             quick = 1;
@@ -276,6 +277,12 @@ int main(int argc, char **argv) {
             warmup = 2;
         } else if (strcmp(argv[i], "--iters") == 0 && i + 1 < argc) {
             iters = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--shape") == 0 && i + 3 < argc) {
+            custom_shape.name = "custom";
+            custom_shape.M = atoi(argv[++i]);
+            custom_shape.N = atoi(argv[++i]);
+            custom_shape.K = atoi(argv[++i]);
+            custom_shape.comment = "custom";
         }
     }
 
@@ -309,7 +316,11 @@ int main(int argc, char **argv) {
         {"qwen3vl_down", 1028, 4096, 11008, "Qwen3-VL mlp down"},
         {NULL, 0, 0, 0, NULL},
     };
-    const shape_t *shapes = quick ? quick_shapes : full_shapes;
+    const shape_t custom_shapes[] = {
+        {custom_shape.name, custom_shape.M, custom_shape.N, custom_shape.K, custom_shape.comment},
+        {NULL, 0, 0, 0, NULL},
+    };
+    const shape_t *shapes = custom_shape.name ? custom_shapes : (quick ? quick_shapes : full_shapes);
 
     printf("Q4_K x Q8_K prefill dispatch matrix; lower ms is better\n");
     printf("threads=%d warmup=%d iters=%d x8mt_tile_m=%d x16_tile_m=%d llama=%s\n", threads, warmup, iters, x8mt_tile_m, x16_tile_m, llama_fn ? "yes" : "no");

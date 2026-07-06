@@ -215,6 +215,58 @@ def _shape_numel(shape: Any) -> Optional[int]:
     return int(n)
 
 
+def _infer_weight_shape_numel(name: str, config: Dict[str, Any]) -> Tuple[Optional[List[int]], Optional[int]]:
+    d_model = int(config.get("embed_dim") or config.get("hidden_size") or 0)
+    vocab = int(config.get("vocab_size") or 0)
+    ff = int(config.get("intermediate_size") or config.get("ffn_dim") or 0)
+    head_dim = int(config.get("head_dim") or 0)
+    kv_heads = int(config.get("num_kv_heads") or config.get("num_heads") or 0)
+    kv_dim = int(kv_heads * head_dim) if kv_heads > 0 and head_dim > 0 else 0
+
+    shape: Optional[List[int]] = None
+    if name in {"token_emb", "output.weight", "output_weight", "lm_head.weight"} and vocab > 0 and d_model > 0:
+        shape = [vocab, d_model]
+    elif name in {"final_ln_weight", "final_norm.weight"} and d_model > 0:
+        shape = [d_model]
+    elif name.startswith("layer."):
+        parts = name.split(".")
+        suffix = parts[-1] if parts else ""
+        if suffix in {"ln1_gamma", "ln2_gamma", "post_attention_norm", "post_ffn_norm"} and d_model > 0:
+            shape = [d_model]
+        elif suffix in {"wq", "wo"} and d_model > 0:
+            shape = [d_model, d_model]
+        elif suffix in {"wk", "wv"} and kv_dim > 0 and d_model > 0:
+            shape = [kv_dim, d_model]
+        elif suffix in {"w1", "w3"} and ff > 0 and d_model > 0:
+            shape = [ff, d_model]
+        elif suffix == "w2" and d_model > 0 and ff > 0:
+            shape = [d_model, ff]
+        elif suffix in {"bq", "bo"} and d_model > 0:
+            shape = [d_model]
+        elif suffix in {"bk", "bv"} and kv_dim > 0:
+            shape = [kv_dim]
+        elif suffix == "b1" and ff > 0:
+            shape = [ff]
+        elif suffix == "b2" and d_model > 0:
+            shape = [d_model]
+
+    numel = _shape_numel(shape)
+    return shape, numel
+
+
+def _entry_shape_numel(entry: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> Tuple[Optional[List[int]], Optional[int]]:
+    shape = entry.get("shape")
+    if isinstance(shape, list):
+        n = _shape_numel(shape)
+        if isinstance(n, int) and n > 0:
+            return list(shape), n
+    if isinstance(config, dict):
+        inferred_shape, inferred_numel = _infer_weight_shape_numel(str(entry.get("name", "") or ""), config)
+        if isinstance(inferred_numel, int) and inferred_numel > 0:
+            return inferred_shape, inferred_numel
+    return None, _entry_numel(entry)
+
+
 def _entry_numel(entry: Dict[str, Any]) -> Optional[int]:
     n = _shape_numel(entry.get("shape"))
     if isinstance(n, int) and n > 0:
@@ -711,8 +763,7 @@ def build_ir1_train(
                 continue
             entry = weight_index[weight_name]
             dtype = str(entry.get("dtype", "fp32")).lower()
-            shape = entry.get("shape")
-            numel = _entry_numel(entry)
+            shape, numel = _entry_shape_numel(entry, config)
             tensor_id = "weight.%s" % weight_name
             ensure_tensor(
                 tensor_id=tensor_id,
@@ -721,14 +772,14 @@ def build_ir1_train(
                 requires_grad=_is_trainable_dtype(dtype),
                 persistent=True,
                 producer=None,
-                shape=shape if isinstance(shape, list) else None,
+                shape=shape,
                 numel=numel,
             )
             resolved[kernel_alias] = {
                 "name": weight_name,
                 "tensor": tensor_id,
                 "dtype": dtype,
-                "shape": shape if isinstance(shape, list) else None,
+                "shape": shape,
                 "numel": int(numel) if isinstance(numel, int) and numel > 0 else None,
                 "kind": "weight",
                 "requires_grad": _is_trainable_dtype(dtype),

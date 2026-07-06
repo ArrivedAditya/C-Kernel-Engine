@@ -387,6 +387,9 @@ static void *ck_get_q4k_packed_meta_x16_cached(const void *B, int N, int K)
 static int ck_should_use_q4k_packed_meta_prefill(int M, int N, int K)
 {
     if (ck_env_enabled("CK_DISABLE_Q4K_PACKED_META_PREFILL")) return 0;
+    if (!ck_env_enabled("CK_ENABLE_Q4K_PACKED_META_PREFILL") &&
+        !ck_env_enabled("CK_FORCE_Q4K_PACKED_META_PREFILL") &&
+        !ck_speed_profile_qwen3vl_ocr_fast()) return 0;
     if (M <= 1 || N <= 0 || K <= 0 || (K % QK_K) != 0) return 0;
 
     const int min_m = ck_env_int_or2("CK_Q4K_PACKED_META_MIN_M", NULL, 32);
@@ -464,6 +467,9 @@ static int ck_should_use_q4k_packed_meta_x8_mreuse_prefill(int M, int N, int K)
 static int ck_should_use_q4k_packed_meta_x8_prefill(int M, int N, int K)
 {
     if (ck_env_enabled("CK_DISABLE_Q4K_PACKED_META_X8_PREFILL")) return 0;
+    if (!ck_env_enabled("CK_ENABLE_Q4K_PACKED_META_X8_PREFILL") &&
+        !ck_env_enabled("CK_FORCE_Q4K_PACKED_META_X8_PREFILL") &&
+        !ck_speed_profile_qwen3vl_ocr_fast()) return 0;
     if (M <= 1 || N <= 0 || K <= 0 || (K % QK_K) != 0) return 0;
 
     const int min_m = ck_env_int_or2("CK_Q4K_PACKED_META_X8_MIN_M", NULL, 16);
