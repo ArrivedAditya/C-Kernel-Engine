@@ -1748,9 +1748,10 @@ def detect_input_type(model_input: str) -> tuple[str, dict]:
     if model_input.endswith('.json') and Path(model_input).exists():
         return 'local_config', {'path': Path(model_input).resolve()}
 
-    # Local directory with config.json
+    # Local directory. GGUF cache dirs may only contain *.gguf plus tokenizer
+    # files, so classify existing directories before Hugging Face repo IDs.
     local_path = Path(model_input)
-    if local_path.is_dir() and (local_path / "config.json").exists():
+    if local_path.is_dir():
         return 'local_dir', {'path': local_path.resolve()}
 
     # HuggingFace URL
@@ -9503,6 +9504,15 @@ def _template_audit_prepare_artifacts(
                 manifest_path = work_dir / "weights_manifest.json"
             else:
                 weights_path, config_path, manifest_path = _prepare_runtime_dir_from_local_ck_artifacts(model_dir, work_dir)
+        elif local_gguf is not None:
+            gguf_path = local_gguf
+            weights_path, config_path = step_convert_gguf(
+                local_gguf,
+                work_dir,
+                force=getattr(args, "force_convert", False),
+                validate=True,
+            )
+            manifest_path = work_dir / "weights_manifest.json"
         else:
             tokenizer_json = model_dir / "tokenizer.json"
             weights_path = step_convert_hf(
@@ -10096,6 +10106,19 @@ def run_pipeline(args: argparse.Namespace):
             if args.inspect_only:
                 log(f"  Local CK runtime manifest: {manifest_path}", C_GREEN)
                 return
+        elif local_gguf is not None:
+            if v7_mode:
+                manifest_input_path = step_inspect_weights_v7(
+                    input_type, None, local_gguf, work_dir, force=args.force_inspect
+                )
+                if args.inspect_only:
+                    return
+            weights_path, config_path = step_convert_gguf(
+                local_gguf,
+                work_dir,
+                force=args.force_convert,
+            )
+            manifest_path = work_dir / "weights_manifest.json"
         else:
             # Convert local HF checkpoint weights
             if v7_mode:
