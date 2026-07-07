@@ -2,27 +2,15 @@
  * @file quantize_row_q8_k_avx2.c
  * @brief AVX2 entrypoint for exact Q8_K row quantization
  *
- * CK-ENGINE KERNEL RULES:
- * =======================
- * 1. NO malloc/free - memory via bump allocator, pointers passed in
- * 2. NO OpenMP - parallelization at orchestrator/codegen layer
- * 3. API must define: inputs, outputs, workspace, and memory layouts
- * 4. Pure computation - deterministic, no side effects
- *
- * After changes: make test && make llamacpp-parity-full
+ * The previous AVX2 entrypoint delegated to the SSE implementation. On this
+ * CPU the scalar reference compiles into a faster loop than both the SSE body
+ * and a hand-written AVX2 pack path, while preserving byte-exact Q8_K output.
  */
 
 #include "ckernel_quant.h"
 
-void quantize_row_q8_k_sse(const float *x, void *vy, int k);
 void quantize_row_q8_k_ref(const float *x, void *vy, int k);
 
 void quantize_row_q8_k_avx2(const float *x, void *vy, int k) {
-    /* Reuse the parity-clean SIMD implementation until a wider AVX2 variant is
-     * worth maintaining separately. */
-#if defined(__SSE4_1__)
-    quantize_row_q8_k_sse(x, vy, k);
-#else
     quantize_row_q8_k_ref(x, vy, k);
-#endif
 }

@@ -1042,6 +1042,10 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
     const char *debug_outproj_env = getenv("CK_V7_DEBUG_OUTPROJ_FP32");
     int debug_outproj_fp32 = debug_outproj_env ? (atoi(debug_outproj_env) != 0) : 0;
     const float *ck_debug_outproj_fp32_input = NULL;
+    const char *debug_mlp_down_env = getenv("CK_V7_DEBUG_MLP_DOWN_FP32");
+    int debug_mlp_down_fp32 = debug_mlp_down_env ? (atoi(debug_mlp_down_env) != 0) : 0;
+    const char *debug_mlp_down_layer_env = getenv("CK_V7_DEBUG_MLP_DOWN_FP32_LAYER");
+    int debug_mlp_down_fp32_layer = debug_mlp_down_layer_env ? atoi(debug_mlp_down_layer_env) : -1;
     const char *debug_mlp_gate_up_env = getenv("CK_V8_DEBUG_MLP_GATE_UP_FP32");
     int debug_mlp_gate_up_fp32 = debug_mlp_gate_up_env ? (atoi(debug_mlp_gate_up_env) != 0) : 0;
     const char *debug_mlp_gate_up_layer_env = getenv("CK_V8_DEBUG_MLP_GATE_UP_FP32_LAYER");
@@ -1054,6 +1058,7 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
     const char *debug_prefill_mamba_in_proj_row_gemv_env = getenv("CK_V8_DEBUG_PREFILL_MAMBA_IN_PROJ_ROW_GEMV");
     int debug_prefill_mamba_in_proj_row_gemv = debug_prefill_mamba_in_proj_row_gemv_env ? (atoi(debug_prefill_mamba_in_proj_row_gemv_env) != 0) : 0;
     int ck_enable_q4k_gateup_swiglu_x16 = ck_env_truthy_or_qwen3vl_ocr_profile("CK_ENABLE_Q4K_GATEUP_SWIGLU_X16");
+    int ck_enable_swiglu_q8k_fusion = ck_env_truthy_or_qwen3vl_ocr_profile("CK_ENABLE_SWIGLU_Q8K_FUSION");
 
     /* Copy input tokens to activation buffer (follow same pattern as decode) */
     memcpy((void*)(model->bump + A_TOKEN_IDS), tokens, (size_t)num_tokens * sizeof(int32_t));
@@ -1072,15 +1077,68 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
     residual_add_count_total = 0
     residual_add_counts_by_layer: Dict[int, int] = {}
 
+    swiglu_q8k_fusion_guard: Optional[str] = None
+    swiglu_q8k_fusion_call: Optional[str] = None
+
     for seq_idx, op in enumerate(ops):
         op_type_for_instance = str(op.get("op", ""))
+        if swiglu_q8k_fusion_guard and op_type_for_instance != "quantize_mlp_down_input":
+            swiglu_q8k_fusion_guard = None
+            swiglu_q8k_fusion_call = None
         if op_type_for_instance == "residual_add" and "op_instance_idx" not in op and "instance" not in op:
             layer_for_instance = int(op.get("layer", -1))
             inst = residual_add_counts_by_layer.get(layer_for_instance, 0)
             op = dict(op)
             op["op_instance_idx"] = inst
             residual_add_counts_by_layer[layer_for_instance] = inst + 1
-        lines.append(emit_prefill_op(op, seq_idx, config, profile=profile, dump=dump))
+        op_code = emit_prefill_op(op, seq_idx, config, profile=profile, dump=dump)
+        if (
+            swiglu_q8k_fusion_guard
+            and swiglu_q8k_fusion_call
+            and op_type_for_instance == "quantize_mlp_down_input"
+            and str(op.get("function", "")) == "quantize_row_q8_k"
+        ):
+            op_code = (
+                f"    if ({swiglu_q8k_fusion_guard}) {{\n"
+                f"{swiglu_q8k_fusion_call}\n"
+                "    } else {\n"
+                + "\n".join("    " + line if line else line for line in op_code.splitlines())
+                + "\n    }"
+            )
+            swiglu_q8k_fusion_guard = None
+            swiglu_q8k_fusion_call = None
+        elif op_type_for_instance in {"silu_mul", "swiglu"}:
+            next_op = ops[seq_idx + 1] if seq_idx + 1 < len(ops) else None
+            if (
+                isinstance(next_op, dict)
+                and str(op.get("function", "")) == "swiglu_forward"
+                and str(next_op.get("op", "")) == "quantize_mlp_down_input"
+                and str(next_op.get("function", "")) == "quantize_row_q8_k"
+            ):
+                swiglu_args = op.get("args", [])
+                quant_args = next_op.get("args", [])
+                swiglu_input = _find_arg_expr(swiglu_args, arg_name="input")
+                quant_output = _find_arg_expr(quant_args, arg_name="y") or _find_arg_expr(quant_args, arg_name="output")
+                dim_expr = _find_arg_expr(swiglu_args, arg_name="dim") or _find_arg_expr(quant_args, arg_name="k")
+                layer_value = op.get("layer", -1)
+                layer = int(layer_value) if layer_value is not None else -1
+                if swiglu_input and quant_output and dim_expr:
+                    guard = f"ck_swiglu_q8k_fused_{seq_idx}"
+                    swiglu_q8k_fusion_guard = guard
+                    fused_lines = []
+                    if profile:
+                        fused_lines.append("        CK_PROFILE_BEGIN();")
+                    fused_lines.append(f"        swiglu_forward_q8_k((const float*)({swiglu_input}), (void*)({quant_output}), num_tokens, (int)({dim_expr}));")
+                    if profile:
+                        fused_lines.append(f'        CK_PROFILE_END("prefill", "swiglu_forward_q8_k", "silu_mul_quantize_mlp_down_input", {layer});')
+                    swiglu_q8k_fusion_call = "\n".join(fused_lines)
+                    op_code = (
+                        f"    const int {guard} = ck_enable_swiglu_q8k_fusion && !(debug_mlp_down_fp32 || debug_mlp_down_fp32_layer == {layer});\n"
+                        f"    if (!{guard}) {{\n"
+                        + "\n".join("    " + line if line else line for line in op_code.splitlines())
+                        + "\n    }"
+                    )
+        lines.append(op_code)
         lines.append(f"    if (stop_seq == {seq_idx}) return;")
         if (scale_embeddings_sqrt_dim
                 and not embed_scale_emitted
@@ -1608,6 +1666,8 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
     const float *ck_debug_outproj_fp32_input = NULL;
     const char *debug_mlp_down_env = getenv("CK_V7_DEBUG_MLP_DOWN_FP32");
     int debug_mlp_down_fp32 = debug_mlp_down_env ? (atoi(debug_mlp_down_env) != 0) : 0;
+    const char *debug_mlp_down_layer_env = getenv("CK_V7_DEBUG_MLP_DOWN_FP32_LAYER");
+    int debug_mlp_down_fp32_layer = debug_mlp_down_layer_env ? atoi(debug_mlp_down_layer_env) : -1;
     const float *ck_debug_mlp_down_fp32_input = NULL;
     const char *debug_mlp_gate_up_env = getenv("CK_V8_DEBUG_MLP_GATE_UP_FP32");
     int debug_mlp_gate_up_fp32 = debug_mlp_gate_up_env ? (atoi(debug_mlp_gate_up_env) != 0) : 0;
@@ -1618,6 +1678,7 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
     const char *debug_prefill_mamba_in_proj_row_gemv_env = getenv("CK_V8_DEBUG_PREFILL_MAMBA_IN_PROJ_ROW_GEMV");
     int debug_prefill_mamba_in_proj_row_gemv = debug_prefill_mamba_in_proj_row_gemv_env ? (atoi(debug_prefill_mamba_in_proj_row_gemv_env) != 0) : 0;
     int ck_enable_q4k_gateup_swiglu_x16 = ck_env_truthy_or_qwen3vl_ocr_profile("CK_ENABLE_Q4K_GATEUP_SWIGLU_X16");
+    int ck_enable_swiglu_q8k_fusion = ck_env_truthy_or_qwen3vl_ocr_profile("CK_ENABLE_SWIGLU_Q8K_FUSION");
     const float *ck_debug_mlp_gate_up_fp32_input = NULL;
 """
     prologue = prologue.replace(
@@ -1645,10 +1706,15 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
     residual_add_counts_by_layer: Dict[int, int] = {}
 
     skip_swiglu_guard: Optional[str] = None
+    swiglu_q8k_fusion_guard: Optional[str] = None
+    swiglu_q8k_fusion_call: Optional[str] = None
     for seq_idx, op in enumerate(ops):
         op_type = str(op.get("op", ""))
         if skip_swiglu_guard and op_type not in {"silu_mul", "swiglu"}:
             skip_swiglu_guard = None
+        if swiglu_q8k_fusion_guard and op_type != "quantize_mlp_down_input":
+            swiglu_q8k_fusion_guard = None
+            swiglu_q8k_fusion_call = None
         if op_type == "residual_add" and "op_instance_idx" not in op and "instance" not in op:
             layer_for_instance = int(op.get("layer", -1))
             inst = residual_add_counts_by_layer.get(layer_for_instance, 0)
@@ -1709,15 +1775,34 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
                     profile=profile,
                     dump=dump,
                 )
-        elif is_qwen3vl and op_type == "quantize_mlp_down_input" and str(op.get("function", "")) in {"quantize_row_q8_0", "quantize_row_q8_k"}:
-            op_code = _emit_prefill_quant_debug_override(
-                op,
-                seq_idx,
-                config,
-                debug_flag_name="debug_mlp_down_fp32",
-                debug_input_name="ck_debug_mlp_down_fp32_input",
-                profile=profile,
-            )
+        elif op_type == "quantize_mlp_down_input" and str(op.get("function", "")) in {"quantize_row_q8_0", "quantize_row_q8_k"}:
+            if swiglu_q8k_fusion_guard and swiglu_q8k_fusion_call and str(op.get("function", "")) == "quantize_row_q8_k":
+                base_code = _emit_prefill_quant_debug_override(
+                    op,
+                    seq_idx,
+                    config,
+                    debug_flag_name="debug_mlp_down_fp32",
+                    debug_input_name="ck_debug_mlp_down_fp32_input",
+                    profile=profile,
+                )
+                op_code = (
+                    f"    if ({swiglu_q8k_fusion_guard}) {{\n"
+                    f"{swiglu_q8k_fusion_call}\n"
+                    "    } else {\n"
+                    + "\n".join("    " + line if line else line for line in base_code.splitlines())
+                    + "\n    }"
+                )
+                swiglu_q8k_fusion_guard = None
+                swiglu_q8k_fusion_call = None
+            else:
+                op_code = _emit_prefill_quant_debug_override(
+                    op,
+                    seq_idx,
+                    config,
+                    debug_flag_name="debug_mlp_down_fp32",
+                    debug_input_name="ck_debug_mlp_down_fp32_input",
+                    profile=profile,
+                )
         elif is_qwen3vl and op_type == "mlp_down" and str(op.get("function", "")) in {"gemm_nt_q4_k_q8_k", "gemm_nt_q6_k_q8_k"}:
             op_code = _emit_prefill_gemm_fp32_override(
                 op,
@@ -1731,9 +1816,42 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
             op_code = emit_prefill_op(op, seq_idx, config, profile=profile, dump=dump)
             if is_qwen3vl and op_type == "rope_qk":
                 op_code = op_code.replace("mrope_qk_text(", "ck_qwen3vl_prefill_mrope_qk(")
+        swiglu_block_guard = skip_swiglu_guard if op_type in {"silu_mul", "swiglu"} else None
         if skip_swiglu_guard and op_type in {"silu_mul", "swiglu"}:
             op_code = f"    if (!{skip_swiglu_guard}) {{\n" + "\n".join("    " + line if line else line for line in op_code.splitlines()) + "\n    }"
             skip_swiglu_guard = None
+        if op_type in {"silu_mul", "swiglu"}:
+            next_op = ops[seq_idx + 1] if seq_idx + 1 < len(ops) else None
+            if (
+                isinstance(next_op, dict)
+                and str(op.get("function", "")) == "swiglu_forward"
+                and str(next_op.get("op", "")) == "quantize_mlp_down_input"
+                and str(next_op.get("function", "")) == "quantize_row_q8_k"
+            ):
+                swiglu_args = op.get("args", [])
+                quant_args = next_op.get("args", [])
+                swiglu_input = _find_arg_expr(swiglu_args, arg_name="input")
+                quant_output = _find_arg_expr(quant_args, arg_name="y") or _find_arg_expr(quant_args, arg_name="output")
+                dim_expr = _find_arg_expr(swiglu_args, arg_name="dim") or _find_arg_expr(quant_args, arg_name="k")
+                layer_value = op.get("layer", -1)
+                layer = int(layer_value) if layer_value is not None else -1
+                if swiglu_input and quant_output and dim_expr:
+                    guard = f"ck_swiglu_q8k_fused_{seq_idx}"
+                    swiglu_q8k_fusion_guard = guard
+                    fused_lines = []
+                    if profile:
+                        fused_lines.append("        CK_PROFILE_BEGIN();")
+                    fused_lines.append(f"        swiglu_forward_q8_k((const float*)({swiglu_input}), (void*)({quant_output}), num_tokens, (int)({dim_expr}));")
+                    if profile:
+                        fused_lines.append(f'        CK_PROFILE_END("prefill", "swiglu_forward_q8_k", "silu_mul_quantize_mlp_down_input", {layer});')
+                    swiglu_q8k_fusion_call = "\n".join(fused_lines)
+                    block_guard_expr = f" && !{swiglu_block_guard}" if swiglu_block_guard else ""
+                    op_code = (
+                        f"    const int {guard} = ck_enable_swiglu_q8k_fusion{block_guard_expr} && !(debug_mlp_down_fp32 || debug_mlp_down_fp32_layer == {layer});\n"
+                        f"    if (!{guard}) {{\n"
+                        + "\n".join("    " + line if line else line for line in op_code.splitlines())
+                        + "\n    }"
+                    )
         lines.append(op_code)
         lines.append(f"    if (stop_seq == {seq_idx}) return;")
         if is_qwen3vl and op_type == "residual_add":
