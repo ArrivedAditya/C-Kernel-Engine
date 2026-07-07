@@ -407,21 +407,43 @@ static void *ck_resolve_ggml_cpu_so_handle(void)
     if (!tried) {
         tried = 1;
         const char *env_path = getenv("CK_GGML_CPU_SO");
-        const char *candidates[] = {
-            env_path && env_path[0] ? env_path : NULL,
-            "libggml-cpu.so",
-            "libggml-cpu.so.0",
-            "./llama.cpp/build/bin/libggml-cpu.so",
-            "./llama.cpp/build/bin/libggml-cpu.so.0",
-            "llama.cpp/build/bin/libggml-cpu.so",
-            "llama.cpp/build/bin/libggml-cpu.so.0",
+        const char *env_dir = getenv("CK_GGML_LIB_DIR");
+        const char *dirs[] = {
+            "/opt/app-root/src/Software/llama.cpp/build/bin",
+            "./llama.cpp/build/bin",
+            "llama.cpp/build/bin",
             NULL,
         };
-        for (int i = 0; candidates[i] != NULL; ++i) {
-            handle = dlopen(candidates[i], RTLD_NOW | RTLD_LOCAL);
+        char path_buf[512];
+        if (env_dir && env_dir[0]) {
+            snprintf(path_buf, sizeof(path_buf), "%s/libggml-base.so", env_dir);
+            dlopen(path_buf, RTLD_NOW | RTLD_GLOBAL);
+            snprintf(path_buf, sizeof(path_buf), "%s/libggml.so", env_dir);
+            dlopen(path_buf, RTLD_NOW | RTLD_GLOBAL);
+            snprintf(path_buf, sizeof(path_buf), "%s/libggml-cpu.so", env_dir);
+            handle = dlopen(path_buf, RTLD_NOW | RTLD_GLOBAL);
+        }
+        for (int i = 0; !handle && dirs[i] != NULL; ++i) {
+            snprintf(path_buf, sizeof(path_buf), "%s/libggml-base.so", dirs[i]);
+            dlopen(path_buf, RTLD_NOW | RTLD_GLOBAL);
+            snprintf(path_buf, sizeof(path_buf), "%s/libggml.so", dirs[i]);
+            dlopen(path_buf, RTLD_NOW | RTLD_GLOBAL);
+            snprintf(path_buf, sizeof(path_buf), "%s/libggml-cpu.so", dirs[i]);
+            handle = dlopen(path_buf, RTLD_NOW | RTLD_GLOBAL);
             if (handle) {
                 break;
             }
+        }
+        if (!handle && env_path && env_path[0]) {
+            handle = dlopen(env_path, RTLD_NOW | RTLD_GLOBAL);
+        }
+        const char *candidates[] = {
+            "libggml-cpu.so",
+            "libggml-cpu.so.0",
+            NULL,
+        };
+        for (int i = 0; !handle && candidates[i] != NULL; ++i) {
+            handle = dlopen(candidates[i], RTLD_NOW | RTLD_GLOBAL);
         }
     }
     return handle;
@@ -3260,19 +3282,55 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
     const size_t kv_head_stride = (size_t)kv_stride_tokens * (size_t)aligned_head_dim;
 
     if (ck_strict_parity_enabled()) {
+        const float strict_scale = ck_attention_strict_scale_f32(head_dim);
+        float *score_row = (float *) alloca((size_t) T * sizeof(float));
+        float *logit_row = (float *) alloca((size_t) T * sizeof(float));
+        float *v_cols = (float *) alloca((size_t) head_dim * (size_t) T * sizeof(float));
         for (int h = 0; h < num_heads; ++h) {
             int kv_head = (int)((long long)h * (long long)num_kv_heads / (long long)num_heads);
             const float *k_head = k + (size_t)kv_head * kv_head_stride;
             const float *v_head = v + (size_t)kv_head * kv_head_stride;
 
+            for (int d = 0; d < head_dim; ++d) {
+                float *dst_col = v_cols + (size_t) d * (size_t) T;
+                for (int j = 0; j < T; ++j) {
+                    dst_col[j] = v_head[(size_t) j * (size_t) aligned_head_dim + (size_t) d];
+                }
+            }
+
             for (int i = 0; i < T; ++i) {
                 const float *q_vec = q + qkv_index(h, i, 0, T, aligned_head_dim);
                 float *out_vec = output + qkv_index(h, i, 0, T, aligned_head_dim);
                 const int kv_tokens = causal ? (i + 1) : T;
-                attention_flash_query_causal_exact(q_vec, k_head, v_head,
-                                                   kv_tokens,
-                                                   head_dim, aligned_head_dim,
-                                                   scale, out_vec);
+                if (kv_tokens <= 0) {
+                    for (int d = 0; d < aligned_head_dim; ++d) {
+                        out_vec[d] = 0.0f;
+                    }
+                    continue;
+                }
+                for (int j = 0; j < kv_tokens; ++j) {
+                    const float *k_vec = k_head + (size_t) j * (size_t) aligned_head_dim;
+                    score_row[j] = ck_ggml_vec_dot_f32_contig(q_vec, k_vec, head_dim);
+                }
+                memcpy(logit_row, score_row, (size_t) kv_tokens * sizeof(float));
+                ck_vec_scale_f32_inplace(logit_row, kv_tokens, strict_scale);
+                const float max_score = ck_vec_max_f32_contig(logit_row, kv_tokens);
+                const double sum = ck_ggml_vec_soft_max_row(kv_tokens, score_row, logit_row, max_score);
+                if (sum > 0.0) {
+                    const float inv_sum = (float) (1.0 / sum);
+                    ck_vec_scale_f32_inplace(score_row, kv_tokens, inv_sum);
+                    for (int d = 0; d < head_dim; ++d) {
+                        const float *v_col = v_cols + (size_t) d * (size_t) T;
+                        out_vec[d] = ck_ggml_vec_dot_f32_contig(score_row, v_col, kv_tokens);
+                    }
+                } else {
+                    for (int d = 0; d < head_dim; ++d) {
+                        out_vec[d] = 0.0f;
+                    }
+                }
+                for (int d = head_dim; d < aligned_head_dim; ++d) {
+                    out_vec[d] = 0.0f;
+                }
             }
         }
         return;
