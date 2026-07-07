@@ -1141,7 +1141,10 @@ def _resolve_run_dir(model_input: str, input_type: str, info: dict[str, Any], re
     if input_type == "gguf":
         return CACHE_DIR / info["path"].stem
     if input_type == "local_dir":
-        return info["path"] / ".ck_build_v8"
+        local_dir = info["path"]
+        if _is_runtime_dir(local_dir):
+            return local_dir
+        return local_dir / ".ck_build_v8"
     if input_type == "local_config":
         return info["path"].parent / ".ck_build_v8"
     return CACHE_DIR / "unknown"

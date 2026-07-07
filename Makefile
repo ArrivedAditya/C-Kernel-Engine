@@ -2660,7 +2660,7 @@ test-v8-decoder-matrix-quick: ck-cli-v8
 	@echo "Running v8 decoder matrix benchmark (quick, CKE vs llama.cpp)..."
 	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
 		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_v8_decoder_matrix.py \
-		--models $${CK_V8_DECODER_MODELS:-qwen35-0.8b-q4_k_m,qwen2-0.5b-q4_k_m} \
+		--models $${CK_V8_DECODER_MODELS:-qwen35-0.8b-q4_k_m,nanbeige4.1-3b-q4_k_m,qwen2-0.5b-q4_k_m} \
 		--threads $${CK_NUM_THREADS:-12} \
 		--prompt $${CK_V8_DECODER_PROMPT:-128} \
 		--decode $${CK_V8_DECODER_DECODE:-32} \
@@ -2749,7 +2749,7 @@ profile-v8-prefill-ops: ck-cli-v8
 	@echo "Profiling v8 prefill operator costs..."
 	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
 		$(PYTHON) $(PYTHONFLAGS) benchmarks/profile_v8_prefill_ops.py \
-		--models $${CK_V8_PROFILE_MODELS:-qwen35-0.8b-q4_k_m,qwen2-0.5b-q4_k_m} \
+		--models $${CK_V8_PROFILE_MODELS:-qwen35-0.8b-q4_k_m,nanbeige4.1-3b-q4_k_m,qwen2-0.5b-q4_k_m} \
 		--threads $${CK_NUM_THREADS:-12} \
 		--prompt $${CK_V8_PROFILE_PROMPT:-512} \
 		--decode $${CK_V8_PROFILE_DECODE:-1} \
@@ -2761,7 +2761,7 @@ profile-v8-prefill-ops-quick: ck-cli-v8
 	@echo "Profiling v8 prefill operator costs (quick)..."
 	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
 		$(PYTHON) $(PYTHONFLAGS) benchmarks/profile_v8_prefill_ops.py \
-		--models $${CK_V8_PROFILE_MODELS:-qwen35-0.8b-q4_k_m,qwen2-0.5b-q4_k_m} \
+		--models $${CK_V8_PROFILE_MODELS:-qwen35-0.8b-q4_k_m,nanbeige4.1-3b-q4_k_m,qwen2-0.5b-q4_k_m} \
 		--threads $${CK_NUM_THREADS:-12} \
 		--prompt $${CK_V8_PROFILE_PROMPT:-128} \
 		--decode $${CK_V8_PROFILE_DECODE:-1} \

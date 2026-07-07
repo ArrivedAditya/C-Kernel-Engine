@@ -24,7 +24,10 @@ def resolve_model_dir(model_input: str) -> Path:
     if input_type == "gguf":
         return CACHE_DIR / info["path"].stem
     if input_type == "local_dir":
-        return Path(info["path"]).resolve()
+        local_dir = Path(info["path"]).resolve()
+        if (local_dir / "weights.bump").exists() and (local_dir / "weights_manifest.json").exists():
+            return local_dir
+        return local_dir / ".ck_build_v8"
     if input_type == "local_config":
         return Path(info["path"]).resolve().parent
 

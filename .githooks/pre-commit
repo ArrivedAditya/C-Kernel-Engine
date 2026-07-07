@@ -271,24 +271,35 @@ if [ "$should_run_v7_regression" = "1" ]; then
     echo -e "${GREEN}✓ v7-kernel-map-contracts passed${NC}"
 fi
 
+regression_pids=()
+regression_names=()
 if [ "$should_run_v7_regression" = "1" ]; then
-    if ! CK_CACHE_DIR="${CACHE_ROOT}" make -C "$SNAPSHOT_DIR" v7-regression-fast REGRESSION_ARGS="--run-root ${RUN_ROOT}/v7 --report-root ${REPORT_ROOT}/v7" > /tmp/ck_precommit_regression_v7.log 2>&1; then
-        echo -e "${RED}✗ v7-regression-fast failed${NC}"
-        echo "  See /tmp/ck_precommit_regression_v7.log for details"
-        tail -40 /tmp/ck_precommit_regression_v7.log || true
-        exit 1
-    fi
-    echo -e "${GREEN}✓ v7-regression-fast passed${NC}"
+    CK_CACHE_DIR="${CACHE_ROOT}" make -C "$SNAPSHOT_DIR" v7-regression-fast REGRESSION_ARGS="--run-root ${RUN_ROOT}/v7 --report-root ${REPORT_ROOT}/v7" > /tmp/ck_precommit_regression_v7.log 2>&1 &
+    regression_pids+=("$!")
+    regression_names+=("v7")
 fi
 
 if [ "$should_run_v8_regression" = "1" ]; then
-    if ! CK_CACHE_DIR="${CACHE_ROOT}" make -C "$SNAPSHOT_DIR" v8-regression-fast REGRESSION_ARGS="--run-root ${RUN_ROOT}/v8 --report-root ${REPORT_ROOT}/v8" > /tmp/ck_precommit_regression_v8.log 2>&1; then
-        echo -e "${RED}✗ v8-regression-fast failed${NC}"
-        echo "  See /tmp/ck_precommit_regression_v8.log for details"
-        tail -40 /tmp/ck_precommit_regression_v8.log || true
-        exit 1
+    CK_CACHE_DIR="${CACHE_ROOT}" make -C "$SNAPSHOT_DIR" v8-regression-fast REGRESSION_ARGS="--run-root ${RUN_ROOT}/v8 --report-root ${REPORT_ROOT}/v8" > /tmp/ck_precommit_regression_v8.log 2>&1 &
+    regression_pids+=("$!")
+    regression_names+=("v8")
+fi
+
+regression_failed=0
+for idx in "${!regression_pids[@]}"; do
+    regression_name="${regression_names[$idx]}"
+    if wait "${regression_pids[$idx]}"; then
+        echo -e "${GREEN}✓ ${regression_name}-regression-fast passed${NC}"
+    else
+        echo -e "${RED}✗ ${regression_name}-regression-fast failed${NC}"
+        echo "  See /tmp/ck_precommit_regression_${regression_name}.log for details"
+        tail -40 "/tmp/ck_precommit_regression_${regression_name}.log" || true
+        regression_failed=1
     fi
-    echo -e "${GREEN}✓ v8-regression-fast passed${NC}"
+done
+
+if [ "$regression_failed" = "1" ]; then
+    exit 1
 fi
 
 exit 0
