@@ -2229,6 +2229,11 @@ void sigmoid_backward_bf16(const uint16_t *input,
 	                    int tokens,
 	                    int dim);
 
+	void swiglu_forward_q8_k(const float *input,
+	                         void *output_q8,
+	                         int tokens,
+	                         int dim);
+
 	void swiglu_backward(const float *input,
 	                     const float *d_output,
 	                     float *d_input,

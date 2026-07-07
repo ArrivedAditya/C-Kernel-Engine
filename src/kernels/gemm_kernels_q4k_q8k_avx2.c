@@ -38,28 +38,18 @@ static inline int32_t hsum256_epi32(__m256i v) {
     return _mm_cvtsi128_si32(sum);
 }
 
-static inline int32_t dot_q4_q8_16_avx2(const uint8_t *q4,
-                                        const int8_t *q8,
-                                        int high_nibble) {
-    const __m128i q4_packed = _mm_loadu_si128((const __m128i *)q4);
-    const __m128i mask4 = _mm_set1_epi8(0x0F);
-    const __m128i q4_nibbles = high_nibble
-        ? _mm_and_si128(_mm_srli_epi16(q4_packed, 4), mask4)
-        : _mm_and_si128(q4_packed, mask4);
-    const __m128i q8_bytes = _mm_loadu_si128((const __m128i *)q8);
-
-    const __m256i q4_16 = _mm256_cvtepu8_epi16(q4_nibbles);
-    const __m256i q8_16 = _mm256_cvtepi8_epi16(q8_bytes);
-    const __m256i prod = _mm256_madd_epi16(q4_16, q8_16);
-
-    return hsum256_epi32(prod);
-}
-
 static inline int32_t dot_q4_q8_32_avx2(const uint8_t *q4,
                                         const int8_t *q8,
                                         int high_nibble) {
-    return dot_q4_q8_16_avx2(q4, q8, high_nibble)
-         + dot_q4_q8_16_avx2(q4 + 16, q8 + 16, high_nibble);
+    const __m256i packed = _mm256_loadu_si256((const __m256i *)q4);
+    const __m256i mask4 = _mm256_set1_epi8(0x0F);
+    const __m256i q4_bytes = high_nibble
+        ? _mm256_and_si256(_mm256_srli_epi16(packed, 4), mask4)
+        : _mm256_and_si256(packed, mask4);
+    const __m256i q8_bytes = _mm256_loadu_si256((const __m256i *)q8);
+    const __m256i pair_sums_i16 = _mm256_maddubs_epi16(q4_bytes, q8_bytes);
+    const __m256i sums_i32 = _mm256_madd_epi16(pair_sums_i16, _mm256_set1_epi16(1));
+    return hsum256_epi32(sums_i32);
 }
 
 static float dot_q4_k_q8_k_avx2(const block_q4_K *w,
