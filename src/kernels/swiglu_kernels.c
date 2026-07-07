@@ -15,6 +15,7 @@
  */
 
 #include "ckernel_engine.h"
+#include "ckernel_quant.h"
 #include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -216,6 +217,62 @@ void swiglu_forward(const float *input,
             float silu = a * s;                  // silu(a) = a * sigmoid(a)
 
             out_row[d] = silu * b;
+        }
+    }
+}
+
+void swiglu_forward_q8_k(const float *input,
+                         void *output_q8,
+                         int tokens,
+                         int dim)
+{
+    if (!input || !output_q8 || tokens <= 0 || dim <= 0) {
+        return;
+    }
+    if ((dim % QK_K) != 0) {
+        return;
+    }
+
+    const char *fast_env = getenv("CK_SWIGLU_FAST");
+    const char *exact_env = getenv("CK_SWIGLU_EXACT");
+    const int use_fast = !ck_strict_parity_enabled() &&
+                         (fast_env && atoi(fast_env) != 0) &&
+                         !(exact_env && atoi(exact_env) != 0);
+
+    const int blocks_per_row = dim / QK_K;
+    block_q8_K *q8 = (block_q8_K *)output_q8;
+    float tmp[QK_K];
+
+    for (int t = 0; t < tokens; ++t) {
+        const float *row = input + (size_t)t * (size_t)(2 * dim);
+        block_q8_K *q8_row = q8 + (size_t)t * (size_t)blocks_per_row;
+
+        for (int block = 0; block < blocks_per_row; ++block) {
+            const int base = block * QK_K;
+            int d = 0;
+
+#if defined(__AVX2__)
+            if (use_fast) {
+                for (; d + 8 <= QK_K; d += 8) {
+                    const __m256 a = _mm256_loadu_ps(row + base + d);
+                    const __m256 b = _mm256_loadu_ps(row + dim + base + d);
+                    const __m256 s = sigmoid256_fast(a);
+                    const __m256 y = _mm256_mul_ps(_mm256_mul_ps(a, s), b);
+                    _mm256_storeu_ps(tmp + d, y);
+                }
+            }
+#else
+            (void)use_fast;
+#endif
+
+            for (; d < QK_K; ++d) {
+                const float a = row[base + d];
+                const float b = row[dim + base + d];
+                const float s = use_fast ? sigmoid_scalar(a) : sigmoid_scalar_parity(a);
+                tmp[d] = (a * s) * b;
+            }
+
+            quantize_row_q8_k(tmp, (void *)&q8_row[block], QK_K);
         }
     }
 }
