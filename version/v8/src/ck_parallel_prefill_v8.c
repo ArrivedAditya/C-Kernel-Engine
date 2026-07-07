@@ -175,6 +175,13 @@ static int ck_env_enabled(const char *name)
     return v && v[0] && strcmp(v, "0") != 0;
 }
 
+static void ck_q4k_prefill_debug_dispatch(const char *path, int M, int N, int K, int active)
+{
+    if (!ck_env_enabled("CK_DEBUG_Q4K_PREFILL_DISPATCH")) return;
+    fprintf(stderr, "[CK q4k prefill] path=%s M=%d N=%d K=%d active=%d\n",
+            path, M, N, K, active);
+}
+
 static int ck_env_int_or2(const char *primary, const char *secondary, int fallback)
 {
     const char *v = getenv(primary);
@@ -421,7 +428,7 @@ static int ck_should_use_q4k_packed_meta_prefill(int M, int N, int K)
      *   - N=896,K=4864 was slower than canonical pool in the dispatch matrix.
      * Keep packed-meta on the wider Qwen3.5 gate/up style shapes that win, and
      * let force/env tuning override this when collecting new hardware data. */
-    if (N >= 1024 && K >= 1024) return 1;
+    if (N >= 512 && K >= 1024) return 1;
     if (K <= 2048 && N >= 1024 && N <= 8192) return 1;
     return 0;
 }
@@ -429,18 +436,22 @@ static int ck_should_use_q4k_packed_meta_prefill(int M, int N, int K)
 static int ck_should_use_q4k_packed_meta_x16_prefill(int M, int N, int K)
 {
     if (ck_env_enabled("CK_DISABLE_Q4K_PACKED_META_X16_PREFILL")) return 0;
-    if (!ck_env_enabled("CK_ENABLE_Q4K_PACKED_META_X16_PREFILL") &&
-        !ck_env_enabled("CK_FORCE_Q4K_PACKED_META_X16_PREFILL")) return 0;
     if (M <= 1 || N <= 0 || K <= 0 || (K % QK_K) != 0) return 0;
 
     const int min_m = ck_env_int_or2("CK_Q4K_PACKED_META_X16_MIN_M", NULL, 16);
     if (M < min_m) return 0;
     if (ck_env_enabled("CK_FORCE_Q4K_PACKED_META_X16_PREFILL")) return 1;
 
-    /* Experimental generic projection path. It wins on Qwen3-VL q/out style
-     * shapes and is marginal on Q4 MLP-down on this Xeon, so keep it opt-in
-     * until model-level sweeps by CPU family justify default promotion. */
-    if (N >= 1024 && K >= 1024) return 1;
+    /* Default prefill path for wide Q4_K x Q8_K projections.
+     *
+     * The canonical v8 fallback is intentionally safe, but it implements GEMM
+     * as row-split GEMV calls. That is appropriate for decode (M == 1), but it
+     * destroys prefill reuse and shows up in Advisor/VTune as a low-AI
+     * gemv_q4_k_q8_k_avx2 hotspot. The packed x16 path keeps a small token tile
+     * hot across 16 output rows and is the measured win for Nanbeige/Qwen-style
+     * prefill shapes on AVX2. Keep CK_DISABLE_Q4K_PACKED_META_X16_PREFILL as
+     * the production escape hatch for new CPUs or model-specific regressions. */
+    if (N >= 512 && K >= 1024) return 1;
     return 0;
 }
 
@@ -855,12 +866,14 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
             if (cap > 0 && active > cap) active = cap;
             const int tile_m = ck_env_int_or2("CK_Q4K_PACKED_META_X16_TILE_M", "CK_PREFILL_TILE_M", 8);
             if (ck_env_enabled("CK_Q4K_PACKED_META_X16_MTILE")) {
+                ck_q4k_prefill_debug_dispatch("x16_mtile", M, N, K, active);
                 gemm_nt_q4_k_packed_meta_x16_q8_k_threaded_mtile(
                     A, packed_x16, bias, C, M, N, K,
                     tile_m,
                     active
                 );
             } else {
+                ck_q4k_prefill_debug_dispatch("x16_mreuse", M, N, K, active);
                 gemm_nt_q4_k_packed_meta_x16_q8_k_threaded_mreuse(
                     A, packed_x16, bias, C, M, N, K,
                     tile_m,
@@ -878,6 +891,7 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
             const int cap = ck_env_int_or2("CK_Q4K_PACKED_META_X8_MREUSE_THREAD_CAP", "CK_GEMM_THREAD_CAP", 20);
             if (cap > 0 && active > cap) active = cap;
             const int tile_m = ck_env_int_or2("CK_Q4K_PACKED_META_X8_MREUSE_TILE_M", "CK_PREFILL_TILE_M", 4);
+            ck_q4k_prefill_debug_dispatch("x8_mreuse", M, N, K, active);
             gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mreuse(
                 A, packed_x8, bias, C, M, N, K,
                 tile_m,
@@ -892,6 +906,7 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
         if (packed_x8) {
             const int active = ck_select_gemm_active_threads(pool, M, N, K);
             const int tile_m = ck_env_int_or2("CK_Q4K_PACKED_META_X8MT_TILE_M", "CK_PREFILL_TILE_M", 2);
+            ck_q4k_prefill_debug_dispatch("x8_mtile", M, N, K, active);
             gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(
                 A, packed_x8, bias, C, M, N, K,
                 tile_m,
@@ -905,6 +920,7 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
         void *packed_x8 = ck_get_q4k_packed_meta_x8_cached(B, N, K);
         if (packed_x8) {
             const int active = ck_select_gemm_active_threads(pool, M, N, K);
+            ck_q4k_prefill_debug_dispatch("x8_nsplit", M, N, K, active);
             gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_nsplit(
                 A, packed_x8, bias, C, M, N, K,
                 active
@@ -925,9 +941,11 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
                 .tile_n = ck_env_int_or2("CK_Q4K_PACKED_META_TILE_N", "CK_PREFILL_TILE_N", 256)
             };
             if (ck_should_use_q4k_packed_meta_2d_prefill(pool, M, N, K, args.tile_m, args.tile_n)) {
+                ck_q4k_prefill_debug_dispatch("packed_meta_2d", M, N, K, active);
                 ck_threadpool_dispatch_n(pool, active, work_gemm_nt_q4_k_packed_meta_q8_k_2d, &args);
                 return;
             }
+            ck_q4k_prefill_debug_dispatch("packed_meta_nsplit", M, N, K, active);
             gemm_nt_q4_k_packed_meta_q8_k_threaded_nsplit(
                 A, packed, bias, C, M, N, K,
                 active
@@ -937,6 +955,7 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
     }
 
     if (!pool || ck_threadpool_n_threads(pool) <= 1 || M <= 1 || ck_should_run_gemm_serial(pool, M, N, K)) {
+        ck_q4k_prefill_debug_dispatch("serial", M, N, K, 1);
         gemm_nt_q4_k_q8_k(A, B, bias, C, M, N, K);
         return;
     }
@@ -958,7 +977,9 @@ void gemm_nt_q4_k_q8_k_parallel_dispatch(
      * active threadpool, so the safe canonical path is row splitting with the
      * one-token Q4_K GEMV primitive in work_gemm_nt_q4_k_q8_k().
      */
-    ck_threadpool_dispatch_n(pool, ck_select_gemm_active_threads(pool, M, N, K), work_gemm_nt_q4_k_q8_k, &args);
+    const int active = ck_select_gemm_active_threads(pool, M, N, K);
+    ck_q4k_prefill_debug_dispatch("fallback_row_gemv", M, N, K, active);
+    ck_threadpool_dispatch_n(pool, active, work_gemm_nt_q4_k_q8_k, &args);
 }
 
 void gemm_nt_q6_k_q8_k_parallel_dispatch(

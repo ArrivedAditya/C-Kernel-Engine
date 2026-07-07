@@ -1057,7 +1057,11 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
     int debug_prefill_mlp_gate_up_row_gemv_layer = debug_prefill_mlp_gate_up_row_gemv_layer_env ? atoi(debug_prefill_mlp_gate_up_row_gemv_layer_env) : -1;
     const char *debug_prefill_mamba_in_proj_row_gemv_env = getenv("CK_V8_DEBUG_PREFILL_MAMBA_IN_PROJ_ROW_GEMV");
     int debug_prefill_mamba_in_proj_row_gemv = debug_prefill_mamba_in_proj_row_gemv_env ? (atoi(debug_prefill_mamba_in_proj_row_gemv_env) != 0) : 0;
-    int ck_enable_q4k_gateup_swiglu_x16 = ck_env_truthy_or_qwen3vl_ocr_profile("CK_ENABLE_Q4K_GATEUP_SWIGLU_X16");
+    const char *ck_disable_q4k_gateup_swiglu_x16_env = getenv("CK_DISABLE_Q4K_GATEUP_SWIGLU_X16");
+    int ck_enable_q4k_gateup_swiglu_x16 =
+        !(ck_disable_q4k_gateup_swiglu_x16_env &&
+          ck_disable_q4k_gateup_swiglu_x16_env[0] &&
+          strcmp(ck_disable_q4k_gateup_swiglu_x16_env, "0") != 0);
     int ck_enable_swiglu_q8k_fusion = ck_env_truthy_or_qwen3vl_ocr_profile("CK_ENABLE_SWIGLU_Q8K_FUSION");
 
     /* Copy input tokens to activation buffer (follow same pattern as decode) */
@@ -1677,7 +1681,11 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
     int debug_prefill_mlp_gate_up_row_gemv_layer = debug_prefill_mlp_gate_up_row_gemv_layer_env ? atoi(debug_prefill_mlp_gate_up_row_gemv_layer_env) : -1;
     const char *debug_prefill_mamba_in_proj_row_gemv_env = getenv("CK_V8_DEBUG_PREFILL_MAMBA_IN_PROJ_ROW_GEMV");
     int debug_prefill_mamba_in_proj_row_gemv = debug_prefill_mamba_in_proj_row_gemv_env ? (atoi(debug_prefill_mamba_in_proj_row_gemv_env) != 0) : 0;
-    int ck_enable_q4k_gateup_swiglu_x16 = ck_env_truthy_or_qwen3vl_ocr_profile("CK_ENABLE_Q4K_GATEUP_SWIGLU_X16");
+    const char *ck_disable_q4k_gateup_swiglu_x16_env = getenv("CK_DISABLE_Q4K_GATEUP_SWIGLU_X16");
+    int ck_enable_q4k_gateup_swiglu_x16 =
+        !(ck_disable_q4k_gateup_swiglu_x16_env &&
+          ck_disable_q4k_gateup_swiglu_x16_env[0] &&
+          strcmp(ck_disable_q4k_gateup_swiglu_x16_env, "0") != 0);
     int ck_enable_swiglu_q8k_fusion = ck_env_truthy_or_qwen3vl_ocr_profile("CK_ENABLE_SWIGLU_Q8K_FUSION");
     const float *ck_debug_mlp_gate_up_fp32_input = NULL;
 """
