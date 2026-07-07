@@ -39,7 +39,8 @@ static int ck_q4k_x16_chunk4_enabled(void)
 {
     static int cached = -1;
     if (cached < 0) {
-        cached = ck_env_truthy_or_qwen3vl_ocr_profile("CK_Q4K_X16_CHUNK4");
+        const char *env = getenv("CK_Q4K_X16_CHUNK4");
+        cached = env ? ck_env_value_truthy(env) : 1;
     }
     return cached;
 }
@@ -147,19 +148,34 @@ static inline float dot_q4_k_q8_k_vnni_block(const block_q4_K *w,
 #endif
 
 #if defined(__AVX2__) && !(defined(__AVX512VNNI__) && defined(__AVX512VL__))
-static inline int32_t dot_q4_k_q8_k_32_avx2_q8v(const uint8_t *q4_packed_32,
-                                                 __m256i q8_bytes,
-                                                 int high_nibble) {
-    const __m256i packed = _mm256_loadu_si256((const __m256i *)q4_packed_32);
+static inline __m256i q4_k_unpack_32_avx2_bytes(__m256i packed, int high_nibble) {
     const __m256i mask4 = _mm256_set1_epi8(0x0F);
-    const __m256i q4_bytes = high_nibble
+    return high_nibble
         ? _mm256_and_si256(_mm256_srli_epi16(packed, 4), mask4)
         : _mm256_and_si256(packed, mask4);
+}
+
+static inline __m256i dot_q4_k_q8_k_32_avx2_i32x8(__m256i q4_bytes,
+                                                   __m256i q8_bytes) {
     const __m256i pair_sums_i16 = _mm256_maddubs_epi16(q4_bytes, q8_bytes);
     const __m256i ones = _mm256_set1_epi16(1);
-    const __m256i sums_i32 = _mm256_madd_epi16(pair_sums_i16, ones);
+    return _mm256_madd_epi16(pair_sums_i16, ones);
+}
+
+static inline int32_t dot_q4_k_q8_k_32_avx2_q4v_q8v(__m256i q4_bytes,
+                                                     __m256i q8_bytes) {
+    const __m256i sums_i32 = dot_q4_k_q8_k_32_avx2_i32x8(q4_bytes, q8_bytes);
     return hsum256_epi32(sums_i32);
 }
+
+static inline __m256i dot_q4_k_q8_k_32_avx2_q4v_q8v_scaled_i32x8(__m256i q4_bytes,
+                                                                   __m256i q8_bytes,
+                                                                   uint8_t scale) {
+    const __m256i pair_sums_i16 = _mm256_maddubs_epi16(q4_bytes, q8_bytes);
+    const __m256i scale_i16 = _mm256_set1_epi16((int16_t)scale);
+    return _mm256_madd_epi16(pair_sums_i16, scale_i16);
+}
+
 #endif
 
 
@@ -486,8 +502,11 @@ static inline void accum_q4_k_packed_meta_x8_q8_k_block(float acc[8],
             const int32_t sum_lo = dot_q4_k_q8_k_32_vnni_q8v(qs, q8_lo, 0);
             const int32_t sum_hi = dot_q4_k_q8_k_32_vnni_q8v(qs, q8_hi, 1);
 #elif defined(__AVX2__)
-            const int32_t sum_lo = dot_q4_k_q8_k_32_avx2_q8v(qs, q8_lo, 0);
-            const int32_t sum_hi = dot_q4_k_q8_k_32_avx2_q8v(qs, q8_hi, 1);
+            const __m256i packed = _mm256_loadu_si256((const __m256i *)qs);
+            const __m256i q4_lo = q4_k_unpack_32_avx2_bytes(packed, 0);
+            const __m256i q4_hi = q4_k_unpack_32_avx2_bytes(packed, 1);
+            const int32_t sum_lo = dot_q4_k_q8_k_32_avx2_q4v_q8v(q4_lo, q8_lo);
+            const int32_t sum_hi = dot_q4_k_q8_k_32_avx2_q4v_q8v(q4_hi, q8_hi);
 #else
             int32_t sum_lo = 0;
             int32_t sum_hi = 0;
@@ -617,11 +636,17 @@ static inline void accum_q4_k_packed_meta_x16_q8_k_block_mreuse(float acc[8][16]
             const __m256i packed = _mm256_loadu_si256((const __m256i *)qs);
             const __m256i q4_lo = q4_k_unpack_32_vnni_bytes(packed, 0);
             const __m256i q4_hi = q4_k_unpack_32_vnni_bytes(packed, 1);
+#elif defined(__AVX2__)
+            const __m256i packed = _mm256_loadu_si256((const __m256i *)qs);
+            const __m256i q4_lo = q4_k_unpack_32_avx2_bytes(packed, 0);
+            const __m256i q4_hi = q4_k_unpack_32_avx2_bytes(packed, 1);
 #endif
             const float wd = CK_FP16_TO_FP32(w->d[lane]);
             const float wdmin = CK_FP16_TO_FP32(w->dmin[lane]);
+#if !defined(__AVX2__) || (defined(__AVX512VNNI__) && defined(__AVX512VL__))
             const float sc_lo = (float)w->sc[lane][is];
             const float sc_hi = (float)w->sc[lane][is + 1];
+#endif
             const float min_lo = (float)w->m[lane][is];
             const float min_hi = (float)w->m[lane][is + 1];
 
@@ -641,8 +666,9 @@ static inline void accum_q4_k_packed_meta_x16_q8_k_block_mreuse(float acc[8][16]
 #elif defined(__AVX2__)
                 const __m256i q8_lo = _mm256_loadu_si256((const __m256i *)q8_lo_ptr);
                 const __m256i q8_hi = _mm256_loadu_si256((const __m256i *)q8_hi_ptr);
-                const int32_t sum_lo = dot_q4_k_q8_k_32_avx2_q8v(qs, q8_lo, 0);
-                const int32_t sum_hi = dot_q4_k_q8_k_32_avx2_q8v(qs, q8_hi, 1);
+                const __m256i sum_lo_v = dot_q4_k_q8_k_32_avx2_q4v_q8v_scaled_i32x8(q4_lo, q8_lo, w->sc[lane][is]);
+                const __m256i sum_hi_v = dot_q4_k_q8_k_32_avx2_q4v_q8v_scaled_i32x8(q4_hi, q8_hi, w->sc[lane][is + 1]);
+                const int32_t sum_scaled = hsum256_epi32(_mm256_add_epi32(sum_lo_v, sum_hi_v));
 #else
                 int32_t sum_lo = 0;
                 int32_t sum_hi = 0;
@@ -654,10 +680,16 @@ static inline void accum_q4_k_packed_meta_x16_q8_k_block_mreuse(float acc[8][16]
                 const float xd = x->d;
                 const float d = wd * xd;
                 const float dmin = wdmin * xd;
+#if defined(__AVX2__) && !(defined(__AVX512VNNI__) && defined(__AVX512VL__))
+                acc[mt][lane] += d * (float)sum_scaled;
+                acc[mt][lane] -= dmin * min_lo * (float)bsum_lo;
+                acc[mt][lane] -= dmin * min_hi * (float)bsum_hi;
+#else
                 acc[mt][lane] += d * sc_lo * (float)sum_lo;
                 acc[mt][lane] -= dmin * min_lo * (float)bsum_lo;
                 acc[mt][lane] += d * sc_hi * (float)sum_hi;
                 acc[mt][lane] -= dmin * min_hi * (float)bsum_hi;
+#endif
             }
         }
     }
@@ -672,7 +704,7 @@ static inline void accum_q4_k_packed_meta_x16_q8_k_block_mreuse_chunk4(float acc
                                                                         int m0,
                                                                         int m_count)
 {
-#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+#if (defined(__AVX512VNNI__) && defined(__AVX512VL__)) || defined(__AVX2__)
     for (int j = 0, is = 0, q_offset = 0; j < QK_K; j += 64, is += 2, q_offset += 32) {
         for (int lane0 = 0; lane0 < active; lane0 += 4) {
             const int lanes = (lane0 + 4 <= active) ? 4 : (active - lane0);
@@ -684,8 +716,13 @@ static inline void accum_q4_k_packed_meta_x16_q8_k_block_mreuse_chunk4(float acc
                 const int lane = lane0 + l;
                 const uint8_t *qs = &w->qs[lane][q_offset];
                 const __m256i packed = _mm256_loadu_si256((const __m256i *)qs);
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
                 q4_lo[l] = q4_k_unpack_32_vnni_bytes(packed, 0);
                 q4_hi[l] = q4_k_unpack_32_vnni_bytes(packed, 1);
+#else
+                q4_lo[l] = q4_k_unpack_32_avx2_bytes(packed, 0);
+                q4_hi[l] = q4_k_unpack_32_avx2_bytes(packed, 1);
+#endif
                 wd[l] = CK_FP16_TO_FP32(w->d[lane]);
                 wdmin[l] = CK_FP16_TO_FP32(w->dmin[lane]);
                 sc_lo[l] = (float)w->sc[lane][is];
@@ -705,14 +742,26 @@ static inline void accum_q4_k_packed_meta_x16_q8_k_block_mreuse_chunk4(float acc
                 const float xd = x->d;
                 for (int l = 0; l < lanes; ++l) {
                     const int lane = lane0 + l;
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
                     const int32_t sum_lo = dot_q4_k_q8_k_32_vnni_q4v_q8v(q4_lo[l], q8_lo);
                     const int32_t sum_hi = dot_q4_k_q8_k_32_vnni_q4v_q8v(q4_hi[l], q8_hi);
+#else
+                    const __m256i sum_lo_v = dot_q4_k_q8_k_32_avx2_q4v_q8v_scaled_i32x8(q4_lo[l], q8_lo, w->sc[lane][is]);
+                    const __m256i sum_hi_v = dot_q4_k_q8_k_32_avx2_q4v_q8v_scaled_i32x8(q4_hi[l], q8_hi, w->sc[lane][is + 1]);
+                    const int32_t sum_scaled = hsum256_epi32(_mm256_add_epi32(sum_lo_v, sum_hi_v));
+#endif
                     const float d = wd[l] * xd;
                     const float dmin = wdmin[l] * xd;
+#if defined(__AVX2__) && !(defined(__AVX512VNNI__) && defined(__AVX512VL__))
+                    acc[mt][lane] += d * (float)sum_scaled;
+                    acc[mt][lane] -= dmin * min_lo[l] * (float)bsum_lo;
+                    acc[mt][lane] -= dmin * min_hi[l] * (float)bsum_hi;
+#else
                     acc[mt][lane] += d * sc_lo[l] * (float)sum_lo;
                     acc[mt][lane] -= dmin * min_lo[l] * (float)bsum_lo;
                     acc[mt][lane] += d * sc_hi[l] * (float)sum_hi;
                     acc[mt][lane] -= dmin * min_hi[l] * (float)bsum_hi;
+#endif
                 }
             }
         }
@@ -750,8 +799,12 @@ static inline void accum_q4_k_packed_meta_x16_q8_k_block(float acc[16],
             const int32_t sum_lo = dot_q4_k_q8_k_32_vnni_q8v(qs, q8_lo, 0);
             const int32_t sum_hi = dot_q4_k_q8_k_32_vnni_q8v(qs, q8_hi, 1);
 #elif defined(__AVX2__)
-            const int32_t sum_lo = dot_q4_k_q8_k_32_avx2_q8v(qs, q8_lo, 0);
-            const int32_t sum_hi = dot_q4_k_q8_k_32_avx2_q8v(qs, q8_hi, 1);
+            const __m256i packed = _mm256_loadu_si256((const __m256i *)qs);
+            const __m256i q4_lo = q4_k_unpack_32_avx2_bytes(packed, 0);
+            const __m256i q4_hi = q4_k_unpack_32_avx2_bytes(packed, 1);
+            const __m256i sum_lo_v = dot_q4_k_q8_k_32_avx2_q4v_q8v_scaled_i32x8(q4_lo, q8_lo, w->sc[lane][is]);
+            const __m256i sum_hi_v = dot_q4_k_q8_k_32_avx2_q4v_q8v_scaled_i32x8(q4_hi, q8_hi, w->sc[lane][is + 1]);
+            const int32_t sum_scaled = hsum256_epi32(_mm256_add_epi32(sum_lo_v, sum_hi_v));
 #else
             int32_t sum_lo = 0;
             int32_t sum_hi = 0;
@@ -762,10 +815,16 @@ static inline void accum_q4_k_packed_meta_x16_q8_k_block(float acc[16],
 #endif
             const float d = CK_FP16_TO_FP32(w->d[lane]) * xd;
             const float dmin = CK_FP16_TO_FP32(w->dmin[lane]) * xd;
+#if defined(__AVX2__) && !(defined(__AVX512VNNI__) && defined(__AVX512VL__))
+            acc[lane] += d * (float)sum_scaled;
+            acc[lane] -= dmin * (float)w->m[lane][is] * (float)bsum_lo;
+            acc[lane] -= dmin * (float)w->m[lane][is + 1] * (float)bsum_hi;
+#else
             acc[lane] += d * (float)w->sc[lane][is] * (float)sum_lo;
             acc[lane] -= dmin * (float)w->m[lane][is] * (float)bsum_lo;
             acc[lane] += d * (float)w->sc[lane][is + 1] * (float)sum_hi;
             acc[lane] -= dmin * (float)w->m[lane][is + 1] * (float)bsum_hi;
+#endif
         }
     }
 }
@@ -1389,6 +1448,50 @@ static void gemm_q4_packed_meta_x16_mtile_thread_fn(int ith, int nth, void *args
 }
 
 
+static inline void gemm_q4_packed_meta_x16_mreuse_process_job(
+    const gemm_q4_packed_meta_x16_thread_work_t *a,
+    int job,
+    int mt,
+    int tile_m)
+{
+    const int g = job / mt;
+    const int tm = job - g * mt;
+    const int m0 = tm * tile_m;
+    const int m1 = (m0 + tile_m < a->M) ? (m0 + tile_m) : a->M;
+    const int m_count = m1 - m0;
+    const int n0 = g * 16;
+    const int active = (n0 + 16 <= a->N) ? 16 : (a->N - n0);
+    if (m0 >= a->M || g >= a->groups || m_count <= 0) {
+        return;
+    }
+
+    float acc[8][16];
+    for (int mt_lane = 0; mt_lane < m_count; ++mt_lane) {
+        for (int lane = 0; lane < active; ++lane) {
+            acc[mt_lane][lane] = a->bias ? a->bias[n0 + lane] : 0.0f;
+        }
+    }
+
+    for (int b = 0; b < a->blocks_per_row; ++b) {
+        const block_q4_K_packed_meta_x16 *w_group =
+            a->W + (size_t)g * (size_t)a->blocks_per_row + (size_t)b;
+        if (ck_q4k_x16_chunk4_enabled()) {
+            accum_q4_k_packed_meta_x16_q8_k_block_mreuse_chunk4(acc, w_group, active, a->A,
+                                                                 a->blocks_per_vec, b, m0, m_count);
+        } else {
+            accum_q4_k_packed_meta_x16_q8_k_block_mreuse(acc, w_group, active, a->A,
+                                                          a->blocks_per_vec, b, m0, m_count);
+        }
+    }
+
+    for (int m = m0; m < m1; ++m) {
+        float *c_row = a->C + (size_t)m * (size_t)a->N;
+        for (int lane = 0; lane < active; ++lane) {
+            c_row[n0 + lane] = acc[m - m0][lane];
+        }
+    }
+}
+
 static void gemm_q4_packed_meta_x16_mreuse_thread_fn(int ith, int nth, void *args)
 {
     gemm_q4_packed_meta_x16_thread_work_t *a = (gemm_q4_packed_meta_x16_thread_work_t *)args;
@@ -1401,37 +1504,7 @@ static void gemm_q4_packed_meta_x16_mreuse_thread_fn(int ith, int nth, void *arg
     const int total = mt * a->groups;
 
     for (int job = ith; job < total; job += nth) {
-        const int g = job / mt;
-        const int tm = job - g * mt;
-        const int m0 = tm * tile_m;
-        const int m1 = (m0 + tile_m < a->M) ? (m0 + tile_m) : a->M;
-        const int m_count = m1 - m0;
-        const int n0 = g * 16;
-        const int active = (n0 + 16 <= a->N) ? 16 : (a->N - n0);
-        if (m0 >= a->M || g >= a->groups || m_count <= 0) {
-            continue;
-        }
-
-        float acc[8][16];
-        for (int mt_lane = 0; mt_lane < m_count; ++mt_lane) {
-            for (int lane = 0; lane < active; ++lane) {
-                acc[mt_lane][lane] = a->bias ? a->bias[n0 + lane] : 0.0f;
-            }
-        }
-
-        for (int b = 0; b < a->blocks_per_row; ++b) {
-            const block_q4_K_packed_meta_x16 *w_group =
-                a->W + (size_t)g * (size_t)a->blocks_per_row + (size_t)b;
-            accum_q4_k_packed_meta_x16_q8_k_block_mreuse(acc, w_group, active, a->A,
-                                                          a->blocks_per_vec, b, m0, m_count);
-        }
-
-        for (int m = m0; m < m1; ++m) {
-            float *c_row = a->C + (size_t)m * (size_t)a->N;
-            for (int lane = 0; lane < active; ++lane) {
-                c_row[n0 + lane] = acc[m - m0][lane];
-            }
-        }
+        gemm_q4_packed_meta_x16_mreuse_process_job(a, job, mt, tile_m);
     }
 }
 
