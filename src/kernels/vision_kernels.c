@@ -17,6 +17,17 @@
 #include <stdint.h>
 #include <math.h>
 
+#if defined(__clang__)
+#define CK_VISION_NOINLINE __attribute__((noinline))
+#define CK_VISION_OPTNONE __attribute__((optnone))
+#elif defined(__GNUC__)
+#define CK_VISION_NOINLINE __attribute__((noinline))
+#define CK_VISION_OPTNONE __attribute__((optimize("O0")))
+#else
+#define CK_VISION_NOINLINE
+#define CK_VISION_OPTNONE
+#endif
+
 static int tile_order_index_2d(int linear_idx,
                                int grid_h,
                                int grid_w,
@@ -38,6 +49,12 @@ static int tile_order_index_2d(int linear_idx,
     const int x = tile_x * merge_size + dx;
 
     return y * grid_w + x;
+}
+
+static float ck_force_f32(float x)
+{
+    volatile float y = x;
+    return y;
 }
 
 
@@ -187,7 +204,7 @@ void position_embeddings_add_gemma4v_xy(float *x,
     }
 }
 
-void position_embeddings_add_tiled_2d(float *x,
+CK_VISION_NOINLINE CK_VISION_OPTNONE void position_embeddings_add_tiled_2d(float *x,
                                       const float *position_embd,
                                       int grid_h,
                                       int grid_w,
@@ -207,13 +224,13 @@ void position_embeddings_add_tiled_2d(float *x,
     const int source_tokens = source_grid_size * source_grid_size;
     const int needs_resize = source_grid_size != grid_h || source_grid_size != grid_w;
 
-    const float sf_x = needs_resize ? (float) grid_w / (float) source_grid_size : 1.0f;
-    const float sf_y = needs_resize ? (float) grid_h / (float) source_grid_size : 1.0f;
+    const float sf_x = needs_resize ? ck_force_f32((float) grid_w / (float) source_grid_size) : 1.0f;
+    const float sf_y = needs_resize ? ck_force_f32((float) grid_h / (float) source_grid_size) : 1.0f;
     const float pixel_offset = 0.5f;
-    const float support_x = needs_resize ? fmaxf(1.0f, 1.0f / sf_x) : 1.0f;
-    const float support_y = needs_resize ? fmaxf(1.0f, 1.0f / sf_y) : 1.0f;
-    const float invscale_x = needs_resize ? 1.0f / support_x : 1.0f;
-    const float invscale_y = needs_resize ? 1.0f / support_y : 1.0f;
+    const float support_x = needs_resize ? ck_force_f32(fmaxf(1.0f, ck_force_f32(1.0f / sf_x))) : 1.0f;
+    const float support_y = needs_resize ? ck_force_f32(fmaxf(1.0f, ck_force_f32(1.0f / sf_y))) : 1.0f;
+    const float invscale_x = needs_resize ? ck_force_f32(1.0f / support_x) : 1.0f;
+    const float invscale_y = needs_resize ? ck_force_f32(1.0f / support_y) : 1.0f;
 
     for (int tok = 0; tok < num_tokens; ++tok) {
         const int src_tok = tile_order_index_2d(tok, grid_h, grid_w, merge_size);
@@ -233,12 +250,12 @@ void position_embeddings_add_tiled_2d(float *x,
             continue;
         }
 
-        const float x_src = ((float) dst_x + pixel_offset) / sf_x;
-        const float y_src = ((float) dst_y + pixel_offset) / sf_y;
-        int x_min = (int) (x_src - support_x + pixel_offset);
-        int x_max = (int) (x_src + support_x + pixel_offset);
-        int y_min = (int) (y_src - support_y + pixel_offset);
-        int y_max = (int) (y_src + support_y + pixel_offset);
+        const float x_src = ck_force_f32(ck_force_f32((float) dst_x + pixel_offset) / sf_x);
+        const float y_src = ck_force_f32(ck_force_f32((float) dst_y + pixel_offset) / sf_y);
+        int x_min = (int) ck_force_f32(ck_force_f32(x_src - support_x) + pixel_offset);
+        int x_max = (int) ck_force_f32(ck_force_f32(x_src + support_x) + pixel_offset);
+        int y_min = (int) ck_force_f32(ck_force_f32(y_src - support_y) + pixel_offset);
+        int y_max = (int) ck_force_f32(ck_force_f32(y_src + support_y) + pixel_offset);
         if (x_min < 0) x_min = 0;
         if (y_min < 0) y_min = 0;
         if (x_max > source_grid_size) x_max = source_grid_size;
@@ -248,23 +265,25 @@ void position_embeddings_add_tiled_2d(float *x,
             float val = 0.0f;
             float total_weight = 0.0f;
             for (int sy = y_min; sy < y_max; ++sy) {
-                const float wy = fmaxf(1.0f - fabsf(((float) sy - y_src + pixel_offset) * invscale_y), 0.0f);
+                const float wy_arg = ck_force_f32(ck_force_f32(ck_force_f32((float) sy - y_src) + pixel_offset) * invscale_y);
+                const float wy = ck_force_f32(fmaxf(ck_force_f32(1.0f - fabsf(wy_arg)), 0.0f));
                 if (wy <= 0.0f) {
                     continue;
                 }
                 for (int sx = x_min; sx < x_max; ++sx) {
-                    const float wx = fmaxf(1.0f - fabsf(((float) sx - x_src + pixel_offset) * invscale_x), 0.0f);
-                    const float weight = wx * wy;
+                    const float wx_arg = ck_force_f32(ck_force_f32(ck_force_f32((float) sx - x_src) + pixel_offset) * invscale_x);
+                    const float wx = ck_force_f32(fmaxf(ck_force_f32(1.0f - fabsf(wx_arg)), 0.0f));
+                    const float weight = ck_force_f32(wx * wy);
                     if (weight <= 0.0f) {
                         continue;
                     }
                     const float sample = position_embd[((size_t) sy * (size_t) source_grid_size + (size_t) sx) * (size_t) embed_dim + (size_t) d];
-                    val += sample * weight;
-                    total_weight += weight;
+                    val = ck_force_f32(fmaf(sample, weight, val));
+                    total_weight = ck_force_f32(total_weight + weight);
                 }
             }
             if (total_weight > 0.0f) {
-                dst[d] += val / total_weight;
+                dst[d] = ck_force_f32(dst[d] + ck_force_f32(val / total_weight));
             }
         }
     }
