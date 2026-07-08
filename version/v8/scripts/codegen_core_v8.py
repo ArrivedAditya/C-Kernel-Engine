@@ -2541,7 +2541,10 @@ CK_EXPORT void ck_model_profile_dump(void) {
     recurrent_reset_lines: list[str] = []
     prefill_policy = str(config.get("prefill_policy") or "").strip().lower()
     force_sequential_prefill = prefill_policy in {"sequential_decode", "decode"}
-    prefill_guard = " && 0" if force_sequential_prefill else " && !(getenv(\"CK_V8_FORCE_DECODE_PREFILL\") && atoi(getenv(\"CK_V8_FORCE_DECODE_PREFILL\")) != 0)"
+    if force_sequential_prefill:
+        prefill_guard = " && (getenv(\"CK_V8_FORCE_BATCHED_PREFILL\") && atoi(getenv(\"CK_V8_FORCE_BATCHED_PREFILL\")) != 0)"
+    else:
+        prefill_guard = " && !(getenv(\"CK_V8_FORCE_DECODE_PREFILL\") && atoi(getenv(\"CK_V8_FORCE_DECODE_PREFILL\")) != 0)"
     for buf_name, macro_name in (
         ("recurrent_conv_state", "A_RECURRENT_CONV_STATE"),
         ("recurrent_ssm_state", "A_RECURRENT_SSM_STATE"),

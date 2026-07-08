@@ -71,6 +71,7 @@ def _compile_profile_runtime(
         "--no-chat-template",
     ]
     if force:
+        cmd.append("--force-convert")
         cmd.append("--force-compile")
     env = os.environ.copy()
     env.setdefault("CK_V8_COMPILER", "gcc")
