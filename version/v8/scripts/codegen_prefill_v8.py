@@ -146,15 +146,11 @@ def _last_token_row_offset_expr(func_name: str, embed_dim: int) -> Optional[str]
     fn = str(func_name or "").lower()
     if "q8_k" in fn:
         return f"(size_t)(num_tokens - 1) * (size_t)({embed_dim} / QK_K) * sizeof(block_q8_K)"
-    if "q8_0" in fn:
+    if "q8_0_q8_0" in fn:
         return f"(size_t)(num_tokens - 1) * (size_t)({embed_dim} / QK8_0) * sizeof(block_q8_0)"
     if "fp32" in fn or "f32" in fn or "bf16" in fn:
         return f"(size_t)(num_tokens - 1) * (size_t){embed_dim} * sizeof(float)"
-    # Conservative default for q8_0-style activation packing.
-    row_bytes = _q8_0_row_bytes(embed_dim)
-    if row_bytes is None:
-        return None
-    return f"(size_t)(num_tokens - 1) * (size_t){row_bytes}"
+    return f"(size_t)(num_tokens - 1) * (size_t){embed_dim} * sizeof(float)"
 
 
 def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False, dump: bool = False) -> str:

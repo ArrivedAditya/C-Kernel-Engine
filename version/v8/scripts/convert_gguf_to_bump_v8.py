@@ -5680,11 +5680,7 @@ def main() -> None:
                 if rope_layout:
                     config["rope_layout"] = rope_layout
                 if arch == "gemma3":
-                    # Gemma 3 decode matches llama.cpp, but the current v8
-                    # batched prefill lowering diverges on first-token logits.
-                    # Replay prompt tokens through decode until Gemma prefill
-                    # has layer-level parity.
-                    config["prefill_policy"] = "sequential_decode"
+                    config["prefill_policy"] = "batched"
                 finetune = meta.get("general.finetune")
                 if isinstance(finetune, str) and finetune.strip():
                     config["finetune"] = finetune
@@ -5893,9 +5889,7 @@ def main() -> None:
         if rope_layout:
             cfg["rope_layout"] = rope_layout
         if arch == "gemma3":
-            # Keep generated runners correct for Gemma 3 while batched prefill
-            # parity is still behind the decode path.
-            cfg["prefill_policy"] = "sequential_decode"
+            cfg["prefill_policy"] = "batched"
         chat_template = meta.get("tokenizer.chat_template")
         if isinstance(chat_template, str) and chat_template.strip():
             cfg["chat_template"] = chat_template
