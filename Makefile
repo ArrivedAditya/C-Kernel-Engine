@@ -84,6 +84,10 @@ DEFAULT_AVX_FLAGS_INTEL :=
 AVX512_SUPPORT := $(findstring avx512f,$(CPU_FLAGS))
 AVX2_SUPPORT := $(findstring avx2,$(CPU_FLAGS))
 AVX_SUPPORT := $(findstring avx,$(CPU_FLAGS))
+F16C_SUPPORT := $(findstring f16c,$(CPU_FLAGS))
+AVX_VNNI_SUPPORT := $(findstring avx_vnni,$(CPU_FLAGS))
+AVX_VNNI_ALT_SUPPORT := $(findstring avxvnni,$(CPU_FLAGS))
+AVX_VNNI_INT16_SUPPORT := $(findstring avx_vnni_int16,$(CPU_FLAGS))
 SSE41_SUPPORT := $(findstring sse4_1,$(CPU_FLAGS))
 AMX_SUPPORT := $(findstring amx_tile,$(CPU_FLAGS))
 AMX_INT8_SUPPORT := $(findstring amx_int8,$(CPU_FLAGS))
@@ -92,6 +96,11 @@ AVX512_BASE_FLAGS_GCC := -mavx512f -mavx512bw -mavx512dq -mavx512vl
 AVX512_BASE_FLAGS_GCC_SUPPORTED := $(call cc-options,$(AVX512_BASE_FLAGS_GCC))
 AVX2_BASE_FLAGS_GCC_SUPPORTED := $(call cc-option,-mavx2)
 AVX_BASE_FLAGS_GCC_SUPPORTED := $(call cc-option,-mavx)
+F16C_FLAGS_SUPPORTED := $(call cc-option,-mf16c)
+AVX_VNNI_FLAGS_SUPPORTED := $(call cc-option,-mavxvnni)
+AVX_VNNI_INT16_FLAGS_SUPPORTED := $(call cc-option,-mavxvnniint16)
+NATIVE_TUNE_FLAGS_SUPPORTED := $(call cc-option,-mtune=native)
+NO_MATH_ERRNO_FLAGS_SUPPORTED := $(call cc-option,-fno-math-errno)
 AVX512_BASE_FLAGS_INTEL := -xcore-avx512 -mavx512f -mavx512bw -mavx512dq -mavx512vl
 AVX512_BASE_FLAGS_INTEL_SUPPORTED := $(call cc-options,$(AVX512_BASE_FLAGS_INTEL))
 AVX2_BASE_FLAGS_INTEL_SUPPORTED := $(call cc-option,-xAVX2)
@@ -137,11 +146,17 @@ ifeq ($(SSE41_BASE_FLAGS_SUPPORTED),-msse4.1 -mssse3)
 DEFAULT_AVX_FLAGS_GCC := $(SSE41_BASE_FLAGS_SUPPORTED)
 endif
 endif
-ifneq (,$(findstring avx_vnni,$(CPU_FLAGS)))
-DEFAULT_AVX_FLAGS_GCC += $(call cc-option,-mavxvnni)
+ifneq (,$(AVX_VNNI_SUPPORT))
+DEFAULT_AVX_FLAGS_GCC += $(AVX_VNNI_FLAGS_SUPPORTED)
 endif
-ifneq (,$(findstring avxvnni,$(CPU_FLAGS)))
-DEFAULT_AVX_FLAGS_GCC += $(call cc-option,-mavxvnni)
+ifneq (,$(AVX_VNNI_ALT_SUPPORT))
+DEFAULT_AVX_FLAGS_GCC += $(AVX_VNNI_FLAGS_SUPPORTED)
+endif
+ifneq (,$(AVX_VNNI_INT16_SUPPORT))
+DEFAULT_AVX_FLAGS_GCC += $(AVX_VNNI_INT16_FLAGS_SUPPORTED)
+endif
+ifneq (,$(F16C_SUPPORT))
+DEFAULT_AVX_FLAGS_GCC += $(F16C_FLAGS_SUPPORTED)
 endif
 
 # Intel icx flags - use -xHost to auto-detect CPU, or -xAVX2 for Ivy Bridge
@@ -186,6 +201,18 @@ else
 # Older CPUs
 DEFAULT_AVX_FLAGS_INTEL :=
 endif
+ifneq (,$(F16C_SUPPORT))
+DEFAULT_AVX_FLAGS_INTEL += $(F16C_FLAGS_SUPPORTED)
+endif
+ifneq (,$(AVX_VNNI_SUPPORT))
+DEFAULT_AVX_FLAGS_INTEL += $(AVX_VNNI_FLAGS_SUPPORTED)
+endif
+ifneq (,$(AVX_VNNI_ALT_SUPPORT))
+DEFAULT_AVX_FLAGS_INTEL += $(AVX_VNNI_FLAGS_SUPPORTED)
+endif
+ifneq (,$(AVX_VNNI_INT16_SUPPORT))
+DEFAULT_AVX_FLAGS_INTEL += $(AVX_VNNI_INT16_FLAGS_SUPPORTED)
+endif
 
 # Use appropriate flags based on compiler
 ifneq (,$(findstring icx,$(CC)))
@@ -210,7 +237,7 @@ WARNING_FLAGS += -Wno-unused-function
 endif
 
 INCLUDES := -Iinclude
-CFLAGS  := -O3 -fPIC $(OPENMP_FLAG) $(WARNING_FLAGS) $(ARCH_DEFINES) $(AVX_FLAGS) $(SSSE3_FLAGS) $(INCLUDES)
+CFLAGS  := -O3 -fPIC $(OPENMP_FLAG) $(WARNING_FLAGS) $(ARCH_DEFINES) $(AVX_FLAGS) $(SSSE3_FLAGS) $(NATIVE_TUNE_FLAGS_SUPPORTED) $(NO_MATH_ERRNO_FLAGS_SUPPORTED) $(INCLUDES)
 CXX ?= g++
 BENCH_CC ?= gcc
 BENCH_CXX ?= $(CXX)
