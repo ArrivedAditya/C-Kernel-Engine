@@ -5,9 +5,29 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+
+def clean_git_env() -> dict[str, str]:
+    """Drop hook-local Git env so `git -C submodule` resolves that repo."""
+    env = os.environ.copy()
+    proc = subprocess.run(
+        ["git", "rev-parse", "--local-env-vars"],
+        check=False,
+        text=True,
+        capture_output=True,
+        env=env,
+    )
+    if proc.returncode == 0:
+        for name in proc.stdout.splitlines():
+            env.pop(name.strip(), None)
+    return env
+
+
+GIT_ENV = clean_git_env()
 
 
 def run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -17,6 +37,7 @@ def run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subproce
         check=check,
         text=True,
         capture_output=True,
+        env=GIT_ENV,
     )
 
 
