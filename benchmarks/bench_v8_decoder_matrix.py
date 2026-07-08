@@ -128,7 +128,7 @@ def _run_llama(gguf: Path, *, prompt: int, decode: int, threads: int, repeats: i
     return row
 
 
-def _run_cke(run_dir: Path, *, prompt: int, decode: int, threads: int, timeout: int) -> dict[str, Any]:
+def _run_cke(run_dir: Path, *, prompt: int, decode: int, threads: int, context: int, timeout: int) -> dict[str, Any]:
     lib = run_dir / "libmodel.so"
     weights = run_dir / "weights.bump"
     env = os.environ.copy()
@@ -144,6 +144,10 @@ def _run_cke(run_dir: Path, *, prompt: int, decode: int, threads: int, timeout: 
         prompt_tokens,
         "--max-tokens",
         str(decode),
+        "--context",
+        str(context),
+        "--no-chat-template",
+        "--no-stream",
         "--ignore-eos",
         "--quiet-output",
         "--timing",
@@ -186,6 +190,7 @@ def main() -> int:
     parser.add_argument("--models", default=",".join(MODELS), help="Comma-separated model ids, or 'all'")
     parser.add_argument("--prompt", type=int, default=512)
     parser.add_argument("--decode", type=int, default=128)
+    parser.add_argument("--context", type=int, default=0, help="CK context for fixed-token runs; 0 means prompt + decode + 8")
     parser.add_argument("--threads", type=int, default=12)
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=900)
@@ -208,7 +213,8 @@ def main() -> int:
             continue
         print(f"== {spec['label']} {spec['quant']} ==", flush=True)
         row["llama"] = _run_llama(gguf, prompt=args.prompt, decode=args.decode, threads=args.threads, repeats=args.repeats, timeout=args.timeout)
-        row["cke"] = _run_cke(run_dir, prompt=args.prompt, decode=args.decode, threads=args.threads, timeout=args.timeout)
+        ck_context = args.context if args.context > 0 else args.prompt + args.decode + 8
+        row["cke"] = _run_cke(run_dir, prompt=args.prompt, decode=args.decode, threads=args.threads, context=ck_context, timeout=args.timeout)
         results.append(row)
 
     args.json_out.parent.mkdir(parents=True, exist_ok=True)
