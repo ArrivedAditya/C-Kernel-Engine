@@ -53,7 +53,7 @@ MODELS: dict[str, dict[str, str]] = {
     "qwen35-0.8b-q4_k_m": {
         "label": "Qwen3.5 0.8B",
         "quant": "Q4_K_M",
-        "run": "Qwen3.5-0.8B-Q4_K_M",
+        "run": "unsloth--Qwen3.5-0.8B-GGUF",
         "gguf": "unsloth--Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-Q4_K_M.gguf",
     },
     "nanbeige4.1-3b-q4_k_m": {

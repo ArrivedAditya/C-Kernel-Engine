@@ -58,7 +58,7 @@ MODELS: list[ModelSpec] = [
         "Qwen3 0.6B",
         "Q8_0",
         Path.home() / ".cache/ck-engine-v8/models/Qwen--Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf",
-        "Qwen3-0.6B-Q8_0",
+        "Qwen--Qwen3-0.6B-GGUF",
     ),
     ModelSpec(
         "qwen35_08b",
