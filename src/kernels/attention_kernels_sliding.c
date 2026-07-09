@@ -4,6 +4,7 @@
  */
 
 #include "ckernel_engine.h"
+#include "ck_threadpool.h"
 #include <math.h>
 #include <stdlib.h>
 
@@ -438,6 +439,105 @@ static void attention_flash_query_sliding(const float *q_vec,
     }
 }
 
+typedef struct {
+    const float *q;
+    const float *k;
+    const float *v;
+    float *output;
+    int num_heads;
+    int num_kv_heads;
+    int num_tokens;
+    int head_dim;
+    int aligned_head_dim;
+    int kv_stride_tokens;
+    int sliding_window;
+    float scale;
+} ck_sliding_attention_args_t;
+
+static int ck_env_int_default(const char *name, int fallback)
+{
+    const char *v = getenv(name);
+    if (!v || !v[0]) return fallback;
+    char *end = NULL;
+    long parsed = strtol(v, &end, 10);
+    if (end == v || (end && *end != '\0')) return fallback;
+    if (parsed < 0) parsed = 0;
+    if (parsed > 1 << 20) parsed = 1 << 20;
+    return (int)parsed;
+}
+
+static int ck_sliding_attention_parallel_disabled(void)
+{
+    const char *v = getenv("CK_DISABLE_SLIDING_ATTN_PARALLEL");
+    return v && v[0] && v[0] != '0';
+}
+
+static int ck_sliding_attention_pick_threads(ck_threadpool_t *pool,
+                                             int total_jobs,
+                                             int num_tokens,
+                                             int head_dim)
+{
+    if (!pool || total_jobs <= 0) return 1;
+    if (ck_sliding_attention_parallel_disabled()) return 1;
+    if (ck_threadpool_thread_id(pool) > 0) return 1;
+
+    const int min_tokens = ck_env_int_default("CK_SLIDING_ATTN_PARALLEL_MIN_TOKENS", 128);
+    if (num_tokens < min_tokens || head_dim < 8) return 1;
+
+    int active = ck_threadpool_n_threads(pool);
+    const int cap = ck_env_int_default("CK_SLIDING_ATTN_THREAD_CAP", active);
+    if (cap > 0 && active > cap) active = cap;
+    if (active > total_jobs) active = total_jobs;
+    return active > 1 ? active : 1;
+}
+
+static void ck_sliding_attention_compute_one(const ck_sliding_attention_args_t *a,
+                                             int job)
+{
+    if (!a || job < 0) return;
+
+    const int T = a->num_tokens;
+    const size_t kv_head_stride = (size_t)a->kv_stride_tokens * (size_t)a->aligned_head_dim;
+
+#if defined(__AVX512F__)
+    #define CK_SLIDING_FLASH_IMPL attention_flash_query_sliding_avx512
+#elif defined(__AVX2__)
+    #define CK_SLIDING_FLASH_IMPL attention_flash_query_sliding_avx2
+#elif defined(__AVX__)
+    #define CK_SLIDING_FLASH_IMPL attention_flash_query_sliding_avx
+#else
+    #define CK_SLIDING_FLASH_IMPL attention_flash_query_sliding
+#endif
+
+    const int h = job / T;
+    const int i = job - h * T;
+    const int kv_head = (int)((long long)h * (long long)a->num_kv_heads /
+                              (long long)a->num_heads);
+    const float *k_head = a->k + (size_t)kv_head * kv_head_stride;
+    const float *v_head = a->v + (size_t)kv_head * kv_head_stride;
+    const float *q_vec = a->q + qkv_index(h, i, 0, T, a->aligned_head_dim);
+    float *out_vec = a->output + qkv_index(h, i, 0, T, a->aligned_head_dim);
+
+    CK_SLIDING_FLASH_IMPL(q_vec, k_head, v_head,
+                          /*query_pos=*/i,
+                          /*kv_tokens=*/T,
+                          a->head_dim, a->aligned_head_dim,
+                          a->scale, out_vec,
+                          a->sliding_window);
+
+#undef CK_SLIDING_FLASH_IMPL
+}
+
+static void ck_sliding_attention_work_fn(int ith, int nth, void *args)
+{
+    const ck_sliding_attention_args_t *a = (const ck_sliding_attention_args_t *)args;
+    if (!a || ith < 0 || nth <= 0 || ith >= nth) return;
+    const int total_jobs = a->num_heads * a->num_tokens;
+    for (int job = ith; job < total_jobs; job += nth) {
+        ck_sliding_attention_compute_one(a, job);
+    }
+}
+
 /**
  * Flash attention forward with sliding window (prefill)
  * @test test_attention.py::TestAttentionForward::test_sliding_window_prefill
@@ -485,6 +585,28 @@ void attention_forward_causal_head_major_gqa_flash_strided_sliding(
     const float scale = 1.0f / sqrtf((float)head_dim);
     const int T = num_tokens;
     const size_t kv_head_stride = (size_t)kv_stride_tokens * (size_t)aligned_head_dim;
+
+    const int total_jobs = num_heads * T;
+    ck_threadpool_t *pool = ck_threadpool_global();
+    const int active = ck_sliding_attention_pick_threads(pool, total_jobs, T, head_dim);
+    if (pool && active > 1) {
+        ck_sliding_attention_args_t args = {
+            .q = q,
+            .k = k,
+            .v = v,
+            .output = output,
+            .num_heads = num_heads,
+            .num_kv_heads = num_kv_heads,
+            .num_tokens = T,
+            .head_dim = head_dim,
+            .aligned_head_dim = aligned_head_dim,
+            .kv_stride_tokens = kv_stride_tokens,
+            .sliding_window = sliding_window,
+            .scale = scale,
+        };
+        ck_threadpool_dispatch_n(pool, active, ck_sliding_attention_work_fn, &args);
+        return;
+    }
 
 #if defined(__AVX512F__)
     #define SLIDING_FLASH_IMPL attention_flash_query_sliding_avx512
@@ -559,6 +681,28 @@ void attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4(
     const float scale = 1.0f;
     const int T = num_tokens;
     const size_t kv_head_stride = (size_t)kv_stride_tokens * (size_t)aligned_head_dim;
+
+    const int total_jobs = num_heads * T;
+    ck_threadpool_t *pool = ck_threadpool_global();
+    const int active = ck_sliding_attention_pick_threads(pool, total_jobs, T, head_dim);
+    if (pool && active > 1) {
+        ck_sliding_attention_args_t args = {
+            .q = q,
+            .k = k,
+            .v = v,
+            .output = output,
+            .num_heads = num_heads,
+            .num_kv_heads = num_kv_heads,
+            .num_tokens = T,
+            .head_dim = head_dim,
+            .aligned_head_dim = aligned_head_dim,
+            .kv_stride_tokens = kv_stride_tokens,
+            .sliding_window = sliding_window,
+            .scale = scale,
+        };
+        ck_threadpool_dispatch_n(pool, active, ck_sliding_attention_work_fn, &args);
+        return;
+    }
 
 #if defined(__AVX512F__)
     #define SLIDING_FLASH_IMPL_GEMMA4 attention_flash_query_sliding_avx512

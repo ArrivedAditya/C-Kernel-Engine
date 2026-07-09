@@ -205,12 +205,12 @@ void position_embeddings_add_gemma4v_xy(float *x,
 }
 
 CK_VISION_NOINLINE CK_VISION_OPTNONE void position_embeddings_add_tiled_2d(float *x,
-                                                                            const float *position_embd,
-                                                                            int grid_h,
-                                                                            int grid_w,
-                                                                            int embed_dim,
-                                                                            int merge_size,
-                                                                            int source_grid_size)
+                                      const float *position_embd,
+                                      int grid_h,
+                                      int grid_w,
+                                      int embed_dim,
+                                      int merge_size,
+                                      int source_grid_size)
 {
     if (x == NULL || position_embd == NULL || grid_h <= 0 || grid_w <= 0 || embed_dim <= 0 || merge_size <= 0) {
         return;

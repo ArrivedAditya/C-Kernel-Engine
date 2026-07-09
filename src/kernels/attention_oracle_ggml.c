@@ -633,10 +633,12 @@ int ck_attention_head_full_ggml_graph_oracle_regular(const float *q_head,
 
     v = ggml_cont_fn(ctx, v);
     struct ggml_tensor *kq_scores = ggml_mul_mat_fn(ctx, k, q);
-    struct ggml_tensor *kq_scores_dump = kq_scores ? ggml_cont_fn(ctx, kq_scores) : NULL;
-    struct ggml_tensor *kq_softmax_src = kq_scores_dump ? kq_scores_dump : kq_scores;
-    struct ggml_tensor *kq = kq_softmax_src ?
-        ggml_soft_max_ext_fn(ctx, kq_softmax_src, NULL, scale, 0.0f) : NULL;
+    struct ggml_tensor *kq_scores_dump =
+        (ck_attention_oracle_dump_enabled() || ck_attention_oracle_meta_dump_enabled()) && kq_scores
+            ? ggml_cont_fn(ctx, kq_scores)
+            : NULL;
+    struct ggml_tensor *kq = kq_scores ?
+        ggml_soft_max_ext_fn(ctx, kq_scores, NULL, scale, 0.0f) : NULL;
     struct ggml_tensor *kqv = kq ? ggml_mul_mat_fn(ctx, v, kq) : NULL;
     struct ggml_tensor *cur = kqv ? ggml_permute_fn(ctx, kqv, 0, 2, 1, 3) : NULL;
     if (cur) {
@@ -859,10 +861,12 @@ int ck_attention_full_ggml_graph_oracle_multihead(const float *q,
 
     v_perm = ggml_cont_fn(ctx, v_perm);
     struct ggml_tensor *kq_scores = v_perm ? ggml_mul_mat_fn(ctx, k_perm, q_perm) : NULL;
-    struct ggml_tensor *kq_scores_dump = kq_scores ? ggml_cont_fn(ctx, kq_scores) : NULL;
-    struct ggml_tensor *kq_softmax_src = kq_scores_dump ? kq_scores_dump : kq_scores;
-    struct ggml_tensor *kq_softmax = kq_softmax_src ?
-        ggml_soft_max_ext_fn(ctx, kq_softmax_src, NULL, scale, 0.0f) : NULL;
+    struct ggml_tensor *kq_scores_dump =
+        (ck_attention_oracle_dump_enabled() || ck_attention_oracle_meta_dump_enabled()) && kq_scores
+            ? ggml_cont_fn(ctx, kq_scores)
+            : NULL;
+    struct ggml_tensor *kq_softmax = kq_scores ?
+        ggml_soft_max_ext_fn(ctx, kq_scores, NULL, scale, 0.0f) : NULL;
     struct ggml_tensor *kqv = kq_softmax ? ggml_mul_mat_fn(ctx, v_perm, kq_softmax) : NULL;
     struct ggml_tensor *cur = kqv ? ggml_permute_fn(ctx, kqv, 0, 2, 1, 3) : NULL;
     if (cur) {

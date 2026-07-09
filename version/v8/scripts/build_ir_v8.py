@@ -243,6 +243,7 @@ def _inject_runtime_config_defaults(config: Dict[str, Any], arch: str) -> Dict[s
             }
         )
     elif arch_lc == "qwen3_vl_vision":
+        config.setdefault("prefer_q8_0_contract", True)
         _merge_activation_defaults({
             "mlp_down": "fp32",
             "out_proj": "q8_0",
@@ -9486,7 +9487,11 @@ def generate_ir_lower_2(
             if not isinstance(sections, list) or len(sections) != 4:
                 default_section = max(1, int(params.get("head_dim", 0) or 0) // 4)
                 sections = [default_section, default_section, default_section, default_section]
-            default_n_dims = max(1, int(sum(int(v) for v in sections) or int(params.get("head_dim", 0) or 0) // 2))
+            # M-RoPE sections choose the axis pattern; they are not the rotary
+            # width. For Qwen3-VL/Qwen3.5, llama.cpp passes n_rot as the full
+            # head width. Use the op/config head dim as the fallback so stale
+            # configs cannot silently rotate only sum(sections) dimensions.
+            default_n_dims = max(1, int(params.get("head_dim", config.get("head_dim", 0)) or 0))
             params.setdefault("n_dims", int(config.get("mrope_n_dims", default_n_dims)))
             params.setdefault("section_0", int(sections[0]))
             params.setdefault("section_1", int(sections[1]))
