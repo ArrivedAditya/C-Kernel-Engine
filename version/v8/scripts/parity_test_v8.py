@@ -216,7 +216,6 @@ def _normalize_layer_and_op(layer_id: int, op_name: str) -> Tuple[int, str]:
         "vcur": "v_proj",
         "qcur_normed": "qcur_normed",
         "kcur_normed": "kcur_normed",
-        "attn_out": "attn_output",
         "sa_out": "attn_output",
         "ffn_gate": "gate_proj",
         "ffn_up": "up_proj",

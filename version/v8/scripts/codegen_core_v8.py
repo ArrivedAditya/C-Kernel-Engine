@@ -935,6 +935,7 @@ def emit_op(
         x_expr = arg_expr_by_name.get("x") or arg_expr_by_name.get("x_q8")
         y_expr = arg_expr_by_name.get("y")
         k_expr = arg_expr_by_name.get("k")
+        rows_expr = arg_expr_by_name.get("rows")
         if x_expr and y_expr and k_expr:
             active_name = f"ck_debug_outproj_fp32_active_{seq_idx if seq_idx is not None else idx}"
             lines.append(
@@ -946,6 +947,12 @@ def emit_op(
                 f'    ck_debug_export_hidden(model, {layer}, "attn_out", '
                 f'(const float*)({x_expr}), (int)({k_expr}));'
             )
+            if rows_expr:
+                lines.append(
+                    f'    if ((int)({rows_expr}) > 1) ck_debug_export_hidden(model, {layer}, "attn_out_last", '
+                    f'(const float*)(((const float*)({x_expr})) + (((size_t)({rows_expr}) - 1u) * (size_t)({k_expr}))), '
+                    f'(int)({k_expr}));'
+                )
             lines.append(f"    if (!{active_name}) {{")
             if profile:
                 lines.append("        CK_PROFILE_BEGIN();")
@@ -1583,6 +1590,17 @@ def emit_op(
             elif op_instance_idx == 1:
                 lines.append(f'    ck_debug_export_hidden(model, {layer}, "layer_out", (const float*){out_expr}, EMBED_DIM);')
                 _emit_hidden_export_last_row(out_expr, "layer_out", "EMBED_DIM")
+    elif op_name == "rmsnorm":
+        out_expr = _hidden_arg("output", "out", "x", "y")
+        if op_instance_idx == 0:
+            _emit_hidden_export(out_expr, "block_rmsnorm", "EMBED_DIM")
+            _emit_hidden_export_last_row(out_expr, "block_rmsnorm", "EMBED_DIM")
+        elif op_instance_idx == 1:
+            _emit_hidden_export(out_expr, "ffn_norm", "EMBED_DIM")
+            _emit_hidden_export_last_row(out_expr, "ffn_norm", "EMBED_DIM")
+        else:
+            _emit_hidden_export(out_expr, "rmsnorm", "EMBED_DIM")
+            _emit_hidden_export_last_row(out_expr, "rmsnorm", "EMBED_DIM")
     elif op_name == "post_attention_norm":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y"))
         if out_expr:
@@ -2612,6 +2630,14 @@ static void ck_trace_pos(const char *stage, int32_t token, int count, int before
 static void ck_debug_export_hidden(CKModel *model, int layer, const char *name, const float *data, int count) {{
     const char *dir = getenv("CK_DEBUG_EXPORT_HIDDEN");
     if (!dir || !dir[0] || !model || !name || !data || count <= 0) return;
+    const char *layer_filter = getenv("CK_DEBUG_EXPORT_HIDDEN_LAYER");
+    if (layer_filter && layer_filter[0]) {{
+        char *end = NULL;
+        long wanted = strtol(layer_filter, &end, 10);
+        if (end != layer_filter && layer != (int)wanted) return;
+    }}
+    const char *name_filter = getenv("CK_DEBUG_EXPORT_HIDDEN_NAME");
+    if (name_filter && name_filter[0] && strcmp(name_filter, name) != 0) return;
     char path[1024];
     int n = snprintf(path, sizeof(path), "%s/tok_%04d_layer_%03d_%s.f32",
                      dir, model->pos, layer, name);

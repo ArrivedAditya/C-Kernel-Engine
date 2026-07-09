@@ -360,7 +360,13 @@ def _inject_runtime_config_defaults(config: dict, arch: str) -> dict:
             }
         )
     elif arch_lc == "qwen3_vl_vision":
-        _merge_activation_defaults({"mlp_down": "fp32", "out_proj": "fp32"})
+        config.setdefault("prefer_q8_0_contract", True)
+        _merge_activation_defaults({
+            "mlp_down": "fp32",
+            "out_proj": "q8_0",
+            "branch_fc1": "fp32",
+            "branch_fc2": "fp32",
+        })
     elif arch_lc == "gemma3":
         config.setdefault("prefer_q8_0_contract", True)
         config.setdefault("prefer_fp32_logits", True)
@@ -3959,6 +3965,12 @@ def main() -> None:
             print(f"Warning: rotary_dim {rotary_dim} is odd, decrementing to make even")
             rotary_dim -= 1
 
+        # GGUF M-RoPE dimension sections define the time/height/width/extra axis
+        # selection pattern. They do not define the rotary width. llama.cpp passes
+        # n_rot == head_dim for Qwen3-VL/Qwen3.5 M-RoPE, so keep the full resolved
+        # rotary width here instead of sum(mrope_sections).
+        mrope_n_dims = int(rotary_dim or head_dim)
+
         # Infer correct dimensions from the first actual attention tensors if metadata
         # is missing or inconsistent. Hybrid models such as Nemotron can start with
         # Mamba layers, so blk.0 is not necessarily an attention block.
@@ -4277,7 +4289,7 @@ def main() -> None:
                 qwen35_config["rope_layout"] = rope_layout
             if mrope_sections:
                 qwen35_config["mrope_sections"] = [int(v) for v in mrope_sections]
-                qwen35_config["mrope_n_dims"] = int(sum(int(v) for v in mrope_sections))
+                qwen35_config["mrope_n_dims"] = int(mrope_n_dims)
             if full_attention_interval is not None:
                 qwen35_config["full_attention_interval"] = int(full_attention_interval)
             if attn_q_gate_proj_dim is not None:
@@ -5643,7 +5655,7 @@ def main() -> None:
                         config["num_deepstack_layers"] = num_deepstack_layers
                     if mrope_sections:
                         config["mrope_sections"] = [int(v) for v in mrope_sections]
-                        config["mrope_n_dims"] = int(sum(int(v) for v in mrope_sections))
+                        config["mrope_n_dims"] = int(mrope_n_dims)
                 if arch == "gemma4":
                     config.update({
                         "layer_kinds": attention_plan["layer_kinds"],
@@ -5883,7 +5895,7 @@ def main() -> None:
                 cfg["num_deepstack_layers"] = num_deepstack_layers
             if mrope_sections:
                 cfg["mrope_sections"] = [int(v) for v in mrope_sections]
-                cfg["mrope_n_dims"] = int(sum(int(v) for v in mrope_sections))
+                cfg["mrope_n_dims"] = int(mrope_n_dims)
         if sliding_window and sliding_window > 0:
             cfg["sliding_window"] = int(sliding_window)
         if rope_layout:

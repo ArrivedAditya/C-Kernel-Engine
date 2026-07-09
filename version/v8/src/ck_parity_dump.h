@@ -50,6 +50,48 @@ _Static_assert(sizeof(CKDumpFileHeader) == 128, "CKDumpFileHeader must be 128 by
 static FILE *g_ck_dump_file = NULL;
 static int g_ck_dump_token = 0;
 
+static inline int ck_dump_filter_token_matches(const char *filter, const char *candidate) {
+    if (!filter || !filter[0] || !candidate || !candidate[0]) return 0;
+    const char *p = filter;
+    const size_t clen = strlen(candidate);
+    while (*p) {
+        while (*p == ',' || *p == ';' || *p == ' ' || *p == '\t' || *p == '\n') p++;
+        const char *start = p;
+        while (*p && *p != ',' && *p != ';' && *p != ' ' && *p != '\t' && *p != '\n') p++;
+        const size_t len = (size_t)(p - start);
+        if (len == clen && strncmp(start, candidate, clen) == 0) return 1;
+    }
+    return 0;
+}
+
+static inline int ck_dump_layer_allowed(int layer_id) {
+    const char *filter = getenv("CK_PARITY_LAYER_FILTER");
+    if (!filter || !filter[0]) return 1;
+    if (ck_dump_filter_token_matches(filter, "all") || ck_dump_filter_token_matches(filter, "*")) return 1;
+
+    char layer_buf[32];
+    snprintf(layer_buf, sizeof(layer_buf), "%d", layer_id);
+    return ck_dump_filter_token_matches(filter, layer_buf);
+}
+
+static inline int ck_dump_op_allowed(int layer_id, const char *op_name) {
+    const char *filter = getenv("CK_PARITY_OP_FILTER");
+    if (!filter || !filter[0]) return 1;
+    if (ck_dump_filter_token_matches(filter, "all") || ck_dump_filter_token_matches(filter, "*")) return 1;
+    if (ck_dump_filter_token_matches(filter, op_name)) return 1;
+
+    char layered_name[96];
+    snprintf(layered_name, sizeof(layered_name), "%s-%d", op_name, layer_id);
+    if (ck_dump_filter_token_matches(filter, layered_name)) return 1;
+    snprintf(layered_name, sizeof(layered_name), "%s:%d", op_name, layer_id);
+    if (ck_dump_filter_token_matches(filter, layered_name)) return 1;
+    return 0;
+}
+
+static inline int ck_dump_should_emit(int layer_id, const char *op_name) {
+    return ck_dump_layer_allowed(layer_id) && ck_dump_op_allowed(layer_id, op_name);
+}
+
 /**
  * Initialize dumping. Call before any inference.
  * @param dump_dir Directory to write dump.bin (default: uses CK_PARITY_DIR env, or "ck_parity_dumps")
@@ -96,6 +138,7 @@ static inline void ck_dump_tensor(
     int elem_count
 ) {
     if (!g_ck_dump_file || !data) return;
+    if (!ck_dump_should_emit(layer_id, op_name)) return;
 
     CKDumpFileHeader header = {0};
     memcpy(header.magic, CKDUMP_MAGIC, 8);
@@ -125,6 +168,7 @@ static inline void ck_dump_tensor_2d(
     int dim1
 ) {
     if (!g_ck_dump_file || !data) return;
+    if (!ck_dump_should_emit(layer_id, op_name)) return;
 
     CKDumpFileHeader header = {0};
     memcpy(header.magic, CKDUMP_MAGIC, 8);
@@ -165,6 +209,7 @@ static inline void ck_dump_tensor_head_major_token_major(
     int head_dim
 ) {
     if (!g_ck_dump_file || !data || num_heads <= 0 || num_tokens <= 0 || head_dim <= 0) return;
+    if (!ck_dump_should_emit(layer_id, op_name)) return;
 
     const size_t elem_count = (size_t) num_heads * (size_t) num_tokens * (size_t) head_dim;
     float *tmp = (float *) malloc(elem_count * sizeof(float));

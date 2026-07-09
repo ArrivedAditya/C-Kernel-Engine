@@ -151,6 +151,7 @@ def _clean_activation_preference_baseline(config: dict[str, Any]) -> dict[str, A
     updated = dict(config)
     model = str(updated.get("model", updated.get("arch", "")) or "").strip().lower()
     if model == "qwen3_vl_vision":
+        updated.setdefault("prefer_q8_0_contract", True)
         updated["activation_preference_by_op"] = {
             "mlp_down": "fp32",
             "out_proj": "q8_0",

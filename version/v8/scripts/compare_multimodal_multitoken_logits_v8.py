@@ -14,6 +14,7 @@ import argparse
 import ctypes
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -53,6 +54,102 @@ def _decode_topk(logits: np.ndarray, tokenizer: GGUFTokenizer, top_k: int) -> li
     return rows
 
 
+
+
+
+def _set_process_env(name: str, value: str | None) -> None:
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = str(value)
+    try:
+        libc = ctypes.CDLL(None)
+        if value is None:
+            libc.unsetenv.argtypes = [ctypes.c_char_p]
+            libc.unsetenv(name.encode())
+        else:
+            libc.setenv.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
+            libc.setenv(name.encode(), str(value).encode(), 1)
+    except Exception:
+        pass
+
+
+def _restore_process_env(saved: dict[str, str | None]) -> None:
+    for key, value in saved.items():
+        _set_process_env(key, value)
+
+
+def _single_hidden_file(root: Path) -> Path:
+    files = sorted(root.glob("*.f32"))
+    if len(files) != 1:
+        raise RuntimeError(f"expected exactly one hidden dump in {root}, found {len(files)}")
+    return files[0]
+
+
+def _hidden_files_by_layer(root: Path) -> dict[int, Path]:
+    out: dict[int, Path] = {}
+    for path in sorted(root.glob("*.f32")):
+        m = re.search(r"_layer_(\d+)_", path.name)
+        if not m:
+            continue
+        layer = int(m.group(1))
+        if layer in out:
+            raise RuntimeError(f"duplicate hidden dump for layer {layer} in {root}")
+        out[layer] = path
+    if not out:
+        raise RuntimeError(f"expected hidden dumps in {root}, found 0")
+    return out
+
+
+def _hidden_compare_many(persistent_dir: Path, full_dir: Path) -> list[dict[str, Any]]:
+    persistent = _hidden_files_by_layer(persistent_dir)
+    full = _hidden_files_by_layer(full_dir)
+    rows: list[dict[str, Any]] = []
+    for layer in sorted(set(persistent) | set(full)):
+        if layer not in persistent or layer not in full:
+            rows.append({
+                "layer": int(layer),
+                "status": "missing",
+                "persistent_path": None if layer not in persistent else str(persistent[layer]),
+                "full_replay_path": None if layer not in full else str(full[layer]),
+            })
+            continue
+        rows.append({"layer": int(layer), **_hidden_compare(persistent[layer], full[layer])})
+    return rows
+
+
+def _hidden_compare(a_path: Path, b_path: Path) -> dict[str, Any]:
+    a = np.fromfile(a_path, dtype=np.float32)
+    b = np.fromfile(b_path, dtype=np.float32)
+    if a.shape != b.shape:
+        return {
+            "status": "shape_mismatch",
+            "persistent_path": str(a_path),
+            "full_replay_path": str(b_path),
+            "persistent_shape": list(a.shape),
+            "full_replay_shape": list(b.shape),
+        }
+    diff = np.abs(a - b)
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    cosine = float(np.dot(a, b) / denom) if denom > 0.0 else 1.0
+    return {
+        "status": "ok",
+        "persistent_path": str(a_path),
+        "full_replay_path": str(b_path),
+        "shape": list(a.shape),
+        "max_abs_diff": float(diff.max()) if diff.size else 0.0,
+        "mean_abs_diff": float(diff.mean()) if diff.size else 0.0,
+        "rmse": float(np.sqrt(np.mean((a - b) ** 2))) if diff.size else 0.0,
+        "cosine": cosine,
+    }
+
+
+def _hidden_full_replay_name(name: str) -> str:
+    # Full replay runs through prefill, which exports last-row tensors with
+    # the *_last suffix for token-major intermediates.
+    if name.endswith("_last"):
+        return name
+    return f"{name}_last"
 
 def _run_llama_greedy_sequence(inputs: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     helper = first_token.compare_first_token_logits_v7.ensure_llama_helper()
@@ -124,7 +221,13 @@ def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> d
     gguf_path = Path(gguf_value).resolve()
     workdir = args.workdir.resolve()
     workdir.mkdir(parents=True, exist_ok=True)
-    decoder_dir = workdir / "decoder"
+    if bool(getattr(args, "reuse_bridge_decoder_runtime", False)):
+        decoder_workdir = str(((bridge_report.get("decoder_runtime") or {}).get("workdir") or "")).strip()
+        if not decoder_workdir:
+            raise ValueError("bridge report does not include decoder_runtime.workdir")
+        decoder_dir = Path(decoder_workdir).resolve()
+    else:
+        decoder_dir = workdir / "decoder"
 
     requested_ctx_len = int(args.ctx_len or bridge_report.get("decoder_context_len") or 256)
     runtime = first_token.bridge_runner_v8._prepare_decoder_runtime(
@@ -184,6 +287,19 @@ def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> d
             )
         )
     )
+    bridge_contract = bridge_report.get("bridge_contract") or {}
+    encoder_report = bridge_report.get("encoder_report") or {}
+    prefix_decode_policy = (
+        str(
+            bridge_report.get("prefix_decode_policy")
+            or bridge_contract.get("decode_policy")
+            or encoder_report.get("prefix_decode_policy")
+            or "causal_mixed_prefix"
+        )
+        .strip()
+        .lower()
+        or "causal_mixed_prefix"
+    )
     llama_prefix_path = first_token._materialize_llama_prefix(
         prefix_embeddings,
         int(prefix_tokens),
@@ -207,9 +323,36 @@ def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> d
         "llama_prefix_path": llama_prefix_path,
         "prefix_grid": prefix_grid,
         "prefix_text_pos": int(prefix_text_pos),
+        "prefix_decode_policy": prefix_decode_policy,
         "ctx_len": int(resolved_ctx_len),
         "requested_ctx_len": int(requested_ctx_len),
     }
+
+
+def _apply_prefix_decode_policy_env(inputs: dict[str, Any]) -> dict[str, str | None]:
+    old = {
+        "CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK": os.environ.get("CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK"),
+        "CK_BRIDGE_VISUAL_START": os.environ.get("CK_BRIDGE_VISUAL_START"),
+        "CK_BRIDGE_VISUAL_TOKENS": os.environ.get("CK_BRIDGE_VISUAL_TOKENS"),
+    }
+    policy = str(inputs.get("prefix_decode_policy") or "").strip().lower()
+    if policy == "non_causal_visual_chunk":
+        os.environ["CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK"] = "1"
+        os.environ["CK_BRIDGE_VISUAL_START"] = str(len(inputs.get("tokens_before") or []))
+        os.environ["CK_BRIDGE_VISUAL_TOKENS"] = str(int(inputs.get("prefix_tokens") or 0))
+    else:
+        os.environ.pop("CK_BRIDGE_NONCAUSAL_VISUAL_CHUNK", None)
+        os.environ.pop("CK_BRIDGE_VISUAL_START", None)
+        os.environ.pop("CK_BRIDGE_VISUAL_TOKENS", None)
+    return old
+
+
+def _restore_prefix_decode_policy_env(old: dict[str, str | None]) -> None:
+    for key, value in old.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 def _capture_step_dump(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
@@ -225,26 +368,30 @@ def _capture_step_dump(report: dict[str, Any], args: argparse.Namespace) -> dict
     row = dict(steps[step_index])
     generated_prefix = [int(t) for t in list(row.get("generated_prefix") or [])]
     replay_tokens_after = [int(t) for t in inputs["tokens_after"]] + generated_prefix
-    ck, dump_report = first_token._capture_dump_compare(
-        inputs["gguf_path"],
-        inputs["runtime"],
-        inputs["prefix_embeddings"],
-        int(inputs["prefix_tokens"]),
-        replay_tokens_after,
-        tokens_before=inputs["tokens_before"],
-        prefix_row_dim=int(inputs["prefix_row_dim"]),
-        ctx_len=int(inputs["ctx_len"]),
-        top_k=int(args.top_k),
-        threads=int(args.threads),
-        dump_root=dump_dir.resolve(),
-        dump_names=str(args.dump_names),
-        dump_pass=str(args.dump_pass),
-        dump_atol=float(args.dump_atol),
-        dump_rtol=float(args.dump_rtol),
-        prefix_grid=inputs["prefix_grid"],
-        prefix_text_pos=int(inputs["prefix_text_pos"]),
-        ck_strict_parity=bool(args.ck_strict_parity),
-    )
+    old_env = _apply_prefix_decode_policy_env(inputs)
+    try:
+        ck, dump_report = first_token._capture_dump_compare(
+            inputs["gguf_path"],
+            inputs["runtime"],
+            inputs["prefix_embeddings"],
+            int(inputs["prefix_tokens"]),
+            replay_tokens_after,
+            tokens_before=inputs["tokens_before"],
+            prefix_row_dim=int(inputs["prefix_row_dim"]),
+            ctx_len=int(inputs["ctx_len"]),
+            top_k=int(args.top_k),
+            threads=int(args.threads),
+            dump_root=dump_dir.resolve(),
+            dump_names=str(args.dump_names),
+            dump_pass=str(args.dump_pass),
+            dump_atol=float(args.dump_atol),
+            dump_rtol=float(args.dump_rtol),
+            prefix_grid=inputs["prefix_grid"],
+            prefix_text_pos=int(inputs["prefix_text_pos"]),
+            ck_strict_parity=bool(args.ck_strict_parity),
+        )
+    finally:
+        _restore_prefix_decode_policy_env(old_env)
     return {
         "step": int(step_index),
         "step_row": row,
@@ -254,6 +401,203 @@ def _capture_step_dump(report: dict[str, Any], args: argparse.Namespace) -> dict
         "ck_top1": int((ck.get("comparison") or {}).get("top1_ck", ck.get("ck_top1", -1))),
         "dump": dump_report,
     }
+
+
+
+
+def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    step_index = int(args.hidden_state_step)
+    steps = list(report.get("steps") or [])
+    if step_index < 0 or step_index >= len(steps):
+        raise ValueError(f"--hidden-state-step {step_index} is outside captured steps [0, {max(0, len(steps) - 1)}]")
+    row = dict(steps[step_index])
+    generated_prefix = [int(t) for t in list(row.get("generated_prefix") or [])]
+    if not generated_prefix:
+        raise ValueError("hidden persistent decode capture needs a generated prefix; step 0 has no decode call to capture")
+
+    inputs = _prepare_inputs(args)
+    layer = int(args.hidden_state_layer)
+    names = [item.strip() for item in str(args.hidden_state_names).split(",") if item.strip()]
+    if not names:
+        raise ValueError("--hidden-state-names did not contain any names")
+    root = (args.hidden_state_dir or (args.workdir / f"hidden_state_step_{step_index:04d}")).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+
+    env_keys = ["CK_DEBUG_EXPORT_HIDDEN", "CK_DEBUG_EXPORT_HIDDEN_NAME", "CK_DEBUG_EXPORT_HIDDEN_LAYER"]
+    saved_env = {key: os.environ.get(key) for key in env_keys}
+    results: list[dict[str, Any]] = []
+    for name in names:
+        persistent_dir = root / f"persistent_{name}"
+        full_dir = root / f"full_replay_{name}"
+        if persistent_dir.exists():
+            import shutil
+            shutil.rmtree(persistent_dir)
+        if full_dir.exists():
+            import shutil
+            shutil.rmtree(full_dir)
+        persistent_dir.mkdir(parents=True, exist_ok=True)
+        full_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            _restore_process_env({key: None for key in env_keys})
+            lib, logits_buf, _vocab_size = _init_ck_state(inputs, bool(args.ck_strict_parity))
+            try:
+                last_i = len(generated_prefix) - 1
+                for i, token in enumerate(generated_prefix):
+                    if i == last_i:
+                        _set_process_env("CK_DEBUG_EXPORT_HIDDEN", str(persistent_dir))
+                        _set_process_env("CK_DEBUG_EXPORT_HIDDEN_NAME", name)
+                        if layer >= 0:
+                            _set_process_env("CK_DEBUG_EXPORT_HIDDEN_LAYER", str(layer))
+                    rc = lib.ck_model_decode(ctypes.c_int32(int(token)), logits_buf)
+                    if rc != 0:
+                        raise RuntimeError(f"ck_model_decode failed rc={rc} while capturing persistent hidden state")
+                    if i == last_i:
+                        _restore_process_env({key: None for key in env_keys})
+            finally:
+                if hasattr(lib, "ck_model_free"):
+                    try:
+                        lib.ck_model_free()
+                    except Exception:
+                        pass
+
+            replay_inputs = dict(inputs)
+            replay_inputs["tokens_after"] = [int(t) for t in inputs["tokens_after"]] + generated_prefix
+            _set_process_env("CK_DEBUG_EXPORT_HIDDEN", str(full_dir))
+            _set_process_env("CK_DEBUG_EXPORT_HIDDEN_NAME", _hidden_full_replay_name(name))
+            if layer >= 0:
+                _set_process_env("CK_DEBUG_EXPORT_HIDDEN_LAYER", str(layer))
+            lib2, _logits2, _vocab2 = _init_ck_state(replay_inputs, bool(args.ck_strict_parity))
+            if hasattr(lib2, "ck_model_free"):
+                try:
+                    lib2.ck_model_free()
+                except Exception:
+                    pass
+            _restore_process_env({key: None for key in env_keys})
+
+            if layer < 0:
+                per_layer = _hidden_compare_many(persistent_dir, full_dir)
+                max_diff = max(float(r.get("max_abs_diff", 0.0)) for r in per_layer if r.get("status") == "ok") if per_layer else 0.0
+                first_layer_issue = next((r for r in per_layer if r.get("status") != "ok" or float(r.get("max_abs_diff", 0.0)) > float(args.hidden_state_atol)), None)
+                results.append({
+                    "name": name,
+                    "full_replay_name": _hidden_full_replay_name(name),
+                    "status": "ok" if first_layer_issue is None else "fail",
+                    "max_abs_diff": float(max_diff),
+                    "first_layer_issue": first_layer_issue,
+                    "layers": per_layer,
+                })
+            else:
+                persistent_file = _single_hidden_file(persistent_dir)
+                full_file = _single_hidden_file(full_dir)
+                results.append({
+                    "name": name,
+                    "full_replay_name": _hidden_full_replay_name(name),
+                    **_hidden_compare(persistent_file, full_file),
+                })
+        except Exception as exc:
+            results.append({
+                "name": name,
+                "full_replay_name": _hidden_full_replay_name(name),
+                "status": "error",
+                "error": str(exc),
+                "persistent_dir": str(persistent_dir),
+                "full_replay_dir": str(full_dir),
+            })
+        finally:
+            _restore_process_env(saved_env)
+
+    first_issue = next((r for r in results if r.get("status") != "ok" or float(r.get("max_abs_diff", 0.0)) > float(args.hidden_state_atol)), None)
+    return {
+        "step": int(step_index),
+        "layer": int(layer),
+        "generated_prefix_count": int(len(generated_prefix)),
+        "persistent_ck_next": int(row.get("ck_next", -1)),
+        "persistent_ck_next_text": str(row.get("ck_next_text", "")),
+        "llama_next": int(row.get("llama_next", -1)),
+        "llama_next_text": str(row.get("llama_next_text", "")),
+        "root": str(root),
+        "atol": float(args.hidden_state_atol),
+        "first_issue": first_issue,
+        "results": results,
+    }
+
+def _capture_full_replay_step(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    step_index = int(args.full_replay_step)
+    steps = list(report.get("steps") or [])
+    if step_index < 0 or step_index >= len(steps):
+        raise ValueError(f"--full-replay-step {step_index} is outside captured steps [0, {max(0, len(steps) - 1)}]")
+
+    inputs = _prepare_inputs(args)
+    tokenizer: GGUFTokenizer = inputs["tokenizer"]
+    row = dict(steps[step_index])
+    generated_prefix = [int(t) for t in list(row.get("generated_prefix") or [])]
+
+    replay_inputs = dict(inputs)
+    replay_inputs["tokens_after"] = [int(t) for t in inputs["tokens_after"]] + generated_prefix
+
+    llama_args = argparse.Namespace(**vars(args))
+    llama_args.max_new_tokens = max(int(args.max_new_tokens), step_index + 1)
+    llama_seq = _run_llama_greedy_sequence(inputs, llama_args)
+    llama_logits = llama_seq["logits"][step_index]
+
+    lib, logits_buf, vocab_size = _init_ck_state(replay_inputs, bool(args.ck_strict_parity))
+    try:
+        replay_logits = _ck_logits_from_buffer(logits_buf, vocab_size)
+    finally:
+        if hasattr(lib, "ck_model_free"):
+            try:
+                lib.ck_model_free()
+            except Exception:
+                pass
+
+    cmp = first_token.compare_first_token_logits_v7.compare_logits(replay_logits, llama_logits, int(args.top_k))
+    replay_top1 = int(cmp["top1_ck"])
+    llama_generated = list((llama_seq.get("meta") or {}).get("greedy_generated", []))
+    llama_top1 = int(llama_generated[step_index]) if step_index < len(llama_generated) else int(cmp["top1_llama"])
+    return {
+        "step": int(step_index),
+        "generated_prefix": generated_prefix,
+        "replay_tokens_after_count": int(len(replay_inputs["tokens_after"])),
+        "persistent_ck_next": int(row.get("ck_next", -1)),
+        "persistent_ck_next_text": str(row.get("ck_next_text", "")),
+        "llama_next": int(llama_top1),
+        "llama_next_text": tokenizer.decode([int(llama_top1)], skip_special=False),
+        "full_replay_ck_next": int(replay_top1),
+        "full_replay_ck_next_text": tokenizer.decode([int(replay_top1)], skip_special=False),
+        "full_replay_matches_persistent_ck": bool(replay_top1 == int(row.get("ck_next", -1))),
+        "full_replay_matches_llama": bool(replay_top1 == int(llama_top1)),
+        "comparison_vs_llama": {
+            "cosine": float(cmp["cosine"]),
+            "rmse": float(cmp["rmse"]),
+            "mean_abs_diff": float(cmp["mean_abs_diff"]),
+            "max_abs_diff": float(cmp["max_abs_diff"]),
+            "topk_overlap_count": int(cmp["topk_overlap_count"]),
+            "topk_overlap_ratio": float(cmp["topk_overlap_ratio"]),
+            "ck_top1_margin": float(cmp.get("ck_top1_margin", 0.0)),
+            "llama_top1_margin": float(cmp.get("llama_top1_margin", 0.0)),
+        },
+        "full_replay_ck_topk": _decode_topk(replay_logits, tokenizer, int(args.top_k)),
+        "llama_topk": _decode_topk(llama_logits, tokenizer, int(args.top_k)),
+    }
+
+
+def _set_ck_strict_parity(lib: Any, strict_parity: bool) -> None:
+    value = 1 if strict_parity else 0
+    if hasattr(lib, "ck_set_strict_parity"):
+        lib.ck_set_strict_parity.argtypes = [ctypes.c_int]
+        lib.ck_set_strict_parity.restype = None
+        lib.ck_set_strict_parity(value)
+        return
+
+    engine_so = REPO_ROOT / "build" / "libckernel_engine.so"
+    if not engine_so.exists():
+        return
+    engine = ctypes.CDLL(str(engine_so))
+    if hasattr(engine, "ck_set_strict_parity"):
+        engine.ck_set_strict_parity.argtypes = [ctypes.c_int]
+        engine.ck_set_strict_parity.restype = None
+        engine.ck_set_strict_parity(value)
 
 
 def _init_ck_state(inputs: dict[str, Any], strict_parity: bool) -> tuple[Any, Any, int]:
@@ -266,8 +610,7 @@ def _init_ck_state(inputs: dict[str, Any], strict_parity: bool) -> tuple[Any, An
     )
     if rc != 0:
         raise RuntimeError(f"decoder init failed with rc={rc}")
-    if hasattr(lib, "ck_set_strict_parity"):
-        lib.ck_set_strict_parity(1 if strict_parity else 0)
+    _set_ck_strict_parity(lib, strict_parity)
 
     vocab_size = int(lib.ck_model_get_vocab_size())
     if vocab_size <= 0:
@@ -289,38 +632,42 @@ def _init_ck_state(inputs: dict[str, Any], strict_parity: bool) -> tuple[Any, An
     before_arr = (ctypes.c_int32 * len(tokens_before))(*tokens_before) if tokens_before else None
     after_arr = (ctypes.c_int32 * len(tokens_after))(*tokens_after) if tokens_after else None
     grid = inputs["prefix_grid"]
-    if tokens_before and hasattr(lib, "ck_model_forward_segments_grid_ex"):
-        grid_x, grid_y = grid if grid is not None else (0, 0)
-        rc = lib.ck_model_forward_segments_grid_ex(
-            before_arr,
-            len(tokens_before),
-            prefix_ptr,
-            prefix_tokens,
-            prefix_row_dim,
-            int(grid_x),
-            int(grid_y),
-            int(inputs["prefix_text_pos"]),
-            after_arr,
-            len(tokens_after),
-            logits,
-        )
-    elif hasattr(lib, "ck_model_forward_mixed_grid_ex") and grid is not None:
-        grid_x, grid_y = grid
-        rc = lib.ck_model_forward_mixed_grid_ex(
-            prefix_ptr,
-            prefix_tokens,
-            prefix_row_dim,
-            int(grid_x),
-            int(grid_y),
-            int(inputs["prefix_text_pos"]),
-            after_arr,
-            len(tokens_after),
-            logits,
-        )
-    elif hasattr(lib, "ck_model_forward_mixed_ex"):
-        rc = lib.ck_model_forward_mixed_ex(prefix_ptr, prefix_tokens, prefix_row_dim, after_arr, len(tokens_after), logits)
-    else:
-        rc = lib.ck_model_forward_mixed(prefix_ptr, prefix_tokens, after_arr, len(tokens_after), logits)
+    old_env = _apply_prefix_decode_policy_env(inputs)
+    try:
+        if tokens_before and hasattr(lib, "ck_model_forward_segments_grid_ex"):
+            grid_x, grid_y = grid if grid is not None else (0, 0)
+            rc = lib.ck_model_forward_segments_grid_ex(
+                before_arr,
+                len(tokens_before),
+                prefix_ptr,
+                prefix_tokens,
+                prefix_row_dim,
+                int(grid_x),
+                int(grid_y),
+                int(inputs["prefix_text_pos"]),
+                after_arr,
+                len(tokens_after),
+                logits,
+            )
+        elif hasattr(lib, "ck_model_forward_mixed_grid_ex") and grid is not None:
+            grid_x, grid_y = grid
+            rc = lib.ck_model_forward_mixed_grid_ex(
+                prefix_ptr,
+                prefix_tokens,
+                prefix_row_dim,
+                int(grid_x),
+                int(grid_y),
+                int(inputs["prefix_text_pos"]),
+                after_arr,
+                len(tokens_after),
+                logits,
+            )
+        elif hasattr(lib, "ck_model_forward_mixed_ex"):
+            rc = lib.ck_model_forward_mixed_ex(prefix_ptr, prefix_tokens, prefix_row_dim, after_arr, len(tokens_after), logits)
+        else:
+            rc = lib.ck_model_forward_mixed(prefix_ptr, prefix_tokens, after_arr, len(tokens_after), logits)
+    finally:
+        _restore_prefix_decode_policy_env(old_env)
     if rc != 0:
         raise RuntimeError(f"decoder forward_mixed failed rc={rc}")
     return lib, logits, vocab_size
@@ -432,6 +779,7 @@ def main() -> int:
     ap.add_argument("--prefix-grid-y", type=int, default=None)
     ap.add_argument("--prefix-text-pos", type=int, default=None)
     ap.add_argument("--workdir", required=True, type=Path)
+    ap.add_argument("--reuse-bridge-decoder-runtime", action="store_true", help="Reuse decoder_runtime.workdir from bridge_report instead of creating a new decoder copy under --workdir")
     ap.add_argument("--ctx-len", type=int, default=None)
     ap.add_argument("--max-new-tokens", type=int, default=16)
     ap.add_argument("--top-k", type=int, default=16)
@@ -443,6 +791,7 @@ def main() -> int:
     ap.add_argument("--ck-strict-parity", action=argparse.BooleanOptionalAction, default=True)
     ap.add_argument("--json-out", type=Path, default=None)
     ap.add_argument("--dump-step", type=int, default=None, help="Capture CK-vs-llama tensor dumps at this generated step")
+    ap.add_argument("--full-replay-step", type=int, default=None, help="Compare a generated step by full mixed-prefix replay instead of incremental CK decode, without tensor dumps")
     ap.add_argument("--dump-dir", type=Path, default=None, help="Directory for --dump-step tensor dumps")
     ap.add_argument(
         "--dump-names",
@@ -453,6 +802,11 @@ def main() -> int:
     ap.add_argument("--dump-pass", choices=("all", "prefill", "decode"), default="decode")
     ap.add_argument("--dump-atol", type=float, default=1.0e-4)
     ap.add_argument("--dump-rtol", type=float, default=1.0e-3)
+    ap.add_argument("--hidden-state-step", type=int, default=None, help="Compare CK persistent decode hidden tensors against CK full replay at this generated step")
+    ap.add_argument("--hidden-state-layer", type=int, default=0)
+    ap.add_argument("--hidden-state-names", type=str, default="attn_out,out_proj,after_attn,layer_out")
+    ap.add_argument("--hidden-state-dir", type=Path, default=None)
+    ap.add_argument("--hidden-state-atol", type=float, default=1.0e-5)
     ap.add_argument("--summary", action="store_true")
     args = ap.parse_args()
 
@@ -462,6 +816,10 @@ def main() -> int:
     report = run_multimodal_multitoken_parity(args)
     if args.dump_step is not None:
         report["step_dump"] = _capture_step_dump(report, args)
+    if args.full_replay_step is not None:
+        report["full_replay_step"] = _capture_full_replay_step(report, args)
+    if args.hidden_state_step is not None:
+        report["hidden_state_step"] = _capture_hidden_state_step(report, args)
     if args.json_out is not None:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -496,6 +854,21 @@ def main() -> int:
                 )
             else:
                 print(f"dump={dump.get('status', 'ok')} step={report['step_dump']['step']} summary={summary}")
+        if report.get("full_replay_step"):
+            replay = report["full_replay_step"]
+            cmp = replay.get("comparison_vs_llama") or {}
+            print(
+                "full_replay "
+                f"step={replay['step']} "
+                f"persistent_ck={replay['persistent_ck_next']}({replay['persistent_ck_next_text']!r}) "
+                f"full_replay_ck={replay['full_replay_ck_next']}({replay['full_replay_ck_next_text']!r}) "
+                f"llama={replay['llama_next']}({replay['llama_next_text']!r}) "
+                f"matches_persistent={replay['full_replay_matches_persistent_ck']} "
+                f"matches_llama={replay['full_replay_matches_llama']} "
+                f"cosine={float(cmp.get('cosine', 0.0)):.6f} "
+                f"rmse={float(cmp.get('rmse', 0.0)):.6f} "
+                f"topk_overlap={int(cmp.get('topk_overlap_count', 0))}/{args.top_k}"
+            )
     else:
         print(json.dumps(report, indent=2))
     return 0 if report.get("pass") else 3
