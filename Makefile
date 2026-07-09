@@ -1754,6 +1754,7 @@ showtests:
 	@echo "  make llamacpp-parity      Quick parity vs llama.cpp/ggml"
 	@echo "  make llamacpp-parity-full Full parity test (all kernels)"
 	@echo "  make llamacpp-parity-full-all-isa-variants Full parity + AVX/AVX2/AVX-512 sweep"
+	@echo "  make llamacpp-parity-stitched  v8 Qwen3-VL bridge + multitoken + granular divergence harness"
 	@echo "  Note: Requires llama.cpp submodule (git submodule update --init)"
 	@echo ""
 	@echo "End-to-End Tests:"
@@ -2175,6 +2176,28 @@ smollm-train-parity: $(LIB)
 #
 # RECOMMENDED: Run 'make llamacpp-parity-rebuild' first time or when patches change
 
+V8_STITCHED_TEMPLATE ?= qwen3vl
+V8_STITCHED_MODE ?= fast
+V8_STITCHED_WORKDIR ?= build/stitched_parity/$(V8_STITCHED_TEMPLATE)
+V8_STITCHED_THREADS ?= 20
+V8_STITCHED_CTX ?= 4096
+V8_STITCHED_TOP_K ?= 16
+V8_STITCHED_MAX_NEW_TOKENS ?= 64
+V8_STITCHED_PHASE_TIMEOUT_SEC ?= 0
+V8_STITCHED_SKIP_ENCODER_NUMERIC ?= 0
+V8_STITCHED_NO_GRANULAR ?= 0
+V8_STITCHED_GRANULAR_CK_STOP ?= 1
+V8_STITCHED_GRANULAR_LAYERS ?=
+CK_RUN_STITCHED_PARITY ?= 0
+V8_QWEN3VL_LOCAL_MODEL ?= models/Qwen3-VL-8B-Instruct-GGUF/Qwen3VL-8B-Instruct-Q4_K_M.gguf
+V8_QWEN3VL_LOCAL_MMPROJ ?= models/Qwen3-VL-8B-Instruct-GGUF/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
+V8_QWEN3VL_STITCHED_DECODER ?= $(V8_QWEN3VL_LOCAL_MODEL)
+V8_QWEN3VL_STITCHED_MMPROJ ?= $(V8_QWEN3VL_LOCAL_MMPROJ)
+V8_QWEN3VL_STITCHED_IMAGE ?= ocr/1 81.jpg
+V8_QWEN3VL_STITCHED_PROMPT ?= Extract visible form fields as compact JSON.
+V8_QWEN3VL_STITCHED_IMAGE_MIN_TOKENS ?=
+V8_QWEN3VL_STITCHED_IMAGE_MAX_TOKENS ?= 1024
+
 # First time / fix everything: clean rebuild with all patches
 llamacpp-parity-rebuild:
 	@echo "Force rebuilding llama.cpp with latest patches..."
@@ -2233,6 +2256,38 @@ llamacpp-e2e:
 	@echo ""
 	@echo "Running v8 Qwen3-VL mmproj contract/codegen parity..."
 	@$(MAKE) --no-print-directory parity-v8-qwen3vl-mmproj
+	@if [ "$(CK_RUN_STITCHED_PARITY)" = "1" ]; then \
+	  echo ""; \
+	  echo "Running v8 stitched parity harness..."; \
+	  $(MAKE) --no-print-directory llamacpp-parity-stitched; \
+	else \
+	  echo ""; \
+	  echo "Skipping v8 stitched parity harness (set CK_RUN_STITCHED_PARITY=1 to enable)."; \
+	fi
+
+llamacpp-parity-stitched:
+	@echo "Running v8 stitched parity harness ($(V8_STITCHED_TEMPLATE), $(V8_STITCHED_MODE))..."
+	@$(PYTHON) version/v8/scripts/stitched_parity_v8.py \
+	  --template "$(V8_STITCHED_TEMPLATE)" \
+	  --mode "$(V8_STITCHED_MODE)" \
+	  --decoder-gguf "$(V8_QWEN3VL_STITCHED_DECODER)" \
+	  --mmproj-gguf "$(V8_QWEN3VL_STITCHED_MMPROJ)" \
+	  --image-path "$(V8_QWEN3VL_STITCHED_IMAGE)" \
+	  --prompt "$(V8_QWEN3VL_STITCHED_PROMPT)" \
+	  --workdir "$(V8_STITCHED_WORKDIR)" \
+	  --ctx-len "$(V8_STITCHED_CTX)" \
+	  --threads "$(V8_STITCHED_THREADS)" \
+	  --top-k "$(V8_STITCHED_TOP_K)" \
+	  --max-new-tokens "$(V8_STITCHED_MAX_NEW_TOKENS)" \
+	  --phase-timeout-sec "$(V8_STITCHED_PHASE_TIMEOUT_SEC)" \
+	  $(if $(V8_QWEN3VL_STITCHED_IMAGE_MIN_TOKENS),--image-min-tokens "$(V8_QWEN3VL_STITCHED_IMAGE_MIN_TOKENS)",) \
+	  $(if $(V8_QWEN3VL_STITCHED_IMAGE_MAX_TOKENS),--image-max-tokens "$(V8_QWEN3VL_STITCHED_IMAGE_MAX_TOKENS)",) \
+	  $(if $(filter 1,$(V8_STITCHED_SKIP_ENCODER_NUMERIC)),--skip-encoder-numeric,) \
+	  $(if $(filter 1,$(V8_STITCHED_NO_GRANULAR)),--no-granular,) \
+	  $(if $(filter 0,$(V8_STITCHED_GRANULAR_CK_STOP)),--no-granular-ck-stop,--granular-ck-stop) \
+	  $(if $(V8_STITCHED_GRANULAR_LAYERS),--granular-layers "$(V8_STITCHED_GRANULAR_LAYERS)",)
+
+llamacpp-parity-full-stitched: llamacpp-parity-full llamacpp-parity-stitched
 
 # Nightly parity profile: keep correctness coverage, but use quick ISA parity
 # benches so nightly does not block on long benchmark loops.
@@ -3238,6 +3293,7 @@ help:
 	@echo "  make layer-parity         PyTorch parity (fp32/bf16)"
 	@echo "  make llamacpp-parity      llama.cpp parity (Q4_K)"
 	@echo "  make llamacpp-parity-full llama.cpp kernel parity suite"
+	@echo "  make llamacpp-parity-stitched v8 Qwen3-VL stitched parity harness"
 	@echo "  make llamacpp-e2e         llama.cpp end-to-end compatibility suite"
 	@echo "  make smollm-train-parity  Full training parity"
 	@echo ""
@@ -4027,7 +4083,7 @@ report-md:
 	@echo ""
 	@$(PYTHON) scripts/optimization_status.py --markdown
 
-.PHONY: all clean test test-bf16 test-libs test-quant test-flash-attention test_flash_attention unittest unittest-show show_test help litmus litmus-test test-quick test-full test-stress profile-memory profile-heap profile-cpu profile-flash-attn profile-cache flamegraph ck-cli ck-cli-v4 ck-cli-v5 ck-chat ck-server ck-chat-py ck-server-py generate-model gguf-inspect gguf-list gguf-to-bump gguf-to-bump-v4 hf-to-bump-v4 ir-v4 ir-v4-q4k opt-status opt-pending opt-inference opt-training opt-kernels opt-targets opt-md kernel-coverage kernel-coverage-md test-coverage test-coverage-md meta-check meta-sync meta-init report report-md show_config show-config v5 demo-v5 demo-v5-debug llamacpp-parity llamacpp-parity-full llamacpp-parity-full-all-isa-variants showtests version version-history e2e e2e-quick e2e-qwen e2e-smollm e2e-v66 e2e-v66-full v6.6-test-help v6.6-test-quick v6.6-sanity v6.6-test-parity v6.6-test-memory v6.6-test-divergence v6.6-test-nan v6.6-test-all v6.6-test v6.6-download v6.6-kernel-map-regenerate v6.6-kernel-map-gate v6.6-validate-contracts v6.6-validate-matrix v6.6-validate-matrix-nightly v6.6-validate-matrix-smoke v6.6-validate-parity-matrix v6.6-validate-parity-matrix-required v6.6-validate-longdecode v6.6-gate v6.6-build v6.6 v6.6-full v6.6-ir-visualizer v6.6-memory-signoff v6.6-perf-gate v6.6-perf-gate-evaluate v7-help v7-sync-inference v7-infer-run v7-infer-gate v7-validate-contracts v7-parity-1tok v7-train-ir-smoke v7-train-ir-backward v7-train-parity-3 v7-train-parity-5 v7-gate-train v7-gate v7 profile-v6-prepare-runtime profile-v6-decode profile-v6-prefill profile-v6-flamegraph profile-v6-perf-stat profile-v6-vtune profile-v6-cachegrind profile-v6-full profile-v7-prepare-runtime profile-v7-decode profile-v7-prefill profile-v7-flamegraph profile-v7-perf-stat profile-v7-vtune profile-v7-advisor profile-v7-cachegrind profile-v7-full
+.PHONY: all clean test test-bf16 test-libs test-quant test-flash-attention test_flash_attention unittest unittest-show show_test help litmus litmus-test test-quick test-full test-stress profile-memory profile-heap profile-cpu profile-flash-attn profile-cache flamegraph ck-cli ck-cli-v4 ck-cli-v5 ck-chat ck-server ck-chat-py ck-server-py generate-model gguf-inspect gguf-list gguf-to-bump gguf-to-bump-v4 hf-to-bump-v4 ir-v4 ir-v4-q4k opt-status opt-pending opt-inference opt-training opt-kernels opt-targets opt-md kernel-coverage kernel-coverage-md test-coverage test-coverage-md meta-check meta-sync meta-init report report-md show_config show-config v5 demo-v5 demo-v5-debug llamacpp-parity llamacpp-parity-full llamacpp-parity-full-all-isa-variants llamacpp-parity-stitched llamacpp-parity-full-stitched showtests version version-history e2e e2e-quick e2e-qwen e2e-smollm e2e-v66 e2e-v66-full v6.6-test-help v6.6-test-quick v6.6-sanity v6.6-test-parity v6.6-test-memory v6.6-test-divergence v6.6-test-nan v6.6-test-all v6.6-test v6.6-download v6.6-kernel-map-regenerate v6.6-kernel-map-gate v6.6-validate-contracts v6.6-validate-matrix v6.6-validate-matrix-nightly v6.6-validate-matrix-smoke v6.6-validate-parity-matrix v6.6-validate-parity-matrix-required v6.6-validate-longdecode v6.6-gate v6.6-build v6.6 v6.6-full v6.6-ir-visualizer v6.6-memory-signoff v6.6-perf-gate v6.6-perf-gate-evaluate v7-help v7-sync-inference v7-infer-run v7-infer-gate v7-validate-contracts v7-parity-1tok v7-train-ir-smoke v7-train-ir-backward v7-train-parity-3 v7-train-parity-5 v7-gate-train v7-gate v7 profile-v6-prepare-runtime profile-v6-decode profile-v6-prefill profile-v6-flamegraph profile-v6-perf-stat profile-v6-vtune profile-v6-cachegrind profile-v6-full profile-v7-prepare-runtime profile-v7-decode profile-v7-prefill profile-v7-flamegraph profile-v7-perf-stat profile-v7-vtune profile-v7-advisor profile-v7-cachegrind profile-v7-full
 .PHONY: v7-perf-gate v7-perf-gate-evaluate
 .PHONY: v7-inference-smoke
 .PHONY: v7-grad-fd v7-replay

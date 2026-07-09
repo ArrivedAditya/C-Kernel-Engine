@@ -40,6 +40,41 @@ def _patch_codegen_config(obj: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _granular_cutpoint_report(ir_obj: Dict[str, Any], layout_obj: Dict[str, Any]) -> Dict[str, Any]:
+    """Describe generated stop points without making model-specific assumptions.
+
+    codegen_core_v8 emits `if (stop_seq == <op index>) return;` after most
+    operations. The parity harness uses this metadata to turn a layer-level
+    request into the concrete CK_STOP_OP index used by generated C.
+    """
+    ops = ir_obj.get("operations", [])
+    if not isinstance(ops, list):
+        ops = []
+    cutpoints = []
+    for index, op in enumerate(ops):
+        if not isinstance(op, dict):
+            continue
+        try:
+            layer = int(op.get("layer", -1) if op.get("layer", -1) is not None else -1)
+        except (TypeError, ValueError):
+            layer = -1
+        cutpoints.append(
+            {
+                "index": int(index),
+                "layer": layer,
+                "op": str(op.get("op") or op.get("name") or op.get("type") or ""),
+                "function": str(op.get("function") or op.get("kernel") or op.get("kernel_fn") or ""),
+                "section": str(op.get("section") or ""),
+            }
+        )
+    return {
+        "schema": "ck.v8.granular_codegen.v1",
+        "mode": str(ir_obj.get("mode") or layout_obj.get("mode") or ""),
+        "model": str((ir_obj.get("config") or {}).get("model") or (layout_obj.get("config") or {}).get("model") or ""),
+        "cutpoints": cutpoints,
+    }
+
+
 def _inject_vision_only_fallbacks(code: str, layout_obj: Dict[str, Any]) -> str:
     act_buffers = (layout_obj.get("memory", {}) or {}).get("activations", {}).get("buffers", []) or []
     present = {str(buf.get("name", "")) for buf in act_buffers}
@@ -942,8 +977,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--debug", action="store_true", help="Emit debug dumps")
     ap.add_argument("--profile", action="store_true", help="Emit profiling wrappers")
     ap.add_argument("--parity-dump", action="store_true", help="Emit parity dump helpers")
+    ap.add_argument("--granular-test", action="store_true", help="Emit parity dumps and a generated-op cutpoint map for stitched parity debugging")
+    ap.add_argument("--granular-report", type=Path, default=None, help="Optional JSON output for --granular-test cutpoints")
     ap.add_argument("--strict-contracts", action="store_true", help="Fail on strict contract/codegen errors")
     args = ap.parse_args(argv)
+    emit_parity_dumps = bool(args.parity_dump or args.granular_test)
 
     with open(args.ir, "r", encoding="utf-8") as f:
         ir_obj = _patch_codegen_config(json.load(f))
@@ -979,7 +1017,7 @@ def main(argv: list[str] | None = None) -> int:
             prefill_code = codegen_prefill_v8.generate_prefill(
                 prefill_path,
                 profile=args.profile,
-                dump=args.parity_dump,
+                dump=emit_parity_dumps,
             )
         code = codegen_core_v8.generate(
             ir_path,
@@ -987,7 +1025,7 @@ def main(argv: list[str] | None = None) -> int:
             debug=args.debug,
             init_call=init_call_obj,
             profile=args.profile,
-            dump=args.parity_dump,
+            dump=emit_parity_dumps,
             strict_contracts=args.strict_contracts,
         )
         if prefill_code:
@@ -1006,9 +1044,9 @@ def main(argv: list[str] | None = None) -> int:
                 code,
                 ir_obj,
                 profile=args.profile,
-                dump=args.parity_dump,
+                dump=emit_parity_dumps,
             )
-        if args.parity_dump:
+        if emit_parity_dumps:
             code = _inject_decode_attention_parity_dumps(code, layout_obj)
         code = _inject_vision_only_fallbacks(code, layout_obj)
         code = _patch_standalone_prefill_runtime(code, layout_obj)
@@ -1017,6 +1055,12 @@ def main(argv: list[str] | None = None) -> int:
         code = _inject_activation_lookup_api(code, layout_obj)
 
     args.output.write_text(code, encoding="utf-8")
+    if args.granular_report is not None:
+        args.granular_report.parent.mkdir(parents=True, exist_ok=True)
+        args.granular_report.write_text(
+            json.dumps(_granular_cutpoint_report(ir_obj, layout_obj), indent=2),
+            encoding="utf-8",
+        )
     print(f"Generated: {args.output}")
     return 0
 
