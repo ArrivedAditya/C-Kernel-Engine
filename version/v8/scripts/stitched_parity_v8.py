@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[2]
+DEFAULT_LOG_BYTE_LIMIT = 2 * 1024 * 1024
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -28,48 +30,125 @@ def _write_json(path: Path, obj: Any) -> None:
     path.write_text(json.dumps(obj, indent=2), encoding="utf-8")
 
 
+def _prune_weight_bumps(root: Path) -> list[dict[str, Any]]:
+    pruned: list[dict[str, Any]] = []
+    if not root.exists():
+        return pruned
+    for path in sorted(root.rglob("weights.bump")):
+        try:
+            size = path.stat().st_size
+            path.unlink()
+        except OSError as exc:
+            pruned.append({"path": str(path), "error": str(exc)})
+            continue
+        pruned.append({"path": str(path), "bytes": int(size)})
+    return pruned
+
+
+class _BoundedCapture:
+    def __init__(self, limit: int) -> None:
+        self.limit = int(limit)
+        self.total = 0
+        self.head = bytearray()
+        self.tail = bytearray()
+
+    def append(self, data: bytes) -> None:
+        if not data:
+            return
+        self.total += len(data)
+        if self.limit <= 0:
+            self.head.extend(data)
+            return
+
+        half = max(1, self.limit // 2)
+        head_room = max(0, half - len(self.head))
+        if head_room:
+            self.head.extend(data[:head_room])
+            data = data[head_room:]
+        if data:
+            self.tail.extend(data)
+            if len(self.tail) > half:
+                del self.tail[: len(self.tail) - half]
+
+    def text(self) -> str:
+        if self.limit <= 0 or self.total <= self.limit:
+            data = bytes(self.head) + bytes(self.tail)
+            return data.decode("utf-8", errors="replace")
+
+        omitted = max(0, self.total - len(self.head) - len(self.tail))
+        head = bytes(self.head).decode("utf-8", errors="replace")
+        tail = bytes(self.tail).decode("utf-8", errors="replace")
+        return f"{head}\n\n[stitched-parity] omitted {omitted} bytes from middle of captured output\n\n{tail}"
+
+
+def _reader_thread(pipe: Any, capture: _BoundedCapture) -> None:
+    try:
+        while True:
+            chunk = pipe.read(65536)
+            if not chunk:
+                break
+            capture.append(chunk)
+    finally:
+        pipe.close()
+
+
 def _run_logged(
     cmd: list[str],
     *,
     log_path: Path,
     env: dict[str, str],
     timeout_sec: int = 0,
+    log_byte_limit: int = DEFAULT_LOG_BYTE_LIMIT,
 ) -> subprocess.CompletedProcess[str]:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     started = time.time()
+    stdout_capture = _BoundedCapture(log_byte_limit)
+    stderr_capture = _BoundedCapture(log_byte_limit)
+    returncode = 1
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
             cwd=str(REPO_ROOT),
             env=env,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=None if int(timeout_sec) <= 0 else int(timeout_sec),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
-    except subprocess.TimeoutExpired as exc:
-        proc = subprocess.CompletedProcess(
-            cmd,
-            124,
-            stdout=exc.stdout if isinstance(exc.stdout, str) else "",
-            stderr=(exc.stderr if isinstance(exc.stderr, str) else "") + f"\nTIMEOUT after {int(timeout_sec)}s\n",
-        )
+        threads = [
+            threading.Thread(target=_reader_thread, args=(proc.stdout, stdout_capture), daemon=True),
+            threading.Thread(target=_reader_thread, args=(proc.stderr, stderr_capture), daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+        try:
+            returncode = proc.wait(timeout=None if int(timeout_sec) <= 0 else int(timeout_sec))
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            returncode = 124
+            stderr_capture.append(f"\nTIMEOUT after {int(timeout_sec)}s\n".encode("utf-8"))
+        for thread in threads:
+            thread.join()
+    except OSError as exc:
+        returncode = 127
+        stderr_capture.append(f"{type(exc).__name__}: {exc}\n".encode("utf-8"))
     elapsed = time.time() - started
+    stdout_text = stdout_capture.text()
+    stderr_text = stderr_capture.text()
     with log_path.open("a", encoding="utf-8") as f:
         f.write("$ " + " ".join(cmd) + "\n")
-        f.write(f"exit={proc.returncode} elapsed_sec={elapsed:.3f}\n")
-        if proc.stdout:
+        f.write(f"exit={returncode} elapsed_sec={elapsed:.3f}\n")
+        if stdout_text:
             f.write("\n[stdout]\n")
-            f.write(proc.stdout)
-            if not proc.stdout.endswith("\n"):
+            f.write(stdout_text)
+            if not stdout_text.endswith("\n"):
                 f.write("\n")
-        if proc.stderr:
+        if stderr_text:
             f.write("\n[stderr]\n")
-            f.write(proc.stderr)
-            if not proc.stderr.endswith("\n"):
+            f.write(stderr_text)
+            if not stderr_text.endswith("\n"):
                 f.write("\n")
         f.write("\n")
-    return proc
+    return subprocess.CompletedProcess(cmd, returncode, stdout=stdout_text, stderr=stderr_text)
 
 
 def _layers_for_mode(mode: str, explicit: str | None) -> list[int]:
@@ -323,6 +402,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--encoder-rmse-max", type=float, default=1.0e-3)
     ap.add_argument("--encoder-max-abs-max", type=float, default=1.0e-1)
     ap.add_argument("--phase-timeout-sec", type=int, default=0, help="Optional timeout per subprocess phase; 0 disables")
+    ap.add_argument("--log-byte-limit", type=int, default=DEFAULT_LOG_BYTE_LIMIT, help="Maximum stdout/stderr bytes to write per phase and stream in commands.log; 0 disables truncation")
+    ap.add_argument(
+        "--keep-generated-weights",
+        action="store_true",
+        help="Keep generated weights.bump files from bridge/multitoken/granular phases; default prunes them to control scratch usage",
+    )
     ap.add_argument("--granular-layers", type=str, default=None, help="Comma-separated activation layers to inspect after coarse mismatch")
     ap.add_argument(
         "--granular-ck-stop",
@@ -381,6 +466,8 @@ def main(argv: list[str] | None = None) -> int:
         "image_min_tokens": args.image_min_tokens,
         "image_max_tokens": args.image_max_tokens,
         "command_log": str(command_log),
+        "log_byte_limit": int(args.log_byte_limit),
+        "keep_generated_weights": bool(args.keep_generated_weights),
         "bridge_report": str(bridge_report),
         "prefix_f32": str(prefix_f32),
         "encoder_numeric_report": str(encoder_numeric_report),
@@ -388,18 +475,34 @@ def main(argv: list[str] | None = None) -> int:
         "granular_ck_stop": bool(args.granular_ck_stop),
     }
 
-    bridge_proc = _run_logged(_bridge_command(args, bridge_dir, prefix_f32), log_path=command_log, env=env, timeout_sec=args.phase_timeout_sec)
+    bridge_proc = _run_logged(
+        _bridge_command(args, bridge_dir, prefix_f32),
+        log_path=command_log,
+        env=env,
+        timeout_sec=args.phase_timeout_sec,
+        log_byte_limit=int(args.log_byte_limit),
+    )
     if bridge_proc.returncode != 0 or not bridge_report.exists() or not prefix_f32.exists():
         report.update({"status": "setup_fail", "bridge_exit_code": bridge_proc.returncode})
+        if not args.keep_generated_weights:
+            report["setup_pruned_weight_bumps"] = _prune_weight_bumps(args.workdir)
         _write_json(final_json, report)
         _write_markdown(report, final_md)
         print(f"status=setup_fail report={final_json}", file=sys.stderr)
         return 2
+    if not args.keep_generated_weights:
+        report["bridge_pruned_weight_bumps"] = _prune_weight_bumps(bridge_dir)
 
     encoder_ok = True
     if not args.skip_encoder_numeric:
         encoder_dir = args.workdir / "encoder_numeric"
-        encoder_proc = _run_logged(_encoder_numeric_command(args, encoder_dir, encoder_numeric_report), log_path=command_log, env=env, timeout_sec=args.phase_timeout_sec)
+        encoder_proc = _run_logged(
+            _encoder_numeric_command(args, encoder_dir, encoder_numeric_report),
+            log_path=command_log,
+            env=env,
+            timeout_sec=args.phase_timeout_sec,
+            log_byte_limit=int(args.log_byte_limit),
+        )
         encoder_numeric = _load_json(encoder_numeric_report)
         encoder_ok = encoder_proc.returncode == 0 and _encoder_numeric_pass(encoder_numeric, args)
         report["encoder_numeric_exit_code"] = int(encoder_proc.returncode)
@@ -413,7 +516,13 @@ def main(argv: list[str] | None = None) -> int:
                 for layer in _layers_for_mode(args.mode, args.granular_layers):
                     layer_dir = args.workdir / "granular" / f"layer_{layer}"
                     layer_json = layer_dir / "activation_report.json"
-                    proc = _run_logged(_granular_command(args, layer, layer_dir, layer_json), log_path=command_log, env=env, timeout_sec=args.phase_timeout_sec)
+                    proc = _run_logged(
+                        _granular_command(args, layer, layer_dir, layer_json),
+                        log_path=command_log,
+                        env=env,
+                        timeout_sec=args.phase_timeout_sec,
+                        log_byte_limit=int(args.log_byte_limit),
+                    )
                     granular_reports.append(
                         {
                             "layer": int(layer),
@@ -428,6 +537,8 @@ def main(argv: list[str] | None = None) -> int:
                     {k: v for k, v in row.items() if k != "report"} for row in granular_reports
                 ]
                 report["first_granular_issue"] = _first_granular_issue(granular_reports)
+            if not args.keep_generated_weights:
+                report["final_pruned_weight_bumps"] = _prune_weight_bumps(args.workdir)
             _write_json(final_json, report)
             _write_markdown(report, final_md)
             issue = report.get("first_granular_issue") or {}
@@ -440,7 +551,13 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 3
 
-    multi_proc = _run_logged(_multitoken_command(args, bridge_report, prefix_f32, multitoken_report), log_path=command_log, env=env, timeout_sec=args.phase_timeout_sec)
+    multi_proc = _run_logged(
+        _multitoken_command(args, bridge_report, prefix_f32, multitoken_report),
+        log_path=command_log,
+        env=env,
+        timeout_sec=args.phase_timeout_sec,
+        log_byte_limit=int(args.log_byte_limit),
+    )
     multitoken = _load_json(multitoken_report)
     report["multitoken_exit_code"] = int(multi_proc.returncode)
     report["multitoken_status"] = multitoken.get("status")
@@ -448,6 +565,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if multitoken.get("pass") is True:
         report["status"] = "pass"
+        if not args.keep_generated_weights:
+            report["final_pruned_weight_bumps"] = _prune_weight_bumps(args.workdir)
         _write_json(final_json, report)
         _write_markdown(report, final_md)
         print(f"status=pass report={final_json}")
@@ -459,7 +578,13 @@ def main(argv: list[str] | None = None) -> int:
         for layer in _layers_for_mode(args.mode, args.granular_layers):
             layer_dir = args.workdir / "granular" / f"layer_{layer}"
             layer_json = layer_dir / "activation_report.json"
-            proc = _run_logged(_granular_command(args, layer, layer_dir, layer_json), log_path=command_log, env=env, timeout_sec=args.phase_timeout_sec)
+            proc = _run_logged(
+                _granular_command(args, layer, layer_dir, layer_json),
+                log_path=command_log,
+                env=env,
+                timeout_sec=args.phase_timeout_sec,
+                log_byte_limit=int(args.log_byte_limit),
+            )
             granular_reports.append(
                 {
                     "layer": int(layer),
@@ -475,6 +600,8 @@ def main(argv: list[str] | None = None) -> int:
         ]
         report["first_granular_issue"] = _first_granular_issue(granular_reports)
 
+    if not args.keep_generated_weights:
+        report["final_pruned_weight_bumps"] = _prune_weight_bumps(args.workdir)
     _write_json(final_json, report)
     _write_markdown(report, final_md)
     first = report.get("first_divergence") or {}
