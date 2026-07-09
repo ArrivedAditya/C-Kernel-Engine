@@ -811,9 +811,25 @@ def _capture_ck_dump(
     dump_dir.mkdir(parents=True, exist_ok=True)
 
     old_dump = os.environ.get("CK_PARITY_DIR")
+    old_cwd = Path.cwd()
+    fallback_dir = dump_dir / "ck_parity_dumps"
+    fallback_dir.mkdir(parents=True, exist_ok=True)
     os.environ["CK_PARITY_DIR"] = str(dump_dir)
     try:
-        return bridge_runner_v8._run_decoder(
+        # Some parity runs load generated C through ctypes before Python's
+        # os.environ update is visible to libc getenv(). Force the C process
+        # environment too, so ck_dump_init(NULL) always sees the dump dir.
+        try:
+            import ctypes as _ctypes
+            _libc = _ctypes.CDLL(None)
+            _libc.setenv.argtypes = [_ctypes.c_char_p, _ctypes.c_char_p, _ctypes.c_int]
+            _libc.setenv(b"CK_PARITY_DIR", str(dump_dir).encode(), 1)
+        except Exception:
+            pass
+        # If the generated C still falls back to ck_parity_dumps/dump.bin,
+        # run from dump_dir and harvest that fallback file after execution.
+        os.chdir(dump_dir)
+        result = bridge_runner_v8._run_decoder(
             runtime,
             prefix_embeddings,
             prefix_tokens,
@@ -824,11 +840,31 @@ def _capture_ck_dump(
             prefix_text_pos=prefix_text_pos,
             strict_parity=ck_strict_parity,
         )
+        target = dump_dir / "dump.bin"
+        fallback = fallback_dir / "dump.bin"
+        if not target.exists() and fallback.exists():
+            shutil.move(str(fallback), str(target))
+        return result
     finally:
+        os.chdir(old_cwd)
         if old_dump is None:
             os.environ.pop("CK_PARITY_DIR", None)
+            try:
+                import ctypes as _ctypes
+                _libc = _ctypes.CDLL(None)
+                _libc.unsetenv.argtypes = [_ctypes.c_char_p]
+                _libc.unsetenv(b"CK_PARITY_DIR")
+            except Exception:
+                pass
         else:
             os.environ["CK_PARITY_DIR"] = old_dump
+            try:
+                import ctypes as _ctypes
+                _libc = _ctypes.CDLL(None)
+                _libc.setenv.argtypes = [_ctypes.c_char_p, _ctypes.c_char_p, _ctypes.c_int]
+                _libc.setenv(b"CK_PARITY_DIR", old_dump.encode(), 1)
+            except Exception:
+                pass
 
 
 def _capture_dump_compare(
@@ -890,18 +926,49 @@ def _capture_dump_compare(
         dump_dir=llama_dump_dir,
         dump_names=dump_names,
     )
-    ck = _capture_ck_dump(
-        runtime,
-        prefix_embeddings,
-        prefix_tokens,
-        token_ids,
-        ck_dump_dir,
-        int(prefix_row_dim),
-        tokens_before=tokens_before,
-        prefix_grid=prefix_grid,
-        prefix_text_pos=prefix_text_pos,
-        ck_strict_parity=ck_strict_parity,
-    )
+    old_ck_op_filter = os.environ.get("CK_PARITY_OP_FILTER")
+    if dump_names:
+        os.environ["CK_PARITY_OP_FILTER"] = str(dump_names)
+    try:
+        try:
+            import ctypes as _ctypes
+            _libc = _ctypes.CDLL(None)
+            _libc.setenv.argtypes = [_ctypes.c_char_p, _ctypes.c_char_p, _ctypes.c_int]
+            if dump_names:
+                _libc.setenv(b"CK_PARITY_OP_FILTER", str(dump_names).encode(), 1)
+        except Exception:
+            pass
+        ck = _capture_ck_dump(
+            runtime,
+            prefix_embeddings,
+            prefix_tokens,
+            token_ids,
+            ck_dump_dir,
+            int(prefix_row_dim),
+            tokens_before=tokens_before,
+            prefix_grid=prefix_grid,
+            prefix_text_pos=prefix_text_pos,
+            ck_strict_parity=ck_strict_parity,
+        )
+    finally:
+        if old_ck_op_filter is None:
+            os.environ.pop("CK_PARITY_OP_FILTER", None)
+            try:
+                import ctypes as _ctypes
+                _libc = _ctypes.CDLL(None)
+                _libc.unsetenv.argtypes = [_ctypes.c_char_p]
+                _libc.unsetenv(b"CK_PARITY_OP_FILTER")
+            except Exception:
+                pass
+        else:
+            os.environ["CK_PARITY_OP_FILTER"] = old_ck_op_filter
+            try:
+                import ctypes as _ctypes
+                _libc = _ctypes.CDLL(None)
+                _libc.setenv.argtypes = [_ctypes.c_char_p, _ctypes.c_char_p, _ctypes.c_int]
+                _libc.setenv(b"CK_PARITY_OP_FILTER", old_ck_op_filter.encode(), 1)
+            except Exception:
+                pass
 
     ck_dump_path = ck_dump_dir / "dump.bin"
     ck_dumps = parity_test_v7.read_dump_file(ck_dump_path)
