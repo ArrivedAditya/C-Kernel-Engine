@@ -4,6 +4,7 @@ import argparse
 import time
 import math
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -46,6 +47,7 @@ lib.position_embeddings_add.restype = None
 lib.position_embeddings_add_tiled_2d.argtypes = [
     ctypes.POINTER(ctypes.c_float),
     ctypes.POINTER(ctypes.c_float),
+    ctypes.c_int,
     ctypes.c_int,
     ctypes.c_int,
     ctypes.c_int,
@@ -209,9 +211,12 @@ def run_c_position_embeddings_add_tiled_2d(
     grid_h: int,
     grid_w: int,
     merge_size: int,
+    source_grid_size: int | None = None,
 ) -> torch.Tensor:
     out = x.clone()
     _, embed_dim = out.shape
+    if source_grid_size is None:
+        source_grid_size = grid_h
     lib.position_embeddings_add_tiled_2d(
         tensor_to_ptr(out),
         tensor_to_ptr(pos),
@@ -219,6 +224,7 @@ def run_c_position_embeddings_add_tiled_2d(
         grid_w,
         embed_dim,
         merge_size,
+        source_grid_size,
     )
     return out
 
@@ -418,9 +424,75 @@ def _ref_position_embeddings_add_tiled_2d(
     grid_h: int,
     grid_w: int,
     merge_size: int,
+    source_grid_size: int | None = None,
 ) -> torch.Tensor:
-    order = _tile_order_indices(grid_h, grid_w, merge_size)
-    return x + pos.index_select(0, order)
+    if source_grid_size is None:
+        source_grid_size = grid_h
+    if source_grid_size == grid_h and source_grid_size == grid_w:
+        order = _tile_order_indices(grid_h, grid_w, merge_size)
+        return x + pos.index_select(0, order)
+
+    def f32(v) -> float:
+        return np.float32(v).item()
+
+    def fmaf32(a: float, b: float, c: float) -> float:
+        if hasattr(math, "fma"):
+            return f32(math.fma(float(a), float(b), float(c)))
+        return f32(float(a) * float(b) + float(c))
+
+    x_np = x.detach().cpu().numpy().astype(np.float32, copy=True)
+    pos_np = pos.detach().cpu().numpy().astype(np.float32, copy=False)
+    tokens, embed_dim = x_np.shape
+    if tokens != grid_h * grid_w:
+        raise ValueError(f"expected {grid_h * grid_w} tokens, got {tokens}")
+    if pos_np.shape[0] != source_grid_size * source_grid_size:
+        raise ValueError(
+            f"expected {source_grid_size * source_grid_size} source positions, got {pos_np.shape[0]}"
+        )
+
+    sf_x = f32(float(grid_w) / float(source_grid_size))
+    sf_y = f32(float(grid_h) / float(source_grid_size))
+    pixel_offset = np.float32(0.5).item()
+    support_x = f32(max(1.0, f32(1.0 / sf_x)))
+    support_y = f32(max(1.0, f32(1.0 / sf_y)))
+    invscale_x = f32(1.0 / support_x)
+    invscale_y = f32(1.0 / support_y)
+
+    order = _tile_order_indices(grid_h, grid_w, merge_size).tolist()
+    for tok, src_tok in enumerate(order):
+        dst_y = src_tok // grid_w
+        dst_x = src_tok - dst_y * grid_w
+        x_src = f32(f32(float(dst_x) + pixel_offset) / sf_x)
+        y_src = f32(f32(float(dst_y) + pixel_offset) / sf_y)
+        x_min = int(f32(f32(x_src - support_x) + pixel_offset))
+        x_max = int(f32(f32(x_src + support_x) + pixel_offset))
+        y_min = int(f32(f32(y_src - support_y) + pixel_offset))
+        y_max = int(f32(f32(y_src + support_y) + pixel_offset))
+        x_min = max(0, x_min)
+        y_min = max(0, y_min)
+        x_max = min(source_grid_size, x_max)
+        y_max = min(source_grid_size, y_max)
+
+        for d in range(embed_dim):
+            val = f32(0.0)
+            total_weight = f32(0.0)
+            for sy in range(y_min, y_max):
+                wy_arg = f32(f32(f32(float(sy) - y_src) + pixel_offset) * invscale_y)
+                wy = f32(max(f32(1.0 - abs(wy_arg)), 0.0))
+                if wy <= 0.0:
+                    continue
+                for sx in range(x_min, x_max):
+                    wx_arg = f32(f32(f32(float(sx) - x_src) + pixel_offset) * invscale_x)
+                    wx = f32(max(f32(1.0 - abs(wx_arg)), 0.0))
+                    weight = f32(wx * wy)
+                    if weight <= 0.0:
+                        continue
+                    sample = float(pos_np[sy * source_grid_size + sx, d])
+                    val = fmaf32(sample, weight, val)
+                    total_weight = f32(total_weight + weight)
+            if total_weight > 0.0:
+                x_np[tok, d] = f32(float(x_np[tok, d]) + f32(val / total_weight))
+    return torch.from_numpy(x_np)
 
 
 def _ref_add_stream_reorder_2d(
@@ -544,6 +616,47 @@ def test_position_embeddings_add_tiled_2d(grid_h=6, grid_w=6, embed_dim=8, merge
 
     if diff > 1e-7:
         raise AssertionError("position_embeddings_add_tiled_2d mismatch!")
+
+
+def test_position_embeddings_add_tiled_2d_qwen3vl_resize_order(
+    grid_h=72,
+    grid_w=56,
+    source_grid_size=48,
+    embed_dim=64,
+    merge_size=2,
+):
+    print(
+        f"\n--- Testing position_embeddings_add_tiled_2d Qwen3-VL resize "
+        f"({grid_h}x{grid_w} from {source_grid_size}x{source_grid_size}, dim {embed_dim}, merge {merge_size}) ---"
+    )
+    tokens = grid_h * grid_w
+    source_tokens = source_grid_size * source_grid_size
+    g = torch.Generator().manual_seed(4408)
+    x = torch.randn(tokens, embed_dim, generator=g, dtype=torch.float32) * 0.25
+    pos = torch.randn(source_tokens, embed_dim, generator=g, dtype=torch.float32) * 0.5
+
+    ref = _ref_position_embeddings_add_tiled_2d(
+        x,
+        pos,
+        grid_h,
+        grid_w,
+        merge_size,
+        source_grid_size,
+    )
+    out_c = run_c_position_embeddings_add_tiled_2d(
+        x,
+        pos,
+        grid_h,
+        grid_w,
+        merge_size,
+        source_grid_size,
+    )
+
+    diff = max_diff(out_c, ref)
+    print(f"Max diff: {diff:.2e}")
+
+    if diff > 2e-6:
+        raise AssertionError("position_embeddings_add_tiled_2d Qwen3-VL resize order mismatch!")
 
 
 def test_rowwise_bias_add(tokens=2304, embed_dim=1152):
@@ -850,6 +963,7 @@ if __name__ == "__main__":
     test_patch2im()
     test_position_embeddings_add()
     test_position_embeddings_add_tiled_2d()
+    test_position_embeddings_add_tiled_2d_qwen3vl_resize_order()
     test_vision_position_ids()
     test_vision_position_ids(grid_h=6, grid_w=6, merge_size=3)
     test_rowwise_bias_add()

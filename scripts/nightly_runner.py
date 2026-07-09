@@ -118,6 +118,7 @@ def parse_sub_tests(stdout: str) -> list:
 
     # Extract accuracy results from standard format
     accuracy_results = {}
+    perf_results = {}
     for match in accuracy_pattern.finditer(stdout):
         name = match.group(1).strip()
         max_diff = float(match.group(2))
@@ -157,8 +158,52 @@ def parse_sub_tests(stdout: str) -> list:
                 'status': status
             }
 
+    # Extract unittest/test_vision.py style blocks:
+    #   --- Testing position_embeddings_add_tiled_2d (...) ---
+    #   PyTorch time: 0.601 ms
+    #   C Kernel time: 0.869 ms
+    #   Max diff: 0.00e+00
+    vision_block_pattern = re.compile(
+        r'^--- Testing\s+(.+?)\s+---\s*(.*?)(?=^--- Testing|\Z)',
+        re.MULTILINE | re.DOTALL,
+    )
+    for block_match in vision_block_pattern.finditer(stdout):
+        block_name = block_match.group(1).strip()
+        block = block_match.group(2)
+        max_diff_matches = list(
+            re.finditer(r'^\s*(?:(Q|K)\s+)?[Mm]ax diff:\s*(\d+\.?\d*e?[+-]?\d*)', block, re.MULTILINE)
+        )
+        if not max_diff_matches:
+            continue
+
+        pytorch_time_ms = None
+        c_time_ms = None
+        pytorch_time_match = re.search(r'PyTorch time:\s*(\d+\.?\d*)\s*ms', block)
+        c_time_match = re.search(r'C Kernel time:\s*(\d+\.?\d*)\s*ms', block)
+        if pytorch_time_match:
+            pytorch_time_ms = float(pytorch_time_match.group(1))
+        if c_time_match:
+            c_time_ms = float(c_time_match.group(1))
+
+        for diff_match in max_diff_matches:
+            suffix = diff_match.group(1)
+            name = f"{block_name} {suffix}" if suffix else block_name
+            if name in accuracy_results:
+                continue
+            max_diff = float(diff_match.group(2))
+            accuracy_results[name] = {
+                'max_diff': max_diff,
+                'tolerance': None,
+                'status': 'pass',
+            }
+            if c_time_ms is not None:
+                perf_results[name] = {
+                    'pytorch_time_us': pytorch_time_ms * 1000.0 if pytorch_time_ms is not None else None,
+                    'c_time_us': c_time_ms * 1000.0,
+                    'speedup': (pytorch_time_ms / c_time_ms) if pytorch_time_ms is not None and c_time_ms > 0 else None,
+                }
+
     # Extract performance results
-    perf_results = {}
     for match in perf_pattern.finditer(stdout):
         name = match.group(1).strip()
         pytorch_time = float(match.group(2))
@@ -446,6 +491,12 @@ MAKE_TARGETS = {
         "category": "inference",
         "target": "v8-visualizer-vision-artifacts",
         "timeout_sec": 120,
+    },
+    "v8_vision_kernel_parity": {
+        "name": "v8 Vision Kernel Parity",
+        "category": "kernels",
+        "target": "test-v8-vision-kernels",
+        "timeout_sec": 300,
     },
     "v8_qwen3vl_vision_smoke": {
         "name": "v8 Qwen3-VL Vision Smoke",
