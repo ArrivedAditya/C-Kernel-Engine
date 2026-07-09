@@ -61,17 +61,57 @@ def _compile_generated_dump_model(output_dir: Path, c_path: Path) -> Path:
 
 def _generate_dump_model_source(output_dir: Path) -> Path:
     c_path = output_dir / "qwen3_vl_mmproj_v8_parity_dump.c"
+    granular_report = output_dir / "granular_codegen.json"
     rc = codegen_v8.main(
         [
             "--ir", str(output_dir / "call.json"),
             "--layout", str(output_dir / "layout.json"),
             "--output", str(c_path),
-            "--parity-dump",
+            "--granular-test",
+            "--granular-report", str(granular_report),
         ]
     )
     if rc != 0:
-        raise RuntimeError(f"codegen_v8 parity-dump failed with rc={rc}")
+        raise RuntimeError(f"codegen_v8 granular-test failed with rc={rc}")
     return c_path
+
+
+def _resolve_ck_stop_op(output_dir: Path, ck_stop_op: int | None, ck_stop_layer: int | None) -> int | None:
+    if ck_stop_op is not None:
+        return int(ck_stop_op)
+    if ck_stop_layer is None:
+        return None
+
+    granular_report = output_dir / "granular_codegen.json"
+    if not granular_report.exists():
+        raise RuntimeError(f"cannot resolve --ck-stop-layer without granular report: {granular_report}")
+    data = json.loads(granular_report.read_text(encoding="utf-8"))
+    cutpoints = data.get("cutpoints")
+    if not isinstance(cutpoints, list):
+        raise RuntimeError(f"invalid granular report {granular_report}: missing cutpoints")
+
+    matches: list[int] = []
+    available_layers: set[int] = set()
+    for row in cutpoints:
+        if not isinstance(row, dict):
+            continue
+        try:
+            layer = int(row.get("layer", -999999))
+        except (TypeError, ValueError):
+            continue
+        available_layers.add(layer)
+        if layer != int(ck_stop_layer):
+            continue
+        try:
+            matches.append(int(row["index"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError(f"invalid cutpoint row in {granular_report}: {row!r}") from exc
+    if not matches:
+        raise RuntimeError(
+            f"granular report {granular_report} has no cutpoints for layer {ck_stop_layer}; "
+            f"available layers: {sorted(available_layers)}"
+        )
+    return max(matches)
 
 
 def _with_env_var(name: str, value: str | None):
@@ -113,6 +153,7 @@ def _run_generated_encoder_with_dump(
     dump_dir: Path,
     strict_parity: bool,
     strict_dump_layer: int | None,
+    ck_stop_op: int | None,
 ) -> None:
     dump_dir.mkdir(parents=True, exist_ok=True)
     dump_path = dump_dir / "dump.bin"
@@ -129,6 +170,7 @@ def _run_generated_encoder_with_dump(
         "CK_STRICT_ATTN_DUMP_LAYER",
         None if strict_dump_layer is None else str(strict_dump_layer),
     )
+    old_stop_op = _with_env_var("CK_STOP_OP", None if ck_stop_op is None else str(int(ck_stop_op)))
     try:
         npv8._run_generated_encoder(
             model_so=model_so,
@@ -139,6 +181,7 @@ def _run_generated_encoder_with_dump(
             strict_parity=strict_parity,
         )
     finally:
+        _restore_env_var("CK_STOP_OP", old_stop_op)
         _restore_env_var("CK_STRICT_ATTN_DUMP_LAYER", old_dump_layer)
         _restore_env_var("CK_PARITY_DIR", old_dump)
 
@@ -205,6 +248,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--output-dir", type=Path, default=Path("/tmp/qwen3vl_mmproj_v8_activation_parity"))
     ap.add_argument("--image-mode", choices=("gradient", "gray", "checker"), default="gradient")
     ap.add_argument("--image-path", type=Path, default=None, help="Optional real image path; overrides --image-mode")
+    ap.add_argument("--image-min-tokens", type=int, default=None, help="Override minimum merged visual tokens for dynamic-resolution Qwen3-VL images")
+    ap.add_argument("--image-max-tokens", type=int, default=None, help="Override maximum merged visual tokens for dynamic-resolution Qwen3-VL images")
     ap.add_argument("--threads", type=int, default=1)
     ap.add_argument("--ck-threads", type=int, default=None)
     ap.add_argument("--strict-parity", action="store_true", help="Enable parity-only strict mode in CK during the generated encoder run")
@@ -220,6 +265,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--llama-dump-layer", type=int, default=None, help="Optional exact llama layer id filter; globals remain included")
     ap.add_argument("--ck-strict-dump-layer", type=int, default=None, help="Optional exact CK strict-attention dump layer filter")
+    ck_stop = ap.add_mutually_exclusive_group()
+    ck_stop.add_argument("--ck-stop-op", type=int, default=None, help="Return from generated CK encoder immediately after this generated op index")
+    ck_stop.add_argument("--ck-stop-layer", type=int, default=None, help="Return from generated CK encoder after the last generated op in this encoder layer")
     args = ap.parse_args(argv)
 
     ck_threads = int(args.ck_threads or args.threads)
@@ -228,14 +276,23 @@ def main(argv: list[str] | None = None) -> int:
     output_dir = args.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    report = npv8._ensure_runtime_artifacts(args.gguf, output_dir)
+    report = npv8._ensure_runtime_artifacts(
+        args.gguf,
+        output_dir,
+        image_path=args.image_path.resolve() if args.image_path is not None else None,
+        image_min_tokens=args.image_min_tokens,
+        image_max_tokens=args.image_max_tokens,
+    )
     c_path = _generate_dump_model_source(output_dir)
+    ck_stop_op = _resolve_ck_stop_op(output_dir, args.ck_stop_op, args.ck_stop_layer)
     model_so = _compile_generated_dump_model(output_dir, c_path)
     shim_so = npv8._compile_mtmd_shim(output_dir)
 
     config = report["config"]
-    height = int(config["image_size"])
-    width = int(config["image_size"])
+    height = int(config.get("image_height", config.get("image_size")))
+    width = int(config.get("image_width", config.get("image_size")))
+    if height <= 0 or width <= 0:
+        raise RuntimeError(f"invalid encoder image shape in generated config: height={height} width={width}")
     if args.image_path is not None:
         image_report = npv8._load_image_file(args.image_path.resolve(), height, width)
         interleaved = image_report["interleaved"]
@@ -262,6 +319,7 @@ def main(argv: list[str] | None = None) -> int:
         dump_dir=ck_dump_dir,
         strict_parity=bool(args.strict_parity),
         strict_dump_layer=args.ck_strict_dump_layer,
+        ck_stop_op=ck_stop_op,
     )
     _run_llama_encoder_with_dump(
         shim_so=shim_so,
@@ -302,6 +360,8 @@ def main(argv: list[str] | None = None) -> int:
         "image_path": image_report.get("image_path"),
         "source_image_size": image_report.get("source_image_size"),
         "preprocess": image_report.get("preprocess"),
+        "image_min_tokens": args.image_min_tokens,
+        "image_max_tokens": args.image_max_tokens,
         "threads": {
             "llama_cpp": args.threads,
             "ck_runtime": ck_threads,
@@ -313,6 +373,10 @@ def main(argv: list[str] | None = None) -> int:
         "rtol": args.rtol,
         "ck_dump": str(ck_dump),
         "llama_dump": str(ref_dump),
+        "granular_codegen": str(output_dir / "granular_codegen.json"),
+        "ck_stop_layer": args.ck_stop_layer,
+        "ck_stop_op_requested": args.ck_stop_op,
+        "ck_stop_op_resolved": ck_stop_op,
         "summary": summary,
         "first_issue": first_issue,
         "results": results,
