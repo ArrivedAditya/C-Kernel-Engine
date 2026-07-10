@@ -3722,6 +3722,20 @@ def _resolve_rope_qk_kernel(config: Dict, template_kernels: Dict[str, Any]) -> s
     return "rope_forward_qk"
 
 
+def _resolve_position_embeddings_kernel(config: Dict, template_kernels: Dict[str, Any]) -> str:
+    kernel_spec = template_kernels.get("position_embeddings")
+    if isinstance(kernel_spec, dict):
+        policy = str(config.get("position_interpolation_policy", "default") or "default").strip().lower()
+        selected = kernel_spec.get(policy) or kernel_spec.get("default")
+        if not selected:
+            raise ValueError(
+                "position_embeddings kernel map has no entry for policy "
+                f"{policy!r} and no default"
+            )
+        return str(selected)
+    return str(kernel_spec or "position_embeddings_add_tiled_2d")
+
+
 def _attention_contract_is_causal(template: Dict[str, Any], config: Dict[str, Any]) -> bool:
     contract = template.get("contract", {}) if isinstance(template.get("contract"), dict) else {}
     attention_contract = contract.get("attention_contract", {}) if isinstance(contract.get("attention_contract"), dict) else {}
@@ -4914,6 +4928,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         if op == "mrope_qk":
             override = str(template_kernels.get("mrope_qk", "") or "").strip()
             return [override or "mrope_qk_vision"]
+        if op == "position_embeddings":
+            return [_resolve_position_embeddings_kernel(config, template_kernels)]
         if op == "kv_cache_store_shared_q":
             return ["kv_cache_store_shared_q"]
         if op == "assistant_layer_scale":
@@ -9550,6 +9566,12 @@ def generate_ir_lower_2(
                 default_section = max(1, int(params.get("head_dim", 0) or 0) // 4)
                 sections = [default_section, default_section, default_section, default_section]
             params.setdefault("n_dims", int(config.get("vision_mrope_n_dims", max(1, int(params.get("head_dim", 0) or 0) // 2))))
+            rope_pairs = min(int(params["n_dims"]), max(1, int(params.get("head_dim", 0) or 0) // 2))
+            if int(sections[0]) + int(sections[1]) > rope_pairs:
+                raise ValueError(
+                    "vision M-RoPE sections exceed available frequency pairs: "
+                    f"sections={sections} n_dims={params['n_dims']} head_dim={params.get('head_dim')}"
+                )
             params.setdefault("section_0", int(sections[0]))
             params.setdefault("section_1", int(sections[1]))
             params.setdefault("section_2", int(sections[2]))

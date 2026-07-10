@@ -78,7 +78,10 @@
     "patch_proj": "gemm_nt_fp32_exact",
     "patch_proj_aux": "gemm_nt_fp32_exact",
     "add_stream": "add_stream_reorder_2d",
-    "position_embeddings": "position_embeddings_add_tiled_2d",
+    "position_embeddings": {
+      "default": "position_embeddings_add_tiled_2d",
+      "align_corners_bilinear": "position_embeddings_add_tiled_2d_align_corners"
+    },
     "spatial_merge": "spatial_merge_contiguous_tiled",
     "branch_spatial_merge": "spatial_merge_contiguous_tiled",
     "layernorm": "layernorm_fp32_exact",

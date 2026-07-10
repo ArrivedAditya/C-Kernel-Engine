@@ -4052,7 +4052,7 @@ nightly-baseline:
 nightly-kernels:
 	@$(PYTHON) scripts/nightly_runner.py --category kernels
 
-nightly-bf16:
+nightly-bf16: $(LIB) $(LIB_VISION)
 	@$(PYTHON) scripts/nightly_runner.py --category bf16
 
 nightly-quant:

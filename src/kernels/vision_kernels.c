@@ -289,6 +289,55 @@ CK_VISION_NOINLINE CK_VISION_OPTNONE void position_embeddings_add_tiled_2d(float
     }
 }
 
+void position_embeddings_add_tiled_2d_align_corners(float *x,
+                                                     const float *position_embd,
+                                                     int grid_h,
+                                                     int grid_w,
+                                                     int embed_dim,
+                                                     int merge_size,
+                                                     int source_grid_size)
+{
+    if (x == NULL || position_embd == NULL || grid_h <= 0 || grid_w <= 0 ||
+        embed_dim <= 0 || merge_size <= 0 || source_grid_size <= 0) {
+        return;
+    }
+
+    const float y_scale = grid_h > 1
+        ? (float)(source_grid_size - 1) / (float)(grid_h - 1)
+        : 0.0f;
+    const float x_scale = grid_w > 1
+        ? (float)(source_grid_size - 1) / (float)(grid_w - 1)
+        : 0.0f;
+
+    for (int tok = 0; tok < grid_h * grid_w; ++tok) {
+        const int row_major = tile_order_index_2d(tok, grid_h, grid_w, merge_size);
+        const int dst_y = row_major / grid_w;
+        const int dst_x = row_major % grid_w;
+        const float src_y = (float)dst_y * y_scale;
+        const float src_x = (float)dst_x * x_scale;
+        const int y0 = (int)src_y;
+        const int x0 = (int)src_x;
+        const int y1 = y0 + 1 < source_grid_size ? y0 + 1 : y0;
+        const int x1 = x0 + 1 < source_grid_size ? x0 + 1 : x0;
+        const float dy = src_y - (float)y0;
+        const float dx = src_x - (float)x0;
+        const float w00 = (1.0f - dy) * (1.0f - dx);
+        const float w01 = (1.0f - dy) * dx;
+        const float w10 = dy * (1.0f - dx);
+        const float w11 = dy * dx;
+        const float *p00 = position_embd + ((size_t)y0 * source_grid_size + x0) * embed_dim;
+        const float *p01 = position_embd + ((size_t)y0 * source_grid_size + x1) * embed_dim;
+        const float *p10 = position_embd + ((size_t)y1 * source_grid_size + x0) * embed_dim;
+        const float *p11 = position_embd + ((size_t)y1 * source_grid_size + x1) * embed_dim;
+        float *dst = x + (size_t)tok * embed_dim;
+
+        for (int d = 0; d < embed_dim; ++d) {
+            const float pos = p00[d] * w00 + p01[d] * w01 + p10[d] * w10 + p11[d] * w11;
+            dst[d] += pos;
+        }
+    }
+}
+
 /**
  * Build merged 2D vision position IDs in the layout expected by vision M-RoPE.
  *

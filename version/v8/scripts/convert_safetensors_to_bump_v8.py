@@ -1359,12 +1359,9 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
                 preproc = json.loads(preproc_path.read_text(encoding="utf-8"))
             except Exception:
                 preproc = {}
-        if head_dim == 72:
-            vision_mrope_sections = [16, 24, 24, 16]
-        elif head_dim > 0:
-            base = max(1, head_dim // 4)
-            rem = max(0, head_dim - base * 4)
-            vision_mrope_sections = [base + (1 if i < rem else 0) for i in range(4)]
+        if head_dim > 0:
+            axis_pairs = max(1, head_dim // 4)
+            vision_mrope_sections = [axis_pairs, axis_pairs, axis_pairs, axis_pairs]
         else:
             vision_mrope_sections = [1, 1, 1, 1]
         cfg.update({
@@ -1400,6 +1397,7 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "vision_grid_h": grid,
             "vision_grid_w": grid,
             "position_grid_size": grid,
+            "position_interpolation_policy": "align_corners_bilinear",
             "vision_num_patches": pos_rows,
             "spatial_merge_size": merge,
             "spatial_merge_factor": merge_factor,
@@ -1418,7 +1416,7 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "preproc_image_size": int(preproc.get("size", {}).get("shortest_edge", 0) or 0) if isinstance(preproc.get("size"), dict) else 0,
             "rope_layout": "multi_section_2d",
             "vision_mrope_sections": vision_mrope_sections,
-            "vision_mrope_n_dims": int(head_dim),
+            "vision_mrope_n_dims": max(1, int(head_dim) // 2),
             "vision_mrope_freq_base": 10000.0,
             "vision_mrope_freq_scale": 1.0,
             "vision_mrope_ext_factor": 0.0,
