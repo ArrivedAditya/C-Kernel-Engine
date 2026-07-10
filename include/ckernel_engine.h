@@ -1495,6 +1495,21 @@ void attention_forward_decode_head_major_gqa_flash_f16cache(const float *q_token
                                                             int head_dim,
                                                             int aligned_head_dim);
 
+// Deterministic llama.cpp-style FP16 split-KV oracle. The explicit chunk count
+// makes diagnostics independent of the host's available core count. Production
+// routing must be accepted separately by stitched model parity.
+void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q_token,
+                                                                  const uint16_t *k_cache,
+                                                                  const uint16_t *v_cache,
+                                                                  float *out_token,
+                                                                  int num_heads,
+                                                                  int num_kv_heads,
+                                                                  int kv_tokens,
+                                                                  int cache_capacity,
+                                                                  int head_dim,
+                                                                  int aligned_head_dim,
+                                                                  int split_chunks);
+
 // Decode attention for a single token using a KV cache (REGULAR - NOT flash).
 //   q_token: [num_heads, aligned_head_dim]
 //   k_cache/v_cache: [num_kv_heads, cache_capacity, aligned_head_dim]

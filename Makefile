@@ -1752,6 +1752,7 @@ showtests:
 	@echo "  make test-bf16        Run BF16 kernel tests"
 	@echo "  make test-quant       Run quantization kernel tests"
 	@echo "  make test-flash-attention  Run flash attention tests (50K+ contexts)"
+	@echo "  make test-attention-f16-split-kv  Run llama-backed FP16 split-KV contract"
 	@echo "  make nightly          Run full test suite (doesn't stop on failure)"
 	@echo ""
 	@echo "Per-Kernel Libraries:"
@@ -1994,6 +1995,13 @@ test-flash-attention: $(LIB)
 		$(PYTHON) $(PYTHONFLAGS) unittest/test_flash_attention.py
 
 test_flash_attention: test-flash-attention
+
+test-attention-f16-split-kv: $(LIB)
+	@echo "Running FP16 split-KV decode attention contract tests..."
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH \
+		$(PYTHON) $(PYTHONFLAGS) unittest/test_attention_f16_split_kv.py
+
+.PHONY: test-attention-f16-split-kv
 
 # GEMM benchmark comparing CKernel (Native + MKL if available) vs PyTorch
 bench_gemm:
@@ -2283,6 +2291,9 @@ llamacpp-parity-full:
 	@echo ""
 	@echo "Running v8 vision kernel oracle tests..."
 	@$(MAKE) --no-print-directory test-v8-vision-kernels
+	@echo ""
+	@echo "Running FP16 split-KV decode attention contract tests..."
+	@$(MAKE) --no-print-directory test-attention-f16-split-kv
 	@echo ""
 	@echo "Running head-major Q5 out-proj parity benchmark..."
 	@$(MAKE) --no-print-directory test-head-major-q5-outproj
