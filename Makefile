@@ -1969,6 +1969,8 @@ test-bf16: $(LIB) test-libs
 	echo "BF16 Python kernel tests completed."
 	@echo "Running v8 BF16 safetensors/lowering guardrails..."
 	$(PYTHON) $(PYTHONFLAGS) $(PY_TESTS_BF16_V8)
+	@echo "Running v8 BF16 file-backed BUMP allocator guardrail..."
+	$(PYTHON) $(PYTHONFLAGS) unittest/test_bump_alloc_mixed.py
 
 test-v4-q4k:
 	@if [ -z "$(GGUF_PATH)" ]; then \

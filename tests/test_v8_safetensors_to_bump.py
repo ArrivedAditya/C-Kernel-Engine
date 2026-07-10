@@ -998,7 +998,6 @@ def _write_tiny_qwen3vl_checkpoint(checkpoint: Path) -> None:
                     "max_position_embeddings": 64,
                     "rope_theta": 5000000.0,
                     "rms_norm_eps": 1e-6,
-                    "tie_word_embeddings": False,
                     "rope_scaling": {
                         "mrope_interleaved": True,
                         "mrope_section": [1, 1, 2],
@@ -1123,6 +1122,56 @@ def test_qwen3vl_safetensors_auto_text_ignores_vision(tmp_path: Path) -> None:
     assert "layer.0.q_norm" in names
     assert "layer.0.k_norm" in names
     assert "output.weight" in names
+    assert manifest["config"]["tie_word_embeddings"] is False
+    assert manifest["config"]["num_deepstack_layers"] == 1
+
+    real_out = tmp_path / "out_qwen3vl_text_real"
+    real_out.mkdir()
+    subprocess.run(
+        [
+            sys.executable, str(script),
+            "--checkpoint", str(checkpoint),
+            "--output", str(real_out / "weights.bump"),
+            "--config-out", str(real_out / "config.json"),
+            "--manifest-out", str(real_out / "weights_manifest.json"),
+            "--arch", "auto",
+        ],
+        check=True,
+    )
+    real_manifest = json.loads((real_out / "weights_manifest.json").read_text(encoding="utf-8"))
+    preview_offsets = {entry["name"]: entry["file_offset"] for entry in manifest["entries"]}
+    real_offsets = {entry["name"]: entry["file_offset"] for entry in real_manifest["entries"]}
+    assert preview_offsets == real_offsets
+    assert (real_out / "weights.bump").stat().st_size > 0
+
+    build_ir = Path("version/v8/scripts/build_ir_v8.py")
+    lowered = out / "lowered_text.json"
+    call = out / "call_text.json"
+    layout = out / "layout_text.json"
+    subprocess.run(
+        [
+            sys.executable, str(build_ir),
+            "--manifest", str(out / "weights_manifest.json"),
+            "--mode", "decode",
+            "--output", str(out / "ir1_text.json"),
+            "--layout-output", str(layout),
+            "--lowered-output", str(lowered),
+            "--call-output", str(call),
+            "--context-len", "4",
+        ],
+        check=True,
+    )
+    text_ops = json.loads(lowered.read_text(encoding="utf-8"))["operations"]
+    layer0_projection_ops = {
+        op["op"]: op["kernel"] for op in text_ops
+        if op.get("layer") == 0 and op.get("op") in {"q_proj", "k_proj", "v_proj"}
+    }
+    assert layer0_projection_ops == {
+        "q_proj": "gemm_nt_bf16",
+        "k_proj": "gemm_nt_bf16",
+        "v_proj": "gemm_nt_bf16",
+    }
+    assert not any(op.get("op") == "qkv_proj" for op in text_ops)
 
 
 def test_qwen3vl_safetensors_vision_maps_temporal_patch_split(tmp_path: Path) -> None:

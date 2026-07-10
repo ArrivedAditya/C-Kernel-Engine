@@ -332,6 +332,11 @@ TEST_SUITES = {
         ROOT / "version" / "v8" / "scripts" / "bf16_safetensors_lowering_guard_v8.py",
         timeout_sec=180,
     ),
+    "v8_bf16_file_backed_bump": TestSuite(
+        "v8 BF16 file-backed BUMP",
+        "bf16",
+        UNITTEST_DIR / "test_bump_alloc_mixed.py",
+    ),
 
     # Quantization tests
     # NOTE: test_quant_kernels.py and test_q4_k_quantize.py removed - use llamacpp-parity-full
@@ -781,6 +786,27 @@ def run_python_test(suite: TestSuite, verbose: bool = False) -> TestResult:
         # Parse sub-test results from output
         sub_tests = parse_sub_tests(result.stdout)
 
+        combined_output = f"{result.stdout}\n{result.stderr}"
+        explicit_skip = next(
+            (
+                line.strip()
+                for line in combined_output.splitlines()
+                if "skipping this test" in line.lower() or line.strip().lower().startswith("test skipped:")
+            ),
+            "",
+        )
+
+        if result.returncode == 0 and explicit_skip:
+            return TestResult(
+                name=suite.name,
+                category=suite.category,
+                status="skip",
+                duration_sec=duration,
+                stdout=_trim_output(result.stdout, PASS_STDOUT_CHARS),
+                stderr=_trim_output(result.stderr, PASS_STDERR_CHARS),
+                error_msg=explicit_skip,
+                sub_tests=sub_tests,
+            )
         if result.returncode == 0:
             return TestResult(
                 name=suite.name,

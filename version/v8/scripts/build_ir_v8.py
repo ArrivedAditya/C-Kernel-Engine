@@ -5095,7 +5095,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             if weight_dtype == "fp32":
                 weight_dtype = header_quant.get(weight_info[0], weight_dtype)
             weight_dtype = str(weight_dtype or "fp32").lower()
-            if op in BF16_DENSE_MATMUL_OPS and weight_dtype == "bf16":
+            force_split_dense_qkv = op == "qkv_proj"
+            if op in BF16_DENSE_MATMUL_OPS and weight_dtype == "bf16" and not force_split_dense_qkv:
                 return ["gemm_nt_bf16"]
             kernel_prefer_q8_activation = _prefer_q8_activation_for_op(op, prefer_q8_activation)
             if op in ("mlp_gate_up", "mlp_up", "mlp_down") and prefer_fp32_mlp_matmuls:
@@ -5116,7 +5117,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                 # Preserve the reference contract flow: select the FP32-activation
                 # kernel first, then remap to the internal Q8 contract adapter.
                 kernel_prefer_q8_activation = False
-            kernel_id = find_kernel(
+            kernel_id = None if force_split_dense_qkv else find_kernel(
                 registry, op=kernel_op, quant={"weight": weight_dtype}, mode=mode,
                 prefer_q8_activation=kernel_prefer_q8_activation,
                 prefer_parallel=use_parallel

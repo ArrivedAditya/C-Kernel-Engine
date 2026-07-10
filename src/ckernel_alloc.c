@@ -34,12 +34,6 @@ static size_t align_up_bytes(size_t n, size_t align)
     return (n + align - 1) & ~(align - 1);
 }
 
-static size_t align_down_bytes(size_t n, size_t align)
-{
-    if (align == 0) return n;
-    return n & ~(align - 1);
-}
-
 static int record_allocation(void *ptr, size_t len, int was_mmap)
 {
     ck_huge_alloc_entry_t *entry = malloc(sizeof(*entry));
@@ -176,22 +170,10 @@ static int ck_bump_alloc_try_mixed(ck_bump_alloc_t *alloc, const char *weights_p
         fprintf(stderr, "ck_bump_alloc_init: invalid bump layout for mixed fallback\n");
         return -1;
     }
-    if (alloc->weights_base != 0) {
-        fprintf(stderr,
-                "ck_bump_alloc_init: mixed fallback currently requires weights_base == 0 (got %zu)\n",
-                alloc->weights_base);
-        return -1;
-    }
-    if (alloc->weights_base != align_down_bytes(alloc->weights_base, page_size)) {
-        fprintf(stderr,
-                "ck_bump_alloc_init: mixed fallback requires page-aligned weights_base (got %zu, page %zu)\n",
-                alloc->weights_base, page_size);
-        return -1;
-    }
 
     mapped_len = align_up_bytes(alloc->total_size, page_size);
-    prefix_len = alloc->weights_base;
-    weights_len = alloc->activations_base - alloc->weights_base;
+    prefix_len = 0;
+    weights_len = alloc->activations_base;
     weights_map_len = align_up_bytes(weights_len, page_size);
     runtime_map_start = align_up_bytes(alloc->activations_base, page_size);
 
@@ -239,7 +221,7 @@ static int ck_bump_alloc_try_mixed(ck_bump_alloc_t *alloc, const char *weights_p
     }
 
     if (weights_map_len > 0) {
-        void *mapped = mmap(base + alloc->weights_base, weights_map_len,
+        void *mapped = mmap(base, weights_map_len,
                             PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, 0);
         if (mapped == MAP_FAILED) {
             fprintf(stderr, "ck_bump_alloc_init: weights mmap failed: %s\n", strerror(errno));
