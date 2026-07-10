@@ -4320,6 +4320,239 @@ void attention_forward_decode_head_major_gqa_flash_f16kv(const float *q_token,
     }
 }
 
+typedef struct {
+    const float *q_token;
+    const uint16_t *k_cache;
+    const uint16_t *v_cache;
+    float *partials;
+    int num_heads;
+    int num_kv_heads;
+    int kv_tokens;
+    int cache_capacity;
+    int head_dim;
+    int aligned_head_dim;
+    int split_chunks;
+} ck_attention_f16_split_args_t;
+
+static inline float ck_attention_dot_f16_llama(const uint16_t *x,
+                                                const uint16_t *y,
+                                                int n)
+{
+    int i = 0;
+#if defined(__AVX2__) && defined(__F16C__)
+    // Match ggml_vec_dot_f16's AVX reduction contract: four independent
+    // accumulators per 32 values, followed by its fixed pairwise tree.
+    __m256 sum0 = _mm256_setzero_ps();
+    __m256 sum1 = _mm256_setzero_ps();
+    __m256 sum2 = _mm256_setzero_ps();
+    __m256 sum3 = _mm256_setzero_ps();
+    const int n32 = n & ~31;
+    for (; i < n32; i += 32) {
+        const __m256 x0 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (x + i)));
+        const __m256 y0 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (y + i)));
+        const __m256 x1 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (x + i + 8)));
+        const __m256 y1 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (y + i + 8)));
+        const __m256 x2 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (x + i + 16)));
+        const __m256 y2 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (y + i + 16)));
+        const __m256 x3 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (x + i + 24)));
+        const __m256 y3 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (y + i + 24)));
+#if defined(__FMA__)
+        sum0 = _mm256_fmadd_ps(x0, y0, sum0);
+        sum1 = _mm256_fmadd_ps(x1, y1, sum1);
+        sum2 = _mm256_fmadd_ps(x2, y2, sum2);
+        sum3 = _mm256_fmadd_ps(x3, y3, sum3);
+#else
+        sum0 = _mm256_add_ps(sum0, _mm256_mul_ps(x0, y0));
+        sum1 = _mm256_add_ps(sum1, _mm256_mul_ps(x1, y1));
+        sum2 = _mm256_add_ps(sum2, _mm256_mul_ps(x2, y2));
+        sum3 = _mm256_add_ps(sum3, _mm256_mul_ps(x3, y3));
+#endif
+    }
+    sum0 = _mm256_add_ps(sum0, sum2);
+    sum1 = _mm256_add_ps(sum1, sum3);
+    sum0 = _mm256_add_ps(sum0, sum1);
+    const __m128 pair = _mm_add_ps(
+        _mm256_castps256_ps128(sum0),
+        _mm256_extractf128_ps(sum0, 1));
+    const __m128 half = _mm_hadd_ps(pair, pair);
+    float result = _mm_cvtss_f32(_mm_hadd_ps(half, half));
+#else
+    float result = 0.0f;
+#endif
+    for (; i < n; ++i) {
+        result += CK_FP16_TO_FP32(x[i]) * CK_FP16_TO_FP32(y[i]);
+    }
+    return result;
+}
+
+static void ck_attention_f16_split_work(int ith, int nth, void *opaque)
+{
+    ck_attention_f16_split_args_t *args = (ck_attention_f16_split_args_t *) opaque;
+    const int partial_stride = args->aligned_head_dim + 2;
+    const int total_jobs = args->num_heads * args->split_chunks;
+    const int chunk_size = (args->kv_tokens + args->split_chunks - 1) / args->split_chunks;
+    const size_t head_stride = (size_t) args->cache_capacity * (size_t) args->aligned_head_dim;
+    const float scale = 1.0f / sqrtf((float) args->head_dim);
+    uint16_t *q_half = (uint16_t *) alloca((size_t) args->aligned_head_dim * sizeof(uint16_t));
+    uint16_t *acc_half = (uint16_t *) alloca((size_t) args->aligned_head_dim * sizeof(uint16_t));
+
+    for (int job = ith; job < total_jobs; job += nth) {
+        const int h = job / args->split_chunks;
+        const int chunk = job % args->split_chunks;
+        const int kv_head = (int) ((long long) h * (long long) args->num_kv_heads /
+                                   (long long) args->num_heads);
+        const int begin = chunk * chunk_size;
+        const int end = begin + chunk_size < args->kv_tokens
+            ? begin + chunk_size
+            : args->kv_tokens;
+        const float *q_head = args->q_token + (size_t) h * (size_t) args->aligned_head_dim;
+        const uint16_t *k_head = args->k_cache + (size_t) kv_head * head_stride;
+        const uint16_t *v_head = args->v_cache + (size_t) kv_head * head_stride;
+        float *partial = args->partials + (size_t) job * (size_t) partial_stride;
+
+        for (int d = 0; d < args->aligned_head_dim; ++d) {
+            q_half[d] = CK_FP32_TO_FP16(q_head[d]);
+            acc_half[d] = CK_FP32_TO_FP16(0.0f);
+        }
+
+        float sum = 0.0f;
+        float max_score = -INFINITY;
+        for (int j = begin; j < end; ++j) {
+            const uint16_t *k_vec = k_head + (size_t) j * (size_t) args->aligned_head_dim;
+            const uint16_t *v_vec = v_head + (size_t) j * (size_t) args->aligned_head_dim;
+            const float dot = ck_attention_dot_f16_llama(q_half, k_vec, args->head_dim);
+            const float score = dot * scale;
+            const float old_max = max_score;
+            float max_scale = 1.0f;
+            float value_scale = 1.0f;
+
+            if (score > max_score) {
+                max_score = score;
+                max_scale = isfinite(old_max) ? expf(old_max - max_score) : 0.0f;
+                for (int d = 0; d < args->head_dim; ++d) {
+                    const float scaled = CK_FP16_TO_FP32(acc_half[d]) * max_scale;
+                    acc_half[d] = CK_FP32_TO_FP16(scaled);
+                }
+            } else {
+                value_scale = expf(score - max_score);
+            }
+
+            for (int d = 0; d < args->head_dim; ++d) {
+                const float updated = CK_FP16_TO_FP32(acc_half[d]) +
+                                      value_scale * CK_FP16_TO_FP32(v_vec[d]);
+                acc_half[d] = CK_FP32_TO_FP16(updated);
+            }
+            sum = sum * max_scale + value_scale;
+        }
+
+        partial[0] = max_score;
+        partial[1] = sum;
+        for (int d = 0; d < args->head_dim; ++d) {
+            partial[2 + d] = CK_FP16_TO_FP32(acc_half[d]);
+        }
+        for (int d = args->head_dim; d < args->aligned_head_dim; ++d) {
+            partial[2 + d] = 0.0f;
+        }
+    }
+}
+
+void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q_token,
+                                                                  const uint16_t *k_cache,
+                                                                  const uint16_t *v_cache,
+                                                                  float *out_token,
+                                                                  int num_heads,
+                                                                  int num_kv_heads,
+                                                                  int kv_tokens,
+                                                                  int cache_capacity,
+                                                                  int head_dim,
+                                                                  int aligned_head_dim,
+                                                                  int split_chunks)
+{
+    if (!q_token || !k_cache || !v_cache || !out_token ||
+        num_heads <= 0 || num_kv_heads <= 0 || kv_tokens <= 0 ||
+        cache_capacity <= 0 || kv_tokens > cache_capacity ||
+        head_dim <= 0 || aligned_head_dim < head_dim) {
+        return;
+    }
+
+    if (split_chunks < 1) {
+        split_chunks = 1;
+    }
+    if (split_chunks > kv_tokens) {
+        split_chunks = kv_tokens;
+    }
+
+    const int partial_stride = aligned_head_dim + 2;
+    const size_t max_partial_bytes = 1024u * 1024u;
+    while (split_chunks > 1 &&
+           (size_t) num_heads * (size_t) split_chunks * (size_t) partial_stride * sizeof(float) >
+               max_partial_bytes) {
+        split_chunks = (split_chunks + 1) / 2;
+    }
+
+    const size_t resolved_count = (size_t) num_heads * (size_t) split_chunks * (size_t) partial_stride;
+    float *partials = (float *) alloca(resolved_count * sizeof(float));
+    ck_attention_f16_split_args_t args = {
+        .q_token = q_token,
+        .k_cache = k_cache,
+        .v_cache = v_cache,
+        .partials = partials,
+        .num_heads = num_heads,
+        .num_kv_heads = num_kv_heads,
+        .kv_tokens = kv_tokens,
+        .cache_capacity = cache_capacity,
+        .head_dim = head_dim,
+        .aligned_head_dim = aligned_head_dim,
+        .split_chunks = split_chunks,
+    };
+
+    ck_threadpool_t *pool = ck_threadpool_global();
+    int active_threads = pool ? ck_threadpool_n_threads(pool) : 1;
+    const int total_jobs = num_heads * split_chunks;
+    if (active_threads > total_jobs) {
+        active_threads = total_jobs;
+    }
+    if (pool && active_threads > 1) {
+        ck_threadpool_dispatch_n(pool, active_threads, ck_attention_f16_split_work, &args);
+    } else {
+        ck_attention_f16_split_work(0, 1, &args);
+    }
+
+    for (int h = 0; h < num_heads; ++h) {
+        float *out_head = out_token + (size_t) h * (size_t) aligned_head_dim;
+        float final_max = -INFINITY;
+        float final_sum = 0.0f;
+        for (int d = 0; d < aligned_head_dim; ++d) {
+            out_head[d] = 0.0f;
+        }
+
+        for (int chunk = 0; chunk < split_chunks; ++chunk) {
+            const float *partial = partials +
+                ((size_t) h * (size_t) split_chunks + (size_t) chunk) * (size_t) partial_stride;
+            const float chunk_max = partial[0];
+            const float chunk_sum = partial[1];
+            if (chunk_sum == 0.0f) {
+                continue;
+            }
+            const float new_max = fmaxf(final_max, chunk_max);
+            const float old_scale = isfinite(final_max) ? expf(final_max - new_max) : 0.0f;
+            const float chunk_scale = expf(chunk_max - new_max);
+            for (int d = 0; d < head_dim; ++d) {
+                out_head[d] = out_head[d] * old_scale + partial[2 + d] * chunk_scale;
+            }
+            final_sum = final_sum * old_scale + chunk_sum * chunk_scale;
+            final_max = new_max;
+        }
+
+        if (final_sum > 0.0f) {
+            const float inv_sum = 1.0f / final_sum;
+            for (int d = 0; d < head_dim; ++d) {
+                out_head[d] *= inv_sum;
+            }
+        }
+    }
+}
+
 void attention_forward_decode_head_major_gqa_flash_f16cache(const float *q_token,
                                                             const uint16_t *k_cache,
                                                             const uint16_t *v_cache,

@@ -390,6 +390,12 @@ MAKE_TARGETS = {
         "target": "test-flash-attention",
         "timeout_sec": 1800,
     },
+    "attention_f16_split_kv": {
+        "name": "FP16 Split-KV Decode Contract",
+        "category": "kernels",
+        "target": "test-attention-f16-split-kv",
+        "timeout_sec": 180,
+    },
     "threadpool_parity": {
         "name": "Thread Pool GEMV Parity (serial vs dispatch)",
         "category": "parity",
