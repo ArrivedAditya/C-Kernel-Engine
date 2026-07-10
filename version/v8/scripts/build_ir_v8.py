@@ -244,6 +244,10 @@ def _inject_runtime_config_defaults(config: Dict[str, Any], arch: str) -> Dict[s
         )
     elif arch_lc == "qwen3_vl_vision":
         config.setdefault("prefer_q8_0_contract", True)
+        config.setdefault(
+            "q8_0_contract_ops",
+            ["projector_fc2", "branch_fc1", "branch_fc2"],
+        )
         _merge_activation_defaults({
             "mlp_down": "fp32",
             "out_proj": "q8_0",
@@ -4498,6 +4502,12 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     # Weight dtype still comes from the manifest; this only selects the activation
     # contract path when a model family explicitly requests it.
     prefer_q8_contract = bool(config.get("prefer_q8_0_contract", False))
+    q8_contract_ops_raw = config.get("q8_0_contract_ops", [])
+    q8_contract_ops = {
+        str(op).strip()
+        for op in q8_contract_ops_raw
+        if str(op).strip()
+    } if isinstance(q8_contract_ops_raw, (list, tuple, set)) else set()
     # Gemma parity guardrail: keep logits projection on FP32-activation kernels.
     # This remains a runtime config knob rather than template metadata.
     prefer_fp32_logits = bool(config.get("prefer_fp32_logits", False))
@@ -4694,7 +4704,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         allow_q8_contract: bool,
     ) -> Optional[str]:
         """Optionally remap standard Q8_0 kernels to explicit contract adapters."""
-        if not kernel_id or not prefer_q8_contract or not allow_q8_contract:
+        if not kernel_id or not allow_q8_contract:
             return kernel_id
         if weight_dtype != "q8_0":
             return kernel_id
@@ -5080,9 +5090,11 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                 # must stay on an fp32-activation kernel.
                 kernel_prefer_q8_activation = False
             allow_q8_contract = bool(
-                prefer_q8_contract
-                and weight_dtype == "q8_0"
-                and kernel_prefer_q8_activation
+                weight_dtype == "q8_0"
+                and (
+                    op in q8_contract_ops
+                    or (prefer_q8_contract and kernel_prefer_q8_activation)
+                )
             )
             if allow_q8_contract:
                 # Preserve the reference contract flow: select the FP32-activation

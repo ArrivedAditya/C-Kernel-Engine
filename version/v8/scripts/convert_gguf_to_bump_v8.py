@@ -361,6 +361,10 @@ def _inject_runtime_config_defaults(config: dict, arch: str) -> dict:
         )
     elif arch_lc == "qwen3_vl_vision":
         config.setdefault("prefer_q8_0_contract", True)
+        config.setdefault(
+            "q8_0_contract_ops",
+            ["projector_fc2", "branch_fc1", "branch_fc2"],
+        )
         _merge_activation_defaults({
             "mlp_down": "fp32",
             "out_proj": "q8_0",

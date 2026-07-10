@@ -273,6 +273,8 @@ def _granular_command(args: argparse.Namespace, layer: int, out_dir: Path, out_j
         str(int(layer)),
         "--llama-dump-names",
         str(args.granular_dump_names),
+        "--ck-dump-names",
+        str(args.granular_dump_names),
         "--report",
         str(out_json),
         "--quiet",

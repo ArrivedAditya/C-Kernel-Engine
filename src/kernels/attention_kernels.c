@@ -377,6 +377,7 @@ static inline void ck_vec_scale_f32_inplace(float *x, int n, float scale);
 static inline float ck_vec_max_f32_contig(const float *x, int n);
 
 #if CK_ENABLE_LLAMA_CPP_PARITY
+struct ggml_compute_params;
 typedef void (*ck_ggml_vec_dot_f32_fn)(int, float *, size_t, const float *, size_t, const float *, size_t, int);
 typedef double (*ck_ggml_vec_soft_max_f32_fn)(int, float *, const float *, float);
 typedef void (*ck_ggml_compute_forward_mul_mat_fn)(const struct ggml_compute_params *, struct ggml_tensor *);
@@ -3283,6 +3284,22 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
 
     if (ck_strict_parity_enabled()) {
         const float strict_scale = ck_attention_strict_scale_f32(head_dim);
+#if CK_ENABLE_LLAMA_CPP_PARITY
+        if (!causal &&
+            ck_attention_full_ggml_graph_oracle_multihead(q,
+                                                          k,
+                                                          v,
+                                                          output,
+                                                          num_heads,
+                                                          num_kv_heads,
+                                                          num_tokens,
+                                                          head_dim,
+                                                          aligned_head_dim,
+                                                          kv_stride_tokens,
+                                                          strict_scale)) {
+            return;
+        }
+#endif
         float *score_row = (float *) alloca((size_t) T * sizeof(float));
         float *logit_row = (float *) alloca((size_t) T * sizeof(float));
         float *v_cols = (float *) alloca((size_t) head_dim * (size_t) T * sizeof(float));
