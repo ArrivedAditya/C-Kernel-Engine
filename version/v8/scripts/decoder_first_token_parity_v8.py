@@ -377,6 +377,11 @@ def _load_llama_dump_dir(dump_dir: Path) -> list[Any]:
                 -1,
                 str(row.get("base_name", row.get("name", ""))),
             )
+            occurrence = int(row.get("occurrence", 0) or 0)
+            if occurrence == 1 and norm_op == "q_proj":
+                norm_op = "qcur_rope"
+            elif occurrence == 1 and norm_op == "k_proj":
+                norm_op = "kcur_rope"
             dumps.append(
                 parity_test_v7.ParityDump(
                     norm_layer,
@@ -495,7 +500,8 @@ def _build_llama_row_specs(llama_dumps: list[Any]) -> dict[tuple[int, str], tupl
         prev = specs.get(key)
         choose = prev is None or row_elems < prev[0]
         if not choose and prev is not None and row_elems == prev[0]:
-            if op_name in {"qcur_normed", "kcur_normed"} and len(row_shape) > len(prev[1]):
+            shaped_qk_ops = {"qcur_normed", "kcur_normed", "qcur_rope", "kcur_rope"}
+            if op_name in shaped_qk_ops and len(row_shape) > len(prev[1]):
                 choose = True
         if choose:
             specs[key] = (row_elems, row_shape)
@@ -630,6 +636,7 @@ def _expand_ck_prefill_decode_dumps(
             and row_shape[1] > 0
             and flat.size % (int(row_shape[0]) * int(row_shape[1])) == 0
         )
+        token_major_rope = head_major and op_name in {"qcur_rope", "kcur_rope"}
         if head_major:
             dim = int(row_shape[0])
             heads = int(row_shape[1])
@@ -638,14 +645,22 @@ def _expand_ck_prefill_decode_dumps(
             if batch_rows < prompt_token_count:
                 expanded.append(dump)
                 continue
-            tensor = flat.reshape(heads, batch_rows, dim)
+            if token_major_rope:
+                # CK's dedicated post-RoPE dump helper has already converted
+                # [head, token, dim] scratch storage to [token, head, dim].
+                tensor = flat.reshape(batch_rows, heads, dim)
+            else:
+                tensor = flat.reshape(heads, batch_rows, dim)
         for prompt_idx in range(prompt_token_count):
             if head_major:
                 token_idx = (batch_rows - prompt_token_count) + prompt_idx
-                # Preserve CK's native head-major flat order here.
-                # compare_dumps() flattens both sides, and llama.cpp's dump
-                # index shape metadata does not imply NumPy/C-order transpose.
-                row = tensor[:, token_idx, :].copy()
+                if token_major_rope:
+                    row = tensor[token_idx, :, :].copy()
+                else:
+                    # Preserve CK's native head-major flat order here.
+                    # compare_dumps() flattens both sides, and llama.cpp's dump
+                    # index shape metadata does not imply NumPy/C-order transpose.
+                    row = tensor[:, token_idx, :].copy()
             else:
                 start = (prompt_start + prompt_idx) * row_elems
                 end = start + row_elems

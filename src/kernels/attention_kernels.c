@@ -24,7 +24,7 @@
 #include "ckernel_engine.h"
 #include "ck_threadpool.h"
 #if CK_ENABLE_LLAMA_CPP_PARITY
-#include "../../llama.cpp/ggml/include/ggml.h"
+#include <ggml.h>
 #endif
 #include <dlfcn.h>
 #ifndef RTLD_DEFAULT
@@ -1699,6 +1699,57 @@ static void attention_flash_query_causal_exact(const float *q_vec,
     }
 }
 
+static void ck_attention_vec_dump_exact_query(const float *q_vec,
+                                              const float *k_head,
+                                              const float *out_vec,
+                                              int kv_tokens,
+                                              int head_dim,
+                                              int aligned_head_dim,
+                                              float scale,
+                                              int layer_id,
+                                              int head_id,
+                                              int query_id)
+{
+    if (!ck_attention_vec_dump_should_emit(layer_id, head_id, query_id)) {
+        return;
+    }
+
+    float *raw_scores = (float *) alloca((size_t) kv_tokens * sizeof(float));
+    float *probs = (float *) alloca((size_t) kv_tokens * sizeof(float));
+    float max_score = -INFINITY;
+    for (int j = 0; j < kv_tokens; ++j) {
+        const float *k_vec = k_head + (size_t) j * (size_t) aligned_head_dim;
+        float dot = 0.0f;
+        for (int d = 0; d < head_dim; ++d) {
+            dot += q_vec[d] * k_vec[d];
+        }
+        raw_scores[j] = dot;
+        const float scaled = dot * scale;
+        probs[j] = scaled;
+        if (scaled > max_score) {
+            max_score = scaled;
+        }
+    }
+
+    float sum = 0.0f;
+    for (int j = 0; j < kv_tokens; ++j) {
+        probs[j] = expf(probs[j] - max_score);
+        sum += probs[j];
+    }
+    if (sum > 0.0f) {
+        const float inv_sum = 1.0f / sum;
+        for (int j = 0; j < kv_tokens; ++j) {
+            probs[j] *= inv_sum;
+        }
+    } else {
+        memset(probs, 0, (size_t) kv_tokens * sizeof(float));
+    }
+
+    ck_attention_vec_dump_selected_query(raw_scores, probs, out_vec, NULL,
+                                         kv_tokens, head_dim,
+                                         layer_id, head_id, query_id);
+}
+
 // Llama-parity attention reference: K/V are rounded through F16 before use.
 static void attention_flash_query_causal_exact_f16kv(const float *q_vec,
                                                      const float *k_head,
@@ -3284,6 +3335,9 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
 
     if (ck_strict_parity_enabled()) {
         const float strict_scale = ck_attention_strict_scale_f32(head_dim);
+        const int debug_layer_id = ck_attention_vec_dump_enabled()
+            ? ck_attention_vec_dump_next_layer_id()
+            : -1;
 #if CK_ENABLE_LLAMA_CPP_PARITY
         if (!causal &&
             ck_attention_full_ggml_graph_oracle_multihead(q,
@@ -3329,6 +3383,11 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
                     const float *k_vec = k_head + (size_t) j * (size_t) aligned_head_dim;
                     score_row[j] = ck_ggml_vec_dot_f32_contig(q_vec, k_vec, head_dim);
                 }
+                float *raw_dump = NULL;
+                if (ck_attention_vec_dump_should_emit(debug_layer_id, h, i)) {
+                    raw_dump = (float *) alloca((size_t) kv_tokens * sizeof(float));
+                    memcpy(raw_dump, score_row, (size_t) kv_tokens * sizeof(float));
+                }
                 memcpy(logit_row, score_row, (size_t) kv_tokens * sizeof(float));
                 ck_vec_scale_f32_inplace(logit_row, kv_tokens, strict_scale);
                 const float max_score = ck_vec_max_f32_contig(logit_row, kv_tokens);
@@ -3347,6 +3406,11 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
                 }
                 for (int d = head_dim; d < aligned_head_dim; ++d) {
                     out_vec[d] = 0.0f;
+                }
+                if (raw_dump) {
+                    ck_attention_vec_dump_selected_query(raw_dump, score_row, out_vec, v_cols,
+                                                         kv_tokens, head_dim,
+                                                         debug_layer_id, h, i);
                 }
             }
         }
@@ -3649,6 +3713,9 @@ void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4(co
     const float scale = 1.0f;
 
     if (ck_strict_parity_enabled()) {
+        const int debug_layer_id = ck_attention_vec_dump_enabled()
+            ? ck_attention_vec_dump_next_layer_id()
+            : -1;
         for (int h = 0; h < num_heads; ++h) {
             int kv_head = (int)((long long)h * (long long)num_kv_heads / (long long)num_heads);
             const float *k_head = k + (size_t)kv_head * kv_head_stride;
@@ -3663,6 +3730,11 @@ void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4(co
                                                    kv_tokens,
                                                    head_dim, aligned_head_dim,
                                                    scale, out_vec);
+                ck_attention_vec_dump_exact_query(q_vec, k_head, out_vec,
+                                                  kv_tokens,
+                                                  head_dim, aligned_head_dim,
+                                                  scale,
+                                                  debug_layer_id, h, i);
             }
         }
         return;
