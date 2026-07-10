@@ -326,6 +326,12 @@ TEST_SUITES = {
     "attention_bf16": TestSuite("Attention BF16", "bf16", BF16_DIR / "test_attention_bf16.py"),
     "mlp_bf16": TestSuite("MLP BF16", "bf16", BF16_DIR / "test_mlp_bf16.py"),
     "cross_entropy_bf16": TestSuite("Cross Entropy BF16", "bf16", BF16_DIR / "test_cross_entropy_bf16.py"),
+    "v8_bf16_safetensors_lowering": TestSuite(
+        "v8 BF16 safetensors lowering",
+        "bf16",
+        ROOT / "version" / "v8" / "scripts" / "bf16_safetensors_lowering_guard_v8.py",
+        timeout_sec=180,
+    ),
 
     # Quantization tests
     # NOTE: test_quant_kernels.py and test_q4_k_quantize.py removed - use llamacpp-parity-full

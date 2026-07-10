@@ -76,6 +76,7 @@ class TensorRef:
     dtype: str | None = None
     synth: str | None = None
     shape: tuple[int, ...] | None = None
+    transform: str | None = None
 
 
 @dataclass
@@ -295,6 +296,8 @@ def _refs_from_safetensors_contract(arch: str, config: dict[str, Any], headers: 
             ck_name = target.replace("{L}", str(layer)) if layer is not None else target
             dtype = spec.get("dtype")
             dtype = str(dtype) if dtype is not None else None
+            transform = spec.get("transform")
+            transform = str(transform) if transform is not None else None
             synth = spec.get("synth")
             synth = str(synth) if synth is not None else None
             shape = _shape_from_spec(spec.get("shape"), config) if (synth or spec.get("fallback_synth")) else None
@@ -304,27 +307,27 @@ def _refs_from_safetensors_contract(arch: str, config: dict[str, Any], headers: 
             if not isinstance(sources_raw, list):
                 raise SystemExit(f"{SAFETENSORS_CK_MAP_PATH}: sources for {ck_name} must be a list")
             if synth:
-                refs.append(TensorRef(ck_name, (), dtype=dtype, synth=synth, shape=shape))
+                refs.append(TensorRef(ck_name, (), dtype=dtype, synth=synth, shape=shape, transform=transform))
                 continue
             combine_mode = str(spec.get("combine") or "").strip().lower()
             if combine_mode in {"concat", "concat_or_single"}:
                 named_sources = [str(src).replace("{L}", str(layer)) if layer is not None else str(src) for src in sources_raw]
                 if combine_mode == "concat_or_single" and named_sources and named_sources[0] in headers:
-                    refs.append(TensorRef(ck_name, (named_sources[0],), dtype=dtype))
+                    refs.append(TensorRef(ck_name, (named_sources[0],), dtype=dtype, transform=transform))
                     continue
                 concat_sources = named_sources[1:] if combine_mode == "concat_or_single" else named_sources
                 missing = [name for name in concat_sources if name not in headers]
                 if missing or not concat_sources:
                     raise SystemExit(f"Missing required safetensors tensor for {ck_name}: tried {named_sources}")
-                refs.append(TensorRef(ck_name, tuple(concat_sources), dtype=dtype))
+                refs.append(TensorRef(ck_name, tuple(concat_sources), dtype=dtype, transform=transform))
                 continue
             found = _first_existing_from_patterns(headers, (str(x) for x in sources_raw), layer)
             if found is not None:
-                refs.append(TensorRef(ck_name, (found,), dtype=dtype))
+                refs.append(TensorRef(ck_name, (found,), dtype=dtype, transform=transform))
                 continue
             fallback = spec.get("fallback_synth")
             if fallback:
-                refs.append(TensorRef(ck_name, (), dtype=dtype, synth=str(fallback), shape=shape))
+                refs.append(TensorRef(ck_name, (), dtype=dtype, synth=str(fallback), shape=shape, transform=transform))
                 continue
             if bool(spec.get("optional", False)):
                 continue
@@ -749,6 +752,74 @@ def _llama_family_text_refs(config: dict[str, Any], headers: dict[str, HeaderTen
     return refs
 
 
+def _qwen3vl_vision_refs(config: dict[str, Any], headers: dict[str, HeaderTensor]) -> list[TensorRef]:
+    num_layers = int(config.get("num_layers") or 0)
+    hidden = int(config.get("embed_dim") or config.get("hidden_size") or 0)
+    intermediate = int(config.get("intermediate_size") or config.get("intermediate_dim") or 0)
+    patch_dim = int(config.get("patch_dim") or 0)
+    if num_layers <= 0 or hidden <= 0 or intermediate <= 0 or patch_dim <= 0:
+        raise SystemExit("Qwen3-VL vision config missing num_layers/embed_dim/intermediate_size/patch_dim")
+
+    patch_src = _require_existing(
+        headers,
+        ("model.visual.patch_embed.proj.weight", "visual.patch_embed.proj.weight"),
+        "Qwen3-VL temporal patch projection",
+    )
+    refs: list[TensorRef] = [
+        TensorRef("v.patch_embd.weight", (patch_src,), shape=(hidden, patch_dim), transform="qwen3vl_patch_temporal_0"),
+        TensorRef("v.patch_embd.weight.1", (patch_src,), shape=(hidden, patch_dim), transform="qwen3vl_patch_temporal_1"),
+        TensorRef(
+            "v.patch_embd.bias",
+            (_require_existing(headers, ("model.visual.patch_embed.proj.bias", "visual.patch_embed.proj.bias"), "Qwen3-VL patch bias"),),
+            dtype="fp32",
+        ),
+        TensorRef(
+            "v.position_embd.weight",
+            (_require_existing(headers, ("model.visual.pos_embed.weight", "visual.pos_embed.weight"), "Qwen3-VL position embeddings"),),
+            dtype="fp32",
+        ),
+    ]
+
+    for layer in range(num_layers):
+        pfx = f"model.visual.blocks.{layer}"
+        refs.extend([
+            TensorRef(f"v.blk.{layer}.ln1.weight", (_require_existing(headers, (f"{pfx}.norm1.weight",), f"vision layer {layer} norm1 weight"),), dtype="fp32"),
+            TensorRef(f"v.blk.{layer}.ln1.bias", (_require_existing(headers, (f"{pfx}.norm1.bias",), f"vision layer {layer} norm1 bias"),), dtype="fp32"),
+            TensorRef(f"v.blk.{layer}.ln2.weight", (_require_existing(headers, (f"{pfx}.norm2.weight",), f"vision layer {layer} norm2 weight"),), dtype="fp32"),
+            TensorRef(f"v.blk.{layer}.ln2.bias", (_require_existing(headers, (f"{pfx}.norm2.bias",), f"vision layer {layer} norm2 bias"),), dtype="fp32"),
+            TensorRef(f"v.blk.{layer}.attn_qkv.weight", (_require_existing(headers, (f"{pfx}.attn.qkv.weight",), f"vision layer {layer} qkv weight"),)),
+            TensorRef(f"v.blk.{layer}.attn_qkv.bias", (_require_existing(headers, (f"{pfx}.attn.qkv.bias",), f"vision layer {layer} qkv bias"),), dtype="fp32"),
+            TensorRef(f"v.blk.{layer}.attn_out.weight", (_require_existing(headers, (f"{pfx}.attn.proj.weight",), f"vision layer {layer} attention output weight"),)),
+            TensorRef(f"v.blk.{layer}.attn_out.bias", (_require_existing(headers, (f"{pfx}.attn.proj.bias",), f"vision layer {layer} attention output bias"),), dtype="fp32"),
+            TensorRef(f"v.blk.{layer}.ffn_up.weight", (_require_existing(headers, (f"{pfx}.mlp.linear_fc1.weight",), f"vision layer {layer} mlp fc1 weight"),)),
+            TensorRef(f"v.blk.{layer}.ffn_up.bias", (_require_existing(headers, (f"{pfx}.mlp.linear_fc1.bias",), f"vision layer {layer} mlp fc1 bias"),), dtype="fp32"),
+            TensorRef(f"v.blk.{layer}.ffn_down.weight", (_require_existing(headers, (f"{pfx}.mlp.linear_fc2.weight",), f"vision layer {layer} mlp fc2 weight"),)),
+            TensorRef(f"v.blk.{layer}.ffn_down.bias", (_require_existing(headers, (f"{pfx}.mlp.linear_fc2.bias",), f"vision layer {layer} mlp fc2 bias"),), dtype="fp32"),
+        ])
+
+    refs.extend([
+        TensorRef("v.post_ln.weight", (_require_existing(headers, ("model.visual.merger.norm.weight",), "Qwen3-VL merger norm weight"),), dtype="fp32"),
+        TensorRef("v.post_ln.bias", (_require_existing(headers, ("model.visual.merger.norm.bias",), "Qwen3-VL merger norm bias"),), dtype="fp32"),
+        TensorRef("mm.0.weight", (_require_existing(headers, ("model.visual.merger.linear_fc1.weight",), "Qwen3-VL merger fc1 weight"),)),
+        TensorRef("mm.0.bias", (_require_existing(headers, ("model.visual.merger.linear_fc1.bias",), "Qwen3-VL merger fc1 bias"),), dtype="fp32"),
+        TensorRef("mm.2.weight", (_require_existing(headers, ("model.visual.merger.linear_fc2.weight",), "Qwen3-VL merger fc2 weight"),)),
+        TensorRef("mm.2.bias", (_require_existing(headers, ("model.visual.merger.linear_fc2.bias",), "Qwen3-VL merger fc2 bias"),), dtype="fp32"),
+    ])
+
+    deepstack_layer_indices = [int(x) for x in (config.get("deepstack_layer_indices") or [])]
+    for compact_idx, layer in enumerate(deepstack_layer_indices):
+        pfx = f"model.visual.deepstack_merger_list.{compact_idx}"
+        refs.extend([
+            TensorRef(f"v.deepstack.{layer}.norm.weight", (_require_existing(headers, (f"{pfx}.norm.weight",), f"deepstack {compact_idx} norm weight"),), dtype="fp32"),
+            TensorRef(f"v.deepstack.{layer}.norm.bias", (_require_existing(headers, (f"{pfx}.norm.bias",), f"deepstack {compact_idx} norm bias"),), dtype="fp32"),
+            TensorRef(f"v.deepstack.{layer}.fc1.weight", (_require_existing(headers, (f"{pfx}.linear_fc1.weight",), f"deepstack {compact_idx} fc1 weight"),)),
+            TensorRef(f"v.deepstack.{layer}.fc1.bias", (_require_existing(headers, (f"{pfx}.linear_fc1.bias",), f"deepstack {compact_idx} fc1 bias"),), dtype="fp32"),
+            TensorRef(f"v.deepstack.{layer}.fc2.weight", (_require_existing(headers, (f"{pfx}.linear_fc2.weight",), f"deepstack {compact_idx} fc2 weight"),)),
+            TensorRef(f"v.deepstack.{layer}.fc2.bias", (_require_existing(headers, (f"{pfx}.linear_fc2.bias",), f"deepstack {compact_idx} fc2 bias"),), dtype="fp32"),
+        ])
+    return refs
+
+
 def _infer_arch(hf: dict[str, Any]) -> str:
     text = hf.get("text_config") if isinstance(hf.get("text_config"), dict) else hf
     root_mt = str(hf.get("model_type") or "").lower()
@@ -769,6 +840,8 @@ def _infer_arch(hf: dict[str, Any]) -> str:
         return "gemma3"
     if "qwen3_5" in mt or "qwen3.5" in mt or "qwen35" in mt:
         return "qwen35"
+    if "qwen3_vl" in mt or any("qwen3vl" in name or "qwen3_vl" in name for name in arch_names):
+        return "qwen3vl"
     if "qwen3" in mt:
         return "qwen3"
     if "qwen2" in mt or mt == "qwen":
@@ -792,11 +865,13 @@ def _refs_for_arch(arch: str, config: dict[str, Any], headers: dict[str, HeaderT
         return _gemma4_text_refs(config, headers)
     if arch == "qwen35":
         return _qwen35_text_refs(config, headers)
+    if arch == "qwen3_vl_vision":
+        return _qwen3vl_vision_refs(config, headers)
     if arch == "nemotron_h":
         return _nemotron_h_text_refs(config, headers)
     if arch == "kimi_vl":
         return _kimi_vl_text_refs(config, headers)
-    if arch in {"llama", "qwen2", "qwen3", "gemma3"}:
+    if arch in {"llama", "qwen2", "qwen3", "qwen3vl", "gemma3"}:
         return _llama_family_text_refs(config, headers)
     raise SystemExit(f"Unsupported safetensors arch for v8 importer: {arch}")
 
@@ -1222,6 +1297,140 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "prefill_policy": "batched",
         })
 
+
+    if arch == "qwen3vl":
+        rope_scaling = text.get("rope_scaling") if isinstance(text.get("rope_scaling"), dict) else {}
+        rope_params_effective = rope_scaling or rope_parameters
+        mrope = list(rope_params_effective.get("mrope_section") or [])
+        cfg.update({
+            "model": "qwen3vl",
+            "arch": "qwen3vl",
+            "model_type": "qwen3vl",
+            "intermediate_dim": int(cfg.get("intermediate_size") or 0),
+            "attn_out_dim": int(cfg.get("num_heads") or 0) * int(cfg.get("head_dim") or 0),
+            "rotary_dim": int(cfg.get("head_dim") or 0),
+            "max_seq_len": int(cfg.get("context_length") or 0),
+            "rope_layout": "multi_section_1d" if mrope else "pairwise",
+            "rope_param_mode": "per_layer_direct",
+            "rope_theta": float(text.get("rope_theta", cfg.get("rope_theta", 5000000.0)) or 5000000.0),
+            "rope_freq_base": float(text.get("rope_theta", cfg.get("rope_theta", 5000000.0)) or 5000000.0),
+            "has_attention_biases": bool(text.get("attention_bias", False)),
+            "has_qk_norm": True,
+            "prefill_policy": "batched",
+            "image_token_id": int(hf.get("image_token_id") or 0),
+            "video_token_id": int(hf.get("video_token_id") or 0),
+            "vision_start_token_id": int(hf.get("vision_start_token_id") or 0),
+            "vision_end_token_id": int(hf.get("vision_end_token_id") or 0),
+        })
+        if mrope:
+            cfg["mrope_sections"] = [int(v) for v in mrope] + ([0] if len(mrope) == 3 else [])
+            cfg["mrope_n_dims"] = int(cfg.get("head_dim") or sum(int(v) for v in mrope))
+            cfg["mrope_interleaved"] = bool(rope_params_effective.get("mrope_interleaved", False))
+
+    if arch == "qwen3_vl_vision":
+        vision = hf.get("vision_config") if isinstance(hf.get("vision_config"), dict) else {}
+        headers = _load_safetensors_headers(model_dir)
+        hidden = int(vision.get("hidden_size") or 0)
+        num_heads = int(vision.get("num_heads") or vision.get("num_attention_heads") or 0)
+        head_dim = int(hidden // max(1, num_heads)) if hidden else 0
+        depth = int(vision.get("depth") or vision.get("num_hidden_layers") or 0)
+        patch_size = int(vision.get("patch_size") or 16)
+        temporal_patch_size = int(vision.get("temporal_patch_size") or 2)
+        channels = int(vision.get("num_channels") or vision.get("in_channels") or 3)
+        pos_rows = int(vision.get("num_position_embeddings") or 0)
+        pos_header = headers.get("model.visual.pos_embed.weight")
+        if pos_header and pos_header.shape:
+            pos_rows = int(pos_header.shape[0])
+        grid = int(round(pos_rows ** 0.5)) if pos_rows > 0 else 0
+        if grid * grid != pos_rows:
+            grid = pos_rows
+        merge = int(vision.get("spatial_merge_size") or hf.get("spatial_merge_size") or 2)
+        merge_factor = merge * merge
+        projector_in = hidden * merge_factor
+        merger_fc1 = headers.get("model.visual.merger.linear_fc1.weight")
+        merger_fc2 = headers.get("model.visual.merger.linear_fc2.weight")
+        projector_hidden = int(merger_fc1.shape[0]) if merger_fc1 and merger_fc1.shape else projector_in
+        projector_out = int(vision.get("out_hidden_size") or (merger_fc2.shape[0] if merger_fc2 and merger_fc2.shape else text.get("hidden_size") or 0))
+        deepstack_layers = [int(x) for x in (vision.get("deepstack_visual_indexes") or vision.get("deepstack_layer_indices") or [])]
+        preproc = {}
+        preproc_path = model_dir / "preprocessor_config.json"
+        if preproc_path.exists():
+            try:
+                preproc = json.loads(preproc_path.read_text(encoding="utf-8"))
+            except Exception:
+                preproc = {}
+        if head_dim == 72:
+            vision_mrope_sections = [16, 24, 24, 16]
+        elif head_dim > 0:
+            base = max(1, head_dim // 4)
+            rem = max(0, head_dim - base * 4)
+            vision_mrope_sections = [base + (1 if i < rem else 0) for i in range(4)]
+        else:
+            vision_mrope_sections = [1, 1, 1, 1]
+        cfg.update({
+            "model": "qwen3_vl_vision",
+            "arch": "qwen3_vl_vision",
+            "model_type": "qwen3_vl_vision",
+            "num_layers": depth,
+            "num_hidden_layers": depth,
+            "embed_dim": hidden,
+            "hidden_size": hidden,
+            "intermediate_size": int(vision.get("intermediate_size") or 0),
+            "intermediate_dim": int(vision.get("intermediate_size") or 0),
+            "num_heads": num_heads,
+            "num_attention_heads": num_heads,
+            "num_kv_heads": num_heads,
+            "num_key_value_heads": num_heads,
+            "head_dim": head_dim,
+            "attn_out_dim": hidden,
+            "q_dim": hidden,
+            "k_dim": hidden,
+            "v_dim": hidden,
+            "context_length": pos_rows,
+            "max_seq_len": pos_rows,
+            "vocab_size": int(text.get("vocab_size") or 0),
+            "n_vocab": int(text.get("vocab_size") or 0),
+            "image_size": int(grid * patch_size) if grid > 0 else int(preproc.get("size", {}).get("shortest_edge", 0) or 0),
+            "image_height": int(grid * patch_size) if grid > 0 else 0,
+            "image_width": int(grid * patch_size) if grid > 0 else 0,
+            "patch_size": patch_size,
+            "temporal_patch_size": temporal_patch_size,
+            "vision_channels": channels,
+            "patch_dim": channels * patch_size * patch_size,
+            "vision_grid_h": grid,
+            "vision_grid_w": grid,
+            "position_grid_size": grid,
+            "vision_num_patches": pos_rows,
+            "spatial_merge_size": merge,
+            "spatial_merge_factor": merge_factor,
+            "vision_merged_tokens": int(pos_rows // max(1, merge_factor)),
+            "projector_in_dim": projector_in,
+            "projector_hidden_dim": projector_hidden,
+            "projector_out_dim": projector_out,
+            "projector_total_out_dim": int(projector_out * (1 + len(deepstack_layers))),
+            "projection_dim": projector_out,
+            "deepstack_layer_indices": deepstack_layers,
+            "num_deepstack_layers": len(deepstack_layers),
+            "image_mean": [float(v) for v in preproc.get("image_mean", [0.48145466, 0.4578275, 0.40821073])[:3]],
+            "image_std": [float(v) for v in preproc.get("image_std", [0.26862954, 0.26130258, 0.27577711])[:3]],
+            "image_min_pixels": int(preproc.get("min_pixels") or 0),
+            "image_max_pixels": int(preproc.get("max_pixels") or 0),
+            "preproc_image_size": int(preproc.get("size", {}).get("shortest_edge", 0) or 0) if isinstance(preproc.get("size"), dict) else 0,
+            "rope_layout": "multi_section_2d",
+            "vision_mrope_sections": vision_mrope_sections,
+            "vision_mrope_n_dims": int(head_dim),
+            "vision_mrope_freq_base": 10000.0,
+            "vision_mrope_freq_scale": 1.0,
+            "vision_mrope_ext_factor": 0.0,
+            "vision_mrope_attn_factor": 1.0,
+            "vision_mrope_beta_fast": 32.0,
+            "vision_mrope_beta_slow": 1.0,
+            "vision_mrope_original_context_length": 32768,
+            "prefer_q8_activation": False,
+            "has_vision_encoder": True,
+            "dtype": "bf16",
+        })
+
     if arch == "qwen35":
         headers = _load_safetensors_headers(model_dir)
         q_gate_proj_dim = 0
@@ -1295,7 +1504,7 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         mrope = list(rope_parameters.get("mrope_section") or [])
         if mrope:
             cfg["mrope_sections"] = [int(v) for v in mrope] + ([0] if len(mrope) == 3 else [])
-            cfg["mrope_n_dims"] = int(sum(int(v) for v in mrope))
+            cfg["mrope_n_dims"] = int(cfg.get("head_dim") or cfg.get("hidden_size", 0) // max(1, int(cfg.get("num_attention_heads", 1))) or sum(int(v) for v in mrope))
     cfg = _inject_runtime_config_defaults(cfg, arch)
     if arch == "gemma4" and "layer_kinds" not in cfg:
         raise SystemExit("Gemma4 safetensors conversion currently requires --config-template with explicit layer_kinds/shared KV policy")
@@ -1306,6 +1515,16 @@ def _entry_size_from_header(ref: TensorRef, headers: dict[str, HeaderTensor], dt
     if ref.synth:
         data, dt, shape = _synth_bytes(ref.synth, ref.shape or (), dtype_policy)
         return dt, len(data), shape
+    if ref.transform and ref.shape is not None and ref.source_names:
+        h = headers[ref.source_names[0]]
+        if ref.dtype:
+            out_dtype = ref.dtype
+            elem = {"fp32": 4, "bf16": 2, "fp16": 2}[out_dtype]
+        else:
+            out_dtype, elem = _header_dtype_to_ck(h.dtype)
+        shape = [int(x) for x in ref.shape]
+        size = int(np.prod(shape, dtype=np.int64)) * elem
+        return out_dtype, size, shape
     total = 0
     out_dtype: str | None = ref.dtype
     out_shape: list[int] = []
@@ -1346,6 +1565,8 @@ def _is_qwen35_shifted_norm_ref(ref: TensorRef) -> bool:
 
 
 def _ref_transform(arch: str, ref: TensorRef) -> str | None:
+    if ref.transform:
+        return ref.transform
     if ref.ck_name.endswith(".ssm_a") or ref.ck_name.endswith(".mamba_a"):
         return "neg_exp_a_log"
     if arch == "qwen35" and _is_qwen35_shifted_norm_ref(ref):
@@ -1362,6 +1583,10 @@ def _ignored_source_tensor(arch: str, name: str) -> str | None:
         return "vision_tower_not_in_decoder_pass"
     if arch == "qwen35" and name.startswith("model.vision_model."):
         return "vision_tower_not_in_decoder_pass"
+    if arch == "qwen3vl" and (name.startswith("model.visual.") or name.startswith("visual.")):
+        return "vision_tower_not_in_decoder_pass"
+    if arch == "qwen3_vl_vision" and (name.startswith("model.language_model.") or name.startswith("model.model.") or name == "lm_head.weight"):
+        return "language_model_not_in_vision_pass"
     return None
 
 
@@ -1420,6 +1645,13 @@ def _write_ref(w: HashingWriter, model_dir: Path, headers: dict[str, HeaderTenso
         elif transform == "qwen35_norm_plus_one":
             import torch
             t = t.to(dtype=torch.float32) + 1.0
+        elif transform in {"qwen3vl_patch_temporal_0", "qwen3vl_patch_temporal_1"}:
+            idx = 0 if transform.endswith("_0") else 1
+            if len(t.shape) != 5:
+                raise SystemExit(f"{src}: expected Qwen3-VL patch tensor [out,in,t,h,w], got {tuple(t.shape)}")
+            if int(t.shape[2]) <= idx:
+                raise SystemExit(f"{src}: temporal dimension {int(t.shape[2])} too small for {transform}")
+            t = t[:, :, idx, :, :].contiguous().reshape(int(t.shape[0]), -1)
         policy = ref.dtype or dtype_policy
         data, dt, shape = _torch_to_bytes(t, policy)
         w.write(data)
@@ -1556,7 +1788,7 @@ def main() -> int:
     ap.add_argument("--ram-dir", type=Path, default=Path("/dev/shm"), help="tmpfs directory for --ram-output; default: /dev/shm")
     ap.add_argument("--config-out", required=True, type=Path)
     ap.add_argument("--manifest-out", required=True, type=Path)
-    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma4_assistant", "gemma3", "llama", "qwen2", "qwen3", "qwen35", "nemotron_h", "glm4", "kimi_vl"])
+    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma4_assistant", "gemma3", "llama", "qwen2", "qwen3", "qwen3vl", "qwen3_vl_vision", "qwen35", "nemotron_h", "glm4", "kimi_vl"])
     ap.add_argument("--config-template", type=Path, help="existing v8 config/manifest to reuse explicit runtime policy")
     ap.add_argument("--dtype", default="preserve", choices=["preserve", "bf16", "fp32"])
     ap.add_argument("--dry-run", action="store_true", help="validate mapping and write JSON reports only; do not write BUMP")

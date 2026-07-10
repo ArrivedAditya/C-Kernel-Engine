@@ -15,6 +15,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import numeric_parity_qwen3vl_mmproj_v8 as npv8  # type: ignore  # noqa: E402
+import qwen3vl_encoder_prefix_parity_suite_v8 as prefix_suite  # type: ignore  # noqa: E402
 
 
 class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
@@ -73,6 +74,46 @@ class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
         with mock.patch.object(npv8.parity_test, "read_dump_file", return_value=[fake_dump]):
             values = npv8._read_named_llama_dump_tensor(Path("/tmp/fake.bin"), "projector_out")
         self.assertEqual(list(values), [1.0, 2.0, 3.0, 4.0])
+
+
+    def test_encoder_prefix_suite_loads_limited_summary_samples(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            summary_path = Path(tmpdir) / "summary.json"
+            summary_path.write_text(
+                json.dumps({
+                    "results": [
+                        {"id": "1 81", "image": "/tmp/1_81.ppm"},
+                        {"id": "Fake 1", "image": "/tmp/Fake_1.ppm"},
+                        {"id": "missing"},
+                    ]
+                }),
+                encoding="utf-8",
+            )
+            specs = prefix_suite._load_image_specs(summary_path, [], 2)
+        self.assertEqual(specs, [
+            {"id": "1 81", "image": "/tmp/1_81.ppm"},
+            {"id": "Fake 1", "image": "/tmp/Fake_1.ppm"},
+        ])
+        self.assertEqual(prefix_suite._sanitize_id("1 81"), "1_81")
+
+    def test_encoder_prefix_suite_thresholds_shape_and_metrics(self) -> None:
+        values = 36 * 28 * 16384
+        sample = {
+            "id": "sample",
+            "grid": [36, 28],
+            "num_values": values,
+            "raw_num_values": {"ck": values, "llama": values},
+            "metrics": {"cosine": 0.999, "rmse": 0.01, "max_abs": 1.0},
+            "shape_ok": True,
+            "expected_values": values,
+        }
+        shape_ok, expected = prefix_suite._shape_status(sample, 16384)
+        self.assertTrue(shape_ok)
+        self.assertEqual(expected, values)
+        args = SimpleNamespace(min_cosine=0.99, max_rmse=0.03, max_abs=None)
+        self.assertEqual(prefix_suite._evaluate_samples([sample], args), [])
+        args = SimpleNamespace(min_cosine=0.9999, max_rmse=0.03, max_abs=None)
+        self.assertIn("cosine", prefix_suite._evaluate_samples([sample], args)[0])
 
 
 if __name__ == "__main__":

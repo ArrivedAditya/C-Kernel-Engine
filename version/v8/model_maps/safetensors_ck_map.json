@@ -363,6 +363,90 @@
         "multi_modal_projector.*"
       ],
       "notes": "Declared mapping contract only. Full tensor_refs are intentionally absent until Kimi MLA/MoE packing and MoonViT bridge lowering are implemented."
+    },
+    "qwen3vl": {
+      "template": "qwen3vl",
+      "family": "qwen3_vl",
+      "aliases": [
+        "qwen3vl",
+        "qwen3_vl",
+        "qwen3_vl_text",
+        "Qwen3VLForConditionalGeneration"
+      ],
+      "status": "text_decoder_mapping",
+      "config": {
+        "model": "qwen3vl",
+        "arch": "qwen3vl",
+        "model_type": "qwen3vl",
+        "rope_layout": "multi_section_1d",
+        "rope_param_mode": "per_layer_direct",
+        "has_qk_norm": true,
+        "has_attention_biases": false,
+        "prefill_policy": "batched"
+      },
+      "required_tensor_patterns": [
+        "model.language_model.embed_tokens.weight",
+        "model.language_model.layers.{L}.input_layernorm.weight",
+        "model.language_model.layers.{L}.post_attention_layernorm.weight",
+        "model.language_model.layers.{L}.self_attn.q_proj.weight",
+        "model.language_model.layers.{L}.self_attn.k_proj.weight",
+        "model.language_model.layers.{L}.self_attn.v_proj.weight",
+        "model.language_model.layers.{L}.self_attn.o_proj.weight",
+        "model.language_model.layers.{L}.self_attn.q_norm.weight",
+        "model.language_model.layers.{L}.self_attn.k_norm.weight",
+        "model.language_model.layers.{L}.mlp.gate_proj.weight",
+        "model.language_model.layers.{L}.mlp.up_proj.weight",
+        "model.language_model.layers.{L}.mlp.down_proj.weight",
+        "model.language_model.norm.weight",
+        "lm_head.weight"
+      ],
+      "notes": "Official Qwen3-VL safetensors store text tensors under model.language_model.*. Vision tensors are intentionally ignored in the text decoder conversion and handled by qwen3_vl_vision."
+    },
+    "qwen3_vl_vision": {
+      "template": "qwen3_vl_vision",
+      "family": "qwen3_vl",
+      "aliases": [
+        "qwen3_vl_vision",
+        "Qwen3VLVisionModel"
+      ],
+      "status": "vision_encoder_mapping",
+      "config": {
+        "model": "qwen3_vl_vision",
+        "arch": "qwen3_vl_vision",
+        "model_type": "qwen3_vl_vision",
+        "patch_frontend": "dual_patch_proj_sum",
+        "position_encoding": "absolute_2d",
+        "projector": "qwen3vl_merger",
+        "prefill_policy": "vision_encoder_only",
+        "rope_layout": "multi_section_2d"
+      },
+      "required_tensor_patterns": [
+        "model.visual.patch_embed.proj.weight",
+        "model.visual.patch_embed.proj.bias",
+        "model.visual.pos_embed.weight",
+        "model.visual.blocks.{L}.norm1.weight",
+        "model.visual.blocks.{L}.norm1.bias",
+        "model.visual.blocks.{L}.norm2.weight",
+        "model.visual.blocks.{L}.norm2.bias",
+        "model.visual.blocks.{L}.attn.qkv.weight",
+        "model.visual.blocks.{L}.attn.qkv.bias",
+        "model.visual.blocks.{L}.attn.proj.weight",
+        "model.visual.blocks.{L}.attn.proj.bias",
+        "model.visual.blocks.{L}.mlp.linear_fc1.weight",
+        "model.visual.blocks.{L}.mlp.linear_fc1.bias",
+        "model.visual.blocks.{L}.mlp.linear_fc2.weight",
+        "model.visual.blocks.{L}.mlp.linear_fc2.bias",
+        "model.visual.merger.norm.weight",
+        "model.visual.merger.norm.bias",
+        "model.visual.merger.linear_fc1.weight",
+        "model.visual.merger.linear_fc1.bias",
+        "model.visual.merger.linear_fc2.weight",
+        "model.visual.merger.linear_fc2.bias",
+        "model.visual.deepstack_merger_list.*.norm.weight",
+        "model.visual.deepstack_merger_list.*.linear_fc1.weight",
+        "model.visual.deepstack_merger_list.*.linear_fc2.weight"
+      ],
+      "notes": "Official safetensors patch_embed.proj.weight is [out,in,temporal,h,w]. CK maps it into v.patch_embd.weight and v.patch_embd.weight.1 with temporal split transforms."
     }
   }
 }

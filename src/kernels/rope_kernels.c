@@ -1240,45 +1240,37 @@ static void vision_mrope_apply_head(
         return;
     }
 
-    if (n_dims > head_dim) {
-        n_dims = head_dim;
+    int rope_dims = n_dims;
+    if (rope_dims > head_dim) {
+        rope_dims = head_dim;
+    }
+    rope_dims &= ~1;
+    if (rope_dims <= 0) {
+        return;
+    }
+
+    const int rope_pairs = rope_dims / 2;
+    const int axis_pairs = rope_pairs / 2;
+    if (axis_pairs <= 0) {
+        return;
     }
 
     const int num_pos = num_tokens;
-    const int sec_w = sections[0] + sections[1];
-    const int sec_e = sec_w + sections[2];
-    const int sect_dims = sections[0] + sections[1] + sections[2] + sections[3];
-    const float theta_scale = powf(freq_base, -2.0f / (float) n_dims);
-    float corr_dims[2] = {0.0f, (float) (n_dims - 1)};
-    vision_mrope_yarn_corr_dims(n_dims, n_ctx_orig, freq_base, beta_fast, beta_slow, corr_dims);
+    const int axis_rotary_dim = axis_pairs * 2;
+    const float theta_scale = powf(freq_base, -2.0f / (float) axis_rotary_dim);
+    float corr_dims[2] = {0.0f, (float) (axis_rotary_dim - 1)};
+    vision_mrope_yarn_corr_dims(axis_rotary_dim, n_ctx_orig, freq_base, beta_fast, beta_slow, corr_dims);
+    (void) sections;
 
     for (int tok = 0; tok < num_tokens; ++tok) {
-        float theta_t = (float) positions[tok];
-        float theta_h = (float) positions[tok + num_pos];
-        float theta_w = (float) positions[tok + 2 * num_pos];
-        float theta_e = (float) positions[tok + 3 * num_pos];
+        float theta_y = (float) positions[tok];
+        float theta_x = (float) positions[tok + num_pos];
         float *row = x + (size_t) tok * (size_t) aligned_head_dim;
 
-        for (int chan = 0; chan < n_dims; ++chan) {
-            const int sector = sect_dims > 0 ? (chan % sect_dims) : chan;
-            if (sector == 0) {
-                theta_t = (float) positions[tok];
-            } else if (sector == sections[0]) {
-                theta_h = (float) positions[tok + num_pos];
-            } else if (sector == sec_w) {
-                theta_w = (float) positions[tok + 2 * num_pos];
-            } else if (sector == sec_e) {
-                theta_e = (float) positions[tok + 3 * num_pos];
-            }
-
-            float theta = theta_t;
-            if (sector >= sections[0] && sector < sec_w) {
-                theta = theta_h;
-            } else if (sector >= sec_w && sector < sec_e) {
-                theta = theta_w;
-            } else if (sector >= sec_e) {
-                theta = theta_e;
-            }
+        for (int pair = 0; pair < rope_pairs; ++pair) {
+            const int is_x_axis = pair >= axis_pairs;
+            const int axis_pair = is_x_axis ? pair - axis_pairs : pair;
+            const float theta = is_x_axis ? theta_x : theta_y;
 
             float cos_theta = 0.0f;
             float sin_theta = 0.0f;
@@ -1286,22 +1278,23 @@ static void vision_mrope_apply_head(
                 theta,
                 freq_scale,
                 corr_dims,
-                chan * 2,
+                axis_pair * 2,
                 ext_factor,
                 attn_factor,
                 &cos_theta,
                 &sin_theta
             );
 
-            const float x0 = row[chan];
-            const float x1 = row[chan + n_dims];
-            row[chan] = x0 * cos_theta - x1 * sin_theta;
-            row[chan + n_dims] = x0 * sin_theta + x1 * cos_theta;
+            const float x0 = row[pair];
+            const float x1 = row[pair + rope_pairs];
+            row[pair] = x0 * cos_theta - x1 * sin_theta;
+            row[pair + rope_pairs] = x0 * sin_theta + x1 * cos_theta;
 
-            theta_t *= theta_scale;
-            theta_h *= theta_scale;
-            theta_w *= theta_scale;
-            theta_e *= theta_scale;
+            if (is_x_axis) {
+                theta_x *= theta_scale;
+            } else {
+                theta_y *= theta_scale;
+            }
         }
     }
 }

@@ -971,3 +971,266 @@ def test_kimi_vl_safetensors_to_bump_dry_run_maps_text_decoder(tmp_path: Path) -
         "final_ln_bias",
         "output.weight",
     }.issubset(names)
+
+
+
+def _write_tiny_qwen3vl_checkpoint(checkpoint: Path) -> None:
+    torch, st = _require_torch_safetensors()
+    checkpoint.mkdir(parents=True, exist_ok=True)
+    (checkpoint / "config.json").write_text(
+        json.dumps(
+            {
+                "architectures": ["Qwen3VLForConditionalGeneration"],
+                "model_type": "qwen3_vl",
+                "image_token_id": 151655,
+                "vision_start_token_id": 151652,
+                "vision_end_token_id": 151653,
+                "tie_word_embeddings": False,
+                "text_config": {
+                    "model_type": "qwen3_vl_text",
+                    "num_hidden_layers": 1,
+                    "hidden_size": 8,
+                    "intermediate_size": 16,
+                    "num_attention_heads": 2,
+                    "num_key_value_heads": 1,
+                    "head_dim": 4,
+                    "vocab_size": 32,
+                    "max_position_embeddings": 64,
+                    "rope_theta": 5000000.0,
+                    "rms_norm_eps": 1e-6,
+                    "tie_word_embeddings": False,
+                    "rope_scaling": {
+                        "mrope_interleaved": True,
+                        "mrope_section": [1, 1, 2],
+                        "rope_type": "default",
+                    },
+                },
+                "vision_config": {
+                    "model_type": "qwen3_vl",
+                    "depth": 1,
+                    "hidden_size": 8,
+                    "intermediate_size": 12,
+                    "num_heads": 2,
+                    "out_hidden_size": 8,
+                    "patch_size": 2,
+                    "temporal_patch_size": 2,
+                    "spatial_merge_size": 2,
+                    "num_position_embeddings": 4,
+                    "deepstack_visual_indexes": [0],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (checkpoint / "preprocessor_config.json").write_text(
+        json.dumps(
+            {
+                "image_mean": [0.1, 0.2, 0.3],
+                "image_std": [0.4, 0.5, 0.6],
+                "min_pixels": 16,
+                "max_pixels": 4096,
+                "size": {"shortest_edge": 4},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _write_tiny_bpe_tokenizer(checkpoint, vocab_size=32)
+
+    tensors = {
+        "model.language_model.embed_tokens.weight": torch.randn(32, 8, dtype=torch.bfloat16),
+        "model.language_model.layers.0.input_layernorm.weight": torch.ones(8, dtype=torch.bfloat16),
+        "model.language_model.layers.0.post_attention_layernorm.weight": torch.ones(8, dtype=torch.bfloat16),
+        "model.language_model.layers.0.self_attn.q_proj.weight": torch.randn(8, 8, dtype=torch.bfloat16),
+        "model.language_model.layers.0.self_attn.k_proj.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+        "model.language_model.layers.0.self_attn.v_proj.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+        "model.language_model.layers.0.self_attn.o_proj.weight": torch.randn(8, 8, dtype=torch.bfloat16),
+        "model.language_model.layers.0.self_attn.q_norm.weight": torch.ones(4, dtype=torch.bfloat16),
+        "model.language_model.layers.0.self_attn.k_norm.weight": torch.ones(4, dtype=torch.bfloat16),
+        "model.language_model.layers.0.mlp.gate_proj.weight": torch.randn(16, 8, dtype=torch.bfloat16),
+        "model.language_model.layers.0.mlp.up_proj.weight": torch.randn(16, 8, dtype=torch.bfloat16),
+        "model.language_model.layers.0.mlp.down_proj.weight": torch.randn(8, 16, dtype=torch.bfloat16),
+        "model.language_model.norm.weight": torch.ones(8, dtype=torch.bfloat16),
+        "lm_head.weight": torch.randn(32, 8, dtype=torch.bfloat16),
+        "model.visual.patch_embed.proj.weight": torch.randn(8, 3, 2, 2, 2, dtype=torch.bfloat16),
+        "model.visual.patch_embed.proj.bias": torch.randn(8, dtype=torch.bfloat16),
+        "model.visual.pos_embed.weight": torch.randn(4, 8, dtype=torch.bfloat16),
+        "model.visual.blocks.0.norm1.weight": torch.ones(8, dtype=torch.bfloat16),
+        "model.visual.blocks.0.norm1.bias": torch.zeros(8, dtype=torch.bfloat16),
+        "model.visual.blocks.0.norm2.weight": torch.ones(8, dtype=torch.bfloat16),
+        "model.visual.blocks.0.norm2.bias": torch.zeros(8, dtype=torch.bfloat16),
+        "model.visual.blocks.0.attn.qkv.weight": torch.randn(24, 8, dtype=torch.bfloat16),
+        "model.visual.blocks.0.attn.qkv.bias": torch.randn(24, dtype=torch.bfloat16),
+        "model.visual.blocks.0.attn.proj.weight": torch.randn(8, 8, dtype=torch.bfloat16),
+        "model.visual.blocks.0.attn.proj.bias": torch.randn(8, dtype=torch.bfloat16),
+        "model.visual.blocks.0.mlp.linear_fc1.weight": torch.randn(12, 8, dtype=torch.bfloat16),
+        "model.visual.blocks.0.mlp.linear_fc1.bias": torch.randn(12, dtype=torch.bfloat16),
+        "model.visual.blocks.0.mlp.linear_fc2.weight": torch.randn(8, 12, dtype=torch.bfloat16),
+        "model.visual.blocks.0.mlp.linear_fc2.bias": torch.randn(8, dtype=torch.bfloat16),
+        "model.visual.merger.norm.weight": torch.ones(8, dtype=torch.bfloat16),
+        "model.visual.merger.norm.bias": torch.zeros(8, dtype=torch.bfloat16),
+        "model.visual.merger.linear_fc1.weight": torch.randn(32, 32, dtype=torch.bfloat16),
+        "model.visual.merger.linear_fc1.bias": torch.randn(32, dtype=torch.bfloat16),
+        "model.visual.merger.linear_fc2.weight": torch.randn(8, 32, dtype=torch.bfloat16),
+        "model.visual.merger.linear_fc2.bias": torch.randn(8, dtype=torch.bfloat16),
+        "model.visual.deepstack_merger_list.0.norm.weight": torch.ones(32, dtype=torch.bfloat16),
+        "model.visual.deepstack_merger_list.0.norm.bias": torch.zeros(32, dtype=torch.bfloat16),
+        "model.visual.deepstack_merger_list.0.linear_fc1.weight": torch.randn(32, 32, dtype=torch.bfloat16),
+        "model.visual.deepstack_merger_list.0.linear_fc1.bias": torch.randn(32, dtype=torch.bfloat16),
+        "model.visual.deepstack_merger_list.0.linear_fc2.weight": torch.randn(8, 32, dtype=torch.bfloat16),
+        "model.visual.deepstack_merger_list.0.linear_fc2.bias": torch.randn(8, dtype=torch.bfloat16),
+    }
+    st.save_file(tensors, checkpoint / "model.safetensors")
+
+
+def test_qwen3vl_safetensors_auto_text_ignores_vision(tmp_path: Path) -> None:
+    _require_torch_safetensors()
+    checkpoint = tmp_path / "qwen3vl"
+    out = tmp_path / "out_qwen3vl_text"
+    out.mkdir()
+    _write_tiny_qwen3vl_checkpoint(checkpoint)
+
+    script = Path("version/v8/scripts/convert_safetensors_to_bump_v8.py")
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--checkpoint",
+            str(checkpoint),
+            "--output",
+            str(out / "weights.bump"),
+            "--config-out",
+            str(out / "config.json"),
+            "--manifest-out",
+            str(out / "weights_manifest.json"),
+            "--arch",
+            "auto",
+            "--dry-run",
+        ],
+        check=True,
+    )
+
+    manifest = json.loads((out / "weights_manifest.json").read_text(encoding="utf-8"))
+    audit = json.loads((out / "conversion_audit.json").read_text(encoding="utf-8"))
+    names = [entry["name"] for entry in manifest["entries"]]
+    assert manifest["model"] == "qwen3vl"
+    assert manifest["config"]["mrope_sections"] == [1, 1, 2, 0]
+    assert manifest["config"]["mrope_interleaved"] is True
+    assert audit["verdict"] == "pass"
+    assert audit["unmapped_source_tensors"] == []
+    assert any(row["reason"] == "vision_tower_not_in_decoder_pass" for row in audit["ignored_source_tensors"])
+    assert "layer.0.q_norm" in names
+    assert "layer.0.k_norm" in names
+    assert "output.weight" in names
+
+
+def test_qwen3vl_safetensors_vision_maps_temporal_patch_split(tmp_path: Path) -> None:
+    _require_torch_safetensors()
+    checkpoint = tmp_path / "qwen3vl"
+    out = tmp_path / "out_qwen3vl_vision"
+    out.mkdir()
+    _write_tiny_qwen3vl_checkpoint(checkpoint)
+
+    script = Path("version/v8/scripts/convert_safetensors_to_bump_v8.py")
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--checkpoint",
+            str(checkpoint),
+            "--output",
+            str(out / "weights.bump"),
+            "--config-out",
+            str(out / "config.json"),
+            "--manifest-out",
+            str(out / "weights_manifest.json"),
+            "--arch",
+            "qwen3_vl_vision",
+        ],
+        check=True,
+    )
+
+    manifest = json.loads((out / "weights_manifest.json").read_text(encoding="utf-8"))
+    audit = json.loads((out / "conversion_audit.json").read_text(encoding="utf-8"))
+    entries = {entry["name"]: entry for entry in manifest["entries"]}
+    assert manifest["model"] == "qwen3_vl_vision"
+    assert manifest["config"]["deepstack_layer_indices"] == [0]
+    assert manifest["config"]["projector_total_out_dim"] == 16
+    assert audit["verdict"] == "pass"
+    assert audit["unmapped_source_tensors"] == []
+    assert entries["v.patch_embd.weight"]["shape"] == [8, 12]
+    assert entries["v.patch_embd.weight.1"]["shape"] == [8, 12]
+    assert entries["v.patch_embd.weight"]["transform"] == "qwen3vl_patch_temporal_0"
+    assert entries["v.patch_embd.weight.1"]["transform"] == "qwen3vl_patch_temporal_1"
+    assert entries["v.patch_embd.weight"]["size"] == 8 * 12 * 2
+    assert entries["v.position_embd.weight"]["dtype"] == "fp32"
+    assert entries["v.deepstack.0.fc1.weight"]["shape"] == [32, 32]
+    assert "model.visual.patch_embed.proj.weight" in audit["source_to_targets"]
+    assert audit["source_to_targets"]["model.visual.patch_embed.proj.weight"] == [
+        "v.patch_embd.weight",
+        "v.patch_embd.weight.1",
+    ]
+    assert manifest["config"]["rope_layout"] == "multi_section_2d"
+    assert manifest["config"]["vision_mrope_n_dims"] == 4
+    assert manifest["config"]["vision_mrope_sections"] == [1, 1, 1, 1]
+    assert (out / "weights.bump").stat().st_size > 0
+
+    build_ir = Path("version/v8/scripts/build_ir_v8.py")
+    codegen = Path("version/v8/scripts/codegen_v8.py")
+    lowered = out / "lowered_vision.json"
+    call = out / "lowered_vision_call.json"
+    layout = out / "layout_vision.json"
+    generated_c = out / "generated_vision.c"
+    subprocess.run(
+        [
+            sys.executable,
+            str(build_ir),
+            "--manifest",
+            str(out / "weights_manifest.json"),
+            "--mode",
+            "prefill",
+            "--output",
+            str(out / "ir1_vision.json"),
+            "--layout-output",
+            str(layout),
+            "--lowered-output",
+            str(lowered),
+            "--call-output",
+            str(call),
+            "--context-len",
+            "4",
+        ],
+        check=True,
+    )
+    lowered_ops = json.loads(lowered.read_text(encoding="utf-8"))["operations"]
+    kernels_by_op = {op["op"]: op.get("kernel") for op in lowered_ops}
+    for op_name in (
+        "patch_proj",
+        "patch_proj_aux",
+        "qkv_packed_proj",
+        "out_proj",
+        "mlp_up",
+        "mlp_down",
+        "projector_fc1",
+        "projector_fc2",
+    ):
+        assert kernels_by_op[op_name] == "gemm_nt_bf16", op_name
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(codegen),
+            "--ir",
+            str(call),
+            "--layout",
+            str(layout),
+            "--output",
+            str(generated_c),
+        ],
+        check=True,
+    )
+    generated = generated_c.read_text(encoding="utf-8")
+    assert "gemm_nt_bf16(" in generated
+    assert "gemm_naive_parallel(" not in generated
+    assert "gemm_blocked_serial(" not in generated
