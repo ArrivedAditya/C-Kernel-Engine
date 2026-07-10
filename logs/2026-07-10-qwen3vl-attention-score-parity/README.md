@@ -68,6 +68,13 @@ inputs to FP16.
 
 ## Next step
 
-Implement and benchmark a bounded reference that matches llama's FP16 Q/K
-conversion and value reduction order exactly. Accept it only if it reduces the
-model-level `kqv_out` error and does not move the first token divergence earlier.
+llama.cpp's CPU flash path adds one more required semantic for this case. For a
+single query with at least 512 KV rows, it partitions KV into one chunk per
+worker. Each worker computes an FP16 Q/K/V online-softmax partial, then the
+partials are combined in chunk order with an FP32 accumulator. CK currently
+uses a single FP32-style reduction for this mixed-prefix replay.
+
+Implement and benchmark a bounded split-KV reference with that exact contract.
+Then vectorize the proven reference and share the split-KV dispatcher with
+persistent decode. Accept it only if it reduces model-level `kqv_out` error,
+keeps one-token parity, and does not move the 64-token divergence earlier.
