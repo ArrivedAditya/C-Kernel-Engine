@@ -1534,7 +1534,19 @@ def emit_op(
                 f'{row_count_expr});'
             )
 
-    if op_name == "patchify":
+    if op_name == "qkv_packed_proj":
+        out_expr = _hidden_arg("output", "out", "c", "y")
+        count_expr = _mul_expr(
+            _hidden_arg("M", "rows", "tokens"),
+            _hidden_arg("N", "out_dim"),
+        )
+        _emit_hidden_export(out_expr, "qkv_packed", count_expr)
+        _emit_hidden_export_last_row(
+            out_expr,
+            "qkv_packed",
+            _hidden_arg("N", "out_dim"),
+        )
+    elif op_name == "patchify":
         patch_h = f"(({_hidden_arg('H')}) / ({_hidden_arg('P')}))" if _hidden_arg("H") and _hidden_arg("P") else None
         patch_w = f"(({_hidden_arg('W')}) / ({_hidden_arg('P')}))" if _hidden_arg("W") and _hidden_arg("P") else None
         patch_dim = _mul_expr(_hidden_arg("C"), _hidden_arg("P"), _hidden_arg("P"))
@@ -1547,9 +1559,17 @@ def emit_op(
         _emit_hidden_export_last_row(out_expr, label, _hidden_arg("N", "out_dim", "embed_dim"))
     elif op_name in ("position_embeddings", "patch_bias_add", "add_stream"):
         out_expr = _hidden_arg("x", "main_inout", "output", "out", "c", "y")
-        count_expr = _mul_expr(_hidden_arg("grid_h", "rows", "tokens"), _hidden_arg("grid_w"), _hidden_arg("embed_dim"))
-        if count_expr is None:
-            count_expr = _mul_expr(_hidden_arg("rows", "tokens", "num_tokens"), _hidden_arg("dim", "embed_dim"))
+        if op_name == "patch_bias_add":
+            count_expr = _mul_expr(
+                _hidden_arg("rows", "tokens", "num_tokens"),
+                _hidden_arg("dim", "embed_dim"),
+            )
+        else:
+            count_expr = _mul_expr(
+                _hidden_arg("grid_h", "rows", "tokens"),
+                _hidden_arg("grid_w"),
+                _hidden_arg("embed_dim"),
+            )
         label = {
             "position_embeddings": "vision_position_embeddings",
             "patch_bias_add": "vision_patch_bias",
@@ -1574,22 +1594,78 @@ def emit_op(
         label = "vision_projector_out" if op_name == "projector_fc2" else "vision_projector_fc1"
         _emit_hidden_export(out_expr, label, count_expr)
         _emit_hidden_export_last_row(out_expr, label, _hidden_arg("N", "out_dim", "embed_dim"))
+    elif op_name == "split_qkv_packed":
+        rows = _hidden_arg("rows", "num_tokens", "tokens")
+        _emit_hidden_export(_hidden_arg("q"), "q_proj", _mul_expr(rows, _hidden_arg("q_dim")))
+        _emit_hidden_export(_hidden_arg("k"), "k_proj", _mul_expr(rows, _hidden_arg("k_dim")))
+        _emit_hidden_export(_hidden_arg("v"), "v_proj", _mul_expr(rows, _hidden_arg("v_dim")))
+    elif op_name in ("rope_qk", "mrope_qk"):
+        q_count = _mul_expr(
+            _hidden_arg("num_heads"),
+            _hidden_arg("num_tokens", "tokens", "rows"),
+            _hidden_arg("aligned_head_dim", "head_dim"),
+        )
+        k_count = _mul_expr(
+            _hidden_arg("num_kv_heads", "num_heads"),
+            _hidden_arg("num_tokens", "tokens", "rows"),
+            _hidden_arg("aligned_head_dim", "head_dim"),
+        )
+        _emit_hidden_export(_hidden_arg("q"), "rope_q", q_count)
+        _emit_hidden_export(_hidden_arg("k"), "rope_k", k_count)
+    elif op_name in ("out_proj", "attn_out_proj"):
+        out_expr = _hidden_arg("output", "out", "c", "y")
+        count_expr = _mul_expr(
+            _hidden_arg("M", "rows", "tokens"),
+            _hidden_arg("N", "out_dim", "embed_dim"),
+        )
+        _emit_hidden_export(out_expr, "out_proj", count_expr)
+        _emit_hidden_export_last_row(out_expr, "out_proj", _hidden_arg("N", "out_dim", "embed_dim"))
+    elif op_name == "attn":
+        out_expr = _hidden_arg("output", "out", "c", "y")
+        count_expr = _mul_expr(
+            _hidden_arg("num_heads"),
+            _hidden_arg("num_tokens", "tokens", "rows"),
+            _hidden_arg("aligned_head_dim", "head_dim"),
+        )
+        _emit_hidden_export(out_expr, "attn_out_head_major", count_expr)
     elif op_name == "residual_add":
-        out_expr = _hidden_raw(_hidden_arg("output", "out", "c", "y"))
-        residual_expr = _hidden_raw(_hidden_arg("b"))
+        out_expr = _hidden_arg("output", "out", "c", "y")
+        residual_expr = _hidden_arg("b")
+        row_dim = _hidden_arg("aligned_embed_dim", "embed_dim", "dim") or "EMBED_DIM"
+        count_expr = _mul_expr(_hidden_arg("tokens", "num_tokens", "rows"), row_dim)
         if op_instance_idx == 0 and residual_expr:
-            lines.append(f'    ck_debug_export_hidden(model, {layer}, "after_attn_residual", (const float*){residual_expr}, EMBED_DIM);')
-            _emit_hidden_export_last_row(residual_expr, "after_attn_residual", "EMBED_DIM")
+            _emit_hidden_export(residual_expr, "after_attn_residual", count_expr)
+            _emit_hidden_export_last_row(residual_expr, "after_attn_residual", row_dim)
         elif op_instance_idx == 1 and residual_expr:
-            lines.append(f'    ck_debug_export_hidden(model, {layer}, "ffn_residual", (const float*){residual_expr}, EMBED_DIM);')
-            _emit_hidden_export_last_row(residual_expr, "ffn_residual", "EMBED_DIM")
+            _emit_hidden_export(residual_expr, "ffn_residual", count_expr)
+            _emit_hidden_export_last_row(residual_expr, "ffn_residual", row_dim)
         if out_expr:
             if op_instance_idx == 0:
-                lines.append(f'    ck_debug_export_hidden(model, {layer}, "after_attn", (const float*){out_expr}, EMBED_DIM);')
-                _emit_hidden_export_last_row(out_expr, "after_attn", "EMBED_DIM")
+                _emit_hidden_export(out_expr, "after_attn", count_expr)
+                _emit_hidden_export_last_row(out_expr, "after_attn", row_dim)
             elif op_instance_idx == 1:
-                lines.append(f'    ck_debug_export_hidden(model, {layer}, "layer_out", (const float*){out_expr}, EMBED_DIM);')
-                _emit_hidden_export_last_row(out_expr, "layer_out", "EMBED_DIM")
+                _emit_hidden_export(out_expr, "layer_out", count_expr)
+                _emit_hidden_export_last_row(out_expr, "layer_out", row_dim)
+    elif op_name == "layernorm":
+        out_expr = _hidden_arg("output", "out", "x", "y")
+        count_expr = _mul_expr(
+            _hidden_arg("tokens", "num_tokens", "rows"),
+            _hidden_arg("d_model", "embed_dim", "dim"),
+        )
+        if str(section or "") == "footer":
+            label = "post_ln"
+        elif op_instance_idx == 0:
+            label = "ln1"
+        elif op_instance_idx == 1:
+            label = "ffn_inp_normed"
+        else:
+            label = "layernorm"
+        _emit_hidden_export(out_expr, label, count_expr)
+        _emit_hidden_export_last_row(
+            out_expr,
+            label,
+            _hidden_arg("d_model", "embed_dim", "dim"),
+        )
     elif op_name == "rmsnorm":
         out_expr = _hidden_arg("output", "out", "x", "y")
         if op_instance_idx == 0:
@@ -1917,7 +1993,13 @@ def emit_op(
             if _same_op("position_embeddings"):
                 _emit_dump(_get_arg("x"), "inp_pos_emb", _mul_expr(_get_arg("grid_h"), _get_arg("grid_w"), _get_arg("embed_dim")))
                 return _return_lines(append_stop=True)
-            if _same_op("layernorm", "layernorm_forward_unrolled_slice", "layernorm_forward_rolled_slice"):
+            if _same_op(
+                "layernorm",
+                "layernorm_fp32_exact",
+                "layernorm_naive_serial_matched_precision",
+                "layernorm_forward_unrolled_slice",
+                "layernorm_forward_rolled_slice",
+            ):
                 dump_label = None
                 if str(section or "") == "footer":
                     dump_label = "post_ln"

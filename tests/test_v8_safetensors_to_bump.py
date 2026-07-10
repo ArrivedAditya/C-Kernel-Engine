@@ -1172,8 +1172,9 @@ def test_qwen3vl_safetensors_vision_maps_temporal_patch_split(tmp_path: Path) ->
         "v.patch_embd.weight.1",
     ]
     assert manifest["config"]["rope_layout"] == "multi_section_2d"
-    assert manifest["config"]["vision_mrope_n_dims"] == 4
+    assert manifest["config"]["vision_mrope_n_dims"] == 2
     assert manifest["config"]["vision_mrope_sections"] == [1, 1, 1, 1]
+    assert manifest["config"]["position_interpolation_policy"] == "align_corners_bilinear"
     assert (out / "weights.bump").stat().st_size > 0
 
     build_ir = Path("version/v8/scripts/build_ir_v8.py")
@@ -1205,6 +1206,12 @@ def test_qwen3vl_safetensors_vision_maps_temporal_patch_split(tmp_path: Path) ->
     )
     lowered_ops = json.loads(lowered.read_text(encoding="utf-8"))["operations"]
     kernels_by_op = {op["op"]: op.get("kernel") for op in lowered_ops}
+    assert kernels_by_op["position_embeddings"] == "position_embeddings_add_tiled_2d_align_corners"
+    call_ops = json.loads(call.read_text(encoding="utf-8"))["operations"]
+    rope_call = next(op for op in call_ops if op["op"] == "rope_qk")
+    rope_args = {arg["name"]: arg["expr"] for arg in rope_call["args"]}
+    assert rope_args["n_dims"] == "2"
+    assert [rope_args[f"section_{i}"] for i in range(4)] == ["1", "1", "1", "1"]
     for op_name in (
         "patch_proj",
         "patch_proj_aux",

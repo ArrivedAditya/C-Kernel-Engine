@@ -516,6 +516,12 @@ MAKE_TARGETS = {
         "target": "test-v8-vision-kernels",
         "timeout_sec": 300,
     },
+    "qwen3vl_template_contracts": {
+        "name": "Qwen3-VL Template/Codegen Contracts",
+        "category": "inference",
+        "target": "test-v8-qwen3vl",
+        "timeout_sec": 600,
+    },
     "v8_qwen3vl_vision_smoke": {
         "name": "v8 Qwen3-VL Vision Smoke",
         "category": "inference",

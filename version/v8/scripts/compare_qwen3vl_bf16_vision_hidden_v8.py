@@ -125,6 +125,7 @@ def _torch_captures(
         ) -> torch.Tensor:
             wanted = wanted_by_layer.get(layer, set())
             internal = {
+                "qkv_packed",
                 "q_proj",
                 "k_proj",
                 "v_proj",
@@ -143,8 +144,11 @@ def _torch_captures(
                 )
 
             seq_length = hidden_states.shape[0]
+            packed_qkv = attn.qkv(hidden_states)
+            if "qkv_packed" in wanted:
+                captures[f"qkv_packed@{layer}"] = packed_qkv.contiguous().detach().cpu().float()
             query_states, key_states, value_states = (
-                attn.qkv(hidden_states).reshape(seq_length, 3, attn.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+                packed_qkv.reshape(seq_length, 3, attn.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
             )
             if "q_proj" in wanted:
                 captures[f"q_proj@{layer}"] = query_states.permute(1, 0, 2).contiguous().detach().cpu().float()
@@ -269,7 +273,7 @@ def _torch_captures(
         block = model.blocks[layer]
         if "ln1" in wanted:
             handles.append(block.norm1.register_forward_hook(make_norm1_hook(layer)))
-        if {"q_proj", "k_proj", "v_proj", "rope_q", "rope_k", "attn_out_head_major", "out_proj"} & wanted:
+        if {"qkv_packed", "q_proj", "k_proj", "v_proj", "rope_q", "rope_k", "attn_out_head_major", "out_proj"} & wanted:
             original_forward = block.attn.forward
             original_attn_forwards.append((block.attn, original_forward))
             block.attn.forward = make_attn_forward(block.attn, layer, original_forward)  # type: ignore[method-assign]
@@ -297,10 +301,12 @@ def _torch_captures(
 
     try:
         with torch.no_grad():
-            if {"vision_patch_sum", "vision_position_embeddings"} & frontend_wanted:
+            if {"vision_patch_sum", "vision_patch_bias", "vision_position_embeddings"} & frontend_wanted:
                 patch_sum = model.patch_embed(pixel_values)
                 if "vision_patch_sum" in frontend_wanted:
                     captures["vision_patch_sum"] = patch_sum.detach().cpu().float()
+                if "vision_patch_bias" in frontend_wanted:
+                    captures["vision_patch_bias"] = patch_sum.detach().cpu().float()
                 if "vision_position_embeddings" in frontend_wanted:
                     pos_embeds = model.fast_pos_embed_interpolate(grid)
                     captures["vision_position_embeddings"] = (patch_sum + pos_embeds).detach().cpu().float()
@@ -312,6 +318,9 @@ def _torch_captures(
             attn.forward = original_forward  # type: ignore[method-assign]
         for handle in handles:
             handle.remove()
+
+    if "vision_output" in frontend_wanted:
+        captures["vision_output"] = torch.cat([final, *deepstack], dim=-1).detach().cpu().float()
 
     prefix_orders: dict[str, dict[str, float]] = {}
     if torch_prefix is not None and torch_prefix.exists():
@@ -472,7 +481,20 @@ def _run_ck_selector(args: argparse.Namespace, selector: str, numeric: Any) -> n
         planar_image=planar_image,
         output_name=selector,
     )
-    return _array_to_np(data)
+    result = _array_to_np(data)
+    base_name, _ = _parse_selector(selector)
+    head_major_names = {"q_proj", "k_proj", "v_proj", "rope_q", "rope_k", "attn_out_head_major"}
+    if base_name in head_major_names:
+        head_dim = int(cfg.get("head_dim") or cfg.get("aligned_head_dim") or 0)
+        if base_name in {"q_proj", "rope_q", "attn_out_head_major"}:
+            heads = int(cfg.get("num_heads") or cfg.get("vision_num_heads") or 0)
+        else:
+            heads = int(cfg.get("num_kv_heads") or cfg.get("vision_num_kv_heads") or cfg.get("num_heads") or 0)
+        row_width = heads * head_dim
+        if row_width > 0 and result.size % row_width == 0:
+            tokens = result.size // row_width
+            result = result.reshape(tokens, heads, head_dim).transpose(1, 0, 2).copy().reshape(-1)
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:

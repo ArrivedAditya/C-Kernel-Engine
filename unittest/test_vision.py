@@ -56,6 +56,17 @@ lib.position_embeddings_add_tiled_2d.argtypes = [
 ]
 lib.position_embeddings_add_tiled_2d.restype = None
 
+lib.position_embeddings_add_tiled_2d_align_corners.argtypes = [
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+]
+lib.position_embeddings_add_tiled_2d_align_corners.restype = None
+
 lib.vision_position_ids_2d_merge.argtypes = [
     ctypes.POINTER(ctypes.c_int32),
     ctypes.c_int,
@@ -230,6 +241,22 @@ def run_c_position_embeddings_add_tiled_2d(
         embed_dim,
         merge_size,
         source_grid_size,
+    )
+    return out
+
+
+def run_c_position_embeddings_add_tiled_2d_align_corners(
+    x: torch.Tensor,
+    pos: torch.Tensor,
+    grid_h: int,
+    grid_w: int,
+    merge_size: int,
+    source_grid_size: int,
+) -> torch.Tensor:
+    out = x.clone()
+    _, embed_dim = out.shape
+    lib.position_embeddings_add_tiled_2d_align_corners(
+        tensor_to_ptr(out), tensor_to_ptr(pos), grid_h, grid_w, embed_dim, merge_size, source_grid_size
     )
     return out
 
@@ -503,6 +530,32 @@ def _ref_position_embeddings_add_tiled_2d(
     return torch.from_numpy(x_np)
 
 
+def _ref_position_embeddings_add_tiled_2d_align_corners(
+    x: torch.Tensor,
+    pos: torch.Tensor,
+    grid_h: int,
+    grid_w: int,
+    merge_size: int,
+    source_grid_size: int,
+) -> torch.Tensor:
+    ys = torch.linspace(0, source_grid_size - 1, grid_h, dtype=torch.float32)
+    xs = torch.linspace(0, source_grid_size - 1, grid_w, dtype=torch.float32)
+    y0 = ys.to(torch.long)
+    x0 = xs.to(torch.long)
+    y1 = (y0 + 1).clamp(max=source_grid_size - 1)
+    x1 = (x0 + 1).clamp(max=source_grid_size - 1)
+    dy = ys - y0
+    dx = xs - x0
+    table = pos.view(source_grid_size, source_grid_size, -1)
+    interp = (
+        table[y0[:, None], x0[None, :]] * ((1 - dy)[:, None] * (1 - dx)[None, :])[..., None]
+        + table[y0[:, None], x1[None, :]] * ((1 - dy)[:, None] * dx[None, :])[..., None]
+        + table[y1[:, None], x0[None, :]] * (dy[:, None] * (1 - dx)[None, :])[..., None]
+        + table[y1[:, None], x1[None, :]] * (dy[:, None] * dx[None, :])[..., None]
+    ).reshape(grid_h * grid_w, -1)
+    return x + interp.index_select(0, _tile_order_indices(grid_h, grid_w, merge_size))
+
+
 def _ref_add_stream_reorder_2d(
     main_input: torch.Tensor,
     aux_input: torch.Tensor,
@@ -665,6 +718,23 @@ def test_position_embeddings_add_tiled_2d_qwen3vl_resize_order(
 
     if diff > 2e-6:
         raise AssertionError("position_embeddings_add_tiled_2d Qwen3-VL resize order mismatch!")
+
+
+def test_position_embeddings_add_tiled_2d_align_corners():
+    grid_h, grid_w, source_grid_size, embed_dim, merge_size = 6, 10, 4, 8, 2
+    g = torch.Generator().manual_seed(4410)
+    x = torch.randn(grid_h * grid_w, embed_dim, generator=g)
+    pos = torch.randn(source_grid_size * source_grid_size, embed_dim, generator=g)
+    ref = _ref_position_embeddings_add_tiled_2d_align_corners(
+        x, pos, grid_h, grid_w, merge_size, source_grid_size
+    )
+    out_c = run_c_position_embeddings_add_tiled_2d_align_corners(
+        x, pos, grid_h, grid_w, merge_size, source_grid_size
+    )
+    diff = max_diff(out_c, ref)
+    print(f"\n--- Testing align-corners tiled position embeddings (max diff {diff:.2e}) ---")
+    if diff > 2e-6:
+        raise AssertionError("align-corners tiled position embeddings mismatch")
 
 
 def test_rowwise_bias_add(tokens=2304, embed_dim=1152):
@@ -1012,6 +1082,7 @@ if __name__ == "__main__":
     test_position_embeddings_add()
     test_position_embeddings_add_tiled_2d()
     test_position_embeddings_add_tiled_2d_qwen3vl_resize_order()
+    test_position_embeddings_add_tiled_2d_align_corners()
     test_vision_position_ids()
     test_vision_position_ids(grid_h=6, grid_w=6, merge_size=3)
     test_rowwise_bias_add()

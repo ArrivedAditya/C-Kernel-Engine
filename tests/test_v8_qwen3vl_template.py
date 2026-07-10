@@ -140,6 +140,29 @@ def _make_qwen3vl_manifest() -> dict:
 
 class V8Qwen3VLTemplateTests(unittest.TestCase):
 
+    def test_qwen3vl_invalid_vision_mrope_sections_fail_lowering(self) -> None:
+        manifest = _make_qwen3vl_manifest()
+        manifest["config"]["vision_mrope_n_dims"] = 2
+        manifest["config"]["vision_mrope_sections"] = [2, 2, 2, 2]
+        with tempfile.TemporaryDirectory(prefix="v8_qwen3vl_invalid_mrope_") as td:
+            td_path = Path(td)
+            manifest_path = td_path / "weights_manifest.json"
+            manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            with self.assertRaisesRegex(
+                ValueError,
+                "vision M-RoPE sections exceed available frequency pairs",
+            ):
+                build_ir_v8.main(
+                    [
+                        "--manifest", str(manifest_path),
+                        "--mode", "prefill",
+                        "--output", str(td_path / "ir1.json"),
+                        "--layout-output", str(td_path / "layout.json"),
+                        "--lowered-output", str(td_path / "lowered.json"),
+                        "--call-output", str(td_path / "call.json"),
+                    ]
+                )
+
     def test_qwen3vl_mmproj_position_grid_size_uses_square_side(self) -> None:
         class FakeTensor:
             dims = [2304, 1152]
@@ -396,6 +419,7 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
 
     def test_qwen3vl_codegen_smoke_emits_c(self) -> None:
         manifest = _make_qwen3vl_manifest()
+        manifest["config"]["position_interpolation_policy"] = "align_corners_bilinear"
         with tempfile.TemporaryDirectory(prefix="v8_qwen3vl_codegen_") as td:
             td_path = Path(td)
             manifest_path = td_path / "weights_manifest.json"
@@ -434,6 +458,10 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             pos_embed = next(op for op in call_ops if op.get("op") == "position_embeddings")
             pos_grid = next(arg for arg in pos_embed.get("args", []) if arg.get("name") == "source_grid_size")
             self.assertEqual(pos_grid.get("expr"), "48")
+            self.assertEqual(
+                pos_embed.get("function"),
+                "position_embeddings_add_tiled_2d_align_corners",
+            )
             split_qkv = next(op for op in call_ops if op.get("op") == "split_qkv_packed")
             self.assertEqual(split_qkv.get("function"), "split_qkv_packed_head_major_forward")
             qkv_packed_proj = next(op for op in call_ops if op.get("op") == "qkv_packed_proj")
@@ -525,6 +553,16 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             self.assertIn("ck_strict_mtmd_clip_encode_planar_f32", text)
             self.assertIn("gelu_ggml_inplace", text)
             self.assertIn("layernorm_naive_serial_matched_precision", text)
+            self.assertIn("ck_debug_export_hidden(model, 0, \"qkv_packed\"", text)
+            self.assertIn("ck_debug_export_hidden(model, 0, \"q_proj\"", text)
+            self.assertIn("ck_debug_export_hidden(model, 0, \"k_proj\"", text)
+            self.assertIn("ck_debug_export_hidden(model, 0, \"v_proj\"", text)
+            self.assertIn("ck_debug_export_hidden(model, 0, \"rope_q\"", text)
+            self.assertIn("ck_debug_export_hidden(model, 0, \"rope_k\"", text)
+            self.assertIn("ck_debug_export_hidden(model, 0, \"attn_out_head_major\"", text)
+            self.assertIn("ck_debug_export_hidden(model, 0, \"out_proj\"", text)
+            self.assertIn("ck_debug_export_hidden(model, 0, \"ln1\"", text)
+            self.assertIn("ck_debug_export_hidden(model, 0, \"ffn_inp_normed\"", text)
             self.assertIn("feature_concat", text)
             self.assertIn("transpose_attn_out_to_token_major", text)
             self.assertNotIn("transpose_inplace();", text)
