@@ -916,6 +916,7 @@
                         <a href="v7-runbook.html">v7 Inference + Training Runbook<small>Copy/paste train + infer workflow</small></a>
                         <a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook<small>Pretrain + midtrain data generation</small></a>
                         <a href="testing.html">Testing<small>Numerical parity verification</small></a>
+                        <a href="divergence-harness.html">Stitched Divergence Harness<small>llama.cpp/PyTorch tensor attribution</small></a>
                         <a href="threadpool.html">Thread Pool<small>Persistent pthreads, dispatch</small></a>
                     </div>
                 </div>
@@ -1695,8 +1696,7 @@
       (<code>make nightly-bf16</code>)</li>
     <li><strong>FP16 Attention Contracts</strong>: Named numerical guards for llama.cpp-compatible unfused causal prefill and split-KV decode,
       including FP16 Q/K rounding, FP16 probability/value reduction, FP16 online-softmax partials, FP32 ordered reduction, GQA/padding,
-      the KV 511/512 semantic boundary,
-      and the Qwen3-VL <code>KV=1058, H=32, D=128</code> shape
+      the KV 511/512 semantic boundary, and the Qwen3-VL <code>KV=1058, H=32, D=128</code> shape
       (<code>make test-attention-f16-split-kv</code>)</li>
     <li><strong>v8 Stitched Dump Alignment</strong>: Guards canonical output-projection aliases and preserves absolute CK/llama
       source-token provenance when mixed-prefix dumps are rebased for per-token comparison
@@ -2751,7 +2751,7 @@ document.addEventListener('DOMContentLoaded', loadResults);
             </div>
             <div style="text-align: right;">
                 <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
-                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-07-08</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-07-10</p>
             </div>
         </div>
     </footer>
