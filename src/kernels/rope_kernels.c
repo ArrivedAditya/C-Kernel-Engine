@@ -1240,27 +1240,24 @@ static void vision_mrope_apply_head(
         return;
     }
 
-    int rope_dims = n_dims;
-    if (rope_dims > head_dim) {
-        rope_dims = head_dim;
+    int rope_pairs = n_dims;
+    if (rope_pairs > head_dim / 2) {
+        rope_pairs = head_dim / 2;
     }
-    rope_dims &= ~1;
-    if (rope_dims <= 0) {
+    if (rope_pairs <= 0 || 2 * rope_pairs > aligned_head_dim) {
         return;
     }
 
-    const int rope_pairs = rope_dims / 2;
-    const int axis_pairs = rope_pairs / 2;
-    if (axis_pairs <= 0) {
+    const int axis_y_pairs = sections[0];
+    const int axis_x_pairs = sections[1];
+    if (axis_y_pairs <= 0 || axis_x_pairs <= 0 || axis_y_pairs + axis_x_pairs > rope_pairs) {
         return;
     }
 
     const int num_pos = num_tokens;
-    const int axis_rotary_dim = axis_pairs * 2;
-    const float theta_scale = powf(freq_base, -2.0f / (float) axis_rotary_dim);
-    float corr_dims[2] = {0.0f, (float) (axis_rotary_dim - 1)};
-    vision_mrope_yarn_corr_dims(axis_rotary_dim, n_ctx_orig, freq_base, beta_fast, beta_slow, corr_dims);
-    (void) sections;
+    const float theta_scale = powf(freq_base, -2.0f / (float) rope_pairs);
+    float corr_dims[2] = {0.0f, (float) (rope_pairs - 1)};
+    vision_mrope_yarn_corr_dims(rope_pairs, n_ctx_orig, freq_base, beta_fast, beta_slow, corr_dims);
 
     for (int tok = 0; tok < num_tokens; ++tok) {
         float theta_y = (float) positions[tok];
@@ -1268,8 +1265,10 @@ static void vision_mrope_apply_head(
         float *row = x + (size_t) tok * (size_t) aligned_head_dim;
 
         for (int pair = 0; pair < rope_pairs; ++pair) {
-            const int is_x_axis = pair >= axis_pairs;
-            const int axis_pair = is_x_axis ? pair - axis_pairs : pair;
+            const int is_x_axis = pair >= axis_y_pairs && pair < axis_y_pairs + axis_x_pairs;
+            if (pair == axis_y_pairs) {
+                theta_x = (float) positions[tok + num_pos];
+            }
             const float theta = is_x_axis ? theta_x : theta_y;
 
             float cos_theta = 0.0f;
@@ -1278,7 +1277,7 @@ static void vision_mrope_apply_head(
                 theta,
                 freq_scale,
                 corr_dims,
-                axis_pair * 2,
+                pair * 2,
                 ext_factor,
                 attn_factor,
                 &cos_theta,
@@ -1286,15 +1285,12 @@ static void vision_mrope_apply_head(
             );
 
             const float x0 = row[pair];
-            const float x1 = row[pair + rope_pairs];
+            const float x1 = row[pair + n_dims];
             row[pair] = x0 * cos_theta - x1 * sin_theta;
-            row[pair + rope_pairs] = x0 * sin_theta + x1 * cos_theta;
+            row[pair + n_dims] = x0 * sin_theta + x1 * cos_theta;
 
-            if (is_x_axis) {
-                theta_x *= theta_scale;
-            } else {
-                theta_y *= theta_scale;
-            }
+            theta_y *= theta_scale;
+            theta_x *= theta_scale;
         }
     }
 }

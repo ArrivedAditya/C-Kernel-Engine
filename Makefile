@@ -747,7 +747,10 @@ all: $(BUILD_DIR) $(LIB)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(BUILD_STAMP): | $(BUILD_DIR)
+.PHONY: FORCE_BUILD_FLAGS
+FORCE_BUILD_FLAGS:
+
+$(BUILD_STAMP): FORCE_BUILD_FLAGS | $(BUILD_DIR)
 	@printf 'CC=%s\nCFLAGS=%s\nLDFLAGS=%s\n' "$(CC)" "$(CFLAGS)" "$(LDFLAGS)" > $@.tmp
 	@if [ ! -f $@ ] || ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi
 

@@ -945,12 +945,11 @@ def _ref_qwen3vl_vision_mrope_qk(
     def apply(x: torch.Tensor) -> torch.Tensor:
         out = x.clone()
         head_dim = out.shape[-1]
-        rope_dims = min(int(n_dims), int(head_dim)) & ~1
-        rope_pairs = rope_dims // 2
+        rope_pairs = min(int(n_dims), int(head_dim) // 2)
         axis_pairs = rope_pairs // 2
-        if axis_pairs <= 0:
+        if axis_pairs <= 0 or 2 * rope_pairs > head_dim:
             return out
-        theta_scale = freq_base ** (-2.0 / float(axis_pairs * 2))
+        theta_scale = freq_base ** (-2.0 / float(rope_pairs))
         num_tokens = out.shape[1]
         for h in range(out.shape[0]):
             for tok in range(num_tokens):
@@ -958,15 +957,14 @@ def _ref_qwen3vl_vision_mrope_qk(
                 theta_x = float(positions[1, tok].item())
                 for pair in range(rope_pairs):
                     is_x_axis = pair >= axis_pairs
-                    axis_pair = pair - axis_pairs if is_x_axis else pair
                     base_theta = theta_x if is_x_axis else theta_y
-                    theta = base_theta * (theta_scale ** axis_pair) * freq_scale
+                    theta = base_theta * (theta_scale ** (pair % axis_pairs)) * freq_scale
                     c = math.cos(theta)
                     s = math.sin(theta)
                     x0 = float(out[h, tok, pair].item())
-                    x1 = float(out[h, tok, pair + rope_pairs].item())
+                    x1 = float(out[h, tok, pair + n_dims].item())
                     out[h, tok, pair] = x0 * c - x1 * s
-                    out[h, tok, pair + rope_pairs] = x0 * s + x1 * c
+                    out[h, tok, pair + n_dims] = x0 * s + x1 * c
         return out
 
     return apply(q), apply(k)
@@ -990,7 +988,7 @@ def test_mrope_qk_vision(num_heads=2, num_kv_heads=2, num_tokens=4, head_dim=8):
     k = torch.randn(num_kv_heads, num_tokens, head_dim, dtype=torch.float32)
     positions = _ref_vision_position_ids(2, 2, 2)
     sections = [max(1, head_dim // 4)] * 4
-    n_dims = head_dim
+    n_dims = head_dim // 2
 
     ref_q, ref_k = _ref_qwen3vl_vision_mrope_qk(q, k, positions, n_dims)
     out_q, out_k = run_c_mrope_qk(q, k, positions, n_dims, sections)

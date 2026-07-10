@@ -154,6 +154,7 @@ def _run_generated_encoder_with_dump(
     strict_parity: bool,
     strict_dump_layer: int | None,
     ck_stop_op: int | None,
+    dump_names: str | None,
 ) -> None:
     dump_dir.mkdir(parents=True, exist_ok=True)
     dump_path = dump_dir / "dump.bin"
@@ -171,6 +172,7 @@ def _run_generated_encoder_with_dump(
         None if strict_dump_layer is None else str(strict_dump_layer),
     )
     old_stop_op = _with_env_var("CK_STOP_OP", None if ck_stop_op is None else str(int(ck_stop_op)))
+    old_filter = _with_env_var("CK_PARITY_OP_FILTER", dump_names)
     try:
         npv8._run_generated_encoder(
             model_so=model_so,
@@ -181,6 +183,7 @@ def _run_generated_encoder_with_dump(
             strict_parity=strict_parity,
         )
     finally:
+        _restore_env_var("CK_PARITY_OP_FILTER", old_filter)
         _restore_env_var("CK_STOP_OP", old_stop_op)
         _restore_env_var("CK_STRICT_ATTN_DUMP_LAYER", old_dump_layer)
         _restore_env_var("CK_PARITY_DIR", old_dump)
@@ -265,6 +268,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--llama-dump-layer", type=int, default=None, help="Optional exact llama layer id filter; globals remain included")
     ap.add_argument("--ck-strict-dump-layer", type=int, default=None, help="Optional exact CK strict-attention dump layer filter")
+    ap.add_argument(
+        "--ck-dump-names",
+        type=str,
+        default=None,
+        help="Optional comma-separated CK dump filter; defaults to --llama-dump-names",
+    )
     ck_stop = ap.add_mutually_exclusive_group()
     ck_stop.add_argument("--ck-stop-op", type=int, default=None, help="Return from generated CK encoder immediately after this generated op index")
     ck_stop.add_argument("--ck-stop-layer", type=int, default=None, help="Return from generated CK encoder after the last generated op in this encoder layer")
@@ -320,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
         strict_parity=bool(args.strict_parity),
         strict_dump_layer=args.ck_strict_dump_layer,
         ck_stop_op=ck_stop_op,
+        dump_names=args.ck_dump_names or args.llama_dump_names,
     )
     _run_llama_encoder_with_dump(
         shim_so=shim_so,
@@ -368,6 +378,7 @@ def main(argv: list[str] | None = None) -> int:
         },
         "strict_parity": bool(args.strict_parity),
         "llama_dump_names": args.llama_dump_names,
+        "ck_dump_names": args.ck_dump_names or args.llama_dump_names,
         "llama_dump_layer": args.llama_dump_layer,
         "atol": args.atol,
         "rtol": args.rtol,

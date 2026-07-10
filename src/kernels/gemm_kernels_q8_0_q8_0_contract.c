@@ -43,6 +43,12 @@ static int ck_q80_contract_dump_enabled(void)
     return v && v[0] && strcmp(v, "0") != 0;
 }
 
+static int ck_q80_contract_cached_input_enabled(void)
+{
+    const char *v = getenv("CK_STRICT_GEMM_USE_CACHED_A");
+    return v && v[0] && strcmp(v, "0") != 0;
+}
+
 static void ck_q80_contract_dump_tensor(const char *name,
                                         int layer_id,
                                         const float *data,
@@ -422,7 +428,7 @@ void gemm_nt_q8_0_q8_0_contract(const float *A,
     const int dump_enabled = strict && ck_q80_contract_dump_enabled();
     int strict_cached_layer = -1;
     int strict_dump_layer = -1;
-    if (ck_strict_parity_enabled()) {
+    if (ck_strict_parity_enabled() && ck_q80_contract_cached_input_enabled()) {
         const float *cached = ck_strict_consume_next_gemm_a((size_t) M * (size_t) K);
         if (cached) {
             A_use = cached;
