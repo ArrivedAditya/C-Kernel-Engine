@@ -138,12 +138,15 @@ class ParityDump:
     """Represents a single tensor dump."""
 
     def __init__(self, layer_id: int, op_name: str, data: np.ndarray,
-                 token_id: int, dtype: str):
+                 token_id: int, dtype: str, *, source_token_id: int | None = None,
+                 source_name: str | None = None):
         self.layer_id = layer_id
         self.op_name = op_name
         self.data = data
         self.token_id = token_id
         self.dtype = dtype
+        self.source_token_id = token_id if source_token_id is None else source_token_id
+        self.source_name = source_name
 
     def __repr__(self):
         return f"ParityDump(layer={self.layer_id}, op={self.op_name}, " \

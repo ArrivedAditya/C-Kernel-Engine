@@ -391,10 +391,16 @@ MAKE_TARGETS = {
         "timeout_sec": 1800,
     },
     "attention_f16_split_kv": {
-        "name": "FP16 Split-KV Decode Contract",
+        "name": "FP16 Prefill/Decode Attention Contracts",
         "category": "kernels",
         "target": "test-attention-f16-split-kv",
         "timeout_sec": 180,
+    },
+    "v8_dump_alignment": {
+        "name": "v8 Stitched Dump Alignment",
+        "category": "parity",
+        "target": "test-v8-dump-alignment",
+        "timeout_sec": 60,
     },
     "threadpool_parity": {
         "name": "Thread Pool GEMV Parity (serial vs dispatch)",
