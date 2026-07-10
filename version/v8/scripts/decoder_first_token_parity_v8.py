@@ -417,6 +417,23 @@ def _canonical_dump_op_name(op_name: str) -> str:
     return str(op_name)
 
 
+def _ck_dump_filter_names(dump_names: str) -> str:
+    """Expand llama.cpp callback names to the equivalent CK dump names."""
+    expanded: list[str] = []
+    seen: set[str] = set()
+    for raw_name in str(dump_names).split(","):
+        raw_name = raw_name.strip()
+        if not raw_name:
+            continue
+        layer_id, canonical_name = parity_test_v7._normalize_layer_and_op(-1, raw_name)
+        canonical_filter = f"{canonical_name}-{layer_id}" if layer_id >= 0 else canonical_name
+        for candidate in (raw_name, canonical_filter):
+            if candidate not in seen:
+                seen.add(candidate)
+                expanded.append(candidate)
+    return ",".join(expanded)
+
+
 def _augment_legacy_kqv_aliases(dumps: list[Any]) -> list[Any]:
     """
     Preserve modern native ``kqv_out`` dumps, but backfill a compatibility
@@ -720,7 +737,16 @@ def _compare_dump_sets(
         llama_by_key.setdefault(key, []).append(dump)
 
     results: list[dict[str, Any]] = []
-    all_keys = sorted(set(ck_by_key.keys()) | set(llama_by_key.keys()))
+    # Dump files are emitted in graph execution order. Preserve that order so
+    # first_issue identifies the first failing circuit boundary, not the first
+    # failing operation alphabetically.
+    all_keys: list[tuple[int, str]] = []
+    seen_keys: set[tuple[int, str]] = set()
+    for dump in [*ck_filtered, *llama_filtered]:
+        key = (int(dump.layer_id), _canonical_dump_op_name(str(dump.op_name)))
+        if key not in seen_keys:
+            seen_keys.add(key)
+            all_keys.append(key)
     for layer_id, op_name in all_keys:
         ck_candidates = ck_by_key.get((layer_id, op_name), [])
         llama_candidates = llama_by_key.get((layer_id, op_name), [])
@@ -926,16 +952,17 @@ def _capture_dump_compare(
         dump_dir=llama_dump_dir,
         dump_names=dump_names,
     )
+    ck_dump_names = _ck_dump_filter_names(dump_names)
     old_ck_op_filter = os.environ.get("CK_PARITY_OP_FILTER")
-    if dump_names:
-        os.environ["CK_PARITY_OP_FILTER"] = str(dump_names)
+    if ck_dump_names:
+        os.environ["CK_PARITY_OP_FILTER"] = ck_dump_names
     try:
         try:
             import ctypes as _ctypes
             _libc = _ctypes.CDLL(None)
             _libc.setenv.argtypes = [_ctypes.c_char_p, _ctypes.c_char_p, _ctypes.c_int]
-            if dump_names:
-                _libc.setenv(b"CK_PARITY_OP_FILTER", str(dump_names).encode(), 1)
+            if ck_dump_names:
+                _libc.setenv(b"CK_PARITY_OP_FILTER", ck_dump_names.encode(), 1)
         except Exception:
             pass
         ck = _capture_ck_dump(
@@ -1011,6 +1038,7 @@ def _capture_dump_compare(
     return ck, {
         "status": status,
         "dump_names": [item.strip() for item in str(dump_names).split(",") if item.strip()],
+        "ck_dump_names": [item.strip() for item in ck_dump_names.split(",") if item.strip()],
         "pass_filter": str(dump_pass),
         "atol": float(dump_atol),
         "rtol": float(dump_rtol),
