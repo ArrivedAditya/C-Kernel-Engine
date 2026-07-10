@@ -727,29 +727,14 @@ int ck_attention_full_ggml_graph_oracle_multihead(const float *q,
     ck_ggml_new_graph_fn ggml_new_graph_fn = ck_resolve_ggml_new_graph();
     ck_ggml_build_forward_expand_fn ggml_build_forward_expand_fn = ck_resolve_ggml_build_forward_expand();
     ck_ggml_set_input_fn ggml_set_input_fn = ck_resolve_ggml_set_input();
-    ck_ggml_backend_init_by_type_fn ggml_backend_init_by_type_fn = ck_resolve_ggml_backend_init_by_type();
-    ck_ggml_backend_free_fn ggml_backend_free_fn = ck_resolve_ggml_backend_free();
-    ck_ggml_backend_cpu_set_n_threads_fn ggml_backend_cpu_set_n_threads_fn = ck_resolve_ggml_backend_cpu_set_n_threads();
-    ck_ggml_backend_get_default_buffer_type_fn ggml_backend_get_default_buffer_type_fn = ck_resolve_ggml_backend_get_default_buffer_type();
-    ck_ggml_backend_sched_new_fn ggml_backend_sched_new_fn = ck_resolve_ggml_backend_sched_new();
-    ck_ggml_backend_sched_free_fn ggml_backend_sched_free_fn = ck_resolve_ggml_backend_sched_free();
-    ck_ggml_backend_sched_reset_fn ggml_backend_sched_reset_fn = ck_resolve_ggml_backend_sched_reset();
-    ck_ggml_backend_sched_alloc_graph_fn ggml_backend_sched_alloc_graph_fn = ck_resolve_ggml_backend_sched_alloc_graph();
-    ck_ggml_backend_tensor_set_fn ggml_backend_tensor_set_fn = ck_resolve_ggml_backend_tensor_set();
-    ck_ggml_backend_tensor_get_fn ggml_backend_tensor_get_fn = ck_resolve_ggml_backend_tensor_get();
-    ck_ggml_backend_sched_graph_compute_fn ggml_backend_sched_graph_compute_fn = ck_resolve_ggml_backend_sched_graph_compute();
+    ck_ggml_graph_compute_with_ctx_fn ggml_graph_compute_with_ctx_fn = ck_resolve_ggml_graph_compute_with_ctx();
 
     if (!ggml_cpu_init_fn || !ggml_init_fn || !ggml_free_fn ||
         !ggml_new_tensor_1d_fn || !ggml_new_tensor_2d_fn ||
         !ggml_view_3d_fn || !ggml_permute_fn || !ggml_cont_fn || !ggml_cont_2d_fn ||
         !ggml_mul_mat_fn || !ggml_soft_max_ext_fn || !ggml_new_graph_fn ||
-        !ggml_build_forward_expand_fn || !ggml_backend_init_by_type_fn ||
-        !ggml_set_input_fn ||
-        !ggml_backend_free_fn || !ggml_backend_cpu_set_n_threads_fn ||
-        !ggml_backend_get_default_buffer_type_fn || !ggml_backend_sched_new_fn ||
-        !ggml_backend_sched_free_fn || !ggml_backend_sched_reset_fn ||
-        !ggml_backend_sched_alloc_graph_fn || !ggml_backend_tensor_set_fn ||
-        !ggml_backend_tensor_get_fn || !ggml_backend_sched_graph_compute_fn) {
+        !ggml_build_forward_expand_fn || !ggml_graph_compute_with_ctx_fn ||
+        !ggml_set_input_fn) {
         return 0;
     }
 
@@ -768,7 +753,7 @@ int ck_attention_full_ggml_graph_oracle_multihead(const float *q,
     struct ggml_init_params params = {
         .mem_size = mem_size,
         .mem_buffer = NULL,
-        .no_alloc = true,
+        .no_alloc = false,
     };
     struct ggml_context *ctx = ggml_init_fn(params);
     if (!ctx) {
@@ -882,36 +867,8 @@ int ck_attention_full_ggml_graph_oracle_multihead(const float *q,
         ggml_build_forward_expand_fn(gf, kq_scores_dump);
     }
     ggml_build_forward_expand_fn(gf, cur);
-    ggml_backend_t backend = ggml_backend_init_by_type_fn(GGML_BACKEND_DEVICE_TYPE_CPU, NULL);
-    if (!backend) {
+    if (ggml_graph_compute_with_ctx_fn(ctx, gf, 1) != GGML_STATUS_SUCCESS) {
         free(qkv_pack);
-        ggml_free_fn(ctx);
-        return 0;
-    }
-    ggml_backend_buffer_type_t buft = ggml_backend_get_default_buffer_type_fn(backend);
-    ggml_backend_t backends[1] = { backend };
-    ggml_backend_buffer_type_t bufts[1] = { buft };
-    ggml_backend_sched_t sched = ggml_backend_sched_new_fn(backends, bufts, 1, 8192, false, true);
-    if (!sched) {
-        free(qkv_pack);
-        ggml_backend_free_fn(backend);
-        ggml_free_fn(ctx);
-        return 0;
-    }
-    ggml_backend_cpu_set_n_threads_fn(backend, 1);
-    ggml_backend_sched_reset_fn(sched);
-    if (!ggml_backend_sched_alloc_graph_fn(sched, gf)) {
-        free(qkv_pack);
-        ggml_backend_sched_free_fn(sched);
-        ggml_backend_free_fn(backend);
-        ggml_free_fn(ctx);
-        return 0;
-    }
-    ggml_backend_tensor_set_fn(qkv_base, qkv_pack, 0, qkv_pack_elems * sizeof(float));
-    free(qkv_pack);
-    if (ggml_backend_sched_graph_compute_fn(sched, gf) != GGML_STATUS_SUCCESS) {
-        ggml_backend_sched_free_fn(sched);
-        ggml_backend_free_fn(backend);
         ggml_free_fn(ctx);
         return 0;
     }
@@ -934,12 +891,11 @@ int ck_attention_full_ggml_graph_oracle_multihead(const float *q,
         const size_t cur_elems = (size_t) cur->ne[0] * (size_t) cur->ne[1] * (size_t) cur->ne[2] * (size_t) cur->ne[3];
         float *cur_host = (float *) malloc(cur_elems * sizeof(float));
         if (!cur_host) {
-            ggml_backend_sched_free_fn(sched);
-            ggml_backend_free_fn(backend);
+            free(qkv_pack);
             ggml_free_fn(ctx);
             return 0;
         }
-        ggml_backend_tensor_get_fn(cur, cur_host, 0, cur_elems * sizeof(float));
+        memcpy(cur_host, cur->data, cur_elems * sizeof(float));
         const float *src = cur_host;
         ck_strict_store_next_gemm_a(src, (size_t) num_tokens * (size_t) num_heads * (size_t) head_dim);
         const size_t token_width = (size_t) num_heads * (size_t) head_dim;
@@ -957,8 +913,7 @@ int ck_attention_full_ggml_graph_oracle_multihead(const float *q,
     }
 
     ok = 1;
-    ggml_backend_sched_free_fn(sched);
-    ggml_backend_free_fn(backend);
+    free(qkv_pack);
     ggml_free_fn(ctx);
     return ok;
 }
