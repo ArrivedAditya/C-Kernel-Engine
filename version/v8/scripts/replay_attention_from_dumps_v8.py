@@ -24,12 +24,6 @@ if str(V7_SCRIPTS) not in sys.path:
 import parity_test  # type: ignore  # noqa: E402
 
 
-NUM_TOKENS = 2304
-NUM_HEADS = 16
-HEAD_DIM = 72
-ALIGNED_HEAD_DIM = 72
-
-
 def _require_tensor_any(dumps: list[parity_test.ParityDump], layer: int, names: list[str]) -> np.ndarray:
     for name in names:
         for dump in dumps:
@@ -38,20 +32,29 @@ def _require_tensor_any(dumps: list[parity_test.ParityDump], layer: int, names: 
     raise KeyError(f"missing tensor layer={layer} names={names}")
 
 
-def _reshape_token_major_qhd(flat: np.ndarray) -> np.ndarray:
-    expected = NUM_TOKENS * NUM_HEADS * HEAD_DIM
+def _infer_num_tokens(flat: np.ndarray, num_heads: int, head_dim: int) -> int:
+    denom = num_heads * head_dim
+    if denom <= 0 or flat.size % denom != 0:
+        raise ValueError(
+            f"cannot infer tokens from {flat.size} elems with heads={num_heads} head_dim={head_dim}"
+        )
+    return flat.size // denom
+
+
+def _reshape_token_major_qhd(flat: np.ndarray, num_tokens: int, num_heads: int, head_dim: int) -> np.ndarray:
+    expected = num_tokens * num_heads * head_dim
     if flat.size != expected:
         raise ValueError(f"expected {expected} elems, got {flat.size}")
-    return flat.reshape(NUM_TOKENS, NUM_HEADS, HEAD_DIM)
+    return flat.reshape(num_tokens, num_heads, head_dim)
 
 
-def _to_head_major(flat: np.ndarray) -> np.ndarray:
-    token_major = _reshape_token_major_qhd(flat)
+def _to_head_major(flat: np.ndarray, num_tokens: int, num_heads: int, head_dim: int) -> np.ndarray:
+    token_major = _reshape_token_major_qhd(flat, num_tokens, num_heads, head_dim)
     return np.transpose(token_major, (1, 0, 2)).copy()
 
 
-def _to_token_major(flat_head_major: np.ndarray) -> np.ndarray:
-    return np.transpose(flat_head_major.reshape(NUM_HEADS, NUM_TOKENS, ALIGNED_HEAD_DIM), (1, 0, 2)).copy()
+def _to_token_major(flat_head_major: np.ndarray, num_tokens: int, num_heads: int, aligned_head_dim: int) -> np.ndarray:
+    return np.transpose(flat_head_major.reshape(num_heads, num_tokens, aligned_head_dim), (1, 0, 2)).copy()
 
 
 def _metrics(a: np.ndarray, b: np.ndarray) -> dict[str, float]:
@@ -111,14 +114,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--strict", action="store_true")
     ap.add_argument("--disable-multihead-oracle", action="store_true")
     ap.add_argument("--disable-regular-oracle", action="store_true")
+    ap.add_argument("--num-heads", type=int, default=16)
+    ap.add_argument("--num-kv-heads", type=int, default=None)
+    ap.add_argument("--head-dim", type=int, default=72)
+    ap.add_argument("--aligned-head-dim", type=int, default=None)
     ap.add_argument("--output", type=Path, default=None)
     args = ap.parse_args(argv)
 
     dumps = parity_test.read_dump_file(args.dump)
-    q = _to_head_major(_require_tensor_any(dumps, args.layer, ["Qcur_rope"]))
-    k = _to_head_major(_require_tensor_any(dumps, args.layer, ["Kcur_rope"]))
-    v = _to_head_major(_require_tensor_any(dumps, args.layer, ["v_proj", "Vcur"]))
-    ref = _reshape_token_major_qhd(_require_tensor_any(dumps, args.layer, ["kqv_out"]))
+    q_flat = _require_tensor_any(dumps, args.layer, ["Qcur_rope"])
+    num_tokens = _infer_num_tokens(q_flat, args.num_heads, args.head_dim)
+    num_kv_heads = args.num_kv_heads if args.num_kv_heads is not None else args.num_heads
+    aligned_head_dim = args.aligned_head_dim if args.aligned_head_dim is not None else args.head_dim
+
+    q = _to_head_major(q_flat, num_tokens, args.num_heads, args.head_dim)
+    k = _to_head_major(_require_tensor_any(dumps, args.layer, ["Kcur_rope"]), num_tokens, num_kv_heads, args.head_dim)
+    v = _to_head_major(_require_tensor_any(dumps, args.layer, ["v_proj", "Vcur"]), num_tokens, num_kv_heads, args.head_dim)
+    ref = _reshape_token_major_qhd(_require_tensor_any(dumps, args.layer, ["kqv_out"]), num_tokens, args.num_heads, args.head_dim)
 
     lib = ctypes.CDLL(str(BUILD_DIR / "libckernel_engine.so"))
     lib.ck_set_strict_parity.argtypes = [ctypes.c_int]
@@ -143,18 +155,18 @@ def main(argv: list[str] | None = None) -> int:
             os.environ.pop("CK_STRICT_DISABLE_REGULAR_ATTN_ORACLE", None)
 
         fn = _resolve_attention_fn(lib, args.mode)
-        out = np.zeros((NUM_HEADS, NUM_TOKENS, ALIGNED_HEAD_DIM), dtype=np.float32)
+        out = np.zeros((args.num_heads, num_tokens, aligned_head_dim), dtype=np.float32)
         fn(
             q.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
             k.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
             v.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
             out.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-            NUM_HEADS,
-            NUM_HEADS,
-            NUM_TOKENS,
-            HEAD_DIM,
-            ALIGNED_HEAD_DIM,
-            NUM_TOKENS,
+            args.num_heads,
+            num_kv_heads,
+            num_tokens,
+            args.head_dim,
+            aligned_head_dim,
+            num_tokens,
         )
     finally:
         if old_multi is None:
@@ -171,12 +183,17 @@ def main(argv: list[str] | None = None) -> int:
             os.environ["CK_GGML_CPU_SO"] = old_ggml_cpu
         lib.ck_set_strict_parity(0)
 
-    token_major = _to_token_major(out)[..., :HEAD_DIM]
+    token_major = _to_token_major(out, num_tokens, args.num_heads, aligned_head_dim)[..., : args.head_dim]
     metrics = _metrics(token_major, ref)
     worst_idx = np.unravel_index(np.argmax(np.abs(token_major - ref)), token_major.shape)
     report = {
         "mode": args.mode,
         "strict": args.strict,
+        "num_tokens": num_tokens,
+        "num_heads": args.num_heads,
+        "num_kv_heads": num_kv_heads,
+        "head_dim": args.head_dim,
+        "aligned_head_dim": aligned_head_dim,
         "disable_multihead_oracle": args.disable_multihead_oracle,
         "disable_regular_oracle": args.disable_regular_oracle,
         "metrics": metrics,

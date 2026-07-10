@@ -256,6 +256,14 @@ V8_QWEN3VL_OCR_PROMPT ?= Read the text in this image. Return only the visible te
 V8_QWEN3VL_OCR_MAX_TOKENS ?= 8
 V8_QWEN3VL_OCR_IMAGE_MIN_TOKENS ?= 128
 V8_QWEN3VL_OCR_IMAGE_MAX_TOKENS ?=
+V8_QWEN3VL_ENCODER_PARITY_SUMMARY ?= build/sdpr_ck_ocr_report_full/summary.json
+V8_QWEN3VL_ENCODER_PARITY_OUTPUT ?= build/qwen3vl_encoder_prefix_parity
+V8_QWEN3VL_ENCODER_PARITY_RUNTIME ?= /tmp/qwen3vl_encoder_prefix_runtime
+V8_QWEN3VL_ENCODER_PARITY_LIMIT ?= 10
+V8_QWEN3VL_ENCODER_PARITY_IMAGE_MAX_TOKENS ?= 1024
+V8_QWEN3VL_ENCODER_PARITY_MIN_COSINE ?= 0.99
+V8_QWEN3VL_ENCODER_PARITY_MAX_RMSE ?= 0.03
+V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT ?= /opt/app-root/src/Software/llama.cpp
 V8_GEMMA4_MODEL ?= hf://unsloth/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf
 V8_GEMMA4_MMPROJ ?= hf://unsloth/gemma-4-E4B-it-GGUF/mmproj-F16.gguf
 V8_GEMMA4_CACHE_DIR ?= /opt/app-root/src/.cache/ck-engine-v8/models/unsloth--gemma-4-E4B-it-GGUF
@@ -692,6 +700,7 @@ PY_TESTS_BF16 := unittest/bf16/test_sigmoid_bf16.py \
                 unittest/bf16/test_swiglu_bf16.py \
                 unittest/bf16/test_embedding_bf16.py \
                 unittest/bf16/test_cross_entropy_bf16.py
+PY_TESTS_BF16_V8 := version/v8/scripts/bf16_safetensors_lowering_guard_v8.py
 
 LITMUS_DEMO_ARGS ?= --vocab 100 --ctx 100 --embed 64 --intermediate 128 --heads 4 --kv-heads 2
 LITMUS_DEMO_SVG ?= $(BUILD_DIR)/litmus_report.svg
@@ -1167,8 +1176,8 @@ $(LIB_LN): $(BUILD_STAMP) src/kernels/layernorm_kernels.c src/kernels/layernorm_
 $(LIB_SOFT): $(BUILD_STAMP) src/kernels/softmax_kernels.c src/kernels/softmax_kernels_bf16.c include/ckernel_engine.h
 	$(CC) $(CFLAGS) -shared -o $@ src/kernels/softmax_kernels.c src/kernels/softmax_kernels_bf16.c -lm
 
-$(LIB_SWIGLU): $(BUILD_STAMP) src/kernels/swiglu_kernels.c src/kernels/swiglu_kernels_bf16.c src/kernels/sigmoid_kernels.c src/ckernel_strict.c src/ck_threadpool.c include/ckernel_engine.h
-	$(CC) $(CFLAGS) -shared -o $@ src/kernels/swiglu_kernels.c src/kernels/swiglu_kernels_bf16.c src/kernels/sigmoid_kernels.c src/ckernel_strict.c src/ck_threadpool.c -lm -lpthread
+$(LIB_SWIGLU): $(BUILD_STAMP) src/kernels/swiglu_kernels.c src/kernels/swiglu_kernels_bf16.c src/kernels/sigmoid_kernels.c src/kernels/gemm_kernels_q4k_q8k.c src/kernels/gemm_kernels_q4k_q8k_vnni.c src/kernels/quantize_row_q8_k_sse.c src/kernels/quantize_row_q8_k_avx.c src/kernels/quantize_row_q8_k_avx2.c src/kernels/quantize_row_q8_k_avx512.c src/ckernel_strict.c src/ck_threadpool.c include/ckernel_engine.h
+	$(CC) $(CFLAGS) -shared -o $@ src/kernels/swiglu_kernels.c src/kernels/swiglu_kernels_bf16.c src/kernels/sigmoid_kernels.c src/kernels/gemm_kernels_q4k_q8k.c src/kernels/gemm_kernels_q4k_q8k_vnni.c src/kernels/quantize_row_q8_k_sse.c src/kernels/quantize_row_q8_k_avx.c src/kernels/quantize_row_q8_k_avx2.c src/kernels/quantize_row_q8_k_avx512.c src/ckernel_strict.c src/ck_threadpool.c -lm -lpthread
 
 $(LIB_SIGMOID): $(BUILD_STAMP) src/kernels/sigmoid_kernels.c src/kernels/sigmoid_kernels_bf16.c include/ckernel_engine.h
 	$(CC) $(CFLAGS) -shared -o $@ src/kernels/sigmoid_kernels.c src/kernels/sigmoid_kernels_bf16.c -lm
@@ -1352,6 +1361,26 @@ parity-v8-qwen3vl-mmproj:
 		exit 0; \
 	fi
 	$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/parity_qwen3vl_mmproj_v8.py --gguf "$(V8_QWEN3VL_MMPROJ)"
+
+qwen3vl-encoder-prefix-parity:
+	@if [ ! -f "$(V8_QWEN3VL_CACHED_MMPROJ)" ]; then \
+		echo "SKIP: Qwen3-VL cached mmproj not found: $(V8_QWEN3VL_CACHED_MMPROJ)"; \
+	elif [ ! -f "$(V8_QWEN3VL_ENCODER_PARITY_SUMMARY)" ]; then \
+		echo "SKIP: Qwen3-VL encoder parity summary not found: $(V8_QWEN3VL_ENCODER_PARITY_SUMMARY)"; \
+	else \
+		CK_NUM_THREADS=$${CK_NUM_THREADS:-20} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-20} CK_LLAMA_CPP_ROOT=$${CK_LLAMA_CPP_ROOT:-$(V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT)} \
+		$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/qwen3vl_encoder_prefix_parity_suite_v8.py \
+			--gguf "$(V8_QWEN3VL_CACHED_MMPROJ)" \
+			--summary-json "$(V8_QWEN3VL_ENCODER_PARITY_SUMMARY)" \
+			--limit $(V8_QWEN3VL_ENCODER_PARITY_LIMIT) \
+			--output-dir "$(V8_QWEN3VL_ENCODER_PARITY_OUTPUT)" \
+			--runtime-dir "$(V8_QWEN3VL_ENCODER_PARITY_RUNTIME)" \
+			--image-max-tokens $(V8_QWEN3VL_ENCODER_PARITY_IMAGE_MAX_TOKENS) \
+			--threads $${CK_NUM_THREADS:-20} \
+			--ck-threads $${CK_NUM_THREADS:-20} \
+			--min-cosine $(V8_QWEN3VL_ENCODER_PARITY_MIN_COSINE) \
+			--max-rmse $(V8_QWEN3VL_ENCODER_PARITY_MAX_RMSE); \
+	fi
 
 test-deltanet: $(LIB)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) tests/test_deltanet.py $(ARGS)
@@ -1925,6 +1954,8 @@ test-bf16: $(LIB) test-libs
 	  exit 1; \
 	fi; \
 	echo "BF16 Python kernel tests completed."
+	@echo "Running v8 BF16 safetensors/lowering guardrails..."
+	$(PYTHON) $(PYTHONFLAGS) $(PY_TESTS_BF16_V8)
 
 test-v4-q4k:
 	@if [ -z "$(GGUF_PATH)" ]; then \
@@ -2876,7 +2907,7 @@ qwen3vl-ocr-perf-analyze:
 		--json-out build/qwen3vl_ocr_perf_pipeline.json \
 		--md-out build/qwen3vl_ocr_perf_pipeline.md
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q4k-gateup-swiglu-x16-chunk4-quick bench-qwen3vl-encoder-attention bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick qwen3vl-ocr-perf-pipeline qwen3vl-ocr-perf-analyze
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q4k-gateup-swiglu-x16-chunk4-quick bench-qwen3vl-encoder-attention bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick qwen3vl-ocr-perf-pipeline qwen3vl-ocr-perf-analyze qwen3vl-encoder-prefix-parity
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

@@ -4386,6 +4386,18 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         )
         if patch_entry:
             header_quant["patch_emb"] = patch_entry
+    if "patch_emb_aux" not in header_quant:
+        patch_aux_entry = entry_dtype.get("v.patch_embd.weight.1")
+        if patch_aux_entry:
+            header_quant["patch_emb_aux"] = patch_aux_entry
+    if "mm0_w" not in header_quant:
+        mm0_entry = entry_dtype.get("mm.0.weight")
+        if mm0_entry:
+            header_quant["mm0_w"] = mm0_entry
+    if "mm1_w" not in header_quant:
+        mm1_entry = entry_dtype.get("mm.2.weight")
+        if mm1_entry:
+            header_quant["mm1_w"] = mm1_entry
     if "assistant_pre_projection" not in header_quant:
         pre_proj_entry = entry_dtype.get("assistant.pre_projection")
         if pre_proj_entry:
@@ -4396,7 +4408,12 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             header_quant["assistant_post_projection"] = post_proj_entry
     config = manifest.get("config", {})
     template_flags = template.get("flags", {}) if isinstance(template.get("flags"), dict) else {}
-    logits_weight_source = _resolve_logits_weight_source(config, weight_index)
+    template_contract = template.get("contract", {}) if isinstance(template.get("contract"), dict) else {}
+    logits_contract = template_contract.get("logits_contract", {}) if isinstance(template_contract.get("logits_contract"), dict) else {}
+    if str(logits_contract.get("lm_head", "")).strip().lower() == "none" or str(logits_contract.get("logits_layout", "")).strip().lower() == "none":
+        logits_weight_source = "none"
+    else:
+        logits_weight_source = _resolve_logits_weight_source(config, weight_index)
     print(f"  [contract/logits] source={logits_weight_source}")
     model_family = str(config.get("model", "")).strip().lower()
     activation_preference_by_op = config.get("activation_preference_by_op", {})
@@ -4835,6 +4852,26 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "weight_tying": "metadata",
         "lm_head": "metadata",  # Signals separate lm_head weight (not tied)
     }
+    BF16_DENSE_MATMUL_OPS = {
+        "patch_proj",
+        "patch_proj_aux",
+        "qkv_packed_proj",
+        "qkv_proj",
+        "q_proj",
+        "q_gate_proj",
+        "k_proj",
+        "v_proj",
+        "out_proj",
+        "mlp_gate_up",
+        "mlp_up",
+        "mlp_down",
+        "projector_fc1",
+        "projector_fc2",
+        "branch_fc1",
+        "branch_fc2",
+        "assistant_pre_projection",
+        "assistant_post_projection",
+    }
 
     def map_op_to_kernel(op: str, layer_quant: Dict, mode: str, header_quant: Dict) -> List[str]:
         """
@@ -4926,6 +4963,13 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
 
         explicit_kernel = str(template_kernels.get(op, "") or "").strip()
         if explicit_kernel:
+            explicit_weight_info = OP_TO_WEIGHT_KEYS.get(op)
+            if op in BF16_DENSE_MATMUL_OPS and isinstance(explicit_weight_info, list) and explicit_weight_info:
+                explicit_weight_dtype = str(layer_quant.get(explicit_weight_info[0], "fp32") or "fp32").lower()
+                if explicit_weight_dtype == "fp32":
+                    explicit_weight_dtype = str(header_quant.get(explicit_weight_info[0], explicit_weight_dtype) or explicit_weight_dtype).lower()
+                if explicit_weight_dtype == "bf16":
+                    return ["gemm_nt_bf16"]
             return [explicit_kernel]
 
         kernel_op = TEMPLATE_TO_KERNEL_OP.get(op)
@@ -5024,6 +5068,9 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             weight_dtype = layer_quant.get(weight_info[0], "fp32")
             if weight_dtype == "fp32":
                 weight_dtype = header_quant.get(weight_info[0], weight_dtype)
+            weight_dtype = str(weight_dtype or "fp32").lower()
+            if op in BF16_DENSE_MATMUL_OPS and weight_dtype == "bf16":
+                return ["gemm_nt_bf16"]
             kernel_prefer_q8_activation = _prefer_q8_activation_for_op(op, prefer_q8_activation)
             if op in ("mlp_gate_up", "mlp_up", "mlp_down") and prefer_fp32_mlp_matmuls:
                 kernel_prefer_q8_activation = False
@@ -5070,7 +5117,11 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                 w_dtype = layer_quant.get(w_key, "fp32")
                 if w_dtype == "fp32":
                     w_dtype = header_quant.get(w_key, w_dtype)
+                w_dtype = str(w_dtype or "fp32").lower()
                 split_op = weight_to_split_op.get(w_key, op)
+                if split_op in BF16_DENSE_MATMUL_OPS and w_dtype == "bf16":
+                    kernels.append(("gemm_nt_bf16", split_op))
+                    continue
                 split_prefer_q8_activation = _prefer_q8_activation_for_op(split_op, prefer_q8_activation)
                 if split_op in ("mlp_gate_up", "mlp_down", "mlp_gate", "mlp_up") and prefer_fp32_mlp_matmuls:
                     split_prefer_q8_activation = False
@@ -5318,8 +5369,22 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             if section_name == "body":
                 for layer_idx in range(num_layers):
                     layer_key = f"layer.{layer_idx}"
+                    base_layer_quant = quant_summary.get(layer_key, {})
+                    if not isinstance(base_layer_quant, dict):
+                        base_layer_quant = {}
+                    if model_family == "qwen3_vl_vision":
+                        base_layer_quant = dict(base_layer_quant)
+                        vision_aliases = {
+                            "attn_qkv": f"v.blk.{layer_idx}.attn_qkv.weight",
+                            "wo": f"v.blk.{layer_idx}.attn_out.weight",
+                            "w3": f"v.blk.{layer_idx}.ffn_up.weight",
+                            "w2": f"v.blk.{layer_idx}.ffn_down.weight",
+                        }
+                        for dst_key, entry_name in vision_aliases.items():
+                            if dst_key not in base_layer_quant and entry_name in entry_dtype:
+                                base_layer_quant[dst_key] = entry_dtype[entry_name]
                     layer_quant = _apply_layer_quant_aliases(
-                        quant_summary.get(layer_key, {}),
+                        base_layer_quant,
                         block["body"],
                         config,
                         layer_idx,
@@ -5681,6 +5746,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
 
     def _footer_weight_keys(op_name: str) -> List[str]:
         if op_name == "logits":
+            if logits_weight_source == "none":
+                return []
             return ["lm_head"] if logits_weight_source == "lm_head" else ["token_emb"]
         if op_name in FOOTER_OP_WEIGHTS:
             return FOOTER_OP_WEIGHTS[op_name]

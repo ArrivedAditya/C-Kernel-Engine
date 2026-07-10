@@ -1,3 +1,4 @@
+from __future__ import annotations
 import ctypes
 import os
 import argparse
@@ -158,11 +159,15 @@ lib.mrope_qk_vision.restype = None
 
 
 def tensor_to_ptr(t: torch.Tensor):
-    return t.contiguous().view(-1).numpy().ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+    if not t.is_contiguous():
+        raise ValueError("ctypes kernel test inputs must be contiguous")
+    return t.view(-1).numpy().ctypes.data_as(ctypes.POINTER(ctypes.c_float))
 
 
 def tensor_to_ptr_i32(t: torch.Tensor):
-    return t.contiguous().view(-1).numpy().ctypes.data_as(ctypes.POINTER(ctypes.c_int32))
+    if not t.is_contiguous():
+        raise ValueError("ctypes kernel test inputs must be contiguous")
+    return t.view(-1).numpy().ctypes.data_as(ctypes.POINTER(ctypes.c_int32))
 
 
 def run_c_im2patch(image: torch.Tensor, P: int) -> torch.Tensor:
@@ -375,10 +380,13 @@ def run_c_mrope_qk(
     k_out = k.clone()
     num_heads, num_tokens, head_dim = q_out.shape
     num_kv_heads = k_out.shape[0]
+    q_np = q_out.view(-1).numpy()
+    k_np = k_out.view(-1).numpy()
+    pos_np = positions.contiguous().view(-1).numpy()
     lib.mrope_qk_vision(
-        tensor_to_ptr(q_out),
-        tensor_to_ptr(k_out),
-        tensor_to_ptr_i32(positions.view(-1)),
+        q_np.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        k_np.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+        pos_np.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
         num_heads,
         num_kv_heads,
         num_tokens,
@@ -926,6 +934,44 @@ def _ref_mrope_qk(
     return apply(q), apply(k)
 
 
+def _ref_qwen3vl_vision_mrope_qk(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    positions: torch.Tensor,
+    n_dims: int,
+    freq_base: float = 10000.0,
+    freq_scale: float = 1.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    def apply(x: torch.Tensor) -> torch.Tensor:
+        out = x.clone()
+        head_dim = out.shape[-1]
+        rope_dims = min(int(n_dims), int(head_dim)) & ~1
+        rope_pairs = rope_dims // 2
+        axis_pairs = rope_pairs // 2
+        if axis_pairs <= 0:
+            return out
+        theta_scale = freq_base ** (-2.0 / float(axis_pairs * 2))
+        num_tokens = out.shape[1]
+        for h in range(out.shape[0]):
+            for tok in range(num_tokens):
+                theta_y = float(positions[0, tok].item())
+                theta_x = float(positions[1, tok].item())
+                for pair in range(rope_pairs):
+                    is_x_axis = pair >= axis_pairs
+                    axis_pair = pair - axis_pairs if is_x_axis else pair
+                    base_theta = theta_x if is_x_axis else theta_y
+                    theta = base_theta * (theta_scale ** axis_pair) * freq_scale
+                    c = math.cos(theta)
+                    s = math.sin(theta)
+                    x0 = float(out[h, tok, pair].item())
+                    x1 = float(out[h, tok, pair + rope_pairs].item())
+                    out[h, tok, pair] = x0 * c - x1 * s
+                    out[h, tok, pair + rope_pairs] = x0 * s + x1 * c
+        return out
+
+    return apply(q), apply(k)
+
+
 def test_vision_position_ids(grid_h=4, grid_w=4, merge_size=2):
     print(f"\n--- Testing vision_position_ids_2d_merge ({grid_h}x{grid_w}, merge {merge_size}) ---")
     ref = _ref_vision_position_ids(grid_h, grid_w, merge_size)
@@ -943,10 +989,10 @@ def test_mrope_qk_vision(num_heads=2, num_kv_heads=2, num_tokens=4, head_dim=8):
     q = torch.randn(num_heads, num_tokens, head_dim, dtype=torch.float32)
     k = torch.randn(num_kv_heads, num_tokens, head_dim, dtype=torch.float32)
     positions = _ref_vision_position_ids(2, 2, 2)
-    sections = [head_dim // 4] * 4
-    n_dims = head_dim // 2
+    sections = [max(1, head_dim // 4)] * 4
+    n_dims = head_dim
 
-    ref_q, ref_k = _ref_mrope_qk(q, k, positions, n_dims, sections)
+    ref_q, ref_k = _ref_qwen3vl_vision_mrope_qk(q, k, positions, n_dims)
     out_q, out_k = run_c_mrope_qk(q, k, positions, n_dims, sections)
 
     q_diff = max_diff(out_q, ref_q)
@@ -956,6 +1002,10 @@ def test_mrope_qk_vision(num_heads=2, num_kv_heads=2, num_tokens=4, head_dim=8):
 
     if q_diff > 1e-6 or k_diff > 1e-6:
         raise AssertionError("mrope_qk_vision mismatch!")
+
+
+def test_mrope_qk_vision_qwen3vl_full_head():
+    test_mrope_qk_vision(num_heads=2, num_kv_heads=2, num_tokens=4, head_dim=72)
 
 
 if __name__ == "__main__":
@@ -974,6 +1024,7 @@ if __name__ == "__main__":
     test_feature_concat()
     test_feature_concat_inplace_expand()
     test_mrope_qk_vision()
+    test_mrope_qk_vision_qwen3vl_full_head()
     
     # Test a non-multiple size just in case (though ViT usually uses multiples)
     test_im2patch(C=3, H=32, W=32, P=8)

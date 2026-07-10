@@ -34,9 +34,24 @@ def _family(name: str) -> str:
         "language_model.lm_head.weight",
         "backbone.embeddings.weight",
         "model.embed_tokens.weight",
+        "model.language_model.embed_tokens.weight",
         "language_model.model.embed_tokens.weight",
     }:
         return name
+    if name.startswith("model.visual.patch_embed."):
+        return "vision_patch_embed"
+    if name.startswith("model.visual.pos_embed."):
+        return "vision_position"
+    if name.startswith("model.visual.blocks."):
+        if ".attn." in name:
+            return "vision_attention"
+        if ".mlp." in name:
+            return "vision_mlp"
+        if ".norm" in name:
+            return "vision_norm"
+        return "vision_block_other"
+    if name.startswith("model.visual.merger.") or name.startswith("model.visual.deepstack_merger_list."):
+        return "multimodal_projector"
     if name.startswith("vision_tower."):
         return "vision_tower"
     if name.startswith("multi_modal_projector."):

@@ -63,6 +63,17 @@
       "runtime_policy": "decode_staged"
     }
   },
+  "activation_preference_by_op": {
+    "qkv_packed_proj": "q8_0",
+    "out_proj": "q8_0",
+    "attn_out_proj": "q8_0",
+    "mlp_up": "q8_0",
+    "mlp_down": "fp32",
+    "projector_fc1": "q8_0",
+    "projector_fc2": "fp32",
+    "branch_fc1": "fp32",
+    "branch_fc2": "fp32"
+  },
   "kernels": {
     "patch_proj": "gemm_nt_fp32_exact",
     "patch_proj_aux": "gemm_nt_fp32_exact",
