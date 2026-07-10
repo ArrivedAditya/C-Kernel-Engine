@@ -134,20 +134,24 @@ def _run_logged(
     elapsed = time.time() - started
     stdout_text = stdout_capture.text()
     stderr_text = stderr_capture.text()
-    with log_path.open("a", encoding="utf-8") as f:
-        f.write("$ " + " ".join(cmd) + "\n")
-        f.write(f"exit={returncode} elapsed_sec={elapsed:.3f}\n")
-        if stdout_text:
-            f.write("\n[stdout]\n")
-            f.write(stdout_text)
-            if not stdout_text.endswith("\n"):
-                f.write("\n")
-        if stderr_text:
-            f.write("\n[stderr]\n")
-            f.write(stderr_text)
-            if not stderr_text.endswith("\n"):
-                f.write("\n")
-        f.write("\n")
+    try:
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write("$ " + " ".join(cmd) + "\n")
+            f.write(f"exit={returncode} elapsed_sec={elapsed:.3f}\n")
+            if stdout_text:
+                f.write("\n[stdout]\n")
+                f.write(stdout_text)
+                if not stdout_text.endswith("\n"):
+                    f.write("\n")
+            if stderr_text:
+                f.write("\n[stderr]\n")
+                f.write(stderr_text)
+                if not stderr_text.endswith("\n"):
+                    f.write("\n")
+            f.write("\n")
+    except OSError as exc:
+        stderr_text += f"\n[stitched-parity] failed to append command log {log_path}: {exc}\n"
+        print(stderr_text.rstrip(), file=sys.stderr)
     return subprocess.CompletedProcess(cmd, returncode, stdout=stdout_text, stderr=stderr_text)
 
 
