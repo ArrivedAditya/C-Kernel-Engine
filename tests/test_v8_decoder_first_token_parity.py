@@ -35,6 +35,12 @@ decoder_parity_v8 = _load_module("decoder_first_token_parity_v8_tests", V8_DECOD
 
 
 class V8DecoderFirstTokenParityTests(unittest.TestCase):
+    def test_ck_dump_filter_names_expands_llama_aliases(self) -> None:
+        self.assertEqual(
+            decoder_parity_v8._ck_dump_filter_names("Qcur-0,Kcur_normed-2,ffn_inp-0,l_out-3"),
+            "Qcur-0,q_proj-0,Kcur_normed-2,kcur_normed-2,ffn_inp-0,l_out-3,layer_out-3",
+        )
+
     def test_load_llama_dump_dir_parses_jsonl_index(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_decoder_llama_dump_") as tmpdir:
             tmp = Path(tmpdir)
@@ -98,6 +104,23 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
         self.assertEqual(report["summary"]["fail"], 1)
         self.assertEqual(report["first_issue"]["op"], "Qcur")
         self.assertEqual(report["first_issue"]["status"], "FAIL")
+
+    def test_compare_dump_sets_preserves_graph_order_for_first_issue(self) -> None:
+        def dump(op_name: str, value: float):
+            return decoder_parity_v8.parity_test_v7.ParityDump(
+                0, op_name, np.array([value], dtype=np.float32), 0, "fp32"
+            )
+
+        report = decoder_parity_v8._compare_dump_sets(
+            [dump("ffn_inp", 2.0), dump("down_proj", 4.0)],
+            [dump("ffn_inp", 1.0), dump("down_proj", 3.0)],
+            atol=1.0e-4,
+            rtol=1.0e-3,
+            pass_filter="decode",
+        )
+
+        self.assertEqual([row["op"] for row in report["results"]], ["ffn_inp", "down_proj"])
+        self.assertEqual(report["first_issue"]["op"], "ffn_inp")
 
     def test_expand_ck_prefill_decode_dumps_splits_prompt_rows(self) -> None:
         ck_dumps = [
