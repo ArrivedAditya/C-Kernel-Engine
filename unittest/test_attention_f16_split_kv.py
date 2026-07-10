@@ -34,6 +34,14 @@ lib.attention_forward_decode_head_major_gqa_flash_f16cache_split.argtypes = _SPL
 lib.attention_forward_decode_head_major_gqa_flash_f16cache_split.restype = None
 lib.ck_get_num_threads.argtypes = []
 lib.ck_get_num_threads.restype = ctypes.c_int
+lib.ck_set_strict_parity.argtypes = [ctypes.c_int]
+lib.ck_set_strict_parity.restype = None
+lib.attention_forward_causal_head_major_gqa_flash_strided.argtypes = [
+    _FLOAT_P, _FLOAT_P, _FLOAT_P, _FLOAT_P,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    ctypes.c_int, ctypes.c_int,
+]
+lib.attention_forward_causal_head_major_gqa_flash_strided.restype = None
 
 
 _LLAMA_HELPER_SOURCE = r"""
@@ -297,6 +305,65 @@ def _fp32_single_reference(q, k_bits, v_bits, head_dim):
     return out
 
 
+def _unfused_f16_causal_reference(q, k, v):
+    heads, tokens, head_dim = q.shape
+    kv_heads = k.shape[0]
+    qh = q.astype(np.float16).astype(np.float32)
+    kh = k.astype(np.float16).astype(np.float32)
+    vh = v.astype(np.float16).astype(np.float32)
+    scale = np.float32(1.0 / math.sqrt(head_dim))
+    out = np.zeros_like(q)
+    for h in range(heads):
+        kv_head = h * kv_heads // heads
+        for token in range(tokens):
+            count = token + 1
+            scores = np.sum(
+                kh[kv_head, :count] * qh[h, token][None, :],
+                axis=1,
+                dtype=np.float32,
+            ) * scale
+            probs = np.exp(scores - np.max(scores)).astype(np.float32)
+            probs /= np.sum(probs, dtype=np.float32)
+            probs = probs.astype(np.float16).astype(np.float32)
+            out[h, token] = np.sum(
+                vh[kv_head, :count] * probs[:, None],
+                axis=0,
+                dtype=np.float32,
+            )
+    return out
+
+
+def _unfused_f16_causal_case():
+    rng = np.random.default_rng(20260710)
+    heads, kv_heads, tokens, head_dim = 4, 2, 17, 32
+    q = rng.normal(0.0, 0.7, (heads, tokens, head_dim)).astype(np.float32)
+    k = rng.normal(0.0, 0.7, (kv_heads, tokens, head_dim)).astype(np.float32)
+    v = rng.normal(0.0, 0.9, (kv_heads, tokens, head_dim)).astype(np.float32)
+    actual = np.zeros_like(q)
+    old = os.environ.get("CK_STRICT_ATTN_F16_UNFUSED")
+    try:
+        os.environ["CK_STRICT_ATTN_F16_UNFUSED"] = "1"
+        lib.ck_set_strict_parity(1)
+        lib.attention_forward_causal_head_major_gqa_flash_strided(
+            _f32_ptr(q), _f32_ptr(k), _f32_ptr(v), _f32_ptr(actual),
+            heads, kv_heads, tokens, head_dim, head_dim, tokens,
+        )
+    finally:
+        lib.ck_set_strict_parity(0)
+        if old is None:
+            os.environ.pop("CK_STRICT_ATTN_F16_UNFUSED", None)
+        else:
+            os.environ["CK_STRICT_ATTN_F16_UNFUSED"] = old
+    expected = _unfused_f16_causal_reference(q, k, v)
+    diff = float(np.max(np.abs(actual - expected)))
+    return Result(
+        "unfused_f16_causal(T=17,H=4,D=32)",
+        diff,
+        3.0e-5,
+        diff <= 3.0e-5,
+    )
+
+
 def _inputs(seed, heads, kv_heads, kv_tokens, head_dim, aligned):
     rng = np.random.default_rng(seed)
     q = rng.normal(0.0, 0.55, (heads, aligned)).astype(np.float32)
@@ -338,6 +405,7 @@ def _case(name, seed, heads, kv_heads, kv_tokens, head_dim, aligned, chunks, tol
 
 def main():
     results = []
+    results.append(_unfused_f16_causal_case())
     below, below_data = _case(
         "f16_split_below_threshold(KV=511,C=1)", 511, 8, 2, 511, 64, 64, 1, 2.0e-5,
     )

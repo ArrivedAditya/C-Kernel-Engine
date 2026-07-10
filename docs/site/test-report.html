@@ -1686,10 +1686,15 @@
     <li><strong>v8 Vision Kernel Parity</strong>: Vision kernel parity for patch extraction/reconstruction, tiled position embeddings,
       Qwen3-VL resized position interpolation order, spatial merge/reorder, feature concat/slice, and vision M-RoPE
       (<code>make test-v8-vision-kernels</code>)</li>
-    <li><strong>FP16 Split-KV Decode Contract</strong>: Named numerical guards for the llama.cpp-compatible decode reduction contract,
-      including FP16 Q/K rounding, FP16 online-softmax partials, FP32 ordered reduction, GQA/padding, the KV 511/512 semantic boundary,
-      and the Qwen3-VL <code>KV=1058, H=32, D=128</code> shape
+    <li><strong>FP16 Attention Contracts</strong>: Named numerical guards for llama.cpp-compatible unfused causal prefill and split-KV decode,
+      including FP16 Q/K rounding, FP16 probability/value reduction, FP16 online-softmax partials, FP32 ordered reduction, GQA/padding,
+      the KV 511/512 semantic boundary, and the Qwen3-VL <code>KV=1058, H=32, D=128</code> shape
       (<code>make test-attention-f16-split-kv</code>)</li>
+    <li><strong>v8 Stitched Dump Alignment</strong>: Guards canonical output-projection aliases and preserves absolute CK/llama
+      source-token provenance when mixed-prefix dumps are rebased for per-token comparison
+      (<code>make test-v8-dump-alignment</code>)</li>
+    <li><strong>Qwen3-VL Parity Guard Sweep</strong>: Local aggregate for GGUF FP16 attention contracts, stitched dump alignment,
+      shared vision kernels, and the BF16 parity lane (<code>make qwen3vl-parity-guards</code>)</li>
     <li><strong>Llama Pairwise RoPE Contract</strong>: explicit regression for consecutive-pair RoPE layout selection plus kernel-level pairwise forward coverage and timing
       (<code>version/v7/scripts/parity/test_check_decode_attention_contract.py</code>, <code>unittest/test_rope.py</code>)</li>
     <li><strong>Sliding-Window Contract</strong>: Explicit sliding attention prefill/decode contract test

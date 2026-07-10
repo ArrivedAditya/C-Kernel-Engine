@@ -830,6 +830,55 @@ static CK_NOINLINE CK_OPTNONE float ck_ggml_vec_dot_f32_contig(const float *x,
 #endif
 }
 
+static inline float ck_attention_dot_f16_unfused_llama(const uint16_t *x,
+                                                        const uint16_t *y,
+                                                        int n)
+{
+    int i = 0;
+#if defined(__AVX2__) && defined(__F16C__)
+    __m256 sum0 = _mm256_setzero_ps();
+    __m256 sum1 = _mm256_setzero_ps();
+    __m256 sum2 = _mm256_setzero_ps();
+    __m256 sum3 = _mm256_setzero_ps();
+    const int n32 = n & ~31;
+    for (; i < n32; i += 32) {
+        const __m256 x0 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (x + i)));
+        const __m256 y0 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (y + i)));
+        const __m256 x1 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (x + i + 8)));
+        const __m256 y1 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (y + i + 8)));
+        const __m256 x2 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (x + i + 16)));
+        const __m256 y2 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (y + i + 16)));
+        const __m256 x3 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (x + i + 24)));
+        const __m256 y3 = _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *) (y + i + 24)));
+#if defined(__FMA__)
+        sum0 = _mm256_fmadd_ps(x0, y0, sum0);
+        sum1 = _mm256_fmadd_ps(x1, y1, sum1);
+        sum2 = _mm256_fmadd_ps(x2, y2, sum2);
+        sum3 = _mm256_fmadd_ps(x3, y3, sum3);
+#else
+        sum0 = _mm256_add_ps(sum0, _mm256_mul_ps(x0, y0));
+        sum1 = _mm256_add_ps(sum1, _mm256_mul_ps(x1, y1));
+        sum2 = _mm256_add_ps(sum2, _mm256_mul_ps(x2, y2));
+        sum3 = _mm256_add_ps(sum3, _mm256_mul_ps(x3, y3));
+#endif
+    }
+    sum0 = _mm256_add_ps(sum0, sum2);
+    sum1 = _mm256_add_ps(sum1, sum3);
+    sum0 = _mm256_add_ps(sum0, sum1);
+    const __m128 pair = _mm_add_ps(
+        _mm256_castps256_ps128(sum0),
+        _mm256_extractf128_ps(sum0, 1));
+    const __m128 half = _mm_hadd_ps(pair, pair);
+    float result = _mm_cvtss_f32(_mm_hadd_ps(half, half));
+#else
+    float result = 0.0f;
+#endif
+    for (; i < n; ++i) {
+        result += CK_FP16_TO_FP32(x[i]) * CK_FP16_TO_FP32(y[i]);
+    }
+    return result;
+}
+
 static CK_NOINLINE CK_OPTNONE float ck_attention_strict_scale_f32(int head_dim)
 {
     // Keep strict parity on the precise libm sqrtf path. icx -O3 on AVX2 was
@@ -3307,6 +3356,98 @@ static int ck_attention_pick_active_threads(const ck_threadpool_t *pool, int tot
     return active < 1 ? 1 : active;
 }
 
+static int ck_attention_strict_unfused_f16_enabled(void)
+{
+    const char *value = getenv("CK_STRICT_ATTN_F16_UNFUSED");
+    return !value || !value[0] || strcmp(value, "0") != 0;
+}
+
+static int attention_forward_head_major_gqa_unfused_f16_strict(
+    const float *q,
+    const float *k,
+    const float *v,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int kv_stride_tokens,
+    int causal,
+    float scale,
+    int debug_layer_id)
+{
+    const int T = num_tokens;
+    const size_t kv_head_stride = (size_t) kv_stride_tokens * (size_t) aligned_head_dim;
+    const size_t kv_half_count = (size_t) T * (size_t) aligned_head_dim;
+    uint16_t *k_half = (uint16_t *) malloc(kv_half_count * sizeof(uint16_t));
+    uint16_t *v_half = (uint16_t *) malloc(kv_half_count * sizeof(uint16_t));
+    if (!k_half || !v_half) {
+        free(k_half);
+        free(v_half);
+        return 0;
+    }
+    uint16_t *q_half = (uint16_t *) alloca((size_t) aligned_head_dim * sizeof(uint16_t));
+    uint16_t *prob_half = (uint16_t *) alloca((size_t) T * sizeof(uint16_t));
+    uint16_t *v_col_half = (uint16_t *) alloca((size_t) T * sizeof(uint16_t));
+    float *raw_scores = (float *) alloca((size_t) T * sizeof(float));
+    float *logits = (float *) alloca((size_t) T * sizeof(float));
+    int cached_kv_head = -1;
+
+    for (int h = 0; h < num_heads; ++h) {
+        const int kv_head = (int) ((long long) h * (long long) num_kv_heads /
+                                   (long long) num_heads);
+        const float *k_head = k + (size_t) kv_head * kv_head_stride;
+        const float *v_head = v + (size_t) kv_head * kv_head_stride;
+        if (kv_head != cached_kv_head) {
+            for (size_t idx = 0; idx < kv_half_count; ++idx) {
+                k_half[idx] = CK_FP32_TO_FP16(k_head[idx]);
+                v_half[idx] = CK_FP32_TO_FP16(v_head[idx]);
+            }
+            cached_kv_head = kv_head;
+        }
+
+        for (int i = 0; i < T; ++i) {
+            const float *q_vec = q + qkv_index(h, i, 0, T, aligned_head_dim);
+            float *out_vec = output + qkv_index(h, i, 0, T, aligned_head_dim);
+            const int kv_tokens = causal ? i + 1 : T;
+            for (int d = 0; d < aligned_head_dim; ++d) {
+                q_half[d] = CK_FP32_TO_FP16(q_vec[d]);
+            }
+            for (int j = 0; j < kv_tokens; ++j) {
+                raw_scores[j] = ck_attention_dot_f16_unfused_llama(
+                    q_half,
+                    k_half + (size_t) j * (size_t) aligned_head_dim,
+                    head_dim);
+                logits[j] = raw_scores[j] * scale;
+            }
+
+            const float max_score = ck_vec_max_f32_contig(logits, kv_tokens);
+            const double sum = ck_ggml_vec_soft_max_row(kv_tokens, logits, logits, max_score);
+            const float inv_sum = sum > 0.0 ? (float) (1.0 / sum) : 0.0f;
+            for (int j = 0; j < kv_tokens; ++j) {
+                logits[j] *= inv_sum;
+                prob_half[j] = CK_FP32_TO_FP16(logits[j]);
+            }
+            for (int d = 0; d < head_dim; ++d) {
+                for (int j = 0; j < kv_tokens; ++j) {
+                    v_col_half[j] = v_half[(size_t) j * (size_t) aligned_head_dim + (size_t) d];
+                }
+                out_vec[d] = ck_attention_dot_f16_unfused_llama(prob_half, v_col_half, kv_tokens);
+            }
+            for (int d = head_dim; d < aligned_head_dim; ++d) {
+                out_vec[d] = 0.0f;
+            }
+            ck_attention_vec_dump_selected_query(raw_scores, logits, out_vec, NULL,
+                                                 kv_tokens, head_dim,
+                                                 debug_layer_id, h, i);
+        }
+    }
+    free(k_half);
+    free(v_half);
+    return 1;
+}
+
 static void attention_forward_head_major_gqa_flash_impl(const float *q,
                                                         const float *k,
                                                         const float *v,
@@ -3338,6 +3479,15 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
         const int debug_layer_id = ck_attention_vec_dump_enabled()
             ? ck_attention_vec_dump_next_layer_id()
             : -1;
+        if (causal && ck_attention_strict_unfused_f16_enabled()) {
+            if (attention_forward_head_major_gqa_unfused_f16_strict(
+                    q, k, v, output,
+                    num_heads, num_kv_heads, num_tokens,
+                    head_dim, aligned_head_dim, kv_stride_tokens,
+                    causal, strict_scale, debug_layer_id)) {
+                return;
+            }
+        }
 #if CK_ENABLE_LLAMA_CPP_PARITY
         if (!causal &&
             ck_attention_full_ggml_graph_oracle_multihead(q,

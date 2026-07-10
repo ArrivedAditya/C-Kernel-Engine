@@ -1997,11 +1997,25 @@ test-flash-attention: $(LIB)
 test_flash_attention: test-flash-attention
 
 test-attention-f16-split-kv: $(LIB)
-	@echo "Running FP16 split-KV decode attention contract tests..."
+	@echo "Running FP16 prefill/decode attention contract tests..."
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH \
 		$(PYTHON) $(PYTHONFLAGS) unittest/test_attention_f16_split_kv.py
 
 .PHONY: test-attention-f16-split-kv
+
+test-v8-dump-alignment:
+	@echo "Running v8 stitched dump alignment contract tests..."
+	@$(PYTHON) $(PYTHONFLAGS) unittest/test_v8_dump_alignment.py
+
+.PHONY: test-v8-dump-alignment
+
+qwen3vl-parity-guards:
+	@$(MAKE) --no-print-directory test-attention-f16-split-kv
+	@$(MAKE) --no-print-directory test-v8-dump-alignment
+	@$(MAKE) --no-print-directory test-v8-vision-kernels
+	@$(MAKE) --no-print-directory nightly-bf16
+
+.PHONY: qwen3vl-parity-guards
 
 # GEMM benchmark comparing CKernel (Native + MKL if available) vs PyTorch
 bench_gemm:

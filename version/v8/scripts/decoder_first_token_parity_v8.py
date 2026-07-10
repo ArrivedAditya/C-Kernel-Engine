@@ -389,6 +389,8 @@ def _load_llama_dump_dir(dump_dir: Path) -> list[Any]:
                     data,
                     int(row.get("token_id", 0) or 0),
                     dtype_name,
+                    source_token_id=int(row.get("token_id", 0) or 0),
+                    source_name=str(row.get("name", "")),
                 )
             )
     return dumps
@@ -419,7 +421,10 @@ def _summarize_statuses(results: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def _canonical_dump_op_name(op_name: str) -> str:
-    return str(op_name)
+    name = str(op_name)
+    if name in {"attn_out", "kqv_wo"}:
+        return "out_proj"
+    return name
 
 
 def _ck_dump_filter_names(dump_names: str) -> str:
@@ -432,7 +437,10 @@ def _ck_dump_filter_names(dump_names: str) -> str:
             continue
         layer_id, canonical_name = parity_test_v7._normalize_layer_and_op(-1, raw_name)
         canonical_filter = f"{canonical_name}-{layer_id}" if layer_id >= 0 else canonical_name
-        for candidate in (raw_name, canonical_filter):
+        candidates = [raw_name, canonical_filter]
+        if canonical_name == "kqv_wo":
+            candidates.append(f"attn_out-{layer_id}" if layer_id >= 0 else "attn_out")
+        for candidate in candidates:
             if candidate not in seen:
                 seen.add(candidate)
                 expanded.append(candidate)
@@ -463,6 +471,8 @@ def _augment_legacy_kqv_aliases(dumps: list[Any]) -> list[Any]:
                 np.array(dump.data, copy=True),
                 int(getattr(dump, "token_id", 0)),
                 str(dump.dtype),
+                source_token_id=int(getattr(dump, "source_token_id", dump.token_id)),
+                source_name=getattr(dump, "source_name", None),
             )
         )
         seen.add(alias_key)
@@ -484,6 +494,8 @@ def _augment_legacy_kqv_aliases(dumps: list[Any]) -> list[Any]:
                 np.array(dump.data, copy=True),
                 int(getattr(dump, "token_id", 0)),
                 str(dump.dtype),
+                source_token_id=int(getattr(dump, "source_token_id", dump.token_id)),
+                source_name=getattr(dump, "source_name", None),
             )
         )
         seen.add(alias_key)
@@ -586,6 +598,7 @@ def _expand_ck_prefill_decode_dumps(
         return list(ck_dumps)
 
     prompt_start = max(0, int(prompt_start_token))
+    source_prompt_start = prompt_start
     rebased: list[Any] = []
     for dump in ck_dumps:
         token_id = int(getattr(dump, "token_id", 0))
@@ -600,6 +613,8 @@ def _expand_ck_prefill_decode_dumps(
                 np.array(dump.data, copy=True),
                 token_id - prompt_start,
                 str(dump.dtype),
+                source_token_id=int(getattr(dump, "source_token_id", token_id)),
+                source_name=getattr(dump, "source_name", None),
             )
         )
     if len({int(getattr(dump, "token_id", 0)) for dump in rebased}) >= prompt_token_count:
@@ -629,7 +644,7 @@ def _expand_ck_prefill_decode_dumps(
             expanded.append(dump)
             continue
 
-        prompt_start = batch_rows - prompt_token_count
+        row_start = batch_rows - prompt_token_count
         head_major = (
             len(row_shape) == 2
             and row_shape[0] > 0
@@ -662,7 +677,7 @@ def _expand_ck_prefill_decode_dumps(
                     # index shape metadata does not imply NumPy/C-order transpose.
                     row = tensor[:, token_idx, :].copy()
             else:
-                start = (prompt_start + prompt_idx) * row_elems
+                start = (row_start + prompt_idx) * row_elems
                 end = start + row_elems
                 row = flat[start:end].copy()
                 if row_shape and int(np.prod(np.array(row_shape, dtype=np.int64))) == row.size:
@@ -674,6 +689,8 @@ def _expand_ck_prefill_decode_dumps(
                     row,
                     prompt_idx,
                     str(dump.dtype),
+                    source_token_id=int(source_prompt_start + prompt_idx),
+                    source_name=getattr(dump, "source_name", None),
                 )
             )
     return expanded
@@ -723,6 +740,8 @@ def _trim_llama_prefill_decode_dumps(
                     np.array(dump.data, copy=True),
                     int(token_rebase[token_id]),
                     str(dump.dtype),
+                    source_token_id=int(getattr(dump, "source_token_id", token_id)),
+                    source_name=getattr(dump, "source_name", None),
                 )
             )
     return trimmed
@@ -798,6 +817,8 @@ def _compare_dump_sets(
                     "token": int(ck_dump.token_id),
                     "ck_token": int(ck_dump.token_id),
                     "llama_token": None,
+                    "ck_source_token": int(getattr(ck_dump, "source_token_id", ck_dump.token_id)),
+                    "ck_source_name": getattr(ck_dump, "source_name", None),
                     "ck_candidates": len(ck_candidates),
                     "llama_candidates": 0,
                     "alignment_ambiguous": bool(ambiguous),
@@ -819,6 +840,10 @@ def _compare_dump_sets(
                 "token": int(ck_dump.token_id),
                 "ck_token": int(ck_dump.token_id),
                 "llama_token": int(llama_dump.token_id),
+                "ck_source_token": int(getattr(ck_dump, "source_token_id", ck_dump.token_id)),
+                "llama_source_token": int(getattr(llama_dump, "source_token_id", llama_dump.token_id)),
+                "ck_source_name": getattr(ck_dump, "source_name", None),
+                "llama_source_name": getattr(llama_dump, "source_name", None),
                 "ck_candidates": len(ck_candidates),
                 "llama_candidates": len(llama_candidates),
                 "alignment_ambiguous": bool(ambiguous),
