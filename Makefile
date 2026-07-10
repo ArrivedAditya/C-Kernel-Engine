@@ -511,8 +511,9 @@ endif
 # Opt-in llama.cpp-backed engine for strict stitched parity diagnostics.
 # This keeps ordinary CK builds independent from a local llama.cpp checkout.
 ifdef CK_LLAMA_PARITY_ENGINE
+LLAMA_CPP_PARITY_ROOT ?= $(V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT)
 SRCS += src/kernels/attention_oracle_ggml.c
-CFLAGS += -DCK_ENABLE_LLAMA_CPP_PARITY=1 -Illama.cpp/ggml/include -Illama.cpp/ggml/src
+CFLAGS += -DCK_ENABLE_LLAMA_CPP_PARITY=1 -I$(LLAMA_CPP_PARITY_ROOT)/ggml/include -I$(LLAMA_CPP_PARITY_ROOT)/ggml/src
 $(info Building strict llama.cpp-backed parity engine)
 endif
 
@@ -2330,11 +2331,11 @@ llamacpp-parity-stitched:
 	  $(if $(V8_STITCHED_GRANULAR_LAYERS),--granular-layers "$(V8_STITCHED_GRANULAR_LAYERS)",)
 
 test-qwen3vl-strict-attn-oracle-build:
-	@if [ ! -f llama.cpp/ggml/include/ggml.h ]; then \
-	  echo "ERROR: llama.cpp GGML headers are required for the strict attention oracle."; \
+	@if [ ! -f "$(V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT)/ggml/include/ggml.h" ]; then \
+	  echo "ERROR: llama.cpp GGML headers are required for the strict attention oracle at $(V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT)."; \
 	  exit 2; \
 	fi
-	@$(MAKE) --no-print-directory CK_LLAMA_PARITY_ENGINE=1 build/libckernel_engine.so
+	@$(MAKE) --no-print-directory CK_LLAMA_PARITY_ENGINE=1 LLAMA_CPP_PARITY_ROOT="$(V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT)" build/libckernel_engine.so
 	@nm -D build/libckernel_engine.so | grep -q ' ck_attention_full_ggml_graph_oracle_multihead$$' || { \
 	  echo "ERROR: strict attention oracle symbol is missing from build/libckernel_engine.so"; \
 	  exit 1; \

@@ -73,6 +73,37 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             self.assertEqual(dumps[0].token_id, 1)
             np.testing.assert_allclose(dumps[0].data, raw.reshape(2, 2))
 
+    def test_load_llama_dump_dir_labels_post_rope_occurrence(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_decoder_llama_rope_dump_") as tmpdir:
+            tmp = Path(tmpdir)
+            rows = []
+            for occurrence in (0, 1):
+                name = f"Qcur-0-token-000001-occ-{occurrence:03d}"
+                raw = np.full(8, float(occurrence), dtype=np.float32)
+                (tmp / f"{name}.bin").write_bytes(raw.tobytes())
+                rows.append(
+                    {
+                        "name": name,
+                        "base_name": "Qcur-0",
+                        "token_id": 1,
+                        "occurrence": occurrence,
+                        "dtype": 0,
+                        "rank": 2,
+                        "shape": [4, 2, 1, 1],
+                        "elem_count": 8,
+                        "nbytes": 32,
+                    }
+                )
+            (tmp / "index.json").write_text(
+                "".join(json.dumps(row) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+
+            dumps = decoder_parity_v8._load_llama_dump_dir(tmp)
+
+            self.assertEqual([dump.op_name for dump in dumps], ["q_proj", "qcur_rope"])
+
+
     def test_compare_dump_sets_reports_failures(self) -> None:
         ck_dumps = [
             decoder_parity_v8.parity_test_v7.ParityDump(
@@ -208,6 +239,41 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
         self.assertEqual([d.token_id for d in rows], [0, 1])
         np.testing.assert_allclose(rows[0].data, ck_tensor[:, 1, :])
         np.testing.assert_allclose(rows[1].data, ck_tensor[:, 2, :])
+
+    def test_expand_ck_prefill_decode_dumps_extracts_token_major_rope_rows(self) -> None:
+        # The dedicated CK post-RoPE dumper writes [tokens, heads, dim], unlike
+        # the raw qcur_normed scratch tensor above.
+        ck_tensor = np.arange(3 * 2 * 4, dtype=np.float32).reshape(3, 2, 4)
+        ck_dumps = [
+            decoder_parity_v8.parity_test_v7.ParityDump(
+                0,
+                "qcur_rope",
+                ck_tensor.reshape(-1),
+                0,
+                "fp32",
+            )
+        ]
+        llama_dumps = [
+            decoder_parity_v8.parity_test_v7.ParityDump(
+                0,
+                "qcur_rope",
+                np.zeros((4, 2), dtype=np.float32),
+                0,
+                "fp32",
+            )
+        ]
+
+        expanded = decoder_parity_v8._expand_ck_prefill_decode_dumps(
+            ck_dumps,
+            llama_dumps,
+            prompt_start_token=0,
+            prompt_token_count=2,
+        )
+
+        rows = [d for d in expanded if d.layer_id == 0 and d.op_name == "qcur_rope"]
+        self.assertEqual([d.token_id for d in rows], [0, 1])
+        np.testing.assert_allclose(rows[0].data, ck_tensor[1])
+        np.testing.assert_allclose(rows[1].data, ck_tensor[2])
 
     def test_build_llama_row_specs_prefers_ranked_norm_shape_on_tie(self) -> None:
         specs = decoder_parity_v8._build_llama_row_specs(

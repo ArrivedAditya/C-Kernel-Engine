@@ -788,6 +788,20 @@ int main(int argc, char ** argv) {
     cparams.n_threads = n_threads;
     cparams.n_threads_batch = n_threads;
     cparams.embeddings = !args.embeddings_out_path.empty();
+    const bool dump_attention_internals = std::any_of(
+        args.dump_names.begin(),
+        args.dump_names.end(),
+        [](const std::string & name) {
+            return name.rfind("kq-", 0) == 0 ||
+                   name.rfind("kq_soft_max-", 0) == 0 ||
+                   name.rfind("kqv-", 0) == 0;
+        });
+    if (dump_attention_internals) {
+        // Flash attention intentionally hides scores and probabilities as one
+        // fused node. Use llama.cpp's unfused reference graph only for a
+        // diagnostic capture that explicitly requests those boundaries.
+        cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    }
     DumpState dump_state;
     if (!args.dump_dir.empty()) {
         dump_state.dump_dir = args.dump_dir;

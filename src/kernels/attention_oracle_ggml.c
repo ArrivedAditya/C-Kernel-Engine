@@ -10,9 +10,9 @@
 #define CK_ENABLE_LLAMA_CPP_PARITY 1
 #include "attention_oracle_ggml.h"
 #include "ckernel_engine.h"
-#include "../../llama.cpp/ggml/include/ggml.h"
-#include "../../llama.cpp/ggml/include/ggml-backend.h"
-#include "../../llama.cpp/ggml/include/ggml-alloc.h"
+#include <ggml.h>
+#include <ggml-backend.h>
+#include <ggml-alloc.h>
 #include <dlfcn.h>
 #ifndef RTLD_DEFAULT
 #define RTLD_DEFAULT ((void *)0)
