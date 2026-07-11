@@ -16,6 +16,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 V8_BUILD_PATH = ROOT / "version" / "v8" / "scripts" / "build_ir_v8.py"
 V8_CODEGEN_PATH = ROOT / "version" / "v8" / "scripts" / "codegen_v8.py"
+V8_CODEGEN_CORE_PATH = ROOT / "version" / "v8" / "scripts" / "codegen_core_v8.py"
 V8_CONVERT_PATH = ROOT / "version" / "v8" / "scripts" / "convert_gguf_to_bump_v8.py"
 V8_BRIDGE_PATH = ROOT / "version" / "v8" / "scripts" / "run_multimodal_bridge_v8.py"
 
@@ -33,6 +34,7 @@ def _load_module(name: str, path: Path):
 
 
 build_ir_v8 = _load_module("build_ir_v8_qwen3vl_tests", V8_BUILD_PATH)
+codegen_core_v8 = _load_module("codegen_core_v8_qwen3vl_tests", V8_CODEGEN_CORE_PATH)
 convert_gguf_to_bump_v8 = _load_module("convert_gguf_to_bump_v8_qwen3vl_tests", V8_CONVERT_PATH)
 run_multimodal_bridge_v8 = _load_module("run_multimodal_bridge_v8_qwen3vl_tests", V8_BRIDGE_PATH)
 
@@ -146,6 +148,28 @@ def _make_qwen3vl_manifest() -> dict:
 
 class V8Qwen3VLTemplateTests(unittest.TestCase):
 
+    def test_vision_mrope_classification_uses_semantics_not_kernel_name(self) -> None:
+        operation = {
+            "op": "rope_qk",
+            "kernel": "deliberately_renamed_kernel",
+            "function": "unrelated_function_name",
+            "resolved_contract": {
+                "semantics": {
+                    "operator_family": "vision_mrope",
+                    "position_transform": {
+                        "pairing": "multi_section",
+                        "position_rank": 4,
+                    },
+                }
+            },
+        }
+        self.assertTrue(build_ir_v8._is_vision_mrope_operation(operation))
+        self.assertTrue(codegen_core_v8._is_vision_mrope_operation(operation))
+
+        operation["resolved_contract"]["semantics"]["operator_family"] = "gemm"
+        self.assertFalse(build_ir_v8._is_vision_mrope_operation(operation))
+        self.assertFalse(codegen_core_v8._is_vision_mrope_operation(operation))
+
     def test_authoritative_contract_preserves_behavior_and_reaches_call_ir(self) -> None:
         manifest = _make_qwen3vl_manifest()
         with tempfile.TemporaryDirectory(prefix="v8_qwen3vl_contract_equivalence_") as td:
@@ -208,6 +232,10 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
                 self.assertEqual(
                     mrope["resolved_contract"]["contract_id"],
                     "vision_mrope_fp32_input_fp32_compute_bf16_output",
+                )
+                self.assertEqual(
+                    mrope["resolved_contract"]["semantics"]["operator_family"],
+                    "vision_mrope",
                 )
                 self.assertEqual(
                     mrope["resolved_contract"]["kernel_id"],

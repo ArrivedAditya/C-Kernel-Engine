@@ -611,6 +611,24 @@ def _infer_logits_layout(config: Dict, layout: Dict) -> str:
                 return "full" if size > vocab * 4 else "last"
     return "last"
 
+
+def _is_vision_mrope_operation(op: Dict) -> bool:
+    """Use resolved semantics for vision M-RoPE diagnostics, never function names."""
+    resolved = op.get("resolved_contract")
+    semantics = resolved.get("semantics") if isinstance(resolved, dict) else None
+    transform = semantics.get("position_transform") if isinstance(semantics, dict) else None
+    if isinstance(semantics, dict):
+        return bool(
+            semantics.get("operator_family") == "vision_mrope"
+            and isinstance(transform, dict)
+            and transform.get("pairing") == "multi_section"
+            and int(transform.get("position_rank", 0) or 0) == 4
+        )
+    return bool(
+        op.get("op") in {"rope_qk", "mrope_qk"}
+        and str((op.get("params") or {}).get("rope_mode", "")).strip().lower() == "vision"
+    )
+
 def emit_op(
     op: Dict,
     seq_idx: int | None = None,
@@ -2056,14 +2074,7 @@ def emit_op(
                     )
                     lines.append("    #endif")
                 return _return_lines(append_stop=True)
-            if _same_op("rope_qk", "mrope_qk") and function in {
-                "mrope_qk_vision",
-                "mrope_qk_vision_bf16_storage",
-                "mrope_qk_vision_fp16_storage",
-                "mrope_qk_text",
-                "ck_qwen3vl_runtime_mrope_qk",
-                "ck_qwen3vl_prefill_mrope_qk",
-            }:
+            if _is_vision_mrope_operation(op):
                 q_expr = _get_arg("q")
                 k_expr = _get_arg("k")
                 rows = _get_arg("num_tokens")
@@ -2365,21 +2376,7 @@ static void ck_decode(CKModel *model, int32_t token) {
     lines.append("")
 
     vision_dump_mode = None
-    if any(
-        str(op.get("op", "")) == "split_qkv_packed"
-        or (
-            str(op.get("op", "")) in {"rope_qk", "mrope_qk"}
-            and str(op.get("function", op.get("kernel", ""))) in {
-                "mrope_qk_text",
-                "mrope_qk_vision",
-                "mrope_qk_vision_bf16_storage",
-                "mrope_qk_vision_fp16_storage",
-                "ck_qwen3vl_runtime_mrope_qk",
-                "ck_qwen3vl_prefill_mrope_qk",
-            }
-        )
-        for op in ops
-    ):
+    if any(_is_vision_mrope_operation(op) for op in ops):
         vision_dump_mode = "vision_qwen3vl"
 
     embed_scale_emitted = False

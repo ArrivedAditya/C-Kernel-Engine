@@ -16,6 +16,10 @@ kernel and the generated model route to disagree.
   production geometry.
 - Propagate the exact kernel and contract through GraphIR, LoweredIR, call IR,
   and generated C.
+- Require resolved `operator_family=vision_mrope` and
+  `position_transform.pairing=multi_section` metadata. Lowering and diagnostic
+  routing consume these semantics rather than inferring behavior from a kernel
+  or function-name prefix.
 - Added exact ABI bindings for the two storage wrappers. No prefix fallback or
   model-name dispatch was introduced.
 
@@ -23,7 +27,9 @@ kernel and the generated model route to disagree.
 
 - Numerical execution resolver: 15/15 pass.
 - X-ray architecture: 8/8 pass.
-- Qwen3-VL circuit/codegen: 20/20 pass.
+- Qwen3-VL circuit/codegen: 21/21 pass.
+- Renamed-kernel semantic routing guard: pass; exact kernel identity remains a
+  resolver output asserted independently in call IR.
 - Template/dataflow audit: 10/10 pass.
 - Vision kernel suite: pass.
 - Storage matrix at head dimensions 8 and 72:
