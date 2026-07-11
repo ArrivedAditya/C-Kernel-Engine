@@ -93,6 +93,8 @@ class XRayNumericalParityTests(unittest.TestCase):
         right = self.manifest("pytorch", [self.entry("vision.layer.0.output", b, storage="bf16")])
         result = xray.compare_manifests(left, right, self.profile, checkpoint_order=["vision.layer.0.output"])
         self.assertEqual(result["first_divergence"]["classification"], "STORAGE_CONTRACT_MISMATCH")
+        self.assertEqual(result["first_divergence"]["fix_owner"], "circuit_and_kernel_map")
+        self.assertIn("Do not add model-name", result["architecture_policy"]["forbidden_fix"])
 
     def test_producer_mismatch_is_not_mislabeled_as_kernel_math(self):
         a = self.root / "a.f32"; b = self.root / "b.f32"

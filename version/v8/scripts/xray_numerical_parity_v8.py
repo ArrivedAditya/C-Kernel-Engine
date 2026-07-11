@@ -146,6 +146,36 @@ REMEDIATIONS = {
     "MISSING_TOLERANCE_PROFILE": "Add a backend/dtype threshold to the parity profile, not the circuit.",
 }
 
+FIX_OWNERS = {
+    "MISSING_CHECKPOINT": "reference_adapter",
+    "CIRCUIT_PRODUCER_MISMATCH": "circuit_or_reference_adapter",
+    "LAYOUT_MISMATCH": "circuit_or_reference_adapter",
+    "STORAGE_CONTRACT_MISMATCH": "circuit_and_kernel_map",
+    "REDUCTION_CONTRACT_MISMATCH": "kernel_map_or_kernel",
+    "POSITION_CONTRACT_MISMATCH": "circuit_kernel_map_or_kernel",
+    "NUMERICAL_CONTRACT_MISMATCH": "circuit_and_kernel_map",
+    "KERNEL_BINDING_MISMATCH": "generic_compiler_hardening",
+    "DIAGNOSTIC_EXPORT_MAPPING": "reference_adapter",
+    "KERNEL_IMPLEMENTATION_DIVERGENCE": "kernel",
+    "NONFINITE_OUTPUT": "kernel_or_input_contract",
+    "RANKING_DIVERGENCE": "first_divergent_edge",
+    "STATE_CACHE_DIVERGENCE": "state_cache_kernel_or_contract",
+    "MISSING_TOLERANCE_PROFILE": "parity_profile",
+}
+
+ARCHITECTURE_POLICY = {
+    "dsl_role": "deterministically stitch and emit the circuit and resolved kernel-map decisions",
+    "allowed_dsl_changes": [
+        "generic validation",
+        "fail-closed resolution",
+        "metadata propagation",
+        "deterministic code generation",
+        "removal of implicit assumptions",
+    ],
+    "forbidden_fix": "Do not add model-name or checkpoint-specific kernel-selection branches to DSL/codegen.",
+    "required_kernel_validation": "Kernel arithmetic fixes require isolated scalar/reference parity plus the applicable llama.cpp or PyTorch parity gate.",
+}
+
 
 def _metrics(reference: np.ndarray, actual: np.ndarray, axes: list[str]) -> Dict[str, Any]:
     if reference.shape != actual.shape:
@@ -261,6 +291,7 @@ def compare_manifests(
 
     if first_classification is not None:
         classification = str(first_classification.get("classification", ""))
+        first_classification["fix_owner"] = FIX_OWNERS.get(classification, "first_divergent_edge")
         first_classification["recommended_action"] = REMEDIATIONS.get(
             classification, "Inspect the first failing semantic edge and its resolved contract metadata."
         )
@@ -279,6 +310,7 @@ def compare_manifests(
         "unresolved_contract_checkpoints": unresolved_contracts,
         "ranking_divergence": ranking,
         "next_plan": plan,
+        "architecture_policy": ARCHITECTURE_POLICY,
     }
 
 
@@ -303,6 +335,8 @@ def main() -> int:
     if divergence:
         print(f"fail_at={divergence.get('checkpoint_id', divergence.get('position', 'ranking'))}")
         print(f"class={divergence.get('classification')}")
+        print(f"fix_owner={divergence.get('fix_owner')}")
+        print(f"action={divergence.get('recommended_action')}")
     print(f"next={','.join(result['next_plan'].get('next_checkpoints', []))}")
     return 1 if result["status"] == "fail" else 0
 

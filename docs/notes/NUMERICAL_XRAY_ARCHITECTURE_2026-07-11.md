@@ -36,6 +36,36 @@ This is approximately 90-95% coverage of ordinary model-integration failures. Co
 
 Every failure includes a recommended action. Metadata faults do not proceed to numerical metrics.
 
+## Fix Ownership Policy
+
+Treat X-ray as an attribution tool, not permission to hardcode the observed
+answer into code generation. Every accepted parity fix must have one explicit
+owner:
+
+- **Circuit:** model topology, producer/consumer edges, operation order,
+  position semantics, and required storage/rounding/reduction contracts.
+- **Kernel map:** exact public function, supported numerical contract, ISA,
+  shape eligibility, and threading/reduction capability.
+- **Kernel:** identical inputs produce incorrect values. Reproduce this in an
+  isolated scalar/reference test and run the applicable llama.cpp or PyTorch
+  parity gate before promotion.
+- **Reference adapter/profile:** backend tensor naming, logical-axis mapping,
+  exported boundaries, and dtype-specific comparison tolerances.
+- **Generic compiler hardening:** schema validation, fail-closed resolution,
+  metadata propagation, deterministic emission, and removal of implicit
+  assumptions.
+
+The DSL/code generator must remain a deterministic consumer of circuit
+requirements and resolved kernel-map decisions. Do not add model-name,
+checkpoint-name, or one-off parity branches to DSL/codegen. If X-ray reports a
+model-specific mismatch, fix its circuit requirement, kernel capability/map,
+kernel arithmetic, or reference adapter. Change the compiler only when the
+missing behavior is model-independent infrastructure.
+
+Reports encode this rule in `first_divergence.fix_owner` and
+`architecture_policy`, so agents receive it with the failure rather than only
+in documentation.
+
 ## Lightweight Gate
 
 ```bash
