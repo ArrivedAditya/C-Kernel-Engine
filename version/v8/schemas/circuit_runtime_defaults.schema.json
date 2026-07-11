@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.circuit_runtime_defaults",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "prefer_q8_0_contract": {"type": "boolean"},
+    "prefer_fp32_logits": {"type": "boolean"},
+    "mlp_gate_up_fp32_layers": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 0},
+      "uniqueItems": true
+    },
+    "q8_0_contract_ops": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "activation_preference_by_op": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "enum": ["fp32", "q8_0", "q8_k"]
+      }
+    }
+  }
+}

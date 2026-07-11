@@ -1,0 +1,22 @@
+{
+  "schema": "cke.v8_dsl_policy",
+  "schema_version": 1,
+  "forbidden_model_literals": [
+    "deepseek",
+    "gemma",
+    "glm",
+    "kimi",
+    "llama",
+    "nanbeige",
+    "qwen"
+  ],
+  "compiler_functions": {
+    "version/v8/scripts/build_ir_v8.py": [
+      "_apply_circuit_runtime_defaults",
+      "_hydrate_manifest_template"
+    ],
+    "version/v8/scripts/resolve_numerical_execution_contracts_v8.py": [
+      "resolve_contract"
+    ]
+  }
+}

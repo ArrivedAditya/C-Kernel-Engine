@@ -488,50 +488,45 @@ _FORBIDDEN_TEMPLATE_KEY_NAMES: Dict[str, str] = {
 }
 
 
-def _inject_runtime_config_defaults(config: Dict[str, Any], arch: str) -> Dict[str, Any]:
-    arch_lc = str(arch or "").strip().lower()
+def _apply_circuit_runtime_defaults(
+    config: Dict[str, Any],
+    circuit: Optional[Dict[str, Any]],
+    *,
+    source: str,
+) -> Dict[str, Any]:
+    contract = circuit.get("contract") if isinstance(circuit, dict) else None
+    defaults = contract.get("runtime_defaults") if isinstance(contract, dict) else None
+    if defaults is None:
+        return dict(config)
+    schema_path = V8_ROOT / "schemas" / "circuit_runtime_defaults.schema.json"
+    with schema_path.open("r", encoding="utf-8") as handle:
+        schema = json.load(handle)
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(defaults),
+        key=lambda error: tuple(str(part) for part in error.absolute_path),
+    )
+    if errors:
+        error = errors[0]
+        location = ".".join(str(part) for part in error.absolute_path) or "<root>"
+        raise RuntimeError(
+            f"HARD CIRCUIT DEFAULT FAULT: {source} runtime_defaults invalid at "
+            f"{location}: {error.message}"
+        )
 
-    def _merge_activation_defaults(defaults: Dict[str, str]) -> None:
-        prefs = config.get("activation_preference_by_op")
-        if not isinstance(prefs, dict):
-            prefs = {}
+    merged = copy.deepcopy(config)
+    for key, value in defaults.items():
+        if isinstance(value, dict):
+            current = merged.get(key)
+            current = dict(current) if isinstance(current, dict) else {}
+            for item_key, item_value in value.items():
+                current.setdefault(item_key, copy.deepcopy(item_value))
+            merged.setdefault(key, current)
+            if isinstance(merged.get(key), dict):
+                for item_key, item_value in current.items():
+                    merged[key].setdefault(item_key, item_value)
         else:
-            prefs = dict(prefs)
-        for key, value in defaults.items():
-            prefs.setdefault(str(key), str(value))
-        config["activation_preference_by_op"] = prefs
-
-    if arch_lc == "qwen35":
-        config.setdefault("prefer_q8_0_contract", True)
-        # Empirical CK-vs-llama parity guard for Qwen3.5 decode:
-        # layer-0 recurrent gate is closer with the Q8_K activation contract,
-        # while layer-0 MLP gate/up stays on the FP32 adapter. Keep both as
-        # config defaults so other model families and later layers are not
-        # silently moved onto a broad fallback path.
-        config.setdefault("mlp_gate_up_fp32_layers", [0])
-        _merge_activation_defaults(
-            {
-                "recurrent_gate_proj": "q8_k",
-                "recurrent_alpha_proj": "q8_0",
-                "recurrent_beta_proj": "q8_0",
-            }
-        )
-    elif arch_lc == "qwen3_vl_vision":
-        config.setdefault("prefer_q8_0_contract", True)
-        config.setdefault(
-            "q8_0_contract_ops",
-            ["projector_fc2", "branch_fc1", "branch_fc2"],
-        )
-        _merge_activation_defaults({
-            "mlp_down": "fp32",
-            "out_proj": "q8_0",
-            "branch_fc1": "fp32",
-            "branch_fc2": "fp32",
-        })
-    elif arch_lc == "gemma3":
-        config.setdefault("prefer_q8_0_contract", True)
-        config.setdefault("prefer_fp32_logits", True)
-    return config
+            merged.setdefault(key, copy.deepcopy(value))
+    return merged
 
 
 def _collect_forbidden_template_metadata(
@@ -579,14 +574,17 @@ def _hydrate_manifest_template(manifest: Dict[str, Any]) -> Dict[str, Any]:
         template_name = str(template_doc.get("name", "") or "").strip().lower()
     if not template_name:
         template_name = str(cfg.get("model", "") or "").strip().lower()
-    cfg = _inject_runtime_config_defaults(dict(cfg), template_name or str(cfg.get("arch", "") or ""))
-    manifest["config"] = cfg
     built_in = _load_builtin_template_doc(template_name)
     if built_in and isinstance(template_doc, dict):
         manifest["template"] = _merge_template_defaults(built_in, template_doc)
     elif built_in:
         manifest["template"] = copy.deepcopy(built_in)
     _raise_on_forbidden_template_metadata(
+        manifest.get("template") if isinstance(manifest.get("template"), dict) else None,
+        source=f"manifest:{template_name or '<embedded>'}",
+    )
+    manifest["config"] = _apply_circuit_runtime_defaults(
+        dict(cfg),
         manifest.get("template") if isinstance(manifest.get("template"), dict) else None,
         source=f"manifest:{template_name or '<embedded>'}",
     )

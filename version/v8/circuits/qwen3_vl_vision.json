@@ -8,6 +8,16 @@
     "normalization": "layernorm"
   },
   "contract": {
+    "runtime_defaults": {
+      "prefer_q8_0_contract": true,
+      "q8_0_contract_ops": ["projector_fc2", "branch_fc1", "branch_fc2"],
+      "activation_preference_by_op": {
+        "mlp_down": "fp32",
+        "out_proj": "q8_0",
+        "branch_fc1": "fp32",
+        "branch_fc2": "fp32"
+      }
+    },
     "vision_contract": {
       "input_modality": "image",
       "position_encoding": "absolute_2d",
@@ -62,17 +72,6 @@
       "cache_policy": "persistent_decoder_kv",
       "runtime_policy": "decode_staged"
     }
-  },
-  "activation_preference_by_op": {
-    "qkv_packed_proj": "q8_0",
-    "out_proj": "q8_0",
-    "attn_out_proj": "q8_0",
-    "mlp_up": "q8_0",
-    "mlp_down": "fp32",
-    "projector_fc1": "q8_0",
-    "projector_fc2": "fp32",
-    "branch_fc1": "fp32",
-    "branch_fc2": "fp32"
   },
   "kernels": {
     "patch_proj": "gemm_nt_fp32_exact",
