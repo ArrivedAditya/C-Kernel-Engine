@@ -596,6 +596,18 @@ void gemv_q6_k_q8_k_avx(float *y,
 
 #if defined(__AVX2__)
 
+/* Match ggml's x86 hsum_float_8 reduction tree exactly. Replacing the final
+ * two additions with _mm_hadd_ps changes one FP32 ULP for realistic MLP-down
+ * rows and can cross the absolute parity gate on AVX2/AVX-512 runners. */
+static inline float ck_q6k_hsum_float_8(const __m256 x)
+{
+    __m128 res = _mm256_extractf128_ps(x, 1);
+    res = _mm_add_ps(res, _mm256_castps256_ps128(x));
+    res = _mm_add_ps(res, _mm_movehl_ps(res, res));
+    res = _mm_add_ss(res, _mm_movehdup_ps(res));
+    return _mm_cvtss_f32(res);
+}
+
 /* Q6_K optimization note:
  * ----------------------
  * llama.cpp's newer Q6_K AVX2 work inspired an experiment that separates the
@@ -603,15 +615,10 @@ void gemv_q6_k_q8_k_avx(float *y,
  * (bsums). That can reduce repeated subtract-32 work and improve some CPU
  * layouts, but it also changes reduction order and instruction balance.
  *
- * On the local AVX2 i7-1260P test box, a direct port kept correctness but made
- * focused single-core Q6_K GEMV slower. More importantly, Qwen3.5 long-decode
- * parity is sensitive to borderline logit movement from reduction order. CK
- * therefore keeps the public Q6_K path on the llama-compatible scalar reduction
- * by default, while v8 threadpool dispatch may use the SIMD row worker for
- * phase/shape-specific decode or prefill sweeps.
- *
- * Promotion rule: only make a Q6_K SIMD/packed path the default after the
- * dispatch matrix shows a stable speedup and model-family long parity passes.
+ * Current llama.cpp x86 kernels use the AVX2 reduction tree even in AVX-512
+ * builds. CK uses the same tree for its AVX2 and non-VBMI AVX-512 paths. Keep
+ * the final horizontal reduction in sync with ggml: an equivalent _mm_hadd_ps
+ * tree differs by one FP32 ULP on realistic MLP-down rows.
  */
 
 /* Scale shuffle for AVX2 - 32-byte version */
@@ -723,13 +730,7 @@ static float dot_q6_k_q8_k_avx2(const block_q6_K *w,
         acc = _mm256_fmadd_ps(_mm256_broadcast_ss(&d), _mm256_cvtepi32_ps(sumi), acc);
     }
 
-    /* Horizontal sum */
-    __m128 hi = _mm256_extractf128_ps(acc, 1);
-    __m128 lo = _mm256_castps256_ps128(acc);
-    __m128 sum128 = _mm_add_ps(hi, lo);
-    sum128 = _mm_hadd_ps(sum128, sum128);
-    sum128 = _mm_hadd_ps(sum128, sum128);
-    return _mm_cvtss_f32(sum128);
+    return ck_q6k_hsum_float_8(acc);
 }
 
 void gemv_q6_k_q8_k_avx2(float *y,
@@ -1030,13 +1031,7 @@ static float dot_q6_k_q8_k_avx512(const block_q6_K *w,
         acc = _mm256_fmadd_ps(_mm256_set1_ps(d), _mm256_cvtepi32_ps(sumi), acc);
     }
 
-    /* Horizontal sum - use AVX-512 reduce for efficiency */
-    __m128 hi = _mm256_extractf128_ps(acc, 1);
-    __m128 lo = _mm256_castps256_ps128(acc);
-    __m128 sum128 = _mm_add_ps(hi, lo);
-    sum128 = _mm_hadd_ps(sum128, sum128);
-    sum128 = _mm_hadd_ps(sum128, sum128);
-    return _mm_cvtss_f32(sum128);
+    return ck_q6k_hsum_float_8(acc);
 }
 
 void gemv_q6_k_q8_k_avx512(float *y,
@@ -1076,10 +1071,8 @@ void vec_dot_q6_k_q8_k(int n, float *s, const void *vx, const void *vy)
     const block_q6_K *x = (const block_q6_K *)vx;
     const block_q8_K *y = (const block_q8_K *)vy;
 
-    /* Keep the public dispatch on the llama-compatible reduction order.
-     * The SIMD variants are still exported for direct tests/benchmarks, but
-     * their horizontal reduction order can move borderline logits in Qwen3.5
-     * long-decode parity. */
+    /* This is the architecture-neutral scalar oracle. Production x86 dispatch
+     * uses the separately parity-tested SIMD reduction tree. */
     *s = dot_q6_k_q8_k_ref(x, y, n);
 }
 
@@ -1096,33 +1089,19 @@ void gemv_q6_k_q8_k(float *y,
         return;
     }
 
-    const char *simd_env = getenv("CK_Q6K_Q8K_SIMD");
-    if (!simd_env || !simd_env[0]) {
-        simd_env = getenv("CK_DEBUG_Q6K_Q8K_SIMD");
-    }
-    if (!(simd_env && simd_env[0] && simd_env[0] != '0')) {
-        /* Keep the public Q6_K dispatcher on the llama-compatible scalar
-         * reduction for now. The AVX/AVX2 path is faster, but it changes the
-         * reduction order enough to fail tight GEMM parity in some cases.
-         * Promote SIMD/packed Q6 only after the faster path is numerically
-         * reliable across model-family parity and long-decode tests. */
-        gemv_q6_k_q8_k_ref(y, W, x_q8, M, K);
-        return;
-    }
-
 #if defined(__AVX512F__) && defined(__AVX512BW__)
-        /* Avoid the Q6 VBMI implementation: it is not parity-safe on Xeon 6542Y. */
-        gemv_q6_k_q8_k_avx512(y, W, x_q8, M, K);
-        return;
+    /* Avoid the Q6 VBMI implementation: it is not parity-safe on Xeon 6542Y. */
+    gemv_q6_k_q8_k_avx512(y, W, x_q8, M, K);
+    return;
 #elif defined(__AVX2__)
-        gemv_q6_k_q8_k_avx2(y, W, x_q8, M, K);
-        return;
+    gemv_q6_k_q8_k_avx2(y, W, x_q8, M, K);
+    return;
 #elif defined(__AVX__)
-        gemv_q6_k_q8_k_avx(y, W, x_q8, M, K);
-        return;
+    gemv_q6_k_q8_k_avx(y, W, x_q8, M, K);
+    return;
 #elif defined(__SSE4_1__)
-        gemv_q6_k_q8_k_sse(y, W, x_q8, M, K);
-        return;
+    gemv_q6_k_q8_k_sse(y, W, x_q8, M, K);
+    return;
 #endif
     gemv_q6_k_q8_k_ref(y, W, x_q8, M, K);
 }

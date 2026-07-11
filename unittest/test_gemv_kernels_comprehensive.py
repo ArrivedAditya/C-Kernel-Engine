@@ -421,13 +421,15 @@ def get_test_cases(quick: bool = False, large: bool = False) -> dict:
         ],
         "Q6_K": [
             # Q6_K parity harness currently exposes a decode-style single-row
-            # entry point. Keep M=1 so reported GFLOPS match actual work.
-            TestCase("tiny", M=1, K=256, description="Minimal Q6_K decode"),
-            TestCase("small", M=1, K=512, description="Small Q6_K decode"),
-            TestCase("qwen", M=1, K=768, description="Qwen 0.5B Q6_K decode"),
-            TestCase("medium", M=1, K=1024, description="Medium Q6_K decode"),
-            TestCase("wide", M=1, K=2048, description="Wide Q6_K decode"),
-            TestCase("mlp_down", M=1, K=4864, description="Qwen 0.5B MLP down decode"),
+            # entry point. Keep M=1 so reported GFLOPS match actual work. The
+            # x86 production reduction is expected to match llama.cpp exactly;
+            # 1e-7 catches a one-ULP regression at realistic output magnitudes.
+            TestCase("tiny", M=1, K=256, tol=1e-7, description="Minimal Q6_K decode"),
+            TestCase("small", M=1, K=512, tol=1e-7, description="Small Q6_K decode"),
+            TestCase("qwen", M=1, K=768, tol=1e-7, description="Qwen 0.5B Q6_K decode"),
+            TestCase("medium", M=1, K=1024, tol=1e-7, description="Medium Q6_K decode"),
+            TestCase("wide", M=1, K=2048, tol=1e-7, description="Wide Q6_K decode"),
+            TestCase("mlp_down", M=1, K=4864, tol=1e-7, description="Qwen 0.5B MLP down decode"),
         ],
         "Q4_K_Q8_K": [
             TestCase("tiny", M=1, K=256, tol=1e-5, rtol=1e-4, description="Minimal direct vec_dot"),
