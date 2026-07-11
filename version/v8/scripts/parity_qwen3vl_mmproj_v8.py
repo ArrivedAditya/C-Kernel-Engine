@@ -159,12 +159,22 @@ def run_harness(gguf_path: Path, output_dir: Path) -> dict:
     branch_lowering_ops = {"branch_spatial_merge", "branch_layernorm", "branch_fc1", "branch_gelu", "branch_fc2", "branch_concat"}
     has_deepstack_lowering = branch_lowering_ops.issubset(set(ops))
     has_position_ids = "position_ids_2d" in ops or "vision_position_ids" in ops
-    has_vision_mrope = any(
-        op.get("op") in {"rope_qk", "mrope_qk"}
-        and str(op.get("kernel", "")).startswith("mrope_qk_vision")
-        for op in ir1_ops
-        if isinstance(op, dict)
-    )
+    def is_vision_mrope(op: dict) -> bool:
+        resolved = op.get("resolved_contract") or {}
+        semantics = resolved.get("semantics") or {}
+        transform = semantics.get("position_transform") or {}
+        if semantics:
+            return (
+                semantics.get("operator_family") == "vision_mrope"
+                and transform.get("pairing") == "multi_section"
+                and int(transform.get("position_rank", 0) or 0) == 4
+            )
+        return op.get("op") == "mrope_qk" or (
+            op.get("op") == "rope_qk"
+            and str((op.get("params") or {}).get("rope_mode", "")).strip().lower() == "vision"
+        )
+
+    has_vision_mrope = any(is_vision_mrope(op) for op in ir1_ops if isinstance(op, dict))
     config = manifest.get("config", {})
     entry_names = {
         str(entry.get("name"))

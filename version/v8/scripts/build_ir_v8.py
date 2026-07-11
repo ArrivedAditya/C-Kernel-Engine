@@ -285,6 +285,29 @@ def _graph_ir_contract_metadata(plan: Dict[str, Any]) -> Dict[str, Any]:
     return metadata
 
 
+def _is_vision_mrope_operation(operation: Dict[str, Any]) -> bool:
+    """Classify vision M-RoPE from circuit/contract semantics, never kernel names."""
+    resolved = operation.get("resolved_contract")
+    semantics = resolved.get("semantics") if isinstance(resolved, dict) else None
+    position = semantics.get("position_transform") if isinstance(semantics, dict) else None
+    if isinstance(semantics, dict):
+        return bool(
+            semantics.get("operator_family") == "vision_mrope"
+            and isinstance(position, dict)
+            and position.get("pairing") == "multi_section"
+            and int(position.get("position_rank", 0) or 0) == 4
+        )
+
+    op_type = str(operation.get("op", ""))
+    if op_type == "mrope_qk":
+        return True
+    if op_type != "rope_qk":
+        return False
+
+    params = operation.get("params") if isinstance(operation.get("params"), dict) else {}
+    return str(params.get("rope_mode", "")).strip().lower() == "vision"
+
+
 def _attach_semantic_checkpoints(
     template: Dict[str, Any],
     arranged_kernels: List[Dict[str, Any]],
@@ -8489,9 +8512,7 @@ def generate_memory_layout_packed(
         if op_type == "rope_q":
             alloc_act("q_scratch")
             alloc_act("rope_cache")
-        if op_type == "mrope_qk" or (
-            op_type == "rope_qk" and kernel_type.startswith("mrope_qk_vision")
-        ):
+        if _is_vision_mrope_operation(op):
             alloc_act("q_scratch")
             alloc_act("k_scratch")
             alloc_act("vision_positions")
@@ -9158,9 +9179,7 @@ def generate_ir_lower_2(
                     "dtype": "i32",
                     "ptr_expr": f"activations + {pos_buf['offset']}",
                 }
-        elif op_type == "mrope_qk" or (
-            op_type == "rope_qk" and str(ir_op.get("kernel", "")).startswith("mrope_qk_vision")
-        ):
+        elif _is_vision_mrope_operation(ir_op):
             q_buf = activation_buffers.get("q_scratch")
             k_buf = activation_buffers.get("k_scratch")
             pos_buf = activation_buffers.get("vision_positions")
@@ -9735,10 +9754,7 @@ def generate_ir_lower_2(
                         "dtype": "fp32",
                         "ptr_expr": f"activations + {k_buf['offset']}",
                     })
-        if ir_op.get("op", "") == "mrope_qk" or (
-            ir_op.get("op", "") == "rope_qk"
-            and str(ir_op.get("kernel", "")).startswith("mrope_qk_vision")
-        ):
+        if _is_vision_mrope_operation(ir_op):
             for scratch_name in ["q_scratch", "k_scratch"]:
                 buf = activation_buffers.get(scratch_name)
                 if buf:
@@ -9957,9 +9973,7 @@ def generate_ir_lower_2(
             gemma4v_freq_base = float(config.get("vision_rope_theta", 100.0) or 100.0)
             params["freq_base"] = gemma4v_freq_base
             params["rope_freq_base"] = gemma4v_freq_base
-        if op_type == "mrope_qk" or (
-            op_type == "rope_qk" and str(ir_op.get("kernel", "")).startswith("mrope_qk_vision")
-        ):
+        if _is_vision_mrope_operation(ir_op):
             sections = config.get("vision_mrope_sections")
             if not isinstance(sections, list) or len(sections) != 4:
                 default_section = max(1, int(params.get("head_dim", 0) or 0) // 4)
@@ -10064,10 +10078,7 @@ def generate_ir_lower_2(
             "quantize_final_output",
         ) or op_type == "branch_layernorm":
             params["_m"] = int(params.get("vision_merged_tokens", params.get("_m", 1)) or 1)
-        if op_type in ("vision_position_ids", "position_ids_2d", "mrope_qk") or (
-            op_type == "rope_qk"
-            and str(ir_op.get("kernel", "")).startswith("mrope_qk_vision")
-        ):
+        if op_type in ("vision_position_ids", "position_ids_2d") or _is_vision_mrope_operation(ir_op):
             params["_m"] = int(params.get("vision_num_patches", params.get("_m", 1)) or 1)
         if op_type in ("quantize_input_0", "quantize_input_1", "quantize_input_2", "quantize_out_proj_input", "quantize_mlp_down_input", "quantize_recurrent_out_proj_input", "quantize_mamba_out_proj_input", "quantize_final_output"):
             inferred_quant_rows = int(params.get("_m", params.get("seq_len", params.get("rows", 1))) or 1)

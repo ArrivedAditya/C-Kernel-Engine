@@ -18,8 +18,11 @@
     "contract": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "storage", "compute", "rounding", "reduction", "threading", "position_transform", "description"],
+      "required": ["operator_family", "status", "storage", "compute", "rounding", "reduction", "threading", "position_transform", "description"],
       "properties": {
+        "operator_family": {
+          "enum": ["gemm", "spatial_position_interpolation", "vision_mrope"]
+        },
         "status": {"enum": ["unresolved", "observed", "validated"]},
         "storage": {
           "type": "object",
