@@ -94,6 +94,7 @@
   "required_contracts": {
     "vision_encoder.attention": {
       "op": "attention",
+      "template_ops": ["attn"],
       "phases": {
         "prefill": {
           "requires": {

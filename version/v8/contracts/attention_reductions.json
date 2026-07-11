@@ -49,6 +49,26 @@
         "reference": "PyTorch with K/V explicitly rounded through FP16"
       }
     },
+    "f16_online_single_range": {
+      "status": "observed",
+      "q_compute": "fp16_rounded",
+      "k_compute": "fp16_rounded",
+      "score_accumulator": "fp32",
+      "softmax_statistics": "fp32",
+      "value_compute": "fp16_rounded",
+      "value_accumulator": "fp16_rounded_each_update",
+      "partial_storage": "none",
+      "partial_merge": "none",
+      "partition": {
+        "kind": "single_range"
+      },
+      "description": "Single-range llama-compatible attention with FP16-rounded Q/K/V and FP16-rounded value updates.",
+      "validation": {
+        "test": "make llamacpp-parity-full",
+        "cases": ["Nanbeige prefill", "Nanbeige decode"],
+        "reference": "llama.cpp GGML attention; promotion remains blocked on a dedicated leaf oracle"
+      }
+    },
     "f16_online_fp32_merge": {
       "status": "validated",
       "q_compute": "fp16_rounded",

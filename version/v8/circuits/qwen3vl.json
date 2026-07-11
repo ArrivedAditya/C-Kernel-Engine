@@ -99,13 +99,24 @@
     }
   },
   "kernels": {
-    "rope_qk": "mrope_qk_text",
-    "attn_decode": "attention_forward_decode_head_major_gqa_flash"
+    "rope_qk": "mrope_qk_text"
   },
   "required_contracts": {
     "decoder.attention": {
       "op": "attention",
+      "template_ops": ["attn"],
       "phases": {
+        "prefill": {
+          "requires": {
+            "execution.phase": "prefill",
+            "tensor.q.dtype": "fp32",
+            "tensor.kv.dtype": "fp32",
+            "tensor.layout": "head_major",
+            "numerics.attention_reduction": "fp32_online"
+          },
+          "validation": "observed",
+          "evidence": "Mixed-prefix full replay remains the production gate; the selected causal FP32 route has leaf coverage."
+        },
         "decode": {
           "requires": {
             "execution.phase": "decode",

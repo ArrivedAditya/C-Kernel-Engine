@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.attention_kernel_capability",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "op", "mode", "contract_schema_version", "provides", "supported_reductions", "implementation", "impl"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "op": {"enum": ["attention", "attention_sliding"]},
+    "mode": {"enum": ["prefill", "decode"]},
+    "contract_schema_version": {"const": 1},
+    "provides": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execution.phase", "tensor.q.dtype", "tensor.kv.dtype", "tensor.layout", "numerics.attention_reduction"],
+      "properties": {
+        "execution.phase": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["prefill", "decode"]}},
+        "tensor.q.dtype": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["fp32", "fp16", "bf16"]}},
+        "tensor.kv.dtype": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["fp32", "fp16", "bf16"]}},
+        "tensor.layout": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["head_major", "token_major"]}},
+        "numerics.attention_reduction": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "supported_reductions": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["status", "function", "explicit_selector", "notes"],
+        "properties": {
+          "status": {"enum": ["unresolved", "observed", "validated"]},
+          "function": {"type": "string", "minLength": 1},
+          "explicit_selector": {"type": "boolean"},
+          "selector": {"type": ["string", "null"]},
+          "notes": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["isa_dispatch", "threading"],
+      "properties": {
+        "isa_dispatch": {"enum": ["runtime", "compile_time", "scalar"]},
+        "threading": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["runtime", "work_partition", "dispatch", "reduction_order_effect"],
+          "properties": {
+            "runtime": {"enum": ["serial", "ck_threadpool"]},
+            "work_partition": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["serial", "independent_heads", "independent_query_blocks", "kv_chunks_by_workers"]}},
+            "dispatch": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["inline", "ck_threadpool_dispatch_n"]}},
+            "reduction_order_effect": {"enum": ["none", "contract_defined", "implementation_defined"]}
+          }
+        }
+      }
+    },
+    "impl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["function"],
+      "properties": {"function": {"type": "string", "minLength": 1}}
+    }
+  }
+}

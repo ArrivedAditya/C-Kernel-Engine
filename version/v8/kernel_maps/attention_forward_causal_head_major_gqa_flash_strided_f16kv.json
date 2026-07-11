@@ -2,6 +2,32 @@
   "id": "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
   "op": "attention",
   "variant": "causal_flash_fp32_f16kv",
+  "mode": "prefill",
+  "contract_schema_version": 1,
+  "provides": {
+    "execution.phase": ["prefill"],
+    "tensor.q.dtype": ["fp32"],
+    "tensor.kv.dtype": ["fp32"],
+    "tensor.layout": ["head_major"],
+    "numerics.attention_reduction": ["f16_online_single_range"]
+  },
+  "supported_reductions": {
+    "f16_online_single_range": {
+      "status": "observed",
+      "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
+      "explicit_selector": true,
+      "notes": "Single-range FP16-rounded Q/K/V compatibility route; dedicated oracle promotion remains open."
+    }
+  },
+  "implementation": {
+    "isa_dispatch": "scalar",
+    "threading": {
+      "runtime": "serial",
+      "work_partition": ["serial"],
+      "dispatch": ["inline"],
+      "reduction_order_effect": "contract_defined"
+    }
+  },
   "quant": {
     "weight": "none",
     "activation": "fp32",

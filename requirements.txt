@@ -4,3 +4,4 @@ numpy
 safetensors
 requests
 tqdm
+jsonschema>=4.18

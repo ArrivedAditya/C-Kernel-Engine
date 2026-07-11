@@ -19,6 +19,7 @@ What is included here right now:
 - `tools/ir_visualizer.html`
 - `circuits/*`
 - `contracts/*`
+- `schemas/*`
 - `kernel_maps/*`
 
 The active compiler input is:
@@ -28,10 +29,18 @@ weights + circuits + kernel maps -> deterministic DSL lowering -> generated C
 ```
 
 Circuits declare graph structure and required semantics. Kernel maps advertise
-complete numerical contracts. `build_ir_v8.py` resolves those requirements and
-then verifies that legacy lowering emitted the same uniquely selected provider.
-This keeps migration behavior-preserving while moving parity discoveries out of
-ad hoc runtime dispatch.
+complete numerical and execution capabilities, including threadpool partition
+policies. `build_ir_v8.py` resolves those requirements before GraphIR is built.
+GraphIR, LoweredIR, and call-ready IR carry the same provider and contract IDs;
+later stages hard-fail if they differ. See `CONTRACT_POLICY.md` before changing a
+contract failure: fallbacks, silent defaults, tolerance relaxation, and bypass
+flags are forbidden.
+
+Every versioned kernel execution capability is also recorded as
+`resolved_execution` in GraphIR and preserved through call-ready IR. This is
+operator-generic: the current maps cover attention plus the hot Q4/Q6 GEMM and
+GEMV routes, including threadpool runtime, partition, dispatch, and reduction-
+order effects.
 
 Canonical text bring-up examples:
 - `version/v8/scripts/cks-v8-run run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf --context-len 1024 --force-compile --force-convert --chat-template=auto --generate-visualizer`

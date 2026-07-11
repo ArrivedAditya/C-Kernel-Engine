@@ -3,6 +3,31 @@
   "op": "attention_sliding",
   "variant": "decode_flash_fp32_sliding",
   "mode": "decode",
+  "contract_schema_version": 1,
+  "provides": {
+    "execution.phase": ["decode"],
+    "tensor.q.dtype": ["fp32"],
+    "tensor.kv.dtype": ["fp32"],
+    "tensor.layout": ["head_major"],
+    "numerics.attention_reduction": ["fp32_online"]
+  },
+  "supported_reductions": {
+    "fp32_online": {
+      "status": "validated",
+      "function": "attention_forward_decode_head_major_gqa_flash_sliding",
+      "explicit_selector": true,
+      "notes": "Validated sliding-window FP32 single-token decode route."
+    }
+  },
+  "implementation": {
+    "isa_dispatch": "runtime",
+    "threading": {
+      "runtime": "serial",
+      "work_partition": ["independent_heads"],
+      "dispatch": ["inline"],
+      "reduction_order_effect": "none"
+    }
+  },
   "quant": {
     "activation": "fp32",
     "output": "fp32"

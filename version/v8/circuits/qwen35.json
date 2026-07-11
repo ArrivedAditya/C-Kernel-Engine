@@ -87,6 +87,24 @@
       "required_call_args": {}
     }
   },
+  "required_contracts": {
+    "decoder.attention": {
+      "op": "attention",
+      "template_ops": ["attn"],
+      "phases": {
+        "prefill": {
+          "requires": {"execution.phase": "prefill", "tensor.q.dtype": "fp32", "tensor.kv.dtype": "fp32", "tensor.layout": "head_major", "numerics.attention_reduction": "fp32_online"},
+          "validation": "validated",
+          "evidence": "v8 Qwen3.5 E2E regression validates dense-attention layers; recurrent layers use a separate state contract."
+        },
+        "decode": {
+          "requires": {"execution.phase": "decode", "tensor.q.dtype": "fp32", "tensor.kv.dtype": "fp32", "tensor.layout": "head_major", "numerics.attention_reduction": "fp32_online"},
+          "validation": "validated",
+          "evidence": "v8 Qwen3.5 E2E regression validates dense-attention decode layers; recurrent layers use a separate state contract."
+        }
+      }
+    }
+  },
   "sequence": ["decoder"],
   "block_types": {
     "decoder": {

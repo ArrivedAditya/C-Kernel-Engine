@@ -89,6 +89,24 @@
   "kernels": {
     "rope_qk": "rope_forward_qk"
   },
+  "required_contracts": {
+    "decoder.attention": {
+      "op": "attention",
+      "template_ops": ["attn"],
+      "phases": {
+        "prefill": {
+          "requires": {"execution.phase": "prefill", "tensor.q.dtype": "fp32", "tensor.kv.dtype": "fp32", "tensor.layout": "head_major", "numerics.attention_reduction": "fp32_online"},
+          "validation": "validated",
+          "evidence": "v8 Qwen3 E2E regression and causal attention parity pass."
+        },
+        "decode": {
+          "requires": {"execution.phase": "decode", "tensor.q.dtype": "fp32", "tensor.kv.dtype": "fp32", "tensor.layout": "head_major", "numerics.attention_reduction": "fp32_online"},
+          "validation": "validated",
+          "evidence": "v8 Qwen3 E2E regression and decode attention parity pass."
+        }
+      }
+    }
+  },
   "sequence": ["decoder"],
   "block_types": {
     "decoder": {

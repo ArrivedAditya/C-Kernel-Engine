@@ -2,6 +2,16 @@
   "id": "gemv_q6_k_q8_k",
   "op": "gemv",
   "variant": "q6_k_w_q8_k_a_fp32_out",
+  "contract_schema_version": 1,
+  "implementation": {
+    "isa_dispatch": "runtime",
+    "threading": {
+      "runtime": "ck_threadpool",
+      "work_partition": ["serial", "independent_rows"],
+      "dispatch": ["inline", "ck_threadpool_dispatch_n"],
+      "reduction_order_effect": "none"
+    }
+  },
   "quant": {
     "weight": "q6_k",
     "activation": "q8_k",

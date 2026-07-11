@@ -600,6 +600,45 @@
       "op": "attention",
       "variant": "decode_head_major_gqa_flash",
       "mode": "decode",
+      "contract_schema_version": 1,
+      "provides": {
+        "execution.phase": [
+          "decode"
+        ],
+        "tensor.q.dtype": [
+          "fp32"
+        ],
+        "tensor.kv.dtype": [
+          "fp32"
+        ],
+        "tensor.layout": [
+          "head_major"
+        ],
+        "numerics.attention_reduction": [
+          "fp32_online"
+        ]
+      },
+      "supported_reductions": {
+        "fp32_online": {
+          "status": "validated",
+          "function": "attention_forward_decode_head_major_gqa_flash",
+          "explicit_selector": true,
+          "notes": "Validated FP32 single-token decode route."
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "independent_heads"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
       "quant": {
         "activation": "fp32",
         "output": "fp32"
@@ -670,6 +709,45 @@
       "op": "attention",
       "variant": "decode_head_major_gqa_flash_f16kv",
       "mode": "decode",
+      "contract_schema_version": 1,
+      "provides": {
+        "execution.phase": [
+          "decode"
+        ],
+        "tensor.q.dtype": [
+          "fp32"
+        ],
+        "tensor.kv.dtype": [
+          "fp32"
+        ],
+        "tensor.layout": [
+          "head_major"
+        ],
+        "numerics.attention_reduction": [
+          "f16_online_single_range"
+        ]
+      },
+      "supported_reductions": {
+        "f16_online_single_range": {
+          "status": "observed",
+          "function": "attention_forward_decode_head_major_gqa_flash_f16kv",
+          "explicit_selector": true,
+          "notes": "Single-range FP16-rounded Q/K/V compatibility route; dedicated oracle promotion remains open."
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
       "quant": {
         "activation": "fp32",
         "output": "fp32"
@@ -809,6 +887,46 @@
       "id": "attention_forward_causal_head_major_gqa_flash_strided",
       "op": "attention",
       "variant": "causal_flash_fp32",
+      "mode": "prefill",
+      "contract_schema_version": 1,
+      "provides": {
+        "execution.phase": [
+          "prefill"
+        ],
+        "tensor.q.dtype": [
+          "fp32"
+        ],
+        "tensor.kv.dtype": [
+          "fp32"
+        ],
+        "tensor.layout": [
+          "head_major"
+        ],
+        "numerics.attention_reduction": [
+          "fp32_online"
+        ]
+      },
+      "supported_reductions": {
+        "fp32_online": {
+          "status": "validated",
+          "function": "attention_forward_causal_head_major_gqa_flash_strided",
+          "explicit_selector": true,
+          "notes": "Validated causal FP32 online-softmax prefill route."
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "ck_threadpool",
+          "work_partition": [
+            "independent_query_blocks"
+          ],
+          "dispatch": [
+            "ck_threadpool_dispatch_n"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
       "quant": {
         "weight": "none",
         "activation": "fp32",
@@ -994,6 +1112,46 @@
       "id": "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
       "op": "attention",
       "variant": "causal_flash_fp32_f16kv",
+      "mode": "prefill",
+      "contract_schema_version": 1,
+      "provides": {
+        "execution.phase": [
+          "prefill"
+        ],
+        "tensor.q.dtype": [
+          "fp32"
+        ],
+        "tensor.kv.dtype": [
+          "fp32"
+        ],
+        "tensor.layout": [
+          "head_major"
+        ],
+        "numerics.attention_reduction": [
+          "f16_online_single_range"
+        ]
+      },
+      "supported_reductions": {
+        "f16_online_single_range": {
+          "status": "observed",
+          "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
+          "explicit_selector": true,
+          "notes": "Single-range FP16-rounded Q/K/V compatibility route; dedicated oracle promotion remains open."
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
       "quant": {
         "weight": "none",
         "activation": "fp32",
@@ -1330,6 +1488,46 @@
       "id": "attention_forward_causal_head_major_gqa_flash_strided_sliding",
       "op": "attention_sliding",
       "variant": "causal_flash_fp32_sliding",
+      "mode": "prefill",
+      "contract_schema_version": 1,
+      "provides": {
+        "execution.phase": [
+          "prefill"
+        ],
+        "tensor.q.dtype": [
+          "fp32"
+        ],
+        "tensor.kv.dtype": [
+          "fp32"
+        ],
+        "tensor.layout": [
+          "head_major"
+        ],
+        "numerics.attention_reduction": [
+          "fp32_online"
+        ]
+      },
+      "supported_reductions": {
+        "fp32_online": {
+          "status": "validated",
+          "function": "attention_forward_causal_head_major_gqa_flash_strided_sliding",
+          "explicit_selector": true,
+          "notes": "Validated sliding-window FP32 online-softmax prefill route."
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "ck_threadpool",
+          "work_partition": [
+            "independent_query_blocks"
+          ],
+          "dispatch": [
+            "ck_threadpool_dispatch_n"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
       "quant": {
         "weight": "none",
         "activation": "fp32",
@@ -1836,6 +2034,7 @@
       "op": "attention",
       "variant": "decode_head_major_gqa_flash_f16cache",
       "mode": "decode",
+      "contract_schema_version": 1,
       "provides": {
         "execution.phase": [
           "decode"
@@ -1859,6 +2058,19 @@
           "function": "attention_forward_decode_head_major_gqa_flash_f16cache",
           "explicit_selector": false,
           "notes": "Current generated v8 route. The explicit selector API is validated separately and will replace this ABI after E2E promotion."
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "ck_threadpool",
+          "work_partition": [
+            "kv_chunks_by_workers"
+          ],
+          "dispatch": [
+            "ck_threadpool_dispatch_n"
+          ],
+          "reduction_order_effect": "contract_defined"
         }
       },
       "quant": {
@@ -2035,6 +2247,45 @@
       "op": "attention_sliding",
       "variant": "decode_flash_fp32_sliding",
       "mode": "decode",
+      "contract_schema_version": 1,
+      "provides": {
+        "execution.phase": [
+          "decode"
+        ],
+        "tensor.q.dtype": [
+          "fp32"
+        ],
+        "tensor.kv.dtype": [
+          "fp32"
+        ],
+        "tensor.layout": [
+          "head_major"
+        ],
+        "numerics.attention_reduction": [
+          "fp32_online"
+        ]
+      },
+      "supported_reductions": {
+        "fp32_online": {
+          "status": "validated",
+          "function": "attention_forward_decode_head_major_gqa_flash_sliding",
+          "explicit_selector": true,
+          "notes": "Validated sliding-window FP32 single-token decode route."
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "independent_heads"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
       "quant": {
         "activation": "fp32",
         "output": "fp32"
@@ -2610,6 +2861,7 @@
       "op": "attention",
       "variant": "full_flash_fp32",
       "mode": "prefill",
+      "contract_schema_version": 1,
       "provides": {
         "execution.phase": [
           "prefill"
@@ -2633,6 +2885,19 @@
           "function": "attention_forward_full_head_major_gqa_flash_strided",
           "explicit_selector": false,
           "notes": "Legacy v8 ABI with validated FP32 Q and FP16-rounded K/V semantics."
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "ck_threadpool",
+          "work_partition": [
+            "independent_query_blocks"
+          ],
+          "dispatch": [
+            "ck_threadpool_dispatch_n"
+          ],
+          "reduction_order_effect": "none"
         }
       },
       "quant": {
@@ -7268,6 +7533,25 @@
       "id": "gemm_nt_q4_k_q8_k",
       "op": "gemm",
       "variant": "q4_k_w_q8_k_a",
+      "contract_schema_version": 1,
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "ck_threadpool",
+          "work_partition": [
+            "serial",
+            "independent_rows",
+            "independent_columns",
+            "output_tiles"
+          ],
+          "dispatch": [
+            "inline",
+            "ck_threadpool_dispatch_n",
+            "internal_threaded"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
       "quant": {
         "weight": "q4_k",
         "activation": "q8_k",
@@ -7896,6 +8180,23 @@
       "id": "gemm_nt_q6_k_q8_k",
       "op": "gemm",
       "variant": "q6_k_w_q8_k_a",
+      "contract_schema_version": 1,
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "ck_threadpool",
+          "work_partition": [
+            "serial",
+            "independent_rows",
+            "output_tiles"
+          ],
+          "dispatch": [
+            "inline",
+            "ck_threadpool_dispatch_n"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
       "quant": {
         "weight": "q6_k",
         "activation": "q8_k",
@@ -9103,6 +9404,22 @@
       "id": "gemv_q4_k_q8_k",
       "op": "gemv",
       "variant": "q4_k_w_q8_k_a_fp32_out",
+      "contract_schema_version": 1,
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "ck_threadpool",
+          "work_partition": [
+            "serial",
+            "independent_rows"
+          ],
+          "dispatch": [
+            "inline",
+            "ck_threadpool_dispatch_n"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
       "quant": {
         "weight": "q4_k",
         "activation": "q8_k",
@@ -9832,6 +10149,22 @@
       "id": "gemv_q6_k_q8_k",
       "op": "gemv",
       "variant": "q6_k_w_q8_k_a_fp32_out",
+      "contract_schema_version": 1,
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "ck_threadpool",
+          "work_partition": [
+            "serial",
+            "independent_rows"
+          ],
+          "dispatch": [
+            "inline",
+            "ck_threadpool_dispatch_n"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
       "quant": {
         "weight": "q6_k",
         "activation": "q8_k",

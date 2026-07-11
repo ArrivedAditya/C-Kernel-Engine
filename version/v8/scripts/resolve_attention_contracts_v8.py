@@ -13,17 +13,34 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
+from jsonschema import Draft202012Validator
+
 
 V8_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = V8_ROOT.parents[1]
 DEFAULT_CONTRACTS = V8_ROOT / "contracts" / "attention_reductions.json"
 DEFAULT_KERNELS = V8_ROOT / "kernel_maps"
+SCHEMA_ROOT = V8_ROOT / "schemas"
+CONTRACT_REGISTRY_SCHEMA = SCHEMA_ROOT / "attention_reduction_registry.schema.json"
+CIRCUIT_REQUIREMENTS_SCHEMA = SCHEMA_ROOT / "attention_required_contracts.schema.json"
+KERNEL_CAPABILITY_SCHEMA = SCHEMA_ROOT / "attention_kernel_capability.schema.json"
+KERNEL_EXECUTION_SCHEMA = SCHEMA_ROOT / "kernel_execution_capability.schema.json"
+RESOLVED_CONTRACT_SCHEMA = SCHEMA_ROOT / "resolved_attention_contract.schema.json"
 VALID_STATES = {"unresolved", "observed", "validated"}
 AMBIGUOUS_IDS = {"fp16", "f16", "bf16", "fp32", "f32", "fast", "strict"}
 
 
 class ContractError(RuntimeError):
     pass
+
+
+def hard_contract_fault(summary: str, detail: str, remediation: str) -> ContractError:
+    return ContractError(
+        "HARD CONTRACT FAULT: " + summary + "\n"
+        "  " + detail + "\n"
+        "  Fix: " + remediation + "\n"
+        "  Do not add a fallback, silent default, tolerance relaxation, or validation bypass."
+    )
 
 
 def load_json(path: Path) -> Dict[str, Any]:
@@ -39,9 +56,27 @@ def load_json(path: Path) -> Dict[str, Any]:
     return doc
 
 
+def validate_schema(instance: Dict[str, Any], schema_path: Path, context: str) -> None:
+    schema = load_json(schema_path)
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(instance),
+        key=lambda error: tuple(str(part) for part in error.absolute_path),
+    )
+    if not errors:
+        return
+    error = errors[0]
+    location = ".".join(str(part) for part in error.absolute_path) or "<root>"
+    raise hard_contract_fault(
+        f"{context} violates {schema_path.name}",
+        f"At {location}: {error.message}",
+        "correct the circuit, reduction registry, or kernel map so it satisfies the versioned schema.",
+    )
+
+
 def load_kernel_capabilities(root: Path = DEFAULT_KERNELS) -> Dict[str, Any]:
     if not root.is_dir():
         raise ContractError(f"Kernel-map directory does not exist: {root}")
+    load_kernel_execution_capabilities(root)
     kernels: Dict[str, Any] = {}
     for path in sorted(root.glob("*.json")):
         doc = load_json(path)
@@ -57,6 +92,45 @@ def load_kernel_capabilities(root: Path = DEFAULT_KERNELS) -> Dict[str, Any]:
         raise ContractError(f"No numerical kernel capabilities found under: {root}")
     return {
         "schema": "cke.kernel_numerical_contracts",
+        "schema_version": 1,
+        "engine_contract_version": "8",
+        "kernels": kernels,
+    }
+
+
+def load_kernel_execution_capabilities(root: Path = DEFAULT_KERNELS) -> Dict[str, Any]:
+    if not root.is_dir():
+        raise ContractError(f"Kernel-map directory does not exist: {root}")
+    kernels: Dict[str, Any] = {}
+    for path in sorted(root.glob("*.json")):
+        doc = load_json(path)
+        if "contract_schema_version" not in doc:
+            continue
+        kernel_id = str(doc.get("id", "")).strip()
+        if not kernel_id:
+            raise hard_contract_fault(
+                "versioned kernel map has no id",
+                f"File: {path}",
+                "add a stable kernel-map id.",
+            )
+        if kernel_id in kernels:
+            raise hard_contract_fault(
+                f"duplicate kernel capability id {kernel_id!r}",
+                f"Files: {kernels[kernel_id]['source']} and {path}",
+                "give each executable provider a unique id.",
+            )
+        capability = {
+            "id": kernel_id,
+            "op": doc.get("op"),
+            "contract_schema_version": doc.get("contract_schema_version"),
+            "implementation": doc.get("implementation"),
+        }
+        validate_schema(capability, KERNEL_EXECUTION_SCHEMA, f"kernel execution capability {kernel_id}")
+        kernels[kernel_id] = {**capability, "source": str(path)}
+    if not kernels:
+        raise ContractError(f"No versioned kernel execution capabilities found under: {root}")
+    return {
+        "schema": "cke.kernel_execution_capabilities",
         "schema_version": 1,
         "engine_contract_version": "8",
         "kernels": kernels,
@@ -87,6 +161,7 @@ def validate_state(value: Any, context: str) -> str:
 
 
 def validate_contract_registry(doc: Dict[str, Any]) -> None:
+    validate_schema(doc, CONTRACT_REGISTRY_SCHEMA, "attention reduction registry")
     require_keys(doc, ("contracts", "required_semantic_fields"), "attention contract registry")
     contracts = doc["contracts"]
     fields = doc["required_semantic_fields"]
@@ -125,6 +200,30 @@ def validate_kernel_overlay(doc: Dict[str, Any]) -> None:
                 f"Kernel capability {kernel_id} points to map with id {base_map.get('id')!r}: {map_path}"
             )
         base_function = (base_map.get("impl") or {}).get("function")
+        validate_schema(
+            {
+                "id": kernel_id,
+                "op": kernel.get("op"),
+                "contract_schema_version": kernel.get("contract_schema_version"),
+                "implementation": kernel.get("implementation"),
+            },
+            KERNEL_EXECUTION_SCHEMA,
+            f"kernel execution capability {kernel_id}",
+        )
+        validate_schema(
+            {
+                "id": kernel_id,
+                "op": kernel.get("op"),
+                "mode": kernel.get("mode"),
+                "contract_schema_version": kernel.get("contract_schema_version"),
+                "provides": kernel.get("provides"),
+                "supported_reductions": kernel.get("supported_reductions"),
+                "implementation": kernel.get("implementation"),
+                "impl": {"function": base_function},
+            },
+            KERNEL_CAPABILITY_SCHEMA,
+            f"kernel capability {kernel_id}",
+        )
         provides = kernel["provides"]
         if not isinstance(provides, dict) or not provides:
             raise ContractError(f"Kernel capability {kernel_id}.provides must be a non-empty object")
@@ -184,12 +283,18 @@ def resolve_contract(
         raise ContractError(f"Unknown resolution mode: {mode}")
 
     operations = circuit_doc.get("required_contracts")
+    validate_schema(
+        {"required_contracts": operations},
+        CIRCUIT_REQUIREMENTS_SCHEMA,
+        f"circuit {circuit_doc.get('name') or '<embedded>'} attention requirements",
+    )
     if not isinstance(operations, dict) or operation not in operations:
         raise ContractError(f"Circuit does not declare operation contract: {operation}")
     operation_doc = operations[operation]
     if not isinstance(operation_doc, dict):
         raise ContractError(f"Circuit operation {operation} must be an object")
-    require_keys(operation_doc, ("op", "phases"), f"circuit operation {operation}")
+    require_keys(operation_doc, ("op", "template_ops", "phases"), f"circuit operation {operation}")
+    template_ops = operation_doc["template_ops"]
     phases = operation_doc["phases"]
     if not isinstance(phases, dict) or phase not in phases:
         raise ContractError(f"Circuit operation {operation} does not declare phase: {phase}")
@@ -224,12 +329,22 @@ def resolve_contract(
         if isinstance(supported, dict) and reduction_id in supported:
             candidates.append((candidate_id, candidate))
     if not candidates:
-        raise ContractError(
-            f"No kernel satisfies circuit requirements for {operation}.{phase}: {json.dumps(requires, sort_keys=True)}"
+        available = [
+            f"{candidate_id}: {json.dumps(candidate.get('provides', {}), sort_keys=True)}"
+            for candidate_id, candidate in kernels.items()
+            if candidate.get("op") == operation_doc["op"]
+        ]
+        raise hard_contract_fault(
+            f"no kernel provides {operation}.{phase}",
+            "Required: " + json.dumps(requires, sort_keys=True)
+            + ("; available attention providers: " + " | ".join(available) if available else "; no providers exist"),
+            "correct the circuit requirement or add and validate a compatible executable kernel map.",
         )
     if len(candidates) > 1:
-        raise ContractError(
-            f"Ambiguous kernel selection for {operation}.{phase}: {[item[0] for item in candidates]}"
+        raise hard_contract_fault(
+            f"multiple kernels provide {operation}.{phase}",
+            f"Matching providers: {[item[0] for item in candidates]}",
+            "make kernel capabilities mutually exclusive or add an explicit semantic requirement that selects one provider.",
         )
     kernel_id, kernel = candidates[0]
     supported = kernel.get("supported_reductions")
@@ -258,12 +373,13 @@ def resolve_contract(
 
     source_path = source_circuit_path.resolve() if source_circuit_path else None
 
-    return {
+    result = {
         "schema": "cke.resolved_attention_contract",
         "schema_version": 1,
         "engine_contract_version": "8",
         "circuit": circuit_doc.get("name"),
         "operation": operation,
+        "template_ops": template_ops,
         "phase": phase,
         "resolution_mode": mode,
         "kernel": {
@@ -278,6 +394,7 @@ def resolve_contract(
             "definition_status": contract_state,
             "semantics": {key: contract[key] for key in contract_doc["required_semantic_fields"]}
         },
+        "implementation": kernel["implementation"],
         "request_status": request_state,
         "requirements": requires,
         "production_blockers": blockers,
@@ -286,6 +403,8 @@ def resolve_contract(
             "circuit_sha256": sha256_file(source_path) if source_path else None
         }
     }
+    validate_schema(result, RESOLVED_CONTRACT_SCHEMA, f"resolved contract {operation}.{phase}")
+    return result
 
 
 def parse_args() -> argparse.Namespace:
