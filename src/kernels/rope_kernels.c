@@ -278,16 +278,11 @@ void rope_precompute_cache_split(float *cos_cache,
                                  float base)
 {
     int half_dim = head_dim / 2;
-    long double base_ld = (long double)base;
-    long double head_dim_ld = (long double)head_dim;
-    long double log_base = logl(base_ld);
-
     for (int pos = 0; pos < max_seq_len; ++pos) {
         for (int i = 0; i < half_dim; ++i) {
-            long double exponent = ((long double)(2 * i)) / head_dim_ld;
-            long double freq = expl(-exponent * log_base);
-            float freq_f = (float)freq;
-            float angle_f = (float)pos * freq_f;
+            const float exponent = ((float)(2 * i)) / (float)head_dim;
+            const float freq_f = 1.0f / powf(base, exponent);
+            const float angle_f = (float)pos * freq_f;
             cos_cache[pos * half_dim + i] = cosf(angle_f);
             sin_cache[pos * half_dim + i] = sinf(angle_f);
         }
@@ -342,10 +337,6 @@ void rope_precompute_cache(float *cos_cache,
 
     int rotary_half = rotary_dim / 2;
 
-    long double base_ld = (long double)base;
-    long double rotary_dim_ld = (long double)rotary_dim;
-    long double log_base = logl(base_ld);
-
     for (int pos = 0; pos < max_seq_len; ++pos) {
         // Apply linear scaling to position if needed
         float effective_pos = (float)pos;
@@ -354,10 +345,11 @@ void rope_precompute_cache(float *cos_cache,
         }
 
         for (int i = 0; i < rotary_half; ++i) {
-            // Frequency spacing should be based on rotary_dim (not full head_dim)
-            long double exponent = ((long double)(2 * i)) / rotary_dim_ld;
-            long double freq = expl(-exponent * log_base);
-            float freq_f = (float)freq;
+            // Match the FP32 reference contract directly. Computing this via
+            // long-double log/exp makes the final float depend on the host
+            // libm and long-double ABI.
+            const float exponent = ((float)(2 * i)) / (float)rotary_dim;
+            const float freq_f = 1.0f / powf(base, exponent);
             float angle_f = effective_pos * freq_f;
             cos_cache[pos * rotary_half + i] = cosf(angle_f);
             sin_cache[pos * rotary_half + i] = sinf(angle_f);

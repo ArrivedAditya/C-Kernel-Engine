@@ -4542,7 +4542,59 @@ static inline float ck_attention_dot_f16_llama(const uint16_t *x,
                                                 int n)
 {
     int i = 0;
-#if defined(__AVX2__) && defined(__F16C__)
+#if defined(__AVX512FP16__)
+    // Match ggml's native AVX-512 FP16 path: four 32-lane FP16
+    // accumulators per 128 values, then its fixed pairwise tree.
+    __m512h sum0 = _mm512_setzero_ph();
+    __m512h sum1 = _mm512_setzero_ph();
+    __m512h sum2 = _mm512_setzero_ph();
+    __m512h sum3 = _mm512_setzero_ph();
+    const int n128 = n & ~127;
+    for (; i < n128; i += 128) {
+        const __m512h x0 = _mm512_loadu_ph(x + i);
+        const __m512h y0 = _mm512_loadu_ph(y + i);
+        const __m512h x1 = _mm512_loadu_ph(x + i + 32);
+        const __m512h y1 = _mm512_loadu_ph(y + i + 32);
+        const __m512h x2 = _mm512_loadu_ph(x + i + 64);
+        const __m512h y2 = _mm512_loadu_ph(y + i + 64);
+        const __m512h x3 = _mm512_loadu_ph(x + i + 96);
+        const __m512h y3 = _mm512_loadu_ph(y + i + 96);
+        sum0 = _mm512_fmadd_ph(x0, y0, sum0);
+        sum1 = _mm512_fmadd_ph(x1, y1, sum1);
+        sum2 = _mm512_fmadd_ph(x2, y2, sum2);
+        sum3 = _mm512_fmadd_ph(x3, y3, sum3);
+    }
+    sum0 = _mm512_add_ph(sum0, sum2);
+    sum1 = _mm512_add_ph(sum1, sum3);
+    sum0 = _mm512_add_ph(sum0, sum1);
+    float result = (float) _mm512_reduce_add_ph(sum0);
+#elif defined(__AVX512F__)
+    // Match ggml's AVX-512 FP16-to-FP32 path: four 16-lane
+    // accumulators per 64 values, then its fixed pairwise tree.
+    __m512 sum0 = _mm512_setzero_ps();
+    __m512 sum1 = _mm512_setzero_ps();
+    __m512 sum2 = _mm512_setzero_ps();
+    __m512 sum3 = _mm512_setzero_ps();
+    const int n64 = n & ~63;
+    for (; i < n64; i += 64) {
+        const __m512 x0 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *) (x + i)));
+        const __m512 y0 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *) (y + i)));
+        const __m512 x1 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *) (x + i + 16)));
+        const __m512 y1 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *) (y + i + 16)));
+        const __m512 x2 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *) (x + i + 32)));
+        const __m512 y2 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *) (y + i + 32)));
+        const __m512 x3 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *) (x + i + 48)));
+        const __m512 y3 = _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *) (y + i + 48)));
+        sum0 = _mm512_fmadd_ps(x0, y0, sum0);
+        sum1 = _mm512_fmadd_ps(x1, y1, sum1);
+        sum2 = _mm512_fmadd_ps(x2, y2, sum2);
+        sum3 = _mm512_fmadd_ps(x3, y3, sum3);
+    }
+    sum0 = _mm512_add_ps(sum0, sum2);
+    sum1 = _mm512_add_ps(sum1, sum3);
+    sum0 = _mm512_add_ps(sum0, sum1);
+    float result = _mm512_reduce_add_ps(sum0);
+#elif defined(__AVX2__) && defined(__F16C__)
     // Match ggml_vec_dot_f16's AVX reduction contract: four independent
     // accumulators per 32 values, followed by its fixed pairwise tree.
     __m256 sum0 = _mm256_setzero_ps();
