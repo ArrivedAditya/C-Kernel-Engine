@@ -26,8 +26,19 @@ Agents and contributors must not:
 
 Threading belongs in execution capabilities. If worker partitioning changes an
 accumulation or merge order, the numerical contract must define that order too.
-A performance planner may rank only providers that already satisfy the complete
-semantic contract.
+The compiler must bind the exact kernel ID and public function named by the
+kernel map; it must not rank or guess functions from ISA, shape, or benchmark
+data. Dimensions and thread counts are function inputs. A named public function
+may dispatch internally only among implementations proven to satisfy its
+numerical contract.
+
+Quantized and reduced-precision linear kernels must name a scalar contract
+oracle. The required evidence ladder is external backend versus scalar oracle,
+optimized public function versus scalar oracle, and threadpool dispatch versus
+scalar oracle. Independent-output partitioning must not change reduction order.
+Split-K requires a distinct contract with partial dtype and merge order.
+`make test-numerical-contracts` must execute representative kernel numerics for
+declared reduction contracts; schema and resolver checks alone are insufficient.
 
 The supported v8 text circuits and Qwen3-VL routes must resolve attention before
 GraphIR construction. GraphIR records the required contract and resolved

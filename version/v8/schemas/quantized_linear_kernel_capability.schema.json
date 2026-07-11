@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.quantized_linear_kernel_capability",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "op", "contract_schema_version", "numerical_contract", "reference", "production", "implementation", "impl"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "op": {"enum": ["gemm", "gemv"]},
+    "contract_schema_version": {"const": 1},
+    "numerical_contract": {"type": "string", "minLength": 1},
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["function", "kind", "adapter", "validation"],
+      "properties": {
+        "function": {"type": "string", "minLength": 1},
+        "kind": {"const": "scalar_contract_oracle"},
+        "adapter": {"enum": ["direct", "per_activation_row", "per_activation_row_then_bias"]},
+        "validation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "tests", "external_oracles"],
+          "properties": {
+            "status": {"enum": ["unresolved", "observed", "validated"]},
+            "tests": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+            "external_oracles": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["backend", "status", "evidence"],
+                "properties": {
+                  "backend": {"type": "string", "minLength": 1},
+                  "status": {"enum": ["unresolved", "observed", "validated"]},
+                  "evidence": {"type": "string", "minLength": 1}
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "production": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["function", "threaded_function", "reference_comparison"],
+      "properties": {
+        "function": {"type": "string", "minLength": 1},
+        "threaded_function": {"type": "string", "minLength": 1},
+        "reference_comparison": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["requirement", "absolute_tolerance", "relative_tolerance", "tests"],
+          "properties": {
+            "requirement": {"enum": ["bit_exact", "contract_tolerance"]},
+            "absolute_tolerance": {"type": "number", "minimum": 0},
+            "relative_tolerance": {"type": "number", "minimum": 0},
+            "tests": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+          }
+        }
+      }
+    },
+    "implementation": {"type": "object"},
+    "impl": {
+      "type": "object",
+      "required": ["function"],
+      "properties": {"function": {"type": "string", "minLength": 1}}
+    }
+  }
+}

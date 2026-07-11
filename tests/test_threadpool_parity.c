@@ -1,6 +1,6 @@
 /**
  * test_threadpool_parity.c - Numerical parity and speed comparison:
- *                             Serial GEMV/GEMM kernels vs Thread Pool dispatch variants
+ *                             Scalar/serial references vs production and threadpool variants
  *
  * Tests thread pool dispatch wrappers against serial kernels:
  *
@@ -23,8 +23,8 @@
  *   - OpenMP fork/join creates threads per #pragma region (~15-50us overhead)
  *   - Thread pool keeps N-1 pthreads alive, spin-waiting on atomics (~0.1us wake)
  *   - OpenMP + thread pool together causes 2N threads competing for N cores
- *   - This test validates that thread pool dispatch produces identical outputs
- *     to serial kernels, and measures the speedup from persistent pthreads.
+ *   - Q4_K/Q6_K production and threadpool routes are each checked against a
+ *     scalar contract oracle, then benchmarked against that reference.
  *
  * Validates:
  *   - Numerical parity (tolerance: 1e-3 abs)
@@ -157,6 +157,8 @@ extern void gemv_q8_0_q8_0(float *y, const void *W, const void *x_q8, int M, int
 extern void gemv_q5_0_q8_0(float *y, const void *W, const void *x_q8, int M, int K);
 extern void gemv_q6_k_q8_k(float *y, const void *W, const void *x_q8, int M, int K);
 extern void gemv_q4_k_q8_k(float *y, const void *W, const void *x_q8, int M, int K);
+extern void gemv_q6_k_q8_k_ref(float *y, const void *W, const void *x_q8, int M, int K);
+extern void gemv_q4_k_q8_k_ref(float *y, const void *W, const void *x_q8, int M, int K);
 extern void gemv_fused_q5_0_bias_dispatch(float *y, const void *W, const float *x,
                                            const float *bias, int M, int K);
 
@@ -189,8 +191,36 @@ extern void gemm_nt_q6_k_q8_k_parallel_dispatch(const void *A, const void *B,
                                                    const float *bias, float *C,
                                                    int M, int N, int K);
 extern void gemm_nt_q4_k_q8_k_parallel_dispatch(const void *A, const void *B,
-                                                   const float *bias, float *C,
-                                                   int M, int N, int K);
+                                                  const float *bias, float *C,
+                                                  int M, int N, int K);
+
+static void gemm_nt_q4_k_q8_k_scalar_oracle(
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K)
+{
+    const size_t row_bytes = (size_t)(K / QK_K) * sizeof(block_q8_K);
+    for (int m = 0; m < M; ++m) {
+        float *row = C + (size_t)m * (size_t)N;
+        gemv_q4_k_q8_k_ref(row, B, (const char *)A + (size_t)m * row_bytes, N, K);
+        if (bias) {
+            for (int n = 0; n < N; ++n) row[n] += bias[n];
+        }
+    }
+}
+
+static void gemm_nt_q6_k_q8_k_scalar_oracle(
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K)
+{
+    const size_t row_bytes = (size_t)(K / QK_K) * sizeof(block_q8_K);
+    for (int m = 0; m < M; ++m) {
+        float *row = C + (size_t)m * (size_t)N;
+        gemv_q6_k_q8_k_ref(row, B, (const char *)A + (size_t)m * row_bytes, N, K);
+        if (bias) {
+            for (int n = 0; n < N; ++n) row[n] += bias[n];
+        }
+    }
+}
 
 /* ============================================================================
  * Parity check (reused from test_gemv_omp_parity.c)
@@ -490,7 +520,7 @@ static int run_gemm_test(const char *test_name,
 
     printf("\n");
     printf("%-15s %6s %6s %6s  %10s %10s %8s  %s\n",
-           "Config", "M", "N", "K", "Serial(ms)", "Pool(ms)", "Speedup", "Parity");
+           "Config", "M", "N", "K", "Reference", "Candidate", "Speedup", "Parity");
     printf("------------------------------------------------------------------------------------\n");
 
     for (int c = 0; configs[c].name; c++) {
@@ -582,7 +612,7 @@ static int run_gemv_q_test(const char *test_name,
 
     printf("\n");
     printf("%-15s %8s %8s  %10s %10s %8s  %s\n",
-           "Config", "M", "K", "Serial(ms)", "Pool(ms)", "Speedup", "Parity");
+           "Config", "M", "K", "Reference", "Candidate", "Speedup", "Parity");
     printf("--------------------------------------------------------------------------------\n");
 
     for (int c = 0; configs[c].name; c++) {
@@ -739,16 +769,24 @@ int main(int argc, char **argv) {
      * ========================================================================= */
     printf("\n");
     printf("================================================================================\n");
-    printf("  TEST 3: gemv_q6_k_q8_k (serial) vs gemv_q6_k_q8_k_parallel_dispatch (pool)\n");
+    printf("  TEST 3: Q6_K GEMV scalar oracle vs production and threadpool\n");
     printf("================================================================================\n");
 
     total_fail += run_gemv_q_test(
-        "q6_k",
-        gemv_q6_k_q8_k, gemv_q6_k_q8_k_parallel_dispatch,
+        "q6_k_prod",
+        gemv_q6_k_q8_k_ref, gemv_q6_k_q8_k,
         QK_K, sizeof(block_q6_K),
         GEMV_WEIGHT_Q6_K,
         GEMV_ACT_Q8_K,
-        configs, warmup, iters, abs_tol, verbose
+        configs, warmup, iters, 1.0e-4f, verbose
+    );
+    total_fail += run_gemv_q_test(
+        "q6_k_pool",
+        gemv_q6_k_q8_k_ref, gemv_q6_k_q8_k_parallel_dispatch,
+        QK_K, sizeof(block_q6_K),
+        GEMV_WEIGHT_Q6_K,
+        GEMV_ACT_Q8_K,
+        configs, warmup, iters, 1.0e-4f, verbose
     );
 
     /* =========================================================================
@@ -757,16 +795,24 @@ int main(int argc, char **argv) {
      * ========================================================================= */
     printf("\n");
     printf("================================================================================\n");
-    printf("  TEST 4: gemv_q4_k_q8_k (serial) vs gemv_q4_k_q8_k_parallel_dispatch (pool)\n");
+    printf("  TEST 4: Q4_K GEMV scalar oracle vs production and threadpool\n");
     printf("================================================================================\n");
 
     total_fail += run_gemv_q_test(
-        "q4_k",
-        gemv_q4_k_q8_k, gemv_q4_k_q8_k_parallel_dispatch,
+        "q4_k_prod",
+        gemv_q4_k_q8_k_ref, gemv_q4_k_q8_k,
         QK_K, sizeof(block_q4_K),
         GEMV_WEIGHT_Q4_K,
         GEMV_ACT_Q8_K,
-        configs, warmup, iters, abs_tol, verbose
+        configs, warmup, iters, 1.0e-3f, verbose
+    );
+    total_fail += run_gemv_q_test(
+        "q4_k_pool",
+        gemv_q4_k_q8_k_ref, gemv_q4_k_q8_k_parallel_dispatch,
+        QK_K, sizeof(block_q4_K),
+        GEMV_WEIGHT_Q4_K,
+        GEMV_ACT_Q8_K,
+        configs, warmup, iters, 1.0e-3f, verbose
     );
 
     /* =========================================================================
@@ -965,8 +1011,7 @@ int main(int argc, char **argv) {
      * ========================================================================= */
     printf("\n");
     printf("================================================================================\n");
-    printf("  TEST 10: gemm_nt_q6_k_q8_k (serial) vs\n");
-    printf("          gemm_nt_q6_k_q8_k_parallel_dispatch (pool) [prefill]\n");
+    printf("  TEST 10: Q6_K GEMM scalar row oracle vs production and threadpool [prefill]\n");
     printf("================================================================================\n");
 
     /* Q6_K/Q8_K require K % 256 == 0 — filter configs accordingly */
@@ -983,15 +1028,23 @@ int main(int argc, char **argv) {
 
         if (q6k_count > 0) {
             total_fail += run_gemm_test(
-                "q6_k_q8_k",
-                gemm_nt_q6_k_q8_k, gemm_nt_q6_k_q8_k_parallel_dispatch,
+                "q6_k_prod",
+                gemm_nt_q6_k_q8_k_scalar_oracle, gemm_nt_q6_k_q8_k,
                 QK_K, sizeof(block_q8_K),   /* A = Q8_K */
                 QK_K, sizeof(block_q6_K),   /* B = Q6_K */
                 0,  /* B_is_q5 */
                 1,  /* A_is_q8_K */
                 1,  /* B_is_q6_K */
                 0,  /* B_is_q4_K */
-                q6k_configs, warmup, iters, abs_tol, verbose
+                q6k_configs, warmup, iters, 1.0e-4f, verbose
+            );
+            total_fail += run_gemm_test(
+                "q6_k_pool",
+                gemm_nt_q6_k_q8_k_scalar_oracle, gemm_nt_q6_k_q8_k_parallel_dispatch,
+                QK_K, sizeof(block_q8_K),
+                QK_K, sizeof(block_q6_K),
+                0, 1, 1, 0,
+                q6k_configs, warmup, iters, 1.0e-4f, verbose
             );
         } else {
             printf("\n  (Skipped: no configs with K %% 256 == 0)\n");
@@ -1004,8 +1057,7 @@ int main(int argc, char **argv) {
      * ========================================================================= */
     printf("\n");
     printf("================================================================================\n");
-    printf("  TEST 11: gemm_nt_q4_k_q8_k (serial) vs\n");
-    printf("          gemm_nt_q4_k_q8_k_parallel_dispatch (pool) [prefill]\n");
+    printf("  TEST 11: Q4_K GEMM scalar row oracle vs production and threadpool [prefill]\n");
     printf("================================================================================\n");
 
     {
@@ -1020,15 +1072,23 @@ int main(int argc, char **argv) {
 
         if (q4k_count > 0) {
             total_fail += run_gemm_test(
-                "q4_k_q8_k",
-                gemm_nt_q4_k_q8_k, gemm_nt_q4_k_q8_k_parallel_dispatch,
+                "q4_k_prod",
+                gemm_nt_q4_k_q8_k_scalar_oracle, gemm_nt_q4_k_q8_k,
                 QK_K, sizeof(block_q8_K),   /* A = Q8_K */
                 QK_K, sizeof(block_q4_K),   /* B = Q4_K */
                 0,  /* B_is_q5 */
                 1,  /* A_is_q8_K */
                 0,  /* B_is_q6_K */
                 1,  /* B_is_q4_K */
-                q4k_configs, warmup, iters, abs_tol, verbose
+                q4k_configs, warmup, iters, 1.0e-3f, verbose
+            );
+            total_fail += run_gemm_test(
+                "q4_k_pool",
+                gemm_nt_q4_k_q8_k_scalar_oracle, gemm_nt_q4_k_q8_k_parallel_dispatch,
+                QK_K, sizeof(block_q8_K),
+                QK_K, sizeof(block_q4_K),
+                0, 1, 0, 1,
+                q4k_configs, warmup, iters, 1.0e-3f, verbose
             );
         } else {
             printf("\n  (Skipped: no configs with K %% 256 == 0)\n");
@@ -1054,6 +1114,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("\n  All thread pool dispatch kernels match serial output within tolerance.\n\n");
+    printf("\n  All production and threadpool kernels match their declared references.\n\n");
     return 0;
 }

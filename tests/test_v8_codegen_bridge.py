@@ -272,6 +272,14 @@ class V8CodegenBridgeTests(unittest.TestCase):
             by_op["mlp_down"][0]["resolved_execution"]["kernel_id"],
             "gemv_q6_k_q8_k",
         )
+        self.assertEqual(
+            by_op["q_proj"][0]["resolved_execution"]["reference"]["function"],
+            "gemv_q4_k_q8_k_ref",
+        )
+        self.assertEqual(
+            by_op["mlp_down"][0]["resolved_execution"]["numerical_contract"],
+            "q6_k_x_q8_k_fp32_block_order",
+        )
 
         with tempfile.TemporaryDirectory(prefix="v8_qwen3vl_text_mrope_") as tmpdir:
             tmp = Path(tmpdir)
@@ -318,6 +326,14 @@ class V8CodegenBridgeTests(unittest.TestCase):
                 "none",
             )
             self.assertEqual(mlp_down_call["resolved_execution"]["kernel_id"], "gemv_q6_k_q8_k")
+            self.assertEqual(
+                q_proj_call["resolved_execution"]["production"]["function"],
+                "gemv_q4_k_q8_k",
+            )
+            self.assertEqual(
+                q_proj_call["resolved_execution"]["production"]["threaded_function"],
+                "gemv_q4_k_q8_k_parallel_dispatch",
+            )
             arg_map = {arg["name"]: arg["expr"] for arg in rope_call["args"]}
             self.assertEqual(arg_map["pos_offset"], "model->rope_pos")
             self.assertEqual(arg_map["section_0"], "1")

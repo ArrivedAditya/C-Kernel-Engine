@@ -132,13 +132,17 @@ def _load_kernel_execution_capabilities() -> Dict[str, Dict[str, Any]]:
 
 
 def _graph_ir_execution_metadata(capability: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+    metadata = {
         "schema": "cke.graph_ir_execution_contract",
         "schema_version": 1,
         "kernel_id": capability["id"],
         "op": capability["op"],
         "implementation": copy.deepcopy(capability["implementation"]),
     }
+    for key in ("numerical_contract", "reference", "production"):
+        if capability.get(key) is not None:
+            metadata[key] = copy.deepcopy(capability[key])
+    return metadata
 
 
 def _validate_resolved_kernels_are_emitted(

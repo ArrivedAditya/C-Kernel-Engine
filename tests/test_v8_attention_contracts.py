@@ -29,6 +29,7 @@ class AttentionContractV8Tests(unittest.TestCase):
         cls.vision_circuit_path = V8_ROOT / "circuits" / "qwen3_vl_vision.json"
         cls.vision_circuit = resolver.load_json(cls.vision_circuit_path)
         cls.contracts = resolver.load_json(resolver.DEFAULT_CONTRACTS)
+        cls.linear_contracts = resolver.load_json(resolver.DEFAULT_LINEAR_CONTRACTS)
         cls.kernels = resolver.load_kernel_capabilities()
 
     def resolve(self, phase: str, mode: str = "bringup"):
@@ -281,6 +282,41 @@ class AttentionContractV8Tests(unittest.TestCase):
                 self.assertEqual(threading["runtime"], "ck_threadpool")
                 self.assertIn("ck_threadpool_dispatch_n", threading["dispatch"])
                 self.assertEqual(threading["reduction_order_effect"], "none")
+                self.assertIn(capabilities[kernel_id]["numerical_contract"], self.linear_contracts["contracts"])
+                self.assertTrue(capabilities[kernel_id]["reference"]["function"].endswith("_ref"))
+                self.assertTrue(capabilities[kernel_id]["production"]["threaded_function"].endswith("_parallel_dispatch"))
+
+    def test_quantized_linear_registry_defines_complete_semantics(self) -> None:
+        resolver.validate_quantized_linear_contract_registry(copy.deepcopy(self.linear_contracts))
+
+    def test_quantized_linear_production_function_drift_is_a_hard_fault(self) -> None:
+        kernel = resolver.load_json(V8_ROOT / "kernel_maps" / "gemm_nt_q4_k_q8_k.json")
+        kernel["production"]["function"] = "wrong_function"
+        with self.assertRaisesRegex(resolver.ContractError, "production function drifts"):
+            resolver.validate_quantized_linear_kernel_capability(kernel, self.linear_contracts)
+
+    def test_quantized_linear_missing_scalar_reference_is_a_hard_fault(self) -> None:
+        kernel = resolver.load_json(V8_ROOT / "kernel_maps" / "gemv_q6_k_q8_k.json")
+        del kernel["reference"]["function"]
+        capability = {
+            key: kernel[key]
+            for key in (
+                "id", "op", "contract_schema_version", "numerical_contract",
+                "reference", "production", "implementation", "impl",
+            )
+        }
+        with self.assertRaisesRegex(resolver.ContractError, "(?s)HARD CONTRACT FAULT.*At reference.*function"):
+            resolver.validate_schema(
+                capability,
+                resolver.LINEAR_KERNEL_CAPABILITY_SCHEMA,
+                "mutated Q6 GEMV capability",
+            )
+
+    def test_quantized_linear_threading_must_match_reduction_contract(self) -> None:
+        kernel = resolver.load_json(V8_ROOT / "kernel_maps" / "gemv_q4_k_q8_k.json")
+        kernel["implementation"]["threading"]["reduction_order_effect"] = "contract_defined"
+        with self.assertRaisesRegex(resolver.ContractError, "threading contradicts"):
+            resolver.validate_quantized_linear_kernel_capability(kernel, self.linear_contracts)
 
 
 if __name__ == "__main__":

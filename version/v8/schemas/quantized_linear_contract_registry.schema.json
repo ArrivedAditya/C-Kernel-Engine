@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.quantized_linear_contract_registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "engine_contract_version", "contracts"],
+  "properties": {
+    "schema": {"const": "cke.quantized_linear_contracts"},
+    "schema_version": {"const": 1},
+    "engine_contract_version": {"const": "8"},
+    "contracts": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/contract"}
+    }
+  },
+  "$defs": {
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "weight", "activation", "dot", "output", "parallel_reduction", "description"],
+      "properties": {
+        "status": {"enum": ["unresolved", "observed", "validated"]},
+        "weight": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "block_size", "layout"],
+          "properties": {
+            "format": {"enum": ["q4_k", "q6_k", "q8_0", "bf16", "fp16", "fp32"]},
+            "block_size": {"type": "integer", "minimum": 1},
+            "layout": {"type": "string", "minLength": 1}
+          }
+        },
+        "activation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "block_size", "layout", "quantization"],
+          "properties": {
+            "format": {"enum": ["q8_k", "q8_0", "bf16", "fp16", "fp32"]},
+            "block_size": {"type": "integer", "minimum": 1},
+            "layout": {"type": "string", "minLength": 1},
+            "quantization": {"type": "string", "minLength": 1}
+          }
+        },
+        "dot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["integer_accumulator", "block_scale_application", "block_order"],
+          "properties": {
+            "integer_accumulator": {"enum": ["int32", "none"]},
+            "block_scale_application": {"type": "string", "minLength": 1},
+            "block_order": {"enum": ["ascending_k"]}
+          }
+        },
+        "output": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["accumulator", "bias", "storage"],
+          "properties": {
+            "accumulator": {"enum": ["fp32", "bf16", "fp16"]},
+            "bias": {"enum": ["after_complete_dot", "none"]},
+            "storage": {"enum": ["fp32", "bf16", "fp16"]}
+          }
+        },
+        "parallel_reduction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reduction_order_effect"],
+          "properties": {
+            "kind": {"enum": ["independent_outputs", "split_k"]},
+            "reduction_order_effect": {"enum": ["none", "contract_defined"]},
+            "partial_accumulator": {"enum": ["fp32", "bf16", "fp16"]},
+            "merge_order": {"type": "string", "minLength": 1}
+          }
+        },
+        "description": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

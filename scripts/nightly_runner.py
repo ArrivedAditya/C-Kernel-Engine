@@ -408,7 +408,7 @@ MAKE_TARGETS = {
         "timeout_sec": 60,
     },
     "threadpool_parity": {
-        "name": "Thread Pool GEMV Parity (serial vs dispatch)",
+        "name": "Quantized Linear Scalar/Production/Threadpool Parity",
         "category": "parity",
         "target": "test-threadpool-parity",
         "timeout_sec": 300,
@@ -492,7 +492,7 @@ MAKE_TARGETS = {
         "timeout_sec": 600,
     },
     "v8_numerical_contracts": {
-        "name": "v8 Numerical Reduction Contracts",
+        "name": "v8 Numerical Kernel Contracts",
         "category": "parity",
         "target": "test-numerical-contracts",
         "timeout_sec": 300,

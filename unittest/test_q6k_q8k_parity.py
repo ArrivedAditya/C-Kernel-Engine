@@ -370,6 +370,10 @@ def test_gemm_nt_q6k_q8k(lib):
         ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
         ctypes.c_int, ctypes.c_int, ctypes.c_int
     ]
+    lib.gemv_q6_k_q8_k_ref.argtypes = [
+        ctypes.POINTER(ctypes.c_float), ctypes.c_void_p,
+        ctypes.c_void_p, ctypes.c_int, ctypes.c_int
+    ]
 
     np.random.seed(456)
 
@@ -412,17 +416,33 @@ def test_gemm_nt_q6k_q8k(lib):
         M, N, K
     )
 
+    scalar_C = np.zeros((M, N), dtype=np.float32)
+    W_ctypes = (ctypes.c_ubyte * len(W_buffer)).from_buffer_copy(W_buffer)
+    for m in range(M):
+        x_ctypes = (ctypes.c_ubyte * len(X_blocks[m])).from_buffer_copy(X_blocks[m])
+        lib.gemv_q6_k_q8_k_ref(
+            scalar_C[m].ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            W_ctypes,
+            x_ctypes,
+            N,
+            K,
+        )
+
     mse = np.mean((C - ref_C) ** 2)
     max_diff = np.max(np.abs(C - ref_C))
+    scalar_external_diff = np.max(np.abs(scalar_C - ref_C))
+    production_scalar_diff = np.max(np.abs(C - scalar_C))
 
     print(f"  Shape:    ({M}, {N})")
     print(f"  MSE:      {mse:.6e}")
     print(f"  Max Diff: {max_diff:.6e}")
+    print(f"  Scalar vs Python: {scalar_external_diff:.6e}")
+    print(f"  Production vs Scalar: {production_scalar_diff:.6e}")
 
     tol = q6k_q8k_abs_tol()
     print(f"  Tolerance: {tol:.6e}")
 
-    if max_diff < tol:
+    if scalar_external_diff < tol and production_scalar_diff < tol:
         print(f"  {GREEN}PASS{RESET}")
         return True
     else:

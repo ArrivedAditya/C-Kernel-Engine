@@ -3,6 +3,30 @@
   "op": "gemm",
   "variant": "q4_k_w_q8_k_a",
   "contract_schema_version": 1,
+  "numerical_contract": "q4_k_x_q8_k_fp32_block_order",
+  "reference": {
+    "function": "gemv_q4_k_q8_k_ref",
+    "kind": "scalar_contract_oracle",
+    "adapter": "per_activation_row_then_bias",
+    "validation": {
+      "status": "observed",
+      "tests": ["unittest/test_q4_k_q8_k_matvec.py", "tests/test_threadpool_parity.c"],
+      "external_oracles": [
+        {"backend": "numpy_dequantized_fp32", "status": "observed", "evidence": "unittest/test_q4_k_q8_k_matvec.py"},
+        {"backend": "llama.cpp", "status": "unresolved", "evidence": "No direct llama.cpp Q4_K x Q8_K GEMM oracle is currently wired."}
+      ]
+    }
+  },
+  "production": {
+    "function": "gemm_nt_q4_k_q8_k",
+    "threaded_function": "gemm_nt_q4_k_q8_k_parallel_dispatch",
+    "reference_comparison": {
+      "requirement": "contract_tolerance",
+      "absolute_tolerance": 0.001,
+      "relative_tolerance": 0.001,
+      "tests": ["tests/test_threadpool_parity.c"]
+    }
+  },
   "implementation": {
     "isa_dispatch": "runtime",
     "threading": {
@@ -89,7 +113,8 @@
           "requires": ["packed_weight_layout", "prefill_phase"]
         }
       ],
-      "selection_policy": "Use canonical serial as the correctness fallback. Promote packed-meta candidates only when the circuit/template lowering has a packed weight layout available and the hardware sweep policy selects that candidate for the model shape."
+      "dispatch_owner": "gemm_nt_q4_k_q8_k_parallel_dispatch",
+      "selection_policy": "The DSL emits the exact public function. Only the declared production dispatcher may choose an internal parity-validated ISA, packing, or tiling variant; dimensions are function inputs, not compiler guesses."
     }
   },
   "constraints": {
