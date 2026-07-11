@@ -13,7 +13,7 @@ from typing import Any, Optional
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_DIRS = (
     REPO_ROOT / "version" / "v7" / "templates",
-    REPO_ROOT / "version" / "v8" / "templates",
+    REPO_ROOT / "version" / "v8" / "circuits",
 )
 
 PRESET_ALIASES = {

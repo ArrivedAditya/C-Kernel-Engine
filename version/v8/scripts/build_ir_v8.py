@@ -54,6 +54,7 @@ LOWERING CONTRACT:
 
 import argparse
 import copy
+import importlib.util
 import json
 import os
 import subprocess
@@ -70,6 +71,69 @@ RESET = '\033[0m'
 
 # Import memory planner
 from memory_planner_v8 import plan_memory, MemoryPlanner
+
+
+def _load_numerical_contract_resolver():
+    path = Path(__file__).resolve().parent / "resolve_attention_contracts_v8.py"
+    spec = importlib.util.spec_from_file_location("resolve_attention_contracts_v8", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load numerical contract resolver: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _resolve_manifest_numerical_contracts(
+    manifest: Dict[str, Any],
+    mode: str,
+) -> List[Dict[str, Any]]:
+    circuit = manifest.get("template") if isinstance(manifest.get("template"), dict) else {}
+    required = circuit.get("required_contracts")
+    if not isinstance(required, dict) or not required:
+        return []
+
+    resolver = _load_numerical_contract_resolver()
+    contracts = resolver.load_json(resolver.DEFAULT_CONTRACTS)
+    kernels = resolver.load_kernel_capabilities()
+    circuit_name = str(circuit.get("name", "")).strip()
+    source_path = V8_ROOT / "circuits" / f"{circuit_name}.json" if circuit_name else None
+    plans: List[Dict[str, Any]] = []
+    for operation, operation_doc in required.items():
+        phases = operation_doc.get("phases") if isinstance(operation_doc, dict) else None
+        if not isinstance(phases, dict) or mode not in phases:
+            continue
+        try:
+            plan = resolver.resolve_contract(
+                circuit,
+                contracts,
+                kernels,
+                operation=str(operation),
+                phase=mode,
+                mode="bringup",
+                source_circuit_path=source_path if source_path and source_path.is_file() else None,
+            )
+        except resolver.ContractError as exc:
+            raise RuntimeError(
+                f"Numerical contract resolution failed for {circuit_name or '<embedded>'} "
+                f"{operation}.{mode}: {exc}"
+            ) from exc
+        plans.append(plan)
+    return plans
+
+
+def _validate_resolved_kernels_are_emitted(
+    plans: List[Dict[str, Any]],
+    arranged_kernels: List[Dict[str, Any]],
+) -> None:
+    emitted = {str(item.get("kernel", "")) for item in arranged_kernels}
+    for plan in plans:
+        selected = str((plan.get("kernel") or {}).get("id", ""))
+        if selected and selected not in emitted:
+            raise RuntimeError(
+                f"Numerical contract selected kernel {selected!r} for "
+                f"{plan.get('operation')}.{plan.get('phase')}, but legacy lowering emitted "
+                f"{sorted(item for item in emitted if item)}"
+            )
 
 
 def _entry_offset(entry: Dict[str, Any]) -> int:
@@ -171,7 +235,7 @@ def _load_builtin_template_doc(template_name: Optional[str]) -> Optional[Dict[st
     name = str(template_name or "").strip().lower()
     if not name:
         return None
-    path = V8_ROOT / "templates" / f"{name}.json"
+    path = V8_ROOT / "circuits" / f"{name}.json"
     if not path.exists():
         return None
     with open(path, "r", encoding="utf-8") as f:
@@ -4510,6 +4574,14 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             quant_summary = manifest.get("quant_summary", {})
             config = manifest.get("config", {})
 
+    numerical_contract_plans = _resolve_manifest_numerical_contracts(manifest, mode)
+    for plan in numerical_contract_plans:
+        print(
+            "  [contract/numerics] "
+            f"{plan['operation']}.{plan['phase']} -> "
+            f"{plan['kernel']['id']} / {plan['reduction']['id']}"
+        )
+
     template_flags = template.get("flags", {}) if isinstance(template.get("flags"), dict) else {}
     template_kernels = template.get("kernels", {}) if isinstance(template.get("kernels"), dict) else {}
     # Runtime-config opt-in: use FP32->Q8_0 contract adapters for Q8_0 kernels.
@@ -5892,6 +5964,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     # and the op is silently skipped (e.g., Gemma logits drop).
     # ==========================================================================
     _check_ir1_completeness(manifest, arranged_kernels)
+    _validate_resolved_kernels_are_emitted(numerical_contract_plans, arranged_kernels)
 
     return arranged_kernels
 

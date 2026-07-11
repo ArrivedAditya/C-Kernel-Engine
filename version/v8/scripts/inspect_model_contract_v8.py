@@ -332,7 +332,7 @@ def _template_candidate_name(arch: str) -> str | None:
         "kimi_vl": "kimi_vl.json",
     }
     name = candidates.get(arch)
-    if name and (REPO_ROOT / "version" / "v8" / "templates" / name).exists():
+    if name and (REPO_ROOT / "version" / "v8" / "circuits" / name).exists():
         return name
     return name
 
@@ -343,7 +343,7 @@ def suggest_template(config: dict[str, Any]) -> dict[str, Any]:
     unique_kinds = sorted(set(layer_kinds))
     text = _text_config(config)
     template_name = _template_candidate_name(arch)
-    existing = bool(template_name and (REPO_ROOT / "version" / "v8" / "templates" / template_name).exists())
+    existing = bool(template_name and (REPO_ROOT / "version" / "v8" / "circuits" / template_name).exists())
     header = ["bpe_tokenizer", "dense_embedding_lookup"]
     if arch == "gemma4":
         header.append("gemma4_per_layer_prepare")

@@ -1,0 +1,34 @@
+{
+  "id": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+  "op": "attention",
+  "variant": "decode_head_major_gqa_flash_f16cache_contract",
+  "mode": "decode",
+  "quant": {
+    "activation": "fp32",
+    "kv_cache": "fp16",
+    "output": "fp32"
+  },
+  "inputs": [
+    {"name": "q_token", "dtype": "fp32", "shape": ["num_heads", "head_dim"]},
+    {"name": "k_cache", "dtype": "fp16", "shape": ["num_kv_heads", "cache_capacity", "head_dim"]},
+    {"name": "v_cache", "dtype": "fp16", "shape": ["num_kv_heads", "cache_capacity", "head_dim"]}
+  ],
+  "outputs": [
+    {"name": "out_token", "dtype": "fp32", "shape": ["num_heads", "head_dim"]}
+  ],
+  "internal_state": [
+    {"name": "score", "dtype": "fp32", "lifetime": "per_kv_element"},
+    {"name": "partial_max", "dtype": "fp32", "shape": ["num_heads", "split_chunks"]},
+    {"name": "partial_sum", "dtype": "fp32", "shape": ["num_heads", "split_chunks"]},
+    {"name": "partial_value", "dtype": "fp16", "shape": ["num_heads", "split_chunks", "aligned_head_dim"]}
+  ],
+  "dims": ["num_heads", "num_kv_heads", "kv_tokens", "cache_capacity", "head_dim", "aligned_head_dim"],
+  "params": [
+    {"name": "reduction", "dtype": "ck_attention_reduction_t"}
+  ],
+  "impl": {
+    "function": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+    "c_declaration": "ck_attention_status_t attention_forward_decode_head_major_gqa_flash_f16cache_contract(const float *q_token, const uint16_t *k_cache, const uint16_t *v_cache, float *out_token, int num_heads, int num_kv_heads, int kv_tokens, int cache_capacity, int head_dim, int aligned_head_dim, ck_attention_reduction_t reduction);",
+    "sources": ["src/kernels/attention_kernels.c"]
+  }
+}

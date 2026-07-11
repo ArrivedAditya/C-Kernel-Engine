@@ -52,19 +52,19 @@ def _normalized_template_doc(doc: dict) -> dict:
 class BuildIrV8ScaffoldTests(unittest.TestCase):
     def test_v8_template_root_is_isolated(self) -> None:
         self.assertEqual(build_ir_v8.V8_ROOT.name, "v8")
-        self.assertTrue((build_ir_v8.V8_ROOT / "templates" / "qwen3.json").exists())
+        self.assertTrue((build_ir_v8.V8_ROOT / "circuits" / "qwen3.json").exists())
 
     def test_v8_templates_match_current_v7_seed_after_runtime_policy_extraction(self) -> None:
         for name in ("gemma3", "llama", "qwen2", "qwen3", "qwen35"):
             with self.subTest(template=name):
                 v7_doc = json.loads((ROOT / "version" / "v7" / "templates" / f"{name}.json").read_text(encoding="utf-8"))
-                v8_doc = json.loads((ROOT / "version" / "v8" / "templates" / f"{name}.json").read_text(encoding="utf-8"))
+                v8_doc = json.loads((ROOT / "version" / "v8" / "circuits" / f"{name}.json").read_text(encoding="utf-8"))
                 self.assertEqual(_normalized_template_doc(v8_doc), _normalized_template_doc(v7_doc))
 
     def test_v8_seeded_templates_do_not_embed_runtime_policy_flags(self) -> None:
         for name in ("gemma3", "llama", "qwen2", "qwen3", "qwen35"):
             with self.subTest(template=name):
-                v8_doc = json.loads((ROOT / "version" / "v8" / "templates" / f"{name}.json").read_text(encoding="utf-8"))
+                v8_doc = json.loads((ROOT / "version" / "v8" / "circuits" / f"{name}.json").read_text(encoding="utf-8"))
                 flags = v8_doc.get("flags", {})
                 self.assertIsInstance(flags, dict)
                 for key in build_ir_v8._FORBIDDEN_TEMPLATE_FLAG_KEYS:

@@ -475,7 +475,7 @@ def step_regenerate_kernel_registry(force: bool = False) -> Path:
             "description": "Kernel registry generated from v8 kernel maps",
             "version": "v8",
             "generated_by": "ck_run_v8.py",
-            "source_dir": str(KERNEL_MAPS_DIR),
+            "source_dir": str(KERNEL_MAPS_DIR.relative_to(PROJECT_ROOT)),
             "counts": {"total": len(maps), "by_op": dict(sorted(by_op.items()))},
         },
         "kernels": maps,

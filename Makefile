@@ -687,6 +687,7 @@ PY_TESTS := unittest/test_layernorm.py \
             unittest/test_sigmoid.py \
             unittest/test_relu.py \
             unittest/test_attention.py \
+            unittest/test_attention_full.py \
             unittest/test_attention_sliding_contract.py \
             unittest/test_attention_backward.py \
             unittest/test_kv_cache_attention.py \
@@ -2872,6 +2873,16 @@ test-v8-template-circuit-audit:
 	@echo "Running v8 template circuit artifact audit tests..."
 	@$(PYTHON) -m py_compile version/v8/scripts/audit_template_circuit_v8.py
 	@$(PYTHON) -m unittest tests.test_v8_template_circuit_audit -v
+
+.PHONY: test-numerical-contracts
+test-numerical-contracts:
+	@echo "Running v8 numerical contract validation..."
+	@$(PYTHON) -m py_compile version/v8/scripts/resolve_attention_contracts_v8.py
+	@$(PYTHON) tests/test_v8_attention_contracts.py
+	@mkdir -p build/v8/contracts
+	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3_vl_vision --operation vision_encoder.attention --phase prefill --mode bringup --output build/v8/contracts/qwen3vl-vision-prefill.json >/dev/null
+	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3vl --operation decoder.attention --phase decode --mode bringup --output build/v8/contracts/qwen3vl-decode.json >/dev/null
+	@echo "Resolved plans: build/v8/contracts/"
 
 v8-model-kernel-inspect:
 	@target="$${MODEL:-$${CONFIG:-}}"; \

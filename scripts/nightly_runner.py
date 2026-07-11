@@ -491,6 +491,12 @@ MAKE_TARGETS = {
         "target": "v8-kernel-map-contracts",
         "timeout_sec": 600,
     },
+    "v8_numerical_contracts": {
+        "name": "v8 Numerical Reduction Contracts",
+        "category": "parity",
+        "target": "test-numerical-contracts",
+        "timeout_sec": 300,
+    },
     "v8_template_circuit_audit": {
         "name": "v8 Template Circuit/Dataflow Audit",
         "category": "inference",
@@ -522,7 +528,7 @@ MAKE_TARGETS = {
         "timeout_sec": 300,
     },
     "qwen3vl_template_contracts": {
-        "name": "Qwen3-VL Template/Codegen Contracts",
+        "name": "Qwen3-VL Circuit/Codegen Contracts",
         "category": "inference",
         "target": "test-v8-qwen3vl",
         "timeout_sec": 600,

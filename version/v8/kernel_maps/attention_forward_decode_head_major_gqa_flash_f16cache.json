@@ -3,6 +3,21 @@
   "op": "attention",
   "variant": "decode_head_major_gqa_flash_f16cache",
   "mode": "decode",
+  "provides": {
+    "execution.phase": ["decode"],
+    "tensor.q.dtype": ["fp32"],
+    "tensor.kv.dtype": ["fp16"],
+    "tensor.layout": ["head_major"],
+    "numerics.attention_reduction": ["f16_online_fp32_merge"]
+  },
+  "supported_reductions": {
+    "f16_online_fp32_merge": {
+      "status": "validated",
+      "function": "attention_forward_decode_head_major_gqa_flash_f16cache",
+      "explicit_selector": false,
+      "notes": "Current generated v8 route. The explicit selector API is validated separately and will replace this ABI after E2E promotion."
+    }
+  },
   "quant": {
     "activation": "fp32",
     "output": "fp32"

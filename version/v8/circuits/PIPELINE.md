@@ -1,38 +1,40 @@
-# IR Pipeline: Template → GraphIR → LoweredIR
+# IR Pipeline: Circuit → GraphIR → LoweredIR
 
-This document explains how templates flow through the IR generation pipeline.
+This document explains how circuits flow through the IR generation pipeline.
 
 ## Contract
 
 The builder must stay architecture-agnostic:
-- Templates declare operations, graph structure, branch taps, collect targets,
-  and stitch points.
+- Circuits declare operations, graph structure, branch taps, collect targets,
+  stitch points, and required numerical semantics.
 - The lowerer only expands declared operations into kernel ops / kernel IDs.
 - It should not learn model-family names such as DeepStack, MoE, or SSM.
-- If a model needs branching or routing semantics, that belongs in the template
+- If a model needs branching or routing semantics, that belongs in the circuit
   as explicit graph constructs.
+- Kernel maps declare the complete numerical contracts each implementation
+  supports. The resolver must find exactly one provider before lowering.
 
 ## Overview: The Three-Stage Pipeline
 
 ```
 ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
-│  Template   │  →   │  GraphIR    │  →   │  LoweredIR  │
+│   Circuit   │  →   │  GraphIR    │  →   │  LoweredIR  │
 │   (v3 JSON) │      │ (Symbolic)  │      │ (Concrete)  │
 └─────────────┘      └─────────────┘      └─────────────┘
     Stage 1              Stage 2              Stage 3
    Parser           Op Builders          Kernel Selection
 ```
 
-## Stage 1: Template Parsing
+## Stage 1: Circuit Parsing
 
-**Input:** Template v3 JSON (e.g., `qwen3_vl_vision.json`)
+**Input:** Circuit v3 JSON (e.g., `qwen3_vl_vision.json`)
 **Tool:** `parse_template_v2.py`
 **Output:** List of `OpNode` objects
 
 ### What Happens:
 
 ```
-Template JSON                    →    OpNode Objects
+Circuit JSON                     →    OpNode Objects
 ─────────────                          ───────────────
 {                                      OpNode(
   "sequence": ["decoder"],               op_id="rmsnorm",

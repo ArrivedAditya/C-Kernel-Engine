@@ -4,7 +4,7 @@
 
 Current scope:
 - keep the inference runner, visualizer, run hub, and regression surface versioned as `v8`
-- isolate template and multimodal bridge evolution inside `version/v8`
+- isolate circuit and multimodal bridge evolution inside `version/v8`
 - preserve stable operator contracts while new vision ops land
 - expose a native `v8` operator surface for text and multimodal bring-up
 
@@ -17,8 +17,21 @@ What is included here right now:
 - `tools/open_ir_visualizer_v8.py`
 - `tools/open_ir_hub_v8.py`
 - `tools/ir_visualizer.html`
-- `templates/*`
+- `circuits/*`
+- `contracts/*`
 - `kernel_maps/*`
+
+The active compiler input is:
+
+```text
+weights + circuits + kernel maps -> deterministic DSL lowering -> generated C
+```
+
+Circuits declare graph structure and required semantics. Kernel maps advertise
+complete numerical contracts. `build_ir_v8.py` resolves those requirements and
+then verifies that legacy lowering emitted the same uniquely selected provider.
+This keeps migration behavior-preserving while moving parity discoveries out of
+ad hoc runtime dispatch.
 
 Canonical text bring-up examples:
 - `version/v8/scripts/cks-v8-run run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf --context-len 1024 --force-compile --force-convert --chat-template=auto --generate-visualizer`

@@ -32,6 +32,13 @@ _SPLIT_ARGS = [
 ]
 lib.attention_forward_decode_head_major_gqa_flash_f16cache_split.argtypes = _SPLIT_ARGS
 lib.attention_forward_decode_head_major_gqa_flash_f16cache_split.restype = None
+_LEGACY_ARGS = _SPLIT_ARGS[:-1]
+lib.attention_forward_decode_head_major_gqa_flash_f16cache.argtypes = _LEGACY_ARGS
+lib.attention_forward_decode_head_major_gqa_flash_f16cache.restype = None
+lib.attention_forward_decode_head_major_gqa_flash_f16cache_contract.argtypes = (
+    _LEGACY_ARGS + [ctypes.c_int]
+)
+lib.attention_forward_decode_head_major_gqa_flash_f16cache_contract.restype = ctypes.c_int
 lib.ck_get_num_threads.argtypes = []
 lib.ck_get_num_threads.restype = ctypes.c_int
 lib.ck_set_strict_parity.argtypes = [ctypes.c_int]
@@ -387,6 +394,28 @@ def _run_explicit(q, k, v, head_dim, chunks):
     return out
 
 
+def _run_legacy(q, k, v, head_dim):
+    heads, aligned = q.shape
+    kv_heads, kv_tokens, _ = k.shape
+    out = np.full_like(q, np.nan)
+    lib.attention_forward_decode_head_major_gqa_flash_f16cache(
+        _f32_ptr(q), _u16_ptr(k), _u16_ptr(v), _f32_ptr(out),
+        heads, kv_heads, kv_tokens, kv_tokens, head_dim, aligned,
+    )
+    return out
+
+
+def _run_contract(q, k, v, head_dim, reduction, fill=np.nan):
+    heads, aligned = q.shape
+    kv_heads, kv_tokens, _ = k.shape
+    out = np.full_like(q, fill)
+    status = lib.attention_forward_decode_head_major_gqa_flash_f16cache_contract(
+        _f32_ptr(q), _u16_ptr(k), _u16_ptr(v), _f32_ptr(out),
+        heads, kv_heads, kv_tokens, kv_tokens, head_dim, aligned, reduction,
+    )
+    return status, out
+
+
 @dataclass
 class Result:
     name: str
@@ -426,6 +455,40 @@ def main():
     results.append(padded)
 
     threads = max(1, int(lib.ck_get_num_threads()))
+    for name, data in (
+        ("explicit_contract_route_below(KV=511)", below_data),
+        ("explicit_contract_route_threshold(KV=512)", threshold_data),
+        ("explicit_contract_route_qwen3vl(KV=1058)", qwen_data),
+    ):
+        q, k, v, _ = data
+        chunks = threads if k.shape[1] >= 512 else 1
+        expected = _run_explicit(q, k, v, q.shape[1], chunks)
+        status, actual = _run_contract(q, k, v, q.shape[1], 1)
+        diff = float(np.max(np.abs(actual - expected))) if status == 0 else math.inf
+        results.append(Result(name, diff, 0.0, status == 0 and diff == 0.0))
+
+    q, k, v, _ = below_data
+    legacy = _run_legacy(q, k, v, q.shape[1])
+    fp32_status, fp32_contract = _run_contract(q, k, v, q.shape[1], 0)
+    fp32_diff = float(np.max(np.abs(fp32_contract - legacy))) if fp32_status == 0 else math.inf
+    results.append(Result(
+        "explicit_fp32_preserves_legacy_abi(KV=511)",
+        fp32_diff,
+        0.0,
+        fp32_status == 0 and fp32_diff == 0.0,
+    ))
+
+    unsupported_status, unsupported_out = _run_contract(
+        q, k, v, q.shape[1], 999, fill=np.float32(123.25),
+    )
+    unsupported_ok = unsupported_status == -2 and bool(np.all(unsupported_out == np.float32(123.25)))
+    results.append(Result(
+        "unsupported_contract_rejected_without_output_write",
+        0.0 if unsupported_ok else 1.0,
+        0.0,
+        unsupported_ok,
+    ))
+
     try:
         for name, data, chunks in (
             ("llama_oracle_below(KV=511)", below_data, 1),

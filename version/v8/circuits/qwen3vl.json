@@ -102,6 +102,24 @@
     "rope_qk": "mrope_qk_text",
     "attn_decode": "attention_forward_decode_head_major_gqa_flash"
   },
+  "required_contracts": {
+    "decoder.attention": {
+      "op": "attention",
+      "phases": {
+        "decode": {
+          "requires": {
+            "execution.phase": "decode",
+            "tensor.q.dtype": "fp32",
+            "tensor.kv.dtype": "fp16",
+            "tensor.layout": "head_major",
+            "numerics.attention_reduction": "f16_online_fp32_merge"
+          },
+          "validation": "observed",
+          "evidence": "Public routing and llama.cpp oracle cases pass at KV 511, 512, and 1058; full multimodal parity remains the production gate."
+        }
+      }
+    }
+  },
   "sequence": ["decoder"],
   "block_types": {
     "decoder": {

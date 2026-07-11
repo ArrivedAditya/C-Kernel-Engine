@@ -59,7 +59,7 @@ for path in "${STAGED_FILES[@]}"; do
         version/v7/scripts/*|version/v7/templates/*|version/v7/regression/*|version/v7/test_assets/*|version/v7/src/*|version/v7/kernel_maps/*|version/v7/README.md)
             should_run_v7_regression=1
             ;;
-        version/v8/scripts/*|version/v8/templates/*|version/v8/regression/*|version/v8/test_assets/*|version/v8/src/*|version/v8/kernel_maps/*|version/v8/README.md)
+        version/v8/scripts/*|version/v8/circuits/*|version/v8/contracts/*|version/v8/regression/*|version/v8/test_assets/*|version/v8/src/*|version/v8/kernel_maps/*|version/v8/README.md)
             should_run_v8_regression=1
             ;;
     esac
