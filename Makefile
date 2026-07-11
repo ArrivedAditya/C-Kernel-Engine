@@ -2876,13 +2876,13 @@ test-v8-template-circuit-audit:
 
 .PHONY: test-numerical-contracts
 test-numerical-contracts:
-	@echo "Running additive v8.5 numerical contract validation..."
-	@$(PYTHON) -m py_compile version/v8.5/scripts/resolve_attention_contracts_v85.py
-	@$(PYTHON) version/v8.5/tests/test_attention_contracts_v85.py
-	@mkdir -p build/v8.5/contracts
-	@$(PYTHON) version/v8.5/scripts/resolve_attention_contracts_v85.py --circuit qwen3vl --phase prefill --mode bringup --output build/v8.5/contracts/qwen3vl-prefill.json >/dev/null
-	@$(PYTHON) version/v8.5/scripts/resolve_attention_contracts_v85.py --circuit qwen3vl --phase decode --mode bringup --output build/v8.5/contracts/qwen3vl-decode.json >/dev/null
-	@echo "Resolved plans: build/v8.5/contracts/"
+	@echo "Running v8 numerical contract validation..."
+	@$(PYTHON) -m py_compile version/v8/scripts/resolve_attention_contracts_v8.py
+	@$(PYTHON) tests/test_v8_attention_contracts.py
+	@mkdir -p build/v8/contracts
+	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3_vl_vision --operation vision_encoder.attention --phase prefill --mode bringup --output build/v8/contracts/qwen3vl-vision-prefill.json >/dev/null
+	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3vl --operation decoder.attention --phase decode --mode bringup --output build/v8/contracts/qwen3vl-decode.json >/dev/null
+	@echo "Resolved plans: build/v8/contracts/"
 
 v8-model-kernel-inspect:
 	@target="$${MODEL:-$${CONFIG:-}}"; \

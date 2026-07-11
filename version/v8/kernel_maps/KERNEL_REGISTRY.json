@@ -3,9 +3,9 @@
     "description": "Kernel registry generated from v8 kernel maps",
     "version": "v8",
     "generated_by": "ck_run_v8.py",
-    "source_dir": "/opt/app-root/src/Ashivaku/C-Kernel-Engine/version/v8/kernel_maps",
+    "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 192,
+      "total": 189,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -34,9 +34,8 @@
         "gemma4_per_layer_prepare": 2,
         "gemv": 14,
         "group_limited_topk_router": 1,
-        "kv_a_layernorm": 1,
         "kv_cache_store": 3,
-        "kv_lora_decompress": 2,
+        "kv_lora_decompress": 1,
         "layernorm": 2,
         "logits_store_indexed": 1,
         "mamba_conv1d_state_update": 1,
@@ -49,10 +48,10 @@
         "mla_kv_cache_batch_store": 1,
         "mla_kv_cache_store": 1,
         "moe_relu2_expert_mlp": 4,
-        "moe_swiglu_expert_mlp": 3,
+        "moe_swiglu_expert_mlp": 2,
         "optimizer": 4,
         "partial_rope_concat": 2,
-        "position_embeddings": 3,
+        "position_embeddings": 4,
         "position_ids": 1,
         "projector_prep": 1,
         "q_norm": 1,
@@ -79,7 +78,7 @@
         "rope_init": 2,
         "rowwise_bias_add": 1,
         "shared_relu2_expert_mlp": 1,
-        "shared_swiglu_expert_mlp": 3,
+        "shared_swiglu_expert_mlp": 2,
         "softmax": 1,
         "spatial_merge": 3,
         "speculative_commit_or_reject": 1,
@@ -1837,6 +1836,31 @@
       "op": "attention",
       "variant": "decode_head_major_gqa_flash_f16cache",
       "mode": "decode",
+      "provides": {
+        "execution.phase": [
+          "decode"
+        ],
+        "tensor.q.dtype": [
+          "fp32"
+        ],
+        "tensor.kv.dtype": [
+          "fp16"
+        ],
+        "tensor.layout": [
+          "head_major"
+        ],
+        "numerics.attention_reduction": [
+          "f16_online_fp32_merge"
+        ]
+      },
+      "supported_reductions": {
+        "f16_online_fp32_merge": {
+          "status": "validated",
+          "function": "attention_forward_decode_head_major_gqa_flash_f16cache",
+          "explicit_selector": false,
+          "notes": "Current generated v8 route. The explicit selector API is validated separately and will replace this ABI after E2E promotion."
+        }
+      },
       "quant": {
         "activation": "fp32",
         "output": "fp32"
@@ -1901,6 +1925,110 @@
       "notes": "Decode flash attention over a packed FP16 KV cache without mutating the existing fp32 kernels.",
       "name": "attention_forward_decode_head_major_gqa_flash_f16cache",
       "_source_file": "attention_forward_decode_head_major_gqa_flash_f16cache.json"
+    },
+    {
+      "id": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+      "op": "attention",
+      "variant": "decode_head_major_gqa_flash_f16cache_contract",
+      "mode": "decode",
+      "quant": {
+        "activation": "fp32",
+        "kv_cache": "fp16",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q_token",
+          "dtype": "fp32",
+          "shape": [
+            "num_heads",
+            "head_dim"
+          ]
+        },
+        {
+          "name": "k_cache",
+          "dtype": "fp16",
+          "shape": [
+            "num_kv_heads",
+            "cache_capacity",
+            "head_dim"
+          ]
+        },
+        {
+          "name": "v_cache",
+          "dtype": "fp16",
+          "shape": [
+            "num_kv_heads",
+            "cache_capacity",
+            "head_dim"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out_token",
+          "dtype": "fp32",
+          "shape": [
+            "num_heads",
+            "head_dim"
+          ]
+        }
+      ],
+      "internal_state": [
+        {
+          "name": "score",
+          "dtype": "fp32",
+          "lifetime": "per_kv_element"
+        },
+        {
+          "name": "partial_max",
+          "dtype": "fp32",
+          "shape": [
+            "num_heads",
+            "split_chunks"
+          ]
+        },
+        {
+          "name": "partial_sum",
+          "dtype": "fp32",
+          "shape": [
+            "num_heads",
+            "split_chunks"
+          ]
+        },
+        {
+          "name": "partial_value",
+          "dtype": "fp16",
+          "shape": [
+            "num_heads",
+            "split_chunks",
+            "aligned_head_dim"
+          ]
+        }
+      ],
+      "dims": [
+        "num_heads",
+        "num_kv_heads",
+        "kv_tokens",
+        "cache_capacity",
+        "head_dim",
+        "aligned_head_dim"
+      ],
+      "params": [
+        {
+          "name": "reduction",
+          "dtype": "ck_attention_reduction_t"
+        }
+      ],
+      "impl": {
+        "function": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+        "c_declaration": "ck_attention_status_t attention_forward_decode_head_major_gqa_flash_f16cache_contract(const float *q_token, const uint16_t *k_cache, const uint16_t *v_cache, float *out_token, int num_heads, int num_kv_heads, int kv_tokens, int cache_capacity, int head_dim, int aligned_head_dim, ck_attention_reduction_t reduction);",
+        "sources": [
+          "src/kernels/attention_kernels.c"
+        ]
+      },
+      "name": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+      "_source_file": "attention_forward_decode_head_major_gqa_flash_f16cache_contract.json"
     },
     {
       "id": "attention_forward_decode_head_major_gqa_flash_sliding",
@@ -2481,6 +2609,32 @@
       "id": "attention_forward_full_head_major_gqa_flash_strided",
       "op": "attention",
       "variant": "full_flash_fp32",
+      "mode": "prefill",
+      "provides": {
+        "execution.phase": [
+          "prefill"
+        ],
+        "tensor.q.dtype": [
+          "fp32"
+        ],
+        "tensor.kv.dtype": [
+          "fp32"
+        ],
+        "tensor.layout": [
+          "head_major"
+        ],
+        "numerics.attention_reduction": [
+          "f16_kv_fp32_online"
+        ]
+      },
+      "supported_reductions": {
+        "f16_kv_fp32_online": {
+          "status": "validated",
+          "function": "attention_forward_full_head_major_gqa_flash_strided",
+          "explicit_selector": false,
+          "notes": "Legacy v8 ABI with validated FP32 Q and FP16-rounded K/V semantics."
+        }
+      },
       "quant": {
         "weight": "none",
         "activation": "fp32",
@@ -3835,107 +3989,6 @@
       "_source_file": "deepseek_mla_attention_decode_f32.json"
     },
     {
-      "id": "deepseek_mla_attention_f32",
-      "op": "attention",
-      "variant": "mla_causal_ref_f32",
-      "quant": {
-        "weight": "none",
-        "activation": "fp32",
-        "output": "fp32"
-      },
-      "inputs": [
-        {
-          "name": "q",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "H",
-            "QK"
-          ],
-          "desc": "MLA query [tokens, heads, qk_head_dim]"
-        },
-        {
-          "name": "k",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "KV",
-            "QK"
-          ],
-          "desc": "MLA key [tokens, kv_heads, qk_head_dim]"
-        },
-        {
-          "name": "v",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "KV",
-            "V"
-          ],
-          "desc": "MLA value [tokens, kv_heads, v_head_dim]"
-        }
-      ],
-      "weights": [],
-      "outputs": [
-        {
-          "name": "out",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "H",
-            "V"
-          ],
-          "desc": "Token-major MLA attention output"
-        }
-      ],
-      "dims": [
-        "T",
-        "H",
-        "KV",
-        "QK",
-        "V"
-      ],
-      "params": [
-        {
-          "name": "num_heads",
-          "dtype": "int32"
-        },
-        {
-          "name": "num_kv_heads",
-          "dtype": "int32"
-        },
-        {
-          "name": "num_tokens",
-          "dtype": "int32"
-        },
-        {
-          "name": "qk_head_dim",
-          "dtype": "int32"
-        },
-        {
-          "name": "v_head_dim",
-          "dtype": "int32"
-        }
-      ],
-      "impl": {
-        "function": "deepseek_mla_attention_f32",
-        "c_declaration": "void deepseek_mla_attention_f32(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int qk_head_dim, int v_head_dim);",
-        "sources": [
-          "src/kernels/deepseek_kernels.c"
-        ],
-        "variants": [
-          {
-            "name": "ref",
-            "requires": [],
-            "compile_flags": []
-          }
-        ]
-      },
-      "notes": "Reference MLA causal attention with q/k dim != value/output dim. Used by Kimi/DeepSeek-style MLA.",
-      "name": "deepseek_mla_attention_f32",
-      "_source_file": "deepseek_mla_attention_f32.json"
-    },
-    {
       "id": "deepseek_mla_kv_cache_batch_store_f32",
       "op": "mla_kv_cache_batch_store",
       "variant": "prefill_cache_store_f32",
@@ -4123,97 +4176,6 @@
       "notes": "MLA decode cache store with separate K and V logical dimensions inside a shared cache stride.",
       "name": "deepseek_mla_kv_cache_store_f32",
       "_source_file": "deepseek_mla_kv_cache_store_f32.json"
-    },
-    {
-      "id": "deepseek_mla_kv_decompress_bf16",
-      "op": "kv_lora_decompress",
-      "variant": "bf16_weight",
-      "modes": {
-        "inference": true,
-        "training": true,
-        "backward": false
-      },
-      "quant": {
-        "weight": "bf16",
-        "activation": "fp32",
-        "output": "fp32"
-      },
-      "inputs": [
-        {
-          "name": "compressed_kv",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "R"
-          ]
-        }
-      ],
-      "weights": [
-        {
-          "name": "kv_b_proj",
-          "dtype": "bf16",
-          "shape": [
-            "H*(Dk+Dv)",
-            "R"
-          ]
-        }
-      ],
-      "outputs": [
-        {
-          "name": "k_nope",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "H",
-            "Dk"
-          ]
-        },
-        {
-          "name": "value",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "H",
-            "Dv"
-          ]
-        }
-      ],
-      "dims": [
-        "T",
-        "H",
-        "R",
-        "Dk",
-        "Dv"
-      ],
-      "impl": {
-        "sources": [
-          "src/kernels/deepseek_kernels.c"
-        ],
-        "variants": [
-          {
-            "name": "scalar_ref",
-            "requires": [],
-            "compile_flags": []
-          }
-        ],
-        "function": "deepseek_mla_kv_decompress_bf16",
-        "c_declaration": "void deepseek_mla_kv_decompress_bf16(const float *compressed_kv, const uint16_t *kv_b_proj, float *k_nope, float *value, int tokens, int heads, int kv_lora_rank, int qk_nope_dim, int v_dim);"
-      },
-      "tests": {
-        "unit": [
-          "unittest/test_deepseek_reference_kernels.py"
-        ],
-        "parity": [
-          {
-            "kind": "pytorch",
-            "command": ".venv/bin/python unittest/test_deepseek_reference_kernels.py",
-            "tolerance": "1e-5"
-          }
-        ]
-      },
-      "notes": "Scalar reference for DeepSeek/Kimi MLA KV LoRA decompress with BF16 kv_b_proj weights.",
-      "name": "deepseek_mla_kv_decompress_bf16",
-      "_source_file": "deepseek_mla_kv_decompress_bf16.json"
     },
     {
       "id": "deepseek_mla_kv_decompress_f32",
@@ -13772,122 +13734,6 @@
       "_source_file": "moe_swiglu_expert_backward_f32.json"
     },
     {
-      "id": "moe_swiglu_expert_forward_bf16",
-      "op": "moe_swiglu_expert_mlp",
-      "variant": "bf16_weights",
-      "modes": {
-        "inference": true,
-        "training": true,
-        "backward": false
-      },
-      "quant": {
-        "weight": "bf16",
-        "activation": "fp32",
-        "output": "fp32"
-      },
-      "inputs": [
-        {
-          "name": "hidden",
-          "dtype": "fp32",
-          "shape": [
-            "R",
-            "H"
-          ]
-        },
-        {
-          "name": "indices",
-          "dtype": "i32",
-          "shape": [
-            "R",
-            "K"
-          ]
-        },
-        {
-          "name": "routing_weights",
-          "dtype": "fp32",
-          "shape": [
-            "R",
-            "K"
-          ]
-        }
-      ],
-      "weights": [
-        {
-          "name": "expert_gate",
-          "dtype": "bf16",
-          "shape": [
-            "E",
-            "I",
-            "H"
-          ]
-        },
-        {
-          "name": "expert_up",
-          "dtype": "bf16",
-          "shape": [
-            "E",
-            "I",
-            "H"
-          ]
-        },
-        {
-          "name": "expert_down",
-          "dtype": "bf16",
-          "shape": [
-            "E",
-            "H",
-            "I"
-          ]
-        }
-      ],
-      "outputs": [
-        {
-          "name": "output",
-          "dtype": "fp32",
-          "shape": [
-            "R",
-            "H"
-          ]
-        }
-      ],
-      "dims": [
-        "R",
-        "H",
-        "I",
-        "E",
-        "K"
-      ],
-      "impl": {
-        "sources": [
-          "src/kernels/axpy_kernels.c"
-        ],
-        "variants": [
-          {
-            "name": "scalar_ref",
-            "requires": [],
-            "compile_flags": []
-          }
-        ],
-        "function": "moe_swiglu_expert_forward_bf16",
-        "c_declaration": "void moe_swiglu_expert_forward_bf16(const float *hidden, const int *indices, const float *routing_weights, const uint16_t *expert_gate, const uint16_t *expert_up, const uint16_t *expert_down, float *output, int rows, int hidden_dim, int intermediate_dim, int n_experts, int top_k);"
-      },
-      "tests": {
-        "unit": [
-          "unittest/test_moe_swiglu_expert.py"
-        ],
-        "parity": [
-          {
-            "kind": "pytorch",
-            "command": ".venv/bin/python unittest/test_moe_swiglu_expert.py",
-            "tolerance": "3e-6"
-          }
-        ]
-      },
-      "notes": "Routed SwiGLU MoE expert reference kernel with BF16 weights for Kimi/DeepSeek-style experts: down(silu(gate(x))*up(x)), accumulated by routing weights.",
-      "name": "moe_swiglu_expert_forward_bf16",
-      "_source_file": "moe_swiglu_expert_forward_bf16.json"
-    },
-    {
       "id": "moe_swiglu_expert_forward_f32",
       "op": "moe_swiglu_expert_mlp",
       "variant": "fp32",
@@ -14137,110 +13983,6 @@
       "notes": "Backward pass for shared SwiGLU expert reference kernel.",
       "name": "moe_swiglu_shared_backward_f32",
       "_source_file": "moe_swiglu_shared_backward_f32.json"
-    },
-    {
-      "id": "moe_swiglu_shared_forward_bf16",
-      "op": "shared_swiglu_expert_mlp",
-      "variant": "bf16_weights",
-      "modes": {
-        "inference": true,
-        "training": true,
-        "backward": false
-      },
-      "quant": {
-        "weight": "bf16",
-        "activation": "fp32",
-        "output": "fp32"
-      },
-      "inputs": [
-        {
-          "name": "hidden",
-          "dtype": "fp32",
-          "shape": [
-            "R",
-            "H"
-          ]
-        },
-        {
-          "name": "routed",
-          "dtype": "fp32",
-          "shape": [
-            "R",
-            "H"
-          ],
-          "optional": true
-        }
-      ],
-      "weights": [
-        {
-          "name": "shared_gate",
-          "dtype": "bf16",
-          "shape": [
-            "I",
-            "H"
-          ]
-        },
-        {
-          "name": "shared_up",
-          "dtype": "bf16",
-          "shape": [
-            "I",
-            "H"
-          ]
-        },
-        {
-          "name": "shared_down",
-          "dtype": "bf16",
-          "shape": [
-            "H",
-            "I"
-          ]
-        }
-      ],
-      "outputs": [
-        {
-          "name": "output",
-          "dtype": "fp32",
-          "shape": [
-            "R",
-            "H"
-          ]
-        }
-      ],
-      "dims": [
-        "R",
-        "H",
-        "I"
-      ],
-      "impl": {
-        "sources": [
-          "src/kernels/axpy_kernels.c"
-        ],
-        "variants": [
-          {
-            "name": "scalar_ref",
-            "requires": [],
-            "compile_flags": []
-          }
-        ],
-        "function": "moe_swiglu_shared_forward_bf16",
-        "c_declaration": "void moe_swiglu_shared_forward_bf16(const float *hidden, const float *routed, const uint16_t *shared_gate, const uint16_t *shared_up, const uint16_t *shared_down, float *output, int rows, int hidden_dim, int intermediate_dim);"
-      },
-      "tests": {
-        "unit": [
-          "unittest/test_moe_swiglu_expert.py"
-        ],
-        "parity": [
-          {
-            "kind": "pytorch",
-            "command": ".venv/bin/python unittest/test_moe_swiglu_expert.py",
-            "tolerance": "3e-6"
-          }
-        ]
-      },
-      "notes": "Shared SwiGLU expert branch used by Kimi/DeepSeek-style MoE; output = routed + shared_down(silu(shared_gate(x))*shared_up(x)).",
-      "name": "moe_swiglu_shared_forward_bf16",
-      "_source_file": "moe_swiglu_shared_forward_bf16.json"
     },
     {
       "id": "moe_swiglu_shared_forward_f32",
@@ -14920,6 +14662,66 @@
       "notes": "Add learned absolute position embeddings to a stream that has already been reordered into merged-tile traversal.",
       "name": "position_embeddings_add_tiled_2d",
       "_source_file": "position_embeddings_add_tiled_2d.json"
+    },
+    {
+      "id": "position_embeddings_add_tiled_2d_align_corners",
+      "op": "position_embeddings",
+      "variant": "absolute_learned_inplace_tiled_2d_align_corners_fp32",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ],
+          "desc": "Token-major activation stream already arranged in merged-tile order"
+        }
+      ],
+      "weights": [
+        {
+          "name": "pos_emb",
+          "dtype": "fp32",
+          "shape": [
+            "P",
+            "E"
+          ],
+          "desc": "Learned position embeddings stored in row-major patch order"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ],
+          "desc": "In-place updated activation stream"
+        }
+      ],
+      "dims": [
+        "grid_h",
+        "grid_w",
+        "embed_dim",
+        "merge_size",
+        "source_grid_size"
+      ],
+      "impl": {
+        "function": "position_embeddings_add_tiled_2d_align_corners",
+        "c_declaration": "void position_embeddings_add_tiled_2d_align_corners(float *x, const float *position_embd, int grid_h, int grid_w, int embed_dim, int merge_size, int source_grid_size);",
+        "sources": [
+          "src/kernels/vision_kernels.c"
+        ]
+      },
+      "notes": "Add align-corners bilinearly interpolated learned position embeddings to a stream in merged-tile traversal.",
+      "name": "position_embeddings_add_tiled_2d_align_corners",
+      "_source_file": "position_embeddings_add_tiled_2d_align_corners.json"
     },
     {
       "id": "q_norm_forward",
@@ -17978,173 +17780,6 @@
       "notes": "Root Mean Square Layer Normalization. Computes: output = input / sqrt(mean(x^2) + eps) * gamma",
       "name": "rmsnorm_forward",
       "_source_file": "rmsnorm_forward.json"
-    },
-    {
-      "id": "rmsnorm_forward_kv_lora",
-      "op": "kv_a_layernorm",
-      "variant": "fp32_kv_lora",
-      "quant": {
-        "weight": "fp32",
-        "activation": "fp32",
-        "output": "fp32"
-      },
-      "inputs": [
-        {
-          "name": "input",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "E"
-          ],
-          "desc": "Input activations [tokens, embed_dim]"
-        }
-      ],
-      "weights": [
-        {
-          "name": "gamma",
-          "dtype": "fp32",
-          "shape": [
-            "E"
-          ],
-          "desc": "RMSNorm scale weight"
-        }
-      ],
-      "activations": [],
-      "outputs": [
-        {
-          "name": "output",
-          "dtype": "fp32",
-          "shape": [
-            "T",
-            "E"
-          ],
-          "desc": "Normalized output"
-        },
-        {
-          "name": "rstd",
-          "dtype": "fp32",
-          "shape": [
-            "T"
-          ],
-          "desc": "Running stddev (can be used for backward pass)"
-        }
-      ],
-      "scratch": [
-        {
-          "name": "mean",
-          "dtype": "fp32",
-          "size_bytes": "T * 4",
-          "desc": "Mean per row (reuse for variance)"
-        },
-        {
-          "name": "variance",
-          "dtype": "fp32",
-          "size_bytes": "T * 4",
-          "desc": "Variance per row"
-        }
-      ],
-      "dims": [
-        "T",
-        "E"
-      ],
-      "params": [
-        {
-          "name": "eps",
-          "dtype": "float32",
-          "desc": "Epsilon for numerical stability (typically 1e-5)"
-        }
-      ],
-      "parallelization": {
-        "supported": [
-          "token",
-          "feature"
-        ],
-        "preferred": {
-          "prefill": "feature",
-          "decode": "feature"
-        },
-        "strategies": [
-          {
-            "name": "token",
-            "partition_dim": "T",
-            "param_style": "range",
-            "range": {
-              "min_chunk": 1
-            },
-            "notes": "Process tokens in parallel; each thread normalizes one or more tokens."
-          },
-          {
-            "name": "feature",
-            "partition_dim": "E",
-            "param_style": "range",
-            "range": {
-              "min_chunk": 64,
-              "align_bytes": 32,
-              "allow_tail": true
-            },
-            "notes": "Parallelize across embed dimension; reduction needed for mean/variance."
-          }
-        ]
-      },
-      "constraints": {
-        "alignment": {
-          "E": 64
-        },
-        "notes": "For optimal performance, E should be multiple of 64 for SIMD vectorization"
-      },
-      "impl": {
-        "function": "rmsnorm_forward_kv_lora",
-        "c_declaration": "void rmsnorm_forward_kv_lora(const float *input, const float *gamma, float *output, float *rstd_cache, int tokens, int d_model, int aligned_embed_dim, float eps);",
-        "sources": [
-          "src/kernels/rmsnorm_kernels.c"
-        ],
-        "variants": [
-          {
-            "name": "avx512",
-            "requires": [
-              "avx512f",
-              "fma"
-            ],
-            "compile_flags": [
-              "-mavx512f",
-              "-mfma"
-            ]
-          },
-          {
-            "name": "avx",
-            "requires": [
-              "avx"
-            ],
-            "compile_flags": [
-              "-mavx"
-            ]
-          },
-          {
-            "name": "ref",
-            "requires": [],
-            "compile_flags": []
-          }
-        ]
-      },
-      "tests": {
-        "unit": [
-          "unittest/test_rmsnorm.py"
-        ],
-        "bench": [
-          "scripts/bench_rmsnorm.py"
-        ],
-        "parity": [
-          {
-            "kind": "numpy",
-            "command": "python unittest/test_rmsnorm.py --compare-numpy",
-            "tolerance": "1e-4",
-            "notes": "Compare against numpy reference implementation"
-          }
-        ]
-      },
-      "notes": "Kimi/DeepSeek MLA latent RMSNorm wrapper: normalizes kv_lora_rank compressed KV values with mla_kv_a_norm gamma.",
-      "name": "rmsnorm_forward_kv_lora",
-      "_source_file": "rmsnorm_forward_kv_lora.json"
     },
     {
       "id": "v_norm",

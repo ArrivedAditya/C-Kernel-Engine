@@ -1,7 +1,7 @@
 {
   "schema": "cke.attention_reduction_contracts",
   "schema_version": 1,
-  "engine_contract_version": "8.5",
+  "engine_contract_version": "8",
   "required_semantic_fields": [
     "q_compute",
     "k_compute",

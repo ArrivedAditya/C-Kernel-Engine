@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve v8.5 attention semantics against kernel capabilities.
+"""Resolve v8 attention semantics against kernel capabilities.
 
 This resolver is intentionally model-name blind. It consumes a circuit,
 a canonical contract registry, and a kernel capability overlay.
@@ -14,10 +14,10 @@ from pathlib import Path
 from typing import Any, Dict, Iterable
 
 
-V85_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = V85_ROOT.parents[1]
-DEFAULT_CONTRACTS = V85_ROOT / "contracts" / "attention_reductions.json"
-DEFAULT_KERNELS = V85_ROOT / "kernel_maps" / "attention_contracts.overlay.json"
+V8_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = V8_ROOT.parents[1]
+DEFAULT_CONTRACTS = V8_ROOT / "contracts" / "attention_reductions.json"
+DEFAULT_KERNELS = V8_ROOT / "kernel_maps"
 VALID_STATES = {"unresolved", "observed", "validated"}
 AMBIGUOUS_IDS = {"fp16", "f16", "bf16", "fp32", "f32", "fast", "strict"}
 
@@ -37,6 +37,30 @@ def load_json(path: Path) -> Dict[str, Any]:
     if not isinstance(doc, dict):
         raise ContractError(f"Expected a JSON object in {path}")
     return doc
+
+
+def load_kernel_capabilities(root: Path = DEFAULT_KERNELS) -> Dict[str, Any]:
+    if not root.is_dir():
+        raise ContractError(f"Kernel-map directory does not exist: {root}")
+    kernels: Dict[str, Any] = {}
+    for path in sorted(root.glob("*.json")):
+        doc = load_json(path)
+        if "supported_reductions" not in doc and "provides" not in doc:
+            continue
+        kernel_id = str(doc.get("id", "")).strip()
+        if not kernel_id:
+            raise ContractError(f"Numerical kernel map has no id: {path}")
+        capability = dict(doc)
+        capability["base_kernel_map"] = str(path.resolve().relative_to(REPO_ROOT.resolve()))
+        kernels[kernel_id] = capability
+    if not kernels:
+        raise ContractError(f"No numerical kernel capabilities found under: {root}")
+    return {
+        "schema": "cke.kernel_numerical_contracts",
+        "schema_version": 1,
+        "engine_contract_version": "8",
+        "kernels": kernels,
+    }
 
 
 def sha256_file(path: Path) -> str:
@@ -133,7 +157,7 @@ def validate_kernel_overlay(doc: Dict[str, Any]) -> None:
 
 
 def circuit_path(circuit: str) -> Path:
-    return V85_ROOT / "circuits" / f"{circuit}.json"
+    return V8_ROOT / "circuits" / f"{circuit}.json"
 
 
 def _capability_satisfies(provides: Dict[str, Any], requires: Dict[str, Any]) -> bool:
@@ -159,7 +183,7 @@ def resolve_contract(
     if mode not in {"bringup", "production"}:
         raise ContractError(f"Unknown resolution mode: {mode}")
 
-    operations = circuit_doc.get("operations")
+    operations = circuit_doc.get("required_contracts")
     if not isinstance(operations, dict) or operation not in operations:
         raise ContractError(f"Circuit does not declare operation contract: {operation}")
     operation_doc = operations[operation]
@@ -232,16 +256,13 @@ def resolve_contract(
             f"Production contract resolution rejected {operation}.{phase}: " + "; ".join(blockers)
         )
 
-    base_circuit = str(circuit_doc.get("base_circuit", "")).strip()
-    base_path = (REPO_ROOT / base_circuit).resolve() if base_circuit else None
-    if base_path is not None and not base_path.is_file():
-        raise ContractError(f"Base circuit does not exist: {base_path}")
+    source_path = source_circuit_path.resolve() if source_circuit_path else None
 
     return {
         "schema": "cke.resolved_attention_contract",
         "schema_version": 1,
-        "engine_contract_version": "8.5",
-        "circuit": circuit_doc.get("circuit"),
+        "engine_contract_version": "8",
+        "circuit": circuit_doc.get("name"),
         "operation": operation,
         "phase": phase,
         "resolution_mode": mode,
@@ -261,9 +282,8 @@ def resolve_contract(
         "requirements": requires,
         "production_blockers": blockers,
         "inputs": {
-            "circuit": str(source_circuit_path) if source_circuit_path else None,
-            "base_circuit": str(base_path) if base_path else None,
-            "base_circuit_sha256": sha256_file(base_path) if base_path else None
+            "circuit": str(source_path) if source_path else None,
+            "circuit_sha256": sha256_file(source_path) if source_path else None
         }
     }
 
@@ -275,7 +295,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--phase", choices=("prefill", "decode"), required=True)
     parser.add_argument("--mode", choices=("bringup", "production"), default="bringup")
     parser.add_argument("--contracts", type=Path, default=DEFAULT_CONTRACTS)
-    parser.add_argument("--kernel-overlay", type=Path, default=DEFAULT_KERNELS)
+    parser.add_argument("--kernel-maps", type=Path, default=DEFAULT_KERNELS)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--pretty", action="store_true")
     return parser.parse_args()
@@ -288,14 +308,14 @@ def main() -> int:
         result = resolve_contract(
             load_json(source_circuit_path),
             load_json(args.contracts),
-            load_json(args.kernel_overlay),
+            load_kernel_capabilities(args.kernel_maps),
             operation=args.operation,
             phase=args.phase,
             mode=args.mode,
             source_circuit_path=source_circuit_path,
         )
     except ContractError as exc:
-        print(f"v8.5 contract resolution: FAIL: {exc}")
+        print(f"v8 contract resolution: FAIL: {exc}")
         return 2
 
     rendered = json.dumps(result, indent=2 if args.pretty else None, sort_keys=True)

@@ -90,7 +90,7 @@ def _load_audit_module() -> Any:
 
 
 def _template_path(name: str) -> Path:
-    return ROOT / "version/v8/templates" / f"{name}.json"
+    return ROOT / "version/v8/circuits" / f"{name}.json"
 
 
 def _safe_template_report(audit: Any, name: str) -> dict[str, Any]:

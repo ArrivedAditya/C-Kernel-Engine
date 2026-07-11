@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -139,6 +142,35 @@ def _make_qwen3vl_manifest() -> dict:
 
 
 class V8Qwen3VLTemplateTests(unittest.TestCase):
+
+    def test_numerical_contract_validation_preserves_generated_artifacts(self) -> None:
+        manifest = _make_qwen3vl_manifest()
+        with tempfile.TemporaryDirectory(prefix="v8_qwen3vl_contract_equivalence_") as td:
+            root = Path(td)
+            manifest_path = root / "weights_manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            def generate(prefix: str) -> dict[str, object]:
+                paths = {
+                    name: root / f"{prefix}_{name}.json"
+                    for name in ("ir1", "layout", "lowered", "call")
+                }
+                args = [
+                    "--manifest", str(manifest_path),
+                    "--mode", "prefill",
+                    "--output", str(paths["ir1"]),
+                    "--layout-output", str(paths["layout"]),
+                    "--lowered-output", str(paths["lowered"]),
+                    "--call-output", str(paths["call"]),
+                ]
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(build_ir_v8.main(args), 0)
+                return {name: json.loads(path.read_text()) for name, path in paths.items()}
+
+            with mock.patch.object(build_ir_v8, "_resolve_manifest_numerical_contracts", return_value=[]):
+                legacy = generate("legacy")
+            contracted = generate("contracted")
+            self.assertEqual(contracted, legacy)
 
     def test_qwen3vl_invalid_vision_mrope_sections_fail_lowering(self) -> None:
         manifest = _make_qwen3vl_manifest()

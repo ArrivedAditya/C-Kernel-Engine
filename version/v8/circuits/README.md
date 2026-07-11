@@ -1,14 +1,14 @@
-# Graph Templates (v8)
+# Model Circuits (v8)
 
-This directory holds model graph templates. A template defines the per-layer
-operation sequence (the logical graph). It is the missing piece between the
-weights manifest (what tensors exist) and the kernel registry (what kernels
-can execute ops).
+This directory holds model circuits. A circuit defines the per-layer operation
+sequence, graph edges, and required numerical semantics. It is the missing
+piece between the weights manifest (what tensors exist) and the kernel maps
+(what implementations can execute the graph correctly).
 
-Templates are architecture-level, not model-specific. They are parameterized by
+Circuits are architecture-level, not checkpoint-specific. They are parameterized by
 model config and the weights manifest.
 
-Do not confuse these templates with the buffer templates used inside
+Do not confuse circuits with the buffer templates used inside
 `version/v8/scripts/build_ir_v8.py`. Those are memory layout templates.
 These files describe compute graphs.
 
@@ -19,9 +19,11 @@ These files describe compute graphs.
    it needs a canonical op sequence to know which kernels to try.
 3) Fusion is a graph rewrite. We need a graph first.
 4) Prefill vs decode are execution plans derived from the same graph
-   (e.g., KV cache vs full attention), not separate templates.
+   (e.g., KV cache vs full attention), not separate circuits.
+5) Numerical requirements are explicit and resolved against kernel-map
+   capabilities before lowering can emit C.
 
-## What a template does
+## What a circuit does
 
 - Defines the forward pass op sequence for each block.
 - Allows per-layer overrides (for MoE or hybrid blocks).
@@ -31,17 +33,20 @@ These files describe compute graphs.
 - Provides a stable op vocabulary for IR1.
 - Declares graph control primitives such as branch/collect/stitch without
   teaching the lowerer model-family names.
+- Declares complete numerical contract IDs for operations whose reduction,
+  partitioning, or intermediate precision affects parity.
 
-## What a template does not do
+## What a circuit does not do
 
 - It does not define backward pass (derived automatically from forward sequence).
 - It does not store weights or offsets (that is `weights_manifest.json`).
-- It does not choose kernels (that is done by kernel registry + selection).
+- It does not name concrete kernels for numerical contracts. The kernel-map
+  resolver must find exactly one compatible implementation.
 - It does not define memory layout (that is IR2 + memory planner).
 
 ## Design Contract
 
-- The template language should stay architecture-agnostic.
+- The circuit language should stay architecture-agnostic.
 - The lowerer should only see declared operations, graph edges, and stitch
   points. It should not branch on names like DeepStack, MoE, SSM, encoder, or
   decoder.
@@ -52,6 +57,8 @@ These files describe compute graphs.
 - Operation objects may carry `id`, `status`, `inputs`, or other metadata. The
   lowerer can consume the active subset while planned ops remain declared in the
   schema for future bring-up.
+- `required_contracts` entries state semantic requirements only. Zero matching
+  providers and multiple matching providers are compile-time errors.
 
 ## File naming
 

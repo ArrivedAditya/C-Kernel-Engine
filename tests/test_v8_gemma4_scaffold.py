@@ -186,7 +186,7 @@ class V8Gemma4ScaffoldTests(unittest.TestCase):
         self.assertEqual(plan["layer_kv_dim"], [512, 1024, 512, 1024])
 
     def test_gemma4_template_declares_q_only_shared_kv_kinds(self) -> None:
-        template_path = REPO_ROOT / "version" / "v8" / "templates" / "gemma4.json"
+        template_path = REPO_ROOT / "version" / "v8" / "circuits" / "gemma4.json"
         import json
 
         template = json.loads(template_path.read_text(encoding="utf-8"))
@@ -206,7 +206,7 @@ class V8Gemma4ScaffoldTests(unittest.TestCase):
         import json
         import build_ir_v8  # type: ignore
 
-        template_path = REPO_ROOT / "version" / "v8" / "templates" / "gemma4_assistant.json"
+        template_path = REPO_ROOT / "version" / "v8" / "circuits" / "gemma4_assistant.json"
         template = json.loads(template_path.read_text(encoding="utf-8"))
         ops = build_ir_v8._collect_template_ops(
             template,
@@ -243,7 +243,7 @@ class V8Gemma4ScaffoldTests(unittest.TestCase):
             self.assertTrue((REPO_ROOT / "version" / "v8" / "kernel_maps" / f"{kernel_id}.json").exists())
 
     def test_gemma4_speculative_pair_template_declares_bridge_and_verifier(self) -> None:
-        template_path = REPO_ROOT / "version" / "v8" / "templates" / "gemma4_speculative_pair.json"
+        template_path = REPO_ROOT / "version" / "v8" / "circuits" / "gemma4_speculative_pair.json"
         template = json.loads(template_path.read_text(encoding="utf-8"))
         self.assertTrue(template["experimental"])
         self.assertEqual(template["contract"]["target"]["template"], "gemma4")
@@ -426,7 +426,7 @@ class V8Gemma4ScaffoldTests(unittest.TestCase):
             self.assertIn("attn_shared_kv", (build_dir / "lowered_decode_call.json").read_text(encoding="utf-8"))
 
     def test_gemma4_kv_layers_use_supported_paired_qk_ops_for_first_bringup(self) -> None:
-        template_path = REPO_ROOT / "version" / "v8" / "templates" / "gemma4.json"
+        template_path = REPO_ROOT / "version" / "v8" / "circuits" / "gemma4.json"
         import json
 
         template = json.loads(template_path.read_text(encoding="utf-8"))
@@ -441,7 +441,7 @@ class V8Gemma4ScaffoldTests(unittest.TestCase):
     def test_gemma4_v_norm_is_unweighted_rmsnorm(self) -> None:
         import json
 
-        template_path = REPO_ROOT / "version" / "v8" / "templates" / "gemma4.json"
+        template_path = REPO_ROOT / "version" / "v8" / "circuits" / "gemma4.json"
         template = json.loads(template_path.read_text(encoding="utf-8"))
         body = template["block_types"]["decoder"]["body"]
         for kind in ("sliding_attention_kv", "full_attention_kv"):
@@ -459,7 +459,7 @@ class V8Gemma4ScaffoldTests(unittest.TestCase):
     def test_gemma4_template_runs_per_layer_embedding_after_ffn_residual(self) -> None:
         import json
 
-        template_path = REPO_ROOT / "version" / "v8" / "templates" / "gemma4.json"
+        template_path = REPO_ROOT / "version" / "v8" / "circuits" / "gemma4.json"
         template = json.loads(template_path.read_text(encoding="utf-8"))
         body = template["block_types"]["decoder"]["body"]
         for ops in body["ops_by_kind"].values():

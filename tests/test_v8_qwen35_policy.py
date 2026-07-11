@@ -36,7 +36,7 @@ class V8Qwen35PolicyTests(unittest.TestCase):
         )
 
     def test_qwen35_template_declares_policy_config_keys(self) -> None:
-        template_path = REPO_ROOT / "version" / "v8" / "templates" / "qwen35.json"
+        template_path = REPO_ROOT / "version" / "v8" / "circuits" / "qwen35.json"
         template = json.loads(template_path.read_text(encoding="utf-8"))
         contract = template["contract"]["attention_contract"]
         self.assertEqual(contract["layer_policy_config_key"], "layer_execution_plan")

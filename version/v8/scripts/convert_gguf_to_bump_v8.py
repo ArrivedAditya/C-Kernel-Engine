@@ -72,9 +72,9 @@ Notes:
   - This tool is intentionally "offline": it may convert/reshape tensors while
     writing the bump file so runtime code stays simple (no format juggling).
   - Template selection is intentionally strict and MUST fail on unknown arch:
-      arch -> templates/<arch>.json
+      arch -> circuits/<arch>.json
     Do not alias or guess similar families. If a new model family (e.g. "paper")
-    appears, conversion must fail until templates/paper.json exists. This keeps
+    appears, conversion must fail until circuits/paper.json exists. This keeps
     architecture-specific changes isolated so "paper" edits cannot silently
     affect qwen/llama and vice versa.
   - For Q4_K/Q6_K models, we treat GGUF tensors of type GGML_TYPE_Q4_K/Q6_K as the
@@ -385,10 +385,10 @@ def _inject_runtime_config_defaults(config: dict, arch: str) -> dict:
 
 def load_template_for_arch(arch: str) -> dict:
     # Intentional contract: template selection is explicit. Most architectures use
-    # templates/<arch>.json directly; GGUF aliases must be declared in
+    # circuits/<arch>.json directly; GGUF aliases must be declared in
     # model_maps/gguf_ck_map.json rather than guessed in Python conditionals.
     template_name = gguf_ck_template_arch(arch)
-    base_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "templates"))
+    base_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "circuits"))
     template_path = os.path.join(base_dir, f"{template_name}.json")
     if not os.path.exists(template_path):
         raise GGUFError(

@@ -2,6 +2,22 @@
   "id": "attention_forward_full_head_major_gqa_flash_strided",
   "op": "attention",
   "variant": "full_flash_fp32",
+  "mode": "prefill",
+  "provides": {
+    "execution.phase": ["prefill"],
+    "tensor.q.dtype": ["fp32"],
+    "tensor.kv.dtype": ["fp32"],
+    "tensor.layout": ["head_major"],
+    "numerics.attention_reduction": ["f16_kv_fp32_online"]
+  },
+  "supported_reductions": {
+    "f16_kv_fp32_online": {
+      "status": "validated",
+      "function": "attention_forward_full_head_major_gqa_flash_strided",
+      "explicit_selector": false,
+      "notes": "Legacy v8 ABI with validated FP32 Q and FP16-rounded K/V semantics."
+    }
+  },
   "quant": {
     "weight": "none",
     "activation": "fp32",

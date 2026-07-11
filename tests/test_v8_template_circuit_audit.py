@@ -86,7 +86,7 @@ class TemplateCircuitAuditTests(unittest.TestCase):
 
     def test_glm4_template_declares_critical_projection_edges(self) -> None:
         audit = _load_module()
-        template = json.loads((REPO / "version/v8/templates/glm4.json").read_text(encoding="utf-8"))
+        template = json.loads((REPO / "version/v8/circuits/glm4.json").read_text(encoding="utf-8"))
         report = audit.audit_template_explicit_edges(template)
         self.assertIn("decoder.body[1].qkv_proj.x=main_stream", report["explicit"])
         self.assertIn("decoder.body[4].out_proj.x=attn_scratch", report["explicit"])
@@ -98,7 +98,7 @@ class TemplateCircuitAuditTests(unittest.TestCase):
 
     def test_kimi_vl_template_declares_mla_and_moe_edges(self) -> None:
         audit = _load_module()
-        template = json.loads((REPO / "version/v8/templates/kimi_vl.json").read_text(encoding="utf-8"))
+        template = json.loads((REPO / "version/v8/circuits/kimi_vl.json").read_text(encoding="utf-8"))
         report = audit.audit_template_explicit_edges(template)
         explicit = set(report["explicit"])
         self.assertIn("decoder.body:mla_dense_mlp[2].q_proj.x=layer_input", explicit)
