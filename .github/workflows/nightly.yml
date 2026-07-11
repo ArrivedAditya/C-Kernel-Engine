@@ -258,6 +258,32 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/ck-regression-runs" build/regression-reports
           make regression-fast REGRESSION_ARGS="--run-root ${RUNNER_TEMP}/ck-regression-runs --report-root build/regression-reports" 2>&1 | tee build/regression_fast.log
 
+      - name: Prepare scheduled Qwen3-VL encoder parity
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          HF_HOME: ${{ runner.temp }}/huggingface
+        run: |
+          avail_kb=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)
+          free_kb=$(df -Pk "${RUNNER_TEMP}" | awk 'NR==2 {print $4}')
+          if [ "${avail_kb:-0}" -lt $((8 * 1024 * 1024)) ] || [ "${free_kb:-0}" -lt $((6 * 1024 * 1024)) ]; then
+            echo "Qwen3-VL encoder parity not eligible: needs 8 GiB available RAM and 6 GiB free disk"
+            exit 0
+          fi
+
+          mmproj=$(python -c 'from huggingface_hub import hf_hub_download; print(hf_hub_download(repo_id="Qwen/Qwen3-VL-8B-Instruct-GGUF", filename="mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf"))')
+          echo "V8_QWEN3VL_CACHED_MMPROJ=${mmproj}" >> "${GITHUB_ENV}"
+          echo "V8_VISION_ENCODER_ALLOW_NON_AVX512=1" >> "${GITHUB_ENV}"
+          echo "CK_LLAMA_CPP_ROOT=${GITHUB_WORKSPACE}/llama.cpp" >> "${GITHUB_ENV}"
+          echo "Scheduled Q8_0 encoder parity enabled with ${mmproj}"
+
+          if [ "${avail_kb:-0}" -ge $((16 * 1024 * 1024)) ] && [ "${free_kb:-0}" -ge $((18 * 1024 * 1024)) ]; then
+            decoder=$(python -c 'from huggingface_hub import hf_hub_download; print(hf_hub_download(repo_id="Qwen/Qwen3-VL-8B-Instruct-GGUF", filename="Qwen3VL-8B-Instruct-Q4_K_M.gguf"))')
+            echo "V8_QWEN3VL_CACHED_MODEL=${decoder}" >> "${GITHUB_ENV}"
+            echo "Scheduled Q4_K_M decoder plus Q8_0 encoder smoke enabled"
+          else
+            echo "Q4_K_M end-to-end smoke not eligible: needs 16 GiB available RAM and 18 GiB free disk"
+          fi
+
       - name: Run Nightly Test Suite
         run: |
           echo "=== Running Full Nightly Test Suite ==="

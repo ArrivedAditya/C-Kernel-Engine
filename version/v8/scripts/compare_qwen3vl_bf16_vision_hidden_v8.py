@@ -31,10 +31,14 @@ def _metrics(ref: np.ndarray, got: np.ndarray) -> dict[str, float]:
         raise RuntimeError(f"shape mismatch: ref={ref.shape} got={got.shape}")
     diff = got.astype(np.float32, copy=False) - ref.astype(np.float32, copy=False)
     denom = float(np.linalg.norm(ref) * np.linalg.norm(got))
+    rmse = float(math.sqrt(float(np.mean(diff * diff)))) if diff.size else 0.0
+    ref_rms = float(math.sqrt(float(np.mean(ref.astype(np.float32, copy=False) ** 2)))) if ref.size else 0.0
     return {
         "max_abs": float(np.max(np.abs(diff))) if diff.size else 0.0,
         "mean_abs": float(np.mean(np.abs(diff))) if diff.size else 0.0,
-        "rmse": float(math.sqrt(float(np.mean(diff * diff)))) if diff.size else 0.0,
+        "rmse": rmse,
+        "ref_rms": ref_rms,
+        "relative_rmse": rmse / ref_rms if ref_rms > 0.0 else (0.0 if rmse == 0.0 else float("inf")),
         "cosine": float(np.dot(ref.reshape(-1), got.reshape(-1)) / denom) if denom > 0.0 else 0.0,
     }
 
@@ -514,6 +518,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--threads", type=int, default=int(os.environ.get("CK_NUM_THREADS", "20") or "20"))
     ap.add_argument("--attn-implementation", choices=("auto", "eager", "sdpa"), default="auto")
     ap.add_argument("--skip-ck", action="store_true", help="Only run the PyTorch hook/reference side")
+    ap.add_argument("--min-cosine", type=float, default=None)
+    ap.add_argument("--max-rmse", type=float, default=None)
+    ap.add_argument("--max-abs", type=float, default=None)
+    ap.add_argument("--max-relative-rmse", type=float, default=None)
+    ap.add_argument("--final-max-rmse", type=float, default=None)
+    ap.add_argument("--final-max-abs", type=float, default=None)
     args = ap.parse_args(argv)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -551,6 +561,21 @@ def main(argv: list[str] | None = None) -> int:
                 **_metrics(ref, ck),
             }
 
+    failures: list[str] = []
+    for selector, metrics in rows.items():
+        if args.min_cosine is not None and float(metrics["cosine"]) < args.min_cosine:
+            failures.append(f"{selector}: cosine {metrics['cosine']:.9f} < {args.min_cosine:.9f}")
+        if args.max_rmse is not None and float(metrics["rmse"]) > args.max_rmse:
+            failures.append(f"{selector}: rmse {metrics['rmse']:.9f} > {args.max_rmse:.9f}")
+        if args.max_abs is not None and float(metrics["max_abs"]) > args.max_abs:
+            failures.append(f"{selector}: max_abs {metrics['max_abs']:.9f} > {args.max_abs:.9f}")
+        if args.max_relative_rmse is not None and float(metrics["relative_rmse"]) > args.max_relative_rmse:
+            failures.append(f"{selector}: relative_rmse {metrics['relative_rmse']:.9f} > {args.max_relative_rmse:.9f}")
+        if selector == "vision_output" and args.final_max_rmse is not None and float(metrics["rmse"]) > args.final_max_rmse:
+            failures.append(f"{selector}: final rmse {metrics['rmse']:.9f} > {args.final_max_rmse:.9f}")
+        if selector == "vision_output" and args.final_max_abs is not None and float(metrics["max_abs"]) > args.final_max_abs:
+            failures.append(f"{selector}: final max_abs {metrics['max_abs']:.9f} > {args.final_max_abs:.9f}")
+
     report = {
         "checkpoint": str(args.checkpoint),
         "runtime_dir": str(args.runtime_dir),
@@ -564,11 +589,21 @@ def main(argv: list[str] | None = None) -> int:
         },
         "torch": torch_report,
         "comparisons": rows,
+        "thresholds": {
+            "min_cosine": args.min_cosine,
+            "max_rmse": args.max_rmse,
+            "max_abs": args.max_abs,
+            "max_relative_rmse": args.max_relative_rmse,
+            "final_max_rmse": args.final_max_rmse,
+            "final_max_abs": args.final_max_abs,
+        },
+        "failures": failures,
+        "status": "fail" if failures else "pass",
     }
     report_path = args.out_dir / "report.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(json.dumps({"report": str(report_path), "comparisons": rows}, indent=2, sort_keys=True))
-    return 0
+    print(json.dumps({"report": str(report_path), "comparisons": rows, "failures": failures}, indent=2, sort_keys=True))
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

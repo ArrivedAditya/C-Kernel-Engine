@@ -388,6 +388,7 @@ def _compile_mtmd_shim(output_dir: Path) -> Path:
         "-fPIC",
         "-O2",
         "-std=c++17",
+        *(["-DCK_MTMD_CLIP_OBJECT_API=1"] if "clip_embd_nbytes_by_img" not in (LLAMA_CPP_ROOT / "tools" / "mtmd" / "clip.h").read_text(encoding="utf-8", errors="ignore") else []),
         f"-I{LLAMA_CPP_ROOT / 'tools' / 'mtmd'}",
         f"-I{LLAMA_CPP_ROOT / 'ggml' / 'include'}",
         f"-I{LLAMA_CPP_ROOT / 'include'}",

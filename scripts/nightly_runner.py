@@ -533,6 +533,13 @@ MAKE_TARGETS = {
         "target": "test-v8-qwen3vl-e2e-smoke",
         "timeout_sec": 5400,
     },
+    "v8_vision_encoder_accuracy": {
+        "name": "v8 Vision Encoder Accuracy (AVX-512 artifact gate)",
+        "category": "bf16",
+        "target": "vision-encoder-full",
+        "timeout_sec": 21600,
+        "status_artifact": "build/vision_encoder_accuracy/summary.json",
+    },
     "v8_gemma4_vision_smoke": {
         "name": "v8 Gemma4 Vision Smoke",
         "category": "inference",
@@ -619,6 +626,7 @@ MAKE_TARGET_FAILURE_ARTIFACTS = {
     "v7-stabilization-nightly": ROOT / "version" / "v7" / ".cache" / "reports" / "training_stabilization_scorecard_latest.json",
     "test-architecture-contracts": ROOT / "version" / "v8" / ".cache" / "reports" / "architecture_contracts_latest.json",
     "v8-visualizer-vision-artifacts": ROOT / "version" / "v8" / ".cache" / "reports" / "vision_visualizer_latest.json",
+    "vision-encoder-full": ROOT / "build" / "vision_encoder_accuracy" / "summary.json",
 }
 
 
@@ -879,6 +887,13 @@ def run_make_target(target_info: dict, verbose: bool = False) -> TestResult:
                 perf_unit = target_info.get("perf_unit", "")
 
         status = "pass" if result.returncode == 0 else "fail"
+        status_artifact = target_info.get("status_artifact")
+        artifact_payload = None
+        if status_artifact:
+            artifact_payload = _load_json_if_fresh(ROOT / status_artifact, start_ts=start)
+            artifact_status = str((artifact_payload or {}).get("status") or "").lower()
+            if artifact_status in {"pass", "fail", "skip"}:
+                status = artifact_status
         error_msg = ""
         if status == "fail":
             # Look for error indicators in both stdout and stderr
@@ -1115,6 +1130,12 @@ def save_json_report(results: list[TestResult], filepath: Path, start_time: date
     )
     if vision_visualizer is not None:
         report["vision_visualizer"] = vision_visualizer
+    vision_encoder_accuracy = _load_json_if_fresh(
+        ROOT / "build" / "vision_encoder_accuracy" / "summary.json",
+        start_ts=start_time.timestamp(),
+    )
+    if vision_encoder_accuracy is not None:
+        report["vision_encoder_accuracy"] = vision_encoder_accuracy
     filepath.write_text(json.dumps(report, indent=2))
     print(f"\nJSON report saved to: {filepath}")
 
