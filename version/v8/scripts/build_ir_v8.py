@@ -151,6 +151,28 @@ def _resolve_manifest_execution_contracts(
     resolution_mode = str((manifest.get("config") or {}).get("numerical_contract_mode", "bringup"))
     plans: List[Dict[str, Any]] = []
     for operation, operation_doc in required.items():
+        selector = operation_doc.get("selector") if isinstance(operation_doc, dict) else None
+        if selector is not None:
+            config_equals = selector.get("config_equals") if isinstance(selector, dict) else None
+            if not isinstance(config_equals, dict) or not config_equals:
+                raise RuntimeError(
+                    f"Numerical execution contract {operation!r} has an invalid selector. "
+                    "Declare a non-empty selector.config_equals map."
+                )
+            config = manifest.get("config") if isinstance(manifest.get("config"), dict) else {}
+            selected = True
+            for key, expected in config_equals.items():
+                current: Any = config
+                for part in str(key).split("."):
+                    if not isinstance(current, dict) or part not in current:
+                        selected = False
+                        break
+                    current = current[part]
+                if not selected or current != expected:
+                    selected = False
+                    break
+            if not selected:
+                continue
         phases = operation_doc.get("phases") if isinstance(operation_doc, dict) else None
         if not isinstance(phases, dict) or mode not in phases:
             continue

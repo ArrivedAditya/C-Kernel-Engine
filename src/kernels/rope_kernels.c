@@ -1240,13 +1240,14 @@ static void vision_mrope_apply_head(
         return;
     }
 
-    int rope_pairs = n_dims;
-    if (rope_pairs > head_dim / 2) {
-        rope_pairs = head_dim / 2;
+    int rotary_width = n_dims;
+    if (rotary_width > head_dim) {
+        rotary_width = head_dim;
     }
-    if (rope_pairs <= 0 || 2 * rope_pairs > aligned_head_dim) {
+    if (rotary_width <= 0 || (rotary_width & 1) != 0 || rotary_width > aligned_head_dim) {
         return;
     }
+    const int rope_pairs = rotary_width / 2;
 
     const int axis_y_pairs = sections[0];
     const int axis_x_pairs = sections[1];
@@ -1285,9 +1286,9 @@ static void vision_mrope_apply_head(
             );
 
             const float x0 = row[pair];
-            const float x1 = row[pair + n_dims];
+            const float x1 = row[pair + rope_pairs];
             row[pair] = x0 * cos_theta - x1 * sin_theta;
-            row[pair + n_dims] = x0 * sin_theta + x1 * cos_theta;
+            row[pair + rope_pairs] = x0 * sin_theta + x1 * cos_theta;
 
             theta_y *= theta_scale;
             theta_x *= theta_scale;

@@ -101,6 +101,23 @@
             }
           ]
         },
+        "spatial_transform": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["interpolation", "coordinate_transform", "coordinate_compute", "source_layout", "output_traversal"],
+              "properties": {
+                "interpolation": {"enum": ["bilinear"]},
+                "coordinate_transform": {"enum": ["align_corners"]},
+                "coordinate_compute": {"enum": ["fp32_from_rational"]},
+                "source_layout": {"enum": ["row_major"]},
+                "output_traversal": {"enum": ["row_major", "merged_tile_order"]}
+              }
+            }
+          ]
+        },
         "description": {"type": "string", "minLength": 1}
       }
     }

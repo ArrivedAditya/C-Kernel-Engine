@@ -326,6 +326,11 @@ TEST_SUITES = {
     "attention_bf16": TestSuite("Attention BF16", "bf16", BF16_DIR / "test_attention_bf16.py"),
     "mlp_bf16": TestSuite("MLP BF16", "bf16", BF16_DIR / "test_mlp_bf16.py"),
     "cross_entropy_bf16": TestSuite("Cross Entropy BF16", "bf16", BF16_DIR / "test_cross_entropy_bf16.py"),
+    "vision_position_storage_bf16": TestSuite(
+        "Vision Position Storage BF16",
+        "bf16",
+        BF16_DIR / "test_vision_position_storage_bf16.py",
+    ),
     "v8_bf16_safetensors_lowering": TestSuite(
         "v8 BF16 safetensors lowering",
         "bf16",

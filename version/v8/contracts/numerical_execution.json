@@ -33,6 +33,44 @@
       },
       "position_transform": null,
       "description": "BF16 weights and BF16-rounded FP32 activation loads with an ascending-K FP32 dot product and FP32 output storage."
+    },
+    "bf16_tiled_2d_align_corners_rne_residual": {
+      "status": "validated",
+      "storage": {
+        "input": "bf16",
+        "weight": "bf16",
+        "output": "bf16"
+      },
+      "compute": {
+        "input": "bf16_rne",
+        "weight": "bf16",
+        "accumulator": "bf16"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "weighted_product", "reduction_update", "output_store"]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "left_to_right",
+        "partial_accumulator": "bf16",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "spatial_transform": {
+        "interpolation": "bilinear",
+        "coordinate_transform": "align_corners",
+        "coordinate_compute": "fp32_from_rational",
+        "source_layout": "row_major",
+        "output_traversal": "merged_tile_order"
+      },
+      "description": "Align-corners tiled 2D bilinear position interpolation with FP32 rational coordinates and explicit BF16 RNE product, accumulation, residual, and output boundaries."
     }
   }
 }

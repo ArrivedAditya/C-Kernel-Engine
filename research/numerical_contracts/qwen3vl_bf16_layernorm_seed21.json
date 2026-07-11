@@ -1,0 +1,49 @@
+{
+  "schema": "cke.minimal_numerical_fixture",
+  "schema_version": 1,
+  "name": "qwen3vl_bf16_layernorm_seed21",
+  "operation": "layernorm",
+  "semantic_checkpoint": "vision.layer.0.norm1.output",
+  "public_generator": {
+    "framework": "torch",
+    "seed": 21,
+    "tokens": 1,
+    "dimension": 1152,
+    "input_dtype": "bf16",
+    "gamma_dtype": "bf16",
+    "beta_dtype": "bf16",
+    "epsilon": 0.000001
+  },
+  "subject": {
+    "kernel": "layernorm_forward_unrolled_slice_bf16",
+    "input_storage": "bf16",
+    "output_storage": "bf16",
+    "compute": "fp32",
+    "reduction": "avx512_four_accumulator_horizontal_reduce"
+  },
+  "oracle": {
+    "backend": "pytorch_cpu",
+    "operation": "torch.nn.functional.layer_norm",
+    "version_observed": "2.8.0+cpu"
+  },
+  "expected_current_divergence": {
+    "classification": "REDUCTION_CONTRACT_MISMATCH",
+    "mismatch_count": 1,
+    "index": 332,
+    "ck": 0.00022411346435546875,
+    "pytorch": 0.0002231597900390625,
+    "max_abs": 0.00000095367431640625
+  },
+  "required_generic_capability": {
+    "storage": {"input": "bf16", "gamma": "bf16", "beta": "bf16", "output": "bf16"},
+    "accumulator": "fp32",
+    "mean_reduction_order": "backend_matched_required",
+    "variance_reduction_order": "backend_matched_required",
+    "variance_formula": "backend_matched_required",
+    "rsqrt_precision": "backend_matched_required",
+    "output_rounding": "bf16_rne",
+    "threading": "independent_rows",
+    "thread_count_changes_arithmetic_order": false,
+    "status": "unresolved"
+  }
+}

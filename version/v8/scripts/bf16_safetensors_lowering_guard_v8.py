@@ -285,7 +285,7 @@ def run_guard(workdir: Path) -> None:
     manifest = json.loads((out / "weights_manifest.json").read_text(encoding="utf-8"))
     assert manifest["config"]["rope_layout"] == "multi_section_2d"
     assert manifest["config"]["vision_mrope_n_dims"] == 2
-    assert manifest["config"]["vision_mrope_sections"] == [1, 1, 1, 1]
+    assert manifest["config"]["vision_mrope_sections"] == [1, 1, 0, 0]
     assert manifest["config"]["position_interpolation_policy"] == "align_corners_bilinear"
 
     lowered = out / "lowered_vision.json"
@@ -314,12 +314,16 @@ def run_guard(workdir: Path) -> None:
     )
     lowered_ops = json.loads(lowered.read_text(encoding="utf-8"))["operations"]
     kernels_by_op = {op["op"]: op.get("kernel") for op in lowered_ops}
-    assert kernels_by_op["position_embeddings"] == "position_embeddings_add_tiled_2d_align_corners"
+    assert kernels_by_op["position_embeddings"] == "position_embeddings_add_tiled_2d_align_corners_bf16"
     call_ops = json.loads(call.read_text(encoding="utf-8"))["operations"]
+    position_call = next(op for op in call_ops if op["op"] == "position_embeddings")
+    assert position_call["function"] == "position_embeddings_add_tiled_2d_align_corners_bf16"
+    assert position_call["resolved_contract"]["resolved_contract_id"] == "bf16_tiled_2d_align_corners_rne_residual"
+    assert position_call["resolved_contract"]["kernel_id"] == "position_embeddings_add_tiled_2d_align_corners_bf16"
     rope_call = next(op for op in call_ops if op["op"] == "rope_qk")
     rope_args = {arg["name"]: arg["expr"] for arg in rope_call["args"]}
     assert rope_args["n_dims"] == "2"
-    assert [rope_args[f"section_{idx}"] for idx in range(4)] == ["1", "1", "1", "1"]
+    assert [rope_args[f"section_{idx}"] for idx in range(4)] == ["1", "1", "0", "0"]
     for op_name in (
         "patch_proj",
         "patch_proj_aux",

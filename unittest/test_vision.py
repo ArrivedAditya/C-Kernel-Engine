@@ -1015,7 +1015,8 @@ def _ref_qwen3vl_vision_mrope_qk(
     def apply(x: torch.Tensor) -> torch.Tensor:
         out = x.clone()
         head_dim = out.shape[-1]
-        rope_pairs = min(int(n_dims), int(head_dim) // 2)
+        rotary_width = min(int(n_dims), int(head_dim))
+        rope_pairs = rotary_width // 2
         axis_pairs = rope_pairs // 2
         if axis_pairs <= 0 or 2 * rope_pairs > head_dim:
             return out
@@ -1032,9 +1033,9 @@ def _ref_qwen3vl_vision_mrope_qk(
                     c = math.cos(theta)
                     s = math.sin(theta)
                     x0 = float(out[h, tok, pair].item())
-                    x1 = float(out[h, tok, pair + n_dims].item())
+                    x1 = float(out[h, tok, pair + rope_pairs].item())
                     out[h, tok, pair] = x0 * c - x1 * s
-                    out[h, tok, pair + n_dims] = x0 * s + x1 * c
+                    out[h, tok, pair + rope_pairs] = x0 * s + x1 * c
         return out
 
     return apply(q), apply(k)
@@ -1057,8 +1058,9 @@ def test_mrope_qk_vision(num_heads=2, num_kv_heads=2, num_tokens=4, head_dim=8):
     q = torch.randn(num_heads, num_tokens, head_dim, dtype=torch.float32)
     k = torch.randn(num_kv_heads, num_tokens, head_dim, dtype=torch.float32)
     positions = _ref_vision_position_ids(2, 2, 2)
-    sections = [max(1, head_dim // 4)] * 4
-    n_dims = head_dim // 2
+    axis_pairs = max(1, head_dim // 4)
+    sections = [axis_pairs, axis_pairs, 0, 0]
+    n_dims = head_dim
 
     ref_q, ref_k = _ref_qwen3vl_vision_mrope_qk(q, k, positions, n_dims)
     out_q, out_k = run_c_mrope_qk(q, k, positions, n_dims, sections)
