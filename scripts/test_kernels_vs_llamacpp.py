@@ -48,11 +48,12 @@ BLOCK_Q4_0_SIZE = 18   # bytes per Q4_0 block
 def load_libraries():
     """Load both test libraries."""
     base_dir = Path(__file__).parent.parent
+    llama_dir = Path(os.environ.get("LLAMA_CPP_DIR", base_dir / "llama.cpp"))
 
     # Try to load llama.cpp kernel test library
     llama_paths = [
-        base_dir / "llama.cpp" / "libggml_kernel_test.so",
-        base_dir / "llama.cpp" / "build" / "libggml_kernel_test.so",
+        llama_dir / "libggml_kernel_test.so",
+        llama_dir / "build" / "libggml_kernel_test.so",
     ]
 
     libggml = None
