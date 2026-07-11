@@ -33,6 +33,8 @@
 #endif
 
 #include "ckernel_engine.h"
+#include "bf16_utils.h"
+#include "ckernel_quant.h"
 #include "ggml_runtime_compat.h"
 
 #include <dlfcn.h>
@@ -1750,6 +1752,40 @@ void mrope_qk_vision(float *q,
         );
     }
 }
+
+
+static void ck_mrope_round_storage(float *data, size_t count, int storage_kind)
+{
+    if (!data) return;
+    for (size_t i = 0; i < count; ++i) {
+        if (storage_kind == 1) {
+            data[i] = bf16_to_float(float_to_bf16(data[i]));
+        } else if (storage_kind == 2) {
+            data[i] = ck_fp16_to_fp32(ck_fp32_to_fp16(data[i]));
+        }
+    }
+}
+
+#define CK_DEFINE_MROPE_STORAGE_WRAPPER(NAME, STORAGE_KIND) \
+void NAME(float *q, float *k, const int32_t *positions, \
+          int num_heads, int num_kv_heads, int num_tokens, \
+          int head_dim, int aligned_head_dim, int n_dims, \
+          int section_0, int section_1, int section_2, int section_3, \
+          int n_ctx_orig, float freq_base, float freq_scale, \
+          float ext_factor, float attn_factor, float beta_fast, float beta_slow) \
+{ \
+    mrope_qk_vision(q, k, positions, num_heads, num_kv_heads, num_tokens, \
+                    head_dim, aligned_head_dim, n_dims, section_0, section_1, \
+                    section_2, section_3, n_ctx_orig, freq_base, freq_scale, \
+                    ext_factor, attn_factor, beta_fast, beta_slow); \
+    const size_t q_count = (size_t) num_heads * (size_t) num_tokens * (size_t) aligned_head_dim; \
+    const size_t k_count = (size_t) num_kv_heads * (size_t) num_tokens * (size_t) aligned_head_dim; \
+    ck_mrope_round_storage(q, q_count, STORAGE_KIND); \
+    ck_mrope_round_storage(k, k_count, STORAGE_KIND); \
+}
+
+CK_DEFINE_MROPE_STORAGE_WRAPPER(mrope_qk_vision_bf16_storage, 1)
+CK_DEFINE_MROPE_STORAGE_WRAPPER(mrope_qk_vision_fp16_storage, 2)
 
 void mrope_qk_imrope_positions(float *q,
                                float *k,

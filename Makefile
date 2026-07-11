@@ -2904,6 +2904,7 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py
 	@$(PYTHON) tests/test_v8_attention_contracts.py
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
+	@PYTHONPATH=unittest CK_NUMERICAL_CAPABILITY_REPORT=version/v8/.cache/reports/mrope_capabilities_latest.json $(PYTHON) -c "import test_vision; test_vision.test_mrope_qk_vision_storage_matrix()"
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
 	@$(PYTHON) unittest/test_attention_full.py
 	@$(PYTHON) unittest/test_attention_f16_split_kv.py

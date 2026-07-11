@@ -131,6 +131,15 @@ def build_report() -> dict[str, Any]:
     explicit_edges = sum(int(row["explicit_count"]) for row in template_rows)
     missing_edges = sum(int(row["missing_count"]) for row in template_rows)
 
+    capability_evidence_path = ROOT / "version/v8/.cache/reports/mrope_capabilities_latest.json"
+    capability_rows = []
+    if capability_evidence_path.exists():
+        try:
+            capability_rows = list(json.loads(capability_evidence_path.read_text(encoding="utf-8")).get("rows") or [])
+        except (OSError, json.JSONDecodeError):
+            capability_rows = []
+    capability_failed = sum(1 for row in capability_rows if row.get("status") != "pass")
+
     sections = [
         {
             "id": "template_circuit",
@@ -168,6 +177,16 @@ def build_report() -> dict[str, Any]:
             "checks_failed": 0,
             "warnings": 2,
             "details": "Mamba2, DeltaNet, sliding attention, KV-cache, and threadpool parity tests exist; long-context Qwen3.5 and Gemma4 vision remain monitored.",
+        },
+        {
+            "id": "numerical_kernel_capabilities",
+            "label": "Numerical Kernel Capabilities",
+            "status": "pass" if capability_rows and not capability_failed else "warn",
+            "checks_passed": sum(1 for row in capability_rows if row.get("status") == "pass"),
+            "checks_failed": capability_failed,
+            "warnings": 0 if capability_rows else 1,
+            "details": "Artifact-backed input storage, compute, reduction, rounding, output storage, shape, thread, and oracle evidence.",
+            "rows": capability_rows,
         },
         {
             "id": "model_contract_coverage",

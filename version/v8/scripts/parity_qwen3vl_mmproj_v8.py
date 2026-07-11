@@ -160,7 +160,8 @@ def run_harness(gguf_path: Path, output_dir: Path) -> dict:
     has_deepstack_lowering = branch_lowering_ops.issubset(set(ops))
     has_position_ids = "position_ids_2d" in ops or "vision_position_ids" in ops
     has_vision_mrope = any(
-        op.get("op") in {"rope_qk", "mrope_qk"} and op.get("kernel") == "mrope_qk_vision"
+        op.get("op") in {"rope_qk", "mrope_qk"}
+        and str(op.get("kernel", "")).startswith("mrope_qk_vision")
         for op in ir1_ops
         if isinstance(op, dict)
     )

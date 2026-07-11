@@ -2996,6 +2996,23 @@ void mrope_qk_vision(float *q,
                      float beta_fast,
                      float beta_slow);
 
+
+void mrope_qk_vision_bf16_storage(float *q, float *k, const int32_t *positions,
+                                  int num_heads, int num_kv_heads, int num_tokens,
+                                  int head_dim, int aligned_head_dim, int n_dims,
+                                  int section_0, int section_1, int section_2, int section_3,
+                                  int n_ctx_orig, float freq_base, float freq_scale,
+                                  float ext_factor, float attn_factor,
+                                  float beta_fast, float beta_slow);
+
+void mrope_qk_vision_fp16_storage(float *q, float *k, const int32_t *positions,
+                                  int num_heads, int num_kv_heads, int num_tokens,
+                                  int head_dim, int aligned_head_dim, int n_dims,
+                                  int section_0, int section_1, int section_2, int section_3,
+                                  int n_ctx_orig, float freq_base, float freq_scale,
+                                  float ext_factor, float attn_factor,
+                                  float beta_fast, float beta_slow);
+
 void rope_forward_qk_gemma4v_vision_xy(float *q,
                                        float *k,
                                        int num_heads,

@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 190,
+      "total": 192,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -73,7 +73,7 @@
         "residual_add": 1,
         "residual_save": 1,
         "rmsnorm": 2,
-        "rope": 9,
+        "rope": 11,
         "rope_backward": 2,
         "rope_init": 2,
         "rowwise_bias_add": 1,
@@ -14894,8 +14894,404 @@
         ]
       },
       "notes": "Vision multi-section RoPE for Q/K using four position streams and head-major activations.",
+      "numerical_capabilities": [
+        {
+          "contract_id": "vision_mrope_fp32_input_fp32_compute_fp32_output",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "mrope_qk_vision",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
       "name": "mrope_qk_vision",
       "_source_file": "mrope_qk_vision.json"
+    },
+    {
+      "id": "mrope_qk_vision_bf16_storage",
+      "op": "rope",
+      "variant": "fp32_head_major_vision_mrope_bf16_storage",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "bf16"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor [heads, tokens, head_dim] rotated in-place"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Key tensor [kv_heads, tokens, head_dim] rotated in-place"
+        },
+        {
+          "name": "positions",
+          "dtype": "i32",
+          "shape": [
+            4,
+            "T"
+          ],
+          "desc": "Four position-id streams for vision M-RoPE"
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "bf16",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor after M-RoPE"
+        },
+        {
+          "name": "k",
+          "dtype": "bf16",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Key tensor after M-RoPE"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D",
+        "n_dims"
+      ],
+      "params": [
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32",
+          "desc": "Aligned head dimension for scratch row stride"
+        },
+        {
+          "name": "n_dims",
+          "dtype": "int32",
+          "desc": "Rotary width used by the vision M-RoPE kernel"
+        },
+        {
+          "name": "section_0",
+          "dtype": "int32",
+          "desc": "First section width"
+        },
+        {
+          "name": "section_1",
+          "dtype": "int32",
+          "desc": "Second section width"
+        },
+        {
+          "name": "section_2",
+          "dtype": "int32",
+          "desc": "Third section width"
+        },
+        {
+          "name": "section_3",
+          "dtype": "int32",
+          "desc": "Fourth section width"
+        },
+        {
+          "name": "n_ctx_orig",
+          "dtype": "int32",
+          "desc": "Original context length for YaRN-style scaling"
+        },
+        {
+          "name": "freq_base",
+          "dtype": "fp32",
+          "desc": "Base rotary frequency"
+        },
+        {
+          "name": "freq_scale",
+          "dtype": "fp32",
+          "desc": "Frequency scaling factor"
+        },
+        {
+          "name": "ext_factor",
+          "dtype": "fp32",
+          "desc": "Extrapolation factor"
+        },
+        {
+          "name": "attn_factor",
+          "dtype": "fp32",
+          "desc": "Attention scaling factor"
+        },
+        {
+          "name": "beta_fast",
+          "dtype": "fp32",
+          "desc": "YaRN beta_fast"
+        },
+        {
+          "name": "beta_slow",
+          "dtype": "fp32",
+          "desc": "YaRN beta_slow"
+        }
+      ],
+      "impl": {
+        "function": "mrope_qk_vision_bf16_storage",
+        "c_declaration": "void mrope_qk_vision_bf16_storage(float *q, float *k, const int32_t *positions, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int n_dims, int section_0, int section_1, int section_2, int section_3, int n_ctx_orig, float freq_base, float freq_scale, float ext_factor, float attn_factor, float beta_fast, float beta_slow);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ]
+      },
+      "notes": "Vision M-RoPE FP32 compute with explicit BF16 RNE output storage boundary.",
+      "numerical_capabilities": [
+        {
+          "contract_id": "vision_mrope_fp32_input_fp32_compute_bf16_output",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "mrope_qk_vision_bf16_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "name": "mrope_qk_vision_bf16_storage",
+      "_source_file": "mrope_qk_vision_bf16_storage.json"
+    },
+    {
+      "id": "mrope_qk_vision_fp16_storage",
+      "op": "rope",
+      "variant": "fp32_head_major_vision_mrope_fp16_storage",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp16"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor [heads, tokens, head_dim] rotated in-place"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Key tensor [kv_heads, tokens, head_dim] rotated in-place"
+        },
+        {
+          "name": "positions",
+          "dtype": "i32",
+          "shape": [
+            4,
+            "T"
+          ],
+          "desc": "Four position-id streams for vision M-RoPE"
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "fp16",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor after M-RoPE"
+        },
+        {
+          "name": "k",
+          "dtype": "fp16",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Key tensor after M-RoPE"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D",
+        "n_dims"
+      ],
+      "params": [
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32",
+          "desc": "Aligned head dimension for scratch row stride"
+        },
+        {
+          "name": "n_dims",
+          "dtype": "int32",
+          "desc": "Rotary width used by the vision M-RoPE kernel"
+        },
+        {
+          "name": "section_0",
+          "dtype": "int32",
+          "desc": "First section width"
+        },
+        {
+          "name": "section_1",
+          "dtype": "int32",
+          "desc": "Second section width"
+        },
+        {
+          "name": "section_2",
+          "dtype": "int32",
+          "desc": "Third section width"
+        },
+        {
+          "name": "section_3",
+          "dtype": "int32",
+          "desc": "Fourth section width"
+        },
+        {
+          "name": "n_ctx_orig",
+          "dtype": "int32",
+          "desc": "Original context length for YaRN-style scaling"
+        },
+        {
+          "name": "freq_base",
+          "dtype": "fp32",
+          "desc": "Base rotary frequency"
+        },
+        {
+          "name": "freq_scale",
+          "dtype": "fp32",
+          "desc": "Frequency scaling factor"
+        },
+        {
+          "name": "ext_factor",
+          "dtype": "fp32",
+          "desc": "Extrapolation factor"
+        },
+        {
+          "name": "attn_factor",
+          "dtype": "fp32",
+          "desc": "Attention scaling factor"
+        },
+        {
+          "name": "beta_fast",
+          "dtype": "fp32",
+          "desc": "YaRN beta_fast"
+        },
+        {
+          "name": "beta_slow",
+          "dtype": "fp32",
+          "desc": "YaRN beta_slow"
+        }
+      ],
+      "impl": {
+        "function": "mrope_qk_vision_fp16_storage",
+        "c_declaration": "void mrope_qk_vision_fp16_storage(float *q, float *k, const int32_t *positions, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int n_dims, int section_0, int section_1, int section_2, int section_3, int n_ctx_orig, float freq_base, float freq_scale, float ext_factor, float attn_factor, float beta_fast, float beta_slow);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ]
+      },
+      "notes": "Vision M-RoPE FP32 compute with explicit FP16 RNE output storage boundary.",
+      "numerical_capabilities": [
+        {
+          "contract_id": "vision_mrope_fp32_input_fp32_compute_fp16_output",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "mrope_qk_vision_fp16_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "name": "mrope_qk_vision_fp16_storage",
+      "_source_file": "mrope_qk_vision_fp16_storage.json"
     },
     {
       "id": "nemotron_group_limited_topk_router_f32",

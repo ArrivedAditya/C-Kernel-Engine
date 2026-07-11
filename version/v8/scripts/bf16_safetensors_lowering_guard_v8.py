@@ -284,8 +284,9 @@ def run_guard(workdir: Path) -> None:
     )
     manifest = json.loads((out / "weights_manifest.json").read_text(encoding="utf-8"))
     assert manifest["config"]["rope_layout"] == "multi_section_2d"
-    assert manifest["config"]["vision_mrope_n_dims"] == 2
+    assert manifest["config"]["vision_mrope_n_dims"] == 4
     assert manifest["config"]["vision_mrope_sections"] == [1, 1, 0, 0]
+    assert manifest["config"]["vision_mrope_storage_boundary"] == "bf16"
     assert manifest["config"]["position_interpolation_policy"] == "align_corners_bilinear"
 
     lowered = out / "lowered_vision.json"

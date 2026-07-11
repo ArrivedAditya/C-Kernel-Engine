@@ -177,6 +177,23 @@ ARCHITECTURE_POLICY = {
 }
 
 
+XRAY_FIX_PROGRESSION = {
+    "policy": "advance_only_after_numerical_evidence",
+    "steps": [
+        "Stop at the first divergent semantic edge; do not debug later outputs.",
+        "Classify storage, compute, reduction, position, layout, circuit, binding, or implementation semantics.",
+        "Check the kernel map for an exact compatible numerical capability; never choose the nearest variant.",
+        "If absent, add one additive kernel variant. If present but wrong, fix that implementation without changing unrelated variants.",
+        "Extend the kernel-family unit matrix for the complete input-storage, compute, accumulator/reduction, rounding, output-storage, and threading contract.",
+        "Validate against an independent scalar formula and the requested PyTorch or llama.cpp backend oracle.",
+        "Register the exact function and validated contract in the kernel map; unsupported and ambiguous resolutions must hard-fail.",
+        "Run isolated kernel tests, numerical-contract resolution, stitched checkpoint parity, mixed-prefill logits, and teacher-forced parity in that order.",
+        "Rerun X-ray from the last passing checkpoint and confirm the first failure progresses to a later semantic edge.",
+        "Preserve the new evidence in nightly and the HTML test-report capability accordion so the bug cannot silently recur."
+    ]
+}
+
+
 def _metrics(reference: np.ndarray, actual: np.ndarray, axes: list[str]) -> Dict[str, Any]:
     if reference.shape != actual.shape:
         raise XRayError(f"canonical tensor shape mismatch: {reference.shape} != {actual.shape}")
@@ -311,6 +328,7 @@ def compare_manifests(
         "ranking_divergence": ranking,
         "next_plan": plan,
         "architecture_policy": ARCHITECTURE_POLICY,
+        "fix_progression": XRAY_FIX_PROGRESSION,
     }
 
 
