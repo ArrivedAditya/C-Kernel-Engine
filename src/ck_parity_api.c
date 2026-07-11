@@ -50,6 +50,7 @@ extern void gemv_q8_0_q8_0(float *y, const void *W, const void *x_q8, int M, int
 /* Direct vec_dot kernels (single dot product, not GEMV) */
 extern void vec_dot_q5_0_q8_0(int n, float *s, const void *vx, const void *vy);
 extern void vec_dot_q8_0_q8_0(int n, float *s, const void *vx, const void *vy);
+extern void vec_dot_q6_k_q8_k(int n, float *s, const void *vx, const void *vy);
 
 /* Q8_0 quantization (for input) */
 extern void quantize_row_q8_0(const float *x, void *vy, int k);
@@ -370,6 +371,23 @@ void ck_test_gemv_q8_0_q8_0(const void *weight_q8_0,
 /* ============================================================================
  * Direct Vec Dot Tests (pre-quantized inputs, no FP32 conversion)
  * ============================================================================ */
+
+void ck_test_vec_dot_q4_k_q8_k(const void *weight_q4_k,
+                                const void *input_q8_k,
+                                float *output,
+                                int cols)
+{
+    /* M=1 reaches the production Q4 dispatch without requantizing input. */
+    gemv_q4_k_q8_k(output, weight_q4_k, input_q8_k, 1, cols);
+}
+
+void ck_test_vec_dot_q6_k_q8_k(const void *weight_q6_k,
+                                const void *input_q8_k,
+                                float *output,
+                                int cols)
+{
+    vec_dot_q6_k_q8_k(cols, output, weight_q6_k, input_q8_k);
+}
 
 /**
  * @brief Direct Q5_0 x Q8_0 dot product test (takes pre-quantized Q8_0 input)
