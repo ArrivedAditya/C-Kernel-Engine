@@ -14,7 +14,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-LLAMA_DIR="$ROOT_DIR/llama.cpp"
+LLAMA_DIR="${LLAMA_CPP_DIR:-$ROOT_DIR/llama.cpp}"
 PATCHES_DIR="$ROOT_DIR/patches"
 BUILD_DIR="$ROOT_DIR/build"
 if [[ -z "${PYTHON_BIN:-}" && -x "$ROOT_DIR/.venv/bin/python" ]]; then

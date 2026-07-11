@@ -1,0 +1,85 @@
+name: llama.cpp Rolling Compatibility
+
+on:
+  workflow_dispatch:
+    inputs:
+      llama_ref:
+        description: llama.cpp ref to probe
+        required: false
+        default: HEAD
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  rolling-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build python3-venv libomp-dev
+          python3 -m venv .venv
+          .venv/bin/pip install -r requirements.txt
+
+      - name: Probe rolling llama.cpp
+        id: probe
+        continue-on-error: true
+        env:
+          LLAMA_REF: ${{ inputs.llama_ref || 'HEAD' }}
+        run: |
+          .venv/bin/python scripts/run_llamacpp_rolling_compat.py \
+            --ref "$LLAMA_REF" \
+            --output-dir build/llamacpp_rolling
+
+      - name: Publish report summary
+        if: always()
+        run: |
+          .venv/bin/python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          path = Path("build/llamacpp_rolling/report.json")
+          if not path.exists():
+              print("## llama.cpp rolling compatibility\n\nNo report was produced.", file=open(os.environ["GITHUB_STEP_SUMMARY"], "a"))
+              raise SystemExit(0)
+          data = json.loads(path.read_text())
+          llama = data["llama_cpp"]
+          lines = [
+              "## llama.cpp rolling compatibility",
+              "",
+              f"- Status: **{data['status'].upper()}**",
+              f"- CK: `{data['cke_commit'][:12]}`",
+              f"- Pinned oracle: `{llama['pinned_commit'][:12]}`",
+              f"- Rolling upstream: `{llama['rolling_commit'][:12]}`",
+              f"- Upstream commits since pin: {llama.get('commits_ahead_of_pin', 'unknown')}",
+              "- Authoritative oracle changed: **no**",
+          ]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
+              stream.write("\n".join(lines) + "\n")
+          PY
+
+      - name: Upload rolling evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llamacpp-rolling-compat
+          path: |
+            build/llamacpp_rolling/report.json
+            build/llamacpp_rolling/ck-build.log
+            build/llamacpp_rolling/quick-parity.log
+          if-no-files-found: warn
+
+      - name: Enforce rolling compatibility result
+        if: always()
+        run: |
+          test -f build/llamacpp_rolling/report.json
+          test "$(.venv/bin/python -c 'import json; print(json.load(open("build/llamacpp_rolling/report.json"))["status"])')" = pass
