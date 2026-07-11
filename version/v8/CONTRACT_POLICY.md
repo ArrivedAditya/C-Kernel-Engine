@@ -37,6 +37,8 @@ oracle. The required evidence ladder is external backend versus scalar oracle,
 optimized public function versus scalar oracle, and threadpool dispatch versus
 scalar oracle. Independent-output partitioning must not change reduction order.
 Split-K requires a distinct contract with partial dtype and merge order.
+`make test-numerical-contracts` must execute representative kernel numerics for
+declared reduction contracts; schema and resolver checks alone are insufficient.
 
 The supported v8 text circuits and Qwen3-VL routes must resolve attention before
 GraphIR construction. GraphIR records the required contract and resolved

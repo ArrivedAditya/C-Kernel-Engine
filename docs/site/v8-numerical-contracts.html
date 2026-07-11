@@ -1065,6 +1065,8 @@
 
 <h2>Validation Commands</h2>
 
+<p><code>make test-numerical-contracts</code> is an executable gate, not only a schema check. It builds the engine and runs contract resolution, full attention numerics, and FP16 split-KV reduction cases. The focused commands below remain useful when attributing a failure.</p>
+
 <pre><code>make test-numerical-contracts
 make test-threadpool-parity
 PYTHONPATH=unittest .venv/bin/python unittest/test_attention_full.py -v

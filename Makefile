@@ -2875,10 +2875,12 @@ test-v8-template-circuit-audit:
 	@$(PYTHON) -m unittest tests.test_v8_template_circuit_audit -v
 
 .PHONY: test-numerical-contracts
-test-numerical-contracts:
+test-numerical-contracts: $(LIB)
 	@echo "Running v8 numerical contract validation..."
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_attention_contracts_v8.py
 	@$(PYTHON) tests/test_v8_attention_contracts.py
+	@$(PYTHON) unittest/test_attention_full.py
+	@$(PYTHON) unittest/test_attention_f16_split_kv.py
 	@mkdir -p build/v8/contracts
 	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3_vl_vision --operation vision_encoder.attention --phase prefill --mode bringup --output build/v8/contracts/qwen3vl-vision-prefill.json >/dev/null
 	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3vl --operation decoder.attention --phase decode --mode bringup --output build/v8/contracts/qwen3vl-decode.json >/dev/null
