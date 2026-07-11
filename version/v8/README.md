@@ -42,6 +42,11 @@ operator-generic: the current maps cover attention plus the hot Q4/Q6 GEMM and
 GEMV routes, including threadpool runtime, partition, dispatch, and reduction-
 order effects.
 
+Q4_K/Q6_K linear maps additionally bind an exact public function, threadpool
+entry point, scalar reference function, adapter, fixed comparison tolerance,
+and external-oracle status. The compiler validates and carries these bindings;
+it does not choose a different function from shape or performance heuristics.
+
 Canonical text bring-up examples:
 - `version/v8/scripts/cks-v8-run run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf --context-len 1024 --force-compile --force-convert --chat-template=auto --generate-visualizer`
 - `version/v8/scripts/cks-v8-run run hf://Qwen/Qwen2-0.5B-Instruct-GGUF/qwen2-0_5b-instruct-q4_k_m.gguf --context-len 1024 --force-compile --force-convert --generate-visualizer`

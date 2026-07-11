@@ -3,6 +3,30 @@
   "op": "gemm",
   "variant": "q6_k_w_q8_k_a",
   "contract_schema_version": 1,
+  "numerical_contract": "q6_k_x_q8_k_fp32_block_order",
+  "reference": {
+    "function": "gemv_q6_k_q8_k_ref",
+    "kind": "scalar_contract_oracle",
+    "adapter": "per_activation_row_then_bias",
+    "validation": {
+      "status": "observed",
+      "tests": ["unittest/test_q6k_q8k_parity.py", "tests/test_threadpool_parity.c"],
+      "external_oracles": [
+        {"backend": "python_scalar_contract", "status": "observed", "evidence": "unittest/test_q6k_q8k_parity.py"},
+        {"backend": "llama.cpp", "status": "unresolved", "evidence": "No direct llama.cpp Q6_K x Q8_K GEMM oracle is currently wired."}
+      ]
+    }
+  },
+  "production": {
+    "function": "gemm_nt_q6_k_q8_k",
+    "threaded_function": "gemm_nt_q6_k_q8_k_parallel_dispatch",
+    "reference_comparison": {
+      "requirement": "contract_tolerance",
+      "absolute_tolerance": 0.0001,
+      "relative_tolerance": 0.0001,
+      "tests": ["tests/test_threadpool_parity.c"]
+    }
+  },
   "implementation": {
     "isa_dispatch": "runtime",
     "threading": {

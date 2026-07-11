@@ -19,6 +19,7 @@ from jsonschema import Draft202012Validator
 V8_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = V8_ROOT.parents[1]
 DEFAULT_CONTRACTS = V8_ROOT / "contracts" / "attention_reductions.json"
+DEFAULT_LINEAR_CONTRACTS = V8_ROOT / "contracts" / "quantized_linear.json"
 DEFAULT_KERNELS = V8_ROOT / "kernel_maps"
 SCHEMA_ROOT = V8_ROOT / "schemas"
 CONTRACT_REGISTRY_SCHEMA = SCHEMA_ROOT / "attention_reduction_registry.schema.json"
@@ -26,6 +27,8 @@ CIRCUIT_REQUIREMENTS_SCHEMA = SCHEMA_ROOT / "attention_required_contracts.schema
 KERNEL_CAPABILITY_SCHEMA = SCHEMA_ROOT / "attention_kernel_capability.schema.json"
 KERNEL_EXECUTION_SCHEMA = SCHEMA_ROOT / "kernel_execution_capability.schema.json"
 RESOLVED_CONTRACT_SCHEMA = SCHEMA_ROOT / "resolved_attention_contract.schema.json"
+LINEAR_CONTRACT_REGISTRY_SCHEMA = SCHEMA_ROOT / "quantized_linear_contract_registry.schema.json"
+LINEAR_KERNEL_CAPABILITY_SCHEMA = SCHEMA_ROOT / "quantized_linear_kernel_capability.schema.json"
 VALID_STATES = {"unresolved", "observed", "validated"}
 AMBIGUOUS_IDS = {"fp16", "f16", "bf16", "fp32", "f32", "fast", "strict"}
 
@@ -102,6 +105,8 @@ def load_kernel_execution_capabilities(root: Path = DEFAULT_KERNELS) -> Dict[str
     if not root.is_dir():
         raise ContractError(f"Kernel-map directory does not exist: {root}")
     kernels: Dict[str, Any] = {}
+    linear_contracts = load_json(DEFAULT_LINEAR_CONTRACTS)
+    validate_quantized_linear_contract_registry(linear_contracts)
     for path in sorted(root.glob("*.json")):
         doc = load_json(path)
         if "contract_schema_version" not in doc:
@@ -126,6 +131,25 @@ def load_kernel_execution_capabilities(root: Path = DEFAULT_KERNELS) -> Dict[str
             "implementation": doc.get("implementation"),
         }
         validate_schema(capability, KERNEL_EXECUTION_SCHEMA, f"kernel execution capability {kernel_id}")
+        if capability["op"] in {"gemm", "gemv"}:
+            linear_capability = {
+                **capability,
+                "numerical_contract": doc.get("numerical_contract"),
+                "reference": doc.get("reference"),
+                "production": doc.get("production"),
+                "impl": doc.get("impl"),
+            }
+            validate_schema(
+                linear_capability,
+                LINEAR_KERNEL_CAPABILITY_SCHEMA,
+                f"quantized linear kernel capability {kernel_id}",
+            )
+            validate_quantized_linear_kernel_capability(linear_capability, linear_contracts)
+            capability.update(
+                numerical_contract=linear_capability["numerical_contract"],
+                reference=linear_capability["reference"],
+                production=linear_capability["production"],
+            )
         kernels[kernel_id] = {**capability, "source": str(path)}
     if not kernels:
         raise ContractError(f"No versioned kernel execution capabilities found under: {root}")
@@ -179,6 +203,63 @@ def validate_contract_registry(doc: Dict[str, Any]) -> None:
         partition = contract.get("partition")
         if not isinstance(partition, dict) or not partition.get("kind"):
             raise ContractError(f"reduction contract {contract_id}.partition requires kind")
+
+
+def validate_quantized_linear_contract_registry(doc: Dict[str, Any]) -> None:
+    validate_schema(doc, LINEAR_CONTRACT_REGISTRY_SCHEMA, "quantized linear contract registry")
+    for contract_id, contract in doc["contracts"].items():
+        validate_state(contract.get("status"), f"quantized linear contract {contract_id}")
+        parallel = contract["parallel_reduction"]
+        if parallel["kind"] == "independent_outputs" and parallel["reduction_order_effect"] != "none":
+            raise hard_contract_fault(
+                f"independent-output contract {contract_id!r} changes reduction order",
+                "Independent outputs do not share an accumulator.",
+                "set reduction_order_effect to none or declare a split_k contract.",
+            )
+        if parallel["kind"] == "split_k" and (
+            "partial_accumulator" not in parallel or "merge_order" not in parallel
+        ):
+            raise hard_contract_fault(
+                f"split-K contract {contract_id!r} is incomplete",
+                "partial_accumulator and merge_order are required for split-K.",
+                "declare the complete partitioned scalar-oracle semantics.",
+            )
+
+
+def validate_quantized_linear_kernel_capability(
+    kernel: Dict[str, Any],
+    registry: Dict[str, Any],
+) -> None:
+    kernel_id = kernel["id"]
+    contract_id = kernel["numerical_contract"]
+    contract = registry["contracts"].get(contract_id)
+    if contract is None:
+        raise hard_contract_fault(
+            f"kernel {kernel_id!r} names unknown numerical contract {contract_id!r}",
+            f"Registry: {DEFAULT_LINEAR_CONTRACTS}",
+            "add and validate the complete contract before binding the kernel.",
+        )
+    production = kernel["production"]
+    impl_function = kernel["impl"]["function"]
+    if production["function"] != impl_function:
+        raise hard_contract_fault(
+            f"kernel {kernel_id!r} production function drifts from impl.function",
+            f"production.function={production['function']!r}, impl.function={impl_function!r}",
+            "bind both fields to the exact public function emitted by codegen.",
+        )
+    threading = kernel["implementation"]["threading"]
+    if threading["runtime"] == "ck_threadpool" and not production.get("threaded_function"):
+        raise hard_contract_fault(
+            f"threaded kernel {kernel_id!r} has no threadpool entry point",
+            "A threadpool implementation must name the exact dispatch function.",
+            "set production.threaded_function and test it against the scalar oracle.",
+        )
+    if threading["reduction_order_effect"] != contract["parallel_reduction"]["reduction_order_effect"]:
+        raise hard_contract_fault(
+            f"kernel {kernel_id!r} threading contradicts {contract_id!r}",
+            "The kernel map and numerical contract disagree about reduction-order effects.",
+            "correct the map or define a distinct numerical contract.",
+        )
 
 
 def validate_kernel_overlay(doc: Dict[str, Any]) -> None:

@@ -134,7 +134,6 @@ static float dot_q4_k_q8_k_ref(const block_q4_K *w,
 {
     const int nb = k / QK_K;
     float sumf = 0.0f;
-    float sums[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 
     for (int i = 0; i < nb; ++i) {
         uint8_t sc[8], m_val[8];
@@ -143,44 +142,26 @@ static float dot_q4_k_q8_k_ref(const block_q4_K *w,
         const float d = CK_FP16_TO_FP32(w[i].d) * x[i].d;
         const float dmin = CK_FP16_TO_FP32(w[i].dmin) * x[i].d;
 
-        int32_t aux32[8] = {0, 0, 0, 0, 0, 0, 0, 0};
         int sumi = 0;
         for (int j = 0; j < QK_K / 16; ++j) {
             sumi += (int)x[i].bsums[j] * (int)m_val[j / 2];
         }
 
-        int is = 0;
-        int q_offset = 0;
-
-        for (int j = 0; j < QK_K; j += 64) {
-            const uint8_t *qs = &w[i].qs[q_offset];
-            const int8_t *q8_lo = &x[i].qs[j];
-            const int8_t *q8_hi = &x[i].qs[j + 32];
-
+        int32_t scaled_sum = 0;
+        for (int group = 0; group < 4; ++group) {
+            const uint8_t *qs = &w[i].qs[group * 32];
+            const int8_t *q8_lo = &x[i].qs[group * 64];
+            const int8_t *q8_hi = q8_lo + 32;
+            int32_t lo = 0;
+            int32_t hi = 0;
             for (int l = 0; l < 32; ++l) {
-                int q4_val = qs[l] & 0x0F;
-                const int prod = q4_val * q8_lo[l];
-                aux32[l & 7] += (int)sc[is] * prod;
+                lo += (int32_t)(qs[l] & 0x0F) * (int32_t)q8_lo[l];
+                hi += (int32_t)(qs[l] >> 4) * (int32_t)q8_hi[l];
             }
-
-            for (int l = 0; l < 32; ++l) {
-                int q4_val = qs[l] >> 4;
-                const int prod = q4_val * q8_hi[l];
-                aux32[l & 7] += (int)sc[is + 1] * prod;
-            }
-
-            q_offset += 32;
-            is += 2;
+            scaled_sum += (int32_t)sc[2 * group] * lo;
+            scaled_sum += (int32_t)sc[2 * group + 1] * hi;
         }
-
-        for (int l = 0; l < 8; ++l) {
-            sums[l] += d * (float)aux32[l];
-        }
-        sumf -= dmin * (float)sumi;
-    }
-
-    for (int l = 0; l < 8; ++l) {
-        sumf += sums[l];
+        sumf += d * (float)scaled_sum - dmin * (float)sumi;
     }
     return sumf;
 }
