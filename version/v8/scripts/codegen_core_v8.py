@@ -2752,7 +2752,7 @@ static int do_init(const char *weights_path) {{
     g_model->bump_size = g_model->bump_alloc.total_size;
     memset(g_model->bump + BUMP_ACT_OFFSET, 0, g_model->bump_size - BUMP_ACT_OFFSET);
 
-    g_model->bump_weights = g_model->bump + BUMP_WEIGHTS_OFFSET;
+    g_model->bump_weights = g_model->bump; /* Manifest runtime offsets are absolute. */
     g_model->activations = (float*)(g_model->bump + BUMP_ACT_OFFSET);
     g_model->kv_cache = (float*)(g_model->bump + A_KV_CACHE);
     g_model->kv_cache_f16 = (uint16_t*)(g_model->bump + A_KV_CACHE);

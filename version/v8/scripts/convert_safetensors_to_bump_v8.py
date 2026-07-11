@@ -1052,7 +1052,10 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
     cfg.setdefault("rope_param_mode", "per_layer_direct")
     cfg.setdefault("rms_eps", text.get("rms_norm_eps", text.get("rms_norm_epsilon", 1e-6)))
     cfg.setdefault("rms_norm_eps", cfg.get("rms_eps"))
-    cfg.setdefault("tie_word_embeddings", bool(text.get("tie_word_embeddings", True)))
+    cfg.setdefault(
+        "tie_word_embeddings",
+        bool(text.get("tie_word_embeddings", hf.get("tie_word_embeddings", True))),
+    )
     if arch == "nemotron_h":
         layer_kinds = _parse_nemotron_h_pattern(str(text.get("hybrid_override_pattern") or ""), int(cfg.get("num_layers") or 0))
         mamba_num_heads = int(text.get("mamba_num_heads") or 0)
@@ -1321,6 +1324,7 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "video_token_id": int(hf.get("video_token_id") or 0),
             "vision_start_token_id": int(hf.get("vision_start_token_id") or 0),
             "vision_end_token_id": int(hf.get("vision_end_token_id") or 0),
+            "num_deepstack_layers": len((hf.get("vision_config") or {}).get("deepstack_visual_indexes") or []),
         })
         if mrope:
             cfg["mrope_sections"] = [int(v) for v in mrope] + ([0] if len(mrope) == 3 else [])
@@ -1804,10 +1808,11 @@ def main() -> int:
 
     config = _build_config(model_dir, arch, args.config_template)
     refs = _refs_for_arch(arch, config, headers)
+    tokenizer_payloads, tokenizer_contract, special_tokens = _tokenizer_payloads_from_json(model_dir, int(config.get("vocab_size") or 0))
     missing: list[str] = []
     entries_preview: list[dict[str, Any]] = []
     dtype_table: list[int] = []
-    offset = DATA_START + 4 + len(refs)
+    offset = DATA_START + 4 + len(refs) + len(tokenizer_payloads)
     for ref in refs:
         for src in ref.source_names:
             if src not in headers:
@@ -1832,8 +1837,6 @@ def main() -> int:
     if missing:
         uniq = sorted(set(missing))
         raise SystemExit("Missing required safetensors tensors:\n  " + "\n  ".join(uniq[:80]))
-
-    tokenizer_payloads, tokenizer_contract, special_tokens = _tokenizer_payloads_from_json(model_dir, int(config.get("vocab_size") or 0))
 
     audit = _build_source_audit(arch, headers, refs)
     audit_out = args.audit_out or (args.manifest_out.parent / "conversion_audit.json")

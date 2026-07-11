@@ -12,7 +12,10 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$ROOT_DIR" ]; then
+    ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
 
 # Colors
 RED='\033[0;31m'
@@ -33,6 +36,11 @@ if [ -n "$CK_SKIP_PREPUSH" ]; then
 fi
 
 cd "$ROOT_DIR"
+
+PREPUSH_ROOT="${CK_PREPUSH_ROOT:-${HOME:-$ROOT_DIR}/.cache/ck-engine/prepush}"
+PREPUSH_REGRESSION_ROOT="${PREPUSH_ROOT}/regression"
+PREPUSH_TRAIN_REPORT_ROOT="${PREPUSH_ROOT}/training-reports"
+mkdir -p "$PREPUSH_REGRESSION_ROOT" "$PREPUSH_TRAIN_REPORT_ROOT"
 
 failed=0
 declare -A CK_PUSH_SHA_SEEN=()
@@ -464,15 +472,18 @@ fi
 # =============================================================================
 if [ "$ck_should_run_v7_regression_fast" = "1" ] || [ "$ck_should_run_v8_regression_fast" = "1" ]; then
     echo -e "${YELLOW}[5.5/6]${NC} Running fast regression..."
+    rm -rf "${PREPUSH_REGRESSION_ROOT}/runs" "${PREPUSH_REGRESSION_ROOT}/reports"
+    mkdir -p "${PREPUSH_REGRESSION_ROOT}/runs" "${PREPUSH_REGRESSION_ROOT}/reports"
+    echo -e "${YELLOW}  ↳ disk-backed run root: ${PREPUSH_REGRESSION_ROOT}${NC}"
     regression_pids=()
     regression_names=()
     if [ "$ck_should_run_v7_regression_fast" = "1" ]; then
-        make --no-print-directory v7-regression-fast REGRESSION_ARGS="--run-root /tmp/ck-prepush-regression/runs/v7 --report-root /tmp/ck-prepush-regression/reports/v7" > /tmp/ck_regression_fast_v7.log 2>&1 &
+        make --no-print-directory v7-regression-fast REGRESSION_ARGS="--run-root ${PREPUSH_REGRESSION_ROOT}/runs/v7 --report-root ${PREPUSH_REGRESSION_ROOT}/reports/v7" > /tmp/ck_regression_fast_v7.log 2>&1 &
         regression_pids+=("$!")
         regression_names+=("v7")
     fi
     if [ "$ck_should_run_v8_regression_fast" = "1" ]; then
-        make --no-print-directory v8-regression-fast REGRESSION_ARGS="--run-root /tmp/ck-prepush-regression/runs/v8 --report-root /tmp/ck-prepush-regression/reports/v8" > /tmp/ck_regression_fast_v8.log 2>&1 &
+        make --no-print-directory v8-regression-fast REGRESSION_ARGS="--run-root ${PREPUSH_REGRESSION_ROOT}/runs/v8 --report-root ${PREPUSH_REGRESSION_ROOT}/reports/v8" > /tmp/ck_regression_fast_v8.log 2>&1 &
         regression_pids+=("$!")
         regression_names+=("v8")
     fi
@@ -494,7 +505,7 @@ fi
 # =============================================================================
 if [ "${CK_V7_KERNEL_PARITY_TRAIN:-1}" = "1" ]; then
     echo -e "${YELLOW}[6/6]${NC} Running training-kernel parity gate..."
-    if make --no-print-directory v7-kernel-parity-train > /tmp/ck_v7_kernel_parity_train.log 2>&1; then
+    if make --no-print-directory v7-kernel-parity-train V7_REPORT_DIR="${PREPUSH_TRAIN_REPORT_ROOT}" > /tmp/ck_v7_kernel_parity_train.log 2>&1; then
         echo -e "${GREEN}  ✓ v7 training-kernel parity passed${NC}"
     else
         echo -e "${RED}  ✗ v7 training-kernel parity failed${NC}"
