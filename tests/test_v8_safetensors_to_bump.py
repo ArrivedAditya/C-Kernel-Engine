@@ -1221,8 +1221,9 @@ def test_qwen3vl_safetensors_vision_maps_temporal_patch_split(tmp_path: Path) ->
         "v.patch_embd.weight.1",
     ]
     assert manifest["config"]["rope_layout"] == "multi_section_2d"
-    assert manifest["config"]["vision_mrope_n_dims"] == 2
+    assert manifest["config"]["vision_mrope_n_dims"] == 4
     assert manifest["config"]["vision_mrope_sections"] == [1, 1, 0, 0]
+    assert manifest["config"]["vision_mrope_storage_boundary"] == "bf16"
     assert manifest["config"]["position_interpolation_policy"] == "align_corners_bilinear"
     assert manifest["config"]["vision_position_storage_boundary"] == "bf16"
     assert (out / "weights.bump").stat().st_size > 0
@@ -1264,7 +1265,10 @@ def test_qwen3vl_safetensors_vision_maps_temporal_patch_split(tmp_path: Path) ->
     assert position_call["resolved_contract"]["kernel_id"] == "position_embeddings_add_tiled_2d_align_corners_bf16"
     rope_call = next(op for op in call_ops if op["op"] == "rope_qk")
     rope_args = {arg["name"]: arg["expr"] for arg in rope_call["args"]}
-    assert rope_args["n_dims"] == "2"
+    assert rope_call["function"] == "mrope_qk_vision_bf16_storage"
+    assert rope_call["resolved_contract"]["resolved_contract_id"] == "vision_mrope_fp32_input_fp32_compute_bf16_output"
+    assert rope_call["resolved_contract"]["kernel_id"] == "mrope_qk_vision_bf16_storage"
+    assert rope_args["n_dims"] == "4"
     assert [rope_args[f"section_{i}"] for i in range(4)] == ["1", "1", "0", "0"]
     for op_name in (
         "patch_proj",

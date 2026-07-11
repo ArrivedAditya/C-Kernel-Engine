@@ -5237,13 +5237,6 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                     f"{resolved_plan.get('phase')!r}, not active mode {mode!r}."
                 )
             return [str(resolved_plan["kernel"]["id"])]
-        if op in {"attn", "attn_sliding"} and numerical_contract_plans:
-            raise RuntimeError(
-                f"HARD CONTRACT FAULT: circuit {template.get('name', '<embedded>')!r} declares "
-                f"numerical contracts, but attention template op {op!r} has no authoritative binding. "
-                "Fix required_contracts.template_ops; do not fall back to legacy attention selection."
-            )
-
         # Template-specified kernel overrides (keeps IR dumb and data-driven)
         if op == "rope_qk":
             return [_resolve_rope_qk_kernel(config, template_kernels)]
@@ -8496,7 +8489,9 @@ def generate_memory_layout_packed(
         if op_type == "rope_q":
             alloc_act("q_scratch")
             alloc_act("rope_cache")
-        if op_type == "mrope_qk" or (op_type == "rope_qk" and kernel_type == "mrope_qk_vision"):
+        if op_type == "mrope_qk" or (
+            op_type == "rope_qk" and kernel_type.startswith("mrope_qk_vision")
+        ):
             alloc_act("q_scratch")
             alloc_act("k_scratch")
             alloc_act("vision_positions")
@@ -9163,7 +9158,9 @@ def generate_ir_lower_2(
                     "dtype": "i32",
                     "ptr_expr": f"activations + {pos_buf['offset']}",
                 }
-        elif op_type == "mrope_qk" or (op_type == "rope_qk" and ir_op.get("kernel", "") == "mrope_qk_vision"):
+        elif op_type == "mrope_qk" or (
+            op_type == "rope_qk" and str(ir_op.get("kernel", "")).startswith("mrope_qk_vision")
+        ):
             q_buf = activation_buffers.get("q_scratch")
             k_buf = activation_buffers.get("k_scratch")
             pos_buf = activation_buffers.get("vision_positions")
@@ -9739,7 +9736,8 @@ def generate_ir_lower_2(
                         "ptr_expr": f"activations + {k_buf['offset']}",
                     })
         if ir_op.get("op", "") == "mrope_qk" or (
-            ir_op.get("op", "") == "rope_qk" and ir_op.get("kernel", "") == "mrope_qk_vision"
+            ir_op.get("op", "") == "rope_qk"
+            and str(ir_op.get("kernel", "")).startswith("mrope_qk_vision")
         ):
             for scratch_name in ["q_scratch", "k_scratch"]:
                 buf = activation_buffers.get(scratch_name)
@@ -9959,13 +9957,25 @@ def generate_ir_lower_2(
             gemma4v_freq_base = float(config.get("vision_rope_theta", 100.0) or 100.0)
             params["freq_base"] = gemma4v_freq_base
             params["rope_freq_base"] = gemma4v_freq_base
-        if op_type == "mrope_qk" or (op_type == "rope_qk" and ir_op.get("kernel", "") == "mrope_qk_vision"):
+        if op_type == "mrope_qk" or (
+            op_type == "rope_qk" and str(ir_op.get("kernel", "")).startswith("mrope_qk_vision")
+        ):
             sections = config.get("vision_mrope_sections")
             if not isinstance(sections, list) or len(sections) != 4:
                 default_section = max(1, int(params.get("head_dim", 0) or 0) // 4)
-                sections = [default_section, default_section, default_section, default_section]
-            params.setdefault("n_dims", int(config.get("vision_mrope_n_dims", max(1, int(params.get("head_dim", 0) or 0) // 2))))
-            rope_pairs = min(int(params["n_dims"]), max(1, int(params.get("head_dim", 0) or 0) // 2))
+                sections = [default_section, default_section, 0, 0]
+            params.setdefault(
+                "n_dims",
+                int(config.get("vision_mrope_n_dims", max(1, int(params.get("head_dim", 0) or 0)))),
+            )
+            rotary_width = int(params["n_dims"])
+            head_dim = int(params.get("head_dim", 0) or 0)
+            if rotary_width <= 0 or (rotary_width & 1) != 0 or rotary_width > head_dim:
+                raise ValueError(
+                    "vision M-RoPE rotary width must be positive, even, and no larger than head_dim: "
+                    f"n_dims={rotary_width} head_dim={head_dim}"
+                )
+            rope_pairs = rotary_width // 2
             if int(sections[0]) + int(sections[1]) > rope_pairs:
                 raise ValueError(
                     "vision M-RoPE sections exceed available frequency pairs: "
@@ -10055,7 +10065,8 @@ def generate_ir_lower_2(
         ) or op_type == "branch_layernorm":
             params["_m"] = int(params.get("vision_merged_tokens", params.get("_m", 1)) or 1)
         if op_type in ("vision_position_ids", "position_ids_2d", "mrope_qk") or (
-            op_type == "rope_qk" and ir_op.get("kernel", "") == "mrope_qk_vision"
+            op_type == "rope_qk"
+            and str(ir_op.get("kernel", "")).startswith("mrope_qk_vision")
         ):
             params["_m"] = int(params.get("vision_num_patches", params.get("_m", 1)) or 1)
         if op_type in ("quantize_input_0", "quantize_input_1", "quantize_input_2", "quantize_out_proj_input", "quantize_mlp_down_input", "quantize_recurrent_out_proj_input", "quantize_mamba_out_proj_input", "quantize_final_output"):

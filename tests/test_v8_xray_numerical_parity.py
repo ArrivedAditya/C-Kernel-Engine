@@ -95,6 +95,9 @@ class XRayNumericalParityTests(unittest.TestCase):
         self.assertEqual(result["first_divergence"]["classification"], "STORAGE_CONTRACT_MISMATCH")
         self.assertEqual(result["first_divergence"]["fix_owner"], "circuit_and_kernel_map")
         self.assertIn("Do not add model-name", result["architecture_policy"]["forbidden_fix"])
+        self.assertEqual(result["fix_progression"]["policy"], "advance_only_after_numerical_evidence")
+        self.assertTrue(any("kernel-family unit matrix" in step for step in result["fix_progression"]["steps"]))
+        self.assertTrue(any("first failure progresses" in step for step in result["fix_progression"]["steps"]))
 
     def test_producer_mismatch_is_not_mislabeled_as_kernel_math(self):
         a = self.root / "a.f32"; b = self.root / "b.f32"

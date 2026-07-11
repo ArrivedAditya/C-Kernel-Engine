@@ -117,7 +117,10 @@ def _make_qwen3vl_manifest() -> dict:
             "projection_dim": 4096,
             "deepstack_layer_indices": [0],
             "num_deepstack_layers": 1,
-            "prefer_q8_activation": True
+            "prefer_q8_activation": True,
+            "vision_mrope_n_dims": 72,
+            "vision_mrope_sections": [18, 18, 0, 0],
+            "vision_mrope_storage_boundary": "bf16"
         },
         "quant_summary": {
             "layer.0": {
@@ -201,6 +204,30 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
                 else:
                     self.assertEqual(attn["kernel"], expected_kernel)
 
+                mrope = next(item for item in operations if item.get("op") == "rope_qk")
+                self.assertEqual(
+                    mrope["resolved_contract"]["contract_id"],
+                    "vision_mrope_fp32_input_fp32_compute_bf16_output",
+                )
+                self.assertEqual(
+                    mrope["resolved_contract"]["kernel_id"],
+                    "mrope_qk_vision_bf16_storage",
+                )
+                if artifact == "call":
+                    self.assertEqual(mrope["function"], "mrope_qk_vision_bf16_storage")
+                else:
+                    self.assertEqual(mrope["kernel"], "mrope_qk_vision_bf16_storage")
+                if artifact == "lowered":
+                    self.assertEqual(mrope["params"]["n_dims"], 72)
+                    self.assertEqual(
+                        [mrope["params"][f"section_{idx}"] for idx in range(4)],
+                        [18, 18, 0, 0],
+                    )
+                if artifact == "call":
+                    args = {arg["name"]: arg["expr"] for arg in mrope["args"]}
+                    self.assertEqual(args["n_dims"], "72")
+                    self.assertEqual([args[f"section_{idx}"] for idx in range(4)], ["18", "18", "0", "0"])
+
                 checkpoint_by_id = {
                     checkpoint["id"]: checkpoint
                     for operation in operations
@@ -257,7 +284,7 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
 
     def test_qwen3vl_invalid_vision_mrope_sections_fail_lowering(self) -> None:
         manifest = _make_qwen3vl_manifest()
-        manifest["config"]["vision_mrope_n_dims"] = 2
+        manifest["config"]["vision_mrope_n_dims"] = 4
         manifest["config"]["vision_mrope_sections"] = [2, 2, 2, 2]
         with tempfile.TemporaryDirectory(prefix="v8_qwen3vl_invalid_mrope_") as td:
             td_path = Path(td)

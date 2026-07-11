@@ -3547,6 +3547,182 @@
           "source": "dim:kv_cache_head_dim"
         }
       ]
+    },
+    "mrope_qk_vision_bf16_storage": {
+      "note": "Vision M-RoPE with explicit BF16 RNE output storage boundary.",
+      "params": [
+        {
+          "cast": "float*",
+          "name": "q",
+          "source": "output:q"
+        },
+        {
+          "cast": "float*",
+          "name": "k",
+          "source": "output:k"
+        },
+        {
+          "cast": "const int32_t*",
+          "name": "positions",
+          "source": "activation:positions"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "n_dims",
+          "source": "dim:n_dims"
+        },
+        {
+          "name": "section_0",
+          "source": "dim:section_0"
+        },
+        {
+          "name": "section_1",
+          "source": "dim:section_1"
+        },
+        {
+          "name": "section_2",
+          "source": "dim:section_2"
+        },
+        {
+          "name": "section_3",
+          "source": "dim:section_3"
+        },
+        {
+          "name": "n_ctx_orig",
+          "source": "dim:n_ctx_orig"
+        },
+        {
+          "name": "freq_base",
+          "source": "dim:freq_base"
+        },
+        {
+          "name": "freq_scale",
+          "source": "dim:freq_scale"
+        },
+        {
+          "name": "ext_factor",
+          "source": "dim:ext_factor"
+        },
+        {
+          "name": "attn_factor",
+          "source": "dim:attn_factor"
+        },
+        {
+          "name": "beta_fast",
+          "source": "dim:beta_fast"
+        },
+        {
+          "name": "beta_slow",
+          "source": "dim:beta_slow"
+        }
+      ]
+    },
+    "mrope_qk_vision_fp16_storage": {
+      "note": "Vision M-RoPE with explicit FP16 RNE output storage boundary.",
+      "params": [
+        {
+          "cast": "float*",
+          "name": "q",
+          "source": "output:q"
+        },
+        {
+          "cast": "float*",
+          "name": "k",
+          "source": "output:k"
+        },
+        {
+          "cast": "const int32_t*",
+          "name": "positions",
+          "source": "activation:positions"
+        },
+        {
+          "name": "num_heads",
+          "source": "dim:num_heads"
+        },
+        {
+          "name": "num_kv_heads",
+          "source": "dim:num_kv_heads"
+        },
+        {
+          "name": "num_tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "aligned_head_dim",
+          "source": "dim:head_dim"
+        },
+        {
+          "name": "n_dims",
+          "source": "dim:n_dims"
+        },
+        {
+          "name": "section_0",
+          "source": "dim:section_0"
+        },
+        {
+          "name": "section_1",
+          "source": "dim:section_1"
+        },
+        {
+          "name": "section_2",
+          "source": "dim:section_2"
+        },
+        {
+          "name": "section_3",
+          "source": "dim:section_3"
+        },
+        {
+          "name": "n_ctx_orig",
+          "source": "dim:n_ctx_orig"
+        },
+        {
+          "name": "freq_base",
+          "source": "dim:freq_base"
+        },
+        {
+          "name": "freq_scale",
+          "source": "dim:freq_scale"
+        },
+        {
+          "name": "ext_factor",
+          "source": "dim:ext_factor"
+        },
+        {
+          "name": "attn_factor",
+          "source": "dim:attn_factor"
+        },
+        {
+          "name": "beta_fast",
+          "source": "dim:beta_fast"
+        },
+        {
+          "name": "beta_slow",
+          "source": "dim:beta_slow"
+        }
+      ]
     }
   }
 }

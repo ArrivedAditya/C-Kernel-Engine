@@ -2058,6 +2058,8 @@ def emit_op(
                 return _return_lines(append_stop=True)
             if _same_op("rope_qk", "mrope_qk") and function in {
                 "mrope_qk_vision",
+                "mrope_qk_vision_bf16_storage",
+                "mrope_qk_vision_fp16_storage",
                 "mrope_qk_text",
                 "ck_qwen3vl_runtime_mrope_qk",
                 "ck_qwen3vl_prefill_mrope_qk",
@@ -2370,6 +2372,8 @@ static void ck_decode(CKModel *model, int32_t token) {
             and str(op.get("function", op.get("kernel", ""))) in {
                 "mrope_qk_text",
                 "mrope_qk_vision",
+                "mrope_qk_vision_bf16_storage",
+                "mrope_qk_vision_fp16_storage",
                 "ck_qwen3vl_runtime_mrope_qk",
                 "ck_qwen3vl_prefill_mrope_qk",
             }

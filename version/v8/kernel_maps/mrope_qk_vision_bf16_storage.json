@@ -1,11 +1,11 @@
 {
-  "id": "mrope_qk_vision",
+  "id": "mrope_qk_vision_bf16_storage",
   "op": "rope",
-  "variant": "fp32_head_major_vision_mrope",
+  "variant": "fp32_head_major_vision_mrope_bf16_storage",
   "quant": {
     "weight": "none",
     "activation": "fp32",
-    "output": "fp32"
+    "output": "bf16"
   },
   "inputs": [
     {
@@ -43,7 +43,7 @@
   "outputs": [
     {
       "name": "q",
-      "dtype": "fp32",
+      "dtype": "bf16",
       "shape": [
         "H",
         "T",
@@ -53,7 +53,7 @@
     },
     {
       "name": "k",
-      "dtype": "fp32",
+      "dtype": "bf16",
       "shape": [
         "KV",
         "T",
@@ -138,22 +138,22 @@
     }
   ],
   "impl": {
-    "function": "mrope_qk_vision",
-    "c_declaration": "void mrope_qk_vision(float *q, float *k, const int32_t *positions, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int n_dims, int section_0, int section_1, int section_2, int section_3, int n_ctx_orig, float freq_base, float freq_scale, float ext_factor, float attn_factor, float beta_fast, float beta_slow);",
+    "function": "mrope_qk_vision_bf16_storage",
+    "c_declaration": "void mrope_qk_vision_bf16_storage(float *q, float *k, const int32_t *positions, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int n_dims, int section_0, int section_1, int section_2, int section_3, int n_ctx_orig, float freq_base, float freq_scale, float ext_factor, float attn_factor, float beta_fast, float beta_slow);",
     "sources": [
       "src/kernels/rope_kernels.c"
     ]
   },
-  "notes": "Vision multi-section RoPE for Q/K using four position streams and head-major activations.",
+  "notes": "Vision M-RoPE FP32 compute with explicit BF16 RNE output storage boundary.",
   "numerical_capabilities": [
     {
-      "contract_id": "vision_mrope_fp32_input_fp32_compute_fp32_output",
+      "contract_id": "vision_mrope_fp32_input_fp32_compute_bf16_output",
       "status": "validated",
       "phases": [
         "prefill",
         "decode"
       ],
-      "function": "mrope_qk_vision",
+      "function": "mrope_qk_vision_bf16_storage",
       "explicit_selector": true,
       "implementation": {
         "isa_dispatch": "scalar",

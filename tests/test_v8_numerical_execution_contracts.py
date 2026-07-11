@@ -52,6 +52,31 @@ def circuit(validation: str = "observed"):
     }
 
 
+def mrope_circuit(contract_id: str):
+    return {
+        "name": "vision_mrope_contract_test",
+        "required_numerical_contracts": {
+            "vision_mrope": {
+                "op": "rope",
+                "template_ops": ["rope_qk"],
+                "phases": {
+                    "prefill": {
+                        "contract_id": contract_id,
+                        "validation": "validated",
+                        "evidence": "unittest/test_vision.py::test_mrope_qk_vision_storage_matrix",
+                    }
+                },
+                "checkpoint": {
+                    "id": "vision.layer.0.q.post_rope",
+                    "producer": "vision_mrope",
+                    "logical_layout": "head_major",
+                    "axis_names": ["head", "token", "channel"],
+                },
+            }
+        },
+    }
+
+
 class NumericalExecutionContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -95,7 +120,45 @@ class NumericalExecutionContractTests(unittest.TestCase):
             plan["kernel"]["function"],
             "position_embeddings_add_tiled_2d_align_corners_bf16",
         )
+    def test_mrope_storage_contract_matrix_resolves_exact_functions(self):
+        expected = {
+            "vision_mrope_fp32_input_fp32_compute_fp32_output": ("mrope_qk_vision", "mrope_qk_vision"),
+            "vision_mrope_fp32_input_fp32_compute_bf16_output": ("mrope_qk_vision_bf16_storage", "mrope_qk_vision_bf16_storage"),
+            "vision_mrope_fp32_input_fp32_compute_fp16_output": ("mrope_qk_vision_fp16_storage", "mrope_qk_vision_fp16_storage"),
+        }
+        for contract_id, (kernel_id, function) in expected.items():
+            with self.subTest(contract_id=contract_id):
+                plan = resolver.resolve_contract(
+                    mrope_circuit(contract_id), self.contracts, self.kernels, "vision_mrope", "prefill", mode="production"
+                )
+                self.assertEqual(plan["kernel"]["id"], kernel_id)
+                self.assertEqual(plan["kernel"]["function"], function)
+                self.assertEqual(plan["contract"]["semantics"]["reduction"]["kind"], "none")
 
+    def test_qwen3vl_circuit_requests_bf16_mrope_storage(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen3_vl_vision.json"
+        )
+        plan = resolver.resolve_contract(
+            circuit_doc,
+            self.contracts,
+            self.kernels,
+            "vision.layer.mrope",
+            "prefill",
+            mode="production",
+        )
+        self.assertEqual(
+            plan["contract"]["id"],
+            "vision_mrope_fp32_input_fp32_compute_bf16_output",
+        )
+        self.assertEqual(plan["kernel"]["id"], "mrope_qk_vision_bf16_storage")
+        self.assertEqual(plan["kernel"]["function"], "mrope_qk_vision_bf16_storage")
+        self.assertEqual(plan["template_ops"], ["rope_qk"])
+
+    def test_unsupported_mrope_storage_contract_hard_fails(self):
+        doc = mrope_circuit("vision_mrope_fp64_input_fp64_compute_fp64_output")
+        with self.assertRaisesRegex(resolver.ContractError, "unknown requested contract"):
+            resolver.resolve_contract(doc, self.contracts, self.kernels, "vision_mrope", "prefill")
     def test_zero_provider_is_hard_failure(self):
         kernels = copy.deepcopy(self.kernels)
         kernels["kernels"] = {}

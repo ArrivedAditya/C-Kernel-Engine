@@ -131,6 +131,28 @@
         "logical_layout": "token_major",
         "axis_names": ["token", "channel"]
       }
+    },
+    "vision.layer.mrope": {
+      "op": "rope",
+      "template_ops": ["rope_qk"],
+      "selector": {
+        "config_equals": {
+          "vision_mrope_storage_boundary": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "vision_mrope_fp32_input_fp32_compute_bf16_output",
+          "validation": "validated",
+          "evidence": "unittest/test_vision.py::test_mrope_qk_vision_storage_matrix"
+        }
+      },
+      "checkpoint": {
+        "id": "vision.layer.{layer}.q.post_rope",
+        "producer": "vision_mrope",
+        "logical_layout": "head_major",
+        "axis_names": ["head", "token", "channel"]
+      }
     }
   },
   "semantic_checkpoints": {
@@ -149,8 +171,8 @@
         {"id": "vision.layer.{layer}.v.output", "producer": "split_qkv", "tensor": "v_proj", "logical_layout": "head_major", "axis_names": ["head", "token", "channel"], "storage_dtype": "fp32"}
       ]},
       "layer.mrope": {"section": "body", "template_op_id": "vision_mrope", "op": "rope_qk", "checkpoints": [
-        {"id": "vision.layer.{layer}.q.post_rope", "producer": "vision_mrope", "tensor": "rope_q", "logical_layout": "head_major", "axis_names": ["head", "token", "channel"], "storage_dtype": "fp32"},
-        {"id": "vision.layer.{layer}.k.post_rope", "producer": "vision_mrope", "tensor": "rope_k", "logical_layout": "head_major", "axis_names": ["head", "token", "channel"], "storage_dtype": "fp32"}
+        {"id": "vision.layer.{layer}.q.post_rope", "producer": "vision_mrope", "tensor": "rope_q", "logical_layout": "head_major", "axis_names": ["head", "token", "channel"], "storage_dtype": "bf16"},
+        {"id": "vision.layer.{layer}.k.post_rope", "producer": "vision_mrope", "tensor": "rope_k", "logical_layout": "head_major", "axis_names": ["head", "token", "channel"], "storage_dtype": "bf16"}
       ]},
       "layer.attention": {"section": "body", "template_op_id": "attn", "op": "attn", "checkpoints": [
         {"id": "vision.layer.{layer}.attention.output", "producer": "attn", "tensor": "attn_out_head_major", "logical_layout": "head_major", "axis_names": ["head", "token", "channel"], "storage_dtype": "fp32"}
@@ -258,7 +280,8 @@
             "params": {
               "rope_mode": "vision",
               "position_rank": 4,
-              "section_policy": "equal_4way"
+              "rotary_width_policy": "full_head_dim",
+              "section_policy": "spatial_2d_split_half"
             }
           },
           {

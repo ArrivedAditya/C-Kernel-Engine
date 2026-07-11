@@ -4,6 +4,8 @@ import os
 import argparse
 import time
 import math
+import json
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -167,6 +169,11 @@ lib.mrope_qk_vision.argtypes = [
     ctypes.c_float,
 ]
 lib.mrope_qk_vision.restype = None
+
+for _mrope_storage_fn in ("mrope_qk_vision_bf16_storage", "mrope_qk_vision_fp16_storage"):
+    _fn = getattr(lib, _mrope_storage_fn)
+    _fn.argtypes = lib.mrope_qk_vision.argtypes
+    _fn.restype = None
 
 
 def tensor_to_ptr(t: torch.Tensor):
@@ -402,6 +409,7 @@ def run_c_mrope_qk(
     attn_factor: float = 1.0,
     beta_fast: float = 32.0,
     beta_slow: float = 1.0,
+    function: str = "mrope_qk_vision",
 ) -> tuple[torch.Tensor, torch.Tensor]:
     q_out = q.clone()
     k_out = k.clone()
@@ -410,7 +418,7 @@ def run_c_mrope_qk(
     q_np = q_out.view(-1).numpy()
     k_np = k_out.view(-1).numpy()
     pos_np = positions.contiguous().view(-1).numpy()
-    lib.mrope_qk_vision(
+    getattr(lib, function)(
         q_np.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
         k_np.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
         pos_np.ctypes.data_as(ctypes.POINTER(ctypes.c_int32)),
@@ -1074,6 +1082,46 @@ def test_mrope_qk_vision(num_heads=2, num_kv_heads=2, num_tokens=4, head_dim=8):
         raise AssertionError("mrope_qk_vision mismatch!")
 
 
+def test_mrope_qk_vision_storage_matrix():
+    rows = []
+    for head_dim in (8, 72):
+        torch.manual_seed(5000 + head_dim)
+        q = torch.randn(2, 4, head_dim, dtype=torch.float32)
+        k = torch.randn(2, 4, head_dim, dtype=torch.float32)
+        positions = _ref_vision_position_ids(2, 2, 2)
+        axis_pairs = head_dim // 4
+        sections = [axis_pairs, axis_pairs, 0, 0]
+        ref_q, ref_k = _ref_qwen3vl_vision_mrope_qk(q, k, positions, head_dim)
+        variants = (
+            ("fp32_fp32_fp32", "mrope_qk_vision", ref_q, ref_k, 1e-6),
+            ("fp32_fp32_bf16", "mrope_qk_vision_bf16_storage", ref_q.to(torch.bfloat16).float(), ref_k.to(torch.bfloat16).float(), 0.0),
+            ("fp32_fp32_fp16", "mrope_qk_vision_fp16_storage", ref_q.to(torch.float16).float(), ref_k.to(torch.float16).float(), 0.0),
+        )
+        for capability, function, oracle_q, oracle_k, tolerance in variants:
+            out_q, out_k = run_c_mrope_qk(q, k, positions, head_dim, sections, function=function)
+            max_abs = max(max_diff(out_q, oracle_q), max_diff(out_k, oracle_k))
+            if max_abs > tolerance:
+                raise AssertionError(f"{capability} head_dim={head_dim} max_abs={max_abs} > {tolerance}")
+            rows.append({
+                "kernel_family": "vision_mrope",
+                "capability": capability,
+                "input_storage": "fp32",
+                "compute": "fp32",
+                "reduction": "none",
+                "output_storage": capability.rsplit("_", 1)[-1],
+                "oracle": "pytorch_formula_and_dtype_cast",
+                "head_dim": head_dim,
+                "threads": "serial_independent_heads",
+                "max_abs": max_abs,
+                "status": "pass",
+            })
+    report = {"schema": "cke.v8.numerical_capability_evidence", "schema_version": 1, "status": "pass", "rows": rows}
+    report_path = Path(os.environ.get("CK_NUMERICAL_CAPABILITY_REPORT", "version/v8/.cache/reports/mrope_capabilities_latest.json"))
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(report, indent=2))
+
+
 def test_mrope_qk_vision_qwen3vl_full_head():
     test_mrope_qk_vision(num_heads=2, num_kv_heads=2, num_tokens=4, head_dim=72)
 
@@ -1096,6 +1144,7 @@ if __name__ == "__main__":
     test_feature_concat_inplace_expand()
     test_mrope_qk_vision()
     test_mrope_qk_vision_qwen3vl_full_head()
+    test_mrope_qk_vision_storage_matrix()
     
     # Test a non-multiple size just in case (though ViT usually uses multiples)
     test_im2patch(C=3, H=32, W=32, P=8)
