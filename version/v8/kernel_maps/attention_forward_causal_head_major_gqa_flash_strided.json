@@ -2,6 +2,32 @@
   "id": "attention_forward_causal_head_major_gqa_flash_strided",
   "op": "attention",
   "variant": "causal_flash_fp32",
+  "mode": "prefill",
+  "contract_schema_version": 1,
+  "provides": {
+    "execution.phase": ["prefill"],
+    "tensor.q.dtype": ["fp32"],
+    "tensor.kv.dtype": ["fp32"],
+    "tensor.layout": ["head_major"],
+    "numerics.attention_reduction": ["fp32_online"]
+  },
+  "supported_reductions": {
+    "fp32_online": {
+      "status": "validated",
+      "function": "attention_forward_causal_head_major_gqa_flash_strided",
+      "explicit_selector": true,
+      "notes": "Validated causal FP32 online-softmax prefill route."
+    }
+  },
+  "implementation": {
+    "isa_dispatch": "runtime",
+    "threading": {
+      "runtime": "ck_threadpool",
+      "work_partition": ["independent_query_blocks"],
+      "dispatch": ["ck_threadpool_dispatch_n"],
+      "reduction_order_effect": "none"
+    }
+  },
   "quant": {
     "weight": "none",
     "activation": "fp32",

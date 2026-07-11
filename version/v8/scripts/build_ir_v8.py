@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-build_ir_v8.py - Complete IR Pipeline: Template + Quant → IR1 → Fusion → Layout
+build_ir_v8.py - Complete IR Pipeline: Circuit + Quant + Contracts → GraphIR → Lowering
 
 PIPELINE (4 stages):
-    1. IR1 Generation: Template + Quant Summary → Kernel IDs
+    1. GraphIR Generation: Circuit requirements + quant summary → resolved kernel IDs
     2. Fusion Pass: Combine consecutive kernels using registry-driven patterns
     3. Memory Layout: Plan activation buffers and weight offsets
     4. Output: IR1 JSON + Memory Layout JSON
 
 Stage 1 - IR1 Generation (Direct mapping, no intermediate abstractions):
-    1. Parse template sequence (what ops to run)
+    1. Parse circuit sequence and required contracts (what math to run)
     2. Read quant summary from manifest (what dtypes for weights)
-    3. Map template ops → kernel ops → concrete kernel IDs
+    3. Resolve contract-bearing ops, then map remaining circuit ops to kernel IDs
     4. Return: List of kernel function names
 
 Stage 2 - Fusion Pass:
@@ -44,9 +44,10 @@ OUTPUTS:
     - Layout JSON: Fused kernels + memory layout with explicit offsets
 
 LOWERING CONTRACT:
-    - The builder must stay architecture-agnostic.
-    - Templates declare operations, graph structure, and stitch points.
-    - The lowerer only expands declared operations into kernel ops / kernel IDs.
+    - The builder must stay model-family agnostic.
+    - Circuits declare operations, graph structure, stitch points, and semantics.
+    - The resolver selects contract-bearing providers before GraphIR construction.
+    - The lowerer consumes resolved providers and may not reselect them.
     - Do not teach the lowerer model names such as MoE, DeepStack, SSM, etc.
     - If a model needs branching, routing, collect, or stitch behavior, that
       contract belongs in the template as explicit operations or graph edges.
@@ -121,19 +122,82 @@ def _resolve_manifest_numerical_contracts(
     return plans
 
 
+def _load_kernel_execution_capabilities() -> Dict[str, Dict[str, Any]]:
+    resolver = _load_numerical_contract_resolver()
+    document = resolver.load_kernel_execution_capabilities()
+    kernels = document.get("kernels")
+    if not isinstance(kernels, dict):
+        raise RuntimeError("HARD CONTRACT FAULT: kernel execution capability registry is malformed.")
+    return kernels
+
+
+def _graph_ir_execution_metadata(capability: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "schema": "cke.graph_ir_execution_contract",
+        "schema_version": 1,
+        "kernel_id": capability["id"],
+        "op": capability["op"],
+        "implementation": copy.deepcopy(capability["implementation"]),
+    }
+
+
 def _validate_resolved_kernels_are_emitted(
     plans: List[Dict[str, Any]],
     arranged_kernels: List[Dict[str, Any]],
 ) -> None:
-    emitted = {str(item.get("kernel", "")) for item in arranged_kernels}
     for plan in plans:
         selected = str((plan.get("kernel") or {}).get("id", ""))
-        if selected and selected not in emitted:
+        template_ops = {str(item) for item in plan.get("template_ops", [])}
+        governed = [item for item in arranged_kernels if str(item.get("op", "")) in template_ops]
+        if not governed:
             raise RuntimeError(
-                f"Numerical contract selected kernel {selected!r} for "
-                f"{plan.get('operation')}.{plan.get('phase')}, but legacy lowering emitted "
-                f"{sorted(item for item in emitted if item)}"
+                f"HARD CONTRACT FAULT: resolved operation {plan.get('operation')}.{plan.get('phase')} "
+                f"governs {sorted(template_ops)}, but GraphIR emitted none of those operations. "
+                "Fix the circuit operation binding; do not bypass contract validation."
             )
+        for item in governed:
+            emitted = str(item.get("kernel", ""))
+            resolved = item.get("resolved_contract") if isinstance(item.get("resolved_contract"), dict) else {}
+            if emitted != selected or resolved.get("kernel_id") != selected:
+                raise RuntimeError(
+                    f"HARD CONTRACT FAULT: GraphIR operation {item.get('op')} selected {emitted!r}, "
+                    f"but authoritative resolution requires {selected!r} for "
+                    f"{plan.get('operation')}.{plan.get('phase')}. Fix the circuit or kernel map; "
+                    "do not add a fallback or validation bypass."
+                )
+
+
+def _index_numerical_contract_plans(
+    plans: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    indexed: Dict[str, Dict[str, Any]] = {}
+    for plan in plans:
+        for template_op in plan.get("template_ops", []):
+            op = str(template_op).strip()
+            if not op:
+                continue
+            existing = indexed.get(op)
+            if existing is not None:
+                raise RuntimeError(
+                    f"HARD CONTRACT FAULT: template op {op!r} is governed by both "
+                    f"{existing.get('operation')!r} and {plan.get('operation')!r}. "
+                    "Make circuit contract bindings unique; do not rely on declaration order."
+                )
+            indexed[op] = plan
+    return indexed
+
+
+def _graph_ir_contract_metadata(plan: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "schema": "cke.graph_ir_numerical_contract",
+        "schema_version": 1,
+        "operation": plan["operation"],
+        "phase": plan["phase"],
+        "contract_id": plan["reduction"]["id"],
+        "kernel_id": plan["kernel"]["id"],
+        "function": plan["kernel"]["function"],
+        "implementation": copy.deepcopy(plan["implementation"]),
+    }
 
 
 def _entry_offset(entry: Dict[str, Any]) -> int:
@@ -4575,6 +4639,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             config = manifest.get("config", {})
 
     numerical_contract_plans = _resolve_manifest_numerical_contracts(manifest, mode)
+    numerical_contract_by_template_op = _index_numerical_contract_plans(numerical_contract_plans)
+    kernel_execution_capabilities = _load_kernel_execution_capabilities()
     for plan in numerical_contract_plans:
         print(
             "  [contract/numerics] "
@@ -4990,6 +5056,23 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         # kernels slower for inference. Each decode token calls kernels 500+ times,
         # so thread management overhead dominates. Needs persistent thread pool.
         use_parallel = False  # Was: prefer_parallel and op in PARALLEL_OPS
+
+        # Contract-bearing operations are selected before GraphIR is built.
+        # Legacy template overrides and heuristic dispatch are not consulted.
+        resolved_plan = numerical_contract_by_template_op.get(op)
+        if resolved_plan is not None:
+            if resolved_plan.get("phase") != mode:
+                raise RuntimeError(
+                    f"HARD CONTRACT FAULT: resolved {op!r} plan is for "
+                    f"{resolved_plan.get('phase')!r}, not active mode {mode!r}."
+                )
+            return [str(resolved_plan["kernel"]["id"])]
+        if op in {"attn", "attn_sliding"} and numerical_contract_plans:
+            raise RuntimeError(
+                f"HARD CONTRACT FAULT: circuit {template.get('name', '<embedded>')!r} declares "
+                f"numerical contracts, but attention template op {op!r} has no authoritative binding. "
+                "Fix required_contracts.template_ops; do not fall back to legacy attention selection."
+            )
 
         # Template-specified kernel overrides (keeps IR dumb and data-driven)
         if op == "rope_qk":
@@ -5757,6 +5840,19 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
 
     print(f"\n✓ Pass 1: Generated {len(arranged_kernels)} kernel calls")
 
+    # GraphIR records the selected provider's execution capability for every
+    # versioned kernel map. Later stages may carry it but must not reinterpret it.
+    for arranged in arranged_kernels:
+        kernel_id = str(arranged.get("kernel", ""))
+        capability = kernel_execution_capabilities.get(kernel_id)
+        if capability is not None:
+            arranged["resolved_execution"] = _graph_ir_execution_metadata(capability)
+        plan = numerical_contract_by_template_op.get(str(arranged.get("op", "")))
+        if plan is None:
+            continue
+        arranged["required_contract"] = copy.deepcopy(plan["requirements"])
+        arranged["resolved_contract"] = _graph_ir_contract_metadata(plan)
+
     # ═══════════════════════════════════════════════════════════
     # PASS 1.5: Add dataflow information
     # For each op, record what it reads from and writes to
@@ -6209,6 +6305,16 @@ def apply_fusion_pass(ir1_ops: List[Dict], registry: Dict, mode: str, no_fusion:
                     removed_ops = fused_ops[i:i+seq_len]
                     removed_kernels = [op.get("kernel") or op.get("function", "?") for op in removed_ops]
 
+                    governed = [op for op in removed_ops if op.get("resolved_contract")]
+                    if governed:
+                        governed_names = [op.get("op") for op in governed]
+                        raise RuntimeError(
+                            "HARD CONTRACT FAULT: fusion attempted to replace contract-bearing "
+                            f"GraphIR operations {governed_names} with {fused_id!r}. "
+                            "Declare and resolve a compatible fused-kernel contract before enabling "
+                            "this fusion; do not silently discard the resolved provider."
+                        )
+
                     print(f"\n  Fusion opportunity at position {i}:")
                     print(f"    Replacing: {' + '.join(removed_kernels)}")
                     print(f"    With:      {fused_id}")
@@ -6576,6 +6682,23 @@ def generate_ir_lower_1(
             "bias_for": ir_op.get("bias_for"),
             "dataflow": ir_op.get("dataflow", {}),  # Preserve dataflow for memory planner
         }
+        if ir_op.get("required_contract") is not None:
+            lowered_op["required_contract"] = copy.deepcopy(ir_op["required_contract"])
+        if ir_op.get("resolved_contract") is not None:
+            lowered_op["resolved_contract"] = copy.deepcopy(ir_op["resolved_contract"])
+            if lowered_op["resolved_contract"].get("kernel_id") != kernel_id:
+                raise RuntimeError(
+                    f"HARD CONTRACT FAULT: LoweredIR received kernel {kernel_id!r}, but GraphIR "
+                    f"resolved {lowered_op['resolved_contract'].get('kernel_id')!r}. "
+                    "Lowering must consume the resolved provider without reselection."
+                )
+        if ir_op.get("resolved_execution") is not None:
+            lowered_op["resolved_execution"] = copy.deepcopy(ir_op["resolved_execution"])
+            if lowered_op["resolved_execution"].get("kernel_id") != kernel_id:
+                raise RuntimeError(
+                    f"HARD CONTRACT FAULT: LoweredIR received kernel {kernel_id!r}, but GraphIR "
+                    f"execution metadata names {lowered_op['resolved_execution'].get('kernel_id')!r}."
+                )
         if ir_op.get("_auto_inserted"):
             lowered_op["_auto_inserted"] = True
 
@@ -6823,8 +6946,18 @@ def generate_ir_lower_1(
                 op["inputs"].pop("k", None)
                 op["inputs"].pop("v", None)
             elif op["op"] in ("attn", "attn_sliding") and "attention" in op["kernel"]:
-                # Switch to decode attention kernel (sliding vs non-sliding)
-                if op["op"] == "attn_sliding":
+                resolved_contract = op.get("resolved_contract") if isinstance(op.get("resolved_contract"), dict) else None
+                if resolved_contract is not None:
+                    decode_kernel = str(resolved_contract["kernel_id"])
+                    if force_decode_attn_regular:
+                        raise RuntimeError(
+                            "HARD CONTRACT FAULT: CK_V7_DECODE_ATTN_REGULAR attempted to override "
+                            f"resolved kernel {decode_kernel!r}. Semantic runtime flags cannot override "
+                            "an authoritative GraphIR contract."
+                        )
+                # Legacy circuits without a declared contract retain their
+                # existing compatibility selection until they are migrated.
+                elif op["op"] == "attn_sliding":
                     decode_kernel = template_kernels.get("attn_sliding_decode") or "attention_forward_decode_head_major_gqa_flash_sliding"
                 else:
                     if force_decode_attn_regular:
@@ -8482,6 +8615,22 @@ def generate_ir_lower_2(
             "outputs": {},
             "params": {},
         }
+        if ir_op.get("required_contract") is not None:
+            lowered_op["required_contract"] = copy.deepcopy(ir_op["required_contract"])
+        if ir_op.get("resolved_contract") is not None:
+            lowered_op["resolved_contract"] = copy.deepcopy(ir_op["resolved_contract"])
+            if lowered_op["resolved_contract"].get("kernel_id") != ir_op["kernel"]:
+                raise RuntimeError(
+                    f"HARD CONTRACT FAULT: memory lowering received kernel {ir_op['kernel']!r}, "
+                    f"but GraphIR resolved {lowered_op['resolved_contract'].get('kernel_id')!r}."
+                )
+        if ir_op.get("resolved_execution") is not None:
+            lowered_op["resolved_execution"] = copy.deepcopy(ir_op["resolved_execution"])
+            if lowered_op["resolved_execution"].get("kernel_id") != ir_op["kernel"]:
+                raise RuntimeError(
+                    f"HARD CONTRACT FAULT: memory lowering received kernel {ir_op['kernel']!r}, "
+                    f"but execution metadata names {lowered_op['resolved_execution'].get('kernel_id')!r}."
+                )
         if "_kv_cache_read_layer" in ir_op:
             lowered_op["_kv_cache_read_layer"] = int(ir_op["_kv_cache_read_layer"])
 
@@ -10635,7 +10784,14 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                 "errors": op_errors,
             })
 
-        call_ops.append({
+        resolved_contract = copy.deepcopy(op.get("resolved_contract")) if op.get("resolved_contract") else None
+        if resolved_contract is not None and resolved_contract.get("function") != func:
+            raise RuntimeError(
+                f"HARD CONTRACT FAULT: call-ready IR function {func!r} differs from resolved "
+                f"function {resolved_contract.get('function')!r} for {resolved_contract.get('operation')}. "
+                "Code generation must emit the resolved decision without reselection."
+            )
+        call_op = {
             "idx": op.get("idx", -1),
             "function": func,
             "op": op.get("op", ""),
@@ -10644,7 +10800,20 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
             "args": args,
             "errors": op_errors,
             "warnings": op_warnings,
-        })
+        }
+        if op.get("required_contract") is not None:
+            call_op["required_contract"] = copy.deepcopy(op["required_contract"])
+        if resolved_contract is not None:
+            call_op["resolved_contract"] = resolved_contract
+        resolved_execution = copy.deepcopy(op.get("resolved_execution")) if op.get("resolved_execution") else None
+        if resolved_execution is not None:
+            if resolved_execution.get("kernel_id") != op.get("kernel"):
+                raise RuntimeError(
+                    f"HARD CONTRACT FAULT: call-ready IR kernel {op.get('kernel')!r} differs from "
+                    f"execution metadata {resolved_execution.get('kernel_id')!r}."
+                )
+            call_op["resolved_execution"] = resolved_execution
+        call_ops.append(call_op)
 
     lowered_call = {
         "format": "lowered-ir-v3",

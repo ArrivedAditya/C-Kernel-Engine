@@ -264,6 +264,14 @@ class V8CodegenBridgeTests(unittest.TestCase):
 
         self.assertEqual(by_op["rope_qk"][0]["kernel"], "mrope_qk_text")
         self.assertEqual(by_op["attn"][0]["kernel"], "attention_forward_decode_head_major_gqa_flash_f16cache")
+        self.assertEqual(
+            by_op["q_proj"][0]["resolved_execution"]["implementation"]["threading"]["runtime"],
+            "ck_threadpool",
+        )
+        self.assertEqual(
+            by_op["mlp_down"][0]["resolved_execution"]["kernel_id"],
+            "gemv_q6_k_q8_k",
+        )
 
         with tempfile.TemporaryDirectory(prefix="v8_qwen3vl_text_mrope_") as tmpdir:
             tmp = Path(tmpdir)
@@ -296,12 +304,20 @@ class V8CodegenBridgeTests(unittest.TestCase):
             layout_doc = json.loads(layout_path.read_text(encoding="utf-8"))
             rope_call = next(op for op in call_doc["operations"] if op["op"] == "rope_qk")
             attn_call = next(op for op in call_doc["operations"] if op["op"] == "attn")
+            q_proj_call = next(op for op in call_doc["operations"] if op["op"] == "q_proj")
+            mlp_down_call = next(op for op in call_doc["operations"] if op["op"] == "mlp_down")
             kv_store_call = next(op for op in call_doc["operations"] if op["op"] == "kv_cache_store")
             kv_buf = next(buf for buf in layout_doc["memory"]["activations"]["buffers"] if buf["name"] == "kv_cache")
             self.assertEqual(rope_call["function"], "mrope_qk_text")
             self.assertEqual(attn_call["function"], "attention_forward_decode_head_major_gqa_flash_f16cache")
             self.assertEqual(kv_store_call["function"], "kv_cache_store_f16")
             self.assertEqual(kv_buf["dtype"], "fp16")
+            self.assertEqual(q_proj_call["resolved_execution"]["kernel_id"], "gemv_q4_k_q8_k")
+            self.assertEqual(
+                q_proj_call["resolved_execution"]["implementation"]["threading"]["reduction_order_effect"],
+                "none",
+            )
+            self.assertEqual(mlp_down_call["resolved_execution"]["kernel_id"], "gemv_q6_k_q8_k")
             arg_map = {arg["name"]: arg["expr"] for arg in rope_call["args"]}
             self.assertEqual(arg_map["pos_offset"], "model->rope_pos")
             self.assertEqual(arg_map["section_0"], "1")

@@ -3,6 +3,7 @@
   "op": "attention",
   "variant": "decode_head_major_gqa_flash_f16cache",
   "mode": "decode",
+  "contract_schema_version": 1,
   "provides": {
     "execution.phase": ["decode"],
     "tensor.q.dtype": ["fp32"],
@@ -16,6 +17,15 @@
       "function": "attention_forward_decode_head_major_gqa_flash_f16cache",
       "explicit_selector": false,
       "notes": "Current generated v8 route. The explicit selector API is validated separately and will replace this ABI after E2E promotion."
+    }
+  },
+  "implementation": {
+    "isa_dispatch": "runtime",
+    "threading": {
+      "runtime": "ck_threadpool",
+      "work_partition": ["kv_chunks_by_workers"],
+      "dispatch": ["ck_threadpool_dispatch_n"],
+      "reduction_order_effect": "contract_defined"
     }
   },
   "quant": {

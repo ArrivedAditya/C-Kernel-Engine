@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.resolved_attention_contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "schema_version", "engine_contract_version", "circuit", "operation",
+    "template_ops", "phase", "resolution_mode", "kernel", "reduction", "implementation", "request_status",
+    "requirements", "production_blockers", "inputs"
+  ],
+  "properties": {
+    "schema": {"const": "cke.resolved_attention_contract"},
+    "schema_version": {"const": 1},
+    "engine_contract_version": {"const": "8"},
+    "circuit": {"type": ["string", "null"]},
+    "operation": {"type": "string", "minLength": 1},
+    "template_ops": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["attn", "attn_sliding"]}},
+    "phase": {"enum": ["prefill", "decode"]},
+    "resolution_mode": {"enum": ["bringup", "production"]},
+    "kernel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "function", "implementation_status", "explicit_selector", "selector"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "function": {"type": "string", "minLength": 1},
+        "implementation_status": {"enum": ["unresolved", "observed", "validated"]},
+        "explicit_selector": {"type": "boolean"},
+        "selector": {"type": ["string", "null"]}
+      }
+    },
+    "reduction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "definition_status", "semantics"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "definition_status": {"enum": ["unresolved", "observed", "validated"]},
+        "semantics": {"type": "object", "minProperties": 9}
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["isa_dispatch", "threading"],
+      "properties": {
+        "isa_dispatch": {"enum": ["runtime", "compile_time", "scalar"]},
+        "threading": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["runtime", "work_partition", "dispatch", "reduction_order_effect"],
+          "properties": {
+            "runtime": {"enum": ["serial", "ck_threadpool"]},
+            "work_partition": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["serial", "independent_heads", "independent_query_blocks", "kv_chunks_by_workers"]}},
+            "dispatch": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["inline", "ck_threadpool_dispatch_n"]}},
+            "reduction_order_effect": {"enum": ["none", "contract_defined", "implementation_defined"]}
+          }
+        }
+      }
+    },
+    "request_status": {"enum": ["unresolved", "observed", "validated"]},
+    "requirements": {"type": "object", "minProperties": 5},
+    "production_blockers": {"type": "array", "items": {"type": "string"}},
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["circuit", "circuit_sha256"],
+      "properties": {
+        "circuit": {"type": ["string", "null"]},
+        "circuit_sha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

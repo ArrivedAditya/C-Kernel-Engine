@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.attention_required_contracts",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["required_contracts"],
+  "properties": {
+    "required_contracts": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["op", "template_ops", "phases"],
+        "properties": {
+          "op": {"enum": ["attention", "attention_sliding"]},
+          "template_ops": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"enum": ["attn", "attn_sliding"]}
+          },
+          "phases": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": false,
+            "properties": {
+              "prefill": {"$ref": "#/$defs/request"},
+              "decode": {"$ref": "#/$defs/request"}
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requires", "validation", "evidence"],
+      "properties": {
+        "requires": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "execution.phase",
+            "tensor.q.dtype",
+            "tensor.kv.dtype",
+            "tensor.layout",
+            "numerics.attention_reduction"
+          ],
+          "properties": {
+            "execution.phase": {"enum": ["prefill", "decode"]},
+            "tensor.q.dtype": {"enum": ["fp32", "fp16", "bf16"]},
+            "tensor.kv.dtype": {"enum": ["fp32", "fp16", "bf16"]},
+            "tensor.layout": {"enum": ["head_major", "token_major"]},
+            "numerics.attention_reduction": {"type": "string", "minLength": 1}
+          }
+        },
+        "validation": {"enum": ["unresolved", "observed", "validated"]},
+        "evidence": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

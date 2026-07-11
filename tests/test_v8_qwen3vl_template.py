@@ -143,7 +143,7 @@ def _make_qwen3vl_manifest() -> dict:
 
 class V8Qwen3VLTemplateTests(unittest.TestCase):
 
-    def test_numerical_contract_validation_preserves_generated_artifacts(self) -> None:
+    def test_authoritative_contract_preserves_behavior_and_reaches_call_ir(self) -> None:
         manifest = _make_qwen3vl_manifest()
         with tempfile.TemporaryDirectory(prefix="v8_qwen3vl_contract_equivalence_") as td:
             root = Path(td)
@@ -169,8 +169,37 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
 
             with mock.patch.object(build_ir_v8, "_resolve_manifest_numerical_contracts", return_value=[]):
                 legacy = generate("legacy")
+
+            # A stale legacy override must not influence a contract-bearing op.
+            manifest["template"]["kernels"]["attn"] = "attention_forward_causal_head_major_gqa_flash"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             contracted = generate("contracted")
-            self.assertEqual(contracted, legacy)
+
+            def without_contract_metadata(value):
+                if isinstance(value, dict):
+                    return {
+                        key: without_contract_metadata(item)
+                        for key, item in value.items()
+                        if key not in {"required_contract", "resolved_contract"}
+                    }
+                if isinstance(value, list):
+                    return [without_contract_metadata(item) for item in value]
+                return value
+
+            self.assertEqual(without_contract_metadata(contracted), legacy)
+
+            expected_kernel = "attention_forward_full_head_major_gqa_flash_strided"
+            for artifact in ("ir1", "lowered", "call"):
+                doc = contracted[artifact]
+                operations = doc if isinstance(doc, list) else doc.get("operations", doc.get("ops", []))
+                attn = next(item for item in operations if item.get("op") == "attn")
+                self.assertEqual(attn["required_contract"]["numerics.attention_reduction"], "f16_kv_fp32_online")
+                self.assertEqual(attn["resolved_contract"]["contract_id"], "f16_kv_fp32_online")
+                self.assertEqual(attn["resolved_contract"]["kernel_id"], expected_kernel)
+                if artifact == "call":
+                    self.assertEqual(attn["function"], expected_kernel)
+                else:
+                    self.assertEqual(attn["kernel"], expected_kernel)
 
     def test_qwen3vl_invalid_vision_mrope_sections_fail_lowering(self) -> None:
         manifest = _make_qwen3vl_manifest()

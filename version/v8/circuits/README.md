@@ -50,7 +50,7 @@ These files describe compute graphs.
 - The lowerer should only see declared operations, graph edges, and stitch
   points. It should not branch on names like DeepStack, MoE, SSM, encoder, or
   decoder.
-- If a model needs side paths, the template should express them via generic
+- If a model needs side paths, the circuit should express them via generic
   control primitives such as `branch`, `collect`, and `stitch`.
 - If a model needs routed experts later, that should extend the same contract
   with `route`, `dispatch`, and `combine`.
@@ -59,6 +59,11 @@ These files describe compute graphs.
   schema for future bring-up.
 - `required_contracts` entries state semantic requirements only. Zero matching
   providers and multiple matching providers are compile-time errors.
+- Contract-bearing operations name the circuit op IDs they govern through
+  `template_ops`. The resolver selects the provider before GraphIR construction;
+  lowering and codegen may not select a replacement.
+- Unknown or incomplete contract fields are hard faults. Follow
+  `version/v8/CONTRACT_POLICY.md`; do not introduce a fallback or bypass.
 
 ## File naming
 

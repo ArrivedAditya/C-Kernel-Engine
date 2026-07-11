@@ -3,6 +3,7 @@
   "op": "attention",
   "variant": "full_flash_fp32",
   "mode": "prefill",
+  "contract_schema_version": 1,
   "provides": {
     "execution.phase": ["prefill"],
     "tensor.q.dtype": ["fp32"],
@@ -16,6 +17,15 @@
       "function": "attention_forward_full_head_major_gqa_flash_strided",
       "explicit_selector": false,
       "notes": "Legacy v8 ABI with validated FP32 Q and FP16-rounded K/V semantics."
+    }
+  },
+  "implementation": {
+    "isa_dispatch": "runtime",
+    "threading": {
+      "runtime": "ck_threadpool",
+      "work_partition": ["independent_query_blocks"],
+      "dispatch": ["ck_threadpool_dispatch_n"],
+      "reduction_order_effect": "none"
     }
   },
   "quant": {

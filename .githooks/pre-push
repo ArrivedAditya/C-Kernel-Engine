@@ -113,7 +113,7 @@ case "${CK_PREPUSH_REGRESSION_FAST:-auto}" in
                 version/v7/scripts/*|version/v7/templates/*|version/v7/regression/*|version/v7/test_assets/*|version/v7/src/*|version/v7/kernel_maps/*|version/v7/README.md)
                     ck_should_run_v7_regression_fast=1
                     ;;
-                version/v8/scripts/*|version/v8/circuits/*|version/v8/contracts/*|version/v8/regression/*|version/v8/test_assets/*|version/v8/src/*|version/v8/kernel_maps/*|version/v8/README.md)
+                version/v8/scripts/*|version/v8/circuits/*|version/v8/contracts/*|version/v8/schemas/*|version/v8/regression/*|version/v8/test_assets/*|version/v8/src/*|version/v8/kernel_maps/*|version/v8/README.md)
                     ck_should_run_v8_regression_fast=1
                     ;;
             esac

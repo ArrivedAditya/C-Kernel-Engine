@@ -30,6 +30,12 @@ build_ir_v8 = _load_module("build_ir_v8_for_tests", V8_BUILD_PATH)
 
 def _normalized_template_doc(doc: dict) -> dict:
     normalized = json.loads(json.dumps(doc))
+    normalized.pop("required_contracts", None)
+    kernels = normalized.get("kernels")
+    if isinstance(kernels, dict):
+        for key in list(kernels):
+            if key.startswith("attn"):
+                kernels.pop(key)
     flags = normalized.get("flags")
     if isinstance(flags, dict):
         for key in build_ir_v8._FORBIDDEN_TEMPLATE_FLAG_KEYS:

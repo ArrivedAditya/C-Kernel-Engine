@@ -3,6 +3,31 @@
   "op": "attention",
   "variant": "decode_head_major_gqa_flash",
   "mode": "decode",
+  "contract_schema_version": 1,
+  "provides": {
+    "execution.phase": ["decode"],
+    "tensor.q.dtype": ["fp32"],
+    "tensor.kv.dtype": ["fp32"],
+    "tensor.layout": ["head_major"],
+    "numerics.attention_reduction": ["fp32_online"]
+  },
+  "supported_reductions": {
+    "fp32_online": {
+      "status": "validated",
+      "function": "attention_forward_decode_head_major_gqa_flash",
+      "explicit_selector": true,
+      "notes": "Validated FP32 single-token decode route."
+    }
+  },
+  "implementation": {
+    "isa_dispatch": "runtime",
+    "threading": {
+      "runtime": "serial",
+      "work_partition": ["independent_heads"],
+      "dispatch": ["inline"],
+      "reduction_order_effect": "none"
+    }
+  },
   "quant": {
     "activation": "fp32",
     "output": "fp32"
