@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 189,
+      "total": 190,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -51,7 +51,7 @@
         "moe_swiglu_expert_mlp": 2,
         "optimizer": 4,
         "partial_rope_concat": 2,
-        "position_embeddings": 4,
+        "position_embeddings": 5,
         "position_ids": 1,
         "projector_prep": 1,
         "q_norm": 1,
@@ -15235,6 +15235,102 @@
       "notes": "Add align-corners bilinearly interpolated learned position embeddings to a stream in merged-tile traversal.",
       "name": "position_embeddings_add_tiled_2d_align_corners",
       "_source_file": "position_embeddings_add_tiled_2d_align_corners.json"
+    },
+    {
+      "id": "position_embeddings_add_tiled_2d_align_corners_bf16",
+      "op": "position_embeddings",
+      "variant": "absolute_learned_inplace_tiled_2d_align_corners_bf16_storage",
+      "quant": {
+        "weight": "bf16",
+        "activation": "bf16",
+        "output": "bf16"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ],
+          "desc": "FP32 ABI carrying BF16-rounded token-major values"
+        }
+      ],
+      "weights": [
+        {
+          "name": "pos_emb",
+          "dtype": "fp32",
+          "shape": [
+            "P",
+            "E"
+          ],
+          "desc": "FP32 ABI carrying BF16-rounded learned position values"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ],
+          "desc": "FP32 ABI carrying BF16-rounded residual output"
+        }
+      ],
+      "dims": [
+        "grid_h",
+        "grid_w",
+        "embed_dim",
+        "merge_size",
+        "source_grid_size"
+      ],
+      "impl": {
+        "function": "position_embeddings_add_tiled_2d_align_corners_bf16",
+        "c_declaration": "void position_embeddings_add_tiled_2d_align_corners_bf16(float *x, const float *position_embd, int grid_h, int grid_w, int embed_dim, int merge_size, int source_grid_size);",
+        "sources": [
+          "src/kernels/vision_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "bf16_tiled_2d_align_corners_rne_residual",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "position_embeddings_add_tiled_2d_align_corners_bf16",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "bf16",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "notes": "Exact PyTorch BF16 storage-boundary contract for Qwen3-VL-style tiled position interpolation. Selection is contract-driven, not model-name-driven.",
+      "name": "position_embeddings_add_tiled_2d_align_corners_bf16",
+      "_source_file": "position_embeddings_add_tiled_2d_align_corners_bf16.json"
     },
     {
       "id": "q_norm_forward",

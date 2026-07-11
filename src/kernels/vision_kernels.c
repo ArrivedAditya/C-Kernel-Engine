@@ -17,6 +17,8 @@
 #include <stdint.h>
 #include <math.h>
 
+#include "bf16_utils.h"
+
 #if defined(__clang__)
 #define CK_VISION_NOINLINE __attribute__((noinline))
 #define CK_VISION_OPTNONE __attribute__((optnone))
@@ -334,6 +336,66 @@ void position_embeddings_add_tiled_2d_align_corners(float *x,
         for (int d = 0; d < embed_dim; ++d) {
             const float pos = p00[d] * w00 + p01[d] * w01 + p10[d] * w10 + p11[d] * w11;
             dst[d] += pos;
+        }
+    }
+}
+
+/*
+ * Match a backend that materializes this interpolation and residual-add edge
+ * in BF16. The ABI remains FP32 so generated runtimes can share activation
+ * storage, but every value is rounded at the BF16 boundary before the next
+ * arithmetic step. Selection belongs to the circuit/kernel-map contract.
+ */
+void position_embeddings_add_tiled_2d_align_corners_bf16(float *x,
+                                                          const float *position_embd,
+                                                          int grid_h,
+                                                          int grid_w,
+                                                          int embed_dim,
+                                                          int merge_size,
+                                                          int source_grid_size)
+{
+    if (x == NULL || position_embd == NULL || grid_h <= 0 || grid_w <= 0 ||
+        embed_dim <= 0 || merge_size <= 0 || source_grid_size <= 0) {
+        return;
+    }
+
+    for (int tok = 0; tok < grid_h * grid_w; ++tok) {
+        const int row_major = tile_order_index_2d(tok, grid_h, grid_w, merge_size);
+        const int dst_y = row_major / grid_w;
+        const int dst_x = row_major % grid_w;
+        /* torch.linspace computes each rational coordinate before FP32 storage. */
+        const float src_y = grid_h > 1
+            ? (float)((double)dst_y * (double)(source_grid_size - 1) / (double)(grid_h - 1))
+            : 0.0f;
+        const float src_x = grid_w > 1
+            ? (float)((double)dst_x * (double)(source_grid_size - 1) / (double)(grid_w - 1))
+            : 0.0f;
+        const int y0 = (int)src_y;
+        const int x0 = (int)src_x;
+        const int y1 = y0 + 1 < source_grid_size ? y0 + 1 : y0;
+        const int x1 = x0 + 1 < source_grid_size ? x0 + 1 : x0;
+        const float dy = src_y - (float)y0;
+        const float dx = src_x - (float)x0;
+        const float w00 = bf16_to_float(float_to_bf16((1.0f - dy) * (1.0f - dx)));
+        const float w01 = bf16_to_float(float_to_bf16((1.0f - dy) * dx));
+        const float w10 = bf16_to_float(float_to_bf16(dy * (1.0f - dx)));
+        const float w11 = bf16_to_float(float_to_bf16(dy * dx));
+        const float *p00 = position_embd + ((size_t)y0 * source_grid_size + x0) * embed_dim;
+        const float *p01 = position_embd + ((size_t)y0 * source_grid_size + x1) * embed_dim;
+        const float *p10 = position_embd + ((size_t)y1 * source_grid_size + x0) * embed_dim;
+        const float *p11 = position_embd + ((size_t)y1 * source_grid_size + x1) * embed_dim;
+        float *dst = x + (size_t)tok * embed_dim;
+
+        for (int d = 0; d < embed_dim; ++d) {
+            const float v00 = bf16_to_float(float_to_bf16(p00[d] * w00));
+            const float v01 = bf16_to_float(float_to_bf16(p01[d] * w01));
+            const float v10 = bf16_to_float(float_to_bf16(p10[d] * w10));
+            const float v11 = bf16_to_float(float_to_bf16(p11[d] * w11));
+            float pos = bf16_to_float(float_to_bf16(v00 + v01));
+            pos = bf16_to_float(float_to_bf16(pos + v10));
+            pos = bf16_to_float(float_to_bf16(pos + v11));
+            const float hidden = bf16_to_float(float_to_bf16(dst[d]));
+            dst[d] = bf16_to_float(float_to_bf16(hidden + pos));
         }
     }
 }

@@ -71,6 +71,31 @@ class NumericalExecutionContractTests(unittest.TestCase):
         )
         self.assertEqual(plan["checkpoint"]["axis_names"], ["token", "channel"])
 
+    def test_bf16_position_contract_resolves_exact_kernel(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen3_vl_vision.json"
+        )
+        plan = resolver.resolve_contract(
+            circuit_doc,
+            self.contracts,
+            self.kernels,
+            "vision.frontend.position",
+            "prefill",
+            mode="production",
+        )
+        self.assertEqual(
+            plan["contract"]["id"],
+            "bf16_tiled_2d_align_corners_rne_residual",
+        )
+        self.assertEqual(
+            plan["kernel"]["id"],
+            "position_embeddings_add_tiled_2d_align_corners_bf16",
+        )
+        self.assertEqual(
+            plan["kernel"]["function"],
+            "position_embeddings_add_tiled_2d_align_corners_bf16",
+        )
+
     def test_zero_provider_is_hard_failure(self):
         kernels = copy.deepcopy(self.kernels)
         kernels["kernels"] = {}

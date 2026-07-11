@@ -109,6 +109,30 @@
       }
     }
   },
+  "required_numerical_contracts": {
+    "vision.frontend.position": {
+      "op": "position_embeddings",
+      "template_ops": ["position_embeddings"],
+      "selector": {
+        "config_equals": {
+          "vision_position_storage_boundary": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "bf16_tiled_2d_align_corners_rne_residual",
+          "validation": "validated",
+          "evidence": "unittest/bf16/test_vision_position_storage_bf16.py: 3/3 exact synthetic geometries and 4,644,864/4,644,864 exact OCR-scale values on the native BF16 reference lane."
+        }
+      },
+      "checkpoint": {
+        "id": "vision.frontend.position.output",
+        "producer": "position_embeddings",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    }
+  },
   "semantic_checkpoints": {
     "schema": "cke.semantic_checkpoint_contract",
     "schema_version": 1,

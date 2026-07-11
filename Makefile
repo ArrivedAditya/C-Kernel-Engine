@@ -723,7 +723,8 @@ PY_TESTS_BF16 := unittest/bf16/test_sigmoid_bf16.py \
                 unittest/bf16/test_relu_bf16.py \
                 unittest/bf16/test_swiglu_bf16.py \
                 unittest/bf16/test_embedding_bf16.py \
-                unittest/bf16/test_cross_entropy_bf16.py
+                unittest/bf16/test_cross_entropy_bf16.py \
+                unittest/bf16/test_vision_position_storage_bf16.py
 PY_TESTS_BF16_V8 := version/v8/scripts/bf16_safetensors_lowering_guard_v8.py
 
 LITMUS_DEMO_ARGS ?= --vocab 100 --ctx 100 --embed 64 --intermediate 128 --heads 4 --kv-heads 2

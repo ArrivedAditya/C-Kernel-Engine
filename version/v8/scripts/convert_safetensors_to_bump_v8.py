@@ -1365,9 +1365,11 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
                 preproc = {}
         if head_dim > 0:
             axis_pairs = max(1, head_dim // 4)
-            vision_mrope_sections = [axis_pairs, axis_pairs, axis_pairs, axis_pairs]
+            # Vision M-RoPE has two spatial axes. Keep the four-slot ABI, but
+            # do not populate decoder-only time/extra sections.
+            vision_mrope_sections = [axis_pairs, axis_pairs, 0, 0]
         else:
-            vision_mrope_sections = [1, 1, 1, 1]
+            vision_mrope_sections = [1, 1, 0, 0]
         cfg.update({
             "model": "qwen3_vl_vision",
             "arch": "qwen3_vl_vision",
@@ -1402,6 +1404,7 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "vision_grid_w": grid,
             "position_grid_size": grid,
             "position_interpolation_policy": "align_corners_bilinear",
+            "vision_position_storage_boundary": "bf16",
             "vision_num_patches": pos_rows,
             "spatial_merge_size": merge,
             "spatial_merge_factor": merge_factor,
