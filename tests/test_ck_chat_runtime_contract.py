@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import io
+import os
 import sys
 import tempfile
 import unittest
@@ -33,6 +34,20 @@ class _FakeCFunc:
 
 
 class TestCKChatRuntimeContract(unittest.TestCase):
+    def test_first_token_llama_root_honors_environment(self) -> None:
+        old = os.environ.get("CK_LLAMA_CPP_ROOT")
+        try:
+            os.environ["CK_LLAMA_CPP_ROOT"] = "/tmp/cke-test-llama-root"
+            self.assertEqual(
+                first_token._llama_cpp_root(),
+                Path("/tmp/cke-test-llama-root").resolve(),
+            )
+        finally:
+            if old is None:
+                os.environ.pop("CK_LLAMA_CPP_ROOT", None)
+            else:
+                os.environ["CK_LLAMA_CPP_ROOT"] = old
+
     def test_ck_model_reads_named_activation_f32_when_runtime_exports_api(self) -> None:
         data = np.array([1.25, -2.5, 3.75, 4.5], dtype=np.float32)
         data_ptr = data.ctypes.data

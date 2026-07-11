@@ -25,9 +25,15 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[4]
 SCRIPT_DIR = Path(__file__).resolve().parent
-LLAMA_CPP = ROOT / "llama.cpp"
 HELPER_SRC = SCRIPT_DIR / "llama_token_replay.cpp"
 HELPER_BIN = Path("/tmp/ckv7_llama_token_replay")
+
+
+def _llama_cpp_root() -> Path:
+    configured = os.environ.get("CK_LLAMA_CPP_ROOT") or os.environ.get("LLAMA_CPP_ROOT")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return ROOT / "llama.cpp"
 
 
 def parse_tokens_csv(text: str) -> list[int]:
@@ -157,9 +163,10 @@ def ensure_llama_helper() -> Path:
     if not rebuild:
         return HELPER_BIN
 
-    include_dir = LLAMA_CPP / "include"
-    ggml_include_dir = LLAMA_CPP / "ggml" / "include"
-    lib_dir = LLAMA_CPP / "build" / "bin"
+    llama_cpp = _llama_cpp_root()
+    include_dir = llama_cpp / "include"
+    ggml_include_dir = llama_cpp / "ggml" / "include"
+    lib_dir = llama_cpp / "build" / "bin"
     if not include_dir.exists():
         raise FileNotFoundError(f"llama include dir missing: {include_dir}")
     if not ggml_include_dir.exists():
@@ -202,7 +209,7 @@ def ensure_llama_helper() -> Path:
 
 def run_llama_logits(gguf_path: Path, tokens: list[int], ctx_len: int, top_k: int, threads: int) -> dict[str, Any]:
     helper = ensure_llama_helper()
-    helper_env = _llama_runtime_env(LLAMA_CPP / "build" / "bin")
+    helper_env = _llama_runtime_env(_llama_cpp_root() / "build" / "bin")
     with tempfile.TemporaryDirectory(prefix="llama_token_replay_") as td:
         logits_path = Path(td) / "llama_logits.f32"
         cmd = [

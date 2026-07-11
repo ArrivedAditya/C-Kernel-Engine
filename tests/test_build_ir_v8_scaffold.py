@@ -31,6 +31,11 @@ build_ir_v8 = _load_module("build_ir_v8_for_tests", V8_BUILD_PATH)
 def _normalized_template_doc(doc: dict) -> dict:
     normalized = json.loads(json.dumps(doc))
     normalized.pop("required_contracts", None)
+    contract = normalized.get("contract")
+    if isinstance(contract, dict):
+        # Runtime preferences moved out of circuit flags in v8. They are not
+        # graph topology and therefore are excluded from the v7 seed check.
+        contract.pop("runtime_defaults", None)
     kernels = normalized.get("kernels")
     if isinstance(kernels, dict):
         for key in list(kernels):
