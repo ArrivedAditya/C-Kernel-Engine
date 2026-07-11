@@ -2427,19 +2427,31 @@ llamacpp-parity-nightly:
 	@$(MAKE) --no-print-directory test-threadpool-parity
 	@echo ""
 	@echo "Running comprehensive Q4/Q5/Q8 GEMV CK vs llama.cpp tests (quick)..."
-	@$(MAKE) --no-print-directory test-gemv-comprehensive-quick
+	@if [ -f "$(LLAMA_KERNEL_TEST)" ]; then \
+	  $(MAKE) --no-print-directory test-gemv-comprehensive-quick; \
+	else \
+	  echo "[SKIP] $(LLAMA_KERNEL_TEST) is unavailable"; \
+	fi
 	@echo ""
 	@echo "Running GEMM AVX vs scalar benchmark (quick)..."
 	@$(MAKE) --no-print-directory test-gemm-avx-bench-quick
 	@echo ""
 	@echo "Running DeltaNet ISA benchmark (quick)..."
-	@$(MAKE) --no-print-directory test-deltanet-avx-bench-quick
+	@if [ -f "$(LLAMA_KERNEL_TEST)" ]; then \
+	  $(MAKE) --no-print-directory test-deltanet-avx-bench-quick; \
+	else \
+	  echo "[SKIP] $(LLAMA_KERNEL_TEST) is unavailable"; \
+	fi
 	@echo ""
 	@echo "Running head-major Q5 out-proj parity benchmark..."
 	@$(MAKE) --no-print-directory test-head-major-q5-outproj-quick
 	@echo ""
 	@echo "Running head-major Q5 CK vs llama.cpp benchmark..."
-	@$(MAKE) --no-print-directory test-head-major-q5-vs-llama-quick
+	@if [ -f "$(LLAMA_KERNEL_TEST)" ]; then \
+	  $(MAKE) --no-print-directory test-head-major-q5-vs-llama-quick; \
+	else \
+	  echo "[SKIP] $(LLAMA_KERNEL_TEST) is unavailable"; \
+	fi
 
 # Full parity + ISA variant sweep for GEMM AVX benchmarks
 llamacpp-parity-full-all-isa-variants:

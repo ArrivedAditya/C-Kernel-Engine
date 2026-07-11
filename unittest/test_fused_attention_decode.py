@@ -1,12 +1,13 @@
-"""
-Fused attention decode parity test (PyTorch vs C kernel).
+"""Fused decode parity against the unfused CK circuit.
 
-Validates the fused attention decode path (QKV + RoPE + KV cache + attention + Wo)
-against a PyTorch reference for a full layer decode run.
+PyTorch remains a diagnostic reference. Fusion equivalence uses the same CK
+attention contract on both sides so host BLAS and CPU dispatch cannot decide
+whether the fused implementation passes.
 """
 import argparse
 import ctypes
 import math
+import os
 
 import numpy as np
 import torch
@@ -82,6 +83,13 @@ lib.ck_layer_forward_rmsnorm_swiglu_decode_fused_attn_mlp.argtypes = [
     ctypes.c_int,
 ]
 lib.ck_layer_forward_rmsnorm_swiglu_decode_fused_attn_mlp.restype = None
+
+lib.ck_layer_forward_rmsnorm_swiglu_decode.argtypes = [
+    ctypes.POINTER(CKLayerForwardParams),
+    ctypes.c_int,
+    ctypes.c_int,
+]
+lib.ck_layer_forward_rmsnorm_swiglu_decode.restype = None
 
 
 def aligned_empty(shape, dtype=np.float32, align=64):
@@ -408,23 +416,48 @@ def run_case(seed=0,
         out = torch.from_numpy(out_history).float()
         return out
 
+    out_unfused = run_decode_kernel(lib.ck_layer_forward_rmsnorm_swiglu_decode)
+    out_unfused_repeat = run_decode_kernel(lib.ck_layer_forward_rmsnorm_swiglu_decode)
     out_fused = run_decode_kernel(lib.ck_layer_forward_rmsnorm_swiglu_decode_fused_attn)
     out_fused_mlp = run_decode_kernel(lib.ck_layer_forward_rmsnorm_swiglu_decode_fused_attn_mlp)
 
-    diff_fused = max_diff(out_fused, ref_out)
-    diff_fused_mlp = max_diff(out_fused_mlp, ref_out)
-    return diff_fused, diff_fused_mlp
+    return (
+        max_diff(out_fused, out_unfused),
+        max_diff(out_fused_mlp, out_unfused),
+        max_diff(out_unfused_repeat, out_unfused),
+        max_diff(out_unfused, ref_out),
+        max_diff(out_fused, ref_out),
+        max_diff(out_fused_mlp, ref_out),
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(description="Fused attention decode parity test")
     parser.add_argument("--seed", type=int, default=0, help="RNG seed")
-    parser.add_argument("--tolerance", type=float, default=5e-3, help="Max abs diff tolerance")
+    parser.add_argument("--tolerance", type=float, default=1e-3, help="Fused-MLP max abs diff tolerance")
     args = parser.parse_args()
 
     print_system_info()
 
-    diff_fused, diff_fused_mlp = run_case(seed=args.seed)
+    # This test isolates fusion equivalence. Use the same deterministic
+    # attention contract on both sides; flash-vs-regular parity has dedicated
+    # kernel tests and must not make this result runner-CPU dependent.
+    os.environ["CK_FLASH_ATTN_STRICT"] = "1"
+    (
+        diff_fused,
+        diff_fused_mlp,
+        diff_repeat,
+        diff_unfused_torch,
+        diff_fused_torch,
+        diff_fused_mlp_torch,
+    ) = run_case(seed=args.seed)
+
+    print("\n  PYTORCH DIAGNOSTIC (not the fusion-equivalence oracle)")
+    print("  ----------------------------------------")
+    print(f"  unfused_vs_pytorch          max_diff={diff_unfused_torch:.8e}")
+    print(f"  fused_attention_vs_pytorch  max_diff={diff_fused_torch:.8e}")
+    print(f"  fused_mlp_vs_pytorch        max_diff={diff_fused_mlp_torch:.8e}")
+    print(f"  unfused_repeatability       max_diff={diff_repeat:.8e}")
 
     report = TestReport(
         test_name="Fused Attention Decode",
@@ -434,15 +467,21 @@ def main():
     )
     report.add_result(TestResult(
         name="fused_attention_decode",
-        passed=diff_fused <= args.tolerance,
+        passed=diff_fused == 0.0,
         max_diff=diff_fused,
-        tolerance=args.tolerance,
+        tolerance=0.0,
     ))
     report.add_result(TestResult(
         name="fused_attention_decode_mlp",
         passed=diff_fused_mlp <= args.tolerance,
         max_diff=diff_fused_mlp,
         tolerance=args.tolerance,
+    ))
+    report.add_result(TestResult(
+        name="unfused_decode_repeatability",
+        passed=diff_repeat == 0.0,
+        max_diff=diff_repeat,
+        tolerance=0.0,
     ))
 
     report.print_report()
