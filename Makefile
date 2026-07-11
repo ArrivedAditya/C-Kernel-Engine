@@ -264,6 +264,17 @@ V8_QWEN3VL_ENCODER_PARITY_IMAGE_MAX_TOKENS ?= 1024
 V8_QWEN3VL_ENCODER_PARITY_MIN_COSINE ?= 0.99
 V8_QWEN3VL_ENCODER_PARITY_MAX_RMSE ?= 0.03
 V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT ?= /opt/app-root/src/Software/llama.cpp
+V8_VISION_ENCODER_FAMILY ?= qwen3vl
+V8_VISION_ENCODER_MODE ?= all
+V8_VISION_ENCODER_OUTPUT ?= build/vision_encoder_accuracy
+V8_VISION_ENCODER_THREADS ?= 20
+V8_VISION_ENCODER_REQUIRE_ARTIFACTS ?= 0
+V8_VISION_ENCODER_ALLOW_NON_AVX512 ?= 0
+V8_VISION_ENCODER_FULL_LAYERS ?= 0
+V8_VISION_ENCODER_KEEP_ARTIFACTS ?= 0
+V8_QWEN3VL_BF16_CHECKPOINT ?=
+V8_QWEN3VL_BF16_RUNTIME ?=
+V8_QWEN3VL_BF16_WEIGHTS ?=
 V8_GEMMA4_MODEL ?= hf://unsloth/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf
 V8_GEMMA4_MMPROJ ?= hf://unsloth/gemma-4-E4B-it-GGUF/mmproj-F16.gguf
 V8_GEMMA4_CACHE_DIR ?= /opt/app-root/src/.cache/ck-engine-v8/models/unsloth--gemma-4-E4B-it-GGUF
@@ -1266,15 +1277,17 @@ test-head-major-q5-outproj-quick: $(LIB)
 
 test-v8-qwen3vl: $(LIB_VISION)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) tests/test_v8_qwen3vl_template.py
+	$(PYTHON) $(PYTHONFLAGS) tests/test_v8_vision_encoder_accuracy_gate.py
+	$(PYTHON) $(PYTHONFLAGS) tests/test_nightly_runner_artifact_status.py
 
 test-v8-qwen3vl-e2e-smoke:
 	@if [ ! -f "$(V8_QWEN3VL_CACHED_MODEL)" ] || [ ! -f "$(V8_QWEN3VL_CACHED_MMPROJ)" ]; then \
 		echo "SKIP: Qwen3-VL cached decoder/mmproj not found under $(V8_QWEN3VL_CACHE_DIR)"; \
 	else \
 		echo "Running cached v8 Qwen3-VL image -> mmproj -> decoder smoke..."; \
-		CK_NUM_THREADS=$${CK_NUM_THREADS:-24} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
-			$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/ck_run_v8.py run "$(V8_QWEN3VL_MODEL)" \
-			--mmproj "hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf" \
+		CK_NUM_THREADS=$(V8_VISION_ENCODER_THREADS) OMP_NUM_THREADS=1 \
+			$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/ck_run_v8.py run "$(V8_QWEN3VL_CACHED_MODEL)" \
+			--mmproj "$(V8_QWEN3VL_CACHED_MMPROJ)" \
 			--image-path "$(V8_QWEN3VL_IMAGE)" \
 			--prompt "Explain this image." \
 			--context-len 1024 \
@@ -1393,6 +1406,28 @@ qwen3vl-encoder-prefix-parity:
 			--min-cosine $(V8_QWEN3VL_ENCODER_PARITY_MIN_COSINE) \
 			--max-rmse $(V8_QWEN3VL_ENCODER_PARITY_MAX_RMSE); \
 	fi
+
+vision-encoder-full:
+	CK_NUM_THREADS=$(V8_VISION_ENCODER_THREADS) OMP_NUM_THREADS=$(V8_VISION_ENCODER_THREADS) \
+		$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/vision_encoder_accuracy_gate_v8.py \
+		--family "$(V8_VISION_ENCODER_FAMILY)" --mode "$(V8_VISION_ENCODER_MODE)" \
+		--output-dir "$(V8_VISION_ENCODER_OUTPUT)" --threads "$(V8_VISION_ENCODER_THREADS)" \
+		$(if $(wildcard $(V8_QWEN3VL_CACHED_MMPROJ)),--q4-mmproj "$(V8_QWEN3VL_CACHED_MMPROJ)",) \
+		$(if $(V8_QWEN3VL_BF16_CHECKPOINT),--bf16-checkpoint "$(V8_QWEN3VL_BF16_CHECKPOINT)",) \
+		$(if $(V8_QWEN3VL_BF16_RUNTIME),--bf16-runtime-dir "$(V8_QWEN3VL_BF16_RUNTIME)",) \
+		$(if $(V8_QWEN3VL_BF16_WEIGHTS),--bf16-weights-bump "$(V8_QWEN3VL_BF16_WEIGHTS)",) \
+		$(if $(filter 1,$(V8_VISION_ENCODER_REQUIRE_ARTIFACTS)),--require-artifacts,) \
+		$(if $(filter 1,$(V8_VISION_ENCODER_ALLOW_NON_AVX512)),--allow-non-avx512,) \
+		$(if $(filter 1,$(V8_VISION_ENCODER_FULL_LAYERS)),--full-layers,) \
+		$(if $(filter 1,$(V8_VISION_ENCODER_KEEP_ARTIFACTS)),--keep-artifacts,)
+
+vision-encoder-q4-full:
+	$(MAKE) vision-encoder-full V8_VISION_ENCODER_MODE=q4 V8_VISION_ENCODER_OUTPUT="$(V8_VISION_ENCODER_OUTPUT)/q4-only"
+
+vision-encoder-bf16-full:
+	$(MAKE) vision-encoder-full V8_VISION_ENCODER_MODE=bf16 V8_VISION_ENCODER_OUTPUT="$(V8_VISION_ENCODER_OUTPUT)/bf16-only"
+
+.PHONY: vision-encoder-full vision-encoder-q4-full vision-encoder-bf16-full
 
 test-deltanet: $(LIB)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) tests/test_deltanet.py $(ARGS)

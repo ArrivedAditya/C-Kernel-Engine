@@ -366,15 +366,44 @@ size_t ck_mtmd_clip_embd_nbytes_by_img(void *handle_ptr, int img_w, int img_h) {
     if (!ctx || img_w <= 0 || img_h <= 0) {
         return 0;
     }
+#ifdef CK_MTMD_CLIP_OBJECT_API
+    clip_image_f32_ptr image(clip_image_f32_init());
+    image->set_size({img_w, img_h}, false, false);
+    const int tokens = clip_n_output_tokens(ctx, image.get());
+    const int embed_dim = clip_n_mmproj_embd(ctx);
+    return tokens > 0 && embed_dim > 0
+        ? (size_t) tokens * (size_t) embed_dim * sizeof(float)
+        : 0;
+#else
     return clip_embd_nbytes_by_img(ctx, img_w, img_h);
+#endif
 }
+
 
 int ck_mtmd_clip_encode_float_image(void *handle_ptr, int n_threads, float *img, int h, int w, float *vec) {
     clip_ctx *ctx = unwrap_ctx(handle_ptr);
     if (!ctx || !img || !vec || h <= 0 || w <= 0) {
         return 0;
     }
+#ifdef CK_MTMD_CLIP_OBJECT_API
+    clip_image_f32_ptr image(clip_image_f32_init());
+    image->set_size({w, h}, false, false);
+    image->cpy_buf(std::vector<float>(img, img + (size_t) h * (size_t) w * 3));
+    const int tokens = clip_n_output_tokens(ctx, image.get());
+    const int embed_dim = clip_n_mmproj_embd(ctx);
+    if (tokens <= 0 || embed_dim <= 0) {
+        return 0;
+    }
+    std::vector<float> output((size_t) tokens * (size_t) embed_dim, 0.0f);
+    if (!clip_image_encode(ctx, n_threads, image.get(), output)) {
+        return 0;
+    }
+    std::memcpy(vec, output.data(), output.size() * sizeof(float));
+    return 1;
+#else
     return clip_encode_float_image(ctx, n_threads, img, h, w, vec) ? 1 : 0;
+#endif
 }
+
 
 }
