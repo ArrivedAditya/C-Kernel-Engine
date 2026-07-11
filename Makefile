@@ -571,6 +571,9 @@ LIB_ATTENTION := $(BUILD_DIR)/libckernel_attention.so
 LIB_ROPE     := $(BUILD_DIR)/libckernel_rope.so
 LIB_PARITY   := $(BUILD_DIR)/libck_parity.so
 LIB_PARITY_LLAMA := $(BUILD_DIR)/libck_parity_llama.so
+LLAMA_CPP_DIR ?= llama.cpp
+LLAMA_CPP_ABS = $(abspath $(LLAMA_CPP_DIR))
+LLAMA_KERNEL_TEST := $(LLAMA_CPP_DIR)/libggml_kernel_test.so
 
 # Tokenizer library (new - from src/tokenizer/)
 SRCS_TOKENIZER := src/tokenizer/murmurhash3.c \
@@ -2440,6 +2443,11 @@ llamacpp-parity-nightly:
 llamacpp-parity-full-all-isa-variants:
 	@echo "Running ISA variant sweep (AVX/AVX2/AVX-512) + full parity..."
 	@./scripts/test_isa_variants.sh
+	@if grep -q avx2 /proc/cpuinfo 2>/dev/null; then \
+		$(MAKE) --no-print-directory test-avx2-no-vnni-llama-quant-oracles; \
+	else \
+		echo "Skipping direct AVX2 quant oracle: AVX2 unavailable"; \
+	fi
 	@$(MAKE) --no-print-directory llamacpp-parity-full
 
 # Parity tests with performance benchmarks (CK vs llama.cpp)
@@ -3538,18 +3546,16 @@ $(LIB_PARITY): $(BUILD_DIR) $(PARITY_SRCS)
 libck_parity.so: $(LIB_PARITY)
 	@echo "Built CK parity library: $(LIB_PARITY)"
 
-$(LIB_PARITY_LLAMA): $(BUILD_DIR) $(PARITY_LLAMA_SRCS)
-	$(CC) $(CFLAGS) -DCK_ENABLE_LLAMA_CPP_PARITY=1 -shared -o $@ $(PARITY_LLAMA_SRCS) $(LDFLAGS) -lm -lpthread
+$(LIB_PARITY_LLAMA): $(BUILD_DIR) $(PARITY_LLAMA_SRCS) $(LLAMA_KERNEL_TEST)
+	$(CC) $(CFLAGS) -DCK_ENABLE_LLAMA_CPP_PARITY=1 \
+		-I$(LLAMA_CPP_DIR)/ggml/include -I$(LLAMA_CPP_DIR)/ggml/src \
+		-shared -o $@ $(PARITY_LLAMA_SRCS) $(LDFLAGS) -lm -lpthread
 
 libck_parity_llama.so: $(LIB_PARITY_LLAMA)
 	@echo "Built llama.cpp-backed CK parity library: $(LIB_PARITY_LLAMA)"
 
 # Build llama.cpp kernel test library
 # Requires llama.cpp to be cloned in llama.cpp/ subdirectory
-LLAMA_CPP_DIR ?= llama.cpp
-LLAMA_CPP_ABS = $(abspath $(LLAMA_CPP_DIR))
-LLAMA_KERNEL_TEST := $(LLAMA_CPP_DIR)/libggml_kernel_test.so
-
 $(LLAMA_KERNEL_TEST):
 	@echo "Building llama.cpp kernel test library..."
 	@if [ ! -d "$(LLAMA_CPP_DIR)" ]; then \
@@ -3589,11 +3595,24 @@ test-kernels: parity-libs
 	@echo "=================================================="
 	$(PYTHON) $(PYTHONFLAGS) scripts/test_kernels_vs_llamacpp.py --all
 
+# Feed identical pre-quantized activation bytes to both backends. This keeps
+# Q4_K/Q6_K dot parity independent of FP32 activation quantization behavior.
+test-avx2-llama-quant-oracles: parity-libs
+	CK_GEMV_WARMUP=1 CK_GEMV_ITERS=3 \
+		$(PYTHON) $(PYTHONFLAGS) unittest/test_gemv_kernels_comprehensive.py --quick
+
+test-avx2-no-vnni-llama-quant-oracles: llama_kernel_test
+	@$(MAKE) --no-print-directory -B BUILD_DIR=build_avx2_no_vnni \
+		AVX_FLAGS="-xAVX2 -mf16c -mssse3" libck_parity.so
+	CK_PARITY_LIB=$(CURDIR)/build_avx2_no_vnni/libck_parity.so \
+		CK_GEMV_WARMUP=1 CK_GEMV_ITERS=3 \
+		$(PYTHON) $(PYTHONFLAGS) unittest/test_gemv_kernels_comprehensive.py --quick
+
 # Run specific kernel test
 test-kernel-%: parity-libs
 	$(PYTHON) $(PYTHONFLAGS) scripts/test_kernels_vs_llamacpp.py --kernel $*
 
-.PHONY: libck_parity.so libck_parity_llama.so llama_kernel_test parity-libs test-kernels
+.PHONY: libck_parity.so libck_parity_llama.so llama_kernel_test parity-libs test-kernels test-avx2-llama-quant-oracles test-avx2-no-vnni-llama-quant-oracles
 
 # Litmus test for full forward pass parity with PyTorch
 # ==============================================================================

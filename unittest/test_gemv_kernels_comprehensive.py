@@ -49,6 +49,7 @@ BLOCK_Q4_K_SIZE = 144   # bytes per Q4_K block
 BLOCK_Q5_0_SIZE = 22    # bytes per Q5_0 block (2 + 4 + 16)
 BLOCK_Q8_0_SIZE = 34    # bytes per Q8_0 block (2 + 32)
 BLOCK_Q6_K_SIZE = 210   # bytes per Q6_K block
+BLOCK_Q8_K_SIZE = 292   # bytes per Q8_K block (4 + 256 + 32)
 
 
 # ============================================================================
@@ -60,6 +61,7 @@ class TestCase:
     M: int          # Output dimension (rows)
     K: int          # Input dimension (cols)
     tol: float = 1e-3
+    rtol: Optional[float] = None
     description: str = ""
 
 
@@ -72,11 +74,14 @@ class TestResult:
     M: int = 0                              # Output dimension
     K: int = 0                              # Input dimension
     tol: float = 1e-3                       # Tolerance for pass/fail
+    rtol: Optional[float] = None
+    ulp_diff: Optional[int] = None
     ck_time_ms: Optional[float] = None
     llama_time_ms: Optional[float] = None
     ck_gflops: Optional[float] = None
     llama_gflops: Optional[float] = None
     error: Optional[str] = None
+    qtype: str = ""
 
 
 # ============================================================================
@@ -84,6 +89,17 @@ class TestResult:
 # ============================================================================
 def fp16_to_bytes(val: float) -> bytes:
     return struct.pack('<e', val)
+
+
+def fp32_ulp_distance(a: float, b: float) -> int:
+    """Return distance between two finite FP32 values in representable steps."""
+    bits = np.asarray([a, b], dtype=np.float32).view(np.uint32)
+    ordered = np.where(
+        (bits & np.uint32(0x80000000)) != 0,
+        np.bitwise_not(bits),
+        bits | np.uint32(0x80000000),
+    ).astype(np.uint64)
+    return int(abs(int(ordered[0]) - int(ordered[1])))
 
 
 # ============================================================================
@@ -244,6 +260,24 @@ def random_q8_0_weights(n_elements: int) -> bytes:
     return bytes(data)
 
 
+def random_q8k_activations(n_elements: int) -> bytes:
+    """Generate valid Q8_K bytes once for direct cross-backend dot tests."""
+    assert n_elements % QK_K == 0, f"n_elements must be multiple of {QK_K}"
+    data = bytearray()
+    for _ in range(n_elements // QK_K):
+        scale = np.float32(np.random.uniform(0.005, 0.05))
+        values = np.random.randint(-127, 128, size=QK_K, dtype=np.int16).astype(np.int8)
+        bsums = np.array(
+            [np.sum(values[i:i + 16], dtype=np.int32) for i in range(0, QK_K, 16)],
+            dtype=np.int16,
+        )
+        data.extend(struct.pack("<f", float(scale)))
+        data.extend(values.tobytes())
+        data.extend(bsums.tobytes())
+    assert len(data) == (n_elements // QK_K) * BLOCK_Q8_K_SIZE
+    return bytes(data)
+
+
 def random_q6k_weights(n_elements: int) -> bytes:
     """Generate random Q6_K quantized weights."""
     assert n_elements % QK_K == 0, f"n_elements must be multiple of {QK_K}"
@@ -299,10 +333,13 @@ def load_libraries() -> Tuple[Optional[ctypes.CDLL], Optional[ctypes.CDLL]]:
                 pass
 
     # CK library
-    ck_paths = [
+    ck_paths = []
+    if os.environ.get("CK_PARITY_LIB"):
+        ck_paths.append(Path(os.environ["CK_PARITY_LIB"]).expanduser())
+    ck_paths.extend([
         base_dir / "build" / "libck_parity.so",
         base_dir / "libck_parity.so",
-    ]
+    ])
     libck = None
     for p in ck_paths:
         if p.exists():
@@ -338,6 +375,14 @@ def get_test_cases(quick: bool = False, large: bool = False) -> dict:
             "Q6_K": [
                 TestCase("tiny", M=1, K=256, description="Minimal Q6_K decode"),
                 TestCase("small", M=1, K=512, description="Small Q6_K decode"),
+            ],
+            "Q4_K_Q8_K": [
+                TestCase("tiny", M=1, K=256, tol=1e-5, rtol=1e-4, description="Direct Q4_KxQ8_K"),
+                TestCase("small", M=1, K=512, tol=1e-5, rtol=1e-4, description="Small direct"),
+            ],
+            "Q6_K_Q8_K": [
+                TestCase("tiny", M=1, K=256, tol=1e-5, rtol=1e-4, description="Direct Q6_KxQ8_K"),
+                TestCase("small", M=1, K=512, tol=1e-5, rtol=1e-4, description="Small direct"),
             ],
             "Q5_0": [
                 TestCase("tiny", M=1, K=32, tol=1e-2, description="Minimal Q5_0"),
@@ -383,6 +428,22 @@ def get_test_cases(quick: bool = False, large: bool = False) -> dict:
             TestCase("medium", M=1, K=1024, description="Medium Q6_K decode"),
             TestCase("wide", M=1, K=2048, description="Wide Q6_K decode"),
             TestCase("mlp_down", M=1, K=4864, description="Qwen 0.5B MLP down decode"),
+        ],
+        "Q4_K_Q8_K": [
+            TestCase("tiny", M=1, K=256, tol=1e-5, rtol=1e-4, description="Minimal direct vec_dot"),
+            TestCase("small", M=1, K=512, tol=1e-5, rtol=1e-4, description="Small direct vec_dot"),
+            TestCase("qwen", M=1, K=768, tol=1e-5, rtol=1e-4, description="Qwen dimension"),
+            TestCase("medium", M=1, K=1024, tol=1e-5, rtol=1e-4, description="Medium direct vec_dot"),
+            TestCase("wide", M=1, K=2048, tol=1e-5, rtol=1e-4, description="Wide direct vec_dot"),
+            TestCase("mlp_down", M=1, K=4864, tol=1e-5, rtol=1e-4, description="Qwen MLP down"),
+        ],
+        "Q6_K_Q8_K": [
+            TestCase("tiny", M=1, K=256, tol=1e-5, rtol=1e-4, description="Minimal direct vec_dot"),
+            TestCase("small", M=1, K=512, tol=1e-5, rtol=1e-4, description="Small direct vec_dot"),
+            TestCase("qwen", M=1, K=768, tol=1e-5, rtol=1e-4, description="Qwen dimension"),
+            TestCase("medium", M=1, K=1024, tol=1e-5, rtol=1e-4, description="Medium direct vec_dot"),
+            TestCase("wide", M=1, K=2048, tol=1e-5, rtol=1e-4, description="Wide direct vec_dot"),
+            TestCase("mlp_down", M=1, K=4864, tol=1e-5, rtol=1e-4, description="Qwen MLP down"),
         ],
         "Q5_0": [
             # Q5_0 tolerance set to 2e-2 because CK and llama.cpp use different
@@ -526,6 +587,17 @@ class KernelTester:
             ]
             lib.test_gemv_q8_0_fp32.restype = None
 
+        for name in ("test_vec_dot_q4_k_q8_k", "test_vec_dot_q6_k_q8_k"):
+            if hasattr(lib, name):
+                fn = getattr(lib, name)
+                fn.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                    ctypes.POINTER(ctypes.c_float),
+                    ctypes.c_int,
+                ]
+                fn.restype = None
+
         # Direct vec_dot Q5_0 x Q8_0 (pre-quantized inputs)
         if hasattr(lib, 'test_vec_dot_q5_0_q8_0'):
             lib.test_vec_dot_q5_0_q8_0.argtypes = [
@@ -608,6 +680,16 @@ class KernelTester:
         ]
         lib.ck_test_gemv_q8_0_q8_0.restype = None
 
+        for name in ("ck_test_vec_dot_q4_k_q8_k", "ck_test_vec_dot_q6_k_q8_k"):
+            fn = getattr(lib, name)
+            fn.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_float),
+                ctypes.c_int,
+            ]
+            fn.restype = None
+
         # Direct vec_dot Q5_0 x Q8_0 (pre-quantized inputs)
         lib.ck_test_vec_dot_q5_0_q8_0.argtypes = [
             ctypes.c_void_p,  # Q5_0 weights
@@ -630,15 +712,16 @@ class KernelTester:
         """Run a single GEMV test case."""
         M, K = case.M, case.K
         name = f"{qtype}_{case.label}"
+        ulp_diff = None
 
         if not self.libck:
-            return TestResult(name, False, 0, 0, error="CK library not loaded")
+            return TestResult(name, False, 0, 0, error="CK library not loaded", qtype=qtype)
 
         # Select appropriate weight generator and dequantization function
         dequant_fn = None
         if qtype == "Q4_K":
             if K % QK_K != 0:
-                return TestResult(name, False, 0, 0, error=f"K={K} not multiple of {QK_K}")
+                return TestResult(name, False, 0, 0, error=f"K={K} not multiple of {QK_K}", qtype=qtype)
             weight_gen = random_q4k_weights
             has_llama_ref = self.libggml is not None
             # No Python dequant for Q4_K, use llama.cpp reference
@@ -652,7 +735,7 @@ class KernelTester:
 
         elif qtype == "Q5_0":
             if K % QK5_0 != 0:
-                return TestResult(name, False, 0, 0, error=f"K={K} not multiple of {QK5_0}")
+                return TestResult(name, False, 0, 0, error=f"K={K} not multiple of {QK5_0}", qtype=qtype)
             weight_gen = random_q5_0_weights
             block_size = BLOCK_Q5_0_SIZE
             # Check if llama.cpp has Q5_0 support
@@ -697,21 +780,47 @@ class KernelTester:
 
         elif qtype == "Q6_K":
             if K % QK_K != 0:
-                return TestResult(name, False, 0, 0, error=f"K={K} not multiple of {QK_K}")
+                return TestResult(name, False, 0, 0, error=f"K={K} not multiple of {QK_K}", qtype=qtype)
             if M != 1:
-                return TestResult(name, False, 0, 0, error="Q6_K harness currently supports decode M=1 only")
+                return TestResult(name, False, 0, 0, error="Q6_K harness currently supports decode M=1 only", qtype=qtype)
             weight_gen = random_q6k_weights
-            has_llama_ref = False
+            has_llama_ref = self.libggml is not None and hasattr(self.libggml, "test_gemv_q6_k")
 
             def call_ck(w, x, y):
                 self.libck.ck_test_gemv_q6_k(w, x, y, K)
 
             def call_llama(w, x, y):
-                return None
+                if has_llama_ref:
+                    self.libggml.test_gemv_q6_k(w, x, y, K)
+
+        elif qtype in ("Q4_K_Q8_K", "Q6_K_Q8_K"):
+            if K % QK_K != 0:
+                return TestResult(name, False, 0, 0, error=f"K={K} not multiple of {QK_K}", qtype=qtype)
+            is_q4 = qtype == "Q4_K_Q8_K"
+            weight_gen = random_q4k_weights if is_q4 else random_q6k_weights
+            ck_name = "ck_test_vec_dot_q4_k_q8_k" if is_q4 else "ck_test_vec_dot_q6_k_q8_k"
+            llama_name = "test_vec_dot_q4_k_q8_k" if is_q4 else "test_vec_dot_q6_k_q8_k"
+            has_llama_ref = self.libggml is not None and hasattr(self.libggml, llama_name)
+            if not has_llama_ref:
+                return TestResult(
+                    name,
+                    False,
+                    0,
+                    0,
+                    error=f"missing llama.cpp oracle symbol: {llama_name}",
+                    qtype=qtype,
+                )
+
+            def call_ck(w, x_q8, y):
+                getattr(self.libck, ck_name)(w, x_q8, y, K)
+
+            def call_llama(w, x_q8, y):
+                if has_llama_ref:
+                    getattr(self.libggml, llama_name)(w, x_q8, y, K)
 
         elif qtype == "Q8_0":
             if K % QK8_0 != 0:
-                return TestResult(name, False, 0, 0, error=f"K={K} not multiple of {QK8_0}")
+                return TestResult(name, False, 0, 0, error=f"K={K} not multiple of {QK8_0}", qtype=qtype)
             weight_gen = random_q8_0_weights
             block_size = BLOCK_Q8_0_SIZE
             # Check if llama.cpp has Q8_0 support
@@ -756,7 +865,7 @@ class KernelTester:
         elif qtype == "Q5_0_Q8_0":
             # Direct Q5_0 x Q8_0 vec_dot test (pre-quantized inputs)
             if K % QK5_0 != 0:
-                return TestResult(name, False, 0, 0, error=f"K={K} not multiple of {QK5_0}")
+                return TestResult(name, False, 0, 0, error=f"K={K} not multiple of {QK5_0}", qtype=qtype)
             weight_gen = random_q5_0_weights
             has_llama_ref = (self.libggml is not None and
                             hasattr(self.libggml, 'test_vec_dot_q5_0_q8_0'))
@@ -771,7 +880,7 @@ class KernelTester:
         elif qtype == "Q8_0_Q8_0":
             # Direct Q8_0 x Q8_0 vec_dot test (pre-quantized inputs)
             if K % QK8_0 != 0:
-                return TestResult(name, False, 0, 0, error=f"K={K} not multiple of {QK8_0}")
+                return TestResult(name, False, 0, 0, error=f"K={K} not multiple of {QK8_0}", qtype=qtype)
             weight_gen = random_q8_0_weights
             has_llama_ref = (self.libggml is not None and
                             hasattr(self.libggml, 'test_vec_dot_q8_0_q8_0'))
@@ -784,11 +893,11 @@ class KernelTester:
                     self.libggml.test_vec_dot_q8_0_q8_0(w, x_q8, y, K)
 
         else:
-            return TestResult(name, False, 0, 0, error=f"Unsupported qtype: {qtype}")
+            return TestResult(name, False, 0, 0, error=f"Unsupported qtype: {qtype}", qtype=qtype)
 
         # Determine comparison size (llama.cpp Q5_0/Q8_0 tests only do M=1)
         # Direct vec_dot tests (Q5_0_Q8_0, Q8_0_Q8_0) always have M=1
-        is_direct_vec_dot = qtype in ("Q5_0_Q8_0", "Q8_0_Q8_0")
+        is_direct_vec_dot = qtype in ("Q4_K_Q8_K", "Q6_K_Q8_K", "Q5_0_Q8_0", "Q8_0_Q8_0")
         compare_rows = 1 if (has_llama_ref and qtype in ("Q5_0", "Q8_0")) or is_direct_vec_dot else M
 
         # Generate test data
@@ -797,9 +906,12 @@ class KernelTester:
         np.random.seed(42 + (zlib.crc32(name.encode("utf-8")) % 10000))
 
         if is_direct_vec_dot:
-            # Direct vec_dot tests: single row of weights, Q8_0 quantized input
+            # Direct tests feed identical quantized activation bytes to both backends.
             weights = weight_gen(K)  # Single row
-            input_q8_0 = random_q8_0_weights(K)  # Q8_0 quantized input
+            if qtype in ("Q4_K_Q8_K", "Q6_K_Q8_K"):
+                input_q8_0 = random_q8k_activations(K)
+            else:
+                input_q8_0 = random_q8_0_weights(K)
 
             ck_out = np.zeros(1, dtype=np.float32)
             llama_out = np.zeros(1, dtype=np.float32) if has_llama_ref else None
@@ -812,7 +924,7 @@ class KernelTester:
                 call_ck(weights, input_q8_0, ck_out_ptr)
 
                 if np.isnan(ck_out).any() or np.isinf(ck_out).any():
-                    return TestResult(name, False, 0, 0, error="CK output contains NaN/Inf")
+                    return TestResult(name, False, 0, 0, error="CK output contains NaN/Inf", qtype=qtype)
 
                 if has_llama_ref:
                     llama_out_ptr = llama_out.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
@@ -820,6 +932,7 @@ class KernelTester:
                     diff = np.abs(llama_out - ck_out)
                     max_diff = float(np.max(diff))
                     mean_diff = float(np.mean(diff))
+                    ulp_diff = fp32_ulp_distance(float(llama_out[0]), float(ck_out[0]))
 
             # Performance test - CK
             for _ in range(self.warmup):
@@ -864,7 +977,7 @@ class KernelTester:
 
                 # Check for NaN/Inf first
                 if np.isnan(ck_out).any() or np.isinf(ck_out).any():
-                    return TestResult(name, False, 0, 0, error="CK output contains NaN/Inf")
+                    return TestResult(name, False, 0, 0, error="CK output contains NaN/Inf", qtype=qtype)
 
                 if has_llama_ref:
                     # Use llama.cpp as reference
@@ -912,7 +1025,14 @@ class KernelTester:
 
         # Test passes if accuracy is within tolerance (for any reference - llama.cpp or Python dequant)
         has_accuracy_ref = has_llama_ref or dequant_fn is not None
-        passed = (max_diff < case.tol) if has_accuracy_ref and not perf_only else True
+        if has_accuracy_ref and not perf_only:
+            if case.rtol is not None and llama_out is not None:
+                output_scale = max(float(np.max(np.abs(llama_out))), float(np.max(np.abs(ck_out))))
+                passed = max_diff <= case.tol + case.rtol * output_scale
+            else:
+                passed = max_diff < case.tol
+        else:
+            passed = True
 
         return TestResult(
             name=name,
@@ -922,10 +1042,13 @@ class KernelTester:
             M=M,
             K=K,
             tol=case.tol,
+            rtol=case.rtol,
+            ulp_diff=ulp_diff,
             ck_time_ms=ck_time_ms,
             llama_time_ms=llama_time_ms,
             ck_gflops=ck_gflops,
-            llama_gflops=llama_gflops
+            llama_gflops=llama_gflops,
+            qtype=qtype,
         )
 
     def run_all_tests(self, cases: dict, perf_only: bool = False) -> List[TestResult]:
@@ -979,7 +1102,9 @@ def print_header():
             Testing: output[M] = weights[M,K] x input[K]
 
   {CYAN}KERNELS:{RESET} Q4_K     - 4-bit K-quant (llama.cpp reference)
-            Q6_K     - 6-bit K-quant decode (CK timing + sanity check)
+            Q6_K     - 6-bit K-quant decode (llama.cpp reference)
+            Q4_K_Q8_K - Direct pre-quantized Q4_K x Q8_K oracle
+            Q6_K_Q8_K - Direct pre-quantized Q6_K x Q8_K oracle
             Q5_0     - 5-bit legacy quant (llama.cpp reference)
             Q8_0     - 8-bit legacy quant (llama.cpp reference)
             Q5_0_Q8_0 - Direct Q5_0 x Q8_0 vec_dot (llama.cpp reference)
@@ -995,7 +1120,7 @@ def print_header():
 
 def print_results(results: List[TestResult], qtype: str):
     """Print results for a quantization type."""
-    qtype_results = [r for r in results if r.name.startswith(qtype)]
+    qtype_results = [r for r in results if r.qtype == qtype]
     if not qtype_results:
         return
 
@@ -1013,7 +1138,7 @@ def print_results(results: List[TestResult], qtype: str):
         print(f"\n{CYAN}ACCURACY (vs Python dequant reference){RESET}")
     else:
         print(f"\n{CYAN}ACCURACY (sanity check - no NaN/Inf){RESET}")
-    print(f"{'Test':<20} {'Dims (MxK)':>14} {'max_diff':>12} {'mean_diff':>12} {'tol':>10} {'Status':>10}")
+    print(f"{'Test':<20} {'Dims (MxK)':>14} {'max_diff':>12} {'mean_diff':>12} {'contract':>12} {'Status':>10}")
     print("-" * 90)
 
     accuracy_passed = 0
@@ -1025,7 +1150,11 @@ def print_results(results: List[TestResult], qtype: str):
             status = f"{GREEN}PASS{RESET}" if r.passed else f"{RED}FAIL{RESET}"
             dims = f"{r.M}x{r.K}"
             # Always show actual accuracy values since we now have reference implementations
-            print(f"{r.name:<20} {dims:>14} {r.max_diff:>12.2e} {r.mean_diff:>12.2e} {r.tol:>10.0e} {status:>10}")
+            if r.rtol is not None:
+                contract = f"a{r.tol:.0e}+r{r.rtol:.0e}"
+            else:
+                contract = f"<{r.tol:.0e}"
+            print(f"{r.name:<20} {dims:>14} {r.max_diff:>12.2e} {r.mean_diff:>12.2e} {contract:>12} {status:>10}")
             if r.passed:
                 accuracy_passed += 1
 

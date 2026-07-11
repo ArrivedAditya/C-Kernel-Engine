@@ -113,6 +113,28 @@ void test_quantize_q8_k(const float * src, void * dst, int n) {
 // GEMV (Matrix-Vector) Tests
 // ============================================================================
 
+/** Direct Q4_K x Q8_K dot product using caller-provided quantized bytes. */
+void test_vec_dot_q4_k_q8_k(const void * weight_q4_k,
+                            const void * input_q8_k,
+                            float * output,
+                            int cols) {
+    *output = 0.0f;
+    ggml_vec_dot_q4_K_q8_K(cols, output, sizeof(float),
+                           weight_q4_k, sizeof(block_q4_K),
+                           input_q8_k, sizeof(block_q8_K), 1);
+}
+
+/** Direct Q6_K x Q8_K dot product using caller-provided quantized bytes. */
+void test_vec_dot_q6_k_q8_k(const void * weight_q6_k,
+                            const void * input_q8_k,
+                            float * output,
+                            int cols) {
+    *output = 0.0f;
+    ggml_vec_dot_q6_K_q8_K(cols, output, sizeof(float),
+                           weight_q6_k, sizeof(block_q6_K),
+                           input_q8_k, sizeof(block_q8_K), 1);
+}
+
 /**
  * Test Q4_K GEMV - dot product of quantized weights and fp32 input
  *

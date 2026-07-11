@@ -162,6 +162,18 @@ void ck_test_gemv_q8_0_q8_0(const void *weight_q8_0,
  * Direct Vec Dot Tests (pre-quantized inputs, no FP32 conversion)
  * ============================================================================ */
 
+/** Direct Q4_K x Q8_K dot product using identical pre-quantized bytes. */
+void ck_test_vec_dot_q4_k_q8_k(const void *weight_q4_k,
+                                const void *input_q8_k,
+                                float *output,
+                                int cols);
+
+/** Direct Q6_K x Q8_K dot product using identical pre-quantized bytes. */
+void ck_test_vec_dot_q6_k_q8_k(const void *weight_q6_k,
+                                const void *input_q8_k,
+                                float *output,
+                                int cols);
+
 /**
  * @brief Direct Q5_0 x Q8_0 dot product (takes pre-quantized Q8_0 input)
  *
