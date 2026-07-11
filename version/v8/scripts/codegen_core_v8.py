@@ -1504,7 +1504,7 @@ def emit_op(
         return default
 
     def _hidden_token_count() -> str | None:
-        for nm in ("num_tokens", "tokens", "token_count", "rows", "n_tokens"):
+        for nm in ("num_tokens", "tokens", "token_count", "rows", "n_tokens", "m"):
             ex = arg_expr_by_name_for_hidden.get(nm)
             if ex:
                 return ex
@@ -1725,9 +1725,16 @@ def emit_op(
     elif op_name == "mlp_up":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "c", "y"))
         if out_expr:
-            count_expr = _hidden_count("m", "M", "rows", "out_dim", default="INTERMEDIATE_DIM")
+            rows_expr = _hidden_arg("m", "M", "rows")
+            width_expr = _hidden_arg("n", "N", "out_dim", "intermediate_dim")
+            count_expr = _mul_expr(rows_expr, width_expr) or width_expr or rows_expr or "INTERMEDIATE_DIM"
             lines.append(f'    ck_debug_export_hidden(model, {layer}, "mlp_up", (const float*){out_expr}, {count_expr});')
-            _emit_hidden_export_last_row(out_expr, "mlp_up", count_expr)
+            _emit_hidden_export_last_row(out_expr, "mlp_up", width_expr or count_expr)
+    elif op_name == "gelu":
+        out_expr = _hidden_raw(_hidden_arg("data", "x", "output", "out"))
+        if out_expr:
+            count_expr = _hidden_count("n", "dim", default="INTERMEDIATE_DIM")
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "ffn_gelu", (const float*){out_expr}, {count_expr});')
     elif op_name == "relu2":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y"))
         if out_expr:
@@ -1737,8 +1744,11 @@ def emit_op(
     elif op_name == "mlp_down":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "c", "y"))
         if out_expr:
-            lines.append(f'    ck_debug_export_hidden(model, {layer}, "mlp_down", (const float*){out_expr}, EMBED_DIM);')
-            _emit_hidden_export_last_row(out_expr, "mlp_down", "EMBED_DIM")
+            rows_expr = _hidden_arg("m", "M", "rows")
+            width_expr = _hidden_arg("n", "N", "out_dim", "embed_dim")
+            count_expr = _mul_expr(rows_expr, width_expr) or width_expr or rows_expr or "EMBED_DIM"
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "mlp_down", (const float*){out_expr}, {count_expr});')
+            _emit_hidden_export_last_row(out_expr, "mlp_down", width_expr or count_expr)
     elif op_name == "mamba_in_proj":
         _emit_hidden_export(
             _hidden_arg("output", "out", "c", "y"),

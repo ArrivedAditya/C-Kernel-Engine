@@ -84,6 +84,16 @@ def _load_numerical_contract_resolver():
     return module
 
 
+def _load_execution_contract_resolver():
+    path = Path(__file__).resolve().parent / "resolve_numerical_execution_contracts_v8.py"
+    spec = importlib.util.spec_from_file_location("resolve_numerical_execution_contracts_v8", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load execution contract resolver: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _resolve_manifest_numerical_contracts(
     manifest: Dict[str, Any],
     mode: str,
@@ -117,6 +127,45 @@ def _resolve_manifest_numerical_contracts(
             raise RuntimeError(
                 f"Numerical contract resolution failed for {circuit_name or '<embedded>'} "
                 f"{operation}.{mode}: {exc}"
+            ) from exc
+        plans.append(plan)
+    return plans
+
+
+def _resolve_manifest_execution_contracts(
+    manifest: Dict[str, Any],
+    mode: str,
+) -> List[Dict[str, Any]]:
+    circuit = manifest.get("template") if isinstance(manifest.get("template"), dict) else {}
+    required = circuit.get("required_numerical_contracts")
+    if not isinstance(required, dict) or not required:
+        return []
+
+    resolver = _load_execution_contract_resolver()
+    contracts = resolver.load_json(resolver.DEFAULT_CONTRACTS)
+    kernels = resolver.load_kernel_capabilities(contracts=contracts)
+    circuit_name = str(circuit.get("name", "")).strip()
+    source_path = V8_ROOT / "circuits" / f"{circuit_name}.json" if circuit_name else None
+    resolution_mode = str((manifest.get("config") or {}).get("numerical_contract_mode", "bringup"))
+    plans: List[Dict[str, Any]] = []
+    for operation, operation_doc in required.items():
+        phases = operation_doc.get("phases") if isinstance(operation_doc, dict) else None
+        if not isinstance(phases, dict) or mode not in phases:
+            continue
+        try:
+            plan = resolver.resolve_contract(
+                circuit,
+                contracts,
+                kernels,
+                operation=str(operation),
+                phase=mode,
+                mode=resolution_mode,
+                source_circuit_path=source_path if source_path and source_path.is_file() else None,
+            )
+        except resolver.ContractError as exc:
+            raise RuntimeError(
+                f"Numerical execution contract resolution failed for "
+                f"{circuit_name or '<embedded>'} {operation}.{mode}: {exc}"
             ) from exc
         plans.append(plan)
     return plans
@@ -192,16 +241,24 @@ def _index_numerical_contract_plans(
 
 
 def _graph_ir_contract_metadata(plan: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+    contract = plan.get("contract") if isinstance(plan.get("contract"), dict) else plan["reduction"]
+    metadata = {
         "schema": "cke.graph_ir_numerical_contract",
         "schema_version": 1,
         "operation": plan["operation"],
         "phase": plan["phase"],
-        "contract_id": plan["reduction"]["id"],
+        "required_contract_id": plan["requirements"].get("contract_id"),
+        "resolved_contract_id": contract["id"],
+        "contract_id": contract["id"],
         "kernel_id": plan["kernel"]["id"],
         "function": plan["kernel"]["function"],
         "implementation": copy.deepcopy(plan["implementation"]),
     }
+    if isinstance(contract.get("semantics"), dict):
+        metadata["semantics"] = copy.deepcopy(contract["semantics"])
+    if isinstance(plan.get("checkpoint"), dict):
+        metadata["checkpoint"] = copy.deepcopy(plan["checkpoint"])
+    return metadata
 
 
 def _entry_offset(entry: Dict[str, Any]) -> int:
@@ -4642,14 +4699,18 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             quant_summary = manifest.get("quant_summary", {})
             config = manifest.get("config", {})
 
-    numerical_contract_plans = _resolve_manifest_numerical_contracts(manifest, mode)
+    numerical_contract_plans = (
+        _resolve_manifest_numerical_contracts(manifest, mode)
+        + _resolve_manifest_execution_contracts(manifest, mode)
+    )
     numerical_contract_by_template_op = _index_numerical_contract_plans(numerical_contract_plans)
     kernel_execution_capabilities = _load_kernel_execution_capabilities()
     for plan in numerical_contract_plans:
         print(
             "  [contract/numerics] "
             f"{plan['operation']}.{plan['phase']} -> "
-            f"{plan['kernel']['id']} / {plan['reduction']['id']}"
+            f"{plan['kernel']['id']} / "
+            f"{(plan.get('contract') or plan.get('reduction'))['id']}"
         )
 
     template_flags = template.get("flags", {}) if isinstance(template.get("flags"), dict) else {}

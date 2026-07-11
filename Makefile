@@ -2878,7 +2878,9 @@ test-v8-template-circuit-audit:
 test-numerical-contracts: $(LIB)
 	@echo "Running v8 numerical contract validation..."
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_attention_contracts_v8.py
+	@$(PYTHON) -m py_compile version/v8/scripts/resolve_numerical_execution_contracts_v8.py
 	@$(PYTHON) tests/test_v8_attention_contracts.py
+	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
 	@$(PYTHON) unittest/test_attention_full.py
 	@$(PYTHON) unittest/test_attention_f16_split_kv.py
 	@mkdir -p build/v8/contracts

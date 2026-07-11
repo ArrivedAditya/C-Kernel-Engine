@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.numerical_kernel_capability",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_id", "status", "phases", "function", "explicit_selector", "implementation", "arithmetic"],
+  "properties": {
+    "contract_id": {"type": "string", "minLength": 1},
+    "status": {"enum": ["unresolved", "observed", "validated"]},
+    "phases": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["prefill", "decode"]}},
+    "function": {"type": "string", "minLength": 1},
+    "explicit_selector": {"const": true},
+    "implementation": {
+      "type": "object", "additionalProperties": false, "required": ["isa_dispatch", "threading"],
+      "properties": {
+        "isa_dispatch": {"enum": ["runtime", "compile_time", "scalar"]},
+        "threading": {
+          "type": "object", "additionalProperties": false,
+          "required": ["runtime", "work_partition", "dispatch", "reduction_order_effect"],
+          "properties": {
+            "runtime": {"enum": ["serial", "ck_threadpool", "openmp"]},
+            "work_partition": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["serial", "independent_rows", "independent_columns", "independent_heads", "independent_query_blocks", "kv_chunks_by_workers", "output_tiles", "split_k"]}},
+            "dispatch": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["inline", "ck_threadpool_dispatch_n", "openmp_parallel_for", "internal_threaded"]}},
+            "reduction_order_effect": {"enum": ["none", "contract_defined", "implementation_defined"]}
+          }
+        }
+      }
+    },
+    "arithmetic": {
+      "type": "object", "additionalProperties": false,
+      "required": ["partial_accumulator", "merge_order", "deterministic", "thread_count_changes_arithmetic_order", "split_strategy"],
+      "properties": {
+        "partial_accumulator": {"enum": ["none", "fp32", "fp16", "bf16", "int32"]},
+        "merge_order": {"enum": ["none", "ascending_chunk", "pairwise_tree", "implementation_defined"]},
+        "deterministic": {"type": "boolean"},
+        "thread_count_changes_arithmetic_order": {"type": "boolean"},
+        "split_strategy": {"enum": ["serial", "independent_outputs", "split_k", "split_kv"]}
+      }
+    }
+  }
+}

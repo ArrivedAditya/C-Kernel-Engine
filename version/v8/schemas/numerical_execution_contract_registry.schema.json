@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.numerical_execution_contract_registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "engine_contract_version", "contracts"],
+  "properties": {
+    "schema": {"const": "cke.numerical_execution_contracts"},
+    "schema_version": {"const": 1},
+    "engine_contract_version": {"const": "8"},
+    "contracts": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"$ref": "#/$defs/contract"}
+    }
+  },
+  "$defs": {
+    "contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "storage", "compute", "rounding", "reduction", "threading", "position_transform", "description"],
+      "properties": {
+        "status": {"enum": ["unresolved", "observed", "validated"]},
+        "storage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input", "weight", "output"],
+          "properties": {
+            "input": {"enum": ["fp32", "fp16", "bf16", "q8_0", "q8_k"]},
+            "weight": {"enum": ["fp32", "fp16", "bf16", "q4_k", "q6_k", "q8_0"]},
+            "output": {"enum": ["fp32", "fp16", "bf16", "q8_0", "q8_k"]}
+          }
+        },
+        "compute": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input", "weight", "accumulator"],
+          "properties": {
+            "input": {"enum": ["fp32", "fp16", "fp16_rne", "bf16", "bf16_rne", "int8"]},
+            "weight": {"enum": ["fp32", "fp16", "bf16", "int4", "int6", "int8"]},
+            "accumulator": {"enum": ["fp32", "fp16", "bf16", "int32"]}
+          }
+        },
+        "rounding": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "points"],
+          "properties": {
+            "mode": {"enum": ["none", "rne", "truncate"]},
+            "points": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"enum": ["input_load", "weighted_product", "reduction_update", "partial_store", "partial_merge", "output_store"]}
+            }
+          }
+        },
+        "reduction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "order", "partial_accumulator", "merge_order"],
+          "properties": {
+            "kind": {"enum": ["none", "dot_product", "sum", "online_softmax", "normalization"]},
+            "order": {"enum": ["none", "ascending_k", "left_to_right", "pairwise_tree", "contract_defined_chunks"]},
+            "partial_accumulator": {"enum": ["none", "fp32", "fp16", "bf16", "int32"]},
+            "merge_order": {"enum": ["none", "ascending_chunk", "pairwise_tree", "implementation_defined"]}
+          }
+        },
+        "threading": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["work_partition", "split_strategy", "deterministic", "thread_count_changes_arithmetic_order"],
+          "properties": {
+            "work_partition": {"enum": ["serial", "independent_rows", "independent_columns", "independent_heads", "independent_query_blocks", "kv_chunks_by_workers", "output_tiles", "split_k"]},
+            "split_strategy": {"enum": ["serial", "independent_outputs", "split_k", "split_kv"]},
+            "deterministic": {"type": "boolean"},
+            "thread_count_changes_arithmetic_order": {"type": "boolean"}
+          }
+        },
+        "position_transform": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["pairing", "rotary_width", "head_width", "position_rank", "axis_order", "section_interpretation", "frequency_compute", "intermediate_compute", "rounding_points", "threading"],
+              "properties": {
+                "pairing": {"enum": ["split_half", "pairwise_interleaved", "multi_section"]},
+                "rotary_width": {"type": "string", "minLength": 1},
+                "head_width": {"type": "string", "minLength": 1},
+                "position_rank": {"type": "integer", "minimum": 1},
+                "axis_order": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+                "section_interpretation": {"enum": ["not_applicable", "axis_selection", "contiguous_widths"]},
+                "rotary_width_value": {"type": "integer", "minimum": 1},
+                "head_width_value": {"type": "integer", "minimum": 1},
+                "mrope_n_dims_value": {"type": "integer", "minimum": 1},
+                "frequency_compute": {"enum": ["fp32", "fp64"]},
+                "intermediate_compute": {"enum": ["fp32", "fp16", "bf16"]},
+                "rounding_points": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+                "threading": {"enum": ["serial", "independent_heads", "independent_tokens"]}
+              }
+            }
+          ]
+        },
+        "description": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

@@ -210,9 +210,9 @@ build_staged_snapshot() {
         ln -s "$ROOT_DIR/llama.cpp" "$SNAPSHOT_DIR/llama.cpp"
     fi
     if git -C "$ROOT_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
-        git -C "$ROOT_DIR" diff --cached --binary --submodule=diff HEAD -- | git -C "$SNAPSHOT_DIR" apply --index --whitespace=nowarn
+        git -C "$ROOT_DIR" diff --cached --binary --submodule=diff HEAD -- | env -u GIT_INDEX_FILE git -C "$SNAPSHOT_DIR" apply --index --whitespace=nowarn
     else
-        git -C "$ROOT_DIR" diff --cached --binary --submodule=diff | git -C "$SNAPSHOT_DIR" apply --index --whitespace=nowarn
+        git -C "$ROOT_DIR" diff --cached --binary --submodule=diff | env -u GIT_INDEX_FILE git -C "$SNAPSHOT_DIR" apply --index --whitespace=nowarn
     fi
 }
 

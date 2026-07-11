@@ -7203,6 +7203,37 @@
         "training": false,
         "backward": false
       },
+      "numerical_capabilities": [
+        {
+          "contract_id": "bf16_weight_bf16_input_fp32_dot_fp32_output",
+          "status": "observed",
+          "phases": [
+            "prefill"
+          ],
+          "function": "gemm_nt_bf16",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "openmp",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "openmp_parallel_for"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
       "notes": "Exact safetensors/BUMP BF16 weight inference path for prefill. Activation rows are rounded to BF16 before multiply.",
       "name": "gemm_nt_bf16",
       "_source_file": "gemm_nt_bf16.json"
