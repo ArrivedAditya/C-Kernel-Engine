@@ -1,0 +1,76 @@
+{
+  "schema": "cke.attention_reduction_contracts",
+  "schema_version": 1,
+  "engine_contract_version": "8.5",
+  "required_semantic_fields": [
+    "q_compute",
+    "k_compute",
+    "score_accumulator",
+    "softmax_statistics",
+    "value_compute",
+    "value_accumulator",
+    "partial_storage",
+    "partial_merge",
+    "partition"
+  ],
+  "contracts": {
+    "fp32_online": {
+      "status": "validated",
+      "q_compute": "fp32",
+      "k_compute": "fp32",
+      "score_accumulator": "fp32",
+      "softmax_statistics": "fp32",
+      "value_compute": "fp32",
+      "value_accumulator": "fp32",
+      "partial_storage": "none",
+      "partial_merge": "none",
+      "partition": {
+        "kind": "single_range"
+      },
+      "description": "Single-range FP32 online-softmax reduction."
+    },
+    "f16_kv_fp32_online": {
+      "status": "validated",
+      "q_compute": "fp32",
+      "k_compute": "fp16_rounded",
+      "score_accumulator": "fp32",
+      "softmax_statistics": "fp32",
+      "value_compute": "fp16_rounded",
+      "value_accumulator": "fp32",
+      "partial_storage": "none",
+      "partial_merge": "none",
+      "partition": {
+        "kind": "single_range"
+      },
+      "description": "Full attention with FP32 Q, FP16-rounded K/V, and FP32 online-softmax accumulation.",
+      "validation": {
+        "test": "unittest/test_attention_full.py",
+        "cases": ["contiguous GQA", "strided GQA", "Qwen3-VL head_dim=72"],
+        "reference": "PyTorch with K/V explicitly rounded through FP16"
+      }
+    },
+    "f16_online_fp32_merge": {
+      "status": "validated",
+      "q_compute": "fp16_rounded",
+      "k_compute": "fp16",
+      "score_accumulator": "fp32",
+      "softmax_statistics": "fp32",
+      "value_compute": "fp16",
+      "value_accumulator": "fp16_rounded_each_update",
+      "partial_storage": "fp16",
+      "partial_merge": "fp32_chunk_order",
+      "partition": {
+        "kind": "kv_chunks_by_workers",
+        "threshold": 512,
+        "below_threshold_chunks": 1,
+        "at_or_above_threshold_chunks": "runtime_worker_count"
+      },
+      "description": "FP16-rounded online-softmax partials with deterministic FP32 chunk-order merge.",
+      "validation": {
+        "test": "unittest/test_attention_f16_split_kv.py",
+        "cases": ["KV=511", "KV=512", "KV=1058", "padded GQA"],
+        "reference": "llama.cpp GGML flash attention"
+      }
+    }
+  }
+}

@@ -1495,6 +1495,34 @@ void attention_forward_decode_head_major_gqa_flash_f16cache(const float *q_token
                                                             int head_dim,
                                                             int aligned_head_dim);
 
+// Complete attention reduction contracts. These IDs describe numerical
+// semantics, not an ISA or performance mode.
+typedef enum {
+    CK_ATTN_REDUCTION_FP32_ONLINE = 0,
+    CK_ATTN_REDUCTION_F16_ONLINE_FP32_MERGE = 1,
+} ck_attention_reduction_t;
+
+typedef enum {
+    CK_ATTENTION_STATUS_OK = 0,
+    CK_ATTENTION_STATUS_INVALID_ARGUMENT = -1,
+    CK_ATTENTION_STATUS_UNSUPPORTED_CONTRACT = -2,
+} ck_attention_status_t;
+
+// v8.5 explicit numerical-contract entry point. Unlike the legacy wrapper,
+// this function never infers reduction semantics from strict/debug state.
+ck_attention_status_t attention_forward_decode_head_major_gqa_flash_f16cache_contract(
+    const float *q_token,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *out_token,
+    int num_heads,
+    int num_kv_heads,
+    int kv_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    ck_attention_reduction_t reduction);
+
 // Deterministic llama.cpp-style FP16 split-KV oracle. The explicit chunk count
 // makes diagnostics independent of the host's available core count. Production
 // routing must be accepted separately by stitched model parity.

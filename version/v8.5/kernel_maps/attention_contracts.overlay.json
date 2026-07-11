@@ -1,0 +1,48 @@
+{
+  "schema": "cke.kernel_numerical_contract_overlay",
+  "schema_version": 1,
+  "engine_contract_version": "8.5",
+  "kernels": {
+    "attention_forward_full_head_major_gqa_flash_strided": {
+      "op": "attention",
+      "mode": "prefill",
+      "base_kernel_map": "version/v8/kernel_maps/attention_forward_full_head_major_gqa_flash_strided.json",
+      "provides": {
+        "execution.phase": ["prefill"],
+        "tensor.q.dtype": ["fp32"],
+        "tensor.kv.dtype": ["fp32"],
+        "tensor.layout": ["head_major"],
+        "numerics.attention_reduction": ["f16_kv_fp32_online"]
+      },
+      "supported_reductions": {
+        "f16_kv_fp32_online": {
+          "status": "validated",
+          "function": "attention_forward_full_head_major_gqa_flash_strided",
+          "explicit_selector": false,
+          "notes": "Legacy v8 ABI with validated FP32 Q and FP16-rounded K/V semantics."
+        }
+      }
+    },
+    "attention_forward_decode_head_major_gqa_flash_f16cache_contract": {
+      "op": "attention",
+      "mode": "decode",
+      "base_kernel_map": "version/v8.5/kernel_maps/attention_forward_decode_head_major_gqa_flash_f16cache_contract.json",
+      "provides": {
+        "execution.phase": ["decode"],
+        "tensor.q.dtype": ["fp32"],
+        "tensor.kv.dtype": ["fp16"],
+        "tensor.layout": ["head_major"],
+        "numerics.attention_reduction": ["f16_online_fp32_merge"]
+      },
+      "supported_reductions": {
+        "f16_online_fp32_merge": {
+          "status": "validated",
+          "function": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+          "explicit_selector": true,
+          "selector": "CK_ATTN_REDUCTION_F16_ONLINE_FP32_MERGE",
+          "notes": "Explicit v8.5 API validated at KV 511/512/1058 against llama.cpp; circuit-level stitched parity remains separate."
+        }
+      }
+    }
+  }
+}

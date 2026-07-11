@@ -1,0 +1,36 @@
+{
+  "schema": "cke.circuit_execution_contract",
+  "schema_version": 1,
+  "engine_contract_version": "8.5",
+  "circuit": "qwen3vl",
+  "base_circuit": "version/v8/templates/qwen3vl.json",
+  "operations": {
+    "decoder.attention": {
+      "op": "attention",
+      "phases": {
+        "prefill": {
+          "requires": {
+            "execution.phase": "prefill",
+            "tensor.q.dtype": "fp32",
+            "tensor.kv.dtype": "fp32",
+            "tensor.layout": "head_major",
+            "numerics.attention_reduction": "f16_kv_fp32_online"
+          },
+          "validation": "observed",
+          "evidence": "The public full-attention route is validated for contiguous, strided, threaded, and Qwen3-VL head_dim=72 shapes; stitched full-model parity remains required before production promotion."
+        },
+        "decode": {
+          "requires": {
+            "execution.phase": "decode",
+            "tensor.q.dtype": "fp32",
+            "tensor.kv.dtype": "fp16",
+            "tensor.layout": "head_major",
+            "numerics.attention_reduction": "f16_online_fp32_merge"
+          },
+          "validation": "observed",
+          "evidence": "Focused KV 511/512/1058 routing tests identify the required split threshold; 64-token multimodal parity is not closed."
+        }
+      }
+    }
+  }
+}

@@ -64,6 +64,22 @@ static inline float ck_round_fp16_scalar(float x) {
     return CK_FP16_TO_FP32(CK_FP32_TO_FP16(x));
 }
 
+static void ck_round_fp16_buffer(const float *src, float *dst, size_t count)
+{
+    size_t i = 0;
+#if defined(__AVX2__) && defined(__F16C__)
+    for (; i + 8 <= count; i += 8) {
+        const __m256 value = _mm256_loadu_ps(src + i);
+        const __m128i half = _mm256_cvtps_ph(
+            value, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+        _mm256_storeu_ps(dst + i, _mm256_cvtph_ps(half));
+    }
+#endif
+    for (; i < count; ++i) {
+        dst[i] = ck_round_fp16_scalar(src[i]);
+    }
+}
+
 static inline void ck_local_fp16_to_fp32_row(const uint16_t *src, float *dst, int n)
 {
     if (!src || !dst || n <= 0) {
@@ -3464,7 +3480,8 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
     if (!q || !k || !v || !output) {
         return;
     }
-    if (num_heads <= 0 || num_kv_heads <= 0 || num_tokens <= 0) {
+    if (num_heads <= 0 || num_kv_heads <= 0 || num_tokens <= 0 ||
+        head_dim <= 0 || aligned_head_dim < head_dim) {
         return;
     }
     if (kv_stride_tokens < num_tokens) {
@@ -3567,6 +3584,37 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
         return;
     }
 
+    /*
+     * Full GGML-style attention consumes FP32 Q with K/V rounded through
+     * FP16.  Materialize that semantic input once so serial, threaded, and
+     * ISA-specific implementations all see the same values.  Causal callers
+     * retain their existing FP32 K/V contract.
+     */
+    float *rounded_kv = NULL;
+    const float *compute_k = k;
+    const float *compute_v = v;
+    if (!causal) {
+        if ((size_t) kv_stride_tokens > SIZE_MAX / (size_t) num_kv_heads) {
+            return;
+        }
+        const size_t rows = (size_t) num_kv_heads * (size_t) kv_stride_tokens;
+        if ((size_t) aligned_head_dim > SIZE_MAX / rows) {
+            return;
+        }
+        const size_t elements = rows * (size_t) aligned_head_dim;
+        if (elements > SIZE_MAX / (2 * sizeof(float))) {
+            return;
+        }
+        rounded_kv = (float *) malloc(2 * elements * sizeof(float));
+        if (!rounded_kv) {
+            return;
+        }
+        compute_k = rounded_kv;
+        compute_v = rounded_kv + elements;
+        ck_round_fp16_buffer(k, rounded_kv, elements);
+        ck_round_fp16_buffer(v, rounded_kv + elements, elements);
+    }
+
     // Select SIMD implementation based on compile-time CPU features
 #if defined(__AVX512F__)
     #define FLASH_QUERY_IMPL attention_flash_query_causal_avx512
@@ -3588,8 +3636,8 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
         if (pool && active > 1) {
             ck_attention_qblock4_args_t args = {
                 .q = q,
-                .k = k,
-                .v = v,
+                .k = compute_k,
+                .v = compute_v,
                 .output = output,
                 .num_heads = num_heads,
                 .num_kv_heads = num_kv_heads,
@@ -3599,6 +3647,7 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
                 .scale = scale,
             };
             ck_threadpool_dispatch_n(pool, active, ck_attention_full_qblock8_work, &args);
+            free(rounded_kv);
             return;
         }
     }
@@ -3611,8 +3660,8 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
         if (pool && active > 1) {
             ck_attention_qblock4_args_t args = {
                 .q = q,
-                .k = k,
-                .v = v,
+                .k = compute_k,
+                .v = compute_v,
                 .output = output,
                 .num_heads = num_heads,
                 .num_kv_heads = num_kv_heads,
@@ -3622,6 +3671,7 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
                 .scale = scale,
             };
             ck_threadpool_dispatch_n(pool, active, ck_attention_full_qblock4_work, &args);
+            free(rounded_kv);
             return;
         }
     }
@@ -3632,8 +3682,8 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
         if (pool && active > 1) {
             ck_attention_parallel_args_t args = {
                 .q = q,
-                .k = k,
-                .v = v,
+                .k = compute_k,
+                .v = compute_v,
                 .output = output,
                 .num_heads = num_heads,
                 .num_kv_heads = num_kv_heads,
@@ -3645,14 +3695,15 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
                 .scale = scale,
             };
             ck_threadpool_dispatch_n(pool, active, ck_attention_full_grid_work, &args);
+            free(rounded_kv);
             return;
         }
     }
 
     for (int h = 0; h < num_heads; ++h) {
         int kv_head = (int)((long long)h * (long long)num_kv_heads / (long long)num_heads);
-        const float *k_head = k + (size_t)kv_head * kv_head_stride;
-        const float *v_head = v + (size_t)kv_head * kv_head_stride;
+        const float *k_head = compute_k + (size_t)kv_head * kv_head_stride;
+        const float *v_head = compute_v + (size_t)kv_head * kv_head_stride;
 
         for (int i = 0; i < T; ++i) {
             const float *q_vec = q + qkv_index(h, i, 0, T, aligned_head_dim);
@@ -3664,6 +3715,8 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
                              scale, out_vec);
         }
     }
+
+    free(rounded_kv);
 
 #undef FLASH_QUERY_IMPL
 }
@@ -4700,6 +4753,48 @@ void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q
                 out_head[d] *= inv_sum;
             }
         }
+    }
+}
+
+ck_attention_status_t attention_forward_decode_head_major_gqa_flash_f16cache_contract(
+    const float *q_token,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *out_token,
+    int num_heads,
+    int num_kv_heads,
+    int kv_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    ck_attention_reduction_t reduction)
+{
+    if (!q_token || !k_cache || !v_cache || !out_token ||
+        num_heads <= 0 || num_kv_heads <= 0 || kv_tokens <= 0 ||
+        cache_capacity <= 0 || kv_tokens > cache_capacity ||
+        head_dim <= 0 || aligned_head_dim < head_dim) {
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+
+    switch (reduction) {
+    case CK_ATTN_REDUCTION_FP32_ONLINE:
+        attention_forward_decode_head_major_gqa_flash_f16cache(
+            q_token, k_cache, v_cache, out_token,
+            num_heads, num_kv_heads, kv_tokens, cache_capacity,
+            head_dim, aligned_head_dim);
+        return CK_ATTENTION_STATUS_OK;
+
+    case CK_ATTN_REDUCTION_F16_ONLINE_FP32_MERGE: {
+        const int split_chunks = kv_tokens >= 512 ? ck_get_num_threads() : 1;
+        attention_forward_decode_head_major_gqa_flash_f16cache_split(
+            q_token, k_cache, v_cache, out_token,
+            num_heads, num_kv_heads, kv_tokens, cache_capacity,
+            head_dim, aligned_head_dim, split_chunks);
+        return CK_ATTENTION_STATUS_OK;
+    }
+
+    default:
+        return CK_ATTENTION_STATUS_UNSUPPORTED_CONTRACT;
     }
 }
 

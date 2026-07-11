@@ -227,6 +227,39 @@ class TestAttentionFull(unittest.TestCase):
         diff = max_diff(got, ref)
         self.assertLessEqual(diff, 5e-5)
 
+    def test_full_flash_threaded_route_matches_reference(self) -> None:
+        """Exercise the production threadpool route, not only the small serial route."""
+        rng = np.random.default_rng(23)
+        heads = 16
+        kv_heads = 4
+        tokens = 129
+        head_dim = 32
+
+        q = rng.standard_normal((heads, tokens, head_dim), dtype=np.float32)
+        k = rng.standard_normal((kv_heads, tokens, head_dim), dtype=np.float32)
+        v = rng.standard_normal((kv_heads, tokens, head_dim), dtype=np.float32)
+        out = np.zeros_like(q)
+
+        lib.attention_forward_full_head_major_gqa_flash(
+            numpy_to_ptr(q),
+            numpy_to_ptr(k),
+            numpy_to_ptr(v),
+            numpy_to_ptr(out),
+            ctypes.c_int(heads),
+            ctypes.c_int(kv_heads),
+            ctypes.c_int(tokens),
+            ctypes.c_int(head_dim),
+            ctypes.c_int(head_dim),
+        )
+
+        ref = full_attention_reference_kv_f16(
+            torch.from_numpy(q.copy()),
+            torch.from_numpy(k.copy()),
+            torch.from_numpy(v.copy()),
+        )
+        diff = max_diff(torch.from_numpy(out), ref)
+        self.assertLessEqual(diff, 5e-5)
+
     def test_full_exact_strided_matches_pytorch_reference(self) -> None:
         lib.attention_forward_full_head_major_gqa_exact_strided(
             numpy_to_ptr(self.q),
