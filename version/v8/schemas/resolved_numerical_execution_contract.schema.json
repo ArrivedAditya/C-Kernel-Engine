@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.resolved_numerical_execution_contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "engine_contract_version", "circuit", "operation", "template_ops", "phase", "mode", "requirements", "contract", "kernel", "implementation", "checkpoint", "source_hashes"],
+  "properties": {
+    "schema": {"const": "cke.resolved_numerical_execution_contract"},
+    "schema_version": {"const": 1},
+    "engine_contract_version": {"const": "8"},
+    "circuit": {"type": "string", "minLength": 1},
+    "operation": {"type": "string", "minLength": 1},
+    "template_ops": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "phase": {"enum": ["prefill", "decode"]},
+    "mode": {"enum": ["bringup", "production"]},
+    "requirements": {"type": "object"},
+    "contract": {"type": "object", "required": ["id", "status", "semantics"]},
+    "kernel": {"type": "object", "required": ["id", "function", "status", "explicit_selector"]},
+    "implementation": {"type": "object"},
+    "checkpoint": {"type": "object"},
+    "source_hashes": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+  }
+}

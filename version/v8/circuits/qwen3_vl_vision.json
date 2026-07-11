@@ -110,6 +110,60 @@
       }
     }
   },
+  "semantic_checkpoints": {
+    "schema": "cke.semantic_checkpoint_contract",
+    "schema_version": 1,
+    "exports": {
+      "frontend.position": {"section": "header", "template_op_id": "position_embeddings", "op": "position_embeddings", "checkpoints": [
+        {"id": "vision.frontend.position.output", "producer": "position_embeddings", "tensor": "vision_position_embeddings", "logical_layout": "token_major", "axis_names": ["token", "channel"], "storage_dtype": "fp32"}
+      ]},
+      "layer.norm1": {"section": "body", "template_op_id": "attn_norm", "op": "layernorm", "checkpoints": [
+        {"id": "vision.layer.{layer}.norm1.output", "producer": "attn_norm", "tensor": "ln1", "logical_layout": "token_major", "axis_names": ["token", "channel"], "storage_dtype": "fp32"}
+      ]},
+      "layer.qkv": {"section": "body", "template_op_id": "split_qkv", "op": "split_qkv_packed", "checkpoints": [
+        {"id": "vision.layer.{layer}.q.pre_rope", "producer": "split_qkv", "tensor": "q_proj", "logical_layout": "head_major", "axis_names": ["head", "token", "channel"], "storage_dtype": "fp32"},
+        {"id": "vision.layer.{layer}.k.pre_rope", "producer": "split_qkv", "tensor": "k_proj", "logical_layout": "head_major", "axis_names": ["head", "token", "channel"], "storage_dtype": "fp32"},
+        {"id": "vision.layer.{layer}.v.output", "producer": "split_qkv", "tensor": "v_proj", "logical_layout": "head_major", "axis_names": ["head", "token", "channel"], "storage_dtype": "fp32"}
+      ]},
+      "layer.mrope": {"section": "body", "template_op_id": "vision_mrope", "op": "rope_qk", "checkpoints": [
+        {"id": "vision.layer.{layer}.q.post_rope", "producer": "vision_mrope", "tensor": "rope_q", "logical_layout": "head_major", "axis_names": ["head", "token", "channel"], "storage_dtype": "fp32"},
+        {"id": "vision.layer.{layer}.k.post_rope", "producer": "vision_mrope", "tensor": "rope_k", "logical_layout": "head_major", "axis_names": ["head", "token", "channel"], "storage_dtype": "fp32"}
+      ]},
+      "layer.attention": {"section": "body", "template_op_id": "attn", "op": "attn", "checkpoints": [
+        {"id": "vision.layer.{layer}.attention.output", "producer": "attn", "tensor": "attn_out_head_major", "logical_layout": "head_major", "axis_names": ["head", "token", "channel"], "storage_dtype": "fp32"}
+      ]},
+      "layer.out_proj": {"section": "body", "template_op_id": "attn_out_proj", "op": "out_proj", "checkpoints": [
+        {"id": "vision.layer.{layer}.out_proj.output", "producer": "attn_out_proj", "tensor": "out_proj", "logical_layout": "token_major", "axis_names": ["token", "channel"], "storage_dtype": "fp32"}
+      ]},
+      "layer.residual1": {"section": "body", "template_op_id": "attn_residual", "op": "residual_add", "checkpoints": [
+        {"id": "vision.layer.{layer}.residual1.output", "producer": "attn_residual", "tensor": "after_attn", "logical_layout": "token_major", "axis_names": ["token", "channel"], "storage_dtype": "fp32"}
+      ]},
+      "layer.norm2": {"section": "body", "template_op_id": "ffn_norm", "op": "layernorm", "checkpoints": [
+        {"id": "vision.layer.{layer}.norm2.output", "producer": "ffn_norm", "tensor": "ffn_inp_normed", "logical_layout": "token_major", "axis_names": ["token", "channel"], "storage_dtype": "fp32"}
+      ]},
+      "layer.mlp_up": {"section": "body", "template_op_id": "mlp_up", "op": "mlp_up", "checkpoints": [
+        {"id": "vision.layer.{layer}.mlp.up", "producer": "mlp_up", "tensor": "mlp_up", "logical_layout": "token_major", "axis_names": ["token", "channel"], "storage_dtype": "fp32"}
+      ]},
+      "layer.activation": {"section": "body", "template_op_id": "mlp_gelu", "op": "gelu", "checkpoints": [
+        {"id": "vision.layer.{layer}.mlp.activation", "producer": "mlp_gelu", "tensor": "ffn_gelu", "logical_layout": "token_major", "axis_names": ["token", "channel"], "storage_dtype": "fp32"}
+      ]},
+      "layer.mlp_down": {"section": "body", "template_op_id": "mlp_down", "op": "mlp_down", "checkpoints": [
+        {"id": "vision.layer.{layer}.mlp.down", "producer": "mlp_down", "tensor": "mlp_down", "logical_layout": "token_major", "axis_names": ["token", "channel"], "storage_dtype": "fp32"}
+      ]},
+      "layer.output": {"section": "body", "template_op_id": "mlp_residual", "op": "residual_add", "checkpoints": [
+        {"id": "vision.layer.{layer}.output", "producer": "mlp_residual", "tensor": "layer_out", "logical_layout": "token_major", "axis_names": ["token", "channel"], "storage_dtype": "fp32"}
+      ]},
+      "projector.merge": {"section": "footer", "template_op_id": "merge_main", "op": "spatial_merge", "checkpoints": [
+        {"id": "vision.spatial_merge.output", "producer": "merge_main", "tensor": "spatial_merge", "logical_layout": "token_major", "axis_names": ["token", "channel"], "storage_dtype": "fp32"}
+      ]},
+      "projector.output": {"section": "footer", "template_op_id": "projector_fc2", "op": "projector_fc2", "checkpoints": [
+        {"id": "vision.projector.output", "producer": "projector_fc2", "tensor": "projector_fc2", "logical_layout": "token_major", "axis_names": ["token", "channel"], "storage_dtype": "fp32"}
+      ]},
+      "prefix.output": {"section": "footer", "template_op_id": "deepstack_concat", "op": "branch_concat", "checkpoints": [
+        {"id": "vision.prefix.output", "producer": "deepstack_concat", "tensor": "vision_output", "logical_layout": "token_major", "axis_names": ["token", "channel"], "storage_dtype": "fp32"}
+      ]}
+    }
+  },
   "sequence": [
     "vision_encoder"
   ],

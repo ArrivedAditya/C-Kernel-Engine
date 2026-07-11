@@ -337,7 +337,6 @@ TEST_SUITES = {
         "bf16",
         UNITTEST_DIR / "test_bump_alloc_mixed.py",
     ),
-
     # Quantization tests
     # NOTE: test_quant_kernels.py and test_q4_k_quantize.py removed - use llamacpp-parity-full
     # for authoritative kernel correctness testing against llama.cpp reference
@@ -495,6 +494,12 @@ MAKE_TARGETS = {
         "name": "v8 Numerical Kernel Contracts",
         "category": "parity",
         "target": "test-numerical-contracts",
+        "timeout_sec": 300,
+    },
+    "v8_xray_contracts": {
+        "name": "v8 Numerical X-ray Contracts",
+        "category": "bf16",
+        "target": "test-bf16-xray",
         "timeout_sec": 300,
     },
     "v8_template_circuit_audit": {

@@ -1,0 +1,38 @@
+{
+  "schema": "cke.numerical_execution_contracts",
+  "schema_version": 1,
+  "engine_contract_version": "8",
+  "contracts": {
+    "bf16_weight_bf16_input_fp32_dot_fp32_output": {
+      "status": "observed",
+      "storage": {
+        "input": "fp32",
+        "weight": "bf16",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "bf16_rne",
+        "weight": "bf16",
+        "accumulator": "fp32"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load"]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "ascending_k",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "BF16 weights and BF16-rounded FP32 activation loads with an ascending-K FP32 dot product and FP32 output storage."
+    }
+  }
+}

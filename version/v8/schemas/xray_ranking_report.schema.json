@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.xray_ranking_report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "checks"],
+  "properties": {
+    "schema": {"const": "cke.xray_ranking_report"},
+    "schema_version": {"const": 1},
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": true,
+        "required": ["kind", "position", "status", "ck_top1", "oracle_top1"],
+        "properties": {
+          "kind": {"enum": ["mixed_prefill", "teacher_forced", "persistent_vs_replay"]},
+          "position": {"type": "integer", "minimum": 0},
+          "status": {"enum": ["pass", "fail"]},
+          "ck_top1": {"type": "integer"},
+          "oracle_top1": {"type": "integer"},
+          "cosine": {"type": "number"},
+          "rmse": {"type": "number", "minimum": 0},
+          "topk_overlap_count": {"type": "integer", "minimum": 0},
+          "topk": {"type": "integer", "minimum": 1}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "schema": "cke.graph_ir_numerical_contract",
+  "schema_version": 1,
+  "operation": "gemm",
+  "phase": "prefill",
+  "required_contract_id": "bf16_weight_bf16_input_fp32_dot_fp32_output",
+  "resolved_contract_id": "bf16_weight_bf16_input_fp32_dot_fp32_output",
+  "contract_id": "bf16_weight_bf16_input_fp32_dot_fp32_output",
+  "kernel_id": "gemm_nt_bf16",
+  "function": "gemm_nt_bf16",
+  "implementation": {
+    "isa_dispatch": "compile_time",
+    "threading": {
+      "runtime": "openmp",
+      "work_partition": ["independent_rows"],
+      "dispatch": ["openmp_parallel_for"],
+      "reduction_order_effect": "none"
+    }
+  },
+  "semantics": {
+    "storage": {"input": "fp32", "weight": "bf16", "output": "fp32"},
+    "compute": {"input": "bf16_rne", "weight": "bf16", "accumulator": "fp32"},
+    "rounding": {"mode": "rne", "points": ["input_load"]},
+    "reduction": {"kind": "dot_product", "order": "ascending_k", "partial_accumulator": "none", "merge_order": "none"},
+    "threading": {"work_partition": "independent_rows", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+    "position_transform": null,
+    "description": "BF16 weights and BF16-rounded FP32 activation loads with an ascending-K FP32 dot product and FP32 output storage."
+  },
+  "checkpoint": {
+    "id": "vision.layer.0.mlp.up",
+    "producer": "mlp_up",
+    "logical_layout": "token_major",
+    "axis_names": ["token", "channel"]
+  }
+}

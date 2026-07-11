@@ -180,13 +180,13 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
                     return {
                         key: without_contract_metadata(item)
                         for key, item in value.items()
-                        if key not in {"required_contract", "resolved_contract"}
+                        if key not in {"required_contract", "resolved_contract", "semantic_checkpoints"}
                     }
                 if isinstance(value, list):
                     return [without_contract_metadata(item) for item in value]
                 return value
 
-            self.assertEqual(without_contract_metadata(contracted), legacy)
+            self.assertEqual(without_contract_metadata(contracted), without_contract_metadata(legacy))
 
             expected_kernel = "attention_forward_full_head_major_gqa_flash_strided"
             for artifact in ("ir1", "lowered", "call"):
@@ -200,6 +200,60 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
                     self.assertEqual(attn["function"], expected_kernel)
                 else:
                     self.assertEqual(attn["kernel"], expected_kernel)
+
+                checkpoint_by_id = {
+                    checkpoint["id"]: checkpoint
+                    for operation in operations
+                    for checkpoint in operation.get("semantic_checkpoints", [])
+                }
+                expected_checkpoints = {
+                    "vision.frontend.position.output",
+                    "vision.layer.0.norm1.output",
+                    "vision.layer.0.q.pre_rope",
+                    "vision.layer.0.k.pre_rope",
+                    "vision.layer.0.v.output",
+                    "vision.layer.0.q.post_rope",
+                    "vision.layer.0.k.post_rope",
+                    "vision.layer.0.attention.output",
+                    "vision.layer.0.out_proj.output",
+                    "vision.layer.0.residual1.output",
+                    "vision.layer.0.norm2.output",
+                    "vision.layer.0.mlp.up",
+                    "vision.layer.0.mlp.activation",
+                    "vision.layer.0.mlp.down",
+                    "vision.layer.0.output",
+                    "vision.spatial_merge.output",
+                    "vision.projector.output",
+                    "vision.prefix.output",
+                }
+                self.assertTrue(expected_checkpoints.issubset(checkpoint_by_id))
+                for checkpoint_id in expected_checkpoints:
+                    checkpoint = checkpoint_by_id[checkpoint_id]
+                    self.assertTrue(checkpoint["kernel_id"])
+                    self.assertTrue(checkpoint["function"])
+                    self.assertEqual(len(checkpoint["axis_names"]), 2 if checkpoint["logical_layout"] == "token_major" else 3)
+
+    def test_stale_semantic_checkpoint_declaration_hard_fails(self) -> None:
+        template = {
+            "semantic_checkpoints": {
+                "schema": "cke.semantic_checkpoint_contract",
+                "schema_version": 1,
+                "exports": {
+                    "stale": {
+                        "section": "body", "template_op_id": "missing", "op": "gelu",
+                        "checkpoints": [{
+                            "id": "vision.layer.{layer}.mlp.activation", "producer": "missing",
+                            "tensor": "ffn_gelu", "logical_layout": "token_major",
+                            "axis_names": ["token", "channel"], "storage_dtype": "fp32",
+                        }],
+                    }
+                },
+            }
+        }
+        registry = {"kernels": [{"id": "gelu", "impl": {"function": "gelu_forward"}}]}
+        arranged = [{"kernel": "gelu", "op": "gelu", "template_op_id": "mlp_gelu", "section": "body", "layer": 0}]
+        with self.assertRaisesRegex(RuntimeError, "checkpoint declarations did not bind"):
+            build_ir_v8._attach_semantic_checkpoints(template, arranged, registry)
 
     def test_qwen3vl_invalid_vision_mrope_sections_fail_lowering(self) -> None:
         manifest = _make_qwen3vl_manifest()
