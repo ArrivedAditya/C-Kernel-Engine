@@ -502,6 +502,12 @@ MAKE_TARGETS = {
         "target": "test-bf16-xray",
         "timeout_sec": 300,
     },
+    "v8_dsl_policy": {
+        "name": "v8 DSL Zero-Hardcoding Policy",
+        "category": "inference",
+        "target": "test-v8-dsl-policy",
+        "timeout_sec": 300,
+    },
     "v8_template_circuit_audit": {
         "name": "v8 Template Circuit/Dataflow Audit",
         "category": "inference",

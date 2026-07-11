@@ -2891,7 +2891,7 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3vl --operation decoder.attention --phase decode --mode bringup --output build/v8/contracts/qwen3vl-decode.json >/dev/null
 	@echo "Resolved plans: build/v8/contracts/"
 
-.PHONY: test-bf16-xray xray-vision-parity
+.PHONY: test-bf16-xray xray-vision-parity test-v8-dsl-policy test-v8-dsl
 test-bf16-xray:
 	@echo "Running bounded numerical X-ray architecture tests..."
 	@$(PYTHON) -m py_compile \
@@ -2915,6 +2915,13 @@ xray-vision-parity:
 		--image "$${IMAGE:-build/xray/public_form_1152x896.ppm}" \
 		--threads "$${CK_NUM_THREADS:-20}" \
 		--output-dir "$${XRAY_OUTPUT_DIR:-build/xray/qwen3vl_bf16}"
+
+test-v8-dsl-policy:
+	@echo "Running v8 zero-hardcoding DSL policy tests..."
+	@$(PYTHON) version/v8/scripts/audit_dsl_policy_v8.py --json-out build/v8/dsl_policy_report.json
+	@$(PYTHON) -m unittest tests.test_v8_dsl_policy -v
+
+test-v8-dsl: test-v8-dsl-policy test-numerical-contracts test-v8-template-circuit-audit
 
 v8-model-kernel-inspect:
 	@target="$${MODEL:-$${CONFIG:-}}"; \
@@ -5014,7 +5021,7 @@ v7-regression-fast:
 	@echo "Running v7 regression fast suite..."
 	@$(PYTHON) version/v7/scripts/run_regression_v7.py --mode fast --force-rebuild $(REGRESSION_ARGS)
 
-v8-regression-fast:
+v8-regression-fast: test-v8-dsl-policy
 	@echo "Running v8 regression fast suite..."
 	@$(PYTHON) version/v8/scripts/run_regression_v8.py --mode fast --force-rebuild $(REGRESSION_ARGS)
 

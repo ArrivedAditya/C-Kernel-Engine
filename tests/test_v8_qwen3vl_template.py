@@ -414,15 +414,21 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "flags.prefer_fp32_mlp_matmuls"):
             build_ir_v8._hydrate_manifest_template(manifest)
 
-    def test_runtime_config_defaults_own_quant_policy(self) -> None:
-        qwen2_cfg = build_ir_v8._inject_runtime_config_defaults({}, "qwen2")
+    def test_circuit_runtime_defaults_own_quant_policy(self) -> None:
+        qwen2_cfg = build_ir_v8._apply_circuit_runtime_defaults(
+            {}, build_ir_v8._load_builtin_template_doc("qwen2"), source="qwen2"
+        )
         self.assertNotIn("prefer_fp32_mlp_matmuls", qwen2_cfg)
 
-        gemma_cfg = build_ir_v8._inject_runtime_config_defaults({}, "gemma3")
+        gemma_cfg = build_ir_v8._apply_circuit_runtime_defaults(
+            {}, build_ir_v8._load_builtin_template_doc("gemma3"), source="gemma3"
+        )
         self.assertTrue(gemma_cfg["prefer_q8_0_contract"])
         self.assertTrue(gemma_cfg["prefer_fp32_logits"])
 
-        vision_cfg = build_ir_v8._inject_runtime_config_defaults({}, "qwen3_vl_vision")
+        vision_cfg = build_ir_v8._apply_circuit_runtime_defaults(
+            {}, build_ir_v8._load_builtin_template_doc("qwen3_vl_vision"), source="vision"
+        )
         self.assertTrue(vision_cfg["prefer_q8_0_contract"])
         self.assertEqual(
             vision_cfg["q8_0_contract_ops"],
@@ -437,6 +443,20 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
                 "branch_fc2": "fp32",
             },
         )
+
+    def test_circuit_runtime_defaults_are_identity_invariant(self) -> None:
+        defaults = {"prefer_q8_0_contract": True, "activation_preference_by_op": {"mlp_down": "fp32"}}
+        alpha = {"name": "model_alpha", "contract": {"runtime_defaults": defaults}}
+        beta = {"name": "model_beta", "contract": {"runtime_defaults": defaults}}
+        self.assertEqual(
+            build_ir_v8._apply_circuit_runtime_defaults({}, alpha, source="alpha"),
+            build_ir_v8._apply_circuit_runtime_defaults({}, beta, source="beta"),
+        )
+
+    def test_circuit_runtime_defaults_reject_unknown_policy(self) -> None:
+        circuit = {"contract": {"runtime_defaults": {"model_specific_fast_path": True}}}
+        with self.assertRaisesRegex(RuntimeError, "HARD CIRCUIT DEFAULT FAULT"):
+            build_ir_v8._apply_circuit_runtime_defaults({}, circuit, source="invalid")
 
     def test_qwen3vl_branch_plan_reads_template_declared_layers(self) -> None:
         manifest = _make_qwen3vl_manifest()

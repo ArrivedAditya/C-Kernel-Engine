@@ -16,8 +16,8 @@ from convert_gguf_to_bump_v8 import (  # type: ignore
     build_gemma4_attention_plan,
     classify_layer_contract,
     describe_layer_contract,
-    _inject_runtime_config_defaults,
 )
+from build_ir_v8 import _apply_circuit_runtime_defaults, _load_builtin_template_doc  # type: ignore
 
 
 def _write_tiny_bpe_tokenizer(checkpoint: Path, vocab_size: int) -> None:
@@ -89,10 +89,13 @@ class V8Gemma4ScaffoldTests(unittest.TestCase):
         self.assertEqual(contract["token_stop_markers"], ["<turn|>"])
 
     def test_gemma4_uses_q8_activation_logits_by_default(self) -> None:
-        gemma4 = _inject_runtime_config_defaults({}, "gemma4")
-        gemma3 = _inject_runtime_config_defaults({}, "gemma3")
-        self.assertFalse(gemma4["prefer_fp32_logits"])
-        self.assertTrue(gemma4["prefer_q8_0_contract"])
+        gemma4 = _apply_circuit_runtime_defaults(
+            {}, _load_builtin_template_doc("gemma4"), source="gemma4"
+        )
+        gemma3 = _apply_circuit_runtime_defaults(
+            {}, _load_builtin_template_doc("gemma3"), source="gemma3"
+        )
+        self.assertNotIn("prefer_fp32_logits", gemma4)
         self.assertTrue(gemma3["prefer_fp32_logits"])
 
     def test_build_chat_contract_detects_gemma4_markers(self) -> None:

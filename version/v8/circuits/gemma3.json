@@ -14,6 +14,10 @@
     "post_ffn_norm": true
   },
   "contract": {
+    "runtime_defaults": {
+      "prefer_q8_0_contract": true,
+      "prefer_fp32_logits": true
+    },
     "tokenizer_contract": {
       "tokenizer_type": "sentencepiece",
       "bos_policy": "model_defined",
