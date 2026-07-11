@@ -63,6 +63,8 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
+from jsonschema import Draft202012Validator
+
 # ANSI colors for output
 RED = '\033[91m'
 GREEN = '\033[92m'
@@ -259,6 +261,89 @@ def _graph_ir_contract_metadata(plan: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(plan.get("checkpoint"), dict):
         metadata["checkpoint"] = copy.deepcopy(plan["checkpoint"])
     return metadata
+
+
+def _attach_semantic_checkpoints(
+    template: Dict[str, Any],
+    arranged_kernels: List[Dict[str, Any]],
+    registry: Dict[str, Any],
+) -> None:
+    contract = template.get("semantic_checkpoints")
+    if not isinstance(contract, dict):
+        return
+    schema_path = V8_ROOT / "schemas" / "semantic_checkpoint_contract.schema.json"
+    with schema_path.open("r", encoding="utf-8") as handle:
+        schema = json.load(handle)
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(contract),
+        key=lambda error: tuple(str(part) for part in error.absolute_path),
+    )
+    if errors:
+        error = errors[0]
+        location = ".".join(str(part) for part in error.absolute_path) or "<root>"
+        raise RuntimeError(
+            f"HARD CHECKPOINT ABI FAULT: semantic checkpoint contract is invalid at "
+            f"{location}: {error.message}"
+        )
+
+    kernel_functions = {
+        str(item.get("id", "")): str((item.get("impl") or {}).get("function", ""))
+        for item in registry.get("kernels", [])
+        if isinstance(item, dict)
+    }
+    matched: Dict[str, int] = {name: 0 for name in contract["exports"]}
+    seen_ids: set[str] = set()
+    for arranged in arranged_kernels:
+        section = str(arranged.get("section", ""))
+        template_op_id = str(arranged.get("template_op_id", ""))
+        op = str(arranged.get("op", ""))
+        layer = int(arranged.get("layer", -1))
+        for declaration_name, declaration in contract["exports"].items():
+            if (
+                declaration["section"] != section
+                or declaration["template_op_id"] != template_op_id
+                or declaration["op"] != op
+            ):
+                continue
+            checkpoints = []
+            for checkpoint in declaration["checkpoints"]:
+                checkpoint_id = str(checkpoint["id"]).replace("{layer}", str(layer))
+                if "{layer}" in checkpoint_id or (section == "body" and layer < 0):
+                    raise RuntimeError(
+                        f"HARD CHECKPOINT ABI FAULT: cannot resolve layer for {checkpoint['id']!r}"
+                    )
+                if checkpoint_id in seen_ids:
+                    raise RuntimeError(
+                        f"HARD CHECKPOINT ABI FAULT: duplicate semantic checkpoint {checkpoint_id!r}"
+                    )
+                seen_ids.add(checkpoint_id)
+                item = copy.deepcopy(checkpoint)
+                item["id"] = checkpoint_id
+                item["phase"] = "prefill" if section in {"header", "body", "footer", "branch"} else section
+                item["layer"] = layer
+                item["kernel_id"] = str(arranged.get("kernel", ""))
+                item["function"] = kernel_functions.get(item["kernel_id"], "")
+                if not item["function"]:
+                    raise RuntimeError(
+                        f"HARD CHECKPOINT ABI FAULT: kernel {item['kernel_id']!r} for "
+                        f"{checkpoint_id!r} has no exact public function"
+                    )
+                resolved = arranged.get("resolved_contract")
+                item["resolved_contract_id"] = (
+                    str(resolved.get("resolved_contract_id") or resolved.get("contract_id"))
+                    if isinstance(resolved, dict)
+                    else "unresolved"
+                )
+                checkpoints.append(item)
+            arranged["semantic_checkpoints"] = checkpoints
+            matched[declaration_name] += 1
+
+    missing = sorted(name for name, count in matched.items() if count == 0)
+    if missing:
+        raise RuntimeError(
+            "HARD CHECKPOINT ABI FAULT: checkpoint declarations did not bind to generated "
+            f"operations: {missing}. Fix section/template_op_id/op; do not add exporter aliases."
+        )
 
 
 def _entry_offset(entry: Dict[str, Any]) -> int:
@@ -5918,6 +6003,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         arranged["required_contract"] = copy.deepcopy(plan["requirements"])
         arranged["resolved_contract"] = _graph_ir_contract_metadata(plan)
 
+    _attach_semantic_checkpoints(template, arranged_kernels, registry)
+
     # ═══════════════════════════════════════════════════════════
     # PASS 1.5: Add dataflow information
     # For each op, record what it reads from and writes to
@@ -6764,6 +6851,8 @@ def generate_ir_lower_1(
                     f"HARD CONTRACT FAULT: LoweredIR received kernel {kernel_id!r}, but GraphIR "
                     f"execution metadata names {lowered_op['resolved_execution'].get('kernel_id')!r}."
                 )
+        if ir_op.get("semantic_checkpoints") is not None:
+            lowered_op["semantic_checkpoints"] = copy.deepcopy(ir_op["semantic_checkpoints"])
         if ir_op.get("_auto_inserted"):
             lowered_op["_auto_inserted"] = True
 
@@ -8696,6 +8785,8 @@ def generate_ir_lower_2(
                     f"HARD CONTRACT FAULT: memory lowering received kernel {ir_op['kernel']!r}, "
                     f"but execution metadata names {lowered_op['resolved_execution'].get('kernel_id')!r}."
                 )
+        if ir_op.get("semantic_checkpoints") is not None:
+            lowered_op["semantic_checkpoints"] = copy.deepcopy(ir_op["semantic_checkpoints"])
         if "_kv_cache_read_layer" in ir_op:
             lowered_op["_kv_cache_read_layer"] = int(ir_op["_kv_cache_read_layer"])
 
@@ -10878,6 +10969,8 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     f"execution metadata {resolved_execution.get('kernel_id')!r}."
                 )
             call_op["resolved_execution"] = resolved_execution
+        if op.get("semantic_checkpoints") is not None:
+            call_op["semantic_checkpoints"] = copy.deepcopy(op["semantic_checkpoints"])
         call_ops.append(call_op)
 
     lowered_call = {

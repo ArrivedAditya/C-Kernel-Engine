@@ -168,6 +168,20 @@ class NumericalExecutionContractTests(unittest.TestCase):
         self.assertEqual(result["next_checkpoints"][0], "vision.layer.9.output")
         self.assertEqual(result["next_checkpoints"][-1], "vision.layer.15.output")
 
+    def test_first_failing_layer_expands_only_that_block(self):
+        profile = planner.load(
+            ROOT / "version" / "v8" / "parity_profiles" / "qwen3vl_pytorch_bf16_v1.json"
+        )
+        order = ["vision.layer.8.output", "vision.layer.9.output", "vision.layer.10.output"]
+        report = {"comparisons": [
+            {"checkpoint_id": "vision.layer.8.output", "status": "pass"},
+            {"checkpoint_id": "vision.layer.9.output", "status": "fail"},
+        ]}
+        result = planner.plan(profile, report, checkpoint_order=order)
+        self.assertEqual(result["status"], "granular")
+        self.assertEqual(result["next_checkpoints"][0], "vision.layer.9.norm1.output")
+        self.assertEqual(result["next_checkpoints"][-1], "vision.layer.9.mlp.down")
+
     def test_graph_ir_metadata_retains_contract_and_checkpoint(self):
         scripts = ROOT / "version" / "v8" / "scripts"
         sys.path.insert(0, str(scripts))

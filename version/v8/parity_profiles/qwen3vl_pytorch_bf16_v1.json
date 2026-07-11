@@ -5,6 +5,7 @@
   "backend": "pytorch",
   "contract_schema_version": 1,
   "required_match_fields": ["checkpoint_id", "producer", "logical_layout", "axis_names", "resolved_contract_id", "kernel_id", "function"],
+  "observed_storage": {"default": "bf16", "checkpoints": {}},
   "dtype_thresholds": {
     "bf16": {"cosine_min": 0.999, "rmse_max": 0.02, "relative_rmse_max": 0.02, "max_abs_max": 0.25, "finite_required": true},
     "fp32": {"cosine_min": 0.99999, "rmse_max": 0.0001, "relative_rmse_max": 0.0001, "max_abs_max": 0.001, "finite_required": true}
@@ -20,10 +21,10 @@
       "vision.layer.13.output", "vision.layer.14.output", "vision.layer.15.output"
     ],
     "vision.layer.input->vision.layer.output": [
-      "vision.layer.norm1.output", "vision.layer.q.pre_rope", "vision.layer.k.pre_rope",
-      "vision.layer.q.post_rope", "vision.layer.k.post_rope", "vision.layer.attention.output",
-      "vision.layer.out_proj.output", "vision.layer.residual1.output", "vision.layer.norm2.output",
-      "vision.layer.mlp.up", "vision.layer.mlp.activation", "vision.layer.mlp.down", "vision.layer.output"
+      "vision.layer.{layer}.norm1.output", "vision.layer.{layer}.q.pre_rope", "vision.layer.{layer}.k.pre_rope",
+      "vision.layer.{layer}.q.post_rope", "vision.layer.{layer}.k.post_rope", "vision.layer.{layer}.attention.output",
+      "vision.layer.{layer}.out_proj.output", "vision.layer.{layer}.residual1.output", "vision.layer.{layer}.norm2.output",
+      "vision.layer.{layer}.mlp.up", "vision.layer.{layer}.mlp.activation", "vision.layer.{layer}.mlp.down", "vision.layer.{layer}.output"
     ]
   },
   "backend_mappings": {

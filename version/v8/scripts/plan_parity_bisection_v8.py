@@ -30,13 +30,17 @@ def validate_profile(profile: Dict[str, Any]) -> None:
         raise ValueError(f"invalid parity profile at {list(error.absolute_path)}: {error.message}")
 
 
-def plan(profile: Dict[str, Any], report: Dict[str, Any]) -> Dict[str, Any]:
+def plan(
+    profile: Dict[str, Any],
+    report: Dict[str, Any],
+    checkpoint_order: list[str] | None = None,
+) -> Dict[str, Any]:
     validate_profile(profile)
     comparisons = report.get("comparisons")
     if not isinstance(comparisons, list):
         raise ValueError("report.comparisons must be an array")
     results = {str(row.get("checkpoint_id")): str(row.get("status")) for row in comparisons}
-    order: List[str] = profile["checkpoint_order"]
+    order: List[str] = checkpoint_order or profile["checkpoint_order"]
     first_failure = next((name for name in order if results.get(name) == "fail"), None)
     if first_failure is None:
         pending = [name for name in order if results.get(name) not in {"pass", "fail"}]
@@ -45,6 +49,12 @@ def plan(profile: Dict[str, Any], report: Dict[str, Any]) -> Dict[str, Any]:
     lower = order[index - 1] if index else "<input>"
     interval = f"{lower}->{first_failure}"
     expansion = profile["interval_expansions"].get(interval, [])
+    if not expansion and first_failure.startswith("vision.layer.") and first_failure.endswith(".output"):
+        parts = first_failure.split(".")
+        if len(parts) == 4 and parts[2].isdigit():
+            layer = parts[2]
+            generic = profile["interval_expansions"].get("vision.layer.input->vision.layer.output", [])
+            expansion = [name.replace("{layer}", layer) for name in generic]
     pending = [name for name in expansion if results.get(name) not in {"pass", "fail"}]
     return {
         "status": "granular" if expansion else "attributed_interval",

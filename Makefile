@@ -2007,6 +2007,7 @@ test-bf16: $(LIB) test-libs
 	$(PYTHON) $(PYTHONFLAGS) $(PY_TESTS_BF16_V8)
 	@echo "Running v8 BF16 file-backed BUMP allocator guardrail..."
 	$(PYTHON) $(PYTHONFLAGS) unittest/test_bump_alloc_mixed.py
+	@$(MAKE) --no-print-directory test-bf16-xray
 
 test-v4-q4k:
 	@if [ -z "$(GGUF_PATH)" ]; then \
@@ -2879,14 +2880,41 @@ test-numerical-contracts: $(LIB)
 	@echo "Running v8 numerical contract validation..."
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_attention_contracts_v8.py
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_numerical_execution_contracts_v8.py
+	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py
 	@$(PYTHON) tests/test_v8_attention_contracts.py
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
+	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
 	@$(PYTHON) unittest/test_attention_full.py
 	@$(PYTHON) unittest/test_attention_f16_split_kv.py
 	@mkdir -p build/v8/contracts
 	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3_vl_vision --operation vision_encoder.attention --phase prefill --mode bringup --output build/v8/contracts/qwen3vl-vision-prefill.json >/dev/null
 	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3vl --operation decoder.attention --phase decode --mode bringup --output build/v8/contracts/qwen3vl-decode.json >/dev/null
 	@echo "Resolved plans: build/v8/contracts/"
+
+.PHONY: test-bf16-xray xray-vision-parity
+test-bf16-xray:
+	@echo "Running bounded numerical X-ray architecture tests..."
+	@$(PYTHON) -m py_compile \
+		version/v8/scripts/xray_numerical_parity_v8.py \
+		version/v8/scripts/build_xray_checkpoint_manifest_v8.py \
+		version/v8/scripts/xray_qwen3vl_bf16_v8.py \
+		version/v8/scripts/normalize_xray_ranking_report_v8.py
+	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
+	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
+	@$(PYTHON) version/v8/test_assets/generate_xray_form_fixture_v8.py \
+		--output build/xray/public_form_1152x896.ppm
+
+xray-vision-parity:
+	@if [ -z "$(CHECKPOINT)" ] || [ -z "$(RUNTIME_DIR)" ] || [ -z "$(WEIGHTS_BUMP)" ] || [ -z "$(CALL_IR)" ]; then \
+		echo "Usage: make xray-vision-parity CHECKPOINT=/safetensors RUNTIME_DIR=/runtime WEIGHTS_BUMP=/weights.bump CALL_IR=/call.json [IMAGE=/form.ppm]"; \
+		exit 2; \
+	fi
+	@$(PYTHON) version/v8/scripts/xray_qwen3vl_bf16_v8.py \
+		--checkpoint "$(CHECKPOINT)" --runtime-dir "$(RUNTIME_DIR)" \
+		--weights-bump "$(WEIGHTS_BUMP)" --call-ir "$(CALL_IR)" \
+		--image "$${IMAGE:-build/xray/public_form_1152x896.ppm}" \
+		--threads "$${CK_NUM_THREADS:-20}" \
+		--output-dir "$${XRAY_OUTPUT_DIR:-build/xray/qwen3vl_bf16}"
 
 v8-model-kernel-inspect:
 	@target="$${MODEL:-$${CONFIG:-}}"; \

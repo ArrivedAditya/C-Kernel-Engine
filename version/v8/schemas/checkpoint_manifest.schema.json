@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.checkpoint_manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "backend", "run", "checkpoints"],
+  "properties": {
+    "schema": {"const": "cke.checkpoint_manifest"},
+    "schema_version": {"const": 1},
+    "backend": {"type": "string", "minLength": 1},
+    "run": {
+      "type": "object", "additionalProperties": false,
+      "required": ["model", "phase", "source"],
+      "properties": {
+        "model": {"type": "string", "minLength": 1},
+        "phase": {"enum": ["prefill", "decode", "mixed_prefill", "teacher_forced"]},
+        "source": {"type": "string", "minLength": 1}
+      }
+    },
+    "checkpoints": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["checkpoint_id", "producer", "phase", "layer", "tensor_path", "storage_dtype", "exported_dtype", "logical_shape", "physical_shape", "logical_layout", "axis_names", "physical_axis_names", "resolved_contract_id", "kernel_id", "function", "sha256"],
+        "properties": {
+          "checkpoint_id": {"type": "string", "minLength": 1},
+          "producer": {"type": "string", "minLength": 1},
+          "phase": {"type": "string", "minLength": 1},
+          "layer": {"type": "integer", "minimum": -1},
+          "tensor_path": {"type": "string", "minLength": 1},
+          "storage_dtype": {"enum": ["fp32", "fp16", "bf16", "q8_0", "q8_k"]},
+          "exported_dtype": {"enum": ["fp32", "fp16", "bf16"]},
+          "logical_shape": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
+          "physical_shape": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
+          "logical_layout": {"type": "string", "minLength": 1},
+          "axis_names": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "physical_axis_names": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "resolved_contract_id": {"type": "string", "minLength": 1},
+          "kernel_id": {"type": "string", "minLength": 1},
+          "function": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    }
+  }
+}

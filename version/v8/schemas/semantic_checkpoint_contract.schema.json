@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.semantic_checkpoint_contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "exports"],
+  "properties": {
+    "schema": {"const": "cke.semantic_checkpoint_contract"},
+    "schema_version": {"const": 1},
+    "exports": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["section", "template_op_id", "op", "checkpoints"],
+        "properties": {
+          "section": {"enum": ["header", "body", "footer", "branch"]},
+          "template_op_id": {"type": "string", "minLength": 1},
+          "op": {"type": "string", "minLength": 1},
+          "checkpoints": {
+            "type": "array", "minItems": 1,
+            "items": {
+              "type": "object", "additionalProperties": false,
+              "required": ["id", "producer", "tensor", "logical_layout", "axis_names", "storage_dtype"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1},
+                "producer": {"type": "string", "minLength": 1},
+                "tensor": {"type": "string", "minLength": 1},
+                "logical_layout": {"type": "string", "minLength": 1},
+                "axis_names": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+                "storage_dtype": {"enum": ["fp32", "fp16", "bf16", "q8_0", "q8_k"]}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
