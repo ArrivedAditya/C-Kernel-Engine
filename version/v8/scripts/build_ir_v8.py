@@ -6754,6 +6754,48 @@ def insert_bias_add_ops(
 # STAGE 3: IR LOWER 1 (Stitch kernel maps)
 # ═══════════════════════════════════════════════════════════════════════════
 
+_DECODE_ATTENTION_OPS = {
+    "attn",
+    "attn_sliding",
+    "attn_shared_kv",
+    "attn_sliding_shared_kv",
+}
+
+
+def _require_resolved_decode_attention_kernel(op: Dict[str, Any]) -> str:
+    """Validate the resolved decode provider without performing selection."""
+    op_name = str(op.get("op", "") or "")
+    if op_name not in _DECODE_ATTENTION_OPS:
+        raise RuntimeError(
+            f"HARD IR LOWERING FAULT: {op_name!r} is not a decode attention operation."
+        )
+    kernel_id = str(op.get("kernel", "") or "").strip()
+    function = str(op.get("function", "") or "").strip()
+    if not kernel_id or not function:
+        raise RuntimeError(
+            f"HARD IR LOWERING FAULT: {op_name} reached Lower 1 without an exact "
+            "IR1 kernel and function. Resolve it from circuit requirements and kernel maps."
+        )
+    resolved = op.get("resolved_contract")
+    if isinstance(resolved, dict):
+        resolved_kernel = str(resolved.get("kernel_id", "") or "").strip()
+        resolved_function = str(resolved.get("function", "") or "").strip()
+        if not resolved_kernel or not resolved_function:
+            raise RuntimeError(
+                f"HARD IR LOWERING FAULT: {op_name} has an incomplete resolved contract."
+            )
+        if resolved_kernel != kernel_id:
+            raise RuntimeError(
+                f"HARD IR LOWERING FAULT: {op_name} IR1 kernel {kernel_id!r} "
+                f"does not match resolved contract kernel {resolved_kernel!r}."
+            )
+        if resolved_function != function:
+            raise RuntimeError(
+                f"HARD IR LOWERING FAULT: {op_name} function {function!r} "
+                f"does not match resolved contract function {resolved_function!r}."
+            )
+    return kernel_id
+
 def generate_ir_lower_1(
     fused_ops: List[Dict],
     registry: Dict,
@@ -6786,7 +6828,6 @@ def generate_ir_lower_1(
     config = manifest.get("config", {})
     logits_layout = _resolve_logits_layout(config, mode)
     template = manifest.get("template", {}) if isinstance(manifest.get("template"), dict) else {}
-    template_kernels = template.get("kernels", {}) if isinstance(template.get("kernels"), dict) else {}
     template_contract = template.get("contract") if isinstance(template.get("contract"), dict) else {}
     attention_contract = template_contract.get("attention_contract") if isinstance(template_contract.get("attention_contract"), dict) else {}
     decode_cache_contract = attention_contract.get("decode_cache_contract") if isinstance(attention_contract.get("decode_cache_contract"), dict) else {}
@@ -6989,6 +7030,7 @@ def generate_ir_lower_1(
     print(f"\n  [{mode.capitalize()} mode] Inserting KV cache operations...")
     final_ops = []
     kv_store_count = 0
+    decode_attention_count = 0
 
     force_decode_attn_regular = str(os.environ.get("CK_V7_DECODE_ATTN_REGULAR", "")).strip().lower() in ("1", "true", "yes", "on")
     decode_kv_cache_dtype = str(config.get("decode_kv_cache_dtype", "fp32") or "fp32").strip().lower()
@@ -7131,29 +7173,15 @@ def generate_ir_lower_1(
                 op["inputs"]["v_cache"] = {"type": "kv_cache", "source": f"kv_cache_v_L{kv_read_layer}"}
                 op["inputs"].pop("k", None)
                 op["inputs"].pop("v", None)
-            elif op["op"] in ("attn", "attn_sliding") and "attention" in op["kernel"]:
-                resolved_contract = op.get("resolved_contract") if isinstance(op.get("resolved_contract"), dict) else None
-                if resolved_contract is not None:
-                    decode_kernel = str(resolved_contract["kernel_id"])
-                    if force_decode_attn_regular:
-                        raise RuntimeError(
-                            "HARD CONTRACT FAULT: CK_V7_DECODE_ATTN_REGULAR attempted to override "
-                            f"resolved kernel {decode_kernel!r}. Semantic runtime flags cannot override "
-                            "an authoritative GraphIR contract."
-                        )
-                # Legacy circuits without a declared contract retain their
-                # existing compatibility selection until they are migrated.
-                elif op["op"] == "attn_sliding":
-                    decode_kernel = template_kernels.get("attn_sliding_decode") or "attention_forward_decode_head_major_gqa_flash_sliding"
-                else:
-                    if force_decode_attn_regular:
-                        decode_kernel = "attention_forward_decode_head_major_gqa_regular"
-                    else:
-                        decode_kernel = template_kernels.get("attn_decode") or "attention_forward_decode_head_major_gqa_flash"
-                    if decode_uses_fp16_kv and decode_kernel == "attention_forward_decode_head_major_gqa_flash":
-                        decode_kernel = "attention_forward_decode_head_major_gqa_flash_f16cache"
-                op["kernel"] = decode_kernel
-                op["function"] = decode_kernel
+            elif op["op"] in _DECODE_ATTENTION_OPS:
+                decode_kernel = _require_resolved_decode_attention_kernel(op)
+                decode_attention_count += 1
+                if force_decode_attn_regular:
+                    raise RuntimeError(
+                        "HARD CONTRACT FAULT: CK_V7_DECODE_ATTN_REGULAR cannot override "
+                        f"authoritative IR1 kernel {decode_kernel!r}. Change the circuit or "
+                        "kernel-map contract instead."
+                    )
                 kv_read_layer = _kv_read_layer_for(int(op.get("layer", 0)))
                 op["_kv_cache_read_layer"] = kv_read_layer
                 # Update inputs to use KV cache instead of scratch
@@ -7163,18 +7191,6 @@ def generate_ir_lower_1(
                 # Remove scratch K/V references if present
                 op["inputs"].pop("k", None)
                 op["inputs"].pop("v", None)
-            elif op["op"] in ("attn_shared_kv", "attn_sliding_shared_kv") and "attention" in op["kernel"]:
-                if op["op"] == "attn_sliding_shared_kv":
-                    decode_kernel = template_kernels.get("attn_sliding_shared_kv_decode") or "attention_forward_decode_head_major_shared_kv_sliding_gemma4"
-                else:
-                    decode_kernel = template_kernels.get("attn_shared_kv_decode") or "attention_forward_decode_head_major_shared_kv_gemma4"
-                op["kernel"] = decode_kernel
-                op["function"] = decode_kernel
-                kv_read_layer = _kv_read_layer_for(int(op.get("layer", 0)))
-                op["_kv_cache_read_layer"] = kv_read_layer
-                op.setdefault("inputs", {})
-                op["inputs"]["k_cache"] = {"type": "kv_cache", "source": f"kv_cache_k_L{kv_read_layer}"}
-                op["inputs"]["v_cache"] = {"type": "kv_cache", "source": f"kv_cache_v_L{kv_read_layer}"}
 
         elif mode == "prefill":
             # Prefill layout bridges are a graph contract, not a decoder/KV-cache
@@ -7353,7 +7369,10 @@ def generate_ir_lower_1(
     if not uses_kv_cache:
         print("  KV cache insertion skipped: template declares no persistent KV cache")
     if mode == "decode" and uses_kv_cache:
-        print(f"  Updated {kv_store_count} attention ops to use decode kernel")
+        print(
+            f"  Validated {decode_attention_count} authoritative IR1 decode "
+            "attention kernels and wired KV-cache inputs"
+        )
 
     # Summary
     total_weight_refs = sum(len(op.get("weights", {})) for op in lowered_ops)
