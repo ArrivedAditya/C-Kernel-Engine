@@ -214,6 +214,30 @@ def _half_bits(a):
     return np.ascontiguousarray(a.astype(np.float16)).view(np.uint16)
 
 
+def _pairwise_sum_f32(values):
+    values = np.asarray(values, dtype=np.float32)
+    while values.size > 1:
+        half = values.size // 2
+        values = (values[:half] + values[half:half * 2]).astype(np.float32)
+    return np.float32(values[0])
+
+
+def _dot_f16_avx512_contract(q32, k32):
+    accum = [np.zeros(16, dtype=np.float32) for _ in range(4)]
+    limit = q32.size - q32.size % 64
+    for offset in range(0, limit, 64):
+        for lane in range(4):
+            begin = offset + lane * 16
+            accum[lane] = (
+                accum[lane] + q32[begin:begin + 16] * k32[begin:begin + 16]
+            ).astype(np.float32)
+    merged = ((accum[0] + accum[2]) + (accum[1] + accum[3])).astype(np.float32)
+    result = _pairwise_sum_f32(merged)
+    for offset in range(limit, q32.size):
+        result = np.float32(result + np.float32(q32[offset] * k32[offset]))
+    return result
+
+
 def _split_oracle(q, k_bits, v_bits, head_dim, chunks):
     """Independent scalar-contract oracle with explicit FP16 accumulators."""
     num_heads, aligned = q.shape
@@ -238,11 +262,8 @@ def _split_oracle(q, k_bits, v_bits, head_dim, chunks):
             total = np.float32(0.0)
             acc = np.zeros(head_dim, dtype=np.float16)
             for token in range(begin, end):
-                # np.sum(dtype=float32) preserves the intended FP32 reduction
-                # contract while keeping the real Qwen3-VL shape test practical.
-                dot = np.sum(
-                    q32 * k_half[kv_head, token, :head_dim].astype(np.float32),
-                    dtype=np.float32,
+                dot = _dot_f16_avx512_contract(
+                    q32, k_half[kv_head, token, :head_dim].astype(np.float32)
                 )
                 score = np.float32(dot * scale)
                 old_max = maximum

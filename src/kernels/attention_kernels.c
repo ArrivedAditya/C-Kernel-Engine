@@ -3843,10 +3843,11 @@ static float ck_bf16_dot_contract(const float *a, const float *b, int count)
 #endif
 }
 
-static int ck_attention_full_bf16_sdpa_tiled(
+static int ck_attention_full_bf16_sdpa_tiled_range(
     const float *q, const float *k, const float *v, float *output,
     int num_heads, int num_kv_heads, int num_tokens,
-    int head_dim, int aligned_head_dim, int kv_stride_tokens)
+    int head_dim, int aligned_head_dim, int kv_stride_tokens,
+    int head_begin, int head_step)
 {
     if (!q || !k || !v || !output || num_heads <= 0 || num_kv_heads <= 0 ||
         head_dim <= 0 || num_tokens <= 0 || aligned_head_dim < head_dim ||
@@ -3865,7 +3866,7 @@ static int ck_attention_full_bf16_sdpa_tiled(
     float probs[512];
     float *v_cols = (float *)malloc(v_col_count * sizeof(float));
     if (!v_cols) return 0;
-    for (int h = 0; h < num_heads; ++h) {
+    for (int h = head_begin; h < num_heads; h += head_step) {
         const int kv_head = (int)((long long)h * (long long)num_kv_heads / (long long)num_heads);
         const float *qh = q + (size_t)h * q_head_stride;
         const float *kh = k + (size_t)kv_head * kv_head_stride;
@@ -3919,6 +3920,56 @@ static int ck_attention_full_bf16_sdpa_tiled(
     free(v_cols);
     return 1;
 }
+
+typedef struct {
+    const float *q;
+    const float *k;
+    const float *v;
+    float *output;
+    int num_heads;
+    int num_kv_heads;
+    int num_tokens;
+    int head_dim;
+    int aligned_head_dim;
+    int kv_stride_tokens;
+    int failed;
+} ck_attention_bf16_sdpa_args_t;
+
+static void ck_attention_bf16_sdpa_work(int ith, int nth, void *opaque)
+{
+    ck_attention_bf16_sdpa_args_t *args = (ck_attention_bf16_sdpa_args_t *)opaque;
+    if (!ck_attention_full_bf16_sdpa_tiled_range(
+            args->q, args->k, args->v, args->output,
+            args->num_heads, args->num_kv_heads, args->num_tokens,
+            args->head_dim, args->aligned_head_dim, args->kv_stride_tokens,
+            ith, nth)) {
+        __atomic_store_n(&args->failed, 1, __ATOMIC_RELAXED);
+    }
+}
+
+static int ck_attention_full_bf16_sdpa_tiled(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens,
+    int head_dim, int aligned_head_dim, int kv_stride_tokens)
+{
+    ck_attention_bf16_sdpa_args_t args = {
+        .q=q, .k=k, .v=v, .output=output,
+        .num_heads=num_heads, .num_kv_heads=num_kv_heads,
+        .num_tokens=num_tokens, .head_dim=head_dim,
+        .aligned_head_dim=aligned_head_dim, .kv_stride_tokens=kv_stride_tokens,
+        .failed=0
+    };
+    ck_threadpool_t *pool = ck_threadpool_global();
+    int active = pool ? ck_threadpool_n_threads(pool) : 1;
+    if (active > num_heads) active = num_heads;
+    if (pool && active > 1) {
+        ck_threadpool_dispatch_n(pool, active, ck_attention_bf16_sdpa_work, &args);
+    } else {
+        ck_attention_bf16_sdpa_work(0, 1, &args);
+    }
+    return __atomic_load_n(&args.failed, __ATOMIC_RELAXED) == 0;
+}
+
 void attention_forward_full_head_major_gqa_flash_strided_bf16_storage(
     const float *q,
     const float *k,

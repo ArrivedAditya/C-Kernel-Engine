@@ -92,10 +92,19 @@ def main() -> int:
     record(rows, "mlp_up_gemm", {"m": 2, "n": 4304, "k": 1152},
            gemm.run_case_detailed(2, 4304, 1152, 103), (0.03125, 3.5e-4),
            min_exact_ratio=0.9997)
+    record(rows, "qkv_gemm_native_threadpool", {"m": 4, "n": 3456, "k": 1152},
+           gemm.run_case_detailed(4, 3456, 1152, 102, kernel=gemm.NATIVE_KERNEL),
+           (0.03125, 3.0e-4), min_exact_ratio=0.9997)
+    record(rows, "mlp_up_gemm_native_threadpool", {"m": 2, "n": 4304, "k": 1152},
+           gemm.run_case_detailed(2, 4304, 1152, 103, kernel=gemm.NATIVE_KERNEL),
+           (0.03125, 3.5e-4), min_exact_ratio=0.9997)
+    record(rows, "qkv_gemm_amx_tile32", {"m": 32, "n": 3456, "k": 1152},
+           gemm.run_case_detailed(32, 3456, 1152, 104, kernel=gemm.AMX_KERNEL),
+           (0.5, 1.0e-3), min_exact_ratio=0.9997)
     record(rows, "vision_attention", {"heads": 2, "tokens": 128, "dim": 72},
-           attention.run_case(2, 128, 72, 104), (0.03125, 0.003))
+           attention.run_case(2, 2, 128, 72, 72, 104)[:2], (0.03125, 0.003))
     record(rows, "vision_attention", {"heads": 2, "tokens": 512, "dim": 72},
-           attention.run_case(2, 512, 72, 105), (0.03125, 0.003))
+           attention.run_case(2, 2, 512, 72, 72, 105)[:2], (0.03125, 0.003))
 
     report = {
         "schema": "cke.bf16_practical_precision",

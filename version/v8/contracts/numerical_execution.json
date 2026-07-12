@@ -299,6 +299,41 @@
       "description": "BF16 weights and BF16-rounded FP32 activation loads with ascending-K FP32 dot products and BF16 RNE output storage.",
       "operator_family": "gemm"
     },
+    "bf16_weight_bf16_input_native_pair_dot_bf16_output": {
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "bf16",
+        "output": "bf16"
+      },
+      "compute": {
+        "input": "bf16_rne",
+        "weight": "bf16",
+        "accumulator": "fp32"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "pairwise_tree"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "BF16 weights and BF16-rounded activations using native paired BF16 dot products, FP32 vector accumulators, pairwise horizontal merge, CK threadpool independent-row partitioning, and BF16 RNE output storage.",
+      "operator_family": "gemm"
+    },
     "attention_bf16_storage_fp32_online_bf16_output": {
       "status": "validated",
       "storage": {
@@ -361,8 +396,8 @@
         "merge_order": "ascending_chunk"
       },
       "threading": {
-        "work_partition": "serial",
-        "split_strategy": "serial",
+        "work_partition": "independent_heads",
+        "split_strategy": "independent_outputs",
         "deterministic": true,
         "thread_count_changes_arithmetic_order": false
       },
@@ -439,6 +474,41 @@
       },
       "position_transform": null,
       "description": "PyTorch tanh-approximate GELU over BF16-valued inputs with FP32 elementwise compute and BF16 RNE output storage."
+    },
+    "bf16_weight_bf16_input_amx_tile32_dot_bf16_output": {
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "bf16",
+        "output": "bf16"
+      },
+      "compute": {
+        "input": "bf16_rne",
+        "weight": "bf16",
+        "accumulator": "fp32"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "ascending_chunk"
+      },
+      "threading": {
+        "work_partition": "output_tiles",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "BF16 weights and BF16-rounded activations using AMX 16x16x32 tile dot products, ascending K tiles, independent 2D output-tile partitioning, and BF16 RNE output storage.",
+      "operator_family": "gemm"
     }
   }
 }

@@ -2002,6 +2002,13 @@ test-bench: $(LIB) test-libs
 
 
 
+.PHONY: test-bf16-performance-sweep
+test-bf16-performance-sweep: $(LIB)
+	@echo "Running BF16 numerical performance thread sweep..."
+	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) \
+		unittest/bf16/test_qwen3vl_performance_sweep_bf16.py \
+		--report version/v8/.cache/reports/bf16_performance_sweep_latest.json
+
 .PHONY: test-bf16-practical-precision
 test-bf16-practical-precision: $(LIB)
 	@echo "Running practical-shape BF16 precision matrix..."

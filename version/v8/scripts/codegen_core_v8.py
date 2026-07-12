@@ -678,6 +678,17 @@ def emit_op(
     lines.append(f"    /* Op {idx}: {function} ({op_name}) layer={layer} section={section} */")
     args = [{**arg, "expr": _normalize_arg_expr(str(arg.get("expr", "0")))} for arg in args]
 
+    if op_name == "residual_save" and int(layer) >= 0:
+        by_name = {str(arg.get("name", "")).lower(): str(arg.get("expr", "0")) for arg in args}
+        src_expr = by_name.get("src")
+        size_expr = by_name.get("size")
+        checkpoint = "layer_input" if op_instance_idx == 0 else "after_attn"
+        if src_expr and size_expr:
+            lines.append(
+                f'    ck_debug_import_checkpoint(model, {int(layer)}, "{checkpoint}", '
+                f"(float*)({src_expr}), ((size_t)({size_expr})) / sizeof(float));"
+            )
+
     def _return_lines(*, append_stop: bool = False) -> str:
         if append_stop and seq_idx is not None:
             lines.append(f"    if (stop_seq == {seq_idx}) return;")
@@ -2751,6 +2762,36 @@ static void ck_decode(CKModel *model, int32_t token);
 static void ck_prefill(CKModel *model, const int32_t *tokens, int count);
 static int ck_trace_pos_enabled(void);
 static void ck_trace_pos(const char *stage, int32_t token, int count, int before_pos, int after_pos);
+
+static int ck_debug_import_checkpoint(CKModel *model, int layer, const char *checkpoint, float *data, size_t count) {{
+    const char *path = getenv("CK_DEBUG_IMPORT_HIDDEN");
+    const char *layer_text = getenv("CK_DEBUG_IMPORT_LAYER");
+    const char *wanted_checkpoint = getenv("CK_DEBUG_IMPORT_CHECKPOINT");
+    if (!path || !path[0] || !layer_text || !layer_text[0] ||
+        !wanted_checkpoint || !wanted_checkpoint[0] ||
+        !model || !checkpoint || !data || count == 0) return 0;
+    char *end = NULL;
+    long wanted = strtol(layer_text, &end, 10);
+    if (end == layer_text || *end != '\\0' || wanted != layer ||
+        strcmp(wanted_checkpoint, checkpoint) != 0) return 0;
+    FILE *f = fopen(path, "rb");
+    if (!f) {{
+        fprintf(stderr, "[CK X-ray] cannot open checkpoint input: %s\\n", path);
+        return -1;
+    }}
+    const size_t got = fread(data, sizeof(float), count, f);
+    const int extra = fgetc(f);
+    fclose(f);
+    if (got != count || extra != EOF) {{
+        fprintf(stderr,
+                "[CK X-ray] checkpoint input size mismatch layer=%d checkpoint=%s expected=%zu got=%zu extra=%d\\n",
+                layer, checkpoint, count, got, extra != EOF);
+        return -1;
+    }}
+    fprintf(stderr, "[CK X-ray] imported layer %d checkpoint %s (%zu floats)\\n",
+            layer, checkpoint, count);
+    return 1;
+}}
 
 static void ck_debug_export_hidden(CKModel *model, int layer, const char *name, const float *data, int count) {{
     const char *dir = getenv("CK_DEBUG_EXPORT_HIDDEN");

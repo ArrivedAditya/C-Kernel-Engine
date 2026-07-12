@@ -24,6 +24,7 @@
  */
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -42,6 +43,7 @@
 
 #include "bf16_utils.h"
 #include "ckernel_engine.h"
+#include "ck_threadpool.h"
 
 /* Block sizes tuned for typical L1/L2 cache */
 #define BLK_M 64
@@ -274,6 +276,10 @@ static void ck_amx_config_bf16_16x16x32(void)
     cfg.colsb[1] = 64;
     cfg.rows[2] = 16;       /* C: 16 rows x 16 FP32 */
     cfg.colsb[2] = 64;
+    for (int tile = 3; tile <= 5; ++tile) {
+        cfg.rows[tile] = 16;
+        cfg.colsb[tile] = 64;
+    }
 
     _tile_loadconfig(&cfg);
 }
@@ -763,6 +769,277 @@ void gemm_tn_bf16(const uint16_t *A,
  * standard mixed-precision training contract where activations/weights may be
  * BF16 but gradient accumulation remains FP32.
  */
+typedef struct {
+    const float *A;
+    const uint16_t *B;
+    const float *bias;
+    float *C;
+    int M;
+    int N;
+    int K;
+} ck_gemm_bf16_native_args_t;
+
+static void ck_gemm_bf16_native_work(int ith, int nth, void *opaque)
+{
+    ck_gemm_bf16_native_args_t *args = (ck_gemm_bf16_native_args_t *)opaque;
+    const int N = args->N;
+    const int K = args->K;
+    uint16_t *a_bf16 = (uint16_t *)alloca((size_t)K * sizeof(uint16_t));
+
+    for (int row = ith; row < args->M; row += nth) {
+        const float *src = args->A + (size_t)row * (size_t)K;
+        float *dst = args->C + (size_t)row * (size_t)N;
+        for (int k = 0; k < K; ++k) a_bf16[k] = float_to_bf16(src[k]);
+
+#if HAVE_NATIVE_BF16
+        int j = 0;
+        for (; j + 4 <= N; j += 4) {
+            const uint16_t *b0 = args->B + (size_t)(j + 0) * K;
+            const uint16_t *b1 = args->B + (size_t)(j + 1) * K;
+            const uint16_t *b2 = args->B + (size_t)(j + 2) * K;
+            const uint16_t *b3 = args->B + (size_t)(j + 3) * K;
+            __m512 acc0 = _mm512_setzero_ps();
+            __m512 acc1 = _mm512_setzero_ps();
+            __m512 acc2 = _mm512_setzero_ps();
+            __m512 acc3 = _mm512_setzero_ps();
+            int k = 0;
+            for (; k <= K - 32; k += 32) {
+                const __m512bh av = load_bf16x32(a_bf16 + k);
+                acc0 = _mm512_dpbf16_ps(acc0, av, load_bf16x32(b0 + k));
+                acc1 = _mm512_dpbf16_ps(acc1, av, load_bf16x32(b1 + k));
+                acc2 = _mm512_dpbf16_ps(acc2, av, load_bf16x32(b2 + k));
+                acc3 = _mm512_dpbf16_ps(acc3, av, load_bf16x32(b3 + k));
+            }
+            float sums[4] = {
+                _mm512_reduce_add_ps(acc0), _mm512_reduce_add_ps(acc1),
+                _mm512_reduce_add_ps(acc2), _mm512_reduce_add_ps(acc3)
+            };
+            for (; k < K; ++k) {
+                const float av = bf16_to_float(a_bf16[k]);
+                sums[0] += av * bf16_to_float(b0[k]);
+                sums[1] += av * bf16_to_float(b1[k]);
+                sums[2] += av * bf16_to_float(b2[k]);
+                sums[3] += av * bf16_to_float(b3[k]);
+            }
+            for (int lane = 0; lane < 4; ++lane) {
+                if (args->bias) sums[lane] += args->bias[j + lane];
+                dst[j + lane] = bf16_to_float(float_to_bf16(sums[lane]));
+            }
+        }
+        for (; j < N; ++j) {
+            const uint16_t *b = args->B + (size_t)j * K;
+            __m512 acc = _mm512_setzero_ps();
+            int k = 0;
+            for (; k <= K - 32; k += 32) {
+                acc = _mm512_dpbf16_ps(
+                    acc, load_bf16x32(a_bf16 + k), load_bf16x32(b + k));
+            }
+            float sum = _mm512_reduce_add_ps(acc);
+            for (; k < K; ++k) {
+                sum += bf16_to_float(a_bf16[k]) * bf16_to_float(b[k]);
+            }
+            if (args->bias) sum += args->bias[j];
+            dst[j] = bf16_to_float(float_to_bf16(sum));
+        }
+#else
+        for (int j = 0; j < N; ++j) {
+            const uint16_t *b = args->B + (size_t)j * K;
+            float sum = args->bias ? args->bias[j] : 0.0f;
+            for (int k = 0; k < K; ++k) {
+                sum += bf16_to_float(a_bf16[k]) * bf16_to_float(b[k]);
+            }
+            dst[j] = bf16_to_float(float_to_bf16(sum));
+        }
+#endif
+    }
+}
+
+void gemm_nt_bf16_native_bf16_storage(const float *A,
+                                       const void *B,
+                                       const float *bias,
+                                       float *C,
+                                       int M, int N, int K)
+{
+    const uint16_t *weights = (const uint16_t *)B;
+    if (!A || !weights || !C || M <= 0 || N <= 0 || K <= 0) return;
+
+    ck_gemm_bf16_native_args_t args = {
+        .A = A, .B = weights, .bias = bias, .C = C, .M = M, .N = N, .K = K
+    };
+    ck_threadpool_t *pool = ck_threadpool_global();
+    int active = pool ? ck_threadpool_n_threads(pool) : 1;
+    if (active > M) active = M;
+    if (active > 24) active = 24;
+    if (!pool || active <= 1 || (size_t)M * (size_t)N <= 4096) {
+        ck_gemm_bf16_native_work(0, 1, &args);
+        return;
+    }
+    ck_threadpool_dispatch_n(pool, active, ck_gemm_bf16_native_work, &args);
+}
+
+typedef struct {
+    const float *src;
+    uint16_t *dst;
+    size_t count;
+} ck_bf16_convert_args_t;
+
+static void ck_bf16_convert_work(int ith, int nth, void *opaque)
+{
+    ck_bf16_convert_args_t *args = (ck_bf16_convert_args_t *)opaque;
+    const size_t begin = args->count * (size_t)ith / (size_t)nth;
+    const size_t end = args->count * (size_t)(ith + 1) / (size_t)nth;
+    for (size_t i = begin; i < end; ++i) args->dst[i] = float_to_bf16(args->src[i]);
+}
+
+typedef struct {
+    const uint16_t *A;
+    const uint16_t *B;
+    const float *bias;
+    float *C;
+    int M;
+    int N;
+    int K;
+    int failed;
+} ck_gemm_bf16_amx_args_t;
+
+static void ck_gemm_bf16_amx_work(int ith, int nth, void *opaque)
+{
+#if HAVE_AMX_BF16
+    ck_gemm_bf16_amx_args_t *args = (ck_gemm_bf16_amx_args_t *)opaque;
+    if (!ck_amx_request_xtile_data()) {
+        __atomic_store_n(&args->failed, 1, __ATOMIC_RELAXED);
+        return;
+    }
+    ck_amx_config_bf16_16x16x32();
+    uint16_t b_tile[16 * 32];
+    const int mb = args->M / 16;
+    const int nb = args->N / 16;
+    const int m_groups = (mb + 3) / 4;
+    const int jobs = m_groups * nb;
+
+    for (int job = ith; job < jobs; job += nth) {
+        const int m_group = job / nb;
+        const int j = (job % nb) * 16;
+        const int group_blocks = (mb - m_group * 4 < 4) ? mb - m_group * 4 : 4;
+        _tile_zero(2);
+        if (group_blocks > 1) _tile_zero(3);
+        if (group_blocks > 2) _tile_zero(4);
+        if (group_blocks > 3) _tile_zero(5);
+        for (int k = 0; k < args->K; k += 32) {
+            ck_pack_bf16_ktile_pairs_16x16(b_tile, args->B, args->K, j, k);
+            _tile_loadd(1, b_tile, 32 * (int)sizeof(uint16_t));
+            for (int g = 0; g < group_blocks; ++g) {
+                const int i = (m_group * 4 + g) * 16;
+                _tile_loadd(0, args->A + (size_t)i * args->K + k,
+                            args->K * (int)sizeof(uint16_t));
+                switch (g) {
+                    case 0: _tile_dpbf16ps(2, 0, 1); break;
+                    case 1: _tile_dpbf16ps(3, 0, 1); break;
+                    case 2: _tile_dpbf16ps(4, 0, 1); break;
+                    default: _tile_dpbf16ps(5, 0, 1); break;
+                }
+            }
+        }
+        for (int g = 0; g < group_blocks; ++g) {
+            const int i = (m_group * 4 + g) * 16;
+            float *tile_dst = args->C + (size_t)i * args->N + j;
+            const int tile_stride = args->N * (int)sizeof(float);
+            switch (g) {
+                case 0: _tile_stored(2, tile_dst, tile_stride); break;
+                case 1: _tile_stored(3, tile_dst, tile_stride); break;
+                case 2: _tile_stored(4, tile_dst, tile_stride); break;
+                default: _tile_stored(5, tile_dst, tile_stride); break;
+            }
+            if (args->bias) {
+                for (int ii = 0; ii < 16; ++ii) {
+                    float *row = args->C + (size_t)(i + ii) * args->N + j;
+                    for (int jj = 0; jj < 16; ++jj) row[jj] += args->bias[j + jj];
+                }
+            }
+        }
+    }
+    _tile_release();
+#else
+    (void)ith; (void)nth; (void)opaque;
+#endif
+}
+
+typedef struct {
+    float *values;
+    size_t count;
+} ck_bf16_round_args_t;
+
+static void ck_bf16_round_work(int ith, int nth, void *opaque)
+{
+    ck_bf16_round_args_t *args = (ck_bf16_round_args_t *)opaque;
+    const size_t begin = args->count * (size_t)ith / (size_t)nth;
+    const size_t end = args->count * (size_t)(ith + 1) / (size_t)nth;
+    for (size_t i = begin; i < end; ++i) {
+        args->values[i] = bf16_to_float(float_to_bf16(args->values[i]));
+    }
+}
+
+int ck_gemm_bf16_amx_available(void)
+{
+#if HAVE_AMX_BF16
+    return ck_amx_request_xtile_data();
+#else
+    return 0;
+#endif
+}
+
+void gemm_nt_bf16_amx_bf16_storage(const float *A,
+                                    const void *B,
+                                    const float *bias,
+                                    float *C,
+                                    int M, int N, int K)
+{
+#if HAVE_AMX_BF16
+    if (!A || !B || !C || M < 16 || N < 16 || K < 32 ||
+        (M % 16) != 0 || (N % 16) != 0 || (K % 32) != 0) {
+        fprintf(stderr,
+                "HARD KERNEL CONTRACT FAULT: AMX BF16 GEMM requires non-null buffers "
+                "and M%%16=N%%16=K%%32=0 (M=%d N=%d K=%d)\n",
+                M, N, K);
+        abort();
+    }
+    const size_t input_count = (size_t)M * K;
+    uint16_t *a_bf16 = (uint16_t *)malloc(input_count * sizeof(uint16_t));
+    if (!a_bf16) {
+        fprintf(stderr, "HARD KERNEL CONTRACT FAULT: AMX BF16 activation workspace allocation failed\n");
+        abort();
+    }
+    ck_threadpool_t *pool = ck_threadpool_global();
+    int active = pool ? ck_threadpool_n_threads(pool) : 1;
+    if (active > 24) active = 24;
+    ck_bf16_convert_args_t convert = {.src=A, .dst=a_bf16, .count=input_count};
+    if (pool && active > 1) ck_threadpool_dispatch_n(pool, active, ck_bf16_convert_work, &convert);
+    else ck_bf16_convert_work(0, 1, &convert);
+    ck_gemm_bf16_amx_args_t gemm = {
+        .A=a_bf16, .B=(const uint16_t *)B, .bias=bias, .C=C,
+        .M=M, .N=N, .K=K, .failed=0
+    };
+    if (pool && active > 1) ck_threadpool_dispatch_n(pool, active, ck_gemm_bf16_amx_work, &gemm);
+    else ck_gemm_bf16_amx_work(0, 1, &gemm);
+    if (__atomic_load_n(&gemm.failed, __ATOMIC_RELAXED)) {
+        free(a_bf16);
+        fprintf(stderr, "HARD KERNEL CONTRACT FAULT: AMX tile permission request failed\n");
+        abort();
+    }
+    ck_bf16_round_args_t round = {.values=C, .count=(size_t)M * N};
+    if (pool && active > 1) ck_threadpool_dispatch_n(pool, active, ck_bf16_round_work, &round);
+    else ck_bf16_round_work(0, 1, &round);
+    free(a_bf16);
+    return;
+#else
+    (void)A; (void)B; (void)bias; (void)C; (void)M; (void)N; (void)K;
+    fprintf(stderr,
+            "HARD KERNEL CONTRACT FAULT: gemm_nt_bf16_amx_bf16_storage was selected "
+            "without AMX BF16 support\n");
+    abort();
+#endif
+}
+
 void gemm_nt_bf16_bf16_storage(const float *A,
                                       const void *B,
                                       const float *bias,
