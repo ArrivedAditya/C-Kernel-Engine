@@ -219,6 +219,18 @@ void gemm_nt_bf16_bf16_storage(const float *A,
                                       float *C,
                                       int M, int N, int K);
 
+void gemm_nt_bf16_native_bf16_storage(const float *A,
+                                      const void *B,
+                                      const float *bias,
+                                      float *C,
+                                      int M, int N, int K);
+void gemm_nt_bf16_amx_bf16_storage(const float *A,
+                                    const void *B,
+                                    const float *bias,
+                                    float *C,
+                                    int M, int N, int K);
+int ck_gemm_bf16_amx_available(void);
+
 // =============================================================================
 // Quantized (GGML-style) GEMM/GEMV helpers
 // =============================================================================

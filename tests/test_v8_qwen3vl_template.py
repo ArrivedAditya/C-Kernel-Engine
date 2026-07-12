@@ -455,14 +455,14 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         self.assertEqual(legacy, [])
         selected = {plan["operation"]: plan["kernel"]["function"] for plan in execution}
         self.assertEqual(selected["vision.layer.layernorm"], "layernorm_naive_serial_bf16_storage")
-        self.assertEqual(selected["vision.layer.qkv_projection"], "gemm_nt_bf16_bf16_storage")
-        self.assertEqual(selected["vision.layer.mlp_projection"], "gemm_nt_bf16_bf16_storage")
+        self.assertEqual(selected["vision.layer.qkv_projection"], "gemm_nt_bf16_native_bf16_storage")
+        self.assertEqual(selected["vision.layer.mlp_projection"], "gemm_nt_bf16_native_bf16_storage")
         self.assertEqual(selected["vision.layer.mlp_activation"], "gelu_pytorch_tanh_bf16_storage")
         self.assertEqual(
             selected["vision.layer.attention"],
             "attention_forward_full_head_major_gqa_sdpa_bf16_storage",
         )
-        self.assertEqual(selected["vision.layer.out_projection"], "gemm_nt_bf16_bf16_storage")
+        self.assertEqual(selected["vision.layer.out_projection"], "gemm_nt_bf16_native_bf16_storage")
         self.assertEqual(
             selected["vision.layer.residual"],
             "ck_residual_add_token_major_bf16_storage",
@@ -475,14 +475,14 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         )
         kernels = [(op["op"], op["kernel"]) for op in ops]
         self.assertIn(("layernorm", "layernorm_bf16_storage"), kernels)
-        self.assertIn(("qkv_packed_proj", "gemm_nt_bf16_bf16_storage"), kernels)
+        self.assertIn(("qkv_packed_proj", "gemm_nt_bf16_native_bf16_storage"), kernels)
         self.assertIn(
             ("attn", "attention_forward_full_head_major_gqa_sdpa_bf16_storage"),
             kernels,
         )
-        self.assertIn(("out_proj", "gemm_nt_bf16_bf16_storage"), kernels)
-        self.assertIn(("mlp_up", "gemm_nt_bf16_bf16_storage"), kernels)
-        self.assertIn(("mlp_down", "gemm_nt_bf16_bf16_storage"), kernels)
+        self.assertIn(("out_proj", "gemm_nt_bf16_native_bf16_storage"), kernels)
+        self.assertIn(("mlp_up", "gemm_nt_bf16_native_bf16_storage"), kernels)
+        self.assertIn(("mlp_down", "gemm_nt_bf16_native_bf16_storage"), kernels)
         self.assertIn(("gelu", "gelu_pytorch_tanh_bf16_storage"), kernels)
         self.assertIn(
             ("residual_add", "ck_residual_add_token_major_bf16_storage"),

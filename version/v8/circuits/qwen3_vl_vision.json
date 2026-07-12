@@ -216,7 +216,7 @@
       },
       "phases": {
         "prefill": {
-          "contract_id": "bf16_weight_bf16_input_fp32_dot_bf16_output",
+          "contract_id": "bf16_weight_bf16_input_native_pair_dot_bf16_output",
           "validation": "validated",
           "evidence": "unittest/bf16/test_gemm_storage_contract_bf16.py"
         }
@@ -271,7 +271,7 @@
       },
       "phases": {
         "prefill": {
-          "contract_id": "bf16_weight_bf16_input_fp32_dot_bf16_output",
+          "contract_id": "bf16_weight_bf16_input_native_pair_dot_bf16_output",
           "validation": "validated",
           "evidence": "unittest/bf16/test_gemm_storage_contract_bf16.py"
         }
@@ -326,7 +326,7 @@
       },
       "phases": {
         "prefill": {
-          "contract_id": "bf16_weight_bf16_input_fp32_dot_bf16_output",
+          "contract_id": "bf16_weight_bf16_input_native_pair_dot_bf16_output",
           "validation": "validated",
           "evidence": "unittest/bf16/test_gemm_storage_contract_bf16.py"
         }
@@ -361,6 +361,36 @@
       "checkpoint": {
         "id": "vision.layer.{layer}.mlp.activation",
         "producer": "gelu",
+        "logical_layout": "token_major",
+        "axis_names": [
+          "token",
+          "channel"
+        ]
+      }
+    },
+    "vision.projector.projection": {
+      "op": "gemm",
+      "template_ops": [
+        "branch_fc1",
+        "branch_fc2",
+        "projector_fc1",
+        "projector_fc2"
+      ],
+      "selector": {
+        "config_equals": {
+          "vision_projection_storage_boundary": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "bf16_weight_bf16_input_amx_tile32_dot_bf16_output",
+          "validation": "validated",
+          "evidence": "unittest/bf16/test_qwen3vl_performance_sweep_bf16.py"
+        }
+      },
+      "checkpoint": {
+        "id": "vision.projector.projection",
+        "producer": "projector_projection",
         "logical_layout": "token_major",
         "axis_names": [
           "token",
@@ -869,13 +899,13 @@
           "id": "final_norm",
           "op": "layernorm"
         },
-      {
-        "id": "merge_main",
-        "op": "spatial_merge",
-        "params": {
-          "merge_size_from_config": "spatial_merge_size",
-          "output_buffer": "embedded_input"
-        }
+        {
+          "id": "merge_main",
+          "op": "spatial_merge",
+          "params": {
+            "merge_size_from_config": "spatial_merge_size",
+            "output_buffer": "embedded_input"
+          }
         },
         {
           "id": "projector_fc1",

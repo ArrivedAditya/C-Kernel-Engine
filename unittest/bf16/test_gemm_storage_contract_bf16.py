@@ -13,6 +13,8 @@ import torch
 ROOT = Path(__file__).resolve().parents[2]
 LIB = ctypes.CDLL(str(ROOT / "build" / "libckernel_engine.so"))
 KERNEL = LIB.gemm_nt_bf16_bf16_storage
+NATIVE_KERNEL = LIB.gemm_nt_bf16_native_bf16_storage
+AMX_KERNEL = LIB.gemm_nt_bf16_amx_bf16_storage
 FLOAT_P = ctypes.POINTER(ctypes.c_float)
 UINT16_P = ctypes.POINTER(ctypes.c_uint16)
 KERNEL.argtypes = [
@@ -20,6 +22,17 @@ KERNEL.argtypes = [
     ctypes.c_int, ctypes.c_int, ctypes.c_int,
 ]
 KERNEL.restype = None
+NATIVE_KERNEL.argtypes = KERNEL.argtypes
+NATIVE_KERNEL.restype = None
+AMX_KERNEL.argtypes = KERNEL.argtypes
+AMX_KERNEL.restype = None
+AMX_AVAILABLE = LIB.ck_gemm_bf16_amx_available
+AMX_AVAILABLE.argtypes = []
+AMX_AVAILABLE.restype = ctypes.c_int
+
+
+def amx_bf16_supported() -> bool:
+    return bool(AMX_AVAILABLE())
 
 
 def bf16_bits(values: np.ndarray) -> np.ndarray:
@@ -30,14 +43,14 @@ def bf16_values(values: np.ndarray) -> np.ndarray:
     return torch.from_numpy(values).to(torch.bfloat16).float().numpy()
 
 
-def run_case_detailed(m: int, n: int, k: int, seed: int) -> dict[str, float]:
+def run_case_detailed(m: int, n: int, k: int, seed: int, *, kernel=KERNEL) -> dict[str, float]:
     rng = np.random.default_rng(seed)
     a = bf16_values(rng.standard_normal((m, k), dtype=np.float32))
     b_values = bf16_values(rng.standard_normal((n, k), dtype=np.float32))
     b = bf16_bits(b_values)
     bias = bf16_values(rng.standard_normal(n, dtype=np.float32))
     actual = np.empty((m, n), dtype=np.float32)
-    KERNEL(
+    kernel(
         a.ctypes.data_as(FLOAT_P),
         ctypes.c_void_p(b.ctypes.data),
         bias.ctypes.data_as(FLOAT_P),
@@ -74,7 +87,16 @@ def main() -> int:
                 f"max_abs={max_abs:.9g} rmse={rmse:.9g}"
             )
         print(f"M={m} N={n} K={k} max_abs={max_abs:.9g} rmse={rmse:.9g}")
-    print(f"BF16 GEMM output storage parity: {len(cases)}/{len(cases)}")
+    tested = len(cases)
+    if amx_bf16_supported():
+        amx = run_case_detailed(16, 32, 32, 4, kernel=AMX_KERNEL)
+        if amx["max_abs"] != 0.0 or amx["rmse"] != 0.0:
+            raise AssertionError(f"AMX BF16 storage mismatch: {amx}")
+        tested += 1
+        print("AMX M=16 N=32 K=32 exact")
+    else:
+        print("AMX M=16 N=32 K=32 SKIP (AMX BF16 unavailable)")
+    print(f"BF16 GEMM output storage parity: {tested}/{tested}")
     return 0
 
 

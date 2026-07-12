@@ -52,12 +52,12 @@ class V8KernelCallABITests(unittest.TestCase):
                     key=lambda error: tuple(str(part) for part in error.absolute_path),
                 )
                 self.assertEqual(errors, [])
-        self.assertEqual(governed, 23)
+        self.assertEqual(governed, 25)
 
     def test_map_owned_abis_do_not_exist_in_legacy_registries(self) -> None:
         call_abis = build_ir_v8.load_kernel_call_abis()
         legacy = build_ir_v8.load_kernel_bindings()
-        self.assertEqual(len(call_abis), 23)
+        self.assertEqual(len(call_abis), 25)
         for kernel_id, entry in call_abis.items():
             with self.subTest(kernel=kernel_id):
                 self.assertNotIn(kernel_id, legacy)

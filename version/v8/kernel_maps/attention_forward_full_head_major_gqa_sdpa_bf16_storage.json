@@ -6,12 +6,12 @@
   "implementation": {
     "isa_dispatch": "compile_time",
     "threading": {
-      "runtime": "serial",
+      "runtime": "ck_threadpool",
       "work_partition": [
-        "serial"
+        "independent_heads"
       ],
       "dispatch": [
-        "inline"
+        "ck_threadpool_dispatch_n"
       ],
       "reduction_order_effect": "none"
     }
@@ -168,12 +168,12 @@
       "implementation": {
         "isa_dispatch": "compile_time",
         "threading": {
-          "runtime": "serial",
+          "runtime": "ck_threadpool",
           "work_partition": [
-            "serial"
+            "independent_heads"
           ],
           "dispatch": [
-            "inline"
+            "ck_threadpool_dispatch_n"
           ],
           "reduction_order_effect": "none"
         }
@@ -183,7 +183,7 @@
         "merge_order": "ascending_chunk",
         "deterministic": true,
         "thread_count_changes_arithmetic_order": false,
-        "split_strategy": "serial"
+        "split_strategy": "independent_outputs"
       }
     }
   ]

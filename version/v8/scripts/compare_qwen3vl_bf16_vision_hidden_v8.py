@@ -477,14 +477,36 @@ def _run_ck_selector(args: argparse.Namespace, selector: str, numeric: Any) -> n
         height=int(cfg["image_height"]),
         width=int(cfg["image_width"]),
     )
-    data = numeric._run_generated_encoder(
-        model_so=runtime_dir / "libqwen3vl_bf16_encoder_v8.so",
-        weights_bump=args.weights_bump.resolve(),
-        manifest_map=runtime_dir / "weights_manifest.map",
-        layout_path=runtime_dir / "layout.json",
-        planar_image=planar_image,
-        output_name=selector,
-    )
+    restore_import_path = os.environ.get("CK_DEBUG_IMPORT_HIDDEN")
+    restore_import_checkpoint = os.environ.get("CK_DEBUG_IMPORT_CHECKPOINT")
+    restore_import_layer = os.environ.get("CK_DEBUG_IMPORT_LAYER")
+    if args.ck_import_layer_input is not None:
+        os.environ["CK_DEBUG_IMPORT_HIDDEN"] = str(args.ck_import_layer_input.resolve())
+        os.environ["CK_DEBUG_IMPORT_CHECKPOINT"] = str(args.ck_import_checkpoint)
+        os.environ["CK_DEBUG_IMPORT_LAYER"] = str(args.ck_import_layer)
+    try:
+        data = numeric._run_generated_encoder(
+            model_so=runtime_dir / "libqwen3vl_bf16_encoder_v8.so",
+            weights_bump=args.weights_bump.resolve(),
+            manifest_map=runtime_dir / "weights_manifest.map",
+            layout_path=runtime_dir / "layout.json",
+            planar_image=planar_image,
+            output_name=selector,
+        )
+    finally:
+        if args.ck_import_layer_input is not None:
+            if restore_import_path is None:
+                os.environ.pop("CK_DEBUG_IMPORT_HIDDEN", None)
+            else:
+                os.environ["CK_DEBUG_IMPORT_HIDDEN"] = restore_import_path
+            if restore_import_layer is None:
+                os.environ.pop("CK_DEBUG_IMPORT_LAYER", None)
+            else:
+                os.environ["CK_DEBUG_IMPORT_LAYER"] = restore_import_layer
+            if restore_import_checkpoint is None:
+                os.environ.pop("CK_DEBUG_IMPORT_CHECKPOINT", None)
+            else:
+                os.environ["CK_DEBUG_IMPORT_CHECKPOINT"] = restore_import_checkpoint
     result = _array_to_np(data)
     base_name, _ = _parse_selector(selector)
     head_major_names = {"q_proj", "k_proj", "v_proj", "rope_q", "rope_k", "attn_out_head_major"}
@@ -517,6 +539,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--threads", type=int, default=int(os.environ.get("CK_NUM_THREADS", "20") or "20"))
     ap.add_argument("--attn-implementation", choices=("auto", "eager", "sdpa"), default="auto")
+    ap.add_argument("--ck-import-layer-input", type=Path, help="Inject an exact FP32 tensor before a CK layer's first residual save")
+    ap.add_argument("--ck-import-layer", type=int, help="Layer index for --ck-import-layer-input")
+    ap.add_argument("--ck-import-checkpoint", choices=("layer_input", "after_attn"), default="layer_input")
     ap.add_argument("--skip-ck", action="store_true", help="Only run the PyTorch hook/reference side")
     ap.add_argument("--min-cosine", type=float, default=None)
     ap.add_argument("--max-rmse", type=float, default=None)
@@ -525,6 +550,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--final-max-rmse", type=float, default=None)
     ap.add_argument("--final-max-abs", type=float, default=None)
     args = ap.parse_args(argv)
+    if (args.ck_import_layer_input is None) != (args.ck_import_layer is None):
+        ap.error("--ck-import-layer-input and --ck-import-layer must be provided together")
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     os.environ["CK_NUM_THREADS"] = str(args.threads)
