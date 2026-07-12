@@ -53,6 +53,9 @@ class V8DSLNightlyRegistrationTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn("v8 DSL and Codegen Contracts", source)
+        self.assertIn('id="v8-dsl-contract-dashboard"', source)
+        self.assertIn("function renderV8DSLContracts(results)", source)
+        self.assertIn("renderV8DSLContracts(data.results || [])", source)
         for target in self.EXPECTED_TARGETS:
             with self.subTest(target=target):
                 self.assertIn(f"<code>{target}</code>", source)
