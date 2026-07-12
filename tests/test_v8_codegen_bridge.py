@@ -321,6 +321,7 @@ class V8CodegenBridgeTests(unittest.TestCase):
             rope_call = next(op for op in call_doc["operations"] if op["op"] == "rope_qk")
             attn_call = next(op for op in call_doc["operations"] if op["op"] == "attn")
             q_proj_call = next(op for op in call_doc["operations"] if op["op"] == "q_proj")
+            quantize_input_call = next(op for op in call_doc["operations"] if op["op"] == "quantize_input_0")
             mlp_down_call = next(op for op in call_doc["operations"] if op["op"] == "mlp_down")
             kv_store_call = next(op for op in call_doc["operations"] if op["op"] == "kv_cache_store")
             kv_buf = next(buf for buf in layout_doc["memory"]["activations"]["buffers"] if buf["name"] == "kv_cache")
@@ -329,6 +330,15 @@ class V8CodegenBridgeTests(unittest.TestCase):
             self.assertEqual(kv_store_call["function"], "kv_cache_store_f16")
             self.assertEqual(kv_buf["dtype"], "fp16")
             self.assertEqual(q_proj_call["resolved_execution"]["kernel_id"], "gemv_q4_k_q8_k")
+            self.assertEqual(
+                quantize_input_call["resolved_codegen_capability"]["output_storage"],
+                {
+                    "format": "q8_k",
+                    "block_elements": 256,
+                    "block_elements_symbol": "QK_K",
+                    "c_block_type": "block_q8_K",
+                },
+            )
             self.assertEqual(
                 q_proj_call["resolved_execution"]["implementation"]["threading"]["reduction_order_effect"],
                 "none",

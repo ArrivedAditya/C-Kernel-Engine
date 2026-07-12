@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.kernel_codegen_capability",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "operator_family", "function", "output_storage"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "operator_family": {"enum": ["activation_quantization"]},
+    "function": {"type": "string", "minLength": 1},
+    "output_storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "block_elements", "block_elements_symbol", "c_block_type"],
+      "properties": {
+        "format": {"enum": ["q8_0", "q8_k"]},
+        "block_elements": {"type": "integer", "minimum": 1},
+        "block_elements_symbol": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"},
+        "c_block_type": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"}
+      }
+    }
+  }
+}

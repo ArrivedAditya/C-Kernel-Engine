@@ -40,6 +40,17 @@
       {"name": "default", "requires": [], "compile_flags": []}
     ]
   },
+  "codegen_capability": {
+    "schema_version": 1,
+    "operator_family": "activation_quantization",
+    "function": "quantize_row_q8_0",
+    "output_storage": {
+      "format": "q8_0",
+      "block_elements": 32,
+      "block_elements_symbol": "QK8_0",
+      "c_block_type": "block_q8_0"
+    }
+  },
   "tests": {
     "unit": ["unittest/test_quantize.py"],
     "bench": ["scripts/bench_quantize.py"],
