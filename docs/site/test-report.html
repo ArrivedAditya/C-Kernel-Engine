@@ -1698,6 +1698,10 @@
       </ul>
     </li>
     <li><strong>Kernel Unit Tests</strong>: Individual kernel parity with PyTorch</li>
+    <li><strong>v8 DSL and Codegen Contracts</strong>: The aggregate <code>make test-v8-dsl</code> gate is reported as three
+      independently visible nightly rows so a failure identifies the responsible layer: <code>test-v8-dsl-policy</code> enforces
+      zero model/provider hardcoding and map-owned codegen capabilities, <code>test-numerical-contracts</code> validates resolved
+      numerical execution semantics, and <code>test-v8-template-circuit-audit</code> verifies circuit dataflow and lowered bindings.</li>
     <li><strong>v8 Vision Kernel Parity</strong>: Vision kernel parity for patch extraction/reconstruction, tiled position embeddings,
       Qwen3-VL resized position interpolation order, spatial merge/reorder, feature concat/slice, and vision M-RoPE
       (<code>make test-v8-vision-kernels</code>)</li>

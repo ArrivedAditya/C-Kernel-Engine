@@ -2964,6 +2964,7 @@ test-v8-dsl-policy:
 	@$(PYTHON) -m unittest tests.test_v8_dsl_policy -v
 	@$(PYTHON) -m unittest tests.test_v8_kernel_call_abi -v
 	@$(PYTHON) -m unittest tests.test_v8_codegen_capabilities -v
+	@$(PYTHON) -m unittest tests.test_v8_dsl_nightly_registration -v
 
 test-v8-dsl: test-v8-dsl-policy test-numerical-contracts test-v8-template-circuit-audit
 
