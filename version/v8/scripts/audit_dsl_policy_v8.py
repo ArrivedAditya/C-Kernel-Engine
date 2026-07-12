@@ -151,23 +151,36 @@ def count_model_literal_sites(source: str, forbidden: list[str], *, path: str) -
     forbidden_lc = tuple(item.lower() for item in forbidden)
     lines: set[int] = set()
     by_function: dict[str, set[int]] = {}
-    for function in (
-        node for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ):
-        docstring = ast.get_docstring(function, clean=False)
-        function_lines: set[int] = set()
-        for child in ast.walk(function):
-            if not isinstance(child, ast.Constant) or not isinstance(child.value, str):
-                continue
-            if docstring is not None and child.value == docstring:
-                continue
-            value = child.value.lower()
-            if any(item in value for item in forbidden_lc):
-                function_lines.add(child.lineno)
-        if function_lines:
-            by_function[function.name] = function_lines
-            lines.update(function_lines)
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    documentation_nodes = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    }
+    for node in ast.walk(tree):
+        if (
+            not isinstance(node, ast.Constant)
+            or not isinstance(node.value, str)
+            or node in documentation_nodes
+        ):
+            continue
+        if not any(item in node.value.lower() for item in forbidden_lc):
+            continue
+        owner = "<module>"
+        parent = parents.get(node)
+        while parent is not None:
+            if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                owner = parent.name
+                break
+            parent = parents.get(parent)
+        by_function.setdefault(owner, set()).add(node.lineno)
+        lines.add(node.lineno)
     return {
         "path": path,
         "sites": len(lines),
