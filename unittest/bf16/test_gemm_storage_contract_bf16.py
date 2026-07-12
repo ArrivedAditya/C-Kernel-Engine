@@ -88,6 +88,18 @@ def main() -> int:
             )
         print(f"M={m} N={n} K={k} max_abs={max_abs:.9g} rmse={rmse:.9g}")
     tested = len(cases)
+    native_cases = [(4, 24, 16, 11), (5, 24, 16, 12), (7, 36, 32, 13)]
+    for m, n, k, seed in native_cases:
+        metrics = run_case_detailed(m, n, k, seed, kernel=NATIVE_KERNEL)
+        if metrics["max_abs"] > 0.5 or metrics["rmse"] > 0.03:
+            raise AssertionError(
+                f"native BF16 row-tile mismatch M={m} N={n} K={k}: {metrics}"
+            )
+        tested += 1
+        print(
+            f"native M={m} N={n} K={k} max_abs={metrics['max_abs']:.9g} "
+            f"rmse={metrics['rmse']:.9g}"
+        )
     if amx_bf16_supported():
         amx = run_case_detailed(16, 32, 32, 4, kernel=AMX_KERNEL)
         if amx["max_abs"] != 0.0 or amx["rmse"] != 0.0:
