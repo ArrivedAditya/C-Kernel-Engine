@@ -1,0 +1,147 @@
+{
+  "schema": "cke.parity_profile",
+  "schema_version": 1,
+  "name": "qwen3vl_llamacpp_q8_v1",
+  "backend": "llamacpp",
+  "contract_schema_version": 1,
+  "required_match_fields": [
+    "checkpoint_id",
+    "producer",
+    "logical_layout",
+    "axis_names",
+    "resolved_contract_id",
+    "kernel_id",
+    "function"
+  ],
+  "observed_storage": {
+    "default": "fp32",
+    "checkpoints": {}
+  },
+  "dtype_thresholds": {
+    "fp32": {
+      "cosine_min": 0.99999,
+      "rmse_max": 0.0001,
+      "relative_rmse_max": 0.0001,
+      "max_abs_max": 0.001,
+      "finite_required": true
+    }
+  },
+  "checkpoint_order": [
+    "vision.frontend.position.output",
+    "vision.layer.{layer}.norm1.output",
+    "vision.layer.{layer}.q.pre_rope",
+    "vision.layer.{layer}.k.pre_rope",
+    "vision.layer.{layer}.v.output",
+    "vision.layer.{layer}.q.post_rope",
+    "vision.layer.{layer}.k.post_rope",
+    "vision.layer.{layer}.attention.output",
+    "vision.layer.{layer}.out_proj.output",
+    "vision.layer.{layer}.residual1.output",
+    "vision.layer.{layer}.norm2.output",
+    "vision.layer.{layer}.mlp.up",
+    "vision.layer.{layer}.mlp.down",
+    "vision.layer.{layer}.output"
+  ],
+  "interval_expansions": {},
+  "backend_mappings": {
+    "vision.frontend.position.output": {
+      "producer": "position_embeddings",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "inp_pos_emb",
+      "result_tensor": "inp_pos_emb",
+      "result_layer": -1
+    },
+    "vision.layer.{layer}.norm1.output": {
+      "producer": "attn_norm",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "ln1",
+      "result_tensor": "ln1"
+    },
+    "vision.layer.{layer}.q.pre_rope": {
+      "producer": "split_qkv",
+      "logical_layout": "head_major",
+      "axis_names": ["head", "token", "channel"],
+      "capture_tensor": "Qcur",
+      "result_tensor": "q_proj"
+    },
+    "vision.layer.{layer}.k.pre_rope": {
+      "producer": "split_qkv",
+      "logical_layout": "head_major",
+      "axis_names": ["head", "token", "channel"],
+      "capture_tensor": "Kcur",
+      "result_tensor": "k_proj"
+    },
+    "vision.layer.{layer}.v.output": {
+      "producer": "split_qkv",
+      "logical_layout": "head_major",
+      "axis_names": ["head", "token", "channel"],
+      "capture_tensor": "Vcur",
+      "result_tensor": "v_proj"
+    },
+    "vision.layer.{layer}.q.post_rope": {
+      "producer": "vision_mrope",
+      "logical_layout": "head_major",
+      "axis_names": ["head", "token", "channel"],
+      "capture_tensor": "Qcur_rope",
+      "result_tensor": "Qcur_rope"
+    },
+    "vision.layer.{layer}.k.post_rope": {
+      "producer": "vision_mrope",
+      "logical_layout": "head_major",
+      "axis_names": ["head", "token", "channel"],
+      "capture_tensor": "Kcur_rope",
+      "result_tensor": "Kcur_rope"
+    },
+    "vision.layer.{layer}.attention.output": {
+      "producer": "attn",
+      "logical_layout": "head_major",
+      "axis_names": ["head", "token", "channel"],
+      "capture_tensor": "kqv_out",
+      "result_tensor": "kqv_out"
+    },
+    "vision.layer.{layer}.out_proj.output": {
+      "producer": "attn_out_proj",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "attn_out",
+      "result_tensor": "attn_output"
+    },
+    "vision.layer.{layer}.residual1.output": {
+      "producer": "attn_residual",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "ffn_inp",
+      "result_tensor": "ffn_inp"
+    },
+    "vision.layer.{layer}.norm2.output": {
+      "producer": "ffn_norm",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "ffn_inp_normed",
+      "result_tensor": "ffn_inp_normed"
+    },
+    "vision.layer.{layer}.mlp.up": {
+      "producer": "mlp_up",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "ffn_up_b",
+      "result_tensor": "ffn_up_b"
+    },
+    "vision.layer.{layer}.mlp.down": {
+      "producer": "mlp_down",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "ffn_out",
+      "result_tensor": "ffn_out"
+    },
+    "vision.layer.{layer}.output": {
+      "producer": "mlp_residual",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "layer_out",
+      "result_tensor": "layer_out"
+    }
+  }
+}

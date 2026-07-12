@@ -2944,26 +2944,41 @@ test-numerical-contracts: $(LIB)
 test-bf16-xray:
 	@echo "Running bounded numerical X-ray architecture tests..."
 	@$(PYTHON) -m py_compile \
+		version/v8/scripts/xray_vision_parity_v8.py \
 		version/v8/scripts/xray_numerical_parity_v8.py \
 		version/v8/scripts/build_xray_checkpoint_manifest_v8.py \
 		version/v8/scripts/xray_qwen3vl_bf16_v8.py \
+		version/v8/scripts/xray_qwen3vl_llamacpp_v8.py \
 		version/v8/scripts/normalize_xray_ranking_report_v8.py
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
+	@$(PYTHON) tests/test_v8_xray_vision_interface.py
 	@$(PYTHON) version/v8/test_assets/generate_xray_form_fixture_v8.py \
 		--output build/xray/public_form_1152x896.ppm
 
 xray-vision-parity:
-	@if [ -z "$(CHECKPOINT)" ] || [ -z "$(RUNTIME_DIR)" ] || [ -z "$(WEIGHTS_BUMP)" ] || [ -z "$(CALL_IR)" ]; then \
-		echo "Usage: make xray-vision-parity CHECKPOINT=/safetensors RUNTIME_DIR=/runtime WEIGHTS_BUMP=/weights.bump CALL_IR=/call.json [IMAGE=/form.ppm]"; \
-		exit 2; \
+	@if [ "$(BACKEND)" = "llamacpp" ]; then \
+		if [ -z "$(GGUF)" ]; then \
+			echo "Usage: make xray-vision-parity BACKEND=llamacpp GGUF=/mmproj.gguf [IMAGE=/form.ppm] [LAYER=0]"; \
+			exit 2; \
+		fi; \
+		$(PYTHON) version/v8/scripts/xray_vision_parity_v8.py --backend llamacpp \
+			--gguf "$(GGUF)" $(if $(IMAGE),--image "$(IMAGE)",) \
+			--layer "$(if $(LAYER),$(LAYER),0)" --image-max-tokens "$(if $(IMAGE_MAX_TOKENS),$(IMAGE_MAX_TOKENS),1024)" \
+			--threads "$${CK_NUM_THREADS:-20}" \
+			--output-dir "$${XRAY_OUTPUT_DIR:-build/xray/qwen3vl_llamacpp}"; \
+	else \
+		if [ -z "$(CHECKPOINT)" ] || [ -z "$(RUNTIME_DIR)" ] || [ -z "$(WEIGHTS_BUMP)" ] || [ -z "$(CALL_IR)" ]; then \
+			echo "Usage: make xray-vision-parity BACKEND=pytorch CHECKPOINT=/safetensors RUNTIME_DIR=/runtime WEIGHTS_BUMP=/weights.bump CALL_IR=/call.json [IMAGE=/form.ppm]"; \
+			exit 2; \
+		fi; \
+		$(PYTHON) version/v8/scripts/xray_vision_parity_v8.py --backend pytorch \
+			--checkpoint "$(CHECKPOINT)" --runtime-dir "$(RUNTIME_DIR)" \
+			--weights-bump "$(WEIGHTS_BUMP)" --call-ir "$(CALL_IR)" \
+			--image "$${IMAGE:-build/xray/public_form_1152x896.ppm}" \
+			--threads "$${CK_NUM_THREADS:-20}" \
+			--output-dir "$${XRAY_OUTPUT_DIR:-build/xray/qwen3vl_bf16}"; \
 	fi
-	@$(PYTHON) version/v8/scripts/xray_qwen3vl_bf16_v8.py \
-		--checkpoint "$(CHECKPOINT)" --runtime-dir "$(RUNTIME_DIR)" \
-		--weights-bump "$(WEIGHTS_BUMP)" --call-ir "$(CALL_IR)" \
-		--image "$${IMAGE:-build/xray/public_form_1152x896.ppm}" \
-		--threads "$${CK_NUM_THREADS:-20}" \
-		--output-dir "$${XRAY_OUTPUT_DIR:-build/xray/qwen3vl_bf16}"
 
 test-v8-dsl-policy:
 	@echo "Running v8 zero-hardcoding DSL policy tests..."
