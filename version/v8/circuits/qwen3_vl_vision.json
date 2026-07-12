@@ -243,7 +243,7 @@
       },
       "phases": {
         "prefill": {
-          "contract_id": "attention_bf16_storage_fp32_online_bf16_output",
+          "contract_id": "attention_bf16_sdpa_tiled512_bf16_prob_fp32_accum_bf16_output",
           "validation": "validated",
           "evidence": "unittest/bf16/test_attention_storage_contract_bf16.py"
         }

@@ -334,6 +334,42 @@
       "description": "Full bidirectional head-major attention over BF16-valued Q/K/V, FP32 score/softmax/value accumulation, and BF16 RNE output storage.",
       "operator_family": "attention"
     },
+    "attention_bf16_sdpa_tiled512_bf16_prob_fp32_accum_bf16_output": {
+      "status": "validated",
+      "storage": {
+        "input": "bf16",
+        "weight": "bf16",
+        "output": "bf16"
+      },
+      "compute": {
+        "input": "bf16",
+        "weight": "bf16",
+        "accumulator": "fp32"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "softmax_probability_store",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "tiled_online_softmax",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "ascending_chunk"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "PyTorch CPU SDPA-compatible full attention: BF16 Q/K/V, 512-key tiles, BF16 softmax probability storage, FP32 tile accumulation and merge, and BF16 RNE output storage.",
+      "operator_family": "attention"
+    },
     "residual_add_bf16_input_fp32_add_bf16_output": {
       "status": "validated",
       "storage": {

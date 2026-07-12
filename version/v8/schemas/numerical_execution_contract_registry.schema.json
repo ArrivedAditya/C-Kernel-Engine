@@ -163,6 +163,7 @@
                   "weighted_product",
                   "reduction_update",
                   "partial_store",
+                  "softmax_probability_store",
                   "partial_merge",
                   "output_store"
                 ]
@@ -186,6 +187,7 @@
                 "dot_product",
                 "sum",
                 "online_softmax",
+                "tiled_online_softmax",
                 "normalization"
               ]
             },
