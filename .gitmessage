@@ -10,4 +10,14 @@
 <type>(<scope>): <summary>
 
 Why: <what changed and why it matters>
-Test: <exact command(s) and result>
+What: <implementation and ownership boundary>
+Validation: <exact command(s) and result>
+Evidence: <metrics and artifact paths, or not measured; reason>
+Docs: <updated path, or not needed; reason>
+Nightly: <coverage added/exercised, or not needed; reason>
+# Content is a durable prompt for an Antsand/content agent scanning git logs.
+# Make it possible to explain: problem -> diagnosis -> fix -> measured delta ->
+# regression guard -> limitation -> next step. Link detailed docs/logs in Sources.
+Content: Angle=<story>; Claims=<publishable evidence>; Caveats=<limits and next step>; Sources=<code, docs, logs>
+# For changes with no useful external story:
+# Content: not publishable; <concrete reason>
