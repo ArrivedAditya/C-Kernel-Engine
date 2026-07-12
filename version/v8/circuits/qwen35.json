@@ -11,6 +11,9 @@
     "prefill_policy": "sequential_decode",
     "hybrid_block_pattern": "3x_recurrent_then_1x_full_attention"
   },
+  "kernels": {
+    "rope_qk": "mrope_qk_text"
+  },
   "contract": {
     "runtime_defaults": {
       "prefer_q8_0_contract": true,

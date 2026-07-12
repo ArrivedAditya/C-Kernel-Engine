@@ -1,0 +1,31 @@
+{
+  "schema": "cke.v8_dsl_policy",
+  "schema_version": 1,
+  "forbidden_model_literals": [
+    "deepseek",
+    "gemma",
+    "glm",
+    "kimi",
+    "llama",
+    "nanbeige",
+    "qwen"
+  ],
+  "forbidden_dispatch_keys": ["model", "model_type", "arch", "family"],
+  "compiler_files": {
+    "version/v7/scripts/build_ir_train_v7.py": {
+      "exclude_functions": ["_choose_template_with_source"]
+    },
+    "version/v7/scripts/build_ir_train_ropefix_v7.py": {"exclude_functions": []},
+    "version/v7/scripts/codegen_train_runtime_v7.py": {"exclude_functions": []}
+  },
+  "compiler_functions": {
+    "version/v7/scripts/build_ir_train_v7.py": [
+      "_resolve_forward_kernels",
+      "_resolve_train_config"
+    ],
+    "version/v7/scripts/codegen_train_runtime_v7.py": [
+      "_attention_runtime_contract",
+      "_infer_gemm_backward_dims"
+    ]
+  }
+}

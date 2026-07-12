@@ -97,6 +97,21 @@
         ]
       }
     },
+  "weight_policy": {
+    "op_bindings": [
+      {
+        "section": "body",
+        "op": "rope_qk",
+        "weights": ["rope_freqs"]
+      }
+    ],
+    "ignore": [
+        {
+          "pattern": "layer.*.v_norm_gamma",
+          "reason": "The selected V RMSNorm kernel is unweighted; GGUF compatibility tensors are intentionally not consumed."
+        }
+      ]
+    },
     "multimodal_bridge": {
       "image_begin_marker": "<|image>",
       "image_end_marker": "<image|>"

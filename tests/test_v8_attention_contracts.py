@@ -227,6 +227,8 @@ class AttentionContractV8Tests(unittest.TestCase):
             ("qwen3", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash"),
             ("qwen35", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_flash_strided"),
             ("qwen35", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash"),
+            ("nemotron_h", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_flash_strided"),
+            ("nemotron_h", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash"),
             ("llama", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_flash_strided_f16kv"),
             ("llama", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash_f16kv"),
             ("qwen3vl", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_flash_strided"),
