@@ -258,7 +258,7 @@ CKE is also a working laboratory for CPU AI systems engineering. If your team ne
 - Intel VTune/Advisor or Linux perf investigation.
 - Building an evidence-backed CPU deployment or distributed-compute plan.
 
-Open a focused [GitHub issue](https://github.com/C-Kernel-Engine/C-Kernel-Engine/issues) for reproducible project work. For consulting and collaboration, connect through [ShivasNotes](https://www.shivasnotes.com/) or [antshiv.com](https://antshiv.com/).
+Open a focused [GitHub issue](https://github.com/C-Kernel-Engine/C-Kernel-Engine/issues) for reproducible project work. For CPU AI feasibility, C/Linux performance investigation, kernel engineering, numerical correctness, or model evaluation consulting, use [Work With Us on ShivasNotes](https://www.shivasnotes.com/work-with-us) or connect through [antshiv.com](https://antshiv.com/).
 
 ## Project Principles
 
