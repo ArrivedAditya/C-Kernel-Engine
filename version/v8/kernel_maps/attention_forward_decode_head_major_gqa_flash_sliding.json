@@ -64,4 +64,58 @@
     ]
   },
   "notes": "Flash attention for decode mode with sliding window: single query token attends to the last W KV cache entries."
+,
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "q_token",
+        "source": "scratch:q_scratch",
+        "cast": "const float*"
+      },
+      {
+        "name": "k_cache",
+        "source": "runtime:kv_cache_k_layer",
+        "cast": "const float*"
+      },
+      {
+        "name": "v_cache",
+        "source": "runtime:kv_cache_v_layer",
+        "cast": "const float*"
+      },
+      {
+        "name": "out_token",
+        "source": "output:out",
+        "cast": "float*"
+      },
+      {
+        "name": "num_heads",
+        "source": "dim:num_heads"
+      },
+      {
+        "name": "num_kv_heads",
+        "source": "dim:num_kv_heads"
+      },
+      {
+        "name": "kv_tokens",
+        "source": "runtime:kv_tokens"
+      },
+      {
+        "name": "cache_capacity",
+        "source": "dim:max_seq_len"
+      },
+      {
+        "name": "head_dim",
+        "source": "dim:head_dim"
+      },
+      {
+        "name": "aligned_head_dim",
+        "source": "dim:head_dim"
+      },
+      {
+        "name": "sliding_window",
+        "source": "dim:sliding_window"
+      }
+    ]
+  }
 }

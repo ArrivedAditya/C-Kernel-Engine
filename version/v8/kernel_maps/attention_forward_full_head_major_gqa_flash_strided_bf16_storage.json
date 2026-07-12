@@ -213,4 +213,54 @@
       }
     }
   ]
+,
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "cast": "float*",
+        "name": "q",
+        "source": "scratch:q_scratch"
+      },
+      {
+        "cast": "float*",
+        "name": "k",
+        "source": "scratch:k_scratch"
+      },
+      {
+        "cast": "float*",
+        "name": "v",
+        "source": "scratch:v_scratch"
+      },
+      {
+        "cast": "float*",
+        "name": "output",
+        "source": "output:out"
+      },
+      {
+        "name": "num_heads",
+        "source": "dim:num_heads"
+      },
+      {
+        "name": "num_kv_heads",
+        "source": "dim:num_kv_heads"
+      },
+      {
+        "name": "num_tokens",
+        "source": "dim:seq_len"
+      },
+      {
+        "name": "head_dim",
+        "source": "dim:head_dim"
+      },
+      {
+        "name": "aligned_head_dim",
+        "source": "dim:head_dim"
+      },
+      {
+        "name": "kv_stride_tokens",
+        "source": "dim:max_seq_len"
+      }
+    ]
+  }
 }

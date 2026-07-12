@@ -75,4 +75,19 @@
       }
     }
   ]
+,
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "cast": "float*",
+        "name": "data",
+        "source": "output:out"
+      },
+      {
+        "name": "n",
+        "source": "dim:gelu_elems"
+      }
+    ]
+  }
 }

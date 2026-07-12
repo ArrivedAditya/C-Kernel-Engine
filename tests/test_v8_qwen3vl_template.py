@@ -489,9 +489,9 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             kernels,
         )
 
-        binding = build_ir_v8.load_kernel_bindings()[
+        binding = build_ir_v8.load_kernel_call_abis()[
             "attention_forward_full_head_major_gqa_sdpa_bf16_storage"
-        ]
+        ]["call_abi"]
         self.assertEqual(
             [param["name"] for param in binding["params"]],
             [
