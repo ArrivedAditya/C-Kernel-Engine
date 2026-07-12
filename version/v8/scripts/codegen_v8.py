@@ -366,8 +366,11 @@ def _inject_decode_runtime_multimodal_fallback(code: str, layout_obj: Dict[str, 
     if embed_dim <= 0:
         return code
 
-    is_qwen3vl = str(cfg.get("model", cfg.get("name", ""))).lower() == "qwen3vl"
-    num_deepstack_layers = int(cfg.get("num_deepstack_layers", 0) or 0) if is_qwen3vl else 0
+    bridge_contract = cfg.get("multimodal_bridge_contract")
+    has_multimodal_bridge = isinstance(bridge_contract, dict) and bool(
+        str(bridge_contract.get("prefix_policy", "") or "").strip()
+    )
+    num_deepstack_layers = int(cfg.get("num_deepstack_layers", 0) or 0) if has_multimodal_bridge else 0
     input_embed_dim = int(cfg.get("input_embed_dim", 0) or 0)
     if input_embed_dim <= 0 and embed_dim > 0 and num_deepstack_layers > 0:
         input_embed_dim = embed_dim * (1 + num_deepstack_layers)
@@ -376,7 +379,7 @@ def _inject_decode_runtime_multimodal_fallback(code: str, layout_obj: Dict[str, 
     deepstack_elems = max(1, num_deepstack_layers * embed_dim)
 
     def _inject_qwen3vl_deepstack_residuals(src: str) -> str:
-        if not (is_qwen3vl and num_deepstack_layers > 0):
+        if not (has_multimodal_bridge and num_deepstack_layers > 0):
             return src
 
         comment_pat = re.compile(
@@ -437,7 +440,7 @@ def _inject_decode_runtime_multimodal_fallback(code: str, layout_obj: Dict[str, 
         "static void ck_decode_embedded(CKModel *model) {",
         1,
     )
-    if is_qwen3vl and num_deepstack_layers > 0:
+    if has_multimodal_bridge and num_deepstack_layers > 0:
         embedded_decode = (
             f"static int g_bridge_deepstack_active;\n"
             f"static float g_bridge_deepstack_slices[{deepstack_elems}];\n\n"
@@ -455,7 +458,7 @@ def _inject_decode_runtime_multimodal_fallback(code: str, layout_obj: Dict[str, 
         raise RuntimeError("unable to derive ck_decode_embedded from ck_decode")
     code = code[:decode_end] + "\n\n" + embedded_decode + code[decode_end:]
 
-    if is_qwen3vl:
+    if has_multimodal_bridge:
         rope_wrapper = """static void ck_qwen3vl_runtime_mrope_qk(CKModel *model, float *q, float *k, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int n_dims, int section_0, int section_1, int section_2, int section_3, int n_ctx_orig, float freq_base, float freq_scale, float ext_factor, float attn_factor, float beta_fast, float beta_slow) {
     if (model && model->bridge_has_explicit_positions) {
         mrope_qk_imrope_positions(q, k, model->bridge_positions, num_heads, num_kv_heads, num_tokens, head_dim, aligned_head_dim, n_dims, section_0, section_1, section_2, section_3, n_ctx_orig, freq_base, freq_scale, ext_factor, attn_factor, beta_fast, beta_slow);

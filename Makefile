@@ -5050,7 +5050,12 @@ v7-kernel-map-contracts:
 	@$(PYTHON) version/v7/kernel_maps/validate_kernel_maps.py --json-out $(V7_REPORT_DIR)/kernel_map_validation_latest.json
 	@$(PYTHON) -m unittest tests.test_v7_kernel_map_validator tests.test_v7_kernel_map_contracts tests.test_deltanet_registry_v7
 
-v7-regression-fast:
+test-v7-dsl-policy:
+	@echo "Running v7 training/backprop zero-hardcoding policy tests..."
+	@$(PYTHON) version/v8/scripts/audit_dsl_policy_v8.py --policy version/v7/dsl_policy.json --json-out build/v7/dsl_policy_report.json
+	@$(PYTHON) -m unittest tests.test_v7_dsl_policy -v
+
+v7-regression-fast: test-v7-dsl-policy
 	@echo "Running v7 regression fast suite..."
 	@$(PYTHON) version/v7/scripts/run_regression_v7.py --mode fast --force-rebuild $(REGRESSION_ARGS)
 

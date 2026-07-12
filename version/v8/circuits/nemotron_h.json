@@ -12,6 +12,9 @@
     "prefill_policy": "batched",
     "hybrid_block_pattern": "config.hybrid_override_pattern"
   },
+  "kernels": {
+    "rope_qk": "rope_forward_qk"
+  },
   "contract": {
     "tokenizer_contract": {
       "tokenizer_type": "bpe",
@@ -78,6 +81,36 @@
     },
     "runtime_invariants": {
       "required_call_args": {}
+    }
+  },
+  "required_contracts": {
+    "decoder.attention": {
+      "op": "attention",
+      "template_ops": ["attn"],
+      "phases": {
+        "prefill": {
+          "requires": {
+            "execution.phase": "prefill",
+            "tensor.q.dtype": "fp32",
+            "tensor.kv.dtype": "fp32",
+            "tensor.layout": "head_major",
+            "numerics.attention_reduction": "fp32_online"
+          },
+          "validation": "observed",
+          "evidence": "Safetensors hybrid-attention lowering and scalar attention parity."
+        },
+        "decode": {
+          "requires": {
+            "execution.phase": "decode",
+            "tensor.q.dtype": "fp32",
+            "tensor.kv.dtype": "fp32",
+            "tensor.layout": "head_major",
+            "numerics.attention_reduction": "fp32_online"
+          },
+          "validation": "observed",
+          "evidence": "Safetensors hybrid-attention lowering and scalar attention parity."
+        }
+      }
     }
   },
   "sequence": [
