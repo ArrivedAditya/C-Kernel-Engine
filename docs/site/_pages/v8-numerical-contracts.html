@@ -108,7 +108,19 @@ make v7-regression-fast</code></pre>
 
 <h3>Remaining Migration Debt</h3>
 
-<p>The policy gate reports zero forbidden family-dispatch findings in its protected generic paths, but codegen is not yet free of all specialized emission. The multimodal bridge shell still rewrites generated M-RoPE calls while constructing the combined runtime, and quantized debug/performance emitters still recognize several exact function identities. These routes are covered by regression tests, but they remain migration work: bridge position advancement and deepstack behavior should become call-IR operations, while specialized emission should consume resolved capability metadata.</p>
+<table>
+  <thead><tr><th>Measured category</th><th>Before this PR</th><th>Current</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td>Direct family-gated predicates/assignments removed by this diff</td><td>37 identified lines</td><td>0 remain from that set</td><td>Qwen3.5, Nemotron-H, Gemma4, and Qwen3-VL decisions moved to circuits/configuration.</td></tr>
+    <tr><td>Forbidden family-dispatch findings in protected generic paths</td><td>Not enforced repository-wide</td><td>0</td><td>The AST policy now fails direct and aliased model/family dispatch.</td></tr>
+    <tr><td>Exact-function codegen predicates</td><td>Not separately tracked</td><td>39</td><td>Mostly ABI, debug, and optimized emission forms; semantic selection must continue moving upstream.</td></tr>
+    <tr><td>Generated M-RoPE call rewrites</td><td>2</td><td>2</td><td>The bridge shell still performs two semantic C-string rewrites.</td></tr>
+  </tbody>
+</table>
+
+<p>The policy gate therefore reports zero forbidden family-dispatch findings in its protected generic paths, but codegen is not yet free of all specialized emission. The remaining inventory is 41 sites: 39 exact-function predicates plus two generated M-RoPE call rewrites. These routes are covered by regression tests, but they remain migration work: bridge position advancement and deepstack behavior should become call-IR operations, while specialized emission should consume resolved capability metadata.</p>
+
+<p>This refactor prevents four concrete failure classes: model names silently changing tensor dimensions, undeclared weights being ignored by family branches, unavailable sliding attention falling back to ordinary attention, and generated runtimes enabling multimodal or quantized behavior from a family-name test instead of a hydrated capability.</p>
 
 <p>Tokenizer and format adapters may identify an external model family while translating source metadata into the canonical circuit/config representation. That knowledge must stop at hydration. It is not permission for GraphIR construction, lowering, memory planning, or codegen to select mathematics from a family name.</p>
 
