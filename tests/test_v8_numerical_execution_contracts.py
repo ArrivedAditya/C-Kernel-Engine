@@ -159,6 +159,32 @@ class NumericalExecutionContractTests(unittest.TestCase):
         doc = mrope_circuit("vision_mrope_fp64_input_fp64_compute_fp64_output")
         with self.assertRaisesRegex(resolver.ContractError, "unknown requested contract"):
             resolver.resolve_contract(doc, self.contracts, self.kernels, "vision_mrope", "prefill")
+    def test_qwen3vl_bf16_boundary_contracts_resolve_exact_functions(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen3_vl_vision.json"
+        )
+        expected = {
+            "vision.layer.layernorm": "layernorm_naive_serial_bf16_storage",
+            "vision.layer.qkv_projection": "gemm_nt_bf16_bf16_storage",
+            "vision.layer.mlp_projection": "gemm_nt_bf16_bf16_storage",
+            "vision.layer.mlp_activation": "gelu_pytorch_tanh_bf16_storage",
+            "vision.layer.attention": "attention_forward_full_head_major_gqa_flash_strided_bf16_storage",
+            "vision.layer.out_projection": "gemm_nt_bf16_bf16_storage",
+            "vision.layer.residual": "ck_residual_add_token_major_bf16_storage",
+        }
+        for operation, function in expected.items():
+            with self.subTest(operation=operation):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    operation,
+                    "prefill",
+                    mode="production",
+                )
+                self.assertEqual(plan["kernel"]["function"], function)
+                self.assertEqual(plan["contract"]["status"], "validated")
+
     def test_zero_provider_is_hard_failure(self):
         kernels = copy.deepcopy(self.kernels)
         kernels["kernels"] = {}

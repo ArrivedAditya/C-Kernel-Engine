@@ -1,0 +1,216 @@
+{
+  "id": "attention_forward_full_head_major_gqa_flash_strided_bf16_storage",
+  "op": "attention",
+  "variant": "full_flash_bf16_values_fp32_online_bf16_output",
+  "mode": "prefill",
+  "implementation": {
+    "isa_dispatch": "runtime",
+    "threading": {
+      "runtime": "ck_threadpool",
+      "work_partition": [
+        "independent_query_blocks"
+      ],
+      "dispatch": [
+        "ck_threadpool_dispatch_n"
+      ],
+      "reduction_order_effect": "none"
+    }
+  },
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "bf16"
+  },
+  "inputs": [
+    {
+      "name": "q",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "T",
+        "D"
+      ],
+      "desc": "Query tensor [heads, tokens, head_dim]"
+    }
+  ],
+  "weights": [],
+  "activations": [],
+  "runtime_buffers": [
+    {
+      "name": "k",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "S",
+        "D"
+      ],
+      "desc": "Key tensor [kv_heads, seq_len, head_dim], strided layout"
+    },
+    {
+      "name": "v",
+      "dtype": "fp32",
+      "shape": [
+        "KV",
+        "S",
+        "D"
+      ],
+      "desc": "Value tensor [kv_heads, seq_len, head_dim], strided layout"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "fp32",
+      "shape": [
+        "H",
+        "T",
+        "D"
+      ],
+      "desc": "Attention output [heads, tokens, head_dim]"
+    }
+  ],
+  "scratch": [
+    {
+      "name": "qkv_scratch",
+      "dtype": "fp32",
+      "size_bytes": "H * T * D * 4",
+      "desc": "QKV tiles for flash attention"
+    },
+    {
+      "name": "attn_scratch",
+      "dtype": "fp32",
+      "size_bytes": "H * T * T * 4",
+      "desc": "Attention scores [heads, T, T]"
+    }
+  ],
+  "dims": [
+    "H",
+    "KV",
+    "T",
+    "S",
+    "D"
+  ],
+  "params": [
+    {
+      "name": "kv_stride_tokens",
+      "dtype": "int32",
+      "desc": "Stride in tokens for KV layout"
+    },
+    {
+      "name": "head_dim",
+      "dtype": "int32",
+      "desc": "Head dimension (unpadded)"
+    },
+    {
+      "name": "aligned_head_dim",
+      "dtype": "int32",
+      "desc": "Aligned head dimension for SIMD"
+    }
+  ],
+  "parallelization": {
+    "supported": [
+      "head"
+    ],
+    "preferred": {
+      "prefill": "head"
+    },
+    "strategies": [
+      {
+        "name": "head",
+        "partition_dim": "H",
+        "param_style": "ith_nth",
+        "notes": "Parallelize across heads; each thread handles one or more heads."
+      }
+    ]
+  },
+  "constraints": {
+    "alignment": {
+      "D": 64,
+      "T": 32
+    },
+    "notes": "Flash attention uses SIMD paths when available. This variant is full / bidirectional and applies no causal mask."
+  },
+  "impl": {
+    "function": "attention_forward_full_head_major_gqa_flash_strided_bf16_storage",
+    "c_declaration": "void attention_forward_full_head_major_gqa_flash_strided_bf16_storage(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens);",
+    "sources": [
+      "src/kernels/attention_kernels.c",
+      "src/kernels/softmax_kernels.c"
+    ],
+    "variants": [
+      {
+        "name": "avx512",
+        "requires": [
+          "avx512f",
+          "fma"
+        ],
+        "compile_flags": [
+          "-mavx512f",
+          "-mfma"
+        ]
+      },
+      {
+        "name": "avx2",
+        "requires": [
+          "avx2",
+          "fma"
+        ],
+        "compile_flags": [
+          "-mavx2",
+          "-mfma"
+        ]
+      },
+      {
+        "name": "avx",
+        "requires": [
+          "avx"
+        ],
+        "compile_flags": [
+          "-mavx"
+        ]
+      },
+      {
+        "name": "ref",
+        "requires": [],
+        "compile_flags": []
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "unittest/bf16/test_attention_storage_contract_bf16.py"
+    ]
+  },
+  "notes": "BF16-valued Q/K/V full attention without the GGUF FP16 K/V conversion, with BF16 output storage.",
+  "numerical_capabilities": [
+    {
+      "contract_id": "attention_bf16_storage_fp32_online_bf16_output",
+      "status": "validated",
+      "phases": [
+        "prefill"
+      ],
+      "function": "attention_forward_full_head_major_gqa_flash_strided_bf16_storage",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "ck_threadpool",
+          "work_partition": [
+            "independent_query_blocks"
+          ],
+          "dispatch": [
+            "ck_threadpool_dispatch_n"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp32",
+        "merge_order": "ascending_chunk",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ]
+}

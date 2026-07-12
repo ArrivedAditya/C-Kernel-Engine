@@ -24,6 +24,7 @@
 #include <pthread.h>
 #include <dlfcn.h>
 
+#include "bf16_utils.h"
 #include "ckernel_quant.h"
 
 #if defined(__AVX__) || defined(__AVX2__) || defined(__AVX512F__)
@@ -529,6 +530,14 @@ void gelu_exact_inplace(float *data, size_t n)
 // GELU is evaluated on that rounded value, then the output is rounded to FP16
 // and widened back to FP32. This matches the lookup-table contract without
 // needing the global ggml table.
+void gelu_pytorch_tanh_bf16_storage(float *data, size_t n)
+{
+    for (size_t i = 0; i < n; ++i) {
+        const float x = bf16_to_float(float_to_bf16(data[i]));
+        data[i] = bf16_to_float(float_to_bf16(ck_gelu_tanh_f32(x)));
+    }
+}
+
 void gelu_ggml_inplace(float *data, size_t n)
 {
     pthread_once(&ck_gelu_ggml_runtime_once, ck_gelu_ggml_runtime_init);

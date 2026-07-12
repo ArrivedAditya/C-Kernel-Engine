@@ -3,7 +3,9 @@
   "$id": "cke.v8.attention_required_contracts",
   "type": "object",
   "additionalProperties": false,
-  "required": ["required_contracts"],
+  "required": [
+    "required_contracts"
+  ],
   "properties": {
     "required_contracts": {
       "type": "object",
@@ -11,23 +13,83 @@
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["op", "template_ops", "phases"],
+        "required": [
+          "op",
+          "template_ops",
+          "phases"
+        ],
         "properties": {
-          "op": {"enum": ["attention", "attention_sliding"]},
+          "op": {
+            "enum": [
+              "attention",
+              "attention_sliding"
+            ]
+          },
           "template_ops": {
             "type": "array",
             "minItems": 1,
             "uniqueItems": true,
-            "items": {"enum": ["attn", "attn_sliding"]}
+            "items": {
+              "enum": [
+                "attn",
+                "attn_sliding"
+              ]
+            }
           },
           "phases": {
             "type": "object",
             "minProperties": 1,
             "additionalProperties": false,
             "properties": {
-              "prefill": {"$ref": "#/$defs/request"},
-              "decode": {"$ref": "#/$defs/request"}
+              "prefill": {
+                "$ref": "#/$defs/request"
+              },
+              "decode": {
+                "$ref": "#/$defs/request"
+              }
             }
+          },
+          "selector": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "config_equals": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "integer",
+                    "boolean"
+                  ]
+                }
+              },
+              "config_not_equals": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "integer",
+                    "boolean"
+                  ]
+                }
+              }
+            },
+            "anyOf": [
+              {
+                "required": [
+                  "config_equals"
+                ]
+              },
+              {
+                "required": [
+                  "config_not_equals"
+                ]
+              }
+            ]
           }
         }
       }
@@ -37,7 +99,11 @@
     "request": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["requires", "validation", "evidence"],
+      "required": [
+        "requires",
+        "validation",
+        "evidence"
+      ],
       "properties": {
         "requires": {
           "type": "object",
@@ -50,15 +116,49 @@
             "numerics.attention_reduction"
           ],
           "properties": {
-            "execution.phase": {"enum": ["prefill", "decode"]},
-            "tensor.q.dtype": {"enum": ["fp32", "fp16", "bf16"]},
-            "tensor.kv.dtype": {"enum": ["fp32", "fp16", "bf16"]},
-            "tensor.layout": {"enum": ["head_major", "token_major"]},
-            "numerics.attention_reduction": {"type": "string", "minLength": 1}
+            "execution.phase": {
+              "enum": [
+                "prefill",
+                "decode"
+              ]
+            },
+            "tensor.q.dtype": {
+              "enum": [
+                "fp32",
+                "fp16",
+                "bf16"
+              ]
+            },
+            "tensor.kv.dtype": {
+              "enum": [
+                "fp32",
+                "fp16",
+                "bf16"
+              ]
+            },
+            "tensor.layout": {
+              "enum": [
+                "head_major",
+                "token_major"
+              ]
+            },
+            "numerics.attention_reduction": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
-        "validation": {"enum": ["unresolved", "observed", "validated"]},
-        "evidence": {"type": "string", "minLength": 1}
+        "validation": {
+          "enum": [
+            "unresolved",
+            "observed",
+            "validated"
+          ]
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     }
   }

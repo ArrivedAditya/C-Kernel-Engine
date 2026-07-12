@@ -323,21 +323,24 @@ def run_guard(workdir: Path) -> None:
     assert position_call["resolved_contract"]["kernel_id"] == "position_embeddings_add_tiled_2d_align_corners_bf16"
     rope_call = next(op for op in call_ops if op["op"] == "rope_qk")
     rope_args = {arg["name"]: arg["expr"] for arg in rope_call["args"]}
-    assert rope_args["n_dims"] == "2"
+    # n_dims is the full rotary width. Sections describe axis allocation;
+    # they are not a pair count and must not halve the kernel ABI value.
+    assert rope_args["n_dims"] == "4"
     assert [rope_args[f"section_{idx}"] for idx in range(4)] == ["1", "1", "0", "0"]
-    for op_name in (
-        "patch_proj",
-        "patch_proj_aux",
-        "qkv_packed_proj",
-        "out_proj",
-        "mlp_up",
-        "mlp_down",
-        "projector_fc1",
-        "projector_fc2",
-    ):
+    expected_kernels = {
+        "patch_proj": "gemm_nt_bf16",
+        "patch_proj_aux": "gemm_nt_bf16",
+        "qkv_packed_proj": "gemm_nt_bf16_bf16_storage",
+        "out_proj": "gemm_nt_bf16_bf16_storage",
+        "mlp_up": "gemm_nt_bf16_bf16_storage",
+        "mlp_down": "gemm_nt_bf16_bf16_storage",
+        "projector_fc1": "gemm_nt_bf16",
+        "projector_fc2": "gemm_nt_bf16",
+    }
+    for op_name, expected in expected_kernels.items():
         got = kernels_by_op.get(op_name)
-        if got != "gemm_nt_bf16":
-            raise AssertionError(f"{op_name}: expected gemm_nt_bf16, got {got}")
+        if got != expected:
+            raise AssertionError(f"{op_name}: expected {expected}, got {got}")
 
     _run(
         [

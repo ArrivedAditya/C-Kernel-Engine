@@ -2765,8 +2765,13 @@ static int do_init(const char *weights_path) {{
 
     g_model->bump_weights = g_model->bump; /* Manifest runtime offsets are absolute. */
     g_model->activations = (float*)(g_model->bump + BUMP_ACT_OFFSET);
+#ifdef A_KV_CACHE
     g_model->kv_cache = (float*)(g_model->bump + A_KV_CACHE);
     g_model->kv_cache_f16 = (uint16_t*)(g_model->bump + A_KV_CACHE);
+#else
+    g_model->kv_cache = NULL;
+    g_model->kv_cache_f16 = NULL;
+#endif
 #ifdef A_ROPE_CACHE
     g_model->rope_cos = (float*)(g_model->bump + A_ROPE_CACHE);
 #else
@@ -2781,7 +2786,11 @@ static int do_init(const char *weights_path) {{
     }}
 #endif
     g_model->rope_sin = g_model->rope_cos + MAX_SEQ_LEN * ROTARY_DIM / 2;
+#ifdef A_LOGITS
     g_model->logits = (float*)(g_model->bump + A_LOGITS);
+#else
+    g_model->logits = NULL;
+#endif
     g_model->pos = 0;
     g_model->rope_pos = 0;
     g_model->bridge_has_explicit_positions = 0;
@@ -2904,7 +2913,9 @@ CK_EXPORT void ck_model_free(void) {{
 CK_EXPORT void ck_model_kv_cache_reset(void) {{
     if (!g_model) return;
     int before_pos = g_model->pos;
-    memset(g_model->kv_cache, 0, KV_CACHE_SIZE);
+    if (g_model->kv_cache && KV_CACHE_SIZE > 0) {{
+        memset(g_model->kv_cache, 0, KV_CACHE_SIZE);
+    }}
 {recurrent_reset_code}    g_model->pos = 0;
     g_model->rope_pos = 0;
     g_model->bridge_has_explicit_positions = 0;

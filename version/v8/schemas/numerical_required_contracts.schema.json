@@ -3,7 +3,9 @@
   "$id": "cke.v8.numerical_required_contracts",
   "type": "object",
   "additionalProperties": false,
-  "required": ["required_numerical_contracts"],
+  "required": [
+    "required_numerical_contracts"
+  ],
   "properties": {
     "required_numerical_contracts": {
       "type": "object",
@@ -11,40 +13,112 @@
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["op", "template_ops", "phases", "checkpoint"],
+        "required": [
+          "op",
+          "template_ops",
+          "phases",
+          "checkpoint"
+        ],
         "properties": {
-          "op": {"type": "string", "minLength": 1},
-          "template_ops": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "op": {
+            "type": "string",
+            "minLength": 1
+          },
+          "template_ops": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
           "selector": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["config_equals"],
             "properties": {
               "config_equals": {
                 "type": "object",
                 "minProperties": 1,
-                "additionalProperties": {"type": ["string", "number", "integer", "boolean"]}
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "integer",
+                    "boolean"
+                  ]
+                }
+              },
+              "config_not_equals": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "number",
+                    "integer",
+                    "boolean"
+                  ]
+                }
               }
-            }
+            },
+            "anyOf": [
+              {
+                "required": [
+                  "config_equals"
+                ]
+              },
+              {
+                "required": [
+                  "config_not_equals"
+                ]
+              }
+            ]
           },
           "phases": {
             "type": "object",
             "minProperties": 1,
             "additionalProperties": false,
             "properties": {
-              "prefill": {"$ref": "#/$defs/request"},
-              "decode": {"$ref": "#/$defs/request"}
+              "prefill": {
+                "$ref": "#/$defs/request"
+              },
+              "decode": {
+                "$ref": "#/$defs/request"
+              }
             }
           },
           "checkpoint": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["id", "producer", "logical_layout", "axis_names"],
+            "required": [
+              "id",
+              "producer",
+              "logical_layout",
+              "axis_names"
+            ],
             "properties": {
-              "id": {"type": "string", "minLength": 1},
-              "producer": {"type": "string", "minLength": 1},
-              "logical_layout": {"type": "string", "minLength": 1},
-              "axis_names": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "producer": {
+                "type": "string",
+                "minLength": 1
+              },
+              "logical_layout": {
+                "type": "string",
+                "minLength": 1
+              },
+              "axis_names": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
             }
           }
         }
@@ -55,11 +129,27 @@
     "request": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["contract_id", "validation", "evidence"],
+      "required": [
+        "contract_id",
+        "validation",
+        "evidence"
+      ],
       "properties": {
-        "contract_id": {"type": "string", "minLength": 1},
-        "validation": {"enum": ["unresolved", "observed", "validated"]},
-        "evidence": {"type": "string", "minLength": 1}
+        "contract_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "validation": {
+          "enum": [
+            "unresolved",
+            "observed",
+            "validated"
+          ]
+        },
+        "evidence": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     }
   }
