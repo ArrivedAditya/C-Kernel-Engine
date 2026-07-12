@@ -1382,11 +1382,20 @@ static int explicit_mrope_apply_ggml_exact(
     int ggml_sections[GGML_MROPE_SECTIONS] = {
         sections[0], sections[1], sections[2], sections[3]
     };
+    /* CK's vision contract names the full rotary width. ggml's VISION mode
+     * names the split-half stride (the number of frequency pairs). Keep this
+     * unit conversion inside the oracle adapter so production kernels and IR
+     * continue to carry the canonical full-width value. */
+    const int ggml_n_dims = rope_type == GGML_ROPE_TYPE_VISION ? n_dims / 2 : n_dims;
+    if (ggml_n_dims <= 0 || (rope_type == GGML_ROPE_TYPE_VISION && (n_dims & 1) != 0)) {
+        ggml_free_fn(ctx);
+        return 0;
+    }
     struct ggml_tensor *rope = ggml_rope_multi_inplace_fn(ctx,
                                                           x_view,
                                                           pos_base,
                                                           NULL,
-                                                          n_dims,
+                                                          ggml_n_dims,
                                                           ggml_sections,
                                                           rope_type,
                                                           n_ctx_orig,
