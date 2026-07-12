@@ -169,6 +169,22 @@ The goal is not to publish a theoretical peak as an achieved result. The goal is
 
 The optimization strategy also follows [Amdahl's Law and the Theory of Constraints](https://www.shivasnotes.com/blog/5932/Amdahl-s-Law-Theory-Of-Constraints-And-C-Kernel-Engine-Optimization): improve the measured system constraint, then profile again instead of assuming the previous hotspot still dominates.
 
+## Hardware Evidence Program
+
+CKE is hardened across different CPU classes because one workstation cannot establish portability, numerical stability, or scaling behavior. Current work spans multiple Intel Core i7 generations, a dedicated 14th Gen Core i7-14700T AVX2/AVX-VNNI profiling node, TI TDA4VM ARM/NEON hardware, and external 2nd, 3rd, and 5th Gen Intel Xeon systems. A Xeon 6 workstation is planned for AVX-512, AMX BF16, memory-channel, NUMA, and distributed experiments.
+
+| Hardware lane | ISA and dtype role | Evidence status |
+|---|---|---|
+| Intel Core i7, multiple generations | FP32 and quantized commodity x86 compatibility, practical model runs, compiler and regression testing | Active |
+| Intel Core i7-14700T | AVX2/FMA/AVX-VNNI FP32 and Q4/Q5/Q6/Q8 profiling with VTune, Advisor, perf, flamegraphs, assembly, thread-pool, and roofline evidence; no native BF16 claim | Active profiling node |
+| TI TDA4VM ARM | FP32 and quantized ARM NEON portability under embedded memory and power constraints | Active portability lane |
+| Intel Xeon, 2nd/3rd/5th Gen | FP32 and quantized AVX-512/VNNI where available; native BF16/AMX only on hosts that expose those ISA features; larger-memory parity and cross-generation behavior | External validation lanes |
+| Intel Xeon 6 | Planned native AMX BF16, AVX-512/VNNI, wider memory/NUMA studies, sustained power, and multi-node scaling | Planned; no results claimed yet |
+
+Hardware coverage does not mean every model, dtype, quantization, and gate has passed on every host. Every published result should identify the CPU, detected ISA flags, storage and compute dtype, memory topology, compiler, CKE commit, model and quantization, prompt or tensor shape, thread/affinity policy, warmup/repeats, and profiler mode. Intel systems use VTune and Advisor where available; Linux perf, flamegraphs, assembly inspection, parity tests, and end-to-end workloads provide the common evidence path across vendors and ISAs.
+
+Future performance articles and release notes should use this matrix, label active versus planned hardware, link raw profiler or benchmark artifacts, and avoid extrapolating one host's result to another CPU generation.
+
 ## Quick Start
 
 Linux is the supported development and profiling environment.
