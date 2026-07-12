@@ -148,6 +148,51 @@ def _make_qwen3vl_manifest() -> dict:
 
 class V8Qwen3VLTemplateTests(unittest.TestCase):
 
+    def test_gguf_vision_mrope_resolves_fp32_contract(self) -> None:
+        manifest = _make_qwen3vl_manifest()
+        manifest["config"]["vision_mrope_storage_boundary"] = "fp32"
+        self.assertEqual(
+            convert_gguf_to_bump_v8._inject_runtime_config_defaults(
+                manifest["config"], "qwen3_vl_vision"
+            )["vision_mrope_storage_boundary"],
+            "fp32",
+        )
+        with tempfile.TemporaryDirectory(prefix="v8_qwen3vl_gguf_mrope_") as td:
+            root = Path(td)
+            manifest_path = root / "weights_manifest.json"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            paths = {
+                name: root / f"{name}.json"
+                for name in ("ir1", "layout", "lowered", "call")
+            }
+            args = [
+                "--manifest", str(manifest_path),
+                "--mode", "prefill",
+                "--output", str(paths["ir1"]),
+                "--layout-output", str(paths["layout"]),
+                "--lowered-output", str(paths["lowered"]),
+                "--call-output", str(paths["call"]),
+            ]
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(build_ir_v8.main(args), 0)
+
+            for artifact in ("ir1", "lowered", "call"):
+                doc = json.loads(paths[artifact].read_text())
+                operations = doc if isinstance(doc, list) else doc.get("operations", doc.get("ops", []))
+                mrope = next(item for item in operations if item.get("op") == "rope_qk")
+                self.assertEqual(
+                    mrope["resolved_contract"]["contract_id"],
+                    "vision_mrope_fp32_input_fp32_compute_fp32_output",
+                )
+                self.assertEqual(
+                    mrope["resolved_contract"]["kernel_id"],
+                    "mrope_qk_vision",
+                )
+                if artifact == "call":
+                    self.assertEqual(mrope["function"], "mrope_qk_vision")
+                else:
+                    self.assertEqual(mrope["kernel"], "mrope_qk_vision")
+
     def test_vision_mrope_classification_uses_semantics_not_kernel_name(self) -> None:
         operation = {
             "op": "rope_qk",

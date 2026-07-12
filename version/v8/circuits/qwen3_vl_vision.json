@@ -121,6 +121,34 @@
     }
   },
   "required_numerical_contracts": {
+    "vision.layer.mrope.fp32": {
+      "op": "rope",
+      "template_ops": [
+        "rope_qk"
+      ],
+      "selector": {
+        "config_equals": {
+          "vision_mrope_storage_boundary": "fp32"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "vision_mrope_fp32_input_fp32_compute_fp32_output",
+          "validation": "validated",
+          "evidence": "unittest/test_vision.py::test_mrope_qk_vision_storage_matrix"
+        }
+      },
+      "checkpoint": {
+        "id": "vision.layer.{layer}.q.post_rope",
+        "producer": "vision_mrope",
+        "logical_layout": "head_major",
+        "axis_names": [
+          "head",
+          "token",
+          "channel"
+        ]
+      }
+    },
     "vision.frontend.position": {
       "op": "position_embeddings",
       "template_ops": [
