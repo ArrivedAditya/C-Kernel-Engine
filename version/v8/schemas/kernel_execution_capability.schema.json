@@ -14,6 +14,34 @@
       "required": ["isa_dispatch", "threading"],
       "properties": {
         "isa_dispatch": {"enum": ["runtime", "compile_time", "scalar"]},
+        "weight_storage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "block_elements", "block_bytes"],
+          "properties": {
+            "format": {"type": "string", "minLength": 1},
+            "block_elements": {"type": "integer", "minimum": 1},
+            "block_bytes": {"type": "integer", "minimum": 1}
+          }
+        },
+        "activation_storage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "block_elements"],
+          "properties": {
+            "format": {"type": "string", "minLength": 1},
+            "block_elements": {"type": "integer", "minimum": 1}
+          }
+        },
+        "diagnostic_providers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["fp32_activation"],
+          "properties": {
+            "fp32_activation": {"type": "string", "minLength": 1},
+            "row_quantized": {"type": "string", "minLength": 1}
+          }
+        },
         "threading": {
           "type": "object",
           "additionalProperties": false,

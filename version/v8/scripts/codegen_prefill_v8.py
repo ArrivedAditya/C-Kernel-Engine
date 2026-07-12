@@ -48,6 +48,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from codegen_capabilities_v8 import (
+    is_q4_q6_q8_linear,
+    resolved_quantized_linear_emission,
+)
+
 
 def _annotate_kv_transpose_roles(ops: List[Dict]) -> None:
     """Mark synthetic transpose ops with K/V role and per-layer head geometry."""
@@ -169,6 +174,7 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
     section = op.get("section", "")
     op_instance_idx = int(op.get("op_instance_idx", op.get("instance", 0)) or 0)
     args_list = op.get("args", [])
+    linear_emission = resolved_quantized_linear_emission(op)
 
     # Handle special auto-inserted ops
     if op_type == "final_logit_softcap" and str(config.get("logits_layout", "auto")).lower() == "last":
@@ -528,7 +534,7 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             lines.append("    }")
             return "\n".join(lines)
 
-    if op_type == "out_proj" and func in ("gemm_nt_q4_k_q8_k", "gemm_nt_q6_k_q8_k"):
+    if op_type == "out_proj" and is_q4_q6_q8_linear(linear_emission):
         a_expr = arg_expr_by_name.get("a")
         b_expr = arg_expr_by_name.get("b")
         bias_expr = arg_expr_by_name.get("bias", "NULL")
@@ -536,7 +542,7 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         m_expr = arg_expr_by_name.get("m", "num_tokens")
         n_expr = arg_expr_by_name.get("n")
         k_expr = arg_expr_by_name.get("k")
-        fp32_func = "gemm_nt_q4_k" if func == "gemm_nt_q4_k_q8_k" else "gemm_nt_q6_k"
+        fp32_func = linear_emission["fp32_activation_function"]
         if a_expr and b_expr and c_expr and n_expr and k_expr:
             lines.append("    if (debug_outproj_fp32 && ck_debug_outproj_fp32_input != NULL) {")
             lines.append(f"        {fp32_func}(")
@@ -577,7 +583,7 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
                 lines.append("    #endif")
             return "\n".join(lines)
 
-    if op_type == "mlp_gate_up" and func in ("gemm_nt_q4_k_q8_k", "gemm_nt_q6_k_q8_k"):
+    if op_type == "mlp_gate_up" and is_q4_q6_q8_linear(linear_emission):
         a_expr = arg_expr_by_name.get("a")
         b_expr = arg_expr_by_name.get("b")
         bias_expr = arg_expr_by_name.get("bias", "NULL")
@@ -585,8 +591,11 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         m_expr = arg_expr_by_name.get("m", "num_tokens")
         n_expr = arg_expr_by_name.get("n")
         k_expr = arg_expr_by_name.get("k")
-        row_gemv_func = "gemv_q4_k_q8_k" if func == "gemm_nt_q4_k_q8_k" else "gemv_q6_k_q8_k"
-        weight_row_bytes_expr = f"(((size_t)({k_expr}) / 256u) * 144u)" if func == "gemm_nt_q4_k_q8_k" else f"(((size_t)({k_expr}) / 256u) * 210u)"
+        row_gemv_func = linear_emission["row_quantized_function"]
+        weight_row_bytes_expr = (
+            f"(((size_t)({k_expr}) / {linear_emission['weight_block_elements']}u) * "
+            f"{linear_emission['weight_block_bytes']}u)"
+        )
         if a_expr and b_expr and c_expr and n_expr and k_expr:
             lines.append(f"    if (debug_prefill_mlp_gate_up_row_gemv || debug_prefill_mlp_gate_up_row_gemv_layer == {layer}) {{")
             if profile:
@@ -614,7 +623,7 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             ])
             if profile:
                 lines.append(f'        CK_PROFILE_END("prefill", "{row_gemv_func}", "{op_type}_row_gemv", {layer});')
-            fp32_func = "gemm_nt_q4_k" if func == "gemm_nt_q4_k_q8_k" else "gemm_nt_q6_k"
+            fp32_func = linear_emission["fp32_activation_function"]
             lines.append(f"    }} else if ((debug_mlp_gate_up_fp32 || debug_mlp_gate_up_fp32_layer == {layer}) && ck_debug_mlp_gate_up_fp32_input != NULL) {{")
             if profile:
                 lines.append("        CK_PROFILE_BEGIN();")
@@ -1491,8 +1500,9 @@ def _emit_prefill_quant_debug_override(op: Dict, seq_idx: int, config: Dict, *, 
 
 def _emit_prefill_gemm_fp32_override(op: Dict, seq_idx: int, *, debug_flag_name: str, debug_input_name: str, profile: bool = False, dump: bool = False) -> str:
     func = str(op.get("function", "") or "")
-    if func not in {"gemm_nt_q4_k_q8_k", "gemm_nt_q6_k_q8_k"}:
-        raise RuntimeError(f"unsupported prefill fp32 override func={func}")
+    linear_emission = resolved_quantized_linear_emission(op)
+    if not is_q4_q6_q8_linear(linear_emission):
+        raise RuntimeError("prefill fp32 override requires resolved Q4/Q6 x Q8 execution metadata")
 
     args_list = op.get("args", [])
     m_arg = next(
@@ -1517,11 +1527,14 @@ def _emit_prefill_gemm_fp32_override(op: Dict, seq_idx: int, *, debug_flag_name:
     if not a_expr or not b_expr or not c_expr or not n_expr or not k_expr:
         raise RuntimeError("prefill fp32 override missing GEMM args")
 
-    fp32_func = "gemm_nt_q4_k" if func == "gemm_nt_q4_k_q8_k" else "gemm_nt_q6_k"
+    fp32_func = linear_emission["fp32_activation_function"]
     layer_value = op.get("layer", -1)
     layer = int(layer_value) if layer_value is not None else -1
-    row_gemv_func = "gemv_q4_k_q8_k" if func == "gemm_nt_q4_k_q8_k" else "gemv_q6_k_q8_k"
-    weight_row_bytes_expr = f"(((size_t)({k_expr}) / 256u) * 144u)" if func == "gemm_nt_q4_k_q8_k" else f"(((size_t)({k_expr}) / 256u) * 210u)"
+    row_gemv_func = linear_emission["row_quantized_function"]
+    weight_row_bytes_expr = (
+        f"(((size_t)({k_expr}) / {linear_emission['weight_block_elements']}u) * "
+        f"{linear_emission['weight_block_bytes']}u)"
+    )
 
     row_gemv_allowed = 1 if str(op.get("op", "")) == "mlp_gate_up" else 0
     lines = [
@@ -1800,6 +1813,7 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
             op = dict(op)
             op["op_instance_idx"] = inst
             rmsnorm_counts_by_layer[layer_for_instance] = inst + 1
+        linear_emission = resolved_quantized_linear_emission(op)
         if op_type == "dense_embedding_lookup":
             lines.append(f"    if (stop_seq == {seq_idx}) return;")
             if (
@@ -1827,10 +1841,10 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
                 debug_input_name="ck_debug_mlp_gate_up_fp32_input",
                 profile=profile,
             )
-        elif op_type == "mlp_gate_up" and str(op.get("function", "")) in {"gemm_nt_q4_k_q8_k", "gemm_nt_q6_k_q8_k"}:
+        elif op_type == "mlp_gate_up" and is_q4_q6_q8_linear(linear_emission):
             next_op = ops[seq_idx + 1] if seq_idx + 1 < len(ops) else None
             if (
-                str(op.get("function", "")) == "gemm_nt_q4_k_q8_k"
+                linear_emission["weight_format"] == "q4_k"
                 and isinstance(next_op, dict)
                 and str(next_op.get("op", "")) in {"silu_mul", "swiglu"}
             ):
@@ -1882,7 +1896,7 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
                     debug_input_name="ck_debug_mlp_down_fp32_input",
                     profile=profile,
                 )
-        elif has_multimodal_bridge and op_type == "mlp_down" and str(op.get("function", "")) in {"gemm_nt_q4_k_q8_k", "gemm_nt_q6_k_q8_k"}:
+        elif has_multimodal_bridge and op_type == "mlp_down" and is_q4_q6_q8_linear(linear_emission):
             op_code = _emit_prefill_gemm_fp32_override(
                 op,
                 seq_idx,

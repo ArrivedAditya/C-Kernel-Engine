@@ -150,6 +150,40 @@ def load_kernel_execution_capabilities(root: Path = DEFAULT_KERNELS) -> Dict[str
                 reference=linear_capability["reference"],
                 production=linear_capability["production"],
             )
+            contract = linear_contracts["contracts"][linear_capability["numerical_contract"]]
+            implementation = capability["implementation"]
+            weight_storage = implementation.get("weight_storage")
+            activation_storage = implementation.get("activation_storage")
+            diagnostic_providers = implementation.get("diagnostic_providers")
+            if not isinstance(weight_storage, dict) or not isinstance(activation_storage, dict):
+                raise hard_contract_fault(
+                    f"quantized linear kernel {kernel_id!r} has no explicit storage capability",
+                    "Code generation must not recover weight or activation layout from a function name.",
+                    "declare implementation.weight_storage and implementation.activation_storage.",
+                )
+            if (
+                weight_storage["format"] != contract["weight"]["format"]
+                or weight_storage["block_elements"] != contract["weight"]["block_size"]
+                or activation_storage["format"] != contract["activation"]["format"]
+                or activation_storage["block_elements"] != contract["activation"]["block_size"]
+            ):
+                raise hard_contract_fault(
+                    f"quantized linear kernel {kernel_id!r} storage capability disagrees with its contract",
+                    f"implementation={implementation}, contract={contract}",
+                    "make the implementation storage metadata match the numerical contract.",
+                )
+            if not isinstance(diagnostic_providers, dict):
+                raise hard_contract_fault(
+                    f"quantized linear kernel {kernel_id!r} has no diagnostic providers",
+                    "Code generation must not derive an FP32 or row-quantized provider from a function name.",
+                    "declare implementation.diagnostic_providers in the kernel map.",
+                )
+            if capability["op"] == "gemm" and not diagnostic_providers.get("row_quantized"):
+                raise hard_contract_fault(
+                    f"quantized GEMM kernel {kernel_id!r} has no row-quantized provider",
+                    "The bounded prefill diagnostic path requires an exact map-owned row provider.",
+                    "declare implementation.diagnostic_providers.row_quantized in the kernel map.",
+                )
         kernels[kernel_id] = {**capability, "source": str(path)}
     if not kernels:
         raise ContractError(f"No versioned kernel execution capabilities found under: {root}")
