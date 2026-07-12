@@ -2460,6 +2460,34 @@ PROJECT_ROOT = SCRIPT_DIR.parent  # version/v8
 REPO_ROOT = PROJECT_ROOT.parent.parent  # repo root
 V8_ROOT = REPO_ROOT / "version" / "v8"
 
+
+def _validated_kernel_codegen_capability(kernel_id: str, kernel_map: Dict) -> Optional[Dict]:
+    capability = kernel_map.get("codegen_capability")
+    if capability is None:
+        return None
+    schema_path = V8_ROOT / "schemas" / "kernel_codegen_capability.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(capability),
+        key=lambda error: tuple(str(part) for part in error.absolute_path),
+    )
+    if errors:
+        error = errors[0]
+        location = ".".join(str(part) for part in error.absolute_path) or "<root>"
+        raise RuntimeError(
+            f"HARD CODEGEN CAPABILITY FAULT: kernel {kernel_id!r} capability is invalid "
+            f"at {location}: {error.message}"
+        )
+    function = str((kernel_map.get("impl") or {}).get("function", kernel_id))
+    if capability["function"] != function:
+        raise RuntimeError(
+            f"HARD CODEGEN CAPABILITY FAULT: kernel {kernel_id!r} advertises function "
+            f"{capability['function']!r}, but its implementation is {function!r}."
+        )
+    resolved = copy.deepcopy(capability)
+    resolved["kernel_id"] = kernel_id
+    return resolved
+
 # Template Op → Kernel Op Mapping
 # This is the single source of truth for how template ops map to kernel registry ops.
 # Keep this mapping semantic, not architecture-named: the builder should only see
@@ -4552,7 +4580,7 @@ def kernel_needs_q8_activation(registry: Dict, kernel_id: str) -> bool:
     return False
 
 
-def get_quantize_kernel_for_activation(activation_dtype: str) -> Optional[str]:
+def get_quantize_kernel_for_activation(registry: Dict, activation_dtype: str) -> Optional[str]:
     """
     Get the appropriate quantize kernel for the target activation dtype.
 
@@ -4562,11 +4590,22 @@ def get_quantize_kernel_for_activation(activation_dtype: str) -> Optional[str]:
     Returns:
         Quantize kernel ID or None if no quantization needed
     """
-    if activation_dtype == "q8_0":
-        return "quantize_row_q8_0"
-    elif activation_dtype == "q8_k":
-        return "quantize_row_q8_k"
-    return None
+    if activation_dtype not in {"q8_0", "q8_k"}:
+        return None
+    matches = [
+        str(kernel.get("id", ""))
+        for kernel in registry.get("kernels", [])
+        if isinstance(kernel, dict)
+        and kernel.get("op") == "quantize"
+        and (kernel.get("quant") or {}).get("output") == activation_dtype
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"HARD CODEGEN CAPABILITY FAULT: activation storage {activation_dtype!r} "
+            f"resolved {len(matches)} quantization providers: {matches}. "
+            "Kernel maps must provide exactly one quantize operator for the requested format."
+        )
+    return matches[0]
 
 
 # Quantization formats that require native kernels (no safe fallback)
@@ -5775,7 +5814,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                                 for kreg in registry.get("kernels", []):
                                     if kreg.get("id") == fk_id:
                                         act_dtype = kreg.get("quant", {}).get("activation", "fp32")
-                                        quantize_kernel = get_quantize_kernel_for_activation(act_dtype)
+                                        quantize_kernel = get_quantize_kernel_for_activation(registry, act_dtype)
                                         if quantize_kernel:
                                             quant_op_name = f"quantize_{op}_input"
                                             quant_op_info = get_op_info(quant_op_name, "body", layer_idx)
@@ -5858,7 +5897,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                                     for kreg in registry.get("kernels", []):
                                         if kreg.get("id") == nk_id:
                                             act_dtype = kreg.get("quant", {}).get("activation", "fp32")
-                                            quantize_kernel = get_quantize_kernel_for_activation(act_dtype)
+                                            quantize_kernel = get_quantize_kernel_for_activation(registry, act_dtype)
                                             if quantize_kernel:
                                                 quant_op_name = f"quantize_input_{norm_instance}"
                                                 quant_op_info = get_op_info(quant_op_name, "body", layer_idx)
@@ -5924,7 +5963,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                                 for kreg in registry.get("kernels", []):
                                     if kreg.get("id") == k_id:
                                         act_dtype = kreg.get("quant", {}).get("activation", "fp32")
-                                        quantize_kernel = get_quantize_kernel_for_activation(act_dtype)
+                                        quantize_kernel = get_quantize_kernel_for_activation(registry, act_dtype)
                                         if quantize_kernel:
                                             quant_op_name = "quantize_final_output"
                                             quant_op_info = get_op_info(quant_op_name, section_name, -1)
@@ -6824,6 +6863,9 @@ def generate_ir_lower_1(
             "bias_for": ir_op.get("bias_for"),
             "dataflow": ir_op.get("dataflow", {}),  # Preserve dataflow for memory planner
         }
+        codegen_capability = _validated_kernel_codegen_capability(kernel_id, kernel_map)
+        if codegen_capability is not None:
+            lowered_op["resolved_codegen_capability"] = codegen_capability
         if ir_op.get("required_contract") is not None:
             lowered_op["required_contract"] = copy.deepcopy(ir_op["required_contract"])
         if ir_op.get("resolved_contract") is not None:
@@ -8732,6 +8774,16 @@ def generate_ir_lower_2(
                 raise RuntimeError(
                     f"HARD CONTRACT FAULT: memory lowering received kernel {ir_op['kernel']!r}, "
                     f"but execution metadata names {lowered_op['resolved_execution'].get('kernel_id')!r}."
+                )
+        if ir_op.get("resolved_codegen_capability") is not None:
+            lowered_op["resolved_codegen_capability"] = copy.deepcopy(
+                ir_op["resolved_codegen_capability"]
+            )
+            if lowered_op["resolved_codegen_capability"].get("kernel_id") != ir_op["kernel"]:
+                raise RuntimeError(
+                    f"HARD CODEGEN CAPABILITY FAULT: memory lowering received kernel "
+                    f"{ir_op['kernel']!r}, but codegen metadata names "
+                    f"{lowered_op['resolved_codegen_capability'].get('kernel_id')!r}."
                 )
         if ir_op.get("semantic_checkpoints") is not None:
             lowered_op["semantic_checkpoints"] = copy.deepcopy(ir_op["semantic_checkpoints"])
@@ -11082,6 +11134,19 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     f"execution metadata {resolved_execution.get('kernel_id')!r}."
                 )
             call_op["resolved_execution"] = resolved_execution
+        resolved_codegen = copy.deepcopy(op.get("resolved_codegen_capability")) if op.get("resolved_codegen_capability") else None
+        if resolved_codegen is not None:
+            if resolved_codegen.get("kernel_id") != op.get("kernel"):
+                raise RuntimeError(
+                    f"HARD CODEGEN CAPABILITY FAULT: call-ready IR kernel {op.get('kernel')!r} "
+                    f"differs from codegen metadata {resolved_codegen.get('kernel_id')!r}."
+                )
+            if resolved_codegen.get("function") != func:
+                raise RuntimeError(
+                    f"HARD CODEGEN CAPABILITY FAULT: call-ready IR function {func!r} differs "
+                    f"from codegen metadata {resolved_codegen.get('function')!r}."
+                )
+            call_op["resolved_codegen_capability"] = resolved_codegen
         if op.get("semantic_checkpoints") is not None:
             call_op["semantic_checkpoints"] = copy.deepcopy(op["semantic_checkpoints"])
         call_ops.append(call_op)

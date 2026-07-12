@@ -39,3 +39,39 @@ def is_q4_q6_q8_linear(capability: Dict[str, Any] | None) -> bool:
         and capability["weight_format"] in {"q4_k", "q6_k"}
         and capability["activation_format"] == "q8_k"
     )
+
+
+def resolved_activation_quantization_emission(op: Dict[str, Any]) -> Dict[str, Any] | None:
+    capability = op.get("resolved_codegen_capability")
+    if not isinstance(capability, dict):
+        return None
+    if capability.get("operator_family") != "activation_quantization":
+        return None
+    function = str(op.get("function", "") or "")
+    if capability.get("function") != function:
+        raise RuntimeError(
+            "resolved activation quantization capability does not match the call-ready function"
+        )
+    storage = capability.get("output_storage")
+    if not isinstance(storage, dict):
+        raise RuntimeError("resolved activation quantization capability has no output storage")
+    required = {"format", "block_elements", "block_elements_symbol", "c_block_type"}
+    if set(storage) != required:
+        raise RuntimeError(
+            "resolved activation quantization storage must define exact format and block ABI"
+        )
+    return {
+        "format": str(storage["format"]),
+        "block_elements": int(storage["block_elements"]),
+        "block_elements_symbol": str(storage["block_elements_symbol"]),
+        "c_block_type": str(storage["c_block_type"]),
+    }
+
+
+def activation_quantized_row_bytes_expr(
+    capability: Dict[str, Any], dimension_expr: str
+) -> str:
+    return (
+        f"(size_t)(({dimension_expr}) / {capability['block_elements_symbol']}) * "
+        f"sizeof({capability['c_block_type']})"
+    )

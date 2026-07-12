@@ -165,7 +165,9 @@ from pathlib import Path
 from typing import Dict, List
 
 from codegen_capabilities_v8 import (
+    activation_quantized_row_bytes_expr,
     is_q4_q6_q8_linear,
+    resolved_activation_quantization_emission,
     resolved_quantized_linear_emission,
 )
 
@@ -662,6 +664,11 @@ def emit_op(
     op_name = op.get("op", "unknown")
     args = op.get("args", [])
     linear_emission = resolved_quantized_linear_emission(op)
+    quantization_emission = resolved_activation_quantization_emission(op)
+    if op_name.startswith("quantize_") and quantization_emission is None:
+        raise RuntimeError(
+            f"quantization op {op_name!r} requires resolved map-owned codegen capability"
+        )
     force_outproj_fp32 = int(layer) in (force_outproj_fp32_layers or set())
     force_attn_proj_fp32 = int(layer) in (force_attn_proj_fp32_layers or set())
     force_mlp_gate_up_fp32 = int(layer) in (force_mlp_gate_up_fp32_layers or set())
@@ -751,7 +758,7 @@ def emit_op(
             lines.append(f"    if (stop_seq == {seq_idx}) return;")
         return "\n".join(lines)
 
-    if op_name == "quantize_input_0" and function == "quantize_row_q8_k":
+    if op_name == "quantize_input_0" and quantization_emission and quantization_emission["format"] == "q8_k":
         arg_expr_by_name = {}
         for arg in args:
             nm = str(arg.get("name", "")).lower()
@@ -767,7 +774,7 @@ def emit_op(
             lines.append(f"    ck_debug_recurrent_proj_fp32_input = {x_expr};")
             if profile:
                 lines.append("    CK_PROFILE_BEGIN();")
-            lines.append("    quantize_row_q8_k(")
+            lines.append(f"    {function}(")
             lines.append(f"        {x_expr},")
             lines.append(f"        {y_expr},")
             lines.append(f"        {k_expr}")
@@ -953,7 +960,7 @@ def emit_op(
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
 
-    if op_name == "quantize_out_proj_input" and function == "quantize_row_q8_k":
+    if op_name == "quantize_out_proj_input" and quantization_emission and quantization_emission["format"] == "q8_k":
         arg_expr_by_name = {}
         for arg in args:
             nm = str(arg.get("name", "")).lower()
@@ -985,7 +992,7 @@ def emit_op(
             lines.append(f"    if (!{active_name}) {{")
             if profile:
                 lines.append("        CK_PROFILE_BEGIN();")
-            lines.append("        quantize_row_q8_k(")
+            lines.append(f"        {function}(")
             lines.append(f"            {x_expr},")
             lines.append(f"            {y_expr},")
             lines.append(f"            {k_expr}")
@@ -997,7 +1004,7 @@ def emit_op(
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
 
-    if op_name == "quantize_final_output" and function == "quantize_row_q8_k":
+    if op_name == "quantize_final_output" and quantization_emission and quantization_emission["format"] == "q8_k":
         arg_expr_by_name = {}
         for arg in args:
             nm = str(arg.get("name", "")).lower()
@@ -1010,6 +1017,9 @@ def emit_op(
         k_expr = arg_expr_by_name.get("k")
         rows_expr = arg_expr_by_name.get("rows")
         if x_expr and y_expr and k_expr and rows_expr:
+            row_bytes_expr = activation_quantized_row_bytes_expr(
+                quantization_emission, "_k"
+            )
             lines.append(f"    ck_debug_lm_head_fp32_input = {x_expr};")
             lines.append("    if (!g_ck_skip_decode_logits && !debug_lm_head_fp32) {")
             if profile:
@@ -1020,9 +1030,9 @@ def emit_op(
                 f"            uint8_t *_y_base = (uint8_t*)({y_expr});",
                 f"            const int _k = (int)({k_expr});",
                 f"            const int _rows = (int)({rows_expr});",
-                "            const size_t _row_bytes = (size_t)(_k / QK_K) * sizeof(block_q8_K);",
+                f"            const size_t _row_bytes = {row_bytes_expr};",
                 "            for (int _t = 0; _t < _rows; ++_t) {",
-                "                quantize_row_q8_k(_x_base + (size_t)_t * (size_t)_k, (void*)(_y_base + (size_t)_t * _row_bytes), _k);",
+                f"                {function}(_x_base + (size_t)_t * (size_t)_k, (void*)(_y_base + (size_t)_t * _row_bytes), _k);",
                 "            }",
                 "        }",
             ])
@@ -1187,7 +1197,7 @@ def emit_op(
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
 
-    if op_name == "quantize_mlp_down_input" and function in {"quantize_row_q8_k", "quantize_row_q8_0"}:
+    if op_name == "quantize_mlp_down_input" and quantization_emission:
         arg_expr_by_name = {}
         for arg in args:
             nm = str(arg.get("name", "")).lower()
@@ -1417,7 +1427,7 @@ def emit_op(
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
 
-    if function in {"quantize_row_q8_0", "quantize_row_q8_k"}:
+    if quantization_emission:
         arg_expr_by_name = {}
         for arg in args:
             nm = str(arg.get("name", "")).lower()
@@ -1429,7 +1439,7 @@ def emit_op(
         y_expr = arg_expr_by_name.get("y")
         k_expr = arg_expr_by_name.get("k")
         rows_expr = arg_expr_by_name.get("rows")
-        row_bytes_expr = "(size_t)(_k / QK_K) * sizeof(block_q8_K)" if function == "quantize_row_q8_k" else "(size_t)(_k / QK8_0) * sizeof(block_q8_0)"
+        row_bytes_expr = activation_quantized_row_bytes_expr(quantization_emission, "_k")
 
         if x_expr and y_expr and k_expr and rows_expr:
             active_name = None

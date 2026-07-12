@@ -36,6 +36,8 @@ GOVERNED_SYMBOLS = {
     "gemv_q6_k_q8_k",
     "gemm_nt_q4_k_q8_k",
     "gemm_nt_q6_k_q8_k",
+    "quantize_row_q8_0",
+    "quantize_row_q8_k",
 }
 
 
@@ -97,6 +99,36 @@ def _prefill_op(op_name: str, weight: str) -> dict:
             {"name": "M", "expr": "M", "source": "dim:_m"},
             {"name": "N", "expr": "N"},
             {"name": "K", "expr": "K"},
+        ],
+    }
+
+
+def _quantize_op(op_name: str, storage: str, *, rows: str = "ROWS") -> dict:
+    is_q8_k = storage == "q8_k"
+    function = f"renamed_{storage}_quantizer"
+    return {
+        "idx": 2,
+        "op": op_name,
+        "function": function,
+        "layer": 0,
+        "section": "body",
+        "resolved_codegen_capability": {
+            "schema_version": 1,
+            "kernel_id": f"fake_{storage}_quantizer",
+            "operator_family": "activation_quantization",
+            "function": function,
+            "output_storage": {
+                "format": storage,
+                "block_elements": 256 if is_q8_k else 32,
+                "block_elements_symbol": "QK_K" if is_q8_k else "QK8_0",
+                "c_block_type": "block_q8_K" if is_q8_k else "block_q8_0",
+            },
+        },
+        "args": [
+            {"name": "x", "expr": "X"},
+            {"name": "y", "expr": "Y"},
+            {"name": "k", "expr": "K"},
+            {"name": "rows", "expr": rows},
         ],
     }
 
@@ -186,6 +218,86 @@ class V8CodegenCapabilityTests(unittest.TestCase):
                 debug_flag_name="debug",
                 debug_input_name="input",
             )
+
+    def test_quantization_maps_own_exact_output_storage_abi(self) -> None:
+        expected = {
+            "quantize_row_q8_0.json": ("q8_0", 32, "QK8_0", "block_q8_0"),
+            "quantize_row_q8_k.json": ("q8_k", 256, "QK_K", "block_q8_K"),
+        }
+        for filename, storage in expected.items():
+            with self.subTest(map=filename):
+                document = json.loads(
+                    (ROOT / "version" / "v8" / "kernel_maps" / filename).read_text(
+                        encoding="utf-8"
+                    )
+                )
+                capability = document["codegen_capability"]
+                self.assertEqual(capability["operator_family"], "activation_quantization")
+                self.assertEqual(
+                    (
+                        capability["output_storage"]["format"],
+                        capability["output_storage"]["block_elements"],
+                        capability["output_storage"]["block_elements_symbol"],
+                        capability["output_storage"]["c_block_type"],
+                    ),
+                    storage,
+                )
+
+    def test_quantization_codegen_capability_rejects_function_drift(self) -> None:
+        path = ROOT / "version" / "v8" / "kernel_maps" / "quantize_row_q8_k.json"
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["codegen_capability"]["function"] = "wrong_quantizer"
+        build_ir = _load("build_ir_v8_quant_drift_tests", SCRIPTS / "build_ir_v8.py")
+        with self.assertRaisesRegex(RuntimeError, "advertises function"):
+            build_ir._validated_kernel_codegen_capability(document["id"], document)
+
+    def test_decode_quantization_uses_storage_capability_not_symbol(self) -> None:
+        for storage, symbol, block_type in (
+            ("q8_0", "QK8_0", "block_q8_0"),
+            ("q8_k", "QK_K", "block_q8_K"),
+        ):
+            with self.subTest(storage=storage):
+                op = _quantize_op("quantize_input_1", storage)
+                code = core.emit_op(op)
+                self.assertIn(f"renamed_{storage}_quantizer(", code)
+                self.assertIn(f"/ {symbol}) * sizeof({block_type})", code)
+
+    def test_prefill_quantization_uses_storage_capability_not_symbol(self) -> None:
+        for storage, symbol, block_type in (
+            ("q8_0", "QK8_0", "block_q8_0"),
+            ("q8_k", "QK_K", "block_q8_K"),
+        ):
+            with self.subTest(storage=storage):
+                op = _quantize_op("quantize_input_0", storage)
+                code = prefill.emit_prefill_op(op, 2, {})
+                self.assertIn(f"renamed_{storage}_quantizer(", code)
+                self.assertIn(f"/ {symbol}) * sizeof({block_type})", code)
+
+    def test_quantization_without_resolved_capability_hard_fails(self) -> None:
+        op = _quantize_op("quantize_input_0", "q8_k")
+        del op["resolved_codegen_capability"]
+        with self.assertRaisesRegex(RuntimeError, "requires resolved map-owned"):
+            core.emit_op(op)
+        with self.assertRaisesRegex(RuntimeError, "requires resolved map-owned"):
+            prefill.emit_prefill_op(op, 2, {})
+
+    def test_quantize_provider_resolution_is_unique_and_map_driven(self) -> None:
+        registry = {
+            "kernels": [
+                {"id": "renamed_q8_0", "op": "quantize", "quant": {"output": "q8_0"}},
+                {"id": "renamed_q8_k", "op": "quantize", "quant": {"output": "q8_k"}},
+            ]
+        }
+        build_ir = _load("build_ir_v8_quant_capability_tests", SCRIPTS / "build_ir_v8.py")
+        self.assertEqual(
+            build_ir.get_quantize_kernel_for_activation(registry, "q8_k"),
+            "renamed_q8_k",
+        )
+        registry["kernels"].append(
+            {"id": "ambiguous_q8_k", "op": "quantize", "quant": {"output": "q8_k"}}
+        )
+        with self.assertRaisesRegex(RuntimeError, "resolved 2 quantization providers"):
+            build_ir.get_quantize_kernel_for_activation(registry, "q8_k")
 
     def test_codegen_conditions_do_not_name_governed_q4_q6_providers(self) -> None:
         for filename in ("codegen_core_v8.py", "codegen_prefill_v8.py"):

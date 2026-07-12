@@ -49,7 +49,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from codegen_capabilities_v8 import (
+    activation_quantized_row_bytes_expr,
     is_q4_q6_q8_linear,
+    resolved_activation_quantization_emission,
     resolved_quantized_linear_emission,
 )
 
@@ -175,6 +177,11 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
     op_instance_idx = int(op.get("op_instance_idx", op.get("instance", 0)) or 0)
     args_list = op.get("args", [])
     linear_emission = resolved_quantized_linear_emission(op)
+    quantization_emission = resolved_activation_quantization_emission(op)
+    if op_type.startswith("quantize_") and quantization_emission is None:
+        raise RuntimeError(
+            f"quantization op {op_type!r} requires resolved map-owned codegen capability"
+        )
 
     # Handle special auto-inserted ops
     if op_type == "final_logit_softcap" and str(config.get("logits_layout", "auto")).lower() == "last":
@@ -500,16 +507,14 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
     # Prefill quantization must preserve token-major row layout exactly for
     # downstream GEMM kernels. Emit explicit per-token row quantization loops
     # instead of batch helper calls to avoid ABI/dispatch ambiguity.
-    batch_quant_kind = None
-    if func in ("quantize_row_q8_0", "quantize_row_q8_k"):
-        batch_quant_kind = func
+    batch_quant_kind = quantization_emission
 
     if batch_quant_kind:
         x_expr = arg_expr_by_name.get("x") or arg_expr_by_name.get("input")
         y_expr = arg_expr_by_name.get("y") or arg_expr_by_name.get("output")
         k_expr = arg_expr_by_name.get("k") or str(config.get("embed_dim", "EMBED_DIM"))
         if x_expr and y_expr and k_expr:
-            row_bytes_expr = "(size_t)(_k / QK_K) * sizeof(block_q8_K)" if batch_quant_kind == "quantize_row_q8_k" else "(size_t)(_k / QK8_0) * sizeof(block_q8_0)"
+            row_bytes_expr = activation_quantized_row_bytes_expr(batch_quant_kind, "_k")
             if op_type == "quantize_out_proj_input":
                 lines.append(f"    ck_debug_outproj_fp32_input = (const float*)({x_expr});")
                 lines.append(
@@ -526,11 +531,11 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
                 f"        const int _k = (int)({k_expr});",
                 f"        const size_t _row_bytes = {row_bytes_expr};",
                 "        for (int _t = 0; _t < num_tokens; ++_t) {",
-                f"            {batch_quant_kind}(_x_base + (size_t)_t * (size_t)_k, (void*)(_y_base + (size_t)_t * _row_bytes), _k);",
+                f"            {func}(_x_base + (size_t)_t * (size_t)_k, (void*)(_y_base + (size_t)_t * _row_bytes), _k);",
                 "        }",
             ])
             if profile:
-                lines.append(f'        CK_PROFILE_END("prefill", "{batch_quant_kind}", "{op_type}", {layer});')
+                lines.append(f'        CK_PROFILE_END("prefill", "{func}", "{op_type}", {layer});')
             lines.append("    }")
             return "\n".join(lines)
 
@@ -732,10 +737,7 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         x_expr = args[0]
         y_expr = args[1]
         k_expr = args[2]
-        if batch_quant_kind == "quantize_row_q8_k":
-            row_bytes_expr = "(size_t)(_k / QK_K) * sizeof(block_q8_K)"
-        else:
-            row_bytes_expr = "(size_t)(_k / QK8_0) * sizeof(block_q8_0)"
+        row_bytes_expr = activation_quantized_row_bytes_expr(batch_quant_kind, "_k")
         if op_type == "quantize_input_2":
             lines.append(f"    ck_debug_mlp_gate_up_fp32_input = (const float*)({x_expr});")
         if op_type == "quantize_out_proj_input":
@@ -752,7 +754,7 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             lines.append(f"        const size_t _row_bytes = {row_bytes_expr};")
             lines.append("        for (int _t = 0; _t < num_tokens; ++_t) {")
             lines.append(
-                f"            {batch_quant_kind}("
+                f"            {func}("
                 "_x_base + (size_t)_t * (size_t)_k, "
                 "(void*)(_y_base + (size_t)_t * _row_bytes), "
                 "_k);"
@@ -767,7 +769,7 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             lines.append(f"        const size_t _row_bytes = {row_bytes_expr};")
             lines.append("        for (int _t = 0; _t < num_tokens; ++_t) {")
             lines.append(
-                f"            {batch_quant_kind}("
+                f"            {func}("
                 "_x_base + (size_t)_t * (size_t)_k, "
                 "(void*)(_y_base + (size_t)_t * _row_bytes), "
                 "_k);"
@@ -1147,6 +1149,7 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
 
     for seq_idx, op in enumerate(ops):
         op_type_for_instance = str(op.get("op", ""))
+        quantization_emission = resolved_activation_quantization_emission(op)
         if swiglu_q8k_fusion_guard and op_type_for_instance != "quantize_mlp_down_input":
             swiglu_q8k_fusion_guard = None
             swiglu_q8k_fusion_call = None
@@ -1161,7 +1164,8 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
             swiglu_q8k_fusion_guard
             and swiglu_q8k_fusion_call
             and op_type_for_instance == "quantize_mlp_down_input"
-            and str(op.get("function", "")) == "quantize_row_q8_k"
+            and quantization_emission is not None
+            and quantization_emission["format"] == "q8_k"
         ):
             op_code = (
                 f"    if ({swiglu_q8k_fusion_guard}) {{\n"
@@ -1174,11 +1178,17 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
             swiglu_q8k_fusion_call = None
         elif op_type_for_instance in {"silu_mul", "swiglu"}:
             next_op = ops[seq_idx + 1] if seq_idx + 1 < len(ops) else None
+            next_quantization = (
+                resolved_activation_quantization_emission(next_op)
+                if isinstance(next_op, dict)
+                else None
+            )
             if (
                 isinstance(next_op, dict)
                 and str(op.get("function", "")) == "swiglu_forward"
                 and str(next_op.get("op", "")) == "quantize_mlp_down_input"
-                and str(next_op.get("function", "")) == "quantize_row_q8_k"
+                and next_quantization is not None
+                and next_quantization["format"] == "q8_k"
             ):
                 swiglu_args = op.get("args", [])
                 quant_args = next_op.get("args", [])
@@ -1429,15 +1439,16 @@ static void ck_qwen3vl_prefill_deepstack_add(CKModel *model, int layer, int num_
 
 def _emit_prefill_quant_rows(op: Dict, seq_idx: int, *, debug_inputs: list[str] | None = None, profile: bool = False) -> str:
     func = str(op.get("function", "") or "")
-    if func not in {"quantize_row_q8_0", "quantize_row_q8_k"}:
-        raise RuntimeError(f"unsupported prefill quant func={func}")
+    quantization_emission = resolved_activation_quantization_emission(op)
+    if quantization_emission is None:
+        raise RuntimeError("prefill quant rows require a resolved activation quantization capability")
     args_list = op.get("args", [])
     x_expr = _find_arg_expr(args_list, arg_name="x") or _find_arg_expr(args_list, arg_name="input")
     y_expr = _find_arg_expr(args_list, arg_name="y") or _find_arg_expr(args_list, arg_name="output")
     k_expr = _find_arg_expr(args_list, arg_name="k")
     if not x_expr or not y_expr or not k_expr:
         raise RuntimeError(f"prefill quant rows missing x/y/k args for op={op.get('op')}")
-    row_bytes_expr = "(size_t)(_k / QK_K) * sizeof(block_q8_K)" if func == "quantize_row_q8_k" else "(size_t)(_k / QK8_0) * sizeof(block_q8_0)"
+    row_bytes_expr = activation_quantized_row_bytes_expr(quantization_emission, "_k")
     lines = [
         f"    /* Op {seq_idx}: {func} ({op.get('op', 'unknown')}) layer={op.get('layer', -1)} section={op.get('section', 'body')} */",
     ]
@@ -1463,8 +1474,9 @@ def _emit_prefill_quant_rows(op: Dict, seq_idx: int, *, debug_inputs: list[str] 
 
 def _emit_prefill_quant_debug_override(op: Dict, seq_idx: int, config: Dict, *, debug_flag_name: str, debug_input_name: str, profile: bool = False) -> str:
     func = str(op.get("function", "") or "")
-    if func not in {"quantize_row_q8_0", "quantize_row_q8_k"}:
-        raise RuntimeError(f"unsupported prefill quant override func={func}")
+    quantization_emission = resolved_activation_quantization_emission(op)
+    if quantization_emission is None:
+        raise RuntimeError("prefill quant override requires a resolved activation quantization capability")
 
     args_list = op.get("args", [])
     x_expr = _find_arg_expr(args_list, arg_name="x") or _find_arg_expr(args_list, arg_name="x_q8")
@@ -1473,7 +1485,7 @@ def _emit_prefill_quant_debug_override(op: Dict, seq_idx: int, config: Dict, *, 
     if not x_expr or not y_expr or not k_expr:
         raise RuntimeError("prefill quant override missing x/y/k args")
 
-    row_bytes_expr = "(size_t)(_k / QK_K) * sizeof(block_q8_K)" if func == "quantize_row_q8_k" else "(size_t)(_k / QK8_0) * sizeof(block_q8_0)"
+    row_bytes_expr = activation_quantized_row_bytes_expr(quantization_emission, "_k")
     lines = [
         f"    /* Op {seq_idx}: {func} ({op.get('op', 'unknown')}) layer={op.get('layer', -1)} */",
         f"    {debug_input_name} = (const float*)({x_expr});",
@@ -1814,6 +1826,7 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
             op["op_instance_idx"] = inst
             rmsnorm_counts_by_layer[layer_for_instance] = inst + 1
         linear_emission = resolved_quantized_linear_emission(op)
+        quantization_emission = resolved_activation_quantization_emission(op)
         if op_type == "dense_embedding_lookup":
             lines.append(f"    if (stop_seq == {seq_idx}) return;")
             if (
@@ -1826,13 +1839,13 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
                 lines.append("")
             continue
 
-        if op_type == "quantize_input_0" and str(op.get("function", "")) in {"quantize_row_q8_0", "quantize_row_q8_k"}:
+        if op_type == "quantize_input_0" and quantization_emission:
             op_code = _emit_prefill_quant_rows(
                 op,
                 seq_idx,
                 profile=profile,
             )
-        elif op_type == "quantize_input_2" and str(op.get("function", "")) in {"quantize_row_q8_0", "quantize_row_q8_k"}:
+        elif op_type == "quantize_input_2" and quantization_emission:
             op_code = _emit_prefill_quant_debug_override(
                 op,
                 seq_idx,
@@ -1868,8 +1881,8 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
                     profile=profile,
                     dump=dump,
                 )
-        elif op_type == "quantize_mlp_down_input" and str(op.get("function", "")) in {"quantize_row_q8_0", "quantize_row_q8_k"}:
-            if swiglu_q8k_fusion_guard and swiglu_q8k_fusion_call and str(op.get("function", "")) == "quantize_row_q8_k":
+        elif op_type == "quantize_mlp_down_input" and quantization_emission:
+            if swiglu_q8k_fusion_guard and swiglu_q8k_fusion_call and quantization_emission["format"] == "q8_k":
                 base_code = _emit_prefill_quant_debug_override(
                     op,
                     seq_idx,
@@ -1915,11 +1928,17 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
             skip_swiglu_guard = None
         if op_type in {"silu_mul", "swiglu"}:
             next_op = ops[seq_idx + 1] if seq_idx + 1 < len(ops) else None
+            next_quantization = (
+                resolved_activation_quantization_emission(next_op)
+                if isinstance(next_op, dict)
+                else None
+            )
             if (
                 isinstance(next_op, dict)
                 and str(op.get("function", "")) == "swiglu_forward"
                 and str(next_op.get("op", "")) == "quantize_mlp_down_input"
-                and str(next_op.get("function", "")) == "quantize_row_q8_k"
+                and next_quantization is not None
+                and next_quantization["format"] == "q8_k"
             ):
                 swiglu_args = op.get("args", [])
                 quant_args = next_op.get("args", [])
