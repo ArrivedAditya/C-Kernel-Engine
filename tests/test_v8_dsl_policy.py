@@ -28,7 +28,31 @@ class V8DSLPolicyTests(unittest.TestCase):
     def test_cleaned_compiler_functions_have_no_model_literals(self) -> None:
         report = audit.audit()
         self.assertEqual(report["status"], "pass", report["findings"])
-        self.assertGreaterEqual(report["checked_functions"], 3)
+        self.assertGreaterEqual(report["checked_functions"], 9)
+        self.assertEqual(report["model_literal_sites"], 69)
+
+    def test_model_literal_inventory_ignores_docs_and_counts_code(self) -> None:
+        source = '''
+def lower():
+    """Qwen in a function docstring is not executable specialization."""
+    # Gemma in a comment is also not executable specialization.
+    return "qwen_runtime_branch"
+'''
+        row = audit.count_model_literal_sites(source, ["qwen", "gemma"], path="synthetic.py")
+        self.assertEqual(row["sites"], 1)
+        self.assertEqual(row["functions"], {"lower": 1})
+
+    def test_model_literal_site_limit_is_fail_closed(self) -> None:
+        policy = json.loads(audit.DEFAULT_POLICY.read_text(encoding="utf-8"))
+        policy["model_literal_site_limits"]["version/v8/scripts/codegen_v8.py"] = 4
+        with tempfile.TemporaryDirectory() as temp:
+            path = pathlib.Path(temp) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+            report = audit.audit(path)
+        self.assertEqual(report["status"], "fail")
+        self.assertTrue(
+            any(finding.get("kind") == "model_literal_site_limit" for finding in report["findings"])
+        )
 
     def test_ast_policy_rejects_model_specific_branch(self) -> None:
         source = """
@@ -202,6 +226,49 @@ def lower(op):
             build_ir.compute_matmul_dims("quantize_final_output", config),
             (4096, 4096),
         )
+
+    def test_lowering_preserves_renamed_ir1_decode_attention_kernel(self) -> None:
+        op = {
+            "op": "attn_shared_kv",
+            "kernel": "renamed_exact_decode_provider_id",
+            "function": "renamed_exact_decode_provider_function",
+            "resolved_contract": {
+                "kernel_id": "renamed_exact_decode_provider_id",
+                "function": "renamed_exact_decode_provider_function",
+            },
+        }
+        self.assertEqual(
+            build_ir._require_resolved_decode_attention_kernel(op),
+            "renamed_exact_decode_provider_id",
+        )
+
+    def test_lowering_rejects_incomplete_or_ambiguous_attention_selection(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "without an exact IR1 kernel"):
+            build_ir._require_resolved_decode_attention_kernel({"op": "attn"})
+        with self.assertRaisesRegex(RuntimeError, "does not match resolved contract"):
+            build_ir._require_resolved_decode_attention_kernel(
+                {
+                    "op": "attn_sliding",
+                    "kernel": "provider_a",
+                    "function": "provider_function",
+                    "resolved_contract": {
+                        "kernel_id": "provider_b",
+                        "function": "provider_function",
+                    },
+                }
+            )
+        with self.assertRaisesRegex(RuntimeError, "does not match resolved contract function"):
+            build_ir._require_resolved_decode_attention_kernel(
+                {
+                    "op": "attn",
+                    "kernel": "provider_a",
+                    "function": "provider_function_a",
+                    "resolved_contract": {
+                        "kernel_id": "provider_a",
+                        "function": "provider_function_b",
+                    },
+                }
+            )
 
     def test_weight_policy_is_circuit_owned_and_conditional(self) -> None:
         circuit = {

@@ -145,6 +145,39 @@ def scan_model_dispatch_source(
     return findings
 
 
+def count_model_literal_sites(source: str, forbidden: list[str], *, path: str) -> dict[str, Any]:
+    """Count existing specialization without treating comments/docstrings as code."""
+    tree = ast.parse(source, filename=path)
+    forbidden_lc = tuple(item.lower() for item in forbidden)
+    lines: set[int] = set()
+    by_function: dict[str, set[int]] = {}
+    for function in (
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ):
+        docstring = ast.get_docstring(function, clean=False)
+        function_lines: set[int] = set()
+        for child in ast.walk(function):
+            if not isinstance(child, ast.Constant) or not isinstance(child.value, str):
+                continue
+            if docstring is not None and child.value == docstring:
+                continue
+            value = child.value.lower()
+            if any(item in value for item in forbidden_lc):
+                function_lines.add(child.lineno)
+        if function_lines:
+            by_function[function.name] = function_lines
+            lines.update(function_lines)
+    return {
+        "path": path,
+        "sites": len(lines),
+        "functions": {
+            name: len(function_lines)
+            for name, function_lines in sorted(by_function.items())
+        },
+    }
+
+
 def audit(policy_path: Path = DEFAULT_POLICY) -> dict[str, Any]:
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
     if policy.get("schema") != "cke.v8_dsl_policy" or policy.get("schema_version") != 1:
@@ -152,6 +185,7 @@ def audit(policy_path: Path = DEFAULT_POLICY) -> dict[str, Any]:
     forbidden = policy.get("forbidden_model_literals")
     compiler_functions = policy.get("compiler_functions")
     compiler_files = policy.get("compiler_files", {})
+    literal_site_limits = policy.get("model_literal_site_limits", {})
     dispatch_keys = policy.get("forbidden_dispatch_keys", [])
     if not isinstance(forbidden, list) or not forbidden or not all(isinstance(item, str) and item for item in forbidden):
         raise DSLPolicyError("forbidden_model_literals must be a non-empty string list")
@@ -191,7 +225,37 @@ def audit(policy_path: Path = DEFAULT_POLICY) -> dict[str, Any]:
                 exclude_functions=exclude,
             )
         )
-    return {"status": "fail" if findings else "pass", "checked_functions": checked, "findings": findings}
+    if not isinstance(literal_site_limits, dict):
+        raise DSLPolicyError("model_literal_site_limits must be an object")
+    inventory: dict[str, Any] = {}
+    total_sites = 0
+    for relative_path, limit in literal_site_limits.items():
+        if not isinstance(relative_path, str) or not isinstance(limit, int) or limit < 0:
+            raise DSLPolicyError("model literal site limits require paths and non-negative integers")
+        path = REPO_ROOT / relative_path
+        if not path.is_file():
+            raise DSLPolicyError(f"compiler file not found: {relative_path}")
+        row = count_model_literal_sites(
+            path.read_text(encoding="utf-8"), forbidden, path=relative_path
+        )
+        inventory[relative_path] = row
+        total_sites += int(row["sites"])
+        if row["sites"] > limit:
+            findings.append(
+                {
+                    "path": relative_path,
+                    "kind": "model_literal_site_limit",
+                    "sites": row["sites"],
+                    "limit": limit,
+                }
+            )
+    return {
+        "status": "fail" if findings else "pass",
+        "checked_functions": checked,
+        "model_literal_sites": total_sites,
+        "model_literal_inventory": inventory,
+        "findings": findings,
+    }
 
 
 def main() -> int:
