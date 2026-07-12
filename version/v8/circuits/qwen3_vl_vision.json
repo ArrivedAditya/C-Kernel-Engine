@@ -869,12 +869,13 @@
           "id": "final_norm",
           "op": "layernorm"
         },
-        {
-          "id": "merge_main",
-          "op": "spatial_merge",
-          "params": {
-            "merge_size_from_config": "spatial_merge_size"
-          }
+      {
+        "id": "merge_main",
+        "op": "spatial_merge",
+        "params": {
+          "merge_size_from_config": "spatial_merge_size",
+          "output_buffer": "embedded_input"
+        }
         },
         {
           "id": "projector_fc1",

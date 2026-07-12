@@ -1061,7 +1061,7 @@ def emit_prefill_function(ops: List[Dict], config: Dict, profile: bool = False, 
     scale_embeddings_sqrt_dim = bool(config.get("scale_embeddings_sqrt_dim", False))
     outproj_policy = str(config.get("out_proj_input_policy") or "").strip().lower()
     debug_outproj_default = 1 if outproj_policy in {"fp32", "fp32_input", "force_fp32"} else 0
-    q4_gateup_swiglu_x16_default = 0 if _is_qwen3vl_multimodal_config(config) else 1
+    q4_gateup_swiglu_x16_default = int(bool(config.get("prefill_gateup_swiglu_fusion_default", True)))
     embed_scale_emitted = False
     prologue = """
 /* ============================================================================
@@ -1273,9 +1273,11 @@ def _emit_embedding_scale_block(num_tokens_expr: str, dump: bool) -> str:
     return "\n".join(lines)
 
 
-def _is_qwen3vl_multimodal_config(config: Dict) -> bool:
-    model = str(config.get("model", config.get("name", ""))).lower()
-    return model == "qwen3vl"
+def _has_multimodal_bridge_contract(config: Dict) -> bool:
+    bridge = config.get("multimodal_bridge_contract")
+    if not isinstance(bridge, dict):
+        return False
+    return bool(str(bridge.get("prefix_policy", "") or "").strip())
 
 
 def _emit_qwen3vl_prefill_bridge_helpers(config: Dict) -> str:
@@ -1688,10 +1690,10 @@ def emit_prefill_from_embedded_function(
     outproj_policy = str(config.get("out_proj_input_policy") or "").strip().lower()
     debug_outproj_default = 1 if outproj_policy in {"fp32", "fp32_input", "force_fp32"} else 0
     embed_scale_emitted = False
-    is_qwen3vl = _is_qwen3vl_multimodal_config(config)
-    q4_gateup_swiglu_x16_default = 0 if is_qwen3vl else 1
-    num_deepstack_layers = int(config.get("num_deepstack_layers", 0) or 0) if is_qwen3vl else 0
-    helper_block = _emit_qwen3vl_prefill_bridge_helpers(config) if is_qwen3vl else ""
+    has_multimodal_bridge = _has_multimodal_bridge_contract(config)
+    q4_gateup_swiglu_x16_default = int(bool(config.get("prefill_gateup_swiglu_fusion_default", True)))
+    num_deepstack_layers = int(config.get("num_deepstack_layers", 0) or 0) if has_multimodal_bridge else 0
+    helper_block = _emit_qwen3vl_prefill_bridge_helpers(config) if has_multimodal_bridge else ""
     if helper_block:
         lines.append(helper_block)
 
@@ -1756,7 +1758,7 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
     )
     prologue = prologue.replace("CK_Q4_GATEUP_SWIGLU_X16_DEFAULT", str(q4_gateup_swiglu_x16_default))
     lines.append(prologue)
-    if is_qwen3vl:
+    if has_multimodal_bridge:
         lines.append(
             """    const char *bridge_fp32_env = getenv("CK_V8_QWEN3VL_PREFILL_FP32");
     int bridge_force_fp32 = bridge_fp32_env ? (atoi(bridge_fp32_env) != 0) : 0;
@@ -1880,7 +1882,7 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
                     debug_input_name="ck_debug_mlp_down_fp32_input",
                     profile=profile,
                 )
-        elif is_qwen3vl and op_type == "mlp_down" and str(op.get("function", "")) in {"gemm_nt_q4_k_q8_k", "gemm_nt_q6_k_q8_k"}:
+        elif has_multimodal_bridge and op_type == "mlp_down" and str(op.get("function", "")) in {"gemm_nt_q4_k_q8_k", "gemm_nt_q6_k_q8_k"}:
             op_code = _emit_prefill_gemm_fp32_override(
                 op,
                 seq_idx,
@@ -1891,7 +1893,7 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
             )
         else:
             op_code = emit_prefill_op(op, seq_idx, config, profile=profile, dump=dump)
-            if is_qwen3vl and op_type == "rope_qk":
+            if has_multimodal_bridge and op_type == "rope_qk":
                 op_code = op_code.replace("mrope_qk_text(", "ck_qwen3vl_prefill_mrope_qk(")
         swiglu_block_guard = skip_swiglu_guard if op_type in {"silu_mul", "swiglu"} else None
         if skip_swiglu_guard and op_type in {"silu_mul", "swiglu"}:
@@ -1931,7 +1933,7 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
                     )
         lines.append(op_code)
         lines.append(f"    if (stop_seq == {seq_idx}) return;")
-        if is_qwen3vl and op_type == "residual_add":
+        if has_multimodal_bridge and op_type == "residual_add":
             residual_add_count_total += 1
             if residual_add_count_total % 2 == 0:
                 deepstack_layer = residual_add_count_total // 2 - 1
@@ -1940,7 +1942,7 @@ static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {
         lines.append("")
 
     lines.append("    model->pos = num_tokens;")
-    if is_qwen3vl:
+    if has_multimodal_bridge:
         lines.append("    model->rope_pos = ck_qwen3vl_prefill_bridge_is_active() ? ck_qwen3vl_prefill_bridge_next_text_pos() : num_tokens;")
         lines.append("    ck_qwen3vl_prefill_bridge_clear();")
     else:
@@ -1964,7 +1966,7 @@ def emit_multimodal_bridge_api(ops: List[Dict], config: Dict | None = None) -> s
         return ""
 
     config = dict(config or {})
-    is_qwen3vl = _is_qwen3vl_multimodal_config(config)
+    has_multimodal_bridge = _has_multimodal_bridge_contract(config)
 
     token_ids_expr = _find_arg_expr(args_list, arg_name="token_ids") or "(int32_t*)(model->bump + A_TOKEN_IDS)"
     token_embeddings_expr = _find_arg_expr(args_list, arg_name="token_embeddings")
@@ -1981,7 +1983,7 @@ def emit_multimodal_bridge_api(ops: List[Dict], config: Dict | None = None) -> s
 
     qwen_prepare_block_mixed = ""
     qwen_prepare_block_segments = ""
-    if is_qwen3vl:
+    if has_multimodal_bridge:
         qwen_prepare_block_mixed = """
         if (prefix_embed_dim > aligned_embed_dim) {
             if (prefix_grid_x > 0 && prefix_grid_y > 0) {

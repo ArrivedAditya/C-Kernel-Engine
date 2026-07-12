@@ -10,6 +10,9 @@
     "tokenizer": "bpe"
   },
   "contract": {
+    "runtime_defaults": {
+      "prefill_gateup_swiglu_fusion_default": false
+    },
     "tokenizer_contract": {
       "tokenizer_type": "bpe",
       "bos_policy": "model_defined",

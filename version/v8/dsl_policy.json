@@ -10,10 +10,29 @@
     "nanbeige",
     "qwen"
   ],
+  "forbidden_dispatch_keys": ["model", "model_type", "arch", "family"],
+  "compiler_files": {
+    "version/v8/scripts/build_ir_v8.py": {
+      "exclude_functions": [
+        "_hydrate_manifest_template",
+        "_resolve_tokenizer_type",
+        "_generate_tokenizer_c_code",
+        "generate_init_ops"
+      ]
+    },
+    "version/v8/scripts/codegen_core_v8.py": {"exclude_functions": []},
+    "version/v8/scripts/codegen_prefill_v8.py": {"exclude_functions": []},
+    "version/v8/scripts/codegen_v8.py": {"exclude_functions": ["_granular_cutpoint_report"]}
+  },
   "compiler_functions": {
     "version/v8/scripts/build_ir_v8.py": [
       "_apply_circuit_runtime_defaults",
-      "_hydrate_manifest_template"
+      "_hydrate_manifest_template",
+      "_validated_circuit_weight_policy",
+      "_ignored_manifest_weights",
+      "_circuit_op_weight_keys",
+      "_config_layer_int",
+      "apply_layer_attention_dims"
     ],
     "version/v8/scripts/resolve_numerical_execution_contracts_v8.py": [
       "resolve_contract"

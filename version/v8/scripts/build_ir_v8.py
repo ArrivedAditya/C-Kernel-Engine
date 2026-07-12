@@ -55,6 +55,7 @@ LOWERING CONTRACT:
 
 import argparse
 import copy
+import fnmatch
 import importlib.util
 import json
 import os
@@ -603,6 +604,76 @@ def _apply_circuit_runtime_defaults(
     return merged
 
 
+def _validated_circuit_weight_policy(template: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    contract = template.get("contract") if isinstance(template.get("contract"), dict) else {}
+    policy = contract.get("weight_policy") if isinstance(contract, dict) else None
+    if policy is None:
+        return None
+    schema_path = V8_ROOT / "schemas" / "circuit_weight_policy.schema.json"
+    with schema_path.open("r", encoding="utf-8") as handle:
+        schema = json.load(handle)
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(policy),
+        key=lambda error: tuple(str(part) for part in error.absolute_path),
+    )
+    if errors:
+        error = errors[0]
+        location = ".".join(str(part) for part in error.absolute_path) or "<root>"
+        raise RuntimeError(
+            f"HARD CIRCUIT WEIGHT POLICY FAULT at {location}: {error.message}. "
+            "Fix the circuit; do not add a family branch in lowering."
+        )
+    return policy
+
+
+def _ignored_manifest_weights(
+    template: Dict[str, Any], config: Dict[str, Any], model_weights: set[str]
+) -> Dict[str, str]:
+    """Resolve circuit-declared ignored weights; undeclared extras remain hard faults."""
+    policy = _validated_circuit_weight_policy(template)
+    if policy is None:
+        return {}
+
+    ignored: Dict[str, str] = {}
+    for rule in policy.get("ignore", []):
+        condition = rule.get("when")
+        if isinstance(condition, dict):
+            current: Any = config
+            for part in str(condition["config_key"]).split("."):
+                if not isinstance(current, dict) or part not in current:
+                    current = None
+                    break
+                current = current[part]
+            if current != condition["equals"]:
+                continue
+        matches = sorted(name for name in model_weights if fnmatch.fnmatchcase(name, rule["pattern"]))
+        for name in matches:
+            if name in ignored:
+                raise RuntimeError(
+                    f"HARD CIRCUIT WEIGHT POLICY FAULT: {name!r} matches multiple ignore rules."
+                )
+            ignored[name] = str(rule["reason"])
+    return ignored
+
+
+def _circuit_op_weight_keys(
+    template: Dict[str, Any], section: str, op: str
+) -> Optional[List[str]]:
+    policy = _validated_circuit_weight_policy(template)
+    if policy is None:
+        return None
+    matches = [
+        rule
+        for rule in policy.get("op_bindings", [])
+        if rule.get("section") == section and rule.get("op") == op
+    ]
+    if len(matches) > 1:
+        raise RuntimeError(
+            f"HARD CIRCUIT WEIGHT POLICY FAULT: multiple bindings for {section}.{op}."
+        )
+    return list(matches[0]["weights"]) if matches else None
+
+
 def _collect_forbidden_template_metadata(
     node: Any,
     path: Tuple[str, ...] = (),
@@ -657,11 +728,17 @@ def _hydrate_manifest_template(manifest: Dict[str, Any]) -> Dict[str, Any]:
         manifest.get("template") if isinstance(manifest.get("template"), dict) else None,
         source=f"manifest:{template_name or '<embedded>'}",
     )
-    manifest["config"] = _apply_circuit_runtime_defaults(
+    hydrated_config = _apply_circuit_runtime_defaults(
         dict(cfg),
         manifest.get("template") if isinstance(manifest.get("template"), dict) else None,
         source=f"manifest:{template_name or '<embedded>'}",
     )
+    hydrated_template = manifest.get("template") if isinstance(manifest.get("template"), dict) else {}
+    hydrated_contract = hydrated_template.get("contract") if isinstance(hydrated_template.get("contract"), dict) else {}
+    bridge_contract = hydrated_contract.get("multimodal_bridge")
+    if isinstance(bridge_contract, dict):
+        hydrated_config["multimodal_bridge_contract"] = copy.deepcopy(bridge_contract)
+    manifest["config"] = hydrated_config
     return manifest
 
 
@@ -3376,8 +3453,7 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
         return embed, embed  # output_dim not used, but _input_dim = embed
     if op_name == "quantize_final_output":
         projector_in_dim = int(config.get("projector_in_dim", 0) or 0)
-        is_qwen3vl_vision = str(config.get("model", config.get("name", config.get("arch", "")))).lower() == "qwen3_vl_vision"
-        if is_qwen3vl_vision and projector_in_dim > 0:
+        if projector_in_dim > 0:
             return projector_in_dim, projector_in_dim
         return embed, embed  # output_dim not used, but _input_dim = embed
     if op_name in ("quantize_out_proj_input",):
@@ -3397,112 +3473,38 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
 
 def _config_layer_int(config: Dict, key: str, layer: int, default: int) -> int:
     vals = config.get(key)
-    if isinstance(vals, list) and 0 <= layer < len(vals):
-        try:
-            return int(vals[layer])
-        except (TypeError, ValueError):
-            return int(default)
-    return int(default)
+    if vals is None:
+        return int(default)
+    if not isinstance(vals, list):
+        raise ValueError(f"{key} must be a per-layer integer list, got {type(vals).__name__}")
+    if not 0 <= layer < len(vals):
+        raise ValueError(f"{key} has no value for layer {layer}; length={len(vals)}")
+    try:
+        return int(vals[layer])
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key}[{layer}] must be an integer, got {vals[layer]!r}") from exc
 
 
 def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: Dict) -> None:
-    """Apply explicit per-layer attention dimensions for architectures that need them."""
-    model_lc = str(config.get("model", "")).lower()
+    """Apply manifest/circuit dimensions without inferring a model family."""
     if layer < 0:
         return
-    if model_lc == "qwen35":
-        embed_dim = int(config.get("embed_dim", 0) or 0)
-        num_heads = int(config.get("num_heads", 1) or 1)
-        num_kv_heads = int(config.get("num_kv_heads", num_heads) or num_heads)
-        head_dim = int(config.get("head_dim", 0) or 0)
-        q_dim = int(config.get("attn_out_dim", num_heads * head_dim) or (num_heads * head_dim))
-        k_dim = int(num_kv_heads * head_dim)
-        v_dim = int(num_kv_heads * head_dim)
-        rotary_dim = int(config.get("mrope_n_dims", config.get("rotary_dim", head_dim)) or head_dim)
-        rope_freq_base = float(config.get("rope_theta", 1000000.0) or 1000000.0)
-        if op_name == "q_gate_proj":
-            params["_output_dim"] = int(config.get("q_gate_proj_dim", config.get("attn_q_gate_proj_dim", q_dim * 2)) or (q_dim * 2))
-            params["_input_dim"] = embed_dim
-        elif op_name == "k_proj":
-            params["_output_dim"] = k_dim
-            params["_input_dim"] = embed_dim
-            params["output_dim"] = k_dim
-        elif op_name == "v_proj":
-            params["_output_dim"] = v_dim
-            params["_input_dim"] = embed_dim
-            params["output_dim"] = v_dim
-        elif op_name == "out_proj":
-            params["_output_dim"] = embed_dim
-            params["_input_dim"] = q_dim
-            params["input_dim"] = q_dim
-        elif op_name in ("qk_norm", "rope_qk", "kv_cache_store", "attn", "attn_sliding"):
-            params["head_dim"] = head_dim
-            params["q_head_dim"] = head_dim
-            params["k_head_dim"] = head_dim
-            params["v_head_dim"] = head_dim
-            params["q_dim"] = q_dim
-            params["k_dim"] = k_dim
-            params["v_dim"] = v_dim
-            params["rotary_dim"] = rotary_dim
-            params["n_dims"] = rotary_dim
-            params["rope_freq_base"] = rope_freq_base
-            params["use_rope_freq_factors"] = 1 if op_name == "rope_qk" else 0
-        return
-    if model_lc == "nemotron_h":
-        embed_dim = int(config.get("embed_dim", 0) or 0)
-        num_heads = int(config.get("num_heads", config.get("num_attention_heads", 1)) or 1)
-        num_kv_heads = int(config.get("num_kv_heads", config.get("num_key_value_heads", num_heads)) or num_heads)
-        head_dim = int(config.get("head_dim", 0) or 0)
-        q_dim = int(config.get("attn_out_dim", num_heads * head_dim) or (num_heads * head_dim))
-        k_dim = int(num_kv_heads * head_dim)
-        v_dim = int(num_kv_heads * head_dim)
-        rotary_dim = int(config.get("rotary_dim", head_dim) or head_dim)
-        rope_freq_base = float(config.get("rope_freq_base", config.get("rope_theta", 10000.0)) or 10000.0)
-        if op_name == "q_proj":
-            params["_output_dim"] = q_dim
-            params["_input_dim"] = embed_dim
-            params["output_dim"] = q_dim
-        elif op_name == "k_proj":
-            params["_output_dim"] = k_dim
-            params["_input_dim"] = embed_dim
-            params["output_dim"] = k_dim
-        elif op_name == "v_proj":
-            params["_output_dim"] = v_dim
-            params["_input_dim"] = embed_dim
-            params["output_dim"] = v_dim
-        elif op_name == "out_proj":
-            params["_output_dim"] = embed_dim
-            params["_input_dim"] = q_dim
-            params["input_dim"] = q_dim
-        elif op_name == "quantize_out_proj_input":
-            params["_output_dim"] = q_dim
-            params["_input_dim"] = q_dim
-            params["input_dim"] = q_dim
-        elif op_name in ("qk_norm", "rope_qk", "kv_cache_store", "attn", "attn_sliding"):
-            params["head_dim"] = head_dim
-            params["q_head_dim"] = head_dim
-            params["k_head_dim"] = head_dim
-            params["v_head_dim"] = head_dim
-            params["q_dim"] = q_dim
-            params["k_dim"] = k_dim
-            params["v_dim"] = v_dim
-            params["rotary_dim"] = rotary_dim
-            params["n_dims"] = rotary_dim
-            params["rope_freq_base"] = rope_freq_base
-            params["use_rope_freq_factors"] = int(config.get("use_rope_freq_factors", 0) or 0)
-        return
-    if model_lc not in ("gemma4", "gemma4_assistant"):
-        return
-
     embed_dim = int(config.get("embed_dim", 0) or 0)
-    num_kv_heads = int(config.get("num_kv_heads", config.get("num_heads", 1)) or 1)
+    num_heads = int(config.get("num_heads", config.get("num_attention_heads", 1)) or 1)
+    num_kv_heads = int(config.get("num_kv_heads", config.get("num_key_value_heads", num_heads)) or num_heads)
     q_head_dim = _config_layer_int(config, "layer_q_head_dim", layer, int(config.get("head_dim", 0) or 0))
     k_head_dim = _config_layer_int(config, "layer_k_head_dim", layer, q_head_dim)
     v_head_dim = _config_layer_int(config, "layer_v_head_dim", layer, k_head_dim)
-    q_dim = _config_layer_int(config, "layer_q_dim", layer, int(config.get("num_heads", 1) or 1) * q_head_dim)
+    q_dim = _config_layer_int(
+        config,
+        "layer_q_dim",
+        layer,
+        int(config.get("attn_out_dim", num_heads * q_head_dim) or (num_heads * q_head_dim)),
+    )
     k_dim = num_kv_heads * k_head_dim
     v_dim = num_kv_heads * v_head_dim
-    rotary_dim = _config_layer_int(config, "layer_rotary_dim", layer, int(config.get("rotary_dim", q_head_dim) or q_head_dim))
+    rotary_default = int(config.get("mrope_n_dims", config.get("rotary_dim", q_head_dim)) or q_head_dim)
+    rotary_dim = _config_layer_int(config, "layer_rotary_dim", layer, rotary_default)
     sliding_window = _config_layer_int(config, "layer_sliding_window", layer, int(config.get("sliding_window", 0) or 0))
     rope_kinds = config.get("layer_rope_kind")
     rope_kind = str(rope_kinds[layer]) if isinstance(rope_kinds, list) and 0 <= layer < len(rope_kinds) else ("swa" if sliding_window > 0 else "full")
@@ -3511,7 +3513,13 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
     else:
         rope_freq_base = float(config.get("rope_theta", 1000000.0) or 1000000.0)
 
-    if op_name == "q_proj":
+    if op_name == "q_gate_proj":
+        params["_output_dim"] = int(
+            config.get("q_gate_proj_dim", config.get("attn_q_gate_proj_dim", q_dim * 2))
+            or (q_dim * 2)
+        )
+        params["_input_dim"] = embed_dim
+    elif op_name == "q_proj":
         params["_output_dim"] = q_dim
         params["_input_dim"] = embed_dim
         params["output_dim"] = q_dim
@@ -3550,14 +3558,17 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
         if op_name in ("q_norm", "rope_q", "attn_shared_kv", "attn_sliding_shared_kv"):
             params["k_dim"] = q_dim
             params["v_dim"] = q_dim
-            params["num_kv_heads"] = int(config.get("num_heads", 1) or 1)
+            params["num_kv_heads"] = num_heads
         else:
             params["k_dim"] = k_dim
             params["v_dim"] = v_dim
         params["rotary_dim"] = rotary_dim
         params["n_dims"] = rotary_dim
         params["rope_freq_base"] = rope_freq_base
-        params["use_rope_freq_factors"] = 1 if (op_name in ("rope_qk", "rope_q") and rope_kind == "full") else 0
+        use_freq_factors = int(config.get("use_rope_freq_factors", 0) or 0)
+        if isinstance(rope_kinds, list):
+            use_freq_factors = 1 if rope_kind == "full" else 0
+        params["use_rope_freq_factors"] = use_freq_factors if op_name in ("rope_qk", "rope_q") else 0
         if sliding_window > 0:
             params["sliding_window"] = sliding_window
     elif op_name == "v_norm":
@@ -3760,8 +3771,10 @@ def _normalize_manifest_config(config: Dict) -> Dict:
     ssm_heads = _pick("ssm_time_step_rank", "mamba_num_heads")
     ssm_inner = _pick("ssm_inner_size")
     mamba_head_dim_value = _pick("mamba_head_dim")
-    model_kind_for_ssm = str(out.get("model_type") or out.get("arch") or "").lower()
-    if ssm_inner is None and model_kind_for_ssm == "nemotron_h" and ssm_heads is not None and mamba_head_dim_value is not None:
+    projection_layout = str(out.get("ssm_projection_layout", "qkv_gate") or "qkv_gate").strip().lower()
+    if projection_layout not in {"qkv_gate", "mamba2_v_qk_dt"}:
+        raise ValueError(f"unsupported ssm_projection_layout: {projection_layout!r}")
+    if ssm_inner is None and projection_layout == "mamba2_v_qk_dt" and ssm_heads is not None and mamba_head_dim_value is not None:
         ssm_inner = int(ssm_heads) * int(mamba_head_dim_value)
     ssm_conv_kernel = _pick("ssm_conv_kernel", "conv_kernel")
     if ssm_state is not None:
@@ -3770,7 +3783,7 @@ def _normalize_manifest_config(config: Dict) -> Dict:
         out["ssm_group_count"] = int(ssm_groups)
     if ssm_heads is not None:
         out["ssm_time_step_rank"] = int(ssm_heads)
-        if model_kind_for_ssm == "nemotron_h":
+        if projection_layout == "mamba2_v_qk_dt":
             out["mamba_num_heads"] = int(ssm_heads)
     if mamba_head_dim_value is not None:
         out["mamba_head_dim"] = int(mamba_head_dim_value)
@@ -3778,10 +3791,15 @@ def _normalize_manifest_config(config: Dict) -> Dict:
         out["ssm_inner_size"] = int(ssm_inner)
     if ssm_conv_kernel is not None:
         out["ssm_conv_kernel"] = int(ssm_conv_kernel)
-        out["ssm_conv_history"] = max(int(ssm_conv_kernel), 0) if model_kind_for_ssm == "nemotron_h" else max(int(ssm_conv_kernel) - 1, 0)
+        history_mode = str(out.get("ssm_conv_history_mode", "kernel_width_minus_one") or "kernel_width_minus_one")
+        if history_mode == "kernel_width":
+            out["ssm_conv_history"] = max(int(ssm_conv_kernel), 0)
+        elif history_mode == "kernel_width_minus_one":
+            out["ssm_conv_history"] = max(int(ssm_conv_kernel) - 1, 0)
+        else:
+            raise ValueError(f"unsupported ssm_conv_history_mode: {history_mode!r}")
     if None not in (ssm_state, ssm_groups, ssm_heads, ssm_inner):
-        model_kind = str(out.get("model_type") or out.get("arch") or "").lower()
-        if model_kind == "nemotron_h":
+        if projection_layout == "mamba2_v_qk_dt":
             # Runtime dt clamp follows time_step_limit. time_step_min/max are
             # initialization ranges and must not clamp forward activations.
             # Use (0, 0) to disable the CK clamp for PyTorch's default (0, inf).
@@ -3824,10 +3842,13 @@ def _normalize_manifest_config(config: Dict) -> Dict:
             out["ssm_conv_channels"] = q_dim + q_dim + v_dim
         out["recurrent_num_heads"] = int(ssm_heads)
         out["recurrent_head_dim"] = int(v_dim // int(ssm_heads)) if int(ssm_heads) else int(ssm_state)
-        if model_kind == "nemotron_h":
+        state_layout = str(out.get("recurrent_state_layout", "grouped_state") or "grouped_state")
+        if state_layout == "heads_head_dim_state":
             out["recurrent_state_heads"] = int(ssm_heads)
             out["recurrent_state_rows"] = int(out["recurrent_head_dim"])
             out["recurrent_state_cols"] = int(ssm_state)
+        elif state_layout != "grouped_state":
+            raise ValueError(f"unsupported recurrent_state_layout: {state_layout!r}")
     attn_out = _pick("attn_out_dim", default=(out.get("num_heads", 0) * out.get("head_dim", 0)))
     if attn_out is not None:
         out["attn_out_dim"] = int(attn_out)
@@ -4041,31 +4062,16 @@ def _resolve_rope_qk_kernel(config: Dict, template_kernels: Dict[str, Any]) -> s
     rope_param_mode = str(config.get("rope_param_mode", "") or "").strip().lower()
     override = str(template_kernels.get("rope_qk", "") or "").strip()
 
-    if rope_layout == "pairwise":
-        if override:
-            return override
-        return "rope_forward_qk_pairwise"
-
-    if rope_layout == "split":
-        if override and "pairwise" not in override.lower():
-            return override
-        if rope_param_mode in {"direct", "per_layer", "per_layer_direct"}:
-            return "rope_forward_qk_split_direct"
-        return "rope_forward_qk"
-
-    if rope_layout == "multi_section_1d":
-        if override:
-            return override
-        return "mrope_qk_text"
-
-    if rope_layout == "multi_section_2d":
-        if override:
-            return override
-        return "mrope_qk_vision"
-
-    if override:
-        return override
-    return "rope_forward_qk"
+    if not override:
+        raise RuntimeError(
+            "HARD KERNEL RESOLUTION FAULT: rope_qk requires an exact circuit kernel mapping "
+            f"for rope_layout={rope_layout!r}, rope_param_mode={rope_param_mode!r}."
+        )
+    if rope_layout == "pairwise" and "pairwise" not in override.lower():
+        raise RuntimeError(
+            f"HARD KERNEL RESOLUTION FAULT: pairwise RoPE cannot use {override!r}."
+        )
+    return override
 
 
 def _resolve_position_embeddings_kernel(config: Dict, template_kernels: Dict[str, Any]) -> str:
@@ -4079,7 +4085,11 @@ def _resolve_position_embeddings_kernel(config: Dict, template_kernels: Dict[str
                 f"{policy!r} and no default"
             )
         return str(selected)
-    return str(kernel_spec or "position_embeddings_add_tiled_2d")
+    if not kernel_spec:
+        raise RuntimeError(
+            "HARD KERNEL RESOLUTION FAULT: position_embeddings requires an exact circuit kernel mapping."
+        )
+    return str(kernel_spec)
 
 
 def _attention_contract_is_causal(template: Dict[str, Any], config: Dict[str, Any]) -> bool:
@@ -4095,10 +4105,6 @@ def _attention_contract_is_causal(template: Dict[str, Any], config: Dict[str, An
         return False
 
     return True
-
-    if override:
-        return override
-    return "rope_forward_qk"
 
 
 def _resolve_rope_backward_qk_kernel(config: Dict, default_kernel: str = "rope_backward_qk_f32") -> str:
@@ -4337,21 +4343,14 @@ def unsupported_template_lowering_reason(manifest: Dict[str, Any]) -> Optional[s
     )
 
 
-# Fallback mapping: when a specific op isn't available, try these fallbacks
-# This prevents hard faults when the exact op isn't registered
-OP_FALLBACKS = {
-    "attention_sliding": "attention",
-    "attn_sliding": "attention",
-}
-
-
 def validate_kernel_availability(registry: Dict, kernel_ops: List[str]) -> Dict[str, bool]:
     """
     Check which kernel ops are available in the registry.
     Returns dict: {kernel_op: is_available}
 
-    Also checks fallback ops - if a op isn't directly available but has a fallback,
-    the fallback is checked too.
+    Operation families are exact compiler inputs. A missing sliding, quantized, or
+    otherwise specialized family must not be accepted because a broader family is
+    present; the circuit or kernel registry must provide the required operation.
     """
     available_ops = set()
     for kernel in registry["kernels"]:
@@ -4359,15 +4358,7 @@ def validate_kernel_availability(registry: Dict, kernel_ops: List[str]) -> Dict[
 
     availability = {}
     for op in kernel_ops:
-        # Check if op is directly available
-        if op in available_ops:
-            availability[op] = True
-        # Check if fallback is available
-        elif op in OP_FALLBACKS:
-            fallback = OP_FALLBACKS[op]
-            availability[op] = fallback in available_ops
-        else:
-            availability[op] = False
+        availability[op] = op in available_ops
 
     return availability
 
@@ -4779,7 +4770,6 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     else:
         logits_weight_source = _resolve_logits_weight_source(config, weight_index)
     print(f"  [contract/logits] source={logits_weight_source}")
-    model_family = str(config.get("model", "")).strip().lower()
     activation_preference_by_op = config.get("activation_preference_by_op", {})
     if not isinstance(activation_preference_by_op, dict):
         activation_preference_by_op = {}
@@ -4804,57 +4794,13 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
 
     num_layers = config.get("num_layers", 0)
 
-    # If template is missing or in old format, try built-in template first.
-    # This commonly occurs for tiny training manifests that intentionally only carry
-    # config+entries and no embedded template document.
+    # Hydration is an explicit pipeline phase. Lowering must never recover a
+    # circuit by model name or rerun conversion as a side effect.
     if not template or "sequence" not in template:
-        print(f"\n⚠️  Template missing or outdated (no 'sequence' field)")
-        template_name = str(config.get("model", "") or "").strip().lower()
-        builtin = _load_builtin_template_doc(template_name)
-        if builtin and "sequence" in builtin:
-            print(f"   Loaded built-in template: {template_name}")
-            template = builtin
-            manifest["template"] = template
-        else:
-            print(f"   Built-in template not found for model '{template_name}', trying GGUF re-bump...")
-
-            manifest_dir = manifest_path.parent
-            gguf_files = list(manifest_dir.glob("*.gguf"))
-            if not gguf_files:
-                print(f"\n❌ HARD FAULT: Cannot recover template")
-                print(f"   No built-in template for '{template_name}' and no GGUF available to re-bump.")
-                print(f"   Searched in: {manifest_dir}")
-                raise RuntimeError("Template missing and cannot be recovered")
-
-            gguf_file = gguf_files[0]
-            print(f"   Found GGUF: {gguf_file}")
-            print(f"   Running converter...")
-
-            converter_script = V8_ROOT / "scripts" / "convert_gguf_to_bump_v8.py"
-            bump_output = manifest_dir / "weights.bump"
-
-            cmd = [
-                sys.executable,
-                str(converter_script),
-                str(gguf_file),
-                "--output", str(bump_output),
-                "--bump-version=5"
-            ]
-
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                print(f"\n❌ HARD FAULT: Converter failed!")
-                print(result.stderr)
-                raise RuntimeError("Failed to re-bump model")
-
-            print(f"   ✅ Converter succeeded - reloading manifest...")
-
-            # Reload manifest
-            manifest_path_new = manifest_dir / "weights_manifest.json"
-            manifest = load_manifest(manifest_path_new)
-            template = manifest.get("template", {})
-            quant_summary = manifest.get("quant_summary", {})
-            config = manifest.get("config", {})
+        raise RuntimeError(
+            "HARD CIRCUIT HYDRATION FAULT: lowering requires a hydrated circuit with a sequence. "
+            "Fix conversion or _hydrate_manifest_template; do not add model-specific recovery to the DSL."
+        )
 
     numerical_contract_plans = (
         _resolve_manifest_numerical_contracts(manifest, mode)
@@ -4885,16 +4831,9 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     # Gemma parity guardrail: keep logits projection on FP32-activation kernels.
     # This remains a runtime config knob rather than template metadata.
     prefer_fp32_logits = bool(config.get("prefer_fp32_logits", False))
-    # Gemma-family input contract: scale token embeddings by sqrt(embed_dim)
-    # before layer-0 residual_save. Keep a Gemma fallback so older cached
-    # manifests (without the new template flag) still generate correctly.
-    model_lc = str(config.get("model", "")).lower()
-    template_name_lc = str(template.get("name", "")).lower()
-    is_gemma_family = model_lc.startswith("gemma") or ("gemma" in template_name_lc)
-    if "scale_embeddings_sqrt_dim" in template_flags:
-        scale_embeddings_sqrt_dim = bool(template_flags.get("scale_embeddings_sqrt_dim"))
-    else:
-        scale_embeddings_sqrt_dim = is_gemma_family
+    # Embedding scaling is a circuit semantic. Missing metadata means no scaling;
+    # the compiler must never infer it from a model or circuit name.
+    scale_embeddings_sqrt_dim = bool(template_flags.get("scale_embeddings_sqrt_dim", False))
     config["scale_embeddings_sqrt_dim"] = scale_embeddings_sqrt_dim
 
     # Extract active op sequences from the template. Planned branch/stitch ops
@@ -5294,42 +5233,39 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             return [_resolve_rope_qk_kernel(config, template_kernels)]
         if op == "rope_q":
             override = str(template_kernels.get("rope_q", "") or "").strip()
-            return [override or "rope_forward_q_gemma4"]
+            if not override:
+                raise RuntimeError("HARD KERNEL RESOLUTION FAULT: rope_q requires an exact circuit kernel mapping.")
+            return [override]
         if op == "mrope_qk":
             override = str(template_kernels.get("mrope_qk", "") or "").strip()
-            return [override or "mrope_qk_vision"]
+            if not override:
+                raise RuntimeError("HARD KERNEL RESOLUTION FAULT: mrope_qk requires an exact circuit kernel mapping.")
+            return [override]
         if op == "position_embeddings":
             return [_resolve_position_embeddings_kernel(config, template_kernels)]
         if op == "kv_cache_store_shared_q":
-            return ["kv_cache_store_shared_q"]
+            override = str(template_kernels.get(op, "") or "").strip()
+            if not override:
+                raise RuntimeError(f"HARD KERNEL RESOLUTION FAULT: {op} requires an exact circuit kernel mapping.")
+            return [override]
         if op == "assistant_layer_scale":
-            return ["assistant_layer_scale_forward"]
+            override = str(template_kernels.get(op, "") or "").strip()
+            if not override:
+                raise RuntimeError(f"HARD KERNEL RESOLUTION FAULT: {op} requires an exact circuit kernel mapping.")
+            return [override]
 
         if op in ("attn_shared_kv", "attn_sliding_shared_kv"):
             if op == "attn_sliding_shared_kv":
                 mode_key = f"attn_sliding_shared_kv_{mode}"
-                attn_kernel = (
-                    template_kernels.get(mode_key)
-                    or template_kernels.get("attn_sliding_shared_kv")
-                    or (
-                        "attention_forward_causal_head_major_shared_kv_sliding_gemma4"
-                        if mode == "prefill"
-                        else "attention_forward_decode_head_major_shared_kv_sliding_gemma4"
-                    )
-                )
+                attn_kernel = template_kernels.get(mode_key) or template_kernels.get("attn_sliding_shared_kv")
             else:
                 mode_key = f"attn_shared_kv_{mode}"
-                attn_kernel = (
-                    template_kernels.get(mode_key)
-                    or template_kernels.get("attn_shared_kv")
-                    or (
-                        "attention_forward_causal_head_major_shared_kv_gemma4"
-                        if mode == "prefill"
-                        else "attention_forward_decode_head_major_shared_kv_gemma4"
-                    )
-                )
+                attn_kernel = template_kernels.get(mode_key) or template_kernels.get("attn_shared_kv")
             if attn_kernel:
                 return [attn_kernel]
+            raise RuntimeError(
+                f"HARD KERNEL RESOLUTION FAULT: {op}.{mode} requires an exact circuit kernel mapping."
+            )
 
         if op in ("attn", "attn_sliding"):
             mode_key = f"{op}_{mode}"
@@ -5771,17 +5707,6 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                     base_layer_quant = quant_summary.get(layer_key, {})
                     if not isinstance(base_layer_quant, dict):
                         base_layer_quant = {}
-                    if model_family == "qwen3_vl_vision":
-                        base_layer_quant = dict(base_layer_quant)
-                        vision_aliases = {
-                            "attn_qkv": f"v.blk.{layer_idx}.attn_qkv.weight",
-                            "wo": f"v.blk.{layer_idx}.attn_out.weight",
-                            "w3": f"v.blk.{layer_idx}.ffn_up.weight",
-                            "w2": f"v.blk.{layer_idx}.ffn_down.weight",
-                        }
-                        for dst_key, entry_name in vision_aliases.items():
-                            if dst_key not in base_layer_quant and entry_name in entry_dtype:
-                                base_layer_quant[dst_key] = entry_dtype[entry_name]
                     layer_quant = _apply_layer_quant_aliases(
                         base_layer_quant,
                         block["body"],
@@ -6234,10 +6159,10 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             weight_keys = list(branch_weight_map.get(op, []))
             if not weight_keys and explicit_refs:
                 weight_keys = list(explicit_refs.keys())
+        elif _circuit_op_weight_keys(template, section, op) is not None:
+            weight_keys = _circuit_op_weight_keys(template, section, op) or []
         elif section == "body" and (op, instance_idx) in REPEATED_OP_WEIGHTS:
             weight_keys = REPEATED_OP_WEIGHTS[(op, instance_idx)]
-        elif section == "body" and op == "rope_qk" and str(config.get("model", "")).lower() == "gemma4":
-            weight_keys = ["rope_freqs"]
         elif section == "header":
             weight_keys = _header_weight_keys(op)
         elif section == "footer":
@@ -6400,7 +6325,7 @@ def _check_ir1_completeness(manifest: Dict, ir1_ops: List[Dict]) -> None:
             f"   Template ops: {sorted(set(template_ops))}\n"
             f"   Actual IR1 ops: {sorted(actual_ops)}\n"
             f"   This indicates find_kernel() returned None for required ops.\n"
-            f"   Fix: Ensure kernel is registered or add fallback in OP_FALLBACKS.\n"
+            f"   Fix: declare and register the exact required kernel operation.\n"
         )
 
     print(f"  ✓ IR1 completeness check passed ({len(template_ops)} expected, {len(ir1_ops)} generated)")
@@ -7869,53 +7794,14 @@ def generate_memory_layout(
             non_model_weights.add(v)
     model_weights = all_weight_names - non_model_weights
 
-    template_family = str(template.get("family", "") or template.get("name", "") or "").strip().lower()
-    model_family = str(config.get("model", "") or config.get("model_type", "") or "").strip().lower()
-    if template_family == "gemma4" or model_family == "gemma4":
-        # Gemma4 GGUFs may carry layer.*.v_norm_gamma tensors, but llama.cpp
-        # applies V RMSNorm as an unweighted ggml_rms_norm. Treat these as
-        # intentionally ignored only for the explicit Gemma4 template.
-        ignored_v_norm_gamma = {
-            w for w in model_weights
-            if w.startswith("layer.") and w.endswith(".v_norm_gamma")
-        }
-        if ignored_v_norm_gamma:
-            model_weights -= ignored_v_norm_gamma
-            print(
-                f"  Ignoring {len(ignored_v_norm_gamma)} Gemma4 v_norm_gamma tensors "
-                "because V RMSNorm is unweighted"
-            )
-
-    if model_family == "gemma4_assistant":
-        projection_mode = str(config.get("assistant_projection_mode", "") or "").strip().lower()
-        layer_scalar_mode = str(config.get("assistant_layer_scalar_mode", "") or "").strip().lower()
-        if projection_mode == "external_backbone_bridge":
-            # The Gemma4 assistant checkpoint is a drafter/assistant model.  Its
-            # pre/post projection tensors bridge the large backbone hidden width
-            # to the smaller assistant hidden width. They are not part of the
-            # standalone token decoder graph, where forcing them into the normal
-            # embedding stream would make the dimensions wrong.
-            ignored_assistant_bridge = {
-                w for w in model_weights
-                if w in {"assistant.pre_projection", "assistant.post_projection"}
-            }
-            if ignored_assistant_bridge:
-                model_weights -= ignored_assistant_bridge
-                print(
-                    f"  Ignoring {len(ignored_assistant_bridge)} Gemma4 assistant bridge tensors "
-                    "for standalone decoder lowering"
-                )
-        if layer_scalar_mode == "external_backbone_bridge":
-            ignored_layer_scalar = {
-                w for w in model_weights
-                if w.startswith("layer.") and w.endswith(".layer_output_scale")
-            }
-            if ignored_layer_scalar:
-                model_weights -= ignored_layer_scalar
-                print(
-                    f"  Ignoring {len(ignored_layer_scalar)} Gemma4 assistant layer scalar tensors "
-                    "for standalone decoder lowering"
-                )
+    ignored_weight_reasons = _ignored_manifest_weights(template, config, model_weights)
+    if ignored_weight_reasons:
+        model_weights -= set(ignored_weight_reasons)
+        reason_counts: Dict[str, int] = {}
+        for reason in ignored_weight_reasons.values():
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        for reason, count in sorted(reason_counts.items()):
+            print(f"  Ignoring {count} circuit-declared manifest weight(s): {reason}")
 
     # Weights expected but not used by IR1
     unused_by_ir1 = expected_weights - ir1_used_weights
@@ -8698,13 +8584,10 @@ def generate_ir_lower_2(
     template_doc = manifest.get("template", {}) if isinstance(manifest.get("template"), dict) else {}
     contract_doc = template_doc.get("contract") if isinstance(template_doc.get("contract"), dict) else None
     if not contract_doc:
-        template_name = (
-            str(template_doc.get("name", "")).strip().lower()
-            or str(config.get("model", "")).strip().lower()
+        raise RuntimeError(
+            "HARD CIRCUIT CONTRACT FAULT: IR Lower 2 requires the hydrated circuit contract. "
+            "Fix circuit hydration; do not infer a circuit from the model family during lowering."
         )
-        builtin_template = _load_builtin_template_doc(template_name)
-        if isinstance(builtin_template, dict) and isinstance(builtin_template.get("contract"), dict):
-            contract_doc = builtin_template.get("contract")
     # Carry semantic contract forward so IR Lower 3/codegen can fail-fast on missing semantics.
     if contract_doc:
         config = dict(config)
@@ -9248,11 +9131,10 @@ def generate_ir_lower_2(
             last_output_buffer = "q_scratch"
         elif op_type == "spatial_merge":
             input_buf_name = last_output_buffer or current_input_buffer
-            is_qwen3vl_vision = str(config.get("model", config.get("name", config.get("arch", "")))).lower() == "qwen3_vl_vision"
-            if str(ir_op.get("section", "")).lower() == "footer" and is_qwen3vl_vision:
-                output_buf_name = "embedded_input"
-            else:
-                output_buf_name = "layer_input" if input_buf_name == "embedded_input" else "embedded_input"
+            declared_output = str((ir_op.get("params") or {}).get("output_buffer", "") or "").strip()
+            output_buf_name = declared_output or (
+                "layer_input" if input_buf_name == "embedded_input" else "embedded_input"
+            )
             src_buf = activation_buffers.get(input_buf_name)
             dst_buf = activation_buffers.get(output_buf_name)
             if src_buf:
@@ -9974,8 +9856,7 @@ def generate_ir_lower_2(
             default_quant_rows = int(params.get("_m", params.get("seq_len", 1)) or 1)
             params.setdefault("rows", default_quant_rows)
         if op_type == "quantize_final_output":
-            is_qwen3vl_vision = str(config.get("model", config.get("name", config.get("arch", "")))).lower() == "qwen3_vl_vision"
-            if is_qwen3vl_vision:
+            if int(config.get("projector_in_dim", 0) or 0) > 0:
                 params["rows"] = int(params.get("vision_merged_tokens", config.get("vision_merged_tokens", params.get("rows", 1))) or 1)
         if op_type == "branch_concat":
             params.setdefault(

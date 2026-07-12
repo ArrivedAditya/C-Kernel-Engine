@@ -96,6 +96,25 @@
       "kernel_select": "weight_dtype_registry",
       "activation_dtype": "fp32_or_q8_path",
       "per_tensor_mixed_quant": true
+    },
+    "weight_policy": {
+      "ignore": [
+        {
+          "pattern": "assistant.pre_projection",
+          "reason": "External-backbone bridge projection is outside the standalone assistant decoder graph.",
+          "when": {"config_key": "assistant_projection_mode", "equals": "external_backbone_bridge"}
+        },
+        {
+          "pattern": "assistant.post_projection",
+          "reason": "External-backbone bridge projection is outside the standalone assistant decoder graph.",
+          "when": {"config_key": "assistant_projection_mode", "equals": "external_backbone_bridge"}
+        },
+        {
+          "pattern": "layer.*.layer_output_scale",
+          "reason": "External-backbone layer scalar is outside the standalone assistant decoder graph.",
+          "when": {"config_key": "assistant_layer_scalar_mode", "equals": "external_backbone_bridge"}
+        }
+      ]
     }
   },
   "kernels": {
@@ -108,6 +127,8 @@
     "attn_sliding_shared_kv_prefill": "attention_forward_causal_head_major_shared_kv_sliding_gemma4",
     "attn_shared_kv_decode": "attention_forward_decode_head_major_shared_kv_gemma4",
     "attn_sliding_shared_kv_decode": "attention_forward_decode_head_major_shared_kv_sliding_gemma4",
+    "kv_cache_store_shared_q": "kv_cache_store_shared_q",
+    "assistant_layer_scale": "assistant_layer_scale_forward",
     "attn_decode": "attention_forward_decode_head_major_gqa_flash_gemma4",
     "attn_sliding_decode": "attention_forward_decode_head_major_gqa_flash_sliding_gemma4"
   },

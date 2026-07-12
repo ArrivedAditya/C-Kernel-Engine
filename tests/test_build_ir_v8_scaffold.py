@@ -39,8 +39,10 @@ def _normalized_template_doc(doc: dict) -> dict:
     kernels = normalized.get("kernels")
     if isinstance(kernels, dict):
         for key in list(kernels):
-            if key.startswith("attn"):
+            if key.startswith("attn") or key == "rope_qk":
                 kernels.pop(key)
+        if not kernels:
+            normalized.pop("kernels", None)
     flags = normalized.get("flags")
     if isinstance(flags, dict):
         for key in build_ir_v8._FORBIDDEN_TEMPLATE_FLAG_KEYS:
@@ -81,19 +83,28 @@ class BuildIrV8ScaffoldTests(unittest.TestCase):
                 for key in build_ir_v8._FORBIDDEN_TEMPLATE_FLAG_KEYS:
                     self.assertNotIn(key, flags)
 
-    def test_v8_uses_same_rope_resolution_as_v7(self) -> None:
+    def test_v8_rope_resolution_requires_explicit_compatible_kernel(self) -> None:
         cases = [
-            ({}, {"rope_qk": "rope_forward_qk_pairwise"}),
-            ({"rope_layout": "split"}, {"rope_qk": "rope_forward_qk_pairwise"}),
-            ({"rope_layout": "interleaved"}, {}),
+            ({}, {"rope_qk": "rope_forward_qk"}),
+            ({"rope_layout": "split"}, {"rope_qk": "rope_forward_qk"}),
+            ({"rope_layout": "interleaved"}, {"rope_qk": "rope_forward_qk_pairwise"}),
             ({"rope_layout": "split"}, {"rope_qk": "rope_forward_qk_custom"}),
         ]
         for config, kernels in cases:
             with self.subTest(config=config, kernels=kernels):
                 self.assertEqual(
                     build_ir_v8._resolve_rope_qk_kernel(config, kernels),
-                    build_ir_v7._resolve_rope_qk_kernel(config, kernels),
+                    kernels["rope_qk"],
                 )
+
+        for config, kernels in [
+            ({"rope_layout": "interleaved"}, {}),
+            ({"rope_layout": "split"}, {}),
+            ({"rope_layout": "interleaved"}, {"rope_qk": "rope_forward_qk"}),
+        ]:
+            with self.subTest(config=config, kernels=kernels):
+                with self.assertRaises(RuntimeError):
+                    build_ir_v8._resolve_rope_qk_kernel(config, kernels)
 
     def test_v8_uses_local_kernel_registry(self) -> None:
         registry = build_ir_v8.load_kernel_registry()

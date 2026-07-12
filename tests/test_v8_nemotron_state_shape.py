@@ -26,9 +26,10 @@ class NemotronStateShapeTests(unittest.TestCase):
         build_ir = _load_build_ir()
         cfg = build_ir._normalize_manifest_config(
             {
-                "model_type": "nemotron_h",
-                "arch": "nemotron_h",
                 "num_layers": 8,
+                "ssm_projection_layout": "mamba2_v_qk_dt",
+                "ssm_conv_history_mode": "kernel_width",
+                "recurrent_state_layout": "heads_head_dim_state",
                 "embed_dim": 4480,
                 "ssm_state_size": 128,
                 "ssm_group_count": 8,
