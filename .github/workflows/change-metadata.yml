@@ -1,0 +1,33 @@
+name: Change Metadata
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Preserve PR body
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s\n' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+
+      - name: Validate PR and commit handoffs
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 scripts/validate_change_metadata.py pr --body-file "$RUNNER_TEMP/pr-body.md"
+          python3 scripts/validate_change_metadata.py commits --base "$BASE_SHA" --head "$HEAD_SHA"
+
+      - name: Test metadata validator
+        run: python3 -m unittest tests.test_change_metadata
