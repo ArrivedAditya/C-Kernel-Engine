@@ -724,7 +724,13 @@ PY_TESTS_BF16 := unittest/bf16/test_sigmoid_bf16.py \
                 unittest/bf16/test_swiglu_bf16.py \
                 unittest/bf16/test_embedding_bf16.py \
                 unittest/bf16/test_cross_entropy_bf16.py \
-                unittest/bf16/test_vision_position_storage_bf16.py
+                unittest/bf16/test_vision_position_storage_bf16.py \
+                unittest/bf16/test_layernorm_storage_contract_bf16.py \
+                unittest/bf16/test_gemm_storage_contract_bf16.py \
+                unittest/bf16/test_attention_storage_contract_bf16.py \
+                unittest/bf16/test_residual_storage_contract_bf16.py \
+                unittest/bf16/test_gelu_pytorch_tanh_storage_bf16.py \
+                unittest/bf16/test_qwen3vl_practical_precision_bf16.py
 PY_TESTS_BF16_V8 := version/v8/scripts/bf16_safetensors_lowering_guard_v8.py
 
 LITMUS_DEMO_ARGS ?= --vocab 100 --ctx 100 --embed 64 --intermediate 128 --heads 4 --kv-heads 2
@@ -1994,6 +2000,15 @@ test-bench: $(LIB) test-libs
 	@echo "Running GEMM microkernel benchmarks (this may take a few minutes)..."
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_gemm_microkernel.py
 
+
+
+.PHONY: test-bf16-practical-precision
+test-bf16-practical-precision: $(LIB)
+	@echo "Running practical-shape BF16 precision matrix..."
+	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) \
+		unittest/bf16/test_qwen3vl_practical_precision_bf16.py \
+		--report version/v8/.cache/reports/bf16_practical_precision_latest.json
+
 test-bf16: $(LIB) test-libs
 	@failed=0; \
 	for t in $(PY_TESTS_BF16); do \
@@ -2904,6 +2919,11 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py
 	@$(PYTHON) tests/test_v8_attention_contracts.py
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
+	@$(PYTHON) unittest/bf16/test_layernorm_storage_contract_bf16.py
+	@$(PYTHON) unittest/bf16/test_gemm_storage_contract_bf16.py
+	@$(PYTHON) unittest/bf16/test_attention_storage_contract_bf16.py
+	@$(PYTHON) unittest/bf16/test_residual_storage_contract_bf16.py
+	@$(PYTHON) unittest/bf16/test_gelu_pytorch_tanh_storage_bf16.py
 	@PYTHONPATH=unittest CK_NUMERICAL_CAPABILITY_REPORT=version/v8/.cache/reports/mrope_capabilities_latest.json $(PYTHON) -c "import test_vision; test_vision.test_mrope_qk_vision_storage_matrix()"
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
 	@$(PYTHON) unittest/test_attention_full.py

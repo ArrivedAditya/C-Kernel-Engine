@@ -763,6 +763,19 @@ void gemm_tn_bf16(const uint16_t *A,
  * standard mixed-precision training contract where activations/weights may be
  * BF16 but gradient accumulation remains FP32.
  */
+void gemm_nt_bf16_bf16_storage(const float *A,
+                                      const void *B,
+                                      const float *bias,
+                                      float *C,
+                                      int M, int N, int K)
+{
+    gemm_nt_bf16(A, B, bias, C, M, N, K);
+    const size_t count = (size_t)M * (size_t)N;
+    for (size_t i = 0; i < count; ++i) {
+        C[i] = bf16_to_float(float_to_bf16(C[i]));
+    }
+}
+
 void gemm_backward_bf16_mixed(const uint16_t *d_output,
                               const uint16_t *input,
                               const uint16_t *weight,

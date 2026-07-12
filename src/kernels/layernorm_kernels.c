@@ -15,6 +15,7 @@
  */
 
 #include "ckernel_engine.h"
+#include "bf16_utils.h"
 
 #if defined(__AVX512F__) || defined(__AVX2__) || defined(__AVX__) || defined(__SSE2__)
 #include <immintrin.h>
@@ -772,6 +773,35 @@ void layernorm_naive_serial_matched_precision(const float *input,
                                  output, mean_cache, rstd_cache,
                                  tokens, d_model,
                                  d_model, d_model, d_model, eps);
+}
+
+/*
+ * Float-buffer LayerNorm with BF16 storage boundaries.
+ *
+ * The physical activation arena remains FP32 so this variant composes with the
+ * existing graph ABI. Inputs are first rounded as if loaded from BF16 storage,
+ * the established matched reduction executes in FP32, and outputs are rounded
+ * back to BF16 values while remaining represented as float.
+ */
+void layernorm_naive_serial_bf16_storage(const float *input,
+                                         const float *gamma,
+                                         const float *beta,
+                                         float *output,
+                                         float *mean_cache,
+                                         float *rstd_cache,
+                                         int tokens, int d_model, float eps)
+{
+    const size_t count = (size_t)tokens * (size_t)d_model;
+    for (size_t i = 0; i < count; ++i) {
+        output[i] = bf16_to_float(float_to_bf16(input[i]));
+    }
+    layernorm_forward_ggml_exact(output, gamma, beta,
+                                 output, mean_cache, rstd_cache,
+                                 tokens, d_model,
+                                 d_model, d_model, d_model, eps);
+    for (size_t i = 0; i < count; ++i) {
+        output[i] = bf16_to_float(float_to_bf16(output[i]));
+    }
 }
 
 // LayerNorm backward kernel (model-agnostic), adapted from C-Transformer's

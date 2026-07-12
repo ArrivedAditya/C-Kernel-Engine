@@ -1,0 +1,106 @@
+{
+  "id": "gemm_nt_bf16_bf16_storage",
+  "op": "gemm",
+  "variant": "bf16_w_fp32_bf16_values_a_bf16_values_out",
+  "quant": {
+    "weight": "bf16",
+    "activation": "fp32",
+    "output": "bf16"
+  },
+  "inputs": [
+    {
+      "name": "A",
+      "dtype": "fp32",
+      "shape": [
+        "M",
+        "K"
+      ],
+      "desc": "Activation matrix [rows, cols] (FP32, rounded to BF16 inside kernel)"
+    },
+    {
+      "name": "B",
+      "dtype": "bf16",
+      "shape": [
+        "N",
+        "K"
+      ],
+      "desc": "Weight matrix [output rows, input cols] BF16"
+    },
+    {
+      "name": "bias",
+      "dtype": "fp32",
+      "shape": [
+        "N"
+      ],
+      "optional": true,
+      "desc": "Bias [N] (optional)"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "C",
+      "dtype": "fp32",
+      "shape": [
+        "M",
+        "N"
+      ],
+      "desc": "Result [M,N], BF16 RNE values represented in FP32 storage"
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "M",
+    "N",
+    "K"
+  ],
+  "constraints": {},
+  "impl": {
+    "function": "gemm_nt_bf16_bf16_storage",
+    "c_declaration": "void gemm_nt_bf16_bf16_storage(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);",
+    "sources": [
+      "src/kernels/gemm_kernels_bf16.c"
+    ]
+  },
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "numerical_capabilities": [
+    {
+      "contract_id": "bf16_weight_bf16_input_fp32_dot_bf16_output",
+      "status": "validated",
+      "phases": [
+        "prefill"
+      ],
+      "function": "gemm_nt_bf16_bf16_storage",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "compile_time",
+        "threading": {
+          "runtime": "openmp",
+          "work_partition": [
+            "independent_rows"
+          ],
+          "dispatch": [
+            "openmp_parallel_for"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "none",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ],
+  "notes": "BF16 input/weight GEMM with explicit BF16 RNE output storage boundary.",
+  "tests": {
+    "unit": [
+      "unittest/bf16/test_gemm_storage_contract_bf16.py"
+    ]
+  }
+}

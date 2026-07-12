@@ -1226,6 +1226,11 @@ def test_qwen3vl_safetensors_vision_maps_temporal_patch_split(tmp_path: Path) ->
     assert manifest["config"]["vision_mrope_storage_boundary"] == "bf16"
     assert manifest["config"]["position_interpolation_policy"] == "align_corners_bilinear"
     assert manifest["config"]["vision_position_storage_boundary"] == "bf16"
+    assert manifest["config"]["vision_layernorm_storage_boundary"] == "bf16"
+    assert manifest["config"]["vision_projection_storage_boundary"] == "bf16"
+    assert manifest["config"]["vision_attention_storage_boundary"] == "bf16"
+    assert manifest["config"]["vision_residual_storage_boundary"] == "bf16"
+    assert manifest["config"]["vision_activation_storage_boundary"] == "bf16"
     assert (out / "weights.bump").stat().st_size > 0
 
     build_ir = Path("version/v8/scripts/build_ir_v8.py")

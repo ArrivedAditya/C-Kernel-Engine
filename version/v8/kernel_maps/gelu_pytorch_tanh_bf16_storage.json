@@ -1,0 +1,78 @@
+{
+  "id": "gelu_pytorch_tanh_bf16_storage",
+  "op": "gelu",
+  "variant": "pytorch_tanh_bf16_storage",
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "bf16"
+  },
+  "inputs": [
+    {
+      "name": "x",
+      "dtype": "fp32",
+      "shape": [
+        "N"
+      ],
+      "desc": "Input/output buffer (in-place)"
+    }
+  ],
+  "weights": [],
+  "outputs": [
+    {
+      "name": "out",
+      "dtype": "fp32",
+      "shape": [
+        "N"
+      ],
+      "desc": "GGML-compatible GELU output (same buffer as input)"
+    }
+  ],
+  "dims": [
+    "N"
+  ],
+  "impl": {
+    "function": "gelu_pytorch_tanh_bf16_storage",
+    "c_declaration": "void gelu_pytorch_tanh_bf16_storage(float *data, size_t n);",
+    "sources": [
+      "src/kernels/gelu_kernels.c"
+    ]
+  },
+  "tests": {
+    "unit": [
+      "unittest/test_gelu.py"
+    ]
+  },
+  "notes": "PyTorch tanh GELU with explicit BF16 input/output storage boundaries.",
+  "numerical_capabilities": [
+    {
+      "contract_id": "gelu_pytorch_tanh_bf16_storage",
+      "status": "validated",
+      "phases": [
+        "prefill"
+      ],
+      "function": "gelu_pytorch_tanh_bf16_storage",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "none",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "serial"
+      }
+    }
+  ]
+}

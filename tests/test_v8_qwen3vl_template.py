@@ -399,7 +399,7 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
     def test_builtin_template_declares_qwen3vl_vision_contract(self) -> None:
         doc = build_ir_v8._load_builtin_template_doc("qwen3_vl_vision")
         self.assertIsNotNone(doc)
-        self.assertEqual(doc["version"], 3)
+        self.assertEqual(doc["version"], 4)
         self.assertEqual(doc["sequence"], ["vision_encoder"])
         self.assertIn("vision_position_contract", doc["contract"])
         self.assertEqual(doc["contract"]["attention_contract"]["rope_layout"], "multi_section_2d")
@@ -434,6 +434,69 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         self.assertEqual(doc["kernels"]["layernorm"], "layernorm_fp32_exact")
         self.assertEqual(doc["kernels"]["branch_layernorm"], "layernorm_fp32_exact")
         self.assertNotIn("dtype", branch["collect"])
+
+    def test_bf16_storage_contracts_select_exact_generated_kernels(self) -> None:
+        manifest = _make_qwen3vl_manifest()
+        manifest["config"].update({
+            "vision_position_storage_boundary": "bf16",
+            "vision_layernorm_storage_boundary": "bf16",
+            "vision_projection_storage_boundary": "bf16",
+            "vision_attention_storage_boundary": "bf16",
+            "vision_residual_storage_boundary": "bf16",
+            "vision_activation_storage_boundary": "bf16",
+        })
+        for entry in manifest["entries"]:
+            if ".attn_qkv." in entry["name"] or ".attn_out." in entry["name"]:
+                if entry["name"].endswith(".weight"):
+                    entry["dtype"] = "bf16"
+
+        legacy = build_ir_v8._resolve_manifest_numerical_contracts(manifest, "prefill")
+        execution = build_ir_v8._resolve_manifest_execution_contracts(manifest, "prefill")
+        self.assertEqual(legacy, [])
+        selected = {plan["operation"]: plan["kernel"]["function"] for plan in execution}
+        self.assertEqual(selected["vision.layer.layernorm"], "layernorm_naive_serial_bf16_storage")
+        self.assertEqual(selected["vision.layer.qkv_projection"], "gemm_nt_bf16_bf16_storage")
+        self.assertEqual(selected["vision.layer.mlp_projection"], "gemm_nt_bf16_bf16_storage")
+        self.assertEqual(selected["vision.layer.mlp_activation"], "gelu_pytorch_tanh_bf16_storage")
+        self.assertEqual(
+            selected["vision.layer.attention"],
+            "attention_forward_full_head_major_gqa_flash_strided_bf16_storage",
+        )
+        self.assertEqual(selected["vision.layer.out_projection"], "gemm_nt_bf16_bf16_storage")
+        self.assertEqual(
+            selected["vision.layer.residual"],
+            "ck_residual_add_token_major_bf16_storage",
+        )
+
+        ops = build_ir_v8.build_ir1_direct(
+            manifest,
+            ROOT / "tests" / "qwen3_vl_vision_manifest.synthetic.json",
+            mode="prefill",
+        )
+        kernels = [(op["op"], op["kernel"]) for op in ops]
+        self.assertIn(("layernorm", "layernorm_bf16_storage"), kernels)
+        self.assertIn(("qkv_packed_proj", "gemm_nt_bf16_bf16_storage"), kernels)
+        self.assertIn(
+            ("attn", "attention_forward_full_head_major_gqa_flash_strided_bf16_storage"),
+            kernels,
+        )
+        self.assertIn(("out_proj", "gemm_nt_bf16_bf16_storage"), kernels)
+        self.assertIn(("mlp_up", "gemm_nt_bf16_bf16_storage"), kernels)
+        self.assertIn(("mlp_down", "gemm_nt_bf16_bf16_storage"), kernels)
+        self.assertIn(("gelu", "gelu_pytorch_tanh_bf16_storage"), kernels)
+        self.assertIn(
+            ("residual_add", "ck_residual_add_token_major_bf16_storage"),
+            kernels,
+        )
+
+    def test_default_attention_contract_retains_legacy_owner(self) -> None:
+        manifest = _make_qwen3vl_manifest()
+        manifest["config"].pop("vision_attention_storage_boundary", None)
+        legacy = build_ir_v8._resolve_manifest_numerical_contracts(manifest, "prefill")
+        execution = build_ir_v8._resolve_manifest_execution_contracts(manifest, "prefill")
+        self.assertEqual(len(legacy), 1)
+        self.assertEqual(legacy[0]["kernel"]["function"], "attention_forward_full_head_major_gqa_flash_strided")
+        self.assertNotIn("vision.layer.attention", {plan["operation"] for plan in execution})
 
     def test_template_dtype_metadata_is_rejected(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "declares dtype/quant policy"):

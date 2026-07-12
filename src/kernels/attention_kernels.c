@@ -3475,6 +3475,7 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
                                                         int aligned_head_dim,
                                                         int kv_stride_tokens,
                                                         int causal,
+                                                        int round_full_kv_fp16,
                                                         float scale)
 {
     if (!q || !k || !v || !output) {
@@ -3593,7 +3594,7 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
     float *rounded_kv = NULL;
     const float *compute_k = k;
     const float *compute_v = v;
-    if (!causal) {
+    if (!causal && round_full_kv_fp16) {
         if ((size_t) kv_stride_tokens > SIZE_MAX / (size_t) num_kv_heads) {
             return;
         }
@@ -3737,6 +3738,7 @@ void attention_forward_causal_head_major_gqa_flash(const float *q,
                                                 aligned_head_dim,
                                                 /*kv_stride_tokens=*/num_tokens,
                                                 /*causal=*/1,
+                                                /*round_full_kv_fp16=*/0,
                                                 1.0f / sqrtf((float)head_dim));
 }
 
@@ -3756,6 +3758,7 @@ void attention_forward_full_head_major_gqa_flash(const float *q,
                                                 aligned_head_dim,
                                                 /*kv_stride_tokens=*/num_tokens,
                                                 /*causal=*/0,
+                                                /*round_full_kv_fp16=*/1,
                                                 1.0f / sqrtf((float)head_dim));
 }
 
@@ -3786,6 +3789,7 @@ void attention_forward_causal_head_major_gqa_flash_strided(const float *q,
                                                 aligned_head_dim,
                                                 kv_stride_tokens,
                                                 /*causal=*/1,
+                                                /*round_full_kv_fp16=*/0,
                                                 1.0f / sqrtf((float)head_dim));
 }
 
@@ -3806,7 +3810,36 @@ void attention_forward_full_head_major_gqa_flash_strided(const float *q,
                                                 aligned_head_dim,
                                                 kv_stride_tokens,
                                                 /*causal=*/0,
+                                                /*round_full_kv_fp16=*/1,
                                                 1.0f / sqrtf((float)head_dim));
+}
+
+
+void attention_forward_full_head_major_gqa_flash_strided_bf16_storage(
+    const float *q,
+    const float *k,
+    const float *v,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int kv_stride_tokens)
+{
+    attention_forward_head_major_gqa_flash_impl(
+        q, k, v, output,
+        num_heads, num_kv_heads, num_tokens, head_dim,
+        aligned_head_dim, kv_stride_tokens,
+        /*causal=*/0,
+        /*round_full_kv_fp16=*/0,
+        1.0f / sqrtf((float)head_dim)
+    );
+    const size_t count = (size_t)num_heads * (size_t)num_tokens
+                       * (size_t)aligned_head_dim;
+    for (size_t i = 0; i < count; ++i) {
+        output[i] = bf16_to_float(float_to_bf16(output[i]));
+    }
 }
 
 
@@ -3828,6 +3861,7 @@ void attention_forward_causal_head_major_gqa_flash_strided_gemma4(const float *q
                                                 aligned_head_dim,
                                                 kv_stride_tokens,
                                                 /*causal=*/1,
+                                                /*round_full_kv_fp16=*/0,
                                                 1.0f);
 }
 
@@ -3863,6 +3897,7 @@ void attention_forward_full_head_major_gqa_flash_strided_gemma4(const float *q,
                                                 aligned_head_dim,
                                                 kv_stride_tokens,
                                                 /*causal=*/0,
+                                                /*round_full_kv_fp16=*/1,
                                                 1.0f);
 }
 

@@ -60,6 +60,11 @@ void ck_residual_add_token_major(const float *a,
                                  float *out,
                                  int tokens,
                                  int aligned_embed_dim);
+void ck_residual_add_token_major_bf16_storage(const float *a,
+                                                  const float *b,
+                                                  float *out,
+                                                  int tokens,
+                                                  int aligned_embed_dim);
 void ck_residual_add_backward(const float *d_out,
                               float *d_a,
                               float *d_b,
@@ -208,6 +213,11 @@ void gemm_nt_bf16(const float *A,
                   const float *bias,
                   float *C,
                   int M, int N, int K);
+void gemm_nt_bf16_bf16_storage(const float *A,
+                                      const void *B,
+                                      const float *bias,
+                                      float *C,
+                                      int M, int N, int K);
 
 // =============================================================================
 // Quantized (GGML-style) GEMM/GEMV helpers
@@ -823,6 +833,13 @@ void layernorm_naive_serial_matched_precision(const float *input,
                                               float *mean_cache,
                                               float *rstd_cache,
                                               int tokens, int d_model, float eps);
+void layernorm_naive_serial_bf16_storage(const float *input,
+                                         const float *gamma,
+                                         const float *beta,
+                                         float *output,
+                                         float *mean_cache,
+                                         float *rstd_cache,
+                                         int tokens, int d_model, float eps);
 
 void layernorm_backward_kernel(const float *d_output,
                                const float *input,
@@ -1070,6 +1087,7 @@ void gelu_exact_inplace(float *data, size_t n);
 
 // GGML-compatible GELU forward matching llama.cpp's FP16 table semantics.
 void gelu_ggml_inplace(float *data, size_t n);
+void gelu_pytorch_tanh_bf16_storage(float *data, size_t n);
 
 // GELU backward using tanh-based derivative (vectorized, uses fast tanh approx).
 void gelu_backward_exact(const float *input,
@@ -1339,6 +1357,11 @@ void attention_forward_full_head_major_gqa_flash_strided(const float *q,
                                                          int head_dim,
                                                          int aligned_head_dim,
                                                          int kv_stride_tokens);
+
+void attention_forward_full_head_major_gqa_flash_strided_bf16_storage(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens, int head_dim,
+    int aligned_head_dim, int kv_stride_tokens);
 
 void attention_forward_causal_head_major_gqa_flash_strided_gemma4(const float *q,
                                                                   const float *k,

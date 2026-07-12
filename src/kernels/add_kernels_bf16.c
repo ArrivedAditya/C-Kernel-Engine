@@ -64,6 +64,20 @@ void add_forward_bf16(const uint16_t *a,
     }
 }
 
+void ck_residual_add_token_major_bf16_storage(const float *a,
+                                                  const float *b,
+                                                  float *out,
+                                                  int tokens,
+                                                  int aligned_embed_dim)
+{
+    const size_t count = (size_t)tokens * (size_t)aligned_embed_dim;
+    for (size_t i = 0; i < count; ++i) {
+        const float av = bf16_to_float(float_to_bf16(a[i]));
+        const float bv = bf16_to_float(float_to_bf16(b[i]));
+        out[i] = bf16_to_float(float_to_bf16(av + bv));
+    }
+}
+
 /* =============================================================================
  * Forward with scale: y = a + alpha * b
  * Useful for gradient accumulation or weighted residuals

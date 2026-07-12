@@ -97,6 +97,49 @@ def _load_execution_contract_resolver():
     return module
 
 
+def _config_value(config: Dict[str, Any], dotted_key: str) -> Tuple[bool, Any]:
+    current: Any = config
+    for part in dotted_key.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return False, None
+        current = current[part]
+    return True, current
+
+
+def _contract_selector_matches(selector: Any, config: Dict[str, Any], operation: str) -> bool:
+    if selector is None:
+        return True
+    if not isinstance(selector, dict) or not selector:
+        raise RuntimeError(
+            f"Numerical contract {operation!r} has an invalid selector. "
+            "Declare selector.config_equals and/or selector.config_not_equals."
+        )
+    supported = {"config_equals", "config_not_equals"}
+    unknown = set(selector) - supported
+    if unknown:
+        raise RuntimeError(
+            f"Numerical contract {operation!r} selector has unsupported keys: "
+            f"{sorted(unknown)}"
+        )
+    predicates = 0
+    for key, expected in (selector.get("config_equals") or {}).items():
+        predicates += 1
+        found, current = _config_value(config, str(key))
+        if not found or current != expected:
+            return False
+    for key, rejected in (selector.get("config_not_equals") or {}).items():
+        predicates += 1
+        found, current = _config_value(config, str(key))
+        if found and current == rejected:
+            return False
+    if predicates == 0:
+        raise RuntimeError(
+            f"Numerical contract {operation!r} has an invalid selector. "
+            "Declare at least one configuration predicate."
+        )
+    return True
+
+
 def _resolve_manifest_numerical_contracts(
     manifest: Dict[str, Any],
     mode: str,
@@ -112,7 +155,11 @@ def _resolve_manifest_numerical_contracts(
     circuit_name = str(circuit.get("name", "")).strip()
     source_path = V8_ROOT / "circuits" / f"{circuit_name}.json" if circuit_name else None
     plans: List[Dict[str, Any]] = []
+    config = manifest.get("config") if isinstance(manifest.get("config"), dict) else {}
     for operation, operation_doc in required.items():
+        selector = operation_doc.get("selector") if isinstance(operation_doc, dict) else None
+        if not _contract_selector_matches(selector, config, str(operation)):
+            continue
         phases = operation_doc.get("phases") if isinstance(operation_doc, dict) else None
         if not isinstance(phases, dict) or mode not in phases:
             continue
@@ -151,29 +198,11 @@ def _resolve_manifest_execution_contracts(
     source_path = V8_ROOT / "circuits" / f"{circuit_name}.json" if circuit_name else None
     resolution_mode = str((manifest.get("config") or {}).get("numerical_contract_mode", "bringup"))
     plans: List[Dict[str, Any]] = []
+    config = manifest.get("config") if isinstance(manifest.get("config"), dict) else {}
     for operation, operation_doc in required.items():
         selector = operation_doc.get("selector") if isinstance(operation_doc, dict) else None
-        if selector is not None:
-            config_equals = selector.get("config_equals") if isinstance(selector, dict) else None
-            if not isinstance(config_equals, dict) or not config_equals:
-                raise RuntimeError(
-                    f"Numerical execution contract {operation!r} has an invalid selector. "
-                    "Declare a non-empty selector.config_equals map."
-                )
-            config = manifest.get("config") if isinstance(manifest.get("config"), dict) else {}
-            selected = True
-            for key, expected in config_equals.items():
-                current: Any = config
-                for part in str(key).split("."):
-                    if not isinstance(current, dict) or part not in current:
-                        selected = False
-                        break
-                    current = current[part]
-                if not selected or current != expected:
-                    selected = False
-                    break
-            if not selected:
-                continue
+        if not _contract_selector_matches(selector, config, str(operation)):
+            continue
         phases = operation_doc.get("phases") if isinstance(operation_doc, dict) else None
         if not isinstance(phases, dict) or mode not in phases:
             continue
