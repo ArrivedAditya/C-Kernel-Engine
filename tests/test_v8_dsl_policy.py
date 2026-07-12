@@ -29,18 +29,21 @@ class V8DSLPolicyTests(unittest.TestCase):
         report = audit.audit()
         self.assertEqual(report["status"], "pass", report["findings"])
         self.assertGreaterEqual(report["checked_functions"], 9)
-        self.assertEqual(report["model_literal_sites"], 69)
+        self.assertEqual(report["model_literal_sites"], 76)
 
     def test_model_literal_inventory_ignores_docs_and_counts_code(self) -> None:
         source = '''
+"""Qwen in a module docstring is not executable specialization."""
+GEMMA_PROVIDER = "gemma_runtime_provider"
+
 def lower():
     """Qwen in a function docstring is not executable specialization."""
     # Gemma in a comment is also not executable specialization.
     return "qwen_runtime_branch"
 '''
         row = audit.count_model_literal_sites(source, ["qwen", "gemma"], path="synthetic.py")
-        self.assertEqual(row["sites"], 1)
-        self.assertEqual(row["functions"], {"lower": 1})
+        self.assertEqual(row["sites"], 2)
+        self.assertEqual(row["functions"], {"<module>": 1, "lower": 1})
 
     def test_model_literal_site_limit_is_fail_closed(self) -> None:
         policy = json.loads(audit.DEFAULT_POLICY.read_text(encoding="utf-8"))
