@@ -185,6 +185,12 @@ Hardware coverage does not mean every model, dtype, quantization, and gate has p
 
 Future performance articles and release notes should use this matrix, label active versus planned hardware, link raw profiler or benchmark artifacts, and avoid extrapolating one host's result to another CPU generation.
 
+### Support the Hardware Evidence Program
+
+CKE is seeking loaner systems, temporary remote access, components, discounts, engineering collaboration, and financial support for its next hardware lanes. The immediate target is a matched two-node Xeon 6 laboratory for native AMX BF16, AVX-512/VNNI, memory-channel, NUMA, 100GbE, and distributed CPU experiments.
+
+The [hardware support plan](https://c-kernel-engine.github.io/C-Kernel-Engine/support-hardware.html) publishes the staged budget, experiment matrix, evidence contract, disclosure policy, and contribution options. Sponsorship does not purchase a favorable result. Supported hardware is tested under the same reproducibility and limitation-reporting rules as independently purchased equipment.
+
 ## Quick Start
 
 Linux is the supported development and profiling environment.
@@ -259,6 +265,8 @@ CKE is also a working laboratory for CPU AI systems engineering. If your team ne
 - Building an evidence-backed CPU deployment or distributed-compute plan.
 
 Open a focused [GitHub issue](https://github.com/C-Kernel-Engine/C-Kernel-Engine/issues) for reproducible project work. For CPU AI feasibility, C/Linux performance investigation, kernel engineering, numerical correctness, or model evaluation consulting, use [Work With Us on ShivasNotes](https://www.shivasnotes.com/work-with-us) or connect through [antshiv.com](https://antshiv.com/).
+
+To contribute hardware, remote lab access, components, or funding, see [Support the CKE Hardware Lab](https://c-kernel-engine.github.io/C-Kernel-Engine/support-hardware.html).
 
 ## Project Principles
 
