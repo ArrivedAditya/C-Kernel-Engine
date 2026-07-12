@@ -39,8 +39,8 @@ void layernorm_naive_serial_matched_precision(const float *input,
                                               float *rstd_cache,
                                               int tokens, int d_model, float eps);
 
-#if defined(__clang__)
-__attribute__((noinline, optnone))
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
+#pragma float_control(precise, off, push)
 #endif
 static void layernorm_forward_ggml_exact(const float *input,
                                          const float *gamma,
@@ -159,6 +159,9 @@ static void layernorm_forward_ggml_exact(const float *input,
         }
     }
 }
+#if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
+#pragma float_control(pop)
+#endif
 
 #if defined(__AVX2__) || defined(__AVX__)
 static inline float hsum256_ps(__m256 v)

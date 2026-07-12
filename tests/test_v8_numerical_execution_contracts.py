@@ -120,6 +120,50 @@ class NumericalExecutionContractTests(unittest.TestCase):
             plan["kernel"]["function"],
             "position_embeddings_add_tiled_2d_align_corners_bf16",
         )
+
+    def test_fp32_position_contract_resolves_exact_kernel_and_evaluation_order(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen3_vl_vision.json"
+        )
+        plan = resolver.resolve_contract(
+            circuit_doc,
+            self.contracts,
+            self.kernels,
+            "vision.frontend.position.fp32",
+            "prefill",
+            mode="production",
+        )
+        self.assertEqual(
+            plan["contract"]["id"],
+            "fp32_tiled_2d_antialias_half_pixel_contracted",
+        )
+        self.assertEqual(plan["kernel"]["id"], "position_embeddings_add_tiled_2d")
+        self.assertEqual(plan["kernel"]["function"], "position_embeddings_add_tiled_2d")
+        spatial = plan["contract"]["semantics"]["spatial_transform"]
+        self.assertEqual(spatial["evaluation_order"], "channel_row_column")
+        self.assertEqual(spatial["contraction"], "enabled")
+
+    def test_fp32_layernorm_contract_resolves_exact_kernel_and_reduction(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen3_vl_vision.json"
+        )
+        plan = resolver.resolve_contract(
+            circuit_doc,
+            self.contracts,
+            self.kernels,
+            "vision.layer.layernorm.fp32",
+            "prefill",
+            mode="production",
+        )
+        self.assertEqual(plan["kernel"]["id"], "layernorm_fp32_exact")
+        self.assertEqual(
+            plan["kernel"]["function"], "layernorm_naive_serial_matched_precision"
+        )
+        semantics = plan["contract"]["semantics"]
+        self.assertEqual(semantics["compute"]["contraction"], "enabled")
+        self.assertEqual(semantics["reduction"]["order"], "contract_defined_chunks")
+        self.assertEqual(semantics["reduction"]["merge_order"], "ascending_chunk")
+
     def test_mrope_storage_contract_matrix_resolves_exact_functions(self):
         expected = {
             "vision_mrope_fp32_input_fp32_compute_fp32_output": ("mrope_qk_vision", "mrope_qk_vision"),
