@@ -173,7 +173,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
     return result
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", type=Path, required=True, help="Qwen3-VL safetensors checkpoint directory")
     parser.add_argument("--runtime-dir", type=Path, required=True)
@@ -187,7 +187,7 @@ def main() -> int:
     parser.add_argument("--threads", type=int, default=int(os.environ.get("CK_NUM_THREADS", "20")))
     parser.add_argument("--attn-implementation", choices=("auto", "eager", "sdpa"), default="eager")
     parser.add_argument("--max-rounds", type=int, default=3)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     result = run(args)
     divergence = (result.get("final_report") or {}).get("first_divergence") or {}
     print(f"status={result['status']} rounds={len(result['rounds'])}")

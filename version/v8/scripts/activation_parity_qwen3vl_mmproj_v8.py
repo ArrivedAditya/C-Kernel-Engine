@@ -1,4 +1,19 @@
 #!/usr/bin/env python3
+"""Qwen3-VL GGUF/llama.cpp checkpoint capture adapter.
+
+Ownership boundary:
+  * This module is backend-specific capture plumbing, not the public parity
+    orchestration surface.
+  * New checkpoint selection, bisection, canonicalization, comparison,
+    classification, or reporting belongs in the v8 X-ray tooling.
+  * Do not add model-family branches here. Add a separate backend adapter that
+    emits the canonical X-ray checkpoint ABI.
+
+Direct CLI use is retained for compatibility and adapter development only.
+Agents and automation must invoke ``xray_vision_parity_v8.py --backend
+llamacpp`` so checkpoint ordering and reports use the standard X-ray surface.
+"""
+
 from __future__ import annotations
 
 import argparse
