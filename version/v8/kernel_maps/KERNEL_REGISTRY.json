@@ -8953,6 +8953,19 @@
       },
       "implementation": {
         "isa_dispatch": "runtime",
+        "weight_storage": {
+          "format": "q4_k",
+          "block_elements": 256,
+          "block_bytes": 144
+        },
+        "activation_storage": {
+          "format": "q8_k",
+          "block_elements": 256
+        },
+        "diagnostic_providers": {
+          "fp32_activation": "gemm_nt_q4_k",
+          "row_quantized": "gemv_q4_k_q8_k"
+        },
         "threading": {
           "runtime": "ck_threadpool",
           "work_partition": [
@@ -9673,6 +9686,19 @@
       },
       "implementation": {
         "isa_dispatch": "runtime",
+        "weight_storage": {
+          "format": "q6_k",
+          "block_elements": 256,
+          "block_bytes": 210
+        },
+        "activation_storage": {
+          "format": "q8_k",
+          "block_elements": 256
+        },
+        "diagnostic_providers": {
+          "fp32_activation": "gemm_nt_q6_k",
+          "row_quantized": "gemv_q6_k_q8_k"
+        },
         "threading": {
           "runtime": "ck_threadpool",
           "work_partition": [
@@ -10969,6 +10995,18 @@
       },
       "implementation": {
         "isa_dispatch": "runtime",
+        "weight_storage": {
+          "format": "q4_k",
+          "block_elements": 256,
+          "block_bytes": 144
+        },
+        "activation_storage": {
+          "format": "q8_k",
+          "block_elements": 256
+        },
+        "diagnostic_providers": {
+          "fp32_activation": "gemv_q4_k"
+        },
         "threading": {
           "runtime": "ck_threadpool",
           "work_partition": [
@@ -11778,6 +11816,18 @@
       },
       "implementation": {
         "isa_dispatch": "runtime",
+        "weight_storage": {
+          "format": "q6_k",
+          "block_elements": 256,
+          "block_bytes": 210
+        },
+        "activation_storage": {
+          "format": "q8_k",
+          "block_elements": 256
+        },
+        "diagnostic_providers": {
+          "fp32_activation": "gemv_q6_k"
+        },
         "threading": {
           "runtime": "ck_threadpool",
           "work_partition": [

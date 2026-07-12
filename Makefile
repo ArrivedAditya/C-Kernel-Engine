@@ -2963,6 +2963,7 @@ test-v8-dsl-policy:
 	@$(PYTHON) version/v8/scripts/audit_dsl_policy_v8.py --json-out build/v8/dsl_policy_report.json
 	@$(PYTHON) -m unittest tests.test_v8_dsl_policy -v
 	@$(PYTHON) -m unittest tests.test_v8_kernel_call_abi -v
+	@$(PYTHON) -m unittest tests.test_v8_codegen_capabilities -v
 
 test-v8-dsl: test-v8-dsl-policy test-numerical-contracts test-v8-template-circuit-audit
 

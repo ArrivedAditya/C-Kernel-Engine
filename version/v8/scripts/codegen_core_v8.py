@@ -164,6 +164,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
+from codegen_capabilities_v8 import (
+    is_q4_q6_q8_linear,
+    resolved_quantized_linear_emission,
+)
+
 # =============================================================================
 # PART 1: MEMORY LAYOUT IN C
 # =============================================================================
@@ -656,6 +661,7 @@ def emit_op(
     section = op.get("section", "")
     op_name = op.get("op", "unknown")
     args = op.get("args", [])
+    linear_emission = resolved_quantized_linear_emission(op)
     force_outproj_fp32 = int(layer) in (force_outproj_fp32_layers or set())
     force_attn_proj_fp32 = int(layer) in (force_attn_proj_fp32_layers or set())
     force_mlp_gate_up_fp32 = int(layer) in (force_mlp_gate_up_fp32_layers or set())
@@ -772,7 +778,10 @@ def emit_op(
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
 
-    if op_name in {"recurrent_gate_proj", "recurrent_alpha_proj", "recurrent_beta_proj"} and function in {"gemv_q4_k_q8_k", "gemv_q8_0_q8_0_contract"}:
+    legacy_q8_recurrent = function == "gemv_q8_0_q8_0_contract"
+    if op_name in {"recurrent_gate_proj", "recurrent_alpha_proj", "recurrent_beta_proj"} and (
+        is_q4_q6_q8_linear(linear_emission) or legacy_q8_recurrent
+    ):
         arg_expr_by_name = {}
         for arg in args:
             nm = str(arg.get("name", "")).lower()
@@ -786,8 +795,10 @@ def emit_op(
         x_expr = arg_expr_by_name.get("x")
         m_expr = arg_expr_by_name.get("m")
         k_expr = arg_expr_by_name.get("k")
-        fp32_function = "gemv_q4_k" if function == "gemv_q4_k_q8_k" else "gemv_q8_0"
-        q8_call_input = x_q8_expr if function == "gemv_q4_k_q8_k" else x_expr
+        fp32_function = (
+            linear_emission["fp32_activation_function"] if linear_emission else "gemv_q8_0"
+        )
+        q8_call_input = x_q8_expr if linear_emission else x_expr
         if y_expr and w_expr and q8_call_input and m_expr and k_expr:
             active_name = f"ck_debug_recurrent_proj_fp32_active_{seq_idx if seq_idx is not None else idx}"
             lines.append(
@@ -842,7 +853,7 @@ def emit_op(
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
 
-    if op_name in {"q_proj", "q_gate_proj", "k_proj", "v_proj"} and function in {"gemv_q4_k_q8_k", "gemv_q6_k_q8_k"}:
+    if op_name in {"q_proj", "q_gate_proj", "k_proj", "v_proj"} and is_q4_q6_q8_linear(linear_emission):
         arg_expr_by_name = {}
         for arg in args:
             nm = str(arg.get("name", "")).lower()
@@ -855,7 +866,7 @@ def emit_op(
         x_expr = arg_expr_by_name.get("x_q8")
         m_expr = arg_expr_by_name.get("m")
         k_expr = arg_expr_by_name.get("k")
-        fp32_function = "gemv_q4_k" if function == "gemv_q4_k_q8_k" else "gemv_q6_k"
+        fp32_function = linear_emission["fp32_activation_function"]
         if y_expr and w_expr and x_expr and m_expr and k_expr:
             active_name = f"ck_debug_attn_proj_fp32_active_{seq_idx if seq_idx is not None else idx}"
             lines.append(
@@ -1022,7 +1033,7 @@ def emit_op(
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
 
-    if op_name == "logits" and function in {"gemv_q4_k_q8_k", "gemv_q6_k_q8_k"}:
+    if op_name == "logits" and is_q4_q6_q8_linear(linear_emission):
         arg_expr_by_name = {}
         for arg in args:
             nm = str(arg.get("name", "")).lower()
@@ -1035,7 +1046,7 @@ def emit_op(
         x_expr = arg_expr_by_name.get("x_q8")
         m_expr = arg_expr_by_name.get("m")
         k_expr = arg_expr_by_name.get("k")
-        fp32_function = "gemv_q4_k" if function == "gemv_q4_k_q8_k" else "gemv_q6_k"
+        fp32_function = linear_emission["fp32_activation_function"]
         if y_expr and w_expr and x_expr and m_expr and k_expr:
             lines.append("    if (!g_ck_skip_decode_logits) {")
             lines.append("        if (debug_lm_head_fp32 && ck_debug_lm_head_fp32_input != NULL) {")
@@ -1110,7 +1121,7 @@ def emit_op(
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
 
-    if op_name == "out_proj" and function in {"gemv_q4_k_q8_k", "gemv_q6_k_q8_k"}:
+    if op_name == "out_proj" and is_q4_q6_q8_linear(linear_emission):
         arg_expr_by_name = {}
         for arg in args:
             nm = str(arg.get("name", "")).lower()
@@ -1123,7 +1134,7 @@ def emit_op(
         x_expr = arg_expr_by_name.get("x_q8")
         m_expr = arg_expr_by_name.get("m")
         k_expr = arg_expr_by_name.get("k")
-        fp32_function = "gemv_q4_k" if function == "gemv_q4_k_q8_k" else "gemv_q6_k"
+        fp32_function = linear_emission["fp32_activation_function"]
         if y_expr and w_expr and x_expr and m_expr and k_expr:
             active_name = f"ck_debug_outproj_fp32_active_{seq_idx if seq_idx is not None else idx}"
             lines.append(
@@ -1209,7 +1220,7 @@ def emit_op(
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
 
-    if op_name == "mlp_down" and function in {"gemv_q4_k_q8_k", "gemv_q6_k_q8_k"}:
+    if op_name == "mlp_down" and is_q4_q6_q8_linear(linear_emission):
         arg_expr_by_name = {}
         for arg in args:
             nm = str(arg.get("name", "")).lower()
@@ -1222,7 +1233,7 @@ def emit_op(
         x_expr = arg_expr_by_name.get("x_q8")
         m_expr = arg_expr_by_name.get("m")
         k_expr = arg_expr_by_name.get("k")
-        fp32_function = "gemv_q4_k" if function == "gemv_q4_k_q8_k" else "gemv_q6_k"
+        fp32_function = linear_emission["fp32_activation_function"]
         if y_expr and w_expr and x_expr and m_expr and k_expr:
             active_name = f"ck_debug_mlp_down_fp32_active_{seq_idx if seq_idx is not None else idx}"
             lines.append(
@@ -1276,7 +1287,13 @@ def emit_op(
                 lines.append(f"    if (stop_seq == {seq_idx}) return;")
             return "\n".join(lines)
 
-    if op_name == "mlp_gate_up" and function in {"gemv_q4_k", "gemv_q4_k_q8_k", "gemv_q6_k", "gemv_q6_k_q8_k"}:
+    legacy_fp32_weight_format = {
+        "gemv_q4_k": "q4_k",
+        "gemv_q6_k": "q6_k",
+    }.get(function)
+    if op_name == "mlp_gate_up" and (
+        is_q4_q6_q8_linear(linear_emission) or legacy_fp32_weight_format is not None
+    ):
         arg_expr_by_name = {}
         for arg in args:
             nm = str(arg.get("name", "")).lower()
@@ -1290,11 +1307,17 @@ def emit_op(
         m_expr = arg_expr_by_name.get("m")
         k_expr = arg_expr_by_name.get("k")
 
-        row_bytes_expr = None
-        if function in {"gemv_q4_k", "gemv_q4_k_q8_k"}:
-            row_bytes_expr = f"(((size_t)({k_expr}) / 256u) * 144u)"
-        elif function in {"gemv_q6_k", "gemv_q6_k_q8_k"}:
-            row_bytes_expr = f"(((size_t)({k_expr}) / 256u) * 210u)"
+        if linear_emission is not None:
+            block_elements = linear_emission["weight_block_elements"]
+            block_bytes = linear_emission["weight_block_bytes"]
+            fp32_function = linear_emission["fp32_activation_function"]
+        elif legacy_fp32_weight_format == "q4_k":
+            block_elements, block_bytes, fp32_function = 256, 144, function
+        else:
+            block_elements, block_bytes, fp32_function = 256, 210, function
+        row_bytes_expr = (
+            f"(((size_t)({k_expr}) / {block_elements}u) * {block_bytes}u)"
+        )
 
         if y_expr and w_expr and x_expr and m_expr and k_expr and row_bytes_expr:
             half_expr = f"(({m_expr}) / 2)"
@@ -1302,10 +1325,9 @@ def emit_op(
             up_y_expr = f"((float*)({y_expr}) + {half_expr})"
             gate_w_expr = w_expr
             up_w_expr = f"((const void*)((const uint8_t*)({w_expr}) + ((size_t)({half_expr}) * {row_bytes_expr})))"
-            fp32_function = "gemv_q4_k" if function in {"gemv_q4_k", "gemv_q4_k_q8_k"} else "gemv_q6_k"
             active_name = f"ck_debug_mlp_gate_up_fp32_active_{seq_idx if seq_idx is not None else idx}"
             q8_contract_name = f"ck_debug_mlp_gate_up_q8_contract_active_{seq_idx if seq_idx is not None else idx}"
-            q8_contract_supported = function in {"gemv_q4_k_q8_k", "gemv_q6_k_q8_k"}
+            q8_contract_supported = linear_emission is not None
 
             if profile:
                 lines.append("    CK_PROFILE_BEGIN();")
