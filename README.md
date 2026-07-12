@@ -33,6 +33,24 @@ CKE addresses that problem at several levels:
 
 For deeper context, read [v8 IR Pipeline Codegen](https://www.shivasnotes.com/blog/5917/v8-IR-Pipeline-Codegen-How-CKE-Hardens-Pure-C-Inference), [Templates Are Circuit Maps](https://www.shivasnotes.com/blog/5934/Templates-Are-Circuit-Maps-How-CKE-Describes-A-Model-Family), and the [architecture documentation](https://c-kernel-engine.github.io/C-Kernel-Engine/architecture.html).
 
+## Scaling Thesis and CKU
+
+CKE separates three questions that are often collapsed into one benchmark number:
+
+1. **Node efficiency:** How close do kernels, memory placement, and scheduling bring one CPU node to its useful roofline?
+2. **Cluster efficiency:** How should model stages, tensor work, state, and communication be partitioned across NUMA domains and Linux nodes?
+3. **Service capacity:** How much useful model data can the complete system cycle at a stated token rate and concurrency?
+
+The [scaling philosophy](https://c-kernel-engine.github.io/C-Kernel-Engine/scaling.html) develops the project's scale-out hypothesis: large CPU memory capacity makes model placement practical, while pipeline/tensor partitioning, RDMA, NUMA locality, and the network become explicit system constraints. It is a research and engineering direction, not a claim that CPUs always beat highly utilized GPUs on raw peak throughput.
+
+The [CKE Throughput Unit](https://c-kernel-engine.github.io/C-Kernel-Engine/cke-throughput-unit.html) gives that work a system-level measure:
+
+```text
+CKU = active_bytes_per_token / seconds_per_token
+```
+
+Active bytes include useful weight, activation, cache/state, layout, and communication traffic participating in model math. CKU is not a memory-copy benchmark and does not replace FLOPS, token rate, latency, or power measurements. A valid report identifies the phase and workload shape because prefill, decode, training, and concurrent serving exercise different paths. The 1 PB/s CKU target is a long-horizon aggregate north star for coordinated nodes, not a claimed single-workstation result.
+
 ## How It Works
 
 ```text
@@ -101,6 +119,7 @@ The articles explain the motivation and math; the documentation records the supp
 | Runtime ownership | [Threadpools and Memory Pools](https://www.shivasnotes.com/blog/5924/Threadpools-And-Memory-Pools-Why-CKE-Needs-Runtime-Ownership-For-CPU-AI-Kernels) | [Thread-pool design](https://c-kernel-engine.github.io/C-Kernel-Engine/threadpool.html) | [Thread pool](src/ck_threadpool.c) and [allocator](src/ckernel_alloc.c) |
 | Performance engineering | [CPU Rooflines, Flamegraphs, VTune, and Perf Gates](https://www.shivasnotes.com/blog/5915/CPU-Performance-Engineering-for-AI-Rooflines-Flamegraphs-VTune-and-Perf-Gates) | [Kernel tuning methodology](https://c-kernel-engine.github.io/C-Kernel-Engine/kernel-tuning-methodology.html) | [Benchmarks](benchmarks/) and [profiling scripts](scripts/) |
 | Distributed CPU AI | [MPI, RDMA, NUMA, and CKE](https://www.shivasnotes.com/blog/5922/Distributed-CPU-AI-MPI-RDMA-NUMA-and-C-Kernel-Engine) and [Pipeline vs Tensor Parallelism](https://www.shivasnotes.com/blog/5923/Pipeline-vs-Tensor-Parallelism-How-CKE-Splits-AI-Across-CPU-Nodes) | [Scaling architecture](https://c-kernel-engine.github.io/C-Kernel-Engine/scaling.html) | [Scaling roadmap](docs/site/_pages/scaling.html) |
+| System throughput | [CPU strategic bet](https://www.shivasnotes.com/blog/5878/Why-I-Stopped-Getting-High-on-the-Newer-AI-Models-And-Why-My-Strategic-Bet-Is-Still-Consistent-CPUs-Smaller-Models-and-Less-Compute-Will-Win) | [CKE Throughput Unit](https://c-kernel-engine.github.io/C-Kernel-Engine/cke-throughput-unit.html) | [CKU definition](docs/site/_pages/cke-throughput-unit.html) |
 | Gemma4 architecture | [Four Attention Paths, Shared KV, and Sliding Windows](https://www.shivasnotes.com/blog/5935/Gemma4-In-CKE-Four-Attention-Paths-Shared-KV-And-Sliding-Windows) | [Gemma4 speculative pair](https://c-kernel-engine.github.io/C-Kernel-Engine/gemma4-speculative-pair.html) | [Gemma4 circuit](version/v8/circuits/gemma4.json) |
 | Audio roadmap | [How Audio Transformers Work](https://www.shivasnotes.com/blog/5928/How-Audio-Transformers-Work-The-Encoder-Path-Whisper-Timestamps-And-Why-Audio-Is-Not-A-VLM-Patch) | [Execution roadmap](https://c-kernel-engine.github.io/C-Kernel-Engine/version-history.html) | Audio circuit and kernels are planned after the v8 hardening gate |
 
