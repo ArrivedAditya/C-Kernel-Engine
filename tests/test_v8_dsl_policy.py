@@ -29,7 +29,20 @@ class V8DSLPolicyTests(unittest.TestCase):
         report = audit.audit()
         self.assertEqual(report["status"], "pass", report["findings"])
         self.assertGreaterEqual(report["checked_functions"], 9)
-        self.assertEqual(report["model_literal_sites"], 76)
+        policy = json.loads(audit.DEFAULT_POLICY.read_text(encoding="utf-8"))
+        allowed_sites = sum(policy["model_literal_site_limits"].values())
+        self.assertLessEqual(report["model_literal_sites"], allowed_sites)
+
+    def test_model_literal_inventory_accepts_debt_reduction(self) -> None:
+        policy = json.loads(audit.DEFAULT_POLICY.read_text(encoding="utf-8"))
+        relative_path = "version/v8/scripts/codegen_prefill_v8.py"
+        current = audit.audit()["model_literal_inventory"][relative_path]["sites"]
+        policy["model_literal_site_limits"][relative_path] = current + 1
+        with tempfile.TemporaryDirectory() as temp:
+            path = pathlib.Path(temp) / "policy.json"
+            path.write_text(json.dumps(policy), encoding="utf-8")
+            report = audit.audit(path)
+        self.assertEqual(report["status"], "pass", report["findings"])
 
     def test_model_literal_inventory_ignores_docs_and_counts_code(self) -> None:
         source = '''

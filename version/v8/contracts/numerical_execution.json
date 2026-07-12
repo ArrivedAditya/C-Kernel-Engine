@@ -81,6 +81,48 @@
       },
       "description": "Align-corners tiled 2D bilinear position interpolation with FP32 rational coordinates and explicit BF16 RNE product, accumulation, residual, and output boundaries."
     },
+    "fp32_tiled_2d_antialias_half_pixel_contracted": {
+      "operator_family": "spatial_position_interpolation",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32"
+      },
+      "rounding": {
+        "mode": "none",
+        "points": []
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "left_to_right",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "spatial_transform": {
+        "interpolation": "bilinear",
+        "coordinate_transform": "half_pixel",
+        "coordinate_compute": "fp32_from_rational",
+        "source_layout": "row_major",
+        "output_traversal": "merged_tile_order",
+        "antialias": true,
+        "evaluation_order": "channel_row_column",
+        "contraction": "enabled"
+      },
+      "description": "Antialiased half-pixel FP32 interpolation with contraction enabled and channel-row-column evaluation before merged-tile output, matching the GGML execution contract."
+    },
     "vision_mrope_fp32_input_fp32_compute_fp32_output": {
       "operator_family": "vision_mrope",
       "status": "validated",
@@ -263,6 +305,40 @@
       },
       "description": "Float-buffer LayerNorm with BF16 input/output storage boundaries and the established ggml matched mean/variance reduction.",
       "operator_family": "layernorm"
+    },
+    "layernorm_fp32_ggml_chunked_contracted": {
+      "status": "validated",
+      "operator_family": "layernorm",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "mean_then_centered_variance_then_scale_affine"
+      },
+      "rounding": {
+        "mode": "none",
+        "points": []
+      },
+      "reduction": {
+        "kind": "normalization",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "ascending_chunk"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "GGML-compatible FP32 LayerNorm with double mean accumulation, ISA-width centered-variance chunks, contracted FP32 arithmetic, and independent-row scheduling."
     },
     "bf16_weight_bf16_input_fp32_dot_bf16_output": {
       "status": "validated",

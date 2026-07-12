@@ -684,6 +684,29 @@ class KernelTester:
 
         return self.compare("gemv_q4_k", ggml_out, ck_out)
 
+    def test_quantize_q8k(self, size: int = 256):
+        """Require the activation ABI to match llama.cpp byte for byte."""
+        print(f"\n--- test_quantize_q8k (size={size}) ---")
+
+        if not self.libggml or not self.libck:
+            print(f"{YELLOW}[SKIP] Libraries not available{RESET}")
+            return False
+
+        input_f32 = np.random.randn(size).astype(np.float32)
+        output_size = (size // QK_K) * BLOCK_Q8_K_SIZE
+        ggml_out = np.zeros(output_size, dtype=np.uint8)
+        ck_out = np.zeros(output_size, dtype=np.uint8)
+        input_ptr = input_f32.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+        self.libggml.test_quantize_q8_k(input_ptr, ggml_out.ctypes.data, size)
+        self.libck.ck_test_quantize_q8_k(input_ptr, ck_out.ctypes.data, size)
+
+        different = int(np.count_nonzero(ggml_out != ck_out))
+        ok = different == 0
+        print(f"  differing bytes: {different}/{output_size}  "
+              f"[{GREEN + 'PASS' if ok else RED + 'FAIL'}{RESET}]")
+        self.results.append((f"quantize_q8_k_bytes_{size}", ok, float(different), 0.0))
+        return ok
+
     def test_gemm_q4k(self, rows: int = 64, cols: int = 256, n_tokens: int = 4):
         """Test Q4_K GEMM (batched matrix multiply)."""
         print(f"\n--- test_gemm_q4k (rows={rows}, cols={cols}, tokens={n_tokens}) ---")
@@ -1346,6 +1369,10 @@ class KernelTester:
             self.test_dequant_q4_0(64)
 
         # Quantized GEMV/GEMM
+        self.test_quantize_q8k(256)
+        if not quick:
+            self.test_quantize_q8k(512)
+            self.test_quantize_q8k(1024)
         self.test_gemv_q4k(256)
         if not quick:
             self.test_gemv_q4k(512)

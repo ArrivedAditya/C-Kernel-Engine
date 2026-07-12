@@ -688,8 +688,8 @@ def test_position_embeddings_add_tiled_2d(grid_h=6, grid_w=6, embed_dim=8, merge
 
 
 def test_position_embeddings_add_tiled_2d_qwen3vl_resize_order(
-    grid_h=72,
-    grid_w=56,
+    grid_h=56,
+    grid_w=72,
     source_grid_size=48,
     embed_dim=64,
     merge_size=2,
@@ -724,8 +724,32 @@ def test_position_embeddings_add_tiled_2d_qwen3vl_resize_order(
     diff = max_diff(out_c, ref)
     print(f"Max diff: {diff:.2e}")
 
-    if diff > 2e-6:
+    # The production contract permits contraction in the interpolation node,
+    # as ggml does. GCC and Intel/Clang can therefore differ by a few ULPs;
+    # the full llama X-ray gate separately requires backend-exact output.
+    if diff > 2.5e-5:
         raise AssertionError("position_embeddings_add_tiled_2d Qwen3-VL resize order mismatch!")
+
+
+def test_position_embeddings_add_tiled_2d_ragged_edges():
+    grid_h, grid_w, source_grid_size, embed_dim, merge_size = 5, 7, 4, 11, 3
+    print(
+        f"\n--- Testing position_embeddings_add_tiled_2d ragged edges "
+        f"({grid_h}x{grid_w}, merge {merge_size}) ---"
+    )
+    g = torch.Generator().manual_seed(4409)
+    x = torch.randn(grid_h * grid_w, embed_dim, generator=g, dtype=torch.float32)
+    pos = torch.randn(source_grid_size**2, embed_dim, generator=g, dtype=torch.float32)
+    ref = _ref_position_embeddings_add_tiled_2d(
+        x, pos, grid_h, grid_w, merge_size, source_grid_size
+    )
+    out_c = run_c_position_embeddings_add_tiled_2d(
+        x, pos, grid_h, grid_w, merge_size, source_grid_size
+    )
+    diff = max_diff(out_c, ref)
+    print(f"Max diff: {diff:.2e}")
+    if diff > 2.5e-5:
+        raise AssertionError("position_embeddings_add_tiled_2d ragged edge mismatch!")
 
 
 def test_position_embeddings_add_tiled_2d_align_corners():
@@ -1132,6 +1156,7 @@ if __name__ == "__main__":
     test_position_embeddings_add()
     test_position_embeddings_add_tiled_2d()
     test_position_embeddings_add_tiled_2d_qwen3vl_resize_order()
+    test_position_embeddings_add_tiled_2d_ragged_edges()
     test_position_embeddings_add_tiled_2d_align_corners()
     test_vision_position_ids()
     test_vision_position_ids(grid_h=6, grid_w=6, merge_size=3)

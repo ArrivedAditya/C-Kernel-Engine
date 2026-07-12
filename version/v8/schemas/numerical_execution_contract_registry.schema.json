@@ -136,6 +136,16 @@
                 "bf16",
                 "int32"
               ]
+            },
+            "contraction": {
+              "enum": [
+                "enabled",
+                "disabled"
+              ]
+            },
+            "evaluation_order": {
+              "type": "string",
+              "minLength": 1
             }
           }
         },
@@ -380,7 +390,8 @@
                 },
                 "coordinate_transform": {
                   "enum": [
-                    "align_corners"
+                    "align_corners",
+                    "half_pixel"
                   ]
                 },
                 "coordinate_compute": {
@@ -397,6 +408,21 @@
                   "enum": [
                     "row_major",
                     "merged_tile_order"
+                  ]
+                },
+                "antialias": {
+                  "type": "boolean"
+                },
+                "evaluation_order": {
+                  "enum": [
+                    "channel_row_column",
+                    "token_channel"
+                  ]
+                },
+                "contraction": {
+                  "enum": [
+                    "enabled",
+                    "disabled"
                   ]
                 }
               }
