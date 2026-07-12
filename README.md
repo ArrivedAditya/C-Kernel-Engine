@@ -114,11 +114,25 @@ A fast kernel is not eligible if it changes the required mathematics. CKE uses l
 4. Stitched layer and semantic checkpoint comparison.
 5. Mixed-prefill and teacher-forced token parity.
 6. Practical end-to-end prompts, images, or audio fixtures.
-7. Nightly and rolling llama.cpp compatibility gates.
+7. Nightly parity and rolling reference-backend compatibility gates.
 
 When a model diverges, the X-ray workflow moves from sparse checkpoints to the first failing layer and then to the first failing operation. Fixes belong in a circuit, kernel map, or tested kernel, not as a special case in the DSL.
 
 Read the [numerical contract architecture](https://c-kernel-engine.github.io/C-Kernel-Engine/v8-numerical-contracts.html) and [divergence harness guide](https://c-kernel-engine.github.io/C-Kernel-Engine/divergence-harness.html) for the method.
+
+## Reference Backends and Compatibility
+
+CKE uses external runtimes as independent numerical and behavioral references. Compatibility means that a declared boundary is tested against a comparable artifact; it does not imply API compatibility or identical implementation internals.
+
+| Reference | State | What CKE compares |
+|---|---|---|
+| llama.cpp | Rolling compatibility active | GGUF parsing, quantized leaf kernels, tensor boundaries, logits, token replay, and end-to-end inference behavior |
+| PyTorch | Numerical parity active | FP32 training, safetensors/BF16 semantics, gradients, optimizer behavior, and model checkpoints where a matching adapter exists |
+| whisper.cpp | Planned with audio inference | Audio frontend, encoder output, decoder logits, timestamps, and transcript behavior for Whisper tiny/base |
+| vLLM | Future adapter | Model logits, batching, KV-cache and serving semantics where model, dtype, prompts, and sampling can be aligned |
+| SGLang | Future adapter | Structured generation, serving, prefix reuse, and distributed runtime behavior at explicitly comparable boundaries |
+
+Additional adapters must emit the same canonical tensor/checkpoint metadata used by CKE's X-ray tooling. A backend is promoted to a rolling gate only after its fixture, version pin, comparison boundary, and failure policy are reproducible.
 
 ## Performance Method
 
@@ -209,7 +223,7 @@ CKE is also a working laboratory for CPU AI systems engineering. If your team ne
 - Intel VTune/Advisor or Linux perf investigation.
 - Building an evidence-backed CPU deployment or distributed-compute plan.
 
-open a focused [GitHub issue](https://github.com/C-Kernel-Engine/C-Kernel-Engine/issues) for reproducible project work, or connect through [Antsand](https://antsand.com) for consulting and collaboration.
+Open a focused [GitHub issue](https://github.com/C-Kernel-Engine/C-Kernel-Engine/issues) for reproducible project work. For consulting and collaboration, connect through [ShivasNotes](https://www.shivasnotes.com/) or [antshiv.com](https://antshiv.com/).
 
 ## Project Principles
 
