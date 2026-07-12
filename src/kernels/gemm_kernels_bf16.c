@@ -784,12 +784,17 @@ static void ck_gemm_bf16_native_work(int ith, int nth, void *opaque)
     ck_gemm_bf16_native_args_t *args = (ck_gemm_bf16_native_args_t *)opaque;
     const int N = args->N;
     const int K = args->K;
-    uint16_t *a_bf16 = (uint16_t *)alloca((size_t)K * sizeof(uint16_t));
+    enum { ROW_TILE = 4 };
+    uint16_t *a_bf16 = (uint16_t *)alloca(
+        (size_t)ROW_TILE * (size_t)K * sizeof(uint16_t));
 
-    for (int row = ith; row < args->M; row += nth) {
-        const float *src = args->A + (size_t)row * (size_t)K;
-        float *dst = args->C + (size_t)row * (size_t)N;
-        for (int k = 0; k < K; ++k) a_bf16[k] = float_to_bf16(src[k]);
+    for (int row0 = ith * ROW_TILE; row0 < args->M; row0 += nth * ROW_TILE) {
+        const int rows = args->M - row0 < ROW_TILE ? args->M - row0 : ROW_TILE;
+        for (int r = 0; r < rows; ++r) {
+            const float *src = args->A + (size_t)(row0 + r) * (size_t)K;
+            uint16_t *ar = a_bf16 + (size_t)r * (size_t)K;
+            for (int k = 0; k < K; ++k) ar[k] = float_to_bf16(src[k]);
+        }
 
 #if HAVE_NATIVE_BF16
         int j = 0;
@@ -798,57 +803,79 @@ static void ck_gemm_bf16_native_work(int ith, int nth, void *opaque)
             const uint16_t *b1 = args->B + (size_t)(j + 1) * K;
             const uint16_t *b2 = args->B + (size_t)(j + 2) * K;
             const uint16_t *b3 = args->B + (size_t)(j + 3) * K;
-            __m512 acc0 = _mm512_setzero_ps();
-            __m512 acc1 = _mm512_setzero_ps();
-            __m512 acc2 = _mm512_setzero_ps();
-            __m512 acc3 = _mm512_setzero_ps();
+            __m512 acc[ROW_TILE][4];
+            for (int r = 0; r < rows; ++r) {
+                for (int lane = 0; lane < 4; ++lane) acc[r][lane] = _mm512_setzero_ps();
+            }
             int k = 0;
             for (; k <= K - 32; k += 32) {
-                const __m512bh av = load_bf16x32(a_bf16 + k);
-                acc0 = _mm512_dpbf16_ps(acc0, av, load_bf16x32(b0 + k));
-                acc1 = _mm512_dpbf16_ps(acc1, av, load_bf16x32(b1 + k));
-                acc2 = _mm512_dpbf16_ps(acc2, av, load_bf16x32(b2 + k));
-                acc3 = _mm512_dpbf16_ps(acc3, av, load_bf16x32(b3 + k));
+                const __m512bh bv[4] = {
+                    load_bf16x32(b0 + k), load_bf16x32(b1 + k),
+                    load_bf16x32(b2 + k), load_bf16x32(b3 + k)
+                };
+                for (int r = 0; r < rows; ++r) {
+                    const __m512bh av =
+                        load_bf16x32(a_bf16 + (size_t)r * (size_t)K + k);
+                    for (int lane = 0; lane < 4; ++lane) {
+                        acc[r][lane] = _mm512_dpbf16_ps(acc[r][lane], av, bv[lane]);
+                    }
+                }
             }
-            float sums[4] = {
-                _mm512_reduce_add_ps(acc0), _mm512_reduce_add_ps(acc1),
-                _mm512_reduce_add_ps(acc2), _mm512_reduce_add_ps(acc3)
-            };
-            for (; k < K; ++k) {
-                const float av = bf16_to_float(a_bf16[k]);
-                sums[0] += av * bf16_to_float(b0[k]);
-                sums[1] += av * bf16_to_float(b1[k]);
-                sums[2] += av * bf16_to_float(b2[k]);
-                sums[3] += av * bf16_to_float(b3[k]);
-            }
-            for (int lane = 0; lane < 4; ++lane) {
-                if (args->bias) sums[lane] += args->bias[j + lane];
-                dst[j + lane] = bf16_to_float(float_to_bf16(sums[lane]));
+            for (int r = 0; r < rows; ++r) {
+                float sums[4];
+                for (int lane = 0; lane < 4; ++lane) {
+                    sums[lane] = _mm512_reduce_add_ps(acc[r][lane]);
+                }
+                const uint16_t *ar = a_bf16 + (size_t)r * (size_t)K;
+                for (int tail = k; tail < K; ++tail) {
+                    const float av = bf16_to_float(ar[tail]);
+                    sums[0] += av * bf16_to_float(b0[tail]);
+                    sums[1] += av * bf16_to_float(b1[tail]);
+                    sums[2] += av * bf16_to_float(b2[tail]);
+                    sums[3] += av * bf16_to_float(b3[tail]);
+                }
+                float *dst = args->C + (size_t)(row0 + r) * (size_t)N;
+                for (int lane = 0; lane < 4; ++lane) {
+                    if (args->bias) sums[lane] += args->bias[j + lane];
+                    dst[j + lane] = bf16_to_float(float_to_bf16(sums[lane]));
+                }
             }
         }
         for (; j < N; ++j) {
             const uint16_t *b = args->B + (size_t)j * K;
-            __m512 acc = _mm512_setzero_ps();
+            __m512 acc[ROW_TILE];
+            for (int r = 0; r < rows; ++r) acc[r] = _mm512_setzero_ps();
             int k = 0;
             for (; k <= K - 32; k += 32) {
-                acc = _mm512_dpbf16_ps(
-                    acc, load_bf16x32(a_bf16 + k), load_bf16x32(b + k));
+                const __m512bh bv = load_bf16x32(b + k);
+                for (int r = 0; r < rows; ++r) {
+                    acc[r] = _mm512_dpbf16_ps(
+                        acc[r], load_bf16x32(a_bf16 + (size_t)r * (size_t)K + k), bv);
+                }
             }
-            float sum = _mm512_reduce_add_ps(acc);
-            for (; k < K; ++k) {
-                sum += bf16_to_float(a_bf16[k]) * bf16_to_float(b[k]);
+            for (int r = 0; r < rows; ++r) {
+                const uint16_t *ar = a_bf16 + (size_t)r * (size_t)K;
+                float sum = _mm512_reduce_add_ps(acc[r]);
+                for (int tail = k; tail < K; ++tail) {
+                    sum += bf16_to_float(ar[tail]) * bf16_to_float(b[tail]);
+                }
+                if (args->bias) sum += args->bias[j];
+                args->C[(size_t)(row0 + r) * (size_t)N + j] =
+                    bf16_to_float(float_to_bf16(sum));
             }
-            if (args->bias) sum += args->bias[j];
-            dst[j] = bf16_to_float(float_to_bf16(sum));
         }
 #else
-        for (int j = 0; j < N; ++j) {
-            const uint16_t *b = args->B + (size_t)j * K;
-            float sum = args->bias ? args->bias[j] : 0.0f;
-            for (int k = 0; k < K; ++k) {
-                sum += bf16_to_float(a_bf16[k]) * bf16_to_float(b[k]);
+        for (int r = 0; r < rows; ++r) {
+            const uint16_t *ar = a_bf16 + (size_t)r * (size_t)K;
+            float *dst = args->C + (size_t)(row0 + r) * (size_t)N;
+            for (int j = 0; j < N; ++j) {
+                const uint16_t *b = args->B + (size_t)j * K;
+                float sum = args->bias ? args->bias[j] : 0.0f;
+                for (int k = 0; k < K; ++k) {
+                    sum += bf16_to_float(ar[k]) * bf16_to_float(b[k]);
+                }
+                dst[j] = bf16_to_float(float_to_bf16(sum));
             }
-            dst[j] = bf16_to_float(float_to_bf16(sum));
         }
 #endif
     }
