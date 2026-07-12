@@ -460,7 +460,7 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         self.assertEqual(selected["vision.layer.mlp_activation"], "gelu_pytorch_tanh_bf16_storage")
         self.assertEqual(
             selected["vision.layer.attention"],
-            "attention_forward_full_head_major_gqa_flash_strided_bf16_storage",
+            "attention_forward_full_head_major_gqa_sdpa_bf16_storage",
         )
         self.assertEqual(selected["vision.layer.out_projection"], "gemm_nt_bf16_bf16_storage")
         self.assertEqual(
@@ -477,7 +477,7 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         self.assertIn(("layernorm", "layernorm_bf16_storage"), kernels)
         self.assertIn(("qkv_packed_proj", "gemm_nt_bf16_bf16_storage"), kernels)
         self.assertIn(
-            ("attn", "attention_forward_full_head_major_gqa_flash_strided_bf16_storage"),
+            ("attn", "attention_forward_full_head_major_gqa_sdpa_bf16_storage"),
             kernels,
         )
         self.assertIn(("out_proj", "gemm_nt_bf16_bf16_storage"), kernels)
@@ -487,6 +487,17 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         self.assertIn(
             ("residual_add", "ck_residual_add_token_major_bf16_storage"),
             kernels,
+        )
+
+        binding = build_ir_v8.load_kernel_bindings()[
+            "attention_forward_full_head_major_gqa_sdpa_bf16_storage"
+        ]
+        self.assertEqual(
+            [param["name"] for param in binding["params"]],
+            [
+                "q", "k", "v", "output", "num_heads", "num_kv_heads",
+                "num_tokens", "head_dim", "aligned_head_dim", "kv_stride_tokens",
+            ],
         )
 
     def test_default_attention_contract_retains_legacy_owner(self) -> None:

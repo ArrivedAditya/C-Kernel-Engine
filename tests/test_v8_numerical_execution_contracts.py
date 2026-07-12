@@ -168,7 +168,7 @@ class NumericalExecutionContractTests(unittest.TestCase):
             "vision.layer.qkv_projection": "gemm_nt_bf16_bf16_storage",
             "vision.layer.mlp_projection": "gemm_nt_bf16_bf16_storage",
             "vision.layer.mlp_activation": "gelu_pytorch_tanh_bf16_storage",
-            "vision.layer.attention": "attention_forward_full_head_major_gqa_flash_strided_bf16_storage",
+            "vision.layer.attention": "attention_forward_full_head_major_gqa_sdpa_bf16_storage",
             "vision.layer.out_projection": "gemm_nt_bf16_bf16_storage",
             "vision.layer.residual": "ck_residual_add_token_major_bf16_storage",
         }
@@ -184,6 +184,10 @@ class NumericalExecutionContractTests(unittest.TestCase):
                 )
                 self.assertEqual(plan["kernel"]["function"], function)
                 self.assertEqual(plan["contract"]["status"], "validated")
+                if operation == "vision.layer.attention":
+                    self.assertEqual(plan["contract"]["semantics"]["threading"]["work_partition"], "serial")
+                    self.assertEqual(plan["implementation"]["threading"]["runtime"], "serial")
+                    self.assertEqual(plan["implementation"]["threading"]["dispatch"], ["inline"])
 
     def test_zero_provider_is_hard_failure(self):
         kernels = copy.deepcopy(self.kernels)

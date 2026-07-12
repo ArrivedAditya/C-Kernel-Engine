@@ -3815,6 +3815,110 @@ void attention_forward_full_head_major_gqa_flash_strided(const float *q,
 }
 
 
+static float ck_bf16_dot_contract(const float *a, const float *b, int count)
+{
+#if defined(__AVX512BF16__)
+    __m512 acc = _mm512_setzero_ps();
+    int i = 0;
+    for (; i + 32 <= count; i += 32) {
+        const __m512bh av = _mm512_cvtne2ps_pbh(_mm512_loadu_ps(a + i + 16), _mm512_loadu_ps(a + i));
+        const __m512bh bv = _mm512_cvtne2ps_pbh(_mm512_loadu_ps(b + i + 16), _mm512_loadu_ps(b + i));
+        acc = _mm512_dpbf16_ps(acc, av, bv);
+    }
+    float sum = _mm512_reduce_add_ps(acc);
+    for (; i < count; ++i) {
+        const float av = bf16_to_float(float_to_bf16(a[i]));
+        const float bv = bf16_to_float(float_to_bf16(b[i]));
+        sum += av * bv;
+    }
+    return sum;
+#else
+    float sum = 0.0f;
+    for (int i = 0; i < count; ++i) {
+        const float av = bf16_to_float(float_to_bf16(a[i]));
+        const float bv = bf16_to_float(float_to_bf16(b[i]));
+        sum += av * bv;
+    }
+    return sum;
+#endif
+}
+
+static int ck_attention_full_bf16_sdpa_tiled(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens,
+    int head_dim, int aligned_head_dim, int kv_stride_tokens)
+{
+    if (!q || !k || !v || !output || num_heads <= 0 || num_kv_heads <= 0 ||
+        head_dim <= 0 || num_tokens <= 0 || aligned_head_dim < head_dim ||
+        kv_stride_tokens < num_tokens || num_heads % num_kv_heads != 0) return 0;
+    if ((size_t)num_tokens > SIZE_MAX / (size_t)head_dim) return 0;
+    const size_t v_col_count = (size_t)head_dim * (size_t)num_tokens;
+    if (v_col_count > SIZE_MAX / sizeof(float)) return 0;
+    if ((size_t)num_tokens > SIZE_MAX / (size_t)aligned_head_dim) return 0;
+    if ((size_t)kv_stride_tokens > SIZE_MAX / (size_t)aligned_head_dim) return 0;
+    const float scale = 1.0f / sqrtf((float)head_dim);
+    const size_t q_head_stride = (size_t)num_tokens * (size_t)aligned_head_dim;
+    const size_t kv_head_stride = (size_t)kv_stride_tokens * (size_t)aligned_head_dim;
+    if ((size_t)num_heads > SIZE_MAX / q_head_stride) return 0;
+    if ((size_t)num_kv_heads > SIZE_MAX / kv_head_stride) return 0;
+    float scores[512];
+    float probs[512];
+    float *v_cols = (float *)malloc(v_col_count * sizeof(float));
+    if (!v_cols) return 0;
+    for (int h = 0; h < num_heads; ++h) {
+        const int kv_head = (int)((long long)h * (long long)num_kv_heads / (long long)num_heads);
+        const float *qh = q + (size_t)h * q_head_stride;
+        const float *kh = k + (size_t)kv_head * kv_head_stride;
+        const float *vh = v + (size_t)kv_head * kv_head_stride;
+        float *oh = output + (size_t)h * q_head_stride;
+        for (int d = 0; d < head_dim; ++d) {
+            float *col = v_cols + (size_t)d * (size_t)num_tokens;
+            for (int t = 0; t < num_tokens; ++t) {
+                col[t] = vh[(size_t)t * (size_t)aligned_head_dim + (size_t)d];
+            }
+        }
+        for (int row = 0; row < num_tokens; ++row) {
+            const float *qrow = qh + (size_t)row * (size_t)aligned_head_dim;
+            float *dst = oh + (size_t)row * (size_t)aligned_head_dim;
+            for (int d = 0; d < head_dim; ++d) dst[d] = 0.0f;
+            float running_max = -INFINITY;
+            float running_sum = 0.0f;
+            for (int n = 0; n < num_tokens; n += 512) {
+                const int block = num_tokens - n < 512 ? num_tokens - n : 512;
+                float block_max = -INFINITY;
+                for (int j = 0; j < block; ++j) {
+                    scores[j] = ck_bf16_dot_contract(
+                        qrow,
+                        kh + (size_t)(n + j) * (size_t)aligned_head_dim,
+                        head_dim) * scale;
+                    if (scores[j] > block_max) block_max = scores[j];
+                }
+                const float merged_max = running_max > block_max ? running_max : block_max;
+                const float old_scale = isfinite(running_max) ? expf(running_max - merged_max) : 0.0f;
+                float block_sum = 0.0f;
+                for (int j = 0; j < block; ++j) {
+                    const float p = expf(scores[j] - merged_max);
+                    block_sum += p;
+                    probs[j] = bf16_to_float(float_to_bf16(p));
+                }
+                for (int d = 0; d < head_dim; ++d) {
+                    const float partial = ck_bf16_dot_contract(
+                        probs,
+                        v_cols + (size_t)d * (size_t)num_tokens + (size_t)n,
+                        block);
+                    dst[d] = dst[d] * old_scale + partial;
+                }
+                running_sum = running_sum * old_scale + block_sum;
+                running_max = merged_max;
+            }
+            const float inv = running_sum > 0.0f ? 1.0f / running_sum : 0.0f;
+            for (int d = 0; d < head_dim; ++d) dst[d] *= inv;
+            for (int d = head_dim; d < aligned_head_dim; ++d) dst[d] = 0.0f;
+        }
+    }
+    free(v_cols);
+    return 1;
+}
 void attention_forward_full_head_major_gqa_flash_strided_bf16_storage(
     const float *q,
     const float *k,
@@ -3840,6 +3944,31 @@ void attention_forward_full_head_major_gqa_flash_strided_bf16_storage(
     for (size_t i = 0; i < count; ++i) {
         output[i] = bf16_to_float(float_to_bf16(output[i]));
     }
+}
+
+void attention_forward_full_head_major_gqa_sdpa_bf16_storage(
+    const float *q,
+    const float *k,
+    const float *v,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int kv_stride_tokens)
+{
+    if (ck_attention_full_bf16_sdpa_tiled(
+            q, k, v, output, num_heads, num_kv_heads, num_tokens,
+            head_dim, aligned_head_dim, kv_stride_tokens)) {
+        const size_t count = (size_t)num_heads * (size_t)num_tokens
+                           * (size_t)aligned_head_dim;
+        for (size_t i = 0; i < count; ++i) {
+            output[i] = bf16_to_float(float_to_bf16(output[i]));
+        }
+        return;
+    }
+    fprintf(stderr, "CK numerical contract failure: BF16 tiled SDPA received invalid dimensions or could not allocate scratch\n");
 }
 
 
