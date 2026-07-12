@@ -107,4 +107,60 @@
       }
     }
   ]
+,
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "cast": "const float*",
+        "name": "input",
+        "source": "activation:input"
+      },
+      {
+        "alt": [
+          "ln1_gamma",
+          "ln2_gamma",
+          "final_ln_weight",
+          "branch_norm_gamma"
+        ],
+        "name": "gamma",
+        "source": "weight_f:gamma"
+      },
+      {
+        "alt": [
+          "ln1_beta",
+          "ln2_beta",
+          "final_ln_bias",
+          "branch_norm_beta"
+        ],
+        "name": "beta",
+        "source": "weight_f:beta"
+      },
+      {
+        "cast": "float*",
+        "name": "output",
+        "source": "output:output"
+      },
+      {
+        "name": "mean_cache",
+        "source": "null"
+      },
+      {
+        "name": "rstd_cache",
+        "source": "null"
+      },
+      {
+        "name": "tokens",
+        "source": "dim:seq_len"
+      },
+      {
+        "name": "d_model",
+        "source": "dim:embed_dim"
+      },
+      {
+        "name": "eps",
+        "source": "dim:rms_eps"
+      }
+    ]
+  }
 }

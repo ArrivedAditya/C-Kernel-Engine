@@ -701,6 +701,55 @@
         ]
       },
       "notes": "Flash attention for decode mode: single query token attends to all KV cache entries (0..kv_tokens-1).",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q_token",
+            "source": "scratch:q_scratch",
+            "cast": "const float*"
+          },
+          {
+            "name": "k_cache",
+            "source": "runtime:kv_cache_k_layer",
+            "cast": "const float*"
+          },
+          {
+            "name": "v_cache",
+            "source": "runtime:kv_cache_v_layer",
+            "cast": "const float*"
+          },
+          {
+            "name": "out_token",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "kv_tokens",
+            "source": "runtime:kv_tokens"
+          },
+          {
+            "name": "cache_capacity",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          }
+        ]
+      },
       "name": "attention_forward_decode_head_major_gqa_flash",
       "_source_file": "attention_decode_flash.json"
     },
@@ -810,6 +859,55 @@
         ]
       },
       "notes": "Decode flash attention variant that rounds K/V through FP16 to match llama.cpp flash-attn input handling.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q_token",
+            "source": "scratch:q_scratch",
+            "cast": "const float*"
+          },
+          {
+            "name": "k_cache",
+            "source": "runtime:kv_cache_k_layer",
+            "cast": "const float*"
+          },
+          {
+            "name": "v_cache",
+            "source": "runtime:kv_cache_v_layer",
+            "cast": "const float*"
+          },
+          {
+            "name": "out_token",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "kv_tokens",
+            "source": "runtime:kv_tokens"
+          },
+          {
+            "name": "cache_capacity",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          }
+        ]
+      },
       "name": "attention_forward_decode_head_major_gqa_flash_f16kv",
       "_source_file": "attention_decode_flash_f16kv.json"
     },
@@ -1105,6 +1203,55 @@
         ]
       },
       "notes": "Causal multi-head attention with GQA support. Uses flash attention algorithm with strided KV cache layout for efficient KV cache updates. Supports grouped-query attention where H >= KV.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "scratch:q_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "k",
+            "source": "scratch:k_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "v",
+            "source": "scratch:v_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "output",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "kv_stride_tokens",
+            "source": "dim:max_seq_len"
+          }
+        ]
+      },
       "name": "attention_forward_causal_head_major_gqa_flash_strided",
       "_source_file": "attention_forward_causal_head_major_gqa_flash_strided.json"
     },
@@ -1296,6 +1443,55 @@
         ]
       },
       "notes": "Causal multi-head attention with GQA support. Uses FP16-rounded K/V inputs to emulate llama.cpp flash-attn numerics for Llama-family models.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "scratch:q_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "k",
+            "source": "scratch:k_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "v",
+            "source": "scratch:v_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "output",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "kv_stride_tokens",
+            "source": "dim:max_seq_len"
+          }
+        ]
+      },
       "name": "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
       "_source_file": "attention_forward_causal_head_major_gqa_flash_strided_f16kv.json"
     },
@@ -1711,6 +1907,59 @@
         ]
       },
       "notes": "Causal multi-head attention with sliding window. Each token attends to the last W tokens. Uses flash attention algorithm with strided KV cache layout. Supports GQA where H >= KV.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "scratch:q_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "k",
+            "source": "scratch:k_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "v",
+            "source": "scratch:v_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "output",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "kv_stride_tokens",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "sliding_window",
+            "source": "dim:sliding_window"
+          }
+        ]
+      },
       "name": "attention_forward_causal_head_major_gqa_flash_strided_sliding",
       "_source_file": "attention_forward_causal_head_major_gqa_flash_strided_sliding.json"
     },
@@ -2135,6 +2384,55 @@
         ]
       },
       "notes": "Decode flash attention over a packed FP16 KV cache without mutating the existing fp32 kernels.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "const float*",
+            "name": "q_token",
+            "source": "scratch:q_scratch"
+          },
+          {
+            "cast": "const uint16_t*",
+            "name": "k_cache",
+            "source": "runtime:kv_cache_k_layer_f16"
+          },
+          {
+            "cast": "const uint16_t*",
+            "name": "v_cache",
+            "source": "runtime:kv_cache_v_layer_f16"
+          },
+          {
+            "cast": "float*",
+            "name": "out_token",
+            "source": "output:out"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "kv_tokens",
+            "source": "runtime:kv_tokens"
+          },
+          {
+            "name": "cache_capacity",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          }
+        ]
+      },
       "name": "attention_forward_decode_head_major_gqa_flash_f16cache",
       "_source_file": "attention_forward_decode_head_major_gqa_flash_f16cache.json"
     },
@@ -2381,6 +2679,59 @@
         ]
       },
       "notes": "Flash attention for decode mode with sliding window: single query token attends to the last W KV cache entries.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q_token",
+            "source": "scratch:q_scratch",
+            "cast": "const float*"
+          },
+          {
+            "name": "k_cache",
+            "source": "runtime:kv_cache_k_layer",
+            "cast": "const float*"
+          },
+          {
+            "name": "v_cache",
+            "source": "runtime:kv_cache_v_layer",
+            "cast": "const float*"
+          },
+          {
+            "name": "out_token",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "kv_tokens",
+            "source": "runtime:kv_tokens"
+          },
+          {
+            "name": "cache_capacity",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "sliding_window",
+            "source": "dim:sliding_window"
+          }
+        ]
+      },
       "name": "attention_forward_decode_head_major_gqa_flash_sliding",
       "_source_file": "attention_forward_decode_head_major_gqa_flash_sliding.json"
     },
@@ -3069,6 +3420,55 @@
         ]
       },
       "notes": "Full / bidirectional multi-head attention with GQA support. Intended for encoder-style prefill where every token attends to the full sequence.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "scratch:q_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "k",
+            "source": "scratch:k_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "v",
+            "source": "scratch:v_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "output",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "kv_stride_tokens",
+            "source": "dim:max_seq_len"
+          }
+        ]
+      },
       "name": "attention_forward_full_head_major_gqa_flash_strided",
       "_source_file": "attention_forward_full_head_major_gqa_flash_strided.json"
     },
@@ -3287,6 +3687,55 @@
           }
         }
       ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "q",
+            "source": "scratch:q_scratch"
+          },
+          {
+            "cast": "float*",
+            "name": "k",
+            "source": "scratch:k_scratch"
+          },
+          {
+            "cast": "float*",
+            "name": "v",
+            "source": "scratch:v_scratch"
+          },
+          {
+            "cast": "float*",
+            "name": "output",
+            "source": "output:out"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "kv_stride_tokens",
+            "source": "dim:max_seq_len"
+          }
+        ]
+      },
       "name": "attention_forward_full_head_major_gqa_flash_strided_bf16_storage",
       "_source_file": "attention_forward_full_head_major_gqa_flash_strided_bf16_storage.json"
     },
@@ -3821,6 +4270,55 @@
           }
         }
       ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "q",
+            "source": "scratch:q_scratch"
+          },
+          {
+            "cast": "float*",
+            "name": "k",
+            "source": "scratch:k_scratch"
+          },
+          {
+            "cast": "float*",
+            "name": "v",
+            "source": "scratch:v_scratch"
+          },
+          {
+            "cast": "float*",
+            "name": "output",
+            "source": "output:out"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "kv_stride_tokens",
+            "source": "dim:max_seq_len"
+          }
+        ]
+      },
       "name": "attention_forward_full_head_major_gqa_sdpa_bf16_storage",
       "_source_file": "attention_forward_full_head_major_gqa_sdpa_bf16_storage.json"
     },
@@ -4701,6 +5199,34 @@
           }
         }
       ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "a",
+            "source": "activation:input",
+            "cast": "float*"
+          },
+          {
+            "name": "b",
+            "source": "scratch:residual",
+            "cast": "float*"
+          },
+          {
+            "name": "out",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "aligned_embed_dim",
+            "source": "dim:embed_dim"
+          }
+        ]
+      },
       "name": "ck_residual_add_token_major_bf16_storage",
       "_source_file": "ck_residual_add_token_major_bf16_storage.json"
     },
@@ -7491,6 +8017,20 @@
           }
         }
       ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "data",
+            "source": "output:out"
+          },
+          {
+            "name": "n",
+            "source": "dim:gelu_elems"
+          }
+        ]
+      },
       "name": "gelu_pytorch_tanh_bf16_storage",
       "_source_file": "gelu_pytorch_tanh_bf16_storage.json"
     },
@@ -7866,6 +8406,41 @@
         }
       ],
       "notes": "Exact safetensors/BUMP BF16 weight inference path for prefill. Activation rows are rounded to BF16 before multiply.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "const float*",
+            "name": "A",
+            "source": "activation:a"
+          },
+          {
+            "name": "B",
+            "source": "weight:_first_weight"
+          },
+          {
+            "name": "bias",
+            "source": "weight_f:_bias"
+          },
+          {
+            "cast": "float*",
+            "name": "C",
+            "source": "output:c"
+          },
+          {
+            "name": "M",
+            "source": "dim:_m"
+          },
+          {
+            "name": "N",
+            "source": "dim:_output_dim"
+          },
+          {
+            "name": "K",
+            "source": "dim:_input_dim"
+          }
+        ]
+      },
       "name": "gemm_nt_bf16",
       "_source_file": "gemm_nt_bf16.json"
     },
@@ -7972,6 +8547,41 @@
       "tests": {
         "unit": [
           "unittest/bf16/test_gemm_storage_contract_bf16.py"
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "const float*",
+            "name": "A",
+            "source": "activation:a"
+          },
+          {
+            "name": "B",
+            "source": "weight:_first_weight"
+          },
+          {
+            "name": "bias",
+            "source": "weight_f:_bias"
+          },
+          {
+            "cast": "float*",
+            "name": "C",
+            "source": "output:c"
+          },
+          {
+            "name": "M",
+            "source": "dim:_m"
+          },
+          {
+            "name": "N",
+            "source": "dim:_output_dim"
+          },
+          {
+            "name": "K",
+            "source": "dim:_input_dim"
+          }
         ]
       },
       "name": "gemm_nt_bf16_bf16_storage",
@@ -8547,6 +9157,41 @@
         ]
       },
       "notes": "General matrix multiplication with Q4_K weights and Q8_K activations. Used for W2 (down) projection in MLP. High compression ratio.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "A",
+            "source": "activation:a",
+            "cast": "const void*"
+          },
+          {
+            "name": "B",
+            "source": "weight:_first_weight"
+          },
+          {
+            "name": "bias",
+            "source": "weight_f:_bias"
+          },
+          {
+            "name": "C",
+            "source": "output:c",
+            "cast": "float*"
+          },
+          {
+            "name": "M",
+            "source": "dim:_m"
+          },
+          {
+            "name": "N",
+            "source": "dim:_output_dim"
+          },
+          {
+            "name": "K",
+            "source": "dim:_input_dim"
+          }
+        ]
+      },
       "name": "gemm_nt_q4_k_q8_k",
       "_source_file": "gemm_nt_q4_k_q8_k.json"
     },
@@ -9181,6 +9826,41 @@
         ]
       },
       "notes": "General matrix multiplication with Q6_K weights and Q8_K activations. Used for W2 (down) projection in MLP when Q4_K accuracy is insufficient.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "A",
+            "source": "activation:a",
+            "cast": "const void*"
+          },
+          {
+            "name": "B",
+            "source": "weight:_first_weight"
+          },
+          {
+            "name": "bias",
+            "source": "weight_f:_bias"
+          },
+          {
+            "name": "C",
+            "source": "output:c",
+            "cast": "float*"
+          },
+          {
+            "name": "M",
+            "source": "dim:_m"
+          },
+          {
+            "name": "N",
+            "source": "dim:_output_dim"
+          },
+          {
+            "name": "K",
+            "source": "dim:_input_dim"
+          }
+        ]
+      },
       "name": "gemm_nt_q6_k_q8_k",
       "_source_file": "gemm_nt_q6_k_q8_k.json"
     },
@@ -10418,6 +11098,33 @@
         ]
       },
       "notes": "Generalized matrix-vector multiplication for Q4_K weights with Q8_K activation input. Used for decode path with K-type quantization.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "y",
+            "source": "output:y",
+            "cast": "float*"
+          },
+          {
+            "name": "W",
+            "source": "weight:_first_weight"
+          },
+          {
+            "name": "x_q8",
+            "source": "activation:x",
+            "cast": "void*"
+          },
+          {
+            "name": "M",
+            "source": "dim:_output_dim"
+          },
+          {
+            "name": "K",
+            "source": "dim:_input_dim"
+          }
+        ]
+      },
       "name": "gemv_q4_k_q8_k",
       "_source_file": "gemv_q4_k_q8_k.json"
     },
@@ -11200,6 +11907,33 @@
         ]
       },
       "notes": "Generalized matrix-vector multiplication for Q6_K weights with Q8_K activation input. Used for decode path with K-type quantization.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "y",
+            "source": "output:y",
+            "cast": "float*"
+          },
+          {
+            "name": "W",
+            "source": "weight:_first_weight"
+          },
+          {
+            "name": "x_q8",
+            "source": "activation:x",
+            "cast": "void*"
+          },
+          {
+            "name": "M",
+            "source": "dim:_output_dim"
+          },
+          {
+            "name": "K",
+            "source": "dim:_input_dim"
+          }
+        ]
+      },
       "name": "gemv_q6_k_q8_k",
       "_source_file": "gemv_q6_k_q8_k.json"
     },
@@ -12216,6 +12950,61 @@
           }
         }
       ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "const float*",
+            "name": "input",
+            "source": "activation:input"
+          },
+          {
+            "alt": [
+              "ln1_gamma",
+              "ln2_gamma",
+              "final_ln_weight",
+              "branch_norm_gamma"
+            ],
+            "name": "gamma",
+            "source": "weight_f:gamma"
+          },
+          {
+            "alt": [
+              "ln1_beta",
+              "ln2_beta",
+              "final_ln_bias",
+              "branch_norm_beta"
+            ],
+            "name": "beta",
+            "source": "weight_f:beta"
+          },
+          {
+            "cast": "float*",
+            "name": "output",
+            "source": "output:output"
+          },
+          {
+            "name": "mean_cache",
+            "source": "null"
+          },
+          {
+            "name": "rstd_cache",
+            "source": "null"
+          },
+          {
+            "name": "tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "d_model",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "eps",
+            "source": "dim:rms_eps"
+          }
+        ]
+      },
       "name": "layernorm_bf16_storage",
       "_source_file": "layernorm_bf16_storage.json"
     },
@@ -15777,6 +16566,94 @@
           }
         }
       ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "q",
+            "source": "output:q"
+          },
+          {
+            "cast": "float*",
+            "name": "k",
+            "source": "output:k"
+          },
+          {
+            "cast": "const int32_t*",
+            "name": "positions",
+            "source": "activation:positions"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "n_dims",
+            "source": "dim:n_dims"
+          },
+          {
+            "name": "section_0",
+            "source": "dim:section_0"
+          },
+          {
+            "name": "section_1",
+            "source": "dim:section_1"
+          },
+          {
+            "name": "section_2",
+            "source": "dim:section_2"
+          },
+          {
+            "name": "section_3",
+            "source": "dim:section_3"
+          },
+          {
+            "name": "n_ctx_orig",
+            "source": "dim:n_ctx_orig"
+          },
+          {
+            "name": "freq_base",
+            "source": "dim:freq_base"
+          },
+          {
+            "name": "freq_scale",
+            "source": "dim:freq_scale"
+          },
+          {
+            "name": "ext_factor",
+            "source": "dim:ext_factor"
+          },
+          {
+            "name": "attn_factor",
+            "source": "dim:attn_factor"
+          },
+          {
+            "name": "beta_fast",
+            "source": "dim:beta_fast"
+          },
+          {
+            "name": "beta_slow",
+            "source": "dim:beta_slow"
+          }
+        ]
+      },
       "name": "mrope_qk_vision",
       "_source_file": "mrope_qk_vision.json"
     },
@@ -15959,6 +16836,94 @@
           }
         }
       ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "q",
+            "source": "output:q"
+          },
+          {
+            "cast": "float*",
+            "name": "k",
+            "source": "output:k"
+          },
+          {
+            "cast": "const int32_t*",
+            "name": "positions",
+            "source": "activation:positions"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "n_dims",
+            "source": "dim:n_dims"
+          },
+          {
+            "name": "section_0",
+            "source": "dim:section_0"
+          },
+          {
+            "name": "section_1",
+            "source": "dim:section_1"
+          },
+          {
+            "name": "section_2",
+            "source": "dim:section_2"
+          },
+          {
+            "name": "section_3",
+            "source": "dim:section_3"
+          },
+          {
+            "name": "n_ctx_orig",
+            "source": "dim:n_ctx_orig"
+          },
+          {
+            "name": "freq_base",
+            "source": "dim:freq_base"
+          },
+          {
+            "name": "freq_scale",
+            "source": "dim:freq_scale"
+          },
+          {
+            "name": "ext_factor",
+            "source": "dim:ext_factor"
+          },
+          {
+            "name": "attn_factor",
+            "source": "dim:attn_factor"
+          },
+          {
+            "name": "beta_fast",
+            "source": "dim:beta_fast"
+          },
+          {
+            "name": "beta_slow",
+            "source": "dim:beta_slow"
+          }
+        ]
+      },
       "name": "mrope_qk_vision_bf16_storage",
       "_source_file": "mrope_qk_vision_bf16_storage.json"
     },
@@ -16141,6 +17106,94 @@
           }
         }
       ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "q",
+            "source": "output:q"
+          },
+          {
+            "cast": "float*",
+            "name": "k",
+            "source": "output:k"
+          },
+          {
+            "cast": "const int32_t*",
+            "name": "positions",
+            "source": "activation:positions"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "n_dims",
+            "source": "dim:n_dims"
+          },
+          {
+            "name": "section_0",
+            "source": "dim:section_0"
+          },
+          {
+            "name": "section_1",
+            "source": "dim:section_1"
+          },
+          {
+            "name": "section_2",
+            "source": "dim:section_2"
+          },
+          {
+            "name": "section_3",
+            "source": "dim:section_3"
+          },
+          {
+            "name": "n_ctx_orig",
+            "source": "dim:n_ctx_orig"
+          },
+          {
+            "name": "freq_base",
+            "source": "dim:freq_base"
+          },
+          {
+            "name": "freq_scale",
+            "source": "dim:freq_scale"
+          },
+          {
+            "name": "ext_factor",
+            "source": "dim:ext_factor"
+          },
+          {
+            "name": "attn_factor",
+            "source": "dim:attn_factor"
+          },
+          {
+            "name": "beta_fast",
+            "source": "dim:beta_fast"
+          },
+          {
+            "name": "beta_slow",
+            "source": "dim:beta_slow"
+          }
+        ]
+      },
       "name": "mrope_qk_vision_fp16_storage",
       "_source_file": "mrope_qk_vision_fp16_storage.json"
     },
@@ -16576,6 +17629,41 @@
         }
       ],
       "notes": "Exact PyTorch BF16 storage-boundary contract for Qwen3-VL-style tiled position interpolation. Selection is contract-driven, not model-name-driven.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "x",
+            "source": "output:x"
+          },
+          {
+            "cast": "const float*",
+            "name": "position_embd",
+            "source": "weight:pos_emb"
+          },
+          {
+            "name": "grid_h",
+            "source": "dim:vision_grid_h"
+          },
+          {
+            "name": "grid_w",
+            "source": "dim:vision_grid_w"
+          },
+          {
+            "name": "embed_dim",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "merge_size",
+            "source": "dim:merge_size"
+          },
+          {
+            "name": "source_grid_size",
+            "source": "dim:source_grid_size"
+          }
+        ]
+      },
       "name": "position_embeddings_add_tiled_2d_align_corners_bf16",
       "_source_file": "position_embeddings_add_tiled_2d_align_corners_bf16.json"
     },

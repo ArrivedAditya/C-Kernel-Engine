@@ -61,6 +61,7 @@
       "additionalProperties": false,
       "required": ["function"],
       "properties": {"function": {"type": "string", "minLength": 1}}
-    }
+    },
+    "call_abi": {"type": "object"}
   }
 }

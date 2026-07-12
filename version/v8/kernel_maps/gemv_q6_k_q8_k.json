@@ -92,4 +92,32 @@
     ]
   },
   "notes": "Generalized matrix-vector multiplication for Q6_K weights with Q8_K activation input. Used for decode path with K-type quantization."
+,
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "y",
+        "source": "output:y",
+        "cast": "float*"
+      },
+      {
+        "name": "W",
+        "source": "weight:_first_weight"
+      },
+      {
+        "name": "x_q8",
+        "source": "activation:x",
+        "cast": "void*"
+      },
+      {
+        "name": "M",
+        "source": "dim:_output_dim"
+      },
+      {
+        "name": "K",
+        "source": "dim:_input_dim"
+      }
+    ]
+  }
 }

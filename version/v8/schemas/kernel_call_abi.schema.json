@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.kernel_call_abi",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "params"],
+  "properties": {
+    "version": {"const": 1},
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "source"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "source": {
+            "type": "string",
+            "pattern": "^(null|(activation|config|const|dim|dtype|dtype_weight|output|param|runtime|scratch|weight|weight_f):.+)$"
+          },
+          "cast": {"type": "string", "minLength": 1},
+          "alt": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  }
+}

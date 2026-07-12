@@ -49,4 +49,40 @@
     }
   ],
   "notes": "Exact PyTorch BF16 storage-boundary contract for Qwen3-VL-style tiled position interpolation. Selection is contract-driven, not model-name-driven."
+,
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "cast": "float*",
+        "name": "x",
+        "source": "output:x"
+      },
+      {
+        "cast": "const float*",
+        "name": "position_embd",
+        "source": "weight:pos_emb"
+      },
+      {
+        "name": "grid_h",
+        "source": "dim:vision_grid_h"
+      },
+      {
+        "name": "grid_w",
+        "source": "dim:vision_grid_w"
+      },
+      {
+        "name": "embed_dim",
+        "source": "dim:embed_dim"
+      },
+      {
+        "name": "merge_size",
+        "source": "dim:merge_size"
+      },
+      {
+        "name": "source_grid_size",
+        "source": "dim:source_grid_size"
+      }
+    ]
+  }
 }

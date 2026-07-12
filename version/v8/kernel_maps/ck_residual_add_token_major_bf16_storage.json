@@ -130,4 +130,33 @@
       }
     }
   ]
+,
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "a",
+        "source": "activation:input",
+        "cast": "float*"
+      },
+      {
+        "name": "b",
+        "source": "scratch:residual",
+        "cast": "float*"
+      },
+      {
+        "name": "out",
+        "source": "output:out",
+        "cast": "float*"
+      },
+      {
+        "name": "tokens",
+        "source": "dim:seq_len"
+      },
+      {
+        "name": "aligned_embed_dim",
+        "source": "dim:embed_dim"
+      }
+    ]
+  }
 }

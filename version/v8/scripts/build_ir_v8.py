@@ -10354,7 +10354,7 @@ def validate_buffer_assignments(lowered_ir: Dict) -> None:
 
 
 def load_kernel_bindings() -> Dict[str, Dict]:
-    """Load kernel parameter bindings for IR Lower 3, with optional v8 overlays."""
+    """Load legacy function-keyed bindings for uncontracted compatibility paths."""
     bindings_path = V8_ROOT / "kernel_maps" / "kernel_bindings.json"
     with open(bindings_path, "r") as f:
         data = json.load(f)
@@ -10372,12 +10372,147 @@ def load_kernel_bindings() -> Dict[str, Dict]:
     return bindings
 
 
+_CALL_ABI_SOURCE_KINDS = {
+    "activation",
+    "config",
+    "const",
+    "dim",
+    "dtype",
+    "dtype_weight",
+    "null",
+    "output",
+    "param",
+    "runtime",
+    "scratch",
+    "weight",
+    "weight_f",
+}
+
+
+def _validate_kernel_call_abi(kernel_id: str, function: str, call_abi: Dict, source: Path) -> None:
+    if set(call_abi) - {"version", "params"}:
+        unknown = sorted(set(call_abi) - {"version", "params"})
+        raise RuntimeError(
+            f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {source.name} has unknown "
+            f"call_abi fields {unknown}. Fix the kernel map; do not add compiler defaults."
+        )
+    if call_abi.get("version") != 1:
+        raise RuntimeError(
+            f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {source.name} must declare "
+            "call_abi.version=1."
+        )
+    params = call_abi.get("params")
+    if not isinstance(params, list):
+        raise RuntimeError(
+            f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {source.name} must declare "
+            "an ordered call_abi.params array."
+        )
+    seen = set()
+    for index, param in enumerate(params):
+        if not isinstance(param, dict):
+            raise RuntimeError(
+                f"HARD CALL ABI FAULT: {kernel_id!r} call_abi.params[{index}] is not an object."
+            )
+        unknown = sorted(set(param) - {"name", "source", "cast", "alt"})
+        if unknown:
+            raise RuntimeError(
+                f"HARD CALL ABI FAULT: {kernel_id!r} call parameter {index} has unknown "
+                f"fields {unknown}."
+            )
+        name = str(param.get("name", "") or "").strip()
+        source_expr = str(param.get("source", "") or "").strip()
+        if not name or not source_expr:
+            raise RuntimeError(
+                f"HARD CALL ABI FAULT: {kernel_id!r} call parameter {index} requires "
+                "non-empty name and source."
+            )
+        if name in seen:
+            raise RuntimeError(
+                f"HARD CALL ABI FAULT: {kernel_id!r} repeats call parameter {name!r}."
+            )
+        seen.add(name)
+        source_kind = source_expr.split(":", 1)[0]
+        if source_kind not in _CALL_ABI_SOURCE_KINDS:
+            raise RuntimeError(
+                f"HARD CALL ABI FAULT: {kernel_id!r}.{name} uses unsupported source "
+                f"{source_expr!r}."
+            )
+        if source_kind == "null" and source_expr != "null":
+            raise RuntimeError(
+                f"HARD CALL ABI FAULT: {kernel_id!r}.{name} null source must be exactly 'null'."
+            )
+        if source_kind != "null" and ":" not in source_expr:
+            raise RuntimeError(
+                f"HARD CALL ABI FAULT: {kernel_id!r}.{name} source {source_expr!r} "
+                "must include an explicit source namespace."
+            )
+        if "cast" in param and (not isinstance(param["cast"], str) or not param["cast"].strip()):
+            raise RuntimeError(
+                f"HARD CALL ABI FAULT: {kernel_id!r}.{name} cast must be a non-empty string."
+            )
+        if "alt" in param:
+            alt = param["alt"]
+            if (
+                not isinstance(alt, list)
+                or not alt
+                or any(not isinstance(value, str) or not value.strip() for value in alt)
+                or len(set(alt)) != len(alt)
+            ):
+                raise RuntimeError(
+                    f"HARD CALL ABI FAULT: {kernel_id!r}.{name} alt must contain unique, "
+                    "non-empty source names."
+                )
+    if not function:
+        raise RuntimeError(
+            f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {source.name} has no impl.function."
+        )
+
+
+def load_kernel_call_abis(
+    kernel_maps_dir: Optional[Path] = None,
+    legacy_bindings: Optional[Dict[str, Dict]] = None,
+) -> Dict[str, Dict]:
+    """Load exact kernel-ID-owned call ABIs and reject split ownership."""
+    maps_dir = kernel_maps_dir or (V8_ROOT / "kernel_maps")
+    legacy = load_kernel_bindings() if legacy_bindings is None else legacy_bindings
+    result: Dict[str, Dict] = {}
+    excluded = {"KERNEL_REGISTRY.json", "kernel_bindings.json", "kernel_bindings.overlay.json"}
+    for path in sorted(maps_dir.glob("*.json")):
+        if path.name in excluded:
+            continue
+        with path.open("r", encoding="utf-8") as handle:
+            doc = json.load(handle)
+        call_abi = doc.get("call_abi")
+        if call_abi is None:
+            continue
+        kernel_id = str(doc.get("id", "") or "").strip()
+        function = str((doc.get("impl") or {}).get("function", "") or "").strip()
+        if not kernel_id:
+            raise RuntimeError(f"HARD CALL ABI FAULT: {path.name} declares call_abi without id.")
+        if kernel_id in result:
+            raise RuntimeError(f"HARD CALL ABI FAULT: duplicate call ABI owner for {kernel_id!r}.")
+        _validate_kernel_call_abi(kernel_id, function, call_abi, path)
+        legacy_keys = [key for key in {kernel_id, function} if key and key in legacy]
+        if legacy_keys:
+            raise RuntimeError(
+                f"HARD CALL ABI FAULT: kernel map {path.name} owns {kernel_id!r}, but legacy "
+                f"bindings still define {legacy_keys}. Remove the duplicate legacy entries."
+            )
+        result[kernel_id] = {
+            "function": function,
+            "call_abi": copy.deepcopy(call_abi),
+            "source_file": path.name,
+        }
+    return result
+
+
 def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
     """
     IR Lower 3: Emit call-ready ops with ordered args (function + expr list).
     This removes all semantic ambiguity for codegen.
     """
-    bindings = load_kernel_bindings()
+    legacy_bindings = load_kernel_bindings()
+    kernel_call_abis = load_kernel_call_abis(legacy_bindings=legacy_bindings)
     ops = lowered_ir.get("operations", lowered_ir.get("ops", []))
     config = lowered_ir.get("config", {})
     dtype_map = {
@@ -10510,7 +10645,21 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
 
     for op in ops:
         func = op.get("function", op.get("kernel", "unknown"))
-        binding = bindings.get(func)
+        kernel_id = str(op.get("kernel", "") or "").strip()
+        call_abi_entry = kernel_call_abis.get(kernel_id)
+        governed = "resolved_contract" in op or "resolved_execution" in op
+        binding_owner = "kernel_map" if call_abi_entry is not None else "legacy_compatibility"
+        if call_abi_entry is not None:
+            if call_abi_entry["function"] != func:
+                raise RuntimeError(
+                    f"HARD CALL ABI FAULT: kernel map {kernel_id!r} resolves function "
+                    f"{call_abi_entry['function']!r}, but LoweredIR carries {func!r}."
+                )
+            binding = call_abi_entry["call_abi"]
+        elif governed:
+            binding = None
+        else:
+            binding = legacy_bindings.get(func)
         op_errors = []
         op_warnings = []
 
@@ -10533,7 +10682,13 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
             continue
 
         if not binding:
-            op_errors.append(f"Missing binding for function '{func}'")
+            if governed:
+                op_errors.append(
+                    f"Resolved kernel '{kernel_id}' is missing map-owned call_abi; "
+                    "fix the kernel map rather than adding a compiler fallback"
+                )
+            else:
+                op_errors.append(f"Missing legacy binding for function '{func}'")
             call_ops.append({
                 "idx": op.get("idx", -1),
                 "function": func,
@@ -10908,6 +11063,12 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
             "args": args,
             "errors": op_errors,
             "warnings": op_warnings,
+            "call_abi": {
+                "version": int(binding.get("version", 0) or 0),
+                "owner": binding_owner,
+                "kernel_id": kernel_id,
+                "source_file": call_abi_entry["source_file"] if call_abi_entry else "kernel_bindings*.json",
+            },
         }
         if op.get("required_contract") is not None:
             call_op["required_contract"] = copy.deepcopy(op["required_contract"])

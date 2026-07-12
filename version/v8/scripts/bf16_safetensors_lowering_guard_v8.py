@@ -322,6 +322,10 @@ def run_guard(workdir: Path) -> None:
     assert position_call["resolved_contract"]["resolved_contract_id"] == "bf16_tiled_2d_align_corners_rne_residual"
     assert position_call["resolved_contract"]["kernel_id"] == "position_embeddings_add_tiled_2d_align_corners_bf16"
     rope_call = next(op for op in call_ops if op["op"] == "rope_qk")
+    attention_call = next(op for op in call_ops if op["op"] == "attn")
+    assert attention_call["call_abi"]["owner"] == "kernel_map"
+    assert attention_call["call_abi"]["kernel_id"] == "attention_forward_full_head_major_gqa_sdpa_bf16_storage"
+    assert attention_call["call_abi"]["version"] == 1
     rope_args = {arg["name"]: arg["expr"] for arg in rope_call["args"]}
     # n_dims is the full rotary width. Sections describe axis allocation;
     # they are not a pair count and must not halve the kernel ABI value.

@@ -147,4 +147,40 @@
     ]
   },
   "notes": "General matrix multiplication with Q4_K weights and Q8_K activations. Used for W2 (down) projection in MLP. High compression ratio."
+,
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "A",
+        "source": "activation:a",
+        "cast": "const void*"
+      },
+      {
+        "name": "B",
+        "source": "weight:_first_weight"
+      },
+      {
+        "name": "bias",
+        "source": "weight_f:_bias"
+      },
+      {
+        "name": "C",
+        "source": "output:c",
+        "cast": "float*"
+      },
+      {
+        "name": "M",
+        "source": "dim:_m"
+      },
+      {
+        "name": "N",
+        "source": "dim:_output_dim"
+      },
+      {
+        "name": "K",
+        "source": "dim:_input_dim"
+      }
+    ]
+  }
 }

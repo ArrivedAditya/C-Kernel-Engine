@@ -103,4 +103,40 @@
       "unittest/bf16/test_gemm_storage_contract_bf16.py"
     ]
   }
+,
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "cast": "const float*",
+        "name": "A",
+        "source": "activation:a"
+      },
+      {
+        "name": "B",
+        "source": "weight:_first_weight"
+      },
+      {
+        "name": "bias",
+        "source": "weight_f:_bias"
+      },
+      {
+        "cast": "float*",
+        "name": "C",
+        "source": "output:c"
+      },
+      {
+        "name": "M",
+        "source": "dim:_m"
+      },
+      {
+        "name": "N",
+        "source": "dim:_output_dim"
+      },
+      {
+        "name": "K",
+        "source": "dim:_input_dim"
+      }
+    ]
+  }
 }
