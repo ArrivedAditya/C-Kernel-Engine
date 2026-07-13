@@ -2984,7 +2984,7 @@ test-numerical-contracts: $(LIB)
 	@echo "Running v8 numerical contract validation..."
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_attention_contracts_v8.py
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_numerical_execution_contracts_v8.py
-	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py
+	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/xray_execution_state_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py
 	@$(PYTHON) tests/test_v8_attention_contracts.py
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
 	@$(PYTHON) unittest/bf16/test_layernorm_storage_contract_bf16.py
@@ -2994,6 +2994,7 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) unittest/bf16/test_gelu_pytorch_tanh_storage_bf16.py
 	@PYTHONPATH=unittest CK_NUMERICAL_CAPABILITY_REPORT=version/v8/.cache/reports/mrope_capabilities_latest.json $(PYTHON) -c "import test_vision; test_vision.test_mrope_qk_vision_storage_matrix()"
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
+	@$(PYTHON) tests/test_v8_xray_execution_state.py
 	@$(PYTHON) unittest/test_attention_full.py
 	@$(PYTHON) unittest/test_attention_f16_split_kv.py
 	@mkdir -p build/v8/contracts
@@ -3007,12 +3008,14 @@ test-bf16-xray:
 	@$(PYTHON) -m py_compile \
 		version/v8/scripts/xray_vision_parity_v8.py \
 		version/v8/scripts/xray_numerical_parity_v8.py \
+		version/v8/scripts/xray_execution_state_v8.py \
 		version/v8/scripts/build_xray_checkpoint_manifest_v8.py \
 		version/v8/scripts/xray_qwen3vl_bf16_v8.py \
 		version/v8/scripts/xray_qwen3vl_llamacpp_v8.py \
 		version/v8/scripts/normalize_xray_ranking_report_v8.py
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
+	@$(PYTHON) tests/test_v8_xray_execution_state.py
 	@$(PYTHON) tests/test_v8_xray_vision_interface.py
 	@$(PYTHON) version/v8/test_assets/generate_xray_form_fixture_v8.py \
 		--output build/xray/public_form_1152x896.ppm
