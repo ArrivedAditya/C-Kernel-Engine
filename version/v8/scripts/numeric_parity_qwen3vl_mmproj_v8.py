@@ -1021,6 +1021,7 @@ def _run_llamacpp_encoder(
     named_dump_output: str | None = None,
     image_min_tokens: int | None = None,
     image_max_tokens: int | None = None,
+    flash_attn_type: int = 0,
 ) -> array:
     lib = _load_mtmd_shim(shim_so)
     dump_dir_ctx: tempfile.TemporaryDirectory[str] | None = None
@@ -1040,7 +1041,7 @@ def _run_llamacpp_encoder(
     ctx = lib.ck_mtmd_clip_init(
         str(gguf_path).encode(),
         0,
-        0,
+        int(flash_attn_type),
         int(image_min_tokens or 0),
         int(image_max_tokens or 0),
         0,
@@ -1345,6 +1346,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--image-min-tokens", type=int, default=None, help="Override minimum merged visual tokens for dynamic-resolution Qwen3-VL images")
     ap.add_argument("--image-max-tokens", type=int, default=None, help="Override maximum merged visual tokens for dynamic-resolution Qwen3-VL images")
     ap.add_argument("--threads", type=int, default=1)
+    ap.add_argument(
+        "--llama-flash-attn",
+        choices=("disabled", "auto", "enabled"),
+        default="disabled",
+        help="Reference attention algorithm; select enabled for production flash-attention parity.",
+    )
     ap.add_argument("--ck-threads", type=int, default=None, help="Thread count for generated CK runtime; defaults to --threads")
     ap.add_argument("--activation-pref", action="append", default=[], help="Override generated vision activation preference in op=dtype form; may be repeated")
     ap.add_argument("--strict-parity", action="store_true", help="Enable parity-only strict mode in CK and load ggml CPU helpers for full-attention replay")
@@ -1368,6 +1375,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--llama-row-index", type=int, default=None, help="Optional llama-only row index; negative indices count from the end")
     ap.add_argument("--llama-row-width", type=int, default=None, help="Optional llama-only row width")
     ap.add_argument("--report", type=Path, default=None, help="Optional JSON report output")
+    ap.add_argument("--dump-ck-f32", type=Path, default=None, help="Optional raw decoder-facing CK output tensor")
+    ap.add_argument("--dump-llama-f32", type=Path, default=None, help="Optional raw decoder-facing llama.cpp output tensor")
     args = ap.parse_args(argv)
 
     ck_threads = int(args.ck_threads or args.threads)
@@ -1440,8 +1449,15 @@ def main(argv: list[str] | None = None) -> int:
         named_dump_output=llama_reference_output,
         image_min_tokens=args.image_min_tokens,
         image_max_tokens=args.image_max_tokens,
+        flash_attn_type={"disabled": 0, "auto": -1, "enabled": 1}[args.llama_flash_attn],
     )
     t_llama = time.perf_counter()
+
+    for path, values in ((args.dump_ck_f32, ck_out), (args.dump_llama_f32, llama_out)):
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("wb") as f:
+                values.tofile(f)
 
     raw_num_values = {"ck": len(ck_out), "llama": len(llama_out)}
     ck_row_slice = _resolve_row_slice(

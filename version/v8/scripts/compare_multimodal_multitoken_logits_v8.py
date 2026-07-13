@@ -680,6 +680,8 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
     lib, logits_buf, vocab_size = _init_ck_state(inputs, bool(args.ck_strict_parity))
     generated: list[int] = []
     llama_generated = [int(t) for t in list((llama_seq.get("meta") or {}).get("greedy_generated", []))]
+    stop_token_ids = _resolve_stop_token_ids(inputs["bridge_report"])
+    stop_reason: str | None = None
     steps: list[dict[str, Any]] = []
     first_divergence: dict[str, Any] | None = None
     try:
@@ -721,6 +723,9 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
                 first_divergence = row
                 if args.append_on_divergence == "stop":
                     break
+            if _is_matched_stop_token(ck_next, llama_next, stop_token_ids):
+                stop_reason = "matched_stop_token"
+                break
             if top1_match or args.append_on_divergence == "llama":
                 next_token = llama_next
             elif args.append_on_divergence == "ck":
@@ -753,6 +758,8 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
         "llama_decode_mode": str(args.llama_decode_mode),
         "llama_greedy_generated": llama_generated,
         "append_on_divergence": str(args.append_on_divergence),
+        "stop_token_ids": sorted(stop_token_ids),
+        "stop_reason": stop_reason,
         "prompt_tokens_before_image": inputs["tokens_before"],
         "prompt_tokens_after_image": inputs["tokens_after"],
         "prefix": {
@@ -768,6 +775,17 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
         "first_divergence": first_divergence,
         "steps": steps,
     }
+
+
+def _resolve_stop_token_ids(bridge_report: dict[str, Any]) -> set[int]:
+    stop_ids = {int(token) for token in list(bridge_report.get("stop_token_ids") or [])}
+    if not stop_ids and bridge_report.get("eos_token_id") is not None:
+        stop_ids.add(int(bridge_report["eos_token_id"]))
+    return stop_ids
+
+
+def _is_matched_stop_token(ck_token: int, llama_token: int, stop_token_ids: set[int]) -> bool:
+    return ck_token == llama_token and ck_token in stop_token_ids
 
 
 def main() -> int:

@@ -337,62 +337,80 @@ def _load_llama_dump_dir(dump_dir: Path) -> list[Any]:
     if not index_path.exists():
         return []
 
-    dumps: list[Any] = []
+    rows: list[dict[str, Any]] = []
     with index_path.open("r", encoding="utf-8") as f:
         for raw_line in f:
             line = raw_line.strip()
             if not line:
                 continue
-            row = json.loads(line)
-            elem_count = int(row.get("elem_count", 0) or 0)
-            nbytes = int(row.get("nbytes", 0) or 0)
-            if elem_count <= 0 or nbytes <= 0:
-                continue
+            rows.append(json.loads(line))
 
-            bin_path = dump_dir / f"{row['name']}.bin"
-            if not bin_path.exists():
-                continue
+    max_occurrence: dict[tuple[str, int], int] = {}
+    for row in rows:
+        base_name = str(row.get("base_name", row.get("name", "")))
+        token_id = int(row.get("token_id", 0) or 0)
+        key = (base_name, token_id)
+        max_occurrence[key] = max(
+            max_occurrence.get(key, 0),
+            int(row.get("occurrence", 0) or 0),
+        )
 
-            elem_size = nbytes // elem_count if nbytes % elem_count == 0 else 4
-            if elem_size == 4:
-                raw = np.fromfile(bin_path, dtype=np.float32)
-                dtype_name = "fp32"
-            elif elem_size == 2:
-                raw = np.fromfile(bin_path, dtype=np.float16).astype(np.float32)
-                dtype_name = "fp16"
+    dumps: list[Any] = []
+    for row in rows:
+        elem_count = int(row.get("elem_count", 0) or 0)
+        nbytes = int(row.get("nbytes", 0) or 0)
+        if elem_count <= 0 or nbytes <= 0:
+            continue
+
+        bin_path = dump_dir / f"{row['name']}.bin"
+        if not bin_path.exists():
+            continue
+
+        elem_size = nbytes // elem_count if nbytes % elem_count == 0 else 4
+        if elem_size == 4:
+            raw = np.fromfile(bin_path, dtype=np.float32)
+            dtype_name = "fp32"
+        elif elem_size == 2:
+            raw = np.fromfile(bin_path, dtype=np.float16).astype(np.float32)
+            dtype_name = "fp16"
+        else:
+            raw = np.fromfile(bin_path, dtype=np.uint8).astype(np.float32)
+            dtype_name = f"raw{elem_size}"
+
+        rank = max(1, int(row.get("rank", 1) or 1))
+        raw_shape = row.get("shape", [])
+        shape = [int(x) for x in list(raw_shape)[:rank] if int(x) > 0]
+        data = raw.astype(np.float32, copy=False)
+        if shape:
+            expected = int(np.prod(np.array(shape, dtype=np.int64)))
+            if expected == int(data.size):
+                data = data.reshape(shape)
+
+        norm_layer, norm_op = parity_test_v7._normalize_layer_and_op(
+            -1,
+            str(row.get("base_name", row.get("name", ""))),
+        )
+        occurrence = int(row.get("occurrence", 0) or 0)
+        base_name = str(row.get("base_name", row.get("name", "")))
+        token_id = int(row.get("token_id", 0) or 0)
+        final_occurrence = max_occurrence.get((base_name, token_id), occurrence)
+        if norm_op in {"q_proj", "k_proj"} and occurrence > 0:
+            stem = "qcur" if norm_op == "q_proj" else "kcur"
+            if final_occurrence >= 2 and occurrence < final_occurrence:
+                norm_op = f"{stem}_normed"
             else:
-                raw = np.fromfile(bin_path, dtype=np.uint8).astype(np.float32)
-                dtype_name = f"raw{elem_size}"
-
-            rank = max(1, int(row.get("rank", 1) or 1))
-            raw_shape = row.get("shape", [])
-            shape = [int(x) for x in list(raw_shape)[:rank] if int(x) > 0]
-            data = raw.astype(np.float32, copy=False)
-            if shape:
-                expected = int(np.prod(np.array(shape, dtype=np.int64)))
-                if expected == int(data.size):
-                    data = data.reshape(shape)
-
-            norm_layer, norm_op = parity_test_v7._normalize_layer_and_op(
-                -1,
-                str(row.get("base_name", row.get("name", ""))),
+                norm_op = f"{stem}_rope"
+        dumps.append(
+            parity_test_v7.ParityDump(
+                norm_layer,
+                norm_op,
+                data,
+                int(row.get("token_id", 0) or 0),
+                dtype_name,
+                source_token_id=int(row.get("token_id", 0) or 0),
+                source_name=str(row.get("name", "")),
             )
-            occurrence = int(row.get("occurrence", 0) or 0)
-            if occurrence == 1 and norm_op == "q_proj":
-                norm_op = "qcur_rope"
-            elif occurrence == 1 and norm_op == "k_proj":
-                norm_op = "kcur_rope"
-            dumps.append(
-                parity_test_v7.ParityDump(
-                    norm_layer,
-                    norm_op,
-                    data,
-                    int(row.get("token_id", 0) or 0),
-                    dtype_name,
-                    source_token_id=int(row.get("token_id", 0) or 0),
-                    source_name=str(row.get("name", "")),
-                )
-            )
+        )
     return dumps
 
 

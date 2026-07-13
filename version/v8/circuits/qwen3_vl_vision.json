@@ -128,7 +128,8 @@
       ],
       "selector": {
         "config_not_equals": {
-          "vision_position_storage_boundary": "bf16"
+          "vision_position_storage_boundary": "bf16",
+          "position_interpolation_policy": "align_corners_bilinear"
         }
       },
       "phases": {
@@ -136,6 +137,36 @@
           "contract_id": "fp32_tiled_2d_antialias_half_pixel_contracted",
           "validation": "validated",
           "evidence": "unittest/test_vision.py::test_position_embeddings_add_tiled_2d_qwen3vl_resize_order and llama.cpp X-ray production-shape parity"
+        }
+      },
+      "checkpoint": {
+        "id": "vision.frontend.position.output",
+        "producer": "position_embeddings",
+        "logical_layout": "token_major",
+        "axis_names": [
+          "token",
+          "channel"
+        ]
+      }
+    },
+    "vision.frontend.position.fp32.align_corners": {
+      "op": "position_embeddings",
+      "template_ops": [
+        "position_embeddings"
+      ],
+      "selector": {
+        "config_equals": {
+          "position_interpolation_policy": "align_corners_bilinear"
+        },
+        "config_not_equals": {
+          "vision_position_storage_boundary": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "fp32_tiled_2d_align_corners_contracted",
+          "validation": "validated",
+          "evidence": "unittest/test_vision.py align-corners oracle and Qwen3-VL call-IR provider selection test"
         }
       },
       "checkpoint": {

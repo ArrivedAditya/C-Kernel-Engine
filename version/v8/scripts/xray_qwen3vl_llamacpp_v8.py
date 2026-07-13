@@ -42,11 +42,13 @@ def _legacy_result_index(report: dict[str, Any]) -> dict[tuple[int, str], dict[s
 
 
 def normalize_capture_report(
-    report: dict[str, Any], profile: dict[str, Any], layer: int
+    report: dict[str, Any], profile: dict[str, Any], layer: int,
+    execution_mode: str = "strict",
 ) -> dict[str, Any]:
     indexed = _legacy_result_index(report)
     comparisons: list[dict[str, Any]] = []
     first_divergence: dict[str, Any] | None = None
+    first_non_exact: dict[str, Any] | None = None
     last_passing: str | None = None
     for checkpoint_id, mapping in _active_checkpoints(profile, layer):
         result_layer = int(mapping.get("result_layer", layer))
@@ -88,28 +90,47 @@ def normalize_capture_report(
             }
         comparisons.append(comparison)
         if comparison["status"] == "pass":
+            metrics = comparison.get("metrics") or {}
+            if first_non_exact is None and float(metrics.get("max_abs_diff", 0.0) or 0.0) != 0.0:
+                first_non_exact = {
+                    "checkpoint_id": checkpoint_id,
+                    "legacy_tensor": result_name,
+                    "metrics": metrics,
+                }
             last_passing = checkpoint_id
             continue
         first_divergence = comparison
         break
 
     if first_divergence is not None:
-        classification = str(first_divergence["classification"])
-        first_divergence["fix_owner"] = xray.FIX_OWNERS.get(
-            classification, "first_divergent_edge"
-        )
-        first_divergence["recommended_action"] = xray.REMEDIATIONS.get(
-            classification, "Inspect the first failing semantic edge."
-        )
+        if first_non_exact is not None:
+            first_divergence["classification"] = "DOWNSTREAM_OR_PROPAGATED_DIVERGENCE"
+            first_divergence["causal_origin_candidate"] = first_non_exact
+            first_divergence["fix_owner"] = "exact_input_control"
+            first_divergence["recommended_action"] = (
+                "Replay this operation with the oracle tensor from the first non-exact "
+                "upstream checkpoint. Fix the downstream kernel only if that exact-input "
+                "control still diverges."
+            )
+        else:
+            classification = str(first_divergence["classification"])
+            first_divergence["fix_owner"] = xray.FIX_OWNERS.get(
+                classification, "first_divergent_edge"
+            )
+            first_divergence["recommended_action"] = xray.REMEDIATIONS.get(
+                classification, "Inspect the first failing semantic edge."
+            )
     return {
         "schema": "cke.xray_numerical_report",
         "schema_version": 1,
         "subject_backend": "ck",
         "oracle_backend": "llamacpp",
+        "execution_mode": execution_mode,
         "status": "fail" if first_divergence is not None else "pass",
         "comparisons": comparisons,
         "first_divergence": first_divergence,
         "last_passing_checkpoint": last_passing,
+        "first_non_exact_checkpoint": first_non_exact,
         "unresolved_contract_checkpoints": [],
         "ranking_divergence": None,
         "next_plan": {
@@ -134,10 +155,12 @@ def _capture_args(args: argparse.Namespace, profile: dict[str, Any], report_path
         "--llama-dump-names", ",".join(names),
         "--llama-dump-layer", str(args.layer),
         "--ck-stop-layer", str(args.layer),
-        "--strict-parity",
         "--quiet",
         "--report", str(report_path),
+        "--llama-flash-attn", "disabled" if args.execution_mode == "strict" else "enabled",
     ]
+    if args.execution_mode == "strict":
+        command.append("--strict-parity")
     if args.image is not None:
         command.extend(["--image-path", str(args.image)])
     else:
@@ -162,12 +185,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             f"llama.cpp capture adapter returned rc={capture_rc} without {capture_report_path}"
         )
     report = normalize_capture_report(
-        xray.load_json(capture_report_path), profile, args.layer
+        xray.load_json(capture_report_path), profile, args.layer, args.execution_mode
     )
     result = {
         "schema": "cke.xray_orchestration_report",
         "schema_version": 1,
         "backend": "llamacpp",
+        "execution_mode": args.execution_mode,
         "status": report["status"],
         "rounds": [{
             "round": 0,
@@ -195,6 +219,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--profile", type=Path, default=DEFAULT_PROFILE)
     parser.add_argument("--threads", type=int, default=20)
     parser.add_argument("--ck-threads", type=int)
+    parser.add_argument(
+        "--execution-mode",
+        choices=("strict", "production"),
+        default="strict",
+        help="Run CK with strict reference semantics or the optimized production path.",
+    )
     parser.add_argument("--output-dir", type=Path, default=Path("build/xray/qwen3vl_llamacpp"))
     args = parser.parse_args(list(argv) if argv is not None else None)
     result = run(args)

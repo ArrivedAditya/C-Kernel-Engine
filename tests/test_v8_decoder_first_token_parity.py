@@ -77,7 +77,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="v8_decoder_llama_rope_dump_") as tmpdir:
             tmp = Path(tmpdir)
             rows = []
-            for occurrence in (0, 1):
+            for occurrence in (0, 1, 2):
                 name = f"Qcur-0-token-000001-occ-{occurrence:03d}"
                 raw = np.full(8, float(occurrence), dtype=np.float32)
                 (tmp / f"{name}.bin").write_bytes(raw.tobytes())
@@ -101,7 +101,10 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
 
             dumps = decoder_parity_v8._load_llama_dump_dir(tmp)
 
-            self.assertEqual([dump.op_name for dump in dumps], ["q_proj", "qcur_rope"])
+            self.assertEqual(
+                [dump.op_name for dump in dumps],
+                ["q_proj", "qcur_normed", "qcur_rope"],
+            )
 
 
     def test_compare_dump_sets_reports_failures(self) -> None:

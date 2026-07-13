@@ -1347,41 +1347,6 @@
         }
       ]
     },
-    "position_embeddings_add_tiled_2d_align_corners": {
-      "note": "Add align-corners position embeddings to an activation stream already laid out in merged-tile order.",
-      "params": [
-        {
-          "cast": "float*",
-          "name": "x",
-          "source": "output:x"
-        },
-        {
-          "cast": "const float*",
-          "name": "position_embd",
-          "source": "weight:pos_emb"
-        },
-        {
-          "name": "grid_h",
-          "source": "dim:vision_grid_h"
-        },
-        {
-          "name": "grid_w",
-          "source": "dim:vision_grid_w"
-        },
-        {
-          "name": "embed_dim",
-          "source": "dim:embed_dim"
-        },
-        {
-          "name": "merge_size",
-          "source": "dim:merge_size"
-        },
-        {
-          "name": "source_grid_size",
-          "source": "dim:source_grid_size"
-        }
-      ]
-    },
     "quantize_row_q8_0": {
       "note": "Allow vision/footer quantize ops to request batched row emission when rows is present.",
       "params": [

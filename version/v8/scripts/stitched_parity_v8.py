@@ -192,8 +192,9 @@ def _bridge_command(args: argparse.Namespace, bridge_dir: Path, prefix_f32: Path
         "--temperature",
         "0",
         "--no-stream-output",
-        "--strict-parity",
     ]
+    if args.execution_mode == "strict":
+        cmd.append("--strict-parity")
     if args.image_min_tokens is not None:
         cmd.extend(["--image-min-tokens", str(int(args.image_min_tokens))])
     if args.image_max_tokens is not None:
@@ -241,10 +242,13 @@ def _encoder_numeric_command(args: argparse.Namespace, out_dir: Path, out_json: 
         str(int(args.threads)),
         "--ck-threads",
         str(int(args.threads)),
-        "--strict-parity",
+        "--llama-flash-attn",
+        "disabled" if args.execution_mode == "strict" else "enabled",
         "--report",
         str(out_json),
     ]
+    if args.execution_mode == "strict":
+        cmd.append("--strict-parity")
     if args.image_min_tokens is not None:
         cmd.extend(["--image-min-tokens", str(int(args.image_min_tokens))])
     if args.image_max_tokens is not None:
@@ -266,7 +270,8 @@ def _granular_command(args: argparse.Namespace, layer: int, out_dir: Path, out_j
         str(int(args.threads)),
         "--ck-threads",
         str(int(args.threads)),
-        "--strict-parity",
+        "--llama-flash-attn",
+        "disabled" if args.execution_mode == "strict" else "enabled",
         "--llama-dump-layer",
         str(int(layer)),
         "--ck-strict-dump-layer",
@@ -279,6 +284,8 @@ def _granular_command(args: argparse.Namespace, layer: int, out_dir: Path, out_j
         str(out_json),
         "--quiet",
     ]
+    if args.execution_mode == "strict":
+        cmd.append("--strict-parity")
     if args.granular_ck_stop:
         cmd.extend(["--ck-stop-layer", str(int(layer))])
     if args.image_min_tokens is not None:
@@ -391,6 +398,12 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Clean v8 stitched parity runner with automatic granular attribution")
     ap.add_argument("--template", choices=["qwen3vl"], default="qwen3vl")
     ap.add_argument("--mode", choices=["fast", "nightly", "deep"], default="fast")
+    ap.add_argument(
+        "--execution-mode",
+        choices=["strict", "production"],
+        default="strict",
+        help="Use matching CK/llama attention contracts throughout every stitched phase.",
+    )
     ap.add_argument("--decoder-gguf", type=Path, required=True)
     ap.add_argument("--mmproj-gguf", type=Path, required=True)
     ap.add_argument("--image-path", type=Path, required=True)
@@ -461,6 +474,7 @@ def main(argv: list[str] | None = None) -> int:
         "schema": "ck.v8.stitched_parity.v1",
         "template": args.template,
         "mode": args.mode,
+        "execution_mode": args.execution_mode,
         "status": "running",
         "workdir": str(args.workdir),
         "decoder_gguf": str(args.decoder_gguf),

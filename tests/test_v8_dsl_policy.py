@@ -159,6 +159,28 @@ def lower(op):
             ),
             "mrope_qk_text",
         )
+        position_kernels = {
+            "position_embeddings": {
+                "default": "position_embeddings_add_tiled_2d",
+                "align_corners_bilinear": "position_embeddings_add_tiled_2d_align_corners",
+            }
+        }
+        self.assertEqual(
+            build_ir._resolve_position_embeddings_kernel({}, position_kernels),
+            "position_embeddings_add_tiled_2d",
+        )
+        self.assertEqual(
+            build_ir._resolve_position_embeddings_kernel(
+                {"position_interpolation_policy": "align_corners_bilinear"},
+                position_kernels,
+            ),
+            "position_embeddings_add_tiled_2d_align_corners",
+        )
+        with self.assertRaisesRegex(RuntimeError, "no exact circuit kernel mapping"):
+            build_ir._resolve_position_embeddings_kernel(
+                {"position_interpolation_policy": "misspelled_policy"},
+                position_kernels,
+            )
 
     def test_kernel_availability_does_not_substitute_broader_operation(self) -> None:
         registry = {"kernels": [{"op": "attention"}]}

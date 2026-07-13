@@ -216,7 +216,9 @@ def parse_sub_tests(stdout: str) -> list:
         }
 
     # Merge accuracy and performance results
-    all_names = set(accuracy_results.keys()) | set(perf_results.keys())
+    # Preserve execution order so a methodical parity lane is rendered in the
+    # same semantic order in which its boundaries were checked.
+    all_names = list(dict.fromkeys((*accuracy_results.keys(), *perf_results.keys())))
     for name in all_names:
         acc = accuracy_results.get(name, {})
         perf = perf_results.get(name, {})
@@ -548,6 +550,12 @@ MAKE_TARGETS = {
         "category": "inference",
         "target": "test-v8-qwen3vl",
         "timeout_sec": 600,
+    },
+    "qwen3vl_methodical_layer_parity": {
+        "name": "Qwen3-VL Methodical Layer Parity",
+        "category": "parity",
+        "target": "test-qwen3vl-methodical-parity",
+        "timeout_sec": 1200,
     },
     "v8_qwen3vl_vision_smoke": {
         "name": "v8 Qwen3-VL Vision Smoke",
