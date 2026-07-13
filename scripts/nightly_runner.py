@@ -569,6 +569,7 @@ MAKE_TARGETS = {
         "target": "vision-encoder-full",
         "timeout_sec": 21600,
         "status_artifact": "build/vision_encoder_accuracy/summary.json",
+        "status_phase": "bf16_pytorch",
     },
     "v8_gemma4_vision_smoke": {
         "name": "v8 Gemma4 Vision Smoke",
@@ -919,12 +920,21 @@ def run_make_target(target_info: dict, verbose: bool = False) -> TestResult:
         status = "pass" if result.returncode == 0 else "fail"
         status_artifact = target_info.get("status_artifact")
         artifact_payload = None
+        artifact_reason = ""
         if status_artifact:
             artifact_payload = _load_json_if_fresh(ROOT / status_artifact, start_ts=start)
-            artifact_status = str((artifact_payload or {}).get("status") or "").lower()
+            status_phase = target_info.get("status_phase")
+            if status_phase:
+                phase = ((artifact_payload or {}).get("phases") or {}).get(status_phase) or {}
+                artifact_status = str(phase.get("status") or "").lower()
+                artifact_reason = str(phase.get("reason") or "")
+            else:
+                artifact_status = str((artifact_payload or {}).get("status") or "").lower()
             if artifact_status in {"pass", "fail", "skip"}:
                 status = artifact_status
         error_msg = ""
+        if status == "skip" and artifact_reason:
+            error_msg = artifact_reason
         if status == "fail":
             # Look for error indicators in both stdout and stderr
             # Match: [ERROR], [FAIL], error, Error, failed, FAILED
