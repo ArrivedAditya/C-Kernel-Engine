@@ -4862,7 +4862,7 @@ static void ck_attention_f16_split_work(int ith, int nth, void *opaque)
     const int total_jobs = args->num_heads * args->split_chunks;
     const int chunk_size = (args->kv_tokens + args->split_chunks - 1) / args->split_chunks;
     const size_t head_stride = (size_t) args->cache_capacity * (size_t) args->aligned_head_dim;
-    const float scale = 1.0f / sqrtf((float) args->head_dim);
+    const float scale = ck_attention_strict_scale_f32(args->head_dim);
     uint16_t *q_half = (uint16_t *) alloca((size_t) args->aligned_head_dim * sizeof(uint16_t));
     uint16_t *acc_half = (uint16_t *) alloca((size_t) args->aligned_head_dim * sizeof(uint16_t));
 

@@ -60,6 +60,37 @@ class NightlyArtifactStatusTests(unittest.TestCase):
         self.assertEqual([row.name for row in parsed], names)
         self.assertTrue(all(row.status == "pass" for row in parsed))
 
+    def test_phase_status_prevents_q8_pass_from_masking_bf16_skip(self) -> None:
+        runner = _load_runner()
+        target = {
+            "name": "BF16 artifact gate",
+            "category": "bf16",
+            "target": "fake-gate",
+            "timeout_sec": 10,
+            "status_artifact": "build/fake/summary.json",
+            "status_phase": "bf16_pytorch",
+        }
+        artifact = {
+            "status": "pass",
+            "phases": {
+                "q8_mmproj_llamacpp": {"status": "pass"},
+                "bf16_pytorch": {
+                    "status": "skip",
+                    "reason": "missing BF16 checkpoint",
+                },
+            },
+        }
+        completed = subprocess.CompletedProcess(
+            ["make", "fake-gate"], 0, stdout="", stderr=""
+        )
+        with mock.patch.object(runner.subprocess, "run", return_value=completed):
+            with mock.patch.object(
+                runner, "_load_json_if_fresh", return_value=artifact
+            ):
+                result = runner.run_make_target(target)
+        self.assertEqual(result.status, "skip")
+        self.assertEqual(result.error_msg, "missing BF16 checkpoint")
+
 
 if __name__ == "__main__":
     unittest.main()

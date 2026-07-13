@@ -1211,35 +1211,27 @@ void vec_dot_q8_0_q8_0_avx512(int n, float *s, const void *vx, const void *vy)
     const block_q8_0 *x = (const block_q8_0 *)vx;
     const block_q8_0 *y = (const block_q8_0 *)vy;
 
-    float sumf = 0.0f;
-
-    for (int ib = 0; ib < nb; ib++) {
-        const float d = CK_FP16_TO_FP32(x[ib].d) * CK_FP16_TO_FP32(y[ib].d);
-
-        /* Load 32 int8 weights in two batches of 16 */
-        __m128i x8_lo = _mm_loadu_si128((const __m128i *)&x[ib].qs[0]);
-        __m128i x8_hi = _mm_loadu_si128((const __m128i *)&x[ib].qs[16]);
-        __m128i y8_lo = _mm_loadu_si128((const __m128i *)&y[ib].qs[0]);
-        __m128i y8_hi = _mm_loadu_si128((const __m128i *)&y[ib].qs[16]);
-
-        /* Sign-extend to 32-bit */
-        __m512i x32_lo = _mm512_cvtepi8_epi32(x8_lo);
-        __m512i x32_hi = _mm512_cvtepi8_epi32(x8_hi);
-        __m512i y32_lo = _mm512_cvtepi8_epi32(y8_lo);
-        __m512i y32_hi = _mm512_cvtepi8_epi32(y8_hi);
-
-        /* Integer multiply */
-        __m512i prod_lo = _mm512_mullo_epi32(x32_lo, y32_lo);
-        __m512i prod_hi = _mm512_mullo_epi32(x32_hi, y32_hi);
-
-        /* Sum all products */
-        int sumi = _mm512_reduce_add_epi32(_mm512_add_epi32(prod_lo, prod_hi));
-
-        /* Scale and accumulate - use scalar to avoid 16x broadcast bug */
-        sumf += d * (float)sumi;
+    /*
+     * ggml keeps the Q8_0 dot on its AVX2 eight-lane accumulation tree even
+     * in an AVX-512 build. Preserve that numerical contract here: reducing
+     * every block to a scalar first changes FP32 addition order and is not
+     * bit-exact at production vision widths.
+     */
+    __m256 acc = _mm256_setzero_ps();
+    for (int ib = 0; ib < nb; ++ib) {
+        const __m256 d = _mm256_set1_ps(
+            CK_FP16_TO_FP32(x[ib].d) * CK_FP16_TO_FP32(y[ib].d));
+        const __m256i qx = _mm256_loadu_si256((const __m256i *)x[ib].qs);
+        const __m256i qy = _mm256_loadu_si256((const __m256i *)y[ib].qs);
+        const __m256 q = mul_sum_i8_pairs_float_q8_0_avx2(qx, qy);
+#if defined(__FMA__)
+        acc = _mm256_fmadd_ps(d, q, acc);
+#else
+        acc = _mm256_add_ps(_mm256_mul_ps(d, q), acc);
+#endif
     }
 
-    *s = sumf;
+    *s = hsum_float_8_q8_0(acc);
 }
 #endif
 
