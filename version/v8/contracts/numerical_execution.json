@@ -123,6 +123,34 @@
       },
       "description": "Antialiased half-pixel FP32 interpolation with contraction enabled and channel-row-column evaluation before merged-tile output, matching the GGML execution contract."
     },
+    "fp32_tiled_2d_align_corners_contracted": {
+      "operator_family": "spatial_position_interpolation",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32"},
+      "rounding": {"mode": "none", "points": []},
+      "reduction": {
+        "kind": "sum",
+        "order": "left_to_right",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "spatial_transform": {
+        "interpolation": "bilinear",
+        "coordinate_transform": "align_corners",
+        "coordinate_compute": "fp32_from_rational",
+        "source_layout": "row_major",
+        "output_traversal": "merged_tile_order"
+      },
+      "description": "Align-corners tiled 2D position interpolation with FP32 rational coordinates and contracted float32 evaluation order."
+    },
     "vision_mrope_fp32_input_fp32_compute_fp32_output": {
       "operator_family": "vision_mrope",
       "status": "validated",

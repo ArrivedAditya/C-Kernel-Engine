@@ -448,8 +448,18 @@ class Result:
 def _case(name, seed, heads, kv_heads, kv_tokens, head_dim, aligned, chunks, tolerance):
     q, k, v = _inputs(seed, heads, kv_heads, kv_tokens, head_dim, aligned)
     actual = _run_explicit(q, k, v, head_dim, chunks)
-    expected = _split_oracle(q, k, v, head_dim, chunks)
-    diff = float(np.max(np.abs(actual - expected)))
+    # The Python model above is useful for explaining the storage/reduction
+    # contract, but its dot traversal models one ISA and is not authoritative
+    # across AVX2, AVX-512, and NEON. Gate the production entry point against
+    # GGML using the same worker/chunk count instead.
+    expected = _llama_split_output(q, k, v, head_dim, chunks)
+    active_diff = float(np.max(np.abs(actual[:, :head_dim] - expected)))
+    padding_diff = (
+        float(np.max(np.abs(actual[:, head_dim:])))
+        if aligned > head_dim
+        else 0.0
+    )
+    diff = max(active_diff, padding_diff)
     return Result(name, diff, tolerance, diff <= tolerance), (q, k, v, actual)
 
 
@@ -469,6 +479,11 @@ def main():
         1058, 32, 8, 1058, 128, 128, 20, 2.0e-5,
     )
     results.append(qwen)
+    qwen_long, qwen_long_data = _case(
+        "f16_split_qwen3vl_long(KV=1609,H=32,D=128,C=20)",
+        1609, 32, 8, 1609, 128, 128, 20, 2.0e-5,
+    )
+    results.append(qwen_long)
     padded, _ = _case(
         "f16_split_padded_gqa(KV=513,D=80,A=128,C=4)",
         513, 8, 2, 513, 80, 128, 4, 2.0e-5,
@@ -480,6 +495,7 @@ def main():
         ("explicit_contract_route_below(KV=511)", below_data),
         ("explicit_contract_route_threshold(KV=512)", threshold_data),
         ("explicit_contract_route_qwen3vl(KV=1058)", qwen_data),
+        ("explicit_contract_route_qwen3vl_long(KV=1609)", qwen_long_data),
     ):
         q, k, v, _ = data
         chunks = threads if k.shape[1] >= 512 else 1
@@ -515,6 +531,7 @@ def main():
             ("llama_oracle_below(KV=511)", below_data, 1),
             ("llama_oracle_threshold(KV=512)", threshold_data, threads),
             ("llama_oracle_qwen3vl(KV=1058)", qwen_data, threads),
+            ("llama_oracle_qwen3vl_long(KV=1609)", qwen_long_data, threads),
         ):
             q, k, v, _ = data
             ck = _run_explicit(q, k, v, q.shape[1], chunks)

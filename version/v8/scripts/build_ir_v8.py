@@ -4106,11 +4106,11 @@ def _resolve_position_embeddings_kernel(config: Dict, template_kernels: Dict[str
     kernel_spec = template_kernels.get("position_embeddings")
     if isinstance(kernel_spec, dict):
         policy = str(config.get("position_interpolation_policy", "default") or "default").strip().lower()
-        selected = kernel_spec.get(policy) or kernel_spec.get("default")
+        selected = kernel_spec.get(policy)
         if not selected:
-            raise ValueError(
-                "position_embeddings kernel map has no entry for policy "
-                f"{policy!r} and no default"
+            raise RuntimeError(
+                "HARD KERNEL RESOLUTION FAULT: position_embeddings has no exact circuit "
+                f"kernel mapping for interpolation policy {policy!r}."
             )
         return str(selected)
     if not kernel_spec:

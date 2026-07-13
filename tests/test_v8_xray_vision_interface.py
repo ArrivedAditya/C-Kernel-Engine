@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import tempfile
@@ -66,6 +67,57 @@ class XRayVisionInterfaceTests(unittest.TestCase):
             result["first_divergence"]["classification"],
             "KERNEL_IMPLEMENTATION_DIVERGENCE",
         )
+
+    def test_nonzero_passing_checkpoint_prevents_false_downstream_blame(self) -> None:
+        profile = xray.load_json(PROFILE)
+        report = {
+            "results": [
+                {"layer": -1, "op": "inp_pos_emb", "status": "PASS", "max_abs_diff": 0.0},
+                {"layer": 0, "op": "ln1", "status": "PASS", "max_abs_diff": 0.0},
+                {"layer": 0, "op": "q_proj", "status": "PASS", "max_abs_diff": 0.0},
+                {"layer": 0, "op": "k_proj", "status": "PASS", "max_abs_diff": 0.0},
+                {"layer": 0, "op": "v_proj", "status": "PASS", "max_abs_diff": 0.0},
+                {"layer": 0, "op": "Qcur_rope", "status": "PASS", "max_abs_diff": 0.0},
+                {"layer": 0, "op": "Kcur_rope", "status": "PASS", "max_abs_diff": 0.0},
+                {"layer": 0, "op": "kqv_out", "status": "PASS", "max_abs_diff": 1e-6},
+                {"layer": 0, "op": "attn_output", "status": "FAIL", "max_abs_diff": 5e-4},
+            ]
+        }
+        result = llama.normalize_capture_report(report, profile, layer=0, execution_mode="production")
+        self.assertEqual(result["execution_mode"], "production")
+        self.assertEqual(
+            result["first_non_exact_checkpoint"]["checkpoint_id"],
+            "vision.layer.0.attention.output",
+        )
+        self.assertEqual(
+            result["first_divergence"]["classification"],
+            "DOWNSTREAM_OR_PROPAGATED_DIVERGENCE",
+        )
+        self.assertEqual(result["first_divergence"]["fix_owner"], "exact_input_control")
+
+    def test_capture_mode_controls_strict_parity_flag(self) -> None:
+        profile = xray.load_json(PROFILE)
+        base = {
+            "gguf": Path("model.gguf"),
+            "output_dir": Path("out"),
+            "threads": 20,
+            "ck_threads": None,
+            "layer": 0,
+            "image": None,
+            "image_mode": "gradient",
+            "image_min_tokens": None,
+            "image_max_tokens": 1024,
+        }
+        strict = llama._capture_args(
+            argparse.Namespace(**base, execution_mode="strict"), profile, Path("report.json")
+        )
+        production = llama._capture_args(
+            argparse.Namespace(**base, execution_mode="production"), profile, Path("report.json")
+        )
+        self.assertIn("--strict-parity", strict)
+        self.assertNotIn("--strict-parity", production)
+        self.assertEqual(strict[strict.index("--llama-flash-attn") + 1], "disabled")
+        self.assertEqual(production[production.index("--llama-flash-attn") + 1], "enabled")
 
     def test_capture_adapter_is_documented_as_internal_to_xray(self) -> None:
         source = (SCRIPTS / "activation_parity_qwen3vl_mmproj_v8.py").read_text(encoding="utf-8")

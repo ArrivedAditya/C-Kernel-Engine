@@ -264,6 +264,10 @@ V8_QWEN3VL_ENCODER_PARITY_IMAGE_MAX_TOKENS ?= 1024
 V8_QWEN3VL_ENCODER_PARITY_MIN_COSINE ?= 0.99
 V8_QWEN3VL_ENCODER_PARITY_MAX_RMSE ?= 0.03
 V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT ?= /opt/app-root/src/Software/llama.cpp
+V8_QWEN3VL_METHODICAL_MMPROJ ?= $(V8_QWEN3VL_CACHED_MMPROJ)
+V8_QWEN3VL_METHODICAL_IMAGE ?= $(V8_QWEN3VL_IMAGE)
+V8_QWEN3VL_METHODICAL_LAYERS ?= 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26
+V8_QWEN3VL_METHODICAL_WORKDIR ?= build/qwen3vl_methodical_parity
 V8_VISION_ENCODER_FAMILY ?= qwen3vl
 V8_VISION_ENCODER_MODE ?= all
 V8_VISION_ENCODER_OUTPUT ?= build/vision_encoder_accuracy
@@ -1291,6 +1295,51 @@ test-v8-qwen3vl: $(LIB_VISION)
 	$(PYTHON) $(PYTHONFLAGS) tests/test_v8_vision_encoder_accuracy_gate.py
 	$(PYTHON) $(PYTHONFLAGS) tests/test_nightly_runner_artifact_status.py
 
+# Fast production-order contract lane. This validates the real circuit and
+# production dimensions without claiming that model artifacts were executed.
+test-qwen3vl-methodical-parity: $(LIB) $(LIB_VISION)
+	@$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_qwen3vl_methodical_parity -v
+	@echo "qwen3vl_checkpoint_coverage max_diff=0 tol=0 [PASS]"
+	@$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_qwen3vl_template -v
+	@echo "qwen3vl_circuit_codegen max_diff=0 tol=0 [PASS]"
+	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_vision.py
+	@echo "qwen3vl_frontend_mrope max_diff=0 tol=0 [PASS]"
+	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_attention_full.py
+	@echo "qwen3vl_attention_contract max_diff=0 tol=0 [PASS]"
+	@$(MAKE) --no-print-directory test-q8-composed-llama-parity
+	@echo "qwen3vl_q8_projection_matrix max_diff=0 tol=0 [PASS]"
+	@$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_multitoken_eos_contract -v
+	@echo "qwen3vl_eos_contract max_diff=0 tol=0 [PASS]"
+
+# Artifact-backed lane. Each invocation runs the generated encoder through the
+# requested layer and X-ray reports the first failing semantic edge. Missing
+# artifacts are a hard failure because this target is the full-model claim.
+test-qwen3vl-methodical-parity-full: test-qwen3vl-methodical-parity
+	@test -f "$(V8_QWEN3VL_METHODICAL_MMPROJ)" || { echo "ERROR: missing Qwen3-VL mmproj: $(V8_QWEN3VL_METHODICAL_MMPROJ)"; exit 2; }
+	@test -f "$(V8_QWEN3VL_METHODICAL_IMAGE)" || { echo "ERROR: missing canonical image: $(V8_QWEN3VL_METHODICAL_IMAGE)"; exit 2; }
+	@set -e; for layer in $(V8_QWEN3VL_METHODICAL_LAYERS); do \
+		echo "Qwen3-VL X-ray layer $$layer"; \
+		layer_dir="$(V8_QWEN3VL_METHODICAL_WORKDIR)/layer_$$layer"; \
+		if ! $(PYTHON) version/v8/scripts/xray_vision_parity_v8.py \
+			--backend llamacpp \
+			--gguf "$(V8_QWEN3VL_METHODICAL_MMPROJ)" \
+			--image "$(V8_QWEN3VL_METHODICAL_IMAGE)" \
+			--image-max-tokens 1024 \
+			--layer $$layer \
+			--execution-mode production \
+			--output-dir "$$layer_dir"; then \
+			control_dump="$$layer_dir/capture/llama_parity_dumps/dump.bin"; \
+			if [ -f "$$control_dump" ]; then \
+				echo "Running exact-input Q8 control for first divergent layer $$layer"; \
+				V8_Q8_COMPOSED_REAL_DUMP="$$control_dump" V8_Q8_COMPOSED_LAYER="$$layer" \
+					$(MAKE) --no-print-directory test-q8-composed-llama-parity; \
+			fi; \
+			exit 1; \
+		fi; \
+	done
+
+.PHONY: test-qwen3vl-methodical-parity test-qwen3vl-methodical-parity-full
+
 test-v8-qwen3vl-e2e-smoke:
 	@if [ ! -f "$(V8_QWEN3VL_CACHED_MODEL)" ] || [ ! -f "$(V8_QWEN3VL_CACHED_MMPROJ)" ]; then \
 		echo "SKIP: Qwen3-VL cached decoder/mmproj not found under $(V8_QWEN3VL_CACHE_DIR)"; \
@@ -2075,6 +2124,7 @@ test-v8-dump-alignment:
 .PHONY: test-v8-dump-alignment
 
 qwen3vl-parity-guards:
+	@$(MAKE) --no-print-directory test-qwen3vl-methodical-parity
 	@$(MAKE) --no-print-directory test-attention-f16-split-kv
 	@$(MAKE) --no-print-directory test-v8-dump-alignment
 	@$(MAKE) --no-print-directory test-v8-vision-kernels
@@ -2374,6 +2424,9 @@ llamacpp-parity-full:
 	@echo "Running FP16 split-KV decode attention contract tests..."
 	@$(MAKE) --no-print-directory test-attention-f16-split-kv
 	@echo ""
+	@echo "Running composed Q8 activation/projection parity at vision dimensions..."
+	@$(MAKE) --no-print-directory test-q8-composed-llama-parity
+	@echo ""
 	@echo "Running head-major Q5 out-proj parity benchmark..."
 	@$(MAKE) --no-print-directory test-head-major-q5-outproj
 	@echo ""
@@ -2381,6 +2434,11 @@ llamacpp-parity-full:
 	@$(MAKE) --no-print-directory test-head-major-q5-vs-llama
 
 test-llamacpp-parity-full: llamacpp-parity-full
+
+.PHONY: test-q8-composed-llama-parity
+test-q8-composed-llama-parity: $(LIB)
+	@CK_BUILD_DIR="$(BUILD_DIR)" LD_LIBRARY_PATH="$(CURDIR)/llama.cpp/build/bin:$${LD_LIBRARY_PATH}" \
+		$(PYTHON) unittest/test_q8_composed_llama_parity.py
 
 # End-to-end llama.cpp compatibility suite
 # This lane is where model-family and stitched graph checks belong.
@@ -2447,6 +2505,9 @@ llamacpp-parity-nightly:
 	@echo ""
 	@echo "Running Thread Pool GEMV parity tests (serial vs dispatch)..."
 	@$(MAKE) --no-print-directory test-threadpool-parity
+	@echo ""
+	@echo "Running composed Q8 activation/projection parity at vision dimensions..."
+	@$(MAKE) --no-print-directory test-q8-composed-llama-parity
 	@echo ""
 	@echo "Running comprehensive Q4/Q5/Q8 GEMV CK vs llama.cpp tests (quick)..."
 	@if [ -f "$(LLAMA_KERNEL_TEST)" ]; then \

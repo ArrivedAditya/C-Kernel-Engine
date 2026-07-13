@@ -18060,6 +18060,77 @@
           "src/kernels/vision_kernels.c"
         ]
       },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "fp32_tiled_2d_align_corners_contracted",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "position_embeddings_add_tiled_2d_align_corners",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "x",
+            "source": "output:x",
+            "cast": "float*"
+          },
+          {
+            "name": "position_embd",
+            "source": "weight:pos_emb",
+            "cast": "const float*"
+          },
+          {
+            "name": "grid_h",
+            "source": "dim:vision_grid_h"
+          },
+          {
+            "name": "grid_w",
+            "source": "dim:vision_grid_w"
+          },
+          {
+            "name": "embed_dim",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "merge_size",
+            "source": "dim:merge_size"
+          },
+          {
+            "name": "source_grid_size",
+            "source": "dim:source_grid_size"
+          }
+        ]
+      },
       "notes": "Add align-corners bilinearly interpolated learned position embeddings to a stream in merged-tile traversal.",
       "name": "position_embeddings_add_tiled_2d_align_corners",
       "_source_file": "position_embeddings_add_tiled_2d_align_corners.json"

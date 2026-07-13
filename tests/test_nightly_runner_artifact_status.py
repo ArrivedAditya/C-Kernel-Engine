@@ -43,6 +43,23 @@ class NightlyArtifactStatusTests(unittest.TestCase):
                         result = runner.run_make_target(target)
                 self.assertEqual(result.status, artifact_status)
 
+    def test_methodical_qwen3vl_stage_lines_are_visible_subtests(self) -> None:
+        runner = _load_runner()
+        names = [
+            "qwen3vl_checkpoint_coverage",
+            "qwen3vl_circuit_codegen",
+            "qwen3vl_frontend_mrope",
+            "qwen3vl_attention_contract",
+            "qwen3vl_q8_projection_matrix",
+            "qwen3vl_eos_contract",
+        ]
+        output = "\n".join(
+            f"{name} max_diff=0 tol=0 [PASS]" for name in names
+        )
+        parsed = runner.parse_sub_tests(output)
+        self.assertEqual([row.name for row in parsed], names)
+        self.assertTrue(all(row.status == "pass" for row in parsed))
+
 
 if __name__ == "__main__":
     unittest.main()

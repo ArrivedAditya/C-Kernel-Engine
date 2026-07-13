@@ -214,6 +214,7 @@ def _run_llama_encoder_with_dump(
     dump_dir: Path,
     dump_names: str | None = None,
     dump_layer: int | None = None,
+    flash_attn_type: int = 0,
 ) -> None:
     dump_dir.mkdir(parents=True, exist_ok=True)
     dump_path = dump_dir / "dump.bin"
@@ -231,6 +232,7 @@ def _run_llama_encoder_with_dump(
             height=height,
             width=width,
             n_threads=n_threads,
+            flash_attn_type=flash_attn_type,
         )
     finally:
         _restore_env_var("CK_LLAMA_PARITY_DIR", old_dump)
@@ -269,6 +271,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--image-min-tokens", type=int, default=None, help="Override minimum merged visual tokens for dynamic-resolution Qwen3-VL images")
     ap.add_argument("--image-max-tokens", type=int, default=None, help="Override maximum merged visual tokens for dynamic-resolution Qwen3-VL images")
     ap.add_argument("--threads", type=int, default=1)
+    ap.add_argument(
+        "--llama-flash-attn",
+        choices=("disabled", "auto", "enabled"),
+        default="disabled",
+        help="Reference attention algorithm; it must match the CK execution contract.",
+    )
     ap.add_argument("--ck-threads", type=int, default=None)
     ap.add_argument("--strict-parity", action="store_true", help="Enable parity-only strict mode in CK during the generated encoder run")
     ap.add_argument("--atol", type=float, default=1e-4)
@@ -356,6 +364,7 @@ def main(argv: list[str] | None = None) -> int:
         dump_dir=llama_dump_dir,
         dump_names=args.llama_dump_names,
         dump_layer=args.llama_dump_layer,
+        flash_attn_type={"disabled": 0, "auto": -1, "enabled": 1}[args.llama_flash_attn],
     )
 
     ck_dump = _merge_ck_dump_artifacts(ck_dump_dir)
@@ -392,6 +401,7 @@ def main(argv: list[str] | None = None) -> int:
             "ck_runtime": ck_threads,
         },
         "strict_parity": bool(args.strict_parity),
+        "llama_flash_attn": args.llama_flash_attn,
         "llama_dump_names": args.llama_dump_names,
         "ck_dump_names": args.ck_dump_names or args.llama_dump_names,
         "llama_dump_layer": args.llama_dump_layer,

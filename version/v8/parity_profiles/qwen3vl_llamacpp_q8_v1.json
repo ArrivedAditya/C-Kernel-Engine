@@ -39,6 +39,7 @@
     "vision.layer.{layer}.residual1.output",
     "vision.layer.{layer}.norm2.output",
     "vision.layer.{layer}.mlp.up",
+    "vision.layer.{layer}.mlp.activation",
     "vision.layer.{layer}.mlp.down",
     "vision.layer.{layer}.output"
   ],
@@ -128,6 +129,13 @@
       "axis_names": ["token", "channel"],
       "capture_tensor": "ffn_up_b",
       "result_tensor": "ffn_up_b"
+    },
+    "vision.layer.{layer}.mlp.activation": {
+      "producer": "mlp_gelu",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "ffn_gelu",
+      "result_tensor": "ffn_gelu"
     },
     "vision.layer.{layer}.mlp.down": {
       "producer": "mlp_down",

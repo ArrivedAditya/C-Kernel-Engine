@@ -50,7 +50,8 @@ run_variant() {
     echo "Skipping ${name}: compiler '$(compiler)' does not accept these flags"
     return 0
   fi
-  make -C "${ROOT_DIR}" -B BUILD_DIR="${build_dir}" AVX_FLAGS="${flags}" test-gemm-avx-bench-quick
+  make -C "${ROOT_DIR}" -B BUILD_DIR="${build_dir}" AVX_FLAGS="${flags}" \
+    test-gemm-avx-bench-quick test-q8-composed-llama-parity
 }
 
 CPU_FLAGS="$(cpu_flags)"
