@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.xray_execution_trace",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "schema_version", "backend", "run", "execution", "state", "artifacts"],
+  "properties": {
+    "schema": {"const": "cke.xray_execution_trace"},
+    "schema_version": {"const": 1},
+    "backend": {"type": "string", "minLength": 1},
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model", "phase", "source"],
+      "properties": {
+        "model": {"type": "string", "minLength": 1},
+        "phase": {"enum": ["prefill", "mixed_prefill", "decode", "teacher_forced"]},
+        "source": {"type": "string", "minLength": 1}
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "calls"],
+      "properties": {
+        "policy_id": {"type": "string", "minLength": 1},
+        "calls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["call_id", "kind", "start", "count", "position_start", "cache_action"],
+            "properties": {
+              "call_id": {"type": "string", "minLength": 1},
+              "kind": {"type": "string", "minLength": 1},
+              "start": {"type": "integer", "minimum": 0},
+              "count": {"type": "integer", "minimum": 1},
+              "position_start": {"type": "integer", "minimum": 0},
+              "cache_action": {"enum": ["reset", "append", "preserve", "none"]},
+              "kernel_batches": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["checkpoint_id", "kernel_id", "m", "n", "k"],
+                  "properties": {
+                    "checkpoint_id": {"type": "string", "minLength": 1},
+                    "kernel_id": {"type": "string", "minLength": 1},
+                    "m": {"type": "integer", "minimum": 1},
+                    "n": {"type": "integer", "minimum": 1},
+                    "k": {"type": "integer", "minimum": 1}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position_policy_id", "position", "cache_token_count", "append_index", "cache_layout"],
+      "properties": {
+        "position_policy_id": {"type": "string", "minLength": 1},
+        "position": {
+          "oneOf": [
+            {"type": "integer", "minimum": 0},
+            {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0}}
+          ]
+        },
+        "cache_token_count": {"type": "integer", "minimum": 0},
+        "append_index": {"type": "integer", "minimum": 0},
+        "cache_layout": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["layout_id", "layer_stride_bytes", "head_stride_bytes", "token_stride_bytes", "channel_stride_bytes"],
+          "properties": {
+            "layout_id": {"type": "string", "minLength": 1},
+            "base_address": {"type": "string"},
+            "layer_stride_bytes": {"type": "integer", "minimum": 1},
+            "head_stride_bytes": {"type": "integer", "minimum": 1},
+            "token_stride_bytes": {"type": "integer", "minimum": 1},
+            "channel_stride_bytes": {"type": "integer", "minimum": 1}
+          }
+        }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["checkpoint_id", "role", "tensor_path", "dtype", "shape", "row_axis", "sha256"],
+        "properties": {
+          "checkpoint_id": {"type": "string", "minLength": 1},
+          "role": {
+            "enum": [
+              "new_key", "new_value", "stored_key", "stored_value",
+              "previous_key_before", "previous_key_after",
+              "previous_value_before", "previous_value_after",
+              "valid_key_cache", "valid_value_cache",
+              "query", "attention_output", "logits"
+            ]
+          },
+          "tensor_path": {"type": "string", "minLength": 1},
+          "dtype": {"enum": ["fp32", "fp16", "bf16", "u8", "i32", "i64"]},
+          "shape": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
+          "row_axis": {"type": "integer", "minimum": 0},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    }
+  }
+}
