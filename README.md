@@ -235,6 +235,18 @@ Depending on the circuit and model lane, generated `libmodel.so` runtimes can pr
 
 ## Contributing
 
+CKE is deep, but a first contribution does not require understanding the entire compiler or solving multimodal numerical parity. Choose the smallest level that matches the evidence you can produce:
+
+| Level | Contribution surface | Good first result |
+|---|---|---|
+| 1 | Documentation, distribution compatibility, and build fixes | Reproduce one workflow on a named Linux distribution and repair or document the exact failure |
+| 2 | Reproducible benchmarks and profiling adapters | Add a perf, flamegraph, VTune, Advisor, or distribution-specific profiling path with a captured artifact |
+| 3 | Reference tests and numerical fixtures | Compare one operation or tensor boundary against PyTorch, llama.cpp, SciPy, or another independent oracle |
+| 4 | Kernel implementation and optimization | Add or tune one kernel while preserving parity, supported-ISA dispatch, and benchmark evidence |
+| 5 | Compiler, DSL, multimodal parity, and distributed execution | Change cross-layer architecture with explicit contracts, regression coverage, and end-to-end evidence |
+
+See the [Contributor Path](https://c-kernel-engine.github.io/C-Kernel-Engine/contributing.html) for bounded starter tasks, the pull-request evidence contract, Discord onboarding, and the complete contribution ladder. Small, well-supported improvements are welcome; unresolved core research is not an onboarding requirement.
+
 Useful contributions include:
 
 - A numerically justified kernel capability and independent oracle test.
