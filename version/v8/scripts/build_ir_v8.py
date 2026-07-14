@@ -10948,7 +10948,7 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
 
             elif src.startswith("weight:"):
                 key = src.split(":", 1)[1]
-                sel = select_weight(key, weights)
+                sel = select_weight(key, weights, param.get("alt", None))
                 if not sel:
                     op_errors.append(f"{func}.{name}: missing weight '{key}'")
                     expr = "NULL"

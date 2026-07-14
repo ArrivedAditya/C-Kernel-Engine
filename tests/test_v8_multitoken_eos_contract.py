@@ -96,6 +96,175 @@ class MultitokenEOSContractTests(unittest.TestCase):
                     manifest_map_override=None,
                 )
 
+    def test_segmented_hidden_capture_selects_final_physical_position(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for token in (0, 5, 1013):
+                (root / f"tok_{token:04d}_layer_000_layer_out_last.f32").touch()
+                (root / f"tok_{token:04d}_layer_001_layer_out_last.f32").touch()
+
+            selected = self.runner._hidden_files_by_layer(root)
+
+            self.assertEqual(selected[0].name, "tok_1013_layer_000_layer_out_last.f32")
+            self.assertEqual(selected[1].name, "tok_1013_layer_001_layer_out_last.f32")
+
+    def test_segmented_hidden_capture_rejects_ambiguous_final_position(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "a_tok_1013_layer_000_layer_out_last.f32"
+            second = root / "b_tok_1013_layer_000_layer_out_last.f32"
+            first.touch()
+            second.touch()
+
+            with self.assertRaisesRegex(RuntimeError, "share final token position 1013"):
+                self.runner._hidden_files_by_layer(root)
+
+    def test_hidden_capture_preflight_accepts_exact_decode_and_replay_exporters(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "decoder_v8.c"
+            source.write_text(
+                '\n'.join(
+                    [
+                        'ck_debug_export_hidden(model, 0, "rope_q", data, 128);',
+                        'ck_debug_export_hidden(model, 0, "rope_q_last", data, 128);',
+                        'ck_debug_export_hidden(model, 1, "rope_q", data, 128);',
+                        'ck_debug_export_hidden(model, 1, "rope_q_last", data, 128);',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            catalog = self.runner._validate_hidden_capture_request(
+                {"workdir": root, "c_path": source}, ["rope_q"], 1
+            )
+
+            self.assertEqual(catalog["rope_q"], [0, 1])
+            self.assertEqual(catalog["rope_q_last"], [0, 1])
+
+    def test_hidden_capture_preflight_rejects_alias_before_model_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "decoder_v8.c"
+            source.write_text(
+                '\n'.join(
+                    [
+                        'ck_debug_export_hidden(model, 0, "qk_norm_q", data, 128);',
+                        'ck_debug_export_hidden(model, 0, "qk_norm_q_last", data, 128);',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "qcur_normed.*does not exist.*Valid base names: qk_norm_q",
+            ):
+                self.runner._validate_hidden_capture_request(
+                    {"workdir": root, "c_path": source}, ["qcur_normed"], 0
+                )
+
+    def test_hidden_capture_preflight_rejects_missing_replay_variant(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "decoder_v8.c"
+            source.write_text(
+                'ck_debug_export_hidden(model, 0, "attn_out", data, 128);\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "attn_out_last.*does not exist"):
+                self.runner._validate_hidden_capture_request(
+                    {"workdir": root, "c_path": source}, ["attn_out"], 0
+                )
+
+    def test_hidden_capture_batches_multiple_names_into_two_model_executions(self) -> None:
+        class Library:
+            def ck_model_decode(self, token, logits):
+                return 0
+
+            def ck_model_free(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "decoder_v8.c"
+            names = ["rope_q", "rope_k", "attn_out"]
+            source.write_text(
+                "\n".join(
+                    f'ck_debug_export_hidden(model, 0, "{name}{suffix}", data, 128);'
+                    for name in names
+                    for suffix in ("", "_last")
+                ),
+                encoding="utf-8",
+            )
+            inputs = {
+                "runtime": {"workdir": root, "c_path": source},
+                "tokens_after": [1, 2],
+            }
+            report = {
+                "steps": [
+                    {},
+                    {
+                        "generated_prefix": [10, 11],
+                        "ck_next": 12,
+                        "llama_next": 12,
+                    },
+                ]
+            }
+            args = Namespace(
+                hidden_state_step=1,
+                hidden_state_layer=0,
+                hidden_state_names=",".join(names),
+                hidden_state_dir=root / "capture",
+                hidden_state_atol=1.0e-5,
+                workdir=root,
+                ck_strict_parity=False,
+            )
+            init = mock.Mock(side_effect=[(Library(), object(), 3), (Library(), object(), 3)])
+
+            def hidden_file(_directory, name):
+                if name == "rope_k_last":
+                    raise RuntimeError("missing rope_k replay checkpoint")
+                return root / f"{name}.f32"
+
+            with mock.patch.object(self.runner, "_prepare_inputs", return_value=inputs), \
+                 mock.patch.object(self.runner, "_init_ck_state", init), \
+                 mock.patch.object(self.runner, "_single_hidden_file", side_effect=hidden_file), \
+                 mock.patch.object(self.runner, "_hidden_compare", return_value={"status": "ok", "max_abs_diff": 0.0}):
+                result = self.runner._capture_hidden_state_step(report, args)
+
+            self.assertEqual(init.call_count, 2)
+            self.assertEqual(result["ck_execution_count"], 2)
+            self.assertEqual(result["preflight"]["requested_names"], names)
+            self.assertEqual(len(result["results"]), len(names))
+            self.assertEqual([row["name"] for row in result["results"]], names)
+            self.assertEqual([row["status"] for row in result["results"]], ["ok", "error", "ok"])
+            self.assertIn("missing rope_k", result["results"][1]["error"])
+
+    def test_granular_capture_rejects_uninstrumented_runtime_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "decoder_v8.c"
+            source.write_text("/* production runtime */\n", encoding="utf-8")
+            inputs = {
+                "runtime": {"c_path": source},
+                "tokens_after": [],
+            }
+            report = {"steps": [{"generated_prefix": []}]}
+            args = Namespace(
+                dump_step=0,
+                dump_dir=root / "dumps",
+                workdir=root,
+            )
+
+            with mock.patch.object(self.runner, "_prepare_inputs", return_value=inputs), \
+                 mock.patch.object(self.runner.first_token, "_capture_dump_compare") as capture:
+                with self.assertRaisesRegex(RuntimeError, "compiled with CK_PARITY_DUMP"):
+                    self.runner._capture_step_dump(report, args)
+
+            capture.assert_not_called()
+
     def test_runner_records_eos_step_without_decoding_past_it(self) -> None:
         class Tokenizer:
             def decode(self, tokens, skip_special=False):
@@ -168,6 +337,11 @@ class MultitokenEOSContractTests(unittest.TestCase):
             report = self.runner.run_multimodal_multitoken_parity(args)
 
         self.assertEqual(report["status"], "pass")
+        self.assertFalse(report["execution_modes"]["ck_strict_parity"])
+        self.assertEqual(report["execution_modes"]["llama_decode_mode"], "persistent")
+        self.assertTrue(report["execution_modes"]["llama_tensor_repack"])
+        self.assertFalse(report["execution_modes"]["diagnostic_tensor_dump"])
+        self.assertIsInstance(report["execution_modes"]["ck_environment"], dict)
         self.assertEqual(report["stop_reason"], "matched_stop_token")
         self.assertEqual(len(report["steps"]), 1)
         self.assertEqual(report["steps"][0]["ck_next"], 151645)

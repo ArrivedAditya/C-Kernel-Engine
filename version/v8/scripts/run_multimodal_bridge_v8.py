@@ -874,6 +874,42 @@ def _converter_fingerprint(gguf_path: Path) -> dict[str, Any]:
     }
 
 
+def _source_set_fingerprint(paths: list[Path]) -> dict[str, Any]:
+    files: list[Path] = []
+    for path in paths:
+        if path.is_dir():
+            files.extend(
+                candidate
+                for candidate in path.rglob("*")
+                if candidate.is_file() and candidate.suffix in {".py", ".json"}
+            )
+        elif path.is_file():
+            files.append(path)
+    files = sorted(set(path.resolve() for path in files), key=str)
+    digest = hashlib.sha256()
+    for path in files:
+        try:
+            identity = str(path.relative_to(REPO_ROOT.resolve()))
+        except ValueError:
+            identity = str(path)
+        digest.update(identity.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return {"sha256": digest.hexdigest(), "file_count": len(files)}
+
+
+def _compiler_source_fingerprint() -> dict[str, Any]:
+    return _source_set_fingerprint(
+        [
+            SCRIPT_DIR,
+            SCRIPT_DIR.parent / "circuits",
+            SCRIPT_DIR.parent / "kernel_maps",
+            SCRIPT_DIR.parent / "schemas",
+        ]
+    )
+
+
 def _runtime_fingerprint(
     *,
     manifest_path: Path,
@@ -883,7 +919,7 @@ def _runtime_fingerprint(
     profile: bool = False,
 ) -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": 2,
         "mode": str(mode),
         "manifest": _path_identity(manifest_path, hash_content=True),
         "context_override": int(context_override) if context_override is not None else None,
@@ -893,6 +929,7 @@ def _runtime_fingerprint(
         "codegen_script": _path_identity(SCRIPT_DIR / "codegen_v8.py", hash_content=True),
         "codegen_prefill_script": _path_identity(SCRIPT_DIR / "codegen_prefill_v8.py", hash_content=True),
         "bridge_script": _path_identity(SCRIPT_DIR / "run_multimodal_bridge_v8.py", hash_content=True),
+        "compiler_source_set": _compiler_source_fingerprint(),
     }
 
 

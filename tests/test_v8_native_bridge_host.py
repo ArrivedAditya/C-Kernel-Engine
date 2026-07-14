@@ -2157,6 +2157,18 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         self.assertEqual(resolved_bump_path, bump_path)
         self.assertEqual(resolved_config_path, config_path)
 
+    def test_runtime_source_fingerprint_invalidates_on_imported_codegen_change(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_runtime_source_fingerprint_") as tmpdir:
+            source = Path(tmpdir) / "codegen_core.py"
+            source.write_text("VERSION = 1\n", encoding="utf-8")
+            before = bridge_runner_v8._source_set_fingerprint([source])
+            source.write_text("VERSION = 2\n", encoding="utf-8")
+            after = bridge_runner_v8._source_set_fingerprint([source])
+
+        self.assertEqual(before["file_count"], 1)
+        self.assertEqual(after["file_count"], 1)
+        self.assertNotEqual(before["sha256"], after["sha256"])
+
     def test_bridge_prepare_encoder_runtime_reuses_cached_artifacts(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_bridge_encoder_reuse_") as tmpdir:
             tmp = Path(tmpdir)

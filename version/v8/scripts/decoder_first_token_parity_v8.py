@@ -456,6 +456,20 @@ def _ck_dump_filter_names(dump_names: str) -> str:
         layer_id, canonical_name = parity_test_v7._normalize_layer_and_op(-1, raw_name)
         canonical_filter = f"{canonical_name}-{layer_id}" if layer_id >= 0 else canonical_name
         candidates = [raw_name, canonical_filter]
+        # llama.cpp reuses Qcur/Kcur for projection, Q/K normalization, and
+        # post-RoPE occurrences. CK gives those semantic boundaries distinct
+        # names, so requesting the llama callback must enable every matching
+        # CK exporter. The occurrence mapper will align the final tensors.
+        if canonical_name == "q_proj":
+            candidates.extend(
+                f"{name}-{layer_id}" if layer_id >= 0 else name
+                for name in ("Qcur_normed", "qcur_normed", "Qcur_rope", "qcur_rope")
+            )
+        elif canonical_name == "k_proj":
+            candidates.extend(
+                f"{name}-{layer_id}" if layer_id >= 0 else name
+                for name in ("Kcur_normed", "kcur_normed", "Kcur_rope", "kcur_rope")
+            )
         if canonical_name == "kqv_wo":
             candidates.append(f"attn_out-{layer_id}" if layer_id >= 0 else "attn_out")
         for candidate in candidates:
@@ -642,13 +656,47 @@ def _expand_ck_prefill_decode_dumps(
     if not row_specs:
         return list(ck_dumps)
 
+    # A segmented multimodal prefill can emit several batched captures for the
+    # same operation (for example text-before, visual, and text-after).  The
+    # legacy dump header records only the final physical position, so all of
+    # those batches can carry the same token id.  Select the batch that exactly
+    # represents the requested trailing prompt window before expanding rows.
+    # Falling back to the last sufficiently large batch preserves support for
+    # older single-batch captures where the requested window is a suffix.
+    selected_batched_dump: dict[tuple[int, str], int] = {}
+    exact_candidates: dict[tuple[int, str], list[int]] = {}
+    suffix_candidates: dict[tuple[int, str], list[int]] = {}
+    for dump_idx, dump in enumerate(ck_dumps):
+        op_name = _canonical_dump_op_name(str(dump.op_name))
+        key = (int(dump.layer_id), op_name)
+        row_spec = row_specs.get(key)
+        if row_spec is None:
+            continue
+        row_elems, _ = row_spec
+        flat_size = int(np.asarray(dump.data).size)
+        if row_elems <= 0 or flat_size <= row_elems or flat_size % row_elems != 0:
+            continue
+        batch_rows = flat_size // row_elems
+        if batch_rows == prompt_token_count:
+            exact_candidates.setdefault(key, []).append(dump_idx)
+        elif batch_rows > prompt_token_count:
+            suffix_candidates.setdefault(key, []).append(dump_idx)
+    for key in set(exact_candidates) | set(suffix_candidates):
+        candidates = exact_candidates.get(key) or suffix_candidates.get(key) or []
+        if candidates:
+            selected_batched_dump[key] = candidates[-1]
+
     expanded: list[Any] = []
-    for dump in ck_dumps:
+    for dump_idx, dump in enumerate(ck_dumps):
         op_name = _canonical_dump_op_name(str(dump.op_name))
         key = (int(dump.layer_id), op_name)
         row_spec = row_specs.get(key)
         if row_spec is None:
             expanded.append(dump)
+            continue
+
+        selected_idx = selected_batched_dump.get(key)
+        if selected_idx is not None and dump_idx != selected_idx:
             continue
 
         row_elems, row_shape = row_spec
@@ -809,6 +857,23 @@ def _compare_dump_sets(
             float(rtol),
         )
 
+        def candidates_are_equivalent(candidates: list[Any]) -> bool:
+            if len(candidates) <= 1:
+                return True
+            first = candidates[0]
+            first_token = int(getattr(first, "token_id", 0))
+            first_data = np.asarray(first.data).reshape(-1)
+            return all(
+                int(getattr(candidate, "token_id", 0)) == first_token
+                and np.array_equal(np.asarray(candidate.data).reshape(-1), first_data)
+                for candidate in candidates[1:]
+            )
+
+        ambiguous = bool(ambiguous) and not (
+            candidates_are_equivalent(ck_candidates)
+            and candidates_are_equivalent(llama_candidates)
+        )
+
         if ck_dump is None:
             results.append(
                 {
@@ -840,6 +905,26 @@ def _compare_dump_sets(
                     "ck_candidates": len(ck_candidates),
                     "llama_candidates": 0,
                     "alignment_ambiguous": bool(ambiguous),
+                }
+            )
+            continue
+
+        if ambiguous:
+            results.append(
+                {
+                    "layer": int(layer_id),
+                    "op": str(op_name),
+                    "status": "ERROR",
+                    "reason": "ambiguous_alignment",
+                    "max_abs_diff": float("inf"),
+                    "token": int(ck_dump.token_id),
+                    "ck_token": int(ck_dump.token_id),
+                    "llama_token": int(llama_dump.token_id),
+                    "ck_source_token": int(getattr(ck_dump, "source_token_id", ck_dump.token_id)),
+                    "llama_source_token": int(getattr(llama_dump, "source_token_id", llama_dump.token_id)),
+                    "ck_candidates": len(ck_candidates),
+                    "llama_candidates": len(llama_candidates),
+                    "alignment_ambiguous": True,
                 }
             )
             continue
@@ -1103,6 +1188,9 @@ def _capture_dump_compare(
         "ck_dump_path": str(ck_dump_path),
         "llama_dump_dir": str(llama_dump_dir),
         "llama_decode_mode": str(llama_capture["meta"].get("decode_mode", "sequential")),
+        "llama_flash_attention_mode": str(
+            llama_capture["meta"].get("flash_attention_mode", "unknown")
+        ),
         "llama_dumped": int(llama_capture["meta"].get("dumped", 0)),
         "prefix_path": None if prefix_path is None else str(prefix_path),
         "tokens_before_count": int(tokens_before_count),

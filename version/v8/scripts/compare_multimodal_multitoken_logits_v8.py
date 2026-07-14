@@ -80,31 +80,71 @@ def _restore_process_env(saved: dict[str, str | None]) -> None:
         _set_process_env(key, value)
 
 
-def _single_hidden_file(root: Path) -> Path:
+def _hidden_token_position(path: Path) -> int | None:
+    match = re.search(r"(?:^|_)tok_(\d+)(?:_|$)", path.name)
+    return int(match.group(1)) if match else None
+
+
+def _select_final_hidden_file(files: list[Path], *, context: str) -> Path:
+    if not files:
+        raise RuntimeError(f"expected hidden dump for {context}, found 0")
+    if len(files) == 1:
+        return files[0]
+
+    positioned = [(path, _hidden_token_position(path)) for path in files]
+    if any(position is None for _, position in positioned):
+        raise RuntimeError(
+            f"multiple hidden dumps for {context} lack unambiguous token positions: "
+            + ", ".join(path.name for path, _ in positioned)
+        )
+    final_position = max(int(position) for _, position in positioned if position is not None)
+    final = [path for path, position in positioned if position == final_position]
+    if len(final) != 1:
+        raise RuntimeError(
+            f"multiple hidden dumps for {context} share final token position {final_position}: "
+            + ", ".join(path.name for path in final)
+        )
+    return final[0]
+
+
+def _hidden_named_files(root: Path, name: str | None) -> list[Path]:
     files = sorted(root.glob("*.f32"))
-    if len(files) != 1:
-        raise RuntimeError(f"expected exactly one hidden dump in {root}, found {len(files)}")
-    return files[0]
+    if name is None:
+        return files
+    suffix = f"_{name}.f32"
+    return [path for path in files if path.name.endswith(suffix)]
 
 
-def _hidden_files_by_layer(root: Path) -> dict[int, Path]:
-    out: dict[int, Path] = {}
-    for path in sorted(root.glob("*.f32")):
+def _single_hidden_file(root: Path, name: str | None = None) -> Path:
+    return _select_final_hidden_file(
+        _hidden_named_files(root, name), context=f"{name or 'hidden tensor'} in {root}"
+    )
+
+
+def _hidden_files_by_layer(root: Path, name: str | None = None) -> dict[int, Path]:
+    candidates: dict[int, list[Path]] = {}
+    for path in _hidden_named_files(root, name):
         m = re.search(r"_layer_(\d+)_", path.name)
         if not m:
             continue
         layer = int(m.group(1))
-        if layer in out:
-            raise RuntimeError(f"duplicate hidden dump for layer {layer} in {root}")
-        out[layer] = path
-    if not out:
+        candidates.setdefault(layer, []).append(path)
+    if not candidates:
         raise RuntimeError(f"expected hidden dumps in {root}, found 0")
-    return out
+    return {
+        layer: _select_final_hidden_file(paths, context=f"layer {layer} in {root}")
+        for layer, paths in candidates.items()
+    }
 
 
-def _hidden_compare_many(persistent_dir: Path, full_dir: Path) -> list[dict[str, Any]]:
-    persistent = _hidden_files_by_layer(persistent_dir)
-    full = _hidden_files_by_layer(full_dir)
+def _hidden_compare_many(
+    persistent_dir: Path,
+    full_dir: Path,
+    persistent_name: str | None = None,
+    full_name: str | None = None,
+) -> list[dict[str, Any]]:
+    persistent = _hidden_files_by_layer(persistent_dir, persistent_name)
+    full = _hidden_files_by_layer(full_dir, full_name)
     rows: list[dict[str, Any]] = []
     for layer in sorted(set(persistent) | set(full)):
         if layer not in persistent or layer not in full:
@@ -151,6 +191,59 @@ def _hidden_full_replay_name(name: str) -> str:
     if name.endswith("_last"):
         return name
     return f"{name}_last"
+
+
+_HIDDEN_EXPORT_CALL_RE = re.compile(
+    r"ck_debug_export_hidden\s*\(\s*model\s*,\s*(\d+)\s*,\s*\"([^\"]+)\""
+)
+
+
+def _hidden_export_catalog(runtime: dict[str, Any]) -> dict[str, list[int]]:
+    """Inventory the exact hidden exporters compiled into a decoder runtime."""
+    c_path_value = runtime.get("c_path")
+    if c_path_value is None:
+        c_path_value = Path(runtime["workdir"]) / "decoder_v8.c"
+    c_path = Path(c_path_value).resolve()
+    if not c_path.is_file():
+        raise FileNotFoundError(
+            "hidden-state preflight requires the generated decoder source matching the runtime: "
+            f"{c_path}"
+        )
+
+    catalog: dict[str, set[int]] = {}
+    for layer_text, name in _HIDDEN_EXPORT_CALL_RE.findall(c_path.read_text(encoding="utf-8")):
+        catalog.setdefault(name, set()).add(int(layer_text))
+    if not catalog:
+        raise RuntimeError(f"generated decoder has no hidden-state exporters: {c_path}")
+    return {name: sorted(layers) for name, layers in sorted(catalog.items())}
+
+
+def _validate_hidden_capture_request(
+    runtime: dict[str, Any], names: list[str], layer: int
+) -> dict[str, list[int]]:
+    catalog = _hidden_export_catalog(runtime)
+    issues: list[str] = []
+    for name in names:
+        replay_name = _hidden_full_replay_name(name)
+        if name not in catalog:
+            issues.append(f"decode exporter {name!r} does not exist")
+            continue
+        if replay_name not in catalog:
+            issues.append(f"full-replay exporter {replay_name!r} does not exist")
+            continue
+        if layer >= 0 and layer not in catalog[name]:
+            issues.append(f"decode exporter {name!r} is unavailable at layer {layer}")
+        if layer >= 0 and layer not in catalog[replay_name]:
+            issues.append(f"full-replay exporter {replay_name!r} is unavailable at layer {layer}")
+    if issues:
+        base_names = sorted(name for name in catalog if not name.endswith("_last"))
+        raise ValueError(
+            "hidden-state checkpoint preflight failed before model execution: "
+            + "; ".join(issues)
+            + ". Valid base names: "
+            + ",".join(base_names)
+        )
+    return catalog
 
 def _run_llama_greedy_sequence(inputs: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     helper = first_token.compare_first_token_logits_v7.ensure_llama_helper()
@@ -246,6 +339,7 @@ def _load_exact_decoder_runtime(
         "gguf": gguf_path,
         "workdir": decoder_dir,
         "so_path": so_path,
+        "c_path": decoder_dir / "decoder_v8.c",
         "weights_bump": weights_bump,
         "manifest_map": manifest_map,
         "decode_layout_path": layout_path,
@@ -273,6 +367,18 @@ def _runtime_evidence(runtime: dict[str, Any], *, exact_reuse: bool) -> dict[str
     }
 
 
+def _ck_environment_evidence() -> dict[str, str]:
+    evidence: dict[str, str] = {}
+    for key, value in sorted(os.environ.items()):
+        if not key.startswith("CK_"):
+            continue
+        if any(marker in key for marker in ("TOKEN", "SECRET", "PASSWORD", "API_KEY")):
+            evidence[key] = "<redacted>"
+        else:
+            evidence[key] = str(value)
+    return evidence
+
+
 def _ck_threads(args: argparse.Namespace) -> int:
     explicit = getattr(args, "ck_threads", None)
     return int(args.threads if explicit is None else explicit)
@@ -296,7 +402,7 @@ def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> d
         decoder_dir = workdir / "decoder"
 
     requested_ctx_len = int(args.ctx_len or bridge_report.get("decoder_context_len") or 256)
-    if exact_runtime:
+    if exact_runtime and not parity_dump:
         runtime = _load_exact_decoder_runtime(
             gguf_path,
             decoder_dir,
@@ -446,6 +552,12 @@ def _capture_step_dump(report: dict[str, Any], args: argparse.Namespace) -> dict
         dump_dir = args.workdir / f"dump_step_{step_index:04d}"
 
     inputs = _prepare_inputs(args, parity_dump=True)
+    dump_source = Path(inputs["runtime"].get("c_path") or "")
+    if not dump_source.is_file() or "#define CK_PARITY_DUMP 1" not in dump_source.read_text(encoding="utf-8"):
+        raise RuntimeError(
+            "granular capture requires a dedicated decoder runtime compiled with CK_PARITY_DUMP; "
+            f"instrumented source is missing or invalid: {dump_source}"
+        )
     row = dict(steps[step_index])
     generated_prefix = [int(t) for t in list(row.get("generated_prefix") or [])]
     replay_tokens_after = [int(t) for t in inputs["tokens_after"]] + generated_prefix
@@ -480,6 +592,11 @@ def _capture_step_dump(report: dict[str, Any], args: argparse.Namespace) -> dict
         "replay_tokens_after_count": int(len(replay_tokens_after)),
         "generated_prefix": generated_prefix,
         "ck_top1": int((ck.get("comparison") or {}).get("top1_ck", ck.get("ck_top1", -1))),
+        "instrumented_runtime": {
+            "c_path": str(dump_source.resolve()),
+            "so_path": str(Path(inputs["runtime"]["so_path"]).resolve()),
+            "parity_dump": True,
+        },
         "dump": dump_report,
     }
 
@@ -501,92 +618,122 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
     names = [item.strip() for item in str(args.hidden_state_names).split(",") if item.strip()]
     if not names:
         raise ValueError("--hidden-state-names did not contain any names")
+    catalog = _validate_hidden_capture_request(inputs["runtime"], names, layer)
     root = (args.hidden_state_dir or (args.workdir / f"hidden_state_step_{step_index:04d}")).resolve()
     root.mkdir(parents=True, exist_ok=True)
 
-    env_keys = ["CK_DEBUG_EXPORT_HIDDEN", "CK_DEBUG_EXPORT_HIDDEN_NAME", "CK_DEBUG_EXPORT_HIDDEN_LAYER"]
+    env_keys = [
+        "CK_DEBUG_EXPORT_HIDDEN",
+        "CK_DEBUG_EXPORT_HIDDEN_NAME",
+        "CK_DEBUG_EXPORT_HIDDEN_NAMES",
+        "CK_DEBUG_EXPORT_HIDDEN_LAYER",
+    ]
     saved_env = {key: os.environ.get(key) for key in env_keys}
     results: list[dict[str, Any]] = []
-    for name in names:
-        persistent_dir = root / f"persistent_{name}"
-        full_dir = root / f"full_replay_{name}"
-        if persistent_dir.exists():
-            import shutil
-            shutil.rmtree(persistent_dir)
-        if full_dir.exists():
-            import shutil
-            shutil.rmtree(full_dir)
-        persistent_dir.mkdir(parents=True, exist_ok=True)
-        full_dir.mkdir(parents=True, exist_ok=True)
+    persistent_dir = root / "persistent"
+    full_dir = root / "full_replay"
+    import shutil
+    for directory in (persistent_dir, full_dir):
+        if directory.exists():
+            shutil.rmtree(directory)
+        directory.mkdir(parents=True, exist_ok=True)
 
+    capture_error: Exception | None = None
+    try:
+        _restore_process_env({key: None for key in env_keys})
+        lib, logits_buf, _vocab_size = _init_ck_state(inputs, bool(args.ck_strict_parity))
         try:
-            _restore_process_env({key: None for key in env_keys})
-            lib, logits_buf, _vocab_size = _init_ck_state(inputs, bool(args.ck_strict_parity))
-            try:
-                last_i = len(generated_prefix) - 1
-                for i, token in enumerate(generated_prefix):
-                    if i == last_i:
-                        _set_process_env("CK_DEBUG_EXPORT_HIDDEN", str(persistent_dir))
-                        _set_process_env("CK_DEBUG_EXPORT_HIDDEN_NAME", name)
-                        if layer >= 0:
-                            _set_process_env("CK_DEBUG_EXPORT_HIDDEN_LAYER", str(layer))
-                    rc = lib.ck_model_decode(ctypes.c_int32(int(token)), logits_buf)
-                    if rc != 0:
-                        raise RuntimeError(f"ck_model_decode failed rc={rc} while capturing persistent hidden state")
-                    if i == last_i:
-                        _restore_process_env({key: None for key in env_keys})
-            finally:
-                if hasattr(lib, "ck_model_free"):
-                    try:
-                        lib.ck_model_free()
-                    except Exception:
-                        pass
-
-            replay_inputs = dict(inputs)
-            replay_inputs["tokens_after"] = [int(t) for t in inputs["tokens_after"]] + generated_prefix
-            _set_process_env("CK_DEBUG_EXPORT_HIDDEN", str(full_dir))
-            _set_process_env("CK_DEBUG_EXPORT_HIDDEN_NAME", _hidden_full_replay_name(name))
-            if layer >= 0:
-                _set_process_env("CK_DEBUG_EXPORT_HIDDEN_LAYER", str(layer))
-            lib2, _logits2, _vocab2 = _init_ck_state(replay_inputs, bool(args.ck_strict_parity))
-            if hasattr(lib2, "ck_model_free"):
+            last_i = len(generated_prefix) - 1
+            for i, token in enumerate(generated_prefix):
+                if i == last_i:
+                    _set_process_env("CK_DEBUG_EXPORT_HIDDEN", str(persistent_dir))
+                    _set_process_env("CK_DEBUG_EXPORT_HIDDEN_NAMES", ",".join(names))
+                    if layer >= 0:
+                        _set_process_env("CK_DEBUG_EXPORT_HIDDEN_LAYER", str(layer))
+                rc = lib.ck_model_decode(ctypes.c_int32(int(token)), logits_buf)
+                if rc != 0:
+                    raise RuntimeError(f"ck_model_decode failed rc={rc} while capturing persistent hidden state")
+                if i == last_i:
+                    _restore_process_env({key: None for key in env_keys})
+        finally:
+            if hasattr(lib, "ck_model_free"):
                 try:
-                    lib2.ck_model_free()
+                    lib.ck_model_free()
                 except Exception:
                     pass
-            _restore_process_env({key: None for key in env_keys})
 
-            if layer < 0:
-                per_layer = _hidden_compare_many(persistent_dir, full_dir)
-                max_diff = max(float(r.get("max_abs_diff", 0.0)) for r in per_layer if r.get("status") == "ok") if per_layer else 0.0
-                first_layer_issue = next((r for r in per_layer if r.get("status") != "ok" or float(r.get("max_abs_diff", 0.0)) > float(args.hidden_state_atol)), None)
-                results.append({
-                    "name": name,
-                    "full_replay_name": _hidden_full_replay_name(name),
-                    "status": "ok" if first_layer_issue is None else "fail",
-                    "max_abs_diff": float(max_diff),
-                    "first_layer_issue": first_layer_issue,
-                    "layers": per_layer,
-                })
-            else:
-                persistent_file = _single_hidden_file(persistent_dir)
-                full_file = _single_hidden_file(full_dir)
-                results.append({
-                    "name": name,
-                    "full_replay_name": _hidden_full_replay_name(name),
-                    **_hidden_compare(persistent_file, full_file),
-                })
-        except Exception as exc:
+        replay_inputs = dict(inputs)
+        replay_inputs["tokens_after"] = [int(t) for t in inputs["tokens_after"]] + generated_prefix
+        replay_names = [_hidden_full_replay_name(name) for name in names]
+        _set_process_env("CK_DEBUG_EXPORT_HIDDEN", str(full_dir))
+        _set_process_env("CK_DEBUG_EXPORT_HIDDEN_NAMES", ",".join(replay_names))
+        if layer >= 0:
+            _set_process_env("CK_DEBUG_EXPORT_HIDDEN_LAYER", str(layer))
+        lib2, _logits2, _vocab2 = _init_ck_state(replay_inputs, bool(args.ck_strict_parity))
+        if hasattr(lib2, "ck_model_free"):
+            try:
+                lib2.ck_model_free()
+            except Exception:
+                pass
+        _restore_process_env({key: None for key in env_keys})
+
+    except Exception as exc:
+        capture_error = exc
+    finally:
+        _restore_process_env(saved_env)
+
+    if capture_error is not None:
+        for name in names:
             results.append({
                 "name": name,
                 "full_replay_name": _hidden_full_replay_name(name),
                 "status": "error",
-                "error": str(exc),
+                "error": str(capture_error),
                 "persistent_dir": str(persistent_dir),
                 "full_replay_dir": str(full_dir),
             })
-        finally:
-            _restore_process_env(saved_env)
+    else:
+        for name in names:
+            replay_name = _hidden_full_replay_name(name)
+            try:
+                if layer < 0:
+                    per_layer = _hidden_compare_many(persistent_dir, full_dir, name, replay_name)
+                    ok_rows = [r for r in per_layer if r.get("status") == "ok"]
+                    max_diff = max(float(r.get("max_abs_diff", 0.0)) for r in ok_rows) if ok_rows else 0.0
+                    first_layer_issue = next(
+                        (
+                            r
+                            for r in per_layer
+                            if r.get("status") != "ok"
+                            or float(r.get("max_abs_diff", 0.0)) > float(args.hidden_state_atol)
+                        ),
+                        None,
+                    )
+                    results.append({
+                        "name": name,
+                        "full_replay_name": replay_name,
+                        "status": "ok" if first_layer_issue is None else "fail",
+                        "max_abs_diff": float(max_diff),
+                        "first_layer_issue": first_layer_issue,
+                        "layers": per_layer,
+                    })
+                else:
+                    persistent_file = _single_hidden_file(persistent_dir, name)
+                    full_file = _single_hidden_file(full_dir, replay_name)
+                    results.append({
+                        "name": name,
+                        "full_replay_name": replay_name,
+                        **_hidden_compare(persistent_file, full_file),
+                    })
+            except Exception as exc:
+                results.append({
+                    "name": name,
+                    "full_replay_name": replay_name,
+                    "status": "error",
+                    "error": str(exc),
+                    "persistent_dir": str(persistent_dir),
+                    "full_replay_dir": str(full_dir),
+                })
 
     first_issue = next((r for r in results if r.get("status") != "ok" or float(r.get("max_abs_diff", 0.0)) > float(args.hidden_state_atol)), None)
     return {
@@ -598,6 +745,12 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
         "llama_next": int(row.get("llama_next", -1)),
         "llama_next_text": str(row.get("llama_next_text", "")),
         "root": str(root),
+        "preflight": {
+            "status": "pass",
+            "requested_names": names,
+            "available_exporter_count": len(catalog),
+        },
+        "ck_execution_count": 2,
         "atol": float(args.hidden_state_atol),
         "first_issue": first_issue,
         "results": results,
@@ -842,6 +995,13 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
         },
         "top_k": int(args.top_k),
         "llama_decode_mode": str(args.llama_decode_mode),
+        "execution_modes": {
+            "ck_strict_parity": bool(args.ck_strict_parity),
+            "llama_decode_mode": str(args.llama_decode_mode),
+            "llama_tensor_repack": not bool(args.llama_no_repack),
+            "diagnostic_tensor_dump": bool(getattr(args, "dump_step", None) is not None),
+            "ck_environment": _ck_environment_evidence(),
+        },
         "llama_greedy_generated": llama_generated,
         "append_on_divergence": str(args.append_on_divergence),
         "ck_runtime": _runtime_evidence(
@@ -909,7 +1069,15 @@ def main() -> int:
     ap.add_argument("--llama-no-repack", action="store_true", help="Disable llama.cpp CPU tensor repacking in the replay helper")
     ap.add_argument("--llama-repack-fallback", action=argparse.BooleanOptionalAction, default=True, help="Retry a failed llama replay step with --no-repack")
     ap.add_argument("--append-on-divergence", choices=["stop", "llama", "ck"], default="stop")
-    ap.add_argument("--ck-strict-parity", action=argparse.BooleanOptionalAction, default=True)
+    ap.add_argument(
+        "--ck-strict-parity",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Enable CK's global diagnostic/reference branches. Production parity defaults this off; "
+            "strict-mode results must not be reported as production behavior."
+        ),
+    )
     ap.add_argument("--json-out", type=Path, default=None)
     ap.add_argument("--dump-step", type=int, default=None, help="Capture CK-vs-llama tensor dumps at this generated step")
     ap.add_argument("--full-replay-step", type=int, default=None, help="Compare a generated step by full mixed-prefix replay instead of incremental CK decode, without tensor dumps")
