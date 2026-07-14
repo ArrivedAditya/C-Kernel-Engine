@@ -46,6 +46,12 @@ class AttentionContractV8Tests(unittest.TestCase):
     def test_registry_defines_complete_semantics(self) -> None:
         resolver.validate_contract_registry(copy.deepcopy(self.contracts))
 
+    def test_f16_split_contract_declares_padded_scheduling_extent(self) -> None:
+        contract = self.contracts["contracts"]["f16_online_fp32_merge"]
+        self.assertEqual(contract["partition"]["kind"], "kv_chunks_by_workers")
+        self.assertEqual(contract["partition"]["threshold"], 512)
+        self.assertEqual(contract["partition"]["extent_alignment"], 256)
+
     def test_kernel_overlay_matches_v8_kernel_maps(self) -> None:
         resolver.validate_kernel_overlay(copy.deepcopy(self.kernels))
 

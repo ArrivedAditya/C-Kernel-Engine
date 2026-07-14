@@ -4858,6 +4858,7 @@ typedef struct {
     int head_dim;
     int aligned_head_dim;
     int split_chunks;
+    int partition_tokens;
 } ck_attention_f16_split_args_t;
 
 static inline float ck_attention_dot_f16_llama(const uint16_t *x,
@@ -4968,7 +4969,8 @@ static void ck_attention_f16_split_work(int ith, int nth, void *opaque)
     ck_attention_f16_split_args_t *args = (ck_attention_f16_split_args_t *) opaque;
     const int partial_stride = args->aligned_head_dim + 2;
     const int total_jobs = args->num_heads * args->split_chunks;
-    const int chunk_size = (args->kv_tokens + args->split_chunks - 1) / args->split_chunks;
+    const int chunk_size =
+        (args->partition_tokens + args->split_chunks - 1) / args->split_chunks;
     const size_t head_stride = (size_t) args->cache_capacity * (size_t) args->aligned_head_dim;
     const float scale = ck_attention_strict_scale_f32(args->head_dim);
     uint16_t *q_half = (uint16_t *) alloca((size_t) args->aligned_head_dim * sizeof(uint16_t));
@@ -4980,9 +4982,9 @@ static void ck_attention_f16_split_work(int ith, int nth, void *opaque)
         const int kv_head = (int) ((long long) h * (long long) args->num_kv_heads /
                                    (long long) args->num_heads);
         const int begin = chunk * chunk_size;
-        const int end = begin + chunk_size < args->kv_tokens
-            ? begin + chunk_size
-            : args->kv_tokens;
+        const int end = begin < args->kv_tokens
+            ? (begin + chunk_size < args->kv_tokens ? begin + chunk_size : args->kv_tokens)
+            : begin;
         const float *q_head = args->q_token + (size_t) h * (size_t) args->aligned_head_dim;
         const uint16_t *k_head = args->k_cache + (size_t) kv_head * head_stride;
         const uint16_t *v_head = args->v_cache + (size_t) kv_head * head_stride;
@@ -5070,6 +5072,17 @@ void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q
 
     const size_t resolved_count = (size_t) num_heads * (size_t) split_chunks * (size_t) partial_stride;
     float *partials = (float *) alloca(resolved_count * sizeof(float));
+    /*
+     * llama.cpp keeps decode graphs reusable by padding the KV scheduling
+     * extent to at least 256 rows. Masked rows do not contribute values, but
+     * the padded extent still determines worker chunk boundaries and therefore
+     * the FP16 partial-reduction order. Keep valid storage separate from that
+     * scheduling contract: this kernel never reads rows >= kv_tokens.
+     */
+    const int partition_alignment = 256;
+    const int partition_tokens = kv_tokens >= 512
+        ? ((kv_tokens + partition_alignment - 1) / partition_alignment) * partition_alignment
+        : kv_tokens;
     ck_attention_f16_split_args_t args = {
         .q_token = q_token,
         .k_cache = k_cache,
@@ -5082,6 +5095,7 @@ void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q
         .head_dim = head_dim,
         .aligned_head_dim = aligned_head_dim,
         .split_chunks = split_chunks,
+        .partition_tokens = partition_tokens,
     };
 
     ck_threadpool_t *pool = ck_threadpool_global();

@@ -88,8 +88,8 @@ static size_t tensor_offset(const ggml_tensor * t, int i0, int i1, int i2, int i
 }
 
 int main(int argc, char ** argv) {
-    if (argc != 10) {
-        fprintf(stderr, "usage: %s q.f32 k.f16 v.f16 out.f32 H Hkv KV D threads\n", argv[0]);
+    if (argc != 10 && argc != 11) {
+        fprintf(stderr, "usage: %s q.f32 k.f16 v.f16 out.f32 H Hkv KV D threads [valid_KV]\n", argv[0]);
         return 2;
     }
     const int H = atoi(argv[5]);
@@ -97,12 +97,15 @@ int main(int argc, char ** argv) {
     const int KV = atoi(argv[7]);
     const int D = atoi(argv[8]);
     const int threads = atoi(argv[9]);
-    if (H <= 0 || Hkv <= 0 || KV <= 0 || D <= 0 || threads <= 0 || H % Hkv != 0) return 2;
+    const int valid_KV = argc == 11 ? atoi(argv[10]) : KV;
+    if (H <= 0 || Hkv <= 0 || KV <= 0 || valid_KV <= 0 || valid_KV > KV ||
+        D <= 0 || threads <= 0 || H % Hkv != 0) return 2;
 
     const size_t q_count = (size_t) H * (size_t) D;
     const size_t kv_count = (size_t) Hkv * (size_t) KV * (size_t) D;
     const size_t memory = 64u * 1024u * 1024u +
-                          q_count * sizeof(float) + 2u * kv_count * sizeof(ggml_fp16_t);
+                          q_count * sizeof(float) +
+                          (2u * kv_count + (size_t) KV) * sizeof(ggml_fp16_t);
     ggml_init_params init = { memory, nullptr, false };
     ggml_context * ctx = ggml_init(init);
     if (!ctx) return 3;
@@ -118,8 +121,16 @@ int main(int argc, char ** argv) {
         return 4;
     }
 
+    ggml_tensor * mask = nullptr;
+    if (valid_KV != KV) {
+        mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F16, KV, 1);
+        ggml_fp16_t * mask_data = (ggml_fp16_t *) mask->data;
+        for (int i = 0; i < KV; ++i) {
+            mask_data[i] = ggml_fp32_to_fp16(i < valid_KV ? 0.0f : -INFINITY);
+        }
+    }
     ggml_tensor * out = ggml_flash_attn_ext(
-        ctx, q, k, v, nullptr, 1.0f / sqrtf((float) D), 0.0f, 0.0f);
+        ctx, q, k, v, mask, 1.0f / sqrtf((float) D), 0.0f, 0.0f);
     ggml_flash_attn_ext_set_prec(out, GGML_PREC_F32);
     ggml_cgraph * graph = ggml_new_graph(ctx);
     ggml_build_forward_expand(graph, out);
@@ -181,13 +192,18 @@ def _ensure_llama_helper():
     return binary, bin_dir
 
 
-def _llama_split_output(q, k_bits, v_bits, head_dim, threads):
+def _llama_split_output(q, k_bits, v_bits, head_dim, threads, padded_kv_tokens=None):
     helper, bin_dir = _ensure_llama_helper()
     heads, _ = q.shape
     kv_heads, kv_tokens, _ = k_bits.shape
+    padded_kv_tokens = int(padded_kv_tokens or kv_tokens)
+    if padded_kv_tokens < kv_tokens:
+        raise ValueError("padded_kv_tokens cannot be smaller than the valid KV count")
     q_compact = np.ascontiguousarray(q[:, :head_dim], dtype=np.float32)
-    k_compact = np.ascontiguousarray(k_bits[:, :, :head_dim], dtype=np.uint16)
-    v_compact = np.ascontiguousarray(v_bits[:, :, :head_dim], dtype=np.uint16)
+    k_compact = np.zeros((kv_heads, padded_kv_tokens, head_dim), dtype=np.uint16)
+    v_compact = np.zeros((kv_heads, padded_kv_tokens, head_dim), dtype=np.uint16)
+    k_compact[:, :kv_tokens, :] = np.ascontiguousarray(k_bits[:, :, :head_dim], dtype=np.uint16)
+    v_compact[:, :kv_tokens, :] = np.ascontiguousarray(v_bits[:, :, :head_dim], dtype=np.uint16)
     with tempfile.TemporaryDirectory(prefix="ck_f16_split_kv_") as tmp:
         tmp = Path(tmp)
         q_path, k_path, v_path, out_path = [tmp / name for name in ("q.f32", "k.f16", "v.f16", "out.f32")]
@@ -196,7 +212,8 @@ def _llama_split_output(q, k_bits, v_bits, head_dim, threads):
         v_compact.tofile(v_path)
         command = [
             str(helper), str(q_path), str(k_path), str(v_path), str(out_path),
-            str(heads), str(kv_heads), str(kv_tokens), str(head_dim), str(threads),
+            str(heads), str(kv_heads), str(padded_kv_tokens), str(head_dim), str(threads),
+            str(kv_tokens),
         ]
         env = os.environ.copy()
         env["LD_LIBRARY_PATH"] = f"{bin_dir}:{env.get('LD_LIBRARY_PATH', '')}"
@@ -206,6 +223,12 @@ def _llama_split_output(q, k_bits, v_bits, head_dim, threads):
                 f"llama.cpp split-KV helper failed ({completed.returncode}):\n{completed.stderr}"
             )
         return np.fromfile(out_path, dtype=np.float32).reshape(heads, head_dim)
+
+
+def _llama_kv_partition_extent(kv_tokens):
+    """Match llama.cpp's reusable decode-graph KV scheduling extent."""
+    kv_tokens = int(kv_tokens)
+    return ((kv_tokens + 255) // 256) * 256 if kv_tokens >= 512 else kv_tokens
 
 
 def _f32_ptr(a):
@@ -492,7 +515,9 @@ def _case(name, seed, heads, kv_heads, kv_tokens, head_dim, aligned, chunks, tol
     # contract, but its dot traversal models one ISA and is not authoritative
     # across AVX2, AVX-512, and NEON. Gate the production entry point against
     # GGML using the same worker/chunk count instead.
-    expected = _llama_split_output(q, k, v, head_dim, chunks)
+    expected = _llama_split_output(
+        q, k, v, head_dim, chunks, _llama_kv_partition_extent(kv_tokens)
+    )
     active_diff = float(np.max(np.abs(actual[:, :head_dim] - expected)))
     padding_diff = (
         float(np.max(np.abs(actual[:, head_dim:])))
@@ -520,6 +545,11 @@ def main():
         1058, 32, 8, 1058, 128, 128, 20, 2.0e-5,
     )
     results.append(qwen)
+    qwen_step20, qwen_step20_data = _case(
+        "f16_split_qwen3vl_step20(KV=1047,P=1280,H=32,D=128,C=20)",
+        1047, 32, 8, 1047, 128, 128, 20, 2.0e-5,
+    )
+    results.append(qwen_step20)
     qwen_long, qwen_long_data = _case(
         "f16_split_qwen3vl_long(KV=1609,H=32,D=128,C=20)",
         1609, 32, 8, 1609, 128, 128, 20, 2.0e-5,
@@ -536,6 +566,7 @@ def main():
         ("explicit_contract_route_below(KV=511)", below_data),
         ("explicit_contract_route_threshold(KV=512)", threshold_data),
         ("explicit_contract_route_qwen3vl(KV=1058)", qwen_data),
+        ("explicit_contract_route_qwen3vl_step20(KV=1047,P=1280)", qwen_step20_data),
         ("explicit_contract_route_qwen3vl_long(KV=1609)", qwen_long_data),
     ):
         q, k, v, _ = data
@@ -572,11 +603,14 @@ def main():
             ("llama_oracle_below(KV=511)", below_data, 1),
             ("llama_oracle_threshold(KV=512)", threshold_data, threads),
             ("llama_oracle_qwen3vl(KV=1058)", qwen_data, threads),
+            ("llama_oracle_qwen3vl_step20(KV=1047,P=1280)", qwen_step20_data, threads),
             ("llama_oracle_qwen3vl_long(KV=1609)", qwen_long_data, threads),
         ):
             q, k, v, _ = data
             ck = _run_explicit(q, k, v, q.shape[1], chunks)
-            llama = _llama_split_output(q, k, v, q.shape[1], threads)
+            llama = _llama_split_output(
+                q, k, v, q.shape[1], threads, _llama_kv_partition_extent(k.shape[1])
+            )
             diff = float(np.max(np.abs(ck[:, :q.shape[1]] - llama)))
             results.append(Result(name, diff, 2.0e-5, diff <= 2.0e-5))
     except RuntimeError as exc:
