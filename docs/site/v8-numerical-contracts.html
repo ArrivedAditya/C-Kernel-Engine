@@ -1112,6 +1112,9 @@ make v7-regression-fast</code></pre>
 <p>Every X-ray failure follows the same additive progression. The report embeds these steps so another agent does not repeat an already diagnosed numerical bug.</p>
 
 <ol>
+  <li>Compare execution policy first: prefill segmentation, kernel batch shapes, position progression, cache reset/append behavior, and cache strides. A combined 1,307-row prefill is not numerically equivalent evidence for a backend that executes 33, 1,008, and 266-row segments.</li>
+  <li>For incremental decode, prove cache state before attention math: compare append index, current post-RoPE K/V, stored-row readback, the previous row, and hashes for every valid cache row.</li>
+  <li>Only when query and valid cache bytes agree, compare attention providers, split thresholds, worker partitions, probability/value rounding, and merge order.</li>
   <li>Stop at the first divergent semantic edge and classify its storage, compute, reduction, position, layout, circuit, binding, and threading contract.</li>
   <li>Resolve an exact compatible kernel-map capability. Zero or multiple providers hard-fail.</li>
   <li>Fix the existing implementation or add one new additive variant. Do not alter unrelated numerical variants.</li>
@@ -1121,6 +1124,15 @@ make v7-regression-fast</code></pre>
   <li>Rerun X-ray from the last passing checkpoint. The accepted fix must move the first divergence to a later semantic edge.</li>
   <li>Publish the capability evidence in the test-report accordion and nightly artifacts before promoting the route.</li>
 </ol>
+
+<p>The bounded execution-state comparator preserves this order in a machine-readable report:</p>
+
+<pre><code>python version/v8/scripts/xray_execution_state_v8.py \
+  --subject-trace build/xray/ck-execution-trace.json \
+  --oracle-trace build/xray/llama-execution-trace.json \
+  --output build/xray/execution-state-report.json</code></pre>
+
+<p>It stops at one of four useful boundaries: execution-policy mismatch, cache metadata/content mismatch, attention-input mismatch, or attention-arithmetic mismatch. Tensor bisection begins only after the execution and state contracts agree.</p>
 
 <h2>Measured BF16 Vision Progression</h2>
 
@@ -1139,6 +1151,26 @@ make v7-regression-fast</code></pre>
 </table>
 
 <p>The next edge is always explicit. After output projection the resolver selects the BF16 residual capability, then X-ray continues through norm2, MLP, spatial merge, projector, final prefix, mixed-prefill logits, and teacher-forced generation. A green leaf test without this forward movement is evidence for a kernel only, not closure of the model bug.</p>
+
+<h2>Execution-Contract X-Ray</h2>
+
+<p>Tensor parity cannot diagnose a backend that executes the same mixed prefix with a different schedule. X-ray therefore records prefill segmentation, cache transitions, position transitions, exact shared-library identity, and the manifest-map identity alongside numerical checkpoints.</p>
+
+<table>
+  <thead><tr><th>Mixed-prefix contract</th><th>Required behavior</th><th>Failure meaning</th></tr></thead>
+  <tbody>
+    <tr><td>Segments</td><td><code>text_before -&gt; visual -&gt; text_after</code></td><td>A combined prefix changes projection reduction shape and rounding.</td></tr>
+    <tr><td>Cache transition</td><td><code>append_preserve</code></td><td>A segment must retain all prior K/V rows and append at the physical token offset.</td></tr>
+    <tr><td>Position transition</td><td><code>segment_defined</code></td><td>Physical cache position and semantic M-RoPE text position must not be conflated.</td></tr>
+    <tr><td>Runtime evidence</td><td>Exact generated library and manifest-map hashes</td><td>A stale converted manifest or rebuilt runtime invalidates attribution.</td></tr>
+  </tbody>
+</table>
+
+<p>On the 1,008-token Qwen3-VL form cases, the old single-call path diverged from llama.cpp as early as generated step 4. Circuit-driven segmented append removed the cache-state failure, but a later close-ranking flip remained. X-ray then showed that the visual M-RoPE cache was exact while only the rotated second half differed. Basis-vector replay isolated two compiler-visible rounding points: llama.cpp rounds the partner product before each <code>fmaf</code>, and its frequency recurrence uses the system <code>powf</code>, <code>sinf</code>, and <code>cosf</code> behavior. CK now names that evaluation order in the numerical contract and implements it explicitly.</p>
+
+<p>The resulting production gate is exact for both canonical OCR forms: each full <code>1008 x 16384</code> decoder-facing visual prefix matches llama.cpp across all 16,515,072 FP32 values, and both 128-token greedy runs match 128/128 top-1 tokens. Minimum logits cosine was 0.98892 and 0.99168 respectively, with at least 14/16 top-k overlap. This closes these two fixtures, not the unexecuted 40-image sweep or every multimodal family.</p>
+
+<p>The investigation also invalidated an earlier packed Q4_K&times;Q8_K diagnosis. The apparent packed-reduction failure was downstream of the M-RoPE ULP and a report that recorded the generated decoder library but not its dynamically loaded engine library. X-ray now defaults the raw llama.cpp oracle to one thread, rejects multi-threaded exact capture without an explicit opt-in, and records the engine, generated model, llama shim, and manifest identities. A downstream kernel is not blamed until exact-input replay and complete runtime provenance both pass.</p>
 
 <h2>Validation Commands</h2>
 
