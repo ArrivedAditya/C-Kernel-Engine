@@ -1292,6 +1292,7 @@ test-head-major-q5-outproj-quick: $(LIB)
 
 test-v8-qwen3vl: $(LIB_VISION)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) tests/test_v8_qwen3vl_template.py
+	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_codegen_bridge.V8CodegenBridgeTests.test_qwen3vl_decode_uses_resolved_mrope_and_attention_contracts -v
 	$(PYTHON) $(PYTHONFLAGS) tests/test_v8_vision_encoder_accuracy_gate.py
 	$(PYTHON) $(PYTHONFLAGS) tests/test_nightly_runner_artifact_status.py
 
@@ -1310,6 +1311,8 @@ test-qwen3vl-methodical-parity: $(LIB) $(LIB_VISION)
 	@echo "qwen3vl_q8_projection_matrix max_diff=0 tol=0 [PASS]"
 	@$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_multitoken_eos_contract -v
 	@echo "qwen3vl_eos_contract max_diff=0 tol=0 [PASS]"
+	@$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_decoder_first_token_parity -v
+	@echo "qwen3vl_segmented_dump_alignment max_diff=0 tol=0 [PASS]"
 
 # Artifact-backed lane. Each invocation runs the generated encoder through the
 # requested layer and X-ray reports the first failing semantic edge. Missing
@@ -3003,6 +3006,7 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) unittest/bf16/test_attention_storage_contract_bf16.py
 	@$(PYTHON) unittest/bf16/test_residual_storage_contract_bf16.py
 	@$(PYTHON) unittest/bf16/test_gelu_pytorch_tanh_storage_bf16.py
+	@$(PYTHON) unittest/test_rmsnorm_numerical_contract.py
 	@PYTHONPATH=unittest CK_NUMERICAL_CAPABILITY_REPORT=version/v8/.cache/reports/mrope_capabilities_latest.json $(PYTHON) -c "import test_vision; test_vision.test_mrope_qk_vision_storage_matrix()"
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py

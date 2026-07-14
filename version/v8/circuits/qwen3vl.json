@@ -141,6 +141,50 @@
     }
   },
   "required_numerical_contracts": {
+    "decoder.rmsnorm": {
+      "op": "rmsnorm",
+      "template_ops": ["rmsnorm"],
+      "phases": {
+        "prefill": {
+          "contract_id": "rmsnorm_fp32_square_fp64_sum_fp32_output",
+          "validation": "validated",
+          "evidence": "llama.cpp Qwen3-VL prefill uses FP32 square products accumulated in an ascending FP64 row sum."
+        },
+        "decode": {
+          "contract_id": "rmsnorm_fp32_square_fp64_sum_fp32_output",
+          "validation": "validated",
+          "evidence": "Layer-0 exact-input attribution identified RMSNorm as the first production decode arithmetic boundary."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.rmsnorm.output",
+        "producer": "rmsnorm",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.qk_norm": {
+      "op": "qk_norm",
+      "template_ops": ["qk_norm"],
+      "phases": {
+        "prefill": {
+          "contract_id": "rmsnorm_fp32_square_fp64_sum_fp32_output",
+          "validation": "validated",
+          "evidence": "Q/K normalization applies the same FP64 row-sum RMSNorm contract independently to each head and token."
+        },
+        "decode": {
+          "contract_id": "rmsnorm_fp32_square_fp64_sum_fp32_output",
+          "validation": "validated",
+          "evidence": "Q/K normalization uses the same reduction contract at head dimension 128 during incremental decode."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.qk_norm.output",
+        "producer": "qk_norm",
+        "logical_layout": "head_major",
+        "axis_names": ["head", "token", "channel"]
+      }
+    },
     "decoder.mrope": {
       "op": "rope",
       "template_ops": ["rope_qk"],

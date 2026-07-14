@@ -2793,6 +2793,22 @@ static int ck_debug_import_checkpoint(CKModel *model, int layer, const char *che
     return 1;
 }}
 
+static int ck_debug_hidden_name_in_list(const char *list, const char *name) {{
+    if (!list || !list[0] || !name) return 1;
+    const size_t name_len = strlen(name);
+    const char *cursor = list;
+    while (*cursor) {{
+        while (*cursor == ',' || *cursor == ' ' || *cursor == '\t') cursor++;
+        const char *start = cursor;
+        while (*cursor && *cursor != ',') cursor++;
+        const char *end = cursor;
+        while (end > start && (end[-1] == ' ' || end[-1] == '\t')) end--;
+        if ((size_t)(end - start) == name_len && memcmp(start, name, name_len) == 0) return 1;
+        if (*cursor == ',') cursor++;
+    }}
+    return 0;
+}}
+
 static void ck_debug_export_hidden(CKModel *model, int layer, const char *name, const float *data, int count) {{
     const char *dir = getenv("CK_DEBUG_EXPORT_HIDDEN");
     if (!dir || !dir[0] || !model || !name || !data || count <= 0) return;
@@ -2804,6 +2820,8 @@ static void ck_debug_export_hidden(CKModel *model, int layer, const char *name, 
     }}
     const char *name_filter = getenv("CK_DEBUG_EXPORT_HIDDEN_NAME");
     if (name_filter && name_filter[0] && strcmp(name_filter, name) != 0) return;
+    const char *name_filters = getenv("CK_DEBUG_EXPORT_HIDDEN_NAMES");
+    if (name_filters && name_filters[0] && !ck_debug_hidden_name_in_list(name_filters, name)) return;
     char path[1024];
     int n = snprintf(path, sizeof(path), "%s/tok_%04d_layer_%03d_%s.f32",
                      dir, model->pos, layer, name);

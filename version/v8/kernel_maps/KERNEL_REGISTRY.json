@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 203,
+      "total": 205,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -55,7 +55,7 @@
         "position_ids": 1,
         "projector_prep": 1,
         "q_norm": 1,
-        "qk_norm": 1,
+        "qk_norm": 2,
         "qk_norm_backward": 1,
         "qkv_projection": 1,
         "quantize": 2,
@@ -72,7 +72,7 @@
         "relu2": 2,
         "residual_add": 2,
         "residual_save": 1,
-        "rmsnorm": 2,
+        "rmsnorm": 3,
         "rope": 12,
         "rope_backward": 2,
         "rope_init": 2,
@@ -2468,28 +2468,28 @@
           "head_major"
         ],
         "numerics.attention_reduction": [
-          "f16_online_fp32_merge"
+          "fp32_online"
         ]
       },
       "supported_reductions": {
-        "f16_online_fp32_merge": {
+        "fp32_online": {
           "status": "validated",
           "function": "attention_forward_decode_head_major_gqa_flash_f16cache",
           "explicit_selector": false,
-          "notes": "Current generated v8 route. The explicit selector API is validated separately and will replace this ABI after E2E promotion."
+          "notes": "Legacy single FP32 decode reduction. Numerically distinct from the explicit FP16 online/FP32 merge contract."
         }
       },
       "implementation": {
         "isa_dispatch": "runtime",
         "threading": {
-          "runtime": "ck_threadpool",
+          "runtime": "serial",
           "work_partition": [
-            "kv_chunks_by_workers"
+            "serial"
           ],
           "dispatch": [
-            "ck_threadpool_dispatch_n"
+            "inline"
           ],
-          "reduction_order_effect": "contract_defined"
+          "reduction_order_effect": "none"
         }
       },
       "quant": {
@@ -2611,6 +2611,46 @@
       "op": "attention",
       "variant": "decode_head_major_gqa_flash_f16cache_contract",
       "mode": "decode",
+      "contract_schema_version": 1,
+      "provides": {
+        "execution.phase": [
+          "decode"
+        ],
+        "tensor.q.dtype": [
+          "fp32"
+        ],
+        "tensor.kv.dtype": [
+          "fp16"
+        ],
+        "tensor.layout": [
+          "head_major"
+        ],
+        "numerics.attention_reduction": [
+          "f16_online_fp32_merge"
+        ]
+      },
+      "supported_reductions": {
+        "f16_online_fp32_merge": {
+          "status": "validated",
+          "function": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+          "explicit_selector": true,
+          "selector": "CK_ATTN_REDUCTION_F16_ONLINE_FP32_MERGE",
+          "notes": "FP16 Q/K and partial-value storage with worker-chunk online softmax and ordered FP32 merge."
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "ck_threadpool",
+          "work_partition": [
+            "kv_chunks_by_workers"
+          ],
+          "dispatch": [
+            "ck_threadpool_dispatch_n"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
       "quant": {
         "activation": "fp32",
         "kv_cache": "fp16",
@@ -2705,6 +2745,59 @@
         "c_declaration": "ck_attention_status_t attention_forward_decode_head_major_gqa_flash_f16cache_contract(const float *q_token, const uint16_t *k_cache, const uint16_t *v_cache, float *out_token, int num_heads, int num_kv_heads, int kv_tokens, int cache_capacity, int head_dim, int aligned_head_dim, ck_attention_reduction_t reduction);",
         "sources": [
           "src/kernels/attention_kernels.c"
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q_token",
+            "source": "scratch:q_scratch",
+            "cast": "const float*"
+          },
+          {
+            "name": "k_cache",
+            "source": "runtime:kv_cache_k_layer_f16",
+            "cast": "const uint16_t*"
+          },
+          {
+            "name": "v_cache",
+            "source": "runtime:kv_cache_v_layer_f16",
+            "cast": "const uint16_t*"
+          },
+          {
+            "name": "out_token",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "kv_tokens",
+            "source": "runtime:kv_tokens"
+          },
+          {
+            "name": "cache_capacity",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "reduction",
+            "source": "const:CK_ATTN_REDUCTION_F16_ONLINE_FP32_MERGE"
+          }
         ]
       },
       "name": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
@@ -19587,6 +19680,172 @@
       "_source_file": "qk_norm_forward.json"
     },
     {
+      "id": "qk_norm_forward_fp64_sum",
+      "op": "qk_norm",
+      "variant": "fp32_square_fp64_sum_fp32_output",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "q_gamma",
+          "dtype": "fp32",
+          "shape": [
+            "D"
+          ]
+        },
+        {
+          "name": "k_gamma",
+          "dtype": "fp32",
+          "shape": [
+            "D"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "qk_norm_forward_fp64_sum",
+        "c_declaration": "void qk_norm_forward_fp64_sum(float *q, float *k, const float *q_gamma, const float *k_gamma, int num_heads, int num_kv_heads, int num_tokens, int head_dim, float eps);",
+        "sources": [
+          "src/kernels/qk_norm_kernels.c",
+          "src/kernels/rmsnorm_kernels.c"
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "rmsnorm_fp32_square_fp64_sum_fp32_output",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "qk_norm_forward_fp64_sum",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp64",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "scratch:q_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "k",
+            "source": "scratch:k_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "q_gamma",
+            "source": "weight_f:q_norm",
+            "cast": "const float*"
+          },
+          {
+            "name": "k_gamma",
+            "source": "weight_f:k_norm",
+            "cast": "const float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "eps",
+            "source": "dim:rms_eps"
+          }
+        ]
+      },
+      "notes": "Per-head Q/K RMSNorm with FP32 squares and ascending FP64 row sums.",
+      "name": "qk_norm_forward_fp64_sum",
+      "_source_file": "qk_norm_forward_fp64_sum.json"
+    },
+    {
       "id": "quantize_batch_q8_0",
       "op": "quantize_batch",
       "variant": "fp32_to_q8_0_batch",
@@ -22262,6 +22521,149 @@
       "notes": "Root Mean Square Layer Normalization. Computes: output = input / sqrt(mean(x^2) + eps) * gamma",
       "name": "rmsnorm_forward",
       "_source_file": "rmsnorm_forward.json"
+    },
+    {
+      "id": "rmsnorm_forward_fp64_sum",
+      "op": "rmsnorm",
+      "variant": "fp32_square_fp64_sum_fp32_output",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "gamma",
+          "dtype": "fp32",
+          "shape": [
+            "E"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ]
+        },
+        {
+          "name": "rstd",
+          "dtype": "fp32",
+          "shape": [
+            "T"
+          ]
+        }
+      ],
+      "dims": [
+        "T",
+        "E"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "rmsnorm_forward_fp64_sum",
+        "c_declaration": "void rmsnorm_forward_fp64_sum(const float *input, const float *gamma, float *output, float *rstd_cache, int tokens, int d_model, int aligned_embed_dim, float eps);",
+        "sources": [
+          "src/kernels/rmsnorm_kernels.c"
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "rmsnorm_fp32_square_fp64_sum_fp32_output",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "rmsnorm_forward_fp64_sum",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp64",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*"
+          },
+          {
+            "name": "gamma",
+            "source": "weight:gamma",
+            "alt": [
+              "ln1_gamma",
+              "ln2_gamma",
+              "final_ln_weight"
+            ],
+            "cast": "const float*"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*"
+          },
+          {
+            "name": "rstd_cache",
+            "source": "null"
+          },
+          {
+            "name": "tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "d_model",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "aligned_embed_dim",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "eps",
+            "source": "dim:rms_eps"
+          }
+        ]
+      },
+      "notes": "FP32 RMSNorm with FP32 square products and an ascending FP64 row sum.",
+      "name": "rmsnorm_forward_fp64_sum",
+      "_source_file": "rmsnorm_forward_fp64_sum.json"
     },
     {
       "id": "v_norm",
