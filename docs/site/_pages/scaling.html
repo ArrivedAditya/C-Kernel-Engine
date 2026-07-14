@@ -1419,6 +1419,11 @@ CPU RAM budget (4TB):
         Match the workload boundary to the communication regime. Use NUMA and local memory first, a controlled RDMA
         fabric for tightly coupled model parallelism, and wider networks only for work that can tolerate their latency.
         The goal is sustained useful model throughput, not an accumulated peak-FLOPS slogan.
+        The <a href="cke-throughput-unit.html">C-Kernel Throughput Unit (CKU)</a> is the measurement contract for
+        this work: active bytes cycled through useful model math per second, reported with the model phase, context,
+        concurrency, memory path, and system topology. Distributed CKU must include bytes crossing sockets and nodes,
+        so compute, memory movement, communication, and token output are evaluated as one workload rather than as
+        disconnected peak specifications.
     </div>
 </div>
 
