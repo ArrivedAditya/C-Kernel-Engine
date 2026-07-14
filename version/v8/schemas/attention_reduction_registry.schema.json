@@ -61,6 +61,7 @@
           "properties": {
             "kind": {"enum": ["single_range", "kv_chunks_by_workers", "query_key_tiles"]},
             "threshold": {"type": "integer", "minimum": 1},
+            "extent_alignment": {"type": "integer", "minimum": 1},
             "below_threshold_chunks": {"type": "integer", "minimum": 1},
             "at_or_above_threshold_chunks": {"enum": ["runtime_worker_count"]},
             "query_tile_size": {"type": "integer", "minimum": 1},

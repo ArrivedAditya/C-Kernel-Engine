@@ -1651,8 +1651,10 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16
     ck_attention_reduction_t reduction);
 
 // Deterministic llama.cpp-style FP16 split-KV oracle. The explicit chunk count
-// makes diagnostics independent of the host's available core count. Production
-// routing must be accepted separately by stitched model parity.
+// makes diagnostics independent of the host's available core count. At and
+// above KV=512, worker boundaries use a 256-row padded scheduling extent while
+// storage reads remain bounded by kv_tokens. Production routing must be
+// accepted separately by stitched model parity.
 void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q_token,
                                                                   const uint16_t *k_cache,
                                                                   const uint16_t *v_cache,
