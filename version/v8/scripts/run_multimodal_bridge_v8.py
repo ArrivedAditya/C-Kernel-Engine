@@ -12,6 +12,7 @@ import json
 import math
 import os
 import random
+import shutil
 import subprocess
 import sys
 import time
@@ -1684,6 +1685,10 @@ def _gemma4_geometry_overrides(config: dict[str, Any], image_path: Path) -> dict
     image_height = vision_grid_h * patch_size
     vision_num_patches = vision_grid_w * vision_grid_h
     vision_merged_tokens = pooled_w * pooled_h
+    patch_area = patch_size * patch_size
+    merge_factor = merge_size * merge_size
+    min_pixels = min_tokens * merge_factor * patch_area
+    max_pixels = max_tokens * merge_factor * patch_area
     return {
         "image_width": int(image_width),
         "image_height": int(image_height),
@@ -1692,7 +1697,7 @@ def _gemma4_geometry_overrides(config: dict[str, Any], image_path: Path) -> dict
         "vision_num_patches": int(vision_num_patches),
         "vision_merged_tokens": int(vision_merged_tokens),
         "spatial_merge_size": int(merge_size),
-        "spatial_merge_factor": int(merge_size * merge_size),
+        "spatial_merge_factor": int(merge_factor),
         "context_length": int(vision_num_patches),
         "max_seq_len": int(vision_num_patches),
         "merged_grid_x": int(pooled_w),
@@ -1701,25 +1706,60 @@ def _gemma4_geometry_overrides(config: dict[str, Any], image_path: Path) -> dict
         "image_source_height": int(source_height),
         "image_min_pixels": int(min_pixels),
         "image_max_pixels": int(max_pixels),
-        "image_min_tokens": int(min_pixels // patch_area),
-        "image_max_tokens": int(max_pixels // patch_area),
+        "image_min_tokens": int(min_tokens),
+        "image_max_tokens": int(max_tokens),
     }
+
+
+def _sync_runtime_engine(engine_path: Path, model_so: Path) -> Path:
+    source = engine_path.resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"CK engine library is missing: {source}")
+    destination = model_so.resolve().parent / "libckernel_engine.so"
+    if destination == source:
+        return destination
+    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+    if destination.is_file() and hashlib.sha256(destination.read_bytes()).hexdigest() == source_hash:
+        return destination
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    shutil.copy2(source, temporary)
+    os.replace(temporary, destination)
+    return destination
 
 
 def _compile_generated_model(c_path: Path, so_path: Path, *, profile: bool = False) -> Path:
     stamp_path = so_path.with_suffix(so_path.suffix + ".build.json")
+    engine_path = (BUILD_DIR / "libckernel_engine.so").resolve()
+    if not engine_path.is_file():
+        raise FileNotFoundError(f"CK engine library is missing: {engine_path}")
+    engine_hash = hashlib.sha256(engine_path.read_bytes()).hexdigest()
     source_hash = hashlib.sha256(c_path.read_bytes()).hexdigest()
     source_size = int(c_path.stat().st_size)
+    compiler_probe = subprocess.run(
+        ["cc", "--version"], text=True, capture_output=True, check=False
+    )
+    compiler_version = (
+        compiler_probe.stdout.splitlines()[0]
+        if compiler_probe.returncode == 0 and compiler_probe.stdout
+        else f"cc probe failed rc={compiler_probe.returncode}"
+    )
     build_fingerprint = {
-        "version": 1,
+        "version": 2,
         "source_path": str(c_path.resolve()),
         "source_sha256": source_hash,
         "source_size": source_size,
         "profile": bool(profile),
+        "compiler": {"command": "cc", "version": compiler_version},
+        "runtime_dependency": {
+            "name": "libckernel_engine.so",
+            "sha256": engine_hash,
+            "runpath": "$ORIGIN",
+        },
     }
     if so_path.exists():
         cached = _json_read(stamp_path)
         if cached == build_fingerprint:
+            _sync_runtime_engine(engine_path, so_path)
             return so_path
     cmd = [
         "cc",
@@ -1736,13 +1776,14 @@ def _compile_generated_model(c_path: Path, so_path: Path, *, profile: bool = Fal
         "version/v8/src/ck_parallel_prefill_v8.c",
         "-Lbuild",
         "-lckernel_engine",
-        f"-Wl,-rpath,{BUILD_DIR}",
+        "-Wl,-rpath,$ORIGIN",
         "-o",
         str(so_path),
         "-lm",
         "-lpthread",
     ]
     _run(cmd)
+    _sync_runtime_engine(engine_path, so_path)
     _json_write(stamp_path, build_fingerprint)
     return so_path
 
@@ -2226,9 +2267,58 @@ def _load_encoder_lib(model_so: Path) -> ctypes.CDLL:
     return lib
 
 
-def _load_decoder_lib(model_so: Path) -> ctypes.CDLL:
-    ctypes.CDLL(str(BUILD_DIR / "libckernel_engine.so"), mode=ctypes.RTLD_GLOBAL)
+class _DlInfo(ctypes.Structure):
+    _fields_ = [
+        ("dli_fname", ctypes.c_char_p),
+        ("dli_fbase", ctypes.c_void_p),
+        ("dli_sname", ctypes.c_char_p),
+        ("dli_saddr", ctypes.c_void_p),
+    ]
+
+
+def _resolved_symbol_library(lib: ctypes.CDLL, symbol: str) -> Path:
+    function = getattr(lib, symbol)
+    dladdr = ctypes.CDLL(None).dladdr
+    dladdr.argtypes = [ctypes.c_void_p, ctypes.POINTER(_DlInfo)]
+    dladdr.restype = ctypes.c_int
+    info = _DlInfo()
+    if dladdr(ctypes.cast(function, ctypes.c_void_p), ctypes.byref(info)) == 0 or not info.dli_fname:
+        raise RuntimeError(f"dladdr could not resolve generated-runtime symbol {symbol}")
+    return Path(os.fsdecode(info.dli_fname)).resolve()
+
+
+def _load_decoder_lib(model_so: Path, *, engine_so: Path | None = None) -> ctypes.CDLL:
+    requested_engine = (engine_so if engine_so is not None else BUILD_DIR / "libckernel_engine.so").resolve()
+    adjacent_engine = model_so.resolve().parent / "libckernel_engine.so"
+    engine_path = requested_engine
+    if adjacent_engine.is_file():
+        requested_hash = hashlib.sha256(requested_engine.read_bytes()).hexdigest()
+        adjacent_hash = hashlib.sha256(adjacent_engine.read_bytes()).hexdigest()
+        if adjacent_hash != requested_hash:
+            raise RuntimeError(
+                "generated decoder has a different adjacent CK engine than requested: "
+                f"requested={requested_engine} adjacent={adjacent_engine}"
+            )
+        engine_path = adjacent_engine.resolve()
+    ctypes.CDLL(str(engine_path), mode=ctypes.RTLD_GLOBAL)
+    tokenizer_candidates = [
+        model_so.resolve().parent / "libckernel_tokenizer.so",
+        BUILD_DIR / "libckernel_tokenizer.so",
+    ]
+    tokenizer_path = next((path for path in tokenizer_candidates if path.is_file()), None)
+    if tokenizer_path is None:
+        raise FileNotFoundError(
+            "generated decoder requires libckernel_tokenizer.so; checked "
+            + ", ".join(str(path) for path in tokenizer_candidates)
+        )
+    ctypes.CDLL(str(tokenizer_path), mode=ctypes.RTLD_GLOBAL)
     lib = ctypes.CDLL(str(model_so))
+    resolved_engine = _resolved_symbol_library(lib, "ck_set_num_threads")
+    if resolved_engine != engine_path:
+        raise RuntimeError(
+            "generated decoder resolved a different CK engine than the parity report requested: "
+            f"requested={engine_path} loaded={resolved_engine}; rebuild with $ORIGIN runtime linking"
+        )
     lib.ck_model_init_with_manifest.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
     lib.ck_model_init_with_manifest.restype = ctypes.c_int
     lib.ck_model_decode.argtypes = [ctypes.c_int32, ctypes.POINTER(ctypes.c_float)]
@@ -2537,7 +2627,11 @@ def _run_decoder(
         model_so = Path(runtime["so_path"])
     else:
         model_so = Path(runtime.get("prefill_so_path") or runtime["so_path"])
-    lib = _load_decoder_lib(model_so)
+    runtime_engine = runtime.get("engine_so")
+    if runtime_engine:
+        lib = _load_decoder_lib(model_so, engine_so=Path(runtime_engine))
+    else:
+        lib = _load_decoder_lib(model_so)
     _log_progress("decoder: init start")
     rc = lib.ck_model_init_with_manifest(
         str(runtime["weights_bump"]).encode(),

@@ -5,6 +5,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from array import array
 from argparse import Namespace
 from pathlib import Path
 from unittest import mock
@@ -25,6 +26,40 @@ def load_module():
 
 
 class MultitokenEOSContractTests(unittest.TestCase):
+    def test_dump_first_divergence_resolves_observed_step(self) -> None:
+        report = {"first_divergence": {"step": 60}}
+        self.assertEqual(self.runner._resolve_dump_step(report, None, True), 60)
+        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+            self.runner._resolve_dump_step(report, 119, True)
+        with self.assertRaisesRegex(RuntimeError, "did not diverge"):
+            self.runner._resolve_dump_step({}, None, True)
+
+    def test_diagnostic_failure_preserves_coarse_report_and_continues(self) -> None:
+        report = {"status": "fail", "first_divergence": {"step": 4}}
+        args = Namespace(
+            dump_step=None,
+            dump_first_divergence=True,
+            full_replay_step=4,
+            hidden_state_step=None,
+        )
+        with mock.patch.object(
+            self.runner,
+            "_capture_step_dump",
+            side_effect=RuntimeError("wrong engine"),
+        ), mock.patch.object(
+            self.runner,
+            "_capture_full_replay_step",
+            return_value={"step": 4, "status": "ok"},
+        ):
+            passed = self.runner._run_requested_diagnostics(report, args)
+
+        self.assertFalse(passed)
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["full_replay_step"]["status"], "ok")
+        self.assertEqual(report["diagnostic_errors"][0]["diagnostic"], "step_dump")
+        self.assertEqual(report["diagnostic_errors"][0]["error_type"], "RuntimeError")
+        self.assertIn("wrong engine", report["diagnostic_errors"][0]["message"])
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.runner = load_module()
@@ -49,6 +84,32 @@ class MultitokenEOSContractTests(unittest.TestCase):
         self.assertFalse(self.runner._is_matched_stop_token(151645, 4, stops))
         self.assertFalse(self.runner._is_matched_stop_token(4, 4, stops))
 
+    def test_segmented_append_auto_selects_batched_oracle(self) -> None:
+        bridge = {
+            "bridge_contract": {
+                "prefill_schedule": {
+                    "segments": ["text_before", "visual", "text_after"],
+                    "cache_transition": "append_preserve",
+                }
+            }
+        }
+        result = self.runner._resolve_oracle_prefill_mode("auto", bridge)
+        self.assertEqual(result["resolved"], "batched")
+        self.assertTrue(result["compatible"])
+        self.assertEqual(result["scope"], "production")
+
+    def test_segmented_append_rejects_sequential_oracle(self) -> None:
+        bridge = {
+            "bridge_contract": {
+                "prefill_schedule": {
+                    "segments": ["text_before", "visual", "text_after"],
+                    "cache_transition": "append_preserve",
+                }
+            }
+        }
+        with self.assertRaisesRegex(RuntimeError, "HARD PARITY CONTRACT FAULT"):
+            self.runner._resolve_oracle_prefill_mode("sequential", bridge)
+
     def test_exact_runtime_reuse_loads_only_declared_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             decoder_dir = Path(tmp)
@@ -67,6 +128,10 @@ class MultitokenEOSContractTests(unittest.TestCase):
             )
             for name in ("weights.bump", "weights_manifest.map", "libdecoder_v8.so"):
                 (decoder_dir / name).touch()
+            (decoder_dir / "libdecoder_v8.so.build.json").write_text(
+                json.dumps({"compiler": {"command": "cc", "version": "gcc test"}}),
+                encoding="utf-8",
+            )
 
             runtime = self.runner._load_exact_decoder_runtime(
                 Path("decoder.gguf"),
@@ -82,8 +147,25 @@ class MultitokenEOSContractTests(unittest.TestCase):
             evidence = self.runner._runtime_evidence(runtime, exact_reuse=True)
             self.assertTrue(evidence["exact_reuse"])
             self.assertEqual(
+                evidence["shared_library"]["build"]["compiler"]["version"],
+                "gcc test",
+            )
+            self.assertEqual(
                 evidence["shared_library"]["sha256"],
                 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            )
+
+            explicit_engine = decoder_dir / "libckernel_engine_gcc.so"
+            explicit_engine.write_bytes(b"gcc-engine")
+            evidence = self.runner._runtime_evidence(
+                runtime,
+                exact_reuse=True,
+                engine_so=explicit_engine,
+            )
+            self.assertEqual(evidence["engine_library"]["path"], str(explicit_engine.resolve()))
+            self.assertEqual(
+                evidence["engine_library"]["sha256"],
+                "a6fa04e316b06ba1c57d027077def545c4f53954cc7005713e3edffc74255ca5",
             )
 
     def test_exact_runtime_reuse_fails_instead_of_regenerating(self) -> None:
@@ -264,6 +346,48 @@ class MultitokenEOSContractTests(unittest.TestCase):
                     self.runner._capture_step_dump(report, args)
 
             capture.assert_not_called()
+
+    def test_prepare_inputs_preserves_explicit_engine_for_nested_dumps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            engine = root / "selected-engine.so"
+            engine.write_bytes(b"selected")
+            runtime = {
+                "so_path": root / "decoder" / "libdecoder_v8.so",
+                "embed_dim": 4,
+                "input_embed_dim": 4,
+                "context_length": 32,
+            }
+            runtime["so_path"].parent.mkdir(parents=True)
+            runtime["so_path"].touch()
+            bridge_report = {
+                "decoder_runtime": {"gguf": str(root / "model.gguf")},
+                "decoder_context_len": 32,
+            }
+            args = Namespace(
+                bridge_report=root / "bridge.json",
+                workdir=root / "work",
+                reuse_bridge_decoder_runtime=False,
+                reuse_bridge_decoder_runtime_exact=False,
+                ctx_len=32,
+                prefix_f32=None,
+                prefix_row_dim=None,
+                prefix_grid_x=None,
+                prefix_grid_y=None,
+                prefix_text_pos=None,
+                ck_engine_so=engine,
+            )
+            with mock.patch.object(self.runner.first_token, "_load_bridge_report", return_value=bridge_report), \
+                 mock.patch.object(self.runner.first_token.bridge_runner_v8, "_prepare_decoder_runtime", return_value=runtime), \
+                 mock.patch.object(self.runner, "GGUFTokenizer") as tokenizer_cls, \
+                 mock.patch.object(self.runner.first_token, "_resolve_prompt_token_segments", return_value=(None, [], [], {})), \
+                 mock.patch.object(self.runner.first_token, "_load_prefix_embeddings", return_value=(array("f"), 0, 4, "none")), \
+                 mock.patch.object(self.runner.first_token.bridge_runner_v8, "_sync_runtime_engine") as sync:
+                tokenizer_cls.from_gguf.return_value = object()
+                inputs = self.runner._prepare_inputs(args)
+
+            self.assertEqual(inputs["runtime"]["engine_so"], str(engine.resolve()))
+            sync.assert_called_once_with(engine.resolve(), runtime["so_path"])
 
     def test_runner_records_eos_step_without_decoding_past_it(self) -> None:
         class Tokenizer:

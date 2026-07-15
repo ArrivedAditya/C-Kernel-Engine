@@ -351,16 +351,52 @@ def _load_exact_decoder_runtime(
     }
 
 
-def _runtime_evidence(runtime: dict[str, Any], *, exact_reuse: bool) -> dict[str, Any]:
+def _runtime_evidence(
+    runtime: dict[str, Any],
+    *,
+    exact_reuse: bool,
+    engine_so: Path | None = None,
+) -> dict[str, Any]:
     def describe(path_value: Any) -> dict[str, Any]:
         path = Path(path_value).resolve()
         digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
-        return {"path": str(path), "sha256": digest}
+        result: dict[str, Any] = {"path": str(path), "sha256": digest}
+        build_path = path.with_suffix(path.suffix + ".build.json")
+        if build_path.is_file():
+            try:
+                result["build"] = json.loads(build_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                result["build_metadata_error"] = str(exc)
+        if path.is_file():
+            probe = subprocess.run(
+                ["readelf", "--string-dump=.comment", str(path)],
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            if probe.returncode == 0:
+                comments = [
+                    line.split("]", 1)[-1].strip()
+                    for line in probe.stdout.splitlines()
+                    if "]" in line and line.split("]", 1)[-1].strip()
+                ]
+                result["elf_compiler_comments"] = comments
+            else:
+                result["elf_comment_error"] = probe.stderr.strip() or f"readelf rc={probe.returncode}"
+        return result
 
+    requested_engine = Path(engine_so or REPO_ROOT / "build" / "libckernel_engine.so").resolve()
+    runtime_engine = Path(runtime["so_path"]).resolve().parent / "libckernel_engine.so"
+    if not runtime_engine.is_file():
+        runtime_engine = requested_engine
     return {
         "exact_reuse": bool(exact_reuse),
         "shared_library": describe(runtime["so_path"]),
-        "engine_library": describe(REPO_ROOT / "build" / "libckernel_engine.so"),
+        "engine_library": describe(runtime_engine),
+        "engine_library_requested": describe(requested_engine),
+        "tokenizer_library": describe(
+            Path(runtime["so_path"]).resolve().parent / "libckernel_tokenizer.so"
+        ),
         "manifest_map": describe(runtime["manifest_map"]),
         "weights_bump_path": str(Path(runtime["weights_bump"]).resolve()),
         "context_length": int(runtime.get("context_length", 0) or 0),
@@ -453,6 +489,17 @@ def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> d
             parity_dump=bool(parity_dump),
             context_override=resolved_ctx_len,
         )
+
+    requested_engine = getattr(args, "ck_engine_so", None)
+    if requested_engine is not None:
+        requested_engine = Path(requested_engine).resolve()
+        first_token.bridge_runner_v8._sync_runtime_engine(
+            requested_engine, Path(runtime["so_path"])
+        )
+        # The runtime dictionary is passed through replay and granular dump
+        # helpers. Preserve the requested engine here so those nested paths
+        # cannot silently fall back to the repository build library.
+        runtime["engine_so"] = str(requested_engine)
 
     bridge_grid_x = None if bridge_report.get("prefix_grid_x") is None else int(bridge_report.get("prefix_grid_x"))
     bridge_grid_y = None if bridge_report.get("prefix_grid_y") is None else int(bridge_report.get("prefix_grid_y"))
@@ -601,6 +648,19 @@ def _capture_step_dump(report: dict[str, Any], args: argparse.Namespace) -> dict
     }
 
 
+def _resolve_dump_step(
+    report: dict[str, Any], requested_step: int | None, dump_first_divergence: bool
+) -> int | None:
+    if requested_step is not None and dump_first_divergence:
+        raise ValueError("--dump-step and --dump-first-divergence are mutually exclusive")
+    if not dump_first_divergence:
+        return requested_step
+    first = report.get("first_divergence")
+    if not isinstance(first, dict) or "step" not in first:
+        raise RuntimeError("--dump-first-divergence requested, but the parity run did not diverge")
+    return int(first["step"])
+
+
 
 
 def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
@@ -641,7 +701,9 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
     capture_error: Exception | None = None
     try:
         _restore_process_env({key: None for key in env_keys})
-        lib, logits_buf, _vocab_size = _init_ck_state(inputs, bool(args.ck_strict_parity))
+        lib, logits_buf, _vocab_size = _init_ck_state(
+            inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None)
+        )
         try:
             last_i = len(generated_prefix) - 1
             for i, token in enumerate(generated_prefix):
@@ -669,7 +731,9 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
         _set_process_env("CK_DEBUG_EXPORT_HIDDEN_NAMES", ",".join(replay_names))
         if layer >= 0:
             _set_process_env("CK_DEBUG_EXPORT_HIDDEN_LAYER", str(layer))
-        lib2, _logits2, _vocab2 = _init_ck_state(replay_inputs, bool(args.ck_strict_parity))
+        lib2, _logits2, _vocab2 = _init_ck_state(
+            replay_inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None)
+        )
         if hasattr(lib2, "ck_model_free"):
             try:
                 lib2.ck_model_free()
@@ -775,7 +839,9 @@ def _capture_full_replay_step(report: dict[str, Any], args: argparse.Namespace) 
     llama_seq = _run_llama_greedy_sequence(inputs, llama_args)
     llama_logits = llama_seq["logits"][step_index]
 
-    lib, logits_buf, vocab_size = _init_ck_state(replay_inputs, bool(args.ck_strict_parity))
+    lib, logits_buf, vocab_size = _init_ck_state(
+        replay_inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None)
+    )
     try:
         replay_logits = _ck_logits_from_buffer(logits_buf, vocab_size)
     finally:
@@ -816,7 +882,7 @@ def _capture_full_replay_step(report: dict[str, Any], args: argparse.Namespace) 
     }
 
 
-def _set_ck_strict_parity(lib: Any, strict_parity: bool) -> None:
+def _set_ck_strict_parity(lib: Any, strict_parity: bool, engine_so: Path | None = None) -> None:
     value = 1 if strict_parity else 0
     if hasattr(lib, "ck_set_strict_parity"):
         lib.ck_set_strict_parity.argtypes = [ctypes.c_int]
@@ -824,27 +890,31 @@ def _set_ck_strict_parity(lib: Any, strict_parity: bool) -> None:
         lib.ck_set_strict_parity(value)
         return
 
-    engine_so = REPO_ROOT / "build" / "libckernel_engine.so"
-    if not engine_so.exists():
+    engine_path = engine_so or REPO_ROOT / "build" / "libckernel_engine.so"
+    if not engine_path.exists():
         return
-    engine = ctypes.CDLL(str(engine_so))
+    engine = ctypes.CDLL(str(engine_path))
     if hasattr(engine, "ck_set_strict_parity"):
         engine.ck_set_strict_parity.argtypes = [ctypes.c_int]
         engine.ck_set_strict_parity.restype = None
         engine.ck_set_strict_parity(value)
 
 
-def _init_ck_state(inputs: dict[str, Any], strict_parity: bool) -> tuple[Any, Any, int]:
+def _init_ck_state(
+    inputs: dict[str, Any],
+    strict_parity: bool,
+    engine_so: Path | None = None,
+) -> tuple[Any, Any, int]:
     runtime = inputs["runtime"]
     model_so = Path(runtime["so_path"])
-    lib = first_token.bridge_runner_v8._load_decoder_lib(model_so)
+    lib = first_token.bridge_runner_v8._load_decoder_lib(model_so, engine_so=engine_so)
     rc = lib.ck_model_init_with_manifest(
         str(runtime["weights_bump"]).encode(),
         str(runtime["manifest_map"]).encode(),
     )
     if rc != 0:
         raise RuntimeError(f"decoder init failed with rc={rc}")
-    _set_ck_strict_parity(lib, strict_parity)
+    _set_ck_strict_parity(lib, strict_parity, engine_so)
 
     vocab_size = int(lib.ck_model_get_vocab_size())
     if vocab_size <= 0:
@@ -909,9 +979,18 @@ def _init_ck_state(inputs: dict[str, Any], strict_parity: bool) -> tuple[Any, An
 
 def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]:
     inputs = _prepare_inputs(args)
+    mode_contract = getattr(args, "prefill_mode_contract", None)
+    if not isinstance(mode_contract, dict):
+        mode_contract = _resolve_oracle_prefill_mode(
+            str(args.llama_decode_mode),
+            inputs["bridge_report"],
+            allow_diagnostic_mismatch=True,
+        )
     tokenizer: GGUFTokenizer = inputs["tokenizer"]
     llama_seq = _run_llama_greedy_sequence(inputs, args)
-    lib, logits_buf, vocab_size = _init_ck_state(inputs, bool(args.ck_strict_parity))
+    lib, logits_buf, vocab_size = _init_ck_state(
+        inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None)
+    )
     generated: list[int] = []
     llama_generated = [int(t) for t in list((llama_seq.get("meta") or {}).get("greedy_generated", []))]
     stop_token_ids = _resolve_stop_token_ids(inputs["bridge_report"])
@@ -979,9 +1058,14 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
             except Exception:
                 pass
 
+    production_pass = first_divergence is None and bool(mode_contract["compatible"])
     return {
-        "status": "pass" if first_divergence is None else "fail",
-        "pass": first_divergence is None,
+        "status": (
+            "pass" if production_pass else
+            "diagnostic_only" if first_divergence is None else
+            "fail"
+        ),
+        "pass": production_pass,
         "bridge_report_path": str(args.bridge_report.resolve()),
         "gguf_path": str(inputs["gguf_path"]),
         "workdir": str(inputs["workdir"]),
@@ -999,14 +1083,19 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
             "ck_strict_parity": bool(args.ck_strict_parity),
             "llama_decode_mode": str(args.llama_decode_mode),
             "llama_tensor_repack": not bool(args.llama_no_repack),
-            "diagnostic_tensor_dump": bool(getattr(args, "dump_step", None) is not None),
+            "diagnostic_tensor_dump": bool(
+                getattr(args, "dump_step", None) is not None
+                or getattr(args, "dump_first_divergence", False)
+            ),
             "ck_environment": _ck_environment_evidence(),
+            "prefill_mode_contract": mode_contract,
         },
         "llama_greedy_generated": llama_generated,
         "append_on_divergence": str(args.append_on_divergence),
         "ck_runtime": _runtime_evidence(
             inputs["runtime"],
             exact_reuse=bool(getattr(args, "reuse_bridge_decoder_runtime_exact", False)),
+            engine_so=getattr(args, "ck_engine_so", None),
         ),
         "stop_token_ids": sorted(stop_token_ids),
         "stop_reason": stop_reason,
@@ -1038,6 +1127,83 @@ def _is_matched_stop_token(ck_token: int, llama_token: int, stop_token_ids: set[
     return ck_token == llama_token and ck_token in stop_token_ids
 
 
+def _resolve_oracle_prefill_mode(
+    requested: str,
+    bridge_report: dict[str, Any],
+    *,
+    allow_diagnostic_mismatch: bool = False,
+) -> dict[str, Any]:
+    """Fail closed when the oracle and CK execute different prefill schedules."""
+    bridge = bridge_report.get("bridge_contract")
+    bridge = bridge if isinstance(bridge, dict) else {}
+    schedule = bridge.get("prefill_schedule")
+    schedule = schedule if isinstance(schedule, dict) else {}
+    segmented_append = (
+        schedule.get("segments") == ["text_before", "visual", "text_after"]
+        and schedule.get("cache_transition") == "append_preserve"
+    )
+    required = "batched" if segmented_append else None
+    resolved = "batched" if requested == "auto" and required == "batched" else requested
+    compatible = required is None or resolved == required
+    if not compatible and not allow_diagnostic_mismatch:
+        raise RuntimeError(
+            "HARD PARITY CONTRACT FAULT: CK segmented-append prefill requires a batched "
+            f"llama.cpp oracle, but {resolved!r} was requested. Use --llama-decode-mode batched "
+            "for production parity. Sequential replay is diagnostic-only and requires "
+            "--allow-diagnostic-prefill-mode-mismatch."
+        )
+    return {
+        "requested": requested,
+        "resolved": resolved,
+        "required": required,
+        "compatible": compatible,
+        "scope": "production" if compatible else "diagnostic_only",
+    }
+
+
+def _run_requested_diagnostics(report: dict[str, Any], args: argparse.Namespace) -> bool:
+    """Run bounded diagnostics without discarding the completed coarse report."""
+    errors: list[dict[str, str]] = []
+
+    def capture(name: str, callback: Any) -> None:
+        try:
+            report[name] = callback()
+        except Exception as exc:
+            errors.append(
+                {
+                    "diagnostic": name,
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                }
+            )
+
+    try:
+        args.dump_step = _resolve_dump_step(
+            report,
+            args.dump_step,
+            bool(args.dump_first_divergence),
+        )
+    except Exception as exc:
+        errors.append(
+            {
+                "diagnostic": "step_dump",
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+            }
+        )
+    else:
+        if args.dump_step is not None:
+            capture("step_dump", lambda: _capture_step_dump(report, args))
+    if args.full_replay_step is not None:
+        capture("full_replay_step", lambda: _capture_full_replay_step(report, args))
+    if args.hidden_state_step is not None:
+        capture("hidden_state_step", lambda: _capture_hidden_state_step(report, args))
+
+    if errors:
+        report["diagnostic_errors"] = errors
+    return not errors
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Multimodal multi-token greedy parity (CK vs llama.cpp)")
     ap.add_argument("--bridge-report", required=True, type=Path)
@@ -1055,6 +1221,12 @@ def main() -> int:
     )
     ap.add_argument("--ck-runtime-so", type=Path, default=None, help="Explicit CK decoder shared library for exact-runtime parity")
     ap.add_argument("--ck-runtime-manifest-map", type=Path, default=None, help="Explicit CK decoder manifest map for exact-runtime parity")
+    ap.add_argument(
+        "--ck-engine-so",
+        type=Path,
+        default=None,
+        help="Explicit CK engine shared library; the executed file is hashed into parity evidence",
+    )
     ap.add_argument("--ctx-len", type=int, default=None)
     ap.add_argument("--max-new-tokens", type=int, default=16)
     ap.add_argument("--top-k", type=int, default=16)
@@ -1065,7 +1237,12 @@ def main() -> int:
         default=None,
         help="CK runtime threads; defaults to --threads when omitted",
     )
-    ap.add_argument("--llama-decode-mode", choices=["batched", "sequential"], default="sequential")
+    ap.add_argument("--llama-decode-mode", choices=["auto", "batched", "sequential"], default="auto")
+    ap.add_argument(
+        "--allow-diagnostic-prefill-mode-mismatch",
+        action="store_true",
+        help="Allow sequential llama replay against batched CK prefill; the report is diagnostic-only.",
+    )
     ap.add_argument("--llama-no-repack", action="store_true", help="Disable llama.cpp CPU tensor repacking in the replay helper")
     ap.add_argument("--llama-repack-fallback", action=argparse.BooleanOptionalAction, default=True, help="Retry a failed llama replay step with --no-repack")
     ap.add_argument("--append-on-divergence", choices=["stop", "llama", "ck"], default="stop")
@@ -1080,6 +1257,11 @@ def main() -> int:
     )
     ap.add_argument("--json-out", type=Path, default=None)
     ap.add_argument("--dump-step", type=int, default=None, help="Capture CK-vs-llama tensor dumps at this generated step")
+    ap.add_argument(
+        "--dump-first-divergence",
+        action="store_true",
+        help="Capture CK-vs-llama tensors at the first observed pre-EOS divergence",
+    )
     ap.add_argument("--full-replay-step", type=int, default=None, help="Compare a generated step by full mixed-prefix replay instead of incremental CK decode, without tensor dumps")
     ap.add_argument("--dump-dir", type=Path, default=None, help="Directory for --dump-step tensor dumps")
     ap.add_argument(
@@ -1098,18 +1280,26 @@ def main() -> int:
     ap.add_argument("--hidden-state-atol", type=float, default=1.0e-5)
     ap.add_argument("--summary", action="store_true")
     args = ap.parse_args()
+    if args.ck_engine_so is not None:
+        args.ck_engine_so = args.ck_engine_so.resolve()
+        if not args.ck_engine_so.is_file():
+            raise FileNotFoundError(f"explicit CK engine shared library does not exist: {args.ck_engine_so}")
+
+    bridge_report = json.loads(args.bridge_report.resolve().read_text(encoding="utf-8"))
+    mode_contract = _resolve_oracle_prefill_mode(
+        str(args.llama_decode_mode),
+        bridge_report,
+        allow_diagnostic_mismatch=bool(args.allow_diagnostic_prefill_mode_mismatch),
+    )
+    args.llama_decode_mode = mode_contract["resolved"]
+    args.prefill_mode_contract = mode_contract
 
     ck_threads = _ck_threads(args)
     if ck_threads > 0:
         os.environ["CK_NUM_THREADS"] = str(ck_threads)
         os.environ["OMP_NUM_THREADS"] = str(ck_threads)
     report = run_multimodal_multitoken_parity(args)
-    if args.dump_step is not None:
-        report["step_dump"] = _capture_step_dump(report, args)
-    if args.full_replay_step is not None:
-        report["full_replay_step"] = _capture_full_replay_step(report, args)
-    if args.hidden_state_step is not None:
-        report["hidden_state_step"] = _capture_hidden_state_step(report, args)
+    diagnostics_passed = _run_requested_diagnostics(report, args)
     if args.json_out is not None:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -1161,7 +1351,7 @@ def main() -> int:
             )
     else:
         print(json.dumps(report, indent=2))
-    return 0 if report.get("pass") else 3
+    return 0 if report.get("pass") and diagnostics_passed else 3
 
 
 if __name__ == "__main__":
