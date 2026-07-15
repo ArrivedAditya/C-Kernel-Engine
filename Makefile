@@ -6292,6 +6292,7 @@ VTUNE_ARTIFACTS_V7_SCRIPT := version/v7/scripts/vtune_artifacts_v7.py
 ADVISOR_ARTIFACTS_V7_SCRIPT := version/v7/scripts/advisor_artifacts_v7.py
 MEMORY_SIGNOFF_V7_SCRIPT := version/v7/scripts/memory_signoff_v7.py
 PERF_GATE_V7_SCRIPT := version/v7/scripts/perf_gate_v7.py
+PERF_GATE_V8_SCRIPT := version/v8/scripts/perf_gate_v8.py
 RESOLVE_MODEL_DIR_V7_SCRIPT := version/v7/scripts/resolve_model_dir_v7.py
 RESOLVE_MODEL_DIR_V8_SCRIPT := version/v8/scripts/resolve_model_dir_v8.py
 PROFILE_V7_SUMMARY_SCRIPT := version/v7/scripts/generate_profile_summary_v7.py
@@ -7266,7 +7267,7 @@ v8-perf-gate:
 	fi
 
 v8-perf-gate-evaluate:
-	@CK_CACHE_DIR="$${CK_CACHE_DIR:-$$HOME/.cache/ck-engine-v8/models}" $(MAKE) --no-print-directory v7-perf-gate-evaluate V7_MODEL="$(V8_MODEL)"
+	@CK_CACHE_DIR="$${CK_CACHE_DIR:-$$HOME/.cache/ck-engine-v8/models}" $(PYTHON) $(PERF_GATE_V8_SCRIPT) --model-input "$(V8_MODEL)"
 
 v6.6-memory-signoff:
 	@$(PYTHON) version/v6.6/scripts/ck_run_v6_6.py run "$(V66_MODEL)" --generate-only $(V66_FORCE_COMPILE_ARG) --context-len 128 --max-tokens 1 --prompt "Hello" $(V66_RUN_ARGS)
