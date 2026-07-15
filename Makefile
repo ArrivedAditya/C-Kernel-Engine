@@ -2528,7 +2528,11 @@ llamacpp-parity-nightly:
 	@$(MAKE) --no-print-directory test-q8-composed-llama-parity
 	@echo ""
 	@echo "Running bounded Q4_K x Q8_K production packed-sequence parity..."
+	@$(MAKE) --no-print-directory test-q4k-q8k-isa-compile
 	@$(MAKE) --no-print-directory test-q4k-q8k-llama-packed-quick
+	@echo ""
+	@echo "Building Qwen3-VL mtmd adapter against pinned llama.cpp..."
+	@CK_LLAMA_CPP_ROOT="$(CURDIR)/llama.cpp" $(PYTHON) tests/test_v8_mtmd_clip_shim_build.py
 	@echo ""
 	@echo "Running F16 GEMM production reduction contract against llama.cpp..."
 	@$(MAKE) --no-print-directory test-f16-gemm-llama-contract
@@ -2786,6 +2790,8 @@ Q4K_DISPATCH_MATRIX_BIN := $(BUILD_DIR)/bench_q4k_dispatch_matrix
 Q4K_Q8K_LLAMA_PACKED_BIN := $(BUILD_DIR)/test_q4k_q8k_llama_packed
 Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ := $(BUILD_DIR)/test_q4k_q8k_llama_prefill.o
 Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ := $(BUILD_DIR)/test_q4k_q8k_llama_decode.o
+Q4K_Q8K_ISA_AVX2_OBJ := $(BUILD_DIR)/test_q4k_q8k_isa_avx2.o
+Q4K_Q8K_ISA_AVX512_OBJ := $(BUILD_DIR)/test_q4k_q8k_isa_avx512.o
 Q4K_GATEUP_SWIGLU_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu
 Q4K_GATEUP_SWIGLU_OMP_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu_omp_standalone
 QWEN3VL_ENCODER_ATTN_BIN := $(BUILD_DIR)/bench_qwen3vl_encoder_attention
@@ -2822,6 +2828,20 @@ $(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ): $(V8_SRC_DIR)/ck_parallel_prefill_v8.c
 $(Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ): $(V8_SRC_DIR)/ck_parallel_decode_v8.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) -O3 -march=native -Iinclude -I$(V8_SRC_DIR) -c $< -o $@
+
+.PHONY: test-q4k-q8k-isa-compile
+test-q4k-q8k-isa-compile:
+ifeq ($(IS_X86_ARCH),)
+	@echo "Q4_K x Q8_K ISA compile matrix: SKIP ($(UNAME_M))"
+else
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 -fPIC -Iinclude -mavx2 -mfma -mavxvnni -mf16c -mssse3 \
+		-c src/kernels/gemm_kernels_q4k_q8k_vnni.c -o $(Q4K_Q8K_ISA_AVX2_OBJ)
+	$(CC) -O3 -fPIC -Iinclude -mavx512f -mavx512bw -mavx512dq -mavx512vl \
+		-mfma -mavx512vnni -mavx512bf16 -mf16c -mssse3 \
+		-c src/kernels/gemm_kernels_q4k_q8k_vnni.c -o $(Q4K_Q8K_ISA_AVX512_OBJ)
+	@echo "Q4_K x Q8_K ISA compile matrix: PASS (AVX2, AVX-512/VNNI)"
+endif
 
 $(Q4K_Q8K_LLAMA_PACKED_BIN): $(LIB) unittest/test_q4k_q8k_llama_packed.cpp $(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ) $(Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ)
 	@mkdir -p $(BUILD_DIR)

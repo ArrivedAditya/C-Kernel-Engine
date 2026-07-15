@@ -618,13 +618,19 @@ static inline void accum_q4_k_packed_meta_x8_q8_k_superblock(
         const int32_t bsum_hi = (int32_t)x->bsums[(j + 32) / 16] +
                                 (int32_t)x->bsums[(j + 32) / 16 + 1];
 
-#if defined(__AVX2__)
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+        const __m256i q8_lo = _mm256_loadu_si256((const __m256i *)q8_lo_ptr);
+        const __m256i q8_hi = _mm256_loadu_si256((const __m256i *)q8_hi_ptr);
+#elif defined(__AVX2__)
         const __m256i q8_lo = _mm256_loadu_si256((const __m256i *)q8_lo_ptr);
         const __m256i q8_hi = _mm256_loadu_si256((const __m256i *)q8_hi_ptr);
 #endif
         for (int lane = 0; lane < active; ++lane) {
             const uint8_t *qs = &w->qs[lane][q_offset];
-#if defined(__AVX2__)
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+            const int32_t sum_lo = dot_q4_k_q8_k_32_vnni_q8v(qs, q8_lo, 0);
+            const int32_t sum_hi = dot_q4_k_q8_k_32_vnni_q8v(qs, q8_hi, 1);
+#elif defined(__AVX2__)
             const __m256i packed = _mm256_loadu_si256((const __m256i *)qs);
             const __m256i q4_lo = q4_k_unpack_32_avx2_bytes(packed, 0);
             const __m256i q4_hi = q4_k_unpack_32_avx2_bytes(packed, 1);
@@ -683,13 +689,19 @@ static inline void accum_q4_k_packed_meta_x8_q8_k_gemv_block(
                                 (int32_t)x->bsums[j / 16 + 1];
         const int32_t bsum_hi = (int32_t)x->bsums[(j + 32) / 16] +
                                 (int32_t)x->bsums[(j + 32) / 16 + 1];
-#if defined(__AVX2__)
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+        const __m256i q8_lo = _mm256_loadu_si256((const __m256i *)q8_lo_ptr);
+        const __m256i q8_hi = _mm256_loadu_si256((const __m256i *)q8_hi_ptr);
+#elif defined(__AVX2__)
         const __m256i q8_lo = _mm256_loadu_si256((const __m256i *)q8_lo_ptr);
         const __m256i q8_hi = _mm256_loadu_si256((const __m256i *)q8_hi_ptr);
 #endif
         for (int lane = 0; lane < active; ++lane) {
             const uint8_t *qs = &w->qs[lane][q_offset];
-#if defined(__AVX2__)
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+            const int32_t sum_lo = dot_q4_k_q8_k_32_vnni_q8v(qs, q8_lo, 0);
+            const int32_t sum_hi = dot_q4_k_q8_k_32_vnni_q8v(qs, q8_hi, 1);
+#elif defined(__AVX2__)
             const __m256i packed = _mm256_loadu_si256((const __m256i *)qs);
             const __m256i q4_lo = q4_k_unpack_32_avx2_bytes(packed, 0);
             const __m256i q4_hi = q4_k_unpack_32_avx2_bytes(packed, 1);
