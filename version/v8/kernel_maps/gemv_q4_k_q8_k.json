@@ -9,11 +9,11 @@
     "kind": "scalar_contract_oracle",
     "adapter": "direct",
     "validation": {
-      "status": "observed",
-      "tests": ["unittest/test_q4_k_q8_k_matvec.py", "tests/test_threadpool_parity.c"],
+      "status": "validated",
+      "tests": ["unittest/test_q4_k_q8_k_matvec.py", "unittest/test_q4k_q8k_llama_packed.cpp", "tests/test_threadpool_parity.c"],
       "external_oracles": [
         {"backend": "numpy_dequantized_fp32", "status": "observed", "evidence": "unittest/test_q4_k_q8_k_matvec.py"},
-        {"backend": "llama.cpp", "status": "unresolved", "evidence": "No direct llama.cpp Q4_K x Q8_K GEMV oracle is currently wired."}
+        {"backend": "llama.cpp_ggml_cpu", "status": "validated", "evidence": "unittest/test_q4k_q8k_llama_packed.cpp"}
       ]
     }
   },
@@ -21,10 +21,10 @@
     "function": "gemv_q4_k_q8_k",
     "threaded_function": "gemv_q4_k_q8_k_parallel_dispatch",
     "reference_comparison": {
-      "requirement": "contract_tolerance",
-      "absolute_tolerance": 0.001,
-      "relative_tolerance": 0.001,
-      "tests": ["tests/test_threadpool_parity.c"]
+      "requirement": "bit_exact",
+      "absolute_tolerance": 0.0,
+      "relative_tolerance": 0.0,
+      "tests": ["unittest/test_q4k_q8k_llama_packed.cpp", "tests/test_threadpool_parity.c"]
     }
   },
   "implementation": {

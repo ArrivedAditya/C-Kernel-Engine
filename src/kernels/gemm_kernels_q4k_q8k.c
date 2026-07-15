@@ -80,7 +80,12 @@ void quantize_row_q8_k_ref(const float *x, void *vy, int k) {
 
         const float iscale = -127.0f / max;
         for (int j = 0; j < QK_K; ++j) {
-            int v = ck_nearest_int(iscale * x[j]);
+            /* The add-magic rounding expression is sensitive to contraction:
+             * icx otherwise emits (x * iscale + magic) as one FMA, while the
+             * llama.cpp reference performs a rounded multiply followed by a
+             * rounded add. Q8_K bytes are an ABI, so force that boundary. */
+            volatile float scaled = iscale * x[j];
+            int v = ck_nearest_int(scaled);
             if (v > 127) {
                 v = 127;
             }
