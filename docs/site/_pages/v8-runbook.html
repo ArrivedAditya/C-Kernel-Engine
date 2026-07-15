@@ -427,6 +427,19 @@ V8_NEMOTRON9_MIN_MEM_GB=24 make test-v8-nemotron9-highmem</pre>
     <p style="margin-bottom: 0;">A healthy prompt shell uses the GGUF chat template in <code>auto</code> mode and preserves the vision markers around <code>&lt;image_embeds&gt;</code>.</p>
 </div>
 
+<h2 id="ir-hub-quick-launch">IR Hub Quick Launch</h2>
+
+<div class="card card-accent">
+    <p style="margin-bottom: 0.35rem;">
+        Generate and open the parent dashboard for all v8 runs under <code>$HOME/.cache/ck-engine-v8/models</code>.
+    </p>
+    <div class="cmd-block">
+        <button class="copy-btn" type="button">Copy</button>
+<pre>.venv/bin/python version/v8/tools/open_ir_hub_v8.py --open</pre>
+    </div>
+    <p style="margin-bottom: 0;">Cache-backed inference, training, profiling, and multimodal runs appear automatically when their artifacts use the canonical v8 model root.</p>
+</div>
+
 <h2>Artifacts To Inspect</h2>
 
 <div class="card">
