@@ -535,20 +535,45 @@ def _augment_legacy_kqv_aliases(dumps: list[Any]) -> list[Any]:
 
 
 def _build_llama_row_specs(llama_dumps: list[Any]) -> dict[tuple[int, str], tuple[int, tuple[int, ...]]]:
-    specs: dict[tuple[int, str], tuple[int, tuple[int, ...]]] = {}
+    grouped: dict[tuple[int, str], list[Any]] = {}
     for dump in llama_dumps:
         op_name = _canonical_dump_op_name(str(dump.op_name))
         key = (int(dump.layer_id), op_name)
-        row_elems = int(np.asarray(dump.data).size)
-        row_shape = tuple(int(x) for x in np.asarray(dump.data).shape)
-        prev = specs.get(key)
-        choose = prev is None or row_elems < prev[0]
-        if not choose and prev is not None and row_elems == prev[0]:
+        grouped.setdefault(key, []).append(dump)
+
+    specs: dict[tuple[int, str], tuple[int, tuple[int, ...]]] = {}
+    for key, dumps in grouped.items():
+        sizes = [int(np.asarray(dump.data).size) for dump in dumps]
+        row_elems = sizes[0]
+        for size in sizes[1:]:
+            row_elems = math.gcd(row_elems, size)
+
+        shapes = [tuple(int(x) for x in np.asarray(dump.data).shape) for dump in dumps]
+        row_shape: tuple[int, ...] = (row_elems,)
+        if len(shapes) > 1 and len({len(shape) for shape in shapes}) == 1:
+            varying_axes = {
+                axis
+                for axis in range(len(shapes[0]))
+                if len({shape[axis] for shape in shapes}) > 1
+            }
+            candidate = tuple(
+                extent for axis, extent in enumerate(shapes[0]) if axis not in varying_axes
+            )
+            if candidate and int(np.prod(np.array(candidate, dtype=np.int64))) == row_elems:
+                row_shape = candidate
+        elif shapes:
             shaped_qk_ops = {"qcur_normed", "kcur_normed", "qcur_rope", "kcur_rope"}
-            if op_name in shaped_qk_ops and len(row_shape) > len(prev[1]):
-                choose = True
-        if choose:
-            specs[key] = (row_elems, row_shape)
+            ordered_shapes = sorted(
+                shapes,
+                key=lambda shape: len(shape) if key[1] in shaped_qk_ops else -len(shape),
+                reverse=True,
+            )
+            for shape in ordered_shapes:
+                if int(np.prod(np.array(shape, dtype=np.int64))) == row_elems:
+                    row_shape = shape
+                    break
+
+        specs[key] = (row_elems, row_shape)
     return specs
 
 
@@ -812,6 +837,72 @@ def _trim_llama_prefill_decode_dumps(
             )
     return trimmed
 
+
+def _expand_llama_prefill_decode_dumps(
+    llama_dumps: list[Any],
+    *,
+    prompt_token_count: int,
+    prompt_start_token: int = 0,
+) -> list[Any]:
+    """Expand the final batched llama segment into canonical logical rows.
+
+    Multimodal M-RoPE positions are not globally monotonic across the visual
+    and trailing-text segments. Selecting a batch by its final position can
+    therefore choose the visual batch instead of the last executed batch.
+    Batch extent and execution order are the stable contract here.
+    """
+    if prompt_token_count <= 0:
+        return list(llama_dumps)
+
+    row_specs = _build_llama_row_specs(llama_dumps)
+    grouped: dict[tuple[int, str], list[Any]] = {}
+    for dump in llama_dumps:
+        key = (int(dump.layer_id), _canonical_dump_op_name(str(dump.op_name)))
+        grouped.setdefault(key, []).append(dump)
+
+    expanded: list[Any] = []
+    for key, dumps in grouped.items():
+        row_spec = row_specs.get(key)
+        if row_spec is None:
+            expanded.extend(dumps)
+            continue
+        row_elems, row_shape = row_spec
+        exact = [
+            dump
+            for dump in dumps
+            if row_elems > 0
+            and int(np.asarray(dump.data).size) == row_elems * prompt_token_count
+        ]
+        selected = exact[-1] if exact else None
+        if selected is None:
+            expanded.extend(
+                _trim_llama_prefill_decode_dumps(
+                    dumps,
+                    prompt_start_token=prompt_start_token,
+                    prompt_token_count=prompt_token_count,
+                )
+            )
+            continue
+
+        flat = np.asarray(selected.data, dtype=np.float32).reshape(-1)
+        for prompt_idx in range(prompt_token_count):
+            start = prompt_idx * row_elems
+            row = flat[start : start + row_elems].copy()
+            if row_shape and int(np.prod(np.array(row_shape, dtype=np.int64))) == row.size:
+                row = row.reshape(row_shape)
+            expanded.append(
+                parity_test_v7.ParityDump(
+                    int(selected.layer_id),
+                    _canonical_dump_op_name(str(selected.op_name)),
+                    row,
+                    prompt_idx,
+                    str(selected.dtype),
+                    source_token_id=int(getattr(selected, "source_token_id", selected.token_id)),
+                    source_name=getattr(selected, "source_name", None),
+                )
+            )
+    return expanded
+
 def _compare_dump_sets(
     ck_dumps: list[Any],
     llama_dumps: list[Any],
@@ -1056,6 +1147,7 @@ def _capture_dump_compare(
     prefix_grid: tuple[int, int] | None = None,
     prefix_text_pos: int | None = None,
     ck_strict_parity: bool = True,
+    llama_decode_mode: str = "sequential",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if prefix_tokens > 0:
         if str(dump_pass) != "decode":
@@ -1091,7 +1183,7 @@ def _capture_dump_compare(
         prefix_grid=prefix_grid,
         prefix_row_dim=int(prefix_row_dim),
         prefix_text_pos=prefix_text_pos,
-        decode_mode="sequential",
+        decode_mode=str(llama_decode_mode),
         dump_dir=llama_dump_dir,
         dump_names=dump_names,
     )
@@ -1153,10 +1245,10 @@ def _capture_dump_compare(
             prefix_text_pos=prefix_text_pos,
             llama_meta=dict(llama_capture.get("meta") or {}),
         )
-        llama_dumps = _trim_llama_prefill_decode_dumps(
+        llama_dumps = _expand_llama_prefill_decode_dumps(
             llama_dumps,
-            prompt_start_token=int(llama_prompt_start_token),
             prompt_token_count=len(token_ids),
+            prompt_start_token=int(llama_prompt_start_token),
         )
         ck_dumps = _expand_ck_prefill_decode_dumps(
             ck_dumps,

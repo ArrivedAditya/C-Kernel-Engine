@@ -875,14 +875,16 @@ def _converter_fingerprint(gguf_path: Path) -> dict[str, Any]:
     }
 
 
-def _source_set_fingerprint(paths: list[Path]) -> dict[str, Any]:
+def _source_set_fingerprint(
+    paths: list[Path], *, suffixes: frozenset[str] = frozenset({".py", ".json"})
+) -> dict[str, Any]:
     files: list[Path] = []
     for path in paths:
         if path.is_dir():
             files.extend(
                 candidate
                 for candidate in path.rglob("*")
-                if candidate.is_file() and candidate.suffix in {".py", ".json"}
+                if candidate.is_file() and candidate.suffix in suffixes
             )
         elif path.is_file():
             files.append(path)
@@ -911,6 +913,14 @@ def _compiler_source_fingerprint() -> dict[str, Any]:
     )
 
 
+def _compiled_runtime_support_fingerprint() -> dict[str, Any]:
+    """Hash support code compiled or included directly by generated runtimes."""
+    return _source_set_fingerprint(
+        [REPO_ROOT / "version" / "v8" / "src", REPO_ROOT / "include"],
+        suffixes=frozenset({".c", ".h"}),
+    )
+
+
 def _runtime_fingerprint(
     *,
     manifest_path: Path,
@@ -920,7 +930,7 @@ def _runtime_fingerprint(
     profile: bool = False,
 ) -> dict[str, Any]:
     return {
-        "version": 2,
+        "version": 3,
         "mode": str(mode),
         "manifest": _path_identity(manifest_path, hash_content=True),
         "context_override": int(context_override) if context_override is not None else None,
@@ -1744,7 +1754,7 @@ def _compile_generated_model(c_path: Path, so_path: Path, *, profile: bool = Fal
         else f"cc probe failed rc={compiler_probe.returncode}"
     )
     build_fingerprint = {
-        "version": 2,
+        "version": 3,
         "source_path": str(c_path.resolve()),
         "source_sha256": source_hash,
         "source_size": source_size,
@@ -1755,6 +1765,7 @@ def _compile_generated_model(c_path: Path, so_path: Path, *, profile: bool = Fal
             "sha256": engine_hash,
             "runpath": "$ORIGIN",
         },
+        "compiled_support_source_set": _compiled_runtime_support_fingerprint(),
     }
     if so_path.exists():
         cached = _json_read(stamp_path)
@@ -2290,7 +2301,6 @@ def _resolved_symbol_library(lib: ctypes.CDLL, symbol: str) -> Path:
 def _load_decoder_lib(model_so: Path, *, engine_so: Path | None = None) -> ctypes.CDLL:
     requested_engine = (engine_so if engine_so is not None else BUILD_DIR / "libckernel_engine.so").resolve()
     adjacent_engine = model_so.resolve().parent / "libckernel_engine.so"
-    engine_path = requested_engine
     if adjacent_engine.is_file():
         requested_hash = hashlib.sha256(requested_engine.read_bytes()).hexdigest()
         adjacent_hash = hashlib.sha256(adjacent_engine.read_bytes()).hexdigest()
@@ -2299,8 +2309,10 @@ def _load_decoder_lib(model_so: Path, *, engine_so: Path | None = None) -> ctype
                 "generated decoder has a different adjacent CK engine than requested: "
                 f"requested={requested_engine} adjacent={adjacent_engine}"
             )
-        engine_path = adjacent_engine.resolve()
-    ctypes.CDLL(str(engine_path), mode=ctypes.RTLD_GLOBAL)
+    # Use one canonical engine object for the process. Generated runtimes keep
+    # a byte-identical $ORIGIN copy for standalone deployment; the engine
+    # SONAME makes their dependency resolve to this explicitly selected object.
+    ctypes.CDLL(str(requested_engine), mode=ctypes.RTLD_GLOBAL)
     tokenizer_candidates = [
         model_so.resolve().parent / "libckernel_tokenizer.so",
         BUILD_DIR / "libckernel_tokenizer.so",
@@ -2314,10 +2326,11 @@ def _load_decoder_lib(model_so: Path, *, engine_so: Path | None = None) -> ctype
     ctypes.CDLL(str(tokenizer_path), mode=ctypes.RTLD_GLOBAL)
     lib = ctypes.CDLL(str(model_so))
     resolved_engine = _resolved_symbol_library(lib, "ck_set_num_threads")
-    if resolved_engine != engine_path:
+    if resolved_engine != requested_engine:
         raise RuntimeError(
             "generated decoder resolved a different CK engine than the parity report requested: "
-            f"requested={engine_path} loaded={resolved_engine}; rebuild with $ORIGIN runtime linking"
+            f"requested={requested_engine} loaded={resolved_engine}; "
+            "rebuild libckernel_engine.so with its canonical SONAME"
         )
     lib.ck_model_init_with_manifest.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
     lib.ck_model_init_with_manifest.restype = ctypes.c_int

@@ -46,6 +46,26 @@ class AttentionContractV8Tests(unittest.TestCase):
     def test_registry_defines_complete_semantics(self) -> None:
         resolver.validate_contract_registry(copy.deepcopy(self.contracts))
 
+    def test_shape_dispatch_rejects_missing_reduction_contract(self) -> None:
+        contracts = copy.deepcopy(self.contracts)
+        contracts["contracts"]["f16_flash_auto_qtile64"]["partition"][
+            "below_threshold"
+        ] = "missing_short_query_contract"
+        with self.assertRaisesRegex(
+            resolver.ContractError,
+            "(?s)HARD CONTRACT FAULT.*references missing below_threshold",
+        ):
+            resolver.validate_contract_registry(contracts)
+
+    def test_shape_dispatch_rejects_unvalidated_reduction_contract(self) -> None:
+        contracts = copy.deepcopy(self.contracts)
+        contracts["contracts"]["f16_online_single_range"]["status"] = "observed"
+        with self.assertRaisesRegex(
+            resolver.ContractError,
+            "(?s)HARD CONTRACT FAULT.*references unvalidated below_threshold",
+        ):
+            resolver.validate_contract_registry(contracts)
+
     def test_f16_split_contract_declares_padded_scheduling_extent(self) -> None:
         contract = self.contracts["contracts"]["f16_online_fp32_merge"]
         self.assertEqual(contract["partition"]["kind"], "kv_chunks_by_workers")
@@ -115,13 +135,29 @@ class AttentionContractV8Tests(unittest.TestCase):
         result = self.resolve("prefill")
         self.assertEqual(
             result["kernel"]["id"],
-            "attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract",
+            "attention_forward_causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64",
         )
         self.assertEqual(
             result["requirements"]["execution.prefill_batching"],
             "segmented_append",
         )
         self.assertEqual(result["requirements"]["tensor.kv.dtype"], "fp16")
+        self.assertEqual(
+            result["reduction"]["id"],
+            "f16_flash_auto_qtile64",
+        )
+        self.assertEqual(
+            result["kernel"]["selector"],
+            "CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64",
+        )
+
+    def test_qwen3vl_decode_keeps_worker_split_reduction(self) -> None:
+        result = self.resolve("decode")
+        self.assertEqual(result["reduction"]["id"], "f16_online_fp32_merge")
+        self.assertEqual(
+            result["kernel"]["selector"],
+            "CK_ATTN_REDUCTION_F16_ONLINE_FP32_MERGE",
+        )
 
     def test_production_rejects_unvalidated_circuit_request(self) -> None:
         with self.assertRaisesRegex(resolver.ContractError, "Production contract resolution rejected"):
@@ -278,7 +314,7 @@ class AttentionContractV8Tests(unittest.TestCase):
             ("nemotron_h", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash"),
             ("llama", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_flash_strided_f16kv"),
             ("llama", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash_f16kv"),
-            ("qwen3vl", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract"),
+            ("qwen3vl", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64"),
             ("qwen3vl", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash_f16cache_contract"),
             ("qwen3_vl_vision", "vision_encoder.attention", "prefill", "attention_forward_full_head_major_gqa_tiled_f16kv_fp32_strided"),
         )
@@ -332,7 +368,20 @@ class AttentionContractV8Tests(unittest.TestCase):
                 self.assertIn("ck_threadpool_dispatch_n", threading["dispatch"])
                 self.assertEqual(threading["reduction_order_effect"], "none")
                 self.assertIn(capabilities[kernel_id]["numerical_contract"], self.linear_contracts["contracts"])
-                self.assertTrue(capabilities[kernel_id]["reference"]["function"].endswith("_ref"))
+                reference = capabilities[kernel_id]["reference"]
+                if reference["kind"] == "scalar_contract_oracle":
+                    self.assertTrue(reference["function"].endswith("_ref"))
+                else:
+                    self.assertEqual(reference["kind"], "llama_repacked_graph_oracle")
+                    self.assertEqual(
+                        capabilities[kernel_id]["production"]["reference_comparison"]["requirement"],
+                        "bit_exact",
+                    )
+                    self.assertTrue(any(
+                        item["backend"] == "llama.cpp_ggml_cpu_graph"
+                        and item["status"] == "validated"
+                        for item in reference["validation"]["external_oracles"]
+                    ))
                 self.assertTrue(capabilities[kernel_id]["production"]["threaded_function"].endswith("_parallel_dispatch"))
 
     def test_quantized_linear_registry_defines_complete_semantics(self) -> None:

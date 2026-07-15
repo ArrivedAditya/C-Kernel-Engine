@@ -257,6 +257,15 @@ def _build_tiny_decoder_runtime(workdir: Path) -> tuple[Path, Path, Path]:
 
 
 class V8NativeBridgeHostTests(unittest.TestCase):
+    def test_engine_has_canonical_soname(self) -> None:
+        dynamic = subprocess.run(
+            ["readelf", "-d", str(LIBCK)],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout
+        self.assertRegex(dynamic, r"\(SONAME\).*\[libckernel_engine\.so\]")
+
     def test_decoder_execution_loads_runtime_selected_engine(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -284,6 +293,54 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 with mock.patch.object(bridge_runner_v8, "BUILD_DIR", root / "missing-build"):
                     with self.assertRaisesRegex(FileNotFoundError, "requires libckernel_tokenizer"):
                         bridge_runner_v8._load_decoder_lib(model_so, engine_so=engine_so)
+
+    def test_decoder_loader_uses_requested_engine_when_adjacent_copy_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            requested = root / "canonical" / "libckernel_engine.so"
+            adjacent = root / "runtime" / "libckernel_engine.so"
+            model_so = root / "runtime" / "libdecoder_v8.so"
+            tokenizer_so = root / "runtime" / "libckernel_tokenizer.so"
+            requested.parent.mkdir()
+            adjacent.parent.mkdir()
+            requested.write_bytes(b"same engine")
+            adjacent.write_bytes(b"same engine")
+            model_so.touch()
+            tokenizer_so.touch()
+
+            fake_lib = mock.Mock()
+            loads: list[Path] = []
+
+            def fake_cdll(path: str | None, mode: int = 0) -> object:
+                if path is not None:
+                    loads.append(Path(path).resolve())
+                return fake_lib
+
+            with mock.patch.object(bridge_runner_v8.ctypes, "CDLL", side_effect=fake_cdll):
+                with mock.patch.object(
+                    bridge_runner_v8,
+                    "_resolved_symbol_library",
+                    return_value=requested.resolve(),
+                ):
+                    bridge_runner_v8._load_decoder_lib(model_so, engine_so=requested)
+
+            self.assertEqual(loads[0], requested.resolve())
+            self.assertNotIn(adjacent.resolve(), loads)
+
+    def test_decoder_loader_rejects_mismatched_adjacent_engine(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            requested = root / "canonical" / "libckernel_engine.so"
+            adjacent = root / "runtime" / "libckernel_engine.so"
+            model_so = root / "runtime" / "libdecoder_v8.so"
+            requested.parent.mkdir()
+            adjacent.parent.mkdir()
+            requested.write_bytes(b"canonical engine")
+            adjacent.write_bytes(b"stale engine")
+            model_so.touch()
+
+            with self.assertRaisesRegex(RuntimeError, "different adjacent CK engine"):
+                bridge_runner_v8._load_decoder_lib(model_so, engine_so=requested)
 
     def test_vision_prefix_position_policy_keeps_qwen_mrope_but_gemma_linear(self) -> None:
         self.assertEqual(
@@ -2566,7 +2623,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 run_cmd.assert_not_called()
 
             initial = json.loads(stamp_path.read_text(encoding="utf-8"))
-            self.assertEqual(initial["version"], 2)
+            self.assertEqual(initial["version"], 3)
             self.assertEqual(initial["runtime_dependency"]["runpath"], "$ORIGIN")
             self.assertEqual(
                 initial["runtime_dependency"]["sha256"],
@@ -2580,6 +2637,20 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 run_cmd.assert_called_once()
                 updated = json.loads(stamp_path.read_text(encoding="utf-8"))
                 self.assertEqual(updated["source_sha256"], hashlib.sha256(c_path.read_bytes()).hexdigest())
+
+            changed_support = {
+                "sha256": "support-source-changed",
+                "file_count": int(initial["compiled_support_source_set"]["file_count"]),
+            }
+            with mock.patch.object(
+                bridge_runner_v8,
+                "_compiled_runtime_support_fingerprint",
+                return_value=changed_support,
+            ), mock.patch.object(bridge_runner_v8, "_run", side_effect=fake_run) as run_cmd:
+                bridge_runner_v8._compile_generated_model(c_path, so_path)
+                run_cmd.assert_called_once()
+                dependency_updated = json.loads(stamp_path.read_text(encoding="utf-8"))
+                self.assertEqual(dependency_updated["compiled_support_source_set"], changed_support)
 
     def test_ck_run_v8_reuses_legacy_v7_hf_gguf_cache(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_legacy_cache_") as tmpdir:

@@ -420,6 +420,32 @@ def _ck_threads(args: argparse.Namespace) -> int:
     return int(args.threads if explicit is None else explicit)
 
 
+def _resolve_decoder_runtime_request(
+    args: argparse.Namespace,
+    bridge_report: dict[str, Any],
+    workdir: Path,
+) -> tuple[Path, bool]:
+    explicit_so = getattr(args, "ck_runtime_so", None)
+    explicit_manifest = getattr(args, "ck_runtime_manifest_map", None)
+    if bool(explicit_so) != bool(explicit_manifest):
+        raise ValueError(
+            "exact runtime reuse requires both --ck-runtime-so and "
+            "--ck-runtime-manifest-map"
+        )
+    if explicit_so and explicit_manifest:
+        return Path(explicit_so).resolve().parent, True
+
+    exact_runtime = bool(getattr(args, "reuse_bridge_decoder_runtime_exact", False))
+    if bool(getattr(args, "reuse_bridge_decoder_runtime", False)) or exact_runtime:
+        decoder_workdir = str(
+            ((bridge_report.get("decoder_runtime") or {}).get("workdir") or "")
+        ).strip()
+        if not decoder_workdir:
+            raise ValueError("bridge report does not include decoder_runtime.workdir")
+        return Path(decoder_workdir).resolve(), exact_runtime
+    return workdir / "decoder", False
+
+
 def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> dict[str, Any]:
     bridge_report = first_token._load_bridge_report(args.bridge_report.resolve())
     gguf_value = str(((bridge_report.get("decoder_runtime") or {}).get("gguf") or "")).strip()
@@ -428,14 +454,9 @@ def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> d
     gguf_path = Path(gguf_value).resolve()
     workdir = args.workdir.resolve()
     workdir.mkdir(parents=True, exist_ok=True)
-    exact_runtime = bool(getattr(args, "reuse_bridge_decoder_runtime_exact", False))
-    if bool(getattr(args, "reuse_bridge_decoder_runtime", False)) or exact_runtime:
-        decoder_workdir = str(((bridge_report.get("decoder_runtime") or {}).get("workdir") or "")).strip()
-        if not decoder_workdir:
-            raise ValueError("bridge report does not include decoder_runtime.workdir")
-        decoder_dir = Path(decoder_workdir).resolve()
-    else:
-        decoder_dir = workdir / "decoder"
+    decoder_dir, exact_runtime = _resolve_decoder_runtime_request(
+        args, bridge_report, workdir
+    )
 
     requested_ctx_len = int(args.ctx_len or bridge_report.get("decoder_context_len") or 256)
     if exact_runtime and not parity_dump:
@@ -545,6 +566,7 @@ def _prepare_inputs(args: argparse.Namespace, *, parity_dump: bool = False) -> d
         "gguf_path": gguf_path,
         "workdir": workdir,
         "runtime": runtime,
+        "exact_runtime": bool(exact_runtime and not parity_dump),
         "tokenizer": tokenizer,
         "tokens_before": [int(t) for t in tokens_before],
         "tokens_after": [int(t) for t in tokens_after],
@@ -629,6 +651,7 @@ def _capture_step_dump(report: dict[str, Any], args: argparse.Namespace) -> dict
             prefix_grid=inputs["prefix_grid"],
             prefix_text_pos=int(inputs["prefix_text_pos"]),
             ck_strict_parity=bool(args.ck_strict_parity),
+            llama_decode_mode=str(args.llama_decode_mode),
         )
     finally:
         _restore_prefix_decode_policy_env(old_env)
@@ -699,6 +722,28 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
         directory.mkdir(parents=True, exist_ok=True)
 
     capture_error: Exception | None = None
+    kv_comparison: dict[str, Any] | None = None
+
+    def export_kv(lib: Any, path: Path) -> dict[str, Any]:
+        if not hasattr(lib, "ck_model_debug_export_kv_f16"):
+            return {
+                "status": "unavailable",
+                "reason": "runtime lacks bounded ck_model_debug_export_kv_f16 X-ray ABI",
+                "path": str(path),
+            }
+        lib.ck_model_debug_export_kv_f16.argtypes = [ctypes.c_char_p, ctypes.c_int]
+        lib.ck_model_debug_export_kv_f16.restype = ctypes.c_int
+        rc = int(lib.ck_model_debug_export_kv_f16(str(path).encode("utf-8"), int(layer)))
+        if rc != 0:
+            return {
+                "status": "error",
+                "reason": f"FP16 KV export failed rc={rc} layer={layer}",
+                "path": str(path),
+            }
+        return {"status": "ok", "path": str(path)}
+
+    persistent_kv_export: dict[str, Any] | None = None
+    replay_kv_export: dict[str, Any] | None = None
     try:
         _restore_process_env({key: None for key in env_keys})
         lib, logits_buf, _vocab_size = _init_ck_state(
@@ -717,6 +762,7 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
                     raise RuntimeError(f"ck_model_decode failed rc={rc} while capturing persistent hidden state")
                 if i == last_i:
                     _restore_process_env({key: None for key in env_keys})
+            persistent_kv_export = export_kv(lib, persistent_dir / "kv_cache_f16.bin")
         finally:
             if hasattr(lib, "ck_model_free"):
                 try:
@@ -734,6 +780,7 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
         lib2, _logits2, _vocab2 = _init_ck_state(
             replay_inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None)
         )
+        replay_kv_export = export_kv(lib2, full_dir / "kv_cache_f16.bin")
         if hasattr(lib2, "ck_model_free"):
             try:
                 lib2.ck_model_free()
@@ -757,6 +804,37 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
                 "full_replay_dir": str(full_dir),
             })
     else:
+        if (
+            persistent_kv_export is not None
+            and replay_kv_export is not None
+            and persistent_kv_export.get("status") == "ok"
+            and replay_kv_export.get("status") == "ok"
+        ):
+            persistent_kv = Path(str(persistent_kv_export["path"]))
+            replay_kv = Path(str(replay_kv_export["path"]))
+            persistent_bytes = persistent_kv.read_bytes()
+            replay_bytes = replay_kv.read_bytes()
+            first_byte = next(
+                (i for i, (a, b) in enumerate(zip(persistent_bytes, replay_bytes)) if a != b),
+                None,
+            )
+            kv_comparison = {
+                "status": "ok" if persistent_bytes == replay_bytes else "fail",
+                "persistent_path": str(persistent_kv),
+                "full_replay_path": str(replay_kv),
+                "persistent_bytes": len(persistent_bytes),
+                "full_replay_bytes": len(replay_bytes),
+                "first_differing_byte": first_byte,
+                "persistent_sha256": hashlib.sha256(persistent_bytes).hexdigest(),
+                "full_replay_sha256": hashlib.sha256(replay_bytes).hexdigest(),
+            }
+        else:
+            statuses = [item for item in (persistent_kv_export, replay_kv_export) if item is not None]
+            kv_comparison = {
+                "status": "error" if any(item.get("status") == "error" for item in statuses) else "unavailable",
+                "persistent": persistent_kv_export,
+                "full_replay": replay_kv_export,
+            }
         for name in names:
             replay_name = _hidden_full_replay_name(name)
             try:
@@ -817,6 +895,7 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
         "ck_execution_count": 2,
         "atol": float(args.hidden_state_atol),
         "first_issue": first_issue,
+        "kv_cache": kv_comparison,
         "results": results,
     }
 
@@ -1094,7 +1173,7 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
         "append_on_divergence": str(args.append_on_divergence),
         "ck_runtime": _runtime_evidence(
             inputs["runtime"],
-            exact_reuse=bool(getattr(args, "reuse_bridge_decoder_runtime_exact", False)),
+            exact_reuse=bool(inputs.get("exact_runtime", False)),
             engine_so=getattr(args, "ck_engine_so", None),
         ),
         "stop_token_ids": sorted(stop_token_ids),

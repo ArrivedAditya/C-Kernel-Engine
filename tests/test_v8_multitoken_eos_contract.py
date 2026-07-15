@@ -178,6 +178,29 @@ class MultitokenEOSContractTests(unittest.TestCase):
                     manifest_map_override=None,
                 )
 
+    def test_explicit_runtime_tuple_is_exact_reuse(self) -> None:
+        args = Namespace(
+            ck_runtime_so=Path("/tmp/runtime/libdecoder_v8.so"),
+            ck_runtime_manifest_map=Path("/tmp/runtime/weights_manifest.map"),
+            reuse_bridge_decoder_runtime=False,
+            reuse_bridge_decoder_runtime_exact=False,
+        )
+        decoder_dir, exact = self.runner._resolve_decoder_runtime_request(
+            args, {}, Path("/tmp/output")
+        )
+        self.assertEqual(decoder_dir, Path("/tmp/runtime").resolve())
+        self.assertTrue(exact)
+
+    def test_partial_explicit_runtime_tuple_hard_fails(self) -> None:
+        args = Namespace(
+            ck_runtime_so=Path("/tmp/runtime/libdecoder_v8.so"),
+            ck_runtime_manifest_map=None,
+            reuse_bridge_decoder_runtime=False,
+            reuse_bridge_decoder_runtime_exact=False,
+        )
+        with self.assertRaisesRegex(ValueError, "requires both"):
+            self.runner._resolve_decoder_runtime_request(args, {}, Path("/tmp/output"))
+
     def test_segmented_hidden_capture_selects_final_physical_position(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -121,10 +121,10 @@
             "tensor.q.dtype": "fp32",
             "tensor.kv.dtype": "fp16",
             "tensor.layout": "head_major",
-            "numerics.attention_reduction": "f16_online_fp32_merge"
+            "numerics.attention_reduction": "f16_flash_auto_qtile64"
           },
-          "validation": "observed",
-          "evidence": "Segmented mixed-prefix replay requires cache-preserving append attention; leaf and stitched parity are the production gates."
+          "validation": "validated",
+          "evidence": "llama.cpp production flash attention uses 64x64 FP32 tiles for multi-query segmented prefill; direct oracle and production-shape Qwen3-VL replay are required gates."
         },
         "decode": {
           "requires": {
@@ -205,6 +205,28 @@
         "producer": "rope_qk",
         "logical_layout": "head_major",
         "axis_names": ["head", "token", "channel"]
+      }
+    },
+    "decoder.swiglu": {
+      "op": "swiglu",
+      "template_ops": ["silu_mul"],
+      "phases": {
+        "prefill": {
+          "contract_id": "swiglu_fp32_ggml_vector_exp_fp32_output",
+          "validation": "validated",
+          "evidence": "Production Qwen3-VL gate/up tensors match llama.cpp byte-for-byte before SwiGLU; the resolved provider matches all 12,288 captured outputs exactly."
+        },
+        "decode": {
+          "contract_id": "swiglu_fp32_ggml_vector_exp_fp32_output",
+          "validation": "validated",
+          "evidence": "Layer-0 first-divergence attribution at decoder step 20 isolates GGML vector-exp and direct-division evaluation order."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.swiglu.output",
+        "producer": "silu_mul",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
       }
     }
   },

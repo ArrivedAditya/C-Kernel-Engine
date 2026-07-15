@@ -1595,6 +1595,8 @@ void attention_forward_decode_head_major_gqa_flash_f16cache(const float *q_token
 typedef enum {
     CK_ATTN_REDUCTION_FP32_ONLINE = 0,
     CK_ATTN_REDUCTION_F16_ONLINE_FP32_MERGE = 1,
+    CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE = 2,
+    CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64 = 3,
 } ck_attention_reduction_t;
 
 typedef enum {
@@ -1613,22 +1615,6 @@ ck_attention_status_t attention_forward_decode_head_major_gqa_flash_f16cache_con
     int num_heads,
     int num_kv_heads,
     int kv_tokens,
-    int cache_capacity,
-    int head_dim,
-    int aligned_head_dim,
-    ck_attention_reduction_t reduction);
-
-// Causal prefill over a cache-preserving segment. Current-segment K/V rows
-// must already be appended at [past_tokens, past_tokens + q_tokens).
-ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract(
-    const float *q,
-    const uint16_t *k_cache,
-    const uint16_t *v_cache,
-    float *output,
-    int num_heads,
-    int num_kv_heads,
-    int q_tokens,
-    int past_tokens,
     int cache_capacity,
     int head_dim,
     int aligned_head_dim,
@@ -2417,6 +2403,11 @@ void sigmoid_backward_bf16(const uint16_t *input,
 	                          float *output,
 	                          int tokens,
 	                          int dim);
+
+	void swiglu_forward_ggml(const float *input,
+	                         float *output,
+	                         int tokens,
+	                         int dim);
 
 	void swiglu_backward_exact(const float *input,
 	                           const float *d_output,

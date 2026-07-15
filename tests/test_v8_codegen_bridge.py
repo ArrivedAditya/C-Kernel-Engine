@@ -316,7 +316,7 @@ class V8CodegenBridgeTests(unittest.TestCase):
         )
         self.assertEqual(
             by_op["q_proj"][0]["resolved_execution"]["reference"]["function"],
-            "gemv_q4_k_q8_k_ref",
+            "gemv_q4_k_q8_k_repacked_parallel_dispatch",
         )
         self.assertEqual(
             by_op["q_proj"][0]["resolved_execution"]["implementation"]["weight_storage"],
@@ -408,11 +408,11 @@ class V8CodegenBridgeTests(unittest.TestCase):
             self.assertEqual(mlp_down_call["resolved_execution"]["kernel_id"], "gemv_q6_k_q8_k")
             self.assertEqual(
                 q_proj_call["resolved_execution"]["production"]["function"],
-                "gemv_q4_k_q8_k",
+                "gemv_q4_k_q8_k_repacked_parallel_dispatch",
             )
             self.assertEqual(
                 q_proj_call["resolved_execution"]["production"]["threaded_function"],
-                "gemv_q4_k_q8_k_parallel_dispatch",
+                "gemv_q4_k_q8_k_repacked_parallel_dispatch",
             )
             self.assertEqual(
                 q_proj_call["resolved_execution"]["implementation"]["diagnostic_providers"],
