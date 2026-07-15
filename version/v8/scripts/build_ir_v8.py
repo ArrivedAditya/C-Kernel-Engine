@@ -1551,7 +1551,7 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
                 if (check && strcmp(check, special_tokens[i]) == 0) {{
                     ck_true_bpe_add_special_token(g_model->tokenizer, special_tokens[i], id);
                     #ifdef CK_DEBUG_TOKENIZER
-                    printf("[Tokenizer] Registered special: %s -> %d\n", special_tokens[i], id);
+                    printf("[Tokenizer] Registered special: %s -> %d\\n", special_tokens[i], id);
                     #endif
                 }}
             }}
