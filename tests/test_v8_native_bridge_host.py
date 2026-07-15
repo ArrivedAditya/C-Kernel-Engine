@@ -2566,7 +2566,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 run_cmd.assert_not_called()
 
             initial = json.loads(stamp_path.read_text(encoding="utf-8"))
-            self.assertEqual(initial["version"], 2)
+            self.assertEqual(initial["version"], 3)
             self.assertEqual(initial["runtime_dependency"]["runpath"], "$ORIGIN")
             self.assertEqual(
                 initial["runtime_dependency"]["sha256"],
@@ -2580,6 +2580,20 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 run_cmd.assert_called_once()
                 updated = json.loads(stamp_path.read_text(encoding="utf-8"))
                 self.assertEqual(updated["source_sha256"], hashlib.sha256(c_path.read_bytes()).hexdigest())
+
+            changed_support = {
+                "sha256": "support-source-changed",
+                "file_count": int(initial["compiled_support_source_set"]["file_count"]),
+            }
+            with mock.patch.object(
+                bridge_runner_v8,
+                "_compiled_runtime_support_fingerprint",
+                return_value=changed_support,
+            ), mock.patch.object(bridge_runner_v8, "_run", side_effect=fake_run) as run_cmd:
+                bridge_runner_v8._compile_generated_model(c_path, so_path)
+                run_cmd.assert_called_once()
+                dependency_updated = json.loads(stamp_path.read_text(encoding="utf-8"))
+                self.assertEqual(dependency_updated["compiled_support_source_set"], changed_support)
 
     def test_ck_run_v8_reuses_legacy_v7_hf_gguf_cache(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_legacy_cache_") as tmpdir:

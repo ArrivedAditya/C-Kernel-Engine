@@ -695,6 +695,43 @@
       "description": "Elementwise residual addition of BF16-valued float buffers with BF16 RNE output storage.",
       "operator_family": "residual_add"
     },
+    "swiglu_fp32_ggml_vector_exp_fp32_output": {
+      "operator_family": "swiglu",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "ggml_isa_vector_exp_then_direct_gate_division_then_up_multiply"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "llama.cpp CPU SwiGLU semantics: evaluate GGML's ISA-specific vector exponential, divide gate by 1+exp(-gate), then multiply by up in FP32."
+    },
     "gelu_pytorch_tanh_bf16_storage": {
       "operator_family": "gelu",
       "status": "validated",

@@ -2781,6 +2781,7 @@ THREADPOOL_BIN := $(BUILD_DIR)/test_threadpool_parity
 Q4K_DISPATCH_MATRIX_BIN := $(BUILD_DIR)/bench_q4k_dispatch_matrix
 Q4K_Q8K_LLAMA_PACKED_BIN := $(BUILD_DIR)/test_q4k_q8k_llama_packed
 Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ := $(BUILD_DIR)/test_q4k_q8k_llama_prefill.o
+Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ := $(BUILD_DIR)/test_q4k_q8k_llama_decode.o
 Q4K_GATEUP_SWIGLU_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu
 Q4K_GATEUP_SWIGLU_OMP_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu_omp_standalone
 QWEN3VL_ENCODER_ATTN_BIN := $(BUILD_DIR)/bench_qwen3vl_encoder_attention
@@ -2814,12 +2815,17 @@ $(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ): $(V8_SRC_DIR)/ck_parallel_prefill_v8.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) -O3 -march=native -Iinclude -I$(V8_SRC_DIR) -c $< -o $@
 
-$(Q4K_Q8K_LLAMA_PACKED_BIN): $(LIB) unittest/test_q4k_q8k_llama_packed.cpp $(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ)
+$(Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ): $(V8_SRC_DIR)/ck_parallel_decode_v8.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 -march=native -Iinclude -I$(V8_SRC_DIR) -c $< -o $@
+
+$(Q4K_Q8K_LLAMA_PACKED_BIN): $(LIB) unittest/test_q4k_q8k_llama_packed.cpp $(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ) $(Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) -O3 -march=native -Iinclude -I$(V8_SRC_DIR) \
 		-Illama.cpp/ggml/include -Illama.cpp/ggml/src \
 		unittest/test_q4k_q8k_llama_packed.cpp \
 		$(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ) \
+		$(Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ) \
 		-L$(BUILD_DIR) -lckernel_engine \
 		-Lllama.cpp/build/bin -lggml-cpu -lggml-base -lggml \
 		-lm -lpthread -ldl \

@@ -419,6 +419,33 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
         np.testing.assert_allclose(q_rows[0].data, np.array([1.0], dtype=np.float32))
         np.testing.assert_allclose(q_rows[1].data, np.array([2.0], dtype=np.float32))
 
+    def test_expand_llama_prefill_decode_dumps_selects_execution_tail_not_largest_position(self) -> None:
+        dump = decoder_parity_v8.parity_test_v7.ParityDump
+        row_elems = 4
+        llama_dumps = [
+            dump(0, "q_proj", np.arange(5 * row_elems, dtype=np.float32), 4, "fp32"),
+            dump(0, "q_proj", np.arange(1008 * row_elems, dtype=np.float32), 1012, "fp32"),
+            dump(
+                0,
+                "q_proj",
+                np.arange(59 * row_elems, dtype=np.float32) + 10000.0,
+                99,
+                "fp32",
+            ),
+        ]
+
+        expanded = decoder_parity_v8._expand_llama_prefill_decode_dumps(
+            llama_dumps,
+            prompt_token_count=59,
+        )
+
+        self.assertEqual([item.token_id for item in expanded], list(range(59)))
+        self.assertTrue(all(item.data.size == row_elems for item in expanded))
+        np.testing.assert_allclose(
+            expanded[-1].data,
+            np.arange(232, 236, dtype=np.float32) + 10000.0,
+        )
+
     def test_resolve_decode_prompt_start_tokens_uses_stage_and_rope_windows(self) -> None:
         ck_start, llama_start = decoder_parity_v8._resolve_decode_prompt_start_tokens(
             tokens_before_count=4,
