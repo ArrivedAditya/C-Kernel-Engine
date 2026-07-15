@@ -2301,7 +2301,6 @@ def _resolved_symbol_library(lib: ctypes.CDLL, symbol: str) -> Path:
 def _load_decoder_lib(model_so: Path, *, engine_so: Path | None = None) -> ctypes.CDLL:
     requested_engine = (engine_so if engine_so is not None else BUILD_DIR / "libckernel_engine.so").resolve()
     adjacent_engine = model_so.resolve().parent / "libckernel_engine.so"
-    engine_path = requested_engine
     if adjacent_engine.is_file():
         requested_hash = hashlib.sha256(requested_engine.read_bytes()).hexdigest()
         adjacent_hash = hashlib.sha256(adjacent_engine.read_bytes()).hexdigest()
@@ -2310,8 +2309,10 @@ def _load_decoder_lib(model_so: Path, *, engine_so: Path | None = None) -> ctype
                 "generated decoder has a different adjacent CK engine than requested: "
                 f"requested={requested_engine} adjacent={adjacent_engine}"
             )
-        engine_path = adjacent_engine.resolve()
-    ctypes.CDLL(str(engine_path), mode=ctypes.RTLD_GLOBAL)
+    # Use one canonical engine object for the process. Generated runtimes keep
+    # a byte-identical $ORIGIN copy for standalone deployment; the engine
+    # SONAME makes their dependency resolve to this explicitly selected object.
+    ctypes.CDLL(str(requested_engine), mode=ctypes.RTLD_GLOBAL)
     tokenizer_candidates = [
         model_so.resolve().parent / "libckernel_tokenizer.so",
         BUILD_DIR / "libckernel_tokenizer.so",
@@ -2325,10 +2326,11 @@ def _load_decoder_lib(model_so: Path, *, engine_so: Path | None = None) -> ctype
     ctypes.CDLL(str(tokenizer_path), mode=ctypes.RTLD_GLOBAL)
     lib = ctypes.CDLL(str(model_so))
     resolved_engine = _resolved_symbol_library(lib, "ck_set_num_threads")
-    if resolved_engine != engine_path:
+    if resolved_engine != requested_engine:
         raise RuntimeError(
             "generated decoder resolved a different CK engine than the parity report requested: "
-            f"requested={engine_path} loaded={resolved_engine}; rebuild with $ORIGIN runtime linking"
+            f"requested={requested_engine} loaded={resolved_engine}; "
+            "rebuild libckernel_engine.so with its canonical SONAME"
         )
     lib.ck_model_init_with_manifest.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
     lib.ck_model_init_with_manifest.restype = ctypes.c_int

@@ -781,9 +781,9 @@ $(BUILD_STAMP): FORCE_BUILD_FLAGS | $(BUILD_DIR)
 	@printf 'CC=%s\nCFLAGS=%s\nLDFLAGS=%s\n' "$(CC)" "$(CFLAGS)" "$(LDFLAGS)" > $@.tmp
 	@if [ ! -f $@ ] || ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi
 
-$(LIB): $(BUILD_STAMP) $(SRCS)
+$(LIB): $(BUILD_STAMP) $(SRCS) Makefile
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -shared -o $@ $(SRCS) $(LDFLAGS) -lm -lpthread
+	$(CC) $(CFLAGS) -shared -Wl,-soname,libckernel_engine.so -o $@ $(SRCS) $(LDFLAGS) -lm -lpthread
 
 $(IR_DEMO): $(BUILD_DIR) src/ckernel_ir.c src/ckernel_ir_demo.c src/ckernel_codegen.c src/ckernel_kernel_specs.c src/ckernel_registry.c include/ckernel_ir.h include/ckernel_codegen.h include/ckernel_registry.h include/ckernel_kernel_specs.h
 	$(CC) -O2 -Wall -Iinclude -o $@ src/ckernel_ir.c src/ckernel_codegen.c src/ckernel_kernel_specs.c src/ckernel_registry.c src/ckernel_ir_demo.c
@@ -1290,9 +1290,13 @@ test-head-major-q5-outproj: $(LIB)
 test-head-major-q5-outproj-quick: $(LIB)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_head_major_q5_outproj.py --quick
 
-test-v8-qwen3vl: $(LIB_VISION)
+test-v8-qwen3vl: $(LIB_VISION) $(LIB)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) tests/test_v8_qwen3vl_template.py
 	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_codegen_bridge.V8CodegenBridgeTests.test_qwen3vl_decode_uses_resolved_mrope_and_attention_contracts -v
+	$(PYTHON) $(PYTHONFLAGS) -m unittest \
+		tests.test_v8_native_bridge_host.V8NativeBridgeHostTests.test_engine_has_canonical_soname \
+		tests.test_v8_native_bridge_host.V8NativeBridgeHostTests.test_decoder_loader_uses_requested_engine_when_adjacent_copy_matches \
+		tests.test_v8_native_bridge_host.V8NativeBridgeHostTests.test_decoder_loader_rejects_mismatched_adjacent_engine -v
 	$(PYTHON) $(PYTHONFLAGS) tests/test_v8_vision_encoder_accuracy_gate.py
 	$(PYTHON) $(PYTHONFLAGS) tests/test_nightly_runner_artifact_status.py
 
