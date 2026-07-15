@@ -2430,6 +2430,9 @@ llamacpp-parity-full:
 	@echo "Running composed Q8 activation/projection parity at vision dimensions..."
 	@$(MAKE) --no-print-directory test-q8-composed-llama-parity
 	@echo ""
+	@echo "Running Q4_K x Q8_K production packed-sequence parity..."
+	@$(MAKE) --no-print-directory test-q4k-q8k-llama-packed
+	@echo ""
 	@echo "Running F16 GEMM production reduction contract against llama.cpp..."
 	@$(MAKE) --no-print-directory test-f16-gemm-llama-contract
 	@echo ""
@@ -2519,6 +2522,9 @@ llamacpp-parity-nightly:
 	@echo ""
 	@echo "Running composed Q8 activation/projection parity at vision dimensions..."
 	@$(MAKE) --no-print-directory test-q8-composed-llama-parity
+	@echo ""
+	@echo "Running bounded Q4_K x Q8_K production packed-sequence parity..."
+	@$(MAKE) --no-print-directory test-q4k-q8k-llama-packed-quick
 	@echo ""
 	@echo "Running F16 GEMM production reduction contract against llama.cpp..."
 	@$(MAKE) --no-print-directory test-f16-gemm-llama-contract
@@ -2773,6 +2779,8 @@ test-gemv-omp-verbose: $(GEMV_OMP_BIN)
 
 THREADPOOL_BIN := $(BUILD_DIR)/test_threadpool_parity
 Q4K_DISPATCH_MATRIX_BIN := $(BUILD_DIR)/bench_q4k_dispatch_matrix
+Q4K_Q8K_LLAMA_PACKED_BIN := $(BUILD_DIR)/test_q4k_q8k_llama_packed
+Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ := $(BUILD_DIR)/test_q4k_q8k_llama_prefill.o
 Q4K_GATEUP_SWIGLU_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu
 Q4K_GATEUP_SWIGLU_OMP_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu_omp_standalone
 QWEN3VL_ENCODER_ATTN_BIN := $(BUILD_DIR)/bench_qwen3vl_encoder_attention
@@ -2801,6 +2809,39 @@ test-threadpool-parity-quick: $(THREADPOOL_BIN)
 test-threadpool-parity-verbose: $(THREADPOOL_BIN)
 	@echo "Running Thread Pool GEMV parity + speed test (verbose)..."
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(THREADPOOL_BIN) --verbose
+
+$(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ): $(V8_SRC_DIR)/ck_parallel_prefill_v8.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 -march=native -Iinclude -I$(V8_SRC_DIR) -c $< -o $@
+
+$(Q4K_Q8K_LLAMA_PACKED_BIN): $(LIB) unittest/test_q4k_q8k_llama_packed.cpp $(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -O3 -march=native -Iinclude -I$(V8_SRC_DIR) \
+		-Illama.cpp/ggml/include -Illama.cpp/ggml/src \
+		unittest/test_q4k_q8k_llama_packed.cpp \
+		$(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ) \
+		-L$(BUILD_DIR) -lckernel_engine \
+		-Lllama.cpp/build/bin -lggml-cpu -lggml-base -lggml \
+		-lm -lpthread -ldl \
+		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(CURDIR)/llama.cpp/build/bin \
+		-o $(Q4K_Q8K_LLAMA_PACKED_BIN)
+
+.PHONY: test-q4k-q8k-llama-packed
+test-q4k-q8k-llama-packed: $(Q4K_Q8K_LLAMA_PACKED_BIN)
+	@echo "Running Q4_K x Q8_K production dispatcher against llama.cpp..."
+	CK_NUM_THREADS=1 \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$(CURDIR)/llama.cpp/build/bin:$$LD_LIBRARY_PATH \
+		$(Q4K_Q8K_LLAMA_PACKED_BIN)
+	CK_NUM_THREADS=4 \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$(CURDIR)/llama.cpp/build/bin:$$LD_LIBRARY_PATH \
+		$(Q4K_Q8K_LLAMA_PACKED_BIN)
+
+.PHONY: test-q4k-q8k-llama-packed-quick
+test-q4k-q8k-llama-packed-quick: $(Q4K_Q8K_LLAMA_PACKED_BIN)
+	@echo "Running bounded Q4_K x Q8_K production parity against llama.cpp..."
+	CK_NUM_THREADS=4 \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$(CURDIR)/llama.cpp/build/bin:$$LD_LIBRARY_PATH \
+		$(Q4K_Q8K_LLAMA_PACKED_BIN) --quick
 
 $(Q4K_DISPATCH_MATRIX_BIN): $(LIB) benchmarks/bench_q4k_dispatch_matrix.c $(V8_SRC_DIR)/ck_parallel_decode_v8.c $(V8_SRC_DIR)/ck_parallel_prefill_v8.c
 	@mkdir -p $(BUILD_DIR)
