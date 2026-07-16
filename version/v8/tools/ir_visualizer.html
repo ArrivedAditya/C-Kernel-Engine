@@ -12335,6 +12335,12 @@ function renderProfileHowTo() {
         `make profile-v8-likwid V8_MODEL="$REPORT_MODEL_DIR" V8_PERF_RUNTIME=cli V8_PREP_WITH_PYTHON=0 V8_LIKWID_GROUPS=auto V8_LIKWID_THREADS=1${makeChatArg}${makeCliArg}`,
         'python3 version/v8/tools/open_ir_visualizer_v8.py --generate --run "$REPORT_MODEL_DIR" --html-only --output "$REPORT_MODEL_DIR/ir_report.html"',
     ].join('\n');
+    const likwidPlotCmd = [
+        explicitModelDirCmd,
+        'LIKWID_PLOT=/absolute/path/to/exported-likwid-plot.svg',
+        `make profile-v8-likwid V8_MODEL="$REPORT_MODEL_DIR" V8_PERF_RUNTIME=cli V8_PREP_WITH_PYTHON=0 V8_LIKWID_GROUPS=auto V8_LIKWID_THREADS=1 V8_LIKWID_PLOT="$LIKWID_PLOT"${makeChatArg}${makeCliArg}`,
+        'python3 version/v8/tools/open_ir_visualizer_v8.py --generate --run "$REPORT_MODEL_DIR" --html-only --output "$REPORT_MODEL_DIR/ir_report.html"',
+    ].join('\n');
 
     const cachegrindNativeCmd = [
         explicitModelDirCmd,
@@ -12635,6 +12641,16 @@ function renderProfileHowTo() {
                                 'Verify counters and topology',
                                 likwidVerifyCmd,
                                 'Loads the MSR module, prints LIKWID access information, lists processor-supported groups, and shows the CPU topology used for pinning.'
+                            )}
+                            ${renderHowToBlock(
+                                'Run LIKWID and refresh this report',
+                                likwidCmd,
+                                'Profiles the current run with supported groups, pins the workload, writes likwid_summary.json and raw evidence, then regenerates this report.'
+                            )}
+                            ${renderHowToBlock(
+                                'Import an exported SVG or PNG plot',
+                                likwidPlotCmd,
+                                'Copies a gnuplot/perfscope export into the run and embeds it in the LIKWID Profile panel. SVG, PNG, JPEG, and WebP are supported.'
                             )}
                         </div>
                     </details>
