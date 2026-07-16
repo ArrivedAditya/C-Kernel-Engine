@@ -94,4 +94,54 @@ Wrapper measurements include all activity on the pinned CPUs; avoid noisy
 neighboring workloads when collecting evidence. Marker API regions can be added
 later without changing this artifact contract.
 
+Install the current stable release on Ubuntu (recommended for Xeon 6, Zen 5,
+and other recent processors):
+
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential git perl
+git clone --depth 1 --branch v5.5.1 https://github.com/RRZE-HPC/likwid.git
+cd likwid
+make -j"$(nproc)"
+sudo make install
+sudo ldconfig
+```
+
+For a quick setup on an older supported processor, Ubuntu also packages LIKWID:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y likwid
+```
+
+Ubuntu LTS repositories may contain an older LIKWID release. If LIKWID does not
+recognize the processor or exposes few useful groups, install the current source
+release above. On CachyOS, Arch, EndeavourOS, or Manjaro, build the current AUR
+package:
+
+```bash
+sudo pacman -S --needed base-devel git perl
+git clone https://aur.archlinux.org/likwid.git
+cd likwid
+makepkg -si
+```
+
+Verify access and discover the groups supported by the actual processor instead
+of assuming that an event name exists:
+
+```bash
+likwid-perfctr -v
+sudo modprobe msr
+likwid-perfctr -i
+likwid-perfctr -a
+likwid-topology -c
+```
+
+The Profile page visualizes the evidence flow from the CKE workload through its
+pinned CPUs and dynamically selected groups to normalized metric cards. The
+audit table and raw CSV/stdout/stderr links remain available beneath it. Metrics
+with different units are deliberately not placed on one comparative bar chart.
+LIKWID's live `likwid-perfscope` plotting can be added later as a separate
+time-series artifact without changing the normalized summary contract.
+
 That keeps `v8` small and honest: the version split now includes the inference runner, local kernel registry/maps, multimodal bridge entrypoint, and the `v8`-named operator tooling surface used by the visualizer, hub, and regression entrypoints.

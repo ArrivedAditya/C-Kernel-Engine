@@ -126,6 +126,65 @@ def _profile_install_hints() -> list[str]:
     ]
 
 
+def _likwid_install_hints() -> dict[str, object]:
+    """Return copyable LIKWID install paths without making it mandatory."""
+    os_release = _read_os_release() if sys.platform.startswith("linux") else {}
+    distro_id = (os_release.get("ID") or "").lower()
+    distro_like = (os_release.get("ID_LIKE") or "").lower()
+    family = "other"
+    if distro_id in {"ubuntu", "debian", "linuxmint", "pop"} or any(
+        value in distro_like for value in ("debian", "ubuntu")
+    ):
+        family = "ubuntu"
+    elif (
+        distro_id in {"arch", "manjaro", "endeavouros", "cachyos"}
+        or "arch" in distro_like
+    ):
+        family = "arch"
+
+    commands: dict[str, list[str]] = {
+        "ubuntu_package": [
+            "sudo apt-get update",
+            "sudo apt-get install -y likwid",
+        ],
+        "ubuntu_source": [
+            "sudo apt-get update",
+            "sudo apt-get install -y build-essential git perl",
+            "git clone --depth 1 --branch v5.5.1 https://github.com/RRZE-HPC/likwid.git",
+            "cd likwid",
+            'make -j"$(nproc)"',
+            "sudo make install",
+            "sudo ldconfig",
+        ],
+        "arch_aur": [
+            "sudo pacman -S --needed base-devel git perl",
+            "git clone https://aur.archlinux.org/likwid.git",
+            "cd likwid",
+            "makepkg -si",
+        ],
+        "verify": [
+            "likwid-perfctr -v",
+            "sudo modprobe msr",
+            "likwid-perfctr -i",
+            "likwid-perfctr -a",
+            "likwid-topology -c",
+        ],
+    }
+    return {
+        "distro_family": family,
+        "recommended": (
+            "arch_aur" if family == "arch" else "ubuntu_source"
+        ),
+        "commands": commands,
+        "minimum_modern_version": "5.5.0",
+        "stable_source_version": "5.5.1",
+        "note": (
+            "Ubuntu repository packages can be older than current LIKWID. "
+            "Use the source path for Xeon 6, Zen 5, or other recent processors."
+        ),
+    }
+
+
 def _format_mem_gib(kb: int | None) -> str | None:
     if not isinstance(kb, int) or kb <= 0:
         return None
@@ -289,6 +348,7 @@ def collect_profile_tool_status() -> dict[str, object]:
     return {
         "host_platform": sys.platform,
         "install_hints": _profile_install_hints(),
+        "likwid_install_hints": _likwid_install_hints(),
         "perf": shutil.which("perf") is not None,
         "valgrind": shutil.which("valgrind") is not None,
         "cg_annotate": shutil.which("cg_annotate") is not None,

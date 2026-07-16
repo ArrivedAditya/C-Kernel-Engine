@@ -44,6 +44,28 @@ class ProfileInstallHintsTests(unittest.TestCase):
                     with patch.object(module, "_read_os_release", return_value=os_release):
                         self.assertEqual(module._profile_install_hints(), ARCH_HINTS)
 
+    def test_v8_likwid_hints_cover_ubuntu_source_and_cachyos_aur(self):
+        module = _load_module(VISUALIZERS[1])
+        with patch.object(
+            module, "_read_os_release", return_value={"ID": "ubuntu", "ID_LIKE": "debian"}
+        ):
+            hints = module._likwid_install_hints()
+        self.assertEqual(hints["distro_family"], "ubuntu")
+        self.assertEqual(hints["recommended"], "ubuntu_source")
+        self.assertIn("sudo apt-get install -y likwid", hints["commands"]["ubuntu_package"])
+        self.assertTrue(
+            any("--branch v5.5.1" in command for command in hints["commands"]["ubuntu_source"])
+        )
+
+        with patch.object(
+            module, "_read_os_release", return_value={"ID": "cachyos", "ID_LIKE": "arch"}
+        ):
+            hints = module._likwid_install_hints()
+        self.assertEqual(hints["distro_family"], "arch")
+        self.assertEqual(hints["recommended"], "arch_aur")
+        self.assertIn("makepkg -si", hints["commands"]["arch_aur"])
+        self.assertIn("likwid-perfctr -a", hints["commands"]["verify"])
+
 
 if __name__ == "__main__":
     unittest.main()

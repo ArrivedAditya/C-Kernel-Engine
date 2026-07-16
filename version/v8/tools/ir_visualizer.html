@@ -12182,6 +12182,9 @@ function renderProfileHowTo() {
     if (!cachegrindInstalled) {
         hostToolWarnings.push('valgrind/cg_annotate are missing, so cachegrind attribution will be skipped by the one-command flow.');
     }
+    if (!likwidInstalled) {
+        hostToolWarnings.push('LIKWID is optional and missing. Use the distro-aware install block to enable pinned cross-vendor counters.');
+    }
 
     const profileIssueHtml = profileDataIssue
         ? `<div style="margin-top:0.65rem;padding:0.55rem 0.7rem;border:1px solid #7a5f1a;border-radius:8px;background:rgba(243,156,18,0.10);color:#f6d48f;font-size:0.84rem;">${escapeHtml(profileDataIssue)}</div>`
@@ -12196,6 +12199,29 @@ function renderProfileHowTo() {
             '# Install perf, valgrind, and FlameGraph for this host, then retry.',
         ];
     const depsCmd = depsCmdLines.join('\n');
+
+    const likwidInstall = (profileToolStatus.likwid_install_hints && typeof profileToolStatus.likwid_install_hints === 'object')
+        ? profileToolStatus.likwid_install_hints
+        : {};
+    const likwidInstallCommands = (likwidInstall.commands && typeof likwidInstall.commands === 'object')
+        ? likwidInstall.commands
+        : {};
+    const likwidRecommendedKey = String(likwidInstall.recommended || 'ubuntu_source');
+    const likwidRecommendedCmd = Array.isArray(likwidInstallCommands[likwidRecommendedKey])
+        ? likwidInstallCommands[likwidRecommendedKey].join('\n')
+        : '';
+    const likwidPackageCmd = Array.isArray(likwidInstallCommands.ubuntu_package)
+        ? likwidInstallCommands.ubuntu_package.join('\n')
+        : '';
+    const likwidVerifyCmd = Array.isArray(likwidInstallCommands.verify)
+        ? likwidInstallCommands.verify.join('\n')
+        : 'likwid-perfctr -v\nlikwid-perfctr -a\nlikwid-topology -c';
+    const likwidDistroFamily = String(likwidInstall.distro_family || 'other');
+    const likwidDistroLabel = likwidDistroFamily === 'arch'
+        ? 'CachyOS / Arch AUR install'
+        : likwidDistroFamily === 'ubuntu'
+            ? 'Ubuntu source install (recommended)'
+            : 'Current LIKWID source install';
 
     const explicitModelDirCmd = [
         `REPORT_MODEL_DIR=${quoteShell(reportModelDir)}`,
@@ -12585,6 +12611,33 @@ function renderProfileHowTo() {
                                 )}
                             </div>
                         `}
+                    <details style="margin-top:0.7rem;" ${!likwidInstalled ? 'open' : ''}>
+                        <summary style="cursor:pointer;font-size:0.8rem;color:var(--text-secondary);font-weight:600;">Optional LIKWID setup (${escapeHtml(likwidDistroFamily)})</summary>
+                        <p class="profile-phase-desc" style="margin-top:0.65rem;">
+                            LIKWID adds CPU-pinned, cross-vendor hardware counters. It remains optional. For Xeon 6,
+                            Zen 5, and other recent CPUs, use LIKWID 5.5.x or newer and trust
+                            <code>likwid-perfctr -a</code> for the groups actually exposed by this machine.
+                        </p>
+                        <div class="profile-howto-grid">
+                            ${renderHowToBlock(
+                                likwidDistroLabel,
+                                likwidRecommendedCmd,
+                                likwidDistroFamily === 'arch'
+                                    ? 'Builds the current AUR package on CachyOS, Arch, EndeavourOS, or Manjaro.'
+                                    : 'Builds the current stable LIKWID release. This is preferred over older Ubuntu repository packages on recent processors.'
+                            )}
+                            ${likwidDistroFamily === 'ubuntu' && likwidPackageCmd ? renderHowToBlock(
+                                'Ubuntu package (quick, may be older)',
+                                likwidPackageCmd,
+                                'Fastest setup for older supported processors. Use the source install above when the package lacks your CPU or counter groups.'
+                            ) : ''}
+                            ${renderHowToBlock(
+                                'Verify counters and topology',
+                                likwidVerifyCmd,
+                                'Loads the MSR module, prints LIKWID access information, lists processor-supported groups, and shows the CPU topology used for pinning.'
+                            )}
+                        </div>
+                    </details>
                 </div>
             </details>
 
@@ -14558,9 +14611,10 @@ function renderProfileHowTo() {
 
             if (likwidSummaryData) {
                 const status = String(likwidSummaryData?.status || 'unknown');
-                const cpuIds = Array.isArray(likwidSummaryData?.cpu_ids)
-                    ? likwidSummaryData.cpu_ids.join(', ')
-                    : '-';
+                const cpuIdList = Array.isArray(likwidSummaryData?.cpu_ids)
+                    ? likwidSummaryData.cpu_ids
+                    : [];
+                const cpuIds = cpuIdList.length ? cpuIdList.join(', ') : '-';
                 const groups = Array.isArray(likwidSummaryData?.selected_groups)
                     ? likwidSummaryData.selected_groups
                     : [];
@@ -14568,19 +14622,34 @@ function renderProfileHowTo() {
                     ? likwidSummaryData.normalized
                     : {};
                 const metricRows = [];
+                const metricCards = [];
                 Object.entries(normalized).forEach(([group, metrics]) => {
                     if (!metrics || typeof metrics !== 'object') return;
                     Object.entries(metrics).forEach(([name, rawValue]) => {
                         const value = Number(rawValue);
+                        const displayValue = Number.isFinite(value) ? value.toFixed(3) : String(rawValue);
                         metricRows.push(`
                             <tr>
                                 <td>${escapeHtml(String(group))}</td>
                                 <td>${escapeHtml(String(name))}</td>
-                                <td>${Number.isFinite(value) ? value.toFixed(3) : escapeHtml(String(rawValue))}</td>
+                                <td>${escapeHtml(displayValue)}</td>
                             </tr>
+                        `);
+                        metricCards.push(`
+                            <div style="padding:0.65rem 0.7rem;border:1px solid rgba(69,143,255,0.3);border-radius:9px;background:rgba(69,143,255,0.07);min-width:0;">
+                                <div style="color:var(--text-muted);font-size:0.66rem;text-transform:uppercase;letter-spacing:0.05em;">${escapeHtml(String(group))}</div>
+                                <div style="margin-top:0.2rem;color:var(--text-secondary);font-size:0.72rem;overflow-wrap:anywhere;">${escapeHtml(String(name).replaceAll('_', ' '))}</div>
+                                <div style="margin-top:0.3rem;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:1rem;font-weight:700;">${escapeHtml(displayValue)}</div>
+                            </div>
                         `);
                     });
                 });
+                const cpuChips = cpuIdList.length
+                    ? cpuIdList.map((cpu) => `<span style="padding:0.12rem 0.38rem;border:1px solid rgba(36,179,113,0.42);border-radius:999px;color:#a7f4cc;font-family:'JetBrains Mono',monospace;font-size:0.68rem;">CPU ${escapeHtml(String(cpu))}</span>`).join('')
+                    : '<span style="color:var(--text-muted);">No CPU selection recorded</span>';
+                const groupChips = groups.length
+                    ? groups.map((group) => `<span style="padding:0.12rem 0.38rem;border:1px solid rgba(69,143,255,0.42);border-radius:999px;color:#a9caff;font-family:'JetBrains Mono',monospace;font-size:0.68rem;">${escapeHtml(String(group))}</span>`).join('')
+                    : '<span style="color:var(--text-muted);">No supported groups selected</span>';
                 if (Array.isArray(likwidSummaryData?.artifacts)) {
                     likwidSummaryData.artifacts.forEach((artifact) => {
                         if (!artifact || typeof artifact !== 'object') return;
@@ -14592,6 +14661,26 @@ function renderProfileHowTo() {
                 likwidPanelHtml = `
                     <div class="profile-artifact-panel" style="margin-top:0.8rem;">
                         <h3><span class="badge badge-blue">LIKWID</span> Pinned Cross-Vendor Counters</h3>
+                        <div aria-label="LIKWID evidence flow" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:0.55rem;margin:0.65rem 0 0.8rem;">
+                            <div style="padding:0.7rem;border:1px solid var(--grey);border-radius:9px;background:rgba(255,255,255,0.025);">
+                                <div style="color:var(--text-muted);font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;">1 · Workload</div>
+                                <strong style="display:block;margin-top:0.25rem;">CKE v8 run</strong>
+                                <span style="color:var(--text-muted);font-size:0.72rem;">Repeated once per selected group</span>
+                            </div>
+                            <div style="padding:0.7rem;border:1px solid rgba(36,179,113,0.35);border-radius:9px;background:rgba(36,179,113,0.06);">
+                                <div style="color:var(--text-muted);font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;">2 · Pinned CPUs</div>
+                                <div style="display:flex;gap:0.28rem;flex-wrap:wrap;margin-top:0.35rem;">${cpuChips}</div>
+                            </div>
+                            <div style="padding:0.7rem;border:1px solid rgba(69,143,255,0.35);border-radius:9px;background:rgba(69,143,255,0.06);">
+                                <div style="color:var(--text-muted);font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;">3 · Detected groups</div>
+                                <div style="display:flex;gap:0.28rem;flex-wrap:wrap;margin-top:0.35rem;">${groupChips}</div>
+                            </div>
+                            <div style="padding:0.7rem;border:1px solid rgba(169,104,255,0.35);border-radius:9px;background:rgba(169,104,255,0.06);">
+                                <div style="color:var(--text-muted);font-size:0.65rem;text-transform:uppercase;letter-spacing:0.06em;">4 · Evidence</div>
+                                <strong style="display:block;margin-top:0.25rem;">${metricCards.length} normalized metrics</strong>
+                                <span style="color:var(--text-muted);font-size:0.72rem;">JSON plus preserved CSV/stdout/stderr</span>
+                            </div>
+                        </div>
                         <table class="profile-hotspot-table">
                             <tbody>
                                 <tr><td>Status</td><td>${escapeHtml(status.toUpperCase())}</td></tr>
@@ -14600,13 +14689,21 @@ function renderProfileHowTo() {
                                 ${likwidSummaryData?.reason ? `<tr><td>Reason</td><td>${escapeHtml(String(likwidSummaryData.reason))}</td></tr>` : ''}
                             </tbody>
                         </table>
-                        ${metricRows.length ? `
+                        ${metricCards.length ? `
                         <div style="margin-top:0.7rem;">
+                            <div style="margin-bottom:0.4rem;color:var(--text-secondary);font-size:0.78rem;font-weight:700;">Normalized metric cards</div>
+                            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:0.5rem;">
+                                ${metricCards.slice(0, 16).join('')}
+                            </div>
+                        </div>` : ''}
+                        ${metricRows.length ? `
+                        <details style="margin-top:0.7rem;">
+                            <summary style="cursor:pointer;color:var(--text-secondary);font-size:0.78rem;font-weight:700;">Metric audit table (${metricRows.length})</summary>
                             <table class="profile-hotspot-table">
                                 <thead><tr><th>Group</th><th>Normalized Metric</th><th>Average</th></tr></thead>
                                 <tbody>${metricRows.join('')}</tbody>
                             </table>
-                        </div>` : ''}
+                        </details>` : ''}
                         <div style="margin-top:0.55rem;color:var(--text-muted);font-size:0.78rem;">
                             Wrapper mode counts activity on the selected CPUs. Keep the workload pinned and the neighboring CPUs quiet.
                         </div>
