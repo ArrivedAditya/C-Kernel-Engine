@@ -6334,6 +6334,7 @@ V8_LIKWID_GROUPS ?= auto
 V8_LIKWID_MAX_GROUPS ?= 2
 V8_LIKWID_CPUS ?= auto
 V8_LIKWID_THREADS ?= 1
+V8_LIKWID_PLOT ?=
 V8_PROFILE_V7_ARGS = \
 	V7_MODEL="$(V8_MODEL)" \
 	V7_PERF_RUNTIME="$(V8_PERF_RUNTIME)" \
@@ -7266,6 +7267,7 @@ profile-v8-likwid:
 			--max-groups "$(V8_LIKWID_MAX_GROUPS)" \
 			--cpus "$(V8_LIKWID_CPUS)" \
 			--threads "$(V8_LIKWID_THREADS)" \
+			$(if $(strip $(V8_LIKWID_PLOT)),--plot-artifact "$(V8_LIKWID_PLOT)",) \
 			-- ./build/ck-cli-v8 "$$runtime_dir/libmodel.so" "$$runtime_dir/weights.bump" \
 				--prompt "The quick brown fox" --max-tokens 32 --timing --quiet-output \
 				$(V8_CLI_TEMPLATE_ARGS) $(V8_CLI_ARGS); \

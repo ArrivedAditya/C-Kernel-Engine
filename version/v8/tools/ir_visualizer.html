@@ -14623,6 +14623,7 @@ function renderProfileHowTo() {
                     : {};
                 const metricRows = [];
                 const metricCards = [];
+                const plotArtifacts = [];
                 Object.entries(normalized).forEach(([group, metrics]) => {
                     if (!metrics || typeof metrics !== 'object') return;
                     Object.entries(metrics).forEach(([name, rawValue]) => {
@@ -14656,6 +14657,13 @@ function renderProfileHowTo() {
                         const path = artifact.resolved_path || artifact.path;
                         if (!path) return;
                         links.push(`<a href="${escapeHtml(String(path))}" target="_blank" style="color:var(--blue);font-family:'JetBrains Mono',monospace;">LIKWID ${escapeHtml(String(artifact.kind || 'artifact'))}</a>`);
+                        if (artifact.image_data_uri) {
+                            plotArtifacts.push({
+                                label: String(artifact.label || artifact.kind || 'LIKWID plot'),
+                                source: String(artifact.image_data_uri),
+                                path: String(path),
+                            });
+                        }
                     });
                 }
                 likwidPanelHtml = `
@@ -14689,6 +14697,17 @@ function renderProfileHowTo() {
                                 ${likwidSummaryData?.reason ? `<tr><td>Reason</td><td>${escapeHtml(String(likwidSummaryData.reason))}</td></tr>` : ''}
                             </tbody>
                         </table>
+                        ${plotArtifacts.length ? `
+                        <div style="margin-top:0.8rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0.7rem;">
+                            ${plotArtifacts.map((plot) => `
+                                <figure style="margin:0;padding:0.65rem;border:1px solid var(--grey);border-radius:10px;background:rgba(0,0,0,0.12);">
+                                    <img src="${escapeHtml(plot.source)}" alt="${escapeHtml(plot.label)}" style="display:block;width:100%;height:auto;max-height:520px;object-fit:contain;border-radius:6px;background:white;">
+                                    <figcaption style="margin-top:0.45rem;color:var(--text-muted);font-size:0.72rem;overflow-wrap:anywhere;">
+                                        ${escapeHtml(plot.label)} · <a href="${escapeHtml(plot.path)}" target="_blank" style="color:var(--blue);">open original</a>
+                                    </figcaption>
+                                </figure>
+                            `).join('')}
+                        </div>` : ''}
                         ${metricCards.length ? `
                         <div style="margin-top:0.7rem;">
                             <div style="margin-bottom:0.4rem;color:var(--text-secondary);font-size:0.78rem;font-weight:700;">Normalized metric cards</div>

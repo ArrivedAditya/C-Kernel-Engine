@@ -140,6 +140,20 @@ class LikwidProfileV8Tests(unittest.TestCase):
         ):
             self.assertEqual(self.module.default_cpu_ids(2), [4, 8])
 
+    def test_exported_plot_is_preserved_as_an_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "memory.svg"
+            source.write_text('<svg xmlns="http://www.w3.org/2000/svg"></svg>')
+            artifact_dir = root / "run" / "likwid"
+            artifact_dir.mkdir(parents=True)
+            summary = {"artifacts": []}
+            self.module.register_plot_artifacts([source], artifact_dir, summary)
+        artifact = summary["artifacts"][0]
+        self.assertEqual(artifact["kind"], "plot")
+        self.assertEqual(artifact["media_type"], "image/svg+xml")
+        self.assertTrue(artifact["path"].endswith("plot_memory.svg"))
+
     def test_visualizer_loads_summary_and_resolves_raw_artifacts(self) -> None:
         spec = importlib.util.spec_from_file_location(
             "likwid_visualizer_v8_test", VISUALIZER
@@ -153,12 +167,17 @@ class LikwidProfileV8Tests(unittest.TestCase):
             raw = run_dir / "likwid" / "mem.csv"
             raw.parent.mkdir()
             raw.write_text("Metric,CPI,1.0\n")
+            plot = run_dir / "likwid" / "memory.svg"
+            plot.write_text('<svg xmlns="http://www.w3.org/2000/svg"></svg>')
             (run_dir / "likwid_summary.json").write_text(
                 json.dumps(
                     {
                         "schema": "cke.profile.likwid.v1",
                         "status": "pass",
-                        "artifacts": [{"kind": "MEM csv", "path": str(raw)}],
+                        "artifacts": [
+                            {"kind": "MEM csv", "path": str(raw)},
+                            {"kind": "plot", "path": str(plot)},
+                        ],
                         "runs": [{"group": "MEM", "csv_path": str(raw)}],
                     }
                 )
@@ -169,6 +188,11 @@ class LikwidProfileV8Tests(unittest.TestCase):
         summary = data["files"]["likwid_summary"]
         self.assertEqual(summary["status"], "pass")
         self.assertEqual(summary["artifacts"][0]["resolved_path"], str(raw))
+        self.assertTrue(
+            summary["artifacts"][1]["image_data_uri"].startswith(
+                "data:image/svg+xml;base64,"
+            )
+        )
         self.assertEqual(summary["runs"][0]["csv_path_resolved"], str(raw))
 
     def test_visualizer_discovers_v8_build_directory(self) -> None:

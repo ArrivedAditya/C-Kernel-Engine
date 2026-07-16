@@ -149,7 +149,7 @@ def _likwid_install_hints() -> dict[str, object]:
         ],
         "ubuntu_source": [
             "sudo apt-get update",
-            "sudo apt-get install -y build-essential git perl",
+            "sudo apt-get install -y build-essential git perl gnuplot-nox",
             "git clone --depth 1 --branch v5.5.1 https://github.com/RRZE-HPC/likwid.git",
             "cd likwid",
             'make -j"$(nproc)"',
@@ -157,7 +157,7 @@ def _likwid_install_hints() -> dict[str, object]:
             "sudo ldconfig",
         ],
         "arch_aur": [
-            "sudo pacman -S --needed base-devel git perl",
+            "sudo pacman -S --needed base-devel git perl gnuplot",
             "git clone https://aur.archlinux.org/likwid.git",
             "cd likwid",
             "makepkg -si",
@@ -794,6 +794,7 @@ def _encode_image_data_uri(path: Path) -> str | None:
         ".jpeg": "image/jpeg",
         ".webp": "image/webp",
         ".gif": "image/gif",
+        ".svg": "image/svg+xml",
     }.get(suffix)
     if mime is None:
         return None
@@ -4585,6 +4586,9 @@ def load_model_data(
                     resolved = _resolve_asset_path(raw, ck_build_path, model_root)
                     if resolved:
                         item2["resolved_path"] = str(resolved)
+                        image_data_uri = _encode_image_data_uri(resolved)
+                        if image_data_uri:
+                            item2["image_data_uri"] = image_data_uri
                 enriched.append(item2)
             likwid["artifacts"] = enriched
         runs = likwid.get("runs")

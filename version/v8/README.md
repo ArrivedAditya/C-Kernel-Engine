@@ -99,13 +99,17 @@ and other recent processors):
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y build-essential git perl
+sudo apt-get install -y build-essential git perl gnuplot-nox
 git clone --depth 1 --branch v5.5.1 https://github.com/RRZE-HPC/likwid.git
 cd likwid
 make -j"$(nproc)"
 sudo make install
 sudo ldconfig
 ```
+
+The `gnuplot-nox` dependency enables headless SVG/PNG generation. The regular
+`gnuplot` desktop package can be used instead when interactive windows are
+wanted.
 
 For a quick setup on an older supported processor, Ubuntu also packages LIKWID:
 
@@ -120,7 +124,7 @@ release above. On CachyOS, Arch, EndeavourOS, or Manjaro, build the current AUR
 package:
 
 ```bash
-sudo pacman -S --needed base-devel git perl
+sudo pacman -S --needed base-devel git perl gnuplot
 git clone https://aur.archlinux.org/likwid.git
 cd likwid
 makepkg -si
@@ -137,11 +141,26 @@ likwid-perfctr -a
 likwid-topology -c
 ```
 
+`likwid-perfscope` is a live plotting frontend and does not automatically leave
+a durable image for every run. Gnuplot/feedgnuplot can export SVG or PNG. Once a
+plot has been exported, preserve and embed it in the generated IR report with:
+
+```bash
+make profile-v8-likwid \
+  V8_MODEL="/path/to/model-or-run-dir" \
+  V8_LIKWID_PLOT="/path/to/exported-likwid-plot.svg"
+```
+
+The profiling script also accepts repeatable `--plot-artifact` arguments when
+called directly. SVG, PNG, JPEG, and WebP files are copied under the run's
+`likwid/` directory, recorded in `likwid_summary.json`, and embedded in the
+Profile page so the standalone report does not depend on the original path.
+
 The Profile page visualizes the evidence flow from the CKE workload through its
 pinned CPUs and dynamically selected groups to normalized metric cards. The
 audit table and raw CSV/stdout/stderr links remain available beneath it. Metrics
 with different units are deliberately not placed on one comparative bar chart.
-LIKWID's live `likwid-perfscope` plotting can be added later as a separate
-time-series artifact without changing the normalized summary contract.
+Automated headless perfscope timeline export can be added later without changing
+the normalized summary or plot-artifact contract.
 
 That keeps `v8` small and honest: the version split now includes the inference runner, local kernel registry/maps, multimodal bridge entrypoint, and the `v8`-named operator tooling surface used by the visualizer, hub, and regression entrypoints.

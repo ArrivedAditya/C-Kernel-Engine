@@ -177,6 +177,40 @@ def write_summary(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
 
 
+def register_plot_artifacts(
+    paths: Iterable[Path], artifact_dir: Path, summary: dict[str, Any]
+) -> None:
+    """Preserve user-exported LIKWID/perfscope plots beside counter evidence."""
+    supported = {".svg", ".png", ".jpg", ".jpeg", ".webp"}
+    for source in paths:
+        resolved = source.expanduser().resolve()
+        if not resolved.is_file():
+            raise ValueError(f"LIKWID plot artifact does not exist: {source}")
+        if resolved.suffix.lower() not in supported:
+            raise ValueError(
+                f"unsupported LIKWID plot format {resolved.suffix!r}; "
+                "use SVG, PNG, JPEG, or WebP"
+            )
+        destination = artifact_dir / f"plot_{resolved.name}"
+        if resolved != destination.resolve():
+            shutil.copy2(resolved, destination)
+        suffix = destination.suffix.lower()
+        media_type = {
+            ".svg": "image/svg+xml",
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp",
+        }[suffix]
+        summary["artifacts"].append(
+            {
+                "kind": "plot",
+                "path": str(destination),
+                "media_type": media_type,
+            }
+        )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -189,6 +223,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=max(1, int(os.environ.get("CK_NUM_THREADS", "1"))),
     )
     parser.add_argument("--summary-name", default="likwid_summary.json")
+    parser.add_argument(
+        "--plot-artifact",
+        type=Path,
+        action="append",
+        default=[],
+        help="preserve an exported LIKWID/perfscope SVG or raster plot (repeatable)",
+    )
     parser.add_argument("command", nargs=argparse.REMAINDER)
     return parser
 
@@ -228,6 +269,13 @@ def main(argv: list[str] | None = None) -> int:
             "Counter groups and metric names vary by processor and LIKWID version.",
         ],
     }
+    try:
+        register_plot_artifacts(args.plot_artifact, artifact_dir, summary)
+    except ValueError as exc:
+        summary.update(status="fail", reason=str(exc))
+        write_summary(summary_path, summary)
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
     if not executable:
         summary["reason"] = "likwid-perfctr is not installed"
         write_summary(summary_path, summary)
