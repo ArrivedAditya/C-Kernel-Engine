@@ -6293,6 +6293,7 @@ ADVISOR_ARTIFACTS_V7_SCRIPT := version/v7/scripts/advisor_artifacts_v7.py
 MEMORY_SIGNOFF_V7_SCRIPT := version/v7/scripts/memory_signoff_v7.py
 PERF_GATE_V7_SCRIPT := version/v7/scripts/perf_gate_v7.py
 PERF_GATE_V8_SCRIPT := version/v8/scripts/perf_gate_v8.py
+LIKWID_PROFILE_V8_SCRIPT := version/v8/scripts/likwid_profile_v8.py
 RESOLVE_MODEL_DIR_V7_SCRIPT := version/v7/scripts/resolve_model_dir_v7.py
 RESOLVE_MODEL_DIR_V8_SCRIPT := version/v8/scripts/resolve_model_dir_v8.py
 PROFILE_V7_SUMMARY_SCRIPT := version/v7/scripts/generate_profile_summary_v7.py
@@ -6329,6 +6330,10 @@ PROFILE_V8_ADVISOR_CSV ?= build/ck_v8_advisor_roofline.csv
 PROFILE_V8_ADVISOR_HTML ?= build/ck_v8_advisor_roofline.html
 PROFILE_V8_CACHEGRIND_OUT ?= build/cachegrind_v8.out
 PROFILE_V8_CACHEGRIND_ANNOTATE ?= build/cachegrind_v8_annotated.txt
+V8_LIKWID_GROUPS ?= auto
+V8_LIKWID_MAX_GROUPS ?= 2
+V8_LIKWID_CPUS ?= auto
+V8_LIKWID_THREADS ?= 1
 V8_PROFILE_V7_ARGS = \
 	V7_MODEL="$(V8_MODEL)" \
 	V7_PERF_RUNTIME="$(V8_PERF_RUNTIME)" \
@@ -7204,7 +7209,7 @@ profile-v7-full:
 
 .PHONY: profile-v8-prepare-runtime profile-v8-decode profile-v8-prefill profile-v8-flamegraph \
 	profile-v8-flamegraph-decode profile-v8-flamegraph-prefill profile-v8-perf-stat profile-v8-cachegrind \
-	profile-v8-vtune profile-v8-advisor profile-v8-full v8-perf-gate v8-perf-gate-evaluate
+	profile-v8-vtune profile-v8-advisor profile-v8-likwid profile-v8-full v8-perf-gate v8-perf-gate-evaluate
 
 profile-v8-prepare-runtime:
 	@CK_CACHE_DIR="$${CK_CACHE_DIR:-$$HOME/.cache/ck-engine-v8/models}" $(MAKE) --no-print-directory profile-v7-prepare-runtime $(V8_PROFILE_V7_ARGS)
@@ -7238,6 +7243,34 @@ profile-v8-vtune:
 profile-v8-advisor:
 	@CK_CACHE_DIR="$${CK_CACHE_DIR:-$$HOME/.cache/ck-engine-v8/models}" $(MAKE) --no-print-directory profile-v7-advisor $(V8_PROFILE_V7_ARGS)
 
+profile-v8-likwid:
+	@if ! command -v likwid-perfctr >/dev/null 2>&1; then \
+		echo "SKIP: profile-v8-likwid (likwid-perfctr not installed)"; \
+	elif [ "$(V8_PERF_RUNTIME)" != "cli" ]; then \
+		echo "SKIP: profile-v8-likwid currently requires V8_PERF_RUNTIME=cli"; \
+	else \
+		$(MAKE) --no-print-directory profile-v8-prepare-runtime; \
+		$(MAKE) --no-print-directory ck-cli-v8 CFLAGS="$(CFLAGS) $(PROFILE_V7_DEBUG_CFLAGS)"; \
+		model_dir="$$( CK_CACHE_DIR="$${CK_CACHE_DIR:-$$HOME/.cache/ck-engine-v8/models}" $(PYTHON) $(RESOLVE_MODEL_DIR_V8_SCRIPT) --model-input "$(V8_MODEL)" )"; \
+		runtime_dir="$$model_dir"; \
+		for candidate in "$$model_dir/.ck_build" "$$model_dir/.ck_build_v8"; do \
+			if [ -f "$$candidate/libmodel.so" ] && [ -f "$$candidate/weights.bump" ]; then runtime_dir="$$candidate"; break; fi; \
+		done; \
+		if [ ! -f "$$runtime_dir/libmodel.so" ] || [ ! -f "$$runtime_dir/weights.bump" ]; then \
+			echo "ERROR: LIKWID profile runtime is missing in $$model_dir"; \
+			exit 1; \
+		fi; \
+		CK_NUM_THREADS="$(V8_LIKWID_THREADS)" $(PYTHON) $(LIKWID_PROFILE_V8_SCRIPT) \
+			--output-dir "$$runtime_dir" \
+			--groups "$(V8_LIKWID_GROUPS)" \
+			--max-groups "$(V8_LIKWID_MAX_GROUPS)" \
+			--cpus "$(V8_LIKWID_CPUS)" \
+			--threads "$(V8_LIKWID_THREADS)" \
+			-- ./build/ck-cli-v8 "$$runtime_dir/libmodel.so" "$$runtime_dir/weights.bump" \
+				--prompt "The quick brown fox" --max-tokens 32 --timing --quiet-output \
+				$(V8_CLI_TEMPLATE_ARGS) $(V8_CLI_ARGS); \
+	fi
+
 profile-v8-full:
 	@$(MAKE) --no-print-directory profile-v8-prepare-runtime
 	@$(MAKE) --no-print-directory profile-v8-decode
@@ -7247,6 +7280,7 @@ profile-v8-full:
 	@$(MAKE) --no-print-directory profile-v8-flamegraph-prefill
 	@$(MAKE) --no-print-directory profile-v8-vtune
 	@$(MAKE) --no-print-directory profile-v8-advisor
+	@$(MAKE) --no-print-directory profile-v8-likwid || true
 	@echo "=== Open visualizer: version/v8/tools/ir_visualizer.html ==="
 	@echo "=== Load folder from model cache to see Profile tab ==="
 

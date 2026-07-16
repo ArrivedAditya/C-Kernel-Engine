@@ -66,4 +66,28 @@ Notes:
 - The `.ppm` regression image is a Portable Pixmap file. CK uses it in CI because the format is simple enough to parse directly: a short header plus raw RGB pixels. That removes PNG/JPEG decoder dependency differences from the vision smoke. It is a test-fixture format, not a requirement for normal use; user-facing runs can still use PNG/JPEG when the local image stack is available.
 - Qwen3-VL is an 8B multimodal lane. `make v8-regression-fast` stays text-family focused, while `make test-v8-qwen3vl-e2e-smoke` runs the cached vision E2E path when the decoder and mmproj artifacts are present.
 
+Optional LIKWID profiling:
+
+```text
+make profile-v8-likwid \
+  V8_MODEL="/path/to/model-or-run-dir" \
+  V8_PERF_RUNTIME=cli \
+  V8_LIKWID_GROUPS=auto \
+  V8_LIKWID_THREADS=1
+```
+
+The target detects the counter groups supported by the current processor,
+selects up to two portable groups by default, pins the workload to CPUs from the
+current affinity set, preserves LIKWID CSV/stdout/stderr, and writes
+`likwid_summary.json` for the IR visualizer Profile section. Override
+`V8_LIKWID_GROUPS` with a comma-separated list, `V8_LIKWID_MAX_GROUPS` to run
+more groups, or `V8_LIKWID_CPUS` with an explicit CPU list. Each group reruns the
+workload, so keep the default small when profiling large models.
+
+LIKWID is optional. If `likwid-perfctr` is unavailable, the Make target reports
+`SKIP` and the normal build, runtime, and visualizer paths remain unchanged.
+Wrapper measurements include all activity on the pinned CPUs; avoid noisy
+neighboring workloads when collecting evidence. Marker API regions can be added
+later without changing this artifact contract.
+
 That keeps `v8` small and honest: the version split now includes the inference runner, local kernel registry/maps, multimodal bridge entrypoint, and the `v8`-named operator tooling surface used by the visualizer, hub, and regression entrypoints.

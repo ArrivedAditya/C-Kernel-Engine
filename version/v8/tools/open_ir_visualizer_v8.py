@@ -294,6 +294,7 @@ def collect_profile_tool_status() -> dict[str, object]:
         "cg_annotate": shutil.which("cg_annotate") is not None,
         "vtune": shutil.which("vtune") is not None,
         "advisor": shutil.which("advisor") is not None,
+        "likwid": shutil.which("likwid-perfctr") is not None,
         "xdg_open": shutil.which("xdg-open") is not None,
         "flamegraph": (
             (flamegraph_dir / "stackcollapse-perf.pl").exists()
@@ -309,7 +310,7 @@ def resolve_model_target(model_arg: str) -> tuple[Path, Path]:
     if candidate.exists():
         if not candidate.is_dir():
             raise ValueError(f"Model path is not a directory: {candidate}")
-        if candidate.name in {"ck_build", ".ck_build"}:
+        if candidate.name in {"ck_build", ".ck_build", ".ck_build_v8"}:
             ck_build = candidate
             model_root = candidate.parent
         else:
@@ -317,6 +318,8 @@ def resolve_model_target(model_arg: str) -> tuple[Path, Path]:
                 ck_build = candidate / "ck_build"
             elif (candidate / ".ck_build").exists():
                 ck_build = candidate / ".ck_build"
+            elif (candidate / ".ck_build_v8").exists():
+                ck_build = candidate / ".ck_build_v8"
             else:
                 ck_build = candidate
             model_root = candidate
@@ -329,6 +332,10 @@ def resolve_model_target(model_arg: str) -> tuple[Path, Path]:
     dot_ck_build = CACHE_PATH / model_arg / ".ck_build"
     if dot_ck_build.exists():
         return dot_ck_build, CACHE_PATH / model_arg
+
+    dot_ck_build_v8 = CACHE_PATH / model_arg / ".ck_build_v8"
+    if dot_ck_build_v8.exists():
+        return dot_ck_build_v8, CACHE_PATH / model_arg
 
     model_dir = CACHE_PATH / model_arg
     if model_dir.exists():
@@ -551,6 +558,7 @@ def copy_artifacts_if_needed(src_model_dir: Path, dst_model_dir: Path) -> None:
         "asan_summary.json",
         "vtune_summary.json",
         "advisor_summary.json",
+        "likwid_summary.json",
         "memory_signoff.json",
         "memory_verification_latest.json",
         "perf_gate_report.json",
@@ -3483,8 +3491,8 @@ def load_model_data(
         model_root = run_dir
         model_name = run_dir.name
     else:
-        model_name = ck_build_path.parent.name if ck_build_path.name in {"ck_build", ".ck_build"} else ck_build_path.name
-        model_root = ck_build_path.parent if ck_build_path.name in {"ck_build", ".ck_build"} else ck_build_path
+        model_name = ck_build_path.parent.name if ck_build_path.name in {"ck_build", ".ck_build", ".ck_build_v8"} else ck_build_path.name
+        model_root = ck_build_path.parent if ck_build_path.name in {"ck_build", ".ck_build", ".ck_build_v8"} else ck_build_path
     train_runtime_available = has_train_runtime_artifacts(run_dir if run_dir is not None else model_root)
     inference_runtime_available = has_inference_runtime_artifacts(run_dir if run_dir is not None else model_root)
     bridge_dirs = _resolve_multimodal_bridge_dirs(run_dir, model_root)
@@ -3496,8 +3504,8 @@ def load_model_data(
     if bridge_decoder_root is not None:
         search_roots.append(bridge_decoder_root)
     if run_dir is not None:
-        search_roots.extend([run_dir, run_dir / "ck_build", run_dir / ".ck_build"])
-    search_roots.extend([ck_build_path, model_root, model_root / ".ck_build"])
+        search_roots.extend([run_dir, run_dir / "ck_build", run_dir / ".ck_build", run_dir / ".ck_build_v8"])
+    search_roots.extend([ck_build_path, model_root, model_root / ".ck_build", model_root / ".ck_build_v8"])
     if bridge_root is not None:
         search_roots.append(bridge_root)
     if bridge_encoder_root is not None:
@@ -3605,6 +3613,7 @@ def load_model_data(
         "asan_summary",
         "vtune_summary",
         "advisor_summary",
+        "likwid_summary",
         "memory_signoff",
         "perf_gate_report",
         "regression_ledger",
@@ -3706,6 +3715,7 @@ def load_model_data(
         "asan_summary": model_candidates("asan_summary.json") + [V8_REPORT_PATH / "asan_summary.json", V8_REPORT_PATH_LEGACY / "asan_summary.json"],
         "vtune_summary": model_candidates("vtune_summary.json") + [V8_REPORT_PATH / "vtune_summary.json", V8_REPORT_PATH_LEGACY / "vtune_summary.json"],
         "advisor_summary": model_candidates("advisor_summary.json") + [V8_REPORT_PATH / "advisor_summary.json", V8_REPORT_PATH_LEGACY / "advisor_summary.json"],
+        "likwid_summary": model_candidates("likwid_summary.json") + [V8_REPORT_PATH / "likwid_summary.json", V8_REPORT_PATH_LEGACY / "likwid_summary.json"],
         "memory_signoff": model_candidates("memory_signoff.json") + [V8_REPORT_PATH / "memory_signoff.json", V8_REPORT_PATH_LEGACY / "memory_signoff.json"],
         "perf_gate_report": model_candidates("perf_gate_report.json") + [V8_REPORT_PATH / "perf_gate_report.json", V8_REPORT_PATH_LEGACY / "perf_gate_report.json"],
         "embedding_dump": model_candidates("embedding_dump.json") + model_candidates("embedding_dump_latest.json"),
@@ -4501,6 +4511,39 @@ def load_model_data(
                 enriched.append(item2)
             advisor["artifacts"] = enriched
 
+    likwid = data["files"].get("likwid_summary")
+    if isinstance(likwid, dict):
+        artifacts = likwid.get("artifacts")
+        if isinstance(artifacts, list):
+            enriched = []
+            for item in artifacts:
+                if not isinstance(item, dict):
+                    continue
+                item2 = dict(item)
+                raw = item2.get("path")
+                if isinstance(raw, str):
+                    resolved = _resolve_asset_path(raw, ck_build_path, model_root)
+                    if resolved:
+                        item2["resolved_path"] = str(resolved)
+                enriched.append(item2)
+            likwid["artifacts"] = enriched
+        runs = likwid.get("runs")
+        if isinstance(runs, list):
+            enriched_runs = []
+            for run in runs:
+                if not isinstance(run, dict):
+                    continue
+                run2 = dict(run)
+                for key in ("csv_path", "stdout_path", "stderr_path"):
+                    raw = run2.get(key)
+                    if not isinstance(raw, str):
+                        continue
+                    resolved = _resolve_asset_path(raw, ck_build_path, model_root)
+                    if resolved:
+                        run2[f"{key}_resolved"] = str(resolved)
+                enriched_runs.append(run2)
+            likwid["runs"] = enriched_runs
+
     cachegrind = data["files"].get("cachegrind_summary")
     if isinstance(cachegrind, dict):
         for key in ("cachegrind_out", "annotate_path"):
@@ -4604,7 +4647,7 @@ def generate_html_report(
     """Generate standalone HTML report."""
     from datetime import datetime
 
-    model_name = ck_build_path.parent.name if ck_build_path.name in {"ck_build", ".ck_build"} else ck_build_path.name
+    model_name = ck_build_path.parent.name if ck_build_path.name in {"ck_build", ".ck_build", ".ck_build_v8"} else ck_build_path.name
     print(f"Generating report for: {model_name}")
 
     # Load data

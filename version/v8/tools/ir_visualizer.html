@@ -3670,6 +3670,7 @@ python3 trace_divergence.py --model "$MODEL_DIR" --token 25 --threads 1 --contex
         let asanSummaryData = null;
         let vtuneSummaryData = null;
         let advisorSummaryData = null;
+        let likwidSummaryData = null;
         let memorySignoffData = null;
         let perfGateData = null;
         let kernelRegistryData = null;
@@ -4432,6 +4433,7 @@ python3 trace_divergence.py --model "$MODEL_DIR" --token 25 --threads 1 --contex
                 { key: 'cachegrind_summary', label: 'cachegrind_summary.json', ready: Boolean(cachegrindSummaryData) },
                 { key: 'vtune_summary', label: 'vtune_summary.json', ready: Boolean(vtuneSummaryData) },
                 { key: 'advisor_summary', label: 'advisor_summary.json', ready: Boolean(advisorSummaryData) },
+                { key: 'likwid_summary', label: 'likwid_summary.json', ready: Boolean(likwidSummaryData) },
                 { key: 'memory_signoff', label: 'memory_signoff.json', ready: Boolean(memorySignoffData) },
                 { key: 'perf_gate_report', label: 'perf_gate_report.json', ready: Boolean(perfGateData) },
                 { key: 'multimodal_bridge_report', label: 'multimodal_bridge/bridge_report.json', ready: Boolean(bridgeView) },
@@ -4885,6 +4887,7 @@ python3 trace_divergence.py --model "$MODEL_DIR" --token 25 --threads 1 --contex
                             { label: 'cachegrind', ready: Boolean(cachegrindSummaryData) },
                             { label: 'vtune', ready: Boolean(vtuneSummaryData) },
                             { label: 'advisor', ready: Boolean(advisorSummaryData) },
+                            { label: 'likwid', ready: Boolean(likwidSummaryData) },
                         ])}
                     </div>`;
                 }
@@ -5164,6 +5167,11 @@ python3 trace_divergence.py --model "$MODEL_DIR" --token 25 --threads 1 --contex
                     await tryFetchJson('.ck_build/advisor_summary.json') ||
                     await tryFetchJson('ck_build/advisor_summary.json');
             }
+            if (!likwidSummaryData) {
+                likwidSummaryData = await tryFetchJson('likwid_summary.json') ||
+                    await tryFetchJson('.ck_build/likwid_summary.json') ||
+                    await tryFetchJson('ck_build/likwid_summary.json');
+            }
             if (!memorySignoffData) {
                 memorySignoffData = await tryFetchJson('memory_signoff.json') ||
                     await tryFetchJson('.ck_build/memory_signoff.json') ||
@@ -5397,6 +5405,7 @@ python3 trace_divergence.py --model "$MODEL_DIR" --token 25 --threads 1 --contex
             asanSummaryData = files.asan_summary || asanSummaryData;
             vtuneSummaryData = files.vtune_summary || vtuneSummaryData;
             advisorSummaryData = files.advisor_summary || advisorSummaryData;
+            likwidSummaryData = files.likwid_summary || likwidSummaryData;
             memorySignoffData = files.memory_signoff || memorySignoffData;
             perfGateData = files.perf_gate_report || perfGateData;
             kernelRegistryData = files.kernel_registry || kernelRegistryData;
@@ -10364,7 +10373,7 @@ function renderTraining() {
         function getFileType(filename) {
             const name = filename.toLowerCase();
             if (name.includes('profile')) return 'profile';
-            if (name.includes('perf_stat') || name.includes('flamegraph_manifest') || name.includes('cachegrind_summary') || name.includes('vtune_summary') || name.includes('advisor_summary')) return 'profile';
+            if (name.includes('perf_stat') || name.includes('flamegraph_manifest') || name.includes('cachegrind_summary') || name.includes('vtune_summary') || name.includes('advisor_summary') || name.includes('likwid_summary')) return 'profile';
             if (name.includes('memory_signoff') || name.includes('perf_gate_report') || name.includes('asan_summary') || name.includes('memory_verification')) return 'validation';
             if (name.includes('ir_train_invariants') || name.includes('ir2_train_summary')) return 'training';
             if (name.includes('ir1_train') || name.includes('ir2_train')) return 'training';
@@ -10452,6 +10461,8 @@ function renderTraining() {
                         console.log('Auto-loaded: vtune summary');
                     } else if (name.includes('advisor_summary')) {
                         advisorSummaryData = info.data;
+                    } else if (name.includes('likwid_summary')) {
+                        likwidSummaryData = info.data;
                         console.log('Auto-loaded: advisor summary');
                     } else if (name.includes('memory_signoff')) {
                         memorySignoffData = info.data;
@@ -12064,6 +12075,7 @@ function renderProfileHowTo() {
         { name: 'perf_gate_report.json', ok: Boolean(perfGateData) },
         { name: 'vtune_summary.json', ok: Boolean(vtuneSummaryData) },
         { name: 'advisor_summary.json', ok: Boolean(advisorSummaryData) },
+        { name: 'likwid_summary.json', ok: Boolean(likwidSummaryData) },
     ];
     const optionalDepChips = [];
     if (hasTrainRuntimeContext || Boolean(asanSummaryData)) {
@@ -12091,6 +12103,7 @@ function renderProfileHowTo() {
     const cachegrindInstalled = Boolean(profileToolStatus.valgrind) && Boolean(profileToolStatus.cg_annotate);
     const vtuneInstalled = Boolean(profileToolStatus.vtune);
     const advisorInstalled = Boolean(profileToolStatus.advisor);
+    const likwidInstalled = Boolean(profileToolStatus.likwid);
     const coreHostReady = linuxHost && perfInstalled && flamegraphInstalled && cachegrindInstalled;
     const hostOsPretty = embeddedHostContext.os_pretty_name || '';
     const hostKernel = embeddedHostContext.kernel_release || '';
@@ -12154,6 +12167,7 @@ function renderProfileHowTo() {
         { name: 'cachegrind', ok: cachegrindInstalled, label: cachegrindInstalled ? 'installed' : 'missing' },
         { name: 'VTune', ok: vtuneInstalled, label: vtuneInstalled ? 'installed' : 'optional' },
         { name: 'Advisor', ok: advisorInstalled, label: advisorInstalled ? 'installed' : 'optional' },
+        { name: 'LIKWID', ok: likwidInstalled, label: likwidInstalled ? 'installed' : 'optional' },
     ];
     const hostToolWarnings = [];
     if (!linuxHost) {
@@ -12290,6 +12304,12 @@ function renderProfileHowTo() {
         'python3 version/v8/tools/open_ir_visualizer_v8.py --generate --run "$REPORT_MODEL_DIR" --html-only --output "$REPORT_MODEL_DIR/ir_report.html"',
     ].join('\n');
 
+    const likwidCmd = [
+        explicitModelDirCmd,
+        `make profile-v8-likwid V8_MODEL="$REPORT_MODEL_DIR" V8_PERF_RUNTIME=cli V8_PREP_WITH_PYTHON=0 V8_LIKWID_GROUPS=auto V8_LIKWID_THREADS=1${makeChatArg}${makeCliArg}`,
+        'python3 version/v8/tools/open_ir_visualizer_v8.py --generate --run "$REPORT_MODEL_DIR" --html-only --output "$REPORT_MODEL_DIR/ir_report.html"',
+    ].join('\n');
+
     const cachegrindNativeCmd = [
         explicitModelDirCmd,
         `make profile-v8-cachegrind V8_MODEL="$REPORT_MODEL_DIR"${makeChatArg}${makeCliArg}`,
@@ -12371,6 +12391,12 @@ function renderProfileHowTo() {
                 : 'Advisor summary requires Intel Advisor (oneAPI). It is not installed on this host.',
             cmd: advisorCmd,
         },
+        'likwid_summary.json': {
+            why: likwidInstalled
+                ? 'Cross-vendor pinned CPU, cache, and memory-counter measurements from groups available on this processor.'
+                : 'LIKWID is optional. Install likwid-perfctr to capture processor-specific counter groups; CKE runs normally without it.',
+            cmd: likwidCmd,
+        },
     };
 
     const missingHelpHtml = missingDeps.length
@@ -12422,6 +12448,7 @@ function renderProfileHowTo() {
         { label: 'Gate',      filled: Boolean(perfGateData) },
         { label: 'VTune',     filled: Boolean(vtuneSummaryData) },
         { label: 'Advisor',   filled: Boolean(advisorSummaryData) },
+        { label: 'LIKWID',    filled: Boolean(likwidSummaryData) },
     ];
     const storyArcHtml = storySteps.map((s, i) => {
         const dot = `<div class="profile-story-arc-step"><div class="profile-story-arc-dot ${s.filled ? 'filled' : ''}"></div><div class="profile-story-arc-label">${escapeHtml(s.label)}</div></div>`;
@@ -13787,6 +13814,7 @@ function renderProfileHowTo() {
             let tlbPanelHtml = '';
             let cachePanelHtml = '';
             let advisorPanelHtml = '';
+            let likwidPanelHtml = '';
             let safetyPanelHtml = '';
 
             const cyc = getPerfCounterByMatcher(['cycles', 'cpu-cycles', /cycles/i, /cpu_core\/cycles/i]);
@@ -14528,6 +14556,64 @@ function renderProfileHowTo() {
                 `;
             }
 
+            if (likwidSummaryData) {
+                const status = String(likwidSummaryData?.status || 'unknown');
+                const cpuIds = Array.isArray(likwidSummaryData?.cpu_ids)
+                    ? likwidSummaryData.cpu_ids.join(', ')
+                    : '-';
+                const groups = Array.isArray(likwidSummaryData?.selected_groups)
+                    ? likwidSummaryData.selected_groups
+                    : [];
+                const normalized = (likwidSummaryData?.normalized && typeof likwidSummaryData.normalized === 'object')
+                    ? likwidSummaryData.normalized
+                    : {};
+                const metricRows = [];
+                Object.entries(normalized).forEach(([group, metrics]) => {
+                    if (!metrics || typeof metrics !== 'object') return;
+                    Object.entries(metrics).forEach(([name, rawValue]) => {
+                        const value = Number(rawValue);
+                        metricRows.push(`
+                            <tr>
+                                <td>${escapeHtml(String(group))}</td>
+                                <td>${escapeHtml(String(name))}</td>
+                                <td>${Number.isFinite(value) ? value.toFixed(3) : escapeHtml(String(rawValue))}</td>
+                            </tr>
+                        `);
+                    });
+                });
+                if (Array.isArray(likwidSummaryData?.artifacts)) {
+                    likwidSummaryData.artifacts.forEach((artifact) => {
+                        if (!artifact || typeof artifact !== 'object') return;
+                        const path = artifact.resolved_path || artifact.path;
+                        if (!path) return;
+                        links.push(`<a href="${escapeHtml(String(path))}" target="_blank" style="color:var(--blue);font-family:'JetBrains Mono',monospace;">LIKWID ${escapeHtml(String(artifact.kind || 'artifact'))}</a>`);
+                    });
+                }
+                likwidPanelHtml = `
+                    <div class="profile-artifact-panel" style="margin-top:0.8rem;">
+                        <h3><span class="badge badge-blue">LIKWID</span> Pinned Cross-Vendor Counters</h3>
+                        <table class="profile-hotspot-table">
+                            <tbody>
+                                <tr><td>Status</td><td>${escapeHtml(status.toUpperCase())}</td></tr>
+                                <tr><td>Pinned CPUs</td><td><code>${escapeHtml(cpuIds)}</code></td></tr>
+                                <tr><td>Groups</td><td>${escapeHtml(groups.join(', ') || '-')}</td></tr>
+                                ${likwidSummaryData?.reason ? `<tr><td>Reason</td><td>${escapeHtml(String(likwidSummaryData.reason))}</td></tr>` : ''}
+                            </tbody>
+                        </table>
+                        ${metricRows.length ? `
+                        <div style="margin-top:0.7rem;">
+                            <table class="profile-hotspot-table">
+                                <thead><tr><th>Group</th><th>Normalized Metric</th><th>Average</th></tr></thead>
+                                <tbody>${metricRows.join('')}</tbody>
+                            </table>
+                        </div>` : ''}
+                        <div style="margin-top:0.55rem;color:var(--text-muted);font-size:0.78rem;">
+                            Wrapper mode counts activity on the selected CPUs. Keep the workload pinned and the neighboring CPUs quiet.
+                        </div>
+                    </div>
+                `;
+            }
+
             if (vtuneSummaryData) {
                 links.push('VTune summary loaded');
 
@@ -14712,10 +14798,11 @@ function renderProfileHowTo() {
                         </div>
                     </div>
                 ${advisorPanelHtml}
+                ${likwidPanelHtml}
                 ${safetyPanelHtml}
                 `;
             } else {
-                vtuneEl.innerHTML = `${advisorPanelHtml}${safetyPanelHtml}` || '';
+                vtuneEl.innerHTML = `${advisorPanelHtml}${likwidPanelHtml}${safetyPanelHtml}` || '';
             }
 
             summaryEl.innerHTML = cards.length > 0
@@ -15408,8 +15495,8 @@ function renderProfileHowTo() {
                 },
                 {
                     label: 'Microarchitecture',
-                    state: (perfStatData || files.perf_stat_summary || flamegraphManifestData || files.flamegraph_manifest || cachegrindSummaryData || files.cachegrind_summary || vtuneSummaryData || files.vtune_summary || advisorSummaryData || files.advisor_summary) ? 'ready' : 'missing',
-                    detail: 'Perf counters, flamegraph, cache, VTune/Advisor',
+                    state: (perfStatData || files.perf_stat_summary || flamegraphManifestData || files.flamegraph_manifest || cachegrindSummaryData || files.cachegrind_summary || vtuneSummaryData || files.vtune_summary || advisorSummaryData || files.advisor_summary || likwidSummaryData || files.likwid_summary) ? 'ready' : 'missing',
+                    detail: 'Perf counters, flamegraph, cache, VTune/Advisor/LIKWID',
                 },
                 {
                     label: 'Safety + Gates',
