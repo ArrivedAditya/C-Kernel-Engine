@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -684,6 +685,58 @@ def _resolve_dump_step(
     return int(first["step"])
 
 
+def _describe_kv_f16_difference(
+    persistent_bytes: bytes,
+    replay_bytes: bytes,
+    first_byte: int | None,
+) -> dict[str, Any] | None:
+    header_size = 8 * 4
+    if first_byte is None or first_byte < header_size:
+        return None
+    if len(persistent_bytes) < header_size or len(replay_bytes) < header_size:
+        return None
+    persistent_header = struct.unpack_from("<8I", persistent_bytes)
+    replay_header = struct.unpack_from("<8I", replay_bytes)
+    if persistent_header != replay_header or persistent_header[0] != 0x564B5843:
+        return None
+
+    _magic, version, layer, valid_tokens, num_heads, max_seq_len, head_dim, _reserved = persistent_header
+    if version != 1 or valid_tokens == 0 or num_heads == 0 or head_dim == 0:
+        return None
+    element_index = (first_byte - header_size) // 2
+    values_per_head = valid_tokens * head_dim
+    values_per_kind = num_heads * values_per_head
+    if element_index < 0 or element_index >= 2 * values_per_kind:
+        return None
+
+    kind_index, kind_offset = divmod(element_index, values_per_kind)
+    head, head_offset = divmod(kind_offset, values_per_head)
+    token, channel = divmod(head_offset, head_dim)
+    value_offset = header_size + element_index * 2
+    persistent_bits = struct.unpack_from("<H", persistent_bytes, value_offset)[0]
+    replay_bits = struct.unpack_from("<H", replay_bytes, value_offset)[0]
+    persistent_value = struct.unpack("<e", struct.pack("<H", persistent_bits))[0]
+    replay_value = struct.unpack("<e", struct.pack("<H", replay_bits))[0]
+    return {
+        "kind": "K" if kind_index == 0 else "V",
+        "layer": int(layer),
+        "head": int(head),
+        "token": int(token),
+        "channel": int(channel),
+        "element_index": int(element_index),
+        "byte_in_element": int((first_byte - header_size) % 2),
+        "persistent_fp16_bits": int(persistent_bits),
+        "full_replay_fp16_bits": int(replay_bits),
+        "fp16_bit_distance": int(abs(persistent_bits - replay_bits)),
+        "persistent_value": float(persistent_value),
+        "full_replay_value": float(replay_value),
+        "valid_tokens": int(valid_tokens),
+        "num_heads": int(num_heads),
+        "head_dim": int(head_dim),
+        "max_seq_len": int(max_seq_len),
+    }
+
+
 
 
 def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
@@ -825,6 +878,9 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
                 "persistent_bytes": len(persistent_bytes),
                 "full_replay_bytes": len(replay_bytes),
                 "first_differing_byte": first_byte,
+                "first_difference": _describe_kv_f16_difference(
+                    persistent_bytes, replay_bytes, first_byte
+                ),
                 "persistent_sha256": hashlib.sha256(persistent_bytes).hexdigest(),
                 "full_replay_sha256": hashlib.sha256(replay_bytes).hexdigest(),
             }

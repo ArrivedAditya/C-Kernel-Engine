@@ -2652,6 +2652,24 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 dependency_updated = json.loads(stamp_path.read_text(encoding="utf-8"))
                 self.assertEqual(dependency_updated["compiled_support_source_set"], changed_support)
 
+            compiler_probe = subprocess.CompletedProcess(
+                ["icx-test", "--version"], 0, stdout="icx-test 1.0\n", stderr=""
+            )
+            with mock.patch.dict("os.environ", {"CC": "icx-test"}), \
+                 mock.patch.object(
+                     bridge_runner_v8.subprocess, "run", return_value=compiler_probe
+                 ), mock.patch.object(
+                     bridge_runner_v8, "_run", side_effect=fake_run
+                 ) as run_cmd:
+                bridge_runner_v8._compile_generated_model(c_path, so_path)
+                run_cmd.assert_called_once()
+                self.assertEqual(run_cmd.call_args.args[0][0], "icx-test")
+                compiler_updated = json.loads(stamp_path.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    compiler_updated["compiler"],
+                    {"command": "icx-test", "version": "icx-test 1.0"},
+                )
+
     def test_ck_run_v8_reuses_legacy_v7_hf_gguf_cache(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_legacy_cache_") as tmpdir:
             tmp = Path(tmpdir)

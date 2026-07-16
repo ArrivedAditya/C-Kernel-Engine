@@ -146,14 +146,14 @@
       "template_ops": ["rmsnorm"],
       "phases": {
         "prefill": {
-          "contract_id": "rmsnorm_fp32_square_fp64_sum_fp32_output",
+          "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
           "validation": "validated",
-          "evidence": "llama.cpp Qwen3-VL prefill uses FP32 square products accumulated in an ascending FP64 row sum."
+          "evidence": "llama.cpp Qwen3-VL prefill uses the active CPU production reciprocal-square-root sequence after its ascending FP64 row sum."
         },
         "decode": {
-          "contract_id": "rmsnorm_fp32_square_fp64_sum_fp32_output",
+          "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
           "validation": "validated",
-          "evidence": "Layer-0 exact-input attribution identified RMSNorm as the first production decode arithmetic boundary."
+          "evidence": "Layer-0 exact-input attribution and the production GGML oracle require the active CPU reciprocal-square-root sequence."
         }
       },
       "checkpoint": {
@@ -168,14 +168,14 @@
       "template_ops": ["qk_norm"],
       "phases": {
         "prefill": {
-          "contract_id": "rmsnorm_fp32_square_fp64_sum_fp32_output",
+          "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
           "validation": "validated",
-          "evidence": "Q/K normalization applies the same FP64 row-sum RMSNorm contract independently to each head and token."
+          "evidence": "Q/K normalization matches llama.cpp CPU production, including AVX-512 RSQRT14/Newton reciprocal-square-root behavior."
         },
         "decode": {
-          "contract_id": "rmsnorm_fp32_square_fp64_sum_fp32_output",
+          "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
           "validation": "validated",
-          "evidence": "Q/K normalization uses the same reduction contract at head dimension 128 during incremental decode."
+          "evidence": "Q/K normalization uses the active llama.cpp CPU production reciprocal-square-root contract at head dimension 128."
         }
       },
       "checkpoint": {

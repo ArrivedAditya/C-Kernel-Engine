@@ -2119,8 +2119,13 @@ test_flash_attention: test-flash-attention
 
 test-attention-f16-split-kv: $(LIB)
 	@echo "Running FP16 prefill/decode attention contract tests..."
-	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH \
-		$(PYTHON) $(PYTHONFLAGS) unittest/test_attention_f16_split_kv.py
+	@set -e; \
+	for threads in $${CK_ATTN_F16_ORACLE_THREADS:-1 16 20 24}; do \
+		echo "  CK_NUM_THREADS=$$threads"; \
+		CK_NUM_THREADS=$$threads \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH \
+			$(PYTHON) $(PYTHONFLAGS) unittest/test_attention_f16_split_kv.py; \
+	done
 
 .PHONY: test-attention-f16-split-kv
 
@@ -2434,8 +2439,8 @@ llamacpp-parity-full:
 	@echo "Running composed Q8 activation/projection parity at vision dimensions..."
 	@$(MAKE) --no-print-directory test-q8-composed-llama-parity
 	@echo ""
-	@echo "Running Q4_K x Q8_K production packed-sequence parity..."
-	@$(MAKE) --no-print-directory test-q4k-q8k-llama-packed
+	@echo "Running native Q4_K/Q6_K x Q8_K production parity matrix..."
+	@$(MAKE) --no-print-directory test-q4q6-llama-production-native
 	@echo ""
 	@echo "Running F16 GEMM production reduction contract against llama.cpp..."
 	@$(MAKE) --no-print-directory test-f16-gemm-llama-contract
@@ -2530,6 +2535,7 @@ llamacpp-parity-nightly:
 	@echo "Running bounded Q4_K x Q8_K production packed-sequence parity..."
 	@$(MAKE) --no-print-directory test-q4k-q8k-isa-compile
 	@$(MAKE) --no-print-directory test-q4k-q8k-llama-packed-quick
+	@$(MAKE) --no-print-directory test-q6k-q8k-llama-production-quick
 	@echo ""
 	@echo "Building Qwen3-VL mtmd adapter against pinned llama.cpp..."
 	@CK_LLAMA_CPP_ROOT="$(CURDIR)/llama.cpp" $(PYTHON) tests/test_v8_mtmd_clip_shim_build.py
@@ -2788,10 +2794,17 @@ test-gemv-omp-verbose: $(GEMV_OMP_BIN)
 THREADPOOL_BIN := $(BUILD_DIR)/test_threadpool_parity
 Q4K_DISPATCH_MATRIX_BIN := $(BUILD_DIR)/bench_q4k_dispatch_matrix
 Q4K_Q8K_LLAMA_PACKED_BIN := $(BUILD_DIR)/test_q4k_q8k_llama_packed
+Q6K_Q8K_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q6k_q8k_llama_production
+RMSNORM_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_rmsnorm_llama_production
+MROPE_TEXT_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_mrope_text_llama_production
+Q4Q6_LLAMA_CPP_DIR ?= $(LLAMA_CPP_DIR)
+Q4Q6_LLAMA_CPP_BIN_DIR ?= $(Q4Q6_LLAMA_CPP_DIR)/build/bin
 Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ := $(BUILD_DIR)/test_q4k_q8k_llama_prefill.o
 Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ := $(BUILD_DIR)/test_q4k_q8k_llama_decode.o
 Q4K_Q8K_ISA_AVX2_OBJ := $(BUILD_DIR)/test_q4k_q8k_isa_avx2.o
 Q4K_Q8K_ISA_AVX512_OBJ := $(BUILD_DIR)/test_q4k_q8k_isa_avx512.o
+Q6K_Q8K_ISA_AVX2_OBJ := $(BUILD_DIR)/test_q6k_q8k_isa_avx2.o
+Q6K_Q8K_ISA_AVX512_OBJ := $(BUILD_DIR)/test_q6k_q8k_isa_avx512.o
 Q4K_GATEUP_SWIGLU_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu
 Q4K_GATEUP_SWIGLU_OMP_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu_omp_standalone
 QWEN3VL_ENCODER_ATTN_BIN := $(BUILD_DIR)/bench_qwen3vl_encoder_attention
@@ -2823,11 +2836,11 @@ test-threadpool-parity-verbose: $(THREADPOOL_BIN)
 
 $(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ): $(V8_SRC_DIR)/ck_parallel_prefill_v8.c
 	@mkdir -p $(BUILD_DIR)
-	$(CC) -O3 -march=native -Iinclude -I$(V8_SRC_DIR) -c $< -o $@
+	$(CC) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) -c $< -o $@
 
 $(Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ): $(V8_SRC_DIR)/ck_parallel_decode_v8.c
 	@mkdir -p $(BUILD_DIR)
-	$(CC) -O3 -march=native -Iinclude -I$(V8_SRC_DIR) -c $< -o $@
+	$(CC) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) -c $< -o $@
 
 .PHONY: test-q4k-q8k-isa-compile
 test-q4k-q8k-isa-compile:
@@ -2840,38 +2853,151 @@ else
 	$(CC) -O3 -fPIC -Iinclude -mavx512f -mavx512bw -mavx512dq -mavx512vl \
 		-mfma -mavx512vnni -mavx512bf16 -mf16c -mssse3 \
 		-c src/kernels/gemm_kernels_q4k_q8k_vnni.c -o $(Q4K_Q8K_ISA_AVX512_OBJ)
-	@echo "Q4_K x Q8_K ISA compile matrix: PASS (AVX2, AVX-512/VNNI)"
+	$(CC) -O3 -fPIC -Iinclude -mavx2 -mfma -mf16c -mssse3 \
+		-c src/kernels/gemm_kernels_q6k_q8k.c -o $(Q6K_Q8K_ISA_AVX2_OBJ)
+	$(CC) -O3 -fPIC -Iinclude -mavx512f -mavx512bw -mavx512dq -mavx512vl \
+		-mfma -mavx512vnni -mavx512bf16 -mf16c -mssse3 \
+		-c src/kernels/gemm_kernels_q6k_q8k.c -o $(Q6K_Q8K_ISA_AVX512_OBJ)
+	@echo "Q4_K/Q6_K x Q8_K ISA compile matrix: PASS (AVX2, AVX-512/VNNI)"
 endif
 
 $(Q4K_Q8K_LLAMA_PACKED_BIN): $(LIB) unittest/test_q4k_q8k_llama_packed.cpp $(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ) $(Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ)
 	@mkdir -p $(BUILD_DIR)
-	$(CXX) -O3 -march=native -Iinclude -I$(V8_SRC_DIR) \
-		-Illama.cpp/ggml/include -Illama.cpp/ggml/src \
+	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		-I$(Q4Q6_LLAMA_CPP_DIR)/ggml/include -I$(Q4Q6_LLAMA_CPP_DIR)/ggml/src \
 		unittest/test_q4k_q8k_llama_packed.cpp \
 		$(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ) \
 		$(Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ) \
 		-L$(BUILD_DIR) -lckernel_engine \
-		-Lllama.cpp/build/bin -lggml-cpu -lggml-base -lggml \
+		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
 		-lm -lpthread -ldl \
-		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(CURDIR)/llama.cpp/build/bin \
+		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
 		-o $(Q4K_Q8K_LLAMA_PACKED_BIN)
+
+$(Q6K_Q8K_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_q6k_q8k_llama_production.cpp $(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ) $(Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		-I$(Q4Q6_LLAMA_CPP_DIR)/ggml/include -I$(Q4Q6_LLAMA_CPP_DIR)/ggml/src \
+		unittest/test_q6k_q8k_llama_production.cpp \
+		$(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ) \
+		$(Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ) \
+		-L$(BUILD_DIR) -lckernel_engine \
+		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
+		-lm -lpthread -ldl \
+		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
+		-o $(Q6K_Q8K_LLAMA_PRODUCTION_BIN)
+
+$(RMSNORM_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_rmsnorm_llama_production.cpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		-I$(Q4Q6_LLAMA_CPP_DIR)/ggml/include -I$(Q4Q6_LLAMA_CPP_DIR)/ggml/src \
+		unittest/test_rmsnorm_llama_production.cpp \
+		-L$(BUILD_DIR) -lckernel_engine \
+		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
+		-lm -lpthread -ldl \
+		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
+		-o $(RMSNORM_LLAMA_PRODUCTION_BIN)
+
+.PHONY: test-mrope-text-llama-production
+test-mrope-text-llama-production: $(MROPE_TEXT_LLAMA_PRODUCTION_BIN)
+	@echo "Running text M-RoPE against llama.cpp production graph..."
+	@set -e; for threads in $${CK_MROPE_ORACLE_THREADS:-1 20}; do \
+		echo "Text M-RoPE llama.cpp production oracle: threads=$$threads"; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			$(MROPE_TEXT_LLAMA_PRODUCTION_BIN); \
+	done
+
+$(MROPE_TEXT_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_mrope_text_llama_production.cpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		-I$(Q4Q6_LLAMA_CPP_DIR)/ggml/include -I$(Q4Q6_LLAMA_CPP_DIR)/ggml/src \
+		unittest/test_mrope_text_llama_production.cpp \
+		-L$(BUILD_DIR) -lckernel_engine \
+		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
+		-lm -lpthread -ldl \
+		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
+		-o $(MROPE_TEXT_LLAMA_PRODUCTION_BIN)
+
+.PHONY: test-rmsnorm-llama-production
+test-rmsnorm-llama-production: $(RMSNORM_LLAMA_PRODUCTION_BIN)
+	@echo "Running RMSNorm against llama.cpp fused production graph..."
+	@set -e; for threads in $${CK_RMSNORM_ORACLE_THREADS:-1 16 20 24}; do \
+		echo "RMSNorm llama.cpp production oracle: threads=$$threads"; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			$(RMSNORM_LLAMA_PRODUCTION_BIN); \
+	done
 
 .PHONY: test-q4k-q8k-llama-packed
 test-q4k-q8k-llama-packed: $(Q4K_Q8K_LLAMA_PACKED_BIN)
 	@echo "Running Q4_K x Q8_K production dispatcher against llama.cpp..."
 	CK_NUM_THREADS=1 \
-		LD_LIBRARY_PATH=$(BUILD_DIR):$(CURDIR)/llama.cpp/build/bin:$$LD_LIBRARY_PATH \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
 		$(Q4K_Q8K_LLAMA_PACKED_BIN)
 	CK_NUM_THREADS=4 \
-		LD_LIBRARY_PATH=$(BUILD_DIR):$(CURDIR)/llama.cpp/build/bin:$$LD_LIBRARY_PATH \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
 		$(Q4K_Q8K_LLAMA_PACKED_BIN)
 
 .PHONY: test-q4k-q8k-llama-packed-quick
 test-q4k-q8k-llama-packed-quick: $(Q4K_Q8K_LLAMA_PACKED_BIN)
 	@echo "Running bounded Q4_K x Q8_K production parity against llama.cpp..."
 	CK_NUM_THREADS=4 \
-		LD_LIBRARY_PATH=$(BUILD_DIR):$(CURDIR)/llama.cpp/build/bin:$$LD_LIBRARY_PATH \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
 		$(Q4K_Q8K_LLAMA_PACKED_BIN) --quick
+
+.PHONY: test-q6k-q8k-llama-production test-q6k-q8k-llama-production-quick
+test-q6k-q8k-llama-production: $(Q6K_Q8K_LLAMA_PRODUCTION_BIN)
+	@echo "Running Q6_K x Q8_K native production parity against llama.cpp..."
+	@set -e; for threads in $${CK_Q6K_ORACLE_THREADS:-1 16 20 24}; do \
+		echo "Q6_K x Q8_K thread count: $$threads"; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			$(Q6K_Q8K_LLAMA_PRODUCTION_BIN); \
+	done
+
+test-q6k-q8k-llama-production-quick: $(Q6K_Q8K_LLAMA_PRODUCTION_BIN)
+	@echo "Running bounded Q6_K x Q8_K production parity against llama.cpp..."
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-4} OMP_NUM_THREADS=1 \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+		$(Q6K_Q8K_LLAMA_PRODUCTION_BIN) --quick
+
+.PHONY: test-q4q6-llama-production-native test-q4q6-llama-production-native-avx512 test-q4q6-llama-production-forced-avx2
+test-q4q6-llama-production-native: $(Q4K_Q8K_LLAMA_PACKED_BIN) $(Q6K_Q8K_LLAMA_PRODUCTION_BIN)
+	@set -e; for threads in $${CK_QUANT_ORACLE_THREADS:-1 16 20 24}; do \
+		echo "Native Q4/Q6 llama.cpp production oracle: threads=$$threads"; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			$(Q4K_Q8K_LLAMA_PACKED_BIN) --quick; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			$(Q6K_Q8K_LLAMA_PRODUCTION_BIN) --quick; \
+	done
+
+# The explicit requirement prevents an AVX2-only ggml build from being
+# reported as native Xeon AVX-512 evidence.
+test-q4q6-llama-production-native-avx512:
+	@CK_REQUIRE_LLAMA_AVX512=1 $(MAKE) --no-print-directory \
+		Q4Q6_LLAMA_CPP_DIR="$(Q4Q6_LLAMA_CPP_DIR)" \
+		Q4Q6_LLAMA_CPP_BIN_DIR="$(Q4Q6_LLAMA_CPP_BIN_DIR)" \
+		CK_QUANT_ORACLE_THREADS="$${CK_QUANT_ORACLE_THREADS:-1 16 20 24}" \
+		test-q4q6-llama-production-native
+
+test-q4q6-llama-production-forced-avx2:
+	@$(MAKE) --no-print-directory \
+		BUILD_DIR=build_quant_avx2 \
+		AVX_FLAGS="-xAVX2 -mfma -mf16c -mssse3" \
+		build_quant_avx2/test_q4k_q8k_llama_packed \
+		build_quant_avx2/test_q6k_q8k_llama_production
+	@set -e; for threads in $${CK_QUANT_ORACLE_THREADS:-1 16 20 24}; do \
+		echo "Forced AVX2 Q4/Q6 llama.cpp production oracle: threads=$$threads"; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=build_quant_avx2:$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			build_quant_avx2/test_q4k_q8k_llama_packed --quick; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=build_quant_avx2:$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			build_quant_avx2/test_q6k_q8k_llama_production --quick; \
+	done
 
 $(Q4K_DISPATCH_MATRIX_BIN): $(LIB) benchmarks/bench_q4k_dispatch_matrix.c $(V8_SRC_DIR)/ck_parallel_decode_v8.c $(V8_SRC_DIR)/ck_parallel_prefill_v8.c
 	@mkdir -p $(BUILD_DIR)
@@ -3078,6 +3204,13 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) unittest/bf16/test_residual_storage_contract_bf16.py
 	@$(PYTHON) unittest/bf16/test_gelu_pytorch_tanh_storage_bf16.py
 	@$(PYTHON) unittest/test_rmsnorm_numerical_contract.py
+	@if [ -n "$${CK_LLAMA_CPP_ROOT:-}" ] && [ -d "$${CK_LLAMA_CPP_ROOT}/build/bin" ]; then \
+		$(MAKE) --no-print-directory test-rmsnorm-llama-production \
+			Q4Q6_LLAMA_CPP_DIR="$${CK_LLAMA_CPP_ROOT}" \
+			Q4Q6_LLAMA_CPP_BIN_DIR="$${CK_LLAMA_CPP_ROOT}/build/bin"; \
+	else \
+		echo "RMSNorm llama.cpp production oracle [SKIP: CK_LLAMA_CPP_ROOT/build/bin unavailable]"; \
+	fi
 	@PYTHONPATH=unittest CK_NUMERICAL_CAPABILITY_REPORT=version/v8/.cache/reports/mrope_capabilities_latest.json $(PYTHON) -c "import test_vision; test_vision.test_mrope_qk_vision_storage_matrix()"
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py

@@ -8,6 +8,7 @@ contract and can change long-decode top-1 tokens.
 """
 
 import ctypes
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -88,6 +89,13 @@ static size_t tensor_offset(const ggml_tensor * t, int i0, int i1, int i2, int i
 }
 
 int main(int argc, char ** argv) {
+    ggml_cpu_init();
+    if (argc == 2 && strcmp(argv[1], "--isa") == 0) {
+        printf("avx2=%d avx_vnni=%d avx512=%d avx512_vnni=%d\n",
+               ggml_cpu_has_avx2(), ggml_cpu_has_avx_vnni(),
+               ggml_cpu_has_avx512(), ggml_cpu_has_avx512_vnni());
+        return 0;
+    }
     if (argc != 10 && argc != 11 && argc != 13) {
         fprintf(stderr, "usage: %s q.f32 k.f16 v.f16 out.f32 H Hkv KV D threads [valid_KV [Q past]]\n", argv[0]);
         return 2;
@@ -112,8 +120,6 @@ int main(int argc, char ** argv) {
     ggml_init_params init = { memory, nullptr, false };
     ggml_context * ctx = ggml_init(init);
     if (!ctx) return 3;
-    ggml_cpu_init();
-
     ggml_tensor * q = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, D, Q, H, 1);
     ggml_tensor * k = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, D, KV, Hkv, 1);
     ggml_tensor * v = ggml_new_tensor_4d(ctx, GGML_TYPE_F16, D, KV, Hkv, 1);
@@ -170,6 +176,9 @@ int main(int argc, char ** argv) {
 """
 
 
+_LLAMA_HELPER_CACHE = {}
+
+
 def _llama_root():
     value = os.environ.get("V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT", "").strip()
     return Path(value).resolve() if value else (Path(__file__).resolve().parents[1] / "llama.cpp")
@@ -181,7 +190,20 @@ def _ensure_llama_helper():
     required = [bin_dir / "libggml.so", bin_dir / "libggml-cpu.so", bin_dir / "libggml-base.so"]
     if not (root / "ggml" / "include" / "ggml.h").is_file() or not all(p.is_file() for p in required):
         raise RuntimeError(f"llama.cpp GGML headers/libraries not found under {root}")
-    helper_dir = Path(tempfile.gettempdir()) / "ck_attention_f16_split_kv"
+    cache_key = (
+        str(root),
+        tuple((str(p.resolve()), p.stat().st_size, p.stat().st_mtime_ns) for p in required),
+    )
+    if cache_key in _LLAMA_HELPER_CACHE:
+        return _LLAMA_HELPER_CACHE[cache_key]
+    digest = hashlib.sha256()
+    digest.update(_LLAMA_HELPER_SOURCE.encode("utf-8"))
+    digest.update(str(root).encode("utf-8"))
+    for library in required:
+        digest.update(str(library.resolve()).encode("utf-8"))
+        digest.update(library.read_bytes())
+    fingerprint = digest.hexdigest()[:16]
+    helper_dir = Path(tempfile.gettempdir()) / f"ck_attention_f16_split_kv_{fingerprint}"
     helper_dir.mkdir(parents=True, exist_ok=True)
     source = helper_dir / "llama_f16_split_kv.cpp"
     binary = helper_dir / "llama_f16_split_kv"
@@ -198,7 +220,26 @@ def _ensure_llama_helper():
         completed = subprocess.run(command, capture_output=True, text=True)
         if completed.returncode != 0:
             raise RuntimeError(f"llama.cpp split-KV helper compile failed:\n{completed.stderr}")
-    return binary, bin_dir
+    env = os.environ.copy()
+    env["LD_LIBRARY_PATH"] = f"{bin_dir}:{env.get('LD_LIBRARY_PATH', '')}"
+    identity = subprocess.run(
+        [str(binary), "--isa"], capture_output=True, text=True, env=env,
+    )
+    if identity.returncode != 0:
+        raise RuntimeError(
+            f"llama.cpp split-KV helper ISA query failed ({identity.returncode}):\n"
+            f"{identity.stderr}"
+        )
+    isa = identity.stdout.strip()
+    if os.environ.get("CK_REQUIRE_LLAMA_AVX512", "").strip() not in ("", "0") and "avx512=1" not in isa:
+        raise RuntimeError(
+            "FP16 attention oracle requires an AVX-512 llama.cpp build, "
+            f"but helper reports: {isa}"
+        )
+    print(f"llama.cpp FP16 attention oracle: root={root} fingerprint={fingerprint} {isa}")
+    result = (binary, bin_dir)
+    _LLAMA_HELPER_CACHE[cache_key] = result
+    return result
 
 
 def _llama_split_output(q, k_bits, v_bits, head_dim, threads, padded_kv_tokens=None):
@@ -613,31 +654,41 @@ def main():
         results.append(_prefill_auto_matches_llama_case(*case))
     results.append(_unfused_f16_causal_case())
     below, below_data = _case(
-        "f16_split_below_threshold(KV=511,C=1)", 511, 8, 2, 511, 64, 64, 1, 2.0e-5,
+        "f16_split_below_threshold(KV=511,C=1)", 511, 8, 2, 511, 64, 64, 1, 0.0,
     )
     results.append(below)
     threshold, threshold_data = _case(
-        "f16_split_threshold(KV=512,C=4)", 512, 8, 2, 512, 64, 64, 4, 2.0e-5,
+        "f16_split_threshold(KV=512,C=4)", 512, 8, 2, 512, 64, 64, 4, 0.0,
     )
     results.append(threshold)
     qwen, qwen_data = _case(
         "f16_split_qwen3vl(KV=1058,H=32,D=128,C=20)",
-        1058, 32, 8, 1058, 128, 128, 20, 2.0e-5,
+        1058, 32, 8, 1058, 128, 128, 20, 0.0,
     )
     results.append(qwen)
     qwen_step20, qwen_step20_data = _case(
         "f16_split_qwen3vl_step20(KV=1047,P=1280,H=32,D=128,C=20)",
-        1047, 32, 8, 1047, 128, 128, 20, 2.0e-5,
+        1047, 32, 8, 1047, 128, 128, 20, 0.0,
     )
     results.append(qwen_step20)
+    qwen_step60, qwen_step60_data = _case(
+        "f16_split_qwen3vl_step60(KV=1087,P=1280,H=32,D=128,C=20)",
+        1087, 32, 8, 1087, 128, 128, 20, 0.0,
+    )
+    results.append(qwen_step60)
+    qwen_mid, qwen_mid_data = _case(
+        "f16_split_qwen3vl_mid(KV=1307,H=32,D=128,C=20)",
+        1307, 32, 8, 1307, 128, 128, 20, 0.0,
+    )
+    results.append(qwen_mid)
     qwen_long, qwen_long_data = _case(
         "f16_split_qwen3vl_long(KV=1609,H=32,D=128,C=20)",
-        1609, 32, 8, 1609, 128, 128, 20, 2.0e-5,
+        1609, 32, 8, 1609, 128, 128, 20, 0.0,
     )
     results.append(qwen_long)
     padded, _ = _case(
         "f16_split_padded_gqa(KV=513,D=80,A=128,C=4)",
-        513, 8, 2, 513, 80, 128, 4, 2.0e-5,
+        513, 8, 2, 513, 80, 128, 4, 0.0,
     )
     results.append(padded)
 
@@ -647,6 +698,8 @@ def main():
         ("explicit_contract_route_threshold(KV=512)", threshold_data),
         ("explicit_contract_route_qwen3vl(KV=1058)", qwen_data),
         ("explicit_contract_route_qwen3vl_step20(KV=1047,P=1280)", qwen_step20_data),
+        ("explicit_contract_route_qwen3vl_step60(KV=1087,P=1280)", qwen_step60_data),
+        ("explicit_contract_route_qwen3vl_mid(KV=1307)", qwen_mid_data),
         ("explicit_contract_route_qwen3vl_long(KV=1609)", qwen_long_data),
     ):
         q, k, v, _ = data
@@ -699,6 +752,8 @@ def main():
             ("llama_oracle_threshold(KV=512)", threshold_data, threads),
             ("llama_oracle_qwen3vl(KV=1058)", qwen_data, threads),
             ("llama_oracle_qwen3vl_step20(KV=1047,P=1280)", qwen_step20_data, threads),
+            ("llama_oracle_qwen3vl_step60(KV=1087,P=1280)", qwen_step60_data, threads),
+            ("llama_oracle_qwen3vl_mid(KV=1307)", qwen_mid_data, threads),
             ("llama_oracle_qwen3vl_long(KV=1609)", qwen_long_data, threads),
         ):
             q, k, v, _ = data
@@ -707,7 +762,7 @@ def main():
                 q, k, v, q.shape[1], threads, _llama_kv_partition_extent(k.shape[1])
             )
             diff = float(np.max(np.abs(ck[:, :q.shape[1]] - llama)))
-            results.append(Result(name, diff, 2.0e-5, diff <= 2.0e-5))
+            results.append(Result(name, diff, 0.0, diff == 0.0))
     except RuntimeError as exc:
         print(f"llama.cpp oracle error: {exc}")
         results.append(Result("llama_oracle_available", 1.0, 0.0, False))

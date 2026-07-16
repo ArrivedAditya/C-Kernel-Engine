@@ -93,6 +93,9 @@ extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mreuse(const void *A_q8,
 extern void gemm_nt_q4_k_packed_meta_x8_q8_k_superblock_order(
     const void *A_q8, const void *B_packed_x8, const float *bias, float *C,
     int M, int N, int K);
+extern void gemm_nt_q4_k_packed_meta_x16_q8_k_llama_order(
+    const void *A_q8, const void *B_packed_x8, const float *bias, float *C,
+    int M, int N, int K);
 extern void gemm_nt_q4_k_packed_meta_x8_q8_k_gemv_order(
     const void *A_q8, const void *B_packed_x8, const float *bias, float *C,
     int M, int N, int K);
@@ -720,13 +723,23 @@ static void work_gemm_nt_q4_k_q8_k_pairwise_split_min(int ith, int nth, void *ar
     const int r1 = (r0 + dr < a->M) ? (r0 + dr) : a->M;
     if (r0 >= a->M) return;
 
-    gemm_nt_q4_k_packed_meta_x8_q8_k_superblock_order(
-        (const char *)a->A + (size_t)r0 * a->A_row_bytes,
-        a->B,
-        a->bias,
-        a->C + (size_t)r0 * (size_t)a->N,
-        r1 - r0, a->N, a->K
-    );
+    if ((a->N % 16) == 0) {
+        gemm_nt_q4_k_packed_meta_x16_q8_k_llama_order(
+            (const char *)a->A + (size_t)r0 * a->A_row_bytes,
+            a->B,
+            a->bias,
+            a->C + (size_t)r0 * (size_t)a->N,
+            r1 - r0, a->N, a->K
+        );
+    } else {
+        gemm_nt_q4_k_packed_meta_x8_q8_k_superblock_order(
+            (const char *)a->A + (size_t)r0 * a->A_row_bytes,
+            a->B,
+            a->bias,
+            a->C + (size_t)r0 * (size_t)a->N,
+            r1 - r0, a->N, a->K
+        );
+    }
 }
 
 static void work_gemv_q4_k_q8_k_repacked(int ith, int nth, void *args)
@@ -1080,8 +1093,13 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
     if (packed_rows > 0 &&
         (!pool || ck_threadpool_n_threads(pool) <= 1 ||
          ck_should_run_gemm_serial(pool, packed_rows, N, K))) {
-        gemm_nt_q4_k_packed_meta_x8_q8_k_superblock_order(
-            A, packed_x8, bias, C, packed_rows, N, K);
+        if ((N % 16) == 0) {
+            gemm_nt_q4_k_packed_meta_x16_q8_k_llama_order(
+                A, packed_x8, bias, C, packed_rows, N, K);
+        } else {
+            gemm_nt_q4_k_packed_meta_x8_q8_k_superblock_order(
+                A, packed_x8, bias, C, packed_rows, N, K);
+        }
     } else if (packed_rows > 0) {
         gemm_args_t args = {
             .A = A, .B = packed_x8, .bias = bias, .C = C,

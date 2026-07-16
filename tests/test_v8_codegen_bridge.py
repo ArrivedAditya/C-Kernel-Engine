@@ -300,11 +300,11 @@ class V8CodegenBridgeTests(unittest.TestCase):
         self.assertTrue(by_op["qk_norm"])
         self.assertEqual(
             {op["kernel"] for op in by_op["rmsnorm"]},
-            {"rmsnorm_forward_fp64_sum"},
+            {"rmsnorm_forward_llama_production"},
         )
         self.assertEqual(
             {op["kernel"] for op in by_op["qk_norm"]},
-            {"qk_norm_forward_fp64_sum"},
+            {"qk_norm_forward_llama_production"},
         )
         self.assertEqual(
             by_op["q_proj"][0]["resolved_execution"]["implementation"]["threading"]["runtime"],
@@ -374,7 +374,7 @@ class V8CodegenBridgeTests(unittest.TestCase):
             self.assertTrue(qk_norm_calls)
             self.assertEqual(
                 {op["function"] for op in rmsnorm_calls},
-                {"rmsnorm_forward_fp64_sum"},
+                {"rmsnorm_forward_llama_production"},
             )
             for call in rmsnorm_calls:
                 gamma = next(arg for arg in call["args"] if arg["name"] == "gamma")
@@ -382,7 +382,7 @@ class V8CodegenBridgeTests(unittest.TestCase):
                 self.assertTrue(gamma.get("weight_ref"))
             self.assertEqual(
                 {op["function"] for op in qk_norm_calls},
-                {"qk_norm_forward_fp64_sum"},
+                {"qk_norm_forward_llama_production"},
             )
             self.assertEqual(attn_call["function"], "attention_forward_decode_head_major_gqa_flash_f16cache_contract")
             self.assertEqual(
