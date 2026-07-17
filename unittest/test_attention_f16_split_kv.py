@@ -304,7 +304,7 @@ def _llama_prefill_output(q, k_bits, v_bits, head_dim, past_tokens, threads):
 
 
 def _llama_kv_partition_extent(kv_tokens):
-    """Match llama.cpp's reusable decode-graph KV scheduling extent."""
+    """Model llama.cpp's padded physical decode-graph K tensor extent."""
     kv_tokens = int(kv_tokens)
     return ((kv_tokens + 255) // 256) * 256 if kv_tokens >= 512 else kv_tokens
 
@@ -661,6 +661,11 @@ def main():
         "f16_split_threshold(KV=512,C=4)", 512, 8, 2, 512, 64, 64, 4, 0.0,
     )
     results.append(threshold)
+    merge_rounding, _ = _case(
+        "f16_split_merge_rounding(KV=512,H=1,D=32,C=20)",
+        2, 1, 1, 512, 32, 32, 20, 0.0,
+    )
+    results.append(merge_rounding)
     qwen, qwen_data = _case(
         "f16_split_qwen3vl(KV=1058,H=32,D=128,C=20)",
         1058, 32, 8, 1058, 128, 128, 20, 0.0,
