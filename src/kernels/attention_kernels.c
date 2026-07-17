@@ -673,6 +673,47 @@ static inline float ck_hsum256_ps(__m256 v) {
 }
 #endif
 
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+static inline __m512 ck_ggml_v_expf512(__m512 x) {
+    const __m512 r = _mm512_set1_ps(0x1.8p23f);
+    const __m512 z = _mm512_fmadd_ps(x, _mm512_set1_ps(0x1.715476p+0f), r);
+    const __m512 n = _mm512_sub_ps(z, r);
+    const __m512 b = _mm512_fnmadd_ps(
+        n,
+        _mm512_set1_ps(0x1.7f7d1cp-20f),
+        _mm512_fnmadd_ps(n, _mm512_set1_ps(0x1.62e4p-1f), x));
+    const __mmask16 d = _mm512_cmp_ps_mask(
+        _mm512_abs_ps(n), _mm512_set1_ps(192), _CMP_GT_OQ);
+    const __m512 u = _mm512_mul_ps(b, b);
+    const __m512 j = _mm512_fmadd_ps(
+        _mm512_fmadd_ps(
+            _mm512_fmadd_ps(
+                _mm512_set1_ps(0x1.0e4020p-7f),
+                b,
+                _mm512_set1_ps(0x1.573e2ep-5f)),
+            u,
+            _mm512_fmadd_ps(
+                _mm512_set1_ps(0x1.555e66p-3f),
+                b,
+                _mm512_set1_ps(0x1.fffdb6p-2f))),
+        u,
+        _mm512_fmadd_ps(
+            _mm512_set1_ps(0x1.ffffecp-1f),
+            b,
+            _mm512_set1_ps(1.0f)));
+    const __m512 res = _mm512_scalef_ps(j, n);
+    if (_mm512_kortestz(d, d)) {
+        return res;
+    }
+    const __m512 zero = _mm512_setzero_ps();
+    const __m512 alt = _mm512_mask_blend_ps(
+        _mm512_cmp_ps_mask(n, zero, _CMP_LE_OQ),
+        _mm512_set1_ps(INFINITY),
+        zero);
+    return _mm512_mask_blend_ps(d, res, alt);
+}
+#endif
+
 #if defined(__AVX2__) && defined(__FMA__)
 static inline __m256 ck_ggml_v_expf256(__m256 x) {
     const __m256 r = _mm256_set1_ps(0x1.8p23f);
@@ -938,7 +979,14 @@ static CK_NOINLINE CK_OPTNONE double ck_ggml_vec_soft_max_row(int n,
     int i = 0;
     double sum = 0.0;
 
-#if defined(__AVX2__) && defined(__FMA__)
+#if defined(__AVX512F__) && defined(__AVX512DQ__)
+    for (; i + 15 < n; i += 16) {
+        const __m512 val = ck_ggml_v_expf512(
+            _mm512_sub_ps(_mm512_loadu_ps(x + i), _mm512_set1_ps(max)));
+        _mm512_storeu_ps(y + i, val);
+        sum += (double) _mm512_reduce_add_ps(val);
+    }
+#elif defined(__AVX2__) && defined(__FMA__)
     for (; i + 7 < n; i += 8) {
         const __m256 val = ck_ggml_v_expf256(
             _mm256_sub_ps(_mm256_loadu_ps(x + i), _mm256_set1_ps(max)));
@@ -2550,7 +2598,156 @@ static inline float ck_vec_max_f32_contig(const float *x, int n)
     return max_val;
 }
 
-#if defined(__AVX__) || defined(__AVX2__)
+#if defined(__AVX512F__)
+static inline void ck_attention_simd_gemm_ukernel_4x4(float *c,
+                                                       const float *a,
+                                                       const float *b,
+                                                       int k,
+                                                       int n)
+{
+    __m512 acc[4][4];
+    for (int i = 0; i < 4; ++i) {
+        for (int r = 0; r < 4; ++r) {
+            acc[i][r] = _mm512_loadu_ps(
+                c + (size_t) i * (size_t) n + (size_t) r * 16u);
+        }
+    }
+
+    for (int kk = 0; kk < k; ++kk) {
+        __m512 bv[4];
+        for (int r = 0; r < 4; ++r) {
+            bv[r] = _mm512_loadu_ps(
+                b + (size_t) kk * (size_t) n + (size_t) r * 16u);
+        }
+        for (int i = 0; i < 4; ++i) {
+            const __m512 p = _mm512_set1_ps(
+                a[(size_t) i * (size_t) k + (size_t) kk]);
+            for (int r = 0; r < 4; ++r) {
+                acc[i][r] = _mm512_fmadd_ps(bv[r], p, acc[i][r]);
+            }
+        }
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        for (int r = 0; r < 4; ++r) {
+            _mm512_storeu_ps(
+                c + (size_t) i * (size_t) n + (size_t) r * 16u,
+                acc[i][r]);
+        }
+    }
+}
+
+static inline void ck_attention_simd_gemm_ukernel_4x1(float *c,
+                                                       const float *a,
+                                                       const float *b,
+                                                       int k,
+                                                       int n)
+{
+    __m512 acc[4];
+    for (int i = 0; i < 4; ++i) {
+        acc[i] = _mm512_loadu_ps(c + (size_t) i * (size_t) n);
+    }
+    for (int kk = 0; kk < k; ++kk) {
+        const __m512 bv = _mm512_loadu_ps(b + (size_t) kk * (size_t) n);
+        for (int i = 0; i < 4; ++i) {
+            const __m512 p = _mm512_set1_ps(
+                a[(size_t) i * (size_t) k + (size_t) kk]);
+            acc[i] = _mm512_fmadd_ps(bv, p, acc[i]);
+        }
+    }
+    for (int i = 0; i < 4; ++i) {
+        _mm512_storeu_ps(c + (size_t) i * (size_t) n, acc[i]);
+    }
+}
+
+static inline void ck_attention_simd_gemm_ukernel_1x4(float *c,
+                                                       const float *a,
+                                                       const float *b,
+                                                       int k,
+                                                       int n)
+{
+    __m512 acc[4];
+    for (int r = 0; r < 4; ++r) {
+        acc[r] = _mm512_loadu_ps(c + (size_t) r * 16u);
+    }
+    for (int kk = 0; kk < k; ++kk) {
+        const __m512 p = _mm512_set1_ps(a[kk]);
+        for (int r = 0; r < 4; ++r) {
+            const __m512 bv = _mm512_loadu_ps(
+                b + (size_t) kk * (size_t) n + (size_t) r * 16u);
+            acc[r] = _mm512_fmadd_ps(bv, p, acc[r]);
+        }
+    }
+    for (int r = 0; r < 4; ++r) {
+        _mm512_storeu_ps(c + (size_t) r * 16u, acc[r]);
+    }
+}
+
+static inline void ck_attention_simd_gemm_ukernel_1x1(float *c,
+                                                       const float *a,
+                                                       const float *b,
+                                                       int k,
+                                                       int n)
+{
+    __m512 acc = _mm512_loadu_ps(c);
+    for (int kk = 0; kk < k; ++kk) {
+        const __m512 bv = _mm512_loadu_ps(b + (size_t) kk * (size_t) n);
+        const __m512 p = _mm512_set1_ps(a[kk]);
+        acc = _mm512_fmadd_ps(bv, p, acc);
+    }
+    _mm512_storeu_ps(c, acc);
+}
+
+static CK_NOINLINE CK_OPTNONE void ck_attention_matmul_f32_accum(float *c,
+                                                                 const float *a,
+                                                                 const float *b,
+                                                                 int m,
+                                                                 int k,
+                                                                 int n)
+{
+    int ii = 0;
+    for (; ii + 4 <= m; ii += 4) {
+        int jj = 0;
+        for (; jj + 64 <= n; jj += 64) {
+            ck_attention_simd_gemm_ukernel_4x4(c + jj, a, b + jj, k, n);
+        }
+        for (; jj + 16 <= n; jj += 16) {
+            ck_attention_simd_gemm_ukernel_4x1(c + jj, a, b + jj, k, n);
+        }
+        for (; jj < n; ++jj) {
+            for (int i = 0; i < 4; ++i) {
+                float sum = c[(size_t) i * (size_t) n + (size_t) jj];
+                for (int kk = 0; kk < k; ++kk) {
+                    sum += a[(size_t) i * (size_t) k + (size_t) kk] *
+                           b[(size_t) kk * (size_t) n + (size_t) jj];
+                }
+                c[(size_t) i * (size_t) n + (size_t) jj] = sum;
+            }
+        }
+        a += (size_t) 4 * (size_t) k;
+        c += (size_t) 4 * (size_t) n;
+    }
+
+    for (; ii < m; ++ii) {
+        int jj = 0;
+        for (; jj + 64 <= n; jj += 64) {
+            ck_attention_simd_gemm_ukernel_1x4(c + jj, a, b + jj, k, n);
+        }
+        for (; jj + 16 <= n; jj += 16) {
+            ck_attention_simd_gemm_ukernel_1x1(c + jj, a, b + jj, k, n);
+        }
+        for (; jj < n; ++jj) {
+            float sum = c[jj];
+            for (int kk = 0; kk < k; ++kk) {
+                sum += a[kk] * b[(size_t) kk * (size_t) n + (size_t) jj];
+            }
+            c[jj] = sum;
+        }
+        a += k;
+        c += n;
+    }
+}
+#elif defined(__AVX__) || defined(__AVX2__)
 static inline void ck_attention_simd_gemm_ukernel_6x2(float *c,
                                                        const float *a,
                                                        const float *b,
@@ -4861,6 +5058,35 @@ typedef struct {
     int partition_tokens;
 } ck_attention_f16_split_args_t;
 
+#if defined(__INTEL_LLVM_COMPILER)
+extern float __svml_expf1_l9(float);
+#endif
+
+static inline float ck_attention_f16_reduce_expf(float value)
+{
+#if defined(__INTEL_LLVM_COMPILER)
+    /*
+     * ICX vectorizes llama.cpp's split-KV reducer through SVML expf4_l9.
+     * The scalar l9 entry point has the same lane result and avoids making
+     * the reduction depend on whether the C or C++ frontend vectorizes it.
+     */
+    return __svml_expf1_l9(value);
+#else
+    return expf(value);
+#endif
+}
+
+static CK_NOINLINE CK_OPTNONE float ck_attention_f16_reduce_sum(
+    float old_sum,
+    float old_scale,
+    float chunk_sum,
+    float chunk_scale)
+{
+    volatile float old_term = old_sum * old_scale;
+    volatile float chunk_term = chunk_sum * chunk_scale;
+    return old_term + chunk_term;
+}
+
 static inline float ck_attention_dot_f16_llama(const uint16_t *x,
                                                 const uint16_t *y,
                                                 int n)
@@ -4891,7 +5117,7 @@ static inline float ck_attention_dot_f16_llama(const uint16_t *x,
     sum0 = _mm512_add_ph(sum0, sum2);
     sum1 = _mm512_add_ph(sum1, sum3);
     sum0 = _mm512_add_ph(sum0, sum1);
-    float result = (float) _mm512_reduce_add_ph(sum0);
+    const float vector_result = (float) _mm512_reduce_add_ph(sum0);
 #elif defined(__AVX512F__)
     // Match ggml's AVX-512 FP16-to-FP32 path: four 16-lane
     // accumulators per 64 values, then its fixed pairwise tree.
@@ -4917,7 +5143,7 @@ static inline float ck_attention_dot_f16_llama(const uint16_t *x,
     sum0 = _mm512_add_ps(sum0, sum2);
     sum1 = _mm512_add_ps(sum1, sum3);
     sum0 = _mm512_add_ps(sum0, sum1);
-    float result = _mm512_reduce_add_ps(sum0);
+    const float vector_result = _mm512_reduce_add_ps(sum0);
 #elif defined(__AVX2__) && defined(__F16C__)
     // Match ggml_vec_dot_f16's AVX reduction contract: four independent
     // accumulators per 32 values, followed by its fixed pairwise tree.
@@ -4954,14 +5180,100 @@ static inline float ck_attention_dot_f16_llama(const uint16_t *x,
         _mm256_castps256_ps128(sum0),
         _mm256_extractf128_ps(sum0, 1));
     const __m128 half = _mm_hadd_ps(pair, pair);
-    float result = _mm_cvtss_f32(_mm_hadd_ps(half, half));
+    const float vector_result = _mm_cvtss_f32(_mm_hadd_ps(half, half));
 #else
-    float result = 0.0f;
+    const float vector_result = 0.0f;
+#endif
+    /* ggml_vec_dot_f16 stores the SIMD reduction in ggml_float (double) and
+     * accumulates any scalar tail there. This matters for head dimensions
+     * below or not divisible by the active ISA step (for example D=32 on
+     * AVX-512 and padded D=80). */
+    double result = (double) vector_result;
+    for (; i < n; ++i) {
+        const float product = CK_FP16_TO_FP32(x[i]) * CK_FP16_TO_FP32(y[i]);
+        result += (double) product;
+    }
+    return (float) result;
+}
+
+static inline void ck_attention_scale_f16_llama(uint16_t *y, float scale, int n)
+{
+    int i = 0;
+#if defined(__AVX512F__)
+    const __m512 factor = _mm512_set1_ps(scale);
+    for (; i + 63 < n; i += 64) {
+        for (int lane = 0; lane < 4; ++lane) {
+            const int offset = i + lane * 16;
+            __m512 value = _mm512_cvtph_ps(
+                _mm256_loadu_si256((const __m256i *) (y + offset)));
+            value = _mm512_mul_ps(value, factor);
+            _mm256_storeu_si256(
+                (__m256i *) (y + offset), _mm512_cvtps_ph(value, 0));
+        }
+    }
+#elif defined(__AVX2__) && defined(__F16C__)
+    const __m256 factor = _mm256_set1_ps(scale);
+    for (; i + 31 < n; i += 32) {
+        for (int lane = 0; lane < 4; ++lane) {
+            const int offset = i + lane * 8;
+            __m256 value = _mm256_cvtph_ps(
+                _mm_loadu_si128((const __m128i *) (y + offset)));
+            value = _mm256_mul_ps(value, factor);
+            _mm_storeu_si128(
+                (__m128i *) (y + offset), _mm256_cvtps_ph(value, 0));
+        }
+    }
 #endif
     for (; i < n; ++i) {
-        result += CK_FP16_TO_FP32(x[i]) * CK_FP16_TO_FP32(y[i]);
+        const float value = CK_FP16_TO_FP32(y[i]);
+        y[i] = CK_FP32_TO_FP16(value * scale);
     }
-    return result;
+}
+
+static inline void ck_attention_mad_f16_llama(uint16_t *y,
+                                               const uint16_t *x,
+                                               float scale,
+                                               int n)
+{
+    int i = 0;
+#if defined(__AVX512F__)
+    const __m512 factor = _mm512_set1_ps(scale);
+    for (; i + 63 < n; i += 64) {
+        for (int lane = 0; lane < 4; ++lane) {
+            const int offset = i + lane * 16;
+            const __m512 xv = _mm512_cvtph_ps(
+                _mm256_loadu_si256((const __m256i *) (x + offset)));
+            __m512 yv = _mm512_cvtph_ps(
+                _mm256_loadu_si256((const __m256i *) (y + offset)));
+            yv = _mm512_fmadd_ps(xv, factor, yv);
+            _mm256_storeu_si256(
+                (__m256i *) (y + offset), _mm512_cvtps_ph(yv, 0));
+        }
+    }
+#elif defined(__AVX2__) && defined(__F16C__)
+    const __m256 factor = _mm256_set1_ps(scale);
+    for (; i + 31 < n; i += 32) {
+        for (int lane = 0; lane < 4; ++lane) {
+            const int offset = i + lane * 8;
+            const __m256 xv = _mm256_cvtph_ps(
+                _mm_loadu_si128((const __m128i *) (x + offset)));
+            __m256 yv = _mm256_cvtph_ps(
+                _mm_loadu_si128((const __m128i *) (y + offset)));
+#if defined(__FMA__)
+            yv = _mm256_fmadd_ps(xv, factor, yv);
+#else
+            yv = _mm256_add_ps(yv, _mm256_mul_ps(xv, factor));
+#endif
+            _mm_storeu_si128(
+                (__m128i *) (y + offset), _mm256_cvtps_ph(yv, 0));
+        }
+    }
+#endif
+    for (; i < n; ++i) {
+        const float product = CK_FP16_TO_FP32(x[i]) * scale;
+        const float updated = CK_FP16_TO_FP32(y[i]) + product;
+        y[i] = CK_FP32_TO_FP16(updated);
+    }
 }
 
 static void ck_attention_f16_split_work(int ith, int nth, void *opaque)
@@ -5009,19 +5321,13 @@ static void ck_attention_f16_split_work(int ith, int nth, void *opaque)
             if (score > max_score) {
                 max_score = score;
                 max_scale = isfinite(old_max) ? expf(old_max - max_score) : 0.0f;
-                for (int d = 0; d < args->head_dim; ++d) {
-                    const float scaled = CK_FP16_TO_FP32(acc_half[d]) * max_scale;
-                    acc_half[d] = CK_FP32_TO_FP16(scaled);
-                }
+                ck_attention_scale_f16_llama(acc_half, max_scale, args->head_dim);
             } else {
                 value_scale = expf(score - max_score);
             }
 
-            for (int d = 0; d < args->head_dim; ++d) {
-                const float updated = CK_FP16_TO_FP32(acc_half[d]) +
-                                      value_scale * CK_FP16_TO_FP32(v_vec[d]);
-                acc_half[d] = CK_FP32_TO_FP16(updated);
-            }
+            ck_attention_mad_f16_llama(
+                acc_half, v_vec, value_scale, args->head_dim);
             sum = sum * max_scale + value_scale;
         }
 
@@ -5127,12 +5433,17 @@ void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q
                 continue;
             }
             const float new_max = fmaxf(final_max, chunk_max);
-            const float old_scale = isfinite(final_max) ? expf(final_max - new_max) : 0.0f;
-            const float chunk_scale = expf(chunk_max - new_max);
+            const float old_scale = isfinite(final_max)
+                ? ck_attention_f16_reduce_expf(final_max - new_max)
+                : 0.0f;
+            const float chunk_scale =
+                ck_attention_f16_reduce_expf(chunk_max - new_max);
             for (int d = 0; d < head_dim; ++d) {
-                out_head[d] = out_head[d] * old_scale + partial[2 + d] * chunk_scale;
+                const float chunk_term = partial[2 + d] * chunk_scale;
+                out_head[d] = fmaf(out_head[d], old_scale, chunk_term);
             }
-            final_sum = final_sum * old_scale + chunk_sum * chunk_scale;
+            final_sum = ck_attention_f16_reduce_sum(
+                final_sum, old_scale, chunk_sum, chunk_scale);
             final_max = new_max;
         }
 

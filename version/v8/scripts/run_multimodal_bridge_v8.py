@@ -1745,13 +1745,14 @@ def _compile_generated_model(c_path: Path, so_path: Path, *, profile: bool = Fal
     engine_hash = hashlib.sha256(engine_path.read_bytes()).hexdigest()
     source_hash = hashlib.sha256(c_path.read_bytes()).hexdigest()
     source_size = int(c_path.stat().st_size)
+    compiler = os.environ.get("CC", "").strip() or "cc"
     compiler_probe = subprocess.run(
-        ["cc", "--version"], text=True, capture_output=True, check=False
+        [compiler, "--version"], text=True, capture_output=True, check=False
     )
     compiler_version = (
         compiler_probe.stdout.splitlines()[0]
         if compiler_probe.returncode == 0 and compiler_probe.stdout
-        else f"cc probe failed rc={compiler_probe.returncode}"
+        else f"{compiler} probe failed rc={compiler_probe.returncode}"
     )
     build_fingerprint = {
         "version": 3,
@@ -1759,7 +1760,7 @@ def _compile_generated_model(c_path: Path, so_path: Path, *, profile: bool = Fal
         "source_sha256": source_hash,
         "source_size": source_size,
         "profile": bool(profile),
-        "compiler": {"command": "cc", "version": compiler_version},
+        "compiler": {"command": compiler, "version": compiler_version},
         "runtime_dependency": {
             "name": "libckernel_engine.so",
             "sha256": engine_hash,
@@ -1773,7 +1774,7 @@ def _compile_generated_model(c_path: Path, so_path: Path, *, profile: bool = Fal
             _sync_runtime_engine(engine_path, so_path)
             return so_path
     cmd = [
-        "cc",
+        compiler,
         "-shared",
         "-fPIC",
         "-O3",

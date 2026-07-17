@@ -35,6 +35,29 @@ decoder_parity_v8 = _load_module("decoder_first_token_parity_v8_tests", V8_DECOD
 
 
 class V8DecoderFirstTokenParityTests(unittest.TestCase):
+    def test_llama_helper_fingerprint_tracks_root_source_and_library_content(self) -> None:
+        helper_module = decoder_parity_v8.compare_first_token_logits_v7
+        with tempfile.TemporaryDirectory(prefix="v8_llama_helper_identity_") as tmpdir:
+            root = Path(tmpdir)
+            source = root / "llama_token_replay_v8.cpp"
+            source.write_text("int main() { return 0; }\n", encoding="utf-8")
+            lib_dir = root / "build" / "bin"
+            lib_dir.mkdir(parents=True)
+            for name in ("libllama.so", "libggml.so", "libggml-cpu.so", "libggml-base.so"):
+                (lib_dir / name).write_bytes(name.encode("ascii"))
+
+            with mock.patch.object(helper_module, "LLAMA_CPP", root), mock.patch.object(
+                helper_module, "HELPER_SRC", source
+            ):
+                original = helper_module._llama_helper_fingerprint()
+                (lib_dir / "libggml-cpu.so").write_bytes(b"different provider")
+                changed_library = helper_module._llama_helper_fingerprint()
+                source.write_text("int main() { return 1; }\n", encoding="utf-8")
+                changed_source = helper_module._llama_helper_fingerprint()
+
+            self.assertNotEqual(original, changed_library)
+            self.assertNotEqual(changed_library, changed_source)
+
     def test_ck_dump_filter_names_expands_llama_aliases(self) -> None:
         self.assertEqual(
             decoder_parity_v8._ck_dump_filter_names("Qcur-0,Kcur_normed-2,ffn_inp-0,l_out-3"),

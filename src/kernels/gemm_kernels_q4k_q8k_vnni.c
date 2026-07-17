@@ -1226,6 +1226,117 @@ void gemm_nt_q4_k_packed_meta_x8_q8_k_superblock_order(
     }
 }
 
+void gemm_nt_q4_k_packed_meta_x16_q8_k_llama_order(
+        const void *A_q8, const void *B_packed_x8, const float *bias, float *C,
+        int M, int N, int K)
+{
+#if defined(__AVX512F__) && defined(__AVX512BW__) && defined(__AVX512DQ__)
+    if (!A_q8 || !B_packed_x8 || !C || M <= 0 || N <= 0 || K <= 0 ||
+        (K % QK_K) != 0 || (N % 16) != 0) {
+        return;
+    }
+    const block_q8_K *A = (const block_q8_K *)A_q8;
+    const block_q4_K_packed_meta_x8 *W =
+            (const block_q4_K_packed_meta_x8 *)B_packed_x8;
+    const int blocks_per_row = K / QK_K;
+
+    for (int row = 0; row < M; ++row) {
+        const block_q8_K *a_row = A + (size_t)row * (size_t)blocks_per_row;
+        float *c_row = C + (size_t)row * (size_t)N;
+        for (int n0 = 0; n0 < N; n0 += 16) {
+            const int group0 = n0 / 8;
+            __m512 acc = _mm512_setzero_ps();
+            __m512 acc_min = _mm512_setzero_ps();
+
+            for (int b = 0; b < blocks_per_row; ++b) {
+                const block_q4_K_packed_meta_x8 *w0 =
+                        W + (size_t)group0 * (size_t)blocks_per_row + (size_t)b;
+                const block_q4_K_packed_meta_x8 *w1 =
+                        W + (size_t)(group0 + 1) * (size_t)blocks_per_row + (size_t)b;
+                const block_q8_K *x = &a_row[b];
+                float d[16];
+                float dmin[16];
+                for (int lane = 0; lane < 16; ++lane) {
+                    const block_q4_K_packed_meta_x8 *w = lane < 8 ? w0 : w1;
+                    const int wl = lane & 7;
+                    d[lane] = CK_FP16_TO_FP32(w->d[wl]);
+                    dmin[lane] = CK_FP16_TO_FP32(w->dmin[wl]);
+                }
+                const __m512 scale =
+                        _mm512_mul_ps(_mm512_loadu_ps(d), _mm512_set1_ps(x->d));
+                const __m512 min_scale =
+                        _mm512_mul_ps(_mm512_loadu_ps(dmin), _mm512_set1_ps(x->d));
+
+                for (int j = 0, is = 0, q_offset = 0;
+                     j < QK_K;
+                     j += 64, is += 2, q_offset += 32) {
+                    int32_t iacc[16];
+                    int32_t iacc_min[16];
+                    const int8_t *q8_lo_ptr = &x->qs[j];
+                    const int8_t *q8_hi_ptr = &x->qs[j + 32];
+                    const int32_t bsum_lo = (int32_t)x->bsums[j / 16] +
+                                            (int32_t)x->bsums[j / 16 + 1];
+                    const int32_t bsum_hi = (int32_t)x->bsums[(j + 32) / 16] +
+                                            (int32_t)x->bsums[(j + 32) / 16 + 1];
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+                    const __m256i q8_lo =
+                            _mm256_loadu_si256((const __m256i *)q8_lo_ptr);
+                    const __m256i q8_hi =
+                            _mm256_loadu_si256((const __m256i *)q8_hi_ptr);
+#endif
+                    for (int lane = 0; lane < 16; ++lane) {
+                        const block_q4_K_packed_meta_x8 *w = lane < 8 ? w0 : w1;
+                        const int wl = lane & 7;
+                        const uint8_t *qs = &w->qs[wl][q_offset];
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+                        const int32_t sum_lo =
+                                dot_q4_k_q8_k_32_vnni_q8v(qs, q8_lo, 0);
+                        const int32_t sum_hi =
+                                dot_q4_k_q8_k_32_vnni_q8v(qs, q8_hi, 1);
+#else
+                        int32_t sum_lo = 0;
+                        int32_t sum_hi = 0;
+                        for (int i = 0; i < 32; ++i) {
+                            sum_lo += (int32_t)(qs[i] & 0x0F) *
+                                      (int32_t)q8_lo_ptr[i];
+                            sum_hi += (int32_t)(qs[i] >> 4) *
+                                      (int32_t)q8_hi_ptr[i];
+                        }
+#endif
+                        /* llama.cpp's AVX-512 q4_K_8x8 provider keeps each
+                         * 32-value dot in an int16 lane through PMADDUBSW and
+                         * wrapping VPADDW operations, then widens while
+                         * applying the two sub-block scales. */
+                        const int16_t packed_sum_lo = (int16_t)sum_lo;
+                        const int16_t packed_sum_hi = (int16_t)sum_hi;
+                        iacc[lane] = (int32_t)w->sc[wl][is] * (int32_t)packed_sum_lo +
+                                     (int32_t)w->sc[wl][is + 1] * (int32_t)packed_sum_hi;
+                        iacc_min[lane] = (int32_t)w->m[wl][is] * bsum_lo +
+                                         (int32_t)w->m[wl][is + 1] * bsum_hi;
+                    }
+                    acc = _mm512_fmadd_ps(
+                            _mm512_cvtepi32_ps(_mm512_loadu_si512(iacc)),
+                            scale,
+                            acc);
+                    acc_min = _mm512_fmadd_ps(
+                            _mm512_cvtepi32_ps(_mm512_loadu_si512(iacc_min)),
+                            min_scale,
+                            acc_min);
+                }
+            }
+            __m512 value = _mm512_sub_ps(acc, acc_min);
+            if (bias) {
+                value = _mm512_add_ps(value, _mm512_loadu_ps(bias + n0));
+            }
+            _mm512_storeu_ps(c_row + n0, value);
+        }
+    }
+#else
+    gemm_nt_q4_k_packed_meta_x8_q8_k_superblock_order(
+            A_q8, B_packed_x8, bias, C, M, N, K);
+#endif
+}
+
 void gemm_nt_q4_k_packed_meta_x8_q8_k_gemv_order(
         const void *A_q8, const void *B_packed_x8, const float *bias, float *C,
         int M, int N, int K)

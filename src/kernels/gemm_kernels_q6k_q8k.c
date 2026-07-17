@@ -1079,11 +1079,10 @@ void gemv_q6_k_q8_k(float *y,
         return;
     }
 
-#if defined(__AVX512F__) && defined(__AVX512BW__)
-    /* Avoid the Q6 VBMI implementation: it is not parity-safe on Xeon 6542Y. */
-    gemv_q6_k_q8_k_avx512(y, W, x_q8, M, K);
-    return;
-#elif defined(__AVX2__)
+#if defined(__AVX2__)
+    /* llama.cpp's x86 Q6_K production graph keeps the AVX2 reduction order
+     * even when AVX-512 is available. Wider ISA availability is not a license
+     * to change this numerical contract. */
     gemv_q6_k_q8_k_avx2(y, W, x_q8, M, K);
     return;
 #elif defined(__AVX__)
@@ -1094,6 +1093,22 @@ void gemv_q6_k_q8_k(float *y,
     return;
 #endif
     gemv_q6_k_q8_k_ref(y, W, x_q8, M, K);
+}
+
+const char *ck_q6_k_q8_k_provider_name(void)
+{
+    if (ck_strict_parity_enabled() || ck_q6k_q8k_force_ref()) {
+        return "q6_k_q8_k_ref";
+    }
+#if defined(__AVX2__)
+    return "q6_k_q8_k_avx2";
+#elif defined(__AVX__)
+    return "q6_k_q8_k_avx";
+#elif defined(__SSE4_1__)
+    return "q6_k_q8_k_sse";
+#else
+    return "q6_k_q8_k_ref";
+#endif
 }
 
 /* ============================================================================
@@ -1165,11 +1180,7 @@ void gemv_q6_k_q8_k_parallel_simd(float *y,
 
     for (int row = r0; row < r1; ++row) {
         const block_q6_K *w_row = blocks + (size_t)row * (size_t)blocks_per_row;
-#if defined(__AVX512F__) && defined(__AVX512BW__)
-        /* Avoid the Q6 VBMI implementation: it is not parity-safe on Xeon 6542Y. */
-        y[row] = strict ? dot_q6_k_q8_k_ref(w_row, x, K)
-                        : dot_q6_k_q8_k_avx512(w_row, x, K);
-#elif defined(__AVX2__)
+#if defined(__AVX2__)
         y[row] = strict ? dot_q6_k_q8_k_ref(w_row, x, K)
                         : dot_q6_k_q8_k_avx2(w_row, x, K);
 #elif defined(__AVX__)
@@ -1272,9 +1283,7 @@ static inline float ck_dot_q6_k_q8_k_fast_or_ref(const block_q6_K *w,
     if (ck_strict_parity_enabled() || ck_q6k_q8k_force_ref()) {
         return dot_q6_k_q8_k_ref(w, x, K);
     }
-#if defined(__AVX512F__) && defined(__AVX512BW__)
-    return dot_q6_k_q8_k_avx512(w, x, K);
-#elif defined(__AVX2__)
+#if defined(__AVX2__)
     return dot_q6_k_q8_k_avx2(w, x, K);
 #elif defined(__AVX__)
     return dot_q6_k_q8_k_avx(w, x, K);

@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 208,
+      "total": 211,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -55,10 +55,10 @@
         "position_ids": 1,
         "projector_prep": 1,
         "q_norm": 1,
-        "qk_norm": 2,
+        "qk_norm": 3,
         "qk_norm_backward": 1,
         "qkv_projection": 1,
-        "quantize": 2,
+        "quantize": 3,
         "quantize_batch": 2,
         "recurrent_conv_state_update": 2,
         "recurrent_dt_gate": 1,
@@ -72,7 +72,7 @@
         "relu2": 2,
         "residual_add": 2,
         "residual_save": 1,
-        "rmsnorm": 3,
+        "rmsnorm": 4,
         "rope": 12,
         "rope_backward": 2,
         "rope_init": 2,
@@ -10269,6 +10269,10 @@
       "quant": {
         "weight": "q4_k",
         "activation": "q8_k",
+        "activation_quantization_contract": {
+          "decode": "canonical_q8_k_row_nearest",
+          "prefill": "llama_repack_q8_k_4row_nearest_even"
+        },
         "output": "fp32"
       },
       "inputs": [
@@ -10940,6 +10944,7 @@
           "status": "observed",
           "tests": [
             "unittest/test_q6k_q8k_parity.py",
+            "unittest/test_q6k_q8k_llama_production.cpp",
             "tests/test_threadpool_parity.c"
           ],
           "external_oracles": [
@@ -10949,9 +10954,9 @@
               "evidence": "unittest/test_q6k_q8k_parity.py"
             },
             {
-              "backend": "llama.cpp",
-              "status": "unresolved",
-              "evidence": "No direct llama.cpp Q6_K x Q8_K GEMM oracle is currently wired."
+              "backend": "llama.cpp_ggml_cpu",
+              "status": "validated",
+              "evidence": "unittest/test_q6k_q8k_llama_production.cpp"
             }
           ]
         }
@@ -10964,12 +10969,13 @@
           "absolute_tolerance": 0.0001,
           "relative_tolerance": 0.0001,
           "tests": [
+            "unittest/test_q6k_q8k_llama_production.cpp",
             "tests/test_threadpool_parity.c"
           ]
         }
       },
       "implementation": {
-        "isa_dispatch": "runtime",
+        "isa_dispatch": "compile_time",
         "weight_storage": {
           "format": "q6_k",
           "block_elements": 256,
@@ -11000,6 +11006,10 @@
       "quant": {
         "weight": "q6_k",
         "activation": "q8_k",
+        "activation_quantization_contract": {
+          "decode": "canonical_q8_k_row_nearest",
+          "prefill": "canonical_q8_k_row_nearest"
+        },
         "output": "fp32"
       },
       "inputs": [
@@ -12309,6 +12319,10 @@
       "quant": {
         "weight": "q4_k",
         "activation": "q8_k",
+        "activation_quantization_contract": {
+          "decode": "canonical_q8_k_row_nearest",
+          "prefill": "llama_repack_q8_k_4row_nearest_even"
+        },
         "output": "fp32"
       },
       "inputs": [
@@ -13073,6 +13087,7 @@
           "tests": [
             "unittest/test_q6k_q8k_parity.py",
             "unittest/test_gemv_kernels_comprehensive.py",
+            "unittest/test_q6k_q8k_llama_production.cpp",
             "tests/test_threadpool_parity.c"
           ],
           "external_oracles": [
@@ -13084,7 +13099,7 @@
             {
               "backend": "llama.cpp_ggml_cpu",
               "status": "validated",
-              "evidence": "unittest/test_gemv_kernels_comprehensive.py"
+              "evidence": "unittest/test_q6k_q8k_llama_production.cpp"
             }
           ]
         }
@@ -13097,13 +13112,14 @@
           "absolute_tolerance": 0.0,
           "relative_tolerance": 0.0,
           "tests": [
+            "unittest/test_q6k_q8k_llama_production.cpp",
             "unittest/test_gemv_kernels_comprehensive.py",
             "tests/test_threadpool_parity.c"
           ]
         }
       },
       "implementation": {
-        "isa_dispatch": "runtime",
+        "isa_dispatch": "compile_time",
         "weight_storage": {
           "format": "q6_k",
           "block_elements": 256,
@@ -13132,6 +13148,10 @@
       "quant": {
         "weight": "q6_k",
         "activation": "q8_k",
+        "activation_quantization_contract": {
+          "decode": "canonical_q8_k_row_nearest",
+          "prefill": "canonical_q8_k_row_nearest"
+        },
         "output": "fp32"
       },
       "inputs": [
@@ -20192,6 +20212,172 @@
       "_source_file": "qk_norm_forward_fp64_sum.json"
     },
     {
+      "id": "qk_norm_forward_llama_production",
+      "op": "qk_norm",
+      "variant": "llama_cpu_production_fp32_output",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "q_gamma",
+          "dtype": "fp32",
+          "shape": [
+            "D"
+          ]
+        },
+        {
+          "name": "k_gamma",
+          "dtype": "fp32",
+          "shape": [
+            "D"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "qk_norm_forward_llama_production",
+        "c_declaration": "void qk_norm_forward_llama_production(float *q, float *k, const float *q_gamma, const float *k_gamma, int num_heads, int num_kv_heads, int num_tokens, int head_dim, float eps);",
+        "sources": [
+          "src/kernels/qk_norm_kernels.c",
+          "src/kernels/rmsnorm_kernels.c"
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "qk_norm_forward_llama_production",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp64",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "scratch:q_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "k",
+            "source": "scratch:k_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "q_gamma",
+            "source": "weight_f:q_norm",
+            "cast": "const float*"
+          },
+          {
+            "name": "k_gamma",
+            "source": "weight_f:k_norm",
+            "cast": "const float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "eps",
+            "source": "dim:rms_eps"
+          }
+        ]
+      },
+      "notes": "Per-head Q/K RMSNorm matching the active llama.cpp CPU production reciprocal-square-root sequence.",
+      "name": "qk_norm_forward_llama_production",
+      "_source_file": "qk_norm_forward_llama_production.json"
+    },
+    {
       "id": "quantize_batch_q8_0",
       "op": "quantize_batch",
       "variant": "fp32_to_q8_0_batch",
@@ -20554,6 +20740,7 @@
       "impl": {
         "function": "quantize_row_q8_k",
         "sources": [
+          "src/kernels/gemm_kernels_q4k_q8k.c",
           "src/kernels/quantize_row_q8_k_sse.c"
         ],
         "variants": [
@@ -20568,6 +20755,7 @@
         "schema_version": 1,
         "operator_family": "activation_quantization",
         "function": "quantize_row_q8_k",
+        "rounding_contract": "canonical_q8_k_row_nearest",
         "output_storage": {
           "format": "q8_k",
           "block_elements": 256,
@@ -20594,6 +20782,95 @@
       "notes": "Quantize FP32 vector to Q8_K format. Used in fused kernels for MLP activations.",
       "name": "quantize_row_q8_k",
       "_source_file": "quantize_row_q8_k.json"
+    },
+    {
+      "id": "quantize_row_q8_k_llama_repack",
+      "op": "quantize",
+      "variant": "fp32_to_q8_k_llama_repack",
+      "quant": {
+        "weight": "fp32",
+        "activation": "q8_k",
+        "output": "q8_k"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "desc": "Input vector [N] (FP32)"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "q8_k",
+          "shape": [
+            "N"
+          ],
+          "desc": "Q8_K row storage with llama.cpp repacked-prefill arithmetic"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "N"
+      ],
+      "params": [],
+      "constraints": {
+        "alignment": {
+          "N": 256
+        },
+        "notes": "Complete groups of four rows use llama.cpp's repacked Q8_K scale and rounding order; residual rows use canonical row quantization."
+      },
+      "impl": {
+        "function": "quantize_row_q8_k",
+        "sources": [
+          "src/kernels/gemm_kernels_q4k_q8k.c",
+          "src/kernels/quantize_row_q8_k_sse.c"
+        ],
+        "variants": [
+          {
+            "name": "default",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "codegen_capability": {
+        "schema_version": 1,
+        "operator_family": "activation_quantization",
+        "function": "quantize_row_q8_k",
+        "rounding_contract": "llama_repack_q8_k_4row_nearest_even",
+        "output_storage": {
+          "format": "q8_k",
+          "block_elements": 256,
+          "block_elements_symbol": "QK_K",
+          "c_block_type": "block_q8_K"
+        },
+        "prefill_batch": {
+          "function": "quantize_batch_q8_k_4row_nearest_even",
+          "row_group": 4,
+          "tail_function": "quantize_row_q8_k",
+          "rounding_contract": "llama_repack_q8_k_4row_nearest_even"
+        }
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_q4k_q8k_llama_packed.cpp"
+        ],
+        "parity": [
+          {
+            "kind": "llamacpp",
+            "command": "make llamacpp-parity-gemm-q4k",
+            "tolerance": "bit_exact",
+            "notes": "Compares grouped Q8_K bytes and loaded repacked Q4_K production output against llama.cpp."
+          }
+        ]
+      },
+      "notes": "Arithmetic-compatible Q8_K producer for llama.cpp repacked Q4_K prefill consumers. Decode still calls the canonical one-row function.",
+      "name": "quantize_row_q8_k_llama_repack",
+      "_source_file": "quantize_row_q8_k_llama_repack.json"
     },
     {
       "id": "recurrent_conv_state_update_backward_f32",
@@ -23010,6 +23287,149 @@
       "notes": "FP32 RMSNorm with FP32 square products and an ascending FP64 row sum.",
       "name": "rmsnorm_forward_fp64_sum",
       "_source_file": "rmsnorm_forward_fp64_sum.json"
+    },
+    {
+      "id": "rmsnorm_forward_llama_production",
+      "op": "rmsnorm",
+      "variant": "llama_cpu_production_fp32_output",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "gamma",
+          "dtype": "fp32",
+          "shape": [
+            "E"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ]
+        },
+        {
+          "name": "rstd",
+          "dtype": "fp32",
+          "shape": [
+            "T"
+          ]
+        }
+      ],
+      "dims": [
+        "T",
+        "E"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "rmsnorm_forward_llama_production",
+        "c_declaration": "void rmsnorm_forward_llama_production(const float *input, const float *gamma, float *output, float *rstd_cache, int tokens, int d_model, int aligned_embed_dim, float eps);",
+        "sources": [
+          "src/kernels/rmsnorm_kernels.c"
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "rmsnorm_forward_llama_production",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp64",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*"
+          },
+          {
+            "name": "gamma",
+            "source": "weight:gamma",
+            "alt": [
+              "ln1_gamma",
+              "ln2_gamma",
+              "final_ln_weight"
+            ],
+            "cast": "const float*"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*"
+          },
+          {
+            "name": "rstd_cache",
+            "source": "null"
+          },
+          {
+            "name": "tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "d_model",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "aligned_embed_dim",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "eps",
+            "source": "dim:rms_eps"
+          }
+        ]
+      },
+      "notes": "FP32 RMSNorm matching llama.cpp CPU production reciprocal-square-root evaluation for the active ISA.",
+      "name": "rmsnorm_forward_llama_production",
+      "_source_file": "rmsnorm_forward_llama_production.json"
     },
     {
       "id": "v_norm",

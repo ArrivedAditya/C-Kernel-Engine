@@ -203,8 +203,8 @@ class NumericalExecutionContractTests(unittest.TestCase):
             ROOT / "version" / "v8" / "circuits" / "qwen3vl.json"
         )
         expected = {
-            "decoder.rmsnorm": "rmsnorm_forward_fp64_sum",
-            "decoder.qk_norm": "qk_norm_forward_fp64_sum",
+            "decoder.rmsnorm": "rmsnorm_forward_llama_production",
+            "decoder.qk_norm": "qk_norm_forward_llama_production",
         }
         for operation, function in expected.items():
             for phase in ("prefill", "decode"):

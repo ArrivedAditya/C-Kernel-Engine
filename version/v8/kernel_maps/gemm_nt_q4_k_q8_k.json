@@ -42,6 +42,10 @@
   "quant": {
     "weight": "q4_k",
     "activation": "q8_k",
+    "activation_quantization_contract": {
+      "decode": "canonical_q8_k_row_nearest",
+      "prefill": "llama_repack_q8_k_4row_nearest_even"
+    },
     "output": "fp32"
   },
   "inputs": [

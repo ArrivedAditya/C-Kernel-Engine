@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import struct
 import tempfile
 import unittest
 from array import array
@@ -26,6 +27,28 @@ def load_module():
 
 
 class MultitokenEOSContractTests(unittest.TestCase):
+    def test_kv_first_difference_decodes_semantic_location(self) -> None:
+        header = struct.pack("<8I", 0x564B5843, 1, 3, 5, 2, 4096, 4, 0)
+        values = [0] * (2 * 2 * 5 * 4)
+        persistent = bytearray(header + struct.pack(f"<{len(values)}H", *values))
+        replay = bytearray(persistent)
+        # V, head 1, token 2, channel 3.
+        element = (2 * 5 * 4) + (1 * 5 * 4) + (2 * 4) + 3
+        offset = len(header) + element * 2
+        struct.pack_into("<H", persistent, offset, 0x3C00)
+        struct.pack_into("<H", replay, offset, 0x3C01)
+
+        row = self.runner._describe_kv_f16_difference(bytes(persistent), bytes(replay), offset)
+
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row["kind"], "V")
+        self.assertEqual(row["layer"], 3)
+        self.assertEqual(row["head"], 1)
+        self.assertEqual(row["token"], 2)
+        self.assertEqual(row["channel"], 3)
+        self.assertEqual(row["fp16_bit_distance"], 1)
+
     def test_dump_first_divergence_resolves_observed_step(self) -> None:
         report = {"first_divergence": {"step": 60}}
         self.assertEqual(self.runner._resolve_dump_step(report, None, True), 60)
