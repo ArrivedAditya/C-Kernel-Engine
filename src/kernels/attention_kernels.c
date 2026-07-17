@@ -5076,17 +5076,6 @@ static inline float ck_attention_f16_reduce_expf(float value)
 #endif
 }
 
-static CK_NOINLINE CK_OPTNONE float ck_attention_f16_reduce_sum(
-    float old_sum,
-    float old_scale,
-    float chunk_sum,
-    float chunk_scale)
-{
-    volatile float old_term = old_sum * old_scale;
-    volatile float chunk_term = chunk_sum * chunk_scale;
-    return old_term + chunk_term;
-}
-
 static inline float ck_attention_dot_f16_llama(const uint16_t *x,
                                                 const uint16_t *y,
                                                 int n)
@@ -5379,11 +5368,8 @@ void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q
     const size_t resolved_count = (size_t) num_heads * (size_t) split_chunks * (size_t) partial_stride;
     float *partials = (float *) alloca(resolved_count * sizeof(float));
     /*
-     * llama.cpp keeps decode graphs reusable by padding the KV scheduling
-     * extent to at least 256 rows. Masked rows do not contribute values, but
-     * the padded extent still determines worker chunk boundaries and therefore
-     * the FP16 partial-reduction order. Keep valid storage separate from that
-     * scheduling contract: this kernel never reads rows >= kv_tokens.
+     * llama.cpp reuses a padded decode graph. Masked rows do not contribute,
+     * but the physical K tensor extent still determines worker boundaries.
      */
     const int partition_alignment = 256;
     const int partition_tokens = kv_tokens >= 512
@@ -5442,8 +5428,10 @@ void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q
                 const float chunk_term = partial[2 + d] * chunk_scale;
                 out_head[d] = fmaf(out_head[d], old_scale, chunk_term);
             }
-            final_sum = ck_attention_f16_reduce_sum(
-                final_sum, old_scale, chunk_sum, chunk_scale);
+            /* llama.cpp's production build contracts the old partial into the
+             * new chunk contribution. Keep this explicit: one FP32 ULP in the
+             * denominator crosses downstream Q8 quantization boundaries. */
+            final_sum = fmaf(final_sum, old_scale, chunk_sum * chunk_scale);
             final_max = new_max;
         }
 
