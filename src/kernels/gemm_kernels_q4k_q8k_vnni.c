@@ -49,6 +49,20 @@ static int ck_q4k_x16_chunk4_enabled(void)
 #include <immintrin.h>
 #endif
 
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+#define CK_HAS_AVX_VNNI_256 1
+static inline __m256i ck_dpbusd_i32x8(__m256i acc, __m256i lhs, __m256i rhs)
+{
+    return _mm256_dpbusd_epi32(acc, lhs, rhs);
+}
+#elif defined(__AVXVNNI__)
+#define CK_HAS_AVX_VNNI_256 1
+static inline __m256i ck_dpbusd_i32x8(__m256i acc, __m256i lhs, __m256i rhs)
+{
+    return _mm256_dpbusd_avx_epi32(acc, lhs, rhs);
+}
+#endif
+
 void gemv_q4_k_q8_k_ref(float *y,
                         const void *W,
                         const void *x_q8,
@@ -70,7 +84,7 @@ static inline int32_t hsum256_epi32(__m256i v) {
 }
 #endif
 
-#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+#if defined(CK_HAS_AVX_VNNI_256)
 static inline int32_t dot_q4_k_q8_k_32_vnni(const uint8_t *q4_packed_32,
                                             const int8_t *q8_32,
                                             int high_nibble) {
@@ -81,7 +95,7 @@ static inline int32_t dot_q4_k_q8_k_32_vnni(const uint8_t *q4_packed_32,
         ? _mm256_and_si256(_mm256_srli_epi16(packed, 4), mask4)
         : _mm256_and_si256(packed, mask4);
     __m256i acc = _mm256_setzero_si256();
-    acc = _mm256_dpbusd_epi32(acc, q4_bytes, q8_bytes);
+    acc = ck_dpbusd_i32x8(acc, q4_bytes, q8_bytes);
     return hsum256_epi32(acc);
 }
 
@@ -94,7 +108,7 @@ static inline int32_t dot_q4_k_q8_k_32_vnni_q8v(const uint8_t *q4_packed_32,
         ? _mm256_and_si256(_mm256_srli_epi16(packed, 4), mask4)
         : _mm256_and_si256(packed, mask4);
     __m256i acc = _mm256_setzero_si256();
-    acc = _mm256_dpbusd_epi32(acc, q4_bytes, q8_bytes);
+    acc = ck_dpbusd_i32x8(acc, q4_bytes, q8_bytes);
     return hsum256_epi32(acc);
 }
 
@@ -107,7 +121,7 @@ static inline __m256i q4_k_unpack_32_vnni_bytes(__m256i packed, int high_nibble)
 
 static inline int32_t dot_q4_k_q8_k_32_vnni_q4v_q8v(__m256i q4_bytes, __m256i q8_bytes) {
     __m256i acc = _mm256_setzero_si256();
-    acc = _mm256_dpbusd_epi32(acc, q4_bytes, q8_bytes);
+    acc = ck_dpbusd_i32x8(acc, q4_bytes, q8_bytes);
     return hsum256_epi32(acc);
 }
 
@@ -147,7 +161,7 @@ static inline float dot_q4_k_q8_k_vnni_block(const block_q4_K *w,
 }
 #endif
 
-#if defined(__AVX2__) && !(defined(__AVX512VNNI__) && defined(__AVX512VL__))
+#if defined(__AVX2__)
 static inline __m256i q4_k_unpack_32_avx2_bytes(__m256i packed, int high_nibble) {
     const __m256i mask4 = _mm256_set1_epi8(0x0F);
     return high_nibble
@@ -672,14 +686,15 @@ static inline void accum_q4_k_packed_meta_x8_q8_k_superblock(
     }
 }
 
-/* Four-row form of the exact repacked-matmul contract. Q4 unpacking is shared
+/* Multi-row form of the exact repacked-matmul contract. Q4 unpacking is shared
  * across rows, while every output retains the same ascending subblock order,
  * separate value/minimum accumulators, and final subtraction as the scalar-row
- * provider. Keeping the tile at four rows bounds the live AVX2 accumulator set. */
-static inline void accum_q4_k_packed_meta_x8_q8_k_superblock_4m(
-        float acc[4][8], float acc_min[4][8],
+ * provider. Callers currently use four or eight rows to measure the reuse versus
+ * register-pressure tradeoff without changing the numerical contract. */
+static inline void accum_q4_k_packed_meta_x8_q8_k_superblock_rows(
+        float acc[8][8], float acc_min[8][8],
         const block_q4_K_packed_meta_x8 *w, int active,
-        const block_q8_K *x[4], int rows)
+        const block_q8_K *x[8], int rows)
 {
 #if defined(__AVX2__)
     float wd[8] = {0};
@@ -693,12 +708,12 @@ static inline void accum_q4_k_packed_meta_x8_q8_k_superblock_4m(
 
     for (int j = 0, is = 0, q_offset = 0;
          j < QK_K; j += 64, is += 2, q_offset += 32) {
-        int32_t iacc[4][8] = {{0}};
-        int32_t iacc_min[4][8] = {{0}};
-        __m256i q8_lo[4];
-        __m256i q8_hi[4];
-        int32_t bsum_lo[4];
-        int32_t bsum_hi[4];
+        int32_t iacc[8][8] = {{0}};
+        int32_t iacc_min[8][8] = {{0}};
+        __m256i q8_lo[8];
+        __m256i q8_hi[8];
+        int32_t bsum_lo[8];
+        int32_t bsum_hi[8];
 
         for (int row = 0; row < rows; ++row) {
             q8_lo[row] = _mm256_loadu_si256((const __m256i *)&x[row]->qs[j]);
@@ -712,7 +727,7 @@ static inline void accum_q4_k_packed_meta_x8_q8_k_superblock_4m(
         for (int lane = 0; lane < active; ++lane) {
             const __m256i packed = _mm256_loadu_si256(
                     (const __m256i *)&w->qs[lane][q_offset]);
-#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+#if defined(CK_HAS_AVX_VNNI_256)
             const __m256i q4_lo = q4_k_unpack_32_vnni_bytes(packed, 0);
             const __m256i q4_hi = q4_k_unpack_32_vnni_bytes(packed, 1);
 #else
@@ -725,7 +740,7 @@ static inline void accum_q4_k_packed_meta_x8_q8_k_superblock_4m(
             const int32_t min_hi = (int32_t)w->m[lane][is + 1];
 
             for (int row = 0; row < rows; ++row) {
-#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+#if defined(CK_HAS_AVX_VNNI_256)
                 const int32_t sum_lo =
                         dot_q4_k_q8_k_32_vnni_q4v_q8v(q4_lo, q8_lo[row]);
                 const int32_t sum_hi =
@@ -1905,17 +1920,74 @@ static void gemm_q4_packed_meta_x8_split_min_4m_thread_fn(
             continue;
         }
 
-        float acc[4][8] = {{0}};
-        float acc_min[4][8] = {{0}};
+        float acc[8][8] = {{0}};
+        float acc_min[8][8] = {{0}};
         for (int b = 0; b < a->blocks_per_row; ++b) {
             const block_q4_K_packed_meta_x8 *w_group =
                     a->W + (size_t)g * (size_t)a->blocks_per_row + (size_t)b;
-            const block_q8_K *x[4] = {NULL, NULL, NULL, NULL};
+            const block_q8_K *x[8] = {NULL};
             for (int row = 0; row < rows; ++row) {
                 x[row] = a->A + (size_t)(m0 + row) *
                                   (size_t)a->blocks_per_vec + (size_t)b;
             }
-            accum_q4_k_packed_meta_x8_q8_k_superblock_4m(
+            accum_q4_k_packed_meta_x8_q8_k_superblock_rows(
+                    acc, acc_min, w_group, active, x, rows);
+        }
+
+        for (int row = 0; row < rows; ++row) {
+            float values[8];
+#if defined(__AVX2__)
+            _mm256_storeu_ps(values,
+                    _mm256_sub_ps(_mm256_loadu_ps(acc[row]),
+                                  _mm256_loadu_ps(acc_min[row])));
+#else
+            for (int lane = 0; lane < active; ++lane) {
+                values[lane] = acc[row][lane] - acc_min[row][lane];
+            }
+#endif
+            float *c_row = a->C + (size_t)(m0 + row) * (size_t)a->N;
+            for (int lane = 0; lane < active; ++lane) {
+                float value = values[lane];
+                if (a->bias) value += a->bias[n0 + lane];
+                c_row[n0 + lane] = value;
+            }
+        }
+    }
+}
+
+static void gemm_q4_packed_meta_x8_split_min_8m_thread_fn(
+        int ith, int nth, void *args)
+{
+    gemm_q4_packed_meta_x8_thread_work_t *a =
+            (gemm_q4_packed_meta_x8_thread_work_t *)args;
+    if (!a || ith < 0 || nth <= 0 || ith >= nth) {
+        return;
+    }
+
+    const int row_tiles = (a->M + 7) / 8;
+    const int total = row_tiles * a->groups;
+    for (int job = ith; job < total; job += nth) {
+        const int g = job / row_tiles;
+        const int row_tile = job - g * row_tiles;
+        const int m0 = row_tile * 8;
+        const int rows = (m0 + 8 <= a->M) ? 8 : (a->M - m0);
+        const int n0 = g * 8;
+        const int active = (n0 + 8 <= a->N) ? 8 : (a->N - n0);
+        if (rows <= 0 || active <= 0 || g >= a->groups) {
+            continue;
+        }
+
+        float acc[8][8] = {{0}};
+        float acc_min[8][8] = {{0}};
+        for (int b = 0; b < a->blocks_per_row; ++b) {
+            const block_q4_K_packed_meta_x8 *w_group =
+                    a->W + (size_t)g * (size_t)a->blocks_per_row + (size_t)b;
+            const block_q8_K *x[8] = {NULL};
+            for (int row = 0; row < rows; ++row) {
+                x[row] = a->A + (size_t)(m0 + row) *
+                                  (size_t)a->blocks_per_vec + (size_t)b;
+            }
+            accum_q4_k_packed_meta_x8_q8_k_superblock_rows(
                     acc, acc_min, w_group, active, x, rows);
         }
 
@@ -2111,6 +2183,46 @@ void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_4m(
     ck_threadpool_dispatch_n(
             pool, active_threads,
             gemm_q4_packed_meta_x8_split_min_4m_thread_fn, &work);
+}
+
+void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_8m(
+        const void *A_q8, const void *B_packed_x8, const float *bias, float *C,
+        int M, int N, int K, int active_threads)
+{
+    if (!A_q8 || !B_packed_x8 || !C || M <= 0 || N <= 0 || K <= 0 ||
+        (K % QK_K) != 0) {
+        return;
+    }
+    ck_threadpool_t *pool = ck_threadpool_global();
+    const int pool_threads = pool ? ck_threadpool_n_threads(pool) : 1;
+    const int groups = (N + 7) / 8;
+    const int jobs = ((M + 7) / 8) * groups;
+    if (active_threads <= 0 || active_threads > pool_threads) {
+        active_threads = pool_threads;
+    }
+    if (active_threads > jobs) active_threads = jobs;
+
+    gemm_q4_packed_meta_x8_thread_work_t work = {
+        .A = (const block_q8_K *)A_q8,
+        .W = (const block_q4_K_packed_meta_x8 *)B_packed_x8,
+        .bias = bias,
+        .C = C,
+        .M = M,
+        .N = N,
+        .K = K,
+        .blocks_per_vec = K / QK_K,
+        .blocks_per_row = K / QK_K,
+        .groups = groups,
+        .tile_m = 8,
+        .jobs = jobs,
+    };
+    if (active_threads <= 1 || !pool) {
+        gemm_q4_packed_meta_x8_split_min_8m_thread_fn(0, 1, &work);
+        return;
+    }
+    ck_threadpool_dispatch_n(
+            pool, active_threads,
+            gemm_q4_packed_meta_x8_split_min_8m_thread_fn, &work);
 }
 
 
