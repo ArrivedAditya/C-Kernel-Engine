@@ -59,6 +59,8 @@ def parse_available_groups(text: str) -> list[dict[str, str]]:
         line = raw_line.strip()
         if not line or line.startswith(("-", "Group name", "Groups")):
             continue
+        if re.match(r"^No\s+groups?\s+defined\b", line, flags=re.IGNORECASE):
+            continue
         match = re.match(r"^([A-Za-z][A-Za-z0-9_]*)\s+(.*)$", line)
         if not match:
             continue
@@ -354,7 +356,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"SKIP: {summary['reason']} ({summary_path})")
         return 0
     if not selected:
-        summary["reason"] = "none of the requested LIKWID groups are available"
+        cpu_info = info_path.read_text(errors="ignore")
+        if re.search(r"^CPU type:\s*nil\s*$", cpu_info, flags=re.MULTILINE):
+            summary["reason"] = (
+                "installed LIKWID does not recognize this processor; "
+                "no counter groups are available"
+            )
+        else:
+            summary["reason"] = "none of the requested LIKWID groups are available"
         write_summary(summary_path, summary)
         print(f"SKIP: {summary['reason']} ({summary_path})")
         return 0
