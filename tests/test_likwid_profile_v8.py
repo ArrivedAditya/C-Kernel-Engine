@@ -45,6 +45,43 @@ class LikwidProfileV8Tests(unittest.TestCase):
             ["MEM"],
         )
 
+    def test_unsupported_processor_diagnostic_is_not_a_counter_group(self) -> None:
+        available = self.module.parse_available_groups("No groups defined for nil\n")
+        self.assertEqual(available, [])
+
+    def test_unrecognized_processor_is_an_explicit_skip(self) -> None:
+        def fake_run(command, **_kwargs):
+            if "-v" in command:
+                return self.module.subprocess.CompletedProcess(
+                    command, 0, "likwid-perfctr 5.4.1\n", ""
+                )
+            if "-i" in command:
+                return self.module.subprocess.CompletedProcess(
+                    command, 0, "CPU type:\tnil\n", ""
+                )
+            if "-a" in command:
+                return self.module.subprocess.CompletedProcess(
+                    command, 0, "No groups defined for nil\n", ""
+                )
+            raise AssertionError(f"unexpected workload invocation: {command}")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            with mock.patch.object(
+                self.module.shutil, "which", return_value="/usr/bin/likwid-perfctr"
+            ), mock.patch.object(
+                self.module.subprocess, "run", side_effect=fake_run
+            ):
+                rc = self.module.main(
+                    ["--output-dir", str(output), "--", "/bin/true"]
+                )
+            summary = json.loads((output / "likwid_summary.json").read_text())
+        self.assertEqual(rc, 0)
+        self.assertEqual(summary["status"], "skip")
+        self.assertEqual(summary["available_groups"], [])
+        self.assertIn("does not recognize this processor", summary["reason"])
+        self.assertEqual(summary["runs"], [])
+
     def test_csv_metrics_are_preserved_and_normalized(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "mem.csv"
