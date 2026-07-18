@@ -5291,7 +5291,10 @@ static void ck_attention_f16_split_work(int ith, int nth, void *opaque)
 
             ck_attention_mad_f16_llama(
                 acc_half, v_vec, value_scale, args->head_dim);
-            sum = sum * max_scale + value_scale;
+            /* Keep the online-softmax denominator on the same fused graph as
+             * llama.cpp. Relying on compiler contraction made Q=63 differ by
+             * one FP32 ULP between hosted C and C++ builds. */
+            sum = fmaf(sum, max_scale, value_scale);
         }
 
         partial[0] = max_score;
