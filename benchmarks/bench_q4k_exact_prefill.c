@@ -18,6 +18,9 @@ extern void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_mreuse(
 extern void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_4m(
         const void *a_q8, const void *b_packed_x8, const float *bias, float *c,
         int m, int n, int k, int active_threads);
+extern void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_8m(
+        const void *a_q8, const void *b_packed_x8, const float *bias, float *c,
+        int m, int n, int k, int active_threads);
 
 static uint32_t rng_state = 0x12345678u;
 
@@ -80,6 +83,11 @@ static void run_provider(const char *provider,
                 a_q8, weights_packed, bias, output, m, n, k, threads);
         return;
     }
+    if (strcmp(provider, "8m") == 0) {
+        gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_8m(
+                a_q8, weights_packed, bias, output, m, n, k, threads);
+        return;
+    }
     gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_mreuse(
             a_q8, weights_packed, bias, output,
             m, n, k, tile_m, threads);
@@ -108,7 +116,8 @@ int main(int argc, char **argv)
     }
 
     if ((k % QK_K) != 0 || m <= 0 || n <= 0 ||
-        (strcmp(provider, "baseline") != 0 && strcmp(provider, "4m") != 0)) {
+        (strcmp(provider, "baseline") != 0 && strcmp(provider, "4m") != 0 &&
+         strcmp(provider, "8m") != 0)) {
         fprintf(stderr, "invalid shape M=%d N=%d K=%d\n", m, n, k);
         return 2;
     }
@@ -149,7 +158,7 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    if (strcmp(provider, "4m") == 0) {
+    if (strcmp(provider, "4m") == 0 || strcmp(provider, "8m") == 0) {
         run_provider("baseline", a_q8, weights_packed, bias, reference,
                      m, n, k, tile_m, threads);
         run_provider(provider, a_q8, weights_packed, bias, output,

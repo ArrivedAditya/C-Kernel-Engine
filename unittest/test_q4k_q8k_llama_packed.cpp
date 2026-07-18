@@ -12,6 +12,7 @@
 #include "ggml-quants.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -43,6 +44,9 @@ void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_mreuse(
         const void * a_q8, const void * w_packed_x8, const float * bias, float * out,
         int m, int n, int k, int tile_m, int threads);
 void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_4m(
+        const void * a_q8, const void * w_packed_x8, const float * bias, float * out,
+        int m, int n, int k, int threads);
+void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_8m(
         const void * a_q8, const void * w_packed_x8, const float * bias, float * out,
         int m, int n, int k, int threads);
 void gemm_nt_q4_k_packed_meta_x16_q8_k_llama_order(
@@ -213,7 +217,9 @@ static bool llama_mul_mat_repacked(
         const std::vector<uint8_t> & weights,
         const std::vector<float> & activations,
         std::vector<float> & output,
-        int m, int n, int k) {
+        int m, int n, int k,
+        double * elapsed_ms = nullptr,
+        int repeats = 1) {
     ggml_init_params weight_params = {ggml_tensor_overhead() * 2, nullptr, true};
     ggml_context * weight_ctx = ggml_init(weight_params);
     if (!weight_ctx) {
@@ -245,6 +251,18 @@ static bool llama_mul_mat_repacked(
             const int threads = std::max(1, std::atoi(std::getenv("CK_NUM_THREADS")
                     ? std::getenv("CK_NUM_THREADS") : "4"));
             ok = ggml_graph_compute_with_ctx(graph_ctx, graph, threads) == GGML_STATUS_SUCCESS;
+            if (ok && elapsed_ms) {
+                const auto start = std::chrono::steady_clock::now();
+                for (int repeat = 0; repeat < repeats; ++repeat) {
+                    if (ggml_graph_compute_with_ctx(graph_ctx, graph, threads) != GGML_STATUS_SUCCESS) {
+                        ok = false;
+                        break;
+                    }
+                }
+                const auto stop = std::chrono::steady_clock::now();
+                *elapsed_ms = std::chrono::duration<double, std::milli>(stop - start).count() /
+                              static_cast<double>(repeats);
+            }
             if (ok) {
                 std::memcpy(output.data(), ggml_get_data_f32(y), output.size() * sizeof(float));
             }
@@ -261,6 +279,84 @@ static bool llama_mul_mat_repacked(
     }
     ggml_free(weight_ctx);
     return ok;
+}
+
+static bool run_q4k_performance_gate() {
+    const int m = std::max(1, std::atoi(env_or("CK_Q4K_PERF_M", "256")));
+    const int n = std::max(1, std::atoi(env_or("CK_Q4K_PERF_N", "2048")));
+    const int k = std::max(QK_K, std::atoi(env_or("CK_Q4K_PERF_K", "2048")));
+    const int repeats = std::max(1, std::atoi(env_or("CK_Q4K_PERF_REPEATS", "7")));
+    if ((k % QK_K) != 0 || (n % 16) != 0 || m < 16) {
+        std::fprintf(stderr, "invalid Q4 performance shape M=%d N=%d K=%d\n", m, n, k);
+        return false;
+    }
+
+    std::vector<float> activations(static_cast<size_t>(m) * k);
+    std::vector<float> weights_f32(static_cast<size_t>(n) * k);
+    for (int row = 0; row < m; ++row) {
+        for (int col = 0; col < k; ++col) {
+            activations[static_cast<size_t>(row) * k + col] =
+                    fixture_value(row, col, 0.019f, 0.61f);
+        }
+    }
+    for (int row = 0; row < n; ++row) {
+        for (int col = 0; col < k; ++col) {
+            weights_f32[static_cast<size_t>(row) * k + col] =
+                    fixture_value(row, col, 0.013f, 0.47f);
+        }
+    }
+
+    const size_t q8_row_bytes = static_cast<size_t>(k / QK_K) * sizeof(block_q8_K);
+    const size_t q4_row_bytes = static_cast<size_t>(k / QK_K) * sizeof(block_q4_K);
+    std::vector<uint8_t> weights(static_cast<size_t>(n) * q4_row_bytes);
+    std::vector<uint8_t> activations_q8(static_cast<size_t>(m) * q8_row_bytes);
+    std::vector<float> ck_output(static_cast<size_t>(m) * n);
+    std::vector<float> llama_output(ck_output.size());
+    for (int row = 0; row < n; ++row) {
+        quantize_row_q4_K_ref(
+                weights_f32.data() + static_cast<size_t>(row) * k,
+                reinterpret_cast<block_q4_K *>(
+                        weights.data() + static_cast<size_t>(row) * q4_row_bytes),
+                k);
+    }
+
+    quantize_batch_q8_k_4row_nearest_even(
+            activations.data(), activations_q8.data(), m, k);
+    gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+            activations_q8.data(), weights.data(), nullptr, ck_output.data(), m, n, k);
+
+    double llama_ms = 0.0;
+    if (!llama_mul_mat_repacked(
+            weights, activations, llama_output, m, n, k, &llama_ms, repeats)) {
+        return false;
+    }
+
+    const auto ck_start = std::chrono::steady_clock::now();
+    for (int repeat = 0; repeat < repeats; ++repeat) {
+        quantize_batch_q8_k_4row_nearest_even(
+                activations.data(), activations_q8.data(), m, k);
+        gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+                activations_q8.data(), weights.data(), nullptr, ck_output.data(), m, n, k);
+    }
+    const auto ck_stop = std::chrono::steady_clock::now();
+    const double ck_ms =
+            std::chrono::duration<double, std::milli>(ck_stop - ck_start).count() /
+            static_cast<double>(repeats);
+    const bool exact = compare_f32(
+            "performance-gate output", ck_output.data(), llama_output.data(), m, n);
+    const double ratio = llama_ms > 0.0 ? ck_ms / llama_ms : INFINITY;
+    const char * max_ratio_text = std::getenv("CK_Q4K_LLAMA_MAX_RATIO");
+    const double max_ratio = max_ratio_text ? std::atof(max_ratio_text) : 0.0;
+    const bool ratio_ok = std::isfinite(ratio) &&
+                          (max_ratio <= 0.0 || ratio <= max_ratio);
+    std::printf(
+            "Q4_K performance: M=%d N=%d K=%d repeats=%d ck_ms=%.3f "
+            "llama_ms=%.3f ck_over_llama=%.3f max_ratio=%s [%s]\n",
+            m, n, k, repeats, ck_ms, llama_ms, ratio,
+            max_ratio > 0.0 ? max_ratio_text : "report-only",
+            ratio_ok ? "PASS" : "FAIL");
+    ck_q4k_packed_weight_cache_clear();
+    return exact && ratio_ok;
 }
 
 static bool read_f32_file(const char * path, std::vector<float> & values, size_t count) {
@@ -609,6 +705,7 @@ static bool run_case(const case_spec & spec) {
     std::vector<float> ck_exact_repacked_output(ck_output.size());
     std::vector<float> ck_exact_reuse_output(ck_output.size());
     std::vector<float> ck_exact_4m_output(ck_output.size());
+    std::vector<float> ck_exact_8m_output(ck_output.size());
     std::vector<float> bias(spec.with_bias ? spec.n : 0);
     for (int col = 0; col < spec.n && spec.with_bias; ++col) {
         bias[col] = fixture_value(0, col, 0.017f, 0.83f);
@@ -690,6 +787,15 @@ static bool run_case(const case_spec & spec) {
                             spec.n,
                             spec.k,
                             4);
+                    gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_8m(
+                            ck_repack_q8.data(),
+                            packed_x8.data(),
+                            spec.with_bias ? bias.data() : nullptr,
+                            ck_exact_8m_output.data(),
+                            grouped_rows,
+                            spec.n,
+                            spec.k,
+                            4);
                 }
             }
         }
@@ -729,6 +835,11 @@ static bool run_case(const case_spec & spec) {
                         spec.n);
                 passed &= compare_f32("exact split-min 4M x 8N provider",
                         ck_exact_4m_output.data(),
+                        llama_repacked_output.data(),
+                        grouped_rows,
+                        spec.n);
+                passed &= compare_f32("exact split-min 8M x 8N provider",
+                        ck_exact_8m_output.data(),
                         llama_repacked_output.data(),
                         grouped_rows,
                         spec.n);
@@ -812,6 +923,11 @@ int main(int argc, char ** argv) {
         setenv("CK_NUM_THREADS", "4", 1);
     }
 
+    if (argc > 1 && std::strcmp(argv[1], "--perf") == 0) {
+        const bool passed = run_q4k_performance_gate();
+        ck_threadpool_global_destroy();
+        return passed ? 0 : 1;
+    }
     const bool quick = argc > 1 && std::strcmp(argv[1], "--quick") == 0;
     const case_spec quick_cases[] = {
         {"decode_leaf", 1, 64, 256, false, false, false},

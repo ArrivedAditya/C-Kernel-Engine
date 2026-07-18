@@ -2966,6 +2966,18 @@ test-q4k-q8k-llama-packed-quick: $(Q4K_Q8K_LLAMA_PACKED_BIN)
 		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
 		$(Q4K_Q8K_LLAMA_PACKED_BIN) --quick
 
+.PHONY: test-q4k-q8k-llama-performance
+test-q4k-q8k-llama-performance: $(Q4K_Q8K_LLAMA_PACKED_BIN)
+	@echo "Running same-host production-shape Q4_K x Q8_K performance gate against llama.cpp..."
+	CK_NUM_THREADS=$${CK_Q4K_PERF_THREADS:-4} OMP_NUM_THREADS=1 \
+		CK_Q4K_PERF_M=$${CK_Q4K_PERF_M:-1028} \
+		CK_Q4K_PERF_N=$${CK_Q4K_PERF_N:-4096} \
+		CK_Q4K_PERF_K=$${CK_Q4K_PERF_K:-4096} \
+		CK_Q4K_PERF_REPEATS=$${CK_Q4K_PERF_REPEATS:-3} \
+		CK_Q4K_LLAMA_MAX_RATIO=$${CK_Q4K_LLAMA_MAX_RATIO:-2.5} \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+		$(Q4K_Q8K_LLAMA_PACKED_BIN) --perf
+
 .PHONY: test-q6k-q8k-llama-production test-q6k-q8k-llama-production-quick
 test-q6k-q8k-llama-production: $(Q6K_Q8K_LLAMA_PRODUCTION_BIN)
 	@echo "Running Q6_K x Q8_K native production parity against llama.cpp..."
@@ -3059,6 +3071,20 @@ test-q4k-exact-prefill-4m: $(Q4K_EXACT_PREFILL_BIN)
 			CK_NUM_THREADS=4 OMP_NUM_THREADS=1 \
 			LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH \
 			$(Q4K_EXACT_PREFILL_BIN) --provider 4m \
+				--m $$1 --n $$2 --k $$3 --threads $$threads \
+				--warmup 1 --iterations 1; \
+		done; \
+	done
+
+.PHONY: test-q4k-exact-prefill-8m
+test-q4k-exact-prefill-8m: $(Q4K_EXACT_PREFILL_BIN)
+	@set -e; \
+	for threads in 1 4; do \
+		for shape in "3 64 512" "4 64 512" "5 70 512" "8 64 512" "9 512 1024" "17 512 1024" "32 512 1024"; do \
+			set -- $$shape; \
+			CK_NUM_THREADS=4 OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH \
+			$(Q4K_EXACT_PREFILL_BIN) --provider 8m \
 				--m $$1 --n $$2 --k $$3 --threads $$threads \
 				--warmup 1 --iterations 1; \
 		done; \
@@ -3241,6 +3267,7 @@ test-v8-template-circuit-audit:
 test-numerical-contracts: $(LIB)
 	@echo "Running v8 numerical contract validation..."
 	@$(MAKE) --no-print-directory test-q4k-exact-prefill-4m
+	@$(MAKE) --no-print-directory test-q4k-exact-prefill-8m
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_attention_contracts_v8.py
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_numerical_execution_contracts_v8.py
 	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/xray_execution_state_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py

@@ -125,6 +125,13 @@
           "layout": "q4_k_packed_meta_x8",
           "promotion": "parity_and_roofline_gated",
           "requires": ["packed_weight_layout", "prefill_phase", "pairwise_split_min_reduction"]
+        },
+        {
+          "name": "packed_meta_x8_split_min_8m8n",
+          "function": "gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_8m",
+          "layout": "q4_k_packed_meta_x8",
+          "promotion": "parity_and_roofline_gated",
+          "requires": ["packed_weight_layout", "prefill_phase", "pairwise_split_min_reduction"]
         }
       ],
       "dispatch_owner": "gemm_nt_q4_k_q8_k_parallel_dispatch",
