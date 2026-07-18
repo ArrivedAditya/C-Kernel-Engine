@@ -7420,6 +7420,8 @@ profile-v8-likwid:
 			--max-groups "$(V8_LIKWID_MAX_GROUPS)" \
 			--cpus "$(V8_LIKWID_CPUS)" \
 			--threads "$(V8_LIKWID_THREADS)" \
+			--require-output "Loading:" \
+			--require-output "prefill " \
 			$(if $(strip $(V8_LIKWID_PLOT)),--plot-artifact "$(V8_LIKWID_PLOT)",) \
 			-- ./build/ck-cli-v8 "$$runtime_dir/libmodel.so" "$$runtime_dir/weights.bump" \
 				--prompt "The quick brown fox" --max-tokens 32 --timing --quiet-output \
