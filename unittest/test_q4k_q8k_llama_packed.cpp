@@ -42,6 +42,9 @@ void gemm_nt_q4_k_packed_meta_x8_q8_k_superblock_order(
 void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_mreuse(
         const void * a_q8, const void * w_packed_x8, const float * bias, float * out,
         int m, int n, int k, int tile_m, int threads);
+void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_4m(
+        const void * a_q8, const void * w_packed_x8, const float * bias, float * out,
+        int m, int n, int k, int threads);
 void gemm_nt_q4_k_packed_meta_x16_q8_k_llama_order(
         const void * a_q8, const void * w_packed_x8, const float * bias, float * out,
         int m, int n, int k);
@@ -605,6 +608,7 @@ static bool run_case(const case_spec & spec) {
     std::vector<float> ck_repacked_output(ck_output.size());
     std::vector<float> ck_exact_repacked_output(ck_output.size());
     std::vector<float> ck_exact_reuse_output(ck_output.size());
+    std::vector<float> ck_exact_4m_output(ck_output.size());
     std::vector<float> bias(spec.with_bias ? spec.n : 0);
     for (int col = 0; col < spec.n && spec.with_bias; ++col) {
         bias[col] = fixture_value(0, col, 0.017f, 0.83f);
@@ -677,6 +681,15 @@ static bool run_case(const case_spec & spec) {
                             spec.k,
                             2,
                             4);
+                    gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_4m(
+                            ck_repack_q8.data(),
+                            packed_x8.data(),
+                            spec.with_bias ? bias.data() : nullptr,
+                            ck_exact_4m_output.data(),
+                            grouped_rows,
+                            spec.n,
+                            spec.k,
+                            4);
                 }
             }
         }
@@ -711,6 +724,11 @@ static bool run_case(const case_spec & spec) {
             if (grouped_rows > 0) {
                 passed &= compare_f32("exact split-min M-reuse provider",
                         ck_exact_reuse_output.data(),
+                        llama_repacked_output.data(),
+                        grouped_rows,
+                        spec.n);
+                passed &= compare_f32("exact split-min 4M x 8N provider",
+                        ck_exact_4m_output.data(),
                         llama_repacked_output.data(),
                         grouped_rows,
                         spec.n);

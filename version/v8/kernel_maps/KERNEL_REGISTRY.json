@@ -10423,6 +10423,17 @@
                 "packed_weight_layout",
                 "prefill_phase"
               ]
+            },
+            {
+              "name": "packed_meta_x8_split_min_4m8n",
+              "function": "gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_4m",
+              "layout": "q4_k_packed_meta_x8",
+              "promotion": "parity_and_roofline_gated",
+              "requires": [
+                "packed_weight_layout",
+                "prefill_phase",
+                "pairwise_split_min_reduction"
+              ]
             }
           ],
           "dispatch_owner": "gemm_nt_q4_k_q8_k_parallel_dispatch",
@@ -10478,7 +10489,7 @@
           }
         ]
       },
-      "notes": "General matrix multiplication with Q4_K weights and Q8_K activations. The production dispatcher preserves llama.cpp grouped-Q8 split-min arithmetic. Aligned prefill shapes with at least 16 grouped rows use independent two-row by eight-column output tiles to reuse packed weights without changing per-output reduction order; residual rows retain the distinct repacked GEMV contract.",
+      "notes": "General matrix multiplication with Q4_K weights and Q8_K activations. The production dispatcher preserves llama.cpp grouped-Q8 split-min arithmetic. Aligned prefill shapes with at least 16 grouped rows use independent four-row by eight-column output tiles to reuse each Q4 unpack without changing per-output reduction order; residual rows retain the distinct repacked GEMV contract.",
       "call_abi": {
         "version": 1,
         "params": [
