@@ -2442,6 +2442,9 @@ llamacpp-parity-full:
 	@echo "Running native Q4_K/Q6_K x Q8_K production parity matrix..."
 	@$(MAKE) --no-print-directory test-q4q6-llama-production-native
 	@echo ""
+	@echo "Running hash-locked private production replay fixtures when configured..."
+	@$(MAKE) --no-print-directory test-private-numerical-replays
+	@echo ""
 	@echo "Running F16 GEMM production reduction contract against llama.cpp..."
 	@$(MAKE) --no-print-directory test-f16-gemm-llama-contract
 	@echo ""
@@ -2457,6 +2460,22 @@ test-llamacpp-parity-full: llamacpp-parity-full
 test-q8-composed-llama-parity: $(LIB)
 	@CK_BUILD_DIR="$(BUILD_DIR)" LD_LIBRARY_PATH="$(CURDIR)/llama.cpp/build/bin:$${LD_LIBRARY_PATH}" \
 		$(PYTHON) unittest/test_q8_composed_llama_parity.py
+
+.PHONY: test-private-numerical-replay-runner test-private-numerical-replays
+test-private-numerical-replay-runner:
+	@echo "Running private numerical replay manifest/adapter tests..."
+	@$(PYTHON) -m unittest tests.test_v8_numerical_replay_fixtures -v
+
+test-private-numerical-replays:
+	@if [ -z "$${CK_NUMERICAL_REPLAY_MANIFEST:-}" ]; then \
+		$(PYTHON) version/v8/scripts/run_numerical_replay_fixtures_v8.py; \
+	else \
+		$(MAKE) --no-print-directory $(Q4K_Q8K_LLAMA_PACKED_BIN) $(Q6K_Q8K_LLAMA_PRODUCTION_BIN); \
+		$(PYTHON) version/v8/scripts/run_numerical_replay_fixtures_v8.py \
+			--manifest "$${CK_NUMERICAL_REPLAY_MANIFEST}" \
+			--q4-binary "$(Q4K_Q8K_LLAMA_PACKED_BIN)" \
+			--q6-binary "$(Q6K_Q8K_LLAMA_PRODUCTION_BIN)"; \
+	fi
 
 .PHONY: test-f16-gemm-llama-contract
 test-f16-gemm-llama-contract: $(LIB)
@@ -3214,8 +3233,9 @@ test-numerical-contracts: $(LIB)
 	@PYTHONPATH=unittest CK_NUMERICAL_CAPABILITY_REPORT=version/v8/.cache/reports/mrope_capabilities_latest.json $(PYTHON) -c "import test_vision; test_vision.test_mrope_qk_vision_storage_matrix()"
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
+	@$(PYTHON) -m unittest tests.test_v8_numerical_replay_fixtures -v
 	@$(PYTHON) unittest/test_attention_full.py
-	@$(PYTHON) unittest/test_attention_f16_split_kv.py
+	@CK_NUM_THREADS=$${CK_NUMERICAL_CONTRACT_THREADS:-1} $(PYTHON) unittest/test_attention_f16_split_kv.py
 	@mkdir -p build/v8/contracts
 	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3_vl_vision --operation vision_encoder.attention --phase prefill --mode bringup --output build/v8/contracts/qwen3vl-vision-prefill.json >/dev/null
 	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3vl --operation decoder.attention --phase decode --mode bringup --output build/v8/contracts/qwen3vl-decode.json >/dev/null
