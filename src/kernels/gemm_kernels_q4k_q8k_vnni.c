@@ -672,6 +672,100 @@ static inline void accum_q4_k_packed_meta_x8_q8_k_superblock(
     }
 }
 
+/* Four-row form of the exact repacked-matmul contract. Q4 unpacking is shared
+ * across rows, while every output retains the same ascending subblock order,
+ * separate value/minimum accumulators, and final subtraction as the scalar-row
+ * provider. Keeping the tile at four rows bounds the live AVX2 accumulator set. */
+static inline void accum_q4_k_packed_meta_x8_q8_k_superblock_4m(
+        float acc[4][8], float acc_min[4][8],
+        const block_q4_K_packed_meta_x8 *w, int active,
+        const block_q8_K *x[4], int rows)
+{
+#if defined(__AVX2__)
+    float wd[8] = {0};
+    float wdmin[8] = {0};
+    for (int lane = 0; lane < active; ++lane) {
+        wd[lane] = CK_FP16_TO_FP32(w->d[lane]);
+        wdmin[lane] = CK_FP16_TO_FP32(w->dmin[lane]);
+    }
+    const __m256 weight_scale = _mm256_loadu_ps(wd);
+    const __m256 weight_min_scale = _mm256_loadu_ps(wdmin);
+
+    for (int j = 0, is = 0, q_offset = 0;
+         j < QK_K; j += 64, is += 2, q_offset += 32) {
+        int32_t iacc[4][8] = {{0}};
+        int32_t iacc_min[4][8] = {{0}};
+        __m256i q8_lo[4];
+        __m256i q8_hi[4];
+        int32_t bsum_lo[4];
+        int32_t bsum_hi[4];
+
+        for (int row = 0; row < rows; ++row) {
+            q8_lo[row] = _mm256_loadu_si256((const __m256i *)&x[row]->qs[j]);
+            q8_hi[row] = _mm256_loadu_si256((const __m256i *)&x[row]->qs[j + 32]);
+            bsum_lo[row] = (int32_t)x[row]->bsums[j / 16] +
+                            (int32_t)x[row]->bsums[j / 16 + 1];
+            bsum_hi[row] = (int32_t)x[row]->bsums[(j + 32) / 16] +
+                            (int32_t)x[row]->bsums[(j + 32) / 16 + 1];
+        }
+
+        for (int lane = 0; lane < active; ++lane) {
+            const __m256i packed = _mm256_loadu_si256(
+                    (const __m256i *)&w->qs[lane][q_offset]);
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+            const __m256i q4_lo = q4_k_unpack_32_vnni_bytes(packed, 0);
+            const __m256i q4_hi = q4_k_unpack_32_vnni_bytes(packed, 1);
+#else
+            const __m256i q4_lo = q4_k_unpack_32_avx2_bytes(packed, 0);
+            const __m256i q4_hi = q4_k_unpack_32_avx2_bytes(packed, 1);
+#endif
+            const int32_t scale_lo = (int32_t)w->sc[lane][is];
+            const int32_t scale_hi = (int32_t)w->sc[lane][is + 1];
+            const int32_t min_lo = (int32_t)w->m[lane][is];
+            const int32_t min_hi = (int32_t)w->m[lane][is + 1];
+
+            for (int row = 0; row < rows; ++row) {
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
+                const int32_t sum_lo =
+                        dot_q4_k_q8_k_32_vnni_q4v_q8v(q4_lo, q8_lo[row]);
+                const int32_t sum_hi =
+                        dot_q4_k_q8_k_32_vnni_q4v_q8v(q4_hi, q8_hi[row]);
+#else
+                const int32_t sum_lo =
+                        dot_q4_k_q8_k_32_avx2_q4v_q8v(q4_lo, q8_lo[row]);
+                const int32_t sum_hi =
+                        dot_q4_k_q8_k_32_avx2_q4v_q8v(q4_hi, q8_hi[row]);
+#endif
+                iacc[row][lane] = scale_lo * sum_lo + scale_hi * sum_hi;
+                iacc_min[row][lane] =
+                        min_lo * bsum_lo[row] + min_hi * bsum_hi[row];
+            }
+        }
+
+        for (int row = 0; row < rows; ++row) {
+            const __m256 row_scale = _mm256_set1_ps(x[row]->d);
+            const __m256 value = _mm256_fmadd_ps(
+                    _mm256_cvtepi32_ps(
+                            _mm256_loadu_si256((const __m256i *)iacc[row])),
+                    _mm256_mul_ps(weight_scale, row_scale),
+                    _mm256_loadu_ps(acc[row]));
+            const __m256 minimum = _mm256_fmadd_ps(
+                    _mm256_cvtepi32_ps(
+                            _mm256_loadu_si256((const __m256i *)iacc_min[row])),
+                    _mm256_mul_ps(weight_min_scale, row_scale),
+                    _mm256_loadu_ps(acc_min[row]));
+            _mm256_storeu_ps(acc[row], value);
+            _mm256_storeu_ps(acc_min[row], minimum);
+        }
+    }
+#else
+    for (int row = 0; row < rows; ++row) {
+        accum_q4_k_packed_meta_x8_q8_k_superblock(
+                acc[row], acc_min[row], w, active, x[row]);
+    }
+#endif
+}
+
 /* The repacked GEMV provider has a distinct reduction boundary from GEMM:
  * all four 64-element pairs in one Q4_K block are combined in int32 before
  * one value FMA and one minimum FMA update the FP32 accumulators. */
@@ -1789,6 +1883,63 @@ static void gemm_q4_packed_meta_x8_split_min_mreuse_thread_fn(
     }
 }
 
+static void gemm_q4_packed_meta_x8_split_min_4m_thread_fn(
+        int ith, int nth, void *args)
+{
+    gemm_q4_packed_meta_x8_thread_work_t *a =
+            (gemm_q4_packed_meta_x8_thread_work_t *)args;
+    if (!a || ith < 0 || nth <= 0 || ith >= nth) {
+        return;
+    }
+
+    const int row_tiles = (a->M + 3) / 4;
+    const int total = row_tiles * a->groups;
+    for (int job = ith; job < total; job += nth) {
+        const int g = job / row_tiles;
+        const int row_tile = job - g * row_tiles;
+        const int m0 = row_tile * 4;
+        const int rows = (m0 + 4 <= a->M) ? 4 : (a->M - m0);
+        const int n0 = g * 8;
+        const int active = (n0 + 8 <= a->N) ? 8 : (a->N - n0);
+        if (rows <= 0 || active <= 0 || g >= a->groups) {
+            continue;
+        }
+
+        float acc[4][8] = {{0}};
+        float acc_min[4][8] = {{0}};
+        for (int b = 0; b < a->blocks_per_row; ++b) {
+            const block_q4_K_packed_meta_x8 *w_group =
+                    a->W + (size_t)g * (size_t)a->blocks_per_row + (size_t)b;
+            const block_q8_K *x[4] = {NULL, NULL, NULL, NULL};
+            for (int row = 0; row < rows; ++row) {
+                x[row] = a->A + (size_t)(m0 + row) *
+                                  (size_t)a->blocks_per_vec + (size_t)b;
+            }
+            accum_q4_k_packed_meta_x8_q8_k_superblock_4m(
+                    acc, acc_min, w_group, active, x, rows);
+        }
+
+        for (int row = 0; row < rows; ++row) {
+            float values[8];
+#if defined(__AVX2__)
+            _mm256_storeu_ps(values,
+                    _mm256_sub_ps(_mm256_loadu_ps(acc[row]),
+                                  _mm256_loadu_ps(acc_min[row])));
+#else
+            for (int lane = 0; lane < active; ++lane) {
+                values[lane] = acc[row][lane] - acc_min[row][lane];
+            }
+#endif
+            float *c_row = a->C + (size_t)(m0 + row) * (size_t)a->N;
+            for (int lane = 0; lane < active; ++lane) {
+                float value = values[lane];
+                if (a->bias) value += a->bias[n0 + lane];
+                c_row[n0 + lane] = value;
+            }
+        }
+    }
+}
+
 void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mtile(const void *A_q8,
                                                       const void *B_packed_x8,
                                                       const float *bias,
@@ -1920,6 +2071,46 @@ void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_mreuse(
     ck_threadpool_dispatch_n(
             pool, active_threads,
             gemm_q4_packed_meta_x8_split_min_mreuse_thread_fn, &work);
+}
+
+void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_4m(
+        const void *A_q8, const void *B_packed_x8, const float *bias, float *C,
+        int M, int N, int K, int active_threads)
+{
+    if (!A_q8 || !B_packed_x8 || !C || M <= 0 || N <= 0 || K <= 0 ||
+        (K % QK_K) != 0) {
+        return;
+    }
+    ck_threadpool_t *pool = ck_threadpool_global();
+    const int pool_threads = pool ? ck_threadpool_n_threads(pool) : 1;
+    const int groups = (N + 7) / 8;
+    const int jobs = ((M + 3) / 4) * groups;
+    if (active_threads <= 0 || active_threads > pool_threads) {
+        active_threads = pool_threads;
+    }
+    if (active_threads > jobs) active_threads = jobs;
+
+    gemm_q4_packed_meta_x8_thread_work_t work = {
+        .A = (const block_q8_K *)A_q8,
+        .W = (const block_q4_K_packed_meta_x8 *)B_packed_x8,
+        .bias = bias,
+        .C = C,
+        .M = M,
+        .N = N,
+        .K = K,
+        .blocks_per_vec = K / QK_K,
+        .blocks_per_row = K / QK_K,
+        .groups = groups,
+        .tile_m = 4,
+        .jobs = jobs,
+    };
+    if (active_threads <= 1 || !pool) {
+        gemm_q4_packed_meta_x8_split_min_4m_thread_fn(0, 1, &work);
+        return;
+    }
+    ck_threadpool_dispatch_n(
+            pool, active_threads,
+            gemm_q4_packed_meta_x8_split_min_4m_thread_fn, &work);
 }
 
 

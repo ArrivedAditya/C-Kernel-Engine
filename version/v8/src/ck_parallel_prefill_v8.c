@@ -93,6 +93,9 @@ extern void gemm_nt_q4_k_packed_meta_x8_q8_k_threaded_mreuse(const void *A_q8,
 extern void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_mreuse(
     const void *A_q8, const void *B_packed_x8, const float *bias, float *C,
     int M, int N, int K, int tile_m, int threads);
+extern void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_4m(
+    const void *A_q8, const void *B_packed_x8, const float *bias, float *C,
+    int M, int N, int K, int threads);
 extern void gemm_nt_q4_k_packed_meta_x8_q8_k_superblock_order(
     const void *A_q8, const void *B_packed_x8, const float *bias, float *C,
     int M, int N, int K);
@@ -1105,12 +1108,11 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
         }
     } else if (packed_rows > 0) {
         const int active = ck_select_gemm_active_threads(pool, packed_rows, N, K);
-        /* A two-row output tile reuses each packed weight block without
-         * changing any output's reduction order. Keep promotion on the
-         * aligned shapes covered by the production llama.cpp oracle. */
+        /* Four rows share each Q4 unpack while every output preserves the
+         * exact ascending-K split-min reduction contract. */
         if (packed_rows >= 16 && N >= 512 && (N % 16) == 0) {
-            gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_mreuse(
-                    A, packed_x8, bias, C, packed_rows, N, K, 2, active);
+            gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_4m(
+                    A, packed_x8, bias, C, packed_rows, N, K, active);
         } else {
             gemm_args_t args = {
                 .A = A, .B = packed_x8, .bias = bias, .C = C,

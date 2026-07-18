@@ -2812,6 +2812,7 @@ test-gemv-omp-verbose: $(GEMV_OMP_BIN)
 
 THREADPOOL_BIN := $(BUILD_DIR)/test_threadpool_parity
 Q4K_DISPATCH_MATRIX_BIN := $(BUILD_DIR)/bench_q4k_dispatch_matrix
+Q4K_EXACT_PREFILL_BIN := $(BUILD_DIR)/bench_q4k_exact_prefill
 Q4K_Q8K_LLAMA_PACKED_BIN := $(BUILD_DIR)/test_q4k_q8k_llama_packed
 Q6K_Q8K_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q6k_q8k_llama_production
 RMSNORM_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_rmsnorm_llama_production
@@ -3036,6 +3037,33 @@ bench-q4k-dispatch-matrix-quick: $(Q4K_DISPATCH_MATRIX_BIN)
 	@echo "Running Q4_K dispatch matrix benchmark (quick)..."
 	LD_LIBRARY_PATH=$(BUILD_DIR):llama.cpp:$$LD_LIBRARY_PATH $(Q4K_DISPATCH_MATRIX_BIN) --quick
 
+$(Q4K_EXACT_PREFILL_BIN): $(LIB) benchmarks/bench_q4k_exact_prefill.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 -g -fno-omit-frame-pointer -march=native -Iinclude \
+		benchmarks/bench_q4k_exact_prefill.c \
+		-L$(BUILD_DIR) -lckernel_engine -lm -lpthread \
+		-Wl,-rpath,$(BUILD_DIR) \
+		-o $(Q4K_EXACT_PREFILL_BIN)
+
+bench-q4k-exact-prefill: $(Q4K_EXACT_PREFILL_BIN)
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-20} OMP_NUM_THREADS=1 \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH \
+		$(Q4K_EXACT_PREFILL_BIN)
+
+.PHONY: test-q4k-exact-prefill-4m
+test-q4k-exact-prefill-4m: $(Q4K_EXACT_PREFILL_BIN)
+	@set -e; \
+	for threads in 1 4; do \
+		for shape in "3 64 512" "4 64 512" "5 70 512" "9 512 1024" "32 512 1024"; do \
+			set -- $$shape; \
+			CK_NUM_THREADS=4 OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH \
+			$(Q4K_EXACT_PREFILL_BIN) --provider 4m \
+				--m $$1 --n $$2 --k $$3 --threads $$threads \
+				--warmup 1 --iterations 1; \
+		done; \
+	done
+
 $(Q4K_GATEUP_SWIGLU_BIN): $(LIB) benchmarks/bench_q4k_gateup_swiglu.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) -O3 -march=native -Iinclude -I$(V8_SRC_DIR) \
@@ -3212,6 +3240,7 @@ test-v8-template-circuit-audit:
 .PHONY: test-numerical-contracts
 test-numerical-contracts: $(LIB)
 	@echo "Running v8 numerical contract validation..."
+	@$(MAKE) --no-print-directory test-q4k-exact-prefill-4m
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_attention_contracts_v8.py
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_numerical_execution_contracts_v8.py
 	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/xray_execution_state_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py
