@@ -23427,7 +23427,7 @@
           }
         ]
       },
-      "notes": "FP32 RMSNorm matching llama.cpp CPU production reciprocal-square-root evaluation for the active ISA.",
+      "notes": "FP32 RMSNorm matching llama.cpp CPU production 1.0f / sqrtf(mean + eps) evaluation for every ISA.",
       "name": "rmsnorm_forward_llama_production",
       "_source_file": "rmsnorm_forward_llama_production.json"
     },

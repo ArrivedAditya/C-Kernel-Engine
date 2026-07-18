@@ -249,7 +249,10 @@ def _validate_hidden_capture_request(
 
 def _run_llama_greedy_sequence(inputs: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     helper = first_token.compare_first_token_logits_v7.ensure_llama_helper()
-    oracle_evidence = _llama_oracle_evidence(helper)
+    requested_isa = str(getattr(args, "llama_required_isa", "auto") or "auto")
+    oracle_evidence = _llama_oracle_evidence(
+        helper, None if requested_isa == "auto" else requested_isa
+    )
     with tempfile.TemporaryDirectory(prefix="llama_token_replay_v8_seq_") as td:
         tmp = Path(td)
         logits_out = tmp / "llama_final.f32"
@@ -428,7 +431,40 @@ def _runtime_evidence(
     }
 
 
-def _llama_oracle_evidence(helper: Path) -> dict[str, Any]:
+def _validate_llama_oracle_isa(
+    isa: dict[str, Any], required_isa: str | None = None
+) -> str | None:
+    required = (
+        os.environ.get("CK_EXPECT_LLAMA_ISA", "").strip().lower()
+        if required_isa is None
+        else str(required_isa).strip().lower()
+    )
+    if (
+        not required
+        and os.environ.get("CK_REQUIRE_LLAMA_AVX512", "").strip() not in ("", "0")
+    ):
+        required = "avx512"
+    if required not in ("", "avx2", "avx512"):
+        raise RuntimeError(
+            "CK_EXPECT_LLAMA_ISA must be empty, avx2, or avx512; "
+            f"got {required!r}"
+        )
+    if required == "avx512" and not bool(isa.get("avx512")):
+        raise RuntimeError(
+            f"llama.cpp oracle ISA mismatch: required avx512, observed {isa}"
+        )
+    if required == "avx2" and (
+        not bool(isa.get("avx2")) or bool(isa.get("avx512"))
+    ):
+        raise RuntimeError(
+            f"llama.cpp oracle ISA mismatch: required avx2-only, observed {isa}"
+        )
+    return required or None
+
+
+def _llama_oracle_evidence(
+    helper: Path, required_isa: str | None = None
+) -> dict[str, Any]:
     module = first_token.compare_first_token_logits_v7
     llama_root, _lib_dir, libraries = module._llama_helper_paths()
 
@@ -450,9 +486,28 @@ def _llama_oracle_evidence(helper: Path) -> dict[str, Any]:
             "cannot establish llama.cpp oracle commit provenance: "
             + (commit_probe.stderr.strip() or f"git rc={commit_probe.returncode}")
         )
+    isa_probe = subprocess.run(
+        [str(helper), "--isa"], text=True, capture_output=True, check=False
+    )
+    if isa_probe.returncode != 0:
+        raise RuntimeError(
+            "cannot establish llama.cpp oracle ISA provenance: "
+            + (isa_probe.stderr.strip() or f"helper rc={isa_probe.returncode}")
+        )
+    try:
+        isa = json.loads(isa_probe.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"invalid llama.cpp oracle ISA evidence: {isa_probe.stdout!r}"
+        ) from exc
+    if not isinstance(isa, dict):
+        raise RuntimeError(f"invalid llama.cpp oracle ISA evidence: {isa!r}")
+    required_isa = _validate_llama_oracle_isa(isa, required_isa)
     return {
         "root": str(llama_root.resolve()),
         "commit": commit_probe.stdout.strip(),
+        "isa": isa,
+        "required_isa": required_isa,
         "helper": describe(helper),
         "helper_source": describe(module.HELPER_SRC),
         "libraries": [describe(path) for path in libraries],
@@ -1562,6 +1617,12 @@ def main() -> int:
     ap.add_argument("--max-new-tokens", type=int, default=16)
     ap.add_argument("--top-k", type=int, default=16)
     ap.add_argument("--threads", type=int, default=1, help="llama.cpp oracle threads")
+    ap.add_argument(
+        "--llama-required-isa",
+        choices=("auto", "avx2", "avx512"),
+        default="auto",
+        help="Hard-fail unless the llama.cpp production oracle exposes this ISA",
+    )
     ap.add_argument(
         "--ck-threads",
         type=int,

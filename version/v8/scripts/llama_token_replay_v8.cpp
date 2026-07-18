@@ -1,4 +1,5 @@
 #include "llama.h"
+#include "ggml-cpu.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -869,6 +870,15 @@ static int32_t decode_prefix_embeddings(
 }
 
 int main(int argc, char ** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--isa") {
+        std::cout << "{\"avx2\":" << (ggml_cpu_has_avx2() ? "true" : "false")
+                  << ",\"avx_vnni\":" << (ggml_cpu_has_avx_vnni() ? "true" : "false")
+                  << ",\"avx512\":" << (ggml_cpu_has_avx512() ? "true" : "false")
+                  << ",\"avx512_vnni\":" << (ggml_cpu_has_avx512_vnni() ? "true" : "false")
+                  << "}\n";
+        return 0;
+    }
+
     Args args;
     std::string err;
     if (!parse_args(argc, argv, args, err)) {

@@ -140,6 +140,23 @@ class MultitokenEOSContractTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "unknown_compiler_family"):
             self.runner._validate_runtime_compiler_provenance(evidence)
 
+    def test_llama_oracle_isa_accepts_matching_avx512(self) -> None:
+        observed = {"avx2": True, "avx512": True}
+        self.assertEqual(
+            self.runner._validate_llama_oracle_isa(observed, "avx512"),
+            "avx512",
+        )
+
+    def test_llama_oracle_isa_rejects_avx2_for_avx512_claim(self) -> None:
+        observed = {"avx2": True, "avx512": False}
+        with self.assertRaisesRegex(RuntimeError, "oracle ISA mismatch"):
+            self.runner._validate_llama_oracle_isa(observed, "avx512")
+
+    def test_llama_oracle_isa_rejects_avx512_for_avx2_only_claim(self) -> None:
+        observed = {"avx2": True, "avx512": True}
+        with self.assertRaisesRegex(RuntimeError, "avx2-only"):
+            self.runner._validate_llama_oracle_isa(observed, "avx2")
+
     def test_dump_first_divergence_resolves_observed_step(self) -> None:
         report = {"first_divergence": {"step": 60}}
         self.assertEqual(self.runner._resolve_dump_step(report, None, True), 60)

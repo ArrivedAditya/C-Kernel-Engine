@@ -779,7 +779,7 @@ FORCE_BUILD_FLAGS:
 
 $(BUILD_STAMP): FORCE_BUILD_FLAGS | $(BUILD_DIR)
 	@printf 'CC=%s\nCFLAGS=%s\nLDFLAGS=%s\n' "$(CC)" "$(CFLAGS)" "$(LDFLAGS)" > $@.tmp
-	@if [ ! -f $@ ] || ! cmp -s $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi
+	@if [ ! -f $@ ] || ! $(PYTHON) -c 'import pathlib, sys; sys.exit(pathlib.Path(sys.argv[1]).read_bytes() != pathlib.Path(sys.argv[2]).read_bytes())' $@.tmp $@; then mv $@.tmp $@; else rm $@.tmp; fi
 
 $(LIB): $(BUILD_STAMP) $(SRCS) Makefile
 	@mkdir -p $(BUILD_DIR)
