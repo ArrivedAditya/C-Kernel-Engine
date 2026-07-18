@@ -3076,9 +3076,9 @@ $(QWEN3VL_ENCODER_ATTN_BIN): $(LIB) benchmarks/bench_qwen3vl_encoder_attention.c
 
 bench-qwen3vl-encoder-attention: $(QWEN3VL_ENCODER_ATTN_BIN)
 	@echo "Running Qwen3-VL encoder full-attention benchmark..."
-	CK_SPEED_PROFILE=qwen3vl_ocr_xeon_avx512 CK_NUM_THREADS=$${CK_NUM_THREADS:-20} \
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-20} \
 		LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH \
-		$(QWEN3VL_ENCODER_ATTN_BIN) --threads $${CK_NUM_THREADS:-20} --iters $${CK_ATTN_ITERS:-3} --warmup $${CK_ATTN_WARMUP:-1} --tokens $${CK_ATTN_TOKENS:-4232}
+		$(QWEN3VL_ENCODER_ATTN_BIN) --threads $${CK_NUM_THREADS:-20} --iters $${CK_ATTN_ITERS:-3} --warmup $${CK_ATTN_WARMUP:-1} --tokens $${CK_ATTN_TOKENS:-4032}
 
 $(Q80_FP32_GEMM_BIN): $(LIB) benchmarks/bench_q8_0_fp32_gemm.c
 	@mkdir -p $(BUILD_DIR)
