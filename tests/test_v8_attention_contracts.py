@@ -172,6 +172,14 @@ class AttentionContractV8Tests(unittest.TestCase):
             result["kernel"]["selector"],
             "CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64",
         )
+        threading = self.kernels["kernels"][result["kernel"]["id"]][
+            "implementation"
+        ]["threading"]
+        self.assertEqual(threading["runtime"], "ck_threadpool")
+        self.assertEqual(
+            threading["work_partition"], ["independent_heads"]
+        )
+        self.assertEqual(threading["dispatch"], ["ck_threadpool_dispatch_n"])
 
     def test_qwen3vl_decode_keeps_worker_split_reduction(self) -> None:
         result = self.resolve("decode")

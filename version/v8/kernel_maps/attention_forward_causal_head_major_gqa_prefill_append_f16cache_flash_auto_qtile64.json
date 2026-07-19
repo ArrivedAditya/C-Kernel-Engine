@@ -24,9 +24,9 @@
   "implementation": {
     "isa_dispatch": "runtime",
     "threading": {
-      "runtime": "serial",
-      "work_partition": ["serial"],
-      "dispatch": ["inline"],
+      "runtime": "ck_threadpool",
+      "work_partition": ["independent_heads"],
+      "dispatch": ["ck_threadpool_dispatch_n"],
       "reduction_order_effect": "contract_defined"
     }
   },

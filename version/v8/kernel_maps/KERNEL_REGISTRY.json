@@ -2361,12 +2361,12 @@
       "implementation": {
         "isa_dispatch": "runtime",
         "threading": {
-          "runtime": "serial",
+          "runtime": "ck_threadpool",
           "work_partition": [
-            "serial"
+            "independent_heads"
           ],
           "dispatch": [
-            "inline"
+            "ck_threadpool_dispatch_n"
           ],
           "reduction_order_effect": "contract_defined"
         }
