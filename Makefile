@@ -1,24 +1,24 @@
-# Auto-detect Intel oneAPI compilers if available (preferred for performance).
-# Intel compilers (icx/icpx) typically produce faster code for INT8/AVX-512 workloads.
-# (icx-built binaries depend on the Intel runtime, e.g. `libimf.so`.)
+# GCC is the correctness-certified default, even when Intel oneAPI is installed.
+# Qwen3-VL parity demonstrated that compiler-dependent contraction and reduction
+# choices can change logits and eventually greedy tokens. ICX can still be used
+# as an explicit performance experiment (`make CC=icx` or
+# `CK_V8_COMPILER=icx`), but it must pass the same numerical contracts before a
+# provider compiled with it is promoted. ICX-built binaries also depend on the
+# Intel runtime, for example `libimf.so`.
 #
-# To force gcc even with Intel compilers available:
+# Explicit compiler selection:
 #   make CC=gcc
-# To explicitly use Intel oneAPI when auto-detection fails:
 #   make CC=icx CXX=icpx
 
-# Auto-detect Intel oneAPI compilers
+# Detect Intel oneAPI compilers for explicit CC=icx builds.
 ICX_CXX := $(shell command -v icpx 2>/dev/null)
 ICX_CC := $(shell command -v icx 2>/dev/null)
 
-# Default to gcc for portability, but prefer Intel if available
-ifeq ($(origin CC),default)
-    ifneq ($(ICX_CC),)
-        CC := icx
-        CXX := icpx
-    else
-        CC := gcc
-    endif
+# Keep the repository default deterministic and parity-certified. Environment
+# exports do not override this policy; use a command-line assignment for an
+# intentional compiler experiment.
+ifneq ($(filter default environment,$(origin CC)),)
+    CC := gcc
 endif
 
 # Handle CC=cc (some environments export this - reset to gcc)
