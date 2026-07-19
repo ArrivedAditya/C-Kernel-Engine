@@ -884,9 +884,16 @@ def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -
     kernel_lib = BUILD_DIR / "libckernel_engine.so"
     tokenizer_lib = BUILD_DIR / "libckernel_tokenizer.so"
 
+    requested_compiler = (os.environ.get("CK_V8_COMPILER", "") or os.environ.get("CK_V7_COMPILER", "")).strip()
+    compiler = requested_compiler or "gcc"
+    if not shutil.which(compiler):
+        log_error(f"Requested CK_V8_COMPILER not found in PATH: {compiler}")
+        sys.exit(1)
+
     if force or not kernel_lib.exists() or not tokenizer_lib.exists():
         targets = [_path_to_make_target(kernel_lib), _path_to_make_target(tokenizer_lib)]
-        run_cmd(["make", "--no-print-directory", *targets], cwd=PROJECT_ROOT)
+        make_cmd = ["make", "--no-print-directory", f"CC={compiler}"]
+        run_cmd([*make_cmd, *targets], cwd=PROJECT_ROOT)
 
     if lib_path.exists() and not force and lib_path.stat().st_mtime >= model_c_path.stat().st_mtime:
         _sync_runtime_lib(kernel_lib, output_dir / "libckernel_engine.so", "libckernel_engine.so")
@@ -902,15 +909,6 @@ def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -
 
     include_dir = PROJECT_ROOT / "include"
     v8_src = V8_ROOT / "src"
-    compiler = "gcc"
-    requested_compiler = (os.environ.get("CK_V8_COMPILER", "") or os.environ.get("CK_V7_COMPILER", "")).strip()
-    if requested_compiler:
-        if not shutil.which(requested_compiler):
-            log_error(f"Requested CK_V8_COMPILER not found in PATH: {requested_compiler}")
-            sys.exit(1)
-        compiler = requested_compiler
-    elif shutil.which("icx"):
-        compiler = "icx"
     omp_flag = "-qopenmp" if compiler == "icx" else "-fopenmp"
     machine = _host_machine()
     use_openmp = _compiler_supports_openmp(compiler, omp_flag)

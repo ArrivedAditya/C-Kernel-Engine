@@ -1330,6 +1330,18 @@ def _encode_prompt_segment(tokenizer: Any, text: str, *, add_bos: bool) -> list[
 
 def _ensure_engine_lib(openmp: bool = False) -> None:
     cmd = ["make"]
+    requested_compiler = (
+        os.environ.get("CK_V8_COMPILER", "")
+        or os.environ.get("CK_V7_COMPILER", "")
+    ).strip()
+    compiler = requested_compiler or "gcc"
+    if not shutil.which(compiler):
+        raise RuntimeError(
+            f"Requested CK_V8_COMPILER not found in PATH: {compiler}"
+        )
+    # The generated model and the core engine must use one compiler family.
+    # GCC is the parity-certified default; ICX remains an explicit experiment.
+    cmd.append(f"CC={compiler}")
     if openmp:
         # BUILD_STAMP tracks compiler flags, so toggling CK_ENABLE_OPENMP only
         # rebuilds when the cached engine library was built for the wrong mode.

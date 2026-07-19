@@ -299,16 +299,50 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             self.assertEqual(copied.read_bytes(), b"engine")
 
     def test_runtime_preflight_builds_engine_and_tokenizer_together(self) -> None:
-        with mock.patch.object(bridge_runner_v8, "_run") as run:
+        with mock.patch.object(bridge_runner_v8, "_run") as run, \
+             mock.patch.object(bridge_runner_v8.shutil, "which", return_value="/usr/bin/gcc"), \
+             mock.patch.dict(bridge_runner_v8.os.environ, {}, clear=True):
             bridge_runner_v8._ensure_engine_lib(openmp=True)
         run.assert_called_once_with(
             [
                 "make",
+                "CC=gcc",
                 "CK_ENABLE_OPENMP=1",
                 "build/libckernel_engine.so",
                 "build/libckernel_tokenizer.so",
             ]
         )
+
+    def test_runtime_preflight_propagates_requested_compiler_to_make(self) -> None:
+        with mock.patch.object(bridge_runner_v8, "_run") as run, \
+             mock.patch.object(bridge_runner_v8.shutil, "which", return_value="/usr/bin/gcc"), \
+             mock.patch.dict(bridge_runner_v8.os.environ, {"CK_V8_COMPILER": "gcc"}, clear=True):
+            bridge_runner_v8._ensure_engine_lib(openmp=True)
+        run.assert_called_once_with(
+            [
+                "make",
+                "CC=gcc",
+                "CK_ENABLE_OPENMP=1",
+                "build/libckernel_engine.so",
+                "build/libckernel_tokenizer.so",
+            ]
+        )
+
+    def test_runtime_preflight_rejects_missing_requested_compiler(self) -> None:
+        with mock.patch.object(bridge_runner_v8, "_run") as run, \
+             mock.patch.object(bridge_runner_v8.shutil, "which", return_value=None), \
+             mock.patch.dict(bridge_runner_v8.os.environ, {"CK_V8_COMPILER": "missing-cc"}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "CK_V8_COMPILER not found"):
+                bridge_runner_v8._ensure_engine_lib(openmp=True)
+        run.assert_not_called()
+
+    def test_pre_push_defaults_to_gcc_and_makes_icx_explicit(self) -> None:
+        hook = (ROOT / ".githooks" / "pre-push").read_text(encoding="utf-8")
+        self.assertIn("CK_PREPUSH_USE_INTEL=0", hook)
+        self.assertIn('CK_PREPUSH_USE_INTEL=1 is explicitly requested', hook)
+        self.assertIn('export CK_V8_COMPILER="${CK_V8_COMPILER:-gcc}"', hook)
+        self.assertIn('export CK_V8_COMPILER="${CK_V8_COMPILER:-icx}"', hook)
+        self.assertNotIn("Prefer Intel path when available", hook)
 
     def test_engine_has_canonical_soname(self) -> None:
         dynamic = subprocess.run(
@@ -527,7 +561,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         self.assertEqual(env["OMP_NUM_THREADS"], "1")
         self.assertEqual(env["OMP_DYNAMIC"], "FALSE")
 
-    def test_ck_run_v8_step_compile_prefers_icx_when_available(self) -> None:
+    def test_ck_run_v8_step_compile_defaults_to_gcc_when_icx_is_available(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_step_compile_icx_") as tmpdir:
             tmp = Path(tmpdir)
             build_dir = tmp / "build"
@@ -555,9 +589,11 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                     return "/usr/bin/gcc"
                 return None
 
-            with mock.patch.object(ck_run_v8, "BUILD_DIR", build_dir), \
+            with mock.patch.object(ck_run_v8, "PROJECT_ROOT", tmp), \
+                 mock.patch.object(ck_run_v8, "BUILD_DIR", build_dir), \
                  mock.patch.object(ck_run_v8, "run_cmd", side_effect=fake_run_cmd), \
                  mock.patch.object(ck_run_v8, "_sync_runtime_lib", side_effect=fake_sync_runtime_lib), \
+                 mock.patch.object(ck_run_v8, "_compiler_supports_openmp", return_value=True), \
                  mock.patch.object(ck_run_v8.shutil, "which", side_effect=fake_which), \
                  mock.patch.dict(ck_run_v8.os.environ, {}, clear=True):
                 lib_path = ck_run_v8.step_compile(model_c, out_dir, force=False)
@@ -565,8 +601,101 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         self.assertEqual(lib_path, out_dir / "libmodel.so")
         self.assertEqual(len(calls), 1)
         cmd = calls[0]
-        self.assertEqual(cmd[0], "icx")
-        self.assertIn("-qopenmp", cmd)
+        self.assertEqual(cmd[0], "gcc")
+        self.assertIn("-fopenmp", cmd)
+
+    def test_ck_run_v8_step_compile_accepts_explicit_icx(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_step_compile_explicit_icx_") as tmpdir:
+            tmp = Path(tmpdir)
+            build_dir = tmp / "build"
+            build_dir.mkdir(parents=True, exist_ok=True)
+            (build_dir / "libckernel_engine.so").write_bytes(b"so")
+            (build_dir / "libckernel_tokenizer.so").write_bytes(b"so")
+            model_c = tmp / "model_v8.c"
+            model_c.write_text("/* generated */", encoding="utf-8")
+            out_dir = tmp / "run"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            calls: list[list[str]] = []
+
+            def fake_run_cmd(cmd: list[str], *, cwd=None, env=None, capture=False):
+                calls.append([str(part) for part in cmd])
+                Path(cmd[cmd.index("-o") + 1]).write_bytes(b"so")
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            with mock.patch.object(ck_run_v8, "PROJECT_ROOT", tmp), \
+                 mock.patch.object(ck_run_v8, "BUILD_DIR", build_dir), \
+                 mock.patch.object(ck_run_v8, "run_cmd", side_effect=fake_run_cmd), \
+                 mock.patch.object(ck_run_v8, "_sync_runtime_lib"), \
+                 mock.patch.object(ck_run_v8.shutil, "which", return_value="/opt/intel/bin/icx"), \
+                 mock.patch.dict(ck_run_v8.os.environ, {"CK_V8_COMPILER": "icx"}, clear=True):
+                ck_run_v8.step_compile(model_c, out_dir, force=False)
+
+        self.assertEqual(calls[0][0], "icx")
+        self.assertIn("-qopenmp", calls[0])
+
+    def test_ck_run_v8_step_compile_propagates_requested_compiler_to_engine(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_step_compile_gcc_") as tmpdir:
+            tmp = Path(tmpdir)
+            build_dir = tmp / "build"
+            build_dir.mkdir(parents=True, exist_ok=True)
+            model_c = tmp / "model_v8.c"
+            model_c.write_text("/* generated */", encoding="utf-8")
+            out_dir = tmp / "run"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            calls: list[list[str]] = []
+
+            def fake_run_cmd(cmd: list[str], *, cwd=None, env=None, capture=False):
+                call = [str(part) for part in cmd]
+                calls.append(call)
+                if call[0] == "make":
+                    (build_dir / "libckernel_engine.so").write_bytes(b"engine")
+                    (build_dir / "libckernel_tokenizer.so").write_bytes(b"tokenizer")
+                else:
+                    Path(call[call.index("-o") + 1]).write_bytes(b"model")
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            with mock.patch.object(ck_run_v8, "PROJECT_ROOT", tmp), \
+                 mock.patch.object(ck_run_v8, "BUILD_DIR", build_dir), \
+                 mock.patch.object(ck_run_v8, "run_cmd", side_effect=fake_run_cmd), \
+                 mock.patch.object(ck_run_v8, "_sync_runtime_lib"), \
+                 mock.patch.object(ck_run_v8.shutil, "which", return_value="/usr/bin/gcc"), \
+                 mock.patch.dict(ck_run_v8.os.environ, {"CK_V8_COMPILER": "gcc"}, clear=True):
+                ck_run_v8.step_compile(model_c, out_dir, force=True)
+
+        self.assertEqual(calls[0][:3], ["make", "--no-print-directory", "CC=gcc"])
+        self.assertEqual(calls[1][0], "gcc")
+
+    def test_ck_run_v8_step_compile_overrides_exported_cc_with_default_gcc(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_step_compile_exported_cc_") as tmpdir:
+            tmp = Path(tmpdir)
+            build_dir = tmp / "build"
+            build_dir.mkdir(parents=True, exist_ok=True)
+            model_c = tmp / "model_v8.c"
+            model_c.write_text("/* generated */", encoding="utf-8")
+            out_dir = tmp / "run"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            calls: list[list[str]] = []
+
+            def fake_run_cmd(cmd: list[str], *, cwd=None, env=None, capture=False):
+                call = [str(part) for part in cmd]
+                calls.append(call)
+                if call[0] == "make":
+                    (build_dir / "libckernel_engine.so").write_bytes(b"engine")
+                    (build_dir / "libckernel_tokenizer.so").write_bytes(b"tokenizer")
+                else:
+                    Path(call[call.index("-o") + 1]).write_bytes(b"model")
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            with mock.patch.object(ck_run_v8, "PROJECT_ROOT", tmp), \
+                 mock.patch.object(ck_run_v8, "BUILD_DIR", build_dir), \
+                 mock.patch.object(ck_run_v8, "run_cmd", side_effect=fake_run_cmd), \
+                 mock.patch.object(ck_run_v8, "_sync_runtime_lib"), \
+                 mock.patch.object(ck_run_v8.shutil, "which", return_value="/usr/bin/gcc"), \
+                 mock.patch.dict(ck_run_v8.os.environ, {"CC": "icx"}, clear=True):
+                ck_run_v8.step_compile(model_c, out_dir, force=True)
+
+        self.assertEqual(calls[0][:3], ["make", "--no-print-directory", "CC=gcc"])
+        self.assertEqual(calls[1][0], "gcc")
 
     def test_ck_run_v8_parser_accepts_visualizer_and_llama_template(self) -> None:
         with mock.patch.object(ck_run_v8, "_ensure_v8_python_requirements"), \
@@ -2705,23 +2834,24 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 dependency_updated = json.loads(stamp_path.read_text(encoding="utf-8"))
                 self.assertEqual(dependency_updated["compiled_support_source_set"], changed_support)
 
-            compiler_probe = subprocess.CompletedProcess(
-                ["icx-test", "--version"], 0, stdout="icx-test 1.0\n", stderr=""
-            )
-            with mock.patch.dict("os.environ", {"CC": "icx-test"}), \
-                 mock.patch.object(
-                     bridge_runner_v8.subprocess, "run", return_value=compiler_probe
-                 ), mock.patch.object(
-                     bridge_runner_v8, "_run", side_effect=fake_run
-                 ) as run_cmd:
+            compiler_descriptor = {
+                "command": ["icx-test"],
+                "version": "icx-test 1.0",
+            }
+            with mock.patch.object(
+                bridge_runner_v8, "_engine_compiler_argv", return_value=["icx-test"]
+            ), mock.patch.object(
+                bridge_runner_v8,
+                "_engine_compiler_descriptor",
+                return_value=compiler_descriptor,
+            ), mock.patch.object(
+                bridge_runner_v8, "_run", side_effect=fake_run
+            ) as run_cmd:
                 bridge_runner_v8._compile_generated_model(c_path, so_path)
                 run_cmd.assert_called_once()
                 self.assertEqual(run_cmd.call_args.args[0][0], "icx-test")
                 compiler_updated = json.loads(stamp_path.read_text(encoding="utf-8"))
-                self.assertEqual(
-                    compiler_updated["compiler"],
-                    {"command": "icx-test", "version": "icx-test 1.0"},
-                )
+                self.assertEqual(compiler_updated["compiler"], compiler_descriptor)
 
     def test_ck_run_v8_reuses_legacy_v7_hf_gguf_cache(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_legacy_cache_") as tmpdir:

@@ -210,15 +210,11 @@ else
 fi
 
 # Toolchain policy:
-# - Prefer Intel path when available (icx/icpx + oneAPI runtime) for parity with perf builds.
-# - Fall back to portable gcc path when Intel runtime is unavailable.
+# - Use the parity-certified GCC path by default, even when oneAPI is installed.
+# - Exercise ICX only when CK_PREPUSH_USE_INTEL=1 is explicitly requested.
 INTEL_SETVARS="${CK_PREPUSH_INTEL_SETVARS:-/opt/intel/oneapi/setvars.sh}"
 if [ -z "${CK_PREPUSH_USE_INTEL:-}" ]; then
-    if command -v icx >/dev/null 2>&1 && command -v icpx >/dev/null 2>&1 && [ -f "$INTEL_SETVARS" ]; then
-        CK_PREPUSH_USE_INTEL=1
-    else
-        CK_PREPUSH_USE_INTEL=0
-    fi
+    CK_PREPUSH_USE_INTEL=0
 fi
 
 if [ "${CK_PREPUSH_USE_INTEL}" = "1" ]; then
@@ -237,12 +233,14 @@ if [ "${CK_PREPUSH_USE_INTEL}" = "1" ]; then
     export CXX="${CK_PREPUSH_CXX:-icpx}"
     export CK_V6_COMPILER="${CK_V6_COMPILER:-icx}"
     export CK_V7_COMPILER="${CK_V7_COMPILER:-icx}"
+    export CK_V8_COMPILER="${CK_V8_COMPILER:-icx}"
     echo -e "${YELLOW}  ↳ Toolchain: CC=${CC} CXX=${CXX} (Intel mode)${NC}"
 else
     export CC="${CK_PREPUSH_CC:-gcc}"
     export CXX="${CK_PREPUSH_CXX:-g++}"
     export CK_V6_COMPILER="${CK_V6_COMPILER:-gcc}"
     export CK_V7_COMPILER="${CK_V7_COMPILER:-gcc}"
+    export CK_V8_COMPILER="${CK_V8_COMPILER:-gcc}"
     export USE_NATIVE=1
     unset USE_MKL
     unset USE_ONEDNN
