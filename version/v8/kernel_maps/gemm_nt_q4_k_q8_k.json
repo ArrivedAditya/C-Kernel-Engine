@@ -144,6 +144,13 @@
           "function": "gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m",
           "layout": "q4_k_packed_vnni_x8",
           "activation_layout": "canonical_q8_k",
+          "threading": {
+            "default_concurrency": "physical_cores",
+            "capacity": "physical_cores_plus_half_available_smt",
+            "smt_extension": "half_available_siblings",
+            "shape_minimum": {"M": 512, "N": 4096, "K": 4096},
+            "reduction_order_effect": "none"
+          },
           "promotion": "production_same_host_llama_ratio_gated",
           "requires": [
             "avx_vnni",

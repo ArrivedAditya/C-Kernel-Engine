@@ -2972,7 +2972,9 @@ test-q4k-q8k-llama-packed-quick: $(Q4K_Q8K_LLAMA_PACKED_BIN)
 .PHONY: test-q4k-q8k-llama-performance
 test-q4k-q8k-llama-performance: $(Q4K_Q8K_LLAMA_PACKED_BIN)
 	@echo "Running same-host production-shape Q4_K x Q8_K performance gate against llama.cpp..."
-	CK_NUM_THREADS=$${CK_Q4K_PERF_THREADS:-4} OMP_NUM_THREADS=1 \
+	CK_NUM_THREADS=$${CK_Q4K_PERF_DEFAULT_THREADS:-$${CK_Q4K_PERF_THREADS:-4}} \
+		CK_THREADPOOL_CAPACITY=$${CK_Q4K_PERF_CAPACITY_THREADS:-$${CK_Q4K_PERF_DEFAULT_THREADS:-$${CK_Q4K_PERF_THREADS:-4}}} \
+		CK_Q4K_LLAMA_THREADS=$${CK_Q4K_PERF_THREADS:-4} OMP_NUM_THREADS=1 \
 		CK_Q4K_PERF_M=$${CK_Q4K_PERF_M:-1028} \
 		CK_Q4K_PERF_N=$${CK_Q4K_PERF_N:-4096} \
 		CK_Q4K_PERF_K=$${CK_Q4K_PERF_K:-4096} \
