@@ -710,37 +710,30 @@ CKSpacePrefixStyle ck_true_bpe_detect_space_style(CKTrueBPE *bpe) {
  * - Tab (0x09) → ĉ (U+0109, bytes 0xC4 0x89)
  * - Carriage return (0x0D) → č (U+010D, bytes 0xC4 0x8D)
  *
- * The mapping is: byte 0x00-0x20 → U+0100 + byte
- * Regular printable ASCII (0x21-0x7E) stays as-is
+ * Bytes represented directly by Unicode keep their value. The remaining 68
+ * bytes map, in byte order, to U+0100..U+0143. This is the exact GPT-2 table;
+ * it is not equivalent to adding 0x100 to the original byte.
  */
+
+static bool gpt2_byte_is_identity(unsigned int byte) {
+    return (byte >= 0x21 && byte <= 0x7E) ||
+           (byte >= 0xA1 && byte <= 0xAC) ||
+           (byte >= 0xAE && byte <= 0xFF);
+}
+
+static unsigned int gpt2_byte_to_codepoint(unsigned int byte) {
+    if (gpt2_byte_is_identity(byte)) return byte;
+
+    unsigned int mapped_index = 0;
+    for (unsigned int candidate = 0; candidate < byte; candidate++) {
+        if (!gpt2_byte_is_identity(candidate)) mapped_index++;
+    }
+    return 0x100 + mapped_index;
+}
 
 /* Convert a byte to GPT-2 byte-level BPE representation */
 static int byte_to_gpt2(unsigned char byte, char *out) {
-    if (byte >= 0x21 && byte <= 0x7E && byte != '!') {
-        /* Printable ASCII (except control chars) stays as-is */
-        out[0] = (char)byte;
-        return 1;
-    }
-
-    /* Control chars and special bytes map to U+0100 + byte */
-    /* This gives us characters like Ġ (U+0120), Ċ (U+010A), etc. */
-    unsigned int codepoint;
-
-    /* GPT-2's byte_encoder mapping */
-    if (byte == '!') codepoint = byte;
-    else if (byte == '"') codepoint = byte;
-    else if (byte >= '#' && byte <= '~') codepoint = byte;
-    else if (byte == 0x21) codepoint = '!';  /* Already handled above */
-    else {
-        /* Map 0x00-0x20, 0x7F-0xFF to offset range */
-        if (byte <= 0x20) {
-            codepoint = 0x100 + byte;  /* 0x00-0x20 → U+0100-U+0120 */
-        } else if (byte >= 0x7F && byte <= 0xA0) {
-            codepoint = 0x100 + byte;  /* 0x7F-0xA0 → U+017F-U+01A0 */
-        } else {
-            codepoint = byte;  /* Others: 0xA1-0xFF stay as-is */
-        }
-    }
+    unsigned int codepoint = gpt2_byte_to_codepoint(byte);
 
     /* Encode as UTF-8 */
     if (codepoint < 0x80) {
@@ -854,7 +847,15 @@ static bool is_bpe_letter(const char *s, int len) {
         unsigned char c = (unsigned char)s[0];
         return is_letter(c);
     }
-    return false;
+    /* Keep mapped UTF-8 bytes in one word chunk so BPE merges can reconstruct
+     * accented and non-ASCII letters. Exclude GPT-2 whitespace controls. */
+    if (len >= 2 && (unsigned char)s[0] == 0xC4) {
+        unsigned char c1 = (unsigned char)s[1];
+        if (c1 == 0xA0 || c1 == 0x8A || c1 == 0x89 || c1 == 0x8D) {
+            return false; /* space, newline, tab, carriage return */
+        }
+    }
+    return true;
 }
 
 /* Check if this is a GPT-2 encoded digit */
@@ -950,7 +951,8 @@ static int gpt2_pretokenize(const char *text, int text_len, PretokChunk *chunks,
         if (is_bpe_letter(text + pos, char_len)) {
             /* Word without prefix */
             is_word = true;
-        } else if (is_bpe_punct(text + pos, char_len) && !is_gpt2_space(text + pos, text_len - pos)) {
+        } else if (is_word_prefix_char(text + pos, char_len) &&
+                   !is_gpt2_space(text + pos, text_len - pos)) {
             /* Check if punctuation is followed by a letter */
             int after = pos + char_len;
             if (after < text_len) {
@@ -1495,14 +1497,16 @@ static int decode_utf8_scalar(const unsigned char *s, int len, int *out_cp, int 
 
 /* Invert byte_to_gpt2(): convert mapped codepoint back to original byte if possible. */
 static int gpt2_codepoint_to_byte(int cp) {
-    /* 0x00-0x20 -> U+0100-U+0120 */
-    if (cp >= 0x0100 && cp <= 0x0120) return cp - 0x0100;
-    /* 0x7F-0xA0 -> U+017F-U+01A0 */
-    if (cp >= 0x017F && cp <= 0x01A0) return cp - 0x0100;
-    /* 0xA1-0xFF are represented as U+00A1-U+00FF */
-    if (cp >= 0x00A1 && cp <= 0x00FF) return cp;
-    /* Printable ASCII bytes stay as-is. */
-    if (cp >= 0x0021 && cp <= 0x007E) return cp;
+    if (cp >= 0 && cp <= 0xFF && gpt2_byte_is_identity((unsigned int)cp)) {
+        return cp;
+    }
+    if (cp >= 0x100 && cp <= 0x143) {
+        int mapped_index = cp - 0x100;
+        for (int byte = 0; byte <= 0xFF; byte++) {
+            if (gpt2_byte_is_identity((unsigned int)byte)) continue;
+            if (mapped_index-- == 0) return byte;
+        }
+    }
     return -1;
 }
 

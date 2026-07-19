@@ -835,7 +835,7 @@ test-tokenizer-special: $(LIB_TOKENIZER)
 	@echo "========================================"
 	@echo "  Special Token & Byte Decode Tests"
 	@echo "========================================"
-	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_true_bpe_special_tokens.py
+	@CK_TOKENIZER_REQUIRE_HF_ORACLE=1 LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_true_bpe_special_tokens.py
 
 test-tokenizer-spm: $(LIB_TOKENIZER)
 	@echo ""

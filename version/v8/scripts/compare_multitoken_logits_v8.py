@@ -41,10 +41,13 @@ def run_multitoken_parity(
     ck_prefill_mode: str,
     llama_decode_mode: str,
     llama_no_repack: bool,
+    stop_token_ids: set[int] | None = None,
 ) -> dict[str, Any]:
     tokens = [int(t) for t in prompt_tokens]
     steps: list[dict[str, Any]] = []
     first_divergence: dict[str, Any] | None = None
+    matched_stop_token: int | None = None
+    declared_stop_tokens = {int(token_id) for token_id in (stop_token_ids or set())}
 
     for step in range(max(1, int(max_new_tokens))):
         if llama_decode_mode == "hybrid":
@@ -111,6 +114,10 @@ def run_multitoken_parity(
             if append_on_divergence == "stop":
                 break
 
+        if top1_match and ck_next in declared_stop_tokens:
+            matched_stop_token = ck_next
+            break
+
         if top1_match or append_on_divergence == "llama":
             tokens.append(llama_next)
         elif append_on_divergence == "ck":
@@ -133,6 +140,8 @@ def run_multitoken_parity(
         "ck_prefill_mode": str(ck_prefill_mode),
         "llama_decode_mode": str(llama_decode_mode),
         "llama_no_repack": bool(llama_no_repack),
+        "stop_token_ids": sorted(declared_stop_tokens),
+        "matched_stop_token": matched_stop_token,
         "first_divergence": first_divergence,
         "steps": steps,
     }
@@ -175,6 +184,11 @@ def main() -> int:
         help="What to append after first top-1 mismatch.",
     )
     ap.add_argument("--json-out", type=Path, default=None)
+    ap.add_argument(
+        "--stop-tokens",
+        default="",
+        help="comma-separated token IDs; a matched CK/llama token ends parity successfully",
+    )
     ap.add_argument("--summary", action="store_true", help="Print a compact one-line result instead of full JSON.")
     args = ap.parse_args()
 
@@ -198,6 +212,7 @@ def main() -> int:
         ck_prefill_mode=str(args.ck_prefill_mode),
         llama_decode_mode=llama_decode_mode,
         llama_no_repack=bool(args.llama_no_repack),
+        stop_token_ids=set(parse_tokens_csv(args.stop_tokens)) if str(args.stop_tokens).strip() else set(),
     )
 
     if args.json_out:
@@ -223,6 +238,7 @@ def main() -> int:
                 f"llama_mode={llama_decode_mode} "
                 f"ck_mode={args.ck_prefill_mode} "
                 f"llama_no_repack={bool(args.llama_no_repack)} "
+                f"matched_stop_token={report.get('matched_stop_token')} "
                 f"steps={len(report.get('steps', []))} "
                 f"final_prefix_len={len(report.get('final_prefix', []))}"
             )

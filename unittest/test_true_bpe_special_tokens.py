@@ -12,6 +12,9 @@ Tests against HuggingFace for parity when available.
 
 import sys
 import ctypes
+import json
+import os
+import unicodedata
 from pathlib import Path
 
 # Try to load HuggingFace transformers
@@ -70,6 +73,24 @@ lib.ck_true_bpe_vocab_size.restype = ctypes.c_size_t
 lib.ck_true_bpe_vocab_size.argtypes = [ctypes.c_void_p]
 
 CK_SPACE_PREFIX_SPM = 2
+REQUIRE_HF_ORACLE = os.environ.get("CK_TOKENIZER_REQUIRE_HF_ORACLE") == "1"
+_HF_TOKENIZER = None
+
+
+def load_hf_qwen_tokenizer():
+    """Load the independent oracle once; strict gates may not silently skip it."""
+    global _HF_TOKENIZER
+    if _HF_TOKENIZER is not None:
+        return _HF_TOKENIZER
+    if not HAS_HF:
+        print("FAIL: transformers is required by the strict tokenizer parity gate")
+        return None
+    try:
+        _HF_TOKENIZER = AutoTokenizer.from_pretrained("Qwen/Qwen2-0.5B-Instruct")
+    except Exception as exc:
+        print(f"FAIL: Could not load Qwen tokenizer oracle: {exc}")
+        return None
+    return _HF_TOKENIZER
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -93,11 +114,52 @@ def decode_c(bpe, ids: list) -> str:
     return out_buf.value[:out_len].decode('utf-8', errors='replace')
 
 
-def load_vocab_from_hf(bpe, hf_tokenizer):
-    """Load vocabulary from HuggingFace tokenizer into C tokenizer."""
+def decode_c_bytes(bpe, ids: list) -> bytes:
+    """Decode token IDs without applying a lossy UTF-8 error policy."""
+    ids_array = (ctypes.c_int32 * len(ids))(*ids)
+    out_buf = ctypes.create_string_buffer(max(32, len(ids) * 8))
+    out_len = lib.ck_true_bpe_decode(bpe, ids_array, len(ids), out_buf, len(out_buf))
+    return out_buf.raw[:out_len]
+
+
+def gpt2_bytes_to_unicode() -> dict[int, str]:
+    """Independent reference construction used by OpenAI GPT-2 tokenizers."""
+    byte_values = (
+        list(range(ord("!"), ord("~") + 1))
+        + list(range(ord("¡"), ord("¬") + 1))
+        + list(range(ord("®"), ord("ÿ") + 1))
+    )
+    codepoints = byte_values[:]
+    mapped = 0
+    for byte in range(256):
+        if byte in byte_values:
+            continue
+        byte_values.append(byte)
+        codepoints.append(256 + mapped)
+        mapped += 1
+    return dict(zip(byte_values, (chr(cp) for cp in codepoints)))
+
+
+def load_vocab_from_hf(bpe, hf_tokenizer, *, load_merges: bool = False):
+    """Load Hugging Face vocabulary and, when requested, ordered BPE merges."""
     vocab = hf_tokenizer.get_vocab()
     for token, id_val in vocab.items():
         lib.ck_true_bpe_add_token(bpe, token.encode('utf-8'), id_val, 0.0)
+
+    if not load_merges:
+        return
+
+    backend = json.loads(hf_tokenizer.backend_tokenizer.to_str())
+    for priority, pair in enumerate(backend.get("model", {}).get("merges", [])):
+        if isinstance(pair, str):
+            left, right = pair.split(" ", 1)
+        else:
+            left, right = pair
+        left_id = vocab.get(left, -1)
+        right_id = vocab.get(right, -1)
+        merged_id = vocab.get(left + right, -1)
+        if left_id >= 0 and right_id >= 0 and merged_id >= 0:
+            lib.ck_true_bpe_add_merge(bpe, left_id, right_id, merged_id, priority)
 
 
 def test_late_spm_space_prefix_detection():
@@ -136,24 +198,6 @@ def test_late_spm_space_prefix_detection():
     finally:
         lib.ck_true_bpe_free(bpe)
 
-    # Load merges if available (BPE tokenizers)
-    if hasattr(hf_tokenizer, 'backend_tokenizer'):
-        try:
-            model = hf_tokenizer.backend_tokenizer.model
-            if hasattr(model, 'get_vocab') and hasattr(model, 'merges'):
-                # Get merges as (left, right) pairs
-                merges = model.merges
-                for priority, (left, right) in enumerate(merges):
-                    left_id = lib.ck_true_bpe_lookup(bpe, left.encode('utf-8'))
-                    right_id = lib.ck_true_bpe_lookup(bpe, right.encode('utf-8'))
-                    merged = left + right
-                    merged_id = lib.ck_true_bpe_lookup(bpe, merged.encode('utf-8'))
-                    if left_id >= 0 and right_id >= 0 and merged_id >= 0:
-                        lib.ck_true_bpe_add_merge(bpe, left_id, right_id, merged_id, priority)
-        except Exception as e:
-            print(f"  Warning: Could not load merges: {e}")
-
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEST: SPECIAL TOKEN ENCODING
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -164,17 +208,11 @@ def test_special_token_encoding():
     print("TEST: Special Token Encoding")
     print("="*60)
 
-    if not HAS_HF:
-        print("SKIP: HuggingFace not available")
-        return True
-
     # Load Qwen tokenizer (has ChatML special tokens)
     print("\nLoading Qwen2-0.5B-Instruct tokenizer...")
-    try:
-        hf = AutoTokenizer.from_pretrained("Qwen/Qwen2-0.5B-Instruct")
-    except Exception as e:
-        print(f"SKIP: Could not load Qwen tokenizer: {e}")
-        return True
+    hf = load_hf_qwen_tokenizer()
+    if hf is None:
+        return not REQUIRE_HF_ORACLE
 
     # Create C tokenizer
     bpe = lib.ck_true_bpe_create()
@@ -261,17 +299,11 @@ def test_gpt2_byte_decoding():
     print("TEST: GPT-2 Byte Decoding")
     print("="*60)
 
-    if not HAS_HF:
-        print("SKIP: HuggingFace not available")
-        return True
-
     # Load Qwen tokenizer (uses GPT-2 style byte encoding)
     print("\nLoading Qwen2-0.5B-Instruct tokenizer...")
-    try:
-        hf = AutoTokenizer.from_pretrained("Qwen/Qwen2-0.5B-Instruct")
-    except Exception as e:
-        print(f"SKIP: Could not load Qwen tokenizer: {e}")
-        return True
+    hf = load_hf_qwen_tokenizer()
+    if hf is None:
+        return not REQUIRE_HF_ORACLE
 
     # Create C tokenizer
     bpe = lib.ck_true_bpe_create()
@@ -282,7 +314,7 @@ def test_gpt2_byte_decoding():
     try:
         # Load vocab
         print("Loading vocabulary...")
-        load_vocab_from_hf(bpe, hf)
+        load_vocab_from_hf(bpe, hf, load_merges=True)
         print(f"  Loaded {lib.ck_true_bpe_vocab_size(bpe)} tokens")
 
         # Test cases with special characters
@@ -292,6 +324,16 @@ def test_gpt2_byte_decoding():
             ("Line1\n\nLine2", "double newline"),
             ("Hello World", "regular space"),
             ("Path/to/file", "slash"),
+            ("café naïve résumé", "accented Latin"),
+            ("日本語 中文 한국어", "multilingual CJK"),
+            ("Привет мир Ελληνικά", "Cyrillic and Greek"),
+            ("مرحبا بالعالم नमस्ते", "Arabic and Devanagari"),
+            ("e\u0301 != é", "combining character"),
+            ("🎉🚀👍🏽", "emoji and skin tone"),
+            ("👨‍👩‍👧‍👦 🇨🇦", "joined emoji and flag"),
+            ("  leading\tspace\ntrailing  ", "mixed whitespace"),
+            ("“quotes”—€12.50…", "Unicode punctuation and currency"),
+            ('printf("%s\\n", name); // π≈3.14159', "code and symbols"),
         ]
 
         print("\nTesting GPT-2 byte decoding:")
@@ -303,11 +345,15 @@ def test_gpt2_byte_decoding():
             hf_ids = hf.encode(text, add_special_tokens=False)
             hf_decoded = hf.decode(hf_ids)
 
+            # C encoding must select the same tokens. A C-only round trip can
+            # hide a symmetrically incorrect byte map.
+            c_ids = encode_c(bpe, unicodedata.normalize("NFC", text))
+
             # Decode with C tokenizer (using same IDs from HF)
             c_decoded = decode_c(bpe, hf_ids)
 
             # Compare
-            match = c_decoded == hf_decoded
+            match = c_ids == hf_ids and c_decoded == hf_decoded
             status = "PASS" if match else "FAIL"
             if not match:
                 all_pass = False
@@ -315,11 +361,44 @@ def test_gpt2_byte_decoding():
             print(f"\n  {status}: {desc}")
             print(f"    Original: {text!r}")
             print(f"    IDs: {hf_ids}")
+            print(f"    C IDs match: {c_ids == hf_ids}")
             print(f"    HF decode:  {hf_decoded!r}")
             print(f"    C decode:   {c_decoded!r}")
 
         return all_pass
 
+    finally:
+        lib.ck_true_bpe_free(bpe)
+
+
+def test_exhaustive_gpt2_byte_table():
+    """Every GPT-2 mapped codepoint must recover its original byte exactly."""
+    print("\n" + "="*60)
+    print("TEST: Exhaustive GPT-2 Byte Table")
+    print("="*60)
+
+    bpe = lib.ck_true_bpe_create()
+    if not bpe:
+        print("FAIL: Could not create C tokenizer")
+        return False
+
+    try:
+        byte_map = gpt2_bytes_to_unicode()
+        for byte in range(256):
+            token = byte_map[byte].encode("utf-8")
+            if lib.ck_true_bpe_add_token(bpe, token, byte, 0.0) != 0:
+                print(f"FAIL: Could not add byte token {byte}")
+                return False
+
+        decoded = decode_c_bytes(bpe, list(range(256)))
+        expected = bytes(range(256))
+        if decoded != expected:
+            first = next(i for i, (actual, wanted) in enumerate(zip(decoded, expected)) if actual != wanted)
+            print(f"FAIL: byte {first:#04x} decoded as {decoded[first]:#04x}")
+            return False
+
+        print("PASS: all 256 GPT-2 byte mappings decode exactly")
+        return True
     finally:
         lib.ck_true_bpe_free(bpe)
 
@@ -334,17 +413,11 @@ def test_chat_template_encoding():
     print("TEST: Chat Template Encoding")
     print("="*60)
 
-    if not HAS_HF:
-        print("SKIP: HuggingFace not available")
-        return True
-
     # Load Qwen tokenizer
     print("\nLoading Qwen2-0.5B-Instruct tokenizer...")
-    try:
-        hf = AutoTokenizer.from_pretrained("Qwen/Qwen2-0.5B-Instruct")
-    except Exception as e:
-        print(f"SKIP: Could not load Qwen tokenizer: {e}")
-        return True
+    hf = load_hf_qwen_tokenizer()
+    if hf is None:
+        return not REQUIRE_HF_ORACLE
 
     # Create C tokenizer
     bpe = lib.ck_true_bpe_create()
@@ -355,7 +428,7 @@ def test_chat_template_encoding():
     try:
         # Load vocab
         print("Loading vocabulary...")
-        load_vocab_from_hf(bpe, hf)
+        load_vocab_from_hf(bpe, hf, load_merges=True)
 
         # Register special tokens
         special_tokens = ["<|im_start|>", "<|im_end|>", "<|endoftext|>"]
@@ -432,6 +505,7 @@ def main():
     # Run tests
     results.append(("Special Token Encoding", test_special_token_encoding()))
     results.append(("GPT-2 Byte Decoding", test_gpt2_byte_decoding()))
+    results.append(("Exhaustive GPT-2 Byte Table", test_exhaustive_gpt2_byte_table()))
     results.append(("Late SPM Space Prefix Detection", test_late_spm_space_prefix_detection()))
     results.append(("Chat Template Encoding", test_chat_template_encoding()))
 

@@ -478,11 +478,53 @@ class TestCKChatRuntimeContract(unittest.TestCase):
         orig_sample = ck_chat.sample_top_k
         try:
             ck_chat.sample_top_k = lambda *args, **kwargs: next(sample_ids)
-            with redirect_stdout(io.StringIO()):
+            with redirect_stdout(io.StringIO()) as buf:
                 out = ck_chat.generate(FakeModel(), "hi", max_tokens=3, show_stats=False)
         finally:
             ck_chat.sample_top_k = orig_sample
         self.assertEqual(out, "éA")
+        self.assertNotIn("\\uFFFD", buf.getvalue())
+        self.assertNotIn("\ufffd", buf.getvalue())
+
+    def test_generate_drops_incomplete_utf8_fragment_at_eos(self) -> None:
+        class FakeModel:
+            has_kv_decode = False
+            eos_tokens = {0}
+            vocab_size = 32
+            context_window = 32
+
+            def encode(self, text: str):
+                return [9]
+
+            def is_eos_token(self, token_id: int) -> bool:
+                return token_id == 0
+
+            def forward(self, token_ids):
+                return np.zeros((32,), dtype=np.float32)
+
+            def decode(self, token_ids):
+                return "Thanks! \ufffd" if token_ids else ""
+
+        sample_ids = iter([1, 0])
+        orig_sample = ck_chat.sample_top_k
+        try:
+            ck_chat.sample_top_k = lambda *args, **kwargs: next(sample_ids)
+            with redirect_stdout(io.StringIO()) as buf:
+                out = ck_chat.generate(FakeModel(), "hi", max_tokens=2, show_stats=False)
+        finally:
+            ck_chat.sample_top_k = orig_sample
+
+        self.assertEqual(out, "Thanks!")
+        self.assertNotIn("\\uFFFD", buf.getvalue())
+        self.assertNotIn("\ufffd", buf.getvalue())
+
+    def test_tokenizer_input_normalization_is_nfc(self) -> None:
+        decomposed = "e\u0301"
+        self.assertEqual(ck_chat._normalize_tokenizer_input(decomposed, "gpt2"), "é")
+        self.assertEqual(
+            ck_chat._normalize_tokenizer_input(decomposed, "sentencepiece"),
+            decomposed,
+        )
 
     def test_generate_trims_obvious_repeated_suffix_loop(self) -> None:
         repeated = "Is there anything you want to know?"

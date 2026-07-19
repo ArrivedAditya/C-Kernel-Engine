@@ -368,6 +368,12 @@ TEST_SUITES = {
 
 # Make targets to run (non-Python tests)
 MAKE_TARGETS = {
+    "tokenizer_byte_fallback_parity": {
+        "name": "Tokenizer Byte/UTF-8 Parity",
+        "category": "inference",
+        "target": "test-tokenizer-special",
+        "timeout_sec": 180,
+    },
     "litmus": {
         "name": "Litmus Test",
         "category": "parity",

@@ -59,6 +59,14 @@ class RegressionHarnessV8Tests(unittest.TestCase):
         result = regression.assess_coherence("Hello! How can I assist you today?", heuristics)
         self.assertEqual(result["status"], regression.PASS)
 
+    def test_coherence_rejects_actual_and_literal_replacement_markers(self) -> None:
+        heuristics = {"max_replacement_chars": 0}
+        for text in ("broken \ufffd text", r"broken \uFFFD text", r"broken \ufffd text"):
+            with self.subTest(text=text):
+                result = regression.assess_coherence(text, heuristics)
+                self.assertEqual(result["status"], regression.FAIL)
+                self.assertGreater(result["metrics"]["replacement_chars"], 0)
+
     def test_manifest_files_are_consistent(self) -> None:
         prompts = regression.load_prompts(ROOT / "version" / "v8" / "regression" / "prompts.json")
         families = regression.load_families(ROOT / "version" / "v8" / "regression" / "families.json", prompts)
