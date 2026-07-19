@@ -123,8 +123,19 @@ jobs:
             git apply ../patches/ck-engine-parity-bench.patch || echo "ck-engine-parity-bench.patch already applied or not needed"
           fi
 
-          # Build
-          cmake -B build -DGGML_CPU=ON -DLLAMA_BUILD_TESTS=OFF -DLLAMA_CURL=OFF -DCMAKE_BUILD_TYPE=Release
+          # Build a controlled oracle. A native Sapphire Rapids build enables
+          # AVX512-FP16 and silently changes ggml_vec_dot_f16 from the FP32
+          # accumulation contract used by CKE to FP16 accumulation.
+          ggml_isa=(-DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_F16C=ON -DGGML_FMA=ON)
+          if grep -qw avx512f /proc/cpuinfo; then
+            ggml_isa+=(-DGGML_AVX512=ON)
+          fi
+          cmake -B build \
+            -DGGML_CPU=ON \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_CURL=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            "${ggml_isa[@]}"
           cmake --build build -j$(nproc)
 
           # Build kernel test library
@@ -137,6 +148,9 @@ jobs:
               -Wl,-rpath,'$ORIGIN/build/bin' || echo "Kernel test lib failed"
           fi
           cd ..
+          echo "V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT=${GITHUB_WORKSPACE}/llama.cpp" >> "${GITHUB_ENV}"
+          echo "CK_LLAMA_CPP_ROOT=${GITHUB_WORKSPACE}/llama.cpp" >> "${GITHUB_ENV}"
+          echo "CK_REQUIRE_LLAMA_FP32_F16_DOT=1" >> "${GITHUB_ENV}"
 
       - name: Run Kernel Parity Tests
         run: |

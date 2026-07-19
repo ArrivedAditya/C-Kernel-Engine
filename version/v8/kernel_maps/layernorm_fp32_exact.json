@@ -48,7 +48,7 @@
     }
   ],
   "constraints": {
-    "notes": "Exact LayerNorm variant matching the scalar ggml accumulation order."
+    "notes": "Exact LayerNorm variant with scalar FP64 mean accumulation and ggml's ordered eight-lane AVX reduction for centered variance. The reduction identity is preserved on wider x86 ISAs."
   },
   "impl": {
     "function": "layernorm_naive_serial_matched_precision",
@@ -98,5 +98,5 @@
   "tests": {
     "unit": ["unittest/test_layernorm.py"]
   },
-  "notes": "GGML-compatible contracted LayerNorm used for parity-sensitive FP32 graphs."
+  "notes": "GGML-compatible contracted LayerNorm used for parity-sensitive FP32 graphs. AVX-512 hosts retain the declared ordered AVX reduction instead of selecting a wider reduction implicitly."
 }

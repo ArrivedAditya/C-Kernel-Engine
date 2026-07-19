@@ -72,14 +72,10 @@ static void layernorm_forward_ggml_exact(const float *input,
 
         double var_acc = 0.0;
         int i = 0;
-#if defined(__AVX512F__) && defined(__AVX512DQ__)
-        for (; i + 15 < d_model; i += 16) {
-            __m512 val = _mm512_sub_ps(_mm512_loadu_ps(x + i),
-                                       _mm512_set1_ps(mean));
-            _mm512_storeu_ps(y + i, val);
-            var_acc += (double)_mm512_reduce_add_ps(_mm512_mul_ps(val, val));
-        }
-#elif defined(__AVX2__) && defined(__FMA__)
+#if defined(__AVX2__) && defined(__FMA__)
+        /* This provider promises ggml's ordered AVX2 reduction. Keep that
+         * arithmetic identity on AVX-512 hosts instead of widening it based
+         * on the compiler target. */
         for (; i + 7 < d_model; i += 8) {
             __m256 val = _mm256_sub_ps(_mm256_loadu_ps(x + i),
                                        _mm256_set1_ps(mean));

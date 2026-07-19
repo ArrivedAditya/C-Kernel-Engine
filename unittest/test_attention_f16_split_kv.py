@@ -184,8 +184,39 @@ def _llama_root():
     return Path(value).resolve() if value else (Path(__file__).resolve().parents[1] / "llama.cpp")
 
 
+def _require_llama_fp32_f16_dot_contract(root):
+    if os.environ.get("CK_REQUIRE_LLAMA_FP32_F16_DOT", "").strip() in ("", "0"):
+        return
+    cache = root / "build" / "CMakeCache.txt"
+    if not cache.is_file():
+        raise RuntimeError(
+            "FP16 attention oracle provenance requires build/CMakeCache.txt"
+        )
+    settings = {}
+    for line in cache.read_text(encoding="utf-8", errors="replace").splitlines():
+        if ":BOOL=" in line:
+            key, value = line.split(":BOOL=", 1)
+            settings[key] = value.strip().upper()
+    if settings.get("GGML_NATIVE") != "OFF":
+        raise RuntimeError(
+            "FP16 attention oracle requires GGML_NATIVE=OFF so AVX512-FP16 "
+            "cannot silently replace the declared FP32 accumulation contract"
+        )
+    if settings.get("GGML_AVX2") != "ON" or settings.get("GGML_F16C") != "ON":
+        raise RuntimeError(
+            "FP16 attention oracle requires controlled GGML_AVX2=ON and "
+            "GGML_F16C=ON providers"
+        )
+    if "mavx512fp16" in cache.read_text(encoding="utf-8", errors="replace").lower():
+        raise RuntimeError(
+            "FP16 attention oracle contains -mavx512fp16, which changes the "
+            "declared FP16-storage/FP32-accumulation contract"
+        )
+
+
 def _ensure_llama_helper():
     root = _llama_root()
+    _require_llama_fp32_f16_dot_contract(root)
     bin_dir = root / "build" / "bin"
     required = [bin_dir / "libggml.so", bin_dir / "libggml-cpu.so", bin_dir / "libggml-base.so"]
     if not (root / "ggml" / "include" / "ggml.h").is_file() or not all(p.is_file() for p in required):
