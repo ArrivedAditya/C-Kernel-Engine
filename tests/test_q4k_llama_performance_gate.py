@@ -118,8 +118,21 @@ class Q4KLlamaPerformanceGateTests(unittest.TestCase):
         source = (ROOT / "version" / "v8" / "src" / "ck_parallel_prefill_v8.c").read_text(
             encoding="utf-8"
         )
-        self.assertIn("ck_get_q4k_packed_vnni_x8_cached", source)
-        self.assertIn("gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m", source)
+        dispatcher = re.search(
+            r"void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch\("
+            r".*?^}",
+            source,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(dispatcher)
+        body = dispatcher.group(0)
+        self.assertIn("ck_get_q4k_packed_vnni_x8_cached", body)
+        self.assertIn("ck_q4k_packed_vnni_x8_available()", body)
+        self.assertIn(
+            "gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m",
+            body,
+        )
+        self.assertNotIn("#if defined(__AVXVNNI__)", body)
         self.assertIn("ck_select_q4k_vnni_active_threads", source)
         self.assertIn("ck_threadpool_capacity(pool)", source)
         self.assertNotIn("pack_q8_k_rows_x4", source)

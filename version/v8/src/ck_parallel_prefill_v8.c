@@ -101,6 +101,7 @@ extern void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_8m(
     const void *A_q8, const void *B_packed_x8, const float *bias, float *C,
     int M, int N, int K, int threads);
 extern size_t q4_k_packed_vnni_x8_block_size(void);
+extern int ck_q4k_packed_vnni_x8_available(void);
 extern void pack_q4_k_to_packed_vnni_x8(
     const void *src, void *dst, int N, int K);
 extern void gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
@@ -1182,13 +1183,11 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
             (!pool || ck_threadpool_n_threads(pool) <= 1 ||
              ck_should_run_gemm_serial(pool, packed_rows, N, K));
     void *packed_vnni = NULL;
-#if defined(__AVXVNNI__) || \
-    (defined(__AVX512VNNI__) && defined(__AVX512VL__))
     if (!serial && packed_rows >= 16 && N >= 512 && K >= 1024 &&
+        ck_q4k_packed_vnni_x8_available() &&
         !ck_env_enabled("CK_DISABLE_Q4K_VNNI_X8_PREFILL")) {
         packed_vnni = ck_get_q4k_packed_vnni_x8_cached(B, N, K);
     }
-#endif
     void *packed_x8 = NULL;
     if (!packed_vnni || packed_rows < M) {
         packed_x8 = ck_get_q4k_packed_meta_x8_cached(B, N, K);
@@ -1197,6 +1196,9 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
 
     if (packed_rows > 0 &&
         serial) {
+        ck_q4k_prefill_debug_dispatch(
+                (N % 16) == 0 ? "pairwise_serial_x16" : "pairwise_serial_x8",
+                packed_rows, N, K, 1);
         if ((N % 16) == 0) {
             gemm_nt_q4_k_packed_meta_x16_q8_k_llama_order(
                 A, packed_x8, bias, C, packed_rows, N, K);
@@ -1211,8 +1213,6 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
          * reduction. Packing is cached by weight identity and does not occur
          * in the steady-state call. Exact 8M remains the allocation/ISA
          * fallback and retains the same pairwise split-min contract. */
-#if defined(__AVXVNNI__) || \
-    (defined(__AVX512VNNI__) && defined(__AVX512VL__))
         if (packed_vnni) {
             active = ck_select_q4k_vnni_active_threads(
                     pool, packed_rows, N, K);
@@ -1220,11 +1220,14 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
             gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
                     A, packed_vnni, bias, C, packed_rows, N, K, active);
         } else
-#endif
         if (packed_rows >= 16 && N >= 512 && (N % 16) == 0) {
+            ck_q4k_prefill_debug_dispatch(
+                    "pairwise_x8_8m", packed_rows, N, K, active);
             gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_8m(
                     A, packed_x8, bias, C, packed_rows, N, K, active);
         } else {
+            ck_q4k_prefill_debug_dispatch(
+                    "pairwise_row_split", packed_rows, N, K, active);
             gemm_args_t args = {
                 .A = A, .B = packed_x8, .bias = bias, .C = C,
                 .M = packed_rows, .N = N, .K = K, .A_row_bytes = row_bytes
@@ -1238,6 +1241,8 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
      * repacked matrix kernel and routes residual rows through its repacked
      * GEMV order. The two reduction boundaries are numerically distinct. */
     if (packed_rows < M) {
+        ck_q4k_prefill_debug_dispatch(
+                "pairwise_residual_gemv", M - packed_rows, N, K, 1);
         gemm_nt_q4_k_packed_meta_x8_q8_k_gemv_order(
             (const char *)A + (size_t)packed_rows * row_bytes,
             packed_x8, bias, C + (size_t)packed_rows * (size_t)N,
