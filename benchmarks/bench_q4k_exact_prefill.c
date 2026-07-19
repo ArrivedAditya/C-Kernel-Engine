@@ -21,6 +21,12 @@ extern void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_4m(
 extern void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_8m(
         const void *a_q8, const void *b_packed_x8, const float *bias, float *c,
         int m, int n, int k, int active_threads);
+extern size_t q4_k_packed_vnni_x8_block_size(void);
+extern void pack_q4_k_to_packed_vnni_x8(
+        const void *src, void *dst, int n, int k);
+extern void gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
+        const void *a_q8, const void *b_packed_vnni_x8, const float *bias,
+        float *c, int m, int n, int k, int active_threads);
 
 static uint32_t rng_state = 0x12345678u;
 
@@ -73,6 +79,7 @@ static void *alloc_aligned(size_t bytes)
 static void run_provider(const char *provider,
                          const void *a_q8,
                          const void *weights_packed,
+                         const void *weights_packed_vnni,
                          const float *bias,
                          float *output,
                          int m, int n, int k,
@@ -86,6 +93,12 @@ static void run_provider(const char *provider,
     if (strcmp(provider, "8m") == 0) {
         gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_8m(
                 a_q8, weights_packed, bias, output, m, n, k, threads);
+        return;
+    }
+    if (strcmp(provider, "4m-vnni-x8") == 0) {
+        gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
+                a_q8, weights_packed_vnni, bias, output,
+                m, n, k, threads);
         return;
     }
     gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_mreuse(
@@ -117,7 +130,8 @@ int main(int argc, char **argv)
 
     if ((k % QK_K) != 0 || m <= 0 || n <= 0 ||
         (strcmp(provider, "baseline") != 0 && strcmp(provider, "4m") != 0 &&
-         strcmp(provider, "8m") != 0)) {
+         strcmp(provider, "8m") != 0 &&
+         strcmp(provider, "4m-vnni-x8") != 0)) {
         fprintf(stderr, "invalid shape M=%d N=%d K=%d\n", m, n, k);
         return 2;
     }
@@ -128,16 +142,22 @@ int main(int argc, char **argv)
     const size_t w_packed_bytes = (size_t)((n + 7) / 8) *
                                   (size_t)(k / QK_K) *
                                   q4_k_packed_meta_x8_block_size();
+    const size_t w_packed_vnni_bytes = (size_t)((n + 7) / 8) *
+                                       (size_t)(k / QK_K) *
+                                       q4_k_packed_vnni_x8_block_size();
     const size_t c_count = (size_t)m * (size_t)n;
 
     float *a = alloc_aligned(a_count * sizeof(float));
     void *a_q8 = alloc_aligned(a_q8_bytes);
     block_q4_K *weights = alloc_aligned(w_count * sizeof(block_q4_K));
     void *weights_packed = alloc_aligned(w_packed_bytes);
+    void *weights_packed_vnni = alloc_aligned(w_packed_vnni_bytes);
     float *bias = alloc_aligned((size_t)n * sizeof(float));
     float *output = alloc_aligned(c_count * sizeof(float));
     float *reference = alloc_aligned(c_count * sizeof(float));
-    if (!a || !a_q8 || !weights || !weights_packed || !bias || !output || !reference) {
+    if (!a || !a_q8 || !weights || !weights_packed ||
+        !weights_packed_vnni ||
+        !bias || !output || !reference) {
         fprintf(stderr, "allocation failed\n");
         return 2;
     }
@@ -151,6 +171,7 @@ int main(int argc, char **argv)
                           (size_t)(k / QK_K) * sizeof(block_q8_K), k);
     }
     pack_q4_k_to_packed_meta_x8(weights, weights_packed, n, k);
+    pack_q4_k_to_packed_vnni_x8(weights, weights_packed_vnni, n, k);
 
     ck_threadpool_t *pool = ck_threadpool_global();
     if (!pool) {
@@ -158,10 +179,12 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    if (strcmp(provider, "4m") == 0 || strcmp(provider, "8m") == 0) {
-        run_provider("baseline", a_q8, weights_packed, bias, reference,
+    if (strcmp(provider, "baseline") != 0) {
+        run_provider("baseline", a_q8, weights_packed,
+                     weights_packed_vnni, bias, reference,
                      m, n, k, tile_m, threads);
-        run_provider(provider, a_q8, weights_packed, bias, output,
+        run_provider(provider, a_q8, weights_packed,
+                     weights_packed_vnni, bias, output,
                      m, n, k, tile_m, threads);
         if (memcmp(reference, output, c_count * sizeof(float)) != 0) {
             size_t first = 0;
@@ -174,13 +197,15 @@ int main(int argc, char **argv)
     }
 
     for (int i = 0; i < warmup; ++i) {
-        run_provider(provider, a_q8, weights_packed, bias, output,
+        run_provider(provider, a_q8, weights_packed,
+                     weights_packed_vnni, bias, output,
                      m, n, k, tile_m, threads);
     }
 
     const double start = now_ms();
     for (int i = 0; i < iterations; ++i) {
-        run_provider(provider, a_q8, weights_packed, bias, output,
+        run_provider(provider, a_q8, weights_packed,
+                     weights_packed_vnni, bias, output,
                      m, n, k, tile_m, threads);
     }
     const double elapsed_ms = (now_ms() - start) / (double)iterations;
@@ -198,6 +223,7 @@ int main(int argc, char **argv)
     free(a_q8);
     free(weights);
     free(weights_packed);
+    free(weights_packed_vnni);
     free(bias);
     free(output);
     free(reference);

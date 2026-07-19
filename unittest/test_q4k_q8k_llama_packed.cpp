@@ -49,6 +49,13 @@ void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_4m(
 void gemm_nt_q4_k_packed_meta_x8_q8_k_split_min_threaded_8m(
         const void * a_q8, const void * w_packed_x8, const float * bias, float * out,
         int m, int n, int k, int threads);
+size_t q4_k_packed_vnni_x8_block_size(void);
+int ck_q4k_packed_vnni_x8_available(void);
+void pack_q4_k_to_packed_vnni_x8(const void * src, void * dst, int n, int k);
+void gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
+        const void * a_q8, const void * w_packed_vnni_x8,
+        const float * bias, float * out,
+        int m, int n, int k, int threads);
 void gemm_nt_q4_k_packed_meta_x16_q8_k_llama_order(
         const void * a_q8, const void * w_packed_x8, const float * bias, float * out,
         int m, int n, int k);
@@ -706,6 +713,7 @@ static bool run_case(const case_spec & spec) {
     std::vector<float> ck_exact_reuse_output(ck_output.size());
     std::vector<float> ck_exact_4m_output(ck_output.size());
     std::vector<float> ck_exact_8m_output(ck_output.size());
+    std::vector<float> ck_exact_vnni_x8_output(ck_output.size());
     std::vector<float> bias(spec.with_bias ? spec.n : 0);
     for (int col = 0; col < spec.n && spec.with_bias; ++col) {
         bias[col] = fixture_value(0, col, 0.017f, 0.83f);
@@ -798,6 +806,23 @@ static bool run_case(const case_spec & spec) {
                             4);
                 }
             }
+            if (ck_q4k_packed_vnni_x8_available()) {
+                const size_t packed_blocks =
+                        static_cast<size_t>((spec.n + 7) / 8) *
+                        static_cast<size_t>(spec.k / QK_K);
+                std::vector<uint8_t> packed_vnni_x8(
+                        packed_blocks * q4_k_packed_vnni_x8_block_size());
+                pack_q4_k_to_packed_vnni_x8(
+                        weights.data(), packed_vnni_x8.data(), spec.n, spec.k);
+                const int grouped_rows = spec.m - (spec.m % 4);
+                if (grouped_rows > 0) {
+                    gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
+                            ck_repack_q8.data(), packed_vnni_x8.data(),
+                            spec.with_bias ? bias.data() : nullptr,
+                            ck_exact_vnni_x8_output.data(), grouped_rows,
+                            spec.n, spec.k, 4);
+                }
+            }
         }
     }
     if (spec.with_bias) {
@@ -859,6 +884,14 @@ static bool run_case(const case_spec & spec) {
                         tail_rows,
                         spec.n,
                         false);
+            }
+        }
+        if (spec.production_dispatch && ck_q4k_packed_vnni_x8_available()) {
+            const int grouped_rows = spec.m - (spec.m % 4);
+            if (grouped_rows > 0) {
+                passed &= compare_f32("exact VNNI 4M x 8N provider",
+                        ck_exact_vnni_x8_output.data(),
+                        llama_repacked_output.data(), grouped_rows, spec.n);
             }
         }
         compare_f32("canonical vs repack control",

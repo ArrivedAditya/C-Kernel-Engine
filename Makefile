@@ -2822,6 +2822,7 @@ Q4Q6_LLAMA_CPP_BIN_DIR ?= $(Q4Q6_LLAMA_CPP_DIR)/build/bin
 Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ := $(BUILD_DIR)/test_q4k_q8k_llama_prefill.o
 Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ := $(BUILD_DIR)/test_q4k_q8k_llama_decode.o
 Q4K_Q8K_ISA_AVX2_OBJ := $(BUILD_DIR)/test_q4k_q8k_isa_avx2.o
+Q4K_Q8K_ISA_AVXVNNI_OBJ := $(BUILD_DIR)/test_q4k_q8k_isa_avxvnni.o
 Q4K_Q8K_ISA_AVX512_OBJ := $(BUILD_DIR)/test_q4k_q8k_isa_avx512.o
 Q6K_Q8K_ISA_AVX2_OBJ := $(BUILD_DIR)/test_q6k_q8k_isa_avx2.o
 Q6K_Q8K_ISA_AVX512_OBJ := $(BUILD_DIR)/test_q6k_q8k_isa_avx512.o
@@ -2868,8 +2869,10 @@ ifeq ($(IS_X86_ARCH),)
 	@echo "Q4_K x Q8_K ISA compile matrix: SKIP ($(UNAME_M))"
 else
 	@mkdir -p $(BUILD_DIR)
-	$(CC) -O3 -fPIC -Iinclude -mavx2 -mfma -mavxvnni -mf16c -mssse3 \
+	$(CC) -O3 -fPIC -Iinclude -mavx2 -mfma -mf16c -mssse3 \
 		-c src/kernels/gemm_kernels_q4k_q8k_vnni.c -o $(Q4K_Q8K_ISA_AVX2_OBJ)
+	$(CC) -O3 -fPIC -Iinclude -mavx2 -mfma -mavxvnni -mf16c -mssse3 \
+		-c src/kernels/gemm_kernels_q4k_q8k_vnni.c -o $(Q4K_Q8K_ISA_AVXVNNI_OBJ)
 	$(CC) -O3 -fPIC -Iinclude -mavx512f -mavx512bw -mavx512dq -mavx512vl \
 		-mfma -mavx512vnni -mavx512bf16 -mf16c -mssse3 \
 		-c src/kernels/gemm_kernels_q4k_q8k_vnni.c -o $(Q4K_Q8K_ISA_AVX512_OBJ)
@@ -2878,7 +2881,7 @@ else
 	$(CC) -O3 -fPIC -Iinclude -mavx512f -mavx512bw -mavx512dq -mavx512vl \
 		-mfma -mavx512vnni -mavx512bf16 -mf16c -mssse3 \
 		-c src/kernels/gemm_kernels_q6k_q8k.c -o $(Q6K_Q8K_ISA_AVX512_OBJ)
-	@echo "Q4_K/Q6_K x Q8_K ISA compile matrix: PASS (AVX2, AVX-512/VNNI)"
+	@echo "Q4_K/Q6_K x Q8_K ISA compile matrix: PASS (AVX2, AVX-VNNI, AVX-512/VNNI)"
 endif
 
 $(Q4K_Q8K_LLAMA_PACKED_BIN): $(LIB) unittest/test_q4k_q8k_llama_packed.cpp $(Q4K_Q8K_LLAMA_PACKED_PREFILL_OBJ) $(Q4K_Q8K_LLAMA_PACKED_DECODE_OBJ)
@@ -3090,6 +3093,24 @@ test-q4k-exact-prefill-8m: $(Q4K_EXACT_PREFILL_BIN)
 		done; \
 	done
 
+.PHONY: test-q4k-exact-prefill-vnni-x8
+test-q4k-exact-prefill-vnni-x8: $(Q4K_EXACT_PREFILL_BIN)
+	@if grep -qw avx_vnni /proc/cpuinfo 2>/dev/null; then \
+		set -e; \
+		for threads in 1 4; do \
+			for shape in "3 64 512" "4 64 512" "5 70 512" "17 513 1024" "32 512 1024"; do \
+				set -- $$shape; \
+				CK_NUM_THREADS=4 OMP_NUM_THREADS=1 \
+				LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH \
+				$(Q4K_EXACT_PREFILL_BIN) --provider 4m-vnni-x8 \
+					--m $$1 --n $$2 --k $$3 --threads $$threads \
+					--warmup 1 --iterations 1; \
+			done; \
+		done; \
+	else \
+		echo "Q4_K VNNI x8 exact provider: SKIP (AVX-VNNI unavailable)"; \
+	fi
+
 $(Q4K_GATEUP_SWIGLU_BIN): $(LIB) benchmarks/bench_q4k_gateup_swiglu.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) -O3 -march=native -Iinclude -I$(V8_SRC_DIR) \
@@ -3268,6 +3289,7 @@ test-numerical-contracts: $(LIB)
 	@echo "Running v8 numerical contract validation..."
 	@$(MAKE) --no-print-directory test-q4k-exact-prefill-4m
 	@$(MAKE) --no-print-directory test-q4k-exact-prefill-8m
+	@$(MAKE) --no-print-directory test-q4k-exact-prefill-vnni-x8
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_attention_contracts_v8.py
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_numerical_execution_contracts_v8.py
 	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/xray_execution_state_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py
