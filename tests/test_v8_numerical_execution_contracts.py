@@ -283,6 +283,61 @@ class NumericalExecutionContractTests(unittest.TestCase):
                     semantics["reduction"]["order"], "left_to_right"
                 )
 
+    def test_qwen35_circuit_resolves_exact_recurrent_silu(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.recurrent_silu",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "recurrent_silu_llama_avx2_fp32_output",
+                )
+                self.assertEqual(
+                    plan["kernel"]["id"], "recurrent_silu_forward_ggml"
+                )
+                self.assertEqual(
+                    plan["kernel"]["function"], "recurrent_silu_forward_ggml"
+                )
+                semantics = plan["contract"]["semantics"]
+                self.assertEqual(semantics["storage"]["weight"], "none")
+                self.assertEqual(semantics["reduction"]["kind"], "none")
+                self.assertEqual(
+                    semantics["compute"]["evaluation_order"],
+                    "llama_avx2_vector_expf_then_add_then_divide_with_scalar_expf_tail",
+                )
+
+    def test_qwen35_circuit_resolves_exact_swiglu(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.swiglu",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "swiglu_fp32_ggml_vector_exp_fp32_output",
+                )
+                self.assertEqual(plan["kernel"]["id"], "swiglu_forward_ggml")
+                self.assertEqual(
+                    plan["kernel"]["function"], "swiglu_forward_ggml"
+                )
+
     def test_qwen35_circuit_resolves_exact_recurrent_qkv_projection(self):
         circuit_doc = resolver.load_json(
             ROOT / "version" / "v8" / "circuits" / "qwen35.json"

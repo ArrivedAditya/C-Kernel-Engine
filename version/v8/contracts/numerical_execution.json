@@ -250,6 +250,30 @@
       "position_transform": null,
       "description": "llama.cpp CPU L2 normalization: FP32 products, ascending FP64 sum, and epsilon as a minimum denominator."
     },
+    "recurrent_silu_llama_avx2_fp32_output": {
+      "operator_family": "recurrent_silu",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "evaluation_order": "llama_avx2_vector_expf_then_add_then_divide_with_scalar_expf_tail"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["vector_exponential", "denominator_add", "output_divide", "output_store"]
+      },
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "llama.cpp x86 AVX2 SiLU provider, including its vector exponential approximation and scalar tail."
+    },
     "text_mrope_fp32_input_fp32_compute_fp32_output": {
       "operator_family": "text_mrope",
       "status": "validated",

@@ -25,6 +25,8 @@ if LIB is None:  # pragma: no cover
     sys.exit(0)
 
 LIB.recurrent_silu_forward.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int]
+LIB.recurrent_silu_forward_ggml.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int]
+LIB.swiglu_forward_ggml.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int]
 LIB.recurrent_silu_backward.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.c_int]
 
 
@@ -57,6 +59,22 @@ class TestRecurrentSilu(unittest.TestCase):
 
     def test_medium_case(self) -> None:
         self._run_case(11, 128, 17)
+
+    def _run_ggml_exact_case(self, rows: int, dim: int, seed: int) -> None:
+        rng = np.random.default_rng(seed)
+        x = (1.75 * rng.standard_normal((rows, dim))).astype(np.float32)
+        ck_out = np.zeros_like(x)
+        packed = np.concatenate([x, np.ones_like(x)], axis=1)
+        oracle = np.zeros_like(x)
+        LIB.recurrent_silu_forward_ggml(_as_ptr(x), _as_ptr(ck_out), rows, dim)
+        LIB.swiglu_forward_ggml(_as_ptr(packed), _as_ptr(oracle), rows, dim)
+        np.testing.assert_array_equal(ck_out, oracle)
+
+    def test_llama_avx2_vector_and_scalar_tail_are_exact(self) -> None:
+        self._run_ggml_exact_case(3, 131, 29)
+
+    def test_llama_qwen35_production_width_is_exact(self) -> None:
+        self._run_ggml_exact_case(1, 6144, 31)
 
 
 if __name__ == "__main__":

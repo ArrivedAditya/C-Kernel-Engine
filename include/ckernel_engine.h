@@ -1956,6 +1956,10 @@ void recurrent_silu_forward(const float *x,
                             float *out,
                             int rows,
                             int dim);
+void recurrent_silu_forward_ggml(const float *x,
+                                 float *out,
+                                 int rows,
+                                 int dim);
 
 // Backward for recurrent_silu_forward.
 void recurrent_silu_backward(const float *d_out,
