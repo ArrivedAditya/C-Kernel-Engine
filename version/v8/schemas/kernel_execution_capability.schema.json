@@ -39,6 +39,43 @@
             }
           }
         },
+        "work_partition_routing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["selection", "numerical_effect", "dispatch_function", "routes"],
+          "properties": {
+            "selection": {"const": "shape_threshold"},
+            "numerical_effect": {"const": "none"},
+            "dispatch_function": {"type": "string", "minLength": 1},
+            "routes": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "work_partition", "predicate"],
+                "properties": {
+                  "id": {"type": "string", "minLength": 1},
+                  "work_partition": {"enum": ["independent_rows", "independent_columns", "output_tiles"]},
+                  "predicate": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "min_m": {"type": "integer", "minimum": 1},
+                      "max_m": {"type": "integer", "minimum": 1},
+                      "min_n": {"type": "integer", "minimum": 1},
+                      "max_n": {"type": "integer", "minimum": 1},
+                      "min_k": {"type": "integer", "minimum": 1},
+                      "max_k": {"type": "integer", "minimum": 1},
+                      "fallback": {"const": true}
+                    },
+                    "minProperties": 1
+                  }
+                }
+              }
+            }
+          }
+        },
         "weight_storage": {
           "type": "object",
           "additionalProperties": false,

@@ -3175,7 +3175,7 @@ bench-q8-0-fp32-gemm-quick: $(Q80_FP32_GEMM_BIN)
 
 # Representative Gemma4-sized Q6_K x Q8_K prefill dispatch benchmark.
 # This is benchmark/dispatch coverage, not a correctness gate for every PR.
-# It compares token-row splitting against the opt-in 2D tile scheduler on
+# It compares token-row splitting against the wide-shape 2D tile scheduler on
 # M=1024, N=2560, K=10240 unless overridden by CLI args.
 test-q6k-prefill-tile-bench: $(LIB)
 	@echo "Running Q6_K x Q8_K prefill tile benchmark (Gemma4-sized)..."
@@ -3186,6 +3186,13 @@ test-q6k-prefill-tile-bench-quick: $(LIB)
 	@echo "Running Q6_K x Q8_K prefill tile benchmark (quick)..."
 	CK_Q6K_Q8K_SIMD=1 CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
 		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_q6k_prefill_tile.py --iters 2 --warmup 1 --threads $${CK_NUM_THREADS:-12}
+
+test-q6k-prefill-routing-exact: $(LIB)
+	@echo "Running Q6_K x Q8_K wide-route exactness gate..."
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=1 \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_q6k_prefill_tile.py \
+		--mode default --m 128 --n 2048 --k 8192 --threads $${CK_NUM_THREADS:-12} \
+		--warmup 0 --iters 1 --verify-row-exact --engine-lib $(LIB)
 
 test-q6k-prefill-dispatch-sweep: $(LIB)
 	@echo "Running Q6_K x Q8_K prefill dispatch sweep..."
@@ -3292,6 +3299,7 @@ test-numerical-contracts: $(LIB)
 	@$(MAKE) --no-print-directory test-q4k-exact-prefill-4m
 	@$(MAKE) --no-print-directory test-q4k-exact-prefill-8m
 	@$(MAKE) --no-print-directory test-q4k-exact-prefill-vnni-x8
+	@$(MAKE) --no-print-directory test-q6k-prefill-routing-exact
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_attention_contracts_v8.py
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_numerical_execution_contracts_v8.py
 	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/xray_execution_state_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py
@@ -3495,7 +3503,7 @@ qwen3vl-ocr-perf-analyze:
 		--json-out build/qwen3vl_ocr_perf_pipeline.json \
 		--md-out build/qwen3vl_ocr_perf_pipeline.md
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q4k-gateup-swiglu-x16-chunk4-quick bench-qwen3vl-encoder-attention bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick qwen3vl-ocr-perf-pipeline qwen3vl-ocr-perf-analyze qwen3vl-encoder-prefix-parity
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q4k-gateup-swiglu-x16-chunk4-quick bench-qwen3vl-encoder-attention bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-routing-exact test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick qwen3vl-ocr-perf-pipeline qwen3vl-ocr-perf-analyze qwen3vl-encoder-prefix-parity
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

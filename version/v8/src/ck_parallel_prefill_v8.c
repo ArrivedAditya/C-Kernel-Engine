@@ -16,7 +16,7 @@
  *
  * Q6_K x Q8_K prefill scheduling note:
  * ------------------------------------
- * The optional 2D scheduler is a load-balancing tool, not a universally faster
+ * The 2D scheduler is a load-balancing tool, not a universally faster
  * Q6 kernel. Row splitting reuses each Q8_K activation row across the full N
  * output dimension. Splitting N into tiles creates more independent jobs, but
  * rereads the same activation tile once per N tile and adds scheduler work.
@@ -27,9 +27,10 @@
  *   - Nanbeige/large-Q6-like MLP-down (N=2560, K=10240): 2D was faster from
  *     M=16 onward, +5% to +23% depending on M.
  *
- * Therefore CK_ENABLE_Q6K_Q8K_2D_PREFILL is still opt-in, and the dispatcher
- * additionally gates it to wide Q6 shapes by default. Use
- * CK_FORCE_Q6K_Q8K_2D_PREFILL=1 only for benchmarking raw 2D behavior.
+ * Production therefore follows the kernel-map shape contract: wide Q6 shapes
+ * use output tiles, while narrow shapes retain independent-row scheduling.
+ * CK_FORCE_Q6K_Q8K_2D_PREFILL and CK_DISABLE_Q6K_Q8K_2D_PREFILL are benchmark
+ * controls only; generated model code does not need either flag.
  *
  * Reuses the same global thread pool as decode (ck_threadpool_global()).
  */
@@ -670,7 +671,7 @@ static int ck_should_use_q6k_q8k_2d_prefill(const ck_threadpool_t *pool,
                                              int M, int N, int K,
                                              int tile_m, int tile_n)
 {
-    if (!ck_env_enabled("CK_ENABLE_Q6K_Q8K_2D_PREFILL")) return 0;
+    if (ck_env_enabled("CK_DISABLE_Q6K_Q8K_2D_PREFILL")) return 0;
     if (ck_q6k_q8k_2d_prefill_forced()) return 1;
     if (!pool || ck_threadpool_n_threads(pool) <= 1) return 0;
     if (M <= 1 || N <= 0 || K <= 0) return 0;
@@ -685,9 +686,9 @@ static int ck_should_use_q6k_q8k_2d_prefill(const ck_threadpool_t *pool,
 
     if (jobs < active * 2) return 0;
 
-    /* 2D tiling pays off only when the output dimension is wide enough that
-     * N-side job balance offsets the extra activation rereads. Narrow MLP-down
-     * shapes such as Qwen2/Gemma/Qwen3.5 remain faster with row splitting. */
+    /* Keep this predicate synchronized with implementation.work_partition_routing
+     * in gemm_nt_q6_k_q8_k.json. The map owns the public capability; this
+     * dispatch function implements that resolved shape contract. */
     if (N < 2048 || K < 8192) return 0;
 
     return 1;

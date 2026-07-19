@@ -20,6 +20,7 @@ import argparse
 import ctypes
 import os
 import random
+import shutil
 import struct
 import subprocess
 import sys
@@ -62,14 +63,13 @@ def _make_q6_rows(rows: int, blocks: int, rng: random.Random) -> bytearray:
 
 
 def _compiler() -> str:
-    for env_name in ('CC',):
-        cc = os.getenv(env_name)
-        if cc:
-            return cc
-    for cc in ('icx', 'clang', 'gcc'):
-        if subprocess.run(['sh', '-c', f'command -v {cc} >/dev/null 2>&1']).returncode == 0:
-            return cc
-    return 'cc'
+    cc = os.getenv('CC')
+    if cc:
+        return cc
+    gcc = shutil.which('gcc')
+    if gcc:
+        return gcc
+    raise RuntimeError('gcc is required for production-parity Q6 benchmarking; set CC to override explicitly')
 
 
 def _ensure_dispatch_lib(engine_lib: Path, model_lib: Path | None) -> Path:
@@ -79,15 +79,18 @@ def _ensure_dispatch_lib(engine_lib: Path, model_lib: Path | None) -> Path:
         return model_lib
 
     engine_dir = engine_lib.resolve().parent
+    compiler = _compiler()
+    compiler_id = Path(compiler).name.replace('/', '_').replace(' ', '_')
     suffix = engine_dir.name.replace('/', '_').replace(' ', '_')
-    out = DEFAULT_DISPATCH_LIB.with_name(f'bench_q6k_prefill_dispatch_{suffix}.so')
+    out = DEFAULT_DISPATCH_LIB.with_name(f'bench_q6k_prefill_dispatch_{suffix}_{compiler_id}.so')
     src = ROOT / 'version' / 'v8' / 'src' / 'ck_parallel_prefill_v8.c'
-    if out.exists() and out.stat().st_mtime >= src.stat().st_mtime:
+    newest_input = max(src.stat().st_mtime, engine_lib.stat().st_mtime)
+    if out.exists() and out.stat().st_mtime >= newest_input:
         return out
 
     out.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        _compiler(),
+        compiler,
         '-O3',
         '-fPIC',
         '-shared',
@@ -110,6 +113,18 @@ def _ensure_dispatch_lib(engine_lib: Path, model_lib: Path | None) -> Path:
 
 
 def _run_one(args: argparse.Namespace) -> int:
+    # Make each benchmark mode explicit. Production chooses from the kernel-map
+    # shape contract, while these controls preserve measurable A/B baselines.
+    if args.mode == 'row':
+        os.environ['CK_DISABLE_Q6K_Q8K_2D_PREFILL'] = '1'
+        os.environ.pop('CK_FORCE_Q6K_Q8K_2D_PREFILL', None)
+    elif args.mode == '2d':
+        os.environ['CK_FORCE_Q6K_Q8K_2D_PREFILL'] = '1'
+        os.environ.pop('CK_DISABLE_Q6K_Q8K_2D_PREFILL', None)
+    else:
+        os.environ.pop('CK_FORCE_Q6K_Q8K_2D_PREFILL', None)
+        os.environ.pop('CK_DISABLE_Q6K_Q8K_2D_PREFILL', None)
+
     if args.k % QK_K != 0:
         raise ValueError(f'--k must be divisible by {QK_K}')
     blocks = args.k // QK_K
@@ -159,6 +174,19 @@ def _run_one(args: argparse.Namespace) -> int:
     print('times_ms=' + ','.join(f'{t * 1000.0:.2f}' for t in times))
     print(f'best_ms={min(times) * 1000.0:.2f} avg_ms={sum(times) * 1000.0 / len(times):.2f}')
     print(f'checksum={checksum:.6f}')
+
+    if args.verify_row_exact:
+        observed = bytes(c)
+        reference = (ctypes.c_float * (args.m * args.n))()
+        os.environ['CK_DISABLE_Q6K_Q8K_2D_PREFILL'] = '1'
+        os.environ.pop('CK_FORCE_Q6K_Q8K_2D_PREFILL', None)
+        fn(a_buf, b_buf, None, reference, args.m, args.n, args.k)
+        reference_bytes = bytes(reference)
+        if observed != reference_bytes:
+            differing = sum(a != b for a, b in zip(observed, reference_bytes))
+            print(f'row_exact=FAIL differing_bytes={differing}')
+            return 1
+        print(f'row_exact=PASS bytes={len(observed)}')
     return 0
 
 
@@ -184,7 +212,7 @@ def _run_compare(args: argparse.Namespace) -> int:
     print(row.stdout.rstrip())
 
     env2 = env.copy()
-    env2['CK_ENABLE_Q6K_Q8K_2D_PREFILL'] = '1'
+    env2['CK_FORCE_Q6K_Q8K_2D_PREFILL'] = '1'
     env2.setdefault('CK_PREFILL_TILE_M', str(args.tile_m))
     env2.setdefault('CK_PREFILL_TILE_N', str(args.tile_n))
     tiled_cmd = base.copy()
@@ -208,7 +236,9 @@ def main() -> int:
     ap.add_argument('--tile-n', type=int, default=256)
     ap.add_argument('--engine-lib', type=Path, default=ROOT / 'build' / 'libckernel_engine.so')
     ap.add_argument('--model-lib', type=Path, default=None)
-    ap.add_argument('--mode', choices=('compare', 'row', '2d'), default='compare')
+    ap.add_argument('--mode', choices=('compare', 'default', 'row', '2d'), default='compare')
+    ap.add_argument('--verify-row-exact', action='store_true',
+                    help='compare every output byte with forced independent-row scheduling')
     args = ap.parse_args()
 
     if args.mode == 'compare':

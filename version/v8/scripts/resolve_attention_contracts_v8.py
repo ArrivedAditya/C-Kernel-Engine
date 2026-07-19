@@ -335,6 +335,76 @@ def validate_quantized_linear_kernel_capability(
             "The kernel map and numerical contract disagree about reduction-order effects.",
             "correct the map or define a distinct numerical contract.",
         )
+    routing = kernel["implementation"].get("work_partition_routing")
+    if routing is not None:
+        if routing["dispatch_function"] != production["threaded_function"]:
+            raise hard_contract_fault(
+                f"kernel {kernel_id!r} work-partition router names the wrong dispatch function",
+                f"routing={routing['dispatch_function']!r}, production={production['threaded_function']!r}",
+                "route every performance partition through the exact resolved threaded provider.",
+            )
+        supported = set(threading["work_partition"])
+        seen_ids = set()
+        fallback_indexes = []
+        bounded = []
+        for index, route in enumerate(routing["routes"]):
+            route_id = route["id"]
+            if route_id in seen_ids:
+                raise hard_contract_fault(
+                    f"kernel {kernel_id!r} repeats work-partition route {route_id!r}",
+                    "Route IDs must identify one measured implementation choice.",
+                    "give every shape route a unique ID.",
+                )
+            seen_ids.add(route_id)
+            if route["work_partition"] not in supported:
+                raise hard_contract_fault(
+                    f"kernel {kernel_id!r} routes to unsupported work partition {route['work_partition']!r}",
+                    f"supported={sorted(supported)}",
+                    "advertise and test the partition before making it shape-eligible.",
+                )
+            predicate = route["predicate"]
+            if predicate.get("fallback") is True:
+                if len(predicate) != 1:
+                    raise hard_contract_fault(
+                        f"kernel {kernel_id!r} fallback route also declares shape bounds",
+                        f"route={route}",
+                        "make fallback unconditional and place it last.",
+                    )
+                fallback_indexes.append(index)
+            else:
+                for axis in ("m", "n", "k"):
+                    lo = predicate.get(f"min_{axis}", 1)
+                    hi = predicate.get(f"max_{axis}")
+                    if hi is not None and hi < lo:
+                        raise hard_contract_fault(
+                            f"kernel {kernel_id!r} has an invalid {axis.upper()} route range",
+                            f"route={route_id!r}, min={lo}, max={hi}",
+                            "make every bounded shape interval non-empty.",
+                        )
+                bounded.append(route)
+        if fallback_indexes != [len(routing["routes"]) - 1]:
+            raise hard_contract_fault(
+                f"kernel {kernel_id!r} does not have exactly one final fallback route",
+                f"fallback_indexes={fallback_indexes}",
+                "end the route table with one unconditional fallback.",
+            )
+        for left_index, left in enumerate(bounded):
+            for right in bounded[left_index + 1:]:
+                overlaps = True
+                for axis in ("m", "n", "k"):
+                    left_lo = left["predicate"].get(f"min_{axis}", 1)
+                    left_hi = left["predicate"].get(f"max_{axis}", float("inf"))
+                    right_lo = right["predicate"].get(f"min_{axis}", 1)
+                    right_hi = right["predicate"].get(f"max_{axis}", float("inf"))
+                    if left_hi < right_lo or right_hi < left_lo:
+                        overlaps = False
+                        break
+                if overlaps:
+                    raise hard_contract_fault(
+                        f"kernel {kernel_id!r} has ambiguous work-partition shape routes",
+                        f"routes={left['id']!r},{right['id']!r}",
+                        "make non-fallback shape predicates disjoint.",
+                    )
 
 
 def validate_kernel_overlay(doc: Dict[str, Any]) -> None:
