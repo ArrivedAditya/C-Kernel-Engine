@@ -6,6 +6,12 @@ of truth.
 
 ## Unreleased
 
+### Contributor Governance
+
+- Clarified the separation between engineering recognition, copyright, and
+  software licensing; added a contribution-rights diagram and explicit current
+  licensing status to the contributor guide and README.
+
 ### Community Portability
 
 - Added focused Arch Linux and CachyOS installation guidance for the v7 and v8

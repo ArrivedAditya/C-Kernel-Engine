@@ -21,4 +21,6 @@ authoritative record; this file is a curated index, not an ownership registry.
 
 Names and identities are consolidated through [`.mailmap`](.mailmap) without
 rewriting published commits. A later replacement of contributed code does not
-remove the original contribution from project history.
+remove the original contribution from project history. Recognition does not by
+itself determine copyright ownership or grant a software licence; see
+[LICENSING.md](LICENSING.md).
