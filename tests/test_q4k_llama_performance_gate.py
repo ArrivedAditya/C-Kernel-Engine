@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import re
 import sys
 import unittest
@@ -42,6 +43,48 @@ class Q4KLlamaPerformanceGateTests(unittest.TestCase):
         self.assertIn("CK_Q4K_PERF_K:-4096", recipe)
         self.assertIn("CK_Q4K_LLAMA_MAX_RATIO:-2.5", recipe)
         self.assertIn("--perf", recipe)
+
+    def test_vnni_provider_is_an_explicit_kernel_map_capability(self) -> None:
+        path = ROOT / "version" / "v8" / "kernel_maps" / "gemm_nt_q4_k_q8_k.json"
+        kernel = json.loads(path.read_text(encoding="utf-8"))
+        candidates = {
+            row["name"]: row
+            for row in kernel["phase_selection"]["prefill"]["candidates"]
+        }
+        provider = candidates["packed_vnni_x8_split_min_4m8n"]
+        self.assertEqual(
+            provider["function"],
+            "gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m",
+        )
+        self.assertEqual(provider["layout"], "q4_k_packed_vnni_x8")
+        self.assertEqual(provider["activation_layout"], "canonical_q8_k")
+        self.assertIn("avx_vnni", provider["requires"])
+        self.assertIn("pairwise_split_min_reduction", provider["requires"])
+
+    def test_forced_avx2_compile_row_does_not_enable_vnni(self) -> None:
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        match = re.search(
+            r"^test-q4k-q8k-isa-compile:.*?(?=^endif$)",
+            makefile,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        recipe = match.group(0)
+        avx2_match = re.search(
+            r"\$\(CC\)(.*?)Q4K_Q8K_ISA_AVX2_OBJ",
+            recipe,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(avx2_match)
+        self.assertNotIn("mavxvnni", avx2_match.group(1))
+
+    def test_production_uses_persistent_weight_pack_not_q8_repack(self) -> None:
+        source = (ROOT / "version" / "v8" / "src" / "ck_parallel_prefill_v8.c").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("ck_get_q4k_packed_vnni_x8_cached", source)
+        self.assertIn("gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m", source)
+        self.assertNotIn("pack_q8_k_rows_x4", source)
 
 
 if __name__ == "__main__":
