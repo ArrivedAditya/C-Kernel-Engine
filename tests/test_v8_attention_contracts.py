@@ -8,6 +8,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -435,6 +436,65 @@ class AttentionContractV8Tests(unittest.TestCase):
         kernel = resolver.load_json(V8_ROOT / "kernel_maps" / "gemv_q4_k_q8_k.json")
         kernel["implementation"]["threading"]["reduction_order_effect"] = "contract_defined"
         with self.assertRaisesRegex(resolver.ContractError, "threading contradicts"):
+            resolver.validate_quantized_linear_kernel_capability(kernel, self.linear_contracts)
+
+    def test_q6_prefill_declares_map_owned_work_partition_routes(self) -> None:
+        kernel = resolver.load_json(V8_ROOT / "kernel_maps" / "gemm_nt_q6_k_q8_k.json")
+        routing = kernel["implementation"]["work_partition_routing"]
+        self.assertEqual(routing["selection"], "shape_threshold")
+        self.assertEqual(routing["numerical_effect"], "none")
+        self.assertEqual(
+            routing["dispatch_function"],
+            kernel["production"]["threaded_function"],
+        )
+        self.assertEqual(
+            routing["routes"],
+            [
+                {
+                    "id": "wide_output_tiles",
+                    "work_partition": "output_tiles",
+                    "predicate": {"min_m": 2, "min_n": 2048, "min_k": 8192},
+                },
+                {
+                    "id": "independent_rows_fallback",
+                    "work_partition": "independent_rows",
+                    "predicate": {"fallback": True},
+                },
+            ],
+        )
+        resolver.validate_quantized_linear_kernel_capability(kernel, self.linear_contracts)
+
+    def test_q6_prefill_runtime_implements_map_owned_shape_route(self) -> None:
+        kernel = resolver.load_json(V8_ROOT / "kernel_maps" / "gemm_nt_q6_k_q8_k.json")
+        predicate = kernel["implementation"]["work_partition_routing"]["routes"][0]["predicate"]
+        source = (V8_ROOT / "src" / "ck_parallel_prefill_v8.c").read_text(encoding="utf-8")
+        self.assertIn(f'N < {predicate["min_n"]} || K < {predicate["min_k"]}', source)
+        self.assertIn("M <= 1", source)
+        self.assertNotIn("CK_ENABLE_Q6K_Q8K_2D_PREFILL", source)
+
+    def test_q6_benchmark_defaults_to_gcc_provenance(self) -> None:
+        bench_path = REPO_ROOT / "benchmarks" / "bench_q6k_prefill_tile.py"
+        spec = importlib.util.spec_from_file_location("bench_q6k_prefill_tile", bench_path)
+        assert spec is not None and spec.loader is not None
+        bench = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bench)
+        with mock.patch.dict("os.environ", {}, clear=True), mock.patch.object(
+            bench.shutil, "which", return_value="/usr/bin/gcc"
+        ):
+            self.assertEqual(bench._compiler(), "/usr/bin/gcc")
+
+    def test_q6_prefill_missing_fallback_is_a_hard_fault(self) -> None:
+        kernel = resolver.load_json(V8_ROOT / "kernel_maps" / "gemm_nt_q6_k_q8_k.json")
+        kernel["implementation"]["work_partition_routing"]["routes"].pop()
+        with self.assertRaisesRegex(resolver.ContractError, "exactly one final fallback"):
+            resolver.validate_quantized_linear_kernel_capability(kernel, self.linear_contracts)
+
+    def test_q6_prefill_ambiguous_shape_routes_are_a_hard_fault(self) -> None:
+        kernel = resolver.load_json(V8_ROOT / "kernel_maps" / "gemm_nt_q6_k_q8_k.json")
+        routes = kernel["implementation"]["work_partition_routing"]["routes"]
+        routes.insert(1, copy.deepcopy(routes[0]))
+        routes[1]["id"] = "overlapping_output_tiles"
+        with self.assertRaisesRegex(resolver.ContractError, "ambiguous work-partition shape routes"):
             resolver.validate_quantized_linear_kernel_capability(kernel, self.linear_contracts)
 
 

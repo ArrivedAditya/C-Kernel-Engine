@@ -89,7 +89,6 @@ def _run_one(
     threads: int,
     warmup: int,
     iters: int,
-    force_2d: bool,
     engine_lib: Path,
 ) -> dict[str, Any]:
     env = os.environ.copy()
@@ -97,12 +96,11 @@ def _run_one(
     env.setdefault("OMP_NUM_THREADS", "1")
     env["CK_NUM_THREADS"] = str(threads)
     if mode == "2d":
-        env["CK_ENABLE_Q6K_Q8K_2D_PREFILL"] = "1"
-        if force_2d:
-            env["CK_FORCE_Q6K_Q8K_2D_PREFILL"] = "1"
+        env["CK_FORCE_Q6K_Q8K_2D_PREFILL"] = "1"
+        env.pop("CK_DISABLE_Q6K_Q8K_2D_PREFILL", None)
     else:
-        env.pop("CK_ENABLE_Q6K_Q8K_2D_PREFILL", None)
         env.pop("CK_FORCE_Q6K_Q8K_2D_PREFILL", None)
+        env["CK_DISABLE_Q6K_Q8K_2D_PREFILL"] = "1"
 
     cmd = [
         sys.executable,
@@ -207,7 +205,6 @@ def main() -> int:
                     threads=threads,
                     warmup=args.warmup,
                     iters=args.iters,
-                    force_2d=False,
                     engine_lib=args.engine_lib,
                 )
                 tiled = _run_one(
@@ -219,7 +216,6 @@ def main() -> int:
                     threads=threads,
                     warmup=args.warmup,
                     iters=args.iters,
-                    force_2d=True,
                     engine_lib=args.engine_lib,
                 )
                 results.extend([row, tiled])

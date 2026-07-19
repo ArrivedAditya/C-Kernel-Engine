@@ -37,6 +37,23 @@
       "work_partition": ["serial", "independent_rows", "output_tiles"],
       "dispatch": ["inline", "ck_threadpool_dispatch_n"],
       "reduction_order_effect": "none"
+    },
+    "work_partition_routing": {
+      "selection": "shape_threshold",
+      "numerical_effect": "none",
+      "dispatch_function": "gemm_nt_q6_k_q8_k_parallel_dispatch",
+      "routes": [
+        {
+          "id": "wide_output_tiles",
+          "work_partition": "output_tiles",
+          "predicate": {"min_m": 2, "min_n": 2048, "min_k": 8192}
+        },
+        {
+          "id": "independent_rows_fallback",
+          "work_partition": "independent_rows",
+          "predicate": {"fallback": true}
+        }
+      ]
     }
   },
   "quant": {
