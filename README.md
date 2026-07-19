@@ -30,6 +30,8 @@ The project has also used MiniMax and other open-model assistants for bounded im
 
 This workflow can sustain bounded profiling sweeps, compiler experiments, tensor-by-tensor comparisons, and overnight debugging investigations at a volume that one developer could not practically execute by hand on the same schedule. That increased throughput does not transfer engineering responsibility to a model. The maintainer defines the mathematical and evidence contracts, chooses the experiments, reviews every proposed pull request, decides what is accepted, and remains accountable for the code merged into CKE.
 
+CKE calls its long-horizon agent workflow **Stamina**. GPT-5.5-era agents can run coordinated investigations across three or four Linux computers, with each host assigned a different model, ISA, compiler, parity boundary, or performance hypothesis. The current evidence fleet spans older and 12th- and 14th-generation Intel Core i7 systems, 5th-generation Intel Xeon access, and the Arm-class TI TDA4VM. This makes it practical to harden the same code across heterogeneous x86 CPUs and an embedded Arm target while agents collect feedback, run experiments, compare artifacts, and return bounded changes for review. Linux, terminals, reproducible commands, and shared git history are what make that orchestration inspectable rather than a collection of private chat sessions.
+
 AI output is therefore treated as a candidate change, not as proof. A substantial CKE pull request must leave a durable engineering record that explains:
 
 - The observed problem and a reproducible workload.
@@ -39,7 +41,7 @@ AI output is therefore treated as a candidate change, not as proof. A substantia
 - Remaining caveats, unsupported hardware, and claims the evidence does not establish.
 - The agent or model provenance when it is material and reliably recorded.
 
-These records serve two purposes. They make AI-assisted work reviewable by a human today, and they preserve enough context for a future contributor to challenge or reproduce it. When a change exposes a useful systems lesson, its pull-request evidence is developed into a [ShivasNotes engineering article](https://www.shivasnotes.com/tag/c-kernel-engine) so implementation velocity also produces public human understanding rather than an unexplained accumulation of generated code.
+These records serve two purposes. They make AI-assisted work reviewable by a human today, and they preserve enough context for a future contributor to challenge or reproduce it. Blogging is therefore a critical part of CKE's understanding thesis, not a separate marketing step. When a change exposes a useful systems lesson, its pull-request evidence is developed into a [ShivasNotes engineering article](https://www.shivasnotes.com/tag/c-kernel-engine) so implementation velocity also produces public human understanding rather than an unexplained accumulation of generated code.
 
 External contributions follow the same evidence contract and retain their authorship and recognition whether or not AI tools helped produce the patch. See the [Contributor Path](https://c-kernel-engine.github.io/C-Kernel-Engine/contributing.html), [CONTRIBUTORS.md](CONTRIBUTORS.md), and [license](LICENSE) for the project rules.
 
