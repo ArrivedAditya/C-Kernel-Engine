@@ -48,7 +48,7 @@
     },
     "code_bundle": {
       "label": "C Python SQL",
-      "prompt": "Give me an example of C, Python and SQL code.",
+      "prompt": "Return exactly three short code blocks: one C, one Python, and one SQL. Do not repeat or explain them.",
       "max_tokens": 240,
       "heuristics": {
         "min_chars": 48,
