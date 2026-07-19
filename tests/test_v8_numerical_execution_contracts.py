@@ -249,6 +249,40 @@ class NumericalExecutionContractTests(unittest.TestCase):
         self.assertEqual(position["position_rank"], 4)
         self.assertEqual(plan["template_ops"], ["rope_qk"])
 
+    def test_qwen35_circuit_resolves_exact_recurrent_qk_l2_norm(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.recurrent_qk_l2_norm",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "recurrent_qk_l2_llama_cpu_fp32_output",
+                )
+                self.assertEqual(
+                    plan["kernel"]["id"], "recurrent_qk_l2_norm_forward"
+                )
+                self.assertEqual(
+                    plan["kernel"]["function"], "recurrent_qk_l2_norm_forward"
+                )
+                semantics = plan["contract"]["semantics"]
+                self.assertEqual(semantics["compute"]["accumulator"], "fp64")
+                self.assertEqual(
+                    semantics["compute"]["evaluation_order"],
+                    "fp32_product_then_ascending_fp64_sum_then_fp32_sqrt_then_max_eps_then_reciprocal",
+                )
+                self.assertEqual(
+                    semantics["reduction"]["order"], "left_to_right"
+                )
+
     def test_unsupported_mrope_storage_contract_hard_fails(self):
         doc = mrope_circuit("vision_mrope_fp64_input_fp64_compute_fp64_output")
         with self.assertRaisesRegex(resolver.ContractError, "unknown requested contract"):

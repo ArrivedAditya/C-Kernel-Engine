@@ -221,6 +221,35 @@
       },
       "description": "Align-corners tiled 2D position interpolation with FP32 rational coordinates and contracted float32 evaluation order."
     },
+    "recurrent_qk_l2_llama_cpu_fp32_output": {
+      "operator_family": "recurrent_qk_l2_norm",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp64",
+        "evaluation_order": "fp32_product_then_ascending_fp64_sum_then_fp32_sqrt_then_max_eps_then_reciprocal"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["square_product", "reduction_finalize", "norm_sqrt", "denominator_max", "reciprocal", "normalization_scale", "output_store"]
+      },
+      "reduction": {
+        "kind": "normalization",
+        "order": "left_to_right",
+        "partial_accumulator": "fp64",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "llama.cpp CPU L2 normalization: FP32 products, ascending FP64 sum, and epsilon as a minimum denominator."
+    },
     "text_mrope_fp32_input_fp32_compute_fp32_output": {
       "operator_family": "text_mrope",
       "status": "validated",

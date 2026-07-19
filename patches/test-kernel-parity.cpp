@@ -822,21 +822,24 @@ void test_recurrent_qk_l2_norm(float * q,
                                int head_dim,
                                float eps) {
     auto normalize = [rows, head_dim, eps](float * x, int dim) {
-        const int num_heads = dim / head_dim;
-        for (int row = 0; row < rows; ++row) {
-            float * row_ptr = x + (size_t) row * (size_t) dim;
-            for (int head = 0; head < num_heads; ++head) {
-                float * head_ptr = row_ptr + (size_t) head * (size_t) head_dim;
-                float sum_sq = 0.0f;
-                for (int col = 0; col < head_dim; ++col) {
-                    sum_sq += head_ptr[col] * head_ptr[col];
-                }
-                const float inv_norm = 1.0f / std::sqrt(sum_sq + eps);
-                for (int col = 0; col < head_dim; ++col) {
-                    head_ptr[col] *= inv_norm;
-                }
-            }
+        const int norm_rows = rows * (dim / head_dim);
+        const size_t count = (size_t) rows * (size_t) dim;
+        const size_t arena_size = 8u * 1024u * 1024u + 4u * count * sizeof(float);
+        ggml_init_params params = {arena_size, nullptr, false};
+        ggml_context * ctx = ggml_init(params);
+        if (!ctx) {
+            return;
         }
+        ggml_tensor * input = ggml_new_tensor_2d(
+                ctx, GGML_TYPE_F32, head_dim, norm_rows);
+        std::memcpy(ggml_get_data(input), x, count * sizeof(float));
+        ggml_tensor * output = ggml_l2_norm(ctx, input, eps);
+        ggml_cgraph * graph = ggml_new_graph(ctx);
+        ggml_build_forward_expand(graph, output);
+        if (ggml_graph_compute_with_ctx(ctx, graph, 1) == GGML_STATUS_SUCCESS) {
+            std::memcpy(x, ggml_get_data_f32(output), count * sizeof(float));
+        }
+        ggml_free(ctx);
     };
 
     if (!q || !k || rows <= 0 || q_dim <= 0 || k_dim <= 0 || head_dim <= 0) {

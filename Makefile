@@ -2816,6 +2816,8 @@ Q4K_EXACT_PREFILL_BIN := $(BUILD_DIR)/bench_q4k_exact_prefill
 Q4K_Q8K_LLAMA_PACKED_BIN := $(BUILD_DIR)/test_q4k_q8k_llama_packed
 Q6K_Q8K_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q6k_q8k_llama_production
 RMSNORM_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_rmsnorm_llama_production
+RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_recurrent_qk_l2_norm_llama_production
+RECURRENT_QK_L2_LLAMA_PRODUCTION_OBJ := $(BUILD_DIR)/recurrent_qk_norm_llama_production.o
 MROPE_TEXT_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_mrope_text_llama_production
 Q4Q6_LLAMA_CPP_DIR ?= $(LLAMA_CPP_DIR)
 Q4Q6_LLAMA_CPP_BIN_DIR ?= $(Q4Q6_LLAMA_CPP_DIR)/build/bin
@@ -2921,6 +2923,21 @@ $(RMSNORM_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_rmsnorm_llama_production.c
 		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
 		-o $(RMSNORM_LLAMA_PRODUCTION_BIN)
 
+$(RECURRENT_QK_L2_LLAMA_PRODUCTION_OBJ): src/kernels/recurrent_qk_norm_kernels.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 -fPIC $(AVX_FLAGS) -Iinclude -c $< -o $@
+
+$(RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN): $(RECURRENT_QK_L2_LLAMA_PRODUCTION_OBJ) unittest/test_recurrent_qk_l2_norm_llama_production.cpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		-I$(Q4Q6_LLAMA_CPP_DIR)/ggml/include -I$(Q4Q6_LLAMA_CPP_DIR)/ggml/src \
+		unittest/test_recurrent_qk_l2_norm_llama_production.cpp \
+		$(RECURRENT_QK_L2_LLAMA_PRODUCTION_OBJ) \
+		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
+		-lm -lpthread -ldl \
+		-Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
+		-o $(RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN)
+
 .PHONY: test-mrope-text-llama-production
 test-mrope-text-llama-production: $(MROPE_TEXT_LLAMA_PRODUCTION_BIN)
 	@echo "Running text M-RoPE against llama.cpp production graph..."
@@ -2950,6 +2967,16 @@ test-rmsnorm-llama-production: $(RMSNORM_LLAMA_PRODUCTION_BIN)
 		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
 			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
 			$(RMSNORM_LLAMA_PRODUCTION_BIN); \
+	done
+
+.PHONY: test-recurrent-qk-l2-llama-production
+test-recurrent-qk-l2-llama-production: $(RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN)
+	@echo "Running recurrent Q/K L2 normalization against llama.cpp production graph..."
+	@set -e; for threads in $${CK_RECURRENT_QK_L2_ORACLE_THREADS:-1 16 20 24}; do \
+		echo "Recurrent Q/K L2 llama.cpp production oracle: threads=$$threads"; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			$(RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN); \
 	done
 
 .PHONY: test-q4k-q8k-llama-packed
@@ -3315,6 +3342,9 @@ test-numerical-contracts: $(LIB)
 		$(MAKE) --no-print-directory test-rmsnorm-llama-production \
 			Q4Q6_LLAMA_CPP_DIR="$${CK_LLAMA_CPP_ROOT}" \
 			Q4Q6_LLAMA_CPP_BIN_DIR="$${CK_LLAMA_CPP_ROOT}/build/bin"; \
+		$(MAKE) --no-print-directory test-recurrent-qk-l2-llama-production \
+			Q4Q6_LLAMA_CPP_DIR="$${CK_LLAMA_CPP_ROOT}" \
+			Q4Q6_LLAMA_CPP_BIN_DIR="$${CK_LLAMA_CPP_ROOT}/build/bin"; \
 	else \
 		echo "RMSNorm llama.cpp production oracle [SKIP: CK_LLAMA_CPP_ROOT/build/bin unavailable]"; \
 	fi
@@ -3323,7 +3353,9 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
 	@$(PYTHON) -m unittest tests.test_v8_numerical_replay_fixtures -v
 	@$(PYTHON) unittest/test_attention_full.py
-	@CK_NUM_THREADS=$${CK_NUMERICAL_CONTRACT_THREADS:-1} $(PYTHON) unittest/test_attention_f16_split_kv.py
+	@V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT="$${V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT:-$${CK_LLAMA_CPP_ROOT:-$(CURDIR)/llama.cpp}}" \
+		CK_NUM_THREADS=$${CK_NUMERICAL_CONTRACT_THREADS:-1} \
+		$(PYTHON) unittest/test_attention_f16_split_kv.py
 	@mkdir -p build/v8/contracts
 	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3_vl_vision --operation vision_encoder.attention --phase prefill --mode bringup --output build/v8/contracts/qwen3vl-vision-prefill.json >/dev/null
 	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3vl --operation decoder.attention --phase decode --mode bringup --output build/v8/contracts/qwen3vl-decode.json >/dev/null
@@ -4043,7 +4075,11 @@ libck_parity_llama.so: $(LIB_PARITY_LLAMA)
 
 # Build llama.cpp kernel test library
 # Requires llama.cpp to be cloned in llama.cpp/ subdirectory
-$(LLAMA_KERNEL_TEST):
+# Prevent the generic test-kernel-% convenience rule from treating this source
+# filename as a requested kernel test target.
+patches/test-kernel-parity.cpp: ;
+
+$(LLAMA_KERNEL_TEST): patches/test-kernel-parity.cpp
 	@echo "Building llama.cpp kernel test library..."
 	@if [ ! -d "$(LLAMA_CPP_DIR)" ]; then \
 		echo "ERROR: llama.cpp not found. Clone it first:"; \

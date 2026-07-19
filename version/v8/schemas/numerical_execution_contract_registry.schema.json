@@ -51,6 +51,7 @@
             "text_mrope",
             "layernorm",
             "rmsnorm",
+            "recurrent_qk_l2_norm",
             "attention",
             "residual_add",
             "gelu",
@@ -183,6 +184,9 @@
                   "output_store",
                   "square_product",
                   "reduction_finalize",
+                  "norm_sqrt",
+                  "denominator_max",
+                  "reciprocal",
                   "reciprocal_sqrt",
                   "normalization_scale",
                   "weight_scale"

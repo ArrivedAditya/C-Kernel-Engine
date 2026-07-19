@@ -74,19 +74,27 @@ def _as_ptr(arr: np.ndarray) -> ctypes.POINTER(ctypes.c_float):
 def _torch_ref(x: torch.Tensor, dim: int, head_dim: int, eps: float) -> torch.Tensor:
     num_heads = dim // head_dim
     shaped = x.view(x.shape[0], num_heads, head_dim)
-    denom = torch.sqrt((shaped * shaped).sum(dim=-1, keepdim=True) + eps)
-    return (shaped / denom).view(x.shape[0], dim)
+    return torch.nn.functional.normalize(shaped, p=2.0, dim=-1, eps=eps).view(x.shape[0], dim)
 
 
 class TestRecurrentQKL2Norm(unittest.TestCase):
     def setUp(self) -> None:
         torch.set_num_threads(1)
-        self.atol = 5e-5
+        self.atol = 2e-6
 
-    def _run_case(self, rows: int, q_dim: int, k_dim: int, head_dim: int, eps: float, seed: int) -> None:
+    def _run_case(
+        self,
+        rows: int,
+        q_dim: int,
+        k_dim: int,
+        head_dim: int,
+        eps: float,
+        seed: int,
+        input_scale: float = 0.20,
+    ) -> None:
         rng = np.random.default_rng(seed)
-        q = (0.20 * rng.standard_normal((rows, q_dim))).astype(np.float32)
-        k = (0.20 * rng.standard_normal((rows, k_dim))).astype(np.float32)
+        q = (input_scale * rng.standard_normal((rows, q_dim))).astype(np.float32)
+        k = (input_scale * rng.standard_normal((rows, k_dim))).astype(np.float32)
 
         ck_q = q.copy()
         ck_k = k.copy()
@@ -126,10 +134,21 @@ class TestRecurrentQKL2Norm(unittest.TestCase):
         np.testing.assert_allclose(ck_d_k, torch_d_k, atol=self.atol, rtol=0.0)
 
     def test_small_case(self) -> None:
-        self._run_case(rows=4, q_dim=32, k_dim=32, head_dim=8, eps=1e-5, seed=7)
+        self._run_case(rows=4, q_dim=32, k_dim=32, head_dim=8, eps=1e-6, seed=7)
 
     def test_qwen35_like_case(self) -> None:
-        self._run_case(rows=3, q_dim=2048, k_dim=2048, head_dim=128, eps=1e-5, seed=11)
+        self._run_case(rows=3, q_dim=2048, k_dim=2048, head_dim=128, eps=1e-6, seed=11)
+
+    def test_epsilon_clamp_forward_and_backward(self) -> None:
+        self._run_case(
+            rows=2,
+            q_dim=32,
+            k_dim=32,
+            head_dim=8,
+            eps=1e-6,
+            seed=23,
+            input_scale=1e-9,
+        )
 
 
 if __name__ == "__main__":

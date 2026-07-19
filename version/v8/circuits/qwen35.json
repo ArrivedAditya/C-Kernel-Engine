@@ -118,6 +118,28 @@
     }
   },
   "required_numerical_contracts": {
+    "decoder.recurrent_qk_l2_norm": {
+      "op": "recurrent_qk_l2_norm",
+      "template_ops": ["recurrent_qk_l2_norm"],
+      "phases": {
+        "prefill": {
+          "contract_id": "recurrent_qk_l2_llama_cpu_fp32_output",
+          "validation": "validated",
+          "evidence": "Production ggml graph parity is bit-exact at Qwen3.5 dimensions and eps=1e-6."
+        },
+        "decode": {
+          "contract_id": "recurrent_qk_l2_llama_cpu_fp32_output",
+          "validation": "validated",
+          "evidence": "Production ggml graph parity is bit-exact at Qwen3.5 dimensions and eps=1e-6."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_qk_l2_norm.output",
+        "producer": "recurrent_qk_l2_norm",
+        "logical_layout": "head_major",
+        "axis_names": ["head", "token", "channel"]
+      }
+    },
     "decoder.mrope": {
       "op": "rope",
       "template_ops": ["rope_qk"],

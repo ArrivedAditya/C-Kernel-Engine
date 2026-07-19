@@ -25,7 +25,7 @@
     {"name": "q_dim", "dtype": "i32"},
     {"name": "k_dim", "dtype": "i32"},
     {"name": "head_dim", "dtype": "i32"},
-    {"name": "eps", "dtype": "f32"}
+    {"name": "eps", "dtype": "f32", "desc": "Minimum L2 denominator: 1 / max(sqrt(sum(x*x)), eps)"}
   ],
   "parallelization": {
     "supported": ["row"],
@@ -38,11 +38,48 @@
     "sources": ["src/kernels/recurrent_qk_norm_kernels.c"],
     "variants": [{"name": "ref", "requires": [], "compile_flags": []}]
   },
+  "numerical_capabilities": [
+    {
+      "contract_id": "recurrent_qk_l2_llama_cpu_fp32_output",
+      "status": "validated",
+      "phases": ["prefill", "decode"],
+      "function": "recurrent_qk_l2_norm_forward",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": ["independent_rows", "independent_heads"],
+          "dispatch": ["inline"],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp64",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"name": "q", "source": "activation:q", "cast": "float*"},
+      {"name": "k", "source": "activation:k", "cast": "float*"},
+      {"name": "rows", "source": "runtime:seq_len"},
+      {"name": "q_dim", "source": "dim:q_dim"},
+      {"name": "k_dim", "source": "dim:k_dim"},
+      {"name": "head_dim", "source": "dim:recurrent_head_dim"},
+      {"name": "eps", "source": "dim:rms_eps"}
+    ]
+  },
   "tests": {
     "unit": ["unittest/test_recurrent_qk_l2_norm.py"],
     "parity": [
-      {"kind": "pytorch", "command": ".venv/bin/python unittest/test_recurrent_qk_l2_norm.py", "tolerance": "5e-5"},
-      {"kind": "llamacpp", "command": "python3 scripts/test_kernels_vs_llamacpp.py --kernel recurrent_qk_l2_norm", "tolerance": "5e-5"}
+      {"kind": "pytorch", "command": ".venv/bin/python unittest/test_recurrent_qk_l2_norm.py", "tolerance": "2e-6"},
+      {"kind": "llamacpp", "command": "make test-recurrent-qk-l2-llama-production", "tolerance": "0"}
     ]
   }
 }
