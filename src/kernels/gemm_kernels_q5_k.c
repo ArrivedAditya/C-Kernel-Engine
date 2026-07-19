@@ -187,11 +187,10 @@ static inline __m256i ck_mm256_set_m128i(__m128i hi, __m128i lo)
 
 static inline float ck_q5k_hsum256_ps(__m256 v)
 {
-    const __m128 lo = _mm256_castps256_ps128(v);
-    const __m128 hi = _mm256_extractf128_ps(v, 1);
-    __m128 sum = _mm_add_ps(lo, hi);
-    sum = _mm_hadd_ps(sum, sum);
-    sum = _mm_hadd_ps(sum, sum);
+    __m128 sum = _mm256_extractf128_ps(v, 1);
+    sum = _mm_add_ps(sum, _mm256_castps256_ps128(v));
+    sum = _mm_add_ps(sum, _mm_movehl_ps(sum, sum));
+    sum = _mm_add_ss(sum, _mm_movehdup_ps(sum));
     return _mm_cvtss_f32(sum);
 }
 
@@ -270,7 +269,8 @@ static float dot_q5_k_q8_k_row_avx2(const block_q5_K *w, const block_q8_K *x, in
             sumi = _mm256_add_epi32(sumi, _mm256_add_epi32(p16_0, p16_1));
         }
 
-        acc = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(d), _mm256_cvtepi32_ps(sumi)), acc);
+        acc = _mm256_fmadd_ps(
+                _mm256_set1_ps(d), _mm256_cvtepi32_ps(sumi), acc);
     }
 
     return ck_q5k_hsum256_ps(acc) + summs;

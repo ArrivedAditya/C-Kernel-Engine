@@ -2292,33 +2292,6 @@
       ],
       "notes": "FP32 activation version - no quantization needed"
     },
-    "gemv_q5_k": {
-      "params": [
-        {
-          "name": "y",
-          "source": "output:y",
-          "cast": "float*"
-        },
-        {
-          "name": "W",
-          "source": "weight:_first_weight"
-        },
-        {
-          "name": "x",
-          "source": "activation:x",
-          "cast": "const float*"
-        },
-        {
-          "name": "M",
-          "source": "dim:_output_dim"
-        },
-        {
-          "name": "K",
-          "source": "dim:_input_dim"
-        }
-      ],
-      "notes": "FP32 activation version - no quantization needed. Q5_K: 5-bit super-block quant with nested scales."
-    },
     "gemv_q5_1": {
       "params": [
         {
@@ -2651,41 +2624,6 @@
         }
       ],
       "notes": "FP32 activation version - no quantization needed"
-    },
-    "gemm_nt_q5_k": {
-      "params": [
-        {
-          "name": "A",
-          "source": "activation:a",
-          "cast": "const float*"
-        },
-        {
-          "name": "B",
-          "source": "weight:_first_weight"
-        },
-        {
-          "name": "bias",
-          "source": "weight_f:_bias"
-        },
-        {
-          "name": "C",
-          "source": "output:c",
-          "cast": "float*"
-        },
-        {
-          "name": "M",
-          "source": "dim:_m"
-        },
-        {
-          "name": "N",
-          "source": "dim:_output_dim"
-        },
-        {
-          "name": "K",
-          "source": "dim:_input_dim"
-        }
-      ],
-      "notes": "FP32 activation version - no quantization needed. Q5_K: 5-bit super-block quant with nested scales."
     },
     "gemm_nt_q5_1": {
       "params": [

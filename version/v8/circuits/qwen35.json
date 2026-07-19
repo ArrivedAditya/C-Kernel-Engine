@@ -118,6 +118,40 @@
     }
   },
   "required_numerical_contracts": {
+    "decoder.recurrent_qkv_projection.prefill": {
+      "op": "gemm",
+      "template_ops": ["recurrent_qkv_proj"],
+      "phases": {
+        "prefill": {
+          "contract_id": "q5_k_weight_q8_k_input_avx2_fma_fp32_output",
+          "validation": "validated",
+          "evidence": "Q5_K adapter is bit-exact against the llama.cpp x86 production graph at the Qwen3.5 recurrent QKV shape."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_qkv_projection.output",
+        "producer": "recurrent_qkv_proj",
+        "logical_layout": "row_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.recurrent_qkv_projection.decode": {
+      "op": "gemv",
+      "template_ops": ["recurrent_qkv_proj"],
+      "phases": {
+        "decode": {
+          "contract_id": "q5_k_weight_q8_k_input_avx2_fma_fp32_output",
+          "validation": "validated",
+          "evidence": "Q5_K adapter is bit-exact against the llama.cpp x86 production graph at M=1,N=6144,K=1024."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_qkv_projection.output",
+        "producer": "recurrent_qkv_proj",
+        "logical_layout": "row_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
     "decoder.recurrent_qk_l2_norm": {
       "op": "recurrent_qk_l2_norm",
       "template_ops": ["recurrent_qk_l2_norm"],

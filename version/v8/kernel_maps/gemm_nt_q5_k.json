@@ -26,5 +26,47 @@
     "c_declaration": "void gemm_nt_q5_k(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);",
     "sources": ["src/kernels/gemm_kernels_q5_k.c"]
   },
-  "notes": "GEMM for Q5_K weights with FP32 activation input. No activation quantization needed. Q5_K: 5-bit super-block quant with nested scales/mins."
+  "numerical_capabilities": [
+    {
+      "contract_id": "q5_k_weight_q8_k_input_avx2_fma_fp32_output",
+      "status": "validated",
+      "phases": ["prefill"],
+      "function": "gemm_nt_q5_k",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "compile_time",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": ["independent_rows"],
+          "dispatch": ["inline"],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp32",
+        "merge_order": "pairwise_tree",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"name": "A", "source": "activation:a", "cast": "const float*"},
+      {"name": "B", "source": "weight:_first_weight"},
+      {"name": "bias", "source": "weight_f:_bias"},
+      {"name": "C", "source": "output:c", "cast": "float*"},
+      {"name": "M", "source": "dim:_m"},
+      {"name": "N", "source": "dim:_output_dim"},
+      {"name": "K", "source": "dim:_input_dim"}
+    ]
+  },
+  "tests": {
+    "parity": [
+      {"kind": "llamacpp", "command": "make test-q5k-q8k-llama-production", "tolerance": "0"}
+    ]
+  },
+  "notes": "GEMM adapter for Q5_K weights and FP32 input. Each FP32 activation row is quantized internally to canonical Q8_K before the llama-compatible Q5_K x Q8_K dot product."
 }

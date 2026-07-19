@@ -283,6 +283,34 @@ class NumericalExecutionContractTests(unittest.TestCase):
                     semantics["reduction"]["order"], "left_to_right"
                 )
 
+    def test_qwen35_circuit_resolves_exact_recurrent_qkv_projection(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        expected = {
+            "prefill": ("decoder.recurrent_qkv_projection.prefill", "gemm_nt_q5_k"),
+            "decode": ("decoder.recurrent_qkv_projection.decode", "gemv_q5_k"),
+        }
+        for phase, (operation, kernel_id) in expected.items():
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    operation,
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "q5_k_weight_q8_k_input_avx2_fma_fp32_output",
+                )
+                self.assertEqual(plan["kernel"]["id"], kernel_id)
+                self.assertEqual(plan["kernel"]["function"], kernel_id)
+                semantics = plan["contract"]["semantics"]
+                self.assertEqual(semantics["compute"]["weight"], "int5")
+                self.assertEqual(semantics["reduction"]["merge_order"], "pairwise_tree")
+
     def test_unsupported_mrope_storage_contract_hard_fails(self):
         doc = mrope_circuit("vision_mrope_fp64_input_fp64_compute_fp64_output")
         with self.assertRaisesRegex(resolver.ContractError, "unknown requested contract"):

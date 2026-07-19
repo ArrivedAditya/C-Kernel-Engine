@@ -2815,6 +2815,7 @@ Q4K_DISPATCH_MATRIX_BIN := $(BUILD_DIR)/bench_q4k_dispatch_matrix
 Q4K_EXACT_PREFILL_BIN := $(BUILD_DIR)/bench_q4k_exact_prefill
 Q4K_Q8K_LLAMA_PACKED_BIN := $(BUILD_DIR)/test_q4k_q8k_llama_packed
 Q6K_Q8K_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q6k_q8k_llama_production
+Q5K_Q8K_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q5k_q8k_llama_production
 RMSNORM_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_rmsnorm_llama_production
 RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_recurrent_qk_l2_norm_llama_production
 RECURRENT_QK_L2_LLAMA_PRODUCTION_OBJ := $(BUILD_DIR)/recurrent_qk_norm_llama_production.o
@@ -2911,6 +2912,31 @@ $(Q6K_Q8K_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_q6k_q8k_llama_production.c
 		-lm -lpthread -ldl \
 		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
 		-o $(Q6K_Q8K_LLAMA_PRODUCTION_BIN)
+
+$(Q5K_Q8K_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_q5k_q8k_llama_production.cpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		-I$(Q4Q6_LLAMA_CPP_DIR)/ggml/include -I$(Q4Q6_LLAMA_CPP_DIR)/ggml/src \
+		unittest/test_q5k_q8k_llama_production.cpp \
+		-L$(BUILD_DIR) -lckernel_engine \
+		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
+		-lm -lpthread -ldl \
+		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
+		-o $(Q5K_Q8K_LLAMA_PRODUCTION_BIN)
+
+.PHONY: test-q5k-q8k-llama-production test-q5k-q8k-llama-production-quick
+test-q5k-q8k-llama-production: $(Q5K_Q8K_LLAMA_PRODUCTION_BIN)
+	@set -e; for threads in $${CK_Q5K_ORACLE_THREADS:-1 16 20 24}; do \
+		echo "Q5_K x Q8_K llama.cpp production oracle: threads=$$threads"; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			$(Q5K_Q8K_LLAMA_PRODUCTION_BIN); \
+	done
+
+test-q5k-q8k-llama-production-quick: $(Q5K_Q8K_LLAMA_PRODUCTION_BIN)
+	@CK_NUM_THREADS=$${CK_NUM_THREADS:-1} OMP_NUM_THREADS=1 \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+		$(Q5K_Q8K_LLAMA_PRODUCTION_BIN) --quick
 
 $(RMSNORM_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_rmsnorm_llama_production.cpp
 	@mkdir -p $(BUILD_DIR)
@@ -3343,6 +3369,9 @@ test-numerical-contracts: $(LIB)
 			Q4Q6_LLAMA_CPP_DIR="$${CK_LLAMA_CPP_ROOT}" \
 			Q4Q6_LLAMA_CPP_BIN_DIR="$${CK_LLAMA_CPP_ROOT}/build/bin"; \
 		$(MAKE) --no-print-directory test-recurrent-qk-l2-llama-production \
+			Q4Q6_LLAMA_CPP_DIR="$${CK_LLAMA_CPP_ROOT}" \
+			Q4Q6_LLAMA_CPP_BIN_DIR="$${CK_LLAMA_CPP_ROOT}/build/bin"; \
+		$(MAKE) --no-print-directory test-q5k-q8k-llama-production-quick \
 			Q4Q6_LLAMA_CPP_DIR="$${CK_LLAMA_CPP_ROOT}" \
 			Q4Q6_LLAMA_CPP_BIN_DIR="$${CK_LLAMA_CPP_ROOT}/build/bin"; \
 	else \
