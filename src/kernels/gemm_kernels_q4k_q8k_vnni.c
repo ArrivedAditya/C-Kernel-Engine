@@ -2460,7 +2460,7 @@ void gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
         return;
     }
     ck_threadpool_t *pool = ck_threadpool_global();
-    const int pool_threads = pool ? ck_threadpool_n_threads(pool) : 1;
+    const int pool_threads = pool ? ck_threadpool_capacity(pool) : 1;
     const int groups = (N + 7) / 8;
     const int jobs = ((M + 3) / 4) * groups;
     if (active_threads <= 0 || active_threads > pool_threads) {

@@ -717,6 +717,21 @@ static int ck_select_gemm_active_threads(const ck_threadpool_t *pool, int M, int
     return pool_threads;
 }
 
+static int ck_select_q4k_vnni_active_threads(
+        const ck_threadpool_t *pool, int M, int N, int K)
+{
+    const int base = ck_select_gemm_active_threads(pool, M, N, K);
+    const int capacity = ck_threadpool_capacity(pool);
+    if (capacity <= base || M < 512 || N < 4096 || K < 4096) {
+        return base;
+    }
+
+    /* The pool capacity already represents the bounded SMT extension selected
+     * at initialization. Ordinary kernels continue to see the physical-core
+     * default through ck_threadpool_n_threads(). */
+    return capacity;
+}
+
 static int ck_should_run_gemm_serial(const ck_threadpool_t *pool, int M, int N, int K)
 {
     if (!ck_shape_aware_enabled(pool)) return 0;
@@ -1189,7 +1204,7 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
                 A, packed_x8, bias, C, packed_rows, N, K);
         }
     } else if (packed_rows > 0) {
-        const int active = ck_select_gemm_active_threads(pool, packed_rows, N, K);
+        int active = ck_select_gemm_active_threads(pool, packed_rows, N, K);
         /* The VNNI layout interleaves Q4 bytes across eight output columns,
          * so each dot-product lane advances one output without horizontal
          * reduction. Packing is cached by weight identity and does not occur
@@ -1198,6 +1213,8 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
 #if defined(__AVXVNNI__) || \
     (defined(__AVX512VNNI__) && defined(__AVX512VL__))
         if (packed_vnni) {
+            active = ck_select_q4k_vnni_active_threads(
+                    pool, packed_rows, N, K);
             ck_q4k_prefill_debug_dispatch("vnni_x8_4m", M, N, K, active);
             gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
                     A, packed_vnni, bias, C, packed_rows, N, K, active);

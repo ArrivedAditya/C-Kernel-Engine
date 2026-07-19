@@ -208,8 +208,9 @@ static bool llama_mul_mat(
             ok = false;
         } else {
             ggml_build_forward_expand(graph, y);
-            const int threads = std::max(1, std::atoi(std::getenv("CK_NUM_THREADS")
-                    ? std::getenv("CK_NUM_THREADS") : "4"));
+            const char * thread_text = std::getenv("CK_Q4K_LLAMA_THREADS");
+            if (!thread_text) thread_text = std::getenv("CK_NUM_THREADS");
+            const int threads = std::max(1, std::atoi(thread_text ? thread_text : "4"));
             ok = ggml_graph_compute_with_ctx(ctx, graph, threads) == GGML_STATUS_SUCCESS;
             if (ok) {
                 std::memcpy(output.data(), ggml_get_data_f32(y), output.size() * sizeof(float));
@@ -242,7 +243,9 @@ static bool llama_mul_mat_repacked(
         ggml_backend_tensor_set(w, weights.data(), 0, weights.size());
     }
 
-    const size_t arena_size = 64u * 1024u * 1024u
+    /* Repacked graphs allocate thread-dependent scheduler/work metadata in
+     * this context. Keep bounded headroom for 24+ thread comparative runs. */
+    const size_t arena_size = 128u * 1024u * 1024u
             + activations.size() * sizeof(float) + output.size() * sizeof(float);
     ggml_init_params graph_params = {arena_size, nullptr, false};
     ggml_context * graph_ctx = ok ? ggml_init(graph_params) : nullptr;
@@ -255,8 +258,9 @@ static bool llama_mul_mat_repacked(
             ok = false;
         } else {
             ggml_build_forward_expand(graph, y);
-            const int threads = std::max(1, std::atoi(std::getenv("CK_NUM_THREADS")
-                    ? std::getenv("CK_NUM_THREADS") : "4"));
+            const char * thread_text = std::getenv("CK_Q4K_LLAMA_THREADS");
+            if (!thread_text) thread_text = std::getenv("CK_NUM_THREADS");
+            const int threads = std::max(1, std::atoi(thread_text ? thread_text : "4"));
             ok = ggml_graph_compute_with_ctx(graph_ctx, graph, threads) == GGML_STATUS_SUCCESS;
             if (ok && elapsed_ms) {
                 const auto start = std::chrono::steady_clock::now();
