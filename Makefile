@@ -1580,7 +1580,11 @@ test-quant: $(LIB_QUANT)
 #   make e2e-qwen      - Test with Qwen2-0.5B (recommended, ~400MB)
 #   make e2e-smollm    - Test with SmolLM2-360M (~200MB)
 #
-e2e:
+.PHONY: test-legacy-runner-kernel-source-policy
+test-legacy-runner-kernel-source-policy:
+	@$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_legacy_runner_kernel_source_policy -v
+
+e2e: test-legacy-runner-kernel-source-policy
 	@echo "========================================"
 	@echo "  CK-Engine E2E Integration Tests"
 	@echo "========================================"
