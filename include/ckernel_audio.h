@@ -1,6 +1,8 @@
 #ifndef CKERNEL_AUDIO_H
 #define CKERNEL_AUDIO_H
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -9,6 +11,61 @@ extern "C" {
 #define CK_AUDIO_WHISPER_N_FFT 400
 #define CK_AUDIO_WHISPER_HOP_LENGTH 160
 #define CK_AUDIO_WHISPER_POWER_BINS 201
+
+int audio_pcm_s16_to_mono_f32(
+    const int16_t *interleaved,
+    int n_frames,
+    int n_channels,
+    float *mono);
+
+int audio_resampled_frame_count(
+    int input_frames,
+    int input_rate,
+    int output_rate);
+
+int audio_resample_linear_f32(
+    const float *input,
+    int input_frames,
+    int input_rate,
+    float *output,
+    int output_frames,
+    int output_rate);
+
+int audio_stft_precompute_tables_f32(
+    int n_fft,
+    float *window,
+    float *cos_table,
+    float *sin_table);
+
+int audio_stft_power_precomputed_f32(
+    const float *samples,
+    int n_samples,
+    const float *window,
+    const float *cos_table,
+    const float *sin_table,
+    int n_fft,
+    int hop_length,
+    float *power,
+    int n_frames);
+
+int audio_conv1d_channel_major_f32(
+    const float *input,
+    const float *weight,
+    const float *bias,
+    float *output,
+    int input_channels,
+    int output_channels,
+    int input_frames,
+    int kernel_size,
+    int stride,
+    int padding,
+    int output_frames);
+
+int audio_transpose_channel_to_token_f32(
+    const float *input,
+    float *output,
+    int channels,
+    int frames);
 
 int audio_whisper_stft_power_reference_f32(
     const float *samples,

@@ -315,6 +315,9 @@ TEST_SUITES = {
     "audio_frontend": TestSuite(
         "Audio Log-Mel Frontend", "kernels", UNITTEST_DIR / "test_audio.py"
     ),
+    "audio_transformer_primitives": TestSuite(
+        "Audio Transformer Primitives", "kernels", UNITTEST_DIR / "test_audio_encoder.py"
+    ),
     # NOTE: Orchestration test disabled - v6.5 uses generated code with local helpers,
     # not orchestration layer. Use llamacpp-parity-full for quantized kernel validation.
     # "orchestration": TestSuite("Orchestration", "kernels", UNITTEST_DIR / "test_orchestration_layer.py"),

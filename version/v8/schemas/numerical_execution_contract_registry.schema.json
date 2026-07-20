@@ -58,6 +58,11 @@
             "attention",
             "attention_gate",
             "audio_log_mel",
+            "audio_pcm_decode",
+            "audio_resample",
+            "audio_stft",
+            "audio_conv1d",
+            "layout_transform",
             "residual_add",
             "gelu",
             "swiglu"
@@ -86,7 +91,8 @@
                 "fp16",
                 "bf16",
                 "q8_0",
-                "q8_k"
+                "q8_k",
+                "int16"
               ]
             },
             "weight": {
@@ -128,7 +134,8 @@
                 "fp16_rne",
                 "bf16",
                 "bf16_rne",
-                "int8"
+                "int8",
+                "int16"
               ]
             },
             "weight": {

@@ -1278,9 +1278,11 @@ test-relu: $(LIB_RELU)
 test-vision: $(LIB_VISION)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_vision.py
 
-test-audio: $(LIB_AUDIO)
+test-audio: $(LIB_AUDIO) $(LIB_ATTENTION)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_audio.py
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_audio_encoder.py
 	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_audio_contract -v
+	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_audio_encoder_contract -v
 
 # Policy:
 # - Keep public/operator-facing test entrypoints version-neutral (`make test`,

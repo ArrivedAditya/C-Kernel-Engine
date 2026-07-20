@@ -31,10 +31,70 @@
 #define RTLD_DEFAULT ((void *)0)
 #endif
 #include <math.h>
+#include <float.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "ck_speed_profiles.h"
 #include <string.h>
+
+int attention_forward_query_key_head_major_f32(
+    const float *query,
+    const float *key,
+    const float *value,
+    float *output,
+    float *score_scratch,
+    int num_heads,
+    int query_tokens,
+    int key_tokens,
+    int head_dim,
+    float scale)
+{
+    if (query == NULL || key == NULL || value == NULL || output == NULL ||
+        score_scratch == NULL) {
+        return -1;
+    }
+    if (num_heads <= 0 || query_tokens <= 0 || key_tokens <= 0 ||
+        head_dim <= 0 || !isfinite(scale)) {
+        return -2;
+    }
+    for (int head = 0; head < num_heads; ++head) {
+        const float *q_head = query + (size_t)head * query_tokens * head_dim;
+        const float *k_head = key + (size_t)head * key_tokens * head_dim;
+        const float *v_head = value + (size_t)head * key_tokens * head_dim;
+        float *out_head = output + (size_t)head * query_tokens * head_dim;
+        for (int q_token = 0; q_token < query_tokens; ++q_token) {
+            const float *q_row = q_head + (size_t)q_token * head_dim;
+            float maximum = -FLT_MAX;
+            for (int k_token = 0; k_token < key_tokens; ++k_token) {
+                const float *k_row = k_head + (size_t)k_token * head_dim;
+                float dot = 0.0f;
+                for (int dim = 0; dim < head_dim; ++dim) {
+                    dot = fmaf(q_row[dim], k_row[dim], dot);
+                }
+                const float score = dot * scale;
+                score_scratch[k_token] = score;
+                maximum = fmaxf(maximum, score);
+            }
+            double denominator = 0.0;
+            for (int k_token = 0; k_token < key_tokens; ++k_token) {
+                const float probability = expf(score_scratch[k_token] - maximum);
+                score_scratch[k_token] = probability;
+                denominator += (double)probability;
+            }
+            const float inverse = denominator > 0.0 ? (float)(1.0 / denominator) : 0.0f;
+            float *out_row = out_head + (size_t)q_token * head_dim;
+            for (int dim = 0; dim < head_dim; ++dim) {
+                float sum = 0.0f;
+                for (int k_token = 0; k_token < key_tokens; ++k_token) {
+                    const float probability = score_scratch[k_token] * inverse;
+                    sum = fmaf(probability, v_head[(size_t)k_token * head_dim + dim], sum);
+                }
+                out_row[dim] = sum;
+            }
+        }
+    }
+    return 0;
+}
 
 #if defined(__AVX__) || defined(__AVX2__) || defined(__AVX512F__) || defined(__SSE2__)
 #include <immintrin.h>

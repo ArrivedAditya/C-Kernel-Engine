@@ -71,6 +71,9 @@ class AudioFrontendContractTests(unittest.TestCase):
         self.assertEqual(frontend["window"], "periodic_hann")
         self.assertEqual(frontend["mel_scale"], "slaney")
 
+    def test_frontend_does_not_override_resolved_kernel_identity(self):
+        self.assertNotIn("kernels", self.circuit)
+
 
 if __name__ == "__main__":
     unittest.main()

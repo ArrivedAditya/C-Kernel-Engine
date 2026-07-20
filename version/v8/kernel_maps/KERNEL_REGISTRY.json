@@ -5,17 +5,21 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 220,
+      "total": 226,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
         "assistant_layer_scale": 1,
-        "attention": 22,
+        "attention": 23,
         "attention_projection": 1,
         "attention_sliding": 6,
         "attn_gate_sigmoid_mul": 1,
         "attn_gate_sigmoid_mul_backward": 1,
+        "audio_conv1d": 1,
         "audio_log_mel": 1,
+        "audio_pcm_decode": 1,
+        "audio_resample": 1,
+        "audio_stft": 1,
         "bias_add": 1,
         "embedding": 7,
         "embedding_backward": 1,
@@ -39,6 +43,7 @@
         "kv_cache_store_batch_f16": 1,
         "kv_lora_decompress": 1,
         "layernorm": 3,
+        "layout_transform": 1,
         "logits_store_indexed": 1,
         "mamba_conv1d_state_update": 1,
         "mamba_dt_softplus": 1,
@@ -5190,6 +5195,174 @@
       "_source_file": "attention_forward_full_head_major_gqa_tiled_f16kv_fp32_strided.json"
     },
     {
+      "id": "attention_forward_query_key_head_major_f32",
+      "op": "attention",
+      "variant": "equal_or_unequal_length_head_major_query_scaled_fp32_reference",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "query",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "Tq",
+            "D"
+          ]
+        },
+        {
+          "name": "key",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "Tk",
+            "D"
+          ]
+        },
+        {
+          "name": "value",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "Tk",
+            "D"
+          ]
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "Tq",
+            "D"
+          ]
+        }
+      ],
+      "scratch": [
+        {
+          "name": "score_scratch",
+          "dtype": "fp32",
+          "shape": [
+            "Tk"
+          ]
+        }
+      ],
+      "dims": [
+        "num_heads",
+        "query_tokens",
+        "key_tokens",
+        "head_dim",
+        "attention_scale"
+      ],
+      "impl": {
+        "function": "attention_forward_query_key_head_major_f32",
+        "c_declaration": "int attention_forward_query_key_head_major_f32(const float *query, const float *key, const float *value, float *output, float *score_scratch, int num_heads, int query_tokens, int key_tokens, int head_dim, float scale);",
+        "sources": [
+          "src/kernels/attention_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "attention_query_key_scaled_ordered_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "attention_forward_query_key_head_major_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "query",
+            "source": "activation:query",
+            "cast": "const float*"
+          },
+          {
+            "name": "key",
+            "source": "activation:key",
+            "cast": "const float*"
+          },
+          {
+            "name": "value",
+            "source": "activation:value",
+            "cast": "const float*"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*"
+          },
+          {
+            "name": "score_scratch",
+            "source": "scratch:score_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "query_tokens",
+            "source": "dim:query_tokens"
+          },
+          {
+            "name": "key_tokens",
+            "source": "dim:key_tokens"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "scale",
+            "source": "dim:attention_scale"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ]
+      },
+      "name": "attention_forward_query_key_head_major_f32",
+      "_source_file": "attention_forward_query_key_head_major_f32.json"
+    },
+    {
       "id": "attn_gate_sigmoid_mul_backward_f32",
       "op": "attn_gate_sigmoid_mul_backward",
       "variant": "fp32",
@@ -5480,6 +5653,659 @@
       "notes": "Applies a llama.cpp-compatible FP32 sigmoid gate after attention and before the output projection.",
       "name": "attn_gate_sigmoid_mul_forward",
       "_source_file": "attn_gate_sigmoid_mul_forward.json"
+    },
+    {
+      "id": "audio_conv1d_channel_major_f32",
+      "op": "audio_conv1d",
+      "variant": "channel_major_bias_stride_padding_fp32_reference",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "C_in",
+            "T_in"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "weight",
+          "dtype": "fp32",
+          "shape": [
+            "C_out",
+            "C_in",
+            "K"
+          ]
+        },
+        {
+          "name": "bias",
+          "dtype": "fp32",
+          "shape": [
+            "C_out"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "C_out",
+            "T_out"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "input_channels",
+        "output_channels",
+        "input_frames",
+        "kernel_size",
+        "stride",
+        "padding",
+        "output_frames"
+      ],
+      "impl": {
+        "function": "audio_conv1d_channel_major_f32",
+        "c_declaration": "int audio_conv1d_channel_major_f32(const float *input, const float *weight, const float *bias, float *output, int input_channels, int output_channels, int input_frames, int kernel_size, int stride, int padding, int output_frames);",
+        "sources": [
+          "src/kernels/audio_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "audio_conv1d_channel_major_ascending_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_conv1d_channel_major_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*"
+          },
+          {
+            "name": "weight",
+            "source": "weight:weight",
+            "cast": "const float*"
+          },
+          {
+            "name": "bias",
+            "source": "weight_f:bias",
+            "cast": "const float*"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*"
+          },
+          {
+            "name": "input_channels",
+            "source": "dim:input_channels"
+          },
+          {
+            "name": "output_channels",
+            "source": "dim:output_channels"
+          },
+          {
+            "name": "input_frames",
+            "source": "dim:input_frames"
+          },
+          {
+            "name": "kernel_size",
+            "source": "dim:kernel_size"
+          },
+          {
+            "name": "stride",
+            "source": "dim:stride"
+          },
+          {
+            "name": "padding",
+            "source": "dim:padding"
+          },
+          {
+            "name": "output_frames",
+            "source": "dim:output_frames"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ]
+      },
+      "name": "audio_conv1d_channel_major_f32",
+      "_source_file": "audio_conv1d_channel_major_f32.json"
+    },
+    {
+      "id": "audio_pcm_s16_to_mono_f32",
+      "op": "audio_pcm_decode",
+      "variant": "signed_16_interleaved_channel_mean_fp32",
+      "quant": {
+        "weight": "none",
+        "activation": "int16",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "interleaved",
+          "dtype": "int16",
+          "shape": [
+            "N_frames",
+            "N_channels"
+          ]
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "mono",
+          "dtype": "fp32",
+          "shape": [
+            "N_frames"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "n_frames",
+        "n_channels"
+      ],
+      "impl": {
+        "function": "audio_pcm_s16_to_mono_f32",
+        "c_declaration": "int audio_pcm_s16_to_mono_f32(const int16_t *interleaved, int n_frames, int n_channels, float *mono);",
+        "sources": [
+          "src/kernels/audio_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "audio_pcm_s16_mono_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_pcm_s16_to_mono_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "interleaved",
+            "source": "activation:interleaved",
+            "cast": "const int16_t*"
+          },
+          {
+            "name": "n_frames",
+            "source": "dim:n_frames"
+          },
+          {
+            "name": "n_channels",
+            "source": "dim:n_channels"
+          },
+          {
+            "name": "mono",
+            "source": "output:mono",
+            "cast": "float*"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ]
+      },
+      "name": "audio_pcm_s16_to_mono_f32",
+      "_source_file": "audio_pcm_s16_to_mono_f32.json"
+    },
+    {
+      "id": "audio_resample_linear_f32",
+      "op": "audio_resample",
+      "variant": "rational_coordinate_linear_fp32_reference",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "N_input"
+          ]
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "N_output"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "input_frames",
+        "input_rate",
+        "output_frames",
+        "output_rate"
+      ],
+      "impl": {
+        "function": "audio_resample_linear_f32",
+        "c_declaration": "int audio_resample_linear_f32(const float *input, int input_frames, int input_rate, float *output, int output_frames, int output_rate);",
+        "sources": [
+          "src/kernels/audio_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "audio_resample_linear_rational_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_resample_linear_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*"
+          },
+          {
+            "name": "input_frames",
+            "source": "dim:input_frames"
+          },
+          {
+            "name": "input_rate",
+            "source": "dim:input_rate"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*"
+          },
+          {
+            "name": "output_frames",
+            "source": "dim:output_frames"
+          },
+          {
+            "name": "output_rate",
+            "source": "dim:output_rate"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ]
+      },
+      "notes": "Reference-only resampler. Circuits requiring band-limited resampling must request a different contract and hard-fail until a compatible provider exists.",
+      "name": "audio_resample_linear_f32",
+      "_source_file": "audio_resample_linear_f32.json"
+    },
+    {
+      "id": "audio_stft_power_precomputed_f32",
+      "op": "audio_stft",
+      "variant": "centered_hann_precomputed_trigonometric_tables_fp32",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "samples",
+          "dtype": "fp32",
+          "shape": [
+            "N_samples"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "window",
+          "dtype": "fp32",
+          "shape": [
+            "N_fft"
+          ]
+        },
+        {
+          "name": "cos_table",
+          "dtype": "fp32",
+          "shape": [
+            "N_bins",
+            "N_fft"
+          ]
+        },
+        {
+          "name": "sin_table",
+          "dtype": "fp32",
+          "shape": [
+            "N_bins",
+            "N_fft"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "power",
+          "dtype": "fp32",
+          "shape": [
+            "N_frames",
+            "N_bins"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "n_samples",
+        "n_fft",
+        "hop_length",
+        "n_frames"
+      ],
+      "impl": {
+        "function": "audio_stft_power_precomputed_f32",
+        "c_declaration": "int audio_stft_power_precomputed_f32(const float *samples, int n_samples, const float *window, const float *cos_table, const float *sin_table, int n_fft, int hop_length, float *power, int n_frames);",
+        "sources": [
+          "src/kernels/audio_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "audio_stft_centered_hann_precomputed_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_stft_power_precomputed_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "samples",
+            "source": "activation:samples",
+            "cast": "const float*"
+          },
+          {
+            "name": "n_samples",
+            "source": "dim:n_samples"
+          },
+          {
+            "name": "window",
+            "source": "weight:window",
+            "cast": "const float*"
+          },
+          {
+            "name": "cos_table",
+            "source": "weight:cos_table",
+            "cast": "const float*"
+          },
+          {
+            "name": "sin_table",
+            "source": "weight:sin_table",
+            "cast": "const float*"
+          },
+          {
+            "name": "n_fft",
+            "source": "dim:n_fft"
+          },
+          {
+            "name": "hop_length",
+            "source": "dim:hop_length"
+          },
+          {
+            "name": "power",
+            "source": "output:power",
+            "cast": "float*"
+          },
+          {
+            "name": "n_frames",
+            "source": "dim:n_frames"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ]
+      },
+      "name": "audio_stft_power_precomputed_f32",
+      "_source_file": "audio_stft_power_precomputed_f32.json"
+    },
+    {
+      "id": "audio_transpose_channel_to_token_f32",
+      "op": "layout_transform",
+      "variant": "channel_major_to_token_major_fp32_copy",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "C",
+            "T"
+          ]
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "C"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "channels",
+        "frames"
+      ],
+      "impl": {
+        "function": "audio_transpose_channel_to_token_f32",
+        "c_declaration": "int audio_transpose_channel_to_token_f32(const float *input, float *output, int channels, int frames);",
+        "sources": [
+          "src/kernels/audio_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "layout_channel_to_token_copy_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_transpose_channel_to_token_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*"
+          },
+          {
+            "name": "channels",
+            "source": "dim:channels"
+          },
+          {
+            "name": "frames",
+            "source": "dim:frames"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ]
+      },
+      "name": "audio_transpose_channel_to_token_f32",
+      "_source_file": "audio_transpose_channel_to_token_f32.json"
     },
     {
       "id": "audio_whisper_log_mel_reference_f32",

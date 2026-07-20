@@ -848,6 +848,38 @@ def _validate_segmented_prefill_contract(
 
 OP_DATAFLOW = {
     # Header ops
+    "audio_pcm_decode": {
+        "inputs": {"interleaved": "external:audio_pcm"},
+        "outputs": {"mono": {"slot": "audio_samples", "dtype": "fp32"}},
+    },
+    "audio_resample": {
+        "inputs": {"input": "audio_samples"},
+        "outputs": {"output": {"slot": "audio_resampled", "dtype": "fp32"}},
+    },
+    "audio_stft": {
+        "inputs": {"samples": "audio_resampled"},
+        "outputs": {"power": {"slot": "audio_power", "dtype": "fp32"}},
+    },
+    "audio_log_mel": {
+        "inputs": {"power": "audio_power"},
+        "outputs": {"log_mel": {"slot": "audio_features", "dtype": "fp32"}},
+    },
+    "audio_conv1d_stem_1": {
+        "inputs": {"input": "audio_features"},
+        "outputs": {"output": {"slot": "audio_conv_1", "dtype": "fp32"}},
+    },
+    "audio_conv1d_stem_2": {
+        "inputs": {"input": "audio_conv_1"},
+        "outputs": {"output": {"slot": "audio_conv_2", "dtype": "fp32"}},
+    },
+    "layout_channel_to_token": {
+        "inputs": {"input": "audio_conv_2"},
+        "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
+    },
+    "cross_attn": {
+        "inputs": {"query": "q_scratch", "key": "k_scratch", "value": "v_scratch"},
+        "outputs": {"output": {"slot": "attn_scratch", "dtype": "fp32"}},
+    },
     "dense_embedding_lookup": {
         "inputs": {"token_ids": "external:token_ids"},
         "outputs": {"out": {"slot": "main_stream", "dtype": "fp32"}},
@@ -2572,6 +2604,13 @@ def _validated_kernel_codegen_capability(kernel_id: str, kernel_map: Dict) -> Op
 # Note: "matmul" is a logical op that maps to gemv (decode) or gemm (prefill) based on mode
 TEMPLATE_TO_KERNEL_OP = {
     # Header ops
+    "audio_pcm_decode": "audio_pcm_decode",
+    "audio_resample": "audio_resample",
+    "audio_stft": "audio_stft",
+    "audio_log_mel": "audio_log_mel",
+    "audio_conv1d_stem_1": "audio_conv1d",
+    "audio_conv1d_stem_2": "audio_conv1d",
+    "layout_channel_to_token": "layout_transform",
     "tokenizer": None,  # Metadata op - no kernel (deprecated, use bpe_tokenizer)
     "bpe_tokenizer": None,  # BPE tokenizer - init handled separately
     "wordpiece_tokenizer": None,  # WordPiece tokenizer - init handled separately
@@ -2649,6 +2688,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "mrope_qk": "rope",
     "kv_cache_store": "kv_cache_store",  # Store K,V to KV cache at pos
     "attn": "attention",
+    "cross_attn": "attention",
     "attn_sliding": "attention_sliding",
     "out_proj": "matmul",  # gemv (decode) or gemm (prefill)
 
@@ -5272,6 +5312,14 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "logits": [],  # Uses lm_head/token_emb, usually q8_0
 
         # Ops with fp32 weights (no quant lookup needed)
+        "audio_pcm_decode": None,
+        "audio_resample": None,
+        "audio_stft": ["audio_window", "audio_cos_table", "audio_sin_table"],
+        "audio_log_mel": ["audio_mel_filters"],
+        "audio_conv1d_stem_1": ["audio_conv1_weight", "audio_conv1_bias"],
+        "audio_conv1d_stem_2": ["audio_conv2_weight", "audio_conv2_bias"],
+        "layout_channel_to_token": None,
+        "cross_attn": None,
         "rmsnorm": None,  # gamma is always fp32
         "layernorm": None,  # gamma/beta are fp32
         "attn_norm": None,
@@ -7747,6 +7795,13 @@ WEIGHT_PATTERNS = {
 # This tells us which weights each template op needs
 TEMPLATE_OP_WEIGHTS = {
     # Header (tokenizer is metadata, not model weights)
+    "audio_pcm_decode": [],
+    "audio_resample": [],
+    "audio_stft": ["audio_window", "audio_cos_table", "audio_sin_table"],
+    "audio_log_mel": ["audio_mel_filters"],
+    "audio_conv1d_stem_1": ["audio_conv1_weight", "audio_conv1_bias"],
+    "audio_conv1d_stem_2": ["audio_conv2_weight", "audio_conv2_bias"],
+    "layout_channel_to_token": [],
     "tokenizer": [],  # Deprecated, use bpe_tokenizer
     "bpe_tokenizer": [],  # BPE tokenizer data handled separately (not model weights)
     "wordpiece_tokenizer": [],  # WordPiece tokenizer data handled separately
@@ -7833,6 +7888,7 @@ TEMPLATE_OP_WEIGHTS = {
     "rope_q": [],  # No model weights (uses direct RoPE params/frequency factors)
     "mrope_qk": [],  # No model weights (runtime positions + RoPE params)
     "attn": [],  # No model weights
+    "cross_attn": [],
     "attn_sliding": [],  # No model weights (kernel op handles windowing)
     "attn_shared_kv": [],  # No model weights; q_scratch is used as Q/K/V
     "attn_sliding_shared_kv": [],  # No model weights; q_scratch is used as Q/K/V with SWA
