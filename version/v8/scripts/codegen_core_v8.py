@@ -1571,6 +1571,23 @@ def emit_op(
                 return ex
         return None
 
+    def _semantic_checkpoint_tensor(default: str) -> str:
+        checkpoints = op.get("semantic_checkpoints")
+        if not isinstance(checkpoints, list):
+            return default
+        tensors = [
+            str(checkpoint.get("tensor", "")).strip()
+            for checkpoint in checkpoints
+            if isinstance(checkpoint, dict) and str(checkpoint.get("tensor", "")).strip()
+        ]
+        if default in tensors or not tensors:
+            return default
+        if len(tensors) == 1:
+            return tensors[0]
+        raise RuntimeError(
+            f"operation {op_name!r} has ambiguous semantic checkpoint tensors {tensors}"
+        )
+
     def _emit_hidden_export(expr: str | None, label: str, count_expr: str | None) -> None:
         raw_expr = _hidden_raw(expr)
         if raw_expr and count_expr:
@@ -1694,7 +1711,11 @@ def emit_op(
             _hidden_arg("num_tokens", "tokens", "rows"),
             _hidden_arg("aligned_head_dim", "head_dim"),
         )
-        _emit_hidden_export(out_expr, "attn_pregate", count_expr)
+        _emit_hidden_export(
+            out_expr,
+            _semantic_checkpoint_tensor("attn_pregate"),
+            count_expr,
+        )
     elif op_name == "attn_gate_sigmoid_mul":
         out_expr = _hidden_arg("output", "out", "y")
         count_expr = _mul_expr(

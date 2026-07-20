@@ -156,6 +156,33 @@ class HiddenExportExtentTests(unittest.TestCase):
         self.assertIn('"attn_pregate", (const float*)ATTN, (8) * (1) * (256)', attention)
         self.assertIn('"attn_out", (const float*)ATTN, (8) * (18) * (256)', gated)
 
+    def test_attention_checkpoint_name_comes_from_call_ir_contract(self) -> None:
+        emitted = codegen.emit_op(
+            {
+                "op": "attn",
+                "function": "attention_forward",
+                "layer": 2,
+                "args": [
+                    _arg("out_token", "ATTN"),
+                    _arg("num_heads", "16"),
+                    _arg("num_tokens", "1008"),
+                    _arg("aligned_head_dim", "72"),
+                ],
+                "semantic_checkpoints": [
+                    {
+                        "id": "vision.layer.2.attention.output",
+                        "tensor": "attn_out_head_major",
+                    }
+                ],
+            }
+        )
+
+        self.assertIn(
+            '"attn_out_head_major", (const float*)ATTN, (16) * (1008) * (72)',
+            emitted,
+        )
+        self.assertNotIn('"attn_pregate"', emitted)
+
     def test_qwen35_prefill_exports_full_norm_and_swiglu_extents(self) -> None:
         norm = codegen.emit_op(
             {
