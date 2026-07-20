@@ -61,6 +61,7 @@
           "properties": {
             "kind": {"enum": ["single_range", "kv_chunks_by_workers", "query_key_tiles", "query_tile_threshold"]},
             "threshold": {"type": "integer", "minimum": 1},
+            "extent_source": {"enum": ["valid_kv_rounded"]},
             "extent_alignment": {"type": "integer", "minimum": 1},
             "below_threshold_chunks": {"type": "integer", "minimum": 1},
             "at_or_above_threshold_chunks": {"enum": ["runtime_worker_count"]},
@@ -72,6 +73,16 @@
             "at_or_above_threshold": {"type": "string", "minLength": 1}
           },
           "allOf": [
+            {
+              "if": {"properties": {"kind": {"const": "kv_chunks_by_workers"}}},
+              "then": {
+                "required": ["threshold", "extent_source", "below_threshold_chunks", "at_or_above_threshold_chunks"]
+              }
+            },
+            {
+              "if": {"properties": {"extent_source": {"const": "valid_kv_rounded"}}, "required": ["extent_source"]},
+              "then": {"required": ["extent_alignment"]}
+            },
             {
               "if": {"properties": {"kind": {"const": "query_key_tiles"}}},
               "then": {

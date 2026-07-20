@@ -57,5 +57,50 @@ class MultitokenParityEOSContractTests(unittest.TestCase):
         self.assertEqual(report["first_divergence"]["ck_next"], 2)
 
 
+class PersistentTrajectoryParityTests(unittest.TestCase):
+    def test_exact_trajectory_stops_at_shared_eos(self) -> None:
+        rows = np.asarray([
+            [0.0, 4.0, 1.0],
+            [0.0, 1.0, 4.0],
+        ], dtype=np.float32)
+        llama = {"logits": rows, "generated_tokens": [1, 2], "meta": {}}
+        ck = {"logits": rows, "generated_tokens": [1, 2], "vocab": 3}
+        with mock.patch.object(runner, "run_llama_greedy_trajectory", return_value=llama), \
+             mock.patch.object(runner, "load_ck_greedy_trajectory", return_value=ck):
+            report = runner.run_multitoken_trajectory_parity(
+                model_dir=Path("/tmp/model"),
+                gguf_path=Path("/tmp/model.gguf"),
+                prompt_tokens=[7],
+                max_new_tokens=64,
+                ctx_len=128,
+                top_k=3,
+                threads=1,
+                llama_no_repack=False,
+                stop_token_ids={2},
+            )
+        self.assertTrue(report["pass"])
+        self.assertEqual(report["matched_stop_token"], 2)
+        self.assertEqual(report["final_prefix"], [7, 1])
+        self.assertEqual(report["execution_mode"], "persistent_greedy_trajectory")
+
+    def test_trajectory_reports_first_top1_divergence(self) -> None:
+        ck_rows = np.asarray([[0.0, 4.0, 1.0]], dtype=np.float32)
+        llama_rows = np.asarray([[0.0, 1.0, 4.0]], dtype=np.float32)
+        with mock.patch.object(runner, "run_llama_greedy_trajectory", return_value={
+            "logits": llama_rows, "generated_tokens": [2], "meta": {},
+        }), mock.patch.object(runner, "load_ck_greedy_trajectory", return_value={
+            "logits": ck_rows, "generated_tokens": [1], "vocab": 3,
+        }):
+            report = runner.run_multitoken_trajectory_parity(
+                model_dir=Path("/tmp/model"), gguf_path=Path("/tmp/model.gguf"),
+                prompt_tokens=[7], max_new_tokens=64, ctx_len=128, top_k=3,
+                threads=1, llama_no_repack=False, stop_token_ids={2},
+            )
+        self.assertFalse(report["pass"])
+        self.assertEqual(report["first_divergence"]["step"], 0)
+        self.assertEqual(report["first_divergence"]["ck_next"], 1)
+        self.assertEqual(report["first_divergence"]["llama_next"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -336,6 +336,63 @@ def run_llama_logits_segmented(
         }
 
 
+def run_llama_greedy_trajectory(
+    gguf_path: Path,
+    prompt_tokens: list[int],
+    max_new_tokens: int,
+    ctx_len: int,
+    top_k: int,
+    threads: int,
+    no_repack: bool = False,
+) -> dict[str, Any]:
+    helper = ensure_llama_helper()
+    with tempfile.TemporaryDirectory(prefix="llama_token_trajectory_") as td:
+        logits_path = Path(td) / "llama_logits.f32"
+        sequence_path = Path(td) / "llama_logits_sequence.f32"
+        cmd = [
+            str(helper),
+            "--model", str(gguf_path),
+            "--tokens-before", ",".join(str(token) for token in prompt_tokens),
+            "--ctx", str(int(ctx_len)),
+            "--top-k", str(int(top_k)),
+            "--logits-out", str(logits_path),
+            "--logits-seq-out", str(sequence_path),
+            "--greedy-steps", str(int(max_new_tokens)),
+            "--prefix-decode-mode", "batched",
+            "--decode-mode", "sequential",
+        ]
+        if no_repack:
+            cmd.append("--no-repack")
+        if threads > 0:
+            cmd.extend(["--threads", str(int(threads))])
+        proc = _run(cmd, cwd=ROOT)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                "llama_token_replay trajectory failed\n"
+                f"cmd: {' '.join(cmd)}\nrc: {proc.returncode}\n"
+                f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}\n"
+            )
+        meta = json.loads(proc.stdout.strip())
+        n_vocab = int(meta.get("n_vocab", 0))
+        logits = np.fromfile(sequence_path, dtype=np.float32)
+        expected = int(max_new_tokens) * n_vocab
+        if n_vocab <= 0 or logits.size != expected:
+            raise RuntimeError(
+                f"llama trajectory size mismatch: got={logits.size} expected={expected}"
+            )
+        generated = [int(token) for token in meta.get("greedy_generated", [])]
+        if len(generated) != int(max_new_tokens):
+            raise RuntimeError(
+                f"llama trajectory token count mismatch: got={len(generated)} "
+                f"expected={max_new_tokens}"
+            )
+        return {
+            "meta": meta,
+            "logits": logits.reshape(int(max_new_tokens), n_vocab),
+            "generated_tokens": generated,
+        }
+
+
 def load_ck_logits(model_dir: Path, tokens: list[int], ck_prefill_mode: str = "auto") -> dict[str, Any]:
     return load_ck_logits_segmented(
         model_dir=model_dir,

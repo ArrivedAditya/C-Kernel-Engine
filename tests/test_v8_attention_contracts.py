@@ -27,6 +27,8 @@ class AttentionContractV8Tests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.circuit_path = V8_ROOT / "circuits" / "qwen3vl.json"
         cls.circuit = resolver.load_json(cls.circuit_path)
+        cls.qwen35_circuit_path = V8_ROOT / "circuits" / "qwen35.json"
+        cls.qwen35_circuit = resolver.load_json(cls.qwen35_circuit_path)
         cls.vision_circuit_path = V8_ROOT / "circuits" / "qwen3_vl_vision.json"
         cls.vision_circuit = resolver.load_json(cls.vision_circuit_path)
         cls.contracts = resolver.load_json(resolver.DEFAULT_CONTRACTS)
@@ -42,6 +44,17 @@ class AttentionContractV8Tests(unittest.TestCase):
             phase=phase,
             mode=mode,
             source_circuit_path=self.circuit_path,
+        )
+
+    def resolve_qwen35(self, phase: str, mode: str = "bringup"):
+        return resolver.resolve_contract(
+            copy.deepcopy(self.qwen35_circuit),
+            copy.deepcopy(self.contracts),
+            copy.deepcopy(self.kernels),
+            operation="decoder.attention",
+            phase=phase,
+            mode=mode,
+            source_circuit_path=self.qwen35_circuit_path,
         )
 
     def test_registry_defines_complete_semantics(self) -> None:
@@ -67,10 +80,11 @@ class AttentionContractV8Tests(unittest.TestCase):
         ):
             resolver.validate_contract_registry(contracts)
 
-    def test_f16_split_contract_declares_padded_scheduling_extent(self) -> None:
+    def test_f16_split_contract_declares_valid_rounded_scheduling_extent(self) -> None:
         contract = self.contracts["contracts"]["f16_online_fp32_merge"]
         self.assertEqual(contract["partition"]["kind"], "kv_chunks_by_workers")
         self.assertEqual(contract["partition"]["threshold"], 512)
+        self.assertEqual(contract["partition"]["extent_source"], "valid_kv_rounded")
         self.assertEqual(contract["partition"]["extent_alignment"], 256)
 
     def test_kernel_overlay_matches_v8_kernel_maps(self) -> None:
@@ -110,6 +124,32 @@ class AttentionContractV8Tests(unittest.TestCase):
         )
         self.assertTrue(result["kernel"]["explicit_selector"])
         self.assertNotIn("kernel uses legacy implicit selection", result["production_blockers"])
+
+    def test_qwen35_decode_resolves_valid_rounded_extent_contract(self) -> None:
+        result = self.resolve_qwen35("decode")
+        self.assertEqual(
+            result["reduction"]["id"],
+            "f16_online_fp32_merge",
+        )
+        self.assertEqual(
+            result["kernel"]["selector"],
+            "CK_ATTN_REDUCTION_F16_ONLINE_FP32_MERGE",
+        )
+        self.assertEqual(
+            result["reduction"]["semantics"]["partition"]["extent_source"],
+            "valid_kv_rounded",
+        )
+        kernel_map = resolver.load_json(
+            V8_ROOT
+            / "kernel_maps"
+            / "attention_forward_decode_head_major_gqa_flash_f16cache_contract.json"
+        )
+        reduction_arg = next(
+            arg
+            for arg in kernel_map["call_abi"]["params"]
+            if arg["name"] == "reduction"
+        )
+        self.assertEqual(reduction_arg["source"], "resolved:kernel_selector")
 
     def test_prefill_bringup_resolves_separately(self) -> None:
         result = resolver.resolve_contract(

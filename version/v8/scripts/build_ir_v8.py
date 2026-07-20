@@ -306,6 +306,7 @@ def _graph_ir_contract_metadata(plan: Dict[str, Any]) -> Dict[str, Any]:
         "contract_id": contract["id"],
         "kernel_id": plan["kernel"]["id"],
         "function": plan["kernel"]["function"],
+        "selector": plan["kernel"].get("selector"),
         "implementation": copy.deepcopy(plan["implementation"]),
     }
     if isinstance(contract.get("semantics"), dict):
@@ -10676,6 +10677,7 @@ _CALL_ABI_SOURCE_KINDS = {
     "null",
     "output",
     "param",
+    "resolved",
     "runtime",
     "scratch",
     "weight",
@@ -11242,6 +11244,17 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
 
             elif src.startswith("const:"):
                 expr = src.split(":", 1)[1]
+
+            elif src == "resolved:kernel_selector":
+                resolved = op.get("resolved_contract")
+                selector = resolved.get("selector") if isinstance(resolved, dict) else None
+                if not isinstance(selector, str) or not selector.strip():
+                    op_errors.append(
+                        f"{func}.{name}: resolved contract has no explicit kernel selector"
+                    )
+                    expr = "0"
+                else:
+                    expr = selector.strip()
 
             elif src == "null":
                 expr = "NULL"

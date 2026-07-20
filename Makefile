@@ -3408,6 +3408,7 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
 	@$(PYTHON) tests/test_v8_xray_text_recurrent.py
+	@$(PYTHON) tests/test_v8_text_prompt_certification.py
 	@$(PYTHON) -m unittest tests.test_v8_numerical_replay_fixtures -v
 	@$(PYTHON) unittest/test_attention_full.py
 	@V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT="$${V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT:-$${CK_LLAMA_CPP_ROOT:-$(CURDIR)/llama.cpp}}" \
@@ -3417,6 +3418,19 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3_vl_vision --operation vision_encoder.attention --phase prefill --mode bringup --output build/v8/contracts/qwen3vl-vision-prefill.json >/dev/null
 	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3vl --operation decoder.attention --phase decode --mode bringup --output build/v8/contracts/qwen3vl-decode.json >/dev/null
 	@echo "Resolved plans: build/v8/contracts/"
+
+.PHONY: certify-qwen35-text-parity
+certify-qwen35-text-parity:
+	@test -n "$${QWEN35_MODEL_DIR:-}" || { echo "QWEN35_MODEL_DIR is required"; exit 2; }
+	@test -n "$${QWEN35_GGUF:-}" || { echo "QWEN35_GGUF is required"; exit 2; }
+	@test -n "$${CK_LLAMA_CPP_ROOT:-}" || { echo "CK_LLAMA_CPP_ROOT is required"; exit 2; }
+	@$(PYTHON) version/v8/scripts/certify_text_prompt_parity_v8.py \
+		--model-dir "$${QWEN35_MODEL_DIR}" \
+		--gguf "$${QWEN35_GGUF}" \
+		--prompt-set version/v8/test_assets/qwen35_text_parity_prompts.json \
+		--output-dir "$${QWEN35_CERT_OUTPUT:-build/qwen35-text-certification}" \
+		--ctx-len "$${QWEN35_CTX_LEN:-1034}" \
+		--threads "$${CK_NUM_THREADS:-20}"
 
 .PHONY: test-bf16-xray xray-vision-parity test-v8-dsl-policy test-v8-dsl
 test-bf16-xray:

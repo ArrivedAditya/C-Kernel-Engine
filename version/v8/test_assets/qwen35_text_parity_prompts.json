@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "name": "qwen35-production-chat-prompts",
+  "chat_template_mode": "auto",
+  "thinking_mode": "auto",
+  "stages": [64, 128, 256],
+  "stop_token_ids": [248046],
+  "llama_cpp_commit": "f3e182816421c648188b5eab269853bf1531d950",
+  "prompts": [
+    {
+      "id": "hello",
+      "text": "Hello",
+      "tokens": [1, 248045, 846, 198, 9419, 248046, 198, 248045, 74455, 198]
+    },
+    {
+      "id": "c-python-sql",
+      "text": "Give me a detailed example of C, Python, and SQL code.",
+      "tokens": [1, 248045, 846, 198, 33963, 728, 264, 11346, 3010, 314, 351, 11, 12654, 11, 321, 7622, 1970, 13, 248046, 198, 248045, 74455, 198]
+    },
+    {
+      "id": "pure-c",
+      "text": "Give me a detailed example of pure C code.",
+      "tokens": [1, 248045, 846, 198, 33963, 728, 264, 11346, 3010, 314, 10213, 351, 1970, 13, 248046, 198, 248045, 74455, 198]
+    },
+    {
+      "id": "thanks",
+      "text": "Thank you!",
+      "tokens": [1, 248045, 846, 198, 12684, 488, 0, 248046, 198, 248045, 74455, 198]
+    }
+  ]
+}
