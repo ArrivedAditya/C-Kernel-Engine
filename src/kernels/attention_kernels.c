@@ -5116,6 +5116,7 @@ typedef struct {
     int head_dim;
     int aligned_head_dim;
     int split_chunks;
+    int scheduled_chunks;
     int partition_tokens;
 } ck_attention_f16_split_args_t;
 
@@ -5304,7 +5305,7 @@ static void ck_attention_f16_split_work(int ith, int nth, void *opaque)
 {
     ck_attention_f16_split_args_t *args = (ck_attention_f16_split_args_t *) opaque;
     const int partial_stride = args->aligned_head_dim + 2;
-    const int total_jobs = args->num_heads * args->split_chunks;
+    const int total_jobs = args->num_heads * args->scheduled_chunks;
     const int chunk_size =
         (args->partition_tokens + args->split_chunks - 1) / args->split_chunks;
     const size_t head_stride = (size_t) args->cache_capacity * (size_t) args->aligned_head_dim;
@@ -5313,8 +5314,8 @@ static void ck_attention_f16_split_work(int ith, int nth, void *opaque)
     uint16_t *acc_half = (uint16_t *) alloca((size_t) args->aligned_head_dim * sizeof(uint16_t));
 
     for (int job = ith; job < total_jobs; job += nth) {
-        const int h = job / args->split_chunks;
-        const int chunk = job % args->split_chunks;
+        const int h = job / args->scheduled_chunks;
+        const int chunk = job % args->scheduled_chunks;
         const int kv_head = (int) ((long long) h * (long long) args->num_kv_heads /
                                    (long long) args->num_heads);
         const int begin = chunk * chunk_size;
@@ -5369,22 +5370,25 @@ static void ck_attention_f16_split_work(int ith, int nth, void *opaque)
     }
 }
 
-void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q_token,
-                                                                  const uint16_t *k_cache,
-                                                                  const uint16_t *v_cache,
-                                                                  float *out_token,
-                                                                  int num_heads,
-                                                                  int num_kv_heads,
-                                                                  int kv_tokens,
-                                                                  int cache_capacity,
-                                                                  int head_dim,
-                                                                  int aligned_head_dim,
-                                                                  int split_chunks)
+static void attention_forward_decode_head_major_gqa_flash_f16cache_split_partitioned(
+    const float *q_token,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *out_token,
+    int num_heads,
+    int num_kv_heads,
+    int kv_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    int split_chunks,
+    int partition_tokens)
 {
     if (!q_token || !k_cache || !v_cache || !out_token ||
         num_heads <= 0 || num_kv_heads <= 0 || kv_tokens <= 0 ||
         cache_capacity <= 0 || kv_tokens > cache_capacity ||
-        head_dim <= 0 || aligned_head_dim < head_dim) {
+        head_dim <= 0 || aligned_head_dim < head_dim ||
+        partition_tokens < kv_tokens) {
         return;
     }
 
@@ -5403,16 +5407,11 @@ void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q
         split_chunks = (split_chunks + 1) / 2;
     }
 
-    const size_t resolved_count = (size_t) num_heads * (size_t) split_chunks * (size_t) partial_stride;
+    const int chunk_size = (partition_tokens + split_chunks - 1) / split_chunks;
+    const int scheduled_chunks = (kv_tokens + chunk_size - 1) / chunk_size;
+    const size_t resolved_count =
+        (size_t) num_heads * (size_t) scheduled_chunks * (size_t) partial_stride;
     float *partials = (float *) alloca(resolved_count * sizeof(float));
-    /*
-     * llama.cpp reuses a padded decode graph. Masked rows do not contribute,
-     * but the physical K tensor extent still determines worker boundaries.
-     */
-    const int partition_alignment = 256;
-    const int partition_tokens = kv_tokens >= 512
-        ? ((kv_tokens + partition_alignment - 1) / partition_alignment) * partition_alignment
-        : kv_tokens;
     ck_attention_f16_split_args_t args = {
         .q_token = q_token,
         .k_cache = k_cache,
@@ -5425,12 +5424,13 @@ void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q
         .head_dim = head_dim,
         .aligned_head_dim = aligned_head_dim,
         .split_chunks = split_chunks,
+        .scheduled_chunks = scheduled_chunks,
         .partition_tokens = partition_tokens,
     };
 
     ck_threadpool_t *pool = ck_threadpool_global();
     int active_threads = pool ? ck_threadpool_n_threads(pool) : 1;
-    const int total_jobs = num_heads * split_chunks;
+    const int total_jobs = num_heads * scheduled_chunks;
     if (active_threads > total_jobs) {
         active_threads = total_jobs;
     }
@@ -5448,9 +5448,9 @@ void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q
             out_head[d] = 0.0f;
         }
 
-        for (int chunk = 0; chunk < split_chunks; ++chunk) {
+        for (int chunk = 0; chunk < scheduled_chunks; ++chunk) {
             const float *partial = partials +
-                ((size_t) h * (size_t) split_chunks + (size_t) chunk) * (size_t) partial_stride;
+                ((size_t) h * (size_t) scheduled_chunks + (size_t) chunk) * (size_t) partial_stride;
             const float chunk_max = partial[0];
             const float chunk_sum = partial[1];
             if (chunk_sum == 0.0f) {
@@ -5482,6 +5482,27 @@ void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q
     }
 }
 
+void attention_forward_decode_head_major_gqa_flash_f16cache_split(const float *q_token,
+                                                                  const uint16_t *k_cache,
+                                                                  const uint16_t *v_cache,
+                                                                  float *out_token,
+                                                                  int num_heads,
+                                                                  int num_kv_heads,
+                                                                  int kv_tokens,
+                                                                  int cache_capacity,
+                                                                  int head_dim,
+                                                                  int aligned_head_dim,
+                                                                  int split_chunks)
+{
+    const int partition_alignment = 256;
+    const int partition_tokens =
+        ((kv_tokens + partition_alignment - 1) / partition_alignment) * partition_alignment;
+    attention_forward_decode_head_major_gqa_flash_f16cache_split_partitioned(
+        q_token, k_cache, v_cache, out_token,
+        num_heads, num_kv_heads, kv_tokens, cache_capacity,
+        head_dim, aligned_head_dim, split_chunks, partition_tokens);
+}
+
 ck_attention_status_t attention_forward_decode_head_major_gqa_flash_f16cache_contract(
     const float *q_token,
     const uint16_t *k_cache,
@@ -5511,7 +5532,10 @@ ck_attention_status_t attention_forward_decode_head_major_gqa_flash_f16cache_con
         return CK_ATTENTION_STATUS_OK;
 
     case CK_ATTN_REDUCTION_F16_ONLINE_FP32_MERGE: {
-        const int split_chunks = kv_tokens >= 512 ? ck_get_num_threads() : 1;
+        const int partition_alignment = 256;
+        const int partition_tokens =
+            ((kv_tokens + partition_alignment - 1) / partition_alignment) * partition_alignment;
+        const int split_chunks = partition_tokens >= 512 ? ck_get_num_threads() : 1;
         attention_forward_decode_head_major_gqa_flash_f16cache_split(
             q_token, k_cache, v_cache, out_token,
             num_heads, num_kv_heads, kv_tokens, cache_capacity,

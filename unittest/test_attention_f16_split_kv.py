@@ -1,10 +1,11 @@
 """Regression tests for llama.cpp-compatible FP16 split-KV decode attention.
 
-The Qwen3-VL mixed-prefix decode path crosses a semantic boundary at KV=512:
-llama.cpp rounds Q/K through FP16, computes FP16 online-softmax partials per
-worker chunk, then combines those partials in FP32 chunk order.  A conventional
-single FP32 reduction is mathematically reasonable, but is not the same model
-contract and can change long-decode top-1 tokens.
+The decode path crosses a semantic boundary when valid KV rounded to 256 rows
+reaches a 512-row scheduling extent. Thus valid KV=256 is single-range while
+valid KV=257 is split. llama.cpp rounds Q/K through FP16, computes FP16
+online-softmax partials per worker chunk, then combines those partials in FP32
+chunk order. A conventional single FP32 reduction is mathematically reasonable,
+but is not the same model contract and can change long-decode top-1 tokens.
 """
 
 import ctypes
@@ -335,9 +336,9 @@ def _llama_prefill_output(q, k_bits, v_bits, head_dim, past_tokens, threads):
 
 
 def _llama_kv_partition_extent(kv_tokens):
-    """Model llama.cpp's padded physical decode-graph K tensor extent."""
+    """Model llama.cpp's 256-row-padded logical K tensor extent."""
     kv_tokens = int(kv_tokens)
-    return ((kv_tokens + 255) // 256) * 256 if kv_tokens >= 512 else kv_tokens
+    return ((kv_tokens + 255) // 256) * 256
 
 
 def _f32_ptr(a):
@@ -666,6 +667,30 @@ def _case(name, seed, heads, kv_heads, kv_tokens, head_dim, aligned, chunks, tol
     return Result(name, diff, tolerance, diff <= tolerance), (q, k, v, actual)
 
 
+def _padded_decode_contract_case(
+    name, seed, heads, kv_heads, valid_kv, capacity, head_dim, threads
+):
+    q, valid_k, valid_v = _inputs(
+        seed, heads, kv_heads, valid_kv, head_dim, head_dim
+    )
+    k = np.zeros((kv_heads, capacity, head_dim), dtype=np.uint16)
+    v = np.zeros_like(k)
+    k[:, :valid_kv, :] = valid_k
+    v[:, :valid_kv, :] = valid_v
+    actual = np.full_like(q, np.nan)
+    status = lib.attention_forward_decode_head_major_gqa_flash_f16cache_contract(
+        _f32_ptr(q), _u16_ptr(k), _u16_ptr(v), _f32_ptr(actual),
+        heads, kv_heads, valid_kv, capacity, head_dim, head_dim, 1,
+    )
+    scheduling_extent = _llama_kv_partition_extent(valid_kv)
+    expected = _llama_split_output(
+        q, valid_k, valid_v, head_dim, threads,
+        padded_kv_tokens=scheduling_extent,
+    )
+    diff = float(np.max(np.abs(actual - expected))) if status == 0 else math.inf
+    return Result(name, diff, 0.0, status == 0 and np.array_equal(actual, expected))
+
+
 def main():
     results = []
     threads = max(1, int(lib.ck_get_num_threads()))
@@ -686,12 +711,12 @@ def main():
         results.append(_prefill_auto_matches_llama_case(*case, threads=threads))
     results.append(_unfused_f16_causal_case())
     below, below_data = _case(
-        "f16_split_below_threshold(KV=511,C=1)", 511, 8, 2, 511, 64, 64, 1, 0.0,
+        "f16_split_below_threshold(KV=256,S=256,C=1)", 256, 8, 2, 256, 64, 64, 1, 0.0,
     )
     results.append(below)
     threshold, threshold_data = _case(
-        f"f16_split_threshold(KV=512,C={threads})",
-        512, 8, 2, 512, 64, 64, threads, 0.0,
+        f"f16_split_threshold(KV=257,S=512,C={threads})",
+        257, 8, 2, 257, 64, 64, threads, 0.0,
     )
     results.append(threshold)
     merge_rounding, _ = _case(
@@ -729,10 +754,14 @@ def main():
         513, 8, 2, 513, 80, 128, threads, 0.0,
     )
     results.append(padded)
+    results.append(_padded_decode_contract_case(
+        f"llama_oracle_qwen35_cache_capacity_independent(KV=257,CAP=1034,S=512,H=8,Hkv=2,D=256,C={threads})",
+        20260720257, 8, 2, 257, 1034, 256, threads,
+    ))
 
     for name, data in (
-        ("explicit_contract_route_below(KV=511)", below_data),
-        ("explicit_contract_route_threshold(KV=512)", threshold_data),
+        ("explicit_contract_route_below(KV=256,S=256)", below_data),
+        ("explicit_contract_route_threshold(KV=257,S=512)", threshold_data),
         ("explicit_contract_route_qwen3vl(KV=1058)", qwen_data),
         ("explicit_contract_route_qwen3vl_step20(KV=1047,P=1280)", qwen_step20_data),
         ("explicit_contract_route_qwen3vl_step60(KV=1087,P=1280)", qwen_step60_data),
@@ -740,7 +769,7 @@ def main():
         ("explicit_contract_route_qwen3vl_long(KV=1609)", qwen_long_data),
     ):
         q, k, v, _ = data
-        chunks = threads if k.shape[1] >= 512 else 1
+        chunks = threads if _llama_kv_partition_extent(k.shape[1]) >= 512 else 1
         expected = _run_explicit(q, k, v, q.shape[1], chunks)
         status, actual = _run_contract(q, k, v, q.shape[1], 1)
         diff = float(np.max(np.abs(actual - expected))) if status == 0 else math.inf
@@ -766,7 +795,7 @@ def main():
     fp32_status, fp32_contract = _run_contract(q, k, v, q.shape[1], 0)
     fp32_diff = float(np.max(np.abs(fp32_contract - legacy))) if fp32_status == 0 else math.inf
     results.append(Result(
-        "explicit_fp32_preserves_legacy_abi(KV=511)",
+        "explicit_fp32_preserves_legacy_abi(KV=256)",
         fp32_diff,
         0.0,
         fp32_status == 0 and fp32_diff == 0.0,
@@ -785,8 +814,8 @@ def main():
 
     try:
         for name, data, chunks in (
-            ("llama_oracle_below(KV=511)", below_data, 1),
-            ("llama_oracle_threshold(KV=512)", threshold_data, threads),
+            ("llama_oracle_below(KV=256,S=256)", below_data, 1),
+            ("llama_oracle_threshold(KV=257,S=512)", threshold_data, threads),
             ("llama_oracle_qwen3vl(KV=1058)", qwen_data, threads),
             ("llama_oracle_qwen3vl_step20(KV=1047,P=1280)", qwen_step20_data, threads),
             ("llama_oracle_qwen3vl_step60(KV=1087,P=1280)", qwen_step60_data, threads),

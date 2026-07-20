@@ -119,6 +119,62 @@ class V8KernelCallABITests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "unsupported source"):
                 build_ir_v8.load_kernel_call_abis(root, legacy_bindings={})
 
+    def test_resolved_selector_requires_resolved_contract_metadata(self) -> None:
+        lowered = {
+            "config": {},
+            "operations": [{
+                "idx": 0,
+                "kernel": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+                "function": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+                "op": "attn",
+                "layer": 0,
+                "section": "body",
+                "activations": {},
+                "outputs": {},
+                "scratch": [],
+                "params": {},
+                "resolved_contract": {
+                    "function": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+                    "kernel_id": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+                },
+            }],
+        }
+        call_ir = build_ir_v8.generate_ir_lower_3(lowered, "decode")
+        errors = call_ir["operations"][0]["errors"]
+        self.assertTrue(any("no explicit kernel selector" in error for error in errors))
+
+    def test_resolved_selector_is_emitted_as_call_expression(self) -> None:
+        lowered = {
+            "config": {},
+            "operations": [{
+                "idx": 0,
+                "kernel": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+                "function": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+                "op": "attn",
+                "layer": 0,
+                "section": "body",
+                "activations": {},
+                "outputs": {},
+                "scratch": [],
+                "params": {},
+                "resolved_contract": {
+                    "function": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+                    "kernel_id": "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
+                    "selector": "CK_ATTN_REDUCTION_F16_ONLINE_FP32_MERGE",
+                },
+            }],
+        }
+        call_ir = build_ir_v8.generate_ir_lower_3(lowered, "decode")
+        reduction = next(
+            arg
+            for arg in call_ir["operations"][0]["args"]
+            if arg["name"] == "reduction"
+        )
+        self.assertEqual(reduction["source"], "resolved:kernel_selector")
+        self.assertEqual(
+            reduction["expr"], "CK_ATTN_REDUCTION_F16_ONLINE_FP32_MERGE"
+        )
+
     def test_malformed_optional_call_metadata_is_a_hard_failure(self) -> None:
         bad_params = [
             {"name": "x", "source": "null:guessed"},
