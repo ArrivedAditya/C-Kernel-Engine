@@ -148,6 +148,32 @@ def _make_qwen3vl_manifest() -> dict:
 
 
 class V8Qwen3VLTemplateTests(unittest.TestCase):
+    def test_bf16_decoder_norm_contracts_select_pytorch_providers(self) -> None:
+        manifest = {
+            "config": {
+                "model": "qwen3vl",
+                "arch": "qwen3vl",
+                "decoder_norm_storage_boundary": "bf16",
+            },
+            "template": build_ir_v8._load_builtin_template_doc("qwen3vl"),
+        }
+        plans = build_ir_v8._resolve_manifest_execution_contracts(manifest, "decode")
+        selected = {plan["operation"]: plan for plan in plans}
+        self.assertNotIn("decoder.rmsnorm", selected)
+        self.assertNotIn("decoder.qk_norm", selected)
+        self.assertEqual(
+            selected["decoder.rmsnorm.bf16"]["kernel"]["function"],
+            "rmsnorm_forward_pytorch_bf16_storage",
+        )
+        self.assertEqual(
+            selected["decoder.qk_norm.bf16"]["kernel"]["function"],
+            "qk_norm_forward_pytorch_bf16_storage",
+        )
+        self.assertEqual(
+            selected["decoder.rmsnorm.bf16"]["contract"]["id"],
+            "rmsnorm_pytorch_avx512_bf16_storage",
+        )
+
 
     def test_gguf_vision_mrope_resolves_fp32_contract(self) -> None:
         manifest = _make_qwen3vl_manifest()

@@ -1328,6 +1328,7 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "vision_start_token_id": int(hf.get("vision_start_token_id") or 0),
             "vision_end_token_id": int(hf.get("vision_end_token_id") or 0),
             "num_deepstack_layers": len((hf.get("vision_config") or {}).get("deepstack_visual_indexes") or []),
+            "decoder_norm_storage_boundary": "bf16",
         })
         if mrope:
             cfg["mrope_sections"] = [int(v) for v in mrope] + ([0] if len(mrope) == 3 else [])
@@ -1857,6 +1858,22 @@ def main() -> int:
     if audit["unmapped_source_tensors"] and not args.allow_unmapped:
         sample = "\n  ".join(audit["unmapped_source_tensors"][:80])
         raise SystemExit(f"Unmapped safetensors source tensors; see {audit_out}:\n  {sample}")
+
+    decoder_projection_suffixes = (".wq", ".wk", ".wv", ".wo", ".w1", ".w2", ".w3")
+    decoder_projection_entries = [
+        entry for entry in entries_preview
+        if str(entry.get("name") or "").startswith("layer.")
+        and str(entry.get("name") or "").endswith(decoder_projection_suffixes)
+    ]
+    if (
+        arch == "qwen3vl"
+        and decoder_projection_entries
+        and all(entry.get("dtype") == "bf16" for entry in decoder_projection_entries)
+    ):
+        # The AMX projection provider is validated for batched prefill. Decode
+        # remains on the generic BF16 provider because its reduction is a
+        # separate numerical contract and can alter long-generation ranking.
+        config.setdefault("decoder_prefill_projection_storage_boundary", "bf16")
 
     template = apply_model_contract_overrides(
         load_template_for_arch(arch),

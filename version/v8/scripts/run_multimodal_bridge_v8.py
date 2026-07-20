@@ -2317,8 +2317,18 @@ def _prepare_decoder_runtime(
     }
 
 
-def _load_encoder_lib(model_so: Path) -> ctypes.CDLL:
-    ctypes.CDLL(str(BUILD_DIR / "libckernel_engine.so"), mode=ctypes.RTLD_GLOBAL)
+def _load_encoder_lib(model_so: Path, *, engine_so: Path | None = None) -> ctypes.CDLL:
+    requested_engine = (engine_so if engine_so is not None else BUILD_DIR / "libckernel_engine.so").resolve()
+    adjacent_engine = model_so.resolve().parent / "libckernel_engine.so"
+    if adjacent_engine.is_file():
+        requested_hash = hashlib.sha256(requested_engine.read_bytes()).hexdigest()
+        adjacent_hash = hashlib.sha256(adjacent_engine.read_bytes()).hexdigest()
+        if adjacent_hash != requested_hash:
+            raise RuntimeError(
+                "generated encoder has a different adjacent CK engine than requested: "
+                f"requested={requested_engine} adjacent={adjacent_engine}"
+            )
+    ctypes.CDLL(str(requested_engine), mode=ctypes.RTLD_GLOBAL)
     lib = ctypes.CDLL(str(model_so))
     lib.ck_model_init_with_manifest.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
     lib.ck_model_init_with_manifest.restype = ctypes.c_int
@@ -2467,7 +2477,11 @@ def _run_encoder(
         os.environ["CK_PROFILE_CSV"] = str(profile_csv_path)
         os.environ.pop("CK_PROFILE_JSON", None)
     lib_load_t0 = time.perf_counter()
-    lib = _load_encoder_lib(runtime["so_path"])
+    runtime_engine = runtime.get("engine_so")
+    if runtime_engine:
+        lib = _load_encoder_lib(Path(runtime["so_path"]), engine_so=Path(runtime_engine))
+    else:
+        lib = _load_encoder_lib(Path(runtime["so_path"]))
     lib_load_ms = (time.perf_counter() - lib_load_t0) * 1000.0
     _log_progress("encoder: init start")
     init_t0 = time.perf_counter()

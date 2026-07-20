@@ -730,6 +730,7 @@ PY_TESTS_BF16 := unittest/bf16/test_sigmoid_bf16.py \
                 unittest/bf16/test_cross_entropy_bf16.py \
                 unittest/bf16/test_vision_position_storage_bf16.py \
                 unittest/bf16/test_layernorm_storage_contract_bf16.py \
+                unittest/bf16/test_rmsnorm_pytorch_storage_bf16.py \
                 unittest/bf16/test_gemm_storage_contract_bf16.py \
                 unittest/bf16/test_attention_storage_contract_bf16.py \
                 unittest/bf16/test_residual_storage_contract_bf16.py \
@@ -3384,6 +3385,7 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) tests/test_v8_attention_contracts.py
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
 	@$(PYTHON) unittest/bf16/test_layernorm_storage_contract_bf16.py
+	@$(PYTHON) unittest/bf16/test_rmsnorm_pytorch_storage_bf16.py
 	@$(PYTHON) unittest/bf16/test_gemm_storage_contract_bf16.py
 	@$(PYTHON) unittest/bf16/test_attention_storage_contract_bf16.py
 	@$(PYTHON) unittest/bf16/test_residual_storage_contract_bf16.py

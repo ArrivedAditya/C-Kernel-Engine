@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Exact PyTorch AVX-512 BF16 RMSNorm storage-contract tests."""
+
+from __future__ import annotations
+
+import ctypes
+from pathlib import Path
+
+import numpy as np
+import torch
+
+
+ROOT = Path(__file__).resolve().parents[2]
+LIB = ctypes.CDLL(str(ROOT / "build" / "libckernel_engine.so"))
+KERNEL = LIB.rmsnorm_forward_pytorch_bf16_storage
+FLOAT_P = ctypes.POINTER(ctypes.c_float)
+KERNEL.argtypes = [
+    FLOAT_P, FLOAT_P, FLOAT_P, FLOAT_P,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_float,
+]
+KERNEL.restype = None
+
+
+def bf16_values(values: np.ndarray) -> np.ndarray:
+    return torch.from_numpy(values).to(torch.bfloat16).float().numpy()
+
+
+def run_case(tokens: int, dim: int, seed: int) -> None:
+    rng = np.random.default_rng(seed)
+    inputs = bf16_values(rng.standard_normal((tokens, dim), dtype=np.float32) * 0.03)
+    gamma = bf16_values(rng.standard_normal(dim, dtype=np.float32) * 0.1 + 1.0)
+    actual = np.empty_like(inputs)
+    rstd = np.empty(tokens, dtype=np.float32)
+    KERNEL(
+        inputs.ctypes.data_as(FLOAT_P), gamma.ctypes.data_as(FLOAT_P),
+        actual.ctypes.data_as(FLOAT_P), rstd.ctypes.data_as(FLOAT_P),
+        tokens, dim, dim, ctypes.c_float(1.0e-6),
+    )
+    x = torch.from_numpy(inputs).to(torch.bfloat16)
+    weight = torch.from_numpy(gamma).to(torch.bfloat16)
+    normalized = (x.float() * torch.rsqrt(x.float().pow(2).mean(-1, keepdim=True) + 1.0e-6)).to(torch.bfloat16)
+    expected = (weight * normalized).float().numpy()
+    differing = int(np.count_nonzero(actual != expected))
+    if differing:
+        diff = np.abs(actual - expected)
+        raise AssertionError(
+            f"PyTorch BF16 RMSNorm mismatch T={tokens} D={dim}: "
+            f"differing={differing} max_abs={float(diff.max()):.9g}"
+        )
+    print(f"T={tokens} D={dim} exact={actual.size}/{actual.size}")
+
+
+def main() -> int:
+    if torch.backends.cpu.get_cpu_capability() != "AVX512":
+        print("PyTorch AVX-512 BF16 RMSNorm storage contract [SKIP: AVX512 unavailable]")
+        return 0
+    for case in ((1, 128, 11), (3, 128, 12), (1, 4096, 13), (4, 4096, 14)):
+        run_case(*case)
+    print("PyTorch AVX-512 BF16 RMSNorm storage contract: 4/4 exact")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
