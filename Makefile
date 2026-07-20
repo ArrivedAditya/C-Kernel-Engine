@@ -5345,10 +5345,10 @@ v7-profile-dashboard: v7-init
 	@$(MAKE) --no-print-directory profile-v7-decode V7_MODEL="$(V7_MODEL)" V7_FORCE_COMPILE=0 V7_PERF_RUNTIME=$(V7_PERF_RUNTIME) V7_CHAT_TEMPLATE="$(V7_CHAT_TEMPLATE)" V7_WEIGHT_DTYPE="$(V7_WEIGHT_DTYPE)"
 	@$(MAKE) --no-print-directory profile-v7-perf-stat V7_MODEL="$(V7_MODEL)" V7_FORCE_COMPILE=0 V7_PERF_RUNTIME=$(V7_PERF_RUNTIME) V7_CHAT_TEMPLATE="$(V7_CHAT_TEMPLATE)" V7_WEIGHT_DTYPE="$(V7_WEIGHT_DTYPE)"
 	@$(MAKE) --no-print-directory profile-v7-flamegraph-decode V7_MODEL="$(V7_MODEL)" V7_FORCE_COMPILE=0 V7_PERF_RUNTIME=$(V7_PERF_RUNTIME) V7_CHAT_TEMPLATE="$(V7_CHAT_TEMPLATE)" V7_WEIGHT_DTYPE="$(V7_WEIGHT_DTYPE)"
-	@if command -v valgrind >/dev/null 2>&1 && command -v cg_annotate >/dev/null 2>&1; then \
+	@if command -v valgrind >/dev/null 2>&1 && command -v cg_merge >/dev/null 2>&1 && command -v cg_annotate >/dev/null 2>&1; then \
 		$(MAKE) --no-print-directory profile-v7-cachegrind V7_MODEL="$(V7_MODEL)" V7_CHAT_TEMPLATE="$(V7_CHAT_TEMPLATE)" V7_WEIGHT_DTYPE="$(V7_WEIGHT_DTYPE)"; \
 	else \
-		echo "SKIP: cachegrind capture requires valgrind + cg_annotate"; \
+		echo "SKIP: cachegrind capture requires valgrind + cg_merge + cg_annotate"; \
 	fi
 	@$(MAKE) --no-print-directory v7-perf-gate-evaluate V7_MODEL="$(V7_MODEL)"
 	@cache_models="$${CK_CACHE_DIR:-$$HOME/.cache/ck-engine-v7/models}"; \
@@ -5416,10 +5416,10 @@ v8-profile-dashboard: v8-init
 	@$(MAKE) --no-print-directory profile-v8-decode V8_MODEL="$(V8_MODEL)" V8_FORCE_COMPILE=0 V8_PERF_RUNTIME=$(V8_PERF_RUNTIME) V8_CHAT_TEMPLATE="$(V8_CHAT_TEMPLATE)" V8_WEIGHT_DTYPE="$(V8_WEIGHT_DTYPE)"
 	@$(MAKE) --no-print-directory profile-v8-perf-stat V8_MODEL="$(V8_MODEL)" V8_FORCE_COMPILE=0 V8_PERF_RUNTIME=$(V8_PERF_RUNTIME) V8_CHAT_TEMPLATE="$(V8_CHAT_TEMPLATE)" V8_WEIGHT_DTYPE="$(V8_WEIGHT_DTYPE)"
 	@$(MAKE) --no-print-directory profile-v8-flamegraph-decode V8_MODEL="$(V8_MODEL)" V8_FORCE_COMPILE=0 V8_PERF_RUNTIME=$(V8_PERF_RUNTIME) V8_CHAT_TEMPLATE="$(V8_CHAT_TEMPLATE)" V8_WEIGHT_DTYPE="$(V8_WEIGHT_DTYPE)"
-	@if command -v valgrind >/dev/null 2>&1 && command -v cg_annotate >/dev/null 2>&1; then \
+	@if command -v valgrind >/dev/null 2>&1 && command -v cg_merge >/dev/null 2>&1 && command -v cg_annotate >/dev/null 2>&1; then \
 		$(MAKE) --no-print-directory profile-v8-cachegrind V8_MODEL="$(V8_MODEL)" V8_CHAT_TEMPLATE="$(V8_CHAT_TEMPLATE)" V8_WEIGHT_DTYPE="$(V8_WEIGHT_DTYPE)"; \
 	else \
-		echo "SKIP: cachegrind capture requires valgrind + cg_annotate"; \
+		echo "SKIP: cachegrind capture requires valgrind + cg_merge + cg_annotate"; \
 	fi
 	@$(MAKE) --no-print-directory v8-perf-gate-evaluate V8_MODEL="$(V8_MODEL)"
 	@cache_models="$${CK_CACHE_DIR:-$$HOME/.cache/ck-engine-v8/models}"; \
@@ -6555,6 +6555,7 @@ PROFILE_V7_VTUNE_UARCH_CSV ?= build/ck_v7_vtune_uarch_summary.csv
 PROFILE_V7_ADVISOR_TEXT ?= build/ck_v7_advisor_roofline.txt
 PROFILE_V7_ADVISOR_CSV ?= build/ck_v7_advisor_roofline.csv
 PROFILE_V7_ADVISOR_HTML ?= build/ck_v7_advisor_roofline.html
+PROFILE_V7_CACHEGRIND_RUNNER := scripts/run_cachegrind_tree.sh
 V8_FLAMEGRAPH_MODE ?= decode
 PROFILE_V8_PERF_DATA ?= build/ck_v8_perf.data
 PROFILE_V8_PERF_FOLDED ?= build/ck_v8_perf.folded
@@ -7223,11 +7224,11 @@ profile-v7-perf-stat:
 	fi
 
 profile-v7-cachegrind:
-	valgrind --tool=cachegrind --cachegrind-out-file=build/cachegrind_v7.out \
-	$(PYTHON) $(PROFILE_V7_SCRIPT) run \
+	$(PROFILE_V7_CACHEGRIND_RUNNER) \
+		build/cachegrind_v7.out build/cachegrind_v7_annotated.txt -- \
+		$(PYTHON) $(PROFILE_V7_SCRIPT) run \
 		"$(V7_MODEL)" \
 		--context-len 1024 --prompt "Hello" --max-tokens 4 $(V7_RUN_ARGS)
-	cg_annotate build/cachegrind_v7.out > build/cachegrind_v7_annotated.txt
 
 
 profile-v7-vtune:
