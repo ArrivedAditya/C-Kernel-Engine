@@ -807,7 +807,10 @@ def step_compile(model_c_path: Path, output_dir: Path, force: bool = False) -> P
     # Default kernel sources if not specified
     if not kernel_sources:
         src_dir = PROJECT_ROOT / "src" / "kernels"
-        kernel_sources = [str(f) for f in src_dir.glob("*.c")]
+        kernel_sources = [
+            str(f) for f in src_dir.glob("*.c")
+            if not f.name.endswith("_oracle_ggml.c")
+        ]
     extra_sources = [
         PROJECT_ROOT / "src" / "v4_legacy" / "ckernel_model_load_v4.c",
         PROJECT_ROOT / "src" / "ckernel_orchestration.c",
