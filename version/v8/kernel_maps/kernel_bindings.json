@@ -1179,7 +1179,7 @@
         },
         {
           "name": "state_dim",
-          "source": "dim:ssm_state_size"
+          "source": "const:1"
         }
       ]
     },
@@ -1487,17 +1487,6 @@
         {"name": "num_heads", "source": "dim:recurrent_num_heads"},
         {"name": "head_dim", "source": "dim:recurrent_head_dim"},
         {"name": "eps", "source": "dim:rms_eps"}
-      ]
-    },
-    "attn_gate_sigmoid_mul_forward": {
-      "note": "Multiply attention output rows by sigmoid(gate) before the qwen3.5 output projection.",
-      "params": [
-        {"name": "x", "source": "activation:x", "cast": "const float*"},
-        {"name": "gate", "source": "activation:gate", "cast": "const float*"},
-        {"name": "out", "source": "output:out", "cast": "float*"},
-        {"name": "rows", "source": "runtime:seq_len"},
-        {"name": "num_heads", "source": "dim:num_heads"},
-        {"name": "state_dim", "source": "dim:head_dim"}
       ]
     },
     "attn_gate_sigmoid_mul_backward": {

@@ -49,6 +49,35 @@ void recurrent_norm_gate_forward(const float *x,
     }
 }
 
+void recurrent_norm_gate_llama_avx2_forward(const float *x,
+                                             const float *gate,
+                                             const float *weight,
+                                             float *out,
+                                             int rows,
+                                             int num_heads,
+                                             int head_dim,
+                                             float eps) {
+    if (!x || !gate || !weight || !out || rows <= 0 || num_heads <= 0 ||
+        head_dim <= 0 || head_dim > 4096) {
+        return;
+    }
+    const int inner_dim = num_heads * head_dim;
+    float normalized[4096];
+    float silu[4096];
+    for (int row = 0; row < rows; ++row) {
+        for (int head = 0; head < num_heads; ++head) {
+            const size_t offset = (size_t) row * (size_t) inner_dim
+                                + (size_t) head * (size_t) head_dim;
+            rmsnorm_forward_llama_production(
+                x + offset, weight, normalized, NULL, 1, head_dim, head_dim, eps);
+            recurrent_silu_forward_ggml(gate + offset, silu, 1, head_dim);
+            for (int col = 0; col < head_dim; ++col) {
+                out[offset + (size_t) col] = normalized[col] * silu[col];
+            }
+        }
+    }
+}
+
 void recurrent_norm_gate_backward(const float *d_out,
                                   const float *x,
                                   const float *gate,

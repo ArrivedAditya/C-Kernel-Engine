@@ -757,6 +757,19 @@ def _hydrate_manifest_template(manifest: Dict[str, Any]) -> Dict[str, Any]:
     )
     hydrated_template = manifest.get("template") if isinstance(manifest.get("template"), dict) else {}
     hydrated_contract = hydrated_template.get("contract") if isinstance(hydrated_template.get("contract"), dict) else {}
+    required_contracts = hydrated_template.get("required_contracts") if isinstance(hydrated_template.get("required_contracts"), dict) else {}
+    attention_contract = required_contracts.get("decoder.attention") if isinstance(required_contracts.get("decoder.attention"), dict) else {}
+    attention_phases = attention_contract.get("phases") if isinstance(attention_contract.get("phases"), dict) else {}
+    decode_attention = attention_phases.get("decode") if isinstance(attention_phases.get("decode"), dict) else {}
+    decode_requires = decode_attention.get("requires") if isinstance(decode_attention.get("requires"), dict) else {}
+    resolved_kv_dtype = str(decode_requires.get("tensor.kv.dtype", "") or "").strip().lower()
+    if resolved_kv_dtype:
+        if resolved_kv_dtype not in {"fp16", "fp32"}:
+            raise RuntimeError(
+                "HARD CONTRACT FAULT: decoder.attention.decode tensor.kv.dtype must be fp16 or fp32; "
+                f"got {resolved_kv_dtype!r} in manifest:{template_name or '<embedded>'}."
+            )
+        hydrated_config["decode_kv_cache_dtype"] = resolved_kv_dtype
     bridge_contract = hydrated_contract.get("multimodal_bridge")
     if isinstance(bridge_contract, dict):
         hydrated_config["multimodal_bridge_contract"] = copy.deepcopy(bridge_contract)
@@ -7453,23 +7466,25 @@ def generate_ir_lower_1(
             if op["op"] in ("attn", "attn_sliding", "attn_shared_kv", "attn_sliding_shared_kv"):
                 layer = op["layer"]
                 required_contract = op.get("required_contract") if isinstance(op.get("required_contract"), dict) else {}
-                segmented_append = required_contract.get("execution.prefill_batching") == "segmented_append"
-                if segmented_append and not uses_kv_cache:
+                prefill_batching = str(required_contract.get("execution.prefill_batching", "") or "")
+                append_before_attention = prefill_batching in {"batch_append", "segmented_append"}
+                if append_before_attention and not uses_kv_cache:
                     raise RuntimeError(
-                        "HARD CONTRACT FAULT: segmented_append attention requires a persistent KV cache. "
+                        "HARD CONTRACT FAULT: append-style attention requires a persistent KV cache. "
                         "Fix the circuit cache contract; do not fall back to full-sequence prefill."
                     )
                 kv_batch_copy_op = None
                 if uses_kv_cache:
                     shared_q_prefill = op["op"] in ("attn_shared_kv", "attn_sliding_shared_kv")
                     copy_src = "q_scratch" if shared_q_prefill else "k_scratch"
+                    exact_f16_append = append_before_attention and decode_uses_fp16_kv
                     kv_batch_copy_op = {
                         "idx": len(final_ops),
-                        "kernel": "kv_cache_batch_copy",
-                        "op": "kv_cache_batch_copy",
+                        "kernel": "kv_cache_store_batch_f16" if exact_f16_append else "kv_cache_batch_copy",
+                        "op": "kv_cache_store_batch_f16" if exact_f16_append else "kv_cache_batch_copy",
                         "layer": layer,
                         "section": op["section"],
-                        "function": "kv_cache_batch_copy",
+                        "function": "kv_cache_store_batch_f16" if exact_f16_append else "kv_cache_batch_copy",
                         "weights": {},
                         "inputs": {
                             "k_src": {"type": "scratch", "source": copy_src},
@@ -7486,11 +7501,11 @@ def generate_ir_lower_1(
                             "seq_len": int(config.get("context_length", config.get("context_len", 1))),
                         },
                         "_auto_inserted": True,
-                        "_cache_append": segmented_append,
+                        "_cache_append": append_before_attention,
                     }
-                if segmented_append:
-                    # The append provider reads current K/V through the persistent
-                    # cache, so store this segment immediately before attention.
+                if append_before_attention:
+                    # Append providers consume current K/V through the persistent
+                    # cache. Commit the current token block before invoking them.
                     final_ops.insert(len(final_ops) - 1, kv_batch_copy_op)
                     kv_store_count += 1
                 transpose_attn_out_op = {
@@ -7507,7 +7522,7 @@ def generate_ir_lower_1(
                     "_auto_inserted": True,
                 }
                 final_ops.append(transpose_attn_out_op)
-                if uses_kv_cache and not segmented_append:
+                if uses_kv_cache and not append_before_attention:
                     # TODO(contract): validate this op against runtime_invariants contract:
                     # _kv_copy_bytes must exist and match
                     # (num_kv_heads * head_dim * seq_len * sizeof(fp32)).

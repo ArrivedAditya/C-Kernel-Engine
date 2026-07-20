@@ -17,7 +17,6 @@
   "contract": {
     "runtime_defaults": {
       "prefer_q8_0_contract": true,
-      "mlp_gate_up_fp32_layers": [0],
       "activation_preference_by_op": {
         "recurrent_gate_proj": "q8_k",
         "recurrent_alpha_proj": "q8_0",
@@ -105,12 +104,12 @@
       "template_ops": ["attn"],
       "phases": {
         "prefill": {
-          "requires": {"execution.phase": "prefill", "tensor.q.dtype": "fp32", "tensor.kv.dtype": "fp32", "tensor.layout": "head_major", "numerics.attention_reduction": "fp32_online"},
+          "requires": {"execution.phase": "prefill", "execution.prefill_batching": "batch_append", "tensor.q.dtype": "fp32", "tensor.kv.dtype": "fp16", "tensor.layout": "head_major", "numerics.attention_reduction": "f16_online_single_range"},
           "validation": "validated",
           "evidence": "v8 Qwen3.5 E2E regression validates dense-attention layers; recurrent layers use a separate state contract."
         },
         "decode": {
-          "requires": {"execution.phase": "decode", "tensor.q.dtype": "fp32", "tensor.kv.dtype": "fp32", "tensor.layout": "head_major", "numerics.attention_reduction": "fp32_online"},
+          "requires": {"execution.phase": "decode", "tensor.q.dtype": "fp32", "tensor.kv.dtype": "fp16", "tensor.layout": "head_major", "numerics.attention_reduction": "f16_online_fp32_merge"},
           "validation": "validated",
           "evidence": "v8 Qwen3.5 E2E regression validates dense-attention decode layers; recurrent layers use a separate state contract."
         }
@@ -118,6 +117,94 @@
     }
   },
   "required_numerical_contracts": {
+    "decoder.rmsnorm": {
+      "op": "rmsnorm",
+      "template_ops": ["attn_norm", "post_attention_norm", "final_rmsnorm"],
+      "phases": {
+        "prefill": {
+          "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
+          "validation": "validated",
+          "evidence": "Matched-schedule Qwen3.5 X-ray shows generic SIMD RMSNorm differences crossing recurrent alpha/beta Q8_0 thresholds; the llama.cpp production graph oracle is bit-exact."
+        },
+        "decode": {
+          "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
+          "validation": "validated",
+          "evidence": "The exact provider preserves the same ascending FP64 row reduction and reciprocal-square-root expression across prefill, decode, and CPU ISA variants."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.rmsnorm.output",
+        "producer": "rmsnorm",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.qk_norm": {
+      "op": "qk_norm",
+      "template_ops": ["qk_norm"],
+      "phases": {
+        "prefill": {
+          "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
+          "validation": "validated",
+          "evidence": "Matched-schedule Qwen3.5 X-ray finds exact Q/K projections followed by the first value drift at Q RMSNorm in full-attention layers."
+        },
+        "decode": {
+          "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
+          "validation": "validated",
+          "evidence": "The llama-production provider uses the same ascending FP64 reduction and reciprocal-square-root expression as the reference graph."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.qk_norm.output",
+        "producer": "qk_norm",
+        "logical_layout": "head_major",
+        "axis_names": ["head", "token", "channel"]
+      }
+    },
+    "decoder.recurrent_core.prefill": {
+      "op": "gated_deltanet",
+      "template_ops": ["recurrent_core"],
+      "phases": {
+        "prefill": {
+          "contract_id": "gated_deltanet_llama_avx2_prefill_fp32_state",
+          "validation": "validated",
+          "evidence": "Matched-schedule X-ray requires llama.cpp's AVX2 four-accumulator dot tree, post-dot query scaling, FMA state update, and ascending prompt-token transitions."
+        },
+        "decode": {
+          "contract_id": "gated_deltanet_llama_avx2_decode_fp32_state",
+          "validation": "validated",
+          "evidence": "The production provider preserves llama.cpp AVX2 state-update and reduction order; the generic provider's sub-ULP drift crossed a later Q8 projection threshold."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_core.output",
+        "producer": "recurrent_core",
+        "logical_layout": "head_major",
+        "axis_names": ["token", "head", "channel"]
+      }
+    },
+    "decoder.recurrent_norm_gate": {
+      "op": "recurrent_norm_gate",
+      "template_ops": ["recurrent_norm_gate"],
+      "phases": {
+        "prefill": {
+          "contract_id": "recurrent_norm_gate_llama_avx2_fp32_output",
+          "validation": "validated",
+          "evidence": "After exact DeltaNet state parity, matched-schedule X-ray advances to the separate RMSNorm-SiLU-gate composition."
+        },
+        "decode": {
+          "contract_id": "recurrent_norm_gate_llama_avx2_fp32_output",
+          "validation": "validated",
+          "evidence": "The provider preserves llama.cpp operation boundaries and evaluation order instead of algebraically fusing the expression."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_norm_gate.output",
+        "producer": "recurrent_norm_gate",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "head", "channel"]
+      }
+    },
     "decoder.recurrent_qkv_projection.prefill": {
       "op": "gemm",
       "template_ops": ["recurrent_qkv_proj"],
@@ -194,6 +281,28 @@
         "producer": "recurrent_silu",
         "logical_layout": "row_major",
         "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.attention_gate": {
+      "op": "attn_gate_sigmoid_mul",
+      "template_ops": ["attn_gate_sigmoid_mul"],
+      "phases": {
+        "prefill": {
+          "contract_id": "attention_gate_llama_sigmoid_fp32_output",
+          "validation": "validated",
+          "evidence": "Schedule-preserving X-ray finds exact pre-gate attention followed by one-ULP sigmoid drift that crosses a later Q8_K MLP boundary."
+        },
+        "decode": {
+          "contract_id": "attention_gate_llama_sigmoid_fp32_output",
+          "validation": "validated",
+          "evidence": "The same provider is bit-exact against the llama.cpp CPU production formula for negative and positive gates."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.attention_gate.output",
+        "producer": "attn_gate_sigmoid_mul",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "head", "channel"]
       }
     },
     "decoder.swiglu": {

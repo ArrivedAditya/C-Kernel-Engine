@@ -1,0 +1,45 @@
+{
+  "id": "kv_cache_store_batch_f16",
+  "op": "kv_cache_store_batch_f16",
+  "variant": "head_major_batch_fp16_cache",
+  "contract_schema_version": 1,
+  "implementation": {
+    "isa_dispatch": "scalar",
+    "threading": {
+      "runtime": "serial",
+      "work_partition": ["serial"],
+      "dispatch": ["inline"],
+      "reduction_order_effect": "none"
+    }
+  },
+  "quant": {
+    "activation": "fp32",
+    "output": "fp16"
+  },
+  "inputs": [
+    {"name": "k_src", "dtype": "fp32", "shape": ["num_kv_heads", "num_tokens", "head_dim"]},
+    {"name": "v_src", "dtype": "fp32", "shape": ["num_kv_heads", "num_tokens", "head_dim"]}
+  ],
+  "outputs": [],
+  "dims": ["num_tokens", "num_kv_heads", "head_dim", "max_seq_len"],
+  "impl": {
+    "function": "kv_cache_store_batch_f16",
+    "c_declaration": "void kv_cache_store_batch_f16(uint16_t *kv_cache_k, uint16_t *kv_cache_v, const float *k, const float *v, int start_pos, int num_tokens, int num_kv_heads, int head_dim, int max_seq_len);",
+    "sources": ["src/kernels/kv_cache_kernels.c"]
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"name": "kv_cache_k", "source": "runtime:kv_cache_k_layer_f16", "cast": "uint16_t*"},
+      {"name": "kv_cache_v", "source": "runtime:kv_cache_v_layer_f16", "cast": "uint16_t*"},
+      {"name": "k", "source": "activation:k_src", "cast": "const float*"},
+      {"name": "v", "source": "activation:v_src", "cast": "const float*"},
+      {"name": "start_pos", "source": "runtime:prefill_start_pos"},
+      {"name": "num_tokens", "source": "dim:seq_len"},
+      {"name": "num_kv_heads", "source": "dim:num_kv_heads"},
+      {"name": "head_dim", "source": "dim:head_dim"},
+      {"name": "max_seq_len", "source": "dim:max_seq_len"}
+    ]
+  },
+  "notes": "Store a compact head-major prefill token block into the resolved physical FP16 KV cache before append attention executes."
+}

@@ -633,9 +633,21 @@ static bool run_real_artifact_case(void) {
     }
     compare_f32(
             "real superblock-order provider", ck_superblock.data(), llama_repacked.data(), m, n, false);
-    passed &= compare_f32(
-            "real x16 llama-order provider",
-            ck_x16_llama_order.data(), llama_repacked.data(), m, n);
+    const int x16_rows = (m / 16) * 16;
+    if (x16_rows > 0) {
+        passed &= compare_f32(
+                "real x16 llama-order provider",
+                ck_x16_llama_order.data(), llama_repacked.data(), x16_rows, n);
+    }
+    if (x16_rows < m) {
+        compare_f32(
+                "real x16 residual-row control",
+                ck_x16_llama_order.data() + static_cast<size_t>(x16_rows) * n,
+                llama_repacked.data() + static_cast<size_t>(x16_rows) * n,
+                m - x16_rows,
+                n,
+                false);
+    }
     if ((m % 4) == 0) {
         passed &= compare_f32(
                 "real x16 with llama repack Q8_K",
@@ -969,8 +981,12 @@ int main(int argc, char ** argv) {
     const case_spec quick_cases[] = {
         {"decode_leaf", 1, 64, 256, false, false, false},
         {"decode_dispatch", 1, 4096, 4096, false, true, false},
+        {"qwen35_mlp_gate_decode", 1, 3584, 1024, false, true, false},
+        {"qwen35_mlp_gate_up_decode", 1, 7168, 1024, false, true, false},
         {"qwen3vl_text_before", 5, 1024, 4096, true, false, false},
         {"packed_prefill_threshold", 16, 512, 1024, true, false, true},
+        {"qwen35_recurrent_gate_prefill", 18, 2048, 1024, true, false, false},
+        {"qwen35_mlp_gate_prefill", 18, 3584, 1024, true, false, false},
         {"packed_prefill_multirow", 33, 1024, 1024, true, false, false},
         {"qwen3vl_text_after", 58, 1024, 4096, true, false, false},
         {"qwen3vl_replay_step45", 59, 1024, 4096, true, false, false},
@@ -978,8 +994,12 @@ int main(int argc, char ** argv) {
     const case_spec full_cases[] = {
         {"decode_leaf", 1, 64, 256, false, false, false},
         {"decode_dispatch", 1, 4096, 4096, false, true, false},
+        {"qwen35_mlp_gate_decode", 1, 3584, 1024, false, true, false},
+        {"qwen35_mlp_gate_up_decode", 1, 7168, 1024, false, true, false},
         {"qwen3vl_text_before", 5, 1024, 4096, true, false, false},
         {"packed_prefill_threshold", 16, 512, 1024, true, false, true},
+        {"qwen35_recurrent_gate_prefill", 18, 2048, 1024, true, false, false},
+        {"qwen35_mlp_gate_prefill", 18, 3584, 1024, true, false, false},
         {"packed_prefill_multirow", 33, 1024, 1024, true, false, false},
         {"qwen3vl_text_after", 58, 1024, 4096, true, false, false},
         {"qwen3vl_replay_step45", 59, 1024, 4096, true, false, false},

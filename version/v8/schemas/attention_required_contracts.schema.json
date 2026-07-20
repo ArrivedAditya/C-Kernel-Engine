@@ -125,6 +125,7 @@
             "execution.prefill_batching": {
               "enum": [
                 "full_sequence",
+                "batch_append",
                 "segmented_append"
               ]
             },

@@ -1660,6 +1660,12 @@ def emit_op(
         _emit_hidden_export(_hidden_arg("q"), "q_proj", _mul_expr(rows, _hidden_arg("q_dim")))
         _emit_hidden_export(_hidden_arg("k"), "k_proj", _mul_expr(rows, _hidden_arg("k_dim")))
         _emit_hidden_export(_hidden_arg("v"), "v_proj", _mul_expr(rows, _hidden_arg("v_dim")))
+    elif op_name == "split_q_gate":
+        _emit_hidden_export(
+            _hidden_arg("gate"),
+            "attn_gate",
+            _mul_expr(_hidden_arg("rows", "num_tokens", "tokens"), _hidden_arg("gate_dim")),
+        )
     elif op_name in ("rope_qk", "mrope_qk"):
         q_count = _mul_expr(
             _hidden_arg("num_heads"),
@@ -1682,13 +1688,21 @@ def emit_op(
         _emit_hidden_export(out_expr, "out_proj", count_expr)
         _emit_hidden_export_last_row(out_expr, "out_proj", _hidden_arg("N", "out_dim", "embed_dim"))
     elif op_name == "attn":
-        out_expr = _hidden_arg("output", "out", "c", "y")
+        out_expr = _hidden_arg("out_token", "output", "out", "c", "y")
         count_expr = _mul_expr(
             _hidden_arg("num_heads"),
             _hidden_arg("num_tokens", "tokens", "rows"),
             _hidden_arg("aligned_head_dim", "head_dim"),
         )
-        _emit_hidden_export(out_expr, "attn_out_head_major", count_expr)
+        _emit_hidden_export(out_expr, "attn_pregate", count_expr)
+    elif op_name == "attn_gate_sigmoid_mul":
+        out_expr = _hidden_arg("output", "out", "y")
+        count_expr = _mul_expr(
+            _hidden_arg("num_heads"),
+            _hidden_arg("rows", "num_tokens", "tokens"),
+            _hidden_arg("state_dim", "aligned_head_dim", "head_dim"),
+        )
+        _emit_hidden_export(out_expr, "attn_out", count_expr)
     elif op_name == "residual_add":
         out_expr = _hidden_arg("output", "out", "c", "y")
         residual_expr = _hidden_arg("b")
@@ -1729,8 +1743,12 @@ def emit_op(
         )
     elif op_name in {"rmsnorm", "attn_norm"}:
         out_expr = _hidden_arg("output", "out", "x", "y")
+        count_expr = _mul_expr(
+            _hidden_arg("tokens", "num_tokens", "rows"),
+            _hidden_arg("d_model", "aligned_embed_dim", "embed_dim", "dim"),
+        ) or "EMBED_DIM"
         if op_name == "attn_norm":
-            _emit_hidden_export(out_expr, "attn_norm", "EMBED_DIM")
+            _emit_hidden_export(out_expr, "attn_norm", count_expr)
             _emit_hidden_export_last_row(out_expr, "attn_norm", "EMBED_DIM")
         elif op_instance_idx == 0:
             _emit_hidden_export(out_expr, "block_rmsnorm", "EMBED_DIM")
@@ -1744,7 +1762,11 @@ def emit_op(
     elif op_name == "post_attention_norm":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y"))
         if out_expr:
-            lines.append(f'    ck_debug_export_hidden(model, {layer}, "post_attn_norm", (const float*){out_expr}, EMBED_DIM);')
+            count_expr = _mul_expr(
+                _hidden_arg("tokens", "num_tokens", "rows"),
+                _hidden_arg("d_model", "aligned_embed_dim", "embed_dim", "dim"),
+            ) or "EMBED_DIM"
+            lines.append(f'    ck_debug_export_hidden(model, {layer}, "post_attn_norm", (const float*){out_expr}, {count_expr});')
             _emit_hidden_export_last_row(out_expr, "post_attn_norm", "EMBED_DIM")
     elif op_name == "ffn_norm":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y"))
@@ -1756,6 +1778,13 @@ def emit_op(
         if out_expr:
             lines.append(f'    ck_debug_export_hidden(model, {layer}, "post_ffn_norm", (const float*){out_expr}, EMBED_DIM);')
             _emit_hidden_export_last_row(out_expr, "post_ffn_norm", "EMBED_DIM")
+    elif op_name == "mlp_gate_up":
+        out_expr = _hidden_arg("output", "out", "c", "y")
+        rows_expr = _hidden_arg("m", "M", "rows", "tokens")
+        width_expr = _hidden_arg("n", "N", "out_dim")
+        count_expr = _mul_expr(rows_expr, width_expr) or width_expr or rows_expr
+        _emit_hidden_export(out_expr, "mlp_gate_up", count_expr)
+        _emit_hidden_export_last_row(out_expr, "mlp_gate_up", width_expr or count_expr)
     elif op_name == "qk_norm":
         q_expr = _hidden_raw(_hidden_arg("q"))
         k_expr = _hidden_raw(_hidden_arg("k"))
@@ -1777,9 +1806,13 @@ def emit_op(
     elif op_name in ("silu_mul", "swiglu"):
         out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y", "data"))
         if out_expr:
-            count_expr = _hidden_count("dim", "n", "intermediate_dim", default="INTERMEDIATE_DIM")
+            width_expr = _hidden_arg("dim", "n", "intermediate_dim")
+            count_expr = _mul_expr(
+                _hidden_arg("tokens", "num_tokens", "rows"),
+                width_expr,
+            ) or _hidden_count("dim", "n", "intermediate_dim", default="INTERMEDIATE_DIM")
             lines.append(f'    ck_debug_export_hidden(model, {layer}, "mlp_swiglu", (const float*){out_expr}, {count_expr});')
-            _emit_hidden_export_last_row(out_expr, "mlp_swiglu", count_expr)
+            _emit_hidden_export_last_row(out_expr, "mlp_swiglu", width_expr or count_expr)
     elif op_name == "geglu":
         out_expr = _hidden_raw(_hidden_arg("output", "out", "x", "y", "data"))
         if out_expr:

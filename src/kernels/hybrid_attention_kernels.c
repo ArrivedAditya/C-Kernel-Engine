@@ -4,14 +4,7 @@
 #include <string.h>
 
 static inline float hybrid_sigmoid(float x) {
-    if (x >= 0.0f) {
-        const float z = expf(-x);
-        return 1.0f / (1.0f + z);
-    }
-    {
-        const float z = expf(x);
-        return z / (1.0f + z);
-    }
+    return 1.0f / (1.0f + expf(-x));
 }
 
 void split_q_gate_forward(const float *packed_qg,

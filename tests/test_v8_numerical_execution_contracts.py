@@ -226,6 +226,121 @@ class NumericalExecutionContractTests(unittest.TestCase):
                         semantics["threading"]["thread_count_changes_arithmetic_order"]
                     )
 
+    def test_qwen35_rmsnorm_resolves_llama_production_provider(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.rmsnorm",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "rmsnorm_llama_cpu_production_fp32_output",
+                )
+                self.assertEqual(
+                    plan["kernel"]["function"],
+                    "rmsnorm_forward_llama_production",
+                )
+
+    def test_qwen35_recurrent_core_resolves_exact_llama_avx2_provider(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        expected = {
+            "prefill": (
+                "gated_deltanet_llama_avx2_prefill_fp32_state",
+                "gated_deltanet_llama_avx2_prefill_forward",
+            ),
+            "decode": (
+                "gated_deltanet_llama_avx2_decode_fp32_state",
+                "gated_deltanet_llama_avx2_forward",
+            ),
+        }
+        for phase, (contract_id, function) in expected.items():
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.recurrent_core.prefill",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(plan["contract"]["id"], contract_id)
+                self.assertEqual(plan["kernel"]["function"], function)
+
+    def test_qwen35_full_attention_qk_norm_resolves_llama_provider(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.qk_norm",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["kernel"]["function"],
+                    "qk_norm_forward_llama_production",
+                )
+
+    def test_qwen35_recurrent_norm_gate_resolves_exact_composed_provider(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.recurrent_norm_gate",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "recurrent_norm_gate_llama_avx2_fp32_output",
+                )
+                self.assertEqual(
+                    plan["kernel"]["function"],
+                    "recurrent_norm_gate_llama_avx2_forward",
+                )
+
+    def test_qwen35_attention_gate_resolves_exact_llama_sigmoid_provider(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.attention_gate",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "attention_gate_llama_sigmoid_fp32_output",
+                )
+                self.assertEqual(
+                    plan["kernel"]["function"],
+                    "attn_gate_sigmoid_mul_forward",
+                )
+
     def test_qwen35_circuit_resolves_partial_width_text_mrope(self):
         circuit_doc = resolver.load_json(
             ROOT / "version" / "v8" / "circuits" / "qwen35.json"

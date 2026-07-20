@@ -3,6 +3,126 @@
   "schema_version": 1,
   "engine_contract_version": "8",
   "contracts": {
+    "gated_deltanet_prefill_ordered_fp32_state": {
+      "operator_family": "gated_deltanet",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "ascending_token_recurrent_state_update_using_decode_provider"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "weighted_product", "reduction_update", "output_store"]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "left_to_right",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Gated DeltaNet prefill carries one FP32 recurrent state through prompt rows in ascending token order and delegates each update to the exact decode provider."
+    },
+    "gated_deltanet_llama_avx2_decode_fp32_state": {
+      "operator_family": "gated_deltanet",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "llama_avx2_four_accumulator_dot_then_scale_with_fma_state_update"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "weighted_product", "reduction_update", "reduction_finalize", "normalization_scale", "output_store"]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "pairwise_tree",
+        "partial_accumulator": "fp32",
+        "merge_order": "pairwise_tree"
+      },
+      "threading": {
+        "work_partition": "independent_heads",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Single-token Gated DeltaNet matching llama.cpp's AVX2 CPU graph: four-vector FMA dot reduction, FMA state update, and query scaling after reduction."
+    },
+    "gated_deltanet_llama_avx2_prefill_fp32_state": {
+      "operator_family": "gated_deltanet",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "ascending_token_then_llama_avx2_decode_provider"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "weighted_product", "reduction_update", "reduction_finalize", "normalization_scale", "output_store"]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "pairwise_tree",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Prompt Gated DeltaNet carries state in token order while invoking the exact llama.cpp AVX2 decode arithmetic for every row."
+    },
+    "recurrent_norm_gate_llama_avx2_fp32_output": {
+      "operator_family": "recurrent_norm_gate",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp64",
+        "contraction": "disabled",
+        "evaluation_order": "llama_rmsnorm_then_weight_mul_then_avx2_silu_then_elementwise_mul"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["square_product", "reduction_finalize", "reciprocal_sqrt", "normalization_scale", "weight_scale", "vector_exponential", "output_divide", "output_store"]
+      },
+      "reduction": {
+        "kind": "normalization",
+        "order": "left_to_right",
+        "partial_accumulator": "fp64",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Qwen3.5 recurrent gated normalization matches llama.cpp's separate RMSNorm, weight multiply, AVX2 SiLU, and final elementwise multiply operations."
+    },
     "rmsnorm_fp32_square_fp64_sum_fp32_output": {
       "operator_family": "rmsnorm",
       "status": "validated",
@@ -817,6 +937,40 @@
       "position_transform": null,
       "description": "Elementwise residual addition of BF16-valued float buffers with BF16 RNE output storage.",
       "operator_family": "residual_add"
+    },
+    "attention_gate_llama_sigmoid_fp32_output": {
+      "operator_family": "attention_gate",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "llama_cpu_one_div_one_plus_expf_negative_gate_then_attention_multiply"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "vector_exponential", "denominator_add", "reciprocal", "weighted_product", "output_store"]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "llama.cpp CPU attention gating evaluates sigmoid as 1.0f/(1.0f+expf(-gate)) before the FP32 attention multiply; the algebraically equivalent sign-stable branch is not numerically interchangeable."
     },
     "swiglu_fp32_ggml_vector_exp_fp32_output": {
       "operator_family": "swiglu",
