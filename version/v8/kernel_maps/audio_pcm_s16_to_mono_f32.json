@@ -1,0 +1,33 @@
+{
+  "id": "audio_pcm_s16_to_mono_f32",
+  "op": "audio_pcm_decode",
+  "variant": "signed_16_interleaved_channel_mean_fp32",
+  "quant": {"weight": "none", "activation": "int16", "output": "fp32"},
+  "inputs": [{"name": "interleaved", "dtype": "int16", "shape": ["N_frames", "N_channels"]}],
+  "weights": [],
+  "outputs": [{"name": "mono", "dtype": "fp32", "shape": ["N_frames"]}],
+  "scratch": [],
+  "dims": ["n_frames", "n_channels"],
+  "impl": {
+    "function": "audio_pcm_s16_to_mono_f32",
+    "c_declaration": "int audio_pcm_s16_to_mono_f32(const int16_t *interleaved, int n_frames, int n_channels, float *mono);",
+    "sources": ["src/kernels/audio_kernels.c"]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [{
+    "contract_id": "audio_pcm_s16_mono_fp32",
+    "status": "validated",
+    "phases": ["prefill"],
+    "function": "audio_pcm_s16_to_mono_f32",
+    "explicit_selector": true,
+    "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "contract_defined"}},
+    "arithmetic": {"partial_accumulator": "fp32", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "independent_outputs"}
+  }],
+  "call_abi": {"version": 1, "params": [
+    {"name": "interleaved", "source": "activation:interleaved", "cast": "const int16_t*"},
+    {"name": "n_frames", "source": "dim:n_frames"},
+    {"name": "n_channels", "source": "dim:n_channels"},
+    {"name": "mono", "source": "output:mono", "cast": "float*"}
+  ]},
+  "tests": {"unit": ["unittest/test_audio_encoder.py"]}
+}

@@ -1,0 +1,36 @@
+{
+  "id": "audio_resample_linear_f32",
+  "op": "audio_resample",
+  "variant": "rational_coordinate_linear_fp32_reference",
+  "quant": {"weight": "none", "activation": "fp32", "output": "fp32"},
+  "inputs": [{"name": "input", "dtype": "fp32", "shape": ["N_input"]}],
+  "weights": [],
+  "outputs": [{"name": "output", "dtype": "fp32", "shape": ["N_output"]}],
+  "scratch": [],
+  "dims": ["input_frames", "input_rate", "output_frames", "output_rate"],
+  "impl": {
+    "function": "audio_resample_linear_f32",
+    "c_declaration": "int audio_resample_linear_f32(const float *input, int input_frames, int input_rate, float *output, int output_frames, int output_rate);",
+    "sources": ["src/kernels/audio_kernels.c"]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [{
+    "contract_id": "audio_resample_linear_rational_fp32",
+    "status": "validated",
+    "phases": ["prefill"],
+    "function": "audio_resample_linear_f32",
+    "explicit_selector": true,
+    "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "none"}},
+    "arithmetic": {"partial_accumulator": "none", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "independent_outputs"}
+  }],
+  "call_abi": {"version": 1, "params": [
+    {"name": "input", "source": "activation:input", "cast": "const float*"},
+    {"name": "input_frames", "source": "dim:input_frames"},
+    {"name": "input_rate", "source": "dim:input_rate"},
+    {"name": "output", "source": "output:output", "cast": "float*"},
+    {"name": "output_frames", "source": "dim:output_frames"},
+    {"name": "output_rate", "source": "dim:output_rate"}
+  ]},
+  "tests": {"unit": ["unittest/test_audio_encoder.py"]},
+  "notes": "Reference-only resampler. Circuits requiring band-limited resampling must request a different contract and hard-fail until a compatible provider exists."
+}

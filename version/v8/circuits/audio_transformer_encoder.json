@@ -1,0 +1,170 @@
+{
+  "version": 4,
+  "name": "audio_transformer_encoder",
+  "family": "audio_transformer",
+  "flags": {
+    "activation": "gelu",
+    "normalization": "layernorm",
+    "feature_layout": "channel_major",
+    "encoder_layout": "token_major"
+  },
+  "contract": {
+    "audio_encoder": {
+      "input_modality": "audio_features",
+      "stem": "two_stage_conv1d",
+      "position_encoding": "absolute",
+      "attention": "dense_bidirectional",
+      "output": "audio_encoder_embeddings"
+    },
+    "block_contract": {
+      "norm_type": "layernorm",
+      "activation": "gelu",
+      "attention_causal": false,
+      "mlp_formula": "up -> gelu -> down"
+    }
+  },
+  "required_numerical_contracts": {
+    "audio.encoder.stem.conv1": {
+      "op": "audio_conv1d",
+      "template_ops": ["audio_conv1d_stem_1"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_conv1d_channel_major_ascending_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py Whisper stem-1 PyTorch Conv1D oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.encoder.stem.conv1.output",
+        "producer": "conv1",
+        "logical_layout": "channel_major",
+        "axis_names": ["channel", "frame"]
+      }
+    },
+    "audio.encoder.stem.conv2": {
+      "op": "audio_conv1d",
+      "template_ops": ["audio_conv1d_stem_2"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_conv1d_channel_major_ascending_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py Whisper stem-2 PyTorch Conv1D oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.encoder.stem.conv2.output",
+        "producer": "conv2",
+        "logical_layout": "channel_major",
+        "axis_names": ["channel", "frame"]
+      }
+    },
+    "audio.encoder.layout": {
+      "op": "layout_transform",
+      "template_ops": ["layout_channel_to_token"],
+      "phases": {
+        "prefill": {
+          "contract_id": "layout_channel_to_token_copy_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py exact channel-major to token-major identity"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.encoder.layout.output",
+        "producer": "to_token_major",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "audio.encoder.attention": {
+      "op": "attention",
+      "template_ops": ["attn"],
+      "phases": {
+        "prefill": {
+          "contract_id": "attention_query_key_scaled_ordered_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py equal-length encoder and unequal-length decoder PyTorch attention oracles"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.encoder.layer.{layer}.attention.output",
+        "producer": "attn",
+        "logical_layout": "head_major",
+        "axis_names": ["head", "token", "channel"]
+      }
+    }
+  },
+  "block_types": {
+    "audio_encoder": {
+      "sequence": ["header", "body", "footer"],
+      "header": [
+        {
+          "id": "conv1",
+          "op": "audio_conv1d_stem_1",
+          "params": {
+            "kernel_size_from_config": "audio_conv1_kernel_size",
+            "stride_from_config": "audio_conv1_stride",
+            "padding_from_config": "audio_conv1_padding"
+          }
+        },
+        {"id": "conv1_gelu", "op": "gelu"},
+        {
+          "id": "conv2",
+          "op": "audio_conv1d_stem_2",
+          "params": {
+            "kernel_size_from_config": "audio_conv2_kernel_size",
+            "stride_from_config": "audio_conv2_stride",
+            "padding_from_config": "audio_conv2_padding"
+          }
+        },
+        {"id": "conv2_gelu", "op": "gelu"},
+        {"id": "to_token_major", "op": "layout_channel_to_token"},
+        {"id": "position", "op": "position_embeddings"}
+      ],
+      "body": {
+        "type": "dense_bidirectional",
+        "ops": [
+          {"id": "attn_norm", "op": "layernorm"},
+          {
+            "id": "q_proj",
+            "op": "q_proj",
+            "graph_slots": {"inputs": {"x": "main_stream"}}
+          },
+          {
+            "id": "k_proj",
+            "op": "k_proj",
+            "graph_slots": {"inputs": {"x": "main_stream"}}
+          },
+          {
+            "id": "v_proj",
+            "op": "v_proj",
+            "graph_slots": {"inputs": {"x": "main_stream"}}
+          },
+          {"id": "attn", "op": "attn"},
+          {
+            "id": "out_proj",
+            "op": "out_proj",
+            "graph_slots": {"inputs": {"x": "attn_scratch"}}
+          },
+          {"id": "attn_residual", "op": "residual_add"},
+          {"id": "ffn_norm", "op": "layernorm"},
+          {
+            "id": "mlp_up",
+            "op": "mlp_up",
+            "graph_slots": {"inputs": {"x": "main_stream"}}
+          },
+          {"id": "mlp_gelu", "op": "gelu"},
+          {
+            "id": "mlp_down",
+            "op": "mlp_down",
+            "graph_slots": {"inputs": {"x": "mlp_scratch"}}
+          },
+          {"id": "mlp_residual", "op": "residual_add"}
+        ]
+      },
+      "footer": [
+        {"id": "final_norm", "op": "layernorm"}
+      ]
+    }
+  },
+  "sequence": ["audio_encoder"]
+}

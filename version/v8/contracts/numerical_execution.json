@@ -3,6 +3,72 @@
   "schema_version": 1,
   "engine_contract_version": "8",
   "contracts": {
+    "audio_pcm_s16_mono_fp32": {
+      "operator_family": "audio_pcm_decode",
+      "status": "validated",
+      "storage": {"input": "int16", "weight": "none", "output": "fp32"},
+      "compute": {"input": "int16", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "ascending_interleaved_channel_sum_then_channel_mean_then_signed_16_bit_scale"},
+      "rounding": {"mode": "rne", "points": ["input_load", "reduction_update", "output_divide", "output_store"]},
+      "reduction": {"kind": "sum", "order": "left_to_right", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Interleaved signed-16 PCM channels are averaged in ascending channel order and scaled by exactly 1/32768 into mono FP32 samples."
+    },
+    "audio_resample_linear_rational_fp32": {
+      "operator_family": "audio_resample",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "enabled", "evaluation_order": "rational_output_coordinate_floor_then_single_fp32_linear_fma"},
+      "rounding": {"mode": "rne", "points": ["input_load", "weighted_product", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Deterministic linear resampling from exact integer-rate rational coordinates; this reference capability is not a substitute for a future band-limited provider."
+    },
+    "audio_stft_centered_hann_precomputed_fp32": {
+      "operator_family": "audio_stft",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32", "contraction": "enabled", "evaluation_order": "reflect_center_then_window_then_ascending_sample_real_imag_fma_then_power"},
+      "rounding": {"mode": "rne", "points": ["window_multiply", "fft_projection", "power_sum", "output_store"]},
+      "reduction": {"kind": "dot_product", "order": "ascending_k", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Centered periodic-Hann STFT power using explicit precomputed trigonometric tables and the same ascending-sample FMA order as the scalar direct reference."
+    },
+    "audio_conv1d_channel_major_ascending_fp32": {
+      "operator_family": "audio_conv1d",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32", "contraction": "enabled", "evaluation_order": "bias_then_ascending_input_channel_then_ascending_kernel_fma"},
+      "rounding": {"mode": "rne", "points": ["input_load", "weighted_product", "reduction_update", "output_store"]},
+      "reduction": {"kind": "dot_product", "order": "ascending_k", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "General channel-major FP32 Conv1D with explicit stride, symmetric zero padding, bias-first accumulation, and deterministic channel/kernel traversal."
+    },
+    "layout_channel_to_token_copy_fp32": {
+      "operator_family": "layout_transform",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "ascending_frame_then_channel_copy"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Exact FP32 layout copy from channel-major [C,T] to token-major [T,C]."
+    },
+    "attention_query_key_scaled_ordered_fp32": {
+      "operator_family": "attention",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "enabled", "evaluation_order": "ascending_head_query_key_dim_qk_then_scale_then_max_exp_fp64_denominator_then_ascending_key_pv"},
+      "rounding": {"mode": "rne", "points": ["input_load", "weighted_product", "reduction_update", "normalization_scale", "vector_exponential", "denominator_add", "reciprocal", "output_store"]},
+      "reduction": {"kind": "composite", "order": "stage_ordered", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Equal- or unequal-length head-major query/key attention with explicit query scaling, ordered FP32 QK and PV products, and an FP64 softmax denominator."
+    },
     "audio_whisper_log_mel_reference_fp32": {
       "operator_family": "audio_log_mel",
       "status": "validated",

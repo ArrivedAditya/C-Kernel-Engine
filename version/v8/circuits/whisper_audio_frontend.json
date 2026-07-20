@@ -20,9 +20,6 @@
       "output": "normalized_log_mel"
     }
   },
-  "kernels": {
-    "log_mel": "audio_whisper_log_mel_reference_f32"
-  },
   "required_numerical_contracts": {
     "audio.frontend.log_mel": {
       "op": "audio_log_mel",
