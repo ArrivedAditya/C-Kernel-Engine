@@ -63,6 +63,7 @@
             "audio_stft",
             "audio_conv1d",
             "layout_transform",
+            "position_embeddings",
             "residual_add",
             "gelu",
             "swiglu"

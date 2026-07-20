@@ -2331,6 +2331,52 @@ def _logits_seq_for_layout(layout: str, mode: str, seq_len: int, context_len: in
     return 1
 
 
+def _audio_activation_specs(
+    config: Dict[str, Any],
+    seq_len: int,
+    embed_dim: int,
+) -> List[Tuple[str, int, str]]:
+    feature_frames = int(config.get("audio_feature_frames", 0) or 0)
+    feature_channels = int(config.get("audio_feature_channels", 0) or 0)
+    if feature_frames <= 0 or feature_channels <= 0:
+        return []
+    conv1_channels = int(config.get("audio_conv1_output_channels", embed_dim) or embed_dim)
+    conv2_channels = int(config.get("audio_conv2_output_channels", embed_dim) or embed_dim)
+    conv1_kernel = int(config.get("audio_conv1_kernel_size", 1) or 1)
+    conv1_stride = int(config.get("audio_conv1_stride", 1) or 1)
+    conv1_padding = int(config.get("audio_conv1_padding", 0) or 0)
+    conv2_kernel = int(config.get("audio_conv2_kernel_size", 1) or 1)
+    conv2_stride = int(config.get("audio_conv2_stride", 1) or 1)
+    conv2_padding = int(config.get("audio_conv2_padding", 0) or 0)
+    conv1_frames = (feature_frames + 2 * conv1_padding - conv1_kernel) // conv1_stride + 1
+    conv2_frames = (conv1_frames + 2 * conv2_padding - conv2_kernel) // conv2_stride + 1
+    if conv1_frames <= 0 or conv2_frames <= 0:
+        raise ValueError("audio Conv1D configuration produces a non-positive frame extent")
+    if conv2_frames != seq_len:
+        raise ValueError(
+            "audio encoder context length must equal the post-Conv1D token extent: "
+            f"context={seq_len}, conv2_frames={conv2_frames}"
+        )
+    if conv2_channels != embed_dim:
+        raise ValueError(
+            "audio Conv1D output channels must equal encoder embed_dim before token-major layout: "
+            f"channels={conv2_channels}, embed_dim={embed_dim}"
+        )
+    declared_conv1_frames = int(config.get("audio_conv1_output_frames", conv1_frames) or 0)
+    declared_conv2_frames = int(config.get("audio_conv2_output_frames", conv2_frames) or 0)
+    if declared_conv1_frames != conv1_frames or declared_conv2_frames != conv2_frames:
+        raise ValueError(
+            "declared audio Conv1D output extents do not match kernel geometry: "
+            f"conv1={declared_conv1_frames}/{conv1_frames}, "
+            f"conv2={declared_conv2_frames}/{conv2_frames}"
+        )
+    return [
+        ("audio_features", feature_channels * feature_frames * 4, f"[{feature_channels}, {feature_frames}]"),
+        ("audio_conv_1", conv1_channels * conv1_frames * 4, f"[{conv1_channels}, {conv1_frames}]"),
+        ("audio_conv_2", conv2_channels * conv2_frames * 4, f"[{conv2_channels}, {conv2_frames}]"),
+    ]
+
+
 def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, num_layers_override: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
     """Return activation buffer specs keyed by name."""
     embed_dim = int(config.get("embed_dim", 896))
@@ -2424,6 +2470,9 @@ def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, 
         add("patch_scratch", patch_scratch_size, f"[{vision_num_patches}, {patch_dim}]")
     if vision_num_patches > 0:
         add("vision_positions", vision_num_patches * 4 * 4, f"[4, {vision_num_patches}]", "i32")
+
+    for name, size, shape in _audio_activation_specs(config, seq_len, embed_dim):
+        add(name, size, shape)
 
     # Embedding + layer buffers
     embedded_size = seq_len * embed_dim * 4
@@ -3123,6 +3172,24 @@ def _template_int_param(
         except Exception:
             return int(default)
     return int(default)
+
+
+def _materialize_template_config_params(
+    params: Optional[Dict[str, Any]],
+    config: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Resolve declarative ``*_from_config`` parameters without family logic."""
+    resolved = copy.deepcopy(params) if isinstance(params, dict) else {}
+    for source_key, config_key_raw in list(resolved.items()):
+        if not str(source_key).endswith("_from_config"):
+            continue
+        target_key = str(source_key)[:-len("_from_config")]
+        config_key = str(config_key_raw or "").strip()
+        if not target_key or not config_key or target_key in resolved:
+            continue
+        if config_key in config:
+            resolved[target_key] = copy.deepcopy(config[config_key])
+    return resolved
 
 
 def _required_template_int_param(
@@ -5870,8 +5937,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                         branch_quant["branch_fc2_w"] = str(entry.get("dtype", "fp32") or "fp32")
                 kernels = map_op_to_kernel(lowered_op, branch_quant, mode, header_quant)
 
-                params: Dict[str, Any] = copy.deepcopy(
-                    producer_item.get("params") if isinstance(producer_item.get("params"), dict) else {}
+                params: Dict[str, Any] = _materialize_template_config_params(
+                    producer_item.get("params"), config
                 )
                 if lowered_op == "branch_fc2":
                     params["branch_collect_target"] = collect_target
@@ -6090,8 +6157,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                                 "section": "body",
                                 "layer": layer_idx,
                                 "instance": op_info["instance"],
-                                "params": copy.deepcopy(
-                                    op_item.get("params") if isinstance(op_item.get("params"), dict) else {}
+                                "params": _materialize_template_config_params(
+                                    op_item.get("params"), config
                                 ),
                             }
                             graph_slots = _template_graph_slots(op_item)
@@ -6193,8 +6260,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                                     "section": section_name,
                                     "layer": -1,
                                     "instance": op_info["instance"],
-                                    "params": copy.deepcopy(
-                                        op_item.get("params") if isinstance(op_item.get("params"), dict) else {}
+                                    "params": _materialize_template_config_params(
+                                        op_item.get("params"), config
                                     ),
                                 })
                                 print(f"      [{op_info['op_id']:3d}] {split_op:20s} → {kernel_id}  (inst: {op_info['instance']})")
@@ -6256,8 +6323,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                             "section": section_name,
                             "layer": -1,
                             "instance": op_info["instance"],
-                            "params": copy.deepcopy(
-                                op_item.get("params") if isinstance(op_item.get("params"), dict) else {}
+                            "params": _materialize_template_config_params(
+                                op_item.get("params"), config
                             ),
                         }
                         graph_slots = _template_graph_slots(op_item)
@@ -8343,6 +8410,9 @@ def generate_memory_layout(
     if vision_num_patches > 0:
         add_buffer("vision_positions", vision_num_patches * 4 * 4, f"[4, {vision_num_patches}]", "i32")
 
+    for name, size, shape in _audio_activation_specs(config, seq_len, int(embed_dim)):
+        add_buffer(name, size, shape)
+
     # Embedded input: embedding lookup output [seq_len, embed_dim]
     # For decode: [1, embed_dim], for prefill: [context_len, embed_dim]
     embedded_size = seq_len * embed_dim * 4
@@ -10183,7 +10253,6 @@ def generate_ir_lower_2(
             params.setdefault("rows", int(config.get("vision_num_patches", 0) or 0))
             params["merge_size"] = _required_template_int_param(params, "merge_size", config, op_type)
         if op_type == "position_embeddings":
-            params["merge_size"] = _required_template_int_param(params, "merge_size", config, op_type)
             source_grid_size = int(config.get("position_grid_size", 0) or 0)
             if source_grid_size <= 0:
                 source_image_size = int(config.get("image_size", 0) or 0)

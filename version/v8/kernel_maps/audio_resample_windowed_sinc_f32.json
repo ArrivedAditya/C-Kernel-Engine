@@ -1,0 +1,37 @@
+{
+  "id": "audio_resample_windowed_sinc_f32",
+  "op": "audio_resample",
+  "variant": "rational_coordinate_hann_windowed_sinc_fp64_accum_fp32_output",
+  "quant": {"weight": "none", "activation": "fp32", "output": "fp32"},
+  "inputs": [{"name": "input", "dtype": "fp32", "shape": ["N_input"]}],
+  "weights": [],
+  "outputs": [{"name": "output", "dtype": "fp32", "shape": ["N_output"]}],
+  "scratch": [],
+  "dims": ["input_frames", "input_rate", "output_frames", "output_rate", "radius"],
+  "impl": {
+    "function": "audio_resample_windowed_sinc_f32",
+    "c_declaration": "int audio_resample_windowed_sinc_f32(const float *input, int input_frames, int input_rate, float *output, int output_frames, int output_rate, int radius);",
+    "sources": ["src/kernels/audio_kernels.c"]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [{
+    "contract_id": "audio_resample_windowed_sinc_fp64_accum_fp32_output",
+    "status": "validated",
+    "phases": ["prefill"],
+    "function": "audio_resample_windowed_sinc_f32",
+    "explicit_selector": true,
+    "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "contract_defined"}},
+    "arithmetic": {"partial_accumulator": "fp64", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "independent_outputs"}
+  }],
+  "call_abi": {"version": 1, "params": [
+    {"name": "input", "source": "activation:input", "cast": "const float*"},
+    {"name": "input_frames", "source": "dim:input_frames"},
+    {"name": "input_rate", "source": "dim:input_rate"},
+    {"name": "output", "source": "output:output", "cast": "float*"},
+    {"name": "output_frames", "source": "dim:output_frames"},
+    {"name": "output_rate", "source": "dim:output_rate"},
+    {"name": "radius", "source": "dim:radius"}
+  ]},
+  "tests": {"unit": ["unittest/test_audio_encoder.py"]},
+  "notes": "Band-limited provider. Radius and rate semantics are explicit call-IR dimensions; codegen must not infer them from a model family."
+}
