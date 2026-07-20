@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 217,
+      "total": 219,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -56,7 +56,7 @@
         "position_ids": 1,
         "projector_prep": 1,
         "q_norm": 1,
-        "qk_norm": 3,
+        "qk_norm": 4,
         "qk_norm_backward": 1,
         "qkv_projection": 1,
         "quantize": 3,
@@ -73,7 +73,7 @@
         "relu2": 2,
         "residual_add": 2,
         "residual_save": 1,
-        "rmsnorm": 4,
+        "rmsnorm": 5,
         "rope": 12,
         "rope_backward": 2,
         "rope_init": 2,
@@ -21484,6 +21484,183 @@
       "_source_file": "qk_norm_forward_llama_production.json"
     },
     {
+      "id": "qk_norm_forward_pytorch_bf16_storage",
+      "op": "qk_norm",
+      "variant": "pytorch_avx512_bf16_storage",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "q_gamma",
+          "dtype": "fp32",
+          "shape": [
+            "D"
+          ]
+        },
+        {
+          "name": "k_gamma",
+          "dtype": "fp32",
+          "shape": [
+            "D"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "qk_norm_forward_pytorch_bf16_storage",
+        "c_declaration": "void qk_norm_forward_pytorch_bf16_storage(float *q, float *k, const float *q_gamma, const float *k_gamma, int num_heads, int num_kv_heads, int num_tokens, int head_dim, float eps);",
+        "sources": [
+          "src/kernels/qk_norm_kernels.c",
+          "src/kernels/rmsnorm_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx512",
+            "requires": [
+              "avx512f"
+            ],
+            "compile_flags": [
+              "-mavx512f"
+            ]
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "rmsnorm_pytorch_avx512_bf16_storage",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "qk_norm_forward_pytorch_bf16_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "pairwise_tree",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "scratch:q_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "k",
+            "source": "scratch:k_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "q_gamma",
+            "source": "weight_f:q_norm",
+            "cast": "const float*"
+          },
+          {
+            "name": "k_gamma",
+            "source": "weight_f:k_norm",
+            "cast": "const float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "eps",
+            "source": "dim:rms_eps"
+          }
+        ]
+      },
+      "notes": "Per-head Q/K RMSNorm with PyTorch AVX-512 BF16 storage semantics.",
+      "name": "qk_norm_forward_pytorch_bf16_storage",
+      "_source_file": "qk_norm_forward_pytorch_bf16_storage.json"
+    },
+    {
       "id": "quantize_batch_q8_0",
       "op": "quantize_batch",
       "variant": "fp32_to_q8_0_batch",
@@ -24933,6 +25110,160 @@
       "notes": "FP32 RMSNorm matching llama.cpp CPU production 1.0f / sqrtf(mean + eps) evaluation for every ISA.",
       "name": "rmsnorm_forward_llama_production",
       "_source_file": "rmsnorm_forward_llama_production.json"
+    },
+    {
+      "id": "rmsnorm_forward_pytorch_bf16_storage",
+      "op": "rmsnorm",
+      "variant": "pytorch_avx512_bf16_storage",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "gamma",
+          "dtype": "fp32",
+          "shape": [
+            "E"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ]
+        },
+        {
+          "name": "rstd",
+          "dtype": "fp32",
+          "shape": [
+            "T"
+          ]
+        }
+      ],
+      "dims": [
+        "T",
+        "E"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "rmsnorm_forward_pytorch_bf16_storage",
+        "c_declaration": "void rmsnorm_forward_pytorch_bf16_storage(const float *input, const float *gamma, float *output, float *rstd_cache, int tokens, int d_model, int aligned_embed_dim, float eps);",
+        "sources": [
+          "src/kernels/rmsnorm_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx512",
+            "requires": [
+              "avx512f"
+            ],
+            "compile_flags": [
+              "-mavx512f"
+            ]
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "rmsnorm_pytorch_avx512_bf16_storage",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "rmsnorm_forward_pytorch_bf16_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "pairwise_tree",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*"
+          },
+          {
+            "name": "gamma",
+            "source": "weight:gamma",
+            "alt": [
+              "ln1_gamma",
+              "ln2_gamma",
+              "final_ln_weight"
+            ],
+            "cast": "const float*"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*"
+          },
+          {
+            "name": "rstd_cache",
+            "source": "null"
+          },
+          {
+            "name": "tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "d_model",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "aligned_embed_dim",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "eps",
+            "source": "dim:rms_eps"
+          }
+        ]
+      },
+      "notes": "PyTorch CPU AVX-512 BF16 RMSNorm storage contract carried in FP32 BUMP buffers.",
+      "name": "rmsnorm_forward_pytorch_bf16_storage",
+      "_source_file": "rmsnorm_forward_pytorch_bf16_storage.json"
     },
     {
       "id": "v_norm",

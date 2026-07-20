@@ -1124,6 +1124,9 @@ def test_qwen3vl_safetensors_auto_text_ignores_vision(tmp_path: Path) -> None:
     assert "output.weight" in names
     assert manifest["config"]["tie_word_embeddings"] is False
     assert manifest["config"]["num_deepstack_layers"] == 1
+    assert manifest["config"]["decoder_norm_storage_boundary"] == "bf16"
+    assert manifest["config"]["decoder_prefill_projection_storage_boundary"] == "bf16"
+    assert "decoder_decode_projection_storage_boundary" not in manifest["config"]
 
     real_out = tmp_path / "out_qwen3vl_text_real"
     real_out.mkdir()
@@ -1170,6 +1173,14 @@ def test_qwen3vl_safetensors_auto_text_ignores_vision(tmp_path: Path) -> None:
         "q_proj": "gemm_nt_bf16",
         "k_proj": "gemm_nt_bf16",
         "v_proj": "gemm_nt_bf16",
+    }
+    layer0_norm_ops = {
+        op["op"]: op["kernel"] for op in text_ops
+        if op.get("layer") == 0 and op.get("op") in {"rmsnorm", "qk_norm"}
+    }
+    assert layer0_norm_ops == {
+        "rmsnorm": "rmsnorm_forward_pytorch_bf16_storage",
+        "qk_norm": "qk_norm_forward_pytorch_bf16_storage",
     }
     assert not any(op.get("op") == "qkv_proj" for op in text_ops)
 

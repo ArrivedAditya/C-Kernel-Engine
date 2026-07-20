@@ -369,6 +369,62 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                     bridge_runner_v8._run_decoder(runtime, array("f"), 0, [])
             loader.assert_called_once_with(runtime["prefill_so_path"], engine_so=selected)
 
+    def test_encoder_execution_loads_runtime_selected_engine(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            selected = root / "selected-engine.so"
+            selected.touch()
+            runtime = {
+                "so_path": root / "libencoder_v8.so",
+                "engine_so": str(selected),
+            }
+            sentinel = RuntimeError("loader reached")
+            with mock.patch.object(bridge_runner_v8, "_load_encoder_lib", side_effect=sentinel) as loader:
+                with self.assertRaisesRegex(RuntimeError, "loader reached"):
+                    bridge_runner_v8._run_encoder(runtime, "processor-planar")
+            loader.assert_called_once_with(runtime["so_path"], engine_so=selected)
+
+    def test_encoder_loader_uses_requested_engine_when_adjacent_copy_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            requested = root / "canonical" / "libckernel_engine.so"
+            adjacent = root / "runtime" / "libckernel_engine.so"
+            model_so = root / "runtime" / "libencoder_v8.so"
+            requested.parent.mkdir()
+            adjacent.parent.mkdir()
+            requested.write_bytes(b"same engine")
+            adjacent.write_bytes(b"same engine")
+            model_so.touch()
+
+            fake_lib = mock.Mock()
+            loads: list[Path] = []
+
+            def fake_cdll(path: str | None, mode: int = 0) -> object:
+                if path is not None:
+                    loads.append(Path(path).resolve())
+                return fake_lib
+
+            with mock.patch.object(bridge_runner_v8.ctypes, "CDLL", side_effect=fake_cdll):
+                bridge_runner_v8._load_encoder_lib(model_so, engine_so=requested)
+
+            self.assertEqual(loads[0], requested.resolve())
+            self.assertNotIn(adjacent.resolve(), loads)
+
+    def test_encoder_loader_rejects_mismatched_adjacent_engine(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            requested = root / "canonical" / "libckernel_engine.so"
+            adjacent = root / "runtime" / "libckernel_engine.so"
+            model_so = root / "runtime" / "libencoder_v8.so"
+            requested.parent.mkdir()
+            adjacent.parent.mkdir()
+            requested.write_bytes(b"canonical engine")
+            adjacent.write_bytes(b"stale engine")
+            model_so.touch()
+
+            with self.assertRaisesRegex(RuntimeError, "different adjacent CK engine"):
+                bridge_runner_v8._load_encoder_lib(model_so, engine_so=requested)
+
     def test_decoder_loader_hard_fails_when_tokenizer_runtime_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

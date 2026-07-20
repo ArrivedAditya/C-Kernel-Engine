@@ -14,6 +14,7 @@
  * RMSNorm: y[i] = gamma[i] * x[i] / sqrt(mean(x^2) + eps)
  */
 
+#include "bf16_utils.h"
 #include "ckernel_engine.h"
 #include <math.h>
 #include <stddef.h>
@@ -154,6 +155,61 @@ void rmsnorm_forward_llama_production(const float *input,
         for (int d = d_model; d < aligned_embed_dim; ++d) {
             y[d] = 0.0f;
         }
+    }
+}
+
+void rmsnorm_forward_pytorch_bf16_storage(const float *input,
+                                          const float *gamma,
+                                          float *output,
+                                          float *rstd_cache,
+                                          int tokens,
+                                          int d_model,
+                                          int aligned_embed_dim,
+                                          float eps)
+{
+    for (int t = 0; t < tokens; ++t) {
+        const float *x = input + (size_t)t * (size_t)aligned_embed_dim;
+        float *y = output + (size_t)t * (size_t)aligned_embed_dim;
+        float sum_sq = 0.0f;
+
+#if defined(__AVX512F__)
+        /* PyTorch AVX-512 ReduceOps accumulates this contiguous last-dimension
+         * mean in two 16-lane partial vectors before a left-to-right lane
+         * fold. Preserve that order: a one-ULP variance change can cross a
+         * BF16 rounding boundary after normalization. */
+        __m512 acc0 = _mm512_setzero_ps();
+        __m512 acc1 = _mm512_setzero_ps();
+        int d = 0;
+        for (; d + 32 <= d_model; d += 32) {
+            const __m512 x0 = _mm512_loadu_ps(x + d);
+            const __m512 x1 = _mm512_loadu_ps(x + d + 16);
+            acc0 = _mm512_add_ps(acc0, _mm512_mul_ps(x0, x0));
+            acc1 = _mm512_add_ps(acc1, _mm512_mul_ps(x1, x1));
+        }
+        _Alignas(64) float lanes[16];
+        _mm512_store_ps(lanes, _mm512_add_ps(acc0, acc1));
+        for (int lane = 0; lane < 16; ++lane) sum_sq += lanes[lane];
+        for (; d < d_model; ++d) {
+            const float value = bf16_to_float(float_to_bf16(x[d]));
+            sum_sq += value * value;
+        }
+#else
+        for (int d = 0; d < d_model; ++d) {
+            const float value = bf16_to_float(float_to_bf16(x[d]));
+            sum_sq += value * value;
+        }
+#endif
+
+        const float variance = sum_sq / (float)d_model;
+        const float rstd = 1.0f / sqrtf(variance + eps);
+        if (rstd_cache) rstd_cache[t] = rstd;
+        for (int d = 0; d < d_model; ++d) {
+            const float value = bf16_to_float(float_to_bf16(x[d]));
+            const float normalized = bf16_to_float(float_to_bf16(value * rstd));
+            const float weight = bf16_to_float(float_to_bf16(gamma[d]));
+            y[d] = bf16_to_float(float_to_bf16(normalized * weight));
+        }
+        for (int d = d_model; d < aligned_embed_dim; ++d) y[d] = 0.0f;
     }
 }
 

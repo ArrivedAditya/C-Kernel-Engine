@@ -258,6 +258,49 @@ class V8CodegenBridgeTests(unittest.TestCase):
         self.assertEqual(doc["contract"]["attention_contract"]["rope_layout"], "multi_section_1d")
         self.assertEqual(doc["kernels"]["rope_qk"], "mrope_qk_text_imrope")
 
+    def test_qwen3vl_bf16_amx_projection_is_prefill_only(self) -> None:
+        manifest = _make_qwen3vl_decoder_manifest()
+        manifest["config"]["decoder_prefill_projection_storage_boundary"] = "bf16"
+        projection_names = {
+            "layer.0.wq", "layer.0.wk", "layer.0.wv", "layer.0.wo",
+            "layer.0.w1", "layer.0.w2", "layer.0.w3",
+        }
+        for entry in manifest["entries"]:
+            if entry["name"] in projection_names:
+                entry["dtype"] = "bf16"
+        for name in ("wq", "wk", "wv", "wo", "w1", "w2", "w3"):
+            manifest["quant_summary"]["layer.0"][name] = "bf16"
+
+        prefill = build_ir_v8.build_ir1_direct(
+            manifest,
+            ROOT / "tests" / "qwen3vl_manifest.synthetic.json",
+            mode="prefill",
+        )
+        prefill_projections = [
+            op for op in prefill
+            if op["op"] in {"q_proj", "k_proj", "v_proj", "out_proj", "mlp_gate_up", "mlp_down"}
+        ]
+        self.assertTrue(prefill_projections)
+        for operation in prefill_projections:
+            with self.subTest(phase="prefill", op=operation["op"]):
+                self.assertEqual(operation["kernel"], "gemm_nt_bf16_amx_bf16_storage")
+                self.assertEqual(
+                    operation["resolved_contract"]["contract_id"],
+                    "bf16_weight_bf16_input_amx_tile32_dot_bf16_output",
+                )
+
+        decode = build_ir_v8.build_ir1_direct(
+            manifest,
+            ROOT / "tests" / "qwen3vl_manifest.synthetic.json",
+            mode="decode",
+        )
+        decode_projections = [
+            op for op in decode
+            if op["op"] in {"q_proj", "k_proj", "v_proj", "out_proj", "mlp_gate_up", "mlp_down"}
+        ]
+        self.assertTrue(decode_projections)
+        self.assertTrue(all(op["kernel"] == "gemm_nt_bf16" for op in decode_projections))
+
     def test_qwen2_decode_uses_contracted_q8_kernels(self) -> None:
         manifest = _make_qwen2_decoder_manifest()
 

@@ -193,6 +193,36 @@
       "position_transform": null,
       "description": "llama.cpp CPU production RMSNorm: FP32 squares, ascending FP64 row sum, and the active CPU provider reciprocal-square-root sequence. AVX-512 uses RSQRT14 plus one Newton refinement; AVX2 uses scalar sqrt/div."
     },
+    "rmsnorm_pytorch_avx512_bf16_storage": {
+      "operator_family": "rmsnorm",
+      "status": "validated",
+      "storage": {"input": "bf16", "weight": "bf16", "output": "bf16"},
+      "compute": {
+        "input": "fp32",
+        "weight": "bf16",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "square_then_two_avx512_partial_vectors_then_lane_fold_then_fp32_mean_rsqrt"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["normalization_scale", "weight_scale", "output_store"]
+      },
+      "reduction": {
+        "kind": "normalization",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "pairwise_tree"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "PyTorch CPU AVX-512 BF16 RMSNorm: FP32 mean-square reduction, BF16 normalized storage, then BF16 weight multiplication and output storage."
+    },
     "bf16_weight_bf16_input_fp32_dot_fp32_output": {
       "operator_family": "gemm",
       "status": "observed",

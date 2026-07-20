@@ -5623,6 +5623,15 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                     w_dtype = header_quant.get(w_key, w_dtype)
                 w_dtype = str(w_dtype or "fp32").lower()
                 split_op = weight_to_split_op.get(w_key, op)
+                split_plan = numerical_contract_by_template_op.get(split_op)
+                if split_plan is not None:
+                    if split_plan.get("phase") != mode:
+                        raise RuntimeError(
+                            f"HARD CONTRACT FAULT: resolved {split_op!r} plan is for "
+                            f"{split_plan.get('phase')!r}, not active mode {mode!r}."
+                        )
+                    kernels.append((str(split_plan["kernel"]["id"]), split_op))
+                    continue
                 if split_op in BF16_DENSE_MATMUL_OPS and w_dtype == "bf16":
                     kernels.append(("gemm_nt_bf16", split_op))
                     continue

@@ -141,9 +141,78 @@
     }
   },
   "required_numerical_contracts": {
+    "decoder.layer.qkv_projection.bf16_amx_prefill": {
+      "op": "gemm",
+      "template_ops": ["q_proj", "k_proj", "v_proj"],
+      "selector": {
+        "config_equals": {
+          "decoder_prefill_projection_storage_boundary": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "bf16_weight_bf16_input_amx_tile32_dot_bf16_output",
+          "validation": "validated",
+          "evidence": "unittest/bf16/test_gemm_storage_contract_bf16.py"
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.qkv.output",
+        "producer": "qkv_projection",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.layer.out_projection.bf16_amx_prefill": {
+      "op": "gemm",
+      "template_ops": ["out_proj"],
+      "selector": {
+        "config_equals": {
+          "decoder_prefill_projection_storage_boundary": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "bf16_weight_bf16_input_amx_tile32_dot_bf16_output",
+          "validation": "validated",
+          "evidence": "unittest/bf16/test_gemm_storage_contract_bf16.py"
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.out_proj.output",
+        "producer": "out_proj",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.layer.mlp_projection.bf16_amx_prefill": {
+      "op": "gemm",
+      "template_ops": ["mlp_gate_up", "mlp_down"],
+      "selector": {
+        "config_equals": {
+          "decoder_prefill_projection_storage_boundary": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "bf16_weight_bf16_input_amx_tile32_dot_bf16_output",
+          "validation": "validated",
+          "evidence": "unittest/bf16/test_gemm_storage_contract_bf16.py"
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.mlp.projection",
+        "producer": "mlp_projection",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
     "decoder.rmsnorm": {
       "op": "rmsnorm",
       "template_ops": ["rmsnorm"],
+      "selector": {
+        "config_not_equals": {"decoder_norm_storage_boundary": "bf16"}
+      },
       "phases": {
         "prefill": {
           "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
@@ -163,9 +232,37 @@
         "axis_names": ["token", "channel"]
       }
     },
+    "decoder.rmsnorm.bf16": {
+      "op": "rmsnorm",
+      "template_ops": ["rmsnorm"],
+      "selector": {
+        "config_equals": {"decoder_norm_storage_boundary": "bf16"}
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "rmsnorm_pytorch_avx512_bf16_storage",
+          "validation": "validated",
+          "evidence": "Qwen3-VL PyTorch BF16 persistent layer-0 RMSNorm capture at decoder step 43 is exact for all 4,096 channels."
+        },
+        "decode": {
+          "contract_id": "rmsnorm_pytorch_avx512_bf16_storage",
+          "validation": "validated",
+          "evidence": "Teacher-forced persistent decode uses the same PyTorch AVX-512 BF16 storage and reduction contract."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.rmsnorm.output",
+        "producer": "rmsnorm",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
     "decoder.qk_norm": {
       "op": "qk_norm",
       "template_ops": ["qk_norm"],
+      "selector": {
+        "config_not_equals": {"decoder_norm_storage_boundary": "bf16"}
+      },
       "phases": {
         "prefill": {
           "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
@@ -176,6 +273,31 @@
           "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
           "validation": "validated",
           "evidence": "Q/K normalization uses the active llama.cpp CPU production reciprocal-square-root contract at head dimension 128."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.qk_norm.output",
+        "producer": "qk_norm",
+        "logical_layout": "head_major",
+        "axis_names": ["head", "token", "channel"]
+      }
+    },
+    "decoder.qk_norm.bf16": {
+      "op": "qk_norm",
+      "template_ops": ["qk_norm"],
+      "selector": {
+        "config_equals": {"decoder_norm_storage_boundary": "bf16"}
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "rmsnorm_pytorch_avx512_bf16_storage",
+          "validation": "validated",
+          "evidence": "Qwen3-VL PyTorch BF16 Q/K normalization follows the decoder RMSNorm storage and reduction contract per head."
+        },
+        "decode": {
+          "contract_id": "rmsnorm_pytorch_avx512_bf16_storage",
+          "validation": "validated",
+          "evidence": "Persistent teacher-forced layer-0 Q/K captures validate the per-head BF16 storage boundary."
         }
       },
       "checkpoint": {
