@@ -84,6 +84,29 @@ def lower(config):
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["function"], "lower")
 
+    def test_audio_bringup_cannot_add_whisper_compiler_dispatch(self) -> None:
+        source = """
+def lower(config):
+    if config.get('model_type') == 'whisper':
+        return 'resolved_audio_kernel'
+    return config['resolved_kernel']
+"""
+        policy = json.loads(audit.DEFAULT_POLICY.read_text(encoding="utf-8"))
+        self.assertIn("whisper", policy["forbidden_model_literals"])
+        literal_findings = audit.scan_source(
+            source,
+            ["lower"],
+            policy["forbidden_model_literals"],
+            path="synthetic_audio_codegen.py",
+        )
+        dispatch_findings = audit.scan_model_dispatch_source(
+            source,
+            policy["forbidden_dispatch_keys"],
+            path="synthetic_audio_codegen.py",
+        )
+        self.assertEqual(len(literal_findings), 1)
+        self.assertEqual(len(dispatch_findings), 1)
+
     def test_ast_policy_rejects_aliased_model_dispatch(self) -> None:
         source = """
 def lower(config):

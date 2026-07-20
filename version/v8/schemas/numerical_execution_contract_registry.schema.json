@@ -57,6 +57,7 @@
             "gated_deltanet",
             "attention",
             "attention_gate",
+            "audio_log_mel",
             "residual_add",
             "gelu",
             "swiglu"
@@ -200,7 +201,14 @@
                   "weight_scale",
                   "vector_exponential",
                   "denominator_add",
-                  "output_divide"
+                  "output_divide",
+                  "window_multiply",
+                  "fft_projection",
+                  "power_sum",
+                  "mel_projection",
+                  "logarithm",
+                  "dynamic_range_clamp",
+                  "affine_normalization"
                 ]
               }
             }
@@ -223,7 +231,8 @@
                 "sum",
                 "online_softmax",
                 "tiled_online_softmax",
-                "normalization"
+                "normalization",
+                "composite"
               ]
             },
             "order": {
@@ -232,7 +241,8 @@
                 "ascending_k",
                 "left_to_right",
                 "pairwise_tree",
-                "contract_defined_chunks"
+                "contract_defined_chunks",
+                "stage_ordered"
               ]
             },
             "partial_accumulator": {

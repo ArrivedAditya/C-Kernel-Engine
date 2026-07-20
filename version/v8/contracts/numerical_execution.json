@@ -3,6 +3,45 @@
   "schema_version": 1,
   "engine_contract_version": "8",
   "contracts": {
+    "audio_whisper_log_mel_reference_fp32": {
+      "operator_family": "audio_log_mel",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "reflect_pad_then_periodic_hann_then_ascending_sample_direct_dft_then_power_then_ascending_bin_slaney_mel_then_log10_global_clamp_affine"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "window_multiply",
+          "fft_projection",
+          "power_sum",
+          "mel_projection",
+          "logarithm",
+          "dynamic_range_clamp",
+          "affine_normalization",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "composite",
+        "order": "stage_ordered",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Whisper-compatible FP32 reference frontend with PyTorch reflect centering, periodic Hann framing, scalar direct DFT power, explicit Slaney Mel weights, log10 floor, eight-decade clamp, and affine normalization."
+    },
     "gated_deltanet_prefill_ordered_fp32_state": {
       "operator_family": "gated_deltanet",
       "status": "validated",
