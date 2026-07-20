@@ -53,6 +53,23 @@ def _load_lib() -> ctypes.CDLL | None:
             ]
             fwd.restype = None
 
+            prefill = lib.gated_deltanet_prefill_forward
+            prefill.argtypes = [
+                ctypes.POINTER(ctypes.c_float),  # q
+                ctypes.POINTER(ctypes.c_float),  # k
+                ctypes.POINTER(ctypes.c_float),  # v
+                ctypes.POINTER(ctypes.c_float),  # g
+                ctypes.POINTER(ctypes.c_float),  # beta
+                ctypes.POINTER(ctypes.c_float),  # state_in
+                ctypes.POINTER(ctypes.c_float),  # state_out
+                ctypes.POINTER(ctypes.c_float),  # out
+                ctypes.c_int,                    # rows
+                ctypes.c_int,                    # num_heads
+                ctypes.c_int,                    # state_dim
+                ctypes.c_float,                  # norm_eps
+            ]
+            prefill.restype = None
+
             bwd = lib.gated_deltanet_autoregressive_backward
             bwd.argtypes = [
                 ctypes.POINTER(ctypes.c_float),  # d_out
@@ -268,6 +285,25 @@ class TestDeltaNetParity(unittest.TestCase):
 
         np.testing.assert_allclose(np.stack(ck_outs), np.stack(torch_outs), atol=self.atol_forward, rtol=0.0)
         np.testing.assert_allclose(np.stack(ck_states), np.stack(torch_states), atol=self.atol_forward, rtol=0.0)
+
+        prefill_state = np.zeros_like(state)
+        prefill_out = np.zeros_like(q)
+        LIB.gated_deltanet_prefill_forward(
+            _as_ptr(q),
+            _as_ptr(k),
+            _as_ptr(v),
+            _as_ptr(g),
+            _as_ptr(beta),
+            _as_ptr(state),
+            _as_ptr(prefill_state),
+            _as_ptr(prefill_out),
+            seq_len,
+            num_heads,
+            state_dim,
+            ctypes.c_float(self.norm_eps),
+        )
+        np.testing.assert_array_equal(prefill_out, np.stack(ck_outs))
+        np.testing.assert_array_equal(prefill_state, ck_states[-1])
 
     def test_strict_parity_dispatches_ref(self) -> None:
         LIB.ck_set_strict_parity(1)

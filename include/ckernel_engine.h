@@ -1572,8 +1572,7 @@ void attention_forward_decode_head_major_gqa_flash(const float *q_token,
                                                   int kv_tokens,
                                                   int cache_capacity,
                                                   int head_dim,
-                                                  int aligned_head_dim);
-
+                                                   int aligned_head_dim);
 void attention_forward_decode_head_major_gqa_flash_gemma4(const float *q_token,
                                                           const float *k_cache,
                                                           const float *v_cache,
@@ -2148,6 +2147,53 @@ void gated_deltanet_autoregressive_forward(const float *q,
                                            int state_dim,
                                            float norm_eps);
 
+void gated_deltanet_prefill_forward(const float *q,
+                                    const float *k,
+                                    const float *v,
+                                    const float *g,
+                                    const float *beta,
+                                    const float *state_in,
+                                    float *state_out,
+                                    float *out,
+                                    int rows,
+                                    int num_heads,
+                                    int state_dim,
+                                    float norm_eps);
+
+void gated_deltanet_llama_avx2_forward(const float *q,
+                                       const float *k,
+                                       const float *v,
+                                       const float *g,
+                                       const float *beta,
+                                       const float *state_in,
+                                       float *state_out,
+                                       float *out,
+                                       int num_heads,
+                                       int state_dim,
+                                       float norm_eps);
+
+void gated_deltanet_llama_avx2_prefill_forward(const float *q,
+                                               const float *k,
+                                               const float *v,
+                                               const float *g,
+                                               const float *beta,
+                                               const float *state_in,
+                                               float *state_out,
+                                               float *out,
+                                               int rows,
+                                               int num_heads,
+                                               int state_dim,
+                                               float norm_eps);
+
+void recurrent_norm_gate_llama_avx2_forward(const float *x,
+                                             const float *gate,
+                                             const float *weight,
+                                             float *out,
+                                             int rows,
+                                             int num_heads,
+                                             int head_dim,
+                                             float eps);
+
 // Gated DeltaNet recurrent backward used by qwen3next/Qwen3.5 linear attention.
 // Layout:
 //   d_out         : [num_heads, state_dim]
@@ -2289,6 +2335,16 @@ void kv_cache_store_f16(uint16_t *__restrict kv_cache_k,
                         int num_kv_heads,
                         int head_dim,
                         int max_seq_len);
+
+void kv_cache_store_batch_f16(uint16_t *__restrict kv_cache_k,
+                              uint16_t *__restrict kv_cache_v,
+                              const float *__restrict k,
+                              const float *__restrict v,
+                              int start_pos,
+                              int num_tokens,
+                              int num_kv_heads,
+                              int head_dim,
+                              int max_seq_len);
 
 // Repack a head-major tensor from a packed `[head, tokens, aligned_head_dim]`
 // layout into a KV-cache-compatible layout `[head, cache_capacity, aligned_head_dim]`

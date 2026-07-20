@@ -6,7 +6,7 @@ codegen_prefill_v8.py - Generate C code for PREFILL mode from lowered IR.
 
 This generates ck_prefill() which processes multiple tokens at once.
 The IR (lowered_prefill_call.json) already has function names and expressions.
-We just substitute num_tokens for const:1 sources.
+Token-count arguments are selected from their semantic source or name.
 
 =============================================================================
 IMPORTANT: CODEGEN IS DUMB - NO PARALLELIZATION LOGIC HERE
@@ -167,7 +167,7 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
       - function: kernel function name
       - args[]: each with name, source, expr
 
-    We just substitute num_tokens for const:1 and fix memcpy size.
+    We substitute num_tokens for token-count arguments and fix memcpy size.
     If profile=True, emit CK_PROFILE_BEGIN/END timing wrappers.
     """
     func = op.get("function", "unknown")
@@ -473,9 +473,7 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         # Substitute num_tokens for token count parameters. Mamba selective
         # scan is single-batch prompt prefill: batch stays 1, seq_len is the
         # runtime token count.
-        if source == "const:1" and not (op_type == "mamba_selective_scan" and name_lc == "batch"):
-            expr = "num_tokens"
-        elif source == "dim:seq_len":
+        if source == "dim:seq_len":
             expr = "num_tokens"
         elif source in ("param:seq_len", "runtime:seq_len"):
             expr = "num_tokens"
@@ -586,6 +584,10 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
 
             raw_expr = c_expr.replace("(float*)", "").replace("(void*)", "").strip()
             lines.append(
+                f'    ck_debug_export_hidden(model, {layer}, "out_proj", '
+                f'(const float*){raw_expr}, ({m_expr}) * ({n_expr}));'
+            )
+            lines.append(
                 f'    if (num_tokens > 1) ck_debug_export_hidden(model, {layer}, "out_proj_last", '
                 f'(const float*)(((const float*){raw_expr}) + (((size_t)num_tokens - 1u) * (size_t)(EMBED_DIM))), '
                 f'EMBED_DIM);'
@@ -674,6 +676,10 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
                 lines.append(f'        CK_PROFILE_END("prefill", "{func}", "{op_type}", {layer});')
             lines.append("    }")
             raw_expr = c_expr.replace("(float*)", "").replace("(void*)", "").strip()
+            lines.append(
+                f'    ck_debug_export_hidden(model, {layer}, "mlp_gate_up", '
+                f'(const float*){raw_expr}, ({m_expr}) * ({n_expr}));'
+            )
             lines.append(
                 f'    if (num_tokens > 1) ck_debug_export_hidden(model, {layer}, "mlp_gate_last", '
                 f'(const float*)(((const float*){raw_expr}) + (((size_t)num_tokens - 1u) * (size_t)({n_expr}))), '
@@ -853,6 +859,19 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             return None
         return expr.replace("(float*)", "").replace("(void*)", "").strip()
 
+    def _hidden_mul(*terms: Optional[str]) -> Optional[str]:
+        used = [f"({term})" for term in terms if term]
+        return " * ".join(used) if used else None
+
+    def _emit_hidden_full(expr: Optional[str], label: str, count_expr: Optional[str]) -> None:
+        raw = _hidden_raw(expr)
+        if not raw or not count_expr:
+            return
+        lines.append(
+            f'    ck_debug_export_hidden(model, {layer}, "{label}", '
+            f'(const float*){raw}, {count_expr});'
+        )
+
     def _emit_hidden_last(
         expr: Optional[str],
         label: str,
@@ -886,21 +905,167 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         lines.append(f'        ck_debug_export_hidden(model, {layer}, "{label}_last", _ck_{safe_label}_last, _ck_{safe_label}_heads * _ck_{safe_label}_dim);')
         lines.append("    }")
 
-    if op_type == "gemma4_per_layer_prepare":
+    if op_type == "attn_norm":
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "x", "y"),
+            "attn_norm",
+            _hidden_mul("num_tokens", "EMBED_DIM"),
+        )
+    elif op_type == "recurrent_qkv_proj":
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "linear_attn_qkv_mixed",
+            _hidden_mul("num_tokens", _hidden_arg("N", "n")),
+        )
+    elif op_type == "recurrent_gate_proj":
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "z",
+            _hidden_mul("num_tokens", _hidden_arg("N", "n")),
+        )
+    elif op_type == "recurrent_alpha_proj":
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "alpha",
+            _hidden_mul("num_tokens", _hidden_arg("N", "n")),
+        )
+    elif op_type == "recurrent_beta_proj":
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "beta",
+            _hidden_mul("num_tokens", _hidden_arg("N", "n")),
+        )
+    elif op_type == "recurrent_ssm_conv":
+        _emit_hidden_full(
+            _hidden_arg("out", "output"),
+            "conv_output_raw",
+            _hidden_mul(_hidden_arg("num_tokens", "rows"), _hidden_arg("num_channels", "dim")),
+        )
+    elif op_type == "recurrent_silu":
+        _emit_hidden_full(
+            _hidden_arg("out", "output"),
+            "conv_output_silu",
+            _hidden_mul(_hidden_arg("rows", "num_tokens"), _hidden_arg("dim", "num_channels")),
+        )
+    elif op_type == "recurrent_split_conv_qkv":
+        rows_expr = _hidden_arg("rows", "num_tokens")
+        _emit_hidden_full(_hidden_arg("q"), "q_conv", _hidden_mul(rows_expr, _hidden_arg("q_dim")))
+        _emit_hidden_full(_hidden_arg("k"), "k_conv", _hidden_mul(rows_expr, _hidden_arg("k_dim")))
+        _emit_hidden_full(_hidden_arg("v"), "v_conv_predelta", _hidden_mul(rows_expr, _hidden_arg("v_dim")))
+    elif op_type == "recurrent_qk_l2_norm":
+        rows_expr = _hidden_arg("rows", "num_tokens")
+        _emit_hidden_full(_hidden_arg("q"), "q_conv_predelta", _hidden_mul(rows_expr, _hidden_arg("q_dim")))
+        _emit_hidden_full(_hidden_arg("k"), "k_conv_predelta", _hidden_mul(rows_expr, _hidden_arg("k_dim")))
+    elif op_type == "recurrent_core":
+        rows_expr = _hidden_arg("rows", "num_tokens", "tokens")
+        heads_expr = _hidden_arg("num_heads", "groups")
+        state_expr = _hidden_arg("state_dim", "head_dim")
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "attn_output",
+            _hidden_mul(rows_expr, heads_expr, state_expr),
+        )
+        _emit_hidden_full(
+            _hidden_arg("state_out"),
+            "new_state",
+            _hidden_mul(heads_expr, state_expr, state_expr),
+        )
+    elif op_type == "recurrent_norm_gate":
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "final_output",
+            _hidden_mul(
+                _hidden_arg("rows", "num_tokens", "tokens"),
+                _hidden_arg("num_heads", "groups"),
+                _hidden_arg("head_dim", "state_dim"),
+            ),
+        )
+    elif op_type == "recurrent_out_proj":
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "linear_attn_out",
+            _hidden_mul("num_tokens", _hidden_arg("N", "n") or "EMBED_DIM"),
+        )
+    elif op_type == "gemma4_per_layer_prepare":
         _emit_hidden_last(_hidden_arg("output", "out", "per_layer_input", "y"), "gemma4_per_layer_prepare", "NUM_LAYERS * 256")
-    elif op_type == "q_proj":
-        _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "q_proj", _hidden_arg("n") or "NUM_HEADS * HEAD_DIM")
+    elif op_type in ("q_proj", "q_gate_proj"):
+        q_width = _hidden_arg("n") or "NUM_HEADS * HEAD_DIM"
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "q_proj",
+            _hidden_mul(_hidden_arg("m", "rows", "num_tokens") or "num_tokens", q_width),
+        )
+        _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "q_proj", q_width)
     elif op_type == "k_proj":
-        _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "k_proj", _hidden_arg("n") or "NUM_KV_HEADS * HEAD_DIM")
+        k_width = _hidden_arg("n") or "NUM_KV_HEADS * HEAD_DIM"
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "k_proj",
+            _hidden_mul(_hidden_arg("m", "rows", "num_tokens") or "num_tokens", k_width),
+        )
+        _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "k_proj", k_width)
     elif op_type == "v_proj":
-        _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "v_proj", _hidden_arg("n") or "NUM_KV_HEADS * HEAD_DIM")
+        v_width = _hidden_arg("n") or "NUM_KV_HEADS * HEAD_DIM"
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "v_proj",
+            _hidden_mul(_hidden_arg("m", "rows", "num_tokens") or "num_tokens", v_width),
+        )
+        _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "v_proj", v_width)
+    elif op_type == "split_q_gate":
+        _emit_hidden_full(
+            _hidden_arg("gate"),
+            "attn_gate",
+            _hidden_mul(_hidden_arg("rows", "num_tokens"), _hidden_arg("gate_dim")),
+        )
     elif op_type == "qk_norm":
+        _emit_hidden_full(
+            _hidden_arg("q"), "qk_norm_q",
+            _hidden_mul(_hidden_arg("num_heads") or "NUM_HEADS", _hidden_arg("rows", "num_tokens") or "num_tokens", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM"),
+        )
+        _emit_hidden_full(
+            _hidden_arg("k"), "qk_norm_k",
+            _hidden_mul(_hidden_arg("num_kv_heads") or "NUM_KV_HEADS", _hidden_arg("rows", "num_tokens") or "num_tokens", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM"),
+        )
         _emit_head_major_last(_hidden_arg("q"), "qk_norm_q", _hidden_arg("num_heads") or "NUM_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
         _emit_head_major_last(_hidden_arg("k"), "qk_norm_k", _hidden_arg("num_kv_heads") or "NUM_KV_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
     elif op_type == "rope_qk":
+        _emit_hidden_full(
+            _hidden_arg("q"), "rope_q",
+            _hidden_mul(_hidden_arg("num_heads") or "NUM_HEADS", _hidden_arg("num_tokens", "rows") or "num_tokens", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM"),
+        )
+        _emit_hidden_full(
+            _hidden_arg("k"), "rope_k",
+            _hidden_mul(_hidden_arg("num_kv_heads") or "NUM_KV_HEADS", _hidden_arg("num_tokens", "rows") or "num_tokens", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM"),
+        )
         _emit_head_major_last(_hidden_arg("q"), "rope_q", _hidden_arg("num_heads") or "NUM_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
         _emit_head_major_last(_hidden_arg("k"), "rope_k", _hidden_arg("num_kv_heads") or "NUM_KV_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
+    elif op_type == "attn":
+        _emit_hidden_full(
+            _hidden_arg("out_token", "output", "out", "c", "y"),
+            "attn_pregate",
+            _hidden_mul(
+                _hidden_arg("rows", "num_tokens") or "num_tokens",
+                _hidden_arg("num_heads") or "NUM_HEADS",
+                _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM",
+            ),
+        )
+    elif op_type == "attn_gate_sigmoid_mul":
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "y"),
+            "attn_out",
+            _hidden_mul(
+                _hidden_arg("num_heads") or "NUM_HEADS",
+                _hidden_arg("rows", "num_tokens") or "num_tokens",
+                _hidden_arg("state_dim", "aligned_head_dim", "head_dim") or "HEAD_DIM",
+            ),
+        )
     elif op_type == "out_proj":
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "out_proj",
+            _hidden_mul("num_tokens", _hidden_arg("N", "n", "out_dim") or "EMBED_DIM"),
+        )
         _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "out_proj", "EMBED_DIM")
     elif op_type in ("rmsnorm", "layernorm"):
         if str(section or "") == "footer" or int(layer) < 0:
@@ -914,6 +1079,11 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
     elif op_type == "block_rmsnorm":
         _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "block_rmsnorm", "EMBED_DIM")
     elif op_type == "post_attention_norm":
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "x", "y"),
+            "post_attn_norm",
+            _hidden_mul("num_tokens", _hidden_arg("d_model", "aligned_embed_dim", "embed_dim", "dim") or "EMBED_DIM"),
+        )
         _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "post_attn_norm", "EMBED_DIM")
     elif op_type == "ffn_norm":
         _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "ffn_norm", "EMBED_DIM")
@@ -921,9 +1091,11 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "post_ffn_norm", "EMBED_DIM")
     elif op_type == "residual_add":
         if op_instance_idx == 0:
+            _emit_hidden_full(_hidden_arg("output", "out", "c", "y"), "after_attn", _hidden_mul("num_tokens", "EMBED_DIM"))
             _emit_hidden_last(_hidden_arg("b"), "after_attn_residual", "EMBED_DIM")
             _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "after_attn", "EMBED_DIM")
         elif op_instance_idx == 1:
+            _emit_hidden_full(_hidden_arg("output", "out", "c", "y"), "layer_out", _hidden_mul("num_tokens", "EMBED_DIM"))
             _emit_hidden_last(_hidden_arg("b"), "ffn_residual", "EMBED_DIM")
             _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "layer_out", "EMBED_DIM")
     elif op_type == "mlp_gate_up":
@@ -940,6 +1112,14 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             )
     elif op_type == "geglu":
         _emit_hidden_last(_hidden_arg("output", "out", "x", "y", "data"), "mlp_geglu", _hidden_arg("dim") or "INTERMEDIATE_DIM")
+    elif op_type in ("silu_mul", "swiglu"):
+        width_expr = _hidden_arg("dim", "n", "intermediate_dim") or "INTERMEDIATE_DIM"
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "x", "y", "data"),
+            "mlp_swiglu",
+            _hidden_mul("num_tokens", width_expr),
+        )
+        _emit_hidden_last(_hidden_arg("output", "out", "x", "y", "data"), "mlp_swiglu", width_expr)
     elif op_type == "mlp_up":
         _emit_hidden_last(
             _hidden_arg("output", "out", "c", "y"),
@@ -953,6 +1133,11 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             _hidden_arg("dim", "intermediate_dim") or "INTERMEDIATE_SIZE",
         )
     elif op_type == "mlp_down":
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "mlp_down",
+            _hidden_mul("num_tokens", _hidden_arg("N", "n", "out_dim") or "EMBED_DIM"),
+        )
         _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "mlp_down", "EMBED_DIM")
     elif op_type == "mamba_in_proj":
         _emit_hidden_last(_hidden_arg("output", "out", "c", "y", "C"), "mamba_in_proj", _hidden_arg("N") or _hidden_arg("m", "M", "rows", "out_dim") or "0")

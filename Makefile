@@ -2818,6 +2818,7 @@ Q6K_Q8K_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q6k_q8k_llama_production
 Q5K_Q8K_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q5k_q8k_llama_production
 RMSNORM_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_rmsnorm_llama_production
 RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_recurrent_qk_l2_norm_llama_production
+DELTANET_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_deltanet_llamacpp_production
 RECURRENT_QK_L2_LLAMA_PRODUCTION_OBJ := $(BUILD_DIR)/recurrent_qk_norm_llama_production.o
 MROPE_TEXT_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_mrope_text_llama_production
 Q4Q6_LLAMA_CPP_DIR ?= $(LLAMA_CPP_DIR)
@@ -2937,6 +2938,26 @@ test-q5k-q8k-llama-production-quick: $(Q5K_Q8K_LLAMA_PRODUCTION_BIN)
 	@CK_NUM_THREADS=$${CK_NUM_THREADS:-1} OMP_NUM_THREADS=1 \
 		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
 		$(Q5K_Q8K_LLAMA_PRODUCTION_BIN) --quick
+
+$(DELTANET_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_deltanet_llamacpp_production.cpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		-I$(Q4Q6_LLAMA_CPP_DIR)/ggml/include -I$(Q4Q6_LLAMA_CPP_DIR)/ggml/src \
+		unittest/test_deltanet_llamacpp_production.cpp \
+		-L$(BUILD_DIR) -lckernel_engine \
+		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
+		-lm -lpthread -ldl \
+		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
+		-o $(DELTANET_LLAMA_PRODUCTION_BIN)
+
+.PHONY: test-deltanet-llamacpp-production
+test-deltanet-llamacpp-production: $(DELTANET_LLAMA_PRODUCTION_BIN)
+	@set -e; for threads in $${CK_DELTANET_ORACLE_THREADS:-1 16 20 24}; do \
+		echo "Gated DeltaNet llama.cpp production oracle: threads=$$threads"; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			$(DELTANET_LLAMA_PRODUCTION_BIN); \
+	done
 
 $(RMSNORM_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_rmsnorm_llama_production.cpp
 	@mkdir -p $(BUILD_DIR)

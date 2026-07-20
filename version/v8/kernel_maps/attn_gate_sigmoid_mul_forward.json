@@ -43,6 +43,42 @@
       {"name": "ref", "requires": [], "compile_flags": []}
     ]
   },
+  "numerical_capabilities": [
+    {
+      "contract_id": "attention_gate_llama_sigmoid_fp32_output",
+      "status": "validated",
+      "phases": ["prefill", "decode"],
+      "function": "attn_gate_sigmoid_mul_forward",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": ["independent_rows"],
+          "dispatch": ["inline"],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "none",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"name": "x", "source": "activation:x", "cast": "const float*"},
+      {"name": "gate", "source": "activation:gate", "cast": "const float*"},
+      {"name": "out", "source": "output:out", "cast": "float*"},
+      {"name": "rows", "source": "runtime:seq_len"},
+      {"name": "num_heads", "source": "dim:num_heads"},
+      {"name": "state_dim", "source": "dim:head_dim"}
+    ]
+  },
   "tests": {
     "unit": ["unittest/test_attn_gate_sigmoid_mul.py"],
     "parity": [
@@ -55,10 +91,10 @@
       {
         "kind": "llamacpp",
         "command": "python3 scripts/test_kernels_vs_llamacpp.py --kernel attn_gate_sigmoid_mul",
-        "tolerance": "1e-6",
-        "notes": "Forward parity against the qwen35 helper reference."
+        "tolerance": "0",
+        "notes": "Bit-exact forward parity against llama.cpp CPU 1/(1+exp(-x)) evaluation."
       }
     ]
   },
-  "notes": "Applies the qwen3.5 full-attention gate after attention and before the output projection."
+  "notes": "Applies a llama.cpp-compatible FP32 sigmoid gate after attention and before the output projection."
 }

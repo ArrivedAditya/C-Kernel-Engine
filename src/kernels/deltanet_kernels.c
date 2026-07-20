@@ -61,6 +61,151 @@ void gated_deltanet_autoregressive_forward_ref(const float *q,
                                                float *out,
                                                int num_heads,
                                                int state_dim,
+                                               float norm_eps);
+
+#if defined(__AVX2__)
+static float ck_deltanet_llama_avx2_dot(const float *x, const float *y, int n)
+{
+    const int np = n & ~31;
+    __m256 sum[4] = {
+        _mm256_setzero_ps(), _mm256_setzero_ps(),
+        _mm256_setzero_ps(), _mm256_setzero_ps()
+    };
+    for (int i = 0; i < np; i += 32) {
+        for (int j = 0; j < 4; ++j) {
+            const __m256 xv = _mm256_loadu_ps(x + i + j * 8);
+            const __m256 yv = _mm256_loadu_ps(y + i + j * 8);
+#if defined(__FMA__)
+            sum[j] = _mm256_fmadd_ps(xv, yv, sum[j]);
+#else
+            sum[j] = _mm256_add_ps(_mm256_mul_ps(xv, yv), sum[j]);
+#endif
+        }
+    }
+    sum[0] = _mm256_add_ps(sum[0], sum[2]);
+    sum[1] = _mm256_add_ps(sum[1], sum[3]);
+    sum[0] = _mm256_add_ps(sum[0], sum[1]);
+    const __m128 halves = _mm_add_ps(
+        _mm256_castps256_ps128(sum[0]), _mm256_extractf128_ps(sum[0], 1));
+    const __m128 pairs = _mm_hadd_ps(halves, halves);
+    float result = _mm_cvtss_f32(_mm_hadd_ps(pairs, pairs));
+    for (int i = np; i < n; ++i) {
+        result += x[i] * y[i];
+    }
+    return result;
+}
+#endif
+
+void gated_deltanet_llama_avx2_forward(const float *q,
+                                       const float *k,
+                                       const float *v,
+                                       const float *g,
+                                       const float *beta,
+                                       const float *state_in,
+                                       float *state_out,
+                                       float *out,
+                                       int num_heads,
+                                       int state_dim,
+                                       float norm_eps)
+{
+#if defined(__AVX2__)
+    (void) norm_eps;
+    if (!q || !k || !v || !g || !beta || !state_in || !state_out || !out ||
+        num_heads <= 0 || state_dim <= 0 || state_dim > CK_DELTANET_MAX_STACK_DIM) {
+        return;
+    }
+    const float scale = 1.0f / sqrtf((float) state_dim);
+    const size_t vector_stride = (size_t) state_dim;
+    const size_t state_stride = (size_t) state_dim * (size_t) state_dim;
+    float column[CK_DELTANET_MAX_STACK_DIM];
+
+    for (int h = 0; h < num_heads; ++h) {
+        const float *q_head = q + (size_t) h * vector_stride;
+        const float *k_head = k + (size_t) h * vector_stride;
+        const float *v_head = v + (size_t) h * vector_stride;
+        const float *state_prev = state_in + (size_t) h * state_stride;
+        float *state_cur = state_out + (size_t) h * state_stride;
+        float *out_head = out + (size_t) h * vector_stride;
+        const float gate = expf(g[h]);
+        const float beta_s = ck_deltanet_sigmoidf(beta[h]);
+
+        for (int row = 0; row < state_dim; ++row) {
+            const size_t row_offset = (size_t) row * (size_t) state_dim;
+            for (int col = 0; col < state_dim; ++col) {
+                state_cur[row_offset + (size_t) col] =
+                    state_prev[row_offset + (size_t) col] * gate;
+            }
+        }
+
+        for (int col = 0; col < state_dim; ++col) {
+            for (int row = 0; row < state_dim; ++row) {
+                column[row] = state_cur[(size_t) row * (size_t) state_dim + (size_t) col];
+            }
+            const float memory = ck_deltanet_llama_avx2_dot(column, k_head, state_dim);
+            const float delta = (v_head[col] - memory) * beta_s;
+            for (int row = 0; row < state_dim; ++row) {
+                const size_t offset = (size_t) row * (size_t) state_dim + (size_t) col;
+#if defined(__FMA__)
+                const float updated = fmaf(k_head[row], delta, state_cur[offset]);
+#else
+                const float updated = state_cur[offset] + k_head[row] * delta;
+#endif
+                state_cur[offset] = updated;
+                column[row] = updated;
+            }
+            out_head[col] = ck_deltanet_llama_avx2_dot(column, q_head, state_dim) * scale;
+        }
+    }
+#else
+    gated_deltanet_autoregressive_forward_ref(
+        q, k, v, g, beta, state_in, state_out, out,
+        num_heads, state_dim, norm_eps);
+#endif
+}
+
+void gated_deltanet_llama_avx2_prefill_forward(const float *q,
+                                               const float *k,
+                                               const float *v,
+                                               const float *g,
+                                               const float *beta,
+                                               const float *state_in,
+                                               float *state_out,
+                                               float *out,
+                                               int rows,
+                                               int num_heads,
+                                               int state_dim,
+                                               float norm_eps)
+{
+    if (!q || !k || !v || !g || !beta || !state_in || !state_out || !out ||
+        rows <= 0 || num_heads <= 0 || state_dim <= 0) {
+        return;
+    }
+    const size_t vector_stride = (size_t) num_heads * (size_t) state_dim;
+    const size_t gate_stride = (size_t) num_heads;
+    for (int row = 0; row < rows; ++row) {
+        gated_deltanet_llama_avx2_forward(
+            q + (size_t) row * vector_stride,
+            k + (size_t) row * vector_stride,
+            v + (size_t) row * vector_stride,
+            g + (size_t) row * gate_stride,
+            beta + (size_t) row * gate_stride,
+            row == 0 ? state_in : state_out,
+            state_out,
+            out + (size_t) row * vector_stride,
+            num_heads, state_dim, norm_eps);
+    }
+}
+
+void gated_deltanet_autoregressive_forward_ref(const float *q,
+                                               const float *k,
+                                               const float *v,
+                                               const float *g,
+                                               const float *beta,
+                                               const float *state_in,
+                                               float *state_out,
+                                               float *out,
+                                               int num_heads,
+                                               int state_dim,
                                                float norm_eps)
 {
     const float q_scale = 1.0f / sqrtf((float)state_dim);
@@ -718,6 +863,45 @@ void gated_deltanet_autoregressive_forward(const float *q,
     gated_deltanet_autoregressive_forward_ref(
         q, k, v, g, beta, state_in, state_out, out, num_heads, state_dim, norm_eps);
 #endif
+}
+
+void gated_deltanet_prefill_forward(const float *q,
+                                    const float *k,
+                                    const float *v,
+                                    const float *g,
+                                    const float *beta,
+                                    const float *state_in,
+                                    float *state_out,
+                                    float *out,
+                                    int rows,
+                                    int num_heads,
+                                    int state_dim,
+                                    float norm_eps)
+{
+    if (!q || !k || !v || !g || !beta || !state_in || !state_out || !out) {
+        return;
+    }
+    if (rows <= 0 || num_heads <= 0 || state_dim <= 0) {
+        return;
+    }
+
+    const size_t vector_stride = (size_t)num_heads * (size_t)state_dim;
+    const size_t gate_stride = (size_t)num_heads;
+    for (int row = 0; row < rows; ++row) {
+        const float *row_state_in = row == 0 ? state_in : state_out;
+        gated_deltanet_autoregressive_forward(
+            q + (size_t)row * vector_stride,
+            k + (size_t)row * vector_stride,
+            v + (size_t)row * vector_stride,
+            g + (size_t)row * gate_stride,
+            beta + (size_t)row * gate_stride,
+            row_state_in,
+            state_out,
+            out + (size_t)row * vector_stride,
+            num_heads,
+            state_dim,
+            norm_eps);
+    }
 }
 
 void gated_deltanet_autoregressive_backward(const float *d_out,

@@ -1224,7 +1224,7 @@ class KernelTester:
             return False
 
         x = (0.25 * np.random.randn(rows, dim)).astype(np.float32)
-        gate = (0.25 * np.random.randn(rows, dim)).astype(np.float32)
+        gate = np.linspace(-12.0, 12.0, rows * dim, dtype=np.float32).reshape(rows, dim)
         ggml_out = np.zeros((rows, dim), dtype=np.float32)
         ck_out = np.zeros_like(ggml_out)
 
@@ -1243,7 +1243,14 @@ class KernelTester:
             dim,
         )
 
-        return self.compare("attn_gate_sigmoid_mul", ggml_out, ck_out)
+        different = int(np.count_nonzero(ggml_out != ck_out))
+        max_diff = float(np.max(np.abs(ggml_out - ck_out)))
+        passed = different == 0
+        self.results.append(("attn_gate_sigmoid_mul", passed, max_diff, float(different)))
+        status = "PASS" if passed else "FAIL"
+        color = GREEN if passed else RED
+        print(f"[{color}{status}{RESET}] attn_gate_sigmoid_mul: max_diff={max_diff:.2e}, differing={different}")
+        return passed
 
     def test_ssm_conv1d(self, kernel_size: int = 4, num_channels: int = 48, num_tokens: int = 7, num_seqs: int = 2):
         """Test qwen3next/Qwen3.5 SSM causal depthwise convolution."""

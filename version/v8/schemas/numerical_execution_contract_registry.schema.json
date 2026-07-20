@@ -53,7 +53,10 @@
             "rmsnorm",
             "recurrent_qk_l2_norm",
             "recurrent_silu",
+            "recurrent_norm_gate",
+            "gated_deltanet",
             "attention",
+            "attention_gate",
             "residual_add",
             "gelu",
             "swiglu"
