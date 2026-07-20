@@ -57,6 +57,16 @@ lib.attention_forward_causal_head_major_gqa_flash_strided.argtypes = [
     ctypes.c_int, ctypes.c_int,
 ]
 lib.attention_forward_causal_head_major_gqa_flash_strided.restype = None
+lib.kv_cache_store_f16.argtypes = [
+    _U16_P, _U16_P, _FLOAT_P, _FLOAT_P,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+]
+lib.kv_cache_store_f16.restype = None
+lib.kv_cache_store_batch_f16.argtypes = [
+    _U16_P, _U16_P, _FLOAT_P, _FLOAT_P,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+]
+lib.kv_cache_store_batch_f16.restype = None
 
 
 _LLAMA_HELPER_SOURCE = r"""
@@ -691,6 +701,98 @@ def _padded_decode_contract_case(
     return Result(name, diff, 0.0, status == 0 and np.array_equal(actual, expected))
 
 
+def _qwen35_cache_write_through_cases(threads):
+    heads, kv_heads = 8, 2
+    prefill_tokens, valid_kv, capacity = 256, 257, 1034
+    head_dim = aligned = 256
+    rng = np.random.default_rng(2026072025634)
+    prefill_k = np.ascontiguousarray(
+        rng.normal(0.0, 0.55, (kv_heads, prefill_tokens, aligned)).astype(np.float32)
+    )
+    prefill_v = np.ascontiguousarray(
+        rng.normal(0.0, 0.75, (kv_heads, prefill_tokens, aligned)).astype(np.float32)
+    )
+    append_k = np.ascontiguousarray(
+        rng.normal(0.0, 0.55, (kv_heads, aligned)).astype(np.float32)
+    )
+    append_v = np.ascontiguousarray(
+        rng.normal(0.0, 0.75, (kv_heads, aligned)).astype(np.float32)
+    )
+    q = np.ascontiguousarray(
+        rng.normal(0.0, 0.55, (heads, aligned)).astype(np.float32)
+    )
+
+    sentinel = np.uint16(0x3555)
+    k_cache = np.full((kv_heads, capacity, aligned), sentinel, dtype=np.uint16)
+    v_cache = np.full_like(k_cache, sentinel)
+    lib.kv_cache_store_batch_f16(
+        _u16_ptr(k_cache), _u16_ptr(v_cache),
+        _f32_ptr(prefill_k), _f32_ptr(prefill_v),
+        0, prefill_tokens, kv_heads, head_dim, capacity,
+    )
+    expected_prefill_k = _half_bits(prefill_k)
+    expected_prefill_v = _half_bits(prefill_v)
+    batch_exact = bool(
+        np.array_equal(k_cache[:, :prefill_tokens], expected_prefill_k)
+        and np.array_equal(v_cache[:, :prefill_tokens], expected_prefill_v)
+        and np.all(k_cache[:, prefill_tokens:] == sentinel)
+        and np.all(v_cache[:, prefill_tokens:] == sentinel)
+    )
+    results = [Result(
+        "qwen35_f16_cache_batch_store(KV=256,CAP=1034)",
+        0.0 if batch_exact else 1.0,
+        0.0,
+        batch_exact,
+    )]
+
+    previous_k = k_cache[:, :prefill_tokens].copy()
+    previous_v = v_cache[:, :prefill_tokens].copy()
+    lib.kv_cache_store_f16(
+        _u16_ptr(k_cache), _u16_ptr(v_cache),
+        _f32_ptr(append_k), _f32_ptr(append_v),
+        0, prefill_tokens, kv_heads, head_dim, capacity,
+    )
+    expected_append_k = _half_bits(append_k)
+    expected_append_v = _half_bits(append_v)
+    append_exact = bool(
+        np.array_equal(k_cache[:, :prefill_tokens], previous_k)
+        and np.array_equal(v_cache[:, :prefill_tokens], previous_v)
+        and np.array_equal(k_cache[:, prefill_tokens], expected_append_k)
+        and np.array_equal(v_cache[:, prefill_tokens], expected_append_v)
+        and np.all(k_cache[:, valid_kv:] == sentinel)
+        and np.all(v_cache[:, valid_kv:] == sentinel)
+    )
+    results.append(Result(
+        "qwen35_f16_cache_decode_append(KV=257,CAP=1034)",
+        0.0 if append_exact else 1.0,
+        0.0,
+        append_exact,
+    ))
+
+    actual = np.full_like(q, np.nan)
+    status = lib.attention_forward_decode_head_major_gqa_flash_f16cache_contract(
+        _f32_ptr(q), _u16_ptr(k_cache), _u16_ptr(v_cache), _f32_ptr(actual),
+        heads, kv_heads, valid_kv, capacity, head_dim, aligned, 1,
+    )
+    expected = _llama_split_output(
+        q,
+        k_cache[:, :valid_kv],
+        v_cache[:, :valid_kv],
+        head_dim,
+        threads,
+        padded_kv_tokens=_llama_kv_partition_extent(valid_kv),
+    )
+    attention_exact = status == 0 and np.array_equal(actual, expected)
+    diff = float(np.max(np.abs(actual - expected))) if status == 0 else math.inf
+    results.append(Result(
+        f"llama_oracle_qwen35_cache_write_through(KV=257,CAP=1034,S=512,C={threads})",
+        diff,
+        0.0,
+        attention_exact,
+    ))
+    return results
+
+
 def main():
     results = []
     threads = max(1, int(lib.ck_get_num_threads()))
@@ -758,6 +860,7 @@ def main():
         f"llama_oracle_qwen35_cache_capacity_independent(KV=257,CAP=1034,S=512,H=8,Hkv=2,D=256,C={threads})",
         20260720257, 8, 2, 257, 1034, 256, threads,
     ))
+    results.extend(_qwen35_cache_write_through_cases(threads))
 
     for name, data in (
         ("explicit_contract_route_below(KV=256,S=256)", below_data),
