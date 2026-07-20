@@ -1,0 +1,45 @@
+{
+  "version": 4,
+  "name": "whisper_audio_frontend",
+  "family": "audio_transformer_frontend",
+  "flags": {
+    "input_storage": "fp32",
+    "sample_rate": 16000,
+    "feature_layout": "mel_major"
+  },
+  "contract": {
+    "audio_frontend": {
+      "input_modality": "audio",
+      "channel_layout": "mono",
+      "sample_rate": 16000,
+      "n_fft": 400,
+      "hop_length": 160,
+      "centering": "reflect",
+      "window": "periodic_hann",
+      "mel_scale": "slaney",
+      "output": "normalized_log_mel"
+    }
+  },
+  "kernels": {
+    "log_mel": "audio_whisper_log_mel_reference_f32"
+  },
+  "required_numerical_contracts": {
+    "audio.frontend.log_mel": {
+      "op": "audio_log_mel",
+      "template_ops": ["log_mel"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_whisper_log_mel_reference_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio.py PyTorch STFT/log-Mel oracle and fixed Slaney-80 filter identity"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.log_mel.output",
+        "producer": "log_mel",
+        "logical_layout": "mel_major",
+        "axis_names": ["mel", "frame"]
+      }
+    }
+  }
+}

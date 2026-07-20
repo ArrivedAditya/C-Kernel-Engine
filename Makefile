@@ -459,6 +459,7 @@ SRCS    := src/backend_native.c \
 	           src/kernels/relu_kernels_bf16.c \
 	           src/kernels/vision_kernels.c \
 	           src/kernels/vision_kernels_bf16.c \
+	           src/kernels/audio_kernels.c \
 	           src/kernels/rope_kernels.c \
 	           src/kernels/rope_kernels_bf16.c \
 	           src/kernels/kv_cache_kernels.c \
@@ -571,6 +572,7 @@ LIB_SWIGLU   := $(BUILD_DIR)/libckernel_swiglu.so
 LIB_SIGMOID  := $(BUILD_DIR)/libckernel_sigmoid.so
 LIB_RELU     := $(BUILD_DIR)/libckernel_relu.so
 LIB_VISION   := $(BUILD_DIR)/libckernel_vision.so
+LIB_AUDIO    := $(BUILD_DIR)/libckernel_audio.so
 LIB_ATTENTION := $(BUILD_DIR)/libckernel_attention.so
 LIB_ROPE     := $(BUILD_DIR)/libckernel_rope.so
 LIB_PARITY   := $(BUILD_DIR)/libck_parity.so
@@ -1227,6 +1229,9 @@ $(LIB_RELU): $(BUILD_STAMP) src/kernels/relu_kernels.c src/kernels/relu_kernels_
 $(LIB_VISION): $(BUILD_STAMP) src/kernels/vision_kernels.c src/kernels/vision_kernels_bf16.c src/kernels/rope_kernels.c src/kernels/rope_kernels_bf16.c src/ckernel_strict.c src/ck_threadpool.c include/ckernel_engine.h
 	$(CC) $(CFLAGS) -shared -o $@ src/kernels/vision_kernels.c src/kernels/vision_kernels_bf16.c src/kernels/rope_kernels.c src/kernels/rope_kernels_bf16.c src/ckernel_strict.c src/ck_threadpool.c -lm -lpthread
 
+$(LIB_AUDIO): $(BUILD_STAMP) src/kernels/audio_kernels.c include/ckernel_audio.h
+	$(CC) $(CFLAGS) -shared -o $@ src/kernels/audio_kernels.c -lm
+
 $(LIB_ATTENTION): $(BUILD_STAMP) src/kernels/attention_kernels.c src/kernels/attention_kernels_sliding.c src/kernels/attention_flash_true.c src/kernels/softmax_kernels.c src/ckernel_strict.c src/ck_threadpool.c include/ckernel_engine.h
 	$(CC) $(CFLAGS) -shared -o $@ src/kernels/attention_kernels.c src/kernels/attention_kernels_sliding.c src/kernels/attention_flash_true.c src/kernels/softmax_kernels.c src/ckernel_strict.c src/ck_threadpool.c -lm -lpthread
 
@@ -1264,11 +1269,18 @@ libckernel_relu.so: $(LIB_RELU)
 libckernel_vision.so: $(LIB_VISION)
 	@true
 
+libckernel_audio.so: $(LIB_AUDIO)
+	@true
+
 test-relu: $(LIB_RELU)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_relu.py
 
 test-vision: $(LIB_VISION)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_vision.py
+
+test-audio: $(LIB_AUDIO)
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_audio.py
+	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_audio_contract -v
 
 # Policy:
 # - Keep public/operator-facing test entrypoints version-neutral (`make test`,
@@ -4736,6 +4748,7 @@ nightly-list:
 	@$(PYTHON) scripts/nightly_runner.py --list
 
 .PHONY: nightly nightly-quick nightly-json nightly-baseline nightly-kernels nightly-bf16 nightly-quant nightly-inference nightly-parity nightly-archive nightly-list
+.PHONY: test-audio libckernel_audio.so
 
 # ============================================================================
 # Status Reports (reads from meta/kernel_meta.json)

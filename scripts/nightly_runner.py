@@ -312,6 +312,9 @@ TEST_SUITES = {
     "mamba2_reference": TestSuite("Mamba2 Reference Kernels", "kernels", UNITTEST_DIR / "test_mamba2_reference.py"),
     "gemma4_assistant": TestSuite("Gemma4 Assistant/MTP Kernels", "kernels", UNITTEST_DIR / "test_gemma4_assistant_kernels.py"),
     "vision": TestSuite("Vision", "kernels", UNITTEST_DIR / "test_vision.py"),
+    "audio_frontend": TestSuite(
+        "Audio Log-Mel Frontend", "kernels", UNITTEST_DIR / "test_audio.py"
+    ),
     # NOTE: Orchestration test disabled - v6.5 uses generated code with local helpers,
     # not orchestration layer. Use llamacpp-parity-full for quantized kernel validation.
     # "orchestration": TestSuite("Orchestration", "kernels", UNITTEST_DIR / "test_orchestration_layer.py"),

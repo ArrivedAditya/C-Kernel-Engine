@@ -8,7 +8,8 @@
     "kimi",
     "llama",
     "nanbeige",
-    "qwen"
+    "qwen",
+    "whisper"
   ],
   "forbidden_dispatch_keys": ["model", "model_type", "arch", "family"],
   "model_literal_site_limits": {
