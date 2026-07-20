@@ -238,6 +238,7 @@ def _run_llama_capture(
     prefix_grid: tuple[int, int] | None = None,
     prefix_row_dim: int | None = None,
     prefix_text_pos: int | None = None,
+    prefix_decode_mode: str = "batched",
     decode_mode: str = "batched",
     dump_dir: Path | None = None,
     dump_names: str | None = None,
@@ -261,6 +262,8 @@ def _run_llama_capture(
             str(int(ctx_len)),
             "--top-k",
             str(int(top_k)),
+            "--prefix-decode-mode",
+            str(prefix_decode_mode),
             "--decode-mode",
             str(decode_mode),
             "--logits-out",
@@ -1209,6 +1212,7 @@ def _capture_dump_compare(
     prefix_grid: tuple[int, int] | None = None,
     prefix_text_pos: int | None = None,
     ck_strict_parity: bool = True,
+    llama_prefix_decode_mode: str = "batched",
     llama_decode_mode: str = "sequential",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     if prefix_tokens > 0:
@@ -1231,6 +1235,7 @@ def _capture_dump_compare(
         prefix_grid=prefix_grid,
         prefix_row_dim=int(prefix_row_dim),
         prefix_text_pos=prefix_text_pos,
+        prefix_decode_mode=str(llama_prefix_decode_mode),
         decode_mode=str(llama_decode_mode),
         dump_dir=llama_dump_dir,
         dump_names=dump_names,

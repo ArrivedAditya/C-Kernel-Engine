@@ -299,7 +299,8 @@ def coherence_metrics(text: str, heuristics: dict[str, Any]) -> dict[str, Any]:
     chars = len(text)
     printable = sum(1 for ch in text if ch.isprintable() or ch in "\n\t")
     printable_ratio = float(printable / chars) if chars else 0.0
-    replacement_chars = text.count("\ufffd")
+    literal_replacement_escapes = len(re.findall(r"\\u[fF]{3}[dD]", text))
+    replacement_chars = text.count("\ufffd") + literal_replacement_escapes
 
     ngram_counts: Counter[tuple[str, ...]] = Counter()
     if len(words) >= 4:
@@ -331,6 +332,7 @@ def coherence_metrics(text: str, heuristics: dict[str, Any]) -> dict[str, Any]:
         "words": len(words),
         "printable_ratio": printable_ratio,
         "replacement_chars": replacement_chars,
+        "literal_replacement_escapes": literal_replacement_escapes,
         "repeated_4gram": repeated_4gram,
         "duplicate_lines": duplicate_lines,
         "line_count": line_count,

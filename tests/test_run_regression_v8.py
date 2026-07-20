@@ -59,21 +59,38 @@ class RegressionHarnessV8Tests(unittest.TestCase):
         result = regression.assess_coherence("Hello! How can I assist you today?", heuristics)
         self.assertEqual(result["status"], regression.PASS)
 
+    def test_coherence_rejects_actual_and_literal_replacement_markers(self) -> None:
+        heuristics = {"max_replacement_chars": 0}
+        for text in ("broken \ufffd text", r"broken \uFFFD text", r"broken \ufffd text"):
+            with self.subTest(text=text):
+                result = regression.assess_coherence(text, heuristics)
+                self.assertEqual(result["status"], regression.FAIL)
+                self.assertGreater(result["metrics"]["replacement_chars"], 0)
+
     def test_manifest_files_are_consistent(self) -> None:
         prompts = regression.load_prompts(ROOT / "version" / "v8" / "regression" / "prompts.json")
         families = regression.load_families(ROOT / "version" / "v8" / "regression" / "families.json", prompts)
         ids = {family.family_id for family in families}
-        self.assertEqual(ids, {"gemma", "qwen2", "qwen3", "qwen35", "qwen3vl", "nanbeige"})
+        self.assertEqual(ids, {"gemma", "qwen2", "qwen3", "qwen35", "nanbeige"})
         by_id = {family.family_id: family for family in families}
         self.assertIn("--thinking-mode", by_id["qwen3"].runtime_args)
         self.assertIn("suppressed", by_id["qwen3"].runtime_args)
-        self.assertNotIn("--image-path", by_id["qwen3vl"].runtime_args)
-        self.assertEqual(by_id["qwen3vl"].smoke_prompts, ["vision_doc_card", "vision_mamba2_card"])
+        arm_manifest = json.loads(
+            (ROOT / "version" / "v8" / "regression" / "families_arm.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        arm_by_id = {family["id"]: family for family in arm_manifest["families"]}
+        self.assertNotIn("qwen3vl", by_id)
+        self.assertIn("qwen3vl", arm_by_id)
+        self.assertFalse(arm_by_id["qwen3vl"]["enabled"])
+        self.assertIn("--image-path", arm_by_id["qwen3vl"]["runtime_args"])
+        self.assertEqual(arm_by_id["qwen3vl"]["smoke_prompts"], ["vision_doc_card"])
         self.assertIn("--image-path", prompts["vision_doc_card"].runtime_args)
         self.assertIn("v8_vision_doc_card_72.ppm", " ".join(prompts["vision_doc_card"].runtime_args))
         self.assertIn("--image-path", prompts["vision_mamba2_card"].runtime_args)
         self.assertIn("v8_vision_mamba2_card_144.png", " ".join(prompts["vision_mamba2_card"].runtime_args))
-        self.assertEqual(by_id["qwen3vl"].runtime_expect.get("manifest", {}).get("config.model"), "qwen3vl")
+        self.assertEqual(arm_by_id["qwen3vl"]["runtime_expect"].get("manifest", {}).get("config.model"), "qwen3vl")
         self.assertEqual(by_id["nanbeige"].runtime_expect.get("config", {}).get("chat_contract.name"), "llama_chatml")
         self.assertEqual(by_id["gemma"].runtime_expect.get("config", {}).get("rope_layout"), "split")
         qwen35_lowered = by_id["qwen35"].runtime_expect.get("lowered_ops", [])

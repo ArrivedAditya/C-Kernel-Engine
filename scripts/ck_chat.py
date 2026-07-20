@@ -20,6 +20,7 @@ import struct
 import sys
 import time
 import codecs
+import unicodedata
 from pathlib import Path
 from typing import Optional, List
 
@@ -63,6 +64,13 @@ class _SimpleEncoding:
 
     def __init__(self, ids: List[int]):
         self.ids = ids
+
+
+def _normalize_tokenizer_input(text: str, tokenizer_model: str) -> str:
+    """Apply normalization only when the exported tokenizer capability requires it."""
+    if str(tokenizer_model or "").strip().lower() == "gpt2":
+        return unicodedata.normalize("NFC", text)
+    return text
 
 
 def _ensure_interactive_stdin() -> Optional[object]:
@@ -263,6 +271,7 @@ class CKTrueBPETokenizer:
     def encode(self, text: str, add_special_tokens: bool = True) -> _SimpleEncoding:
         if not self._bpe:
             return _SimpleEncoding([])
+        text = _normalize_tokenizer_input(text, self.model_type)
         text_bytes = text.encode("utf-8")
         max_ids = max(256, len(text_bytes) * 8)
         out = (ctypes.c_int32 * max_ids)()
@@ -1398,6 +1407,8 @@ class CKModel:
         Uses C tokenizer if available (faster), otherwise Python tokenizer.
         """
         if self.use_c_tokenizer:
+            tokenizer_model = self._load_tokenizer_contract().get("tokenizer_model")
+            text = _normalize_tokenizer_input(text, str(tokenizer_model or ""))
             # Use C tokenizer - encode directly into model's token buffer
             text_bytes = text.encode('utf-8')
             num_tokens = self.lib.ck_model_encode_text(text_bytes, len(text_bytes))
@@ -1415,6 +1426,8 @@ class CKModel:
         Returns: number of tokens encoded
         """
         if self.use_c_tokenizer:
+            tokenizer_model = self._load_tokenizer_contract().get("tokenizer_model")
+            text = _normalize_tokenizer_input(text, str(tokenizer_model or ""))
             text_bytes = text.encode('utf-8')
             return self.lib.ck_model_encode_text(text_bytes, len(text_bytes))
         else:
@@ -2080,7 +2093,12 @@ def generate(model: CKModel, prompt: str, max_tokens: int = 50,
         nonlocal displayed_chars, display_decoder
         if show_token_ids:
             return
-        visible_text = _displayable_text(force=force)
+        # Cumulative decoding can temporarily end in U+FFFD when one token
+        # carries only the first bytes of a UTF-8 scalar. Do not advance the
+        # display cursor past that unstable suffix; the next cumulative decode
+        # may replace it with the completed character. At EOS the same rule
+        # drops a permanently incomplete fragment.
+        visible_text = _strip_trailing_decode_artifacts(_displayable_text(force=force))
         if displayed_chars > len(visible_text):
             displayed_chars = len(visible_text)
         chunk = visible_text[displayed_chars:]

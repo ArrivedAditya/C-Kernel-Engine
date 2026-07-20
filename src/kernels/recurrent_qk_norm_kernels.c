@@ -19,11 +19,12 @@ static void recurrent_l2_norm_rows_forward_one(float *x,
         float *row_ptr = x + (size_t) row * (size_t) dim;
         for (int head = 0; head < num_heads; ++head) {
             float *head_ptr = row_ptr + (size_t) head * (size_t) head_dim;
-            float sum_sq = 0.0f;
+            double sum_sq = 0.0;
             for (int col = 0; col < head_dim; ++col) {
-                sum_sq += head_ptr[col] * head_ptr[col];
+                sum_sq += (double) (head_ptr[col] * head_ptr[col]);
             }
-            const float inv_norm = 1.0f / sqrtf(sum_sq + eps);
+            const float norm = sqrtf((float) sum_sq);
+            const float inv_norm = 1.0f / fmaxf(norm, eps);
             for (int col = 0; col < head_dim; ++col) {
                 head_ptr[col] *= inv_norm;
             }
@@ -55,14 +56,21 @@ static void recurrent_l2_norm_rows_backward_one(const float *d_out,
             const float *x_head = x_row + (size_t) head * (size_t) head_dim;
             float *dx_head = dx_row + (size_t) head * (size_t) head_dim;
 
-            float sum_sq = 0.0f;
-            float dot = 0.0f;
+            double sum_sq = 0.0;
+            double dot = 0.0;
             for (int col = 0; col < head_dim; ++col) {
-                sum_sq += x_head[col] * x_head[col];
-                dot += d_head[col] * x_head[col];
+                sum_sq += (double) (x_head[col] * x_head[col]);
+                dot += (double) (d_head[col] * x_head[col]);
             }
-            const float inv_norm = 1.0f / sqrtf(sum_sq + eps);
-            const float proj_scale = inv_norm * inv_norm * inv_norm * dot;
+            const float norm = sqrtf((float) sum_sq);
+            const float inv_norm = 1.0f / fmaxf(norm, eps);
+            if (norm <= eps) {
+                for (int col = 0; col < head_dim; ++col) {
+                    dx_head[col] = d_head[col] / eps;
+                }
+                continue;
+            }
+            const float proj_scale = inv_norm * inv_norm * inv_norm * (float) dot;
             for (int col = 0; col < head_dim; ++col) {
                 dx_head[col] = inv_norm * d_head[col] - proj_scale * x_head[col];
             }

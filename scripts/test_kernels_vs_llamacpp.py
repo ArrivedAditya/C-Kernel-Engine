@@ -596,7 +596,7 @@ class KernelTester:
 
         # Check for NaN
         has_nan = np.isnan(ggml_out).any() or np.isnan(ck_out).any()
-        passed = max_diff < self.tol and not has_nan
+        passed = max_diff <= self.tol and not has_nan
 
         self.results.append((name, passed, max_diff, mean_diff))
 
@@ -1117,7 +1117,15 @@ class KernelTester:
         v_ok = self.compare("recurrent_split_conv_v", ggml_v, ck_v)
         return q_ok and k_ok and v_ok
 
-    def test_recurrent_qk_l2_norm(self, rows: int = 5, q_dim: int = 64, k_dim: int = 64, head_dim: int = 16):
+    def test_recurrent_qk_l2_norm(
+        self,
+        rows: int = 5,
+        q_dim: int = 64,
+        k_dim: int = 64,
+        head_dim: int = 16,
+        eps: float = 1e-6,
+        input_scale: float = 0.20,
+    ):
         """Test recurrent per-head L2 normalization for Q/K."""
         print(f"\n--- test_recurrent_qk_l2_norm (rows={rows}, q={q_dim}, k={k_dim}, head_dim={head_dim}) ---")
 
@@ -1129,13 +1137,14 @@ class KernelTester:
             self.results.append(("recurrent_qk_l2_norm_symbol", False, float('inf'), float('inf')))
             return False
 
-        q = (0.20 * np.random.randn(rows, q_dim)).astype(np.float32)
-        k = (0.20 * np.random.randn(rows, k_dim)).astype(np.float32)
+        rng = np.random.default_rng(20260719 + rows + q_dim + k_dim + head_dim)
+        q = (input_scale * rng.standard_normal((rows, q_dim))).astype(np.float32)
+        k = (input_scale * rng.standard_normal((rows, k_dim))).astype(np.float32)
         ggml_q = q.copy()
         ggml_k = k.copy()
         ck_q = q.copy()
         ck_k = k.copy()
-        eps = ctypes.c_float(1e-5)
+        eps_arg = ctypes.c_float(eps)
 
         self.libggml.test_recurrent_qk_l2_norm(
             ggml_q.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
@@ -1144,7 +1153,7 @@ class KernelTester:
             q_dim,
             k_dim,
             head_dim,
-            eps,
+            eps_arg,
         )
         self.libck.ck_test_recurrent_qk_l2_norm(
             ck_q.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
@@ -1153,7 +1162,7 @@ class KernelTester:
             q_dim,
             k_dim,
             head_dim,
-            eps,
+            eps_arg,
         )
 
         q_ok = self.compare("recurrent_qk_l2_norm_q", ggml_q, ck_q)
@@ -1415,9 +1424,10 @@ class KernelTester:
         self.test_recurrent_split_conv_qkv(5, 64, 64, 128)
         if not quick:
             self.test_recurrent_split_conv_qkv(9, 128, 128, 256)
-        self.test_recurrent_qk_l2_norm(5, 64, 64, 16)
+        self.test_recurrent_qk_l2_norm(5, 64, 64, 16, 1e-6)
+        self.test_recurrent_qk_l2_norm(2, 32, 32, 8, 1e-6, 1e-9)
         if not quick:
-            self.test_recurrent_qk_l2_norm(7, 2048, 2048, 128)
+            self.test_recurrent_qk_l2_norm(7, 2048, 2048, 128, 1e-6)
         self.test_recurrent_norm_gate(4, 8, 16)
         if not quick:
             self.test_recurrent_norm_gate(7, 16, 32)

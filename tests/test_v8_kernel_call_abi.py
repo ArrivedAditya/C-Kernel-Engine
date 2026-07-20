@@ -15,13 +15,14 @@ SCHEMA = ROOT / "version" / "v8" / "schemas" / "kernel_call_abi.schema.json"
 REGISTRY = MAPS / "KERNEL_REGISTRY.json"
 EXCLUDED = {"KERNEL_REGISTRY.json", "kernel_bindings.json", "kernel_bindings.overlay.json"}
 BUILD_IR = ROOT / "version" / "v8" / "scripts" / "build_ir_v8.py"
-EXPECTED_GOVERNED_MAP_COUNT = 42
+EXPECTED_GOVERNED_MAP_COUNT = 46
 QWEN3VL_PARITY_PROVIDERS = {
     "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
     "attention_forward_causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64",
     "attention_forward_causal_head_major_gqa_prefill_append_f16cache_single_range",
     "qk_norm_forward_fp64_sum",
     "rmsnorm_forward_fp64_sum",
+    "recurrent_silu_forward_ggml",
     "swiglu_forward_ggml",
 }
 

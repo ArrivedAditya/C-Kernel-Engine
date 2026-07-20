@@ -1412,18 +1412,6 @@
         {"name": "v_dim", "source": "dim:v_dim"}
       ]
     },
-    "recurrent_qk_l2_norm_forward": {
-      "note": "Apply per-head L2 normalization to recurrent Q and K rows in-place before DeltaNet.",
-      "params": [
-        {"name": "q", "source": "activation:q", "cast": "float*"},
-        {"name": "k", "source": "activation:k", "cast": "float*"},
-        {"name": "rows", "source": "runtime:seq_len"},
-        {"name": "q_dim", "source": "dim:q_dim"},
-        {"name": "k_dim", "source": "dim:k_dim"},
-        {"name": "head_dim", "source": "dim:recurrent_head_dim"},
-        {"name": "eps", "source": "dim:rms_eps"}
-      ]
-    },
     "recurrent_qk_l2_norm_backward": {
       "note": "Backward pass for recurrent_qk_l2_norm_forward.",
       "params": [
@@ -2304,33 +2292,6 @@
       ],
       "notes": "FP32 activation version - no quantization needed"
     },
-    "gemv_q5_k": {
-      "params": [
-        {
-          "name": "y",
-          "source": "output:y",
-          "cast": "float*"
-        },
-        {
-          "name": "W",
-          "source": "weight:_first_weight"
-        },
-        {
-          "name": "x",
-          "source": "activation:x",
-          "cast": "const float*"
-        },
-        {
-          "name": "M",
-          "source": "dim:_output_dim"
-        },
-        {
-          "name": "K",
-          "source": "dim:_input_dim"
-        }
-      ],
-      "notes": "FP32 activation version - no quantization needed. Q5_K: 5-bit super-block quant with nested scales."
-    },
     "gemv_q5_1": {
       "params": [
         {
@@ -2663,41 +2624,6 @@
         }
       ],
       "notes": "FP32 activation version - no quantization needed"
-    },
-    "gemm_nt_q5_k": {
-      "params": [
-        {
-          "name": "A",
-          "source": "activation:a",
-          "cast": "const float*"
-        },
-        {
-          "name": "B",
-          "source": "weight:_first_weight"
-        },
-        {
-          "name": "bias",
-          "source": "weight_f:_bias"
-        },
-        {
-          "name": "C",
-          "source": "output:c",
-          "cast": "float*"
-        },
-        {
-          "name": "M",
-          "source": "dim:_m"
-        },
-        {
-          "name": "N",
-          "source": "dim:_output_dim"
-        },
-        {
-          "name": "K",
-          "source": "dim:_input_dim"
-        }
-      ],
-      "notes": "FP32 activation version - no quantization needed. Q5_K: 5-bit super-block quant with nested scales."
     },
     "gemm_nt_q5_1": {
       "params": [

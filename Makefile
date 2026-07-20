@@ -835,7 +835,7 @@ test-tokenizer-special: $(LIB_TOKENIZER)
 	@echo "========================================"
 	@echo "  Special Token & Byte Decode Tests"
 	@echo "========================================"
-	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_true_bpe_special_tokens.py
+	@CK_TOKENIZER_REQUIRE_HF_ORACLE=1 LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_true_bpe_special_tokens.py
 
 test-tokenizer-spm: $(LIB_TOKENIZER)
 	@echo ""
@@ -2815,7 +2815,10 @@ Q4K_DISPATCH_MATRIX_BIN := $(BUILD_DIR)/bench_q4k_dispatch_matrix
 Q4K_EXACT_PREFILL_BIN := $(BUILD_DIR)/bench_q4k_exact_prefill
 Q4K_Q8K_LLAMA_PACKED_BIN := $(BUILD_DIR)/test_q4k_q8k_llama_packed
 Q6K_Q8K_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q6k_q8k_llama_production
+Q5K_Q8K_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q5k_q8k_llama_production
 RMSNORM_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_rmsnorm_llama_production
+RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_recurrent_qk_l2_norm_llama_production
+RECURRENT_QK_L2_LLAMA_PRODUCTION_OBJ := $(BUILD_DIR)/recurrent_qk_norm_llama_production.o
 MROPE_TEXT_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_mrope_text_llama_production
 Q4Q6_LLAMA_CPP_DIR ?= $(LLAMA_CPP_DIR)
 Q4Q6_LLAMA_CPP_BIN_DIR ?= $(Q4Q6_LLAMA_CPP_DIR)/build/bin
@@ -2910,6 +2913,31 @@ $(Q6K_Q8K_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_q6k_q8k_llama_production.c
 		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
 		-o $(Q6K_Q8K_LLAMA_PRODUCTION_BIN)
 
+$(Q5K_Q8K_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_q5k_q8k_llama_production.cpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		-I$(Q4Q6_LLAMA_CPP_DIR)/ggml/include -I$(Q4Q6_LLAMA_CPP_DIR)/ggml/src \
+		unittest/test_q5k_q8k_llama_production.cpp \
+		-L$(BUILD_DIR) -lckernel_engine \
+		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
+		-lm -lpthread -ldl \
+		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
+		-o $(Q5K_Q8K_LLAMA_PRODUCTION_BIN)
+
+.PHONY: test-q5k-q8k-llama-production test-q5k-q8k-llama-production-quick
+test-q5k-q8k-llama-production: $(Q5K_Q8K_LLAMA_PRODUCTION_BIN)
+	@set -e; for threads in $${CK_Q5K_ORACLE_THREADS:-1 16 20 24}; do \
+		echo "Q5_K x Q8_K llama.cpp production oracle: threads=$$threads"; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			$(Q5K_Q8K_LLAMA_PRODUCTION_BIN); \
+	done
+
+test-q5k-q8k-llama-production-quick: $(Q5K_Q8K_LLAMA_PRODUCTION_BIN)
+	@CK_NUM_THREADS=$${CK_NUM_THREADS:-1} OMP_NUM_THREADS=1 \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+		$(Q5K_Q8K_LLAMA_PRODUCTION_BIN) --quick
+
 $(RMSNORM_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_rmsnorm_llama_production.cpp
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
@@ -2920,6 +2948,21 @@ $(RMSNORM_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_rmsnorm_llama_production.c
 		-lm -lpthread -ldl \
 		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
 		-o $(RMSNORM_LLAMA_PRODUCTION_BIN)
+
+$(RECURRENT_QK_L2_LLAMA_PRODUCTION_OBJ): src/kernels/recurrent_qk_norm_kernels.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 -fPIC $(AVX_FLAGS) -Iinclude -c $< -o $@
+
+$(RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN): $(RECURRENT_QK_L2_LLAMA_PRODUCTION_OBJ) unittest/test_recurrent_qk_l2_norm_llama_production.cpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		-I$(Q4Q6_LLAMA_CPP_DIR)/ggml/include -I$(Q4Q6_LLAMA_CPP_DIR)/ggml/src \
+		unittest/test_recurrent_qk_l2_norm_llama_production.cpp \
+		$(RECURRENT_QK_L2_LLAMA_PRODUCTION_OBJ) \
+		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
+		-lm -lpthread -ldl \
+		-Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
+		-o $(RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN)
 
 .PHONY: test-mrope-text-llama-production
 test-mrope-text-llama-production: $(MROPE_TEXT_LLAMA_PRODUCTION_BIN)
@@ -2950,6 +2993,16 @@ test-rmsnorm-llama-production: $(RMSNORM_LLAMA_PRODUCTION_BIN)
 		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
 			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
 			$(RMSNORM_LLAMA_PRODUCTION_BIN); \
+	done
+
+.PHONY: test-recurrent-qk-l2-llama-production
+test-recurrent-qk-l2-llama-production: $(RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN)
+	@echo "Running recurrent Q/K L2 normalization against llama.cpp production graph..."
+	@set -e; for threads in $${CK_RECURRENT_QK_L2_ORACLE_THREADS:-1 16 20 24}; do \
+		echo "Recurrent Q/K L2 llama.cpp production oracle: threads=$$threads"; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			$(RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN); \
 	done
 
 .PHONY: test-q4k-q8k-llama-packed
@@ -3315,15 +3368,24 @@ test-numerical-contracts: $(LIB)
 		$(MAKE) --no-print-directory test-rmsnorm-llama-production \
 			Q4Q6_LLAMA_CPP_DIR="$${CK_LLAMA_CPP_ROOT}" \
 			Q4Q6_LLAMA_CPP_BIN_DIR="$${CK_LLAMA_CPP_ROOT}/build/bin"; \
+		$(MAKE) --no-print-directory test-recurrent-qk-l2-llama-production \
+			Q4Q6_LLAMA_CPP_DIR="$${CK_LLAMA_CPP_ROOT}" \
+			Q4Q6_LLAMA_CPP_BIN_DIR="$${CK_LLAMA_CPP_ROOT}/build/bin"; \
+		$(MAKE) --no-print-directory test-q5k-q8k-llama-production-quick \
+			Q4Q6_LLAMA_CPP_DIR="$${CK_LLAMA_CPP_ROOT}" \
+			Q4Q6_LLAMA_CPP_BIN_DIR="$${CK_LLAMA_CPP_ROOT}/build/bin"; \
 	else \
 		echo "RMSNorm llama.cpp production oracle [SKIP: CK_LLAMA_CPP_ROOT/build/bin unavailable]"; \
 	fi
 	@PYTHONPATH=unittest CK_NUMERICAL_CAPABILITY_REPORT=version/v8/.cache/reports/mrope_capabilities_latest.json $(PYTHON) -c "import test_vision; test_vision.test_mrope_qk_vision_storage_matrix()"
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
+	@$(PYTHON) tests/test_v8_xray_text_recurrent.py
 	@$(PYTHON) -m unittest tests.test_v8_numerical_replay_fixtures -v
 	@$(PYTHON) unittest/test_attention_full.py
-	@CK_NUM_THREADS=$${CK_NUMERICAL_CONTRACT_THREADS:-1} $(PYTHON) unittest/test_attention_f16_split_kv.py
+	@V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT="$${V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT:-$${CK_LLAMA_CPP_ROOT:-$(CURDIR)/llama.cpp}}" \
+		CK_NUM_THREADS=$${CK_NUMERICAL_CONTRACT_THREADS:-1} \
+		$(PYTHON) unittest/test_attention_f16_split_kv.py
 	@mkdir -p build/v8/contracts
 	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3_vl_vision --operation vision_encoder.attention --phase prefill --mode bringup --output build/v8/contracts/qwen3vl-vision-prefill.json >/dev/null
 	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3vl --operation decoder.attention --phase decode --mode bringup --output build/v8/contracts/qwen3vl-decode.json >/dev/null
@@ -3336,6 +3398,7 @@ test-bf16-xray:
 		version/v8/scripts/xray_vision_parity_v8.py \
 		version/v8/scripts/xray_numerical_parity_v8.py \
 		version/v8/scripts/xray_execution_state_v8.py \
+		version/v8/scripts/xray_text_recurrent_v8.py \
 		version/v8/scripts/build_xray_checkpoint_manifest_v8.py \
 		version/v8/scripts/xray_qwen3vl_bf16_v8.py \
 		version/v8/scripts/xray_qwen3vl_llamacpp_v8.py \
@@ -3343,6 +3406,7 @@ test-bf16-xray:
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
+	@$(PYTHON) tests/test_v8_xray_text_recurrent.py
 	@$(PYTHON) tests/test_v8_xray_vision_interface.py
 	@$(PYTHON) version/v8/test_assets/generate_xray_form_fixture_v8.py \
 		--output build/xray/public_form_1152x896.ppm
@@ -4043,7 +4107,11 @@ libck_parity_llama.so: $(LIB_PARITY_LLAMA)
 
 # Build llama.cpp kernel test library
 # Requires llama.cpp to be cloned in llama.cpp/ subdirectory
-$(LLAMA_KERNEL_TEST):
+# Prevent the generic test-kernel-% convenience rule from treating this source
+# filename as a requested kernel test target.
+patches/test-kernel-parity.cpp: ;
+
+$(LLAMA_KERNEL_TEST): patches/test-kernel-parity.cpp
 	@echo "Building llama.cpp kernel test library..."
 	@if [ ! -d "$(LLAMA_CPP_DIR)" ]; then \
 		echo "ERROR: llama.cpp not found. Clone it first:"; \

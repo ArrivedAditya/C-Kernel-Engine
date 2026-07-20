@@ -1727,9 +1727,12 @@ def emit_op(
             label,
             _hidden_arg("d_model", "embed_dim", "dim"),
         )
-    elif op_name == "rmsnorm":
+    elif op_name in {"rmsnorm", "attn_norm"}:
         out_expr = _hidden_arg("output", "out", "x", "y")
-        if op_instance_idx == 0:
+        if op_name == "attn_norm":
+            _emit_hidden_export(out_expr, "attn_norm", "EMBED_DIM")
+            _emit_hidden_export_last_row(out_expr, "attn_norm", "EMBED_DIM")
+        elif op_instance_idx == 0:
             _emit_hidden_export(out_expr, "block_rmsnorm", "EMBED_DIM")
             _emit_hidden_export_last_row(out_expr, "block_rmsnorm", "EMBED_DIM")
         elif op_instance_idx == 1:

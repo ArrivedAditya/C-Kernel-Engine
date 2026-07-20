@@ -28,5 +28,45 @@
     "c_declaration": "void gemv_q5_k(float *y, const void *W, const float *x, int M, int K);",
     "sources": ["src/kernels/gemm_kernels_q5_k.c"]
   },
+  "numerical_capabilities": [
+    {
+      "contract_id": "q5_k_weight_q8_k_input_avx2_fma_fp32_output",
+      "status": "validated",
+      "phases": ["decode"],
+      "function": "gemv_q5_k",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "compile_time",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": ["independent_rows"],
+          "dispatch": ["inline"],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp32",
+        "merge_order": "pairwise_tree",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"name": "y", "source": "output:y", "cast": "float*"},
+      {"name": "W", "source": "weight:_first_weight"},
+      {"name": "x", "source": "activation:x", "cast": "const float*"},
+      {"name": "M", "source": "dim:_output_dim"},
+      {"name": "K", "source": "dim:_input_dim"}
+    ]
+  },
+  "tests": {
+    "parity": [
+      {"kind": "llamacpp", "command": "make test-q5k-q8k-llama-production", "tolerance": "0"}
+    ]
+  },
   "notes": "GEMV for Q5_K weights with FP32 activation input; kernel quantizes activations internally to Q8_K for llama-compatible dot math. Q5_K: 5-bit super-block quant with nested scales/mins."
 }
