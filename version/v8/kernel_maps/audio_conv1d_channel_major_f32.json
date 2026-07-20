@@ -28,8 +28,8 @@
   }],
   "call_abi": {"version": 1, "params": [
     {"name": "input", "source": "activation:input", "cast": "const float*"},
-    {"name": "weight", "source": "weight:weight", "cast": "const float*"},
-    {"name": "bias", "source": "weight_f:bias", "cast": "const float*"},
+    {"name": "weight", "source": "weight:weight", "alt": ["audio_conv1_weight", "audio_conv2_weight"], "cast": "const float*"},
+    {"name": "bias", "source": "weight_f:bias", "alt": ["audio_conv1_bias", "audio_conv2_bias"], "cast": "const float*"},
     {"name": "output", "source": "output:output", "cast": "float*"},
     {"name": "input_channels", "source": "dim:input_channels"},
     {"name": "output_channels", "source": "dim:output_channels"},

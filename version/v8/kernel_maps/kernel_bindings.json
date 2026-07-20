@@ -47,32 +47,6 @@
         }
       ]
     },
-    "position_embeddings_add": {
-      "params": [
-        {
-          "name": "x",
-          "source": "output:x",
-          "cast": "float*"
-        },
-        {
-          "name": "position_embd",
-          "source": "weight:pos_emb",
-          "cast": "const float*"
-        },
-        {
-          "name": "num_tokens",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "embed_dim",
-          "source": "dim:embed_dim"
-        },
-        {
-          "name": "num_positions",
-          "source": "dim:vision_num_patches"
-        }
-      ]
-    },
     "rowwise_bias_add": {
       "params": [
         {

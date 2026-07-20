@@ -21,6 +21,12 @@
       "activation": "gelu",
       "attention_causal": false,
       "mlp_formula": "up -> gelu -> down"
+    },
+    "attention_contract": {
+      "causal": false,
+      "attn_variant": "dense_bidirectional",
+      "kv_layout": "ephemeral_full_context",
+      "rope_layout": "none"
     }
   },
   "required_numerical_contracts": {
@@ -75,6 +81,23 @@
         "axis_names": ["token", "channel"]
       }
     },
+    "audio.encoder.position": {
+      "op": "position_embeddings",
+      "template_ops": ["position_embeddings"],
+      "phases": {
+        "prefill": {
+          "contract_id": "position_embeddings_add_token_major_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_vision.py exact learned absolute position addition"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.encoder.position.output",
+        "producer": "position",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
     "audio.encoder.attention": {
       "op": "attention",
       "template_ops": ["attn"],
@@ -101,6 +124,10 @@
           "id": "conv1",
           "op": "audio_conv1d_stem_1",
           "params": {
+            "input_channels_from_config": "audio_feature_channels",
+            "output_channels_from_config": "audio_conv1_output_channels",
+            "input_frames_from_config": "audio_feature_frames",
+            "output_frames_from_config": "audio_conv1_output_frames",
             "kernel_size_from_config": "audio_conv1_kernel_size",
             "stride_from_config": "audio_conv1_stride",
             "padding_from_config": "audio_conv1_padding"
@@ -111,17 +138,28 @@
           "id": "conv2",
           "op": "audio_conv1d_stem_2",
           "params": {
+            "input_channels_from_config": "audio_conv1_output_channels",
+            "output_channels_from_config": "audio_conv2_output_channels",
+            "input_frames_from_config": "audio_conv1_output_frames",
+            "output_frames_from_config": "audio_conv2_output_frames",
             "kernel_size_from_config": "audio_conv2_kernel_size",
             "stride_from_config": "audio_conv2_stride",
             "padding_from_config": "audio_conv2_padding"
           }
         },
         {"id": "conv2_gelu", "op": "gelu"},
-        {"id": "to_token_major", "op": "layout_channel_to_token"},
+        {
+          "id": "to_token_major",
+          "op": "layout_channel_to_token",
+          "params": {
+            "channels_from_config": "audio_conv2_output_channels",
+            "frames_from_config": "audio_conv2_output_frames"
+          }
+        },
         {"id": "position", "op": "position_embeddings"}
       ],
       "body": {
-        "type": "dense_bidirectional",
+        "type": "dense",
         "ops": [
           {"id": "attn_norm", "op": "layernorm"},
           {
@@ -139,7 +177,15 @@
             "op": "v_proj",
             "graph_slots": {"inputs": {"x": "main_stream"}}
           },
-          {"id": "attn", "op": "attn"},
+          {
+            "id": "attn",
+            "op": "attn",
+            "params": {
+              "query_tokens_from_config": "context_length",
+              "key_tokens_from_config": "context_length",
+              "attention_scale_from_config": "attention_scale"
+            }
+          },
           {
             "id": "out_proj",
             "op": "out_proj",

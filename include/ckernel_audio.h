@@ -2,6 +2,7 @@
 #define CKERNEL_AUDIO_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -11,6 +12,28 @@ extern "C" {
 #define CK_AUDIO_WHISPER_N_FFT 400
 #define CK_AUDIO_WHISPER_HOP_LENGTH 160
 #define CK_AUDIO_WHISPER_POWER_BINS 201
+
+typedef struct CKAudioWavInfo {
+    int format_tag;
+    int channels;
+    int sample_rate;
+    int bits_per_sample;
+    int frames;
+    size_t data_offset;
+    size_t data_bytes;
+} CKAudioWavInfo;
+
+int audio_wav_parse_memory(
+    const uint8_t *bytes,
+    size_t byte_count,
+    CKAudioWavInfo *info);
+
+int audio_wav_decode_pcm16_mono_f32(
+    const uint8_t *bytes,
+    size_t byte_count,
+    const CKAudioWavInfo *info,
+    float *mono,
+    int mono_capacity);
 
 int audio_pcm_s16_to_mono_f32(
     const int16_t *interleaved,
@@ -31,6 +54,15 @@ int audio_resample_linear_f32(
     int output_frames,
     int output_rate);
 
+int audio_resample_windowed_sinc_f32(
+    const float *input,
+    int input_frames,
+    int input_rate,
+    float *output,
+    int output_frames,
+    int output_rate,
+    int radius);
+
 int audio_stft_precompute_tables_f32(
     int n_fft,
     float *window,
@@ -47,6 +79,17 @@ int audio_stft_power_precomputed_f32(
     int hop_length,
     float *power,
     int n_frames);
+
+int audio_stft_power_fft400_f32(
+    const float *samples,
+    int n_samples,
+    const float *window,
+    const float *cos_table,
+    const float *sin_table,
+    int hop_length,
+    float *power,
+    int n_frames,
+    float *fft_scratch);
 
 int audio_conv1d_channel_major_f32(
     const float *input,

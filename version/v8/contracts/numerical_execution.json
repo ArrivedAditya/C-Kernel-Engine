@@ -25,6 +25,17 @@
       "position_transform": null,
       "description": "Deterministic linear resampling from exact integer-rate rational coordinates; this reference capability is not a substitute for a future band-limited provider."
     },
+    "audio_resample_windowed_sinc_fp64_accum_fp32_output": {
+      "operator_family": "audio_resample",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp64", "contraction": "disabled", "evaluation_order": "exact_rational_output_coordinate_then_ascending_tap_hann_windowed_sinc_weighted_sum_and_weight_sum_then_normalize"},
+      "rounding": {"mode": "rne", "points": ["input_load", "weighted_product", "reduction_update", "output_divide", "output_store"]},
+      "reduction": {"kind": "composite", "order": "stage_ordered", "partial_accumulator": "fp64", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Band-limited resampling with exact integer-rate output positions, cutoff=min(1, output_rate/input_rate), a finite Hann-windowed sinc radius, ascending-tap FP64 accumulation, normalization, and FP32 storage."
+    },
     "audio_stft_centered_hann_precomputed_fp32": {
       "operator_family": "audio_stft",
       "status": "validated",
@@ -35,6 +46,17 @@
       "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
       "position_transform": null,
       "description": "Centered periodic-Hann STFT power using explicit precomputed trigonometric tables and the same ascending-sample FMA order as the scalar direct reference."
+    },
+    "audio_stft_centered_hann_fft400_radix20_fp32": {
+      "operator_family": "audio_stft",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32", "contraction": "enabled", "evaluation_order": "reflect_center_then_window_then_radix20_q_stage_then_radix20_p_stage_then_power"},
+      "rounding": {"mode": "rne", "points": ["window_multiply", "fft_projection", "reduction_update", "power_sum", "output_store"]},
+      "reduction": {"kind": "composite", "order": "stage_ordered", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Whisper-width 400-point centered periodic-Hann STFT power using a fixed 20x20 Cooley-Tukey factorization and precomputed FP32 trigonometric tables. This provider intentionally has a different reduction tree from the direct DFT reference."
     },
     "audio_conv1d_channel_major_ascending_fp32": {
       "operator_family": "audio_conv1d",
@@ -57,6 +79,17 @@
       "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
       "position_transform": null,
       "description": "Exact FP32 layout copy from channel-major [C,T] to token-major [T,C]."
+    },
+    "position_embeddings_add_token_major_fp32": {
+      "operator_family": "position_embeddings",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "ascending_token_then_channel_single_fp32_add"},
+      "rounding": {"mode": "rne", "points": ["input_load", "weighted_product", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "In-place token-major addition of learned absolute FP32 position embeddings with no interpolation or reduction."
     },
     "attention_query_key_scaled_ordered_fp32": {
       "operator_family": "attention",
