@@ -137,8 +137,13 @@ static bool run_case(const case_spec & spec) {
     std::vector<float> weights_f32(static_cast<size_t>(spec.n) * spec.k);
     for (int row = 0; row < spec.m; ++row) {
         for (int col = 0; col < spec.k; ++col) {
-            activations[static_cast<size_t>(row) * spec.k + col] =
-                    fixture(row, col, 0.31f, 0.19f);
+            float value = fixture(row, col, 0.31f, 0.19f);
+            if (std::strcmp(spec.name, "q8_rounding_boundary") == 0) {
+                const int code = (col % 251) - 125;
+                value = (static_cast<float>(code) + 0.5f) / 127.0f;
+                if (col % 256 == 0) value = 1.0f;
+            }
+            activations[static_cast<size_t>(row) * spec.k + col] = value;
         }
     }
     for (int row = 0; row < spec.n; ++row) {
@@ -206,11 +211,13 @@ int main(int argc, char ** argv) {
     const bool quick = argc > 1 && std::strcmp(argv[1], "--quick") == 0;
     const case_spec quick_cases[] = {
         {"decode_leaf", 1, 64, 256},
+        {"q8_rounding_boundary", 1, 64, 1024},
         {"qwen35_recurrent_decode", 1, 6144, 1024},
         {"short_prefill", 7, 512, 1024},
     };
     const case_spec full_cases[] = {
         {"decode_leaf", 1, 64, 256},
+        {"q8_rounding_boundary", 1, 64, 1024},
         {"qwen35_recurrent_decode", 1, 6144, 1024},
         {"qwen35_recurrent_prefill", 33, 6144, 1024},
     };

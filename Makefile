@@ -3380,6 +3380,7 @@ test-numerical-contracts: $(LIB)
 	@PYTHONPATH=unittest CK_NUMERICAL_CAPABILITY_REPORT=version/v8/.cache/reports/mrope_capabilities_latest.json $(PYTHON) -c "import test_vision; test_vision.test_mrope_qk_vision_storage_matrix()"
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
+	@$(PYTHON) tests/test_v8_xray_text_recurrent.py
 	@$(PYTHON) -m unittest tests.test_v8_numerical_replay_fixtures -v
 	@$(PYTHON) unittest/test_attention_full.py
 	@V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT="$${V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT:-$${CK_LLAMA_CPP_ROOT:-$(CURDIR)/llama.cpp}}" \
@@ -3397,6 +3398,7 @@ test-bf16-xray:
 		version/v8/scripts/xray_vision_parity_v8.py \
 		version/v8/scripts/xray_numerical_parity_v8.py \
 		version/v8/scripts/xray_execution_state_v8.py \
+		version/v8/scripts/xray_text_recurrent_v8.py \
 		version/v8/scripts/build_xray_checkpoint_manifest_v8.py \
 		version/v8/scripts/xray_qwen3vl_bf16_v8.py \
 		version/v8/scripts/xray_qwen3vl_llamacpp_v8.py \
@@ -3404,6 +3406,7 @@ test-bf16-xray:
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
+	@$(PYTHON) tests/test_v8_xray_text_recurrent.py
 	@$(PYTHON) tests/test_v8_xray_vision_interface.py
 	@$(PYTHON) version/v8/test_assets/generate_xray_form_fixture_v8.py \
 		--output build/xray/public_form_1152x896.ppm

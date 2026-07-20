@@ -55,16 +55,6 @@ static int ck_q5k_debug_fp32_fallback(void)
     return cached;
 }
 
-static int ck_q5k_debug_shared_q8_quant(void)
-{
-    static int cached = -1;
-    if (cached < 0) {
-        const char *env = getenv("CK_DEBUG_Q5K_SHARED_Q8_QUANT");
-        cached = (env && env[0] && env[0] != '0') ? 1 : 0;
-    }
-    return cached;
-}
-
 static int ck_q5k_debug_generic_dot(void)
 {
     static int cached = -1;
@@ -120,49 +110,6 @@ static inline uint8_t q5_k_quant_value(const block_q5_K *block, int subblock, in
 
 /* quantize_row_q8_k() is implemented in gemm_kernels_q4k_q8k.c */
 void quantize_row_q8_k(const float *x, void *vy, int k);
-
-static inline int ck_nearest_int(float fval) {
-    float val = fval + 12582912.f;
-    int i;
-    memcpy(&i, &val, sizeof(int));
-    return (i & 0x007fffff) - 0x00400000;
-}
-
-static void quantize_row_q8_k_scalar(const float *x, block_q8_K *y) {
-    float max = 0.0f;
-    float amax = 0.0f;
-    for (int j = 0; j < QK_K; ++j) {
-        float ax = x[j] < 0.0f ? -x[j] : x[j];
-        if (ax > amax) {
-            amax = ax;
-            max = x[j];
-        }
-    }
-    if (amax == 0.0f) {
-        y->d = 0.0f;
-        memset(y->qs, 0, sizeof(y->qs));
-        memset(y->bsums, 0, sizeof(y->bsums));
-        return;
-    }
-
-    const float iscale = -127.0f / max;
-    for (int j = 0; j < QK_K; ++j) {
-        int q = ck_nearest_int(iscale * x[j]);
-        if (q > 127) q = 127;
-        if (q < -128) q = -128;
-        y->qs[j] = (int8_t)q;
-    }
-
-    for (int j = 0; j < QK_K / 16; ++j) {
-        int sum = 0;
-        const int8_t *q = &y->qs[j * 16];
-        for (int l = 0; l < 16; ++l) {
-            sum += q[l];
-        }
-        y->bsums[j] = (int16_t)sum;
-    }
-    y->d = 1.0f / iscale;
-}
 
 #if defined(__AVX2__)
 static inline __m256i ck_q5k_scale_shuffle_avx2(int i)
@@ -538,13 +485,9 @@ void gemv_q5_k_ref(float *y, const void *W, const float *x, int M, int K)
     }
 
     block_q8_K x_q8[CK_Q5K_STACK_Q8_BLOCKS];
-    if (ck_q5k_debug_shared_q8_quant()) {
-        quantize_row_q8_k(x, x_q8, K);
-    } else {
-        for (int b = 0; b < blocks_per_row; ++b) {
-            quantize_row_q8_k_scalar(x + b * QK_K, &x_q8[b]);
-        }
-    }
+    /* Q8_K bytes are part of the numerical ABI. Use the shared provider,
+     * whose FP-contraction policy is validated against llama.cpp. */
+    quantize_row_q8_k(x, x_q8, K);
     gemv_q5_k_q8_k_ref(y, blocks, x_q8, M, K);
 }
 
@@ -584,13 +527,7 @@ void gemm_nt_q5_k_ref(const float *A,
     for (int m = 0; m < M; ++m) {
         const float *a_row = &A[m * K];
         block_q8_K a_q8[CK_Q5K_STACK_Q8_BLOCKS];
-        if (ck_q5k_debug_shared_q8_quant()) {
-            quantize_row_q8_k(a_row, a_q8, K);
-        } else {
-            for (int b = 0; b < blocks_per_col; ++b) {
-                quantize_row_q8_k_scalar(a_row + b * QK_K, &a_q8[b]);
-            }
-        }
+        quantize_row_q8_k(a_row, a_q8, K);
         gemm_nt_q5_k_q8_k_ref(a_q8, blocks, bias, &C[m * N], 1, N, K);
     }
 }

@@ -35,6 +35,38 @@ decoder_parity_v8 = _load_module("decoder_first_token_parity_v8_tests", V8_DECOD
 
 
 class V8DecoderFirstTokenParityTests(unittest.TestCase):
+    def test_llama_capture_preserves_explicit_prefix_and_decode_schedules(self) -> None:
+        captured: list[str] = []
+
+        def fake_run(command: list[str]):
+            captured.extend(command)
+            logits_path = Path(command[command.index("--logits-out") + 1])
+            np.array([0.0], dtype=np.float32).tofile(logits_path)
+            return mock.Mock(
+                returncode=0,
+                stdout=json.dumps({"ok": True, "n_vocab": 1}),
+                stderr="",
+            )
+
+        with mock.patch.object(
+            decoder_parity_v8.compare_first_token_logits_v7,
+            "ensure_llama_helper",
+            return_value=Path("/tmp/llama-token-replay"),
+        ), mock.patch.object(decoder_parity_v8, "_run", side_effect=fake_run):
+            decoder_parity_v8._run_llama_capture(
+                Path("model.gguf"),
+                [3],
+                128,
+                1,
+                1,
+                tokens_before=[1, 2],
+                prefix_decode_mode="batched",
+                decode_mode="sequential",
+            )
+
+        self.assertEqual(captured[captured.index("--prefix-decode-mode") + 1], "batched")
+        self.assertEqual(captured[captured.index("--decode-mode") + 1], "sequential")
+
     def test_llama_helper_fingerprint_tracks_root_source_and_library_content(self) -> None:
         helper_module = decoder_parity_v8.compare_first_token_logits_v7
         with tempfile.TemporaryDirectory(prefix="v8_llama_helper_identity_") as tmpdir:

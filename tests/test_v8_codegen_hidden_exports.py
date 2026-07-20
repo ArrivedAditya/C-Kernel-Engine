@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CODEGEN_PATH = ROOT / "version" / "v8" / "scripts" / "codegen_core_v8.py"
+sys.path.insert(0, str(CODEGEN_PATH.parent))
 
 
 def _load_codegen():
@@ -81,6 +82,27 @@ class HiddenExportExtentTests(unittest.TestCase):
         )
 
         self.assertIn('"ffn_gelu", (const float*)UP, 17353728', emitted)
+
+    def test_attention_norm_exports_the_projection_input_boundary(self) -> None:
+        emitted = codegen.emit_op(
+            {
+                "op": "attn_norm",
+                "function": "rmsnorm_forward",
+                "layer": 0,
+                "args": [
+                    _arg("input", "X"),
+                    _arg("weight", "W"),
+                    _arg("output", "Y"),
+                    _arg("bias", "NULL"),
+                    _arg("num_tokens", "1"),
+                    _arg("dim", "1024"),
+                    _arg("aligned_dim", "1024"),
+                    _arg("eps", "1e-6f"),
+                ],
+            }
+        )
+
+        self.assertIn('"attn_norm", (const float*)Y, EMBED_DIM', emitted)
 
 
 if __name__ == "__main__":
