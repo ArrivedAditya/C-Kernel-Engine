@@ -401,6 +401,9 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
                     self.assertTrue(checkpoint["function"])
                     self.assertEqual(len(checkpoint["axis_names"]), 2 if checkpoint["logical_layout"] == "token_major" else 3)
                 for checkpoint_id in (
+                    "vision.layer.0.mlp.up",
+                    "vision.layer.0.mlp.activation",
+                    "vision.layer.0.mlp.down",
                     "vision.spatial_merge.output",
                     "vision.projector.output",
                     "vision.prefix.output",

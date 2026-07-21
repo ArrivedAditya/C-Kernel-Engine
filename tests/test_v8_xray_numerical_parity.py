@@ -75,6 +75,29 @@ class XRayNumericalParityTests(unittest.TestCase):
         result = xray.compare_manifests(left, right, self.profile, checkpoint_order=["vision.layer.0.output"])
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["comparisons"][0]["classification"], "MATCH")
+        self.assertTrue(result["comparisons"][0]["metrics"]["byte_exact"])
+        self.assertIsNone(result["first_non_exact_checkpoint"])
+
+    def test_reports_first_non_exact_checkpoint_without_mislabeling_material_failure(self):
+        a = self.root / "a.f32"; b = self.root / "b.f32"
+        got = np.ones((2, 3), np.float32)
+        ref = got.copy()
+        got[0, 1] += np.float32(1.0e-5)
+        got.tofile(a); ref.tofile(b)
+        left = self.manifest("ck", [self.entry("vision.layer.0.output", a)])
+        right = self.manifest("pytorch", [self.entry("vision.layer.0.output", b)])
+
+        result = xray.compare_manifests(
+            left, right, self.profile, checkpoint_order=["vision.layer.0.output"]
+        )
+
+        self.assertEqual(result["status"], "pass")
+        self.assertIsNone(result["first_divergence"])
+        non_exact = result["first_non_exact_checkpoint"]
+        self.assertEqual(non_exact["checkpoint_id"], "vision.layer.0.output")
+        self.assertEqual(non_exact["classification"], "NON_BYTE_EXACT")
+        self.assertFalse(non_exact["metrics"]["byte_exact"])
+        self.assertEqual(non_exact["metrics"]["exact_elements"], 5)
 
     def test_named_axes_are_canonicalized_before_comparison(self):
         logical = np.arange(6, dtype=np.float32).reshape(2, 3)

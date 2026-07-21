@@ -5,6 +5,7 @@ import argparse
 import json
 import math
 import os
+import subprocess
 import sys
 import time
 from array import array
@@ -536,6 +537,70 @@ def _run_ck_selector(args: argparse.Namespace, selector: str, numeric: Any) -> n
     return result
 
 
+def _run_ck_selector_isolated(args: argparse.Namespace, selector: str, output: Path) -> np.ndarray:
+    """Capture one model-sized CK checkpoint in a fresh process."""
+    cmd = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--checkpoint", str(args.checkpoint),
+        "--runtime-dir", str(args.runtime_dir),
+        "--weights-bump", str(args.weights_bump),
+        "--image", str(args.image),
+        "--out-dir", str(args.out_dir),
+        "--threads", str(args.threads),
+        "--attn-implementation", str(args.attn_implementation),
+        "--ck-worker-selector", selector,
+        "--ck-worker-output", str(output),
+    ]
+    if args.ck_import_layer_input is not None:
+        cmd.extend([
+            "--ck-import-layer-input", str(args.ck_import_layer_input),
+            "--ck-import-layer", str(args.ck_import_layer),
+            "--ck-import-checkpoint", str(args.ck_import_checkpoint),
+        ])
+    env = os.environ.copy()
+    env["CK_NUM_THREADS"] = str(args.threads)
+    env["OMP_NUM_THREADS"] = str(args.threads)
+    completed = subprocess.run(cmd, cwd=REPO_ROOT, env=env)
+    if completed.returncode != 0:
+        raise RuntimeError(f"isolated CK capture failed for {selector!r}: rc={completed.returncode}")
+    if not output.is_file():
+        raise RuntimeError(f"isolated CK capture did not produce {output}")
+    return np.fromfile(output, dtype=np.float32)
+
+
+def _run_torch_captures_isolated(args: argparse.Namespace, selectors: list[str]) -> dict[str, Any]:
+    """Capture PyTorch checkpoints in a process that exits before CK loads."""
+    cmd = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--checkpoint", str(args.checkpoint),
+        "--runtime-dir", str(args.runtime_dir),
+        "--weights-bump", str(args.weights_bump),
+        "--image", str(args.image),
+        "--out-dir", str(args.out_dir),
+        "--threads", str(args.threads),
+        "--attn-implementation", str(args.attn_implementation),
+        "--skip-ck",
+    ]
+    if args.torch_prefix is not None:
+        cmd.extend(["--torch-prefix", str(args.torch_prefix)])
+    for selector in selectors:
+        cmd.extend(["--selector", selector])
+    completed = subprocess.run(cmd, cwd=REPO_ROOT, env=os.environ.copy())
+    if completed.returncode != 0:
+        raise RuntimeError(f"isolated PyTorch capture failed: rc={completed.returncode}")
+    report_path = args.out_dir / "report.json"
+    if not report_path.is_file():
+        raise RuntimeError(f"isolated PyTorch capture did not produce {report_path}")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    tensors = ((report.get("torch") or {}).get("tensors") or {})
+    missing = [selector for selector in selectors if selector not in tensors]
+    if missing:
+        raise RuntimeError(f"isolated PyTorch capture omitted selectors: {missing}")
+    return report["torch"]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Compare Qwen3-VL BF16 vision hidden tensors against CK hidden exports.")
     ap.add_argument("--checkpoint", type=Path, required=True)
@@ -562,6 +627,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-relative-rmse", type=float, default=None)
     ap.add_argument("--final-max-rmse", type=float, default=None)
     ap.add_argument("--final-max-abs", type=float, default=None)
+    ap.add_argument("--ck-worker-selector", help=argparse.SUPPRESS)
+    ap.add_argument("--ck-worker-output", type=Path, help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     if (args.ck_import_layer_input is None) != (args.ck_import_layer is None):
         ap.error("--ck-import-layer-input and --ck-import-layer must be provided together")
@@ -569,29 +636,38 @@ def main(argv: list[str] | None = None) -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     os.environ["CK_NUM_THREADS"] = str(args.threads)
     os.environ["OMP_NUM_THREADS"] = str(args.threads)
+    if args.ck_worker_selector:
+        if args.ck_worker_output is None:
+            ap.error("--ck-worker-output is required with --ck-worker-selector")
+        numeric = _import_numeric_parity()
+        captured = _run_ck_selector(args, args.ck_worker_selector, numeric)
+        args.ck_worker_output.parent.mkdir(parents=True, exist_ok=True)
+        captured.tofile(args.ck_worker_output)
+        return 0
     selectors = args.selector or ["ffn_inp_normed@9", "mlp_up@9", "ffn_gelu@9", "mlp_down@9", "layer_out@9"]
 
     t0 = time.perf_counter()
-    torch_report = _torch_captures(
-        args.checkpoint.resolve(),
-        args.image.resolve(),
-        args.torch_prefix,
-        args.out_dir,
-        args.attn_implementation,
-        selectors,
-    )
+    if args.skip_ck:
+        torch_report = _torch_captures(
+            args.checkpoint.resolve(),
+            args.image.resolve(),
+            args.torch_prefix,
+            args.out_dir,
+            args.attn_implementation,
+            selectors,
+        )
+    else:
+        torch_report = _run_torch_captures_isolated(args, selectors)
     t_torch = time.perf_counter()
 
     rows: dict[str, Any] = {}
     if not args.skip_ck:
-        numeric = _import_numeric_parity()
         ck_dir = args.out_dir / "ck"
         ck_dir.mkdir(parents=True, exist_ok=True)
         for selector in selectors:
             print(f"[ck] {selector}", flush=True)
-            ck = _run_ck_selector(args, selector, numeric)
             ck_path = ck_dir / f"{selector.replace('@', '_layer_')}.f32"
-            ck.tofile(ck_path)
+            ck = _run_ck_selector_isolated(args, selector, ck_path)
             torch_path = Path(torch_report["tensors"][selector]["path"])
             ref = np.fromfile(torch_path, dtype=np.float32)
             rows[selector] = {

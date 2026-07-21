@@ -783,7 +783,7 @@
               "token",
               "channel"
             ],
-            "storage_dtype": "fp32"
+            "storage_dtype": "bf16"
           }
         ]
       },
@@ -801,7 +801,7 @@
               "token",
               "channel"
             ],
-            "storage_dtype": "fp32"
+            "storage_dtype": "bf16"
           }
         ]
       },
@@ -819,7 +819,7 @@
               "token",
               "channel"
             ],
-            "storage_dtype": "fp32"
+            "storage_dtype": "bf16"
           }
         ]
       },

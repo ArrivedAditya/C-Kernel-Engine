@@ -124,8 +124,9 @@ def main() -> int:
             rows,
             "vision_attention_production",
             {"heads": 16, "tokens": 4032, "dim": 72},
-            attention.run_case(16, 16, 4032, 72, 72, 106)[:2],
-            (0.03125, 0.003),
+            attention.run_case_detailed(16, 16, 4032, 72, 72, 106),
+            (0.001, 7.0e-5),
+            min_exact_ratio=0.58,
         )
 
     report = {

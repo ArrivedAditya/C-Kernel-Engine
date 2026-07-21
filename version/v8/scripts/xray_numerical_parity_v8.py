@@ -206,6 +206,8 @@ def _metrics(reference: np.ndarray, actual: np.ndarray, axes: list[str]) -> Dict
     denom = float(np.linalg.norm(ref64) * np.linalg.norm(got64))
     rmse = float(np.sqrt(np.mean(diff * diff))) if diff.size else 0.0
     ref_rms = float(np.sqrt(np.mean(ref64 * ref64))) if diff.size else 0.0
+    exact_elements = int(np.count_nonzero(reference == actual))
+    total_elements = int(reference.size)
     return {
         "cosine": float(np.dot(ref64.reshape(-1), got64.reshape(-1)) / denom) if denom else 1.0,
         "rmse": rmse,
@@ -214,6 +216,10 @@ def _metrics(reference: np.ndarray, actual: np.ndarray, axes: list[str]) -> Dict
         "max_abs": float(abs_diff.reshape(-1)[flat_index]) if diff.size else 0.0,
         "worst_coordinate": {axis: int(value) for axis, value in zip(axes, coordinate)},
         "finite": bool(np.isfinite(reference).all() and np.isfinite(actual).all()),
+        "exact_elements": exact_elements,
+        "total_elements": total_elements,
+        "exact_ratio": exact_elements / total_elements if total_elements else 1.0,
+        "byte_exact": exact_elements == total_elements,
     }
 
 
@@ -253,6 +259,7 @@ def compare_manifests(
     oracle_index = _index_manifest(oracle)
     rows = []
     first_classification = None
+    first_non_exact = None
     last_passing_checkpoint = None
     unresolved_contracts = []
     active_order = checkpoint_order or profile["checkpoint_order"]
@@ -289,6 +296,17 @@ def compare_manifests(
                 classification = "NONFINITE_OUTPUT" if "nonfinite" in failed_metrics else ("KERNEL_IMPLEMENTATION_DIVERGENCE" if status == "fail" else "MATCH")
                 row = {"checkpoint_id": checkpoint_id, "status": status, "classification": classification, "metrics": metrics, "failed_metrics": failed_metrics, "threshold": threshold}
         rows.append(row)
+        if (
+            first_non_exact is None
+            and row.get("metrics") is not None
+            and not bool(row["metrics"].get("byte_exact", False))
+        ):
+            first_non_exact = {
+                "checkpoint_id": checkpoint_id,
+                "status": row["status"],
+                "classification": "NON_BYTE_EXACT",
+                "metrics": row["metrics"],
+            }
         if row["status"] == "pass":
             last_passing_checkpoint = checkpoint_id
         if row["status"] == "fail" and first_classification is None:
@@ -323,6 +341,7 @@ def compare_manifests(
         "status": "fail" if first_classification is not None else "pass",
         "comparisons": rows,
         "first_divergence": first_classification,
+        "first_non_exact_checkpoint": first_non_exact,
         "last_passing_checkpoint": last_passing_checkpoint,
         "unresolved_contract_checkpoints": unresolved_contracts,
         "ranking_divergence": ranking,
