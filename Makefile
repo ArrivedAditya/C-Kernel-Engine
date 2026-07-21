@@ -3496,14 +3496,17 @@ test-bf16-xray:
 	@$(PYTHON) -m py_compile \
 		version/v8/scripts/xray_vision_parity_v8.py \
 		version/v8/scripts/xray_numerical_parity_v8.py \
+		version/v8/scripts/xray_attention_sensitivity_v8.py \
 		version/v8/scripts/xray_execution_state_v8.py \
 		version/v8/scripts/xray_text_recurrent_v8.py \
 		version/v8/scripts/build_xray_checkpoint_manifest_v8.py \
 		version/v8/scripts/xray_qwen3vl_bf16_v8.py \
 		version/v8/scripts/xray_qwen3vl_llamacpp_v8.py \
 		version/v8/scripts/normalize_xray_ranking_report_v8.py
+	@$(PYTHON) -c 'import json; from jsonschema import Draft202012Validator; Draft202012Validator.check_schema(json.load(open("version/v8/schemas/xray_attention_sensitivity.schema.json", encoding="utf-8")))'
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
+	@$(PYTHON) tests/test_v8_xray_attention_sensitivity.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
 	@$(PYTHON) tests/test_v8_xray_text_recurrent.py
 	@$(PYTHON) tests/test_v8_xray_vision_interface.py

@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://c-kernel-engine.dev/schemas/xray_attention_sensitivity.schema.json",
+  "title": "CKE X-ray attention sensitivity report",
+  "type": "object",
+  "required": ["schema", "schema_version", "status", "interpretation", "configuration", "cases"],
+  "properties": {
+    "schema": {"const": "cke.xray_attention_sensitivity"},
+    "schema_version": {"const": 1},
+    "status": {"const": "observed"},
+    "interpretation": {
+      "type": "object",
+      "required": ["scope", "proves", "does_not_prove", "threshold_policy"]
+    },
+    "configuration": {
+      "type": "object",
+      "required": [
+        "operation", "causal", "storage_dtype", "q_shape", "kv_shape",
+        "query_start", "query_count", "probe_seed", "threads", "torch_version",
+        "torch_cpu_capability", "torch_mkldnn_enabled"
+      ]
+    },
+    "artifacts": {"type": "object"},
+    "cases": {
+      "type": "object",
+      "required": ["q_only", "k_only", "v_only", "qkv"],
+      "additionalProperties": false,
+      "properties": {
+        "q_only": {"$ref": "#/$defs/case"},
+        "k_only": {"$ref": "#/$defs/case"},
+        "v_only": {"$ref": "#/$defs/case"},
+        "qkv": {"$ref": "#/$defs/case"}
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "metric": {
+      "type": "object",
+      "required": [
+        "l2", "rmse", "max_abs", "mean_abs", "exact_elements",
+        "total_elements", "byte_exact", "finite", "worst_coordinate"
+      ]
+    },
+    "case": {
+      "type": "object",
+      "required": [
+        "observation", "input_delta", "input_delta_l2", "output_delta",
+        "forward_amplification_l2", "vjp_delta", "vjp_delta_l2",
+        "backward_amplification_l2"
+      ],
+      "properties": {
+        "observation": {
+          "enum": [
+            "NO_SURVIVING_STORAGE_DELTA",
+            "NO_OBSERVED_DOWNSTREAM_EFFECT",
+            "SENSITIVITY_OBSERVED"
+          ]
+        },
+        "input_delta": {
+          "type": "object",
+          "required": ["q", "k", "v"],
+          "properties": {
+            "q": {"$ref": "#/$defs/metric"},
+            "k": {"$ref": "#/$defs/metric"},
+            "v": {"$ref": "#/$defs/metric"}
+          }
+        },
+        "input_delta_l2": {"type": "number", "minimum": 0},
+        "output_delta": {"$ref": "#/$defs/metric"},
+        "forward_amplification_l2": {"type": ["number", "null"], "minimum": 0},
+        "vjp_delta": {
+          "type": "object",
+          "required": ["q", "k", "v"],
+          "properties": {
+            "q": {"$ref": "#/$defs/metric"},
+            "k": {"$ref": "#/$defs/metric"},
+            "v": {"$ref": "#/$defs/metric"}
+          }
+        },
+        "vjp_delta_l2": {"type": "number", "minimum": 0},
+        "backward_amplification_l2": {"type": ["number", "null"], "minimum": 0}
+      }
+    }
+  }
+}

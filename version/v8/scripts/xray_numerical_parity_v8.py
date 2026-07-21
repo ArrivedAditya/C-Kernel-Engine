@@ -187,6 +187,7 @@ XRAY_FIX_PROGRESSION = {
         "Extend the kernel-family unit matrix for the complete input-storage, compute, accumulator/reduction, rounding, output-storage, and threading contract.",
         "Validate against an independent scalar formula and the requested PyTorch or llama.cpp backend oracle.",
         "Register the exact function and validated contract in the kernel map; unsupported and ambiguous resolutions must hard-fail.",
+        "When a small stored delta precedes a later failure, run same-backend forward/VJP sensitivity ablations before blaming a backward provider; Q, K, and V perturbations must be isolated.",
         "Run isolated kernel tests, numerical-contract resolution, stitched checkpoint parity, mixed-prefill logits, and teacher-forced parity in that order.",
         "Rerun X-ray from the last passing checkpoint and confirm the first failure progresses to a later semantic edge.",
         "Preserve the new evidence in nightly and the HTML test-report capability accordion so the bug cannot silently recur."
