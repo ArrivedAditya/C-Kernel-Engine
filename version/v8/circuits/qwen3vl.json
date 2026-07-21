@@ -151,7 +151,7 @@
       },
       "phases": {
         "prefill": {
-          "contract_id": "bf16_weight_bf16_input_amx_tile32_dot_bf16_output",
+          "contract_id": "bf16_weight_bf16_input_shape_safe_prefill_bf16_output",
           "validation": "validated",
           "evidence": "unittest/bf16/test_gemm_storage_contract_bf16.py"
         }
@@ -173,7 +173,7 @@
       },
       "phases": {
         "prefill": {
-          "contract_id": "bf16_weight_bf16_input_amx_tile32_dot_bf16_output",
+          "contract_id": "bf16_weight_bf16_input_shape_safe_prefill_bf16_output",
           "validation": "validated",
           "evidence": "unittest/bf16/test_gemm_storage_contract_bf16.py"
         }
@@ -195,7 +195,7 @@
       },
       "phases": {
         "prefill": {
-          "contract_id": "bf16_weight_bf16_input_amx_tile32_dot_bf16_output",
+          "contract_id": "bf16_weight_bf16_input_shape_safe_prefill_bf16_output",
           "validation": "validated",
           "evidence": "unittest/bf16/test_gemm_storage_contract_bf16.py"
         }

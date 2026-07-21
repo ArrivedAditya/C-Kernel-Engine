@@ -1,0 +1,72 @@
+{
+  "id": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+  "op": "gemm",
+  "variant": "bf16_w_fp32_pytorch_onednn_brgemm_bf16_out",
+  "quant": {"weight": "bf16", "activation": "fp32", "output": "bf16"},
+  "inputs": [
+    {"name": "A", "dtype": "fp32", "shape": ["M", "K"], "desc": "BF16-valued activation in FP32 storage"},
+    {"name": "B", "dtype": "bf16", "shape": ["N", "K"], "desc": "PyTorch Linear weight layout"},
+    {"name": "bias", "dtype": "fp32", "shape": ["N"], "optional": true, "desc": "BF16-valued bias in FP32 storage"}
+  ],
+  "outputs": [
+    {"name": "C", "dtype": "fp32", "shape": ["M", "N"], "desc": "BF16 RNE values represented in FP32 storage"}
+  ],
+  "scratch": [],
+  "dims": ["M", "N", "K"],
+  "constraints": {"external_runtime": "onednn_3_7_openmp"},
+  "impl": {
+    "function": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+    "c_declaration": "void gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);",
+    "sources": ["src/kernels/gemm_kernels_bf16.c"],
+    "variants": [
+      {"name": "onednn_3_7_openmp", "requires": ["avx512_bf16", "amx_bf16"], "compile_flags": ["-DUSE_ONEDNN"]}
+    ]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [
+    {
+      "contract_id": "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+      "status": "validated",
+      "phases": ["prefill"],
+      "function": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "openmp",
+          "work_partition": ["split_k"],
+          "dispatch": ["internal_threaded"],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp32",
+        "merge_order": "implementation_defined",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": true,
+        "split_strategy": "split_k"
+      }
+    }
+  ],
+  "notes": "Optional PyTorch BF16 parity provider. Converts FP32 storage to BF16, executes oneDNN 3.7 BRGEMM with BF16 destination preloaded by BF16 bias and a sum post-op, then expands BF16 output to FP32 storage. Exactness is defined at a fixed OpenMP thread count because PyTorch/oneDNN changes K partition and BF16 results across thread counts.",
+  "tests": {
+    "unit": ["research/bf16/compare_onednn_pytorch_linear.py"],
+    "real_shapes": [
+      "M=4032,N=3456,K=1152",
+      "M=4032,N=4304,K=1152",
+      "M=4032,N=1152,K=4304"
+    ]
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"cast": "const float*", "name": "A", "source": "activation:a"},
+      {"name": "B", "source": "weight:_first_weight"},
+      {"name": "bias", "source": "weight_f:_bias"},
+      {"cast": "float*", "name": "C", "source": "output:c"},
+      {"name": "M", "source": "dim:_m"},
+      {"name": "N", "source": "dim:_output_dim"},
+      {"name": "K", "source": "dim:_input_dim"}
+    ]
+  }
+}

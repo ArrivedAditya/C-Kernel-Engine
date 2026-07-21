@@ -849,13 +849,13 @@
           {
             "id": "vision.spatial_merge.output",
             "producer": "merge_main",
-            "tensor": "spatial_merge",
+            "tensor": "vision_spatial_merge",
             "logical_layout": "token_major",
             "axis_names": [
               "token",
               "channel"
             ],
-            "storage_dtype": "fp32"
+            "storage_dtype": "bf16"
           }
         ]
       },
@@ -867,13 +867,13 @@
           {
             "id": "vision.projector.output",
             "producer": "projector_fc2",
-            "tensor": "projector_fc2",
+            "tensor": "vision_projector_out",
             "logical_layout": "token_major",
             "axis_names": [
               "token",
               "channel"
             ],
-            "storage_dtype": "fp32"
+            "storage_dtype": "bf16"
           }
         ]
       },
@@ -891,7 +891,7 @@
               "token",
               "channel"
             ],
-            "storage_dtype": "fp32"
+            "storage_dtype": "bf16"
           }
         ]
       }

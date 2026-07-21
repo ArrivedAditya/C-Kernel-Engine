@@ -28,6 +28,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef USE_ONEDNN
+#include <dnnl.h>
+#include <pthread.h>
+#endif
+
 #if defined(__AVX512F__)
 #include <immintrin.h>
 #endif
@@ -1027,9 +1032,9 @@ void gemm_nt_bf16_amx_bf16_storage(const float *A,
     if (!A || !B || !C || M < 16 || N < 16 || K < 32 ||
         (M % 16) != 0 || (N % 16) != 0 || (K % 32) != 0) {
         fprintf(stderr,
-                "HARD KERNEL CONTRACT FAULT: AMX BF16 GEMM requires non-null buffers "
-                "and M%%16=N%%16=K%%32=0 (M=%d N=%d K=%d)\n",
-                M, N, K);
+            "HARD KERNEL CONTRACT FAULT: AMX BF16 GEMM requires non-null buffers "
+            "and M%%16=N%%16=K%%32=0 (M=%d N=%d K=%d)\n",
+            M, N, K);
         abort();
     }
     const size_t input_count = (size_t)M * K;
@@ -1065,6 +1070,173 @@ void gemm_nt_bf16_amx_bf16_storage(const float *A,
     fprintf(stderr,
             "HARD KERNEL CONTRACT FAULT: gemm_nt_bf16_amx_bf16_storage was selected "
             "without AMX BF16 support\n");
+    abort();
+#endif
+}
+
+void gemm_nt_bf16_prefill_shape_safe_bf16_storage(const float *A,
+                                                   const void *B,
+                                                   const float *bias,
+                                                   float *C,
+                                                   int M, int N, int K)
+{
+    const int amx_shape = M >= 16 && N >= 16 && K >= 32 &&
+                          (M % 16) == 0 && (N % 16) == 0 && (K % 32) == 0;
+    if (amx_shape && ck_gemm_bf16_amx_available()) {
+        gemm_nt_bf16_amx_bf16_storage(A, B, bias, C, M, N, K);
+        return;
+    }
+    gemm_nt_bf16_native_bf16_storage(A, B, bias, C, M, N, K);
+}
+
+#ifdef USE_ONEDNN
+static dnnl_engine_t ck_pytorch_brgemm_engine;
+static dnnl_stream_t ck_pytorch_brgemm_stream;
+static int ck_pytorch_brgemm_init_status = -1;
+static pthread_once_t ck_pytorch_brgemm_once = PTHREAD_ONCE_INIT;
+static pthread_mutex_t ck_pytorch_brgemm_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void ck_pytorch_brgemm_init(void)
+{
+    const dnnl_version_t *version = dnnl_version();
+    static const char expected_hash[] = "8d263e693366ef8db40acc569cc7d8edf644556d";
+    if (!version || version->major != 3 || version->minor != 7 || version->patch != 1 ||
+        version->cpu_runtime != DNNL_RUNTIME_OMP || !version->hash ||
+        strcmp(version->hash, expected_hash) != 0) {
+        fprintf(stderr,
+                "HARD KERNEL CONTRACT FAULT: PyTorch oneDNN BF16 BRGEMM requires "
+                "oneDNN 3.7.1 OpenMP at %s (found %d.%d.%d runtime=%u hash=%s)\n",
+                expected_hash,
+                version ? version->major : -1,
+                version ? version->minor : -1,
+                version ? version->patch : -1,
+                version ? version->cpu_runtime : 0,
+                version && version->hash ? version->hash : "<missing>");
+        return;
+    }
+    if (dnnl_engine_create(&ck_pytorch_brgemm_engine, dnnl_cpu, 0) != dnnl_success) return;
+    if (dnnl_stream_create(&ck_pytorch_brgemm_stream, ck_pytorch_brgemm_engine,
+                           dnnl_stream_default_flags) != dnnl_success) {
+        dnnl_engine_destroy(ck_pytorch_brgemm_engine);
+        ck_pytorch_brgemm_engine = NULL;
+        return;
+    }
+    ck_pytorch_brgemm_init_status = 0;
+}
+
+static void ck_pytorch_brgemm_fault(const char *message, int M, int N, int K)
+{
+    fprintf(stderr, "HARD KERNEL CONTRACT FAULT: PyTorch oneDNN BF16 BRGEMM %s "
+                    "(M=%d N=%d K=%d)\n", message, M, N, K);
+    abort();
+}
+#endif
+
+void gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage(const float *A,
+                                                       const void *B,
+                                                       const float *bias,
+                                                       float *C,
+                                                       int M, int N, int K)
+{
+#ifdef USE_ONEDNN
+    if (!A || !B || !C || M <= 0 || N <= 0 || K <= 0) {
+        ck_pytorch_brgemm_fault("received an invalid tensor contract", M, N, K);
+    }
+    pthread_once(&ck_pytorch_brgemm_once, ck_pytorch_brgemm_init);
+    if (ck_pytorch_brgemm_init_status != 0) {
+        ck_pytorch_brgemm_fault("could not initialize oneDNN", M, N, K);
+    }
+
+    const size_t input_count = (size_t)M * (size_t)K;
+    const size_t output_count = (size_t)M * (size_t)N;
+    uint16_t *input_bf16 = (uint16_t *)malloc(input_count * sizeof(*input_bf16));
+    uint16_t *output_bf16 = (uint16_t *)malloc(output_count * sizeof(*output_bf16));
+    uint16_t *bias_bf16 = bias ? (uint16_t *)malloc((size_t)N * sizeof(*bias_bf16)) : NULL;
+    if (!input_bf16 || !output_bf16 || (bias && !bias_bf16)) {
+        free(bias_bf16);
+        free(output_bf16);
+        free(input_bf16);
+        ck_pytorch_brgemm_fault("workspace allocation failed", M, N, K);
+    }
+    for (size_t i = 0; i < input_count; ++i) input_bf16[i] = float_to_bf16(A[i]);
+    if (bias) {
+        for (int j = 0; j < N; ++j) bias_bf16[j] = float_to_bf16(bias[j]);
+        for (int i = 0; i < M; ++i) {
+            memcpy(output_bf16 + (size_t)i * (size_t)N,
+                   bias_bf16, (size_t)N * sizeof(*bias_bf16));
+        }
+    }
+
+    dnnl_memory_desc_t src_md = NULL, weights_md = NULL, dst_md = NULL;
+    dnnl_primitive_attr_t attr = NULL;
+    dnnl_post_ops_t post_ops = NULL;
+    dnnl_primitive_desc_t primitive_desc = NULL;
+    dnnl_primitive_t primitive = NULL;
+    dnnl_memory_t src_mem = NULL, weights_mem = NULL, dst_mem = NULL;
+    dnnl_dims_t src_dims = {M, K};
+    dnnl_dims_t weights_dims = {K, N};
+    dnnl_dims_t dst_dims = {M, N};
+    dnnl_dims_t src_strides = {K, 1};
+    dnnl_dims_t weights_strides = {1, K};
+    dnnl_dims_t dst_strides = {N, 1};
+    dnnl_status_t status = dnnl_success;
+
+#define CK_DNNL(call) do { status = (call); if (status != dnnl_success) goto cleanup; } while (0)
+    pthread_mutex_lock(&ck_pytorch_brgemm_lock);
+    CK_DNNL(dnnl_memory_desc_create_with_strides(&src_md, 2, src_dims, dnnl_bf16, src_strides));
+    CK_DNNL(dnnl_memory_desc_create_with_strides(
+        &weights_md, 2, weights_dims, dnnl_bf16, weights_strides));
+    CK_DNNL(dnnl_memory_desc_create_with_strides(&dst_md, 2, dst_dims, dnnl_bf16, dst_strides));
+    if (bias) {
+        CK_DNNL(dnnl_primitive_attr_create(&attr));
+        CK_DNNL(dnnl_post_ops_create(&post_ops));
+        CK_DNNL(dnnl_post_ops_append_sum(post_ops, 1.0f, 0, dnnl_bf16));
+        CK_DNNL(dnnl_primitive_attr_set_post_ops(attr, post_ops));
+    }
+    CK_DNNL(dnnl_matmul_primitive_desc_create(
+        &primitive_desc, ck_pytorch_brgemm_engine, src_md, weights_md, NULL, dst_md, attr));
+    CK_DNNL(dnnl_primitive_create(&primitive, primitive_desc));
+    CK_DNNL(dnnl_memory_create(&src_mem, src_md, ck_pytorch_brgemm_engine, input_bf16));
+    CK_DNNL(dnnl_memory_create(
+        &weights_mem, weights_md, ck_pytorch_brgemm_engine, (void *)B));
+    CK_DNNL(dnnl_memory_create(&dst_mem, dst_md, ck_pytorch_brgemm_engine, output_bf16));
+    dnnl_exec_arg_t args[] = {
+        {DNNL_ARG_SRC, src_mem},
+        {DNNL_ARG_WEIGHTS, weights_mem},
+        {DNNL_ARG_DST, dst_mem},
+    };
+    CK_DNNL(dnnl_primitive_execute(
+        primitive, ck_pytorch_brgemm_stream, (int)(sizeof(args) / sizeof(args[0])), args));
+    CK_DNNL(dnnl_stream_wait(ck_pytorch_brgemm_stream));
+
+cleanup:
+    if (dst_mem) dnnl_memory_destroy(dst_mem);
+    if (weights_mem) dnnl_memory_destroy(weights_mem);
+    if (src_mem) dnnl_memory_destroy(src_mem);
+    if (primitive) dnnl_primitive_destroy(primitive);
+    if (primitive_desc) dnnl_primitive_desc_destroy(primitive_desc);
+    if (dst_md) dnnl_memory_desc_destroy(dst_md);
+    if (weights_md) dnnl_memory_desc_destroy(weights_md);
+    if (src_md) dnnl_memory_desc_destroy(src_md);
+    if (post_ops) dnnl_post_ops_destroy(post_ops);
+    if (attr) dnnl_primitive_attr_destroy(attr);
+    pthread_mutex_unlock(&ck_pytorch_brgemm_lock);
+#undef CK_DNNL
+
+    if (status != dnnl_success) {
+        free(bias_bf16);
+        free(output_bf16);
+        free(input_bf16);
+        ck_pytorch_brgemm_fault("execution failed", M, N, K);
+    }
+    for (size_t i = 0; i < output_count; ++i) C[i] = bf16_to_float(output_bf16[i]);
+    free(bias_bf16);
+    free(output_bf16);
+    free(input_bf16);
+#else
+    (void)A; (void)B; (void)bias; (void)C; (void)M; (void)N; (void)K;
+    fprintf(stderr, "HARD KERNEL CONTRACT FAULT: PyTorch oneDNN BF16 BRGEMM was "
+                    "selected without USE_ONEDNN=1\n");
     abort();
 #endif
 }

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import tempfile
 import unittest
@@ -19,6 +20,14 @@ SPEC.loader.exec_module(MODULE)
 
 
 class CustomPrefixProvenanceTests(unittest.TestCase):
+    def test_bridge_encoder_accepts_processor_planar_override(self) -> None:
+        bridge = MODULE._load_bridge_module()
+        encoder_parameters = inspect.signature(bridge._run_encoder).parameters
+        decoder_parameters = inspect.signature(bridge._run_decoder).parameters
+        self.assertIn("planar_override", encoder_parameters)
+        self.assertIn("forced_generation_token_ids", decoder_parameters)
+        self.assertIn("generation_trace_top_k", decoder_parameters)
+
     def _fixture(self, root: Path, source_bytes: bytes) -> tuple[Path, Path]:
         source = root / "source.ppm"
         source.write_bytes(source_bytes)

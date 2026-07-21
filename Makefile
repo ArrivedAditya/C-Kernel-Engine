@@ -2091,6 +2091,40 @@ test-bf16-practical-precision: $(LIB)
 		unittest/bf16/test_qwen3vl_practical_precision_bf16.py \
 		--report version/v8/.cache/reports/bf16_practical_precision_latest.json
 
+.PHONY: test-bf16-practical-precision-full
+test-bf16-practical-precision-full: $(LIB)
+	@echo "Running production-shape BF16 precision matrix..."
+	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) \
+		unittest/bf16/test_qwen3vl_practical_precision_bf16.py \
+		--full-shapes \
+		--report version/v8/.cache/reports/bf16_practical_precision_full_latest.json
+
+BF16_ONEDNN_SRC ?= $(HOME)/.cache/onednn-3.7.1-src
+BF16_ONEDNN_BUILD ?= $(HOME)/.cache/onednn-3.7.1-build
+BF16_ONEDNN_THREADS ?= 1 16 24
+BF16_ONEDNN_PROBE_DIR ?= build/research_bf16_onednn
+BF16_ONEDNN_PROBE_LIB := $(BF16_ONEDNN_PROBE_DIR)/libonednn_pytorch_linear_probe.so
+
+.PHONY: test-bf16-pytorch-onednn-real-shapes
+test-bf16-pytorch-onednn-real-shapes:
+	@test -f "$(BF16_ONEDNN_SRC)/include/dnnl.h" || { echo "ERROR: exact oneDNN 3.7 source not found at $(BF16_ONEDNN_SRC)"; exit 2; }
+	@test -f "$(BF16_ONEDNN_BUILD)/src/libdnnl.so" || { echo "ERROR: exact oneDNN 3.7 library not found at $(BF16_ONEDNN_BUILD)/src/libdnnl.so"; exit 2; }
+	@mkdir -p "$(BF16_ONEDNN_PROBE_DIR)"
+	$(CC) -O3 -shared -fPIC -I"$(BF16_ONEDNN_SRC)/include" \
+		-o "$(BF16_ONEDNN_PROBE_LIB)" research/bf16/onednn_pytorch_linear_probe.c \
+		-L"$(BF16_ONEDNN_BUILD)/src" -ldnnl -Wl,-rpath,"$(BF16_ONEDNN_BUILD)/src"
+	@$(MAKE) --no-print-directory BUILD_DIR=build_onednn USE_ONEDNN=1 USE_NATIVE= \
+		DNNL_INC="$(BF16_ONEDNN_SRC)/include" DNNL_LIB="$(BF16_ONEDNN_BUILD)/src" \
+		build_onednn/libckernel_engine.so
+	@for threads in $(BF16_ONEDNN_THREADS); do \
+		OMP_NUM_THREADS=$$threads $(PYTHON) $(PYTHONFLAGS) \
+			research/bf16/run_pytorch_onednn_real_shapes.py \
+			--workdir "$(BF16_ONEDNN_PROBE_DIR)/real_shapes_t$$threads" \
+			--library "$(BF16_ONEDNN_PROBE_LIB)" \
+			--ck-library build_onednn/libckernel_engine.so \
+			--threads $$threads || exit $$?; \
+	done
+
 test-bf16: $(LIB) test-libs
 	@failed=0; \
 	for t in $(PY_TESTS_BF16); do \
@@ -2109,6 +2143,16 @@ test-bf16: $(LIB) test-libs
 	@echo "Running v8 BF16 file-backed BUMP allocator guardrail..."
 	$(PYTHON) $(PYTHONFLAGS) unittest/test_bump_alloc_mixed.py
 	@$(MAKE) --no-print-directory test-bf16-xray
+	@if [ "$${CK_BF16_ONEDNN_REAL_SHAPES:-0}" = "1" ]; then \
+		$(MAKE) --no-print-directory test-bf16-pytorch-onednn-real-shapes; \
+	else \
+		echo "SKIP: PyTorch/oneDNN production-shape gate (set CK_BF16_ONEDNN_REAL_SHAPES=1)"; \
+	fi
+	@if [ "$${CK_BF16_FULL_SHAPES:-0}" = "1" ]; then \
+		$(MAKE) --no-print-directory test-bf16-practical-precision-full; \
+	else \
+		echo "SKIP: BF16 H=16 T=4032 D=72 attention gate (set CK_BF16_FULL_SHAPES=1)"; \
+	fi
 
 test-v4-q4k:
 	@if [ -z "$(GGUF_PATH)" ]; then \

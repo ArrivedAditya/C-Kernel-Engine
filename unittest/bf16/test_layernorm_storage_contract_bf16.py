@@ -13,19 +13,23 @@ import torch
 ROOT = Path(__file__).resolve().parents[2]
 LIB = ctypes.CDLL(str(ROOT / "build" / "libckernel_engine.so"))
 KERNEL = LIB.layernorm_naive_serial_bf16_storage
+PYTORCH_KERNEL = LIB.layernorm_pytorch_welford_bf16_storage
 FLOAT_P = ctypes.POINTER(ctypes.c_float)
-KERNEL.argtypes = [
+ARGTYPES = [
     FLOAT_P, FLOAT_P, FLOAT_P, FLOAT_P, FLOAT_P, FLOAT_P,
     ctypes.c_int, ctypes.c_int, ctypes.c_float,
 ]
+KERNEL.argtypes = ARGTYPES
 KERNEL.restype = None
+PYTORCH_KERNEL.argtypes = ARGTYPES
+PYTORCH_KERNEL.restype = None
 
 
 def bf16_values(values: np.ndarray) -> np.ndarray:
     return torch.from_numpy(values).to(torch.bfloat16).float().numpy()
 
 
-def run_case(tokens: int, dim: int, eps: float, seed: int) -> tuple[float, float]:
+def run_case(tokens: int, dim: int, eps: float, seed: int, *, kernel=KERNEL) -> tuple[float, float]:
     rng = np.random.default_rng(seed)
     x = bf16_values(rng.standard_normal((tokens, dim), dtype=np.float32))
     gamma = bf16_values(rng.standard_normal(dim, dtype=np.float32))
@@ -33,7 +37,7 @@ def run_case(tokens: int, dim: int, eps: float, seed: int) -> tuple[float, float
     actual = np.empty_like(x)
     mean = np.empty(tokens, dtype=np.float32)
     rstd = np.empty(tokens, dtype=np.float32)
-    KERNEL(
+    kernel(
         x.ctypes.data_as(FLOAT_P),
         gamma.ctypes.data_as(FLOAT_P),
         beta.ctypes.data_as(FLOAT_P),
@@ -65,6 +69,13 @@ def main() -> int:
                 f"max_abs={max_abs:.9g} rmse={rmse:.9g}"
             )
         print(f"T={tokens} D={dim} max_abs={max_abs:.9g} rmse={rmse:.9g}")
+    max_abs, rmse = run_case(4032, 1152, 1e-6, 107, kernel=PYTORCH_KERNEL)
+    if max_abs > 0.03125 or rmse > 0.003:
+        raise AssertionError(
+            "PyTorch Welford LayerNorm exceeds the existing BF16 gate: "
+            f"max_abs={max_abs:.9g} rmse={rmse:.9g}"
+        )
+    print(f"T=4032 D=1152 pytorch_welford max_abs={max_abs:.9g} rmse={rmse:.9g}")
     print(f"BF16 LayerNorm storage contract parity: {len(cases)}/{len(cases)}")
     return 0
 

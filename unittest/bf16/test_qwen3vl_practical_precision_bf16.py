@@ -63,6 +63,11 @@ def record(rows, family, shape, metrics, limits, *, min_exact_ratio=None):
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--report", type=Path)
+    parser.add_argument(
+        "--full-shapes",
+        action="store_true",
+        help="Run high-memory production-shape attention coverage.",
+    )
     args = parser.parse_args()
     if not native_bf16_supported():
         report = {
@@ -105,6 +110,23 @@ def main() -> int:
            attention.run_case(2, 2, 128, 72, 72, 104)[:2], (0.03125, 0.003))
     record(rows, "vision_attention", {"heads": 2, "tokens": 512, "dim": 72},
            attention.run_case(2, 2, 512, 72, 72, 105)[:2], (0.03125, 0.003))
+    if args.full_shapes:
+        record(
+            rows,
+            "layernorm_pytorch_welford_production",
+            {"tokens": 4032, "dim": 1152},
+            layernorm.run_case(
+                4032, 1152, 1e-6, 107, kernel=layernorm.PYTORCH_KERNEL
+            ),
+            (0.03125, 0.003),
+        )
+        record(
+            rows,
+            "vision_attention_production",
+            {"heads": 16, "tokens": 4032, "dim": 72},
+            attention.run_case(16, 16, 4032, 72, 72, 106)[:2],
+            (0.03125, 0.003),
+        )
 
     report = {
         "schema": "cke.bf16_practical_precision",
@@ -112,7 +134,11 @@ def main() -> int:
         "model_shape_family": "qwen3_vl_vision",
         "status": "pass",
         "rows": rows,
-        "scope": "Practical leaf/reduction shapes; full 4032-token stitched parity is a separate high-memory gate.",
+        "scope": (
+            "Practical leaf/reduction shapes. The production H=16, T=4032, D=72 "
+            "attention row is present only when --full-shapes is requested."
+        ),
+        "full_shapes": args.full_shapes,
     }
     if args.report:
         args.report.parent.mkdir(parents=True, exist_ok=True)

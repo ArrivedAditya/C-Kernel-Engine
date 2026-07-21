@@ -237,6 +237,16 @@ void gemm_nt_bf16_amx_bf16_storage(const float *A,
                                     const float *bias,
                                     float *C,
                                     int M, int N, int K);
+void gemm_nt_bf16_prefill_shape_safe_bf16_storage(const float *A,
+                                                   const void *B,
+                                                   const float *bias,
+                                                   float *C,
+                                                   int M, int N, int K);
+void gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage(const float *A,
+                                                      const void *B,
+                                                      const float *bias,
+                                                      float *C,
+                                                      int M, int N, int K);
 int ck_gemm_bf16_amx_available(void);
 
 // =============================================================================
@@ -863,6 +873,13 @@ void layernorm_naive_serial_bf16_storage(const float *input,
                                          float *mean_cache,
                                          float *rstd_cache,
                                          int tokens, int d_model, float eps);
+void layernorm_pytorch_welford_bf16_storage(const float *input,
+                                             const float *gamma,
+                                             const float *beta,
+                                             float *output,
+                                             float *mean_cache,
+                                             float *rstd_cache,
+                                             int tokens, int d_model, float eps);
 
 void layernorm_backward_kernel(const float *d_output,
                                const float *input,

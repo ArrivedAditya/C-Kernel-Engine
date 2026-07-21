@@ -15,6 +15,7 @@ LIB = ctypes.CDLL(str(ROOT / "build" / "libckernel_engine.so"))
 KERNEL = LIB.gemm_nt_bf16_bf16_storage
 NATIVE_KERNEL = LIB.gemm_nt_bf16_native_bf16_storage
 AMX_KERNEL = LIB.gemm_nt_bf16_amx_bf16_storage
+SHAPE_SAFE_KERNEL = LIB.gemm_nt_bf16_prefill_shape_safe_bf16_storage
 FLOAT_P = ctypes.POINTER(ctypes.c_float)
 UINT16_P = ctypes.POINTER(ctypes.c_uint16)
 KERNEL.argtypes = [
@@ -26,6 +27,8 @@ NATIVE_KERNEL.argtypes = KERNEL.argtypes
 NATIVE_KERNEL.restype = None
 AMX_KERNEL.argtypes = KERNEL.argtypes
 AMX_KERNEL.restype = None
+SHAPE_SAFE_KERNEL.argtypes = KERNEL.argtypes
+SHAPE_SAFE_KERNEL.restype = None
 AMX_AVAILABLE = LIB.ck_gemm_bf16_amx_available
 AMX_AVAILABLE.argtypes = []
 AMX_AVAILABLE.restype = ctypes.c_int
@@ -100,12 +103,28 @@ def main() -> int:
             f"native M={m} N={n} K={k} max_abs={metrics['max_abs']:.9g} "
             f"rmse={metrics['rmse']:.9g}"
         )
+    segmented = run_case_detailed(4, 32, 32, 14, kernel=SHAPE_SAFE_KERNEL)
+    if segmented["max_abs"] > 0.5 or segmented["rmse"] > 0.03:
+        raise AssertionError(f"shape-safe short-segment mismatch: {segmented}")
+    tested += 1
+    print(
+        "shape-safe short segment M=4 N=32 K=32 "
+        f"max_abs={segmented['max_abs']:.9g} rmse={segmented['rmse']:.9g}"
+    )
     if amx_bf16_supported():
         amx = run_case_detailed(16, 32, 32, 4, kernel=AMX_KERNEL)
         if amx["max_abs"] != 0.0 or amx["rmse"] != 0.0:
             raise AssertionError(f"AMX BF16 storage mismatch: {amx}")
         tested += 1
         print("AMX M=16 N=32 K=32 exact")
+        shape_aligned = run_case_detailed(16, 32, 32, 4, kernel=SHAPE_SAFE_KERNEL)
+        if shape_aligned != amx:
+            raise AssertionError(
+                f"shape-safe aligned provider did not preserve AMX metrics: "
+                f"shape_safe={shape_aligned} amx={amx}"
+            )
+        tested += 1
+        print("shape-safe aligned M=16 N=32 K=32 exact")
     else:
         print("AMX M=16 N=32 K=32 SKIP (AMX BF16 unavailable)")
     print(f"BF16 GEMM output storage parity: {tested}/{tested}")
