@@ -19,7 +19,7 @@ import sys
 import time
 from array import array
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 try:
     from PIL import Image
@@ -2467,6 +2467,7 @@ def _run_encoder(
     image_mode: str,
     image_path: Path | None = None,
     profile_csv_path: Path | None = None,
+    planar_override: Sequence[float] | None = None,
 ) -> dict[str, Any]:
     encoder_t0 = time.perf_counter()
     old_profile_csv_env = os.environ.get("CK_PROFILE_CSV")
@@ -2515,7 +2516,17 @@ def _run_encoder(
         prefix_decode_policy = _vision_prefix_decode_policy(layout_cfg)
 
         image_prepare_t0 = time.perf_counter()
-        if image_path is not None:
+        if planar_override is not None:
+            planar = [float(value) for value in planar_override]
+            interleaved = []
+            image_report = {
+                "image_source": "processor-planar",
+                "image_mode": image_mode,
+                "image_path": str(image_path.resolve()) if image_path is not None else None,
+                "source_image_size": [image_width, image_height],
+                "preprocess": "caller_supplied_planar",
+            }
+        elif image_path is not None:
             image_report = _load_image_file(
                 image_path,
                 image_height,
@@ -2695,6 +2706,8 @@ def _run_decoder(
     stream_output: bool = False,
     generation_progress_every: int = 0,
     profile_csv_path: Path | None = None,
+    forced_generation_token_ids: list[int] | None = None,
+    generation_trace_top_k: int = 0,
 ) -> dict[str, Any]:
     # Mixed image/text prefill normally uses the prefill-capable staged decoder:
     # decode IR plus prefill-sized activations.  That gives one model instance
@@ -2835,6 +2848,8 @@ def _run_decoder(
         logits_arr = array("f", logits)
         stop_ids = {int(token_id) for token_id in list(stop_token_ids or [])}
         generated_token_ids: list[int] = []
+        teacher_forced_input_ids: list[int] = []
+        generation_logit_trace: list[dict[str, Any]] = []
         generation_stop_reason = "disabled"
         if max_tokens > 0:
             runtime_context_len = int(runtime.get("context_length", 0) or 0)
@@ -2859,18 +2874,32 @@ def _run_decoder(
             current_logits: array | ctypes.Array[Any] = logits_arr
             streamed_text = ""
             for step in range(int(effective_max_tokens)):
+                if int(generation_trace_top_k) > 0:
+                    generation_logit_trace.append({
+                        "step": int(step),
+                        "top_k": [
+                            {"token_id": int(token_id), "logit": float(logit)}
+                            for token_id, logit in _topk(
+                                array("f", current_logits), int(generation_trace_top_k)
+                            )
+                        ],
+                    })
                 banned_ids = stop_ids if len(generated_token_ids) < int(min_response_tokens) else set()
-                next_token = _sample_next_token(
-                    current_logits,
-                    temperature=float(temperature),
-                    sample_top_k=int(sample_top_k),
-                    top_p=float(top_p),
-                    min_p=float(min_p),
-                    recent_tokens=generated_token_ids,
-                    repeat_penalty=float(repeat_penalty),
-                    repeat_last_n=int(repeat_last_n),
-                    banned_ids=banned_ids,
-                )
+                if forced_generation_token_ids is not None and step < len(forced_generation_token_ids):
+                    next_token = int(forced_generation_token_ids[step])
+                    teacher_forced_input_ids.append(next_token)
+                else:
+                    next_token = _sample_next_token(
+                        current_logits,
+                        temperature=float(temperature),
+                        sample_top_k=int(sample_top_k),
+                        top_p=float(top_p),
+                        min_p=float(min_p),
+                        recent_tokens=generated_token_ids,
+                        repeat_penalty=float(repeat_penalty),
+                        repeat_last_n=int(repeat_last_n),
+                        banned_ids=banned_ids,
+                    )
                 if int(next_token) in stop_ids:
                     generation_stop_reason = "stop_token"
                     break
@@ -2950,6 +2979,8 @@ def _run_decoder(
             "logits": logits_arr,
             "runtime_mode": "decode",
             "generated_token_ids": generated_token_ids,
+            "teacher_forced_input_ids": teacher_forced_input_ids,
+            "generation_logit_trace": generation_logit_trace,
             "generated_text": generated_text,
             "generated_text_raw": generated_text_raw,
             "generation_stop_reason": generation_stop_reason,

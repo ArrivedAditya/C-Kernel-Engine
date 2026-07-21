@@ -114,6 +114,19 @@ def _torch_captures(
     original_mlp_forwards: list[tuple[Any, Any]] = []
     original_attn_forwards: list[tuple[Any, Any]] = []
 
+    if "vision_spatial_merge" in frontend_wanted:
+        def capture_spatial_merge(_module, _inputs, output):
+            merged_width = int(model.merger.hidden_size)
+            captures["vision_spatial_merge"] = output.reshape(-1, merged_width).detach().cpu().float()
+
+        handles.append(model.merger.norm.register_forward_hook(capture_spatial_merge))
+
+    if "vision_projector_out" in frontend_wanted:
+        def capture_projector_fc2(_module, _inputs, output):
+            captures["vision_projector_out"] = output.detach().cpu().float()
+
+        handles.append(model.merger.linear_fc2.register_forward_hook(capture_projector_fc2))
+
     def make_norm1_hook(layer: int):
         def hook(_module, _inputs, output):
             captures[f"ln1@{layer}"] = output.detach().cpu().float()

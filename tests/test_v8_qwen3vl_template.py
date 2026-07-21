@@ -400,6 +400,20 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
                     self.assertTrue(checkpoint["kernel_id"])
                     self.assertTrue(checkpoint["function"])
                     self.assertEqual(len(checkpoint["axis_names"]), 2 if checkpoint["logical_layout"] == "token_major" else 3)
+                for checkpoint_id in (
+                    "vision.spatial_merge.output",
+                    "vision.projector.output",
+                    "vision.prefix.output",
+                ):
+                    self.assertEqual(checkpoint_by_id[checkpoint_id]["storage_dtype"], "bf16")
+                self.assertEqual(
+                    checkpoint_by_id["vision.spatial_merge.output"]["tensor"],
+                    "vision_spatial_merge",
+                )
+                self.assertEqual(
+                    checkpoint_by_id["vision.projector.output"]["tensor"],
+                    "vision_projector_out",
+                )
 
     def test_stale_semantic_checkpoint_declaration_hard_fails(self) -> None:
         template = {
@@ -1004,6 +1018,11 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             self.assertIn("ck_debug_export_hidden(model, 0, \"out_proj\"", text)
             self.assertIn("ck_debug_export_hidden(model, 0, \"ln1\"", text)
             self.assertIn("ck_debug_export_hidden(model, 0, \"ffn_inp_normed\"", text)
+            spatial_export = next(
+                line for line in text.splitlines()
+                if 'ck_debug_export_hidden(model, -1, "vision_spatial_merge"' in line
+            )
+            self.assertIn("(48) * (48) * (1152)", spatial_export)
             self.assertIn("feature_concat", text)
             self.assertIn("transpose_attn_out_to_token_major", text)
             self.assertNotIn("transpose_inplace();", text)

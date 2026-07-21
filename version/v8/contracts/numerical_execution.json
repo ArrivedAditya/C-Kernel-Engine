@@ -866,6 +866,41 @@
       "description": "Float-buffer LayerNorm with BF16 input/output storage boundaries and the established ggml matched mean/variance reduction.",
       "operator_family": "layernorm"
     },
+    "layernorm_bf16_storage_fp32_compute_aten_avx2_welford_bf16_output": {
+      "status": "observed",
+      "operator_family": "layernorm",
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32"
+      },
+      "reduction": {
+        "kind": "normalization",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "pairwise_tree"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "storage": {
+        "input": "bf16",
+        "weight": "bf16",
+        "output": "bf16"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "output_store"
+        ]
+      },
+      "description": "Float-buffer BF16 LayerNorm reproducing PyTorch 2.8 GCC 13.3 ATen's AVX2 Welford chunk and cascade structure using explicit intrinsics. Promotion requires the stitched monotonic X-ray gate because compiler contraction can differ by FP32 ULPs."
+    },
     "layernorm_fp32_ggml_chunked_contracted": {
       "status": "validated",
       "operator_family": "layernorm",
@@ -1319,6 +1354,72 @@
       },
       "position_transform": null,
       "description": "BF16 weights and BF16-rounded activations using AMX 16x16x32 tile dot products, ascending K tiles, independent 2D output-tile partitioning, and BF16 RNE output storage.",
+      "operator_family": "gemm"
+    },
+    "bf16_weight_bf16_input_shape_safe_prefill_bf16_output": {
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "bf16",
+        "output": "bf16"
+      },
+      "compute": {
+        "input": "bf16_rne",
+        "weight": "bf16",
+        "accumulator": "fp32",
+        "evaluation_order": "amx_tile32_for_aligned_shapes_else_native_pair_dot"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "output_store"]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "implementation_defined"
+      },
+      "threading": {
+        "work_partition": "output_tiles",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Segmented BF16 prefill provider: aligned M/N/K uses the AMX tile32 contract; short or unaligned text segments use the native paired-dot contract. Both paths round input and output at the same BF16 storage boundaries.",
+      "operator_family": "gemm"
+    },
+    "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output": {
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "bf16",
+        "output": "bf16"
+      },
+      "compute": {
+        "input": "bf16_rne",
+        "weight": "bf16",
+        "accumulator": "fp32",
+        "evaluation_order": "onednn_3_7_brg_matmul_avx10_1_512_amx"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "output_store"]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "implementation_defined"
+      },
+      "threading": {
+        "work_partition": "split_k",
+        "split_strategy": "split_k",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": true
+      },
+      "position_transform": null,
+      "description": "PyTorch BF16 Linear parity contract for oneDNN 3.7 OpenMP BRGEMM. The result is deterministic only for a fixed thread count; changing the oneDNN K partition can alter BF16 outputs by one storage step.",
       "operator_family": "gemm"
     }
   }

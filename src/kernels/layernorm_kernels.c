@@ -21,6 +21,7 @@
 #include <immintrin.h>
 #endif
 #include <math.h>
+#include <stdlib.h>
 
 static inline void zero_layernorm_padding(float *out_ptr,
                                           int d_model,
@@ -801,6 +802,204 @@ void layernorm_naive_serial_bf16_storage(const float *input,
     for (size_t i = 0; i < count; ++i) {
         output[i] = bf16_to_float(float_to_bf16(output[i]));
     }
+}
+
+#if defined(__AVX2__) && defined(__FMA__)
+static inline void layernorm_pytorch_add_moments_vec(
+    int m0_add,
+    __m256 m1_add,
+    __m256 m2_add,
+    int *m0,
+    __m256 *m1,
+    __m256 *m2)
+{
+    const int n = *m0 + m0_add;
+    const float c = n == 0 ? 0.0f : (float)m0_add / (float)n;
+    const __m256 delta = _mm256_sub_ps(m1_add, *m1);
+    const __m256 c_vec = _mm256_set1_ps(c);
+    *m1 = _mm256_fmadd_ps(delta, c_vec, *m1);
+    const __m256 delta_term = _mm256_mul_ps(
+        _mm256_mul_ps(delta, delta), c_vec);
+    const __m256 correction = _mm256_fmadd_ps(
+        delta_term, _mm256_set1_ps((float)*m0), m2_add);
+    *m2 = _mm256_add_ps(*m2, correction);
+    *m0 = n;
+}
+
+static inline void layernorm_pytorch_add_moments_scalar(
+    int m0_add,
+    float m1_add,
+    float m2_add,
+    int *m0,
+    float *m1,
+    float *m2)
+{
+    const int n = *m0 + m0_add;
+    const float c = n == 0 ? 0.0f : (float)m0_add / (float)n;
+    const float delta = m1_add - *m1;
+    *m1 = fmaf(c, delta, *m1);
+    const float delta_term = (delta * delta) * c;
+    *m2 += fmaf(delta_term, (float)*m0, m2_add);
+    *m0 = n;
+}
+
+/*
+ * Match the AVX2 ATen BF16 RowwiseMoments provider selected by PyTorch 2.8.
+ * It consumes 16 BF16 values per vector, converts its lower and upper halves
+ * to two 8-lane FP32 vectors, and combines 16-vector Welford chunks
+ * through a binary cascade. The activation arena contains BF16-rounded FP32
+ * values, so the same lane grouping can be reproduced without changing ABI.
+ */
+static inline void layernorm_pytorch_bf16_rowwise_moments_avx2(
+    const float *x,
+    int n_values,
+    float *mean,
+    float *variance)
+{
+    enum { BF16_VEC_SIZE = 16, ACC_VEC_SIZE = 8, CHUNK_SIZE = 16, MAX_DEPTH = 64 };
+    const int n_vec = n_values / BF16_VEC_SIZE;
+    const int chunks = (n_vec + CHUNK_SIZE - 1) / CHUNK_SIZE;
+    int depth = 0;
+    for (int v = chunks; v > 1; v = (v + 1) / 2) {
+        ++depth;
+    }
+    if (depth == 0) {
+        depth = 1;
+    }
+
+    int m0_stack[MAX_DEPTH] = {0};
+    __m256 m1_stack[MAX_DEPTH];
+    __m256 m2_stack[MAX_DEPTH];
+    const __m256 zero = _mm256_setzero_ps();
+    for (int i = 0; i < depth; ++i) {
+        m1_stack[i] = zero;
+        m2_stack[i] = zero;
+    }
+
+    for (int chunk = 0; chunk < chunks; ++chunk) {
+        const int remaining = n_vec - chunk * CHUNK_SIZE;
+        const int count = remaining < CHUNK_SIZE ? remaining : CHUNK_SIZE;
+        __m256 local_m1_lo = zero;
+        __m256 local_m1_hi = zero;
+        __m256 local_m2_lo = zero;
+        __m256 local_m2_hi = zero;
+        const float *chunk_x = x + (size_t)chunk * CHUNK_SIZE * BF16_VEC_SIZE;
+
+        for (int j = 0; j < count; ++j) {
+            const float c = 1.0f / (float)(j + 1);
+            const __m256 c_vec = _mm256_set1_ps(c);
+            const float *row = chunk_x + (size_t)j * BF16_VEC_SIZE;
+            const __m256 x_lo = _mm256_loadu_ps(row);
+            const __m256 x_hi = _mm256_loadu_ps(row + ACC_VEC_SIZE);
+            const __m256 delta_lo = _mm256_sub_ps(x_lo, local_m1_lo);
+            const __m256 delta_hi = _mm256_sub_ps(x_hi, local_m1_hi);
+            local_m1_lo = _mm256_fmadd_ps(delta_lo, c_vec, local_m1_lo);
+            local_m1_hi = _mm256_fmadd_ps(delta_hi, c_vec, local_m1_hi);
+            local_m2_lo = _mm256_fmadd_ps(
+                delta_lo, _mm256_sub_ps(x_lo, local_m1_lo), local_m2_lo);
+            local_m2_hi = _mm256_fmadd_ps(
+                delta_hi, _mm256_sub_ps(x_hi, local_m1_hi), local_m2_hi);
+        }
+
+        layernorm_pytorch_add_moments_vec(
+            count, local_m1_lo, local_m2_lo,
+            &m0_stack[0], &m1_stack[0], &m2_stack[0]);
+        layernorm_pytorch_add_moments_vec(
+            count, local_m1_hi, local_m2_hi,
+            &m0_stack[0], &m1_stack[0], &m2_stack[0]);
+
+        int mask = chunk + 1;
+        for (int level = 1; level < depth && (mask & 1) == 0; ++level) {
+            layernorm_pytorch_add_moments_vec(
+                m0_stack[level - 1], m1_stack[level - 1], m2_stack[level - 1],
+                &m0_stack[level], &m1_stack[level], &m2_stack[level]);
+            m0_stack[level - 1] = 0;
+            m1_stack[level - 1] = zero;
+            m2_stack[level - 1] = zero;
+            mask >>= 1;
+        }
+    }
+    for (int level = 1; level < depth; ++level) {
+        layernorm_pytorch_add_moments_vec(
+            m0_stack[level], m1_stack[level], m2_stack[level],
+            &m0_stack[0], &m1_stack[0], &m2_stack[0]);
+    }
+
+    float m1_lanes[ACC_VEC_SIZE];
+    float m2_lanes[ACC_VEC_SIZE];
+    _mm256_storeu_ps(m1_lanes, m1_stack[0]);
+    _mm256_storeu_ps(m2_lanes, m2_stack[0]);
+    int scalar_count = 0;
+    float scalar_m1 = 0.0f;
+    float scalar_m2 = 0.0f;
+    for (int i = n_vec * BF16_VEC_SIZE; i < n_values; ++i) {
+        const float delta = x[i] - scalar_m1;
+        ++scalar_count;
+        scalar_m1 += delta / (float)scalar_count;
+        scalar_m2 += delta * (x[i] - scalar_m1);
+    }
+    const int lane_count = n_vec * BF16_VEC_SIZE / ACC_VEC_SIZE;
+    for (int lane = 0; lane < ACC_VEC_SIZE; ++lane) {
+        layernorm_pytorch_add_moments_scalar(
+            lane_count, m1_lanes[lane], m2_lanes[lane],
+            &scalar_count, &scalar_m1, &scalar_m2);
+    }
+    *mean = scalar_m1;
+    *variance = scalar_m2 / (float)n_values;
+}
+#endif
+
+void layernorm_pytorch_welford_bf16_storage(const float *input,
+                                             const float *gamma,
+                                             const float *beta,
+                                             float *output,
+                                             float *mean_cache,
+                                             float *rstd_cache,
+                                             int tokens,
+                                             int d_model,
+                                             float eps)
+{
+#if !defined(__AVX2__) || !defined(__FMA__)
+    (void)input; (void)gamma; (void)beta; (void)output;
+    (void)mean_cache; (void)rstd_cache; (void)tokens; (void)d_model; (void)eps;
+    abort();
+#else
+    for (int t = 0; t < tokens; ++t) {
+        const float *x = input + (size_t)t * (size_t)d_model;
+        float *y = output + (size_t)t * (size_t)d_model;
+        float mean;
+        float variance;
+        layernorm_pytorch_bf16_rowwise_moments_avx2(x, d_model, &mean, &variance);
+        const float rstd = 1.0f / sqrtf(variance + eps);
+        const float bias = -rstd * mean;
+        int i = 0;
+        for (; i + 7 < d_model; i += 8) {
+            const __m256 x_vec = _mm256_loadu_ps(x + i);
+            const __m256 gamma_vec = gamma ? _mm256_loadu_ps(gamma + i) : _mm256_set1_ps(1.0f);
+            const __m256 beta_vec = beta ? _mm256_loadu_ps(beta + i) : _mm256_setzero_ps();
+            const __m256 normalized = _mm256_fmadd_ps(
+                x_vec, _mm256_set1_ps(rstd), _mm256_set1_ps(bias));
+            const __m256 transformed = _mm256_fmadd_ps(normalized, gamma_vec, beta_vec);
+            float lanes[8];
+            _mm256_storeu_ps(lanes, transformed);
+            for (int lane = 0; lane < 8; ++lane) {
+                y[i + lane] = bf16_to_float(float_to_bf16(lanes[lane]));
+            }
+        }
+        for (; i < d_model; ++i) {
+            const float gamma_v = gamma ? gamma[i] : 1.0f;
+            const float beta_v = beta ? beta[i] : 0.0f;
+            const float value = fmaf(fmaf(x[i], rstd, bias), gamma_v, beta_v);
+            y[i] = bf16_to_float(float_to_bf16(value));
+        }
+        if (mean_cache) {
+            mean_cache[t] = mean;
+        }
+        if (rstd_cache) {
+            rstd_cache[t] = rstd;
+        }
+    }
+#endif
 }
 
 // LayerNorm backward kernel (model-agnostic), adapted from C-Transformer's

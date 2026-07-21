@@ -96,6 +96,62 @@ class NumericalExecutionContractTests(unittest.TestCase):
         )
         self.assertEqual(plan["checkpoint"]["axis_names"], ["token", "channel"])
 
+    def test_pytorch_onednn_brgemm_contract_resolves_exact_provider(self):
+        doc = circuit(validation="validated")
+        requirement = doc["required_numerical_contracts"]["gemm"]["phases"]["prefill"]
+        requirement["contract_id"] = (
+            "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output"
+        )
+        plan = resolver.resolve_contract(
+            doc, self.contracts, self.kernels, "gemm", "prefill", mode="production"
+        )
+        self.assertEqual(
+            plan["kernel"]["id"],
+            "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+        )
+        self.assertEqual(plan["implementation"]["threading"]["runtime"], "openmp")
+        self.assertTrue(
+            plan["contract"]["semantics"]["threading"]
+            ["thread_count_changes_arithmetic_order"]
+        )
+
+    def test_pytorch_welford_layernorm_resolves_only_in_bringup(self):
+        doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen3_vl_vision.json"
+        )
+        requirement = doc["required_numerical_contracts"]["vision.layer.layernorm"]
+        requirement["phases"]["prefill"] = {
+            "contract_id": (
+                "layernorm_bf16_storage_fp32_compute_aten_avx2_welford_bf16_output"
+            ),
+            "validation": "observed",
+            "evidence": "production-shape PyTorch 2.8 oracle",
+        }
+        plan = resolver.resolve_contract(
+            doc,
+            self.contracts,
+            self.kernels,
+            "vision.layer.layernorm",
+            "prefill",
+            mode="bringup",
+        )
+        self.assertEqual(plan["kernel"]["id"], "layernorm_bf16_pytorch_welford")
+        self.assertEqual(
+            plan["kernel"]["function"],
+            "layernorm_pytorch_welford_bf16_storage",
+        )
+        with self.assertRaisesRegex(
+            resolver.ContractError, "production resolution uses unvalidated contract"
+        ):
+            resolver.resolve_contract(
+                doc,
+                self.contracts,
+                self.kernels,
+                "vision.layer.layernorm",
+                "prefill",
+                mode="production",
+            )
+
     def test_bf16_position_contract_resolves_exact_kernel(self):
         circuit_doc = resolver.load_json(
             ROOT / "version" / "v8" / "circuits" / "qwen3_vl_vision.json"

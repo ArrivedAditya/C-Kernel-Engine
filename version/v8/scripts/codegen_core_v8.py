@@ -701,7 +701,7 @@ def emit_op(
             f"""    {{
         const int Hkv = NUM_KV_HEADS;
         const int D = HEAD_DIM;
-        const int num_tokens = MAX_SEQ_LEN;
+        const int num_tokens = 1;
         float *buf = (float*)(model->bump + {scratch_name});
         float *_temp_buf = (float*)(model->bump + A_LAYER_OUTPUT);
         for (int t = 0; t < num_tokens; t++) {{
@@ -758,13 +758,6 @@ def emit_op(
         memcpy(buf, _temp_buf, (size_t)num_tokens * H * D * sizeof(float));
     }"""
         )
-        if dump and dump_mode == "vision_qwen3vl":
-            lines.append("    #ifdef CK_PARITY_DUMP")
-            lines.append(
-                '    ck_dump_tensor((float*)(model->bump + A_ATTN_SCRATCH), '
-                f'{layer}, "kqv_out", (MAX_SEQ_LEN) * (NUM_HEADS) * (HEAD_DIM));'
-            )
-            lines.append("    #endif")
         if seq_idx is not None:
             lines.append(f"    if (stop_seq == {seq_idx}) return;")
         return "\n".join(lines)
@@ -1659,7 +1652,7 @@ def emit_op(
         grid_h = _hidden_arg("grid_h")
         grid_w = _hidden_arg("grid_w")
         merge = _hidden_arg("merge_size") or "1"
-        count_expr = f"(({grid_h}) / ({merge})) * (({grid_w}) / ({merge})) * ({_hidden_arg('embed_dim')})" if grid_h and grid_w and _hidden_arg("embed_dim") else None
+        count_expr = _mul_expr(grid_h, grid_w, _hidden_arg("embed_dim"))
         _emit_hidden_export(out_expr, "vision_spatial_merge", count_expr)
     elif op_name == "projector_prep":
         out_expr = _hidden_arg("output", "out", "c", "y")
@@ -1716,6 +1709,13 @@ def emit_op(
             _semantic_checkpoint_tensor("attn_pregate"),
             count_expr,
         )
+        if dump and out_expr:
+            lines.append("    #ifdef CK_PARITY_DUMP")
+            lines.append(
+                f'    ck_dump_tensor((float*){_hidden_raw(out_expr)}, {layer}, '
+                '"kqv_out", NUM_HEADS * HEAD_DIM);'
+            )
+            lines.append("    #endif")
     elif op_name == "attn_gate_sigmoid_mul":
         out_expr = _hidden_arg("output", "out", "y")
         count_expr = _mul_expr(

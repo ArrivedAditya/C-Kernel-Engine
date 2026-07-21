@@ -283,10 +283,13 @@ class V8CodegenBridgeTests(unittest.TestCase):
         self.assertTrue(prefill_projections)
         for operation in prefill_projections:
             with self.subTest(phase="prefill", op=operation["op"]):
-                self.assertEqual(operation["kernel"], "gemm_nt_bf16_amx_bf16_storage")
+                self.assertEqual(
+                    operation["kernel"],
+                    "gemm_nt_bf16_prefill_shape_safe_bf16_storage",
+                )
                 self.assertEqual(
                     operation["resolved_contract"]["contract_id"],
-                    "bf16_weight_bf16_input_amx_tile32_dot_bf16_output",
+                    "bf16_weight_bf16_input_shape_safe_prefill_bf16_output",
                 )
 
         decode = build_ir_v8.build_ir1_direct(
@@ -572,7 +575,10 @@ class V8CodegenBridgeTests(unittest.TestCase):
             prefill_doc = json.loads(prefill_call.read_text(encoding="utf-8"))
             prefill_ops = list(prefill_doc.get("operations") or [])
             cache_copy_idx = next(
-                i for i, op in enumerate(prefill_ops) if op.get("op") == "kv_cache_batch_copy"
+                i
+                for i, op in enumerate(prefill_ops)
+                if op.get("op") == "kv_cache_store_batch_f16"
+                and op.get("function") == "kv_cache_store_batch_f16"
             )
             append_attn_idx = next(
                 i
@@ -581,6 +587,13 @@ class V8CodegenBridgeTests(unittest.TestCase):
                 == "attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract"
             )
             self.assertLess(cache_copy_idx, append_attn_idx)
+            cache_args = prefill_ops[cache_copy_idx].get("args", [])
+            cache_arg_by_name = {arg.get("name"): arg for arg in cache_args}
+            self.assertEqual(cache_arg_by_name["k"].get("buffer_ref"), "k_scratch")
+            self.assertEqual(cache_arg_by_name["v"].get("buffer_ref"), "v_scratch")
+            self.assertEqual(cache_arg_by_name["start_pos"].get("source"), "runtime:prefill_start_pos")
+            self.assertEqual(cache_arg_by_name["start_pos"].get("expr"), "model->pos")
+            self.assertEqual(cache_arg_by_name["max_seq_len"].get("source"), "dim:max_seq_len")
             append_args = prefill_ops[append_attn_idx].get("args", [])
             self.assertTrue(
                 any(
@@ -617,9 +630,7 @@ class V8CodegenBridgeTests(unittest.TestCase):
             self.assertIn("ck_prefill_from_embedded_range(g_model, tokens_before_count, 0);", text)
             self.assertIn("ck_prefill_from_embedded_range(g_model, prefix_tokens, tokens_before_count);", text)
             self.assertIn("ck_prefill_from_embedded_range(g_model, tokens_after_count, tokens_before_count + prefix_tokens);", text)
-            self.assertIn("uint16_t *kv_cache = (uint16_t*)model->kv_cache_f16;", text)
-            self.assertIn("ck_fp32_to_fp16_soft(ks[d])", text)
-            self.assertIn("ck_fp32_to_fp16_soft(vs[d])", text)
+            self.assertIn("kv_cache_store_batch_f16(", text)
             self.assertIn(
                 "int debug_outproj_fp32 = debug_outproj_env ? (atoi(debug_outproj_env) != 0) : 0;",
                 text,
@@ -950,7 +961,8 @@ class V8CodegenBridgeTests(unittest.TestCase):
             self.assertIn("CK_EXPORT int ck_model_forward_mixed_ex", text)
             self.assertIn("CK_EXPORT int ck_model_forward_mixed_grid_ex", text)
             self.assertIn("if (prefix_grid_x > 0 && prefix_grid_y > 0 && prefix_grid_x * prefix_grid_y != prefix_tokens) return -10;", text)
-            self.assertIn("static void kv_cache_batch_copy(", text)
+            self.assertIn("kv_cache_store_batch_f16(", text)
+            self.assertNotIn("static void kv_cache_batch_copy(", text)
             self.assertNotIn("vocab_size * sizeof(float)", text)
             self.assertIn("transpose_v_to_head_major layer=0", text)
             self.assertIn("float *buf = (float*)(model->bump + A_V_SCRATCH);", text)

@@ -1,0 +1,102 @@
+{
+  "id": "layernorm_bf16_pytorch_welford",
+  "op": "layernorm",
+  "variant": "float_buffer_bf16_storage_aten_avx2_welford",
+  "quant": {
+    "weight": "fp32_bf16_values",
+    "activation": "fp32_bf16_values",
+    "output": "fp32_bf16_values"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "fp32",
+      "shape": ["T", "E"],
+      "desc": "Input activations [tokens, embed_dim]"
+    }
+  ],
+  "weights": [
+    {
+      "name": "gamma",
+      "dtype": "fp32",
+      "shape": ["E"],
+      "desc": "LayerNorm scale weight"
+    },
+    {
+      "name": "beta",
+      "dtype": "fp32",
+      "shape": ["E"],
+      "desc": "LayerNorm bias weight"
+    }
+  ],
+  "activations": [],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": ["T", "E"],
+      "desc": "BF16-rounded normalized output in the FP32 activation arena"
+    }
+  ],
+  "scratch": [],
+  "dims": ["T", "E"],
+  "params": [
+    {
+      "name": "eps",
+      "dtype": "float32",
+      "desc": "Epsilon for numerical stability"
+    }
+  ],
+  "constraints": {
+    "isa": ["avx2", "fma"],
+    "notes": "ATen AVX2 BF16 Welford structure. Experimental until monotonic stitched parity passes."
+  },
+  "impl": {
+    "function": "layernorm_pytorch_welford_bf16_storage",
+    "c_declaration": "void layernorm_pytorch_welford_bf16_storage(const float *input, const float *gamma, const float *beta, float *output, float *mean_cache, float *rstd_cache, int tokens, int d_model, float eps);",
+    "sources": ["src/kernels/layernorm_kernels.c"]
+  },
+  "tests": {
+    "unit": ["unittest/bf16/test_layernorm_storage_contract_bf16.py"]
+  },
+  "notes": "Separate PyTorch-compatible candidate; does not replace the ggml numerical provider.",
+  "numerical_capabilities": [
+    {
+      "contract_id": "layernorm_bf16_storage_fp32_compute_aten_avx2_welford_bf16_output",
+      "status": "observed",
+      "phases": ["prefill"],
+      "function": "layernorm_pytorch_welford_bf16_storage",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "compile_time",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": ["independent_rows"],
+          "dispatch": ["inline"],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp32",
+        "merge_order": "pairwise_tree",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"cast": "const float*", "name": "input", "source": "activation:input"},
+      {"alt": ["ln1_gamma", "ln2_gamma", "final_ln_weight", "branch_norm_gamma"], "name": "gamma", "source": "weight_f:gamma"},
+      {"alt": ["ln1_beta", "ln2_beta", "final_ln_bias", "branch_norm_beta"], "name": "beta", "source": "weight_f:beta"},
+      {"cast": "float*", "name": "output", "source": "output:output"},
+      {"name": "mean_cache", "source": "null"},
+      {"name": "rstd_cache", "source": "null"},
+      {"name": "tokens", "source": "dim:seq_len"},
+      {"name": "d_model", "source": "dim:embed_dim"},
+      {"name": "eps", "source": "dim:rms_eps"}
+    ]
+  }
+}

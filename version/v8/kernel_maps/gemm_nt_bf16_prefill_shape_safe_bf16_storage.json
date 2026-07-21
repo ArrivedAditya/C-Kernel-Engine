@@ -1,0 +1,65 @@
+{
+  "id": "gemm_nt_bf16_prefill_shape_safe_bf16_storage",
+  "op": "gemm",
+  "variant": "bf16_w_fp32_shape_safe_prefill_bf16_out",
+  "quant": {"weight": "bf16", "activation": "fp32", "output": "bf16"},
+  "inputs": [
+    {"name": "A", "dtype": "fp32", "shape": ["M", "K"]},
+    {"name": "B", "dtype": "bf16", "shape": ["N", "K"]},
+    {"name": "bias", "dtype": "fp32", "shape": ["N"], "optional": true}
+  ],
+  "outputs": [
+    {"name": "C", "dtype": "fp32", "shape": ["M", "N"], "desc": "BF16 RNE values represented in FP32 storage"}
+  ],
+  "scratch": [],
+  "dims": ["M", "N", "K"],
+  "constraints": {},
+  "impl": {
+    "function": "gemm_nt_bf16_prefill_shape_safe_bf16_storage",
+    "c_declaration": "void gemm_nt_bf16_prefill_shape_safe_bf16_storage(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);",
+    "sources": ["src/kernels/gemm_kernels_bf16.c"],
+    "variants": [
+      {"name": "shape_safe", "requires": [], "compile_flags": []}
+    ]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [
+    {
+      "contract_id": "bf16_weight_bf16_input_shape_safe_prefill_bf16_output",
+      "status": "validated",
+      "phases": ["prefill"],
+      "function": "gemm_nt_bf16_prefill_shape_safe_bf16_storage",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "ck_threadpool",
+          "work_partition": ["output_tiles"],
+          "dispatch": ["ck_threadpool_dispatch_n"],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp32",
+        "merge_order": "implementation_defined",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ],
+  "notes": "Shape-safe segmented prefill provider. Uses AMX for M%16=N%16=0 and K%32=0 when tile permission is available; otherwise uses the native BF16 paired-dot provider.",
+  "tests": {"unit": ["unittest/bf16/test_gemm_storage_contract_bf16.py", "tests/test_v8_codegen_bridge.py"]},
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"cast": "const float*", "name": "A", "source": "activation:a"},
+      {"name": "B", "source": "weight:_first_weight"},
+      {"name": "bias", "source": "weight_f:_bias"},
+      {"cast": "float*", "name": "C", "source": "output:c"},
+      {"name": "M", "source": "dim:_m"},
+      {"name": "N", "source": "dim:_output_dim"},
+      {"name": "K", "source": "dim:_input_dim"}
+    ]
+  }
+}
