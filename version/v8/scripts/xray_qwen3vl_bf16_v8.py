@@ -53,6 +53,15 @@ def _bounded_order(
     return result
 
 
+def _apply_observed_storage(manifest: Dict[str, Any], observed_storage: Dict[str, Any]) -> None:
+    """Apply parity-profile storage semantics per semantic checkpoint."""
+    default = str(observed_storage["default"])
+    overrides = observed_storage.get("checkpoints") or {}
+    for checkpoint in manifest.get("checkpoints", []):
+        checkpoint_id = str(checkpoint["checkpoint_id"])
+        checkpoint["storage_dtype"] = str(overrides.get(checkpoint_id, default))
+
+
 def _run_capture(args: argparse.Namespace, selectors: list[str], round_dir: Path) -> Path:
     cmd = [
         sys.executable, str(CAPTURE_SCRIPT),
@@ -66,6 +75,12 @@ def _run_capture(args: argparse.Namespace, selectors: list[str], round_dir: Path
     ]
     if args.torch_prefix:
         cmd.extend(["--torch-prefix", str(args.torch_prefix)])
+    if args.ck_import_layer_input is not None:
+        cmd.extend([
+            "--ck-import-layer-input", str(args.ck_import_layer_input),
+            "--ck-import-layer", str(args.ck_import_layer),
+            "--ck-import-checkpoint", str(args.ck_import_checkpoint),
+        ])
     for selector in selectors:
         cmd.extend(["--selector", selector])
     env = os.environ.copy()
@@ -137,6 +152,7 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
             model="qwen3vl", source=str(args.checkpoint), phase="prefill",
             storage_dtype_override=observed_storage["default"], requested=set(active),
         )
+        _apply_observed_storage(torch_manifest, observed_storage)
         ck_path = round_dir / "ck.checkpoints.json"
         torch_path = round_dir / "pytorch.checkpoints.json"
         ck_path.write_text(json.dumps(ck_manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -181,6 +197,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--call-ir", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True)
     parser.add_argument("--torch-prefix", type=Path)
+    parser.add_argument("--ck-import-layer-input", type=Path)
+    parser.add_argument("--ck-import-layer", type=int)
+    parser.add_argument("--ck-import-checkpoint", choices=("layer_input", "after_attn"), default="layer_input")
     parser.add_argument("--profile", type=Path, default=DEFAULT_PROFILE)
     parser.add_argument("--ranking-report", type=Path)
     parser.add_argument("--output-dir", type=Path, default=Path("build/xray/qwen3vl_bf16"))
@@ -188,6 +207,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--attn-implementation", choices=("auto", "eager", "sdpa"), default="eager")
     parser.add_argument("--max-rounds", type=int, default=3)
     args = parser.parse_args(argv)
+    if (args.ck_import_layer_input is None) != (args.ck_import_layer is None):
+        parser.error("--ck-import-layer-input and --ck-import-layer must be provided together")
     result = run(args)
     divergence = (result.get("final_report") or {}).get("first_divergence") or {}
     print(f"status={result['status']} rounds={len(result['rounds'])}")

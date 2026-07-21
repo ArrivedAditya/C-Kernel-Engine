@@ -26,14 +26,14 @@ def bf16_values(values: np.ndarray) -> np.ndarray:
     return torch.from_numpy(values).to(torch.bfloat16).float().numpy()
 
 
-def run_case(
+def run_case_detailed(
     heads: int,
     kv_heads: int,
     tokens: int,
     dim: int,
     aligned_dim: int,
     seed: int,
-) -> tuple[float, float, float]:
+) -> dict[str, float | int]:
     rng = np.random.default_rng(seed)
     q = bf16_values(rng.standard_normal((heads, tokens, dim), dtype=np.float32))
     k = bf16_values(rng.standard_normal((kv_heads, tokens, dim), dtype=np.float32))
@@ -63,11 +63,30 @@ def run_case(
     diff = np.abs(actual - expected)
     padding = actual_padded[..., dim:]
     padding_max = float(np.abs(padding).max(initial=0.0))
-    return (
-        float(diff.max(initial=0.0)),
-        float(np.sqrt(np.mean(diff * diff))),
-        padding_max,
+    different_outputs = int(np.count_nonzero(actual != expected))
+    output_count = int(actual.size)
+    return {
+        "max_abs": float(diff.max(initial=0.0)),
+        "rmse": float(np.sqrt(np.mean(diff * diff))),
+        "padding_max": padding_max,
+        "exact_ratio": float((output_count - different_outputs) / output_count),
+        "different_outputs": different_outputs,
+        "output_count": output_count,
+    }
+
+
+def run_case(
+    heads: int,
+    kv_heads: int,
+    tokens: int,
+    dim: int,
+    aligned_dim: int,
+    seed: int,
+) -> tuple[float, float, float]:
+    metrics = run_case_detailed(
+        heads, kv_heads, tokens, dim, aligned_dim, seed
     )
+    return metrics["max_abs"], metrics["rmse"], metrics["padding_max"]
 
 
 def main() -> int:
@@ -78,18 +97,26 @@ def main() -> int:
         (4, 2, 19, 72, 80, 4),
     ]
     for heads, kv_heads, tokens, dim, aligned_dim, seed in cases:
-        max_abs, rmse, padding_max = run_case(
+        metrics = run_case_detailed(
             heads, kv_heads, tokens, dim, aligned_dim, seed
         )
-        if max_abs > 0.03125 or rmse > 0.004 or padding_max != 0.0:
+        if (
+            metrics["max_abs"] > 0.03125
+            or metrics["rmse"] > 0.004
+            or metrics["padding_max"] != 0.0
+        ):
             raise AssertionError(
                 f"BF16 attention mismatch H={heads} KV={kv_heads} T={tokens} "
-                f"D={dim} A={aligned_dim}: max_abs={max_abs:.9g} "
-                f"rmse={rmse:.9g} padding_max={padding_max:.9g}"
+                f"D={dim} A={aligned_dim}: max_abs={metrics['max_abs']:.9g} "
+                f"rmse={metrics['rmse']:.9g} "
+                f"padding_max={metrics['padding_max']:.9g}"
             )
         print(
             f"H={heads} KV={kv_heads} T={tokens} D={dim} A={aligned_dim} "
-            f"max_abs={max_abs:.9g} rmse={rmse:.9g} padding_max={padding_max:.9g}"
+            f"max_abs={metrics['max_abs']:.9g} rmse={metrics['rmse']:.9g} "
+            f"exact={metrics['exact_ratio']:.9%} "
+            f"different={metrics['different_outputs']}/{metrics['output_count']} "
+            f"padding_max={metrics['padding_max']:.9g}"
         )
     print(f"BF16 full-attention storage parity: {len(cases)}/{len(cases)}")
     return 0

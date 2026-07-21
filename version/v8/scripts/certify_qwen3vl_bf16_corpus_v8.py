@@ -170,6 +170,36 @@ def _first_difference(left: list[int], right: list[int]) -> int | None:
     return None
 
 
+def _trace_top1_token(row: dict[str, Any]) -> int | None:
+    top_k = row.get("top_k") or []
+    if not top_k or not isinstance(top_k[0], dict):
+        return None
+    token_id = top_k[0].get("token_id")
+    return int(token_id) if token_id is not None else None
+
+
+def _first_trace_top1_difference(
+    reference: list[dict[str, Any]], subject: list[dict[str, Any]]
+) -> int | None:
+    for index, (reference_row, subject_row) in enumerate(zip(reference, subject)):
+        if _trace_top1_token(reference_row) != _trace_top1_token(subject_row):
+            return index
+    if len(reference) != len(subject):
+        return min(len(reference), len(subject))
+    return None
+
+
+def _failure_step_histogram(rows: list[dict[str, Any]]) -> dict[str, int]:
+    histogram: dict[str, int] = {}
+    for row in rows:
+        if bool(row.get("exact_pre_eos")):
+            continue
+        step = row.get("first_divergence")
+        key = "unknown" if step is None else str(int(step))
+        histogram[key] = histogram.get(key, 0) + 1
+    return dict(sorted(histogram.items(), key=lambda item: (item[0] == "unknown", int(item[0]) if item[0] != "unknown" else 0)))
+
+
 def _prefix_metrics(torch: Any, ck_values: array, reference: Any) -> dict[str, float | int]:
     ck = torch.frombuffer(ck_values, dtype=torch.float32).clone().reshape(reference.shape)
     ref = reference.float().cpu().contiguous()
@@ -585,7 +615,14 @@ def main() -> int:
         ) / 1000.0
         ck_ids_raw = [int(value) for value in decoder_report["generated_token_ids"]]
         ck_ids = _pre_eos(ck_ids_raw, eos_ids)
-        divergence = _first_difference(torch_ids, ck_ids)
+        token_divergence = _first_difference(torch_ids, ck_ids)
+        ck_logit_trace = decoder_report.get("generation_logit_trace", [])
+        ranking_divergence = (
+            _first_trace_top1_difference(torch_logit_trace, ck_logit_trace)
+            if args.teacher_force_pytorch
+            else None
+        )
+        divergence = ranking_divergence if args.teacher_force_pytorch else token_divergence
         result = {
             "index": int(sample["index"]),
             "id": sample["id"],
@@ -597,6 +634,8 @@ def main() -> int:
             "torch_ids_pre_eos": torch_ids,
             "ck_ids_pre_eos": ck_ids,
             "first_divergence": divergence,
+            "first_token_divergence": token_divergence,
+            "first_teacher_forced_top1_divergence": ranking_divergence,
             "exact_pre_eos": divergence is None,
             "status": "pass" if divergence is None else "fail",
             "ck_prefix_source": prefix_source,
@@ -610,7 +649,7 @@ def main() -> int:
                 int(value) for value in decoder_report.get("teacher_forced_input_ids", [])
             ],
             "torch_logit_trace": torch_logit_trace,
-            "ck_logit_trace": decoder_report.get("generation_logit_trace", []),
+            "ck_logit_trace": ck_logit_trace,
             "prefix_metrics": prefix_metrics,
             "torch_text": processor.tokenizer.decode(torch_ids, skip_special_tokens=False),
             "ck_text": processor.tokenizer.decode(ck_ids, skip_special_tokens=False),
@@ -641,9 +680,20 @@ def main() -> int:
             "prompt": args.prompt,
             "max_new_tokens": args.max_new_tokens,
             "threads": args.threads,
+            "teacher_forced": bool(args.teacher_force_pytorch),
             "completed": len(completed),
             "passed": sum(bool(row.get("exact_pre_eos")) for row in completed),
             "failed": sum(not bool(row.get("exact_pre_eos")) for row in completed),
+            "failure_step_histogram": _failure_step_histogram(completed),
+            "failed_samples": [
+                {
+                    "index": int(row["index"]),
+                    "id": str(row["id"]),
+                    "first_divergence": row.get("first_divergence"),
+                }
+                for row in completed
+                if not bool(row.get("exact_pre_eos"))
+            ],
             "min_prefix_cosine": min(
                 (float(row["prefix_metrics"]["cosine"]) for row in completed if row.get("prefix_metrics")),
                 default=None,

@@ -20,6 +20,34 @@ SPEC.loader.exec_module(MODULE)
 
 
 class CustomPrefixProvenanceTests(unittest.TestCase):
+    def test_teacher_forced_trace_uses_backend_top1_not_forced_tokens(self) -> None:
+        reference = [
+            {"top_k": [{"token_id": 10, "logit": 2.0}]},
+            {"top_k": [{"token_id": 20, "logit": 3.0}]},
+        ]
+        subject = [
+            {"top_k": [{"token_id": 10, "logit": 1.5}]},
+            {"top_k": [{"token_id": 21, "logit": 2.5}]},
+        ]
+        self.assertEqual(MODULE._first_trace_top1_difference(reference, subject), 1)
+
+    def test_teacher_forced_trace_detects_missing_steps(self) -> None:
+        row = {"top_k": [{"token_id": 10, "logit": 2.0}]}
+        self.assertEqual(MODULE._first_trace_top1_difference([row, row], [row]), 1)
+
+    def test_failure_histogram_groups_divergence_steps(self) -> None:
+        rows = [
+            {"exact_pre_eos": True, "first_divergence": None},
+            {"exact_pre_eos": False, "first_divergence": 25},
+            {"exact_pre_eos": False, "first_divergence": 20},
+            {"exact_pre_eos": False, "first_divergence": 25},
+            {"exact_pre_eos": False, "first_divergence": None},
+        ]
+        self.assertEqual(
+            MODULE._failure_step_histogram(rows),
+            {"20": 1, "25": 2, "unknown": 1},
+        )
+
     def test_bridge_encoder_accepts_processor_planar_override(self) -> None:
         bridge = MODULE._load_bridge_module()
         encoder_parameters = inspect.signature(bridge._run_encoder).parameters
