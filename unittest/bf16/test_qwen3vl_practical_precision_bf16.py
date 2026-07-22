@@ -120,14 +120,18 @@ def main() -> int:
             ),
             (0.03125, 0.003),
         )
-        record(
-            rows,
-            "vision_attention_production",
-            {"heads": 16, "tokens": 4032, "dim": 72},
-            attention.run_case_detailed(16, 16, 4032, 72, 72, 106),
-            (0.001, 7.0e-5),
-            min_exact_ratio=0.58,
-        )
+        for threads in (1, 16, 20, 24):
+            record(
+                rows,
+                "vision_attention_pytorch_cpu_flash_production",
+                {"heads": 16, "tokens": 4032, "dim": 72, "threads": threads},
+                attention.run_case_detailed(
+                    16, 16, 4032, 72, 72, 106, threads=threads,
+                    kernel=attention.PYTORCH_FLASH_KERNEL,
+                ),
+                (0.0, 0.0),
+                min_exact_ratio=1.0,
+            )
 
     report = {
         "schema": "cke.bf16_practical_precision",

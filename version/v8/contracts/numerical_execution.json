@@ -1103,7 +1103,45 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "PyTorch CPU SDPA-compatible full attention: BF16 Q/K/V, 512-key tiles, BF16 softmax probability storage, FP32 tile accumulation and merge, and BF16 RNE output storage.",
+      "description": "Portable BF16 full attention with 512-key tiles, BF16 probability storage, FP32 tile accumulation and merge, and BF16 RNE output storage.",
+      "operator_family": "attention"
+    },
+    "attention_bf16_pytorch_cpu_flash_amx_exact": {
+      "status": "validated",
+      "storage": {
+        "input": "bf16",
+        "weight": "bf16",
+        "output": "bf16"
+      },
+      "compute": {
+        "input": "bf16",
+        "weight": "bf16",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "pytorch_cpu_flash_scale_fp64_inverse_sqrt_to_fp32_then_qk_brgemm_largest_even_k_block_le32_then_avx512_exp_u20_pairwise_lane_reduce_then_bf16_probability_store_then_pv_brgemm"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "softmax_probability_store",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "tiled_online_softmax",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "ascending_chunk"
+      },
+      "threading": {
+        "work_partition": "independent_heads",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "PyTorch 2.8 CPU flash-SDPA-compatible full attention: FP64-evaluated inverse-sqrt scale narrowed to FP32, 256-query/512-key tiles, oneDNN BF16 BRGEMM using its largest even K block at or below 32 (24 for head width 72), AVX-512 exp_u20 and pairwise lane reductions, BF16 softmax probability storage, FP32 tile accumulation, and BF16 RNE output storage. Diagnose future drift against the complete PyTorch CPU-flash and oneDNN schedule; matching only scale, GEMM, softmax, or storage in isolation is insufficient.",
       "operator_family": "attention"
     },
     "residual_add_bf16_input_fp32_add_bf16_output": {

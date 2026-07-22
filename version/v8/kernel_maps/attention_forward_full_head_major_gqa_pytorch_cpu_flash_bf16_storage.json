@@ -1,7 +1,7 @@
 {
-  "id": "attention_forward_full_head_major_gqa_sdpa_bf16_storage",
+  "id": "attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage",
   "op": "attention",
-  "variant": "full_sdpa_bf16_tiled512_bf16_output",
+  "variant": "full_sdpa_pytorch_cpu_flash_amx_bf16_exact",
   "mode": "prefill",
   "implementation": {
     "isa_dispatch": "compile_time",
@@ -109,44 +109,39 @@
   ],
   "parallelization": {
     "supported": [
-      "serial"
+      "independent_heads"
     ],
     "preferred": {
-      "prefill": "serial"
+      "prefill": "independent_heads"
     },
     "strategies": [
       {
-        "name": "serial",
-        "partition_dim": "none",
+        "name": "independent_heads",
+        "partition_dim": "H",
         "param_style": "inline",
-        "notes": "Correctness-first implementation; a threaded provider requires separate numerical evidence."
+        "notes": "Each worker owns complete heads; thread count does not alter per-head arithmetic order."
       }
     ]
   },
   "constraints": {
     "alignment": {
-      "D": 1,
-      "T": 1
+      "D": 72,
+      "T": 16
     },
-    "notes": "Full bidirectional attention with no causal mask. num_heads must be divisible by num_kv_heads, aligned_head_dim must be at least head_dim, and kv_stride_tokens must be at least num_tokens."
+    "notes": "AMX-only full bidirectional attention with no causal mask. head_dim and aligned_head_dim must both be 72, T must be a multiple of 16, num_heads must be divisible by num_kv_heads, and kv_stride_tokens must be at least num_tokens."
   },
   "impl": {
-    "function": "attention_forward_full_head_major_gqa_sdpa_bf16_storage",
-    "c_declaration": "void attention_forward_full_head_major_gqa_sdpa_bf16_storage(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens);",
+    "function": "attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage",
+    "c_declaration": "void attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens);",
     "sources": [
       "src/kernels/attention_kernels.c",
       "src/kernels/softmax_kernels.c"
     ],
     "variants": [
       {
-        "name": "avx512_bf16",
-        "requires": ["avx512f", "avx512_bf16"],
-        "compile_flags": ["-mavx512f", "-mavx512bf16"]
-      },
-      {
-        "name": "portable_contract_reference",
-        "requires": [],
-        "compile_flags": []
+        "name": "pytorch_cpu_flash_amx_bf16",
+        "requires": ["avx512f", "avx512_bf16", "amx_tile", "amx_bf16"],
+        "compile_flags": ["-mavx512f", "-mavx512bf16", "-mamx-tile", "-mamx-bf16"]
       }
     ]
   },
@@ -155,15 +150,15 @@
       "unittest/bf16/test_attention_storage_contract_bf16.py"
     ]
   },
-  "notes": "Portable BF16 full attention with 512-key tiles, BF16 probability storage, FP32 accumulation, and BF16 output storage. PyTorch CPU-flash exactness is a separate provider because its AMX/AVX-512 schedule must never silently fall back to this implementation.",
+  "notes": "Exact PyTorch 2.8 CPU flash-SDPA BF16 provider. It uses 256-query/512-key tiles, FP64 inverse-sqrt evaluation narrowed to FP32, oneDNN-compatible largest-divisor K blocking (K=72 resolves to 24+24+24), AVX-512 exp_u20 and pairwise reductions, BF16 probability storage, FP32 accumulation, and BF16 output storage. There is deliberately no portable fallback under this provider identity. For future drift, inspect the complete PyTorch CPU-flash and oneDNN source schedule rather than an isolated primitive.",
   "numerical_capabilities": [
     {
-      "contract_id": "attention_bf16_sdpa_tiled512_bf16_prob_fp32_accum_bf16_output",
+      "contract_id": "attention_bf16_pytorch_cpu_flash_amx_exact",
       "status": "validated",
       "phases": [
         "prefill"
       ],
-      "function": "attention_forward_full_head_major_gqa_sdpa_bf16_storage",
+      "function": "attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage",
       "explicit_selector": true,
       "implementation": {
         "isa_dispatch": "compile_time",

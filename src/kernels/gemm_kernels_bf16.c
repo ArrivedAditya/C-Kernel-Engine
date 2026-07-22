@@ -289,6 +289,20 @@ static void ck_amx_config_bf16_16x16x32(void)
     _tile_loadconfig(&cfg);
 }
 
+static void ck_amx_config_bf16_16x16_kblock(int k_block)
+{
+    ck_amx_tile_config cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.palette_id = 1;
+    cfg.rows[0] = 16;
+    cfg.colsb[0] = (uint16_t)(k_block * (int)sizeof(uint16_t));
+    cfg.rows[1] = (uint8_t)(k_block / 2);
+    cfg.colsb[1] = 64;
+    cfg.rows[2] = 16;
+    cfg.colsb[2] = 64;
+    _tile_loadconfig(&cfg);
+}
+
 static void ck_pack_bf16_ktile_pairs_16x16(uint16_t *dst,
                                              const uint16_t *B,
                                              int K,
@@ -1018,6 +1032,59 @@ int ck_gemm_bf16_amx_available(void)
 #if HAVE_AMX_BF16
     return ck_amx_request_xtile_data();
 #else
+    return 0;
+#endif
+}
+
+int ck_gemm_bf16_fp32out_amx_raw(const uint16_t *A,
+                                 const uint16_t *B,
+                                 float *C,
+                                 int M, int N, int K,
+                                 int accumulate)
+{
+#if HAVE_AMX_BF16
+    if (!A || !B || !C || M <= 0 || N <= 0 || K <= 0 ||
+        (M % 16) != 0 || (N % 16) != 0 || (K % 2) != 0 ||
+        !ck_amx_request_xtile_data()) {
+        return 0;
+    }
+    /* Match oneDNN BRGEMM: largest even divisor of K no greater than 32. */
+    int k_block = K < 32 ? K : 32;
+    while (k_block > 2 && K % k_block != 0) k_block -= 2;
+    ck_amx_config_bf16_16x16_kblock(k_block);
+    uint16_t b_tile[16 * 32];
+    for (int i = 0; i < M; i += 16) {
+        for (int j = 0; j < N; j += 16) {
+            if (accumulate) {
+                _tile_loadd(2, C + (size_t)i * (size_t)N + (size_t)j,
+                            N * (int)sizeof(float));
+            } else {
+                _tile_zero(2);
+            }
+            for (int k = 0; k < K; k += k_block) {
+                memset(b_tile, 0, sizeof(b_tile));
+                for (int kp = 0; kp < k_block / 2; ++kp) {
+                    const int k0 = k + kp * 2;
+                    for (int nn = 0; nn < 16; ++nn) {
+                        b_tile[(size_t)kp * 32u + (size_t)nn * 2u] =
+                            B[(size_t)(j + nn) * (size_t)K + (size_t)k0];
+                        b_tile[(size_t)kp * 32u + (size_t)nn * 2u + 1u] =
+                            B[(size_t)(j + nn) * (size_t)K + (size_t)k0 + 1u];
+                    }
+                }
+                _tile_loadd(0, A + (size_t)i * (size_t)K + (size_t)k,
+                            K * (int)sizeof(uint16_t));
+                _tile_loadd(1, b_tile, 32 * (int)sizeof(uint16_t));
+                _tile_dpbf16ps(2, 0, 1);
+            }
+            _tile_stored(2, C + (size_t)i * (size_t)N + (size_t)j,
+                         N * (int)sizeof(float));
+        }
+    }
+    _tile_release();
+    return 1;
+#else
+    (void)A; (void)B; (void)C; (void)M; (void)N; (void)K; (void)accumulate;
     return 0;
 #endif
 }

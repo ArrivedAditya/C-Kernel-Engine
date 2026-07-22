@@ -648,7 +648,7 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         self.assertEqual(selected["vision.layer.mlp_activation"], "gelu_pytorch_tanh_bf16_storage")
         self.assertEqual(
             selected["vision.layer.attention"],
-            "attention_forward_full_head_major_gqa_sdpa_bf16_storage",
+            "attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage",
         )
         self.assertEqual(selected["vision.layer.out_projection"], "gemm_nt_bf16_native_bf16_storage")
         self.assertEqual(
@@ -665,7 +665,7 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         self.assertIn(("layernorm", "layernorm_bf16_storage"), kernels)
         self.assertIn(("qkv_packed_proj", "gemm_nt_bf16_native_bf16_storage"), kernels)
         self.assertIn(
-            ("attn", "attention_forward_full_head_major_gqa_sdpa_bf16_storage"),
+            ("attn", "attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage"),
             kernels,
         )
         self.assertIn(("out_proj", "gemm_nt_bf16_native_bf16_storage"), kernels)
@@ -678,7 +678,7 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         )
 
         binding = build_ir_v8.load_kernel_call_abis()[
-            "attention_forward_full_head_major_gqa_sdpa_bf16_storage"
+            "attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage"
         ]["call_abi"]
         self.assertEqual(
             [param["name"] for param in binding["params"]],

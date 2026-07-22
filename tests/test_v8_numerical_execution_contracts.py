@@ -550,7 +550,7 @@ class NumericalExecutionContractTests(unittest.TestCase):
             "vision.layer.qkv_projection": "gemm_nt_bf16_native_bf16_storage",
             "vision.layer.mlp_projection": "gemm_nt_bf16_native_bf16_storage",
             "vision.layer.mlp_activation": "gelu_pytorch_tanh_bf16_storage",
-            "vision.layer.attention": "attention_forward_full_head_major_gqa_sdpa_bf16_storage",
+            "vision.layer.attention": "attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage",
             "vision.layer.out_projection": "gemm_nt_bf16_native_bf16_storage",
             "vision.layer.residual": "ck_residual_add_token_major_bf16_storage",
             "vision.projector.projection": "gemm_nt_bf16_amx_bf16_storage",
@@ -568,6 +568,14 @@ class NumericalExecutionContractTests(unittest.TestCase):
                 self.assertEqual(plan["kernel"]["function"], function)
                 self.assertEqual(plan["contract"]["status"], "validated")
                 if operation == "vision.layer.attention":
+                    self.assertEqual(
+                        plan["contract"]["id"],
+                        "attention_bf16_pytorch_cpu_flash_amx_exact",
+                    )
+                    self.assertEqual(
+                        plan["kernel"]["id"],
+                        "attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage",
+                    )
                     self.assertEqual(
                         plan["contract"]["semantics"]["threading"]["work_partition"],
                         "independent_heads",
