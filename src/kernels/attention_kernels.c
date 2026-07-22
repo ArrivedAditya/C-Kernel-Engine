@@ -4269,6 +4269,223 @@ static float ck_bf16_dot_contract(const float *a, const float *b, int count)
 #endif
 }
 
+float ck_attention_pytorch_sdpa_scale_f32(int head_dim)
+{
+    /* PyTorch CPU flash calculate_scale evaluates in FP64, then narrows. */
+    return head_dim > 0 ? (float)(1.0 / sqrt((double)head_dim)) : 0.0f;
+}
+
+#if defined(__AVX512F__)
+static float ck_bf16_sdpa_reduce_add_avx512(__m512 value)
+{
+    __m512 other = _mm512_shuffle_f32x4(value, value, 0x4E);
+    value = _mm512_add_ps(value, other);
+    other = _mm512_shuffle_f32x4(value, value, 0xB1);
+    value = _mm512_add_ps(value, other);
+    other = _mm512_shuffle_ps(value, value, 0x4E);
+    value = _mm512_add_ps(value, other);
+    other = _mm512_shuffle_ps(value, value, 0xB1);
+    value = _mm512_add_ps(value, other);
+    return _mm512_cvtss_f32(value);
+}
+
+static float ck_bf16_sdpa_reduce_max_avx512(__m512 value)
+{
+    __m512 other = _mm512_shuffle_f32x4(value, value, 0x4E);
+    value = _mm512_max_ps(value, other);
+    other = _mm512_shuffle_f32x4(value, value, 0xB1);
+    value = _mm512_max_ps(value, other);
+    other = _mm512_shuffle_ps(value, value, 0x4E);
+    value = _mm512_max_ps(value, other);
+    other = _mm512_shuffle_ps(value, value, 0xB1);
+    value = _mm512_max_ps(value, other);
+    return _mm512_cvtss_f32(value);
+}
+
+static __m512 ck_bf16_sdpa_exp_u20_avx512(__m512 value)
+{
+    const __m512 c1 = _mm512_set1_ps(0.999999701f);
+    const __m512 c2 = _mm512_set1_ps(0.499991506f);
+    const __m512 c3 = _mm512_set1_ps(0.166676521f);
+    const __m512 c4 = _mm512_set1_ps(0.0418978221f);
+    const __m512 c5 = _mm512_set1_ps(0.00828929059f);
+    const __m512 log2e = _mm512_castsi512_ps(_mm512_set1_epi32(0x3fb8aa3b));
+    const __m512 half = _mm512_set1_ps(0.5f);
+    const __m512 one = _mm512_set1_ps(1.0f);
+    const __m512 zero = _mm512_setzero_ps();
+    const __m512 two = _mm512_set1_ps(2.0f);
+    const __m512 ln2 = _mm512_castsi512_ps(_mm512_set1_epi32(0x3f317218));
+    const __m512 min_log = _mm512_castsi512_ps(_mm512_set1_epi32(0xc2aeac50));
+    const __m512 max_log = _mm512_castsi512_ps(_mm512_set1_epi32(0x42b17218));
+    const __mmask16 underflow = _mm512_cmp_ps_mask(value, min_log, _CMP_LT_OS);
+    __m512 source = _mm512_max_ps(_mm512_min_ps(value, max_log), min_log);
+    __m512 exponent = _mm512_fmadd_ps(source, log2e, half);
+    const __m512i exponent_i = _mm512_cvt_roundps_epi32(
+        exponent, _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
+    exponent = _mm512_cvtepi32_ps(exponent_i);
+    const __m512 reduced = _mm512_fnmadd_ps(exponent, ln2, source);
+    __m512 result = _mm512_fmadd_ps(reduced, c5, c4);
+    result = _mm512_fmadd_ps(reduced, result, c3);
+    result = _mm512_fmadd_ps(reduced, result, c2);
+    result = _mm512_fmadd_ps(reduced, result, c1);
+    result = _mm512_fmadd_ps(reduced, result, one);
+    __m512i power = _mm512_cvtps_epi32(_mm512_sub_ps(exponent, one));
+    power = _mm512_slli_epi32(_mm512_add_epi32(power, _mm512_set1_epi32(127)), 23);
+    __m512 scale = _mm512_castsi512_ps(power);
+    scale = _mm512_mask_blend_ps(underflow, scale, zero);
+    return _mm512_mul_ps(_mm512_mul_ps(result, scale), two);
+}
+
+static float ck_bf16_sdpa_scale_max_avx512(float *row, int count, float scale)
+{
+    __m512 lane_max = _mm512_set1_ps(-INFINITY);
+    const __m512 scale_v = _mm512_set1_ps(scale);
+    for (int i = 0; i < count; i += 16) {
+        const __m512 value = _mm512_mul_ps(_mm512_loadu_ps(row + i), scale_v);
+        lane_max = _mm512_max_ps(lane_max, value);
+        _mm512_storeu_ps(row + i, value);
+    }
+    return ck_bf16_sdpa_reduce_max_avx512(lane_max);
+}
+
+static float ck_bf16_sdpa_exp_sum_avx512(
+    const float *scores, uint16_t *probabilities, int count, float maximum)
+{
+    __m512 lane_sum = _mm512_setzero_ps();
+    const __m512 maximum_v = _mm512_set1_ps(maximum);
+    for (int i = 0; i < count; i += 16) {
+        const __m512 exponent = ck_bf16_sdpa_exp_u20_avx512(
+            _mm512_sub_ps(_mm512_loadu_ps(scores + i), maximum_v));
+        lane_sum = _mm512_add_ps(lane_sum, exponent);
+        float values[16];
+        _mm512_storeu_ps(values, exponent);
+        for (int lane = 0; lane < 16; ++lane) {
+            probabilities[i + lane] = float_to_bf16(values[lane]);
+        }
+    }
+    return ck_bf16_sdpa_reduce_add_avx512(lane_sum);
+}
+#endif
+
+static int ck_attention_full_bf16_sdpa_amx_range(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens,
+    int head_dim, int aligned_head_dim, int kv_stride_tokens,
+    int head_begin, int head_step)
+{
+#if defined(__AVX512F__)
+    /*
+     * This is a schedule contract, not merely an AMX acceleration of the
+     * portable kernel. PyTorch CPU flash attention composes FP64 scale
+     * evaluation, oneDNN-style BF16 BRGEMMs, AVX-512 exp/reductions, BF16
+     * probability storage, and a second BRGEMM. When parity drifts, compare
+     * this complete sequence with the PyTorch and oneDNN sources before
+     * changing an isolated primitive or tolerance.
+     */
+    enum { Q_BLOCK = 256, KV_BLOCK = 512, K_PAD = 72, D_PAD = 80 };
+    if (!ck_gemm_bf16_amx_available() || head_dim != 72 || aligned_head_dim != 72 ||
+        (num_tokens % 16) != 0 || (kv_stride_tokens < num_tokens) ||
+        num_heads % num_kv_heads != 0) return 0;
+    uint16_t *q_block = malloc((size_t)Q_BLOCK * K_PAD * sizeof(uint16_t));
+    uint16_t *k_block = malloc((size_t)KV_BLOCK * K_PAD * sizeof(uint16_t));
+    uint16_t *probabilities = malloc((size_t)Q_BLOCK * KV_BLOCK * sizeof(uint16_t));
+    uint16_t *v_block = malloc((size_t)D_PAD * KV_BLOCK * sizeof(uint16_t));
+    float *scores = malloc((size_t)Q_BLOCK * KV_BLOCK * sizeof(float));
+    float *destination = malloc((size_t)Q_BLOCK * D_PAD * sizeof(float));
+    float *row_max = malloc((size_t)Q_BLOCK * sizeof(float));
+    float *row_sum = malloc((size_t)Q_BLOCK * sizeof(float));
+    if (!q_block || !k_block || !probabilities || !v_block || !scores ||
+        !destination || !row_max || !row_sum) {
+        free(q_block); free(k_block); free(probabilities); free(v_block);
+        free(scores); free(destination); free(row_max); free(row_sum);
+        return 0;
+    }
+    const float scale = ck_attention_pytorch_sdpa_scale_f32(head_dim);
+    const size_t q_stride = (size_t)num_tokens * (size_t)aligned_head_dim;
+    const size_t kv_stride = (size_t)kv_stride_tokens * (size_t)aligned_head_dim;
+    for (int h = head_begin; h < num_heads; h += head_step) {
+        const int kv_head = (int)((long long)h * num_kv_heads / num_heads);
+        const float *qh = q + (size_t)h * q_stride;
+        const float *kh = k + (size_t)kv_head * kv_stride;
+        const float *vh = v + (size_t)kv_head * kv_stride;
+        float *oh = output + (size_t)h * q_stride;
+        for (int m = 0; m < num_tokens; m += Q_BLOCK) {
+            const int query_count = num_tokens - m < Q_BLOCK ? num_tokens - m : Q_BLOCK;
+            memset(q_block, 0, (size_t)query_count * K_PAD * sizeof(uint16_t));
+            memset(destination, 0, (size_t)query_count * D_PAD * sizeof(float));
+            for (int row = 0; row < query_count; ++row) {
+                for (int d = 0; d < head_dim; ++d) {
+                    q_block[(size_t)row * K_PAD + d] =
+                        float_to_bf16(qh[(size_t)(m + row) * aligned_head_dim + d]);
+                }
+                row_max[row] = -INFINITY;
+                row_sum[row] = 0.0f;
+            }
+            for (int n = 0; n < num_tokens; n += KV_BLOCK) {
+                const int key_count = num_tokens - n < KV_BLOCK ? num_tokens - n : KV_BLOCK;
+                memset(k_block, 0, (size_t)key_count * K_PAD * sizeof(uint16_t));
+                memset(v_block, 0, (size_t)D_PAD * key_count * sizeof(uint16_t));
+                for (int key = 0; key < key_count; ++key) {
+                    for (int d = 0; d < head_dim; ++d) {
+                        k_block[(size_t)key * K_PAD + d] =
+                            float_to_bf16(kh[(size_t)(n + key) * aligned_head_dim + d]);
+                        v_block[(size_t)d * key_count + key] =
+                            float_to_bf16(vh[(size_t)(n + key) * aligned_head_dim + d]);
+                    }
+                }
+                if (!ck_gemm_bf16_fp32out_amx_raw(
+                        q_block, k_block, scores,
+                        query_count, key_count, K_PAD, 0)) goto fail;
+                for (int row = 0; row < query_count; ++row) {
+                    float *score_row = scores + (size_t)row * key_count;
+                    uint16_t *prob_row = probabilities + (size_t)row * key_count;
+                    const float block_max = ck_bf16_sdpa_scale_max_avx512(
+                        score_row, key_count, scale);
+                    const float merged_max = row_max[row] > block_max
+                        ? row_max[row] : block_max;
+                    const float old_scale = isfinite(row_max[row])
+                        ? expf(row_max[row] - merged_max) : 0.0f;
+                    const float block_sum = ck_bf16_sdpa_exp_sum_avx512(
+                        score_row, prob_row, key_count, merged_max);
+                    row_sum[row] = block_sum + old_scale * row_sum[row];
+                    row_max[row] = merged_max;
+                    if (n > 0) {
+                        __m512 scale_v = _mm512_set1_ps(old_scale);
+                        int d = 0;
+                        for (; d + 16 <= D_PAD; d += 16) {
+                            float *dst = destination + (size_t)row * D_PAD + d;
+                            _mm512_storeu_ps(dst, _mm512_mul_ps(_mm512_loadu_ps(dst), scale_v));
+                        }
+                    }
+                }
+                if (!ck_gemm_bf16_fp32out_amx_raw(
+                        probabilities, v_block, destination,
+                        query_count, D_PAD, key_count, n > 0)) goto fail;
+            }
+            for (int row = 0; row < query_count; ++row) {
+                const float reciprocal = row_sum[row] == 0.0f ? 1.0f : 1.0f / row_sum[row];
+                for (int d = 0; d < head_dim; ++d) {
+                    oh[(size_t)(m + row) * aligned_head_dim + d] = bf16_to_float(
+                        float_to_bf16(destination[(size_t)row * D_PAD + d] * reciprocal));
+                }
+            }
+        }
+    }
+    free(q_block); free(k_block); free(probabilities); free(v_block);
+    free(scores); free(destination); free(row_max); free(row_sum);
+    return 1;
+fail:
+    free(q_block); free(k_block); free(probabilities); free(v_block);
+    free(scores); free(destination); free(row_max); free(row_sum);
+    return 0;
+#else
+    (void)q; (void)k; (void)v; (void)output; (void)num_heads;
+    (void)num_kv_heads; (void)num_tokens; (void)head_dim;
+    (void)aligned_head_dim; (void)kv_stride_tokens; (void)head_begin; (void)head_step;
+    return 0;
+#endif
+}
+
 static int ck_attention_full_bf16_sdpa_tiled_range(
     const float *q, const float *k, const float *v, float *output,
     int num_heads, int num_kv_heads, int num_tokens,
@@ -4283,7 +4500,7 @@ static int ck_attention_full_bf16_sdpa_tiled_range(
     if (v_col_count > SIZE_MAX / sizeof(float)) return 0;
     if ((size_t)num_tokens > SIZE_MAX / (size_t)aligned_head_dim) return 0;
     if ((size_t)kv_stride_tokens > SIZE_MAX / (size_t)aligned_head_dim) return 0;
-    const float scale = 1.0f / sqrtf((float)head_dim);
+    const float scale = ck_attention_pytorch_sdpa_scale_f32(head_dim);
     const size_t q_head_stride = (size_t)num_tokens * (size_t)aligned_head_dim;
     const size_t kv_head_stride = (size_t)kv_stride_tokens * (size_t)aligned_head_dim;
     if ((size_t)num_heads > SIZE_MAX / q_head_stride) return 0;
@@ -4373,6 +4590,42 @@ static void ck_attention_bf16_sdpa_work(int ith, int nth, void *opaque)
     }
 }
 
+static void ck_attention_bf16_pytorch_flash_work(int ith, int nth, void *opaque)
+{
+    ck_attention_bf16_sdpa_args_t *args = (ck_attention_bf16_sdpa_args_t *)opaque;
+    if (!ck_attention_full_bf16_sdpa_amx_range(
+            args->q, args->k, args->v, args->output,
+            args->num_heads, args->num_kv_heads, args->num_tokens,
+            args->head_dim, args->aligned_head_dim, args->kv_stride_tokens,
+            ith, nth)) {
+        __atomic_store_n(&args->failed, 1, __ATOMIC_RELAXED);
+    }
+}
+
+static int ck_attention_full_bf16_pytorch_flash(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens,
+    int head_dim, int aligned_head_dim, int kv_stride_tokens)
+{
+    ck_attention_bf16_sdpa_args_t args = {
+        .q=q, .k=k, .v=v, .output=output,
+        .num_heads=num_heads, .num_kv_heads=num_kv_heads,
+        .num_tokens=num_tokens, .head_dim=head_dim,
+        .aligned_head_dim=aligned_head_dim, .kv_stride_tokens=kv_stride_tokens,
+        .failed=0
+    };
+    ck_threadpool_t *pool = ck_threadpool_global();
+    int active = pool ? ck_threadpool_n_threads(pool) : 1;
+    if (active > num_heads) active = num_heads;
+    if (pool && active > 1) {
+        ck_threadpool_dispatch_n(
+            pool, active, ck_attention_bf16_pytorch_flash_work, &args);
+    } else {
+        ck_attention_bf16_pytorch_flash_work(0, 1, &args);
+    }
+    return __atomic_load_n(&args.failed, __ATOMIC_RELAXED) == 0;
+}
+
 static int ck_attention_full_bf16_sdpa_tiled(
     const float *q, const float *k, const float *v, float *output,
     int num_heads, int num_kv_heads, int num_tokens,
@@ -4446,6 +4699,30 @@ void attention_forward_full_head_major_gqa_sdpa_bf16_storage(
         return;
     }
     fprintf(stderr, "CK numerical contract failure: BF16 tiled SDPA received invalid dimensions or could not allocate scratch\n");
+}
+
+void attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage(
+    const float *q,
+    const float *k,
+    const float *v,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int kv_stride_tokens)
+{
+    if (ck_attention_full_bf16_pytorch_flash(
+            q, k, v, output, num_heads, num_kv_heads, num_tokens,
+            head_dim, aligned_head_dim, kv_stride_tokens)) {
+        return;
+    }
+    fprintf(stderr,
+            "HARD KERNEL CONTRACT FAULT: PyTorch CPU-flash BF16 attention "
+            "requires AMX-BF16, AVX-512, D=72/A=72 and a token multiple of 16; "
+            "no numerically different fallback is permitted\n");
+    abort();
 }
 
 

@@ -248,6 +248,16 @@ void gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage(const float *A,
                                                       float *C,
                                                       int M, int N, int K);
 int ck_gemm_bf16_amx_available(void);
+float ck_attention_pytorch_sdpa_scale_f32(int head_dim);
+void attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens,
+    int head_dim, int aligned_head_dim, int kv_stride_tokens);
+int ck_gemm_bf16_fp32out_amx_raw(const uint16_t *A,
+                                 const uint16_t *B,
+                                 float *C,
+                                 int M, int N, int K,
+                                 int accumulate);
 
 // =============================================================================
 // Quantized (GGML-style) GEMM/GEMV helpers

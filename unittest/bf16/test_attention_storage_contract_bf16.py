@@ -4,15 +4,22 @@
 from __future__ import annotations
 
 import ctypes
+import struct
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
 import torch
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 
 ROOT = Path(__file__).resolve().parents[2]
 LIB = ctypes.CDLL(str(ROOT / "build" / "libckernel_engine.so"))
 KERNEL = LIB.attention_forward_full_head_major_gqa_sdpa_bf16_storage
+PYTORCH_FLASH_KERNEL = (
+    LIB.attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage
+)
 FLOAT_P = ctypes.POINTER(ctypes.c_float)
 KERNEL.argtypes = [
     FLOAT_P, FLOAT_P, FLOAT_P, FLOAT_P,
@@ -20,10 +27,41 @@ KERNEL.argtypes = [
     ctypes.c_int, ctypes.c_int, ctypes.c_int,
 ]
 KERNEL.restype = None
+PYTORCH_FLASH_KERNEL.argtypes = KERNEL.argtypes
+PYTORCH_FLASH_KERNEL.restype = None
+SCALE = LIB.ck_attention_pytorch_sdpa_scale_f32
+SCALE.argtypes = [ctypes.c_int]
+SCALE.restype = ctypes.c_float
+SET_THREADS = LIB.ck_set_num_threads
+SET_THREADS.argtypes = [ctypes.c_int]
+SET_THREADS.restype = None
 
 
 def bf16_values(values: np.ndarray) -> np.ndarray:
     return torch.from_numpy(values).to(torch.bfloat16).float().numpy()
+
+
+def assert_exact_provider_hard_faults_instead_of_falling_back() -> None:
+    probe = subprocess.run(
+        [sys.executable, __file__, "--probe-exact-provider-hard-fault"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if probe.returncode == 0 or "no numerically different fallback" not in probe.stderr:
+        raise AssertionError(
+            "PyTorch-exact attention provider did not hard-fault on an "
+            f"unsupported shape: rc={probe.returncode} stderr={probe.stderr!r}"
+        )
+
+
+def run_exact_provider_hard_fault_probe() -> None:
+    values = np.zeros((1, 7, 8), dtype=np.float32)
+    PYTORCH_FLASH_KERNEL(
+        values.ctypes.data_as(FLOAT_P), values.ctypes.data_as(FLOAT_P),
+        values.ctypes.data_as(FLOAT_P), values.ctypes.data_as(FLOAT_P),
+        1, 1, 7, 8, 8, 7,
+    )
 
 
 def run_case_detailed(
@@ -33,7 +71,11 @@ def run_case_detailed(
     dim: int,
     aligned_dim: int,
     seed: int,
+    threads=None,
+    kernel=KERNEL,
 ) -> dict[str, float | int]:
+    if threads is not None:
+        SET_THREADS(threads)
     rng = np.random.default_rng(seed)
     q = bf16_values(rng.standard_normal((heads, tokens, dim), dtype=np.float32))
     k = bf16_values(rng.standard_normal((kv_heads, tokens, dim), dtype=np.float32))
@@ -45,20 +87,22 @@ def run_case_detailed(
     q_padded[..., :dim] = q
     k_padded[..., :dim] = k
     v_padded[..., :dim] = v
-    KERNEL(
+    kernel(
         q_padded.ctypes.data_as(FLOAT_P), k_padded.ctypes.data_as(FLOAT_P),
         v_padded.ctypes.data_as(FLOAT_P), actual_padded.ctypes.data_as(FLOAT_P),
         heads, kv_heads, tokens, dim, aligned_dim, tokens,
     )
-    tq = torch.from_numpy(q).to(torch.bfloat16)
-    tk = torch.from_numpy(k).to(torch.bfloat16)
-    tv = torch.from_numpy(v).to(torch.bfloat16)
-    expected = torch.nn.functional.scaled_dot_product_attention(
-        tq,
-        tk,
-        tv,
-        enable_gqa=heads != kv_heads,
-    ).float().numpy()
+    tq = torch.from_numpy(q).to(torch.bfloat16).unsqueeze(0)
+    tk = torch.from_numpy(k).to(torch.bfloat16).unsqueeze(0)
+    tv = torch.from_numpy(v).to(torch.bfloat16).unsqueeze(0)
+    if heads != kv_heads:
+        repeats = heads // kv_heads
+        tk = tk.repeat_interleave(repeats, dim=1)
+        tv = tv.repeat_interleave(repeats, dim=1)
+    with sdpa_kernel(SDPBackend.FLASH_ATTENTION):
+        expected = torch.nn.functional.scaled_dot_product_attention(
+            tq, tk, tv
+        )[0].float().numpy()
     actual = actual_padded[..., :dim]
     diff = np.abs(actual - expected)
     padding = actual_padded[..., dim:]
@@ -90,6 +134,12 @@ def run_case(
 
 
 def main() -> int:
+    assert_exact_provider_hard_faults_instead_of_falling_back()
+    scale_bits = struct.unpack("<I", struct.pack("<f", SCALE(72)))[0]
+    if scale_bits != 0x3DF15BEF:
+        raise AssertionError(
+            f"PyTorch SDPA D=72 scale bits mismatch: 0x{scale_bits:08x}"
+        )
     cases = [
         (2, 2, 7, 8, 8, 1),
         (2, 2, 17, 72, 72, 2),
@@ -123,4 +173,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--probe-exact-provider-hard-fault"]:
+        run_exact_provider_hard_fault_probe()
+        raise SystemExit(0)
     raise SystemExit(main())

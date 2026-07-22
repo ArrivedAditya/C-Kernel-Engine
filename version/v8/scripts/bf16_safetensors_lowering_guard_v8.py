@@ -324,7 +324,7 @@ def run_guard(workdir: Path) -> None:
     rope_call = next(op for op in call_ops if op["op"] == "rope_qk")
     attention_call = next(op for op in call_ops if op["op"] == "attn")
     assert attention_call["call_abi"]["owner"] == "kernel_map"
-    assert attention_call["call_abi"]["kernel_id"] == "attention_forward_full_head_major_gqa_sdpa_bf16_storage"
+    assert attention_call["call_abi"]["kernel_id"] == "attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage"
     assert attention_call["call_abi"]["version"] == 1
     rope_args = {arg["name"]: arg["expr"] for arg in rope_call["args"]}
     # n_dims is the full rotary width. Sections describe axis allocation;
