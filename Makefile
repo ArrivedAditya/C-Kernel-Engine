@@ -737,6 +737,7 @@ PY_TESTS_BF16 := unittest/bf16/test_sigmoid_bf16.py \
                 unittest/bf16/test_attention_storage_contract_bf16.py \
                 unittest/bf16/test_residual_storage_contract_bf16.py \
                 unittest/bf16/test_gelu_pytorch_tanh_storage_bf16.py \
+                unittest/bf16/test_pytorch_onednn_oracle_contract_bf16.py \
                 unittest/bf16/test_qwen3vl_practical_precision_bf16.py
 PY_TESTS_BF16_V8 := version/v8/scripts/bf16_safetensors_lowering_guard_v8.py
 
@@ -2101,14 +2102,16 @@ test-bf16-practical-precision-full: $(LIB)
 
 BF16_ONEDNN_SRC ?= $(HOME)/.cache/onednn-3.7.1-src
 BF16_ONEDNN_BUILD ?= $(HOME)/.cache/onednn-3.7.1-build
-BF16_ONEDNN_THREADS ?= 1 16 24
+BF16_ONEDNN_THREADS ?= 1 16 20 24
 BF16_ONEDNN_PROBE_DIR ?= build/research_bf16_onednn
 BF16_ONEDNN_PROBE_LIB := $(BF16_ONEDNN_PROBE_DIR)/libonednn_pytorch_linear_probe.so
+BF16_ONEDNN_REPORT ?= version/v8/.cache/reports/bf16_pytorch_onednn_real_shapes_latest.json
 
-.PHONY: test-bf16-pytorch-onednn-real-shapes
+.PHONY: test-bf16-pytorch-onednn-real-shapes test-bf16-pytorch-onednn-oracle-auto
 test-bf16-pytorch-onednn-real-shapes:
 	@test -f "$(BF16_ONEDNN_SRC)/include/dnnl.h" || { echo "ERROR: exact oneDNN 3.7 source not found at $(BF16_ONEDNN_SRC)"; exit 2; }
 	@test -f "$(BF16_ONEDNN_BUILD)/src/libdnnl.so" || { echo "ERROR: exact oneDNN 3.7 library not found at $(BF16_ONEDNN_BUILD)/src/libdnnl.so"; exit 2; }
+	@$(PYTHON) -c 'import torch; assert torch.backends.mkldnn.is_available(), "PyTorch oneDNN backend unavailable"'
 	@mkdir -p "$(BF16_ONEDNN_PROBE_DIR)"
 	$(CC) -O3 -shared -fPIC -I"$(BF16_ONEDNN_SRC)/include" \
 		-o "$(BF16_ONEDNN_PROBE_LIB)" research/bf16/onednn_pytorch_linear_probe.c \
@@ -2116,14 +2119,25 @@ test-bf16-pytorch-onednn-real-shapes:
 	@$(MAKE) --no-print-directory BUILD_DIR=build_onednn USE_ONEDNN=1 USE_NATIVE= \
 		DNNL_INC="$(BF16_ONEDNN_SRC)/include" DNNL_LIB="$(BF16_ONEDNN_BUILD)/src" \
 		build_onednn/libckernel_engine.so
-	@for threads in $(BF16_ONEDNN_THREADS); do \
-		OMP_NUM_THREADS=$$threads $(PYTHON) $(PYTHONFLAGS) \
-			research/bf16/run_pytorch_onednn_real_shapes.py \
-			--workdir "$(BF16_ONEDNN_PROBE_DIR)/real_shapes_t$$threads" \
-			--library "$(BF16_ONEDNN_PROBE_LIB)" \
-			--ck-library build_onednn/libckernel_engine.so \
-			--threads $$threads || exit $$?; \
-	done
+	@OMP_NUM_THREADS=1 $(PYTHON) $(PYTHONFLAGS) \
+		research/bf16/run_pytorch_onednn_real_shapes.py \
+		--workdir "$(BF16_ONEDNN_PROBE_DIR)/real_shapes" \
+		--library "$(BF16_ONEDNN_PROBE_LIB)" \
+		--ck-library build_onednn/libckernel_engine.so \
+		--threads $(BF16_ONEDNN_THREADS) \
+		--report "$(BF16_ONEDNN_REPORT)"
+
+test-bf16-pytorch-onednn-oracle-auto:
+	@if [ ! -f "$(BF16_ONEDNN_SRC)/include/dnnl.h" ] || \
+	    [ ! -f "$(BF16_ONEDNN_BUILD)/src/libdnnl.so" ]; then \
+		echo "SKIP: exact oneDNN 3.7.1 source/build unavailable"; \
+	elif ! $(PYTHON) -c 'import torch; raise SystemExit(0 if torch.backends.mkldnn.is_available() else 1)' >/dev/null 2>&1; then \
+		echo "SKIP: PyTorch oneDNN backend unavailable"; \
+	elif ! grep -qw avx512_bf16 /proc/cpuinfo || ! grep -qw amx_bf16 /proc/cpuinfo; then \
+		echo "SKIP: AVX512-BF16 and AMX-BF16 are required by the exact provider"; \
+	else \
+		$(MAKE) --no-print-directory test-bf16-pytorch-onednn-real-shapes; \
+	fi
 
 test-bf16: $(LIB) test-libs
 	@failed=0; \
@@ -2143,11 +2157,7 @@ test-bf16: $(LIB) test-libs
 	@echo "Running v8 BF16 file-backed BUMP allocator guardrail..."
 	$(PYTHON) $(PYTHONFLAGS) unittest/test_bump_alloc_mixed.py
 	@$(MAKE) --no-print-directory test-bf16-xray
-	@if [ "$${CK_BF16_ONEDNN_REAL_SHAPES:-0}" = "1" ]; then \
-		$(MAKE) --no-print-directory test-bf16-pytorch-onednn-real-shapes; \
-	else \
-		echo "SKIP: PyTorch/oneDNN production-shape gate (set CK_BF16_ONEDNN_REAL_SHAPES=1)"; \
-	fi
+	@$(MAKE) --no-print-directory test-bf16-pytorch-onednn-oracle-auto
 	@if [ "$${CK_BF16_FULL_SHAPES:-0}" = "1" ]; then \
 		$(MAKE) --no-print-directory test-bf16-practical-precision-full; \
 	else \

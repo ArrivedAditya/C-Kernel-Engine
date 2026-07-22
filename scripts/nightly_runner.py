@@ -350,6 +350,11 @@ TEST_SUITES = {
         "bf16",
         UNITTEST_DIR / "test_bump_alloc_mixed.py",
     ),
+    "pytorch_onednn_oracle_contract_bf16": TestSuite(
+        "PyTorch/oneDNN Oracle Contract BF16",
+        "bf16",
+        BF16_DIR / "test_pytorch_onednn_oracle_contract_bf16.py",
+    ),
     # Quantization tests
     # NOTE: test_quant_kernels.py and test_q4_k_quantize.py removed - use llamacpp-parity-full
     # for authoritative kernel correctness testing against llama.cpp reference
@@ -538,6 +543,12 @@ MAKE_TARGETS = {
         "category": "bf16",
         "target": "test-bf16-xray",
         "timeout_sec": 300,
+    },
+    "v8_bf16_pytorch_onednn_oracle": {
+        "name": "BF16 PyTorch/oneDNN Production-Shape Oracle",
+        "category": "bf16",
+        "target": "test-bf16-pytorch-onednn-oracle-auto",
+        "timeout_sec": 1800,
     },
     "v8_dsl_policy": {
         "name": "v8 DSL Zero-Hardcoding Policy",
