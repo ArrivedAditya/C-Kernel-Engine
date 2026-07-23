@@ -2456,12 +2456,36 @@ V8_STITCHED_GRANULAR_LAYERS ?=
 CK_RUN_STITCHED_PARITY ?= 0
 V8_QWEN3VL_LOCAL_MODEL ?= models/Qwen3-VL-8B-Instruct-GGUF/Qwen3VL-8B-Instruct-Q4_K_M.gguf
 V8_QWEN3VL_LOCAL_MMPROJ ?= models/Qwen3-VL-8B-Instruct-GGUF/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf
+QWEN3VL_PRIVATE_CORPUS_MANIFEST ?= $(CK_QWEN3VL_OCR_MANIFEST)
+QWEN3VL_PRIVATE_CORPUS_DECODER ?= $(V8_QWEN3VL_LOCAL_MODEL)
+QWEN3VL_PRIVATE_CORPUS_MMPROJ ?= $(V8_QWEN3VL_LOCAL_MMPROJ)
+QWEN3VL_PRIVATE_CORPUS_LLAMA_ROOT ?= $(CK_LLAMA_CPP_ROOT)
+QWEN3VL_PRIVATE_CORPUS_OUTPUT ?= $(HOME)/.cache/ck-engine-v8/private/qwen3vl-llamacpp-corpus
+QWEN3VL_PRIVATE_CORPUS_ARGS ?=
 V8_QWEN3VL_STITCHED_DECODER ?= $(V8_QWEN3VL_LOCAL_MODEL)
 V8_QWEN3VL_STITCHED_MMPROJ ?= $(V8_QWEN3VL_LOCAL_MMPROJ)
 V8_QWEN3VL_STITCHED_IMAGE ?= ocr/1 81.jpg
 V8_QWEN3VL_STITCHED_PROMPT ?= Extract visible form fields as compact JSON.
 V8_QWEN3VL_STITCHED_IMAGE_MIN_TOKENS ?=
 V8_QWEN3VL_STITCHED_IMAGE_MAX_TOKENS ?= 1024
+
+.PHONY: test-qwen3vl-private-corpus-parity-auto
+test-qwen3vl-private-corpus-parity-auto:
+	@if [ -z "$(QWEN3VL_PRIVATE_CORPUS_MANIFEST)" ]; then \
+		echo "SKIP: private Qwen3-VL corpus is not configured on this runner"; \
+	else \
+		test -f "$(QWEN3VL_PRIVATE_CORPUS_MANIFEST)" || { echo "ERROR: private corpus manifest is missing"; exit 2; }; \
+		test -f "$(QWEN3VL_PRIVATE_CORPUS_DECODER)" || { echo "ERROR: Qwen3-VL decoder GGUF is missing"; exit 2; }; \
+		test -f "$(QWEN3VL_PRIVATE_CORPUS_MMPROJ)" || { echo "ERROR: Qwen3-VL mmproj GGUF is missing"; exit 2; }; \
+		test -f "$(QWEN3VL_PRIVATE_CORPUS_LLAMA_ROOT)/build/bin/libllama.so" || { echo "ERROR: pinned llama.cpp build is missing"; exit 2; }; \
+		$(PYTHON) version/v8/scripts/certify_qwen3vl_llamacpp_corpus_v8.py \
+			--manifest "$(QWEN3VL_PRIVATE_CORPUS_MANIFEST)" \
+			--decoder-gguf "$(QWEN3VL_PRIVATE_CORPUS_DECODER)" \
+			--mmproj-gguf "$(QWEN3VL_PRIVATE_CORPUS_MMPROJ)" \
+			--llama-root "$(QWEN3VL_PRIVATE_CORPUS_LLAMA_ROOT)" \
+			--output-dir "$(QWEN3VL_PRIVATE_CORPUS_OUTPUT)" \
+			--continue-on-failure $(QWEN3VL_PRIVATE_CORPUS_ARGS); \
+	fi
 
 # First time / fix everything: clean rebuild with all patches
 llamacpp-parity-rebuild:
