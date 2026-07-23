@@ -22,6 +22,25 @@ def _load_runner():
 
 
 class NightlyArtifactStatusTests(unittest.TestCase):
+    def test_make_target_explicit_skip_is_not_reported_as_pass(self) -> None:
+        runner = _load_runner()
+        target = {
+            "name": "private artifact gate",
+            "category": "parity",
+            "target": "fake-private-gate",
+            "timeout_sec": 10,
+        }
+        completed = subprocess.CompletedProcess(
+            ["make", "fake-private-gate"],
+            0,
+            stdout="SKIP: private corpus is not configured\n",
+            stderr="",
+        )
+        with mock.patch.object(runner.subprocess, "run", return_value=completed):
+            result = runner.run_make_target(target)
+        self.assertEqual(result.status, "skip")
+        self.assertEqual(result.error_msg, "SKIP: private corpus is not configured")
+
     def test_fresh_artifact_status_overrides_zero_exit(self) -> None:
         runner = _load_runner()
         target = {

@@ -364,6 +364,11 @@ TEST_SUITES = {
 
     # Parity tests
     "pytorch_parity": TestSuite("PyTorch Parity", "parity", UNITTEST_DIR / "test_pytorch_parity.py", timeout_sec=300),
+    "qwen3vl_private_corpus_contract": TestSuite(
+        "Qwen3-VL Private Corpus Runner Contract",
+        "parity",
+        ROOT / "tests" / "test_v8_qwen3vl_private_corpus_certification.py",
+    ),
     "rope_pairwise_layout": TestSuite(
         "RoPE Pairwise Layout (Llama)",
         "parity",
@@ -586,6 +591,12 @@ MAKE_TARGETS = {
         "category": "parity",
         "target": "test-qwen3vl-methodical-parity",
         "timeout_sec": 1200,
+    },
+    "qwen3vl_private_corpus_parity": {
+        "name": "Qwen3-VL Private 40-Image E2E Parity",
+        "category": "parity",
+        "target": "test-qwen3vl-private-corpus-parity-auto",
+        "timeout_sec": 21600,
     },
     "v8_qwen3vl_vision_smoke": {
         "name": "v8 Qwen3-VL Vision Smoke",
@@ -948,6 +959,16 @@ def run_make_target(target_info: dict, verbose: bool = False) -> TestResult:
                 perf_unit = target_info.get("perf_unit", "")
 
         status = "pass" if result.returncode == 0 else "fail"
+        explicit_skip = next(
+            (
+                line.strip()
+                for line in f"{result.stdout}\n{result.stderr}".splitlines()
+                if line.strip().lower().startswith("skip:")
+            ),
+            "",
+        )
+        if result.returncode == 0 and explicit_skip:
+            status = "skip"
         status_artifact = target_info.get("status_artifact")
         artifact_payload = None
         artifact_reason = ""
@@ -963,8 +984,8 @@ def run_make_target(target_info: dict, verbose: bool = False) -> TestResult:
             if artifact_status in {"pass", "fail", "skip"}:
                 status = artifact_status
         error_msg = ""
-        if status == "skip" and artifact_reason:
-            error_msg = artifact_reason
+        if status == "skip":
+            error_msg = artifact_reason or explicit_skip
         if status == "fail":
             # Look for error indicators in both stdout and stderr
             # Match: [ERROR], [FAIL], error, Error, failed, FAILED
