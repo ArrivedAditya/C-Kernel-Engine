@@ -2198,6 +2198,18 @@ test-qwen3vl-bf16-kernel-oracles:
 	@failed=0; \
 	for t in $(PY_TESTS_QWEN3VL_BF16_ORACLES); do \
 	  echo "Running $$t"; \
+	  case "$$t" in \
+	    *test_patch_projection_pytorch_onednn_bf16.py) \
+	      if [ "$(USE_ONEDNN)" != "1" ]; then \
+	        echo "SKIP: $$t requires a USE_ONEDNN=1 engine"; \
+	        continue; \
+	      fi ;; \
+	    *test_gelu_pytorch_erf_sleef_storage_bf16.py) \
+	      if [ -z "$(AVX512_SUPPORT)" ]; then \
+	        echo "SKIP: $$t requires an AVX-512 engine"; \
+	        continue; \
+	      fi ;; \
+	  esac; \
 	  if ! CK_ENGINE_SO=$(BUILD_DIR)/libckernel_engine.so \
 	       CK_ENGINE_LIB=$(BUILD_DIR)/libckernel_engine.so \
 	       LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH \
@@ -2210,6 +2222,19 @@ test-qwen3vl-bf16-kernel-oracles:
 	  exit 1; \
 	fi
 	@$(PYTHON) $(PYTHONFLAGS) tests/test_v8_qwen3vl_bf16_kernel_matrix.py
+
+.PHONY: install-git-hooks test-git-patch-archive
+install-git-hooks:
+	@git config core.hooksPath .githooks
+	@echo "Installed CKE Git hooks from .githooks"
+
+test-git-patch-archive:
+	@tmp="$$(mktemp -d)"; \
+	CK_PATCH_ARCHIVE_DIR="$$tmp" scripts/git_hooks/export_commit_patch.sh HEAD; \
+	test "$$(find "$$tmp" -maxdepth 1 -name '*.patch' | wc -l)" -eq 1; \
+	test "$$(find "$$tmp" -maxdepth 1 -name '*.patch.sha256' | wc -l)" -eq 1; \
+	(cd "$$tmp" && sha256sum -c *.patch.sha256); \
+	echo "PASS: binary-safe commit patch and SHA-256 archive"
 
 test-v4-q4k:
 	@if [ -z "$(GGUF_PATH)" ]; then \
@@ -2512,6 +2537,18 @@ QWEN3VL_PRIVATE_CORPUS_OUTPUT ?= $(HOME)/.cache/ck-engine-v8/private/qwen3vl-lla
 QWEN3VL_PRIVATE_CORPUS_ARGS ?=
 QWEN3VL_PRIVATE_CORPUS_PRETTY ?= auto
 QWEN3VL_PRIVATE_CORPUS_FORCE_RERUN ?= 0
+QWEN3VL_BF16_PRIVATE_CORPUS_MANIFEST ?= $(CK_QWEN3VL_OCR_MANIFEST)
+QWEN3VL_BF16_PRIVATE_CHECKPOINT ?= $(CK_QWEN3VL_BF16_CHECKPOINT)
+QWEN3VL_BF16_PRIVATE_ENCODER_RUNTIMES ?= $(CK_QWEN3VL_BF16_ENCODER_RUNTIMES)
+QWEN3VL_BF16_PRIVATE_ENCODER_WEIGHTS ?= $(CK_QWEN3VL_BF16_ENCODER_WEIGHTS)
+QWEN3VL_BF16_PRIVATE_DECODER_RUNTIME ?= $(CK_QWEN3VL_BF16_DECODER_RUNTIME)
+QWEN3VL_BF16_PRIVATE_ENGINE ?= $(CK_QWEN3VL_BF16_ENGINE)
+QWEN3VL_BF16_PRIVATE_SLEEF_LIBRARY ?= $(CK_SLEEF_LIBRARY)
+QWEN3VL_BF16_PRIVATE_OUTPUT ?= $(HOME)/.cache/ck-engine-v8/private/qwen3vl-bf16-corpus
+QWEN3VL_BF16_PRIVATE_THREADS ?= 24
+QWEN3VL_BF16_PRIVATE_MAX_NEW_TOKENS ?= 64
+QWEN3VL_BF16_PRIVATE_REQUIRED_IMAGES ?= 40
+QWEN3VL_BF16_PRIVATE_ARGS ?=
 V8_QWEN3VL_STITCHED_DECODER ?= $(V8_QWEN3VL_LOCAL_MODEL)
 V8_QWEN3VL_STITCHED_MMPROJ ?= $(V8_QWEN3VL_LOCAL_MMPROJ)
 V8_QWEN3VL_STITCHED_IMAGE ?= ocr/1 81.jpg
@@ -2538,6 +2575,47 @@ test-qwen3vl-private-corpus-parity-auto:
 			$(if $(filter 0,$(QWEN3VL_PRIVATE_CORPUS_PRETTY)),--redacted-console,) \
 			$(if $(filter 1,$(QWEN3VL_PRIVATE_CORPUS_FORCE_RERUN)),--force-rerun,) \
 			--continue-on-failure $(QWEN3VL_PRIVATE_CORPUS_ARGS); \
+	fi
+
+.PHONY: test-qwen3vl-bf16-private-corpus-parity-auto
+test-qwen3vl-bf16-private-corpus-parity-auto:
+	@if [ -z "$(QWEN3VL_BF16_PRIVATE_CORPUS_MANIFEST)" ] && \
+	    [ -z "$(QWEN3VL_BF16_PRIVATE_CHECKPOINT)" ]; then \
+		echo "SKIP: private Qwen3-VL BF16 corpus is not configured on this runner"; \
+	else \
+		test -f "$(QWEN3VL_BF16_PRIVATE_CORPUS_MANIFEST)" || { echo "ERROR: BF16 private corpus manifest is missing"; exit 2; }; \
+		test -d "$(QWEN3VL_BF16_PRIVATE_CHECKPOINT)" || { echo "ERROR: BF16 safetensors checkpoint is missing"; exit 2; }; \
+		test -n "$(QWEN3VL_BF16_PRIVATE_ENCODER_RUNTIMES)" || { echo "ERROR: BF16 encoder runtimes are not configured"; exit 2; }; \
+		for runtime in $(QWEN3VL_BF16_PRIVATE_ENCODER_RUNTIMES); do \
+			test -d "$$runtime" || { echo "ERROR: BF16 encoder runtime is missing: $$runtime"; exit 2; }; \
+		done; \
+		test -f "$(QWEN3VL_BF16_PRIVATE_ENCODER_WEIGHTS)" || { echo "ERROR: BF16 encoder weights BUMP is missing"; exit 2; }; \
+		test -d "$(QWEN3VL_BF16_PRIVATE_DECODER_RUNTIME)" || { echo "ERROR: BF16 decoder runtime is missing"; exit 2; }; \
+		test -f "$(QWEN3VL_BF16_PRIVATE_ENGINE)" || { echo "ERROR: canonical BF16 engine is missing"; exit 2; }; \
+		$(PYTHON) -c 'import torch, transformers' >/dev/null 2>&1 || { \
+			echo "ERROR: PYTHON=$(PYTHON) must provide torch and transformers"; exit 2; \
+		}; \
+		sleef="$(QWEN3VL_BF16_PRIVATE_SLEEF_LIBRARY)"; \
+		if [ -z "$$sleef" ]; then \
+			sleef="$$( $(PYTHON) -c 'import pathlib, torch; print(pathlib.Path(torch.__file__).resolve().parent / "lib" / "libtorch_cpu.so")' )"; \
+		fi; \
+		test -f "$$sleef" || { echo "ERROR: PyTorch/SLEEF provider library is missing: $$sleef"; exit 2; }; \
+		CK_CERT_ENGINE_SO="$(QWEN3VL_BF16_PRIVATE_ENGINE)" \
+		CK_SLEEF_LIBRARY="$$sleef" \
+		CK_NUM_THREADS="$(QWEN3VL_BF16_PRIVATE_THREADS)" \
+		OMP_NUM_THREADS="$(QWEN3VL_BF16_PRIVATE_THREADS)" \
+		MKL_NUM_THREADS="$(QWEN3VL_BF16_PRIVATE_THREADS)" \
+		$(PYTHON) version/v8/scripts/certify_qwen3vl_bf16_corpus_v8.py \
+			--checkpoint "$(QWEN3VL_BF16_PRIVATE_CHECKPOINT)" \
+			--manifest "$(QWEN3VL_BF16_PRIVATE_CORPUS_MANIFEST)" \
+			$(foreach runtime,$(QWEN3VL_BF16_PRIVATE_ENCODER_RUNTIMES),--encoder-runtime "$(runtime)") \
+			--encoder-weights-bump "$(QWEN3VL_BF16_PRIVATE_ENCODER_WEIGHTS)" \
+			--decoder-runtime "$(QWEN3VL_BF16_PRIVATE_DECODER_RUNTIME)" \
+			--output-dir "$(QWEN3VL_BF16_PRIVATE_OUTPUT)" \
+			--require-images "$(QWEN3VL_BF16_PRIVATE_REQUIRED_IMAGES)" \
+			--max-new-tokens "$(QWEN3VL_BF16_PRIVATE_MAX_NEW_TOKENS)" \
+			--threads "$(QWEN3VL_BF16_PRIVATE_THREADS)" \
+			--decoder-process spawn $(QWEN3VL_BF16_PRIVATE_ARGS); \
 	fi
 
 # First time / fix everything: clean rebuild with all patches
@@ -3563,7 +3641,9 @@ test-numerical-contracts: $(LIB)
 		$(PYTHON) unittest/test_attention_f16_split_kv.py
 	@mkdir -p build/v8/contracts
 	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3_vl_vision --operation vision_encoder.attention --phase prefill --mode bringup --output build/v8/contracts/qwen3vl-vision-prefill.json >/dev/null
-	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3vl --operation decoder.attention --phase decode --mode bringup --output build/v8/contracts/qwen3vl-decode.json >/dev/null
+	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3vl --operation decoder.attention.fp16_cache --phase decode --mode bringup --output build/v8/contracts/qwen3vl-decode.json >/dev/null
+	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3vl --operation decoder.attention.bf16_pytorch --phase prefill --mode bringup --output build/v8/contracts/qwen3vl-bf16-prefill.json >/dev/null
+	@$(PYTHON) version/v8/scripts/resolve_attention_contracts_v8.py --circuit qwen3vl --operation decoder.attention.bf16_pytorch --phase decode --mode bringup --output build/v8/contracts/qwen3vl-bf16-decode.json >/dev/null
 	@echo "Resolved plans: build/v8/contracts/"
 
 .PHONY: certify-qwen35-text-parity

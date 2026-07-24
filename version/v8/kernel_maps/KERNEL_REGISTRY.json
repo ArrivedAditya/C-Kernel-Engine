@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 243,
+      "total": 244,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -82,7 +82,7 @@
         "residual_add": 2,
         "residual_save": 1,
         "rmsnorm": 5,
-        "rope": 15,
+        "rope": 16,
         "rope_backward": 2,
         "rope_init": 2,
         "rowwise_bias_add": 1,
@@ -12892,6 +12892,7 @@
       },
       "call_abi": {
         "version": 1,
+        "last_token_dispatch": "preserve_provider",
         "params": [
           {
             "cast": "const float*",
@@ -21531,6 +21532,265 @@
       "notes": "Shared SwiGLU expert branch used by Kimi/DeepSeek-style MoE; output = routed + shared_down(silu(shared_gate(x))*shared_up(x)).",
       "name": "moe_swiglu_shared_forward_f32",
       "_source_file": "moe_swiglu_shared_forward_f32.json"
+    },
+    {
+      "id": "mrope_qk_imrope_positions",
+      "op": "rope",
+      "variant": "fp32_head_major_text_imrope_explicit_positions",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "positions",
+          "dtype": "i32",
+          "shape": [
+            4,
+            "T"
+          ]
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D",
+        "n_dims"
+      ],
+      "params": [
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32"
+        },
+        {
+          "name": "n_dims",
+          "dtype": "int32"
+        },
+        {
+          "name": "section_0",
+          "dtype": "int32"
+        },
+        {
+          "name": "section_1",
+          "dtype": "int32"
+        },
+        {
+          "name": "section_2",
+          "dtype": "int32"
+        },
+        {
+          "name": "section_3",
+          "dtype": "int32"
+        },
+        {
+          "name": "n_ctx_orig",
+          "dtype": "int32"
+        },
+        {
+          "name": "freq_base",
+          "dtype": "fp32"
+        },
+        {
+          "name": "freq_scale",
+          "dtype": "fp32"
+        },
+        {
+          "name": "ext_factor",
+          "dtype": "fp32"
+        },
+        {
+          "name": "attn_factor",
+          "dtype": "fp32"
+        },
+        {
+          "name": "beta_fast",
+          "dtype": "fp32"
+        },
+        {
+          "name": "beta_slow",
+          "dtype": "fp32"
+        }
+      ],
+      "impl": {
+        "function": "mrope_qk_imrope_positions",
+        "c_declaration": "void mrope_qk_imrope_positions(float *q, float *k, const int32_t *positions, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int n_dims, int section_0, int section_1, int section_2, int section_3, int n_ctx_orig, float freq_base, float freq_scale, float ext_factor, float attn_factor, float beta_fast, float beta_slow);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "text_imrope_positions_fp32_input_fp32_compute_fp32_output",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "mrope_qk_imrope_positions",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "q",
+            "source": "output:q"
+          },
+          {
+            "cast": "float*",
+            "name": "k",
+            "source": "output:k"
+          },
+          {
+            "cast": "const int32_t*",
+            "name": "positions",
+            "source": "activation:positions"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "n_dims",
+            "source": "dim:n_dims"
+          },
+          {
+            "name": "section_0",
+            "source": "dim:section_0"
+          },
+          {
+            "name": "section_1",
+            "source": "dim:section_1"
+          },
+          {
+            "name": "section_2",
+            "source": "dim:section_2"
+          },
+          {
+            "name": "section_3",
+            "source": "dim:section_3"
+          },
+          {
+            "name": "n_ctx_orig",
+            "source": "dim:n_ctx_orig"
+          },
+          {
+            "name": "freq_base",
+            "source": "dim:freq_base"
+          },
+          {
+            "name": "freq_scale",
+            "source": "dim:freq_scale"
+          },
+          {
+            "name": "ext_factor",
+            "source": "dim:ext_factor"
+          },
+          {
+            "name": "attn_factor",
+            "source": "dim:attn_factor"
+          },
+          {
+            "name": "beta_fast",
+            "source": "dim:beta_fast"
+          },
+          {
+            "name": "beta_slow",
+            "source": "dim:beta_slow"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_mrope_qwen3vl.py"
+        ],
+        "production_shapes": [
+          "H=32,Hkv=8,T=1026,D=128"
+        ],
+        "oracle": "Qwen3-VL explicit-position M-RoPE reference"
+      },
+      "name": "mrope_qk_imrope_positions",
+      "_source_file": "mrope_qk_imrope_positions.json"
     },
     {
       "id": "mrope_qk_text",

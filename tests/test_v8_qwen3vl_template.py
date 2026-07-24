@@ -697,6 +697,10 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
                 "segments": ["text_before", "visual", "text_after"],
                 "cache_transition": "append_preserve",
                 "position_transition": "segment_defined",
+                "position_transform": {
+                    "kernel_id": "mrope_qk_imrope_positions",
+                    "contract_id": "text_imrope_positions_fp32_input_fp32_compute_fp32_output",
+                },
             },
         )
         self.assertEqual(

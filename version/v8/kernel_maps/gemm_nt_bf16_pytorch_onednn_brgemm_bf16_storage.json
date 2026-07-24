@@ -63,6 +63,7 @@
   },
   "call_abi": {
     "version": 1,
+    "last_token_dispatch": "preserve_provider",
     "params": [
       {"cast": "const float*", "name": "A", "source": "activation:a"},
       {"name": "B", "source": "weight:_first_weight"},

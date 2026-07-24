@@ -772,8 +772,10 @@ def main() -> int:
                 f"ERROR {type(exc).__name__}; inspect the local case result",
                 file=sys.stderr,
             )
-            if not args.continue_on_failure:
-                break
+            # --continue-on-failure applies to completed numerical comparisons.
+            # Execution/setup errors are global until proven otherwise; fail
+            # immediately instead of repeating an expensive broken run.
+            break
         finally:
             _json_write(args.output_dir / "summary.json", _summary(selected=selected, rows=rows, config=config))
 

@@ -21,6 +21,8 @@ resolver = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = resolver
 SPEC.loader.exec_module(resolver)
 
+QWEN3VL_FP16_ATTENTION = "decoder.attention.fp16_cache"
+
 
 class AttentionContractV8Tests(unittest.TestCase):
     @classmethod
@@ -40,7 +42,7 @@ class AttentionContractV8Tests(unittest.TestCase):
             copy.deepcopy(self.circuit),
             copy.deepcopy(self.contracts),
             copy.deepcopy(self.kernels),
-            operation="decoder.attention",
+            operation=QWEN3VL_FP16_ATTENTION,
             phase=phase,
             mode=mode,
             source_circuit_path=self.circuit_path,
@@ -235,7 +237,7 @@ class AttentionContractV8Tests(unittest.TestCase):
 
     def test_plain_dtype_is_not_a_reduction_contract(self) -> None:
         circuit = copy.deepcopy(self.circuit)
-        circuit["required_contracts"]["decoder.attention"]["phases"]["decode"]["requires"][
+        circuit["required_contracts"][QWEN3VL_FP16_ATTENTION]["phases"]["decode"]["requires"][
             "numerics.attention_reduction"
         ] = "fp32"
         with self.assertRaisesRegex(resolver.ContractError, "ambiguous reduction"):
@@ -243,7 +245,7 @@ class AttentionContractV8Tests(unittest.TestCase):
                 circuit,
                 copy.deepcopy(self.contracts),
                 copy.deepcopy(self.kernels),
-                operation="decoder.attention",
+                operation=QWEN3VL_FP16_ATTENTION,
                 phase="decode",
                 mode="bringup",
             )
@@ -251,7 +253,7 @@ class AttentionContractV8Tests(unittest.TestCase):
     def test_unsupported_kernel_reduction_fails_without_fallback(self) -> None:
         circuit = copy.deepcopy(self.circuit)
         kernels = copy.deepcopy(self.kernels)
-        circuit["required_contracts"]["decoder.attention"]["phases"]["decode"]["requires"][
+        circuit["required_contracts"][QWEN3VL_FP16_ATTENTION]["phases"]["decode"]["requires"][
             "numerics.attention_reduction"
         ] = "fp32_online"
         del kernels["kernels"]["attention_forward_decode_head_major_gqa_flash_f16cache"]
@@ -260,7 +262,7 @@ class AttentionContractV8Tests(unittest.TestCase):
                 circuit,
                 copy.deepcopy(self.contracts),
                 kernels,
-                operation="decoder.attention",
+                operation=QWEN3VL_FP16_ATTENTION,
                 phase="decode",
                 mode="bringup",
             )
@@ -269,7 +271,7 @@ class AttentionContractV8Tests(unittest.TestCase):
         circuit = copy.deepcopy(self.circuit)
         contracts = copy.deepcopy(self.contracts)
         kernels = copy.deepcopy(self.kernels)
-        circuit["required_contracts"]["decoder.attention"]["phases"]["decode"]["validation"] = "validated"
+        circuit["required_contracts"][QWEN3VL_FP16_ATTENTION]["phases"]["decode"]["validation"] = "validated"
         contracts["contracts"]["f16_online_fp32_merge"]["status"] = "validated"
         implementation = kernels["kernels"][
             "attention_forward_decode_head_major_gqa_flash_f16cache_contract"
@@ -280,7 +282,7 @@ class AttentionContractV8Tests(unittest.TestCase):
             circuit,
             contracts,
             kernels,
-            operation="decoder.attention",
+            operation=QWEN3VL_FP16_ATTENTION,
             phase="decode",
             mode="production",
         )
@@ -307,33 +309,33 @@ class AttentionContractV8Tests(unittest.TestCase):
                     copy.deepcopy(self.circuit),
                     copy.deepcopy(self.contracts),
                     kernels,
-                    operation="decoder.attention",
+                    operation=QWEN3VL_FP16_ATTENTION,
                     phase="decode",
                     mode="bringup",
                 )
 
     def test_unknown_circuit_contract_field_is_a_hard_fault(self) -> None:
         circuit = copy.deepcopy(self.circuit)
-        circuit["required_contracts"]["decoder.attention"]["phases"]["decode"]["fallback"] = "fp32"
+        circuit["required_contracts"][QWEN3VL_FP16_ATTENTION]["phases"]["decode"]["fallback"] = "fp32"
         with self.assertRaisesRegex(resolver.ContractError, "(?s)HARD CONTRACT FAULT.*fallback"):
             resolver.resolve_contract(
                 circuit,
                 copy.deepcopy(self.contracts),
                 copy.deepcopy(self.kernels),
-                operation="decoder.attention",
+                operation=QWEN3VL_FP16_ATTENTION,
                 phase="decode",
                 mode="bringup",
             )
 
     def test_missing_template_op_binding_is_a_hard_fault(self) -> None:
         circuit = copy.deepcopy(self.circuit)
-        del circuit["required_contracts"]["decoder.attention"]["template_ops"]
+        del circuit["required_contracts"][QWEN3VL_FP16_ATTENTION]["template_ops"]
         with self.assertRaisesRegex(resolver.ContractError, "(?s)HARD CONTRACT FAULT.*template_ops"):
             resolver.resolve_contract(
                 circuit,
                 copy.deepcopy(self.contracts),
                 copy.deepcopy(self.kernels),
-                operation="decoder.attention",
+                operation=QWEN3VL_FP16_ATTENTION,
                 phase="decode",
                 mode="bringup",
             )
@@ -354,7 +356,7 @@ class AttentionContractV8Tests(unittest.TestCase):
 
     def test_hard_fault_instructs_agents_not_to_bypass(self) -> None:
         circuit = copy.deepcopy(self.circuit)
-        circuit["required_contracts"]["decoder.attention"]["phases"]["decode"]["requires"][
+        circuit["required_contracts"][QWEN3VL_FP16_ATTENTION]["phases"]["decode"]["requires"][
             "numerics.attention_reduction"
         ] = "fp32_online"
         kernels = copy.deepcopy(self.kernels)
@@ -364,7 +366,7 @@ class AttentionContractV8Tests(unittest.TestCase):
                 circuit,
                 copy.deepcopy(self.contracts),
                 kernels,
-                operation="decoder.attention",
+                operation=QWEN3VL_FP16_ATTENTION,
                 phase="decode",
                 mode="bringup",
             )
@@ -384,8 +386,10 @@ class AttentionContractV8Tests(unittest.TestCase):
             ("nemotron_h", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash"),
             ("llama", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_flash_strided_f16kv"),
             ("llama", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash_f16kv"),
-            ("qwen3vl", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64"),
-            ("qwen3vl", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash_f16cache_contract"),
+            ("qwen3vl", QWEN3VL_FP16_ATTENTION, "prefill", "attention_forward_causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64"),
+            ("qwen3vl", QWEN3VL_FP16_ATTENTION, "decode", "attention_forward_decode_head_major_gqa_flash_f16cache_contract"),
+            ("qwen3vl", "decoder.attention.bf16_pytorch", "prefill", "attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract"),
+            ("qwen3vl", "decoder.attention.bf16_pytorch", "decode", "attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract"),
             ("qwen3_vl_vision", "vision_encoder.attention", "prefill", "attention_forward_full_head_major_gqa_tiled_f16kv_fp32_strided"),
         )
         for circuit_name, operation, phase, expected in cases:
@@ -401,7 +405,10 @@ class AttentionContractV8Tests(unittest.TestCase):
                     source_circuit_path=path,
                 )
                 self.assertEqual(result["kernel"]["id"], expected)
-                self.assertIn(result["implementation"]["threading"]["runtime"], {"serial", "ck_threadpool"})
+                self.assertIn(
+                    result["implementation"]["threading"]["runtime"],
+                    {"serial", "ck_threadpool", "external_blas"},
+                )
                 self.assertTrue(result["implementation"]["threading"]["work_partition"])
 
     def test_execution_schema_is_operator_generic(self) -> None:

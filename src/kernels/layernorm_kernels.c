@@ -817,12 +817,12 @@ static inline void layernorm_pytorch_add_moments_vec(
     const float c = n == 0 ? 0.0f : (float)m0_add / (float)n;
     const __m256 delta = _mm256_sub_ps(m1_add, *m1);
     const __m256 c_vec = _mm256_set1_ps(c);
-    *m1 = _mm256_fmadd_ps(delta, c_vec, *m1);
-    const __m256 delta_term = _mm256_mul_ps(
-        _mm256_mul_ps(delta, delta), c_vec);
-    const __m256 correction = _mm256_fmadd_ps(
-        delta_term, _mm256_set1_ps((float)*m0), m2_add);
-    *m2 = _mm256_add_ps(*m2, correction);
+    const __m256 m2_tmp = _mm256_add_ps(*m2, m2_add);
+    const __m256 c_delta = _mm256_mul_ps(c_vec, delta);
+    const __m256 m0_delta = _mm256_mul_ps(
+        delta, _mm256_set1_ps((float)*m0));
+    *m1 = _mm256_add_ps(*m1, c_delta);
+    *m2 = _mm256_fmadd_ps(m0_delta, c_delta, m2_tmp);
     *m0 = n;
 }
 

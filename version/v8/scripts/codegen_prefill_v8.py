@@ -226,10 +226,14 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             gemm_c_expr = _find_arg_expr(
                 args_list, source_prefix="output:", arg_name="C"
             )
-            # An exact numerical contract may intentionally resolve logits to a
-            # GEMM provider even for M=1. Preserve that provider and ABI instead
-            # of deriving an unregistered GEMV function name.
-            if gemm_a_expr and gemm_b_expr and gemm_c_expr:
+            # Some exact numerical contracts require the resolved GEMM provider
+            # even for M=1. Lower 3 carries this map-owned policy explicitly.
+            # Quantized providers omit it and use their registered row GEMV.
+            preserve_provider = (
+                (op.get("call_abi") or {}).get("last_token_dispatch")
+                == "preserve_provider"
+            )
+            if preserve_provider and gemm_a_expr and gemm_b_expr and gemm_c_expr:
                 return f"""    /* Op {seq_idx}: logits (last-only exact GEMM contract) */
     {func}(
         (const float*)({gemm_a_expr}) + (size_t)(num_tokens - 1) * {embed_dim},

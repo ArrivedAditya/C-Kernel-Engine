@@ -162,6 +162,7 @@ def _runtime_from_dir(path: Path, *, encoder: bool) -> dict[str, Any]:
         os.environ.get("CK_CERT_ENGINE_SO", str(adjacent_engine))
     ).resolve()
     runtime = {
+        "runtime_dir": path.resolve(),
         "so_path": libraries[0],
         "engine_so": canonical_engine,
         "weights_bump": path / "weights.bump",
@@ -182,7 +183,71 @@ def _runtime_from_dir(path: Path, *, encoder: bool) -> dict[str, Any]:
             "runtime adjacent and canonical engines differ: "
             f"adjacent={adjacent_engine} canonical={canonical_engine}"
         )
+    runtime["engine_sha256"] = _sha256(canonical_engine)
+    runtime["model_sha256"] = _sha256(libraries[0])
+    runtime["layout_sha256"] = _sha256(layouts[0])
+    runtime["manifest_map_sha256"] = _sha256(runtime["manifest_map"])
     return runtime
+
+
+def _runtime_provenance(
+    encoder_runtimes: dict[tuple[int, int, int], dict[str, Any]],
+    decoder_runtime: dict[str, Any],
+) -> dict[str, Any]:
+    rows = []
+    for grid, runtime in sorted(encoder_runtimes.items()):
+        rows.append({
+            "role": "encoder",
+            "grid": list(grid),
+            "runtime_dir": str(runtime["runtime_dir"]),
+            "engine_sha256": str(runtime["engine_sha256"]),
+            "model_sha256": str(runtime["model_sha256"]),
+            "layout_sha256": str(runtime["layout_sha256"]),
+            "manifest_map_sha256": str(runtime["manifest_map_sha256"]),
+        })
+    rows.append({
+        "role": "decoder",
+        "grid": None,
+        "runtime_dir": str(decoder_runtime["runtime_dir"]),
+        "engine_sha256": str(decoder_runtime["engine_sha256"]),
+        "model_sha256": str(decoder_runtime["model_sha256"]),
+        "layout_sha256": str(decoder_runtime["layout_sha256"]),
+        "manifest_map_sha256": str(decoder_runtime["manifest_map_sha256"]),
+    })
+    engine_hashes = {row["engine_sha256"] for row in rows}
+    if len(engine_hashes) != 1:
+        detail = ", ".join(
+            f"{row['role']}:{row['grid']}={row['engine_sha256']}" for row in rows
+        )
+        raise RuntimeError(
+            "BF16 certification requires one identical core engine for every runtime: "
+            + detail
+        )
+    return {
+        "engine_sha256": next(iter(engine_hashes)),
+        "runtimes": rows,
+    }
+
+
+def _config_sha256(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _retained_result(
+    path: Path,
+    *,
+    expected_config_sha256: str,
+    expected_image_sha256: str,
+) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    payload = _read_json(path)
+    if payload.get("certification_config_sha256") != expected_config_sha256:
+        return None
+    if payload.get("image_sha256") != expected_image_sha256:
+        return None
+    return payload
 
 
 def _encoder_grid(runtime: dict[str, Any]) -> tuple[int, int, int]:
@@ -401,6 +466,12 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--prompt", default="Extract visible form fields as compact JSON.")
     parser.add_argument("--max-images", type=int, default=0)
+    parser.add_argument(
+        "--require-images",
+        type=int,
+        default=0,
+        help="Fail unless the selected corpus contains exactly this many images",
+    )
     parser.add_argument("--sample-index", type=int, action="append", default=[])
     parser.add_argument("--max-new-tokens", type=int, default=64)
     parser.add_argument("--threads", type=int, default=24)
@@ -452,6 +523,7 @@ def main() -> int:
             raise RuntimeError(f"duplicate encoder geometry {grid}")
         encoder_runtimes[grid] = runtime
     decoder_runtime = _runtime_from_dir(args.decoder_runtime.resolve(), encoder=False)
+    runtime_provenance = _runtime_provenance(encoder_runtimes, decoder_runtime)
 
     processor = AutoProcessor.from_pretrained(str(checkpoint), local_files_only=True)
     model = Qwen3VLForConditionalGeneration.from_pretrained(
@@ -462,6 +534,35 @@ def main() -> int:
     eos = model.generation_config.eos_token_id
     eos_ids = {int(value) for value in (eos if isinstance(eos, list) else [eos]) if value is not None}
     samples = _load_samples(args.manifest.resolve(), args.max_images, set(args.sample_index))
+    if args.require_images and len(samples) != args.require_images:
+        raise RuntimeError(
+            "BF16 corpus size mismatch: "
+            f"required={args.require_images} selected={len(samples)}"
+        )
+    checkpoint_index = checkpoint / "model.safetensors.index.json"
+    certification_config = {
+        "schema_version": 1,
+        "checkpoint": str(checkpoint),
+        "checkpoint_index_sha256": (
+            _sha256(checkpoint_index) if checkpoint_index.is_file() else None
+        ),
+        "manifest": str(args.manifest.resolve()),
+        "manifest_sha256": _sha256(args.manifest.resolve()),
+        "prompt_sha256": hashlib.sha256(args.prompt.encode("utf-8")).hexdigest(),
+        "max_new_tokens": int(args.max_new_tokens),
+        "threads": int(args.threads),
+        "image_max_pixels": int(args.image_max_pixels),
+        "ck_prefix_source": str(args.ck_prefix_source),
+        "teacher_force_pytorch": bool(args.teacher_force_pytorch),
+        "trace_top_k": int(args.trace_top_k),
+        "decoder_process": str(args.decoder_process),
+        "runtime_provenance": runtime_provenance,
+    }
+    certification_config_sha256 = _config_sha256(certification_config)
+    _write_json(output_dir / "run_config.json", {
+        **certification_config,
+        "certification_config_sha256": certification_config_sha256,
+    })
     if args.ck_prefix_f32 is not None:
         if args.ck_prefix_source != "ck":
             parser.error("--ck-prefix-f32 cannot be combined with --ck-prefix-source=pytorch")
@@ -471,13 +572,21 @@ def main() -> int:
 
     for ordinal, sample in enumerate(samples, start=1):
         result_path = result_dir / f"{int(sample['index']):03d}.json"
-        if result_path.exists() and not args.force:
-            retained = _read_json(result_path)
+        image_path = Path(sample["image"])
+        image_sha256 = _sha256(image_path)
+        if not args.force:
+            retained = _retained_result(
+                result_path,
+                expected_config_sha256=certification_config_sha256,
+                expected_image_sha256=image_sha256,
+            )
+        else:
+            retained = None
+        if retained is not None:
             completed.append(retained)
             print(f"[{ordinal}/{len(samples)}] retained {sample['id']}: {retained.get('status')}", flush=True)
             continue
 
-        image_path = Path(sample["image"])
         image = Image.open(image_path).convert("RGB")
         messages = [{
             "role": "user",
@@ -666,9 +775,10 @@ def main() -> int:
         )
         divergence = ranking_divergence if args.teacher_force_pytorch else token_divergence
         result = {
+            "certification_config_sha256": certification_config_sha256,
             "index": int(sample["index"]),
             "id": sample["id"],
-            "image_sha256": _sha256(image_path),
+            "image_sha256": image_sha256,
             "grid_thw": list(grid),
             "prefix_shape": [int(encoder_report["prefix_tokens"]), int(encoder_report["embed_dim"])],
             "torch_ids_raw": torch_ids_raw,
@@ -728,6 +838,8 @@ def main() -> int:
             "prompt": args.prompt,
             "max_new_tokens": args.max_new_tokens,
             "threads": args.threads,
+            "certification_config_sha256": certification_config_sha256,
+            "runtime_provenance": runtime_provenance,
             "numerical_thread_provenance": thread_provenance,
             "teacher_forced": bool(args.teacher_force_pytorch),
             "completed": len(completed),

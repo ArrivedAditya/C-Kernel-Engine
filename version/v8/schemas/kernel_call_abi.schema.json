@@ -6,6 +6,11 @@
   "required": ["version", "params"],
   "properties": {
     "version": {"const": 1},
+    "last_token_dispatch": {
+      "type": "string",
+      "enum": ["preserve_provider"],
+      "description": "Keep the resolved provider for last-only logits instead of deriving a row GEMV."
+    },
     "params": {
       "type": "array",
       "items": {
