@@ -4253,6 +4253,7 @@ PARITY_SRCS := src/ck_parity_api.c \
                src/kernels/gemm_kernels_q5_1_q8_1.c \
                src/kernels/gemm_kernels_q8_0.c \
                src/kernels/gemm_kernels_q8_0_q8_0_contract.c \
+               src/kernels/gemm_kernels_bf16.c \
                src/kernels/gemm_batch_int8.c \
                src/kernels/quantize_row_q8_k_sse.c \
                src/kernels/quantize_row_q8_k_avx.c \
