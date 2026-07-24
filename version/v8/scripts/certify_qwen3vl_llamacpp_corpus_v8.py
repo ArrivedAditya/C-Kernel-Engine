@@ -251,6 +251,7 @@ def _redacted_row(
     prefix_sha256: str,
     report: dict[str, Any],
     elapsed: dict[str, float],
+    requested_tokens: int,
 ) -> dict[str, Any]:
     divergence = report.get("first_divergence")
     first_divergence = None
@@ -272,21 +273,193 @@ def _redacted_row(
             for key in ("status", "decoder_family", "engine_family")
         }
     prefix = report.get("prefix")
+    steps = len(report.get("steps") or [])
+    prefix_tokens = int(prefix.get("tokens", 0)) if isinstance(prefix, dict) else 0
+    prompt_tokens = len(report.get("prompt_tokens_before_image") or []) + len(
+        report.get("prompt_tokens_after_image") or []
+    )
+    prefill_tokens = prefix_tokens + prompt_tokens
+    bridge_sec = float(elapsed.get("bridge", 0.0))
+    parity_sec = float(elapsed.get("parity", 0.0))
+    total_sec = bridge_sec + parity_sec
     return {
         "image_index": int(index),
         "image_sha256": image_sha256,
         "prefix_sha256": prefix_sha256,
         "grid": prefix.get("grid") if isinstance(prefix, dict) else None,
         "status": "pass" if bool(report.get("pass")) else "fail",
-        "steps": len(report.get("steps") or []),
+        "steps": steps,
+        "matched_tokens": steps,
+        "requested_tokens": requested_tokens,
+        "prefix_tokens": prefix_tokens,
+        "prompt_tokens": prompt_tokens,
+        "prefill_tokens": prefill_tokens,
+        "context_capacity": int(report.get("ctx_len", 0)),
+        "context_tokens_after_comparison": prefill_tokens + steps,
         "first_divergence": first_divergence,
         "stop_reason": report.get("stop_reason"),
         "decoder_sha256": _runtime_hash(report, "shared_library"),
         "engine_sha256": _runtime_hash(report, "engine_library"),
         "compiler_provenance": compiler_summary,
         "llama_commit": llama.get("commit") if isinstance(llama, dict) else None,
-        "elapsed_sec": elapsed,
+        "elapsed_sec": {
+            **elapsed,
+            "total": total_sec,
+            "comparison_per_token": parity_sec / steps if steps else None,
+        },
     }
+
+
+def _row_total_sec(row: dict[str, Any]) -> float:
+    elapsed = row.get("elapsed_sec")
+    return float(elapsed.get("total", 0.0)) if isinstance(elapsed, dict) else 0.0
+
+
+def _timing_summary(rows: list[dict[str, Any]]) -> dict[str, float]:
+    totals = [_row_total_sec(row) for row in rows if _row_total_sec(row) > 0.0]
+    if not totals:
+        return {
+            "total_sec": 0.0,
+            "mean_sec_per_image": 0.0,
+            "min_sec_per_image": 0.0,
+            "max_sec_per_image": 0.0,
+        }
+    return {
+        "total_sec": sum(totals),
+        "mean_sec_per_image": sum(totals) / len(totals),
+        "min_sec_per_image": min(totals),
+        "max_sec_per_image": max(totals),
+    }
+
+
+def _progress_line(
+    row: dict[str, Any],
+    *,
+    completed: int,
+    requested: int,
+    resumed: bool = False,
+) -> str:
+    elapsed = row.get("elapsed_sec")
+    elapsed = elapsed if isinstance(elapsed, dict) else {}
+    matched = int(row.get("matched_tokens", row.get("steps", 0)))
+    target = int(row.get("requested_tokens", matched))
+    suffix = " resumed" if resumed else ""
+    return (
+        f"[{completed}/{requested}] image {int(row['image_index']):02d}: "
+        f"{str(row.get('status', 'unknown')).upper()} "
+        f"matched={matched}/{target} "
+        f"prefix={int(row.get('prefix_tokens', 0))} "
+        f"prompt={int(row.get('prompt_tokens', 0))} "
+        f"prefill={int(row.get('prefill_tokens', 0))} "
+        f"context={int(row.get('context_tokens_after_comparison', 0))}/"
+        f"{int(row.get('context_capacity', 0))} "
+        f"bridge={float(elapsed.get('bridge', 0.0)):.2f}s "
+        f"parity={float(elapsed.get('parity', 0.0)):.2f}s "
+        f"total={_row_total_sec(row):.2f}s "
+        f"compare={float(elapsed.get('comparison_per_token') or 0.0):.3f}s/token-pair"
+        f"{suffix}"
+    )
+
+
+def _private_console_enabled(args: argparse.Namespace) -> bool:
+    configured = getattr(args, "show_private_details", None)
+    if configured is not None:
+        return bool(configured)
+    return bool(sys.stdout.isatty() and not os.environ.get("CI"))
+
+
+def _load_json_if_present(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    value = json.loads(path.read_text(encoding="utf-8"))
+    return value if isinstance(value, dict) else {}
+
+
+def _print_private_case_details(
+    *,
+    sample: dict[str, Any],
+    row: dict[str, Any],
+    case_dir: Path,
+    prompt: str,
+) -> None:
+    bridge = _load_json_if_present(case_dir / "bridge_report.json")
+    parity = _load_json_if_present(case_dir / "parity.json")
+    encoder = bridge.get("encoder_report")
+    encoder = encoder if isinstance(encoder, dict) else {}
+    bridge_timings = bridge.get("timings")
+    bridge_timings = bridge_timings if isinstance(bridge_timings, dict) else {}
+    source_size = encoder.get("source_image_size")
+    source_text = "unknown"
+    if isinstance(source_size, list) and len(source_size) == 2:
+        source_text = f"{int(source_size[0])}x{int(source_size[1])}"
+    image_width = int(encoder.get("image_width", 0) or 0)
+    image_height = int(encoder.get("image_height", 0) or 0)
+    processed_text = (
+        f"{image_width}x{image_height}" if image_width > 0 and image_height > 0 else "unknown"
+    )
+    grid = row.get("grid")
+    grid_text = "unknown"
+    if isinstance(grid, list) and len(grid) == 2:
+        grid_text = f"{int(grid[0])}x{int(grid[1])}"
+
+    matched = int(row.get("matched_tokens", row.get("steps", 0)))
+    requested = int(row.get("requested_tokens", matched))
+    exact = str(row.get("status", "")).lower() == "pass"
+    label = "EXACT MATCH" if exact else str(row.get("status", "unknown")).upper()
+    elapsed = row.get("elapsed_sec")
+    elapsed = elapsed if isinstance(elapsed, dict) else {}
+    encoder_sec = float(bridge_timings.get("encoder_execute_ms", 0.0) or 0.0) / 1000.0
+    prefill_sec = float(bridge_timings.get("decoder_forward_mixed_ms", 0.0) or 0.0) / 1000.0
+
+    print()
+    print("=" * 88)
+    print(f"QWEN3-VL PRIVATE PARITY | IMAGE {int(sample['index']):02d} | {label}")
+    print("-" * 88)
+    print(f"Image       : {sample['image']}")
+    print(f"Image SHA256: {sample['image_sha256']}")
+    print(
+        f"Geometry    : source {source_text} -> processed {processed_text} | "
+        f"grid {grid_text} | vision tokens {int(row.get('prefix_tokens', 0))}"
+    )
+    print(f"Prompt      : {prompt}")
+    print(
+        f"Context     : prefill {int(row.get('prefill_tokens', 0))} + "
+        f"compared {matched} = {int(row.get('context_tokens_after_comparison', 0))}/"
+        f"{int(row.get('context_capacity', 0))}"
+    )
+    print(
+        f"Comparison  : {matched}/{requested} exact pre-EOS greedy token pairs | "
+        f"stop={row.get('stop_reason') or 'token limit'}"
+    )
+    print(
+        f"Timing      : encoder={encoder_sec:.2f}s mixed-prefill={prefill_sec:.2f}s "
+        f"bridge={float(elapsed.get('bridge', 0.0)):.2f}s "
+        f"parity-pair={float(elapsed.get('parity', 0.0)):.2f}s "
+        f"total={_row_total_sec(row):.2f}s"
+    )
+
+    shared_text = str(parity.get("generated_shared_text", "") or "")
+    print("-" * 88)
+    if exact:
+        print("Output (CK == llama.cpp for every compared token):")
+    else:
+        print("Shared output before the first divergence:")
+    print(shared_text if shared_text else "<no decoded text>")
+
+    divergence = parity.get("first_divergence")
+    if isinstance(divergence, dict):
+        print("-" * 88)
+        print(
+            f"First divergence at step {divergence.get('step')}: "
+            f"CK={divergence.get('ck_next')} {divergence.get('ck_next_text')!r} | "
+            f"llama.cpp={divergence.get('llama_next')} "
+            f"{divergence.get('llama_next_text')!r}"
+        )
+        print(
+            f"cosine={divergence.get('cosine')} rmse={divergence.get('rmse')} "
+            f"top-k overlap={divergence.get('topk_overlap_count')}"
+        )
+    print("=" * 88)
 
 
 def _summary(
@@ -316,6 +489,7 @@ def _summary(
         "max_new_tokens": config["max_new_tokens"],
         "config_sha256": _sha256_json(config),
         "provenance": _public_provenance(config),
+        "timing": _timing_summary(ordered),
         "rows": ordered,
     }
 
@@ -366,6 +540,25 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--keep-prefixes", action="store_true")
     parser.add_argument("--continue-on-failure", action="store_true")
+    parser.add_argument(
+        "--force-rerun",
+        action="store_true",
+        help="ignore matching completed case results and execute the selected cases again",
+    )
+    private_console = parser.add_mutually_exclusive_group()
+    private_console.add_argument(
+        "--show-private-details",
+        dest="show_private_details",
+        action="store_true",
+        default=None,
+        help="print private image paths, prompt, decoded text, and detailed timings",
+    )
+    private_console.add_argument(
+        "--redacted-console",
+        dest="show_private_details",
+        action="store_false",
+        help="print only redacted progress, even in an interactive local terminal",
+    )
     args = parser.parse_args()
 
     os.umask(0o077)
@@ -442,10 +635,34 @@ def main() -> int:
             global_config_sha256=config_sha256,
             sample=sample,
         )
-        resumed = _resumed_row(result_path, case_config)
+        resumed = None if args.force_rerun else _resumed_row(result_path, case_config)
         if resumed is not None:
+            resumed_report = _load_json_if_present(case_dir / "parity.json")
+            if resumed_report:
+                resumed = _redacted_row(
+                    index=index,
+                    image_sha256=sample["image_sha256"],
+                    prefix_sha256=str(resumed.get("prefix_sha256", "")),
+                    report=resumed_report,
+                    elapsed=dict(resumed.get("elapsed_sec") or {}),
+                    requested_tokens=args.max_new_tokens,
+                )
             rows.append(resumed)
-            print(f"[{len(rows)}/{len(selected)}] image {index:02d}: PASS (resumed)")
+            print(
+                _progress_line(
+                    resumed,
+                    completed=len(rows),
+                    requested=len(selected),
+                    resumed=True,
+                )
+            )
+            if _private_console_enabled(args):
+                _print_private_case_details(
+                    sample=sample,
+                    row=resumed,
+                    case_dir=case_dir,
+                    prompt=args.prompt,
+                )
             _json_write(args.output_dir / "summary.json", _summary(selected=selected, rows=rows, config=config))
             continue
 
@@ -504,6 +721,7 @@ def main() -> int:
                 prefix_sha256=prefix_sha256,
                 report=report,
                 elapsed=elapsed,
+                requested_tokens=args.max_new_tokens,
             )
             rows.append(row)
             _json_write(
@@ -521,10 +739,14 @@ def main() -> int:
             )
             if row["status"] == "pass" and not args.keep_prefixes:
                 prefix_path.unlink(missing_ok=True)
-            print(
-                f"[{len(rows)}/{len(selected)}] image {index:02d}: "
-                f"{row['status'].upper()} steps={row['steps']}"
-            )
+            print(_progress_line(row, completed=len(rows), requested=len(selected)))
+            if _private_console_enabled(args):
+                _print_private_case_details(
+                    sample=sample,
+                    row=row,
+                    case_dir=case_dir,
+                    prompt=args.prompt,
+                )
             if row["status"] != "pass" and not args.continue_on_failure:
                 break
         except Exception as exc:
@@ -562,6 +784,8 @@ def main() -> int:
     print(
         f"status={summary['status']} completed={summary['completed']}/{summary['requested']} "
         f"passed={summary['passed']} failed={summary['failed']} "
+        f"total={summary['timing']['total_sec']:.2f}s "
+        f"mean={summary['timing']['mean_sec_per_image']:.2f}s/image "
         f"report={args.output_dir / 'summary.json'}"
     )
     return 0 if summary["status"] == "pass" else 3
