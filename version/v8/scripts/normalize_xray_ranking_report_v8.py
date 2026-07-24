@@ -8,9 +8,52 @@ import json
 from pathlib import Path
 
 
+def _trace_top_k(row: dict, backend: str) -> list[dict]:
+    top_k = row.get("top_k")
+    if not isinstance(top_k, list) or not top_k:
+        raise ValueError(f"{backend} trace step {row.get('step')} has no top_k values")
+    return top_k
+
+
 def normalize(source: dict, kind: str) -> dict:
     checks = []
-    if isinstance(source.get("steps"), list):
+    ck_trace = source.get("ck_logit_trace")
+    oracle_trace = source.get("torch_logit_trace", source.get("llama_logit_trace"))
+    if isinstance(ck_trace, list) and isinstance(oracle_trace, list):
+        if len(ck_trace) != len(oracle_trace):
+            raise ValueError(
+                f"ranking traces have different lengths: CK={len(ck_trace)} oracle={len(oracle_trace)}"
+            )
+        for position, (ck_row, oracle_row) in enumerate(zip(ck_trace, oracle_trace)):
+            ck_step = int(ck_row.get("step", position))
+            oracle_step = int(oracle_row.get("step", position))
+            if ck_step != oracle_step:
+                raise ValueError(f"ranking trace step mismatch: CK={ck_step} oracle={oracle_step}")
+            ck_top_k = _trace_top_k(ck_row, "CK")
+            oracle_top_k = _trace_top_k(oracle_row, "oracle")
+            ck = int(ck_top_k[0]["token_id"])
+            oracle = int(oracle_top_k[0]["token_id"])
+            ck_ids = {int(item["token_id"]) for item in ck_top_k}
+            oracle_ids = {int(item["token_id"]) for item in oracle_top_k}
+            check = {
+                "kind": kind,
+                "position": ck_step,
+                "status": "pass" if ck == oracle else "fail",
+                "ck_top1": ck,
+                "oracle_top1": oracle,
+                "ck_top1_margin": (
+                    float(ck_top_k[0]["logit"]) - float(ck_top_k[1]["logit"])
+                    if len(ck_top_k) > 1 else None
+                ),
+                "oracle_top1_margin": (
+                    float(oracle_top_k[0]["logit"]) - float(oracle_top_k[1]["logit"])
+                    if len(oracle_top_k) > 1 else None
+                ),
+                "topk_overlap_count": len(ck_ids & oracle_ids),
+                "topk": min(len(ck_top_k), len(oracle_top_k)),
+            }
+            checks.append(check)
+    elif isinstance(source.get("steps"), list):
         for row in source["steps"]:
             ck = int(row.get("ck_next", row.get("top1_ck", -1)))
             oracle = int(row.get("llama_next", row.get("torch_next", row.get("top1_llama", -1))))

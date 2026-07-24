@@ -109,7 +109,9 @@
           "additionalProperties": false,
           "required": ["runtime", "work_partition", "dispatch", "reduction_order_effect"],
           "properties": {
-            "runtime": {"enum": ["serial", "ck_threadpool", "openmp"]},
+            "runtime": {
+              "enum": ["serial", "ck_threadpool", "openmp", "external_blas"]
+            },
             "work_partition": {
               "type": "array",
               "minItems": 1,

@@ -40,7 +40,7 @@
   },
   "tests": {
     "unit": [
-      "unittest/test_gelu.py"
+      "unittest/bf16/test_gelu_pytorch_tanh_storage_bf16.py"
     ]
   },
   "notes": "PyTorch tanh GELU with explicit BF16 input/output storage boundaries.",

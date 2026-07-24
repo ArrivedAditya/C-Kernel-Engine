@@ -84,5 +84,15 @@
         "source": "dim:source_grid_size"
       }
     ]
+  },
+  "tests": {
+    "unit": [
+      "unittest/bf16/test_vision_position_storage_bf16.py"
+    ],
+    "production_shapes": [
+      "grid=56x72,D=1152",
+      "grid=72x56,D=1152"
+    ],
+    "oracle": "PyTorch BF16 align-corners position interpolation and add"
   }
 }

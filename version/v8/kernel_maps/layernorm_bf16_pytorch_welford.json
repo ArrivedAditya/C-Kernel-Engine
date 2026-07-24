@@ -49,7 +49,7 @@
   ],
   "constraints": {
     "isa": ["avx2", "fma"],
-    "notes": "ATen AVX2 BF16 Welford structure. Experimental until monotonic stitched parity passes."
+    "notes": "ATen AVX2 BF16 Welford structure selected only by an explicit numerical policy."
   },
   "impl": {
     "function": "layernorm_pytorch_welford_bf16_storage",
@@ -63,7 +63,7 @@
   "numerical_capabilities": [
     {
       "contract_id": "layernorm_bf16_storage_fp32_compute_aten_avx2_welford_bf16_output",
-      "status": "observed",
+      "status": "validated",
       "phases": ["prefill"],
       "function": "layernorm_pytorch_welford_bf16_storage",
       "explicit_selector": true,

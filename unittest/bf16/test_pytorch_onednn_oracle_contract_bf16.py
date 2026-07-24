@@ -40,6 +40,9 @@ def main() -> None:
             ("qkv", 4032, 3456, 1152),
             ("mlp_up", 4032, 4304, 1152),
             ("mlp_down", 4032, 1152, 4304),
+            ("decode_qkv", 1, 4096, 4096),
+            ("decode_gate_up", 1, 24576, 4096),
+            ("decode_mlp_down", 1, 4096, 12288),
         ),
         "production-shape BF16 matrix changed without updating its contract test",
     )

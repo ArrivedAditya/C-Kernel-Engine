@@ -41,6 +41,48 @@ GOVERNED_SYMBOLS = {
 }
 
 
+def _phase_layout(*, q_size: int, q_offset: int, total_size: int) -> dict:
+    return {
+        "memory": {
+            "weights": {
+                "entries": [
+                    {"define": "W_Q", "abs_offset": 128, "size": 64},
+                ],
+            },
+            "activations": {
+                "buffers": [
+                    {
+                        "define": "A_Q_SCRATCH",
+                        "abs_offset": q_offset,
+                        "size": q_size,
+                    },
+                ],
+            },
+            "arena": {"total_size": total_size, "activations_base": 512},
+        },
+    }
+
+
+def test_combined_runtime_uses_dominating_prefill_buffer_plan() -> None:
+    decode_layout = _phase_layout(q_size=16_384, q_offset=512, total_size=1024)
+    prefill_layout = _phase_layout(
+        q_size=67_108_864, q_offset=4096, total_size=80_000_000
+    )
+    combined = core._select_combined_runtime_layout(decode_layout, prefill_layout)
+    q_buffer = combined["memory"]["activations"]["buffers"][0]
+    assert q_buffer["size"] == 67_108_864
+    assert q_buffer["abs_offset"] == 4096
+    assert combined["memory"]["arena"]["total_size"] == 80_000_000
+    assert decode_layout["memory"]["activations"]["buffers"][0]["size"] == 16_384
+
+
+def test_combined_runtime_rejects_undersized_prefill_buffer_plan() -> None:
+    decode_layout = _phase_layout(q_size=16_384, q_offset=512, total_size=1024)
+    prefill_layout = _phase_layout(q_size=4096, q_offset=4096, total_size=80_000_000)
+    with unittest.TestCase().assertRaisesRegex(RuntimeError, "does not dominate"):
+        core._select_combined_runtime_layout(decode_layout, prefill_layout)
+
+
 def _execution(weight: str, *, prefill_mode: bool = False) -> dict:
     is_q4 = weight == "q4_k"
     prefix = "gemm_nt" if prefill_mode else "gemv"
@@ -148,6 +190,18 @@ def _quantize_op(
 
 
 class V8CodegenCapabilityTests(unittest.TestCase):
+    def test_full_matrix_math_sdpa_provider_declares_external_blas(self) -> None:
+        kernel_id = (
+            "attention_forward_causal_head_major_gqa_prefill_full_"
+            "bf16cache_pytorch_contract"
+        )
+        kernel = resolver.load_kernel_execution_capabilities()["kernels"][kernel_id]
+        threading = kernel["implementation"]["threading"]
+        self.assertEqual(kernel["id"], kernel_id)
+        self.assertEqual(threading["runtime"], "external_blas")
+        self.assertEqual(threading["dispatch"], ["internal_threaded"])
+        self.assertEqual(threading["reduction_order_effect"], "contract_defined")
+
     def test_kernel_maps_own_q4_q6_storage_and_diagnostic_providers(self) -> None:
         kernels = resolver.load_kernel_execution_capabilities()["kernels"]
         expected = {

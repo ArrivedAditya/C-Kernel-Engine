@@ -90,6 +90,8 @@ def _annotate_kv_transpose_roles(ops: List[Dict]) -> None:
             "transpose_kv_to_head_major",
             "transpose_attn_out_to_token_major",
             "kv_cache_batch_copy",
+            "kv_cache_store_batch_bf16",
+            "kv_cache_store_batch_f16",
         }:
             continue
         layer = int(op.get("layer", 0))
@@ -212,6 +214,33 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         vocab_size = int(config.get("vocab_size", 151936))
         embed_dim = int(config.get("embed_dim", 0))
         if embed_dim > 0:
+            gemm_a_expr = _find_arg_expr(
+                args_list, source_prefix="activation:", arg_name="A"
+            )
+            gemm_b_expr = _find_arg_expr(
+                args_list, source_prefix="weight:", arg_name="B"
+            )
+            gemm_bias_expr = _find_arg_expr(
+                args_list, source_prefix="weight_f:", arg_name="bias"
+            )
+            gemm_c_expr = _find_arg_expr(
+                args_list, source_prefix="output:", arg_name="C"
+            )
+            # An exact numerical contract may intentionally resolve logits to a
+            # GEMM provider even for M=1. Preserve that provider and ABI instead
+            # of deriving an unregistered GEMV function name.
+            if gemm_a_expr and gemm_b_expr and gemm_c_expr:
+                return f"""    /* Op {seq_idx}: logits (last-only exact GEMM contract) */
+    {func}(
+        (const float*)({gemm_a_expr}) + (size_t)(num_tokens - 1) * {embed_dim},
+        {gemm_b_expr},
+        {gemm_bias_expr or "NULL"},
+        {gemm_c_expr},
+        1,
+        {vocab_size},
+        {embed_dim}
+    );
+    ck_debug_export_hidden(model, -1, "logits", (const float*){gemm_c_expr}, VOCAB_SIZE);"""
             gemv_func = func
             if gemv_func.startswith("gemm_nt_"):
                 gemv_func = "gemv_" + gemv_func[len("gemm_nt_"):]
@@ -905,7 +934,14 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         lines.append(f'        ck_debug_export_hidden(model, {layer}, "{label}_last", _ck_{safe_label}_last, _ck_{safe_label}_heads * _ck_{safe_label}_dim);')
         lines.append("    }")
 
-    if op_type == "attn_norm":
+    if op_type == "residual_save":
+        checkpoint = "layer_input" if op_instance_idx == 0 else "after_attn"
+        _emit_hidden_full(
+            _hidden_arg("src", "input", "x"),
+            checkpoint,
+            _hidden_mul("num_tokens", "EMBED_DIM"),
+        )
+    elif op_type == "attn_norm":
         _emit_hidden_full(
             _hidden_arg("output", "out", "x", "y"),
             "attn_norm",
@@ -1071,12 +1107,27 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         if str(section or "") == "footer" or int(layer) < 0:
             _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "final_hidden", "EMBED_DIM")
         elif op_instance_idx == 0:
+            _emit_hidden_full(
+                _hidden_arg("output", "out", "x", "y"),
+                "block_rmsnorm",
+                _hidden_mul(_hidden_arg("rows", "num_tokens") or "num_tokens", "EMBED_DIM"),
+            )
             _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "block_rmsnorm", "EMBED_DIM")
         elif op_instance_idx == 1:
+            _emit_hidden_full(
+                _hidden_arg("output", "out", "x", "y"),
+                "ffn_norm",
+                _hidden_mul(_hidden_arg("rows", "num_tokens") or "num_tokens", "EMBED_DIM"),
+            )
             _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "ffn_norm", "EMBED_DIM")
         else:
             _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "rmsnorm", "EMBED_DIM")
     elif op_type == "block_rmsnorm":
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "x", "y"),
+            "block_rmsnorm",
+            _hidden_mul(_hidden_arg("rows", "num_tokens") or "num_tokens", "EMBED_DIM"),
+        )
         _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "block_rmsnorm", "EMBED_DIM")
     elif op_type == "post_attention_norm":
         _emit_hidden_full(
@@ -1352,6 +1403,7 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
     _annotate_kv_transpose_roles(ops)
     residual_add_count_total = 0
     residual_add_counts_by_layer: Dict[int, int] = {}
+    residual_save_counts_by_layer: Dict[int, int] = {}
     rmsnorm_counts_by_layer: Dict[int, int] = {}
 
     swiglu_q8k_fusion_guard: Optional[str] = None
@@ -1369,6 +1421,18 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
             op = dict(op)
             op["op_instance_idx"] = inst
             residual_add_counts_by_layer[layer_for_instance] = inst + 1
+        elif op_type_for_instance == "residual_save" and "op_instance_idx" not in op and "instance" not in op:
+            layer_for_instance = int(op.get("layer", -1))
+            inst = residual_save_counts_by_layer.get(layer_for_instance, 0)
+            op = dict(op)
+            op["op_instance_idx"] = inst
+            residual_save_counts_by_layer[layer_for_instance] = inst + 1
+        elif op_type_for_instance in {"rmsnorm", "layernorm"} and "op_instance_idx" not in op and "instance" not in op:
+            layer_for_instance = int(op.get("layer", -1))
+            inst = rmsnorm_counts_by_layer.get(layer_for_instance, 0)
+            op = dict(op)
+            op["op_instance_idx"] = inst
+            rmsnorm_counts_by_layer[layer_for_instance] = inst + 1
         op_code = emit_prefill_op(op, seq_idx, config, profile=profile, dump=dump)
         if (
             swiglu_q8k_fusion_guard
@@ -1523,11 +1587,77 @@ def _has_segmented_append_prefill_contract(config: Dict) -> bool:
     )
 
 
+def _has_unified_mixed_prefill_contract(config: Dict) -> bool:
+    bridge = config.get("multimodal_bridge_contract")
+    if not isinstance(bridge, dict):
+        return False
+    schedule = bridge.get("prefill_schedule")
+    if not isinstance(schedule, dict):
+        return False
+    return (
+        bridge.get("prefill_batching") == "unified_mixed"
+        and schedule.get("segments") == ["text_before", "visual", "text_after"]
+        and schedule.get("cache_transition") == "single_pass"
+        and schedule.get("position_transition") == "explicit_full_sequence"
+    )
+
+
 def _emit_multimodal_prefill_bridge_helpers(config: Dict, text_mrope_function: str) -> str:
     embed_dim = int(config.get("embed_dim", 0) or 0)
     num_deepstack_layers = int(config.get("num_deepstack_layers", 0) or 0)
     if embed_dim <= 0 or num_deepstack_layers <= 0:
         return ""
+    bridge = config.get("multimodal_bridge_contract")
+    schedule = bridge.get("prefill_schedule") if isinstance(bridge, dict) else None
+    position_transform = (
+        schedule.get("position_transform") if isinstance(schedule, dict) else None
+    )
+    positions_mrope_function = str(
+        (position_transform or {}).get("resolved_function", "") or ""
+    ).strip()
+    deepstack_injection = (
+        schedule.get("deepstack_injection") if isinstance(schedule, dict) else None
+    )
+    deepstack_add_function = str(
+        (deepstack_injection or {}).get("resolved_function", "") or ""
+    ).strip()
+    if _has_unified_mixed_prefill_contract(config) and not positions_mrope_function:
+        raise RuntimeError(
+            "unified mixed-prefill requires a resolved positions-aware M-RoPE provider"
+        )
+    if (
+        _has_unified_mixed_prefill_contract(config)
+        and num_deepstack_layers > 0
+        and not deepstack_add_function
+    ):
+        raise RuntimeError(
+            "unified mixed-prefill with deepstack requires a resolved injection provider"
+        )
+    if _has_unified_mixed_prefill_contract(config):
+        position_call = (
+            f"{positions_mrope_function}(q, k, g_multimodal_prefill_positions, "
+            "num_heads, num_kv_heads, num_tokens, head_dim, aligned_head_dim, "
+            "n_dims, section_0, section_1, section_2, section_3, n_ctx_orig, "
+            "freq_base, freq_scale, ext_factor, attn_factor, beta_fast, beta_slow);"
+        )
+        deepstack_call = (
+            f"{deepstack_add_function}(dst_row, src, dst_row, 1, {embed_dim});"
+        )
+    else:
+        # Segmented append retains the established FP32 bridge contract. Its
+        # segments are positioned independently, so it does not consume the
+        # unified schedule's BF16 full-sequence providers.
+        position_call = (
+            "mrope_qk_imrope_positions(q, k, g_multimodal_prefill_positions, "
+            "num_heads, num_kv_heads, num_tokens, head_dim, aligned_head_dim, "
+            "n_dims, section_0, section_1, section_2, section_3, n_ctx_orig, "
+            "freq_base, freq_scale, ext_factor, attn_factor, beta_fast, beta_slow);"
+        )
+        deepstack_call = (
+            f"for (int i = 0; i < {embed_dim}; ++i) {{\n"
+            "            dst_row[i] += src[i];\n"
+            "        }"
+        )
 
     return f"""
 static int g_multimodal_prefill_bridge_active = 0;
@@ -1635,7 +1765,7 @@ static int ck_multimodal_prefill_bridge_prepare(const float *rows,
 
 static void ck_multimodal_prefill_mrope_qk(float *q, float *k, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int n_dims, int section_0, int section_1, int section_2, int section_3, int n_ctx_orig, float freq_base, float freq_scale, float ext_factor, float attn_factor, float beta_fast, float beta_slow) {{
     if (g_multimodal_prefill_bridge_active && g_multimodal_prefill_positions && g_multimodal_prefill_total_tokens == num_tokens) {{
-        mrope_qk_imrope_positions(q, k, g_multimodal_prefill_positions, num_heads, num_kv_heads, num_tokens, head_dim, aligned_head_dim, n_dims, section_0, section_1, section_2, section_3, n_ctx_orig, freq_base, freq_scale, ext_factor, attn_factor, beta_fast, beta_slow);
+        {position_call}
         return;
     }}
     {text_mrope_function}(q, k, num_heads, num_kv_heads, num_tokens, head_dim, aligned_head_dim, pos_offset, n_dims, section_0, section_1, section_2, section_3, n_ctx_orig, freq_base, freq_scale, ext_factor, attn_factor, beta_fast, beta_slow);
@@ -1654,9 +1784,7 @@ static void ck_multimodal_prefill_deepstack_add(CKModel *model, int layer, int n
     for (int tok = 0; tok < g_multimodal_prefill_prefix_tokens; ++tok) {{
         const float *src = g_multimodal_prefill_rows + (size_t)tok * (size_t)g_multimodal_prefill_row_dim + slice_offset;
         float *dst_row = dst + (size_t)(g_multimodal_prefill_prefix_start + tok) * (size_t){embed_dim};
-        for (int i = 0; i < {embed_dim}; ++i) {{
-            dst_row[i] += src[i];
-        }}
+        {deepstack_call}
     }}
 }}
 """
@@ -2078,6 +2206,7 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
     _annotate_kv_transpose_roles(ops)
     residual_add_count_total = 0
     residual_add_counts_by_layer: Dict[int, int] = {}
+    residual_save_counts_by_layer: Dict[int, int] = {}
     rmsnorm_counts_by_layer: Dict[int, int] = {}
 
     skip_swiglu_guard: Optional[str] = None
@@ -2096,6 +2225,12 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
             op = dict(op)
             op["op_instance_idx"] = inst
             residual_add_counts_by_layer[layer_for_instance] = inst + 1
+        if op_type == "residual_save" and "op_instance_idx" not in op and "instance" not in op:
+            layer_for_instance = int(op.get("layer", -1))
+            inst = residual_save_counts_by_layer.get(layer_for_instance, 0)
+            op = dict(op)
+            op["op_instance_idx"] = inst
+            residual_save_counts_by_layer[layer_for_instance] = inst + 1
         if op_type in {"rmsnorm", "layernorm"} and "op_instance_idx" not in op and "instance" not in op:
             layer_for_instance = int(op.get("layer", -1))
             inst = rmsnorm_counts_by_layer.get(layer_for_instance, 0)
@@ -2287,6 +2422,11 @@ def emit_multimodal_bridge_api(ops: List[Dict], config: Dict | None = None) -> s
     config = dict(config or {})
     has_multimodal_bridge = _has_multimodal_bridge_contract(config)
     has_segmented_append = _has_segmented_append_prefill_contract(config)
+    has_unified_mixed = _has_unified_mixed_prefill_contract(config)
+    if has_multimodal_bridge and not (has_segmented_append or has_unified_mixed):
+        raise RuntimeError(
+            "multimodal bridge must resolve exactly one supported prefill schedule"
+        )
 
     token_ids_expr = _find_arg_expr(args_list, arg_name="token_ids") or "(int32_t*)(model->bump + A_TOKEN_IDS)"
     token_embeddings_expr = _find_arg_expr(args_list, arg_name="token_embeddings")

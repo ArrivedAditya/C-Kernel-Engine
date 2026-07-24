@@ -27,9 +27,10 @@ def _import_numeric_parity() -> Any:
     return numeric
 
 
-def _metrics(ref: np.ndarray, got: np.ndarray) -> dict[str, float]:
+def _metrics(ref: np.ndarray, got: np.ndarray) -> dict[str, float | bool]:
     if ref.shape != got.shape:
         raise RuntimeError(f"shape mismatch: ref={ref.shape} got={got.shape}")
+    byte_exact = bool(np.array_equal(ref.view(np.uint8), got.view(np.uint8)))
     diff = got.astype(np.float32, copy=False) - ref.astype(np.float32, copy=False)
     denom = float(np.linalg.norm(ref) * np.linalg.norm(got))
     rmse = float(math.sqrt(float(np.mean(diff * diff)))) if diff.size else 0.0
@@ -40,7 +41,10 @@ def _metrics(ref: np.ndarray, got: np.ndarray) -> dict[str, float]:
         "rmse": rmse,
         "ref_rms": ref_rms,
         "relative_rmse": rmse / ref_rms if ref_rms > 0.0 else (0.0 if rmse == 0.0 else float("inf")),
-        "cosine": float(np.dot(ref.reshape(-1), got.reshape(-1)) / denom) if denom > 0.0 else 0.0,
+        # A float32 norm/dot can round an exact high-dimensional tensor below
+        # one. Exact identity is stronger evidence than that derived metric.
+        "cosine": 1.0 if byte_exact else (float(np.dot(ref.reshape(-1), got.reshape(-1)) / denom) if denom > 0.0 else 0.0),
+        "byte_exact": byte_exact,
     }
 
 
@@ -127,6 +131,18 @@ def _torch_captures(
             captures["vision_projector_out"] = output.detach().cpu().float()
 
         handles.append(model.merger.linear_fc2.register_forward_hook(capture_projector_fc2))
+
+    if "vision_projector_fc1" in frontend_wanted:
+        def capture_projector_fc1(_module, _inputs, output):
+            captures["vision_projector_fc1"] = output.detach().cpu().float()
+
+        handles.append(model.merger.linear_fc1.register_forward_hook(capture_projector_fc1))
+
+    if "vision_projector_gelu" in frontend_wanted:
+        def capture_projector_gelu(_module, inputs):
+            captures["vision_projector_gelu"] = inputs[0].detach().cpu().float()
+
+        handles.append(model.merger.linear_fc2.register_forward_pre_hook(capture_projector_gelu))
 
     def make_norm1_hook(layer: int):
         def hook(_module, _inputs, output):

@@ -44,6 +44,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef USE_MKL
+#include <mkl_vml_functions.h>
+#endif
+
 #if defined(__AVX__) || defined(__AVX2__) || defined(__AVX512F__)
 #include <immintrin.h>
 #endif
@@ -1401,6 +1405,94 @@ static void vision_mrope_apply_head(
     }
 }
 
+/* Match transformers Qwen3VLVisionRotaryEmbedding and
+ * apply_rotary_pos_emb_vision. The reference materializes every FP32
+ * inv_freq independently and rounds the two products before addition. */
+#ifdef USE_MKL
+static void vision_mrope_apply_pytorch_bf16(
+    float *x,
+    const int32_t *positions,
+    int num_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int n_dims,
+    const int sections[4],
+    float freq_base,
+    float freq_scale
+) {
+    if (!x || !positions || num_heads <= 0 || num_tokens <= 0 || head_dim <= 0 ||
+        aligned_head_dim < head_dim || n_dims <= 0) {
+        return;
+    }
+
+    const int rotary_width = n_dims < head_dim ? n_dims : head_dim;
+    if ((rotary_width & 1) != 0 || rotary_width <= 0) {
+        return;
+    }
+    const int rope_pairs = rotary_width / 2;
+    const int axis_pairs = sections[0];
+    if (axis_pairs <= 0 || sections[1] != axis_pairs || axis_pairs * 2 != rope_pairs ||
+        sections[2] != 0 || sections[3] != 0) {
+        return;
+    }
+
+    int max_pos = 0;
+    for (int tok = 0; tok < num_tokens; ++tok) {
+        if (positions[tok] > max_pos) max_pos = positions[tok];
+        if (positions[tok + num_tokens] > max_pos) max_pos = positions[tok + num_tokens];
+    }
+    if (max_pos < 0 || max_pos > 65535 || axis_pairs > 256) {
+        return;
+    }
+
+    float inv_freq[256];
+    for (int i = 0; i < axis_pairs; ++i) {
+        const float exponent = (2.0f * (float)i) / (float)rope_pairs;
+        inv_freq[i] = 1.0f / ck_rope_reference_powf(freq_base, exponent);
+    }
+
+    const size_t table_count = (size_t)(max_pos + 1) * (size_t)axis_pairs;
+    float angles[table_count];
+    float cos_table[table_count];
+    float sin_table[table_count];
+    for (int pos = 0; pos <= max_pos; ++pos) {
+        for (int i = 0; i < axis_pairs; ++i) {
+            angles[(size_t)pos * (size_t)axis_pairs + (size_t)i] =
+                ((float)pos * inv_freq[i]) * freq_scale;
+        }
+    }
+    vsCos((MKL_INT)table_count, angles, cos_table);
+    vsSin((MKL_INT)table_count, angles, sin_table);
+
+    const size_t head_stride = (size_t)num_tokens * (size_t)aligned_head_dim;
+    for (int h = 0; h < num_heads; ++h) {
+        float *head = x + (size_t)h * head_stride;
+        for (int tok = 0; tok < num_tokens; ++tok) {
+            const int pos_y = positions[tok];
+            const int pos_x = positions[tok + num_tokens];
+            float *row = head + (size_t)tok * (size_t)aligned_head_dim;
+            for (int pair = 0; pair < rope_pairs; ++pair) {
+                const int local_pair = pair < axis_pairs ? pair : pair - axis_pairs;
+                const int pos = pair < axis_pairs ? pos_y : pos_x;
+                const size_t table_idx = (size_t)pos * (size_t)axis_pairs + (size_t)local_pair;
+                const float cosine = cos_table[table_idx];
+                const float sine = sin_table[table_idx];
+                const float x0 = row[pair];
+                const float x1 = row[pair + rope_pairs];
+
+                volatile float x0_cos = x0 * cosine;
+                volatile float x1_sin = x1 * sine;
+                volatile float x0_sin = x0 * sine;
+                volatile float x1_cos = x1 * cosine;
+                row[pair] = bf16_to_float(float_to_bf16(x0_cos - x1_sin));
+                row[pair + rope_pairs] = bf16_to_float(float_to_bf16(x0_sin + x1_cos));
+            }
+        }
+    }
+}
+#endif
+
 static int explicit_mrope_apply_ggml_exact(
     float *x,
     const int32_t *positions,
@@ -1886,6 +1978,197 @@ void mrope_qk_text_imrope(float *q,
     }
 }
 
+static void text_mrope_apply_pytorch_bf16_storage(float *x,
+                                                   int num_heads,
+                                                   int num_tokens,
+                                                   int head_dim,
+                                                   int aligned_head_dim,
+                                                   int pos_offset,
+                                                   int n_dims,
+                                                   float freq_base,
+                                                   float freq_scale)
+{
+    if (!x || num_heads <= 0 || num_tokens <= 0 || head_dim <= 0 ||
+        aligned_head_dim < head_dim || n_dims <= 0) {
+        return;
+    }
+    int rope_dims = n_dims < head_dim ? n_dims : head_dim;
+    rope_dims &= ~1;
+    if (rope_dims <= 0) return;
+    const int pairs = rope_dims / 2;
+    const size_t head_stride = (size_t)num_tokens * (size_t)aligned_head_dim;
+
+    for (int h = 0; h < num_heads; ++h) {
+        float *head = x + (size_t)h * head_stride;
+        for (int tok = 0; tok < num_tokens; ++tok) {
+            float *row = head + (size_t)tok * (size_t)aligned_head_dim;
+            const float position = (float)(pos_offset + tok);
+            for (int pair = 0; pair < pairs; ++pair) {
+                const float exponent = (2.0f * (float)pair) / (float)rope_dims;
+                const float inv_freq = 1.0f / ck_rope_reference_powf(freq_base, exponent);
+                const float angle = (position * inv_freq) * freq_scale;
+                const float cosine = bf16_to_float(float_to_bf16(ck_rope_reference_cosf(angle)));
+                const float sine = bf16_to_float(float_to_bf16(ck_rope_reference_sinf(angle)));
+                const float x0 = row[pair];
+                const float x1 = row[pair + pairs];
+
+                volatile uint16_t x0_cos_bits = float_to_bf16(x0 * cosine);
+                volatile uint16_t x1_sin_bits = float_to_bf16((-x1) * sine);
+                volatile uint16_t x1_cos_bits = float_to_bf16(x1 * cosine);
+                volatile uint16_t x0_sin_bits = float_to_bf16(x0 * sine);
+                const float x0_cos = bf16_to_float(x0_cos_bits);
+                const float x1_sin = bf16_to_float(x1_sin_bits);
+                const float x1_cos = bf16_to_float(x1_cos_bits);
+                const float x0_sin = bf16_to_float(x0_sin_bits);
+                volatile uint16_t out0_bits = float_to_bf16(x0_cos + x1_sin);
+                volatile uint16_t out1_bits = float_to_bf16(x1_cos + x0_sin);
+                row[pair] = bf16_to_float(out0_bits);
+                row[pair + pairs] = bf16_to_float(out1_bits);
+            }
+        }
+    }
+}
+
+#if defined(__clang__)
+#pragma float_control(precise, on, push)
+#endif
+static void text_mrope_apply_positions_pytorch_bf16_storage(
+    float *x,
+    const int32_t *positions,
+    int num_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int n_dims,
+    const int sections[4],
+    float freq_base,
+    float freq_scale)
+{
+    if (!x || !positions || num_heads <= 0 || num_tokens <= 0 || head_dim <= 0 ||
+        aligned_head_dim < head_dim || n_dims <= 0) {
+        return;
+    }
+    int rope_dims = n_dims < head_dim ? n_dims : head_dim;
+    rope_dims &= ~1;
+    if (rope_dims <= 0) return;
+    const int pairs = rope_dims / 2;
+    if (sections[0] <= 0 || sections[1] < 0 || sections[2] < 0 ||
+        sections[3] != 0 || sections[0] + sections[1] + sections[2] != pairs) {
+        return;
+    }
+    const size_t head_stride = (size_t)num_tokens * (size_t)aligned_head_dim;
+
+    for (int h = 0; h < num_heads; ++h) {
+        float *head = x + (size_t)h * head_stride;
+        for (int tok = 0; tok < num_tokens; ++tok) {
+            float *row = head + (size_t)tok * (size_t)aligned_head_dim;
+            for (int pair = 0; pair < pairs; ++pair) {
+                int axis = 0;
+                if (pair < sections[1] * 3 && pair % 3 == 1) axis = 1;
+                if (pair < sections[2] * 3 && pair % 3 == 2) axis = 2;
+                const float position = (float)positions[(size_t)axis * (size_t)num_tokens + (size_t)tok];
+                const float exponent = (2.0f * (float)pair) / (float)rope_dims;
+                const float inv_freq = 1.0f / ck_rope_reference_powf(freq_base, exponent);
+                const float angle = (position * inv_freq) * freq_scale;
+                const float cosine = bf16_to_float(float_to_bf16(ck_rope_reference_cosf(angle)));
+                const float sine = bf16_to_float(float_to_bf16(ck_rope_reference_sinf(angle)));
+                const float x0 = row[pair];
+                const float x1 = row[pair + pairs];
+
+                volatile uint16_t x0_cos_bits = float_to_bf16(x0 * cosine);
+                volatile uint16_t x1_sin_bits = float_to_bf16((-x1) * sine);
+                volatile uint16_t x1_cos_bits = float_to_bf16(x1 * cosine);
+                volatile uint16_t x0_sin_bits = float_to_bf16(x0 * sine);
+                const float x0_cos = bf16_to_float(x0_cos_bits);
+                const float x1_sin = bf16_to_float(x1_sin_bits);
+                const float x1_cos = bf16_to_float(x1_cos_bits);
+                const float x0_sin = bf16_to_float(x0_sin_bits);
+                volatile uint16_t out0_bits = float_to_bf16(x0_cos + x1_sin);
+                volatile uint16_t out1_bits = float_to_bf16(x1_cos + x0_sin);
+                row[pair] = bf16_to_float(out0_bits);
+                row[pair + pairs] = bf16_to_float(out1_bits);
+            }
+        }
+    }
+}
+#if defined(__clang__)
+#pragma float_control(pop)
+#endif
+
+void mrope_qk_text_imrope_positions_bf16_pytorch_storage(
+    float *q,
+    float *k,
+    const int32_t *positions,
+    int num_heads,
+    int num_kv_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int n_dims,
+    int section_0,
+    int section_1,
+    int section_2,
+    int section_3,
+    int n_ctx_orig,
+    float freq_base,
+    float freq_scale,
+    float ext_factor,
+    float attn_factor,
+    float beta_fast,
+    float beta_slow)
+{
+    (void)n_ctx_orig;
+    (void)ext_factor;
+    (void)attn_factor;
+    (void)beta_fast;
+    (void)beta_slow;
+    const int sections[4] = {section_0, section_1, section_2, section_3};
+    text_mrope_apply_positions_pytorch_bf16_storage(
+        q, positions, num_heads, num_tokens, head_dim, aligned_head_dim, n_dims,
+        sections, freq_base, freq_scale);
+    text_mrope_apply_positions_pytorch_bf16_storage(
+        k, positions, num_kv_heads, num_tokens, head_dim, aligned_head_dim, n_dims,
+        sections, freq_base, freq_scale);
+}
+
+void mrope_qk_text_imrope_bf16_pytorch_storage(float *q,
+                                                float *k,
+                                                int num_heads,
+                                                int num_kv_heads,
+                                                int num_tokens,
+                                                int head_dim,
+                                                int aligned_head_dim,
+                                                int pos_offset,
+                                                int n_dims,
+                                                int section_0,
+                                                int section_1,
+                                                int section_2,
+                                                int section_3,
+                                                int n_ctx_orig,
+                                                float freq_base,
+                                                float freq_scale,
+                                                float ext_factor,
+                                                float attn_factor,
+                                                float beta_fast,
+                                                float beta_slow)
+{
+    (void)section_0;
+    (void)section_1;
+    (void)section_2;
+    (void)section_3;
+    (void)n_ctx_orig;
+    (void)ext_factor;
+    (void)attn_factor;
+    (void)beta_fast;
+    (void)beta_slow;
+    text_mrope_apply_pytorch_bf16_storage(q, num_heads, num_tokens, head_dim,
+                                           aligned_head_dim, pos_offset, n_dims,
+                                           freq_base, freq_scale);
+    text_mrope_apply_pytorch_bf16_storage(k, num_kv_heads, num_tokens, head_dim,
+                                           aligned_head_dim, pos_offset, n_dims,
+                                           freq_base, freq_scale);
+}
+
 void mrope_qk_vision(float *q,
                      float *k,
                      const int32_t *positions,
@@ -1999,6 +2282,44 @@ void NAME(float *q, float *k, const int32_t *positions, \
 
 CK_DEFINE_MROPE_STORAGE_WRAPPER(mrope_qk_vision_bf16_storage, 1)
 CK_DEFINE_MROPE_STORAGE_WRAPPER(mrope_qk_vision_fp16_storage, 2)
+
+#ifdef USE_MKL
+void mrope_qk_vision_bf16_pytorch_storage(float *q,
+                                          float *k,
+                                          const int32_t *positions,
+                                          int num_heads,
+                                          int num_kv_heads,
+                                          int num_tokens,
+                                          int head_dim,
+                                          int aligned_head_dim,
+                                          int n_dims,
+                                          int section_0,
+                                          int section_1,
+                                          int section_2,
+                                          int section_3,
+                                          int n_ctx_orig,
+                                          float freq_base,
+                                          float freq_scale,
+                                          float ext_factor,
+                                          float attn_factor,
+                                          float beta_fast,
+                                          float beta_slow)
+{
+    (void)n_ctx_orig;
+    (void)ext_factor;
+    (void)attn_factor;
+    (void)beta_fast;
+    (void)beta_slow;
+    if (!q || !k || !positions || num_heads <= 0 || num_kv_heads <= 0 || num_tokens <= 0) {
+        return;
+    }
+    const int sections[4] = {section_0, section_1, section_2, section_3};
+    vision_mrope_apply_pytorch_bf16(q, positions, num_heads, num_tokens, head_dim,
+                                    aligned_head_dim, n_dims, sections, freq_base, freq_scale);
+    vision_mrope_apply_pytorch_bf16(k, positions, num_kv_heads, num_tokens, head_dim,
+                                    aligned_head_dim, n_dims, sections, freq_base, freq_scale);
+}
+#endif
 
 void mrope_qk_imrope_positions(float *q,
                                float *k,

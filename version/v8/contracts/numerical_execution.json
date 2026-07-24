@@ -331,7 +331,7 @@
       "position_transform": null,
       "description": "llama.cpp CPU production RMSNorm: FP32 squares, ascending FP64 row sum, and the active CPU provider reciprocal-square-root sequence. AVX-512 uses RSQRT14 plus one Newton refinement; AVX2 uses scalar sqrt/div."
     },
-    "rmsnorm_pytorch_avx512_bf16_storage": {
+    "rmsnorm_pytorch_avx2_cascade_bf16_storage": {
       "operator_family": "rmsnorm",
       "status": "validated",
       "storage": {"input": "bf16", "weight": "bf16", "output": "bf16"},
@@ -340,7 +340,7 @@
         "weight": "bf16",
         "accumulator": "fp32",
         "contraction": "disabled",
-        "evaluation_order": "square_then_two_avx512_partial_vectors_then_lane_fold_then_fp32_mean_rsqrt"
+        "evaluation_order": "materialized_square_then_avx2_four_level_cascade_then_left_to_right_lane_fold_then_ordered_fp32_mean_rsqrt"
       },
       "rounding": {
         "mode": "rne",
@@ -350,7 +350,7 @@
         "kind": "normalization",
         "order": "contract_defined_chunks",
         "partial_accumulator": "fp32",
-        "merge_order": "pairwise_tree"
+        "merge_order": "hierarchical_cascade"
       },
       "threading": {
         "work_partition": "independent_rows",
@@ -359,11 +359,11 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "PyTorch CPU AVX-512 BF16 RMSNorm: FP32 mean-square reduction, BF16 normalized storage, then BF16 weight multiplication and output storage."
+      "description": "PyTorch CPU AVX2-dispatched BF16 RMSNorm: materialized FP32 squares, ATen cascade_sum reduction, ordered FP32 division/rsqrt sequence, BF16 normalized storage, then BF16 weight multiplication and output storage. Provider ISA follows the PyTorch build, not the host maximum ISA."
     },
     "bf16_weight_bf16_input_fp32_dot_fp32_output": {
       "operator_family": "gemm",
-      "status": "observed",
+      "status": "validated",
       "storage": {
         "input": "fp32",
         "weight": "bf16",
@@ -665,6 +665,109 @@
       },
       "description": "Text M-RoPE uses full-width split-half rotation with Qwen-style interleaved temporal, height, width, and reserved-axis selection."
     },
+    "text_imrope_bf16_input_pytorch_bf16_compute_bf16_output": {
+      "operator_family": "text_mrope",
+      "status": "validated",
+      "compute": {
+        "input": "bf16",
+        "weight": "none",
+        "accumulator": "bf16",
+        "contraction": "disabled",
+        "evaluation_order": "pytorch_bf16_cos_sin_then_bf16_products_then_bf16_add"
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": {
+        "pairing": "multi_section",
+        "rotary_width": "head_dim",
+        "head_width": "head_dim",
+        "position_rank": 4,
+        "axis_order": ["temporal", "height", "width", "reserved"],
+        "section_interpretation": "interleaved_axis_selection",
+        "frequency_compute": "fp32",
+        "intermediate_compute": "bf16",
+        "rounding_points": [
+          "cosine_store",
+          "sine_store",
+          "source_cosine_product",
+          "partner_sine_product",
+          "output_add"
+        ],
+        "threading": "serial"
+      },
+      "storage": {
+        "input": "bf16",
+        "weight": "none",
+        "output": "bf16"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "weighted_product", "output_store"]
+      },
+      "description": "PyTorch BF16 text M-RoPE contract: FP32 frequencies, BF16 cos/sin, BF16 products and BF16 output storage. Unreplaced interleaved tail frequencies retain the temporal axis."
+    },
+    "text_imrope_positions_bf16_input_pytorch_bf16_compute_bf16_output": {
+      "operator_family": "text_mrope",
+      "status": "validated",
+      "compute": {
+        "input": "bf16",
+        "weight": "none",
+        "accumulator": "bf16",
+        "contraction": "disabled",
+        "evaluation_order": "pytorch_bf16_cos_sin_then_bf16_products_then_bf16_add"
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": {
+        "position_source": "explicit_i32_axis_streams",
+        "pairing": "multi_section",
+        "rotary_width": "head_dim",
+        "head_width": "head_dim",
+        "position_rank": 4,
+        "axis_order": ["temporal", "height", "width", "reserved"],
+        "section_interpretation": "interleaved_axis_selection",
+        "frequency_compute": "fp32",
+        "intermediate_compute": "bf16",
+        "rounding_points": [
+          "cosine_store",
+          "sine_store",
+          "source_cosine_product",
+          "partner_sine_product",
+          "output_add"
+        ],
+        "threading": "serial"
+      },
+      "storage": {
+        "input": "bf16",
+        "weight": "none",
+        "output": "bf16"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "weighted_product", "output_store"]
+      },
+      "description": "PyTorch BF16 decoder M-RoPE over an explicit four-axis position tensor: FP32 frequencies, BF16 cos/sin, BF16 products, and BF16 output storage."
+    },
     "vision_mrope_fp32_input_fp32_compute_fp32_output": {
       "operator_family": "vision_mrope",
       "status": "validated",
@@ -774,6 +877,51 @@
         ]
       },
       "description": "Vision M-RoPE computes in FP32 and materializes a BF16 RNE storage boundary in the FP32 activation buffer."
+    },
+    "vision_mrope_pytorch_mkl_fp32_input_fp32_compute_bf16_output": {
+      "operator_family": "vision_mrope",
+      "status": "validated",
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "direct_powf_frequency_table_then_mkl_vml_sincos_then_separate_products_and_sum"
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": {
+        "pairing": "multi_section",
+        "rotary_width": "head_dim",
+        "head_width": "head_dim",
+        "position_rank": 4,
+        "axis_order": ["height", "width", "height_copy", "width_copy"],
+        "section_interpretation": "axis_selection",
+        "frequency_compute": "fp32",
+        "intermediate_compute": "fp32",
+        "rounding_points": ["product", "sum", "output_store"],
+        "threading": "serial"
+      },
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "bf16"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["output_store"]
+      },
+      "description": "PyTorch CPU-compatible Qwen3-VL vision M-RoPE using direct FP32 frequencies, MKL VML trigonometry, separate FP32 products/sum, and BF16 RNE storage."
     },
     "vision_mrope_fp32_input_fp32_compute_fp16_output": {
       "operator_family": "vision_mrope",
@@ -899,7 +1047,7 @@
           "output_store"
         ]
       },
-      "description": "Float-buffer BF16 LayerNorm reproducing PyTorch 2.8 GCC 13.3 ATen's AVX2 Welford chunk and cascade structure using explicit intrinsics. Promotion requires the stitched monotonic X-ray gate because compiler contraction can differ by FP32 ULPs."
+      "description": "Float-buffer BF16 LayerNorm reproducing PyTorch 2.8 ATen's AVX2 Welford chunk and cascade structure using explicit intrinsics. Validated byte-exact at the production 4032x1152 shape; stitched X-ray remains the model-level acceptance gate."
     },
     "layernorm_fp32_ggml_chunked_contracted": {
       "status": "validated",
@@ -1250,6 +1398,45 @@
       "position_transform": null,
       "description": "llama.cpp CPU SwiGLU semantics: evaluate GGML's ISA-specific vector exponential, divide gate by 1+exp(-gate), then multiply by up in FP32."
     },
+    "swiglu_pytorch_sleef_bf16_intermediate_bf16_output": {
+      "operator_family": "swiglu",
+      "status": "validated",
+      "storage": {
+        "input": "bf16",
+        "weight": "none",
+        "output": "bf16"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "bf16_gate_to_fp32_then_sleef_vector_exp_then_divide_then_bf16_silu_store_then_bf16_up_multiply_then_bf16_output_store"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "activation_intermediate_store",
+          "activation_intermediate_load",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "PyTorch 2.8 CPU BF16 SwiGLU: ATen SiLU uses SLEEF vector exp and stores BF16, followed by a separate BF16 elementwise multiply and BF16 output store."
+    },
     "gelu_pytorch_tanh_bf16_storage": {
       "operator_family": "gelu",
       "status": "validated",
@@ -1284,6 +1471,42 @@
       },
       "position_transform": null,
       "description": "PyTorch tanh-approximate GELU over BF16-valued inputs with FP32 elementwise compute and BF16 RNE output storage."
+    },
+    "gelu_pytorch_erf_sleef_bf16_storage": {
+      "operator_family": "gelu",
+      "status": "validated",
+      "storage": {
+        "input": "bf16",
+        "weight": "fp32",
+        "output": "bf16"
+      },
+      "compute": {
+        "input": "bf16",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "evaluation_order": "pytorch_avx512_erf_polynomial_then_sleef_expf16_u10"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "PyTorch x86 exact GELU (approximate=none): AVX-512 Abramowitz-Stegun vector erf with SLEEF u10 exp over BF16 input, FP32 elementwise arithmetic, and BF16 RNE output storage."
     },
     "gelu_fp32_input_fp16_table_fp32_output": {
       "operator_family": "gelu",
@@ -1392,6 +1615,39 @@
       },
       "position_transform": null,
       "description": "BF16 weights and BF16-rounded activations using AMX 16x16x32 tile dot products, ascending K tiles, independent 2D output-tile partitioning, and BF16 RNE output storage.",
+      "operator_family": "gemm"
+    },
+    "patch_projection_bf16_pytorch_onednn_conv3d_storage": {
+      "status": "validated",
+      "storage": {
+        "input": "bf16",
+        "weight": "bf16",
+        "output": "bf16"
+      },
+      "compute": {
+        "input": "bf16_rne",
+        "weight": "bf16",
+        "accumulator": "fp32",
+        "evaluation_order": "onednn_3_7_convolution_direct_temporal_patch"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "output_store"]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "implementation_defined"
+      },
+      "threading": {
+        "work_partition": "output_tiles",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": true
+      },
+      "position_transform": null,
+      "description": "PyTorch BF16 temporal patch Conv3D parity contract. The two temporal weight planes and duplicated image frame are reduced by oneDNN as one convolution before BF16 output storage.",
       "operator_family": "gemm"
     },
     "bf16_weight_bf16_input_shape_safe_prefill_bf16_output": {

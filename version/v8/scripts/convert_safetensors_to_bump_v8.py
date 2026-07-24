@@ -1329,6 +1329,13 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "vision_end_token_id": int(hf.get("vision_end_token_id") or 0),
             "num_deepstack_layers": len((hf.get("vision_config") or {}).get("deepstack_visual_indexes") or []),
             "decoder_norm_storage_boundary": "bf16",
+            "decoder_norm_reduction_policy": "pytorch_avx2_cascade_exact",
+            "decoder_qk_norm_reduction_policy": "pytorch_avx2_cascade_exact",
+            "decoder_projection_reduction_policy": "pytorch_onednn_brgemm_exact",
+            "decoder_residual_storage_boundary": "bf16",
+            "decoder_mrope_storage_boundary": "pytorch_bf16_exact",
+            "decoder_swiglu_storage_boundary": "pytorch_bf16_exact",
+            "decode_kv_cache_dtype": "bf16",
         })
         if mrope:
             cfg["mrope_sections"] = [int(v) for v in mrope] + ([0] if len(mrope) == 3 else [])
@@ -1428,9 +1435,13 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "rope_layout": "multi_section_2d",
             "vision_mrope_sections": vision_mrope_sections,
             "vision_mrope_n_dims": max(1, int(head_dim)),
+            "vision_patch_projection_reduction_policy": "pytorch_onednn_conv3d_exact",
             "vision_mrope_storage_boundary": "bf16",
+            "vision_mrope_reduction_policy": "pytorch_mkl_exact",
             "vision_layernorm_storage_boundary": "bf16",
+            "vision_layernorm_reduction_policy": "pytorch_welford_exact",
             "vision_projection_storage_boundary": "bf16",
+            "vision_projection_reduction_policy": "pytorch_onednn_brgemm_exact",
             "vision_attention_storage_boundary": "bf16",
             "vision_residual_storage_boundary": "bf16",
             "vision_activation_storage_boundary": "bf16",

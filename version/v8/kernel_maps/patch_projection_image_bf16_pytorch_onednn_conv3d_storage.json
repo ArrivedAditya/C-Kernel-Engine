@@ -1,0 +1,73 @@
+{
+  "id": "patch_projection_image_bf16_pytorch_onednn_conv3d_storage",
+  "op": "patch_projection",
+  "variant": "image_temporal2_bf16_pytorch_onednn_conv3d",
+  "quant": {"weight": "bf16", "activation": "fp32", "output": "bf16"},
+  "inputs": [
+    {"name": "image", "dtype": "fp32", "shape": ["C", "H", "W"]},
+    {"name": "weights_t0", "dtype": "bf16", "shape": ["N", "C", "P", "P"]},
+    {"name": "weights_t1", "dtype": "bf16", "shape": ["N", "C", "P", "P"]},
+    {"name": "bias", "dtype": "fp32", "shape": ["N"]}
+  ],
+  "outputs": [
+    {"name": "output", "dtype": "fp32", "shape": ["H/P*W/P", "N"], "desc": "BF16 values expanded to FP32 storage"}
+  ],
+  "scratch": [],
+  "dims": ["C", "H", "W", "P", "N", "MERGE"],
+  "constraints": {"external_runtime": "onednn_3_7_openmp", "temporal_patch_size": 2},
+  "impl": {
+    "function": "patch_projection_image_bf16_pytorch_onednn_conv3d_storage",
+    "c_declaration": "void patch_projection_image_bf16_pytorch_onednn_conv3d_storage(const float *image, const void *weights_t0, const void *weights_t1, const float *bias, float *output, int channels, int image_h, int image_w, int patch_size, int out_channels, int merge_size);",
+    "sources": ["src/kernels/gemm_kernels_bf16.c"],
+    "variants": [
+      {"name": "onednn_3_7_openmp", "requires": ["avx512_bf16", "amx_bf16"], "compile_flags": ["-DUSE_ONEDNN"]}
+    ]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [
+    {
+      "contract_id": "patch_projection_bf16_pytorch_onednn_conv3d_storage",
+      "status": "validated",
+      "phases": ["prefill"],
+      "function": "patch_projection_image_bf16_pytorch_onednn_conv3d_storage",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "openmp",
+          "work_partition": ["output_tiles"],
+          "dispatch": ["internal_threaded"],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp32",
+        "merge_order": "implementation_defined",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": true,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ],
+  "tests": {
+    "unit": ["unittest/bf16/test_patch_projection_pytorch_onednn_bf16.py"],
+    "conversion": ["tests/test_v8_safetensors_to_bump.py::test_qwen3vl_safetensors_vision_maps_temporal_patch_split"],
+    "stitched": ["version/v8/scripts/compare_qwen3vl_bf16_vision_hidden_v8.py"]
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"cast": "const float*", "name": "image", "source": "activation:image"},
+      {"name": "weights_t0", "source": "weight:patch_emb"},
+      {"name": "weights_t1", "source": "weight:patch_emb_aux"},
+      {"cast": "const float*", "name": "bias", "source": "weight_f:patch_bias"},
+      {"cast": "float*", "name": "output", "source": "output:y"},
+      {"name": "channels", "source": "dim:vision_channels"},
+      {"name": "image_h", "source": "dim:image_height"},
+      {"name": "image_w", "source": "dim:image_width"},
+      {"name": "patch_size", "source": "dim:patch_size"},
+      {"name": "out_channels", "source": "dim:embed_dim"},
+      {"name": "merge_size", "source": "dim:spatial_merge_size"}
+    ]
+  }
+}

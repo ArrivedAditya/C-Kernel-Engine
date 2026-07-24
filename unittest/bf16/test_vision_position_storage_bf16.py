@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 from pathlib import Path
 
 import numpy as np
@@ -11,7 +12,7 @@ import torch
 
 
 ROOT = Path(__file__).resolve().parents[2]
-LIB = ctypes.CDLL(str(ROOT / "build" / "libckernel_engine.so"))
+LIB = ctypes.CDLL(os.environ.get("CK_ENGINE_SO", str(ROOT / "build" / "libckernel_engine.so")))
 LIB.position_embeddings_add_tiled_2d_align_corners_bf16.argtypes = [
     ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
     ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
@@ -78,4 +79,5 @@ if __name__ == "__main__":
     run_case(6, 10, 4, 8, 4411)
     run_case(28, 36, 32, 16, 4412)
     run_case(36, 28, 32, 72, 4413)
-    print("BF16 tiled position storage parity: 3/3 exact")
+    run_case(56, 72, 32, 1152, 4414)
+    print("BF16 tiled position storage parity: 4/4 exact")

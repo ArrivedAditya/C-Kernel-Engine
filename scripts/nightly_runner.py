@@ -549,10 +549,22 @@ MAKE_TARGETS = {
         "target": "test-bf16-xray",
         "timeout_sec": 300,
     },
+    "v8_xray_validator_selftest": {
+        "name": "v8 X-ray Injected-Fault Validator",
+        "category": "bf16",
+        "target": "test-xray-validator-selftest",
+        "timeout_sec": 120,
+    },
     "v8_bf16_pytorch_onednn_oracle": {
         "name": "BF16 PyTorch/oneDNN Production-Shape Oracle",
         "category": "bf16",
         "target": "test-bf16-pytorch-onednn-oracle-auto",
+        "timeout_sec": 1800,
+    },
+    "qwen3vl_bf16_kernel_oracles": {
+        "name": "Qwen3-VL BF16 Generated Kernel Oracle Matrix",
+        "category": "bf16",
+        "target": "test-qwen3vl-bf16-kernel-oracles",
         "timeout_sec": 1800,
     },
     "v8_dsl_policy": {

@@ -126,7 +126,15 @@
               "enum": [
                 "full_sequence",
                 "batch_append",
-                "segmented_append"
+                "segmented_append",
+                "unified_mixed"
+              ]
+            },
+            "execution.attention_schedule": {
+              "enum": [
+                "streaming_online",
+                "query_tiled_online",
+                "full_matrix_causal"
               ]
             },
             "tensor.q.dtype": {

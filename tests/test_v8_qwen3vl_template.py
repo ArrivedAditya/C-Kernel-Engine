@@ -154,6 +154,8 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
                 "model": "qwen3vl",
                 "arch": "qwen3vl",
                 "decoder_norm_storage_boundary": "bf16",
+                "decoder_norm_reduction_policy": "pytorch_avx2_cascade_exact",
+                "decoder_qk_norm_reduction_policy": "pytorch_avx2_cascade_exact",
             },
             "template": build_ir_v8._load_builtin_template_doc("qwen3vl"),
         }
@@ -171,8 +173,108 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         )
         self.assertEqual(
             selected["decoder.rmsnorm.bf16"]["contract"]["id"],
-            "rmsnorm_pytorch_avx512_bf16_storage",
+            "rmsnorm_pytorch_avx2_cascade_bf16_storage",
         )
+        self.assertEqual(
+            selected["decoder.qk_norm.bf16"]["contract"]["id"],
+            "rmsnorm_pytorch_avx2_cascade_bf16_storage",
+        )
+
+    def test_bf16_decoder_projection_and_residual_contracts_cover_both_phases(self) -> None:
+        manifest = {
+            "config": {
+                "model": "qwen3vl",
+                "arch": "qwen3vl",
+                "decoder_norm_storage_boundary": "bf16",
+                "decoder_prefill_projection_storage_boundary": "bf16",
+                "decoder_projection_reduction_policy": "pytorch_onednn_brgemm_exact",
+                "decoder_residual_storage_boundary": "bf16",
+            },
+            "template": build_ir_v8._load_builtin_template_doc("qwen3vl"),
+        }
+        expected = {
+            "decoder.layer.qkv_projection.bf16_pytorch_onednn",
+            "decoder.layer.out_projection.bf16_pytorch_onednn",
+            "decoder.layer.mlp_projection.bf16_pytorch_onednn",
+            "decoder.logits.bf16_pytorch_onednn",
+            "decoder.layer.residual.bf16_pytorch",
+        }
+        for phase in ("prefill", "decode"):
+            plans = build_ir_v8._resolve_manifest_execution_contracts(manifest, phase)
+            selected = {plan["operation"]: plan for plan in plans}
+            self.assertTrue(expected.issubset(selected), (phase, sorted(selected)))
+            for operation in expected - {"decoder.layer.residual.bf16_pytorch"}:
+                self.assertEqual(
+                    selected[operation]["kernel"]["function"],
+                    "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+                )
+                self.assertEqual(
+                    selected[operation]["contract"]["id"],
+                    "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+                )
+            residual = selected["decoder.layer.residual.bf16_pytorch"]
+            self.assertEqual(
+                residual["kernel"]["function"],
+                "ck_residual_add_token_major_bf16_storage",
+            )
+            self.assertEqual(
+                residual["contract"]["id"],
+                "residual_add_bf16_input_fp32_add_bf16_output",
+            )
+
+    def test_bf16_decoder_mrope_contract_covers_prefill_and_decode(self) -> None:
+        manifest = {
+            "config": {
+                "model": "qwen3vl",
+                "arch": "qwen3vl",
+                "decoder_mrope_storage_boundary": "pytorch_bf16_exact",
+            },
+            "template": build_ir_v8._load_builtin_template_doc("qwen3vl"),
+        }
+        for phase in ("prefill", "decode"):
+            plans = build_ir_v8._resolve_manifest_execution_contracts(manifest, phase)
+            selected = {
+                plan["operation"]: plan
+                for plan in plans
+                if plan["operation"].startswith("decoder.layer.mrope")
+            }
+            self.assertEqual(set(selected), {"decoder.layer.mrope.bf16_pytorch"})
+            plan = selected["decoder.layer.mrope.bf16_pytorch"]
+            self.assertEqual(
+                plan["kernel"]["function"],
+                "mrope_qk_text_imrope_bf16_pytorch_storage",
+            )
+            self.assertEqual(
+                plan["contract"]["id"],
+                "text_imrope_bf16_input_pytorch_bf16_compute_bf16_output",
+            )
+
+    def test_bf16_decoder_swiglu_contract_covers_prefill_and_decode(self) -> None:
+        manifest = {
+            "config": {
+                "model": "qwen3vl",
+                "arch": "qwen3vl",
+                "decoder_swiglu_storage_boundary": "pytorch_bf16_exact",
+            },
+            "template": build_ir_v8._load_builtin_template_doc("qwen3vl"),
+        }
+        for phase in ("prefill", "decode"):
+            plans = build_ir_v8._resolve_manifest_execution_contracts(manifest, phase)
+            selected = {
+                plan["operation"]: plan
+                for plan in plans
+                if plan["operation"].startswith("decoder.swiglu")
+            }
+            self.assertEqual(set(selected), {"decoder.swiglu.bf16"})
+            plan = selected["decoder.swiglu.bf16"]
+            self.assertEqual(
+                plan["kernel"]["function"],
+                "swiglu_forward_pytorch_bf16_storage",
+            )
+            self.assertEqual(
+                plan["contract"]["id"],
+                "swiglu_pytorch_sleef_bf16_intermediate_bf16_output",
+            )
 
 
     def test_gguf_vision_mrope_resolves_fp32_contract(self) -> None:
@@ -440,6 +542,88 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "checkpoint declarations did not bind"):
             build_ir_v8._attach_semantic_checkpoints(template, arranged, registry)
 
+    def test_template_operation_conditions_are_config_driven(self) -> None:
+        section = [
+            {
+                "id": "exact",
+                "op": "patch_projection_image",
+                "when": {"config_key": "frontend.policy", "equals": "exact"},
+            },
+            {
+                "id": "legacy",
+                "op": "patchify",
+                "when": {"config_key": "frontend.policy", "not_equals": "exact"},
+            },
+        ]
+        self.assertEqual(
+            [item["id"] for item in build_ir_v8._normalize_template_op_items(
+                section, config={"frontend": {"policy": "exact"}}
+            )],
+            ["exact"],
+        )
+        self.assertEqual(
+            [item["id"] for item in build_ir_v8._normalize_template_op_items(
+                section, config={"frontend": {"policy": "legacy"}}
+            )],
+            ["legacy"],
+        )
+
+    def test_invalid_template_operation_condition_hard_fails(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "HARD CIRCUIT CONDITION FAULT"):
+            build_ir_v8._normalize_template_op_items(
+                [{
+                    "op": "patchify",
+                    "when": {"config_key": "frontend.policy", "equals": "a", "not_equals": "b"},
+                }],
+                config={"frontend": {"policy": "a"}},
+            )
+
+    def test_semantic_checkpoint_conditions_follow_operation_conditions(self) -> None:
+        template = {
+            "semantic_checkpoints": {
+                "schema": "cke.semantic_checkpoint_contract",
+                "schema_version": 1,
+                "exports": {
+                    "exact": {
+                        "section": "header",
+                        "template_op_id": "exact",
+                        "op": "patch_projection_image",
+                        "when": {"config_key": "frontend_policy", "equals": "exact"},
+                        "checkpoints": [{
+                            "id": "vision.frontend.output", "producer": "exact",
+                            "tensor": "vision_patch_projection", "logical_layout": "token_major",
+                            "axis_names": ["token", "channel"], "storage_dtype": "bf16",
+                        }],
+                    },
+                    "legacy": {
+                        "section": "header",
+                        "template_op_id": "legacy",
+                        "op": "patchify",
+                        "when": {"config_key": "frontend_policy", "not_equals": "exact"},
+                        "checkpoints": [{
+                            "id": "vision.frontend.output", "producer": "legacy",
+                            "tensor": "vision_patchify", "logical_layout": "token_major",
+                            "axis_names": ["token", "channel"], "storage_dtype": "fp32",
+                        }],
+                    },
+                },
+            }
+        }
+        registry = {"kernels": [{
+            "id": "exact_kernel", "impl": {"function": "exact_kernel"}
+        }]}
+        arranged = [{
+            "kernel": "exact_kernel", "op": "patch_projection_image",
+            "template_op_id": "exact", "section": "header", "layer": -1,
+        }]
+        build_ir_v8._attach_semantic_checkpoints(
+            template, arranged, registry, {"frontend_policy": "exact"}
+        )
+        self.assertEqual(
+            arranged[0]["semantic_checkpoints"][0]["id"],
+            "vision.frontend.output",
+        )
+
     def test_qwen3vl_invalid_vision_mrope_sections_fail_lowering(self) -> None:
         manifest = _make_qwen3vl_manifest()
         manifest["config"]["vision_mrope_n_dims"] = 4
@@ -508,11 +692,29 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         self.assertEqual(bridge["cache_policy"], "persistent_decoder_kv")
         self.assertEqual(bridge["runtime_policy"], "decode_staged")
         self.assertEqual(
-            bridge["prefill_schedule"],
+            bridge["prefill_schedules"]["segmented_append"],
             {
                 "segments": ["text_before", "visual", "text_after"],
                 "cache_transition": "append_preserve",
                 "position_transition": "segment_defined",
+            },
+        )
+        self.assertEqual(
+            bridge["prefill_schedules"]["unified_mixed"],
+            {
+                "segments": ["text_before", "visual", "text_after"],
+                "cache_transition": "single_pass",
+                "position_transition": "explicit_full_sequence",
+                "deepstack_injection": {
+                    "kernel_id": "ck_residual_add_token_major_bf16_storage",
+                    "contract_id": "residual_add_bf16_input_fp32_add_bf16_output",
+                    "target": "visual_rows_after_decoder_layer",
+                    "layers_from_config": "num_deepstack_layers",
+                },
+                "position_transform": {
+                    "kernel_id": "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
+                    "contract_id": "text_imrope_positions_bf16_input_pytorch_bf16_compute_bf16_output",
+                },
             },
         )
         self.assertEqual(
@@ -522,6 +724,58 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         self.assertEqual(
             run_multimodal_bridge_v8._bridge_generation_mode_from_policy(bridge),
             "incremental-decode",
+        )
+
+        bf16_manifest = {
+            "config": {"model": "qwen3vl", "decode_kv_cache_dtype": "bf16"},
+            "template": copy.deepcopy(doc),
+        }
+        hydrated_bf16 = build_ir_v8._hydrate_manifest_template(bf16_manifest)
+        resolved_bf16 = hydrated_bf16["config"]["multimodal_bridge_contract"]
+        self.assertEqual(
+            resolved_bf16["prefill_schedule"]["position_transform"]["resolved_function"],
+            "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
+        )
+        self.assertEqual(
+            resolved_bf16["prefill_schedule"]["deepstack_injection"]["resolved_function"],
+            "ck_residual_add_token_major_bf16_storage",
+        )
+        self.assertEqual(resolved_bf16["prefill_batching"], "unified_mixed")
+        self.assertEqual(resolved_bf16["prefill_schedule"]["cache_transition"], "single_pass")
+        bf16_attention = build_ir_v8._resolve_manifest_numerical_contracts(
+            hydrated_bf16,
+            "prefill",
+        )
+        self.assertEqual(len(bf16_attention), 1)
+        self.assertEqual(
+            bf16_attention[0]["kernel"]["function"],
+            "attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract",
+        )
+        self.assertEqual(
+            bf16_attention[0]["requirements"]["execution.attention_schedule"],
+            "full_matrix_causal",
+        )
+
+        fp16_manifest = {
+            "config": {"model": "qwen3vl", "decode_kv_cache_dtype": "fp16"},
+            "template": copy.deepcopy(doc),
+        }
+        hydrated_fp16 = build_ir_v8._hydrate_manifest_template(fp16_manifest)
+        resolved_fp16 = hydrated_fp16["config"]["multimodal_bridge_contract"]
+        self.assertEqual(resolved_fp16["prefill_batching"], "segmented_append")
+        self.assertEqual(resolved_fp16["prefill_schedule"]["cache_transition"], "append_preserve")
+        fp16_attention = build_ir_v8._resolve_manifest_numerical_contracts(
+            hydrated_fp16,
+            "prefill",
+        )
+        self.assertEqual(len(fp16_attention), 1)
+        self.assertEqual(
+            fp16_attention[0]["kernel"]["function"],
+            "attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract",
+        )
+        self.assertNotIn(
+            "execution.attention_schedule",
+            fp16_attention[0]["requirements"],
         )
 
     def test_unknown_bridge_contract_defaults_to_safe_replay(self) -> None:
@@ -565,19 +819,19 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         build_ir_v8._validate_segmented_prefill_contract(circuit, source="test:qwen3vl")
 
         missing_attention = copy.deepcopy(circuit)
-        del missing_attention["required_contracts"]["decoder.attention"]["phases"][
+        missing_attention["required_contracts"]["decoder.attention.fp16_cache"]["phases"][
             "prefill"
-        ]["requires"]["execution.prefill_batching"]
-        with self.assertRaisesRegex(RuntimeError, "schedule and attention provider disagree"):
+        ]["requires"]["execution.prefill_batching"] = "unknown_schedule"
+        with self.assertRaisesRegex(RuntimeError, "schedules and attention providers disagree"):
             build_ir_v8._validate_segmented_prefill_contract(
                 missing_attention,
                 source="test:missing-attention",
             )
 
         malformed_schedule = copy.deepcopy(circuit)
-        malformed_schedule["contract"]["multimodal_bridge"]["prefill_schedule"][
-            "segments"
-        ] = ["visual", "text_after"]
+        malformed_schedule["contract"]["multimodal_bridge"]["prefill_schedules"][
+            "segmented_append"
+        ]["segments"] = ["visual", "text_after"]
         with self.assertRaisesRegex(RuntimeError, "unsupported mixed-prefill schedule"):
             build_ir_v8._validate_segmented_prefill_contract(
                 malformed_schedule,
@@ -592,16 +846,20 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         self.assertIn("vision_position_contract", doc["contract"])
         self.assertEqual(doc["contract"]["attention_contract"]["rope_layout"], "multi_section_2d")
         self.assertEqual(doc["block_types"]["vision_encoder"]["header"][-1]["op"], "position_ids_2d")
+        header_by_id = {
+            item["id"]: item
+            for item in doc["block_types"]["vision_encoder"]["header"]
+        }
         self.assertEqual(
-            doc["block_types"]["vision_encoder"]["header"][3]["params"]["merge_size_from_config"],
+            header_by_id["patch_sum"]["params"]["merge_size_from_config"],
             "spatial_merge_size",
         )
         self.assertEqual(
-            doc["block_types"]["vision_encoder"]["header"][5]["params"]["merge_size_from_config"],
+            header_by_id["position_embeddings"]["params"]["merge_size_from_config"],
             "spatial_merge_size",
         )
         self.assertEqual(
-            doc["block_types"]["vision_encoder"]["header"][6]["params"]["merge_size_from_config"],
+            header_by_id["vision_position_ids"]["params"]["merge_size_from_config"],
             "spatial_merge_size",
         )
         self.assertEqual(doc["block_types"]["vision_encoder"]["body"]["ops"][3]["op"], "rope_qk")
@@ -1059,6 +1317,75 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
                 manifest,
                 registry,
                 mode="prefill",
+            )
+
+    def test_reused_layout_cannot_replace_resolved_bridge_numerics(self) -> None:
+        manifest = _make_qwen3vl_manifest()
+        ir1_ops = build_ir_v8.build_ir1_direct(
+            manifest,
+            ROOT / "tests" / "qwen3_vl_vision_manifest.synthetic.json",
+            mode="prefill",
+        )
+        registry = build_ir_v8.load_kernel_registry()
+        lowered_ir1 = build_ir_v8.generate_ir_lower_1(
+            ir1_ops,
+            registry,
+            manifest,
+            "prefill",
+        )
+        layout = build_ir_v8.generate_memory_layout(
+            lowered_ir1,
+            manifest,
+            registry,
+            mode="prefill",
+            context_len=manifest["config"]["context_length"],
+        )
+        # Simulate --layout-input from an older compiler which knew the
+        # schedule but not its exact positions-aware numerical provider.
+        stale_bridge = {
+            "prefill_batching": "unified_mixed",
+            "prefill_schedule": {
+                "segments": ["text_before", "visual", "text_after"],
+                "cache_transition": "single_pass",
+                "position_transition": "explicit_full_sequence",
+            },
+        }
+        layout["config"]["multimodal_bridge_contract"] = stale_bridge
+        manifest["config"]["multimodal_bridge_contract"] = {
+            **copy.deepcopy(stale_bridge),
+            "prefill_schedule": {
+                **copy.deepcopy(stale_bridge["prefill_schedule"]),
+                "position_transform": {
+                    "kernel_id": "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
+                    "contract_id": "text_imrope_positions_bf16_input_pytorch_bf16_compute_bf16_output",
+                    "resolved_function": "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
+                },
+            },
+        }
+
+        lowered = build_ir_v8.generate_ir_lower_2(
+            lowered_ir1,
+            layout,
+            manifest,
+            registry,
+            mode="prefill",
+        )
+        call_ir = build_ir_v8.generate_ir_lower_3(lowered, mode="prefill")
+        for artifact in (lowered, call_ir):
+            transform = artifact["config"]["multimodal_bridge_contract"][
+                "prefill_schedule"
+            ]["position_transform"]
+            self.assertEqual(
+                transform["kernel_id"],
+                "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
+            )
+            self.assertEqual(
+                transform["contract_id"],
+                "text_imrope_positions_bf16_input_pytorch_bf16_compute_bf16_output",
+            )
+            self.assertEqual(
+                transform["resolved_function"],
+                "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
             )
 
 

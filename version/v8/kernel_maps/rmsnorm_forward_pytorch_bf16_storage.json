@@ -1,7 +1,7 @@
 {
   "id": "rmsnorm_forward_pytorch_bf16_storage",
   "op": "rmsnorm",
-  "variant": "pytorch_avx512_bf16_storage",
+  "variant": "pytorch_avx2_cascade_bf16_storage",
   "quant": {"weight": "fp32", "activation": "fp32", "output": "fp32"},
   "inputs": [{"name": "input", "dtype": "fp32", "shape": ["T", "E"]}],
   "weights": [{"name": "gamma", "dtype": "fp32", "shape": ["E"]}],
@@ -16,13 +16,13 @@
     "c_declaration": "void rmsnorm_forward_pytorch_bf16_storage(const float *input, const float *gamma, float *output, float *rstd_cache, int tokens, int d_model, int aligned_embed_dim, float eps);",
     "sources": ["src/kernels/rmsnorm_kernels.c"],
     "variants": [{
-      "name": "avx512",
-      "requires": ["avx512f"],
-      "compile_flags": ["-mavx512f"]
+      "name": "avx2",
+      "requires": ["avx2"],
+      "compile_flags": ["-mavx2"]
     }]
   },
   "numerical_capabilities": [{
-    "contract_id": "rmsnorm_pytorch_avx512_bf16_storage",
+    "contract_id": "rmsnorm_pytorch_avx2_cascade_bf16_storage",
     "status": "validated",
     "phases": ["prefill", "decode"],
     "function": "rmsnorm_forward_pytorch_bf16_storage",
@@ -38,7 +38,7 @@
     },
     "arithmetic": {
       "partial_accumulator": "fp32",
-      "merge_order": "pairwise_tree",
+      "merge_order": "hierarchical_cascade",
       "deterministic": true,
       "thread_count_changes_arithmetic_order": false,
       "split_strategy": "independent_outputs"
@@ -57,5 +57,15 @@
       {"name": "eps", "source": "dim:rms_eps"}
     ]
   },
-  "notes": "PyTorch CPU AVX-512 BF16 RMSNorm storage contract carried in FP32 BUMP buffers."
+  "tests": {
+    "unit": [
+      "unittest/bf16/test_rmsnorm_pytorch_storage_bf16.py"
+    ],
+    "production_shapes": [
+      "T=1026,D=4096",
+      "T=1,D=4096"
+    ],
+    "oracle": "PyTorch BF16 RMSNorm CPU reduction and storage"
+  },
+  "notes": "PyTorch CPU AVX2 cascade-sum BF16 RMSNorm storage contract carried in FP32 BUMP buffers. The oracle provider ISA is determined by the PyTorch build."
 }

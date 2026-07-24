@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 from pathlib import Path
 
 import numpy as np
@@ -11,7 +12,8 @@ import torch
 
 
 ROOT = Path(__file__).resolve().parents[2]
-LIB = ctypes.CDLL(str(ROOT / "build" / "libckernel_engine.so"))
+LIB_PATH = Path(os.environ.get("CK_ENGINE_SO", ROOT / "build" / "libckernel_engine.so")).resolve()
+LIB = ctypes.CDLL(str(LIB_PATH))
 KERNEL = LIB.layernorm_naive_serial_bf16_storage
 PYTORCH_KERNEL = LIB.layernorm_pytorch_welford_bf16_storage
 FLOAT_P = ctypes.POINTER(ctypes.c_float)
@@ -69,13 +71,17 @@ def main() -> int:
                 f"max_abs={max_abs:.9g} rmse={rmse:.9g}"
             )
         print(f"T={tokens} D={dim} max_abs={max_abs:.9g} rmse={rmse:.9g}")
-    max_abs, rmse = run_case(4032, 1152, 1e-6, 107, kernel=PYTORCH_KERNEL)
-    if max_abs > 0.03125 or rmse > 0.003:
-        raise AssertionError(
-            "PyTorch Welford LayerNorm exceeds the existing BF16 gate: "
+    for seed in (3, 107, 211):
+        max_abs, rmse = run_case(4032, 1152, 1e-6, seed, kernel=PYTORCH_KERNEL)
+        if max_abs != 0.0 or rmse != 0.0:
+            raise AssertionError(
+                "PyTorch Welford LayerNorm is not byte-exact at the production shape: "
+                f"seed={seed} max_abs={max_abs:.9g} rmse={rmse:.9g}"
+            )
+        print(
+            f"T=4032 D=1152 seed={seed} pytorch_welford "
             f"max_abs={max_abs:.9g} rmse={rmse:.9g}"
         )
-    print(f"T=4032 D=1152 pytorch_welford max_abs={max_abs:.9g} rmse={rmse:.9g}")
     print(f"BF16 LayerNorm storage contract parity: {len(cases)}/{len(cases)}")
     return 0
 

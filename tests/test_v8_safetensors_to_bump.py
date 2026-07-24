@@ -1125,7 +1125,14 @@ def test_qwen3vl_safetensors_auto_text_ignores_vision(tmp_path: Path) -> None:
     assert manifest["config"]["tie_word_embeddings"] is False
     assert manifest["config"]["num_deepstack_layers"] == 1
     assert manifest["config"]["decoder_norm_storage_boundary"] == "bf16"
+    assert manifest["config"]["decoder_norm_reduction_policy"] == "pytorch_avx2_cascade_exact"
+    assert manifest["config"]["decoder_qk_norm_reduction_policy"] == "pytorch_avx2_cascade_exact"
     assert manifest["config"]["decoder_prefill_projection_storage_boundary"] == "bf16"
+    assert manifest["config"]["decoder_projection_reduction_policy"] == "pytorch_onednn_brgemm_exact"
+    assert manifest["config"]["decoder_residual_storage_boundary"] == "bf16"
+    assert manifest["config"]["decoder_mrope_storage_boundary"] == "pytorch_bf16_exact"
+    assert manifest["config"]["decoder_swiglu_storage_boundary"] == "pytorch_bf16_exact"
+    assert manifest["config"]["decode_kv_cache_dtype"] == "bf16"
     assert "decoder_decode_projection_storage_boundary" not in manifest["config"]
 
     real_out = tmp_path / "out_qwen3vl_text_real"
@@ -1170,10 +1177,15 @@ def test_qwen3vl_safetensors_auto_text_ignores_vision(tmp_path: Path) -> None:
         if op.get("layer") == 0 and op.get("op") in {"q_proj", "k_proj", "v_proj"}
     }
     assert layer0_projection_ops == {
-        "q_proj": "gemm_nt_bf16",
-        "k_proj": "gemm_nt_bf16",
-        "v_proj": "gemm_nt_bf16",
+        "q_proj": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+        "k_proj": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+        "v_proj": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
     }
+    rope_op = next(op for op in text_ops if op.get("layer") == 0 and op.get("op") == "rope_qk")
+    assert rope_op["kernel"] == "mrope_qk_text_imrope_bf16_pytorch_storage"
+    assert rope_op["resolved_contract"]["resolved_contract_id"] == (
+        "text_imrope_bf16_input_pytorch_bf16_compute_bf16_output"
+    )
     layer0_norm_ops = {
         op["op"]: op["kernel"] for op in text_ops
         if op.get("layer") == 0 and op.get("op") in {"rmsnorm", "qk_norm"}
@@ -1182,7 +1194,49 @@ def test_qwen3vl_safetensors_auto_text_ignores_vision(tmp_path: Path) -> None:
         "rmsnorm": "rmsnorm_forward_pytorch_bf16_storage",
         "qk_norm": "qk_norm_forward_pytorch_bf16_storage",
     }
+    attention_op = next(
+        op for op in text_ops if op.get("layer") == 0 and op.get("op") == "attn"
+    )
+    assert attention_op["kernel"] == (
+        "attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract"
+    )
+    assert attention_op["required_contract"]["tensor.kv.dtype"] == "bf16"
+    cache_store = next(
+        op for op in text_ops if op.get("layer") == 0 and op.get("op") == "kv_cache_store"
+    )
+    assert cache_store["kernel"] == "kv_cache_store_bf16"
+    layout_doc = json.loads(layout.read_text(encoding="utf-8"))
+    kv_cache = next(
+        item
+        for item in layout_doc["memory"]["activations"]["buffers"]
+        if item["name"] == "kv_cache"
+    )
+    assert kv_cache["dtype"] == "bf16"
     assert not any(op.get("op") == "qkv_proj" for op in text_ops)
+
+    prefill_lowered = out / "lowered_text_prefill.json"
+    subprocess.run(
+        [
+            sys.executable, str(build_ir),
+            "--manifest", str(out / "weights_manifest.json"),
+            "--mode", "prefill",
+            "--output", str(out / "ir1_text_prefill.json"),
+            "--layout-output", str(out / "layout_text_prefill.json"),
+            "--lowered-output", str(prefill_lowered),
+            "--call-output", str(out / "call_text_prefill.json"),
+            "--context-len", "4",
+        ],
+        check=True,
+    )
+    prefill_ops = json.loads(prefill_lowered.read_text(encoding="utf-8"))["operations"]
+    prefill_attention = next(
+        op for op in prefill_ops if op.get("layer") == 0 and op.get("op") == "attn"
+    )
+    assert prefill_attention["kernel"] == (
+        "attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract"
+    )
+    assert prefill_attention["required_contract"]["tensor.kv.dtype"] == "bf16"
+    assert any(op.get("kernel") == "kv_cache_store_batch_bf16" for op in prefill_ops)
 
 
 def test_qwen3vl_safetensors_vision_maps_temporal_patch_split(tmp_path: Path) -> None:
@@ -1238,10 +1292,12 @@ def test_qwen3vl_safetensors_vision_maps_temporal_patch_split(tmp_path: Path) ->
     assert manifest["config"]["position_interpolation_policy"] == "align_corners_bilinear"
     assert manifest["config"]["vision_position_storage_boundary"] == "bf16"
     assert manifest["config"]["vision_layernorm_storage_boundary"] == "bf16"
+    assert manifest["config"]["vision_layernorm_reduction_policy"] == "pytorch_welford_exact"
     assert manifest["config"]["vision_projection_storage_boundary"] == "bf16"
     assert manifest["config"]["vision_attention_storage_boundary"] == "bf16"
     assert manifest["config"]["vision_residual_storage_boundary"] == "bf16"
     assert manifest["config"]["vision_activation_storage_boundary"] == "bf16"
+    assert manifest["config"]["vision_patch_projection_reduction_policy"] == "pytorch_onednn_conv3d_exact"
     assert (out / "weights.bump").stat().st_size > 0
 
     build_ir = Path("version/v8/scripts/build_ir_v8.py")
@@ -1281,14 +1337,28 @@ def test_qwen3vl_safetensors_vision_maps_temporal_patch_split(tmp_path: Path) ->
     assert position_call["resolved_contract"]["kernel_id"] == "position_embeddings_add_tiled_2d_align_corners_bf16"
     rope_call = next(op for op in call_ops if op["op"] == "rope_qk")
     rope_args = {arg["name"]: arg["expr"] for arg in rope_call["args"]}
-    assert rope_call["function"] == "mrope_qk_vision_bf16_storage"
-    assert rope_call["resolved_contract"]["resolved_contract_id"] == "vision_mrope_fp32_input_fp32_compute_bf16_output"
-    assert rope_call["resolved_contract"]["kernel_id"] == "mrope_qk_vision_bf16_storage"
+    assert rope_call["function"] == "mrope_qk_vision_bf16_pytorch_storage"
+    assert rope_call["resolved_contract"]["resolved_contract_id"] == "vision_mrope_pytorch_mkl_fp32_input_fp32_compute_bf16_output"
+    assert rope_call["resolved_contract"]["kernel_id"] == "mrope_qk_vision_bf16_pytorch_storage"
     assert rope_args["n_dims"] == "4"
     assert [rope_args[f"section_{i}"] for i in range(4)] == ["1", "1", "0", "0"]
+    assert kernels_by_op["patch_projection_image"] == "patch_projection_image_bf16_pytorch_onednn_conv3d_storage"
+    assert "patchify" not in kernels_by_op
+    assert "patch_proj" not in kernels_by_op
+    assert "patch_proj_aux" not in kernels_by_op
+    assert "add_stream" not in kernels_by_op
+    assert "patch_bias_add" not in kernels_by_op
+    patch_projection_call = next(
+        op for op in call_ops if op["op"] == "patch_projection_image"
+    )
+    assert patch_projection_call["function"] == "patch_projection_image_bf16_pytorch_onednn_conv3d_storage"
+    assert patch_projection_call["resolved_contract"]["resolved_contract_id"] == "patch_projection_bf16_pytorch_onednn_conv3d_storage"
+    assert patch_projection_call["resolved_contract"]["kernel_id"] == "patch_projection_image_bf16_pytorch_onednn_conv3d_storage"
+    assert [
+        checkpoint["id"]
+        for checkpoint in patch_projection_call["semantic_checkpoints"]
+    ] == ["vision.frontend.patch_bias.output"]
     for op_name in (
-        "patch_proj",
-        "patch_proj_aux",
         "qkv_packed_proj",
         "out_proj",
         "mlp_up",
@@ -1296,7 +1366,7 @@ def test_qwen3vl_safetensors_vision_maps_temporal_patch_split(tmp_path: Path) ->
         "projector_fc1",
         "projector_fc2",
     ):
-        assert kernels_by_op[op_name] == "gemm_nt_bf16", op_name
+        assert kernels_by_op[op_name] == "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage", op_name
 
     subprocess.run(
         [
@@ -1312,6 +1382,7 @@ def test_qwen3vl_safetensors_vision_maps_temporal_patch_split(tmp_path: Path) ->
         check=True,
     )
     generated = generated_c.read_text(encoding="utf-8")
-    assert "gemm_nt_bf16(" in generated
+    assert "patch_projection_image_bf16_pytorch_onednn_conv3d_storage(" in generated
+    assert "gemm_nt_bf16(" not in generated
     assert "gemm_naive_parallel(" not in generated
     assert "gemm_blocked_serial(" not in generated

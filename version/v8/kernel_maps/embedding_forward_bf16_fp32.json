@@ -89,7 +89,7 @@
   },
   "tests": {
     "unit": [
-      "unittest/test_embedding.py"
+      "unittest/bf16/test_embedding_bf16_fp32.py"
     ],
     "bench": [
       "scripts/bench_embedding.py"

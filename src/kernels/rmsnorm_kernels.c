@@ -24,6 +24,53 @@
 #include <immintrin.h>
 #endif
 
+#if defined(__AVX2__)
+static inline __m256 rmsnorm_square_avx2_no_contract(__m256 values)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    __m256 squared;
+    __asm__ volatile ("vmulps %1, %1, %0" : "=x"(squared) : "x"(values));
+    return squared;
+#else
+    /* Preserve the materialized pow(2) boundary on compilers where inline
+     * assembly is unavailable. */
+    _Alignas(32) volatile float materialized[8];
+    _mm256_store_ps((float *)materialized, _mm256_mul_ps(values, values));
+    return _mm256_load_ps((const float *)materialized);
+#endif
+}
+
+static inline __m256 rmsnorm_add_avx2_ordered(__m256 left, __m256 right)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    __m256 sum;
+    __asm__ volatile ("vaddps %2, %1, %0" : "=x"(sum) : "x"(left), "x"(right));
+    return sum;
+#else
+    _Alignas(32) volatile float materialized[8];
+    _mm256_store_ps((float *)materialized, _mm256_add_ps(left, right));
+    return _mm256_load_ps((const float *)materialized);
+#endif
+}
+#endif
+
+#if defined(__i386__) || defined(__x86_64__)
+static inline float rmsnorm_div_f32_ordered(float numerator, float denominator)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    float quotient;
+    __asm__ volatile ("vdivss %2, %1, %0"
+                      : "=x"(quotient)
+                      : "x"(numerator), "x"(denominator));
+    return quotient;
+#else
+    volatile float ordered_numerator = numerator;
+    volatile float ordered_denominator = denominator;
+    return ordered_numerator / ordered_denominator;
+#endif
+}
+#endif
+
 /* AVX1 horizontal sum helper (no _mm256_reduce_add_ps in AVX1) */
 #if defined(__AVX__) && !defined(__AVX512F__)
 static inline float hsum256_ps_rmsnorm(__m256 v) {
@@ -158,6 +205,25 @@ void rmsnorm_forward_llama_production(const float *input,
     }
 }
 
+/*
+ * Backend-matched PyTorch BF16 RMSNorm contract.
+ *
+ * This is intentionally separate from the generic FP32 and strict/FP64
+ * RMSNorm providers. FP64 accumulation lowers mathematical error, but it does
+ * not reproduce PyTorch's BF16 CPU boundary values. The installed PyTorch 2.8
+ * binary dispatches mean(sum(pow(x, 2))) through ATen's AVX2 float reduction:
+ *
+ *   BF16 load -> FP32 materialized square -> four-stream/four-level AVX2
+ *   cascade -> ordered lane fold -> FP32 mean/div/sqrt -> BF16 normalized
+ *   value -> BF16 gamma multiply -> BF16 output.
+ *
+ * ICX may otherwise contract the square with accumulation, tree-reduce the
+ * scalar lane fold, or replace scalar division. The ordered intrinsic helpers
+ * above prevent those transformations. This implementation follows PyTorch
+ * aten/src/ATen/native/cpu/SumKernel.cpp (cascade_sum) at commit
+ * a1cb3cc05d46d198467bebbb6e8fba50a325d4e7. oneDNN is not the RMSNorm
+ * oracle; it is used by adjacent BF16 linear projections.
+ */
 void rmsnorm_forward_pytorch_bf16_storage(const float *input,
                                           const float *gamma,
                                           float *output,
@@ -172,23 +238,94 @@ void rmsnorm_forward_pytorch_bf16_storage(const float *input,
         float *y = output + (size_t)t * (size_t)aligned_embed_dim;
         float sum_sq = 0.0f;
 
-#if defined(__AVX512F__)
-        /* PyTorch AVX-512 ReduceOps accumulates this contiguous last-dimension
-         * mean in two 16-lane partial vectors before a left-to-right lane
-         * fold. Preserve that order: a one-ULP variance change can cross a
-         * BF16 rounding boundary after normalization. */
-        __m512 acc0 = _mm512_setzero_ps();
-        __m512 acc1 = _mm512_setzero_ps();
-        int d = 0;
-        for (; d + 32 <= d_model; d += 32) {
-            const __m512 x0 = _mm512_loadu_ps(x + d);
-            const __m512 x1 = _mm512_loadu_ps(x + d + 16);
-            acc0 = _mm512_add_ps(acc0, _mm512_mul_ps(x0, x0));
-            acc1 = _mm512_add_ps(acc1, _mm512_mul_ps(x1, x1));
+#if defined(__AVX2__)
+        /* Match the installed ATen build's AVX2 floating-point cascade_sum
+         * contract. It treats the
+         * contiguous row as four interleaved vector streams, accumulates
+         * 16-item blocks through four hierarchy levels, then folds the four
+         * streams and vector lanes left-to-right. PyTorch materializes pow(2)
+         * before mean(), so keep the multiply separate from accumulation.
+         * The host supports AVX-512, but this PyTorch build has AVX2 reduction
+         * providers only; provider ISA is part of the numerical contract. */
+        __m256 level[4][4];
+        for (int hierarchy = 0; hierarchy < 4; ++hierarchy) {
+            for (int stream = 0; stream < 4; ++stream) {
+                level[hierarchy][stream] = _mm256_setzero_ps();
+            }
         }
-        _Alignas(64) float lanes[16];
-        _mm512_store_ps(lanes, _mm512_add_ps(acc0, acc1));
-        for (int lane = 0; lane < 16; ++lane) sum_sq += lanes[lane];
+        int d = 0;
+        const int vector_count = d_model / 8;
+        const int cascade_items = vector_count / 4;
+        int level_power = 4;
+        if (cascade_items > 1) {
+            int ceil_log2 = 0;
+            unsigned int value = (unsigned int)(cascade_items - 1);
+            while (value != 0) {
+                value >>= 1;
+                ++ceil_log2;
+            }
+            const int candidate = ceil_log2 / 4;
+            if (candidate > level_power) level_power = candidate;
+        }
+        const int level_step = 1 << level_power;
+        const int level_mask = level_step - 1;
+        int item = 0;
+        for (; item + level_step <= cascade_items;) {
+            for (int block = 0; block < level_step; ++block, ++item) {
+                for (int stream = 0; stream < 4; ++stream) {
+                    const int offset = (item * 4 + stream) * 8;
+                    const __m256 values = _mm256_loadu_ps(x + offset);
+                    const __m256 squared = rmsnorm_square_avx2_no_contract(values);
+                    level[0][stream] = rmsnorm_add_avx2_ordered(
+                        level[0][stream], squared
+                    );
+                }
+            }
+            for (int hierarchy = 1; hierarchy < 4; ++hierarchy) {
+                for (int stream = 0; stream < 4; ++stream) {
+                    level[hierarchy][stream] = rmsnorm_add_avx2_ordered(
+                        level[hierarchy][stream], level[hierarchy - 1][stream]
+                    );
+                    level[hierarchy - 1][stream] = _mm256_setzero_ps();
+                }
+                const int mask = level_mask << (hierarchy * level_power);
+                if ((item & mask) != 0) break;
+            }
+        }
+        for (; item < cascade_items; ++item) {
+            for (int stream = 0; stream < 4; ++stream) {
+                const int offset = (item * 4 + stream) * 8;
+                const __m256 values = _mm256_loadu_ps(x + offset);
+                const __m256 squared = rmsnorm_square_avx2_no_contract(values);
+                level[0][stream] = rmsnorm_add_avx2_ordered(
+                    level[0][stream], squared
+                );
+            }
+        }
+        for (int hierarchy = 1; hierarchy < 4; ++hierarchy) {
+            for (int stream = 0; stream < 4; ++stream) {
+                level[0][stream] = rmsnorm_add_avx2_ordered(
+                    level[0][stream], level[hierarchy][stream]
+                );
+            }
+        }
+        __m256 reduced = level[0][0];
+        for (int stream = 1; stream < 4; ++stream) {
+            reduced = rmsnorm_add_avx2_ordered(reduced, level[0][stream]);
+        }
+        d = cascade_items * 4 * 8;
+        for (; d + 8 <= d_model; d += 8) {
+            const __m256 values = _mm256_loadu_ps(x + d);
+            const __m256 squared = rmsnorm_square_avx2_no_contract(values);
+            reduced = rmsnorm_add_avx2_ordered(reduced, squared);
+        }
+        _Alignas(32) float lanes[8];
+        _mm256_store_ps(lanes, reduced);
+        volatile float ordered_sum = 0.0f;
+        for (int lane = 0; lane < 8; ++lane) {
+            ordered_sum = ordered_sum + lanes[lane];
+        }
+        sum_sq = ordered_sum;
         for (; d < d_model; ++d) {
             const float value = bf16_to_float(float_to_bf16(x[d]));
             sum_sq += value * value;
@@ -200,8 +337,13 @@ void rmsnorm_forward_pytorch_bf16_storage(const float *input,
         }
 #endif
 
+#if defined(__i386__) || defined(__x86_64__)
+        const float variance = rmsnorm_div_f32_ordered(sum_sq, (float)d_model);
+        const float rstd = rmsnorm_div_f32_ordered(1.0f, sqrtf(variance + eps));
+#else
         const float variance = sum_sq / (float)d_model;
         const float rstd = 1.0f / sqrtf(variance + eps);
+#endif
         if (rstd_cache) rstd_cache[t] = rstd;
         for (int d = 0; d < d_model; ++d) {
             const float value = bf16_to_float(float_to_bf16(x[d]));

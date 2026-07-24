@@ -243,10 +243,18 @@ void gemm_nt_bf16_prefill_shape_safe_bf16_storage(const float *A,
                                                    float *C,
                                                    int M, int N, int K);
 void gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage(const float *A,
-                                                      const void *B,
-                                                      const float *bias,
-                                                      float *C,
-                                                      int M, int N, int K);
+                                                       const void *B,
+                                                       const float *bias,
+                                                       float *C,
+                                                       int M, int N, int K);
+void patch_projection_bf16_pytorch_onednn_conv3d_storage(
+    const float *input, const void *weights, const float *bias, float *output,
+    int batch, int out_channels, int in_channels, int temporal,
+    int patch_h, int patch_w);
+void patch_projection_image_bf16_pytorch_onednn_conv3d_storage(
+    const float *image, const void *weights_t0, const void *weights_t1,
+    const float *bias, float *output, int channels, int image_h, int image_w,
+    int patch_size, int out_channels, int merge_size);
 int ck_gemm_bf16_amx_available(void);
 float ck_attention_pytorch_sdpa_scale_f32(int head_dim);
 void attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage(
@@ -1205,6 +1213,7 @@ void gelu_exact_inplace(float *data, size_t n);
 // GGML-compatible GELU forward matching llama.cpp's FP16 table semantics.
 void gelu_ggml_inplace(float *data, size_t n);
 void gelu_pytorch_tanh_bf16_storage(float *data, size_t n);
+void gelu_pytorch_erf_sleef_bf16_storage(float *data, size_t n);
 
 // GELU backward using tanh-based derivative (vectorized, uses fast tanh approx).
 void gelu_backward_exact(const float *input,
@@ -1682,6 +1691,7 @@ typedef enum {
     CK_ATTN_REDUCTION_F16_ONLINE_FP32_MERGE = 1,
     CK_ATTN_REDUCTION_F16_ONLINE_SINGLE_RANGE = 2,
     CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64 = 3,
+    CK_ATTN_REDUCTION_BF16_PYTORCH_SDPA = 4,
 } ck_attention_reduction_t;
 
 typedef enum {
@@ -1704,10 +1714,52 @@ ck_attention_status_t attention_forward_decode_head_major_gqa_flash_f16cache_con
     int head_dim,
     int aligned_head_dim,
     ck_attention_reduction_t reduction);
+ck_attention_status_t attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract(
+    const float *q_token,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *out_token,
+    int num_heads,
+    int num_kv_heads,
+    int kv_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    ck_attention_reduction_t reduction);
 
 // Causal prefill over a cache-preserving segment. Current-segment K/V rows
 // must already be appended at [past_tokens, past_tokens + q_tokens).
 ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract(
+    const float *q,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int q_tokens,
+    int past_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    ck_attention_reduction_t reduction);
+ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract(
+    const float *q,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int q_tokens,
+    int past_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    ck_attention_reduction_t reduction);
+
+// Full-matrix PyTorch math-SDPA prefill. Unlike the row-at-a-time segmented
+// provider above, this entry point materializes [head, query, key] scores and
+// applies the causal mask over the complete key width before FP32 softmax.
+ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract(
     const float *q,
     const uint16_t *k_cache,
     const uint16_t *v_cache,
@@ -2379,6 +2431,24 @@ void kv_cache_store_f16(uint16_t *__restrict kv_cache_k,
                         int num_kv_heads,
                         int head_dim,
                         int max_seq_len);
+void kv_cache_store_bf16(uint16_t *__restrict kv_cache_k,
+                         uint16_t *__restrict kv_cache_v,
+                         const float *__restrict k,
+                         const float *__restrict v,
+                         int layer,
+                         int pos,
+                         int num_kv_heads,
+                         int head_dim,
+                         int max_seq_len);
+void kv_cache_store_batch_bf16(uint16_t *__restrict kv_cache_k,
+                               uint16_t *__restrict kv_cache_v,
+                               const float *__restrict k,
+                               const float *__restrict v,
+                               int start_pos,
+                               int num_tokens,
+                               int num_kv_heads,
+                               int head_dim,
+                               int max_seq_len);
 
 void kv_cache_store_batch_f16(uint16_t *__restrict kv_cache_k,
                               uint16_t *__restrict kv_cache_v,
@@ -2554,6 +2624,11 @@ void sigmoid_backward_bf16(const uint16_t *input,
 	                         float *output,
 	                         int tokens,
 	                         int dim);
+
+	void swiglu_forward_pytorch_bf16_storage(const float *input,
+	                                         float *output,
+	                                         int tokens,
+	                                         int dim);
 
 	void swiglu_backward_exact(const float *input,
 	                           const float *d_output,
@@ -3282,6 +3357,21 @@ void mrope_qk_vision_bf16_storage(float *q, float *k, const int32_t *positions,
                                   int n_ctx_orig, float freq_base, float freq_scale,
                                   float ext_factor, float attn_factor,
                                   float beta_fast, float beta_slow);
+void mrope_qk_vision_bf16_pytorch_storage(float *q, float *k, const int32_t *positions,
+                                          int num_heads, int num_kv_heads, int num_tokens,
+                                          int head_dim, int aligned_head_dim, int n_dims,
+                                          int section_0, int section_1, int section_2, int section_3,
+                                          int n_ctx_orig, float freq_base, float freq_scale,
+                                          float ext_factor, float attn_factor,
+                                          float beta_fast, float beta_slow);
+
+void mrope_qk_text_imrope_positions_bf16_pytorch_storage(
+    float *q, float *k, const int32_t *positions,
+    int num_heads, int num_kv_heads, int num_tokens,
+    int head_dim, int aligned_head_dim, int n_dims,
+    int section_0, int section_1, int section_2, int section_3,
+    int n_ctx_orig, float freq_base, float freq_scale,
+    float ext_factor, float attn_factor, float beta_fast, float beta_slow);
 
 void mrope_qk_vision_fp16_storage(float *q, float *k, const int32_t *positions,
                                   int num_heads, int num_kv_heads, int num_tokens,
@@ -3343,6 +3433,27 @@ void mrope_qk_text_imrope(float *q,
                           float attn_factor,
                           float beta_fast,
                           float beta_slow);
+
+void mrope_qk_text_imrope_bf16_pytorch_storage(float *q,
+                                                float *k,
+                                                int num_heads,
+                                                int num_kv_heads,
+                                                int num_tokens,
+                                                int head_dim,
+                                                int aligned_head_dim,
+                                                int pos_offset,
+                                                int n_dims,
+                                                int section_0,
+                                                int section_1,
+                                                int section_2,
+                                                int section_3,
+                                                int n_ctx_orig,
+                                                float freq_base,
+                                                float freq_scale,
+                                                float ext_factor,
+                                                float attn_factor,
+                                                float beta_fast,
+                                                float beta_slow);
 
 void rope_forward_qk_strided(float *q,
                              float *k,

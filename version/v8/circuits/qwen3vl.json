@@ -97,10 +97,27 @@
       "position_policy": "mrope_2d",
       "cache_policy": "persistent_decoder_kv",
       "runtime_policy": "decode_staged",
-      "prefill_schedule": {
-        "segments": ["text_before", "visual", "text_after"],
-        "cache_transition": "append_preserve",
-        "position_transition": "segment_defined"
+      "prefill_schedules": {
+        "segmented_append": {
+          "segments": ["text_before", "visual", "text_after"],
+          "cache_transition": "append_preserve",
+          "position_transition": "segment_defined"
+        },
+        "unified_mixed": {
+          "segments": ["text_before", "visual", "text_after"],
+          "cache_transition": "single_pass",
+          "position_transition": "explicit_full_sequence",
+          "deepstack_injection": {
+            "kernel_id": "ck_residual_add_token_major_bf16_storage",
+            "contract_id": "residual_add_bf16_input_fp32_add_bf16_output",
+            "target": "visual_rows_after_decoder_layer",
+            "layers_from_config": "num_deepstack_layers"
+          },
+          "position_transform": {
+            "kernel_id": "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
+            "contract_id": "text_imrope_positions_bf16_input_pytorch_bf16_compute_bf16_output"
+          }
+        }
       },
       "image_begin_marker": "<|vision_start|>",
       "image_end_marker": "<|vision_end|>"
@@ -110,9 +127,12 @@
     "rope_qk": "mrope_qk_text_imrope"
   },
   "required_contracts": {
-    "decoder.attention": {
+    "decoder.attention.fp16_cache": {
       "op": "attention",
       "template_ops": ["attn"],
+      "selector": {
+        "config_not_equals": {"decode_kv_cache_dtype": "bf16"}
+      },
       "phases": {
         "prefill": {
           "requires": {
@@ -138,15 +158,78 @@
           "evidence": "Public routing and llama.cpp oracle cases pass at KV 511, 512, and 1058; full multimodal parity remains the production gate."
         }
       }
+    },
+    "decoder.attention.bf16_pytorch": {
+      "op": "attention",
+      "template_ops": ["attn"],
+      "selector": {
+        "config_equals": {"decode_kv_cache_dtype": "bf16"}
+      },
+      "phases": {
+        "prefill": {
+          "requires": {
+            "execution.phase": "prefill",
+            "execution.prefill_batching": "unified_mixed",
+            "execution.attention_schedule": "full_matrix_causal",
+            "tensor.q.dtype": "fp32",
+            "tensor.kv.dtype": "bf16",
+            "tensor.layout": "head_major",
+            "numerics.attention_reduction": "bf16_pytorch_sdpa"
+          },
+          "validation": "observed",
+          "evidence": "PyTorch Qwen3-VL evaluates text-before, visual, and text-after together in one causal prefill and stores K/V as BF16 in DynamicCache."
+        },
+        "decode": {
+          "requires": {
+            "execution.phase": "decode",
+            "tensor.q.dtype": "fp32",
+            "tensor.kv.dtype": "bf16",
+            "tensor.layout": "head_major",
+            "numerics.attention_reduction": "bf16_pytorch_sdpa"
+          },
+          "validation": "observed",
+          "evidence": "PyTorch Qwen3-VL BF16 DynamicCache preserves BF16 K/V storage during incremental decode."
+        }
+      }
     }
   },
   "required_numerical_contracts": {
+    "decoder.layer.mrope.bf16_pytorch": {
+      "op": "rope",
+      "template_ops": ["rope_qk"],
+      "selector": {
+        "config_equals": {
+          "decoder_mrope_storage_boundary": "pytorch_bf16_exact"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "text_imrope_bf16_input_pytorch_bf16_compute_bf16_output",
+          "validation": "validated",
+          "evidence": "PyTorch BF16 persistent decoder Q/K and FP16 cache comparison at production multimodal positions"
+        },
+        "decode": {
+          "contract_id": "text_imrope_bf16_input_pytorch_bf16_compute_bf16_output",
+          "validation": "validated",
+          "evidence": "Qwen3-VL BF16 sample-3 step-53 X-ray: pre-RoPE Q/K exact, first material divergence at post-RoPE BF16 storage"
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.mrope.output",
+        "producer": "rope_qk",
+        "logical_layout": "head_major",
+        "axis_names": ["head", "token", "channel"]
+      }
+    },
     "decoder.layer.qkv_projection.bf16_amx_prefill": {
       "op": "gemm",
       "template_ops": ["q_proj", "k_proj", "v_proj"],
       "selector": {
         "config_equals": {
           "decoder_prefill_projection_storage_boundary": "bf16"
+        },
+        "config_not_equals": {
+          "decoder_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
         }
       },
       "phases": {
@@ -163,12 +246,43 @@
         "axis_names": ["token", "channel"]
       }
     },
+    "decoder.layer.qkv_projection.bf16_pytorch_onednn": {
+      "op": "gemm",
+      "template_ops": ["q_proj", "k_proj", "v_proj"],
+      "selector": {
+        "config_equals": {
+          "decoder_prefill_projection_storage_boundary": "bf16",
+          "decoder_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+          "validation": "validated",
+          "evidence": "research/bf16/compare_onednn_pytorch_linear.py at production prefill and M=1 decoder shapes"
+        },
+        "decode": {
+          "contract_id": "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+          "validation": "validated",
+          "evidence": "M=1,N=4096,K=4096 is byte-exact to PyTorch BF16 at 24 threads"
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.qkv.output",
+        "producer": "qkv_projection",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
     "decoder.layer.out_projection.bf16_amx_prefill": {
       "op": "gemm",
       "template_ops": ["out_proj"],
       "selector": {
         "config_equals": {
           "decoder_prefill_projection_storage_boundary": "bf16"
+        },
+        "config_not_equals": {
+          "decoder_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
         }
       },
       "phases": {
@@ -185,12 +299,43 @@
         "axis_names": ["token", "channel"]
       }
     },
+    "decoder.layer.out_projection.bf16_pytorch_onednn": {
+      "op": "gemm",
+      "template_ops": ["out_proj"],
+      "selector": {
+        "config_equals": {
+          "decoder_prefill_projection_storage_boundary": "bf16",
+          "decoder_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+          "validation": "validated",
+          "evidence": "research/bf16/compare_onednn_pytorch_linear.py"
+        },
+        "decode": {
+          "contract_id": "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+          "validation": "validated",
+          "evidence": "Qwen3-VL BF16 teacher-forced image-1 coupled projection/residual control"
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.out_proj.output",
+        "producer": "out_proj",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
     "decoder.layer.mlp_projection.bf16_amx_prefill": {
       "op": "gemm",
       "template_ops": ["mlp_gate_up", "mlp_down"],
       "selector": {
         "config_equals": {
           "decoder_prefill_projection_storage_boundary": "bf16"
+        },
+        "config_not_equals": {
+          "decoder_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
         }
       },
       "phases": {
@@ -203,6 +348,89 @@
       "checkpoint": {
         "id": "decoder.layer.{layer}.mlp.projection",
         "producer": "mlp_projection",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.layer.mlp_projection.bf16_pytorch_onednn": {
+      "op": "gemm",
+      "template_ops": ["mlp_gate_up", "mlp_down"],
+      "selector": {
+        "config_equals": {
+          "decoder_prefill_projection_storage_boundary": "bf16",
+          "decoder_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+          "validation": "validated",
+          "evidence": "research/bf16/compare_onednn_pytorch_linear.py"
+        },
+        "decode": {
+          "contract_id": "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+          "validation": "validated",
+          "evidence": "Qwen3-VL BF16 teacher-forced image-1 coupled projection/residual control"
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.mlp.projection",
+        "producer": "mlp_projection",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.logits.bf16_pytorch_onednn": {
+      "op": "gemm",
+      "template_ops": ["logits"],
+      "selector": {
+        "config_equals": {
+          "decoder_prefill_projection_storage_boundary": "bf16",
+          "decoder_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+          "validation": "validated",
+          "evidence": "PyTorch oneDNN BF16 Linear oracle at M=1 and production decoder widths; output is materialized at the BF16 logits boundary."
+        },
+        "decode": {
+          "contract_id": "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+          "validation": "validated",
+          "evidence": "The logits head is a one-token BF16 Linear and must use the same oneDNN BRGEMM reduction/storage contract as PyTorch."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.logits.output",
+        "producer": "logits",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "vocabulary"]
+      }
+    },
+    "decoder.layer.residual.bf16_pytorch": {
+      "op": "residual_add",
+      "template_ops": ["residual_add"],
+      "selector": {
+        "config_equals": {
+          "decoder_residual_storage_boundary": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "residual_add_bf16_input_fp32_add_bf16_output",
+          "validation": "validated",
+          "evidence": "unittest/bf16/test_residual_storage_contract_bf16.py"
+        },
+        "decode": {
+          "contract_id": "residual_add_bf16_input_fp32_add_bf16_output",
+          "validation": "validated",
+          "evidence": "Qwen3-VL BF16 image-1 teacher-forced step-25 isolated control"
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.residual.output",
+        "producer": "residual_add",
         "logical_layout": "token_major",
         "axis_names": ["token", "channel"]
       }
@@ -240,12 +468,12 @@
       },
       "phases": {
         "prefill": {
-          "contract_id": "rmsnorm_pytorch_avx512_bf16_storage",
+          "contract_id": "rmsnorm_pytorch_avx2_cascade_bf16_storage",
           "validation": "validated",
           "evidence": "Qwen3-VL PyTorch BF16 persistent layer-0 RMSNorm capture at decoder step 43 is exact for all 4,096 channels."
         },
         "decode": {
-          "contract_id": "rmsnorm_pytorch_avx512_bf16_storage",
+          "contract_id": "rmsnorm_pytorch_avx2_cascade_bf16_storage",
           "validation": "validated",
           "evidence": "Teacher-forced persistent decode uses the same PyTorch AVX-512 BF16 storage and reduction contract."
         }
@@ -286,16 +514,19 @@
       "op": "qk_norm",
       "template_ops": ["qk_norm"],
       "selector": {
-        "config_equals": {"decoder_norm_storage_boundary": "bf16"}
+        "config_equals": {
+          "decoder_norm_storage_boundary": "bf16",
+          "decoder_qk_norm_reduction_policy": "pytorch_avx2_cascade_exact"
+        }
       },
       "phases": {
         "prefill": {
-          "contract_id": "rmsnorm_pytorch_avx512_bf16_storage",
+          "contract_id": "rmsnorm_pytorch_avx2_cascade_bf16_storage",
           "validation": "validated",
           "evidence": "Qwen3-VL PyTorch BF16 Q/K normalization follows the decoder RMSNorm storage and reduction contract per head."
         },
         "decode": {
-          "contract_id": "rmsnorm_pytorch_avx512_bf16_storage",
+          "contract_id": "rmsnorm_pytorch_avx2_cascade_bf16_storage",
           "validation": "validated",
           "evidence": "Persistent teacher-forced layer-0 Q/K captures validate the per-head BF16 storage boundary."
         }
@@ -310,6 +541,11 @@
     "decoder.mrope": {
       "op": "rope",
       "template_ops": ["rope_qk"],
+      "selector": {
+        "config_not_equals": {
+          "decoder_mrope_storage_boundary": "pytorch_bf16_exact"
+        }
+      },
       "phases": {
         "prefill": {
           "contract_id": "text_imrope_fp32_input_fp32_compute_fp32_output",
@@ -332,6 +568,9 @@
     "decoder.swiglu": {
       "op": "swiglu",
       "template_ops": ["silu_mul"],
+      "selector": {
+        "config_not_equals": {"decoder_swiglu_storage_boundary": "pytorch_bf16_exact"}
+      },
       "phases": {
         "prefill": {
           "contract_id": "swiglu_fp32_ggml_vector_exp_fp32_output",
@@ -342,6 +581,31 @@
           "contract_id": "swiglu_fp32_ggml_vector_exp_fp32_output",
           "validation": "validated",
           "evidence": "Layer-0 first-divergence attribution at decoder step 20 isolates GGML vector-exp and direct-division evaluation order."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.swiglu.output",
+        "producer": "silu_mul",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.swiglu.bf16": {
+      "op": "swiglu",
+      "template_ops": ["silu_mul"],
+      "selector": {
+        "config_equals": {"decoder_swiglu_storage_boundary": "pytorch_bf16_exact"}
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "swiglu_pytorch_sleef_bf16_intermediate_bf16_output",
+          "validation": "validated",
+          "evidence": "Qwen3-VL BF16 layer-0 exact-input X-ray: gate/up are byte-exact and PyTorch stores both the SiLU intermediate and final product as BF16."
+        },
+        "decode": {
+          "contract_id": "swiglu_pytorch_sleef_bf16_intermediate_bf16_output",
+          "validation": "validated",
+          "evidence": "PyTorch 2.8 ATen silu_cpu plus BF16 TensorIterator multiplication at intermediate width 12,288."
         }
       },
       "checkpoint": {

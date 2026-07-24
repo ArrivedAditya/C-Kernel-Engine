@@ -29,5 +29,9 @@
     "c_declaration": "void spatial_merge_contiguous_tiled(const float *input, float *output, int grid_h, int grid_w, int embed_dim, int merge_size);",
     "sources": ["src/kernels/vision_kernels.c"]
   },
+  "tests": {
+    "unit": ["unittest/test_vision.py"],
+    "oracle": "PyTorch contiguous tile reshape and spatial merge"
+  },
   "notes": "Merge contiguous groups of merge_size^2 tokens from an activation stream that already uses merged-tile traversal order."
 }

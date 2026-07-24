@@ -21,6 +21,7 @@
  */
 
 #include "ckernel_engine.h"
+#include "bf16_utils.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -32,6 +33,16 @@ static inline void ck_local_fp32_to_fp16_row(const float *src, uint16_t *dst, in
     }
     for (int i = 0; i < n; ++i) {
         dst[i] = CK_FP32_TO_FP16(src[i]);
+    }
+}
+
+static inline void ck_local_fp32_to_bf16_row(const float *src, uint16_t *dst, int n)
+{
+    if (!src || !dst || n <= 0) {
+        return;
+    }
+    for (int i = 0; i < n; ++i) {
+        dst[i] = float_to_bf16(src[i]);
     }
 }
 
@@ -181,6 +192,34 @@ void kv_cache_store_f16(uint16_t *__restrict kv_cache_k,
     }
 }
 
+void kv_cache_store_bf16(uint16_t *__restrict kv_cache_k,
+                         uint16_t *__restrict kv_cache_v,
+                         const float *__restrict k,
+                         const float *__restrict v,
+                         int layer,
+                         int pos,
+                         int num_kv_heads,
+                         int head_dim,
+                         int max_seq_len)
+{
+    (void)layer;
+    if (!kv_cache_k || !kv_cache_v || !k || !v ||
+        num_kv_heads <= 0 || pos < 0 || pos >= max_seq_len ||
+        head_dim <= 0 || max_seq_len <= 0) {
+        return;
+    }
+
+    const size_t head_stride = (size_t)max_seq_len * (size_t)head_dim;
+    for (int h = 0; h < num_kv_heads; ++h) {
+        const float *k_src = k + (size_t)h * (size_t)head_dim;
+        const float *v_src = v + (size_t)h * (size_t)head_dim;
+        uint16_t *k_dst = kv_cache_k + (size_t)h * head_stride + (size_t)pos * (size_t)head_dim;
+        uint16_t *v_dst = kv_cache_v + (size_t)h * head_stride + (size_t)pos * (size_t)head_dim;
+        ck_local_fp32_to_bf16_row(k_src, k_dst, head_dim);
+        ck_local_fp32_to_bf16_row(v_src, v_dst, head_dim);
+    }
+}
+
 void kv_cache_store_batch_f16(uint16_t *__restrict kv_cache_k,
                               uint16_t *__restrict kv_cache_v,
                               const float *__restrict k,
@@ -213,6 +252,39 @@ void kv_cache_store_batch_f16(uint16_t *__restrict kv_cache_k,
             const size_t dst_offset = (size_t)(start_pos + t) * (size_t)head_dim;
             ck_local_fp32_to_fp16_row(k_head + src_offset, k_head_cache + dst_offset, head_dim);
             ck_local_fp32_to_fp16_row(v_head + src_offset, v_head_cache + dst_offset, head_dim);
+        }
+    }
+}
+
+void kv_cache_store_batch_bf16(uint16_t *__restrict kv_cache_k,
+                               uint16_t *__restrict kv_cache_v,
+                               const float *__restrict k,
+                               const float *__restrict v,
+                               int start_pos,
+                               int num_tokens,
+                               int num_kv_heads,
+                               int head_dim,
+                               int max_seq_len)
+{
+    if (!kv_cache_k || !kv_cache_v || !k || !v ||
+        start_pos < 0 || num_tokens <= 0 || num_kv_heads <= 0 ||
+        head_dim <= 0 || max_seq_len <= 0 ||
+        start_pos > max_seq_len - num_tokens) {
+        return;
+    }
+
+    const size_t compact_head_stride = (size_t)num_tokens * (size_t)head_dim;
+    const size_t cache_head_stride = (size_t)max_seq_len * (size_t)head_dim;
+    for (int h = 0; h < num_kv_heads; ++h) {
+        const float *k_head = k + (size_t)h * compact_head_stride;
+        const float *v_head = v + (size_t)h * compact_head_stride;
+        uint16_t *k_head_cache = kv_cache_k + (size_t)h * cache_head_stride;
+        uint16_t *v_head_cache = kv_cache_v + (size_t)h * cache_head_stride;
+        for (int t = 0; t < num_tokens; ++t) {
+            const size_t src_offset = (size_t)t * (size_t)head_dim;
+            const size_t dst_offset = (size_t)(start_pos + t) * (size_t)head_dim;
+            ck_local_fp32_to_bf16_row(k_head + src_offset, k_head_cache + dst_offset, head_dim);
+            ck_local_fp32_to_bf16_row(v_head + src_offset, v_head_cache + dst_offset, head_dim);
         }
     }
 }

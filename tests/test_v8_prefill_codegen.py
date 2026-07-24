@@ -27,6 +27,178 @@ codegen_prefill_v8 = _load_module("codegen_prefill_v8_tests", CODEGEN_PREFILL_PA
 
 
 class TestV8PrefillCodegen(unittest.TestCase):
+    def test_last_logits_preserves_resolved_exact_gemm_provider(self) -> None:
+        function = "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage"
+        op = {
+            "function": function,
+            "op": "logits",
+            "layer": -1,
+            "args": [
+                {
+                    "name": "A",
+                    "source": "activation:a",
+                    "expr": "(const float*)(model->bump + A_MAIN_STREAM)",
+                },
+                {
+                    "name": "B",
+                    "source": "weight:_first_weight",
+                    "expr": "(const void*)(model->bump + W_LM_HEAD)",
+                },
+                {
+                    "name": "C",
+                    "source": "output:c",
+                    "expr": "(float*)(model->bump + A_LOGITS)",
+                },
+                {"name": "M", "source": "dim:_m", "expr": "num_tokens"},
+                {"name": "N", "source": "dim:_output_dim", "expr": "151936"},
+                {"name": "K", "source": "dim:_input_dim", "expr": "4096"},
+            ],
+        }
+
+        emitted = codegen_prefill_v8.emit_prefill_op(
+            op,
+            758,
+            {"embed_dim": 4096, "vocab_size": 151936, "logits_layout": "last"},
+        )
+
+        self.assertIn("logits (last-only exact GEMM contract)", emitted)
+        self.assertIn(function + "(", emitted)
+        self.assertIn("(size_t)(num_tokens - 1) * 4096", emitted)
+        self.assertNotIn(
+            "gemv_bf16_pytorch_onednn_brgemm_bf16_storage",
+            emitted,
+        )
+
+    def test_residual_save_exports_prefill_layer_input_before_normalization(self) -> None:
+        op = {
+            "function": "memcpy",
+            "op": "residual_save",
+            "layer": 0,
+            "op_instance_idx": 0,
+            "args": [
+                {"name": "dst", "expr": "RESIDUAL"},
+                {"name": "src", "expr": "LAYER_INPUT"},
+                {"name": "size", "source": "dim:_memcpy_bytes", "expr": "4096"},
+            ],
+        }
+
+        emitted = codegen_prefill_v8.emit_prefill_op(op, 1, {"embed_dim": 4096})
+
+        self.assertIn(
+            'ck_debug_export_hidden(model, 0, "layer_input", '
+            "(const float*)LAYER_INPUT, (num_tokens) * (EMBED_DIM))",
+            emitted,
+        )
+
+        op["op_instance_idx"] = 1
+        emitted_after_attention = codegen_prefill_v8.emit_prefill_op(
+            op, 16, {"embed_dim": 4096}
+        )
+        self.assertIn('"after_attn"', emitted_after_attention)
+        self.assertNotIn('"layer_input"', emitted_after_attention)
+
+    @staticmethod
+    def _bridge_embedding_ops() -> list[dict]:
+        return [{
+            "op": "dense_embedding_lookup",
+            "function": "embedding_forward_bf16_fp32",
+            "args": [
+                {"name": "token_ids", "expr": "TOKENS"},
+                {"name": "token_embeddings", "expr": "WEIGHTS"},
+                {"name": "output", "expr": "OUT"},
+                {"name": "vocab_size", "expr": "VOCAB_SIZE"},
+                {"name": "embed_dim", "expr": "EMBED_DIM"},
+                {"name": "aligned_embed_dim", "expr": "EMBED_DIM"},
+            ],
+        }]
+
+    def test_unified_mixed_bridge_emits_one_full_prefill(self) -> None:
+        config = {
+            "embed_dim": 16,
+            "num_deepstack_layers": 3,
+            "context_length": 32,
+            "multimodal_bridge_contract": {
+                "prefix_policy": "mixed_visual_text_prefill",
+                "prefill_batching": "unified_mixed",
+                "prefill_schedule": {
+                    "segments": ["text_before", "visual", "text_after"],
+                    "cache_transition": "single_pass",
+                    "position_transition": "explicit_full_sequence",
+                    "position_transform": {
+                        "kernel_id": "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
+                        "contract_id": "text_imrope_positions_bf16_input_pytorch_bf16_compute_bf16_output",
+                        "resolved_function": "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
+                    },
+                    "deepstack_injection": {
+                        "kernel_id": "ck_residual_add_token_major_bf16_storage",
+                        "contract_id": "residual_add_bf16_input_fp32_add_bf16_output",
+                        "resolved_function": "ck_residual_add_token_major_bf16_storage",
+                        "target": "visual_rows_after_decoder_layer",
+                        "layers_from_config": "num_deepstack_layers",
+                    },
+                },
+            },
+        }
+        emitted = codegen_prefill_v8.emit_multimodal_bridge_api(
+            self._bridge_embedding_ops(), config
+        )
+        self.assertEqual(
+            emitted.count("ck_prefill_from_embedded(g_model, total_tokens);"), 2
+        )
+        self.assertNotIn(
+            "ck_prefill_from_embedded_range(g_model, prefix_tokens", emitted
+        )
+        helpers = codegen_prefill_v8._emit_multimodal_prefill_bridge_helpers(
+            config, "mrope_qk_text_imrope_bf16_pytorch_storage"
+        )
+        self.assertIn("mrope_qk_text_imrope_positions_bf16_pytorch_storage(q, k,", helpers)
+        self.assertIn("ck_residual_add_token_major_bf16_storage(dst_row, src, dst_row,", helpers)
+        self.assertNotIn("mrope_qk_imrope_positions(q, k,", helpers)
+
+    def test_unified_mixed_bridge_rejects_unresolved_position_provider(self) -> None:
+        config = {
+            "embed_dim": 16,
+            "num_deepstack_layers": 3,
+            "multimodal_bridge_contract": {
+                "prefix_policy": "mixed_visual_text_prefill",
+                "prefill_batching": "unified_mixed",
+                "prefill_schedule": {
+                    "segments": ["text_before", "visual", "text_after"],
+                    "cache_transition": "single_pass",
+                    "position_transition": "explicit_full_sequence",
+                },
+            },
+        }
+        with self.assertRaisesRegex(RuntimeError, "positions-aware M-RoPE provider"):
+            codegen_prefill_v8._emit_multimodal_prefill_bridge_helpers(
+                config, "mrope_qk_text_imrope_bf16_pytorch_storage"
+            )
+
+    def test_segmented_bridge_retains_three_cache_preserving_prefills(self) -> None:
+        config = {
+            "embed_dim": 16,
+            "num_deepstack_layers": 3,
+            "context_length": 32,
+            "multimodal_bridge_contract": {
+                "prefix_policy": "mixed_visual_text_prefill",
+                "prefill_batching": "segmented_append",
+                "prefill_schedule": {
+                    "segments": ["text_before", "visual", "text_after"],
+                    "cache_transition": "append_preserve",
+                    "position_transition": "segment_defined",
+                },
+            },
+        }
+        emitted = codegen_prefill_v8.emit_multimodal_bridge_api(
+            self._bridge_embedding_ops(), config
+        )
+        self.assertIn(
+            "ck_prefill_from_embedded_range(g_model, prefix_tokens", emitted
+        )
+        self.assertEqual(
+            emitted.count("ck_prefill_from_embedded(g_model, total_tokens);"), 1
+        )
+
     def test_qwen35_post_attention_prefill_exports_full_checkpoint_extents(self) -> None:
         cases = [
             (

@@ -258,6 +258,21 @@ class V8CodegenBridgeTests(unittest.TestCase):
         self.assertEqual(doc["contract"]["attention_contract"]["rope_layout"], "multi_section_1d")
         self.assertEqual(doc["kernels"]["rope_qk"], "mrope_qk_text_imrope")
 
+    def test_bf16_unified_bridge_codegen_uses_resolved_deepstack_storage_provider(self) -> None:
+        manifest = _make_qwen3vl_decoder_manifest()
+        manifest["config"]["decode_kv_cache_dtype"] = "bf16"
+        hydrated = build_ir_v8._hydrate_manifest_template(manifest)
+        config = hydrated["config"]
+        helper = codegen_v8.codegen_prefill_v8._emit_multimodal_prefill_bridge_helpers(
+            config,
+            "mrope_qk_text_imrope_bf16_pytorch_storage",
+        )
+        self.assertIn(
+            "ck_residual_add_token_major_bf16_storage(dst_row, src, dst_row, 1, 16);",
+            helper,
+        )
+        self.assertNotIn("dst_row[i] += src[i]", helper)
+
     def test_qwen3vl_bf16_amx_projection_is_prefill_only(self) -> None:
         manifest = _make_qwen3vl_decoder_manifest()
         manifest["config"]["decoder_prefill_projection_storage_boundary"] = "bf16"
@@ -898,7 +913,7 @@ class V8CodegenBridgeTests(unittest.TestCase):
             self.assertIn("CK_EXPORT uintptr_t ck_model_get_named_activation_ptr", text)
             self.assertIn("rope_precompute_cache(", text)
             self.assertNotIn("/* No pre-weights init ops */", text)
-            self.assertIn("logits (last-only)", text)
+            self.assertIn("logits (last-only exact GEMM contract)", text)
             self.assertNotIn("copy_last_logits (prefill fixup)", text)
             self.assertNotIn("static void ck_decode_embedded", text)
             self.assertNotIn("static int ck_bridge_forward_staged", text)

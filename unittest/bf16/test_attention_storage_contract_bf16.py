@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import struct
 import subprocess
 import sys
@@ -15,7 +16,8 @@ from torch.nn.attention import SDPBackend, sdpa_kernel
 
 
 ROOT = Path(__file__).resolve().parents[2]
-LIB = ctypes.CDLL(str(ROOT / "build" / "libckernel_engine.so"))
+LIB_PATH = Path(os.environ.get("CK_ENGINE_SO", ROOT / "build" / "libckernel_engine.so")).resolve()
+LIB = ctypes.CDLL(str(LIB_PATH))
 KERNEL = LIB.attention_forward_full_head_major_gqa_sdpa_bf16_storage
 PYTORCH_FLASH_KERNEL = (
     LIB.attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage
