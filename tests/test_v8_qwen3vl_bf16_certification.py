@@ -94,6 +94,71 @@ class CustomPrefixProvenanceTests(unittest.TestCase):
             {"20": 1, "25": 2, "unknown": 1},
         )
 
+    def test_runtime_provenance_rejects_mixed_core_engines(self) -> None:
+        encoder = {
+            (1, 56, 72): {
+                "runtime_dir": Path("/encoder"),
+                "engine_sha256": "encoder-engine",
+                "model_sha256": "encoder-model",
+                "layout_sha256": "encoder-layout",
+                "manifest_map_sha256": "encoder-map",
+            },
+        }
+        decoder = {
+            "runtime_dir": Path("/decoder"),
+            "engine_sha256": "decoder-engine",
+            "model_sha256": "decoder-model",
+            "layout_sha256": "decoder-layout",
+            "manifest_map_sha256": "decoder-map",
+        }
+        with self.assertRaisesRegex(RuntimeError, "one identical core engine"):
+            MODULE._runtime_provenance(encoder, decoder)
+
+    def test_runtime_provenance_accepts_one_engine_identity(self) -> None:
+        encoder = {
+            (1, 56, 72): {
+                "runtime_dir": Path("/encoder"),
+                "engine_sha256": "shared-engine",
+                "model_sha256": "encoder-model",
+                "layout_sha256": "encoder-layout",
+                "manifest_map_sha256": "encoder-map",
+            },
+        }
+        decoder = {
+            "runtime_dir": Path("/decoder"),
+            "engine_sha256": "shared-engine",
+            "model_sha256": "decoder-model",
+            "layout_sha256": "decoder-layout",
+            "manifest_map_sha256": "decoder-map",
+        }
+        provenance = MODULE._runtime_provenance(encoder, decoder)
+        self.assertEqual(provenance["engine_sha256"], "shared-engine")
+        self.assertEqual(len(provenance["runtimes"]), 2)
+
+    def test_resume_requires_matching_config_and_image(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "result.json"
+            path.write_text(json.dumps({
+                "certification_config_sha256": "config-a",
+                "image_sha256": "image-a",
+                "status": "pass",
+            }), encoding="utf-8")
+            self.assertIsNotNone(MODULE._retained_result(
+                path,
+                expected_config_sha256="config-a",
+                expected_image_sha256="image-a",
+            ))
+            self.assertIsNone(MODULE._retained_result(
+                path,
+                expected_config_sha256="config-b",
+                expected_image_sha256="image-a",
+            ))
+            self.assertIsNone(MODULE._retained_result(
+                path,
+                expected_config_sha256="config-a",
+                expected_image_sha256="image-b",
+            ))
+
     def test_bridge_encoder_accepts_processor_planar_override(self) -> None:
         bridge = MODULE._load_bridge_module()
         encoder_parameters = inspect.signature(bridge._run_encoder).parameters

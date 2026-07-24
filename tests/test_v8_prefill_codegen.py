@@ -33,6 +33,12 @@ class TestV8PrefillCodegen(unittest.TestCase):
             "function": function,
             "op": "logits",
             "layer": -1,
+            "call_abi": {
+                "version": 1,
+                "owner": "kernel_map",
+                "kernel_id": function,
+                "last_token_dispatch": "preserve_provider",
+            },
             "args": [
                 {
                     "name": "A",
@@ -68,6 +74,71 @@ class TestV8PrefillCodegen(unittest.TestCase):
             "gemv_bf16_pytorch_onednn_brgemm_bf16_storage",
             emitted,
         )
+
+    def test_last_logits_quantized_provider_uses_q8_k_row_gemv(self) -> None:
+        op = {
+            "function": "gemm_nt_q6_k_q8_k",
+            "op": "logits",
+            "layer": -1,
+            "call_abi": {
+                "version": 1,
+                "owner": "kernel_map",
+                "kernel_id": "gemm_nt_q6_k_q8_k",
+            },
+            "resolved_execution": {
+                "kernel_id": "gemm_nt_q6_k_q8_k",
+                "implementation": {
+                    "weight_storage": {
+                        "format": "q6_k",
+                        "block_elements": 256,
+                        "block_bytes": 210,
+                    },
+                    "activation_storage": {
+                        "format": "q8_k",
+                        "block_elements": 256,
+                    },
+                    "diagnostic_providers": {
+                        "fp32_activation": "gemm_nt_q6_k",
+                        "row_quantized": "gemv_q6_k_q8_k",
+                    },
+                },
+                "numerical_contract": "q6_k_x_q8_k_fp32_block_order",
+            },
+            "args": [
+                {
+                    "name": "A",
+                    "source": "activation:a",
+                    "expr": "(const void*)(model->bump + A_LAYER_INPUT)",
+                },
+                {
+                    "name": "B",
+                    "source": "weight:_first_weight",
+                    "expr": "(const void*)(model->bump + W_OUTPUT_WEIGHT)",
+                },
+                {
+                    "name": "bias",
+                    "source": "weight_f:_bias",
+                    "expr": "NULL",
+                },
+                {
+                    "name": "C",
+                    "source": "output:c",
+                    "expr": "(float*)(model->bump + A_LOGITS)",
+                },
+            ],
+        }
+
+        emitted = codegen_prefill_v8.emit_prefill_op(
+            op,
+            921,
+            {"embed_dim": 4096, "vocab_size": 151936, "logits_layout": "last"},
+        )
+
+        self.assertIn("logits (last-only)", emitted)
+        self.assertIn("gemv_q6_k_q8_k(", emitted)
+        self.assertIn("(4096 / QK_K) * sizeof(block_q8_K)", emitted)
+        self.assertNotIn("(const float*)", emitted.split("ck_debug_export_hidden", 1)[0])
+        self.assertNotIn("last-only exact GEMM contract", emitted)
 
     def test_residual_save_exports_prefill_layer_input_before_normalization(self) -> None:
         op = {

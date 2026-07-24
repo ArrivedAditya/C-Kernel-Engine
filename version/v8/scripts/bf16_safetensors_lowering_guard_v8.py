@@ -332,8 +332,8 @@ def run_guard(workdir: Path) -> None:
     assert rope_args["n_dims"] == "4"
     assert [rope_args[f"section_{idx}"] for idx in range(4)] == ["1", "1", "0", "0"]
     expected_kernels = {
-        "patch_proj": "gemm_nt_bf16",
-        "patch_proj_aux": "gemm_nt_bf16",
+        "patch_projection_image":
+            "patch_projection_image_bf16_pytorch_onednn_conv3d_storage",
         "qkv_packed_proj": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
         "out_proj": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
         "mlp_up": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
@@ -359,14 +359,17 @@ def run_guard(workdir: Path) -> None:
         ]
     )
     generated = generated_c.read_text(encoding="utf-8")
-    if "gemm_nt_bf16(" not in generated:
-        raise AssertionError("generated C does not call gemm_nt_bf16")
     for required in (
+        "patch_projection_image_bf16_pytorch_onednn_conv3d_storage(",
         "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage(",
     ):
         if required not in generated:
             raise AssertionError(f"generated C does not call {required}")
-    for forbidden in ("gemm_naive_parallel(", "gemm_blocked_serial("):
+    for forbidden in (
+        "gemm_nt_bf16(",
+        "gemm_naive_parallel(",
+        "gemm_blocked_serial(",
+    ):
         if forbidden in generated:
             raise AssertionError(f"generated C still contains {forbidden}")
     print("PASS: v8 BF16 safetensors lowering/codegen guard")

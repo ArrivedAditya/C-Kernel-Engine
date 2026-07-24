@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+"$repo_root/scripts/git_hooks/export_commit_patch.sh" HEAD || true

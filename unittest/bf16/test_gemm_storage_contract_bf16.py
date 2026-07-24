@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ctypes
+import os
 from pathlib import Path
 
 import numpy as np
@@ -11,7 +12,12 @@ import torch
 
 
 ROOT = Path(__file__).resolve().parents[2]
-LIB = ctypes.CDLL(str(ROOT / "build" / "libckernel_engine.so"))
+LIB_PATH = Path(
+    os.environ.get("CK_ENGINE_SO")
+    or os.environ.get("CK_ENGINE_LIB")
+    or ROOT / "build" / "libckernel_engine.so"
+)
+LIB = ctypes.CDLL(str(LIB_PATH))
 KERNEL = LIB.gemm_nt_bf16_bf16_storage
 NATIVE_KERNEL = LIB.gemm_nt_bf16_native_bf16_storage
 AMX_KERNEL = LIB.gemm_nt_bf16_amx_bf16_storage

@@ -567,6 +567,12 @@ MAKE_TARGETS = {
         "target": "test-qwen3vl-bf16-kernel-oracles",
         "timeout_sec": 1800,
     },
+    "qwen3vl_bf16_private_corpus_parity": {
+        "name": "Qwen3-VL BF16 Private 40-Image E2E Parity",
+        "category": "bf16",
+        "target": "test-qwen3vl-bf16-private-corpus-parity-auto",
+        "timeout_sec": 21600,
+    },
     "v8_dsl_policy": {
         "name": "v8 DSL Zero-Hardcoding Policy",
         "category": "inference",

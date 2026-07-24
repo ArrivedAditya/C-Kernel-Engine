@@ -716,6 +716,56 @@
       },
       "description": "PyTorch BF16 text M-RoPE contract: FP32 frequencies, BF16 cos/sin, BF16 products and BF16 output storage. Unreplaced interleaved tail frequencies retain the temporal axis."
     },
+    "text_imrope_positions_fp32_input_fp32_compute_fp32_output": {
+      "operator_family": "text_mrope",
+      "status": "validated",
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "glibc_powf_sinf_cosf_then_rounded_partner_product_then_fma"
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": {
+        "position_source": "explicit_i32_axis_streams",
+        "pairing": "multi_section",
+        "rotary_width": "head_dim",
+        "head_width": "head_dim",
+        "position_rank": 4,
+        "axis_order": ["temporal", "height", "width", "reserved"],
+        "section_interpretation": "interleaved_axis_selection",
+        "frequency_compute": "fp32",
+        "intermediate_compute": "fp32",
+        "rounding_points": [
+          "partner_sin_product",
+          "partner_cos_product",
+          "fma_output"
+        ],
+        "threading": "serial"
+      },
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "rounding": {
+        "mode": "none",
+        "points": []
+      },
+      "description": "Explicit-position Qwen3-VL M-RoPE for segmented quantized mixed prefill with FP32 input, compute, and output."
+    },
     "text_imrope_positions_bf16_input_pytorch_bf16_compute_bf16_output": {
       "operator_family": "text_mrope",
       "status": "validated",

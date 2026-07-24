@@ -733,7 +733,11 @@ class V8CodegenBridgeTests(unittest.TestCase):
             self.assertIn("ck_bridge_forward_staged(g_model, total_tokens);", text)
 
             make_result = subprocess.run(
-                ["make", "build/libckernel_engine.so"],
+                [
+                    "make",
+                    "build/libckernel_engine.so",
+                    "AVX_FLAGS=-mavx2 -mfma -mf16c -mssse3",
+                ],
                 cwd=str(ROOT),
                 capture_output=True,
                 text=True,

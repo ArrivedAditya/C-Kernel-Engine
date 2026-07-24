@@ -954,11 +954,21 @@ def _validate_segmented_prefill_contract(
                     "HARD CONTRACT FAULT: unified mixed-prefill requires an exact "
                     f"deepstack injection kernel and numerical contract in {source}."
                 )
-        elif position_transform is not None or deepstack_injection is not None:
-            raise RuntimeError(
-                "HARD CONTRACT FAULT: segmented mixed-prefill cannot declare a full-sequence "
-                f"position_transform or deepstack_injection in {source}."
-            )
+        else:
+            if (
+                not isinstance(position_transform, dict)
+                or not str(position_transform.get("kernel_id", "") or "").strip()
+                or not str(position_transform.get("contract_id", "") or "").strip()
+            ):
+                raise RuntimeError(
+                    "HARD CONTRACT FAULT: segmented mixed-prefill requires an exact "
+                    f"positions-aware kernel and numerical contract in {source}."
+                )
+            if deepstack_injection is not None:
+                raise RuntimeError(
+                    "HARD CONTRACT FAULT: segmented mixed-prefill cannot declare a "
+                    f"full-sequence deepstack_injection in {source}."
+                )
 
     if any(value not in schedules for value in attention_batching):
         raise RuntimeError(
@@ -11094,8 +11104,8 @@ _CALL_ABI_SOURCE_KINDS = {
 
 
 def _validate_kernel_call_abi(kernel_id: str, function: str, call_abi: Dict, source: Path) -> None:
-    if set(call_abi) - {"version", "params"}:
-        unknown = sorted(set(call_abi) - {"version", "params"})
+    if set(call_abi) - {"version", "params", "last_token_dispatch"}:
+        unknown = sorted(set(call_abi) - {"version", "params", "last_token_dispatch"})
         raise RuntimeError(
             f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {source.name} has unknown "
             f"call_abi fields {unknown}. Fix the kernel map; do not add compiler defaults."
@@ -11110,6 +11120,12 @@ def _validate_kernel_call_abi(kernel_id: str, function: str, call_abi: Dict, sou
         raise RuntimeError(
             f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {source.name} must declare "
             "an ordered call_abi.params array."
+        )
+    last_token_dispatch = call_abi.get("last_token_dispatch")
+    if last_token_dispatch not in {None, "preserve_provider"}:
+        raise RuntimeError(
+            f"HARD CALL ABI FAULT: kernel {kernel_id!r} in {source.name} declares "
+            f"unsupported last_token_dispatch={last_token_dispatch!r}."
         )
     seen = set()
     for index, param in enumerate(params):
@@ -11795,6 +11811,11 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                 "owner": binding_owner,
                 "kernel_id": kernel_id,
                 "source_file": call_abi_entry["source_file"] if call_abi_entry else "kernel_bindings*.json",
+                **(
+                    {"last_token_dispatch": binding["last_token_dispatch"]}
+                    if binding and binding.get("last_token_dispatch")
+                    else {}
+                ),
             },
         }
         if op.get("required_contract") is not None:
