@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,10 +50,14 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
     def test_redacted_summary_excludes_paths_text_and_sample_ids(self) -> None:
         report = {
             "pass": True,
+            "max_new_tokens": 128,
+            "ctx_len": 4096,
             "steps": [{"generated_prefix": [1], "ck_next_text": "private"}],
             "stop_reason": None,
             "first_divergence": None,
-            "prefix": {"grid": [36, 28]},
+            "prefix": {"grid": [36, 28], "tokens": 1008},
+            "prompt_tokens_before_image": [1, 2],
+            "prompt_tokens_after_image": [3],
             "ck_runtime": {
                 "shared_library": {"sha256": "decoder"},
                 "engine_library": {"sha256": "engine"},
@@ -69,12 +76,19 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
             prefix_sha256="prefix",
             report=report,
             elapsed={"bridge": 1.0, "parity": 2.0},
+            requested_tokens=128,
         )
         encoded = json.dumps(row)
         self.assertNotIn("private", encoded)
         self.assertNotIn("path", encoded)
         self.assertEqual(row["status"], "pass")
         self.assertEqual(row["steps"], 1)
+        self.assertEqual(row["matched_tokens"], 1)
+        self.assertEqual(row["requested_tokens"], 128)
+        self.assertEqual(row["prefill_tokens"], 1011)
+        self.assertEqual(row["context_tokens_after_comparison"], 1012)
+        self.assertEqual(row["elapsed_sec"]["total"], 3.0)
+        self.assertEqual(row["elapsed_sec"]["comparison_per_token"], 2.0)
 
     def test_resume_requires_exact_case_configuration_and_pass(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -151,6 +165,135 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
         self.assertIn("--llama-decode-mode batched", rendered)
         self.assertIn("--append-on-divergence stop", rendered)
         self.assertIn("--max-new-tokens 128", rendered)
+
+    def test_progress_line_distinguishes_tokens_context_and_time(self) -> None:
+        row = {
+            "image_index": 7,
+            "status": "pass",
+            "matched_tokens": 128,
+            "requested_tokens": 128,
+            "prefix_tokens": 1008,
+            "prompt_tokens": 27,
+            "prefill_tokens": 1035,
+            "context_tokens_after_comparison": 1163,
+            "context_capacity": 4096,
+            "elapsed_sec": {
+                "bridge": 75.5,
+                "parity": 100.0,
+                "total": 175.5,
+                "comparison_per_token": 0.78125,
+            },
+        }
+        line = self.module._progress_line(
+            row,
+            completed=7,
+            requested=40,
+            resumed=True,
+        )
+        self.assertIn("matched=128/128", line)
+        self.assertIn("prefix=1008", line)
+        self.assertIn("prefill=1035", line)
+        self.assertIn("context=1163/4096", line)
+        self.assertIn("total=175.50s", line)
+        self.assertIn("compare=0.781s/token-pair", line)
+        self.assertTrue(line.endswith("resumed"))
+
+    def test_timing_summary_reports_corpus_total_and_mean(self) -> None:
+        timing = self.module._timing_summary(
+            [
+                {"elapsed_sec": {"total": 10.0}},
+                {"elapsed_sec": {"total": 20.0}},
+            ]
+        )
+        self.assertEqual(timing["total_sec"], 30.0)
+        self.assertEqual(timing["mean_sec_per_image"], 15.0)
+        self.assertEqual(timing["min_sec_per_image"], 10.0)
+        self.assertEqual(timing["max_sec_per_image"], 20.0)
+
+    def test_private_console_requires_tty_or_explicit_opt_in(self) -> None:
+        with mock.patch.dict("os.environ", {"CI": "true"}):
+            self.assertFalse(
+                self.module._private_console_enabled(
+                    SimpleNamespace(show_private_details=None)
+                )
+            )
+        self.assertTrue(
+            self.module._private_console_enabled(
+                SimpleNamespace(show_private_details=True)
+            )
+        )
+        self.assertFalse(
+            self.module._private_console_enabled(
+                SimpleNamespace(show_private_details=False)
+            )
+        )
+
+    def test_private_console_renders_local_details_without_changing_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            case_dir = Path(temporary)
+            (case_dir / "bridge_report.json").write_text(
+                json.dumps(
+                    {
+                        "encoder_report": {
+                            "source_image_size": [2200, 1700],
+                            "image_width": 1152,
+                            "image_height": 896,
+                        },
+                        "timings": {
+                            "encoder_execute_ms": 20000.0,
+                            "decoder_forward_mixed_ms": 85000.0,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (case_dir / "parity.json").write_text(
+                json.dumps(
+                    {
+                        "generated_shared_text": '{"title":"Monthly Report"}',
+                        "first_divergence": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            row = {
+                "image_index": 1,
+                "image_sha256": "image-hash",
+                "grid": [36, 28],
+                "status": "pass",
+                "matched_tokens": 128,
+                "requested_tokens": 128,
+                "prefix_tokens": 1008,
+                "prefill_tokens": 1035,
+                "context_tokens_after_comparison": 1163,
+                "context_capacity": 4096,
+                "stop_reason": None,
+                "elapsed_sec": {
+                    "bridge": 110.0,
+                    "parity": 90.0,
+                    "total": 200.0,
+                },
+            }
+            output = io.StringIO()
+            with mock.patch("sys.stdout", output):
+                self.module._print_private_case_details(
+                    sample={
+                        "index": 1,
+                        "image": Path("/private/form.jpg"),
+                        "image_sha256": "image-hash",
+                    },
+                    row=row,
+                    case_dir=case_dir,
+                    prompt="Extract fields.",
+                )
+            rendered = output.getvalue()
+            self.assertIn("EXACT MATCH", rendered)
+            self.assertIn("/private/form.jpg", rendered)
+            self.assertIn("source 2200x1700 -> processed 1152x896", rendered)
+            self.assertIn("128/128 exact pre-EOS greedy token pairs", rendered)
+            self.assertIn('Output (CK == llama.cpp', rendered)
+            self.assertIn('{"title":"Monthly Report"}', rendered)
+            self.assertNotIn("/private/form.jpg", json.dumps(row))
 
     def _config(self) -> dict[str, object]:
         return {
