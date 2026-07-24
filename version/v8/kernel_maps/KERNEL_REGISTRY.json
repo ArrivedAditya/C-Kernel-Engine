@@ -5,12 +5,12 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 232,
+      "total": 243,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
         "assistant_layer_scale": 1,
-        "attention": 24,
+        "attention": 27,
         "attention_projection": 1,
         "attention_sliding": 6,
         "attn_gate_sigmoid_mul": 1,
@@ -32,14 +32,15 @@
         "fused_qkv_block": 1,
         "gated_deltanet": 5,
         "geglu": 4,
-        "gelu": 4,
+        "gelu": 5,
         "gemm": 21,
         "gemm_backward": 1,
         "gemma4_per_layer_embed": 1,
         "gemma4_per_layer_prepare": 2,
         "gemv": 14,
         "group_limited_topk_router": 1,
-        "kv_cache_store": 3,
+        "kv_cache_store": 4,
+        "kv_cache_store_batch_bf16": 1,
         "kv_cache_store_batch_f16": 1,
         "kv_lora_decompress": 1,
         "layernorm": 4,
@@ -58,6 +59,7 @@
         "moe_swiglu_expert_mlp": 2,
         "optimizer": 4,
         "partial_rope_concat": 2,
+        "patch_projection": 1,
         "position_embeddings": 5,
         "position_ids": 1,
         "projector_prep": 1,
@@ -80,7 +82,7 @@
         "residual_add": 2,
         "residual_save": 1,
         "rmsnorm": 5,
-        "rope": 12,
+        "rope": 15,
         "rope_backward": 2,
         "rope_init": 2,
         "rowwise_bias_add": 1,
@@ -95,7 +97,7 @@
         "split_qkv_packed_head_major": 1,
         "ssm_conv1d": 1,
         "ssm_conv1d_backward": 1,
-        "swiglu": 4,
+        "swiglu": 5,
         "tokenizer": 1,
         "v_norm": 1,
         "vision_patchify": 1
@@ -2161,6 +2163,126 @@
       "_source_file": "attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4.json"
     },
     {
+      "id": "attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract",
+      "op": "attention",
+      "variant": "causal_head_major_gqa_prefill_append_bf16cache_pytorch",
+      "mode": "prefill",
+      "contract_schema_version": 1,
+      "provides": {
+        "execution.phase": [
+          "prefill"
+        ],
+        "execution.prefill_batching": [
+          "unified_mixed"
+        ],
+        "tensor.q.dtype": [
+          "fp32"
+        ],
+        "tensor.kv.dtype": [
+          "bf16"
+        ],
+        "tensor.layout": [
+          "head_major"
+        ],
+        "numerics.attention_reduction": [
+          "bf16_pytorch_sdpa"
+        ]
+      },
+      "supported_reductions": {
+        "bf16_pytorch_sdpa": {
+          "status": "observed",
+          "function": "attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract",
+          "explicit_selector": true,
+          "selector": "CK_ATTN_REDUCTION_BF16_PYTORCH_SDPA",
+          "notes": "Unified mixed causal prefill over a BF16 DynamicCache with PyTorch-compatible BF16 output storage."
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "ck_threadpool",
+          "work_partition": [
+            "independent_heads"
+          ],
+          "dispatch": [
+            "ck_threadpool_dispatch_n"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "quant": {
+        "activation": "fp32",
+        "kv_cache": "bf16",
+        "output": "bf16"
+      },
+      "impl": {
+        "function": "attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract",
+        "c_declaration": "ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract(const float *q, const uint16_t *k_cache, const uint16_t *v_cache, float *output, int num_heads, int num_kv_heads, int q_tokens, int past_tokens, int cache_capacity, int head_dim, int aligned_head_dim, ck_attention_reduction_t reduction);",
+        "sources": [
+          "src/kernels/attention_kernels.c"
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "scratch:q_scratch",
+            "cast": "const float*"
+          },
+          {
+            "name": "k_cache",
+            "source": "runtime:kv_cache_k_layer_u16",
+            "cast": "const uint16_t*"
+          },
+          {
+            "name": "v_cache",
+            "source": "runtime:kv_cache_v_layer_u16",
+            "cast": "const uint16_t*"
+          },
+          {
+            "name": "output",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "q_tokens",
+            "source": "runtime:seq_len"
+          },
+          {
+            "name": "past_tokens",
+            "source": "runtime:prefill_start_pos"
+          },
+          {
+            "name": "cache_capacity",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "reduction",
+            "source": "resolved:kernel_selector"
+          }
+        ]
+      },
+      "name": "attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract",
+      "_source_file": "attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract.json"
+    },
+    {
       "id": "attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract",
       "op": "attention",
       "variant": "causal_head_major_gqa_prefill_append_f16cache_contract",
@@ -2672,6 +2794,139 @@
       "_source_file": "attention_forward_causal_head_major_gqa_prefill_append_f16cache_single_range.json"
     },
     {
+      "id": "attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract",
+      "op": "attention",
+      "variant": "causal_head_major_gqa_prefill_full_bf16cache_pytorch",
+      "mode": "prefill",
+      "contract_schema_version": 1,
+      "provides": {
+        "execution.phase": [
+          "prefill"
+        ],
+        "execution.prefill_batching": [
+          "unified_mixed"
+        ],
+        "execution.attention_schedule": [
+          "full_matrix_causal"
+        ],
+        "tensor.q.dtype": [
+          "fp32"
+        ],
+        "tensor.kv.dtype": [
+          "bf16"
+        ],
+        "tensor.layout": [
+          "head_major"
+        ],
+        "numerics.attention_reduction": [
+          "bf16_pytorch_sdpa"
+        ]
+      },
+      "supported_reductions": {
+        "bf16_pytorch_sdpa": {
+          "status": "observed",
+          "function": "attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract",
+          "explicit_selector": true,
+          "selector": "CK_ATTN_REDUCTION_BF16_PYTORCH_SDPA",
+          "notes": "PyTorch math-SDPA full score matrix with complete-width causal masking, FP32 softmax and BF16 output storage."
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "compile_time",
+        "threading": {
+          "runtime": "external_blas",
+          "work_partition": [
+            "independent_heads"
+          ],
+          "dispatch": [
+            "internal_threaded"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "quant": {
+        "activation": "fp32",
+        "kv_cache": "bf16",
+        "output": "bf16"
+      },
+      "impl": {
+        "function": "attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract",
+        "c_declaration": "ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract(const float *q, const uint16_t *k_cache, const uint16_t *v_cache, float *output, int num_heads, int num_kv_heads, int q_tokens, int past_tokens, int cache_capacity, int head_dim, int aligned_head_dim, ck_attention_reduction_t reduction);",
+        "sources": [
+          "src/kernels/attention_kernels.c"
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "scratch:q_scratch",
+            "cast": "const float*"
+          },
+          {
+            "name": "k_cache",
+            "source": "runtime:kv_cache_k_layer_u16",
+            "cast": "const uint16_t*"
+          },
+          {
+            "name": "v_cache",
+            "source": "runtime:kv_cache_v_layer_u16",
+            "cast": "const uint16_t*"
+          },
+          {
+            "name": "output",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "q_tokens",
+            "source": "runtime:seq_len"
+          },
+          {
+            "name": "past_tokens",
+            "source": "runtime:prefill_start_pos"
+          },
+          {
+            "name": "cache_capacity",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "reduction",
+            "source": "resolved:kernel_selector"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_attention_decode_gqa_pytorch_math_bf16.py"
+        ],
+        "production_shapes": [
+          "H=32,Hkv=8,T=1026,D=128",
+          "H=32,Hkv=8,T=4096,D=128"
+        ],
+        "oracle": "PyTorch BF16 scaled_dot_product_attention math backend"
+      },
+      "name": "attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract",
+      "_source_file": "attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract.json"
+    },
+    {
       "id": "attention_forward_causal_head_major_shared_kv_gemma4",
       "op": "attention",
       "variant": "fp32_prefill_head_major_shared_kv",
@@ -2795,6 +3050,183 @@
       "notes": "Prefill-only correctness wrapper for Gemma4 assistant q-only sliding shared-KV attention.",
       "name": "attention_forward_causal_head_major_shared_kv_sliding_gemma4",
       "_source_file": "attention_forward_causal_head_major_shared_kv_sliding_gemma4.json"
+    },
+    {
+      "id": "attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract",
+      "op": "attention",
+      "variant": "decode_head_major_gqa_bf16cache_pytorch",
+      "mode": "decode",
+      "contract_schema_version": 1,
+      "provides": {
+        "execution.phase": [
+          "decode"
+        ],
+        "tensor.q.dtype": [
+          "fp32"
+        ],
+        "tensor.kv.dtype": [
+          "bf16"
+        ],
+        "tensor.layout": [
+          "head_major"
+        ],
+        "numerics.attention_reduction": [
+          "bf16_pytorch_sdpa"
+        ]
+      },
+      "supported_reductions": {
+        "bf16_pytorch_sdpa": {
+          "status": "validated",
+          "function": "attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract",
+          "explicit_selector": true,
+          "selector": "CK_ATTN_REDUCTION_BF16_PYTORCH_SDPA",
+          "notes": "PyTorch CPU native-GQA math: BF16 Q/K/V storage promoted to FP32, split sqrt(scale) on Q and K, grouped FP32 SGEMM for QK and P*V, PyTorch AVX-512 softmax reduction order, and one final BF16 output rounding boundary."
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "runtime",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
+      "quant": {
+        "activation": "bf16_rounded_fp32_view",
+        "kv_cache": "bf16",
+        "score": "fp32",
+        "probability": "fp32",
+        "output": "bf16"
+      },
+      "inputs": [
+        {
+          "name": "q_token",
+          "dtype": "fp32",
+          "shape": [
+            "num_heads",
+            "head_dim"
+          ]
+        },
+        {
+          "name": "k_cache",
+          "dtype": "bf16",
+          "shape": [
+            "num_kv_heads",
+            "cache_capacity",
+            "head_dim"
+          ]
+        },
+        {
+          "name": "v_cache",
+          "dtype": "bf16",
+          "shape": [
+            "num_kv_heads",
+            "cache_capacity",
+            "head_dim"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out_token",
+          "dtype": "bf16",
+          "shape": [
+            "num_heads",
+            "head_dim"
+          ]
+        }
+      ],
+      "dims": [
+        "num_heads",
+        "num_kv_heads",
+        "kv_tokens",
+        "cache_capacity",
+        "head_dim",
+        "aligned_head_dim"
+      ],
+      "params": [
+        {
+          "name": "reduction",
+          "dtype": "ck_attention_reduction_t"
+        }
+      ],
+      "impl": {
+        "function": "attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract",
+        "c_declaration": "ck_attention_status_t attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract(const float *q_token, const uint16_t *k_cache, const uint16_t *v_cache, float *out_token, int num_heads, int num_kv_heads, int kv_tokens, int cache_capacity, int head_dim, int aligned_head_dim, ck_attention_reduction_t reduction);",
+        "sources": [
+          "src/kernels/attention_kernels.c"
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q_token",
+            "source": "scratch:q_scratch",
+            "cast": "const float*"
+          },
+          {
+            "name": "k_cache",
+            "source": "runtime:kv_cache_k_layer_u16",
+            "cast": "const uint16_t*"
+          },
+          {
+            "name": "v_cache",
+            "source": "runtime:kv_cache_v_layer_u16",
+            "cast": "const uint16_t*"
+          },
+          {
+            "name": "out_token",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "kv_tokens",
+            "source": "runtime:kv_tokens"
+          },
+          {
+            "name": "cache_capacity",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "reduction",
+            "source": "resolved:kernel_selector"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_attention_decode_gqa_pytorch_math_bf16.py"
+        ],
+        "production_shapes": [
+          "H=32,Hkv=8,T=1027,D=128",
+          "H=32,Hkv=8,T=4096,D=128"
+        ],
+        "oracle": "PyTorch BF16 native-GQA math attention"
+      },
+      "name": "attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract",
+      "_source_file": "attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract.json"
     },
     {
       "id": "attention_forward_decode_head_major_gqa_flash_f16cache",
@@ -7619,7 +8051,8 @@
           "contract_id": "residual_add_bf16_input_fp32_add_bf16_output",
           "status": "validated",
           "phases": [
-            "prefill"
+            "prefill",
+            "decode"
           ],
           "function": "ck_residual_add_token_major_bf16_storage",
           "explicit_selector": true,
@@ -8629,7 +9062,7 @@
       },
       "tests": {
         "unit": [
-          "unittest/test_embedding.py"
+          "unittest/bf16/test_embedding_bf16_fp32.py"
         ],
         "bench": [
           "scripts/bench_embedding.py"
@@ -11124,6 +11557,100 @@
       "_source_file": "gelu_ggml_inplace.json"
     },
     {
+      "id": "gelu_pytorch_erf_sleef_bf16_storage",
+      "op": "gelu",
+      "variant": "pytorch_erf_sleef_bf16_storage",
+      "quant": {
+        "weight": "none",
+        "activation": "bf16",
+        "output": "bf16"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "desc": "BF16-valued FP32 input/output buffer"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "desc": "BF16-rounded output in the input buffer"
+        }
+      ],
+      "dims": [
+        "N"
+      ],
+      "impl": {
+        "function": "gelu_pytorch_erf_sleef_bf16_storage",
+        "c_declaration": "void gelu_pytorch_erf_sleef_bf16_storage(float *data, size_t n);",
+        "sources": [
+          "src/kernels/gelu_kernels.c"
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_gelu_pytorch_erf_sleef_storage_bf16.py"
+        ]
+      },
+      "notes": "Exact PyTorch x86 BF16 nn.GELU provider. Reproduces PyTorch's vector erf polynomial and requires Sleef_expf16_u10 via CK_SLEEF_LIBRARY or the process symbol table.",
+      "numerical_capabilities": [
+        {
+          "contract_id": "gelu_pytorch_erf_sleef_bf16_storage",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "gelu_pytorch_erf_sleef_bf16_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "runtime",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "data",
+            "source": "output:out"
+          },
+          {
+            "name": "n",
+            "source": "dim:gelu_elems"
+          }
+        ]
+      },
+      "name": "gelu_pytorch_erf_sleef_bf16_storage",
+      "_source_file": "gelu_pytorch_erf_sleef_bf16_storage.json"
+    },
+    {
       "id": "gelu_pytorch_tanh_bf16_storage",
       "op": "gelu",
       "variant": "pytorch_tanh_bf16_storage",
@@ -11165,7 +11692,7 @@
       },
       "tests": {
         "unit": [
-          "unittest/test_gelu.py"
+          "unittest/bf16/test_gelu_pytorch_tanh_storage_bf16.py"
         ]
       },
       "notes": "PyTorch tanh GELU with explicit BF16 input/output storage boundaries.",
@@ -12321,7 +12848,8 @@
           "contract_id": "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
           "status": "validated",
           "phases": [
-            "prefill"
+            "prefill",
+            "decode"
           ],
           "function": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
           "explicit_selector": true,
@@ -12350,12 +12878,16 @@
       "notes": "Optional PyTorch BF16 parity provider. Converts FP32 storage to BF16, executes oneDNN 3.7 BRGEMM with BF16 destination preloaded by BF16 bias and a sum post-op, then expands BF16 output to FP32 storage. Exactness is defined at a fixed OpenMP thread count because PyTorch/oneDNN changes K partition and BF16 results across thread counts.",
       "tests": {
         "unit": [
-          "research/bf16/compare_onednn_pytorch_linear.py"
+          "unittest/bf16/test_pytorch_onednn_oracle_contract_bf16.py"
         ],
+        "production_oracle": "research/bf16/run_pytorch_onednn_real_shapes.py",
         "real_shapes": [
           "M=4032,N=3456,K=1152",
           "M=4032,N=4304,K=1152",
-          "M=4032,N=1152,K=4304"
+          "M=4032,N=1152,K=4304",
+          "M=1,N=4096,K=4096",
+          "M=1,N=24576,K=4096",
+          "M=1,N=4096,K=12288"
         ]
       },
       "call_abi": {
@@ -16891,6 +17423,98 @@
       "_source_file": "kv_cache_store.json"
     },
     {
+      "id": "kv_cache_store_batch_bf16",
+      "op": "kv_cache_store_batch_bf16",
+      "variant": "bf16_cache_batch",
+      "inputs": [
+        {
+          "name": "k_src",
+          "dtype": "fp32",
+          "shape": [
+            "num_kv_heads",
+            "num_tokens",
+            "head_dim"
+          ]
+        },
+        {
+          "name": "v_src",
+          "dtype": "fp32",
+          "shape": [
+            "num_kv_heads",
+            "num_tokens",
+            "head_dim"
+          ]
+        }
+      ],
+      "outputs": [],
+      "dims": [
+        "num_tokens",
+        "num_kv_heads",
+        "head_dim",
+        "max_seq_len"
+      ],
+      "impl": {
+        "function": "kv_cache_store_batch_bf16",
+        "c_declaration": "void kv_cache_store_batch_bf16(uint16_t *kv_cache_k, uint16_t *kv_cache_v, const float *k, const float *v, int start_pos, int num_tokens, int num_kv_heads, int head_dim, int max_seq_len);",
+        "sources": [
+          "src/kernels/kv_cache_kernels.c"
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "kv_cache_k",
+            "source": "runtime:kv_cache_k_layer_u16",
+            "cast": "uint16_t*"
+          },
+          {
+            "name": "kv_cache_v",
+            "source": "runtime:kv_cache_v_layer_u16",
+            "cast": "uint16_t*"
+          },
+          {
+            "name": "k",
+            "source": "activation:k_src",
+            "cast": "const float*"
+          },
+          {
+            "name": "v",
+            "source": "activation:v_src",
+            "cast": "const float*"
+          },
+          {
+            "name": "start_pos",
+            "source": "runtime:prefill_start_pos"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "max_seq_len",
+            "source": "dim:max_seq_len"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_kv_cache_storage_bf16.py"
+        ],
+        "oracle": "PyTorch BF16 cast bits for single and segmented Qwen3-VL prefill cache writes"
+      },
+      "name": "kv_cache_store_batch_bf16",
+      "_source_file": "kv_cache_store_batch_bf16.json"
+    },
+    {
       "id": "kv_cache_store_batch_f16",
       "op": "kv_cache_store_batch_f16",
       "variant": "head_major_batch_fp16_cache",
@@ -16994,6 +17618,121 @@
       "notes": "Store a compact head-major prefill token block into the resolved physical FP16 KV cache before append attention executes.",
       "name": "kv_cache_store_batch_f16",
       "_source_file": "kv_cache_store_batch_f16.json"
+    },
+    {
+      "id": "kv_cache_store_bf16",
+      "op": "kv_cache_store",
+      "variant": "bf16_cache",
+      "quant": {
+        "activation": "fp32",
+        "output": "bf16"
+      },
+      "inputs": [
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "num_kv_heads",
+            "head_dim"
+          ]
+        },
+        {
+          "name": "v",
+          "dtype": "fp32",
+          "shape": [
+            "num_kv_heads",
+            "head_dim"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "kv_cache_k",
+          "dtype": "bf16",
+          "shape": [
+            "num_layers",
+            "num_kv_heads",
+            "max_seq_len",
+            "head_dim"
+          ]
+        },
+        {
+          "name": "kv_cache_v",
+          "dtype": "bf16",
+          "shape": [
+            "num_layers",
+            "num_kv_heads",
+            "max_seq_len",
+            "head_dim"
+          ]
+        }
+      ],
+      "dims": [
+        "num_kv_heads",
+        "head_dim",
+        "num_layers",
+        "max_seq_len"
+      ],
+      "impl": {
+        "function": "kv_cache_store_bf16",
+        "c_declaration": "void kv_cache_store_bf16(uint16_t *kv_cache_k, uint16_t *kv_cache_v, const float *k, const float *v, int layer, int pos, int num_kv_heads, int head_dim, int max_seq_len);",
+        "sources": [
+          "src/kernels/kv_cache_kernels.c"
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "kv_cache_k",
+            "source": "runtime:kv_cache_k_layer_u16",
+            "cast": "uint16_t*"
+          },
+          {
+            "name": "kv_cache_v",
+            "source": "runtime:kv_cache_v_layer_u16",
+            "cast": "uint16_t*"
+          },
+          {
+            "name": "k",
+            "source": "activation:k",
+            "cast": "const float*"
+          },
+          {
+            "name": "v",
+            "source": "activation:v",
+            "cast": "const float*"
+          },
+          {
+            "name": "layer",
+            "source": "const:0"
+          },
+          {
+            "name": "pos",
+            "source": "runtime:pos"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "max_seq_len",
+            "source": "dim:max_seq_len"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_kv_cache_storage_bf16.py"
+        ],
+        "oracle": "PyTorch BF16 cast bits at Qwen3-VL head_dim=128 and cache boundaries 511/512/1058/1307/1609"
+      },
+      "name": "kv_cache_store_bf16",
+      "_source_file": "kv_cache_store_bf16.json"
     },
     {
       "id": "kv_cache_store_f16",
@@ -17198,7 +17937,7 @@
           "avx2",
           "fma"
         ],
-        "notes": "ATen AVX2 BF16 Welford structure. Experimental until monotonic stitched parity passes."
+        "notes": "ATen AVX2 BF16 Welford structure selected only by an explicit numerical policy."
       },
       "impl": {
         "function": "layernorm_pytorch_welford_bf16_storage",
@@ -17216,7 +17955,7 @@
       "numerical_capabilities": [
         {
           "contract_id": "layernorm_bf16_storage_fp32_compute_aten_avx2_welford_bf16_output",
-          "status": "observed",
+          "status": "validated",
           "phases": [
             "prefill"
           ],
@@ -21324,6 +22063,540 @@
       "_source_file": "mrope_qk_text_imrope.json"
     },
     {
+      "id": "mrope_qk_text_imrope_bf16_pytorch_storage",
+      "op": "rope",
+      "variant": "bf16_storage_head_major_text_imrope_pytorch",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor [heads, tokens, head_dim] rotated in-place"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Key tensor [kv_heads, tokens, head_dim] rotated in-place"
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor after interleaved text M-RoPE"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Key tensor after interleaved text M-RoPE"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D",
+        "n_dims"
+      ],
+      "params": [
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32",
+          "desc": "Aligned head dimension for scratch row stride"
+        },
+        {
+          "name": "pos_offset",
+          "dtype": "int32",
+          "desc": "Starting text position for the current token slice"
+        },
+        {
+          "name": "n_dims",
+          "dtype": "int32",
+          "desc": "Rotary width used by the text M-RoPE kernel"
+        },
+        {
+          "name": "section_0",
+          "dtype": "int32",
+          "desc": "Temporal-axis interleave width"
+        },
+        {
+          "name": "section_1",
+          "dtype": "int32",
+          "desc": "Height-axis interleave width"
+        },
+        {
+          "name": "section_2",
+          "dtype": "int32",
+          "desc": "Width-axis interleave width"
+        },
+        {
+          "name": "section_3",
+          "dtype": "int32",
+          "desc": "Extra-axis interleave width"
+        },
+        {
+          "name": "n_ctx_orig",
+          "dtype": "int32",
+          "desc": "Original context length for YaRN-style scaling"
+        },
+        {
+          "name": "freq_base",
+          "dtype": "fp32",
+          "desc": "Base rotary frequency"
+        },
+        {
+          "name": "freq_scale",
+          "dtype": "fp32",
+          "desc": "Frequency scaling factor"
+        },
+        {
+          "name": "ext_factor",
+          "dtype": "fp32",
+          "desc": "Extrapolation factor"
+        },
+        {
+          "name": "attn_factor",
+          "dtype": "fp32",
+          "desc": "Attention scaling factor"
+        },
+        {
+          "name": "beta_fast",
+          "dtype": "fp32",
+          "desc": "YaRN beta_fast"
+        },
+        {
+          "name": "beta_slow",
+          "dtype": "fp32",
+          "desc": "YaRN beta_slow"
+        }
+      ],
+      "impl": {
+        "function": "mrope_qk_text_imrope_bf16_pytorch_storage",
+        "c_declaration": "void mrope_qk_text_imrope_bf16_pytorch_storage(float *q, float *k, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int n_dims, int section_0, int section_1, int section_2, int section_3, int n_ctx_orig, float freq_base, float freq_scale, float ext_factor, float attn_factor, float beta_fast, float beta_slow);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ]
+      },
+      "notes": "PyTorch BF16 storage-matched text M-RoPE using one shared text position and BF16 arithmetic boundaries.",
+      "numerical_capabilities": [
+        {
+          "contract_id": "text_imrope_bf16_input_pytorch_bf16_compute_bf16_output",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "mrope_qk_text_imrope_bf16_pytorch_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "q",
+            "source": "output:q"
+          },
+          {
+            "cast": "float*",
+            "name": "k",
+            "source": "output:k"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "pos_offset",
+            "source": "runtime:pos"
+          },
+          {
+            "name": "n_dims",
+            "source": "dim:n_dims"
+          },
+          {
+            "name": "section_0",
+            "source": "dim:section_0"
+          },
+          {
+            "name": "section_1",
+            "source": "dim:section_1"
+          },
+          {
+            "name": "section_2",
+            "source": "dim:section_2"
+          },
+          {
+            "name": "section_3",
+            "source": "dim:section_3"
+          },
+          {
+            "name": "n_ctx_orig",
+            "source": "dim:n_ctx_orig"
+          },
+          {
+            "name": "freq_base",
+            "source": "dim:freq_base"
+          },
+          {
+            "name": "freq_scale",
+            "source": "dim:freq_scale"
+          },
+          {
+            "name": "ext_factor",
+            "source": "dim:ext_factor"
+          },
+          {
+            "name": "attn_factor",
+            "source": "dim:attn_factor"
+          },
+          {
+            "name": "beta_fast",
+            "source": "dim:beta_fast"
+          },
+          {
+            "name": "beta_slow",
+            "source": "dim:beta_slow"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_text_mrope_pytorch_bf16.py"
+        ],
+        "production_shapes": [
+          "H=32,Hkv=8,T=1026,D=128",
+          "H=32,Hkv=8,T=1,D=128"
+        ],
+        "oracle": "PyTorch Qwen3-VL multimodal rotary embedding"
+      },
+      "name": "mrope_qk_text_imrope_bf16_pytorch_storage",
+      "_source_file": "mrope_qk_text_imrope_bf16_pytorch_storage.json"
+    },
+    {
+      "id": "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
+      "op": "rope",
+      "variant": "fp32_head_major_text_imrope_positions_pytorch_bf16_storage",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "bf16"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "positions",
+          "dtype": "i32",
+          "shape": [
+            4,
+            "T"
+          ]
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "bf16",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "bf16",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D",
+        "n_dims"
+      ],
+      "params": [
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32"
+        },
+        {
+          "name": "n_dims",
+          "dtype": "int32"
+        },
+        {
+          "name": "section_0",
+          "dtype": "int32"
+        },
+        {
+          "name": "section_1",
+          "dtype": "int32"
+        },
+        {
+          "name": "section_2",
+          "dtype": "int32"
+        },
+        {
+          "name": "section_3",
+          "dtype": "int32"
+        },
+        {
+          "name": "n_ctx_orig",
+          "dtype": "int32"
+        },
+        {
+          "name": "freq_base",
+          "dtype": "fp32"
+        },
+        {
+          "name": "freq_scale",
+          "dtype": "fp32"
+        },
+        {
+          "name": "ext_factor",
+          "dtype": "fp32"
+        },
+        {
+          "name": "attn_factor",
+          "dtype": "fp32"
+        },
+        {
+          "name": "beta_fast",
+          "dtype": "fp32"
+        },
+        {
+          "name": "beta_slow",
+          "dtype": "fp32"
+        }
+      ],
+      "impl": {
+        "function": "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
+        "c_declaration": "void mrope_qk_text_imrope_positions_bf16_pytorch_storage(float *q, float *k, const int32_t *positions, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int n_dims, int section_0, int section_1, int section_2, int section_3, int n_ctx_orig, float freq_base, float freq_scale, float ext_factor, float attn_factor, float beta_fast, float beta_slow);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "text_imrope_positions_bf16_input_pytorch_bf16_compute_bf16_output",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "q",
+            "source": "output:q"
+          },
+          {
+            "cast": "float*",
+            "name": "k",
+            "source": "output:k"
+          },
+          {
+            "cast": "const int32_t*",
+            "name": "positions",
+            "source": "activation:positions"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "n_dims",
+            "source": "dim:n_dims"
+          },
+          {
+            "name": "section_0",
+            "source": "dim:section_0"
+          },
+          {
+            "name": "section_1",
+            "source": "dim:section_1"
+          },
+          {
+            "name": "section_2",
+            "source": "dim:section_2"
+          },
+          {
+            "name": "section_3",
+            "source": "dim:section_3"
+          },
+          {
+            "name": "n_ctx_orig",
+            "source": "dim:n_ctx_orig"
+          },
+          {
+            "name": "freq_base",
+            "source": "dim:freq_base"
+          },
+          {
+            "name": "freq_scale",
+            "source": "dim:freq_scale"
+          },
+          {
+            "name": "ext_factor",
+            "source": "dim:ext_factor"
+          },
+          {
+            "name": "attn_factor",
+            "source": "dim:attn_factor"
+          },
+          {
+            "name": "beta_fast",
+            "source": "dim:beta_fast"
+          },
+          {
+            "name": "beta_slow",
+            "source": "dim:beta_slow"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_text_mrope_positions_pytorch_bf16.py"
+        ],
+        "production_shapes": [
+          "H=32,Hkv=8,T=1026,D=128"
+        ],
+        "oracle": "PyTorch Qwen3-VL explicit-position multimodal rotary embedding"
+      },
+      "name": "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
+      "_source_file": "mrope_qk_text_imrope_positions_bf16_pytorch_storage.json"
+    },
+    {
       "id": "mrope_qk_vision",
       "op": "rope",
       "variant": "fp32_head_major_vision_mrope",
@@ -21592,6 +22865,273 @@
       },
       "name": "mrope_qk_vision",
       "_source_file": "mrope_qk_vision.json"
+    },
+    {
+      "id": "mrope_qk_vision_bf16_pytorch_storage",
+      "op": "rope",
+      "variant": "fp32_head_major_vision_mrope_pytorch_mkl_bf16_storage",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "bf16"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "positions",
+          "dtype": "i32",
+          "shape": [
+            4,
+            "T"
+          ]
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "bf16",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "bf16",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D",
+        "n_dims"
+      ],
+      "params": [
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32"
+        },
+        {
+          "name": "n_dims",
+          "dtype": "int32"
+        },
+        {
+          "name": "section_0",
+          "dtype": "int32"
+        },
+        {
+          "name": "section_1",
+          "dtype": "int32"
+        },
+        {
+          "name": "section_2",
+          "dtype": "int32"
+        },
+        {
+          "name": "section_3",
+          "dtype": "int32"
+        },
+        {
+          "name": "n_ctx_orig",
+          "dtype": "int32"
+        },
+        {
+          "name": "freq_base",
+          "dtype": "fp32"
+        },
+        {
+          "name": "freq_scale",
+          "dtype": "fp32"
+        },
+        {
+          "name": "ext_factor",
+          "dtype": "fp32"
+        },
+        {
+          "name": "attn_factor",
+          "dtype": "fp32"
+        },
+        {
+          "name": "beta_fast",
+          "dtype": "fp32"
+        },
+        {
+          "name": "beta_slow",
+          "dtype": "fp32"
+        }
+      ],
+      "impl": {
+        "function": "mrope_qk_vision_bf16_pytorch_storage",
+        "c_declaration": "void mrope_qk_vision_bf16_pytorch_storage(float *q, float *k, const int32_t *positions, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int n_dims, int section_0, int section_1, int section_2, int section_3, int n_ctx_orig, float freq_base, float freq_scale, float ext_factor, float attn_factor, float beta_fast, float beta_slow);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ]
+      },
+      "variants": [
+        {
+          "name": "mkl_vml",
+          "requires": [
+            "avx512f"
+          ],
+          "compile_flags": [
+            "-DUSE_MKL"
+          ]
+        }
+      ],
+      "numerical_capabilities": [
+        {
+          "contract_id": "vision_mrope_pytorch_mkl_fp32_input_fp32_compute_bf16_output",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "mrope_qk_vision_bf16_pytorch_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "q",
+            "source": "output:q"
+          },
+          {
+            "cast": "float*",
+            "name": "k",
+            "source": "output:k"
+          },
+          {
+            "cast": "const int32_t*",
+            "name": "positions",
+            "source": "activation:positions"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "n_dims",
+            "source": "dim:n_dims"
+          },
+          {
+            "name": "section_0",
+            "source": "dim:section_0"
+          },
+          {
+            "name": "section_1",
+            "source": "dim:section_1"
+          },
+          {
+            "name": "section_2",
+            "source": "dim:section_2"
+          },
+          {
+            "name": "section_3",
+            "source": "dim:section_3"
+          },
+          {
+            "name": "n_ctx_orig",
+            "source": "dim:n_ctx_orig"
+          },
+          {
+            "name": "freq_base",
+            "source": "dim:freq_base"
+          },
+          {
+            "name": "freq_scale",
+            "source": "dim:freq_scale"
+          },
+          {
+            "name": "ext_factor",
+            "source": "dim:ext_factor"
+          },
+          {
+            "name": "attn_factor",
+            "source": "dim:attn_factor"
+          },
+          {
+            "name": "beta_fast",
+            "source": "dim:beta_fast"
+          },
+          {
+            "name": "beta_slow",
+            "source": "dim:beta_slow"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_vision_mrope_pytorch_bf16.py"
+        ],
+        "oracle": "PyTorch Qwen3-VL vision M-RoPE with BF16 storage at the practical 72-dimensional head width"
+      },
+      "name": "mrope_qk_vision_bf16_pytorch_storage",
+      "_source_file": "mrope_qk_vision_bf16_pytorch_storage.json"
     },
     {
       "id": "mrope_qk_vision_bf16_storage",
@@ -22258,6 +23798,198 @@
       "_source_file": "nemotron_group_limited_topk_router_f32.json"
     },
     {
+      "id": "patch_projection_image_bf16_pytorch_onednn_conv3d_storage",
+      "op": "patch_projection",
+      "variant": "image_temporal2_bf16_pytorch_onednn_conv3d",
+      "quant": {
+        "weight": "bf16",
+        "activation": "fp32",
+        "output": "bf16"
+      },
+      "inputs": [
+        {
+          "name": "image",
+          "dtype": "fp32",
+          "shape": [
+            "C",
+            "H",
+            "W"
+          ]
+        },
+        {
+          "name": "weights_t0",
+          "dtype": "bf16",
+          "shape": [
+            "N",
+            "C",
+            "P",
+            "P"
+          ]
+        },
+        {
+          "name": "weights_t1",
+          "dtype": "bf16",
+          "shape": [
+            "N",
+            "C",
+            "P",
+            "P"
+          ]
+        },
+        {
+          "name": "bias",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "H/P*W/P",
+            "N"
+          ],
+          "desc": "BF16 values expanded to FP32 storage"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "C",
+        "H",
+        "W",
+        "P",
+        "N",
+        "MERGE"
+      ],
+      "constraints": {
+        "external_runtime": "onednn_3_7_openmp",
+        "temporal_patch_size": 2
+      },
+      "impl": {
+        "function": "patch_projection_image_bf16_pytorch_onednn_conv3d_storage",
+        "c_declaration": "void patch_projection_image_bf16_pytorch_onednn_conv3d_storage(const float *image, const void *weights_t0, const void *weights_t1, const float *bias, float *output, int channels, int image_h, int image_w, int patch_size, int out_channels, int merge_size);",
+        "sources": [
+          "src/kernels/gemm_kernels_bf16.c"
+        ],
+        "variants": [
+          {
+            "name": "onednn_3_7_openmp",
+            "requires": [
+              "avx512_bf16",
+              "amx_bf16"
+            ],
+            "compile_flags": [
+              "-DUSE_ONEDNN"
+            ]
+          }
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "patch_projection_bf16_pytorch_onednn_conv3d_storage",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "patch_projection_image_bf16_pytorch_onednn_conv3d_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "runtime",
+            "threading": {
+              "runtime": "openmp",
+              "work_partition": [
+                "output_tiles"
+              ],
+              "dispatch": [
+                "internal_threaded"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "implementation_defined",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": true,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_patch_projection_pytorch_onednn_bf16.py"
+        ],
+        "conversion": [
+          "tests/test_v8_safetensors_to_bump.py::test_qwen3vl_safetensors_vision_maps_temporal_patch_split"
+        ],
+        "stitched": [
+          "version/v8/scripts/compare_qwen3vl_bf16_vision_hidden_v8.py"
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "const float*",
+            "name": "image",
+            "source": "activation:image"
+          },
+          {
+            "name": "weights_t0",
+            "source": "weight:patch_emb"
+          },
+          {
+            "name": "weights_t1",
+            "source": "weight:patch_emb_aux"
+          },
+          {
+            "cast": "const float*",
+            "name": "bias",
+            "source": "weight_f:patch_bias"
+          },
+          {
+            "cast": "float*",
+            "name": "output",
+            "source": "output:y"
+          },
+          {
+            "name": "channels",
+            "source": "dim:vision_channels"
+          },
+          {
+            "name": "image_h",
+            "source": "dim:image_height"
+          },
+          {
+            "name": "image_w",
+            "source": "dim:image_width"
+          },
+          {
+            "name": "patch_size",
+            "source": "dim:patch_size"
+          },
+          {
+            "name": "out_channels",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "merge_size",
+            "source": "dim:spatial_merge_size"
+          }
+        ]
+      },
+      "name": "patch_projection_image_bf16_pytorch_onednn_conv3d_storage",
+      "_source_file": "patch_projection_image_bf16_pytorch_onednn_conv3d_storage.json"
+    },
+    {
       "id": "position_embeddings_add",
       "op": "position_embeddings",
       "variant": "absolute_learned_inplace_fp32",
@@ -22804,6 +24536,16 @@
             "source": "dim:source_grid_size"
           }
         ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_vision_position_storage_bf16.py"
+        ],
+        "production_shapes": [
+          "grid=56x72,D=1152",
+          "grid=72x56,D=1152"
+        ],
+        "oracle": "PyTorch BF16 align-corners position interpolation and add"
       },
       "name": "position_embeddings_add_tiled_2d_align_corners_bf16",
       "_source_file": "position_embeddings_add_tiled_2d_align_corners_bf16.json"
@@ -23546,7 +25288,7 @@
     {
       "id": "qk_norm_forward_pytorch_bf16_storage",
       "op": "qk_norm",
-      "variant": "pytorch_avx512_bf16_storage",
+      "variant": "pytorch_avx2_cascade_bf16_storage",
       "quant": {
         "weight": "fp32",
         "activation": "fp32",
@@ -23629,19 +25371,19 @@
         ],
         "variants": [
           {
-            "name": "avx512",
+            "name": "avx2",
             "requires": [
-              "avx512f"
+              "avx2"
             ],
             "compile_flags": [
-              "-mavx512f"
+              "-mavx2"
             ]
           }
         ]
       },
       "numerical_capabilities": [
         {
-          "contract_id": "rmsnorm_pytorch_avx512_bf16_storage",
+          "contract_id": "rmsnorm_pytorch_avx2_cascade_bf16_storage",
           "status": "validated",
           "phases": [
             "prefill",
@@ -23664,7 +25406,7 @@
           },
           "arithmetic": {
             "partial_accumulator": "fp32",
-            "merge_order": "pairwise_tree",
+            "merge_order": "hierarchical_cascade",
             "deterministic": true,
             "thread_count_changes_arithmetic_order": false,
             "split_strategy": "independent_outputs"
@@ -23716,7 +25458,17 @@
           }
         ]
       },
-      "notes": "Per-head Q/K RMSNorm with PyTorch AVX-512 BF16 storage semantics.",
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_qk_norm_pytorch_storage_bf16.py"
+        ],
+        "production_shapes": [
+          "H=32,Hkv=8,T=1026,D=128",
+          "H=32,Hkv=8,T=1,D=128"
+        ],
+        "oracle": "PyTorch BF16 per-head RMSNorm"
+      },
+      "notes": "Per-head Q/K RMSNorm with the validated PyTorch BF16 ATen cascade reduction and BF16 storage semantics.",
       "name": "qk_norm_forward_pytorch_bf16_storage",
       "_source_file": "qk_norm_forward_pytorch_bf16_storage.json"
     },
@@ -27174,7 +28926,7 @@
     {
       "id": "rmsnorm_forward_pytorch_bf16_storage",
       "op": "rmsnorm",
-      "variant": "pytorch_avx512_bf16_storage",
+      "variant": "pytorch_avx2_cascade_bf16_storage",
       "quant": {
         "weight": "fp32",
         "activation": "fp32",
@@ -27234,19 +28986,19 @@
         ],
         "variants": [
           {
-            "name": "avx512",
+            "name": "avx2",
             "requires": [
-              "avx512f"
+              "avx2"
             ],
             "compile_flags": [
-              "-mavx512f"
+              "-mavx2"
             ]
           }
         ]
       },
       "numerical_capabilities": [
         {
-          "contract_id": "rmsnorm_pytorch_avx512_bf16_storage",
+          "contract_id": "rmsnorm_pytorch_avx2_cascade_bf16_storage",
           "status": "validated",
           "phases": [
             "prefill",
@@ -27269,7 +29021,7 @@
           },
           "arithmetic": {
             "partial_accumulator": "fp32",
-            "merge_order": "pairwise_tree",
+            "merge_order": "hierarchical_cascade",
             "deterministic": true,
             "thread_count_changes_arithmetic_order": false,
             "split_strategy": "independent_outputs"
@@ -27321,7 +29073,17 @@
           }
         ]
       },
-      "notes": "PyTorch CPU AVX-512 BF16 RMSNorm storage contract carried in FP32 BUMP buffers.",
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_rmsnorm_pytorch_storage_bf16.py"
+        ],
+        "production_shapes": [
+          "T=1026,D=4096",
+          "T=1,D=4096"
+        ],
+        "oracle": "PyTorch BF16 RMSNorm CPU reduction and storage"
+      },
+      "notes": "PyTorch CPU AVX2 cascade-sum BF16 RMSNorm storage contract carried in FP32 BUMP buffers. The oracle provider ISA is determined by the PyTorch build.",
       "name": "rmsnorm_forward_pytorch_bf16_storage",
       "_source_file": "rmsnorm_forward_pytorch_bf16_storage.json"
     },
@@ -29222,6 +30984,12 @@
           "src/kernels/vision_kernels.c"
         ]
       },
+      "tests": {
+        "unit": [
+          "unittest/test_vision.py"
+        ],
+        "oracle": "PyTorch contiguous tile reshape and spatial merge"
+      },
       "notes": "Merge contiguous groups of merge_size^2 tokens from an activation stream that already uses merged-tile traversal order.",
       "name": "spatial_merge_contiguous_tiled",
       "_source_file": "spatial_merge_contiguous_tiled.json"
@@ -30438,6 +32206,158 @@
       "_source_file": "swiglu_forward_ggml.json"
     },
     {
+      "id": "swiglu_forward_pytorch_bf16_storage",
+      "op": "swiglu",
+      "variant": "pytorch_sleef_bf16_intermediate_storage",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32_bf16_values",
+        "output": "fp32_bf16_values"
+      },
+      "inputs": [
+        {
+          "name": "gate_up",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "2 * I"
+          ],
+          "desc": "BF16-valued gate then up projections carried in an FP32 buffer."
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "I"
+          ],
+          "desc": "PyTorch BF16 SiLU result times BF16 up projection, rounded to BF16 and carried as FP32."
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "T",
+        "I"
+      ],
+      "parallelization": {
+        "supported": [
+          "serial"
+        ],
+        "preferred": {
+          "prefill": "serial",
+          "decode": "serial"
+        },
+        "strategies": [
+          {
+            "name": "serial",
+            "partition_dim": "T",
+            "param_style": "complete_call",
+            "notes": "Elementwise vector traversal with no cross-element reduction."
+          }
+        ]
+      },
+      "constraints": {
+        "alignment": {
+          "I": 16
+        },
+        "notes": "The validated PyTorch AVX-512 CPU lane requires Sleef_expf16_u10 from CK_SLEEF_LIBRARY or the process symbol table."
+      },
+      "impl": {
+        "function": "swiglu_forward_pytorch_bf16_storage",
+        "c_declaration": "void swiglu_forward_pytorch_bf16_storage(const float *input, float *output, int tokens, int dim);",
+        "sources": [
+          "src/kernels/swiglu_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx512_sleef",
+            "requires": [
+              "avx512f"
+            ],
+            "compile_flags": [
+              "-mavx512f"
+            ]
+          }
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "swiglu_pytorch_sleef_bf16_intermediate_bf16_output",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "swiglu_forward_pytorch_bf16_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "runtime",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:gate",
+            "cast": "const float*"
+          },
+          {
+            "name": "output",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "dim",
+            "source": "dim:intermediate_size"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/bf16/test_swiglu_pytorch_storage_bf16.py"
+        ],
+        "bench": [],
+        "parity": [
+          "PyTorch 2.8 ATen BF16 silu_cpu plus BF16 TensorIterator multiply"
+        ]
+      },
+      "notes": "PyTorch BF16 SwiGLU provider. Unlike the llama.cpp FP32 provider, this stores the SiLU intermediate and final product as BF16.",
+      "name": "swiglu_forward_pytorch_bf16_storage",
+      "_source_file": "swiglu_forward_pytorch_bf16_storage.json"
+    },
+    {
       "id": "tokenizer_bpe_trie",
       "kernel": "tokenizer_bpe_trie",
       "op": "tokenizer",
@@ -30641,6 +32561,12 @@
         "sources": [
           "src/kernels/vision_kernels.c"
         ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_vision.py"
+        ],
+        "oracle": "PyTorch merge-major 2D position traversal"
       },
       "notes": "Build merged vision position IDs for 2D M-RoPE style encoders.",
       "name": "vision_position_ids_2d_merge",

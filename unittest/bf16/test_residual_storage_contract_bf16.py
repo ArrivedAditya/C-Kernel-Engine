@@ -20,7 +20,8 @@ KERNEL.restype = None
 
 def main() -> int:
     rng = np.random.default_rng(7)
-    for tokens, dim in ((3, 8), (4, 72), (2, 1152)):
+    cases = ((3, 8), (4, 72), (2, 1152), (1008, 4096))
+    for tokens, dim in cases:
         a_t = torch.from_numpy(rng.standard_normal((tokens, dim), dtype=np.float32)).to(torch.bfloat16)
         b_t = torch.from_numpy(rng.standard_normal((tokens, dim), dtype=np.float32)).to(torch.bfloat16)
         a = a_t.float().numpy()
@@ -34,8 +35,16 @@ def main() -> int:
             raise AssertionError(
                 f"BF16 residual mismatch T={tokens} D={dim}: max={diff.max()}"
             )
-        print(f"T={tokens} D={dim} exact")
-    print("BF16 residual storage parity: 3/3 exact")
+        in_place = a.copy()
+        KERNEL(in_place.ctypes.data_as(FLOAT_P), b.ctypes.data_as(FLOAT_P),
+               in_place.ctypes.data_as(FLOAT_P), tokens, dim)
+        if not np.array_equal(in_place, expected):
+            diff = np.abs(in_place - expected)
+            raise AssertionError(
+                f"BF16 in-place residual mismatch T={tokens} D={dim}: max={diff.max()}"
+            )
+        print(f"T={tokens} D={dim} exact (out-of-place and in-place)")
+    print(f"BF16 residual storage parity: {len(cases)}/{len(cases)} exact")
     return 0
 
 

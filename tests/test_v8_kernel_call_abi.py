@@ -15,12 +15,16 @@ SCHEMA = ROOT / "version" / "v8" / "schemas" / "kernel_call_abi.schema.json"
 REGISTRY = MAPS / "KERNEL_REGISTRY.json"
 EXCLUDED = {"KERNEL_REGISTRY.json", "kernel_bindings.json", "kernel_bindings.overlay.json"}
 BUILD_IR = ROOT / "version" / "v8" / "scripts" / "build_ir_v8.py"
-EXPECTED_GOVERNED_MAP_COUNT = 67
-EXPECTED_MAP_OWNED_ABI_COUNT = 68
+EXPECTED_GOVERNED_MAP_COUNT = 76
+EXPECTED_MAP_OWNED_ABI_COUNT = 79
 QWEN3VL_PARITY_PROVIDERS = {
     "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
     "attention_forward_causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64",
     "attention_forward_causal_head_major_gqa_prefill_append_f16cache_single_range",
+    "attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract",
+    "attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract",
+    "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
+    "patch_projection_image_bf16_pytorch_onednn_conv3d_storage",
     "qk_norm_forward_fp64_sum",
     "rmsnorm_forward_fp64_sum",
     "recurrent_silu_forward_ggml",

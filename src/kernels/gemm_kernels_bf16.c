@@ -251,6 +251,9 @@ typedef struct ck_amx_tile_config {
     uint8_t rows[16];
 } ck_amx_tile_config;
 
+_Static_assert(sizeof(ck_amx_tile_config) == 64,
+               "AMX tile configuration must occupy exactly 64 bytes");
+
 static int ck_amx_request_xtile_data(void)
 {
 #if defined(__linux__)
@@ -300,6 +303,15 @@ static void ck_amx_config_bf16_16x16_kblock(int k_block)
     cfg.colsb[1] = 64;
     cfg.rows[2] = 16;
     cfg.colsb[2] = 64;
+    /* Keep the palette structurally identical to the proven 16x16x32
+     * configuration. */
+    for (int tile = 3; tile <= 5; ++tile) {
+        cfg.rows[tile] = 16;
+        cfg.colsb[tile] = 64;
+    }
+    /* GCC 11 models ldtilecfg as reading less than its architectural 64-byte
+     * operand and can otherwise delete dynamic row/column descriptor stores. */
+    __asm__ volatile("" : : "m"(cfg) : "memory");
     _tile_loadconfig(&cfg);
 }
 
@@ -1304,6 +1316,275 @@ cleanup:
     (void)A; (void)B; (void)bias; (void)C; (void)M; (void)N; (void)K;
     fprintf(stderr, "HARD KERNEL CONTRACT FAULT: PyTorch oneDNN BF16 BRGEMM was "
                     "selected without USE_ONEDNN=1\n");
+    abort();
+#endif
+}
+
+void patch_projection_bf16_pytorch_onednn_conv3d_storage(
+    const float *input, const void *weights, const float *bias, float *output,
+    int batch, int out_channels, int in_channels, int temporal,
+    int patch_h, int patch_w)
+{
+#ifdef USE_ONEDNN
+    if (!input || !weights || !bias || !output || batch <= 0 ||
+        out_channels <= 0 || in_channels <= 0 || temporal <= 0 ||
+        patch_h <= 0 || patch_w <= 0) {
+        ck_pytorch_brgemm_fault("invalid Conv3D patch contract", batch,
+                                out_channels, in_channels * temporal * patch_h * patch_w);
+    }
+    pthread_once(&ck_pytorch_brgemm_once, ck_pytorch_brgemm_init);
+    if (ck_pytorch_brgemm_init_status != 0) {
+        ck_pytorch_brgemm_fault("could not initialize oneDNN Conv3D", batch,
+                                out_channels, in_channels * temporal * patch_h * patch_w);
+    }
+
+    const size_t input_count = (size_t)batch * (size_t)in_channels *
+        (size_t)temporal * (size_t)patch_h * (size_t)patch_w;
+    const size_t output_count = (size_t)batch * (size_t)out_channels;
+    uint16_t *input_bf16 = (uint16_t *)malloc(input_count * sizeof(*input_bf16));
+    uint16_t *bias_bf16 = (uint16_t *)malloc((size_t)out_channels * sizeof(*bias_bf16));
+    uint16_t *output_bf16 = (uint16_t *)malloc(output_count * sizeof(*output_bf16));
+    if (!input_bf16 || !bias_bf16 || !output_bf16) {
+        free(output_bf16);
+        free(bias_bf16);
+        free(input_bf16);
+        ck_pytorch_brgemm_fault("Conv3D workspace allocation failed", batch,
+                                out_channels, in_channels * temporal * patch_h * patch_w);
+    }
+    for (size_t i = 0; i < input_count; ++i) input_bf16[i] = float_to_bf16(input[i]);
+    for (int i = 0; i < out_channels; ++i) bias_bf16[i] = float_to_bf16(bias[i]);
+
+    dnnl_dims_t src_dims = {batch, in_channels, temporal, patch_h, patch_w};
+    dnnl_dims_t weight_dims = {
+        out_channels, in_channels, temporal, patch_h, patch_w};
+    dnnl_dims_t bias_dims = {out_channels};
+    dnnl_dims_t dst_dims = {batch, out_channels, 1, 1, 1};
+    dnnl_dims_t strides = {temporal, patch_h, patch_w};
+    dnnl_dims_t dilates = {0, 0, 0};
+    dnnl_dims_t padding = {0, 0, 0};
+
+    dnnl_memory_desc_t user_src_md = NULL, user_weight_md = NULL;
+    dnnl_memory_desc_t bias_md = NULL, user_dst_md = NULL;
+    dnnl_memory_desc_t any_src_md = NULL, any_weight_md = NULL, any_dst_md = NULL;
+    dnnl_primitive_desc_t conv_pd = NULL;
+    dnnl_primitive_t conv = NULL;
+    dnnl_memory_t user_src = NULL, user_weight = NULL, bias_mem = NULL, user_dst = NULL;
+    dnnl_memory_t conv_src = NULL, conv_weight = NULL, conv_dst = NULL;
+    dnnl_status_t status = dnnl_success;
+
+#define CK_DNNL_CONV(call) do { status = (call); if (status != dnnl_success) goto cleanup_conv; } while (0)
+    pthread_mutex_lock(&ck_pytorch_brgemm_lock);
+    CK_DNNL_CONV(dnnl_memory_desc_create_with_tag(
+        &user_src_md, 5, src_dims, dnnl_bf16, dnnl_ncdhw));
+    CK_DNNL_CONV(dnnl_memory_desc_create_with_tag(
+        &user_weight_md, 5, weight_dims, dnnl_bf16, dnnl_oidhw));
+    CK_DNNL_CONV(dnnl_memory_desc_create_with_tag(
+        &bias_md, 1, bias_dims, dnnl_bf16, dnnl_x));
+    CK_DNNL_CONV(dnnl_memory_desc_create_with_tag(
+        &user_dst_md, 5, dst_dims, dnnl_bf16, dnnl_ncdhw));
+    CK_DNNL_CONV(dnnl_memory_desc_create_with_tag(
+        &any_src_md, 5, src_dims, dnnl_bf16, dnnl_format_tag_any));
+    CK_DNNL_CONV(dnnl_memory_desc_create_with_tag(
+        &any_weight_md, 5, weight_dims, dnnl_bf16, dnnl_format_tag_any));
+    CK_DNNL_CONV(dnnl_memory_desc_create_with_tag(
+        &any_dst_md, 5, dst_dims, dnnl_bf16, dnnl_format_tag_any));
+    CK_DNNL_CONV(dnnl_convolution_forward_primitive_desc_create(
+        &conv_pd, ck_pytorch_brgemm_engine, dnnl_forward_training,
+        dnnl_convolution_direct, any_src_md, any_weight_md, bias_md, any_dst_md,
+        strides, dilates, padding, padding, NULL));
+
+    const_dnnl_memory_desc_t conv_src_md =
+        dnnl_primitive_desc_query_md(conv_pd, dnnl_query_src_md, 0);
+    const_dnnl_memory_desc_t conv_weight_md =
+        dnnl_primitive_desc_query_md(conv_pd, dnnl_query_weights_md, 0);
+    const_dnnl_memory_desc_t conv_dst_md =
+        dnnl_primitive_desc_query_md(conv_pd, dnnl_query_dst_md, 0);
+    CK_DNNL_CONV(dnnl_memory_create(
+        &user_src, user_src_md, ck_pytorch_brgemm_engine, input_bf16));
+    CK_DNNL_CONV(dnnl_memory_create(
+        &user_weight, user_weight_md, ck_pytorch_brgemm_engine, (void *)weights));
+    CK_DNNL_CONV(dnnl_memory_create(
+        &bias_mem, bias_md, ck_pytorch_brgemm_engine, bias_bf16));
+    CK_DNNL_CONV(dnnl_memory_create(
+        &user_dst, user_dst_md, ck_pytorch_brgemm_engine, output_bf16));
+    CK_DNNL_CONV(dnnl_memory_create(
+        &conv_src, conv_src_md, ck_pytorch_brgemm_engine, DNNL_MEMORY_ALLOCATE));
+    CK_DNNL_CONV(dnnl_memory_create(
+        &conv_weight, conv_weight_md, ck_pytorch_brgemm_engine, DNNL_MEMORY_ALLOCATE));
+    CK_DNNL_CONV(dnnl_memory_create(
+        &conv_dst, conv_dst_md, ck_pytorch_brgemm_engine, DNNL_MEMORY_ALLOCATE));
+
+    dnnl_primitive_desc_t reorder_pd = NULL;
+    dnnl_primitive_t reorder = NULL;
+    dnnl_exec_arg_t reorder_args[2];
+    CK_DNNL_CONV(dnnl_reorder_primitive_desc_create(
+        &reorder_pd, user_src_md, ck_pytorch_brgemm_engine,
+        conv_src_md, ck_pytorch_brgemm_engine, NULL));
+    CK_DNNL_CONV(dnnl_primitive_create(&reorder, reorder_pd));
+    reorder_args[0] = (dnnl_exec_arg_t){DNNL_ARG_FROM, user_src};
+    reorder_args[1] = (dnnl_exec_arg_t){DNNL_ARG_TO, conv_src};
+    CK_DNNL_CONV(dnnl_primitive_execute(
+        reorder, ck_pytorch_brgemm_stream, 2, reorder_args));
+    dnnl_primitive_destroy(reorder); reorder = NULL;
+    dnnl_primitive_desc_destroy(reorder_pd); reorder_pd = NULL;
+
+    CK_DNNL_CONV(dnnl_reorder_primitive_desc_create(
+        &reorder_pd, user_weight_md, ck_pytorch_brgemm_engine,
+        conv_weight_md, ck_pytorch_brgemm_engine, NULL));
+    CK_DNNL_CONV(dnnl_primitive_create(&reorder, reorder_pd));
+    reorder_args[0] = (dnnl_exec_arg_t){DNNL_ARG_FROM, user_weight};
+    reorder_args[1] = (dnnl_exec_arg_t){DNNL_ARG_TO, conv_weight};
+    CK_DNNL_CONV(dnnl_primitive_execute(
+        reorder, ck_pytorch_brgemm_stream, 2, reorder_args));
+    dnnl_primitive_destroy(reorder); reorder = NULL;
+    dnnl_primitive_desc_destroy(reorder_pd); reorder_pd = NULL;
+
+    CK_DNNL_CONV(dnnl_primitive_create(&conv, conv_pd));
+    dnnl_exec_arg_t conv_args[] = {
+        {DNNL_ARG_SRC, conv_src},
+        {DNNL_ARG_WEIGHTS, conv_weight},
+        {DNNL_ARG_BIAS, bias_mem},
+        {DNNL_ARG_DST, conv_dst},
+    };
+    CK_DNNL_CONV(dnnl_primitive_execute(
+        conv, ck_pytorch_brgemm_stream,
+        (int)(sizeof(conv_args) / sizeof(conv_args[0])), conv_args));
+
+    CK_DNNL_CONV(dnnl_reorder_primitive_desc_create(
+        &reorder_pd, conv_dst_md, ck_pytorch_brgemm_engine,
+        user_dst_md, ck_pytorch_brgemm_engine, NULL));
+    CK_DNNL_CONV(dnnl_primitive_create(&reorder, reorder_pd));
+    reorder_args[0] = (dnnl_exec_arg_t){DNNL_ARG_FROM, conv_dst};
+    reorder_args[1] = (dnnl_exec_arg_t){DNNL_ARG_TO, user_dst};
+    CK_DNNL_CONV(dnnl_primitive_execute(
+        reorder, ck_pytorch_brgemm_stream, 2, reorder_args));
+    CK_DNNL_CONV(dnnl_stream_wait(ck_pytorch_brgemm_stream));
+
+cleanup_conv:
+    if (reorder) dnnl_primitive_destroy(reorder);
+    if (reorder_pd) dnnl_primitive_desc_destroy(reorder_pd);
+    if (conv) dnnl_primitive_destroy(conv);
+    if (conv_dst) dnnl_memory_destroy(conv_dst);
+    if (conv_weight) dnnl_memory_destroy(conv_weight);
+    if (conv_src) dnnl_memory_destroy(conv_src);
+    if (user_dst) dnnl_memory_destroy(user_dst);
+    if (bias_mem) dnnl_memory_destroy(bias_mem);
+    if (user_weight) dnnl_memory_destroy(user_weight);
+    if (user_src) dnnl_memory_destroy(user_src);
+    if (conv_pd) dnnl_primitive_desc_destroy(conv_pd);
+    if (any_dst_md) dnnl_memory_desc_destroy(any_dst_md);
+    if (any_weight_md) dnnl_memory_desc_destroy(any_weight_md);
+    if (any_src_md) dnnl_memory_desc_destroy(any_src_md);
+    if (user_dst_md) dnnl_memory_desc_destroy(user_dst_md);
+    if (bias_md) dnnl_memory_desc_destroy(bias_md);
+    if (user_weight_md) dnnl_memory_desc_destroy(user_weight_md);
+    if (user_src_md) dnnl_memory_desc_destroy(user_src_md);
+    pthread_mutex_unlock(&ck_pytorch_brgemm_lock);
+#undef CK_DNNL_CONV
+
+    if (status != dnnl_success) {
+        free(output_bf16);
+        free(bias_bf16);
+        free(input_bf16);
+        ck_pytorch_brgemm_fault("oneDNN Conv3D execution failed", batch,
+                                out_channels, in_channels * temporal * patch_h * patch_w);
+    }
+    for (size_t i = 0; i < output_count; ++i) output[i] = bf16_to_float(output_bf16[i]);
+    free(output_bf16);
+    free(bias_bf16);
+    free(input_bf16);
+#else
+    (void)input; (void)weights; (void)bias; (void)output; (void)batch;
+    (void)out_channels; (void)in_channels; (void)temporal; (void)patch_h; (void)patch_w;
+    fprintf(stderr, "HARD KERNEL CONTRACT FAULT: PyTorch oneDNN BF16 Conv3D "
+                    "was selected without USE_ONEDNN=1\n");
+    abort();
+#endif
+}
+
+void patch_projection_image_bf16_pytorch_onednn_conv3d_storage(
+    const float *image, const void *weights_t0, const void *weights_t1,
+    const float *bias, float *output, int channels, int image_h, int image_w,
+    int patch_size, int out_channels, int merge_size)
+{
+#ifdef USE_ONEDNN
+    if (!image || !weights_t0 || !weights_t1 || !bias || !output ||
+        channels <= 0 || image_h <= 0 || image_w <= 0 || patch_size <= 0 ||
+        out_channels <= 0 || merge_size <= 0 || image_h % patch_size != 0 ||
+        image_w % patch_size != 0) {
+        ck_pytorch_brgemm_fault("invalid image patch projection contract",
+                                image_h, image_w, patch_size);
+    }
+    const int grid_h = image_h / patch_size;
+    const int grid_w = image_w / patch_size;
+    if (grid_h % merge_size != 0 || grid_w % merge_size != 0) {
+        ck_pytorch_brgemm_fault("patch grid is not merge-tile aligned",
+                                grid_h, grid_w, merge_size);
+    }
+    const int batch = grid_h * grid_w;
+    const int temporal = 2;
+    const int half_k = channels * patch_size * patch_size;
+    const int full_k = temporal * half_k;
+    float *patches = (float *)malloc((size_t)batch * (size_t)full_k * sizeof(*patches));
+    uint16_t *weights = (uint16_t *)malloc(
+        (size_t)out_channels * (size_t)full_k * sizeof(*weights));
+    if (!patches || !weights) {
+        free(weights);
+        free(patches);
+        ck_pytorch_brgemm_fault("image patch projection workspace allocation failed",
+                                batch, out_channels, full_k);
+    }
+
+    for (int tok = 0; tok < batch; ++tok) {
+        const int tiles_per_row = grid_w / merge_size;
+        const int tile_area = merge_size * merge_size;
+        const int tile = tok / tile_area;
+        const int within = tok % tile_area;
+        const int patch_y = (tile / tiles_per_row) * merge_size + within / merge_size;
+        const int patch_x = (tile % tiles_per_row) * merge_size + within % merge_size;
+        float *dst = patches + (size_t)tok * (size_t)full_k;
+        for (int c = 0; c < channels; ++c) {
+            for (int t = 0; t < temporal; ++t) {
+                for (int py = 0; py < patch_size; ++py) {
+                    const float *src = image +
+                        ((size_t)c * (size_t)image_h +
+                         (size_t)(patch_y * patch_size + py)) * (size_t)image_w +
+                        (size_t)(patch_x * patch_size);
+                    memcpy(dst, src, (size_t)patch_size * sizeof(*dst));
+                    dst += patch_size;
+                }
+            }
+        }
+    }
+
+    const uint16_t *w0 = (const uint16_t *)weights_t0;
+    const uint16_t *w1 = (const uint16_t *)weights_t1;
+    for (int n = 0; n < out_channels; ++n) {
+        uint16_t *dst = weights + (size_t)n * (size_t)full_k;
+        for (int c = 0; c < channels; ++c) {
+            const size_t channel_offset =
+                (size_t)n * (size_t)half_k +
+                (size_t)c * (size_t)patch_size * (size_t)patch_size;
+            const size_t plane_bytes =
+                (size_t)patch_size * (size_t)patch_size * sizeof(*dst);
+            memcpy(dst, w0 + channel_offset, plane_bytes);
+            dst += patch_size * patch_size;
+            memcpy(dst, w1 + channel_offset, plane_bytes);
+            dst += patch_size * patch_size;
+        }
+    }
+
+    patch_projection_bf16_pytorch_onednn_conv3d_storage(
+        patches, weights, bias, output, batch, out_channels, channels,
+        temporal, patch_size, patch_size);
+    free(weights);
+    free(patches);
+#else
+    (void)image; (void)weights_t0; (void)weights_t1; (void)bias; (void)output;
+    (void)channels; (void)image_h; (void)image_w; (void)patch_size;
+    (void)out_channels; (void)merge_size;
+    fprintf(stderr, "HARD KERNEL CONTRACT FAULT: PyTorch oneDNN BF16 image "
+                    "patch projection was selected without USE_ONEDNN=1\n");
     abort();
 #endif
 }

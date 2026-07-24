@@ -99,6 +99,47 @@ class XRayNumericalParityTests(unittest.TestCase):
         self.assertFalse(non_exact["metrics"]["byte_exact"])
         self.assertEqual(non_exact["metrics"]["exact_elements"], 5)
 
+    def test_reports_accumulated_drift_and_resolved_provider_boundary(self):
+        paths = []
+        reference = np.ones((2, 3), np.float32)
+        entries_left = []
+        entries_right = []
+        checkpoints = ["vision.layer.0.output", "vision.layer.1.output", "vision.layer.2.output"]
+        deltas = [1.0e-5, 4.0e-5, 1.0e-2]
+        for index, (checkpoint, delta) in enumerate(zip(checkpoints, deltas)):
+            got_path = self.root / f"got-{index}.f32"
+            ref_path = self.root / f"ref-{index}.f32"
+            got = reference.copy()
+            got[0, 0] += np.float32(delta)
+            got.tofile(got_path)
+            reference.tofile(ref_path)
+            left = self.entry(checkpoint, got_path)
+            left["kernel_id"] = f"kernel.{index}"
+            left["function"] = f"kernel_{index}"
+            right = self.entry(checkpoint, ref_path)
+            right["kernel_id"] = left["kernel_id"]
+            right["function"] = left["function"]
+            entries_left.append(left)
+            entries_right.append(right)
+            paths.extend([got_path, ref_path])
+
+        result = xray.compare_manifests(
+            self.manifest("ck", entries_left),
+            self.manifest("pytorch", entries_right),
+            self.profile,
+            checkpoint_order=checkpoints,
+        )
+
+        progression = result["drift_progression"]
+        self.assertEqual(progression["policy"], "observational_no_additional_tolerance")
+        self.assertEqual(progression["first_non_exact"]["checkpoint_id"], checkpoints[0])
+        boundary = progression["largest_amplification_boundary"]
+        self.assertEqual(boundary["from_checkpoint_id"], checkpoints[1])
+        self.assertEqual(boundary["to_checkpoint_id"], checkpoints[2])
+        self.assertGreater(boundary["relative_rmse_ratio"], 100.0)
+        self.assertEqual(boundary["resolved_execution"]["kernel_id"], "kernel.2")
+        self.assertEqual(boundary["resolved_execution"]["function"], "kernel_2")
+
     def test_named_axes_are_canonicalized_before_comparison(self):
         logical = np.arange(6, dtype=np.float32).reshape(2, 3)
         a = self.root / "a.f32"; b = self.root / "b.f32"

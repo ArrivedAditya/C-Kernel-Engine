@@ -32,6 +32,7 @@
 #endif
 #include <math.h>
 #include <float.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "ck_speed_profiles.h"
@@ -5904,7 +5905,13 @@ typedef struct {
     int cache_capacity;
     int head_dim;
     int aligned_head_dim;
+    int cache_is_bf16;
 } ck_attention_f16_prefill_qtile64_args_t;
+
+static inline float ck_attention_u16_cache_to_f32(uint16_t value, int cache_is_bf16)
+{
+    return cache_is_bf16 ? bf16_to_float(value) : CK_FP16_TO_FP32(value);
+}
 
 static void ck_attention_f16_prefill_qtile64_work(int ith, int nth, void *opaque)
 {
@@ -5983,9 +5990,9 @@ static void ck_attention_f16_prefill_qtile64_work(int ith, int nth, void *opaque
                         (size_t) (ik + tk) * (size_t) args->aligned_head_dim;
                     for (int d = 0; d < args->head_dim; ++d) {
                         k_tile[(size_t) d * (size_t) CK_GGML_FA_TILE_KV + (size_t) tk] =
-                            CK_FP16_TO_FP32(k_vec[d]);
+                            ck_attention_u16_cache_to_f32(k_vec[d], args->cache_is_bf16);
                         v_tile[(size_t) tk * (size_t) args->head_dim + (size_t) d] =
-                            CK_FP16_TO_FP32(v_vec[d]);
+                            ck_attention_u16_cache_to_f32(v_vec[d], args->cache_is_bf16);
                     }
                 }
 
@@ -6091,6 +6098,7 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16
             .cache_capacity = cache_capacity,
             .head_dim = head_dim,
             .aligned_head_dim = aligned_head_dim,
+            .cache_is_bf16 = 0,
         };
         ck_threadpool_t *pool = ck_threadpool_global();
         int active = pool ? ck_threadpool_n_threads(pool) : 1;
@@ -6152,6 +6160,843 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16
     free(q_token);
     free(out_token);
     return status;
+}
+
+#if defined(__AVX512F__)
+typedef void (*ck_mkl_gemm_bf16_fn)(
+    const char *, const char *, const int *, const int *, const int *,
+    const float *, const uint16_t *, const int *, const uint16_t *, const int *,
+    const float *, float *, const int *);
+typedef void (*ck_mkl_cblas_sgemm_fn)(
+    int, int, int, int, int, int, float,
+    const float *, int, const float *, int, float, float *, int);
+typedef void (*ck_mkl_cblas_sgemm_batch_fn)(
+    int, const int *, const int *, const int *, const int *, const int *,
+    const float *, const float **, const int *, const float **, const int *,
+    const float *, float **, const int *, int, const int *);
+typedef __m512 (*ck_sleef_expf16_fn)(__m512);
+
+static ck_mkl_gemm_bf16_fn ck_pytorch_bf16_gemm = NULL;
+static ck_mkl_cblas_sgemm_fn ck_pytorch_sgemm = NULL;
+static ck_mkl_cblas_sgemm_batch_fn ck_pytorch_sgemm_batch = NULL;
+static ck_sleef_expf16_fn ck_pytorch_attention_expf16 = NULL;
+static void *ck_pytorch_mkl_handle = NULL;
+static void *ck_pytorch_attention_sleef_handle = NULL;
+static pthread_once_t ck_pytorch_attention_once = PTHREAD_ONCE_INIT;
+
+static void ck_bind_pytorch_attention_primitives(void)
+{
+    const char *mkl_library = getenv("CK_MKL_LIBRARY");
+    if (mkl_library && *mkl_library) {
+        ck_pytorch_mkl_handle = dlopen(mkl_library, RTLD_NOW | RTLD_LOCAL);
+        if (ck_pytorch_mkl_handle) {
+            ck_pytorch_bf16_gemm = (ck_mkl_gemm_bf16_fn)dlsym(
+                ck_pytorch_mkl_handle, "gemm_bf16bf16f32");
+            ck_pytorch_sgemm = (ck_mkl_cblas_sgemm_fn)dlsym(
+                ck_pytorch_mkl_handle, "cblas_sgemm");
+            ck_pytorch_sgemm_batch = (ck_mkl_cblas_sgemm_batch_fn)dlsym(
+                ck_pytorch_mkl_handle, "cblas_sgemm_batch");
+        }
+    } else {
+        ck_pytorch_bf16_gemm =
+            (ck_mkl_gemm_bf16_fn)dlsym(RTLD_DEFAULT, "gemm_bf16bf16f32");
+        ck_pytorch_sgemm =
+            (ck_mkl_cblas_sgemm_fn)dlsym(RTLD_DEFAULT, "cblas_sgemm");
+        ck_pytorch_sgemm_batch =
+            (ck_mkl_cblas_sgemm_batch_fn)dlsym(RTLD_DEFAULT, "cblas_sgemm_batch");
+        if (!ck_pytorch_bf16_gemm || !ck_pytorch_sgemm ||
+            !ck_pytorch_sgemm_batch) {
+            mkl_library = "libmkl_rt.so.2";
+            ck_pytorch_mkl_handle = dlopen(mkl_library, RTLD_NOW | RTLD_LOCAL);
+            if (ck_pytorch_mkl_handle) {
+                ck_pytorch_bf16_gemm = (ck_mkl_gemm_bf16_fn)dlsym(
+                    ck_pytorch_mkl_handle, "gemm_bf16bf16f32");
+                ck_pytorch_sgemm = (ck_mkl_cblas_sgemm_fn)dlsym(
+                    ck_pytorch_mkl_handle, "cblas_sgemm");
+                ck_pytorch_sgemm_batch = (ck_mkl_cblas_sgemm_batch_fn)dlsym(
+                    ck_pytorch_mkl_handle, "cblas_sgemm_batch");
+            }
+        }
+    }
+
+    const char *sleef_library = getenv("CK_SLEEF_LIBRARY");
+    if (sleef_library && *sleef_library) {
+        ck_pytorch_attention_sleef_handle =
+            dlopen(sleef_library, RTLD_NOW | RTLD_LOCAL);
+        if (ck_pytorch_attention_sleef_handle) {
+            ck_pytorch_attention_expf16 = (ck_sleef_expf16_fn)dlsym(
+                ck_pytorch_attention_sleef_handle, "Sleef_expf16_u10");
+        }
+    } else {
+        ck_pytorch_attention_expf16 =
+            (ck_sleef_expf16_fn)dlsym(RTLD_DEFAULT, "Sleef_expf16_u10");
+    }
+}
+
+static float ck_pytorch_scale_max_f32(float *scores, int count, float scale)
+{
+    const __m512 scale_v = _mm512_set1_ps(scale);
+    __m512 maximum_v = _mm512_set1_ps(-INFINITY);
+    int i = 0;
+    for (; i + 16 <= count; i += 16) {
+        __m512 values = _mm512_mul_ps(_mm512_loadu_ps(scores + i), scale_v);
+        maximum_v = _mm512_max_ps(maximum_v, values);
+        _mm512_storeu_ps(scores + i, values);
+    }
+    float maximum = _mm512_reduce_max_ps(maximum_v);
+    for (; i < count; ++i) {
+        scores[i] *= scale;
+        maximum = fmaxf(maximum, scores[i]);
+    }
+    return maximum;
+}
+
+static float ck_pytorch_exp_sum_bf16(
+    float *scores, uint16_t *probabilities, int count, float maximum)
+{
+    const __m512 maximum_v = _mm512_set1_ps(maximum);
+    __m512 sum_v = _mm512_setzero_ps();
+    int i = 0;
+    for (; i + 16 <= count; i += 16) {
+        __m512 values = _mm512_sub_ps(_mm512_loadu_ps(scores + i), maximum_v);
+        values = ck_pytorch_attention_expf16(values);
+        sum_v = _mm512_add_ps(sum_v, values);
+        float lanes[16] __attribute__((aligned(64)));
+        _mm512_store_ps(lanes, values);
+        for (int lane = 0; lane < 16; ++lane) {
+            probabilities[i + lane] = float_to_bf16(lanes[lane]);
+        }
+    }
+    float sum = _mm512_reduce_add_ps(sum_v);
+    for (; i < count; ++i) {
+        const float value = expf(scores[i] - maximum);
+        sum += value;
+        probabilities[i] = float_to_bf16(value);
+    }
+    return sum;
+}
+
+static inline float ck_pytorch_reduce_max_f32x16(__m512 value)
+{
+    __m512 shuffled = _mm512_shuffle_f32x4(value, value, 0x4e);
+    value = _mm512_max_ps(value, shuffled);
+    shuffled = _mm512_shuffle_f32x4(value, value, 0xb1);
+    value = _mm512_max_ps(value, shuffled);
+    shuffled = _mm512_shuffle_ps(value, value, 0x4e);
+    value = _mm512_max_ps(value, shuffled);
+    shuffled = _mm512_shuffle_ps(value, value, 0xb1);
+    value = _mm512_max_ps(value, shuffled);
+    return _mm512_cvtss_f32(value);
+}
+
+static inline float ck_pytorch_reduce_sum_f32x16(__m512 value)
+{
+    __m512 shuffled = _mm512_shuffle_f32x4(value, value, 0x4e);
+    value = _mm512_add_ps(value, shuffled);
+    shuffled = _mm512_shuffle_f32x4(value, value, 0xb1);
+    value = _mm512_add_ps(value, shuffled);
+    shuffled = _mm512_shuffle_ps(value, value, 0x4e);
+    value = _mm512_add_ps(value, shuffled);
+    shuffled = _mm512_shuffle_ps(value, value, 0xb1);
+    value = _mm512_add_ps(value, shuffled);
+    return _mm512_cvtss_f32(value);
+}
+
+static float ck_pytorch_softmax_f32(float *scores, int count)
+{
+    /* Match the observed ATen CPU dispatch: sub-vector rows use scalar
+     * exp/reduction, while larger rows use the AVX-512 accumulator and fold
+     * a masked tail into its reduction tree. */
+    if (count < 16) {
+        float maximum = scores[0];
+        for (int i = 1; i < count; ++i) {
+            maximum = fmaxf(maximum, scores[i]);
+        }
+        float sum = 0.0f;
+        for (int i = 0; i < count; ++i) {
+            scores[i] = expf(scores[i] - maximum);
+            sum += scores[i];
+        }
+        const float reciprocal = 1.0f / sum;
+        for (int i = 0; i < count; ++i) {
+            scores[i] *= reciprocal;
+        }
+        return sum;
+    }
+
+    __m512 maximum_v = _mm512_set1_ps(-INFINITY);
+    int i = 0;
+    for (; i + 16 <= count; i += 16) {
+        maximum_v = _mm512_max_ps(maximum_v, _mm512_loadu_ps(scores + i));
+    }
+    if (i < count) {
+        const __mmask16 tail_mask = (__mmask16)((1u << (count - i)) - 1u);
+        maximum_v = _mm512_max_ps(
+            maximum_v,
+            _mm512_mask_loadu_ps(_mm512_set1_ps(-INFINITY), tail_mask, scores + i));
+    }
+    const float maximum = ck_pytorch_reduce_max_f32x16(maximum_v);
+
+    const __m512 maximum_broadcast = _mm512_set1_ps(maximum);
+    __m512 sum_v = _mm512_setzero_ps();
+    i = 0;
+    for (; i + 16 <= count; i += 16) {
+        __m512 values = _mm512_sub_ps(_mm512_loadu_ps(scores + i), maximum_broadcast);
+        values = ck_pytorch_attention_expf16(values);
+        _mm512_storeu_ps(scores + i, values);
+        sum_v = _mm512_add_ps(sum_v, values);
+    }
+    if (i < count) {
+        const __mmask16 tail_mask = (__mmask16)((1u << (count - i)) - 1u);
+        __m512 values = _mm512_mask_loadu_ps(
+            _mm512_set1_ps(-INFINITY), tail_mask, scores + i);
+        values = ck_pytorch_attention_expf16(
+            _mm512_sub_ps(values, maximum_broadcast));
+        values = _mm512_maskz_mov_ps(tail_mask, values);
+        _mm512_mask_storeu_ps(scores + i, tail_mask, values);
+        sum_v = _mm512_add_ps(sum_v, values);
+    }
+    const float sum = ck_pytorch_reduce_sum_f32x16(sum_v);
+
+    const float reciprocal = 1.0f / sum;
+    const __m512 reciprocal_broadcast = _mm512_set1_ps(reciprocal);
+    i = 0;
+    for (; i + 16 <= count; i += 16) {
+        _mm512_storeu_ps(
+            scores + i,
+            _mm512_mul_ps(
+                _mm512_loadu_ps(scores + i), reciprocal_broadcast));
+    }
+    if (i < count) {
+        const __mmask16 tail_mask = (__mmask16)((1u << (count - i)) - 1u);
+        const __m512 values = _mm512_maskz_loadu_ps(tail_mask, scores + i);
+        _mm512_mask_storeu_ps(
+            scores + i, tail_mask,
+            _mm512_mul_ps(values, reciprocal_broadcast));
+    }
+    return sum;
+}
+
+static ck_attention_status_t ck_attention_decode_bf16_pytorch_math_gqa(
+    const float *q_token,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *out_token,
+    int num_heads,
+    int num_kv_heads,
+    int kv_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim)
+{
+    enum { CBLAS_ROW_MAJOR = 101, CBLAS_NO_TRANS = 111, CBLAS_TRANS = 112 };
+    if (!ck_pytorch_sgemm_batch || !ck_pytorch_attention_expf16) {
+        fprintf(stderr,
+                "CK BF16 PyTorch GQA math provider requires MKL cblas_sgemm_batch "
+                "and SLEEF Sleef_expf16_u10\n");
+        return CK_ATTENTION_STATUS_UNSUPPORTED_CONTRACT;
+    }
+
+    const size_t matrix_count =
+        (size_t)num_heads * (size_t)kv_tokens * (size_t)head_dim;
+    float *k_scaled = (float *)malloc(matrix_count * sizeof(float));
+    float *v_f32 = (float *)malloc(matrix_count * sizeof(float));
+    float *scores = (float *)malloc(
+        (size_t)num_heads * (size_t)kv_tokens * sizeof(float));
+    float *q_scaled = (float *)malloc(
+        (size_t)num_heads * (size_t)head_dim * sizeof(float));
+    float *destination = (float *)malloc(
+        (size_t)num_heads * (size_t)head_dim * sizeof(float));
+    const float **q_batch = (const float **)malloc(
+        (size_t)num_heads * sizeof(*q_batch));
+    const float **k_batch = (const float **)malloc(
+        (size_t)num_heads * sizeof(*k_batch));
+    float **score_batch = (float **)malloc(
+        (size_t)num_heads * sizeof(*score_batch));
+    const float **probability_batch = (const float **)malloc(
+        (size_t)num_heads * sizeof(*probability_batch));
+    const float **v_batch = (const float **)malloc(
+        (size_t)num_heads * sizeof(*v_batch));
+    float **destination_batch = (float **)malloc(
+        (size_t)num_heads * sizeof(*destination_batch));
+    if (!k_scaled || !v_f32 || !scores || !q_scaled || !destination ||
+        !q_batch || !k_batch || !score_batch || !probability_batch ||
+        !v_batch || !destination_batch) {
+        free(destination_batch);
+        free(v_batch);
+        free(probability_batch);
+        free(score_batch);
+        free(k_batch);
+        free(q_batch);
+        free(destination);
+        free(q_scaled);
+        free(scores);
+        free(v_f32);
+        free(k_scaled);
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+
+    /* aten::_scaled_dot_product_attention_math promotes BF16 Q/K/V to FP32,
+     * applies sqrt(scale) independently to Q and K, then performs FP32 BMM,
+     * FP32 softmax and FP32 P*V before the single BF16 output store. */
+    const float split_scale = (float)sqrt(sqrt(1.0 / (double)head_dim));
+    const size_t cache_head_stride =
+        (size_t)cache_capacity * (size_t)aligned_head_dim;
+    const int heads_per_kv = num_heads / num_kv_heads;
+
+    for (int h = 0; h < num_heads; ++h) {
+        const int kv_head = h / heads_per_kv;
+        const uint16_t *k_head = k_cache + (size_t)kv_head * cache_head_stride;
+        const uint16_t *v_head = v_cache + (size_t)kv_head * cache_head_stride;
+        float *k_repeated = k_scaled +
+            (size_t)h * (size_t)kv_tokens * (size_t)head_dim;
+        float *v_repeated = v_f32 +
+            (size_t)h * (size_t)kv_tokens * (size_t)head_dim;
+        for (int token = 0; token < kv_tokens; ++token) {
+            for (int d = 0; d < head_dim; ++d) {
+                const size_t compact = (size_t)token * (size_t)head_dim + (size_t)d;
+                const size_t cached =
+                    (size_t)token * (size_t)aligned_head_dim + (size_t)d;
+                k_repeated[compact] = bf16_to_float(k_head[cached]) * split_scale;
+                v_repeated[compact] = bf16_to_float(v_head[cached]);
+            }
+        }
+
+        const float *q_head = q_token + (size_t)h * (size_t)aligned_head_dim;
+        float *q_row = q_scaled + (size_t)h * (size_t)head_dim;
+        for (int d = 0; d < head_dim; ++d) {
+            q_row[d] = bf16_to_float(float_to_bf16(q_head[d])) * split_scale;
+        }
+        q_batch[h] = q_row;
+        k_batch[h] = k_repeated;
+        score_batch[h] = scores + (size_t)h * (size_t)kv_tokens;
+        probability_batch[h] = score_batch[h];
+        v_batch[h] = v_repeated;
+        destination_batch[h] = destination + (size_t)h * (size_t)head_dim;
+    }
+
+    const int group_count = 1;
+    const int group_size = num_heads;
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    int transpose_a = CBLAS_NO_TRANS;
+    int transpose_b = CBLAS_TRANS;
+    int m = 1;
+    int n = kv_tokens;
+    int k = head_dim;
+    int lda = head_dim;
+    int ldb = head_dim;
+    int ldc = kv_tokens;
+    ck_pytorch_sgemm_batch(
+        CBLAS_ROW_MAJOR, &transpose_a, &transpose_b, &m, &n, &k,
+        &alpha, q_batch, &lda, k_batch, &ldb, &beta, score_batch, &ldc,
+        group_count, &group_size);
+
+    for (int h = 0; h < num_heads; ++h) {
+        (void)ck_pytorch_softmax_f32(score_batch[h], kv_tokens);
+    }
+
+    transpose_b = CBLAS_NO_TRANS;
+    n = head_dim;
+    k = kv_tokens;
+    lda = kv_tokens;
+    ldb = head_dim;
+    ldc = head_dim;
+    ck_pytorch_sgemm_batch(
+        CBLAS_ROW_MAJOR, &transpose_a, &transpose_b, &m, &n, &k,
+        &alpha, probability_batch, &lda, v_batch, &ldb,
+        &beta, destination_batch, &ldc, group_count, &group_size);
+
+    for (int h = 0; h < num_heads; ++h) {
+        float *out_head = out_token + (size_t)h * (size_t)aligned_head_dim;
+        const float *source = destination + (size_t)h * (size_t)head_dim;
+        for (int d = 0; d < head_dim; ++d) {
+            out_head[d] = bf16_to_float(float_to_bf16(source[d]));
+        }
+        for (int d = head_dim; d < aligned_head_dim; ++d) out_head[d] = 0.0f;
+    }
+
+    free(destination_batch);
+    free(v_batch);
+    free(probability_batch);
+    free(score_batch);
+    free(k_batch);
+    free(q_batch);
+    free(destination);
+    free(q_scaled);
+    free(scores);
+    free(v_f32);
+    free(k_scaled);
+    return CK_ATTENTION_STATUS_OK;
+}
+
+static ck_attention_status_t ck_attention_prefill_bf16_pytorch_math_gqa_full(
+    const float *q,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int q_tokens,
+    int past_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim)
+{
+    enum { CBLAS_ROW_MAJOR = 101, CBLAS_NO_TRANS = 111, CBLAS_TRANS = 112 };
+    if (!ck_pytorch_sgemm_batch || !ck_pytorch_attention_expf16) {
+        fprintf(stderr,
+                "CK BF16 PyTorch full-matrix provider requires MKL "
+                "cblas_sgemm_batch and SLEEF Sleef_expf16_u10\n");
+        return CK_ATTENTION_STATUS_UNSUPPORTED_CONTRACT;
+    }
+
+    const int kv_tokens = past_tokens + q_tokens;
+    const size_t q_matrix_count =
+        (size_t)num_heads * (size_t)q_tokens * (size_t)head_dim;
+    const size_t kv_matrix_count =
+        (size_t)num_heads * (size_t)kv_tokens * (size_t)head_dim;
+    const size_t score_count =
+        (size_t)num_heads * (size_t)q_tokens * (size_t)kv_tokens;
+    float *q_scaled = (float *)malloc(q_matrix_count * sizeof(float));
+    float *k_scaled = (float *)malloc(kv_matrix_count * sizeof(float));
+    float *v_f32 = (float *)malloc(kv_matrix_count * sizeof(float));
+    float *scores = (float *)malloc(score_count * sizeof(float));
+    float *destination = (float *)malloc(q_matrix_count * sizeof(float));
+    const float **q_batch =
+        (const float **)malloc((size_t)num_heads * sizeof(*q_batch));
+    const float **k_batch =
+        (const float **)malloc((size_t)num_heads * sizeof(*k_batch));
+    float **score_batch =
+        (float **)malloc((size_t)num_heads * sizeof(*score_batch));
+    const float **probability_batch =
+        (const float **)malloc((size_t)num_heads * sizeof(*probability_batch));
+    const float **v_batch =
+        (const float **)malloc((size_t)num_heads * sizeof(*v_batch));
+    float **destination_batch =
+        (float **)malloc((size_t)num_heads * sizeof(*destination_batch));
+    if (!q_scaled || !k_scaled || !v_f32 || !scores || !destination ||
+        !q_batch || !k_batch || !score_batch || !probability_batch ||
+        !v_batch || !destination_batch) {
+        free(destination_batch);
+        free(v_batch);
+        free(probability_batch);
+        free(score_batch);
+        free(k_batch);
+        free(q_batch);
+        free(destination);
+        free(scores);
+        free(v_f32);
+        free(k_scaled);
+        free(q_scaled);
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+
+    const float split_scale = (float)sqrt(sqrt(1.0 / (double)head_dim));
+    const size_t cache_head_stride =
+        (size_t)cache_capacity * (size_t)aligned_head_dim;
+    const int heads_per_kv = num_heads / num_kv_heads;
+    for (int h = 0; h < num_heads; ++h) {
+        const int kv_head = h / heads_per_kv;
+        const uint16_t *k_head =
+            k_cache + (size_t)kv_head * cache_head_stride;
+        const uint16_t *v_head =
+            v_cache + (size_t)kv_head * cache_head_stride;
+        float *q_head =
+            q_scaled + (size_t)h * (size_t)q_tokens * (size_t)head_dim;
+        float *k_head_f32 =
+            k_scaled + (size_t)h * (size_t)kv_tokens * (size_t)head_dim;
+        float *v_head_f32 =
+            v_f32 + (size_t)h * (size_t)kv_tokens * (size_t)head_dim;
+        for (int token = 0; token < q_tokens; ++token) {
+            const float *q_row = q +
+                ((size_t)h * (size_t)q_tokens + (size_t)token) *
+                    (size_t)aligned_head_dim;
+            float *q_row_f32 =
+                q_head + (size_t)token * (size_t)head_dim;
+            for (int d = 0; d < head_dim; ++d) {
+                q_row_f32[d] =
+                    bf16_to_float(float_to_bf16(q_row[d])) * split_scale;
+            }
+        }
+        for (int token = 0; token < kv_tokens; ++token) {
+            const uint16_t *k_row =
+                k_head + (size_t)token * (size_t)aligned_head_dim;
+            const uint16_t *v_row =
+                v_head + (size_t)token * (size_t)aligned_head_dim;
+            float *k_row_f32 =
+                k_head_f32 + (size_t)token * (size_t)head_dim;
+            float *v_row_f32 =
+                v_head_f32 + (size_t)token * (size_t)head_dim;
+            for (int d = 0; d < head_dim; ++d) {
+                k_row_f32[d] = bf16_to_float(k_row[d]) * split_scale;
+                v_row_f32[d] = bf16_to_float(v_row[d]);
+            }
+        }
+        q_batch[h] = q_head;
+        k_batch[h] = k_head_f32;
+        score_batch[h] =
+            scores + (size_t)h * (size_t)q_tokens * (size_t)kv_tokens;
+        probability_batch[h] = score_batch[h];
+        v_batch[h] = v_head_f32;
+        destination_batch[h] =
+            destination + (size_t)h * (size_t)q_tokens * (size_t)head_dim;
+    }
+
+    const int group_count = 1;
+    const int group_size = num_heads;
+    const float alpha = 1.0f;
+    const float beta = 0.0f;
+    int transpose_a = CBLAS_NO_TRANS;
+    int transpose_b = CBLAS_TRANS;
+    int m = q_tokens;
+    int n = kv_tokens;
+    int k = head_dim;
+    int lda = head_dim;
+    int ldb = head_dim;
+    int ldc = kv_tokens;
+    ck_pytorch_sgemm_batch(
+        CBLAS_ROW_MAJOR, &transpose_a, &transpose_b, &m, &n, &k,
+        &alpha, q_batch, &lda, k_batch, &ldb, &beta, score_batch, &ldc,
+        group_count, &group_size);
+
+    /* PyTorch math SDPA reduces each causal row across the complete key
+     * width. Masked future entries remain -inf and therefore contribute
+     * zero to the same vector reduction tree as the valid prefix. */
+    for (int h = 0; h < num_heads; ++h) {
+        float *score_head = score_batch[h];
+        for (int token = 0; token < q_tokens; ++token) {
+            float *score_row =
+                score_head + (size_t)token * (size_t)kv_tokens;
+            const int valid = past_tokens + token + 1;
+            for (int key_token = valid; key_token < kv_tokens; ++key_token) {
+                score_row[key_token] = -INFINITY;
+            }
+            (void)ck_pytorch_softmax_f32(score_row, kv_tokens);
+        }
+    }
+
+    transpose_b = CBLAS_NO_TRANS;
+    n = head_dim;
+    k = kv_tokens;
+    lda = kv_tokens;
+    ldb = head_dim;
+    ldc = head_dim;
+    ck_pytorch_sgemm_batch(
+        CBLAS_ROW_MAJOR, &transpose_a, &transpose_b, &m, &n, &k,
+        &alpha, probability_batch, &lda, v_batch, &ldb,
+        &beta, destination_batch, &ldc, group_count, &group_size);
+
+    for (int h = 0; h < num_heads; ++h) {
+        const float *source =
+            destination + (size_t)h * (size_t)q_tokens * (size_t)head_dim;
+        for (int token = 0; token < q_tokens; ++token) {
+            float *out_row = output +
+                ((size_t)h * (size_t)q_tokens + (size_t)token) *
+                    (size_t)aligned_head_dim;
+            const float *source_row =
+                source + (size_t)token * (size_t)head_dim;
+            for (int d = 0; d < head_dim; ++d) {
+                out_row[d] =
+                    bf16_to_float(float_to_bf16(source_row[d]));
+            }
+            for (int d = head_dim; d < aligned_head_dim; ++d) {
+                out_row[d] = 0.0f;
+            }
+        }
+    }
+
+    free(destination_batch);
+    free(v_batch);
+    free(probability_batch);
+    free(score_batch);
+    free(k_batch);
+    free(q_batch);
+    free(destination);
+    free(scores);
+    free(v_f32);
+    free(k_scaled);
+    free(q_scaled);
+    return CK_ATTENTION_STATUS_OK;
+}
+
+static ck_attention_status_t ck_attention_decode_bf16_pytorch_cpu_flash(
+    const float *q_token,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *out_token,
+    int num_heads,
+    int num_kv_heads,
+    int kv_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim)
+{
+    enum { CK_PYTORCH_KV_SPLIT = 512, CK_PYTORCH_MAX_HEAD_DIM = 512 };
+    if (head_dim > CK_PYTORCH_MAX_HEAD_DIM || aligned_head_dim > CK_PYTORCH_MAX_HEAD_DIM) {
+        return CK_ATTENTION_STATUS_UNSUPPORTED_CONTRACT;
+    }
+    pthread_once(&ck_pytorch_attention_once, ck_bind_pytorch_attention_primitives);
+    if (!ck_pytorch_bf16_gemm || !ck_pytorch_sgemm || !ck_pytorch_attention_expf16) {
+        fprintf(stderr,
+                "CK BF16 PyTorch SDPA provider requires MKL gemm_bf16bf16f32 "
+                "and SLEEF Sleef_expf16_u10; set CK_MKL_LIBRARY and "
+                "CK_SLEEF_LIBRARY\n");
+        return CK_ATTENTION_STATUS_UNSUPPORTED_CONTRACT;
+    }
+
+    const float scale = 1.0f / sqrtf((float)head_dim);
+    const size_t head_stride = (size_t)cache_capacity * (size_t)aligned_head_dim;
+    for (int h = 0; h < num_heads; ++h) {
+        const int kv_head = (int)((long long)h * (long long)num_kv_heads / (long long)num_heads);
+        const float *q_head = q_token + (size_t)h * (size_t)aligned_head_dim;
+        const uint16_t *k_head = k_cache + (size_t)kv_head * head_stride;
+        const uint16_t *v_head = v_cache + (size_t)kv_head * head_stride;
+        float *out_head = out_token + (size_t)h * (size_t)aligned_head_dim;
+        uint16_t q_bf16[CK_PYTORCH_MAX_HEAD_DIM] __attribute__((aligned(64)));
+        uint16_t probabilities[CK_PYTORCH_KV_SPLIT] __attribute__((aligned(64)));
+        float scores[CK_PYTORCH_KV_SPLIT] __attribute__((aligned(64)));
+        float destination[CK_PYTORCH_MAX_HEAD_DIM] __attribute__((aligned(64)));
+        for (int d = 0; d < head_dim; ++d) q_bf16[d] = float_to_bf16(q_head[d]);
+
+        float running_max = -INFINITY;
+        float running_sum = 0.0f;
+        for (int start = 0; start < kv_tokens; start += CK_PYTORCH_KV_SPLIT) {
+            const int block = kv_tokens - start < CK_PYTORCH_KV_SPLIT
+                ? kv_tokens - start : CK_PYTORCH_KV_SPLIT;
+            const char transpose = 'T';
+            const char no_transpose = 'N';
+            const int one = 1;
+            const float one_f = 1.0f;
+            const float zero_f = 0.0f;
+            ck_pytorch_bf16_gemm(
+                &transpose, &no_transpose, &block, &one, &head_dim,
+                &one_f, k_head + (size_t)start * (size_t)aligned_head_dim,
+                &aligned_head_dim, q_bf16, &aligned_head_dim,
+                &zero_f, scores, &block);
+
+            const float block_max = ck_pytorch_scale_max_f32(scores, block, scale);
+            const float maximum = running_max > block_max ? running_max : block_max;
+            const float block_sum = ck_pytorch_exp_sum_bf16(
+                scores, probabilities, block, maximum);
+            const float previous_scale = expf(running_max - maximum);
+            running_sum = block_sum + previous_scale * running_sum;
+            if (start > 0) {
+                const __m512 previous_scale_v = _mm512_set1_ps(previous_scale);
+                int d = 0;
+                for (; d + 16 <= head_dim; d += 16) {
+                    _mm512_storeu_ps(
+                        destination + d,
+                        _mm512_mul_ps(_mm512_loadu_ps(destination + d), previous_scale_v));
+                }
+                for (; d < head_dim; ++d) destination[d] *= previous_scale;
+            }
+            const float beta = start == 0 ? 0.0f : 1.0f;
+            ck_pytorch_bf16_gemm(
+                &no_transpose, &no_transpose, &head_dim, &one, &block,
+                &one_f, v_head + (size_t)start * (size_t)aligned_head_dim,
+                &aligned_head_dim, probabilities, &block,
+                &beta, destination, &head_dim);
+            running_max = maximum;
+        }
+
+        const float reciprocal = running_sum != 0.0f ? 1.0f / running_sum : 1.0f;
+        for (int d = 0; d < head_dim; ++d) {
+            out_head[d] = bf16_to_float(float_to_bf16(destination[d] * reciprocal));
+        }
+        for (int d = head_dim; d < aligned_head_dim; ++d) out_head[d] = 0.0f;
+    }
+    return CK_ATTENTION_STATUS_OK;
+}
+#endif
+
+ck_attention_status_t attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract(
+    const float *q_token,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *out_token,
+    int num_heads,
+    int num_kv_heads,
+    int kv_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    ck_attention_reduction_t reduction)
+{
+    if (!q_token || !k_cache || !v_cache || !out_token ||
+        num_heads <= 0 || num_kv_heads <= 0 || kv_tokens <= 0 ||
+        cache_capacity <= 0 || kv_tokens > cache_capacity ||
+        head_dim <= 0 || aligned_head_dim < head_dim ||
+        num_heads % num_kv_heads != 0) {
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+    if (reduction != CK_ATTN_REDUCTION_BF16_PYTORCH_SDPA) {
+        return CK_ATTENTION_STATUS_UNSUPPORTED_CONTRACT;
+    }
+
+#if defined(__AVX512F__)
+    pthread_once(&ck_pytorch_attention_once, ck_bind_pytorch_attention_primitives);
+    return ck_attention_decode_bf16_pytorch_math_gqa(
+        q_token, k_cache, v_cache, out_token, num_heads, num_kv_heads,
+        kv_tokens, cache_capacity, head_dim, aligned_head_dim);
+#else
+    const float scale = 1.0f / sqrtf((float)head_dim);
+    const size_t head_stride = (size_t)cache_capacity * (size_t)aligned_head_dim;
+    for (int h = 0; h < num_heads; ++h) {
+        const int kv_head = (int)((long long)h * (long long)num_kv_heads / (long long)num_heads);
+        const float *q_head = q_token + (size_t)h * (size_t)aligned_head_dim;
+        const uint16_t *k_head = k_cache + (size_t)kv_head * head_stride;
+        const uint16_t *v_head = v_cache + (size_t)kv_head * head_stride;
+        float *out_head = out_token + (size_t)h * (size_t)aligned_head_dim;
+
+        float maximum = -INFINITY;
+        for (int token = 0; token < kv_tokens; ++token) {
+            const uint16_t *k_row = k_head + (size_t)token * (size_t)aligned_head_dim;
+            float dot = 0.0f;
+            for (int d = 0; d < head_dim; ++d) {
+                dot = fmaf(q_head[d], bf16_to_float(k_row[d]), dot);
+            }
+            const float score = dot * scale;
+            if (score > maximum) maximum = score;
+        }
+
+        for (int d = 0; d < aligned_head_dim; ++d) out_head[d] = 0.0f;
+        float denominator = 0.0f;
+        for (int token = 0; token < kv_tokens; ++token) {
+            const uint16_t *k_row = k_head + (size_t)token * (size_t)aligned_head_dim;
+            const uint16_t *v_row = v_head + (size_t)token * (size_t)aligned_head_dim;
+            float dot = 0.0f;
+            for (int d = 0; d < head_dim; ++d) {
+                dot = fmaf(q_head[d], bf16_to_float(k_row[d]), dot);
+            }
+            const float probability = expf(dot * scale - maximum);
+            denominator += probability;
+            for (int d = 0; d < head_dim; ++d) {
+                out_head[d] = fmaf(probability, bf16_to_float(v_row[d]), out_head[d]);
+            }
+        }
+        const float inverse = denominator > 0.0f ? 1.0f / denominator : 0.0f;
+        for (int d = 0; d < head_dim; ++d) {
+            out_head[d] = bf16_to_float(float_to_bf16(out_head[d] * inverse));
+        }
+    }
+    return CK_ATTENTION_STATUS_OK;
+#endif
+}
+
+ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract(
+    const float *q,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int q_tokens,
+    int past_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    ck_attention_reduction_t reduction)
+{
+    if (!q || !k_cache || !v_cache || !output ||
+        num_heads <= 0 || num_kv_heads <= 0 || q_tokens <= 0 ||
+        past_tokens < 0 || past_tokens + q_tokens > cache_capacity ||
+        head_dim <= 0 || aligned_head_dim < head_dim) {
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+    if (reduction != CK_ATTN_REDUCTION_BF16_PYTORCH_SDPA) {
+        return CK_ATTENTION_STATUS_UNSUPPORTED_CONTRACT;
+    }
+
+    if (q_tokens >= CK_GGML_FA_TILE_Q) {
+        ck_attention_f16_prefill_qtile64_args_t args = {
+            .q = q, .k_cache = k_cache, .v_cache = v_cache, .output = output,
+            .num_heads = num_heads, .num_kv_heads = num_kv_heads,
+            .q_tokens = q_tokens, .past_tokens = past_tokens,
+            .cache_capacity = cache_capacity, .head_dim = head_dim,
+            .aligned_head_dim = aligned_head_dim, .cache_is_bf16 = 1,
+        };
+        ck_threadpool_t *pool = ck_threadpool_global();
+        int active = pool ? ck_threadpool_n_threads(pool) : 1;
+        if (active > num_kv_heads) active = num_kv_heads;
+        if (pool && active > 1 && ck_threadpool_thread_id(pool) <= 0) {
+            ck_threadpool_dispatch_n(pool, active, ck_attention_f16_prefill_qtile64_work, &args);
+        } else {
+            ck_attention_f16_prefill_qtile64_work(0, 1, &args);
+        }
+        const size_t count = (size_t)num_heads * (size_t)q_tokens * (size_t)aligned_head_dim;
+        for (size_t i = 0; i < count; ++i) {
+            output[i] = bf16_to_float(float_to_bf16(output[i]));
+        }
+        return CK_ATTENTION_STATUS_OK;
+    }
+
+    const size_t token_elems = (size_t)num_heads * (size_t)aligned_head_dim;
+    float *q_token = (float *)malloc(token_elems * sizeof(float));
+    float *out_token = (float *)malloc(token_elems * sizeof(float));
+    if (!q_token || !out_token) {
+        free(q_token);
+        free(out_token);
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+    ck_attention_status_t status = CK_ATTENTION_STATUS_OK;
+    for (int t = 0; t < q_tokens; ++t) {
+        for (int h = 0; h < num_heads; ++h) {
+            memcpy(q_token + (size_t)h * (size_t)aligned_head_dim,
+                   q + ((size_t)h * (size_t)q_tokens + (size_t)t) * (size_t)aligned_head_dim,
+                   (size_t)aligned_head_dim * sizeof(float));
+        }
+        status = attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract(
+            q_token, k_cache, v_cache, out_token,
+            num_heads, num_kv_heads, past_tokens + t + 1, cache_capacity,
+            head_dim, aligned_head_dim, reduction);
+        if (status != CK_ATTENTION_STATUS_OK) break;
+        for (int h = 0; h < num_heads; ++h) {
+            memcpy(output + ((size_t)h * (size_t)q_tokens + (size_t)t) * (size_t)aligned_head_dim,
+                   out_token + (size_t)h * (size_t)aligned_head_dim,
+                   (size_t)aligned_head_dim * sizeof(float));
+        }
+    }
+    free(q_token);
+    free(out_token);
+    return status;
+}
+
+ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract(
+    const float *q,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int q_tokens,
+    int past_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    ck_attention_reduction_t reduction)
+{
+    if (!q || !k_cache || !v_cache || !output ||
+        num_heads <= 0 || num_kv_heads <= 0 ||
+        num_heads % num_kv_heads != 0 ||
+        q_tokens <= 0 || past_tokens < 0 ||
+        past_tokens + q_tokens > cache_capacity ||
+        head_dim <= 0 || aligned_head_dim < head_dim) {
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+    if (reduction != CK_ATTN_REDUCTION_BF16_PYTORCH_SDPA) {
+        return CK_ATTENTION_STATUS_UNSUPPORTED_CONTRACT;
+    }
+
+#if defined(__AVX512F__)
+    pthread_once(&ck_pytorch_attention_once, ck_bind_pytorch_attention_primitives);
+    return ck_attention_prefill_bf16_pytorch_math_gqa_full(
+        q, k_cache, v_cache, output,
+        num_heads, num_kv_heads, q_tokens, past_tokens, cache_capacity,
+        head_dim, aligned_head_dim);
+#else
+    return CK_ATTENTION_STATUS_UNSUPPORTED_CONTRACT;
+#endif
 }
 
 void attention_forward_decode_head_major_gqa_flash_f16cache(const float *q_token,

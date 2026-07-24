@@ -31,6 +31,16 @@ def _load_bridge_module():
     return module
 
 
+def _load_ranking_normalizer():
+    path = SCRIPT_DIR / "normalize_xray_ranking_report_v8.py"
+    spec = importlib.util.spec_from_file_location("cke_bf16_ranking_normalizer", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load X-ray ranking normalizer: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
@@ -52,6 +62,37 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _numerical_thread_provenance(torch_module: Any, requested_threads: int) -> dict[str, Any]:
+    """Validate the thread-count inputs that can change BF16 reduction order."""
+    requested = int(requested_threads)
+    environment = {
+        name: os.environ.get(name)
+        for name in ("CK_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+    }
+    mismatches = {
+        name: value
+        for name, value in environment.items()
+        if value is None or int(value) != requested
+    }
+    torch_threads = int(torch_module.get_num_threads())
+    if torch_threads != requested:
+        mismatches["torch_num_threads"] = torch_threads
+    if mismatches:
+        raise RuntimeError(
+            "BF16 numerical thread provenance mismatch: "
+            f"requested={requested} observed={mismatches}"
+        )
+    return {
+        "requested_threads": requested,
+        "ck_num_threads": int(environment["CK_NUM_THREADS"]),
+        "omp_num_threads": int(environment["OMP_NUM_THREADS"]),
+        "mkl_num_threads": int(environment["MKL_NUM_THREADS"]),
+        "torch_num_threads": torch_threads,
+        "torch_num_interop_threads": int(torch_module.get_num_interop_threads()),
+        "thread_count_changes_arithmetic_order": True,
+    }
 
 
 def _custom_prefix_report(prefix_path: Path) -> tuple[Path, dict[str, Any]]:
@@ -396,6 +437,7 @@ def main() -> int:
 
     bridge = _load_bridge_module()
     torch.set_num_threads(args.threads)
+    thread_provenance = _numerical_thread_provenance(torch, args.threads)
     checkpoint = args.checkpoint.resolve()
     output_dir = args.output_dir.resolve()
     result_dir = output_dir / "images"
@@ -645,6 +687,7 @@ def main() -> int:
             ),
             "teacher_forced": bool(args.teacher_force_pytorch),
             "decoder_process": args.decoder_process,
+            "numerical_thread_provenance": thread_provenance,
             "teacher_forced_input_ids": [
                 int(value) for value in decoder_report.get("teacher_forced_input_ids", [])
             ],
@@ -663,6 +706,11 @@ def main() -> int:
                 "ck_decoder_stages": decoder_timings,
             },
         }
+        if args.teacher_force_pytorch:
+            ranking_path = result_dir / f"{int(sample['index']):03d}.xray-ranking.json"
+            ranking = _load_ranking_normalizer().normalize(result, "teacher_forced")
+            _write_json(ranking_path, ranking)
+            result["xray_ranking_report"] = str(ranking_path)
         _write_json(result_path, result)
         completed.append(result)
         print(
@@ -680,6 +728,7 @@ def main() -> int:
             "prompt": args.prompt,
             "max_new_tokens": args.max_new_tokens,
             "threads": args.threads,
+            "numerical_thread_provenance": thread_provenance,
             "teacher_forced": bool(args.teacher_force_pytorch),
             "completed": len(completed),
             "passed": sum(bool(row.get("exact_pre_eos")) for row in completed),

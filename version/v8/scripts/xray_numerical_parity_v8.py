@@ -188,6 +188,8 @@ XRAY_FIX_PROGRESSION = {
         "Validate against an independent scalar formula and the requested PyTorch or llama.cpp backend oracle.",
         "Register the exact function and validated contract in the kernel map; unsupported and ambiguous resolutions must hard-fail.",
         "When a small stored delta precedes a later failure, run same-backend forward/VJP sensitivity ablations before blaming a backward provider; Q, K, and V perturbations must be isolated.",
+        "If the final encoder prefix is byte-exact but teacher-forced ranking fails, close the encoder interval and switch X-ray to decoder mixed-prefill/decode checkpoints at the first failing position.",
+        "When sparse tensors pass but ranking fails, expand only the measured interval with the largest positive relative-RMSE growth; never reopen an all-exact phase.",
         "Run isolated kernel tests, numerical-contract resolution, stitched checkpoint parity, mixed-prefill logits, and teacher-forced parity in that order.",
         "Rerun X-ray from the last passing checkpoint and confirm the first failure progresses to a later semantic edge.",
         "Preserve the new evidence in nightly and the HTML test-report capability accordion so the bug cannot silently recur."
@@ -237,6 +239,78 @@ def _metric_status(metrics: Dict[str, Any], threshold: Dict[str, Any]) -> tuple[
     if metrics["max_abs"] > threshold["max_abs_max"]:
         failures.append("max_abs")
     return ("fail" if failures else "pass"), failures
+
+
+def _resolved_execution(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep the exact numerical provider attached to every measured edge."""
+    return {
+        "producer": entry.get("producer"),
+        "phase": entry.get("phase"),
+        "layer": entry.get("layer"),
+        "storage_dtype": entry.get("storage_dtype"),
+        "exported_dtype": entry.get("exported_dtype"),
+        "resolved_contract_id": entry.get("resolved_contract_id"),
+        "kernel_id": entry.get("kernel_id"),
+        "function": entry.get("function"),
+    }
+
+
+def _drift_progression(rows: list[Dict[str, Any]]) -> Dict[str, Any]:
+    """Describe error accumulation without inventing another pass threshold.
+
+    Relative RMSE is scale-normalized, so its delta is useful across adjacent
+    semantic checkpoints. Ratios are reported only after a non-zero baseline;
+    the first rounding difference is intentionally not called infinite
+    amplification.
+    """
+    checkpoints = []
+    previous = None
+    first_non_exact = None
+    largest_boundary = None
+    for row in rows:
+        metrics = row.get("metrics")
+        if not isinstance(metrics, dict):
+            continue
+        current = float(metrics["relative_rmse"])
+        item = {
+            "checkpoint_id": row["checkpoint_id"],
+            "status": row["status"],
+            "relative_rmse": current,
+            "rmse": float(metrics["rmse"]),
+            "max_abs": float(metrics["max_abs"]),
+            "byte_exact": bool(metrics["byte_exact"]),
+            "resolved_execution": row.get("resolved_execution"),
+            "previous_checkpoint_id": previous["checkpoint_id"] if previous else None,
+            "relative_rmse_delta": current - previous["relative_rmse"] if previous else None,
+            "relative_rmse_ratio": (
+                current / previous["relative_rmse"]
+                if previous and previous["relative_rmse"] > 0.0
+                else None
+            ),
+        }
+        checkpoints.append(item)
+        if first_non_exact is None and not item["byte_exact"]:
+            first_non_exact = item
+        if previous is not None:
+            boundary = {
+                "from_checkpoint_id": previous["checkpoint_id"],
+                "to_checkpoint_id": item["checkpoint_id"],
+                "relative_rmse_before": previous["relative_rmse"],
+                "relative_rmse_after": current,
+                "relative_rmse_delta": item["relative_rmse_delta"],
+                "relative_rmse_ratio": item["relative_rmse_ratio"],
+                "resolved_execution": item["resolved_execution"],
+            }
+            if largest_boundary is None or boundary["relative_rmse_delta"] > largest_boundary["relative_rmse_delta"]:
+                largest_boundary = boundary
+        previous = item
+    return {
+        "metric": "relative_rmse",
+        "policy": "observational_no_additional_tolerance",
+        "first_non_exact": first_non_exact,
+        "largest_amplification_boundary": largest_boundary,
+        "checkpoints": checkpoints,
+    }
 
 
 def _load_planner():
@@ -295,7 +369,15 @@ def compare_manifests(
             else:
                 status, failed_metrics = _metric_status(metrics, threshold)
                 classification = "NONFINITE_OUTPUT" if "nonfinite" in failed_metrics else ("KERNEL_IMPLEMENTATION_DIVERGENCE" if status == "fail" else "MATCH")
-                row = {"checkpoint_id": checkpoint_id, "status": status, "classification": classification, "metrics": metrics, "failed_metrics": failed_metrics, "threshold": threshold}
+                row = {
+                    "checkpoint_id": checkpoint_id,
+                    "status": status,
+                    "classification": classification,
+                    "metrics": metrics,
+                    "failed_metrics": failed_metrics,
+                    "threshold": threshold,
+                    "resolved_execution": _resolved_execution(left),
+                }
         rows.append(row)
         if (
             first_non_exact is None
@@ -333,7 +415,11 @@ def compare_manifests(
         )
 
     planner = _load_planner()
-    plan = planner.plan(profile, {"comparisons": rows}, checkpoint_order=active_order)
+    plan = planner.plan(
+        profile,
+        {"comparisons": rows, "ranking_divergence": ranking},
+        checkpoint_order=active_order,
+    )
     return {
         "schema": "cke.xray_numerical_report",
         "schema_version": 1,
@@ -343,6 +429,7 @@ def compare_manifests(
         "comparisons": rows,
         "first_divergence": first_classification,
         "first_non_exact_checkpoint": first_non_exact,
+        "drift_progression": _drift_progression(rows),
         "last_passing_checkpoint": last_passing_checkpoint,
         "unresolved_contract_checkpoints": unresolved_contracts,
         "ranking_divergence": ranking,
@@ -375,6 +462,13 @@ def main() -> int:
         print(f"class={divergence.get('classification')}")
         print(f"fix_owner={divergence.get('fix_owner')}")
         print(f"action={divergence.get('recommended_action')}")
+    amplification = (result.get("drift_progression") or {}).get("largest_amplification_boundary")
+    if amplification:
+        print(
+            "largest_amplification="
+            f"{amplification['from_checkpoint_id']}->{amplification['to_checkpoint_id']} "
+            f"relative_rmse_delta={amplification['relative_rmse_delta']:.9g}"
+        )
     print(f"next={','.join(result['next_plan'].get('next_checkpoints', []))}")
     return 1 if result["status"] == "fail" else 0
 

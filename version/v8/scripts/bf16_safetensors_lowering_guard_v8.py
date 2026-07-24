@@ -334,12 +334,12 @@ def run_guard(workdir: Path) -> None:
     expected_kernels = {
         "patch_proj": "gemm_nt_bf16",
         "patch_proj_aux": "gemm_nt_bf16",
-        "qkv_packed_proj": "gemm_nt_bf16_native_bf16_storage",
-        "out_proj": "gemm_nt_bf16_native_bf16_storage",
-        "mlp_up": "gemm_nt_bf16_native_bf16_storage",
-        "mlp_down": "gemm_nt_bf16_native_bf16_storage",
-        "projector_fc1": "gemm_nt_bf16_amx_bf16_storage",
-        "projector_fc2": "gemm_nt_bf16_amx_bf16_storage",
+        "qkv_packed_proj": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+        "out_proj": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+        "mlp_up": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+        "mlp_down": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+        "projector_fc1": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+        "projector_fc2": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
     }
     for op_name, expected in expected_kernels.items():
         got = kernels_by_op.get(op_name)
@@ -362,8 +362,7 @@ def run_guard(workdir: Path) -> None:
     if "gemm_nt_bf16(" not in generated:
         raise AssertionError("generated C does not call gemm_nt_bf16")
     for required in (
-        "gemm_nt_bf16_native_bf16_storage(",
-        "gemm_nt_bf16_amx_bf16_storage(",
+        "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage(",
     ):
         if required not in generated:
             raise AssertionError(f"generated C does not call {required}")

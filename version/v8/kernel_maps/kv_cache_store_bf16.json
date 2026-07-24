@@ -1,0 +1,38 @@
+{
+  "id": "kv_cache_store_bf16",
+  "op": "kv_cache_store",
+  "variant": "bf16_cache",
+  "quant": {"activation": "fp32", "output": "bf16"},
+  "inputs": [
+    {"name": "k", "dtype": "fp32", "shape": ["num_kv_heads", "head_dim"]},
+    {"name": "v", "dtype": "fp32", "shape": ["num_kv_heads", "head_dim"]}
+  ],
+  "outputs": [
+    {"name": "kv_cache_k", "dtype": "bf16", "shape": ["num_layers", "num_kv_heads", "max_seq_len", "head_dim"]},
+    {"name": "kv_cache_v", "dtype": "bf16", "shape": ["num_layers", "num_kv_heads", "max_seq_len", "head_dim"]}
+  ],
+  "dims": ["num_kv_heads", "head_dim", "num_layers", "max_seq_len"],
+  "impl": {
+    "function": "kv_cache_store_bf16",
+    "c_declaration": "void kv_cache_store_bf16(uint16_t *kv_cache_k, uint16_t *kv_cache_v, const float *k, const float *v, int layer, int pos, int num_kv_heads, int head_dim, int max_seq_len);",
+    "sources": ["src/kernels/kv_cache_kernels.c"]
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"name": "kv_cache_k", "source": "runtime:kv_cache_k_layer_u16", "cast": "uint16_t*"},
+      {"name": "kv_cache_v", "source": "runtime:kv_cache_v_layer_u16", "cast": "uint16_t*"},
+      {"name": "k", "source": "activation:k", "cast": "const float*"},
+      {"name": "v", "source": "activation:v", "cast": "const float*"},
+      {"name": "layer", "source": "const:0"},
+      {"name": "pos", "source": "runtime:pos"},
+      {"name": "num_kv_heads", "source": "dim:num_kv_heads"},
+      {"name": "head_dim", "source": "dim:head_dim"},
+      {"name": "max_seq_len", "source": "dim:max_seq_len"}
+    ]
+  },
+  "tests": {
+    "unit": ["unittest/bf16/test_kv_cache_storage_bf16.py"],
+    "oracle": "PyTorch BF16 cast bits at Qwen3-VL head_dim=128 and cache boundaries 511/512/1058/1307/1609"
+  }
+}

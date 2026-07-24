@@ -8,6 +8,7 @@ import inspect
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -20,6 +21,37 @@ SPEC.loader.exec_module(MODULE)
 
 
 class CustomPrefixProvenanceTests(unittest.TestCase):
+    class _TorchThreads:
+        @staticmethod
+        def get_num_threads() -> int:
+            return 24
+
+        @staticmethod
+        def get_num_interop_threads() -> int:
+            return 1
+
+    def test_numerical_thread_provenance_is_explicit(self) -> None:
+        environment = {
+            "CK_NUM_THREADS": "24",
+            "OMP_NUM_THREADS": "24",
+            "MKL_NUM_THREADS": "24",
+        }
+        with mock.patch.dict(MODULE.os.environ, environment, clear=False):
+            report = MODULE._numerical_thread_provenance(self._TorchThreads(), 24)
+        self.assertEqual(report["torch_num_threads"], 24)
+        self.assertEqual(report["omp_num_threads"], 24)
+        self.assertTrue(report["thread_count_changes_arithmetic_order"])
+
+    def test_numerical_thread_provenance_rejects_cross_thread_oracle(self) -> None:
+        environment = {
+            "CK_NUM_THREADS": "20",
+            "OMP_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "20",
+        }
+        with mock.patch.dict(MODULE.os.environ, environment, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "thread provenance mismatch"):
+                MODULE._numerical_thread_provenance(self._TorchThreads(), 24)
+
     def test_teacher_forced_trace_uses_backend_top1_not_forced_tokens(self) -> None:
         reference = [
             {"top_k": [{"token_id": 10, "logit": 2.0}]},
@@ -34,6 +66,20 @@ class CustomPrefixProvenanceTests(unittest.TestCase):
     def test_teacher_forced_trace_detects_missing_steps(self) -> None:
         row = {"top_k": [{"token_id": 10, "logit": 2.0}]}
         self.assertEqual(MODULE._first_trace_top1_difference([row, row], [row]), 1)
+
+    def test_corpus_trace_normalizes_directly_for_xray(self) -> None:
+        normalizer = MODULE._load_ranking_normalizer()
+        result = normalizer.normalize({
+            "ck_logit_trace": [
+                {"step": 0, "top_k": [{"token_id": 10, "logit": 2.0}]},
+            ],
+            "torch_logit_trace": [
+                {"step": 0, "top_k": [{"token_id": 11, "logit": 2.0}]},
+            ],
+        }, "teacher_forced")
+        self.assertEqual(result["checks"][0]["status"], "fail")
+        self.assertEqual(result["checks"][0]["ck_top1"], 10)
+        self.assertEqual(result["checks"][0]["oracle_top1"], 11)
 
     def test_failure_histogram_groups_divergence_steps(self) -> None:
         rows = [

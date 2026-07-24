@@ -19,6 +19,27 @@ import qwen3vl_encoder_prefix_parity_suite_v8 as prefix_suite  # type: ignore  #
 
 
 class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
+    def test_generated_engine_prefers_runtime_local_library(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = Path(tmpdir)
+            model = runtime / "libmodel.so"
+            engine = runtime / "libckernel_engine.so"
+            model.write_bytes(b"model")
+            engine.write_bytes(b"engine")
+            self.assertEqual(npv8._resolve_generated_engine(model), engine.resolve())
+
+    def test_generated_engine_honors_explicit_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model = root / "runtime" / "libmodel.so"
+            engine = root / "explicit" / "libckernel_engine.so"
+            model.parent.mkdir()
+            engine.parent.mkdir()
+            model.write_bytes(b"model")
+            engine.write_bytes(b"engine")
+            with mock.patch.dict("os.environ", {"CK_ENGINE_SO": str(engine)}):
+                self.assertEqual(npv8._resolve_generated_engine(model), engine.resolve())
+
     def test_llama_reference_output_name_uses_public_encode_for_qwen3vl(self) -> None:
         config = {
             "projector_out_dim": 4096,

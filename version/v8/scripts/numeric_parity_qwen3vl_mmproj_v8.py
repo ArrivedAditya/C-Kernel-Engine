@@ -613,8 +613,30 @@ def _load_image_file(image_path: Path, height: int, width: int) -> dict[str, Any
     }
 
 
+def _resolve_generated_engine(model_so: Path) -> Path:
+    override = os.environ.get("CK_ENGINE_SO")
+    if override:
+        engine = Path(override).expanduser().resolve()
+        if not engine.is_file():
+            raise FileNotFoundError(f"CK_ENGINE_SO does not name an engine library: {engine}")
+        return engine
+
+    runtime_engine = model_so.resolve().parent / "libckernel_engine.so"
+    if runtime_engine.is_file():
+        return runtime_engine
+
+    build_engine = BUILD_DIR / "libckernel_engine.so"
+    if build_engine.is_file():
+        return build_engine.resolve()
+    raise FileNotFoundError(
+        "generated model has no adjacent libckernel_engine.so and the repository engine is missing: "
+        f"model={model_so.resolve()} fallback={build_engine.resolve()}"
+    )
+
+
 def _load_generated_lib(model_so: Path) -> ctypes.CDLL:
-    ctypes.CDLL(str(BUILD_DIR / "libckernel_engine.so"), mode=ctypes.RTLD_GLOBAL)
+    engine_so = _resolve_generated_engine(model_so)
+    ctypes.CDLL(str(engine_so), mode=ctypes.RTLD_GLOBAL)
     lib = ctypes.CDLL(str(model_so))
     lib.ck_model_init_with_manifest.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
     lib.ck_model_init_with_manifest.restype = ctypes.c_int
@@ -865,6 +887,7 @@ _CK_HIDDEN_EXPORT_OUTPUTS = {
     "vision_position_embeddings",
     "vision_projector_fc1",
     "vision_projector_fc1_last",
+    "vision_projector_gelu",
     "vision_projector_out",
     "vision_projector_out_last",
     "vision_projector_prep",

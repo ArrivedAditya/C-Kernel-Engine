@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exact PyTorch AVX-512 BF16 RMSNorm storage-contract tests."""
+"""Exact PyTorch BF16 full-width RMSNorm storage-contract tests."""
 
 from __future__ import annotations
 
@@ -12,7 +12,9 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[2]
 LIB = ctypes.CDLL(str(ROOT / "build" / "libckernel_engine.so"))
-KERNEL = LIB.rmsnorm_forward_pytorch_bf16_storage
+PYTORCH_CAPABILITY = torch.backends.cpu.get_cpu_capability()
+KERNEL_NAME = "rmsnorm_forward_pytorch_bf16_storage"
+KERNEL = getattr(LIB, KERNEL_NAME)
 FLOAT_P = ctypes.POINTER(ctypes.c_float)
 KERNEL.argtypes = [
     FLOAT_P, FLOAT_P, FLOAT_P, FLOAT_P,
@@ -25,9 +27,9 @@ def bf16_values(values: np.ndarray) -> np.ndarray:
     return torch.from_numpy(values).to(torch.bfloat16).float().numpy()
 
 
-def run_case(tokens: int, dim: int, seed: int) -> None:
+def run_case(tokens: int, dim: int, seed: int, scale: float = 0.03) -> None:
     rng = np.random.default_rng(seed)
-    inputs = bf16_values(rng.standard_normal((tokens, dim), dtype=np.float32) * 0.03)
+    inputs = bf16_values(rng.standard_normal((tokens, dim), dtype=np.float32) * scale)
     gamma = bf16_values(rng.standard_normal(dim, dtype=np.float32) * 0.1 + 1.0)
     actual = np.empty_like(inputs)
     rstd = np.empty(tokens, dtype=np.float32)
@@ -51,12 +53,24 @@ def run_case(tokens: int, dim: int, seed: int) -> None:
 
 
 def main() -> int:
-    if torch.backends.cpu.get_cpu_capability() != "AVX512":
-        print("PyTorch AVX-512 BF16 RMSNorm storage contract [SKIP: AVX512 unavailable]")
+    if torch.backends.cpu.get_cpu_capability() not in {"AVX2", "AVX512"}:
+        print("PyTorch AVX2-cascade BF16 RMSNorm storage contract [SKIP: AVX2 unavailable]")
         return 0
-    for case in ((1, 128, 11), (3, 128, 12), (1, 4096, 13), (4, 4096, 14)):
+    cases = (
+        (1, 128, 11, 0.03),
+        (3, 128, 12, 0.03),
+        (1, 4096, 13, 0.03),
+        (4, 4096, 14, 0.03),
+        # Public practical-width boundary fixture. The former two-accumulator
+        # reduction differs from PyTorch in 38 outputs for this row.
+        (1, 4096, 30, 0.15),
+    )
+    for case in cases:
         run_case(*case)
-    print("PyTorch AVX-512 BF16 RMSNorm storage contract: 4/4 exact")
+    print(
+        f"PyTorch {PYTORCH_CAPABILITY} full-width BF16 RMSNorm storage contract "
+        f"via {KERNEL_NAME}: {len(cases)}/{len(cases)} exact"
+    )
     return 0
 
 

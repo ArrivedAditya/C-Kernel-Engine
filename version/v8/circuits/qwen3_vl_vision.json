@@ -121,6 +121,28 @@
     }
   },
   "required_numerical_contracts": {
+    "vision.frontend.patch_projection.pytorch_onednn_exact": {
+      "op": "patch_projection",
+      "template_ops": ["patch_projection_image"],
+      "selector": {
+        "config_equals": {
+          "vision_patch_projection_reduction_policy": "pytorch_onednn_conv3d_exact"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "patch_projection_bf16_pytorch_onednn_conv3d_storage",
+          "validation": "validated",
+          "evidence": "Qwen3-VL BF16 production-shape patch projection is byte-exact to PyTorch oneDNN Conv3D"
+        }
+      },
+      "checkpoint": {
+        "id": "vision.frontend.patch_projection.output",
+        "producer": "patch_projection_image",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
     "vision.frontend.position.fp32": {
       "op": "position_embeddings",
       "template_ops": [
@@ -267,6 +289,9 @@
       "selector": {
         "config_equals": {
           "vision_mrope_storage_boundary": "bf16"
+        },
+        "config_not_equals": {
+          "vision_mrope_reduction_policy": "pytorch_mkl_exact"
         }
       },
       "phases": {
@@ -287,6 +312,29 @@
         ]
       }
     },
+    "vision.layer.mrope.pytorch_mkl": {
+      "op": "rope",
+      "template_ops": ["rope_qk"],
+      "selector": {
+        "config_equals": {
+          "vision_mrope_storage_boundary": "bf16",
+          "vision_mrope_reduction_policy": "pytorch_mkl_exact"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "vision_mrope_pytorch_mkl_fp32_input_fp32_compute_bf16_output",
+          "validation": "validated",
+          "evidence": "unittest/bf16/test_vision_mrope_pytorch_bf16.py"
+        }
+      },
+      "checkpoint": {
+        "id": "vision.layer.{layer}.q.post_rope",
+        "producer": "vision_mrope",
+        "logical_layout": "head_major",
+        "axis_names": ["head", "token", "channel"]
+      }
+    },
     "vision.layer.layernorm": {
       "op": "layernorm",
       "template_ops": [
@@ -296,6 +344,9 @@
       "selector": {
         "config_equals": {
           "vision_layernorm_storage_boundary": "bf16"
+        },
+        "config_not_equals": {
+          "vision_layernorm_reduction_policy": "pytorch_welford_exact"
         }
       },
       "phases": {
@@ -303,6 +354,35 @@
           "contract_id": "layernorm_bf16_storage_fp32_compute_ggml_reduction_bf16_output",
           "validation": "validated",
           "evidence": "unittest/bf16/test_layernorm_storage_contract_bf16.py"
+        }
+      },
+      "checkpoint": {
+        "id": "vision.layer.{layer}.norm.output",
+        "producer": "layernorm",
+        "logical_layout": "token_major",
+        "axis_names": [
+          "token",
+          "channel"
+        ]
+      }
+    },
+    "vision.layer.layernorm.pytorch_welford_exact": {
+      "op": "layernorm",
+      "template_ops": [
+        "layernorm",
+        "branch_layernorm"
+      ],
+      "selector": {
+        "config_equals": {
+          "vision_layernorm_storage_boundary": "bf16",
+          "vision_layernorm_reduction_policy": "pytorch_welford_exact"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "layernorm_bf16_storage_fp32_compute_aten_avx2_welford_bf16_output",
+          "validation": "validated",
+          "evidence": "unittest/bf16/test_layernorm_storage_contract_bf16.py production 4032x1152 exact oracle"
         }
       },
       "checkpoint": {
@@ -323,6 +403,9 @@
       "selector": {
         "config_equals": {
           "vision_projection_storage_boundary": "bf16"
+        },
+        "config_not_equals": {
+          "vision_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
         }
       },
       "phases": {
@@ -330,6 +413,34 @@
           "contract_id": "bf16_weight_bf16_input_native_pair_dot_bf16_output",
           "validation": "validated",
           "evidence": "unittest/bf16/test_gemm_storage_contract_bf16.py"
+        }
+      },
+      "checkpoint": {
+        "id": "vision.layer.{layer}.qkv.output",
+        "producer": "qkv_packed_proj",
+        "logical_layout": "token_major",
+        "axis_names": [
+          "token",
+          "channel"
+        ]
+      }
+    },
+    "vision.layer.qkv_projection.pytorch_onednn_exact": {
+      "op": "gemm",
+      "template_ops": [
+        "qkv_packed_proj"
+      ],
+      "selector": {
+        "config_equals": {
+          "vision_projection_storage_boundary": "bf16",
+          "vision_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+          "validation": "validated",
+          "evidence": "unittest/bf16/test_pytorch_onednn_oracle_contract_bf16.py"
         }
       },
       "checkpoint": {
@@ -378,6 +489,9 @@
       "selector": {
         "config_equals": {
           "vision_projection_storage_boundary": "bf16"
+        },
+        "config_not_equals": {
+          "vision_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
         }
       },
       "phases": {
@@ -385,6 +499,34 @@
           "contract_id": "bf16_weight_bf16_input_native_pair_dot_bf16_output",
           "validation": "validated",
           "evidence": "unittest/bf16/test_gemm_storage_contract_bf16.py"
+        }
+      },
+      "checkpoint": {
+        "id": "vision.layer.{layer}.out_proj.output",
+        "producer": "out_proj",
+        "logical_layout": "token_major",
+        "axis_names": [
+          "token",
+          "channel"
+        ]
+      }
+    },
+    "vision.layer.out_projection.pytorch_onednn_exact": {
+      "op": "gemm",
+      "template_ops": [
+        "out_proj"
+      ],
+      "selector": {
+        "config_equals": {
+          "vision_projection_storage_boundary": "bf16",
+          "vision_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+          "validation": "validated",
+          "evidence": "unittest/bf16/test_pytorch_onednn_oracle_contract_bf16.py"
         }
       },
       "checkpoint": {
@@ -460,6 +602,9 @@
       "selector": {
         "config_equals": {
           "vision_projection_storage_boundary": "bf16"
+        },
+        "config_not_equals": {
+          "vision_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
         }
       },
       "phases": {
@@ -467,6 +612,35 @@
           "contract_id": "bf16_weight_bf16_input_native_pair_dot_bf16_output",
           "validation": "validated",
           "evidence": "unittest/bf16/test_gemm_storage_contract_bf16.py"
+        }
+      },
+      "checkpoint": {
+        "id": "vision.layer.{layer}.mlp.projection",
+        "producer": "mlp_projection",
+        "logical_layout": "token_major",
+        "axis_names": [
+          "token",
+          "channel"
+        ]
+      }
+    },
+    "vision.layer.mlp_projection.pytorch_onednn_exact": {
+      "op": "gemm",
+      "template_ops": [
+        "mlp_up",
+        "mlp_down"
+      ],
+      "selector": {
+        "config_equals": {
+          "vision_projection_storage_boundary": "bf16",
+          "vision_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+          "validation": "validated",
+          "evidence": "unittest/bf16/test_pytorch_onednn_oracle_contract_bf16.py"
         }
       },
       "checkpoint": {
@@ -533,6 +707,34 @@
         ]
       }
     },
+    "vision.projector.activation.pytorch_sleef_exact": {
+      "op": "gelu",
+      "template_ops": [
+        "projector_gelu",
+        "branch_gelu"
+      ],
+      "selector": {
+        "config_equals": {
+          "vision_activation_storage_boundary": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "gelu_pytorch_erf_sleef_bf16_storage",
+          "validation": "validated",
+          "evidence": "unittest/bf16/test_gelu_pytorch_erf_sleef_storage_bf16.py"
+        }
+      },
+      "checkpoint": {
+        "id": "vision.projector.activation",
+        "producer": "projector_gelu",
+        "logical_layout": "token_major",
+        "axis_names": [
+          "token",
+          "channel"
+        ]
+      }
+    },
     "vision.projector.projection": {
       "op": "gemm",
       "template_ops": [
@@ -544,6 +746,9 @@
       "selector": {
         "config_equals": {
           "vision_projection_storage_boundary": "bf16"
+        },
+        "config_not_equals": {
+          "vision_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
         }
       },
       "phases": {
@@ -551,6 +756,37 @@
           "contract_id": "bf16_weight_bf16_input_amx_tile32_dot_bf16_output",
           "validation": "validated",
           "evidence": "unittest/bf16/test_qwen3vl_performance_sweep_bf16.py"
+        }
+      },
+      "checkpoint": {
+        "id": "vision.projector.projection",
+        "producer": "projector_projection",
+        "logical_layout": "token_major",
+        "axis_names": [
+          "token",
+          "channel"
+        ]
+      }
+    },
+    "vision.projector.projection.pytorch_onednn_exact": {
+      "op": "gemm",
+      "template_ops": [
+        "branch_fc1",
+        "branch_fc2",
+        "projector_fc1",
+        "projector_fc2"
+      ],
+      "selector": {
+        "config_equals": {
+          "vision_projection_storage_boundary": "bf16",
+          "vision_projection_reduction_policy": "pytorch_onednn_brgemm_exact"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+          "validation": "validated",
+          "evidence": "unittest/bf16/test_pytorch_onednn_oracle_contract_bf16.py"
         }
       },
       "checkpoint": {
@@ -572,11 +808,37 @@
         "section": "header",
         "template_op_id": "patch_bias",
         "op": "patch_bias_add",
+        "when": {
+          "config_key": "vision_patch_projection_reduction_policy",
+          "not_equals": "pytorch_onednn_conv3d_exact"
+        },
         "checkpoints": [
           {
             "id": "vision.frontend.patch_bias.output",
             "producer": "patch_bias",
             "tensor": "patch_bias",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "bf16"
+          }
+        ]
+      },
+      "frontend.patch_projection_exact": {
+        "section": "header",
+        "template_op_id": "patch_projection_image",
+        "op": "patch_projection_image",
+        "when": {
+          "config_key": "vision_patch_projection_reduction_policy",
+          "equals": "pytorch_onednn_conv3d_exact"
+        },
+        "checkpoints": [
+          {
+            "id": "vision.frontend.patch_bias.output",
+            "producer": "patch_projection_image",
+            "tensor": "vision_patch_projection",
             "logical_layout": "token_major",
             "axis_names": [
               "token",
@@ -877,6 +1139,24 @@
           }
         ]
       },
+      "projector.activation": {
+        "section": "footer",
+        "template_op_id": "projector_gelu",
+        "op": "projector_gelu",
+        "checkpoints": [
+          {
+            "id": "vision.projector.activation",
+            "producer": "projector_gelu",
+            "tensor": "vision_projector_gelu",
+            "logical_layout": "token_major",
+            "axis_names": [
+              "token",
+              "channel"
+            ],
+            "storage_dtype": "bf16"
+          }
+        ]
+      },
       "prefix.output": {
         "section": "footer",
         "template_op_id": "deepstack_concat",
@@ -909,27 +1189,55 @@
       ],
       "header": [
         {
+          "id": "patch_projection_image",
+          "op": "patch_projection_image",
+          "when": {
+            "config_key": "vision_patch_projection_reduction_policy",
+            "equals": "pytorch_onednn_conv3d_exact"
+          }
+        },
+        {
           "id": "patchify",
-          "op": "patchify"
+          "op": "patchify",
+          "when": {
+            "config_key": "vision_patch_projection_reduction_policy",
+            "not_equals": "pytorch_onednn_conv3d_exact"
+          }
         },
         {
           "id": "patch_proj",
-          "op": "patch_proj"
+          "op": "patch_proj",
+          "when": {
+            "config_key": "vision_patch_projection_reduction_policy",
+            "not_equals": "pytorch_onednn_conv3d_exact"
+          }
         },
         {
           "id": "patch_proj_aux",
-          "op": "patch_proj_aux"
+          "op": "patch_proj_aux",
+          "when": {
+            "config_key": "vision_patch_projection_reduction_policy",
+            "not_equals": "pytorch_onednn_conv3d_exact"
+          }
         },
         {
           "id": "patch_sum",
           "op": "add_stream",
+          "when": {
+            "config_key": "vision_patch_projection_reduction_policy",
+            "not_equals": "pytorch_onednn_conv3d_exact"
+          },
           "params": {
             "merge_size_from_config": "spatial_merge_size"
           }
         },
         {
           "id": "patch_bias",
-          "op": "patch_bias_add"
+          "op": "patch_bias_add",
+          "when": {
+            "config_key": "vision_patch_projection_reduction_policy",
+            "not_equals": "pytorch_onednn_conv3d_exact"
+          }
         },
         {
           "id": "position_embeddings",

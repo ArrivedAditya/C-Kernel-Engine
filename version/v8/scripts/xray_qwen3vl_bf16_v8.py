@@ -175,7 +175,11 @@ def run(args: argparse.Namespace) -> Dict[str, Any]:
         next_requested = list(next_plan.get("next_checkpoints") or [])
         if report["status"] == "pass" or not next_requested:
             break
-        if classification not in {"KERNEL_IMPLEMENTATION_DIVERGENCE", "NONFINITE_OUTPUT"}:
+        if classification not in {
+            "KERNEL_IMPLEMENTATION_DIVERGENCE",
+            "NONFINITE_OUTPUT",
+            "RANKING_DIVERGENCE",
+        }:
             break
         lower_bound = next_plan.get("passing_lower_bound")
         requested = next_requested

@@ -361,6 +361,7 @@ def _attach_semantic_checkpoints(
     template: Dict[str, Any],
     arranged_kernels: List[Dict[str, Any]],
     registry: Dict[str, Any],
+    config: Optional[Dict[str, Any]] = None,
 ) -> None:
     contract = template.get("semantic_checkpoints")
     if not isinstance(contract, dict):
@@ -385,14 +386,19 @@ def _attach_semantic_checkpoints(
         for item in registry.get("kernels", [])
         if isinstance(item, dict)
     }
-    matched: Dict[str, int] = {name: 0 for name in contract["exports"]}
+    active_exports = {
+        name: declaration
+        for name, declaration in contract["exports"].items()
+        if _template_item_is_active(declaration, config)
+    }
+    matched: Dict[str, int] = {name: 0 for name in active_exports}
     seen_ids: set[str] = set()
     for arranged in arranged_kernels:
         section = str(arranged.get("section", ""))
         template_op_id = str(arranged.get("template_op_id", ""))
         op = str(arranged.get("op", ""))
         layer = int(arranged.get("layer", -1))
-        for declaration_name, declaration in contract["exports"].items():
+        for declaration_name, declaration in active_exports.items():
             if (
                 declaration["section"] != section
                 or declaration["template_op_id"] != template_op_id
@@ -759,21 +765,110 @@ def _hydrate_manifest_template(manifest: Dict[str, Any]) -> Dict[str, Any]:
     hydrated_template = manifest.get("template") if isinstance(manifest.get("template"), dict) else {}
     hydrated_contract = hydrated_template.get("contract") if isinstance(hydrated_template.get("contract"), dict) else {}
     required_contracts = hydrated_template.get("required_contracts") if isinstance(hydrated_template.get("required_contracts"), dict) else {}
-    attention_contract = required_contracts.get("decoder.attention") if isinstance(required_contracts.get("decoder.attention"), dict) else {}
+    attention_candidates = []
+    for operation, operation_doc in required_contracts.items():
+        if not isinstance(operation_doc, dict) or operation_doc.get("op") != "attention":
+            continue
+        if "attn" not in (operation_doc.get("template_ops") or []):
+            continue
+        phases = operation_doc.get("phases") if isinstance(operation_doc.get("phases"), dict) else {}
+        if "decode" not in phases:
+            continue
+        if _contract_selector_matches(operation_doc.get("selector"), hydrated_config, str(operation)):
+            attention_candidates.append((str(operation), operation_doc))
+    if attention_candidates and len(attention_candidates) != 1:
+        names = [name for name, _ in attention_candidates]
+        raise RuntimeError(
+            "HARD CONTRACT FAULT: decoder circuit must resolve exactly one attention contract; "
+            f"resolved={names} in manifest:{template_name or '<embedded>'}."
+        )
+    attention_contract = attention_candidates[0][1] if attention_candidates else {}
     attention_phases = attention_contract.get("phases") if isinstance(attention_contract.get("phases"), dict) else {}
     decode_attention = attention_phases.get("decode") if isinstance(attention_phases.get("decode"), dict) else {}
     decode_requires = decode_attention.get("requires") if isinstance(decode_attention.get("requires"), dict) else {}
     resolved_kv_dtype = str(decode_requires.get("tensor.kv.dtype", "") or "").strip().lower()
     if resolved_kv_dtype:
-        if resolved_kv_dtype not in {"fp16", "fp32"}:
+        if resolved_kv_dtype not in {"bf16", "fp16", "fp32"}:
             raise RuntimeError(
-                "HARD CONTRACT FAULT: decoder.attention.decode tensor.kv.dtype must be fp16 or fp32; "
+                "HARD CONTRACT FAULT: decoder attention tensor.kv.dtype must be bf16, fp16, or fp32; "
                 f"got {resolved_kv_dtype!r} in manifest:{template_name or '<embedded>'}."
             )
         hydrated_config["decode_kv_cache_dtype"] = resolved_kv_dtype
     bridge_contract = hydrated_contract.get("multimodal_bridge")
     if isinstance(bridge_contract, dict):
-        hydrated_config["multimodal_bridge_contract"] = copy.deepcopy(bridge_contract)
+        resolved_bridge = copy.deepcopy(bridge_contract)
+        schedules = resolved_bridge.pop("prefill_schedules", None)
+        prefill_attention = (
+            attention_phases.get("prefill")
+            if isinstance(attention_phases.get("prefill"), dict)
+            else {}
+        )
+        prefill_requires = (
+            prefill_attention.get("requires")
+            if isinstance(prefill_attention.get("requires"), dict)
+            else {}
+        )
+        batching = str(
+            prefill_requires.get("execution.prefill_batching", "") or ""
+        ).strip()
+        if schedules is not None:
+            if not isinstance(schedules, dict) or not batching or batching not in schedules:
+                raise RuntimeError(
+                    "HARD CONTRACT FAULT: multimodal bridge cannot resolve the active "
+                    f"prefill batching contract {batching!r} in "
+                    f"manifest:{template_name or '<embedded>'}."
+                )
+            resolved_schedule = copy.deepcopy(schedules[batching])
+            for transform_name in ("position_transform", "deepstack_injection"):
+                transform = resolved_schedule.get(transform_name)
+                if transform is None:
+                    continue
+                if not isinstance(transform, dict):
+                    raise RuntimeError(
+                        f"HARD CONTRACT FAULT: mixed-prefill {transform_name} must be an object."
+                    )
+                kernel_id = str(transform.get("kernel_id", "") or "").strip()
+                contract_id = str(transform.get("contract_id", "") or "").strip()
+                if not kernel_id or not contract_id:
+                    raise RuntimeError(
+                        f"HARD CONTRACT FAULT: mixed-prefill {transform_name} requires exact "
+                        "kernel_id and contract_id."
+                    )
+                registry = load_kernel_registry()
+                matches = [
+                    kernel for kernel in registry.get("kernels", [])
+                    if isinstance(kernel, dict) and kernel.get("id") == kernel_id
+                ]
+                if len(matches) != 1:
+                    raise RuntimeError(
+                        f"HARD CONTRACT FAULT: mixed-prefill {transform_name} must resolve "
+                        f"exactly one kernel; kernel_id={kernel_id!r} matches={len(matches)}."
+                    )
+                kernel = matches[0]
+                capabilities = [
+                    capability for capability in kernel.get("numerical_capabilities", [])
+                    if isinstance(capability, dict)
+                    and capability.get("contract_id") == contract_id
+                ]
+                if len(capabilities) != 1:
+                    raise RuntimeError(
+                        f"HARD CONTRACT FAULT: mixed-prefill {transform_name} must resolve "
+                        f"exactly one numerical capability; kernel_id={kernel_id!r} "
+                        f"contract_id={contract_id!r} matches={len(capabilities)}."
+                    )
+                function = str(capabilities[0].get("function", "") or "").strip()
+                implementation_function = str(
+                    (kernel.get("impl") or {}).get("function", "") or ""
+                ).strip()
+                if not function or function != implementation_function:
+                    raise RuntimeError(
+                        f"HARD CONTRACT FAULT: mixed-prefill {transform_name} capability and "
+                        f"kernel implementation disagree for {kernel_id!r}."
+                    )
+                transform["resolved_function"] = function
+            resolved_bridge["prefill_schedule"] = resolved_schedule
+            resolved_bridge["prefill_batching"] = batching
+        hydrated_config["multimodal_bridge_contract"] = resolved_bridge
     manifest["config"] = hydrated_config
     return manifest
 
@@ -786,35 +881,89 @@ def _validate_segmented_prefill_contract(
     if not isinstance(circuit, dict):
         return
     contract = circuit.get("contract") if isinstance(circuit.get("contract"), dict) else {}
-    bridge = contract.get("multimodal_bridge") if isinstance(contract.get("multimodal_bridge"), dict) else {}
-    schedule = bridge.get("prefill_schedule") if isinstance(bridge.get("prefill_schedule"), dict) else {}
-    schedule_is_segmented = bool(schedule) and (
-        schedule.get("segments") == ["text_before", "visual", "text_after"]
-        and schedule.get("cache_transition") == "append_preserve"
-        and schedule.get("position_transition") == "segment_defined"
-    )
-    if schedule and not schedule_is_segmented:
-        raise RuntimeError(
-            "HARD CONTRACT FAULT: unsupported mixed-prefill schedule in "
-            f"{source}. The segmented append contract requires text_before, visual, text_after; "
-            "append_preserve; and segment_defined."
-        )
-
+    if "multimodal_bridge" not in contract:
+        return
     required = circuit.get("required_contracts")
     required = required if isinstance(required, dict) else {}
-    attention = required.get("decoder.attention")
-    attention = attention if isinstance(attention, dict) else {}
-    phases = attention.get("phases") if isinstance(attention.get("phases"), dict) else {}
-    prefill = phases.get("prefill") if isinstance(phases.get("prefill"), dict) else {}
-    requirements = prefill.get("requires") if isinstance(prefill.get("requires"), dict) else {}
-    attention_is_segmented = requirements.get("execution.prefill_batching") == "segmented_append"
-
-    if schedule_is_segmented != attention_is_segmented:
+    attention_docs = [
+        doc for doc in required.values()
+        if isinstance(doc, dict) and doc.get("op") == "attention"
+        and "attn" in (doc.get("template_ops") or [])
+    ]
+    attention_batching = []
+    for attention in attention_docs:
+        phases = attention.get("phases") if isinstance(attention.get("phases"), dict) else {}
+        prefill = phases.get("prefill") if isinstance(phases.get("prefill"), dict) else {}
+        requirements = prefill.get("requires") if isinstance(prefill.get("requires"), dict) else {}
+        batching = requirements.get("execution.prefill_batching")
+        if batching is not None:
+            attention_batching.append(str(batching))
+    if not attention_batching:
+        return
+    bridge = contract.get("multimodal_bridge") if isinstance(contract.get("multimodal_bridge"), dict) else {}
+    schedules = bridge.get("prefill_schedules")
+    if not isinstance(schedules, dict) or not schedules:
         raise RuntimeError(
-            "HARD CONTRACT FAULT: segmented mixed-prefill schedule and attention provider disagree "
-            f"in {source}. Declare both multimodal_bridge.prefill_schedule.cache_transition="
-            "append_preserve and decoder.attention.prefill execution.prefill_batching="
-            "segmented_append, or declare neither."
+            f"HARD CONTRACT FAULT: multimodal bridge in {source} must declare prefill_schedules."
+        )
+    expected_schedules = {
+        "segmented_append": {
+            "segments": ["text_before", "visual", "text_after"],
+            "cache_transition": "append_preserve",
+            "position_transition": "segment_defined",
+        },
+        "unified_mixed": {
+            "segments": ["text_before", "visual", "text_after"],
+            "cache_transition": "single_pass",
+            "position_transition": "explicit_full_sequence",
+        },
+    }
+    for name, schedule in schedules.items():
+        schedule_core = copy.deepcopy(schedule) if isinstance(schedule, dict) else schedule
+        position_transform = (
+            schedule_core.pop("position_transform", None)
+            if isinstance(schedule_core, dict) else None
+        )
+        deepstack_injection = (
+            schedule_core.pop("deepstack_injection", None)
+            if isinstance(schedule_core, dict) else None
+        )
+        if name not in expected_schedules or schedule_core != expected_schedules[name]:
+            raise RuntimeError(
+                "HARD CONTRACT FAULT: unsupported mixed-prefill schedule "
+                f"{name!r} in {source}."
+            )
+        if name == "unified_mixed":
+            if (
+                not isinstance(position_transform, dict)
+                or not str(position_transform.get("kernel_id", "") or "").strip()
+                or not str(position_transform.get("contract_id", "") or "").strip()
+            ):
+                raise RuntimeError(
+                    "HARD CONTRACT FAULT: unified mixed-prefill requires an exact "
+                    f"positions-aware kernel and numerical contract in {source}."
+                )
+            if (
+                not isinstance(deepstack_injection, dict)
+                or not str(deepstack_injection.get("kernel_id", "") or "").strip()
+                or not str(deepstack_injection.get("contract_id", "") or "").strip()
+                or deepstack_injection.get("target") != "visual_rows_after_decoder_layer"
+                or deepstack_injection.get("layers_from_config") != "num_deepstack_layers"
+            ):
+                raise RuntimeError(
+                    "HARD CONTRACT FAULT: unified mixed-prefill requires an exact "
+                    f"deepstack injection kernel and numerical contract in {source}."
+                )
+        elif position_transform is not None or deepstack_injection is not None:
+            raise RuntimeError(
+                "HARD CONTRACT FAULT: segmented mixed-prefill cannot declare a full-sequence "
+                f"position_transform or deepstack_injection in {source}."
+            )
+
+    if any(value not in schedules for value in attention_batching):
+        raise RuntimeError(
+            "HARD CONTRACT FAULT: mixed-prefill schedules and attention providers disagree "
+            f"in {source}; declared batching={attention_batching}."
         )
 
 
@@ -895,6 +1044,10 @@ OP_DATAFLOW = {
     "patchify": {
         "inputs": {"image": "external:image_input"},
         "outputs": {"patches": {"slot": "patch_scratch", "dtype": "fp32"}},
+    },
+    "patch_projection_image": {
+        "inputs": {"image": "external:image_input"},
+        "outputs": {"y": {"slot": "main_stream", "dtype": "fp32"}},
     },
     "patch_proj": {
         "inputs": {"x": "patch_scratch"},
@@ -2402,7 +2555,12 @@ def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, 
     uses_rope = bool(config.get("_template_uses_rope", True))
     has_logits = bool(config.get("_template_has_logits", True))
     decode_kv_cache_dtype = str(config.get("decode_kv_cache_dtype", "fp32") or "fp32").strip().lower()
-    kv_cache_dtype = "fp16" if mode == "decode" and decode_kv_cache_dtype in {"fp16", "f16"} else "fp32"
+    if mode == "decode" and decode_kv_cache_dtype in {"bf16", "bfloat16"}:
+        kv_cache_dtype = "bf16"
+    elif mode == "decode" and decode_kv_cache_dtype in {"fp16", "f16"}:
+        kv_cache_dtype = "fp16"
+    else:
+        kv_cache_dtype = "fp32"
     kv_elem_bytes = _dtype_size_bytes(kv_cache_dtype)
 
     def _positive_int_config(name: str, default: int) -> int:
@@ -2666,6 +2824,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "tiktoken_tokenizer": None,  # TikToken tokenizer - init handled separately
     "patch_embeddings": None,  # Vision model patches - init handled separately
     "patchify": "vision_patchify",
+    "patch_projection_image": "patch_projection",
     "patch_proj": "matmul",
     "patch_proj_aux": "matmul",
     "add_stream": "add_stream",
@@ -2852,16 +3011,45 @@ def _resolve_config_layer_kind(
     return default_kind
 
 
-def _template_item_is_active(item: Dict[str, Any]) -> bool:
+def _template_item_is_active(
+    item: Dict[str, Any], config: Optional[Dict[str, Any]] = None
+) -> bool:
     lowering = item.get("lowering") if isinstance(item.get("lowering"), dict) else {}
     enabled = lowering.get("enabled")
     if enabled is False:
         return False
     status = str(item.get("status", "active") or "active").strip().lower()
-    return status not in {"planned", "disabled", "metadata_only"}
+    if status in {"planned", "disabled", "metadata_only"}:
+        return False
+    condition = item.get("when")
+    if condition is None or config is None:
+        return True
+    if not isinstance(condition, dict) or not isinstance(condition.get("config_key"), str):
+        raise RuntimeError(
+            "HARD CIRCUIT CONDITION FAULT: template op 'when' requires config_key "
+            "and exactly one of equals/not_equals."
+        )
+    predicates = [name for name in ("equals", "not_equals") if name in condition]
+    if len(predicates) != 1:
+        raise RuntimeError(
+            "HARD CIRCUIT CONDITION FAULT: template op 'when' requires exactly one "
+            "of equals/not_equals."
+        )
+    current: Any = config
+    for part in condition["config_key"].split("."):
+        if not isinstance(current, dict) or part not in current:
+            current = None
+            break
+        current = current[part]
+    predicate = predicates[0]
+    return current == condition[predicate] if predicate == "equals" else current != condition[predicate]
 
 
-def _normalize_template_op_items(section: Any, include_inactive: bool = False) -> List[Dict[str, Any]]:
+def _normalize_template_op_items(
+    section: Any,
+    include_inactive: bool = False,
+    config: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     if not isinstance(section, list):
         return out
@@ -2875,17 +3063,26 @@ def _normalize_template_op_items(section: Any, include_inactive: bool = False) -
         op = candidate.get("op")
         if not isinstance(op, str) or not op:
             continue
-        if include_inactive or _template_item_is_active(candidate):
+        if include_inactive or _template_item_is_active(candidate, config):
             out.append(candidate)
     return out
 
 
-def _extract_template_ops(section: Any, include_inactive: bool = False) -> List[str]:
+def _extract_template_ops(
+    section: Any,
+    include_inactive: bool = False,
+    config: Optional[Dict[str, Any]] = None,
+) -> List[str]:
     # Template sections are the graph contract. The lowerer should consume the
     # declared operations exactly as written here; future branching/routing
     # support should surface as explicit template ops/subgraphs rather than
     # family-specific conditionals in the lowerer.
-    return [item["op"] for item in _normalize_template_op_items(section, include_inactive=include_inactive)]
+    return [
+        item["op"]
+        for item in _normalize_template_op_items(
+            section, include_inactive=include_inactive, config=config
+        )
+    ]
 
 
 def _template_graph_slots(op_item: Dict[str, Any]) -> Dict[str, Any]:
@@ -2951,7 +3148,11 @@ def _resolve_body_items_for_layer(
 ) -> List[Dict[str, Any]]:
     ops_by_kind = body_def.get("ops_by_kind")
     if not isinstance(ops_by_kind, dict):
-        return _normalize_template_op_items(body_def.get("ops", []), include_inactive=include_inactive)
+        return _normalize_template_op_items(
+            body_def.get("ops", []),
+            include_inactive=include_inactive,
+            config=config,
+        )
 
     # Contract note:
     #   Do not hard-code family-specific graph stitching here.
@@ -2980,7 +3181,11 @@ def _resolve_body_items_for_layer(
         raise RuntimeError(
             f"Template body missing ops_by_kind['{layer_kind}'] for layer {layer_idx}."
         )
-    return _normalize_template_op_items(ops, include_inactive=include_inactive)
+    return _normalize_template_op_items(
+        ops,
+        include_inactive=include_inactive,
+        config=config,
+    )
 
 
 def _resolve_body_ops_for_layer(
@@ -3006,11 +3211,19 @@ def _collect_body_items_for_validation(
     include_inactive: bool = False,
 ) -> List[Dict[str, Any]]:
     if not isinstance(body_def, dict):
-        return _normalize_template_op_items(body_def, include_inactive=include_inactive)
+        return _normalize_template_op_items(
+            body_def,
+            include_inactive=include_inactive,
+            config=config,
+        )
 
     ops_by_kind = body_def.get("ops_by_kind")
     if not isinstance(ops_by_kind, dict):
-        return _normalize_template_op_items(body_def.get("ops", []), include_inactive=include_inactive)
+        return _normalize_template_op_items(
+            body_def.get("ops", []),
+            include_inactive=include_inactive,
+            config=config,
+        )
 
     kinds: List[str] = []
     configured_kinds = config.get(str(body_def.get("kind_config_key", "layer_kinds") or "layer_kinds"))
@@ -3025,7 +3238,13 @@ def _collect_body_items_for_validation(
 
     collected: List[str] = []
     for kind in kinds:
-        collected.extend(_normalize_template_op_items(ops_by_kind.get(kind, []), include_inactive=include_inactive))
+        collected.extend(
+            _normalize_template_op_items(
+                ops_by_kind.get(kind, []),
+                include_inactive=include_inactive,
+                config=config,
+            )
+        )
 
     seen: set[Tuple[str, str]] = set()
     out: List[Dict[str, Any]] = []
@@ -3427,11 +3646,15 @@ def _template_uses_kv_cache(template: Dict[str, Any], config: Optional[Dict[str,
 def _resolve_decode_kv_cache_dtype(template: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> str:
     cfg = config if isinstance(config, dict) else {}
     explicit = str(cfg.get("decode_kv_cache_dtype", "") or "").strip().lower()
+    if explicit in {"bf16", "bfloat16"}:
+        return "bf16"
     if explicit in {"fp16", "f16"}:
         return "fp16"
     contract = template.get("contract") if isinstance(template.get("contract"), dict) else {}
     attention_contract = contract.get("attention_contract") if isinstance(contract.get("attention_contract"), dict) else {}
     declared = str(attention_contract.get("decode_kv_cache_dtype", "") or "").strip().lower()
+    if declared in {"bf16", "bfloat16"}:
+        return "bf16"
     if declared in {"fp16", "f16"}:
         return "fp16"
     return "fp32"
@@ -5118,9 +5341,9 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     block_name = template["sequence"][0]
     block = template["block_types"][block_name]
 
-    header_items = _normalize_template_op_items(block.get("header", []))
+    header_items = _normalize_template_op_items(block.get("header", []), config=config)
     body_items = _collect_body_items_for_validation(block.get("body", {}), config)
-    footer_items = _normalize_template_op_items(block.get("footer", []))
+    footer_items = _normalize_template_op_items(block.get("footer", []), config=config)
     header_ops = [item["op"] for item in header_items]
     body_ops = [item["op"] for item in body_items]
     footer_ops = [item["op"] for item in footer_items]
@@ -5331,6 +5554,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         # Ops with quantized weights - look up in quant_summary
         "patch_proj": ["patch_emb"],
         "patch_proj_aux": ["patch_emb_aux"],
+        "patch_projection_image": ["patch_emb", "patch_emb_aux", "patch_bias"],
         "patch_bias_add": None,
     "vision_position_ids": None,
     "position_ids_2d": None,
@@ -5557,6 +5781,13 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             attn_kernel = template_kernels.get(mode_key) or template_kernels.get(op)
             decode_kv_cache_dtype = str(config.get("decode_kv_cache_dtype", "fp32") or "fp32").strip().lower()
             if (
+                op == "attn"
+                and mode == "decode"
+                and decode_kv_cache_dtype in {"bf16", "bfloat16"}
+                and attn_kernel == "attention_forward_decode_head_major_gqa_flash"
+            ):
+                attn_kernel = "attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract"
+            elif (
                 op == "attn"
                 and mode == "decode"
                 and decode_kv_cache_dtype in {"fp16", "f16"}
@@ -5990,9 +6221,11 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             # Get active ops list. Section items may carry ids/metadata even when
             # the lowerer only needs the op names today.
             if isinstance(section_def, dict):
-                ops = _normalize_template_op_items(section_def.get("ops", []))
+                ops = _normalize_template_op_items(
+                    section_def.get("ops", []), config=config
+                )
             else:
-                ops = _normalize_template_op_items(section_def)
+                ops = _normalize_template_op_items(section_def, config=config)
 
             # Body: loop over layers
             if section_name == "body":
@@ -6356,7 +6589,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         arranged["required_contract"] = copy.deepcopy(plan["requirements"])
         arranged["resolved_contract"] = _graph_ir_contract_metadata(plan)
 
-    _attach_semantic_checkpoints(template, arranged_kernels, registry)
+    _attach_semantic_checkpoints(template, arranged_kernels, registry, config)
 
     # ═══════════════════════════════════════════════════════════
     # PASS 1.5: Add dataflow information
@@ -6629,9 +6862,9 @@ def _check_ir1_completeness(manifest: Dict, ir1_ops: List[Dict]) -> None:
     block = template["block_types"].get(block_name, {})
 
     # Extract ops from header, body, and footer
-    header_ops = _extract_template_ops(block.get("header", []))
+    header_ops = _extract_template_ops(block.get("header", []), config=manifest.get("config", {}))
     body_ops = _collect_body_ops_for_validation(block.get("body", {}), manifest.get("config", {}))
-    footer_ops = _extract_template_ops(block.get("footer", []))
+    footer_ops = _extract_template_ops(block.get("footer", []), config=manifest.get("config", {}))
 
     branch_ops: List[str] = []
     for branch in _build_block_branch_plan(block, manifest.get("config", {})):
@@ -7359,6 +7592,7 @@ def generate_ir_lower_1(
     force_decode_attn_regular = str(os.environ.get("CK_V7_DECODE_ATTN_REGULAR", "")).strip().lower() in ("1", "true", "yes", "on")
     decode_kv_cache_dtype = str(config.get("decode_kv_cache_dtype", "fp32") or "fp32").strip().lower()
     decode_uses_fp16_kv = decode_kv_cache_dtype in {"fp16", "f16"}
+    decode_uses_bf16_kv = decode_kv_cache_dtype in {"bf16", "bfloat16"}
     layer_kv_source_cfg = config.get("layer_kv_source") if isinstance(config.get("layer_kv_source"), list) else []
     decode_attention_layers = {
         int(op.get("layer", 0))
@@ -7386,13 +7620,18 @@ def generate_ir_lower_1(
 
     def _make_decode_kv_store_op(anchor_op: Dict[str, Any]) -> Dict[str, Any]:
         layer = int(anchor_op["layer"])
+        store_kernel = (
+            "kv_cache_store_bf16" if decode_uses_bf16_kv
+            else "kv_cache_store_f16" if decode_uses_fp16_kv
+            else "kv_cache_store"
+        )
         return {
             "idx": len(final_ops),  # Will be renumbered
-            "kernel": "kv_cache_store_f16" if decode_uses_fp16_kv else "kv_cache_store",
+            "kernel": store_kernel,
             "op": "kv_cache_store",
             "layer": layer,
             "section": anchor_op["section"],
-            "function": "kv_cache_store_f16" if decode_uses_fp16_kv else "kv_cache_store",
+            "function": store_kernel,
             "weights": {},
             "inputs": {
                 "k": {"type": "scratch", "source": "k_scratch"},
@@ -7592,7 +7831,11 @@ def generate_ir_lower_1(
                 layer = op["layer"]
                 required_contract = op.get("required_contract") if isinstance(op.get("required_contract"), dict) else {}
                 prefill_batching = str(required_contract.get("execution.prefill_batching", "") or "")
-                append_before_attention = prefill_batching in {"batch_append", "segmented_append"}
+                append_before_attention = prefill_batching in {
+                    "batch_append",
+                    "segmented_append",
+                    "unified_mixed",
+                }
                 if append_before_attention and not uses_kv_cache:
                     raise RuntimeError(
                         "HARD CONTRACT FAULT: append-style attention requires a persistent KV cache. "
@@ -7603,13 +7846,19 @@ def generate_ir_lower_1(
                     shared_q_prefill = op["op"] in ("attn_shared_kv", "attn_sliding_shared_kv")
                     copy_src = "q_scratch" if shared_q_prefill else "k_scratch"
                     exact_f16_append = append_before_attention and decode_uses_fp16_kv
+                    exact_bf16_append = append_before_attention and decode_uses_bf16_kv
+                    batch_store_kernel = (
+                        "kv_cache_store_batch_bf16" if exact_bf16_append
+                        else "kv_cache_store_batch_f16" if exact_f16_append
+                        else "kv_cache_batch_copy"
+                    )
                     kv_batch_copy_op = {
                         "idx": len(final_ops),
-                        "kernel": "kv_cache_store_batch_f16" if exact_f16_append else "kv_cache_batch_copy",
-                        "op": "kv_cache_store_batch_f16" if exact_f16_append else "kv_cache_batch_copy",
+                        "kernel": batch_store_kernel,
+                        "op": batch_store_kernel,
                         "layer": layer,
                         "section": op["section"],
-                        "function": "kv_cache_store_batch_f16" if exact_f16_append else "kv_cache_batch_copy",
+                        "function": batch_store_kernel,
                         "weights": {},
                         "inputs": {
                             "k_src": {"type": "scratch", "source": copy_src},
@@ -7874,6 +8123,7 @@ TEMPLATE_OP_WEIGHTS = {
     "wordpiece_tokenizer": [],  # WordPiece tokenizer data handled separately
     "patch_embeddings": [],  # Vision model patches handled separately
     "patchify": [],
+    "patch_projection_image": ["patch_emb", "patch_emb_aux", "patch_bias"],
     "patch_proj": ["patch_emb", "patch_bias"],
     "patch_proj_aux": ["patch_emb_aux"],
     "patch_bias_add": ["patch_bias"],
@@ -8090,10 +8340,10 @@ def generate_memory_layout(
     block_name = template.get("sequence", ["decoder"])[0]
     block = template.get("block_types", {}).get(block_name, {})
 
-    header_ops = _extract_template_ops(block.get("header", []))
+    header_ops = _extract_template_ops(block.get("header", []), config=config)
     body_def = block.get("body", {})
     body_ops = _collect_body_ops_for_validation(body_def, config)
-    footer_ops = _extract_template_ops(block.get("footer", []))
+    footer_ops = _extract_template_ops(block.get("footer", []), config=config)
     branch_plan = _build_block_branch_plan(block, config)
 
     print(f"\n📋 Template structure:")
@@ -8327,7 +8577,12 @@ def generate_memory_layout(
     uses_rope = bool(config.get("_template_uses_rope", True))
     has_logits = bool(config.get("_template_has_logits", True))
     decode_kv_cache_dtype = str(config.get("decode_kv_cache_dtype", "fp32") or "fp32").strip().lower()
-    kv_cache_dtype = "fp16" if mode == "decode" and decode_kv_cache_dtype in {"fp16", "f16"} else "fp32"
+    if mode == "decode" and decode_kv_cache_dtype in {"bf16", "bfloat16"}:
+        kv_cache_dtype = "bf16"
+    elif mode == "decode" and decode_kv_cache_dtype in {"fp16", "f16"}:
+        kv_cache_dtype = "fp16"
+    else:
+        kv_cache_dtype = "fp32"
     kv_elem_bytes = _dtype_size_bytes(kv_cache_dtype)
 
     head_dim = int(head_dim)
@@ -9023,14 +9278,24 @@ def generate_ir_lower_2(
     # KV cache slice helper (prefill path may write directly into KV cache)
     layout_config = layout.get("config", {}) if isinstance(layout, dict) else {}
     if layout_config:
-        merged = dict(config)
-        merged.update(layout_config)
+        # A saved layout owns physical arena parameters, not execution semantics.
+        # In particular, --layout-input may point at an artifact generated before
+        # the active circuit acquired a stricter numerical contract.  Letting the
+        # stale layout config replace the hydrated manifest config silently routes
+        # codegen through an obsolete provider.
+        merged = dict(layout_config)
+        merged.update(config)
+        for physical_key in ("context_length", "context_len", "logits_layout"):
+            if physical_key in layout_config:
+                merged[physical_key] = layout_config[physical_key]
         config = merged
     context_len = config.get("context_length", config.get("max_seq_len", config.get("context_len", 0)))
     num_kv_heads = config.get("num_kv_heads", 0)
     head_dim = config.get("head_dim", 0)
     kv_cache_dtype = str(config.get("decode_kv_cache_dtype", "fp32") or "fp32").strip().lower()
-    kv_elem_bytes = _dtype_size_bytes(kv_cache_dtype if kv_cache_dtype in {"fp16", "f16"} else "fp32")
+    kv_elem_bytes = _dtype_size_bytes(
+        kv_cache_dtype if kv_cache_dtype in {"bf16", "bfloat16", "fp16", "f16"} else "fp32"
+    )
 
     layer_k_cache_offset = config.get("layer_k_cache_offset") if isinstance(config.get("layer_k_cache_offset"), list) else []
     layer_v_cache_offset = config.get("layer_v_cache_offset") if isinstance(config.get("layer_v_cache_offset"), list) else []
@@ -9431,6 +9696,24 @@ def generate_ir_lower_2(
             _bind_recurrent_norm_gate_io(lowered_op, ir_op, activation_buffers)
             if lowered_op["outputs"]:
                 last_output_buffer = "recurrent_normed"
+        elif op_type == "patch_projection_image":
+            image_buf = activation_buffers.get("image_input")
+            embed_buf = activation_buffers.get("embedded_input")
+            if image_buf:
+                lowered_op["activations"]["image"] = {
+                    "buffer": "image_input",
+                    "activation_offset": image_buf["offset"],
+                    "dtype": "fp32",
+                    "ptr_expr": f"activations + {image_buf['offset']}",
+                }
+            if embed_buf:
+                lowered_op["outputs"]["y"] = {
+                    "buffer": "embedded_input",
+                    "activation_offset": embed_buf["offset"],
+                    "dtype": "fp32",
+                    "ptr_expr": f"activations + {embed_buf['offset']}",
+                }
+                last_output_buffer = "embedded_input"
         elif op_type == "patchify":
             image_buf = activation_buffers.get("image_input")
             patch_buf = activation_buffers.get("patch_scratch")
@@ -10196,7 +10479,7 @@ def generate_ir_lower_2(
         if op_type == "attn_sliding":
             sliding_window = config.get("sliding_window", 0)
             params.setdefault("sliding_window", sliding_window)
-        if op_type in ("patchify", "patch_proj"):
+        if op_type in ("patch_projection_image", "patchify", "patch_proj"):
             params.setdefault("image_size", config.get("image_size", 0))
             params.setdefault("image_height", config.get("image_height", config.get("image_size", 0)))
             params.setdefault("image_width", config.get("image_width", config.get("image_size", 0)))
@@ -10393,7 +10676,7 @@ def generate_ir_lower_2(
 
         # Keep _m aligned with effective seq_len for token-major kernels.
         params["_m"] = params.get("seq_len", 1)
-        if op_type in ("patch_proj", "patch_proj_aux"):
+        if op_type in ("patch_projection_image", "patch_proj", "patch_proj_aux"):
             params["_m"] = int(params.get("vision_num_patches", params.get("_m", 1)) or 1)
         if op_type in (
             "spatial_merge",
@@ -10448,7 +10731,7 @@ def generate_ir_lower_2(
             current_output_buffer = "layer_input"
         elif op_type == "patchify":
             pass
-        elif op_type in ("patch_proj", "patch_proj_aux", "position_embeddings", "patch_bias_add", "vision_position_ids", "position_ids_2d", "add_stream"):
+        elif op_type in ("patch_projection_image", "patch_proj", "patch_proj_aux", "position_embeddings", "patch_bias_add", "vision_position_ids", "position_ids_2d", "add_stream"):
             current_input_buffer = "embedded_input"
             current_output_buffer = "layer_input"
         elif op_type in ("q_proj", "q_gate_proj", "split_q_gate", "split_qkv_packed", "attn_gate_sigmoid_mul", "k_proj", "v_proj", "qkv_proj", "qkv_packed_proj", "q_norm", "rope_qk", "rope_q", "mrope_qk",
@@ -11325,6 +11608,10 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                 elif key == "kv_cache_k_layer_f16":
                     expr = k_expr_f16
                 elif key == "kv_cache_v_layer_f16":
+                    expr = v_expr_f16
+                elif key == "kv_cache_k_layer_u16":
+                    expr = k_expr_f16
+                elif key == "kv_cache_v_layer_u16":
                     expr = v_expr_f16
                 elif key == "rope_cos":
                     expr = "model->rope_cos"

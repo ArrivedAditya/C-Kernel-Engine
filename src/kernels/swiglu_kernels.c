@@ -14,10 +14,18 @@
  * SwiGLU: y = silu(gate) * up = (gate * sigmoid(gate)) * up
  */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#include "bf16_utils.h"
 #include "ckernel_engine.h"
 #include "ckernel_quant.h"
+#include <dlfcn.h>
 #include <math.h>
+#include <pthread.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #if defined(__AVX__) || defined(__AVX2__) || defined(__AVX512F__)
@@ -561,6 +569,97 @@ void swiglu_forward_ggml(const float *input,
         for (; d < dim; ++d) {
             const float gate = row[d];
             out_row[d] = (gate / (1.0f + expf(-gate))) * row[dim + d];
+        }
+    }
+}
+
+#if defined(__AVX512F__)
+typedef __m512 (*ck_sleef_expf16_fn)(__m512);
+
+static ck_sleef_expf16_fn ck_pytorch_swiglu_expf16 = NULL;
+static void *ck_pytorch_swiglu_sleef_handle = NULL;
+static pthread_once_t ck_pytorch_swiglu_once = PTHREAD_ONCE_INIT;
+
+static void ck_bind_pytorch_swiglu_sleef(void)
+{
+    const char *library = getenv("CK_SLEEF_LIBRARY");
+    if (library && *library) {
+        ck_pytorch_swiglu_sleef_handle = dlopen(library, RTLD_NOW | RTLD_LOCAL);
+        if (ck_pytorch_swiglu_sleef_handle) {
+            ck_pytorch_swiglu_expf16 = (ck_sleef_expf16_fn)dlsym(
+                ck_pytorch_swiglu_sleef_handle, "Sleef_expf16_u10");
+        }
+    } else {
+        ck_pytorch_swiglu_expf16 =
+            (ck_sleef_expf16_fn)dlsym(RTLD_DEFAULT, "Sleef_expf16_u10");
+    }
+}
+#endif
+
+/*
+ * Match the ATen BF16 Qwen MLP expression, not the GGML FP32 expression:
+ *
+ *   silu_bf16 = aten::silu(gate_bf16)
+ *   out_bf16  = silu_bf16 * up_bf16
+ *
+ * PyTorch 2.8's reduced-floating CPU SiLU converts BF16 lanes to FP32, uses
+ * its SLEEF vector exponential, evaluates x / (1 + exp(-x)), and rounds the
+ * SiLU result to BF16. The following TensorIterator multiplication converts
+ * both BF16 operands to FP32 and performs a second BF16 store. Keeping the
+ * SiLU intermediate in FP32 is close, but is a different storage contract and
+ * changes long teacher-forced generation after repeated MLP blocks.
+ *
+ * Source oracle: PyTorch aten/src/ATen/native/cpu/Activation.cpp,
+ * silu_kernel(), commit a1cb3cc05d46d198467bebbb6e8fba50a325d4e7.
+ */
+void swiglu_forward_pytorch_bf16_storage(const float *input,
+                                         float *output,
+                                         int tokens,
+                                         int dim)
+{
+    if (!input || !output || tokens < 0 || dim < 0) {
+        fprintf(stderr, "HARD KERNEL CONTRACT FAULT: invalid PyTorch BF16 SwiGLU arguments\n");
+        abort();
+    }
+
+#if defined(__AVX512F__)
+    pthread_once(&ck_pytorch_swiglu_once, ck_bind_pytorch_swiglu_sleef);
+    if (!ck_pytorch_swiglu_expf16) {
+        fprintf(stderr,
+                "HARD KERNEL CONTRACT FAULT: PyTorch BF16 SwiGLU requires "
+                "SLEEF Sleef_expf16_u10; set CK_SLEEF_LIBRARY\n");
+        abort();
+    }
+#endif
+
+    for (int t = 0; t < tokens; ++t) {
+        const float *row = input + (size_t)t * (size_t)(2 * dim);
+        float *out_row = output + (size_t)t * (size_t)dim;
+        int d = 0;
+
+#if defined(__AVX512F__)
+        for (; d + 16 <= dim; d += 16) {
+            const __m512 gate = _mm512_loadu_ps(row + d);
+            const __m512 denominator = _mm512_add_ps(
+                _mm512_set1_ps(1.0f),
+                ck_pytorch_swiglu_expf16(_mm512_sub_ps(_mm512_setzero_ps(), gate)));
+            const __m512 silu = _mm512_div_ps(gate, denominator);
+            float silu_lanes[16] __attribute__((aligned(64)));
+            _mm512_store_ps(silu_lanes, silu);
+            for (int lane = 0; lane < 16; ++lane) {
+                const float silu_bf16 = bf16_to_float(float_to_bf16(silu_lanes[lane]));
+                const float up_bf16 = bf16_to_float(float_to_bf16(row[dim + d + lane]));
+                out_row[d + lane] = bf16_to_float(
+                    float_to_bf16(silu_bf16 * up_bf16));
+            }
+        }
+#endif
+        for (; d < dim; ++d) {
+            const float gate_bf16 = bf16_to_float(float_to_bf16(row[d]));
+            const float up_bf16 = bf16_to_float(float_to_bf16(row[dim + d]));
+            const float silu = gate_bf16 / (1.0f + expf(-gate_bf16));
+            const float silu_bf16 = bf16_to_float(float_to_bf16(silu));
+            out_row[d] = bf16_to_float(float_to_bf16(silu_bf16 * up_bf16));
         }
     }
 }

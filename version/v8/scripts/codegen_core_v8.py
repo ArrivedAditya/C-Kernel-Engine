@@ -157,12 +157,13 @@ WHAT CODEGEN DOES CORRECTLY (keep these patterns)
 """
 
 import argparse
+import copy
 import json
 import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from codegen_capabilities_v8 import (
     activation_quantized_row_bytes_expr,
@@ -474,6 +475,76 @@ def _collect_layout_defines(layout: Dict) -> tuple[dict, int]:
     return defines, total_size
 
 
+def _layout_with_minimum_total_size(layout: Dict, minimum_total_size: int) -> Dict:
+    """Preserve layout offsets while sizing a combined decode/prefill arena."""
+    out = copy.deepcopy(layout)
+    arena = out.setdefault("memory", {}).setdefault("arena", {})
+    arena["total_size"] = max(int(arena.get("total_size", 0)), int(minimum_total_size or 0))
+    return out
+
+
+def _layout_entries_by_define(layout: Dict, section: str) -> Dict[str, Dict]:
+    memory = layout.get("memory", {})
+    if section == "weights":
+        entries = memory.get("weights", {}).get("entries", [])
+    elif section == "activations":
+        entries = memory.get("activations", {}).get("buffers", [])
+    else:
+        raise ValueError(f"unsupported layout section {section!r}")
+    result: Dict[str, Dict] = {}
+    for entry in entries:
+        define = str(entry.get("define", "") or "").strip()
+        if not define:
+            raise RuntimeError(
+                f"HARD COMBINED LAYOUT FAULT: {section} entry lacks a stable define."
+            )
+        if define in result:
+            raise RuntimeError(
+                f"HARD COMBINED LAYOUT FAULT: duplicate {section} define {define!r}."
+            )
+        result[define] = entry
+    return result
+
+
+def _select_combined_runtime_layout(decode_layout: Dict, prefill_layout: Dict) -> Dict:
+    """Select one complete layout that safely serves decode and prefill.
+
+    Combined generated C has one macro namespace, so increasing only arena.total_size
+    is insufficient: every activation define must also point at a buffer large enough
+    for both phases. The current planner emits a prefill layout that dominates decode;
+    hard-fail instead of guessing if a future pair is not nested this way.
+    """
+    decode_weights = _layout_entries_by_define(decode_layout, "weights")
+    prefill_weights = _layout_entries_by_define(prefill_layout, "weights")
+    if set(decode_weights) != set(prefill_weights):
+        raise RuntimeError(
+            "HARD COMBINED LAYOUT FAULT: decode and prefill weight defines differ."
+        )
+    for define in sorted(decode_weights):
+        decode_offset = int(decode_weights[define].get("abs_offset", -1))
+        prefill_offset = int(prefill_weights[define].get("abs_offset", -1))
+        if decode_offset != prefill_offset:
+            raise RuntimeError(
+                "HARD COMBINED LAYOUT FAULT: weight offset differs between phases; "
+                f"define={define} decode={decode_offset} prefill={prefill_offset}."
+            )
+
+    decode_buffers = _layout_entries_by_define(decode_layout, "activations")
+    prefill_buffers = _layout_entries_by_define(prefill_layout, "activations")
+    missing = sorted(set(decode_buffers) - set(prefill_buffers))
+    undersized = sorted(
+        (define, int(decode_buffers[define].get("size", 0)), int(prefill_buffers[define].get("size", 0)))
+        for define in set(decode_buffers) & set(prefill_buffers)
+        if int(prefill_buffers[define].get("size", 0)) < int(decode_buffers[define].get("size", 0))
+    )
+    if missing or undersized:
+        raise RuntimeError(
+            "HARD COMBINED LAYOUT FAULT: prefill activation plan does not dominate decode; "
+            f"missing={missing} undersized={undersized}. Run a unified memory planner."
+        )
+    return copy.deepcopy(prefill_layout)
+
+
 def _max_bump_offset_from_ir(ir: Dict, defines: dict) -> tuple[int, set]:
     """Return max offset used with model->bump and any unknown macros."""
     ops = ir.get("ops", ir.get("operations", []))
@@ -687,6 +758,10 @@ def emit_op(
             lines.append(
                 f'    ck_debug_import_checkpoint(model, {int(layer)}, "{checkpoint}", '
                 f"(float*)({src_expr}), ((size_t)({size_expr})) / sizeof(float));"
+            )
+            lines.append(
+                f'    ck_debug_export_hidden(model, {int(layer)}, "{checkpoint}", '
+                f"(const float*)({src_expr}), ((size_t)({size_expr})) / sizeof(float));"
             )
 
     def _return_lines(*, append_stop: bool = False) -> str:
@@ -1622,6 +1697,22 @@ def emit_op(
         patch_w = f"(({_hidden_arg('W')}) / ({_hidden_arg('P')}))" if _hidden_arg("W") and _hidden_arg("P") else None
         patch_dim = _mul_expr(_hidden_arg("C"), _hidden_arg("P"), _hidden_arg("P"))
         _emit_hidden_export(_hidden_arg("patches", "output", "out"), "vision_patchify", _mul_expr(patch_h, patch_w, patch_dim))
+    elif op_name == "patch_projection_image":
+        out_expr = _hidden_arg("output", "out", "c", "y")
+        patch_h = (
+            f"(({_hidden_arg('image_h', 'H')}) / ({_hidden_arg('patch_size', 'P')}))"
+            if _hidden_arg("image_h", "H") and _hidden_arg("patch_size", "P")
+            else None
+        )
+        patch_w = (
+            f"(({_hidden_arg('image_w', 'W')}) / ({_hidden_arg('patch_size', 'P')}))"
+            if _hidden_arg("image_w", "W") and _hidden_arg("patch_size", "P")
+            else None
+        )
+        width_expr = _hidden_arg("out_channels", "N", "out_dim", "embed_dim")
+        count_expr = _mul_expr(patch_h, patch_w, width_expr)
+        _emit_hidden_export(out_expr, "vision_patch_projection", count_expr)
+        _emit_hidden_export_last_row(out_expr, "vision_patch_projection", width_expr)
     elif op_name in ("patch_proj", "patch_proj_aux"):
         out_expr = _hidden_arg("output", "out", "c", "y")
         count_expr = _mul_expr(_hidden_arg("M", "rows", "tokens"), _hidden_arg("N", "out_dim", "embed_dim"))
@@ -1665,6 +1756,10 @@ def emit_op(
         label = "vision_projector_out" if op_name == "projector_fc2" else "vision_projector_fc1"
         _emit_hidden_export(out_expr, label, count_expr)
         _emit_hidden_export_last_row(out_expr, label, _hidden_arg("N", "out_dim", "embed_dim"))
+    elif op_name in ("projector_gelu", "branch_gelu"):
+        out_expr = _hidden_arg("data", "x", "output", "out")
+        label = "vision_projector_gelu" if op_name == "projector_gelu" else "vision_branch_gelu"
+        _emit_hidden_export(out_expr, label, _hidden_arg("n", "dim", "elements"))
     elif op_name == "split_qkv_packed":
         rows = _hidden_arg("rows", "num_tokens", "tokens")
         _emit_hidden_export(_hidden_arg("q"), "q_proj", _mul_expr(rows, _hidden_arg("q_dim")))
@@ -2094,6 +2189,20 @@ def emit_op(
         head_dim = _get_arg("aligned_head_dim", "head_dim") or "HEAD_DIM"
 
         if dump_mode == "vision_qwen3vl":
+            if _same_op("patch_projection_image"):
+                patch_h = _div_expr(_get_arg("image_h", "H"), _get_arg("patch_size", "P"))
+                patch_w = _div_expr(_get_arg("image_w", "W"), _get_arg("patch_size", "P"))
+                size_expr = _mul_expr(
+                    patch_h,
+                    patch_w,
+                    _get_arg("out_channels", "N", "out_dim", "embed_dim"),
+                )
+                _emit_dump(
+                    _get_arg("output", "out", "c", "y"),
+                    "patch_proj",
+                    size_expr,
+                )
+                return _return_lines(append_stop=True)
             if _same_op("patchify"):
                 patch_h = _div_expr(_get_arg("H"), _get_arg("P"))
                 patch_w = _div_expr(_get_arg("W"), _get_arg("P"))
@@ -3223,6 +3332,8 @@ def generate(
     profile: bool = False,
     dump: bool = False,
     strict_contracts: bool = False,
+    minimum_total_size: int = 0,
+    layout_override: Optional[Dict] = None,
 ) -> str:
     """Generate complete C code.
 
@@ -3238,8 +3349,12 @@ def generate(
     """
     with open(ir_path) as f:
         ir = json.load(f)
-    with open(layout_path) as f:
-        layout = json.load(f)
+    if layout_override is None:
+        with open(layout_path) as f:
+            layout = json.load(f)
+    else:
+        layout = copy.deepcopy(layout_override)
+    layout = _layout_with_minimum_total_size(layout, minimum_total_size)
 
     config = ir.get("config", {})
     # Prefer layout config for global dimensions (context length, etc.)
@@ -3570,8 +3685,24 @@ def main():
                     )
         with open(layout_decode) as f:
             layout_obj = json.load(f)
+        minimum_total_size = 0
+        combined_layout_obj = layout_obj
+        if prefill_obj is not None:
+            minimum_total_size = int(
+                prefill_obj.get("memory", {}).get("arena", {}).get("total_size", 0) or 0
+            )
+            layout_prefill = prefill_ir.parent / "layout_prefill.json"
+            if not layout_prefill.exists():
+                raise RuntimeError(
+                    f"HARD COMBINED LAYOUT FAULT: prefill IR requires {layout_prefill}."
+                )
+            with open(layout_prefill) as f:
+                prefill_layout_obj = json.load(f)
+            combined_layout_obj = _select_combined_runtime_layout(
+                layout_obj, prefill_layout_obj
+            )
         ir_list = [decode_obj] + ([prefill_obj] if prefill_obj else [])
-        _guard_bump_offsets(layout_obj, ir_list)
+        _guard_bump_offsets(combined_layout_obj, ir_list)
 
         # Generate decode code
         code = generate(
@@ -3582,6 +3713,8 @@ def main():
             profile=args.profile,
             dump=args.parity_dump,
             strict_contracts=args.strict_contracts,
+            minimum_total_size=minimum_total_size,
+            layout_override=combined_layout_obj,
         )
 
         # Generate prefill code if provided

@@ -1,7 +1,7 @@
 {
   "id": "qk_norm_forward_pytorch_bf16_storage",
   "op": "qk_norm",
-  "variant": "pytorch_avx512_bf16_storage",
+  "variant": "pytorch_avx2_cascade_bf16_storage",
   "quant": {"weight": "fp32", "activation": "fp32", "output": "fp32"},
   "inputs": [
     {"name": "q", "dtype": "fp32", "shape": ["H", "T", "D"]},
@@ -22,13 +22,13 @@
     "c_declaration": "void qk_norm_forward_pytorch_bf16_storage(float *q, float *k, const float *q_gamma, const float *k_gamma, int num_heads, int num_kv_heads, int num_tokens, int head_dim, float eps);",
     "sources": ["src/kernels/qk_norm_kernels.c", "src/kernels/rmsnorm_kernels.c"],
     "variants": [{
-      "name": "avx512",
-      "requires": ["avx512f"],
-      "compile_flags": ["-mavx512f"]
+      "name": "avx2",
+      "requires": ["avx2"],
+      "compile_flags": ["-mavx2"]
     }]
   },
   "numerical_capabilities": [{
-    "contract_id": "rmsnorm_pytorch_avx512_bf16_storage",
+    "contract_id": "rmsnorm_pytorch_avx2_cascade_bf16_storage",
     "status": "validated",
     "phases": ["prefill", "decode"],
     "function": "qk_norm_forward_pytorch_bf16_storage",
@@ -44,7 +44,7 @@
     },
     "arithmetic": {
       "partial_accumulator": "fp32",
-      "merge_order": "pairwise_tree",
+      "merge_order": "hierarchical_cascade",
       "deterministic": true,
       "thread_count_changes_arithmetic_order": false,
       "split_strategy": "independent_outputs"
@@ -64,5 +64,15 @@
       {"name": "eps", "source": "dim:rms_eps"}
     ]
   },
-  "notes": "Per-head Q/K RMSNorm with PyTorch AVX-512 BF16 storage semantics."
+  "tests": {
+    "unit": [
+      "unittest/bf16/test_qk_norm_pytorch_storage_bf16.py"
+    ],
+    "production_shapes": [
+      "H=32,Hkv=8,T=1026,D=128",
+      "H=32,Hkv=8,T=1,D=128"
+    ],
+    "oracle": "PyTorch BF16 per-head RMSNorm"
+  },
+  "notes": "Per-head Q/K RMSNorm with the validated PyTorch BF16 ATen cascade reduction and BF16 storage semantics."
 }

@@ -733,13 +733,40 @@ PY_TESTS_BF16 := unittest/bf16/test_sigmoid_bf16.py \
                 unittest/bf16/test_vision_position_storage_bf16.py \
                 unittest/bf16/test_layernorm_storage_contract_bf16.py \
                 unittest/bf16/test_rmsnorm_pytorch_storage_bf16.py \
+                unittest/bf16/test_qk_norm_pytorch_storage_bf16.py \
+                unittest/bf16/test_embedding_bf16_fp32.py \
                 unittest/bf16/test_gemm_storage_contract_bf16.py \
                 unittest/bf16/test_attention_storage_contract_bf16.py \
+                unittest/bf16/test_attention_decode_gqa_pytorch_math_bf16.py \
+                unittest/bf16/test_kv_cache_storage_bf16.py \
                 unittest/bf16/test_residual_storage_contract_bf16.py \
                 unittest/bf16/test_gelu_pytorch_tanh_storage_bf16.py \
+                unittest/bf16/test_gelu_pytorch_erf_sleef_storage_bf16.py \
+                unittest/bf16/test_swiglu_pytorch_storage_bf16.py \
+                unittest/bf16/test_text_mrope_pytorch_bf16.py \
+                unittest/bf16/test_text_mrope_positions_pytorch_bf16.py \
+                unittest/bf16/test_vision_mrope_pytorch_bf16.py \
                 unittest/bf16/test_pytorch_onednn_oracle_contract_bf16.py \
                 unittest/bf16/test_qwen3vl_practical_precision_bf16.py
 PY_TESTS_BF16_V8 := version/v8/scripts/bf16_safetensors_lowering_guard_v8.py
+PY_TESTS_QWEN3VL_BF16_ORACLES := \
+                unittest/bf16/test_patch_projection_pytorch_onednn_bf16.py \
+                unittest/bf16/test_embedding_bf16_fp32.py \
+                unittest/bf16/test_vision_position_storage_bf16.py \
+                unittest/bf16/test_layernorm_storage_contract_bf16.py \
+                unittest/bf16/test_rmsnorm_pytorch_storage_bf16.py \
+                unittest/bf16/test_qk_norm_pytorch_storage_bf16.py \
+                unittest/bf16/test_attention_storage_contract_bf16.py \
+                unittest/bf16/test_attention_decode_gqa_pytorch_math_bf16.py \
+                unittest/bf16/test_residual_storage_contract_bf16.py \
+                unittest/bf16/test_kv_cache_storage_bf16.py \
+                unittest/bf16/test_gelu_pytorch_tanh_storage_bf16.py \
+                unittest/bf16/test_gelu_pytorch_erf_sleef_storage_bf16.py \
+                unittest/bf16/test_swiglu_pytorch_storage_bf16.py \
+                unittest/bf16/test_text_mrope_pytorch_bf16.py \
+                unittest/bf16/test_text_mrope_positions_pytorch_bf16.py \
+                unittest/bf16/test_vision_mrope_pytorch_bf16.py \
+                unittest/bf16/test_pytorch_onednn_oracle_contract_bf16.py
 
 LITMUS_DEMO_ARGS ?= --vocab 100 --ctx 100 --embed 64 --intermediate 128 --heads 4 --kv-heads 2
 LITMUS_DEMO_SVG ?= $(BUILD_DIR)/litmus_report.svg
@@ -2154,6 +2181,8 @@ test-bf16: $(LIB) test-libs
 	echo "BF16 Python kernel tests completed."
 	@echo "Running v8 BF16 safetensors/lowering guardrails..."
 	$(PYTHON) $(PYTHONFLAGS) $(PY_TESTS_BF16_V8)
+	@echo "Running Qwen3-VL BF16 generated-provider matrix..."
+	$(PYTHON) $(PYTHONFLAGS) tests/test_v8_qwen3vl_bf16_kernel_matrix.py
 	@echo "Running v8 BF16 file-backed BUMP allocator guardrail..."
 	$(PYTHON) $(PYTHONFLAGS) unittest/test_bump_alloc_mixed.py
 	@$(MAKE) --no-print-directory test-bf16-xray
@@ -2163,6 +2192,24 @@ test-bf16: $(LIB) test-libs
 	else \
 		echo "SKIP: BF16 H=16 T=4032 D=72 attention gate (set CK_BF16_FULL_SHAPES=1)"; \
 	fi
+
+.PHONY: test-qwen3vl-bf16-kernel-oracles
+test-qwen3vl-bf16-kernel-oracles:
+	@failed=0; \
+	for t in $(PY_TESTS_QWEN3VL_BF16_ORACLES); do \
+	  echo "Running $$t"; \
+	  if ! CK_ENGINE_SO=$(BUILD_DIR)/libckernel_engine.so \
+	       CK_ENGINE_LIB=$(BUILD_DIR)/libckernel_engine.so \
+	       LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH \
+	       $(TEST_ENV) $(PYTHON) $(PYTHONFLAGS) $$t; then \
+	    failed=1; \
+	  fi; \
+	done; \
+	if [ $$failed -ne 0 ]; then \
+	  echo "Qwen3-VL BF16 kernel oracle matrix failed."; \
+	  exit 1; \
+	fi
+	@$(PYTHON) $(PYTHONFLAGS) tests/test_v8_qwen3vl_bf16_kernel_matrix.py
 
 test-v4-q4k:
 	@if [ -z "$(GGUF_PATH)" ]; then \
@@ -2323,6 +2370,7 @@ tests-list:
 	@echo "  unittest/bf16/test_attention_bf16.py - BF16 attention forward/backward"
 	@echo "  unittest/bf16/test_rope_bf16.py      - BF16 RoPE forward/backward"
 	@echo "  unittest/bf16/test_swiglu_bf16.py    - BF16 SwiGLU forward/backward"
+	@echo "  unittest/bf16/test_swiglu_pytorch_storage_bf16.py - Exact PyTorch/SLEEF BF16 SwiGLU storage"
 	@echo "  unittest/bf16/test_embedding_bf16.py - BF16 embedding forward/backward"
 	@echo "  unittest/bf16/test_cross_entropy_bf16.py - BF16 cross-entropy loss"
 	@echo ""
@@ -3478,8 +3526,10 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
 	@$(PYTHON) unittest/bf16/test_layernorm_storage_contract_bf16.py
 	@$(PYTHON) unittest/bf16/test_rmsnorm_pytorch_storage_bf16.py
+	@$(PYTHON) unittest/bf16/test_qk_norm_pytorch_storage_bf16.py
 	@$(PYTHON) unittest/bf16/test_gemm_storage_contract_bf16.py
 	@$(PYTHON) unittest/bf16/test_attention_storage_contract_bf16.py
+	@$(PYTHON) unittest/bf16/test_attention_decode_gqa_pytorch_math_bf16.py
 	@$(PYTHON) unittest/bf16/test_residual_storage_contract_bf16.py
 	@$(PYTHON) unittest/bf16/test_gelu_pytorch_tanh_storage_bf16.py
 	@$(PYTHON) unittest/test_rmsnorm_numerical_contract.py
@@ -3524,7 +3574,13 @@ certify-qwen35-text-parity:
 		--ctx-len "$${QWEN35_CTX_LEN:-1034}" \
 		--threads "$${CK_NUM_THREADS:-20}"
 
-.PHONY: test-bf16-xray xray-vision-parity test-v8-dsl-policy test-v8-dsl
+.PHONY: test-xray-validator-selftest test-bf16-xray xray-vision-parity test-v8-dsl-policy test-v8-dsl
+test-xray-validator-selftest:
+	@echo "Running X-ray injected-fault validator self-test..."
+	@mkdir -p build/xray
+	@CK_XRAY_SELFTEST_REPORT=build/xray/validator_selftest_report.json \
+		$(PYTHON) tests/test_v8_xray_validator_selftest.py
+
 test-bf16-xray:
 	@echo "Running bounded numerical X-ray architecture tests..."
 	@$(PYTHON) -m py_compile \
@@ -3535,6 +3591,7 @@ test-bf16-xray:
 		version/v8/scripts/xray_text_recurrent_v8.py \
 		version/v8/scripts/build_xray_checkpoint_manifest_v8.py \
 		version/v8/scripts/xray_qwen3vl_bf16_v8.py \
+		version/v8/scripts/xray_qwen3vl_bf16_decoder_v8.py \
 		version/v8/scripts/xray_qwen3vl_llamacpp_v8.py \
 		version/v8/scripts/normalize_xray_ranking_report_v8.py
 	@$(PYTHON) -c 'import json; from jsonschema import Draft202012Validator; Draft202012Validator.check_schema(json.load(open("version/v8/schemas/xray_attention_sensitivity.schema.json", encoding="utf-8")))'
@@ -3544,6 +3601,8 @@ test-bf16-xray:
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
 	@$(PYTHON) tests/test_v8_xray_text_recurrent.py
 	@$(PYTHON) tests/test_v8_xray_vision_interface.py
+	@$(PYTHON) tests/test_v8_xray_qwen3vl_bf16_decoder.py
+	@$(PYTHON) tests/test_v8_normalize_xray_ranking_report.py
 	@$(PYTHON) version/v8/test_assets/generate_xray_form_fixture_v8.py \
 		--output build/xray/public_form_1152x896.ppm
 

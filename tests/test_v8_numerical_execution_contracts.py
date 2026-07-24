@@ -716,6 +716,41 @@ class NumericalExecutionContractTests(unittest.TestCase):
         self.assertEqual(result["next_checkpoints"][0], "vision.layer.9.norm1.output")
         self.assertEqual(result["next_checkpoints"][-1], "vision.layer.9.mlp.down")
 
+    def test_ranking_failure_expands_largest_sparse_drift_interval(self):
+        profile = planner.load(
+            ROOT / "version" / "v8" / "parity_profiles" / "qwen3vl_pytorch_bf16_v1.json"
+        )
+        report = {
+            "comparisons": [
+                {"checkpoint_id": "vision.frontend.position.output", "status": "pass", "metrics": {"relative_rmse": 0.0001}},
+                {"checkpoint_id": "vision.layer.0.output", "status": "pass", "metrics": {"relative_rmse": 0.0002}},
+                {"checkpoint_id": "vision.layer.8.output", "status": "pass", "metrics": {"relative_rmse": 0.0060}},
+                {"checkpoint_id": "vision.layer.16.output", "status": "pass", "metrics": {"relative_rmse": 0.0065}},
+            ],
+            "ranking_divergence": {"classification": "RANKING_DIVERGENCE", "position": 26},
+        }
+        result = planner.plan(profile, report)
+        self.assertEqual(result["status"], "granular_accumulated_drift")
+        self.assertEqual(result["interval"], "vision.layer.0.output->vision.layer.8.output")
+        self.assertEqual(result["next_checkpoints"][0], "vision.layer.1.output")
+        self.assertEqual(result["next_checkpoints"][-1], "vision.layer.7.output")
+
+    def test_ranking_failure_does_not_reopen_byte_exact_encoder(self):
+        profile = planner.load(
+            ROOT / "version" / "v8" / "parity_profiles" / "qwen3vl_pytorch_bf16_v1.json"
+        )
+        report = {
+            "comparisons": [
+                {"checkpoint_id": checkpoint, "status": "pass", "metrics": {"relative_rmse": 0.0}}
+                for checkpoint in profile["checkpoint_order"]
+            ],
+            "ranking_divergence": {"classification": "RANKING_DIVERGENCE", "position": 26},
+        }
+        result = planner.plan(profile, report)
+        self.assertEqual(result["status"], "ranking_attributed")
+        self.assertEqual(result["reason"], "ranking_failed_without_nonzero_sparse_tensor_growth")
+        self.assertEqual(result["next_checkpoints"], [])
+
     def test_graph_ir_metadata_retains_contract_and_checkpoint(self):
         scripts = ROOT / "version" / "v8" / "scripts"
         sys.path.insert(0, str(scripts))

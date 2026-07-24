@@ -42,5 +42,9 @@
     "c_declaration": "void vision_position_ids_2d_merge(int32_t *positions, int grid_h, int grid_w, int merge_size);",
     "sources": ["src/kernels/vision_kernels.c"]
   },
+  "tests": {
+    "unit": ["unittest/test_vision.py"],
+    "oracle": "PyTorch merge-major 2D position traversal"
+  },
   "notes": "Build merged vision position IDs for 2D M-RoPE style encoders."
 }
