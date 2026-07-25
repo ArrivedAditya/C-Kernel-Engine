@@ -171,6 +171,171 @@ def test_qwen3_safetensors_to_bump_smoke(tmp_path: Path) -> None:
     assert (out / "weights.bump").stat().st_size > 0
 
 
+def test_whisper_encoder_safetensors_maps_and_generates_call_ir(tmp_path: Path) -> None:
+    torch, st = _require_torch_safetensors()
+    checkpoint = tmp_path / "whisper_tiny"
+    out = tmp_path / "out_whisper_tiny"
+    checkpoint.mkdir()
+    out.mkdir()
+
+    (checkpoint / "config.json").write_text(
+        json.dumps(
+            {
+                "architectures": ["WhisperForConditionalGeneration"],
+                "model_type": "whisper",
+                "d_model": 8,
+                "encoder_layers": 1,
+                "encoder_attention_heads": 2,
+                "encoder_ffn_dim": 16,
+                "max_source_positions": 4,
+                "num_mel_bins": 4,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    tensors = {
+        "model.encoder.conv1.weight": torch.randn(8, 4, 3),
+        "model.encoder.conv1.bias": torch.randn(8),
+        "model.encoder.conv2.weight": torch.randn(8, 8, 3),
+        "model.encoder.conv2.bias": torch.randn(8),
+        "model.encoder.embed_positions.weight": torch.randn(4, 8),
+        "model.encoder.layers.0.self_attn_layer_norm.weight": torch.randn(8),
+        "model.encoder.layers.0.self_attn_layer_norm.bias": torch.randn(8),
+        "model.encoder.layers.0.final_layer_norm.weight": torch.randn(8),
+        "model.encoder.layers.0.final_layer_norm.bias": torch.randn(8),
+        "model.encoder.layers.0.self_attn.q_proj.weight": torch.randn(8, 8),
+        "model.encoder.layers.0.self_attn.q_proj.bias": torch.randn(8),
+        "model.encoder.layers.0.self_attn.k_proj.weight": torch.randn(8, 8),
+        "model.encoder.layers.0.self_attn.v_proj.weight": torch.randn(8, 8),
+        "model.encoder.layers.0.self_attn.v_proj.bias": torch.randn(8),
+        "model.encoder.layers.0.self_attn.out_proj.weight": torch.randn(8, 8),
+        "model.encoder.layers.0.self_attn.out_proj.bias": torch.randn(8),
+        "model.encoder.layers.0.fc1.weight": torch.randn(16, 8),
+        "model.encoder.layers.0.fc1.bias": torch.randn(16),
+        "model.encoder.layers.0.fc2.weight": torch.randn(8, 16),
+        "model.encoder.layers.0.fc2.bias": torch.randn(8),
+        "model.encoder.layer_norm.weight": torch.randn(8),
+        "model.encoder.layer_norm.bias": torch.randn(8),
+        # A complete Whisper checkpoint contains decoder tensors. The
+        # encoder artifact must classify them explicitly instead of silently
+        # accepting or accidentally binding them.
+        "model.decoder.embed_tokens.weight": torch.randn(32, 8),
+        "proj_out.weight": torch.randn(32, 8),
+    }
+    st.save_file(tensors, checkpoint / "model.safetensors")
+
+    script = Path("version/v8/scripts/convert_safetensors_to_bump_v8.py")
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--checkpoint",
+            str(checkpoint),
+            "--output",
+            str(out / "weights.bump"),
+            "--config-out",
+            str(out / "config.json"),
+            "--manifest-out",
+            str(out / "weights_manifest.json"),
+            "--arch",
+            "auto",
+        ],
+        check=True,
+    )
+
+    manifest = json.loads((out / "weights_manifest.json").read_text(encoding="utf-8"))
+    audit = json.loads((out / "conversion_audit.json").read_text(encoding="utf-8"))
+    entries = {entry["name"]: entry for entry in manifest["entries"]}
+    assert manifest["model"] == "whisper_encoder"
+    assert manifest["template"]["name"] == "audio_transformer_encoder"
+    assert manifest["config"]["artifact_scope"] == "encoder_only"
+    assert manifest["config"]["audio_feature_channels"] == 4
+    assert manifest["config"]["audio_feature_frames"] == 8
+    assert manifest["config"]["audio_conv2_output_frames"] == 4
+    assert manifest["config"]["head_dim"] == 4
+    assert manifest["config"]["attention_scale"] == 0.5
+    assert manifest["tokenizer_contract"] is None
+    assert not any(name.startswith("vocab_") for name in entries)
+    assert audit["verdict"] == "pass"
+    assert audit["unmapped_source_tensors"] == []
+    assert audit["synthetic_entries"] == ["layer.0.bk"]
+    assert entries["layer.0.bk"]["source_name"] == "synthetic:zeros_fp32"
+    assert entries["layer.0.bk"]["shape"] == [8]
+    assert entries["layer.0.bk"]["dtype"] == "fp32"
+    ignored = {
+        row["source"]: row["reason"] for row in audit["ignored_source_tensors"]
+    }
+    assert ignored == {
+        "model.decoder.embed_tokens.weight": "decoder_not_in_encoder_artifact",
+        "proj_out.weight": "decoder_not_in_encoder_artifact",
+    }
+    assert (out / "weights.bump").stat().st_size > 0
+
+    build_ir = Path("version/v8/scripts/build_ir_v8.py")
+    lowered = out / "lowered_encoder.json"
+    call = out / "call_encoder.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(build_ir),
+            "--manifest",
+            str(out / "weights_manifest.json"),
+            "--mode",
+            "prefill",
+            "--output",
+            str(out / "ir1_encoder.json"),
+            "--layout-output",
+            str(out / "layout_encoder.json"),
+            "--lowered-output",
+            str(lowered),
+            "--call-output",
+            str(call),
+            "--context-len",
+            "4",
+        ],
+        check=True,
+    )
+    call_ops = json.loads(call.read_text(encoding="utf-8"))["operations"]
+    assert not [op for op in call_ops if op.get("errors")]
+    functions = {op["op"]: op["function"] for op in call_ops}
+    assert functions["audio_conv1d_stem_1"] == "audio_conv1d_channel_major_f32"
+    assert functions["audio_conv1d_stem_2"] == "audio_conv1d_channel_major_f32"
+    assert functions["layout_channel_to_token"] == "audio_transpose_channel_to_token_f32"
+    assert functions["attn"] == "attention_forward_query_key_head_major_f32"
+
+    generated_c = out / "whisper_encoder_v8.c"
+    subprocess.run(
+        [
+            sys.executable,
+            "version/v8/scripts/codegen_v8.py",
+            "--ir",
+            str(call),
+            "--layout",
+            str(out / "layout_encoder.json"),
+            "--output",
+            str(generated_c),
+            "--strict-contracts",
+        ],
+        check=True,
+    )
+    generated = generated_c.read_text(encoding="utf-8")
+    assert "audio_conv1d_channel_major_f32" in generated
+    assert "attention_forward_query_key_head_major_f32" in generated
+    subprocess.run(
+        [
+            "cc",
+            "-fsyntax-only",
+            "-fopenmp",
+            "-Iinclude",
+            "-Iversion/v8/src",
+            str(generated_c),
+        ],
+        check=True,
+    )
+
+
 def test_qwen35_safetensors_to_bump_smoke(tmp_path: Path) -> None:
     torch, st = _require_torch_safetensors()
     checkpoint = tmp_path / "qwen35"
