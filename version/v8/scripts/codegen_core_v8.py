@@ -657,13 +657,29 @@ CODEGEN_REQUIRED_CONTRACT_FIELDS: dict[str, tuple[str, ...]] = {
     "runtime_invariants": ("required_call_args",),
 }
 
+ENCODER_CODEGEN_REQUIRED_CONTRACT_FIELDS: dict[str, tuple[str, ...]] = {
+    "attention_contract": (
+        "causal",
+        "attn_variant",
+        "kv_layout",
+        "rope_layout",
+    ),
+    "block_contract": ("norm_type", "mlp_formula", "activation"),
+}
+
 
 def _validate_codegen_contract(config: Dict) -> list[str]:
     issues: list[str] = []
     contract = config.get("contract")
     if not isinstance(contract, dict):
         return ["missing config.contract object in lowered IR"]
-    for section, fields in CODEGEN_REQUIRED_CONTRACT_FIELDS.items():
+    artifact_scope = str(config.get("artifact_scope") or "").strip().lower()
+    required = (
+        ENCODER_CODEGEN_REQUIRED_CONTRACT_FIELDS
+        if artifact_scope == "encoder_only"
+        else CODEGEN_REQUIRED_CONTRACT_FIELDS
+    )
+    for section, fields in required.items():
         sec = contract.get(section)
         if not isinstance(sec, dict):
             issues.append(f"missing contract section: {section}")
@@ -671,6 +687,19 @@ def _validate_codegen_contract(config: Dict) -> list[str]:
         for field in fields:
             if sec.get(field) is None:
                 issues.append(f"missing contract field: {section}.{field}")
+    if artifact_scope == "encoder_only":
+        encoder_sections = [
+            (name, value)
+            for name, value in contract.items()
+            if name.endswith("_encoder") and isinstance(value, dict)
+        ]
+        if not encoder_sections:
+            issues.append("missing modality encoder contract section")
+        else:
+            for name, section in encoder_sections:
+                for field in ("input_modality", "output"):
+                    if section.get(field) is None:
+                        issues.append(f"missing contract field: {name}.{field}")
     return issues
 
 

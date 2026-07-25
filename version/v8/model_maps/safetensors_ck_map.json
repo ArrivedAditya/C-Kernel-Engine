@@ -2,6 +2,159 @@
   "version": 1,
   "description": "Declarative safetensors-to-CK source tensor mapping. Source formats are not first-class CK runtime artifacts; they map into BUMP manifest names consumed by templates.",
   "architectures": {
+    "whisper_encoder": {
+      "template": "audio_transformer_encoder",
+      "family": "audio_transformer",
+      "aliases": [
+        "whisper",
+        "WhisperForConditionalGeneration"
+      ],
+      "status": "encoder_artifact_mapping",
+      "config": {
+        "model": "audio_transformer_encoder",
+        "arch": "whisper_encoder",
+        "model_type": "whisper_encoder",
+        "artifact_scope": "encoder_only",
+        "feature_layout": "channel_major",
+        "encoder_layout": "token_major",
+        "position_encoding": "absolute",
+        "attention_variant": "dense_bidirectional",
+        "prefill_policy": "audio_encoder_only"
+      },
+      "required_tensor_families": [
+        "model.encoder.conv1.weight",
+        "model.encoder.conv2.weight",
+        "model.encoder.embed_positions.weight",
+        "model.encoder.layers.{L}.self_attn_layer_norm.weight",
+        "model.encoder.layers.{L}.self_attn.q_proj.weight",
+        "model.encoder.layers.{L}.self_attn.k_proj.weight",
+        "model.encoder.layers.{L}.self_attn.v_proj.weight",
+        "model.encoder.layers.{L}.self_attn.out_proj.weight",
+        "model.encoder.layers.{L}.final_layer_norm.weight",
+        "model.encoder.layers.{L}.fc1.weight",
+        "model.encoder.layers.{L}.fc2.weight",
+        "model.encoder.layer_norm.weight"
+      ],
+      "tensor_refs": [
+        {
+          "target": "audio_conv1_weight",
+          "sources": ["model.encoder.conv1.weight"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "audio_conv1_bias",
+          "sources": ["model.encoder.conv1.bias"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "audio_conv2_weight",
+          "sources": ["model.encoder.conv2.weight"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "audio_conv2_bias",
+          "sources": ["model.encoder.conv2.bias"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "pos_emb",
+          "sources": ["model.encoder.embed_positions.weight"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.ln1_gamma",
+          "sources": ["model.encoder.layers.{L}.self_attn_layer_norm.weight"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.ln1_beta",
+          "sources": ["model.encoder.layers.{L}.self_attn_layer_norm.bias"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.ln2_gamma",
+          "sources": ["model.encoder.layers.{L}.final_layer_norm.weight"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.ln2_beta",
+          "sources": ["model.encoder.layers.{L}.final_layer_norm.bias"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.wq",
+          "sources": ["model.encoder.layers.{L}.self_attn.q_proj.weight"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.bq",
+          "sources": ["model.encoder.layers.{L}.self_attn.q_proj.bias"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.wk",
+          "sources": ["model.encoder.layers.{L}.self_attn.k_proj.weight"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.bk",
+          "fallback_synth": "zeros_fp32",
+          "dtype": "fp32",
+          "shape": ["embed_dim"]
+        },
+        {
+          "target": "layer.{L}.wv",
+          "sources": ["model.encoder.layers.{L}.self_attn.v_proj.weight"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.bv",
+          "sources": ["model.encoder.layers.{L}.self_attn.v_proj.bias"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.wo",
+          "sources": ["model.encoder.layers.{L}.self_attn.out_proj.weight"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.bo",
+          "sources": ["model.encoder.layers.{L}.self_attn.out_proj.bias"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.w3",
+          "sources": ["model.encoder.layers.{L}.fc1.weight"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.b1",
+          "sources": ["model.encoder.layers.{L}.fc1.bias"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.w2",
+          "sources": ["model.encoder.layers.{L}.fc2.weight"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "layer.{L}.b2",
+          "sources": ["model.encoder.layers.{L}.fc2.bias"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "final_ln_weight",
+          "sources": ["model.encoder.layer_norm.weight"],
+          "dtype": "fp32"
+        },
+        {
+          "target": "final_ln_bias",
+          "sources": ["model.encoder.layer_norm.bias"],
+          "dtype": "fp32"
+        }
+      ],
+      "notes": "Encoder-only mapping for Hugging Face Whisper checkpoints. Decoder tensors remain outside this artifact until the generic encoder-decoder bridge and cross-attention decoder circuit are promoted."
+    },
     "gemma4_assistant": {
       "template": "gemma4_assistant",
       "family": "gemma4",

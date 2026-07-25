@@ -12,6 +12,7 @@ safetensors and GGUF through the same BUMP runtime contract.
 import argparse
 import hashlib
 import json
+import math
 import os
 import shutil
 import struct
@@ -876,6 +877,12 @@ def _refs_for_arch(arch: str, config: dict[str, Any], headers: dict[str, HeaderT
     raise SystemExit(f"Unsupported safetensors arch for v8 importer: {arch}")
 
 
+def _load_safetensors_template_for_arch(arch: str) -> dict[str, Any]:
+    contract = _safetensors_arch_contract(arch)
+    template_name = str(contract.get("template") or arch).strip().lower()
+    return load_template_for_arch(template_name)
+
+
 def _build_gemma4_attention_plan_from_hf(text: dict[str, Any], headers: dict[str, HeaderTensor]) -> dict[str, Any]:
     num_layers = int(text.get("num_hidden_layers") or 0)
     if num_layers <= 0:
@@ -1056,6 +1063,64 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         "tie_word_embeddings",
         bool(text.get("tie_word_embeddings", hf.get("tie_word_embeddings", True))),
     )
+    if arch == "whisper_encoder":
+        embed_dim = int(hf.get("d_model") or 0)
+        num_heads = int(hf.get("encoder_attention_heads") or 0)
+        context_length = int(hf.get("max_source_positions") or 0)
+        feature_channels = int(hf.get("num_mel_bins") or 0)
+        num_layers = int(hf.get("encoder_layers") or hf.get("num_hidden_layers") or 0)
+        intermediate_size = int(hf.get("encoder_ffn_dim") or 0)
+        if min(
+            embed_dim,
+            num_heads,
+            context_length,
+            feature_channels,
+            num_layers,
+            intermediate_size,
+        ) <= 0:
+            raise SystemExit("Whisper encoder config is missing required dimensions")
+        if embed_dim % num_heads != 0:
+            raise SystemExit(
+                f"Whisper encoder d_model={embed_dim} is not divisible by heads={num_heads}"
+            )
+        contract = _safetensors_arch_contract(arch)
+        contract_cfg = (
+            contract.get("config") if isinstance(contract.get("config"), dict) else {}
+        )
+        cfg.update(contract_cfg)
+        cfg.update(
+            {
+                "num_layers": num_layers,
+                "num_hidden_layers": num_layers,
+                "embed_dim": embed_dim,
+                "hidden_size": embed_dim,
+                "intermediate_size": intermediate_size,
+                "num_heads": num_heads,
+                "num_attention_heads": num_heads,
+                "num_kv_heads": num_heads,
+                "num_key_value_heads": num_heads,
+                "head_dim": embed_dim // num_heads,
+                "context_length": context_length,
+                "audio_feature_channels": feature_channels,
+                "audio_feature_frames": context_length * 2,
+                "audio_conv1_output_channels": embed_dim,
+                "audio_conv2_output_channels": embed_dim,
+                "audio_conv1_kernel_size": 3,
+                "audio_conv1_stride": 1,
+                "audio_conv1_padding": 1,
+                "audio_conv1_output_frames": context_length * 2,
+                "audio_conv2_kernel_size": 3,
+                "audio_conv2_stride": 2,
+                "audio_conv2_padding": 1,
+                "audio_conv2_output_frames": context_length,
+                "attention_scale": 1.0 / math.sqrt(float(embed_dim // num_heads)),
+                "rms_eps": 1.0e-5,
+                "prefer_q8_activation": False,
+                "numerical_contract_mode": "production",
+                "tie_word_embeddings": True,
+                "vocab_size": 1,
+            }
+        )
     if arch == "nemotron_h":
         layer_kinds = _parse_nemotron_h_pattern(str(text.get("hybrid_override_pattern") or ""), int(cfg.get("num_layers") or 0))
         mamba_num_heads = int(text.get("mamba_num_heads") or 0)
@@ -1613,6 +1678,10 @@ def _ignored_source_tensor(arch: str, name: str) -> str | None:
         return "vision_tower_not_in_decoder_pass"
     if arch == "qwen3_vl_vision" and (name.startswith("model.language_model.") or name.startswith("model.model.") or name == "lm_head.weight"):
         return "language_model_not_in_vision_pass"
+    if arch == "whisper_encoder" and (
+        name.startswith("model.decoder.") or name == "proj_out.weight"
+    ):
+        return "decoder_not_in_encoder_artifact"
     return None
 
 
@@ -1814,7 +1883,7 @@ def main() -> int:
     ap.add_argument("--ram-dir", type=Path, default=Path("/dev/shm"), help="tmpfs directory for --ram-output; default: /dev/shm")
     ap.add_argument("--config-out", required=True, type=Path)
     ap.add_argument("--manifest-out", required=True, type=Path)
-    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma4_assistant", "gemma3", "llama", "qwen2", "qwen3", "qwen3vl", "qwen3_vl_vision", "qwen35", "nemotron_h", "glm4", "kimi_vl"])
+    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma4_assistant", "gemma3", "llama", "qwen2", "qwen3", "qwen3vl", "qwen3_vl_vision", "qwen35", "nemotron_h", "glm4", "kimi_vl", "whisper_encoder"])
     ap.add_argument("--config-template", type=Path, help="existing v8 config/manifest to reuse explicit runtime policy")
     ap.add_argument("--dtype", default="preserve", choices=["preserve", "bf16", "fp32"])
     ap.add_argument("--dry-run", action="store_true", help="validate mapping and write JSON reports only; do not write BUMP")
@@ -1832,7 +1901,12 @@ def main() -> int:
 
     config = _build_config(model_dir, arch, args.config_template)
     refs = _refs_for_arch(arch, config, headers)
-    tokenizer_payloads, tokenizer_contract, special_tokens = _tokenizer_payloads_from_json(model_dir, int(config.get("vocab_size") or 0))
+    if str(config.get("artifact_scope") or "") == "encoder_only":
+        tokenizer_payloads, tokenizer_contract, special_tokens = [], None, {}
+    else:
+        tokenizer_payloads, tokenizer_contract, special_tokens = _tokenizer_payloads_from_json(
+            model_dir, int(config.get("vocab_size") or 0)
+        )
     missing: list[str] = []
     entries_preview: list[dict[str, Any]] = []
     dtype_table: list[int] = []
@@ -1887,7 +1961,7 @@ def main() -> int:
         config.setdefault("decoder_prefill_projection_storage_boundary", "bf16")
 
     template = apply_model_contract_overrides(
-        load_template_for_arch(arch),
+        _load_safetensors_template_for_arch(arch),
         tie_word_embeddings=bool(config.get("tie_word_embeddings", True)),
         has_untied_output_weight=any(e["name"] == "output.weight" for e in entries_preview),
     )

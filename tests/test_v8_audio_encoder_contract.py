@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 V8 = ROOT / "version" / "v8"
 RESOLVER_PATH = V8 / "scripts" / "resolve_numerical_execution_contracts_v8.py"
 BUILD_IR_PATH = V8 / "scripts" / "build_ir_v8.py"
+CODEGEN_CORE_PATH = V8 / "scripts" / "codegen_core_v8.py"
 NIGHTLY_PATH = ROOT / "scripts" / "nightly_runner.py"
 if str(BUILD_IR_PATH.parent) not in sys.path:
     sys.path.insert(0, str(BUILD_IR_PATH.parent))
@@ -31,6 +32,7 @@ def _load_module(name: str, path: Path):
 
 resolver = _load_module("audio_encoder_contract_resolver", RESOLVER_PATH)
 build_ir = _load_module("audio_encoder_build_ir", BUILD_IR_PATH)
+codegen_core = _load_module("audio_encoder_codegen_core", CODEGEN_CORE_PATH)
 nightly = _load_module("audio_encoder_nightly", NIGHTLY_PATH)
 
 
@@ -258,6 +260,26 @@ class AudioEncoderContractTests(unittest.TestCase):
             if row.get("errors")
         ]
         self.assertEqual(errors, [])
+
+    def test_encoder_only_codegen_contract_is_capability_scoped_and_fail_closed(self):
+        manifest = _make_audio_encoder_manifest()
+        config = copy.deepcopy(manifest["config"])
+        config["artifact_scope"] = "encoder_only"
+        config["contract"] = copy.deepcopy(manifest["template"]["contract"])
+        self.assertEqual(codegen_core._validate_codegen_contract(config), [])
+
+        missing_output = copy.deepcopy(config)
+        del missing_output["contract"]["audio_encoder"]["output"]
+        self.assertIn(
+            "missing contract field: audio_encoder.output",
+            codegen_core._validate_codegen_contract(missing_output),
+        )
+
+        decoder = copy.deepcopy(config)
+        decoder["artifact_scope"] = "decoder"
+        decoder_issues = codegen_core._validate_codegen_contract(decoder)
+        self.assertIn("missing contract section: tokenizer_contract", decoder_issues)
+        self.assertIn("missing contract section: quant_contract", decoder_issues)
 
     def test_audio_encoder_geometry_mismatch_is_a_hard_failure(self):
         manifest = _make_audio_encoder_manifest()
