@@ -39,6 +39,7 @@
     .model-card.mc-gemma3::before { background: var(--blue); }
     .model-card.mc-gemma4::before { background: #f39c12; }
     .model-card.mc-kimi::before   { background: #b48cff; }
+    .model-card.mc-whisper::before { background: #f59e0b; }
     .model-card.mc-llama::before  { background: #e74c3c; }
     .model-card.mc-gpt2::before   { background: #9b59b6; }
 
@@ -391,7 +392,9 @@
       <rect class="mk-chip" x="746" y="92"  width="120" height="26" rx="6"/><text x="806" y="110" text-anchor="middle" class="mk-chip-t">qwen3vl</text>
       <rect class="mk-chip" x="876" y="92"  width="160" height="26" rx="6"/><text x="956" y="110" text-anchor="middle" class="mk-chip-t" fill="#9ed6ff">gemma4_vision</text>
       <rect class="mk-chip" x="1046" y="92" width="110" height="26" rx="6"/><text x="1101" y="110" text-anchor="middle" class="mk-chip-t" fill="#cbb6ff">siglip_vit</text>
-      <text x="616" y="140" class="mk-sub" fill="#808080">11 templates resolve into the same lowering passes</text>
+      <rect class="mk-chip" x="616" y="126" width="150" height="26" rx="6"/><text x="691" y="144" text-anchor="middle" class="mk-chip-t" fill="#ffd38a">audio_frontend</text>
+      <rect class="mk-chip" x="776" y="126" width="160" height="26" rx="6"/><text x="856" y="144" text-anchor="middle" class="mk-chip-t" fill="#ffd38a">audio_enc / audio_dec</text>
+      <text x="616" y="172" class="mk-sub" fill="#808080">11 text/vision templates + audio circuit trio → same lowering passes</text>
     </g>
 
     <!-- arrows sources -> compile -->
@@ -629,6 +632,37 @@
         <span class="mq-chip preferred">Q4_K_M decoder ★</span>
         <span class="mq-chip">Q8_0 mmproj</span>
         <span class="mq-chip">image bridge</span>
+      </div>
+    </div>
+
+    <!-- Whisper Tiny -->
+    <div class="model-card mc-whisper">
+      <span class="model-badge">circuits: audio frontend + encoder + decoder</span>
+      <div class="model-title">Whisper Tiny</div>
+      <div class="model-arch">First encoder&#8211;decoder family &#183; generated frontend (7 ops &#8594; ck_model_run_audio_wav)<br>LayerNorm &#183; learned absolute position &#183; GELU (erf) &#183; dense bidirectional encoder</div>
+      <div class="model-pipeline">
+        <div class="mp-row"><span class="mp-dot inference"></span><span class="mp-text">v8 audio inference — WAV to transcript via cks-v8-run audio, cached cross-attn K/V (&asymp;79&times; decode)</span></div>
+        <div class="mp-row"><span class="mp-dot inference"></span><span class="mp-text">Artifact-gated E2E — JFK fixture matches Hugging Face token for token</span></div>
+      </div>
+      <div class="source-note">
+        Bring-up scope: Whisper Tiny FP32 is the first audio lane — English, no-timestamp decoding certified on the JFK fixture; arbitrary recordings functional, not corpus-certified. PCM16 WAV input, 30 s truncated not chunked. safetensors &rarr; BUMP as an encoder + decoder run-directory pair.
+      </div>
+      <div class="model-command">
+        <div class="model-command-head"><span>Whisper E2E artifact gate</span><button class="copy-command" type="button" data-copy-command="cmd-whisper">Copy</button></div>
+        <pre id="cmd-whisper"><code>CK_WHISPER_ENCODER_RUN_DIR=/path/to/whisper-tiny-encoder \
+CK_WHISPER_DECODER_RUN_DIR=/path/to/whisper-tiny-decoder \
+CK_WHISPER_WAV=/path/to/jfk.wav \
+make test-whisper-e2e-auto</code></pre>
+      </div>
+      <div class="model-tags">
+        <span class="tag learned">encoder_decoder</span>
+        <span class="tag learned">cross_attention</span>
+        <span class="tag fixed">artifact-gated e2e</span>
+      </div>
+      <div class="model-quant">
+        <span class="mq-chip preferred">FP32 &#9733;</span>
+        <span class="mq-chip">safetensors &#8594; BUMP</span>
+        <span class="mq-chip">enc + dec pair</span>
       </div>
     </div>
 
