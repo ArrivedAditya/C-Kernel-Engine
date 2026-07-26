@@ -66,6 +66,36 @@
       }
     }
   },
+  "required_contracts": {
+    "audio.decoder.self_attention": {
+      "op": "attention",
+      "template_ops": ["attn"],
+      "phases": {
+        "prefill": {
+          "requires": {
+            "execution.phase": "prefill",
+            "tensor.q.dtype": "fp32",
+            "tensor.kv.dtype": "fp32",
+            "tensor.layout": "head_major",
+            "numerics.attention_reduction": "fp32_online"
+          },
+          "validation": "validated",
+          "evidence": "Whisper batched causal self-attention contract and persistent KV-cache transition oracle."
+        },
+        "decode": {
+          "requires": {
+            "execution.phase": "decode",
+            "tensor.q.dtype": "fp32",
+            "tensor.kv.dtype": "fp32",
+            "tensor.layout": "head_major",
+            "numerics.attention_reduction": "fp32_online"
+          },
+          "validation": "validated",
+          "evidence": "Whisper incremental decode attends all model->pos + 1 valid rows in the persistent FP32 KV cache."
+        }
+      }
+    }
+  },
   "required_numerical_contracts": {
     "audio.decoder.position": {
       "op": "position_embeddings",

@@ -1317,6 +1317,11 @@ test-audio: $(LIB_AUDIO) $(LIB_ATTENTION) $(LIB_GELU)
 	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_audio_contract -v
 	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_audio_encoder_contract -v
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_safetensors_to_bump.py -k "whisper_encoder or whisper_decoder"
+	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_whisper_runner.py
+
+test-whisper-e2e-auto:
+	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_whisper_runner.py \
+		-k exact_transcript
 
 # Policy:
 # - Keep public/operator-facing test entrypoints version-neutral (`make test`,
@@ -5016,7 +5021,7 @@ nightly-list:
 	@$(PYTHON) scripts/nightly_runner.py --list
 
 .PHONY: nightly nightly-quick nightly-json nightly-baseline nightly-kernels nightly-bf16 nightly-quant nightly-inference nightly-parity nightly-archive nightly-list
-.PHONY: test-audio libckernel_audio.so
+.PHONY: test-audio test-whisper-e2e-auto libckernel_audio.so
 
 # ============================================================================
 # Status Reports (reads from meta/kernel_meta.json)

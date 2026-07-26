@@ -12018,6 +12018,21 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                 "source": src,
                 "expr": expr,
             }
+            # Record cross-attention extents semantically after resolving the
+            # map-owned ABI source. Prefill codegen uses these call-IR labels to
+            # distinguish active decoder rows from immutable encoder rows.
+            if (
+                op_name in ("cross_k_proj", "cross_v_proj")
+                and str(name).lower() == "m"
+                and src == "dim:_m"
+            ):
+                arg_doc["source"] = "dim:encoder_memory_length"
+            elif (
+                op_name == "cross_attn"
+                and str(name).lower() == "query_tokens"
+                and src == "dim:query_tokens"
+            ):
+                arg_doc["source"] = "runtime:query_tokens"
             if src.startswith(("activation:", "output:", "scratch:")):
                 info = None
                 if src.startswith("activation:"):
