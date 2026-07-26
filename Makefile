@@ -1306,7 +1306,7 @@ test-relu: $(LIB_RELU)
 test-vision: $(LIB_VISION)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_vision.py
 
-test-audio: $(LIB_AUDIO) $(LIB_ATTENTION)
+test-audio: $(LIB_AUDIO) $(LIB_ATTENTION) $(LIB_GELU)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_audio.py
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_audio_encoder.py
 	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_audio_contract -v

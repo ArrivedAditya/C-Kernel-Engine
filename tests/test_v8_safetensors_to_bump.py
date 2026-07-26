@@ -253,7 +253,9 @@ def test_whisper_encoder_safetensors_maps_and_generates_call_ir(tmp_path: Path) 
     assert manifest["config"]["artifact_scope"] == "encoder_only"
     assert manifest["config"]["audio_feature_channels"] == 4
     assert manifest["config"]["audio_feature_frames"] == 8
+    assert manifest["config"]["audio_conv1_elements"] == 64
     assert manifest["config"]["audio_conv2_output_frames"] == 4
+    assert manifest["config"]["audio_conv2_elements"] == 32
     assert manifest["config"]["head_dim"] == 4
     assert manifest["config"]["attention_scale"] == 0.5
     assert manifest["tokenizer_contract"] is None
@@ -264,6 +266,7 @@ def test_whisper_encoder_safetensors_maps_and_generates_call_ir(tmp_path: Path) 
     assert entries["layer.0.bk"]["source_name"] == "synthetic:zeros_fp32"
     assert entries["layer.0.bk"]["shape"] == [8]
     assert entries["layer.0.bk"]["dtype"] == "fp32"
+    assert all(entry["file_offset"] % 64 == 0 for entry in manifest["entries"])
     ignored = {
         row["source"]: row["reason"] for row in audit["ignored_source_tensors"]
     }
@@ -304,6 +307,15 @@ def test_whisper_encoder_safetensors_maps_and_generates_call_ir(tmp_path: Path) 
     assert functions["audio_conv1d_stem_2"] == "audio_conv1d_channel_major_f32"
     assert functions["layout_channel_to_token"] == "audio_transpose_channel_to_token_f32"
     assert functions["attn"] == "attention_forward_query_key_head_major_f32"
+    layout_doc = json.loads(
+        (out / "layout_encoder.json").read_text(encoding="utf-8")
+    )
+    assert layout_doc["memory"]["arena"]["activations_base"] % 64 == 0
+    assert all(
+        row["abs_offset"] % 64 == 0
+        for row in layout_doc["memory"]["activations"]["buffers"]
+        if row["dtype"] in {"fp32", "bf16", "fp16"}
+    )
 
     generated_c = out / "whisper_encoder_v8.c"
     subprocess.run(
@@ -323,6 +335,7 @@ def test_whisper_encoder_safetensors_maps_and_generates_call_ir(tmp_path: Path) 
     generated = generated_c.read_text(encoding="utf-8")
     assert "audio_conv1d_channel_major_f32" in generated
     assert "attention_forward_query_key_head_major_f32" in generated
+    assert "CK_EXPORT int ck_model_run_encoder(void)" in generated
     subprocess.run(
         [
             "cc",

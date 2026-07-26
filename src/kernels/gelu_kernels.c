@@ -553,6 +553,18 @@ void gelu_exact_inplace(float *data, size_t n)
     }
 }
 
+// PyTorch GELU with approximate="none" over FP32 storage. Keep this provider
+// separate from gelu_exact_inplace, whose historical contract is the tanh
+// approximation despite its name.
+void gelu_pytorch_erf_f32_inplace(float *data, size_t n)
+{
+    const float inv_sqrt_2 = 0.70710678118654752440f;
+    for (size_t i = 0; i < n; ++i) {
+        const float x = data[i];
+        data[i] = (0.5f * x) * (1.0f + erff(x * inv_sqrt_2));
+    }
+}
+
 // GGML-compatible GELU forward used by llama.cpp CPU F32 paths when
 // GGML_GELU_FP16 is enabled. Inputs inside [-10, 10] are rounded to FP16,
 // GELU is evaluated on that rounded value, then the output is rounded to FP16
