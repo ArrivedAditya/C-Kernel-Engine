@@ -5,9 +5,16 @@ from __future__ import annotations
 
 import ctypes
 import math
+import os
 import struct
 
 import numpy as np
+
+# This file validates scalar C providers. Pin the PyTorch oracle before import
+# so a runner's AVX2/AVX-512 SLEEF dispatch cannot silently change reference
+# arithmetic while the C provider remains scalar.
+os.environ.setdefault("ATEN_CPU_CAPABILITY", "default")
+
 import torch
 import torch.nn.functional as F
 
@@ -384,6 +391,7 @@ def _check_cross_attention(name: str, heads: int, query_tokens: int, key_tokens:
 
 
 def main() -> None:
+    assert torch.backends.cpu.get_cpu_capability() == "DEFAULT"
     torch.set_num_threads(1)
     check_wav_pcm16()
     check_pcm()

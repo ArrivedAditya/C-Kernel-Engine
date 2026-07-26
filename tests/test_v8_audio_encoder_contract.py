@@ -389,6 +389,14 @@ class AudioEncoderContractTests(unittest.TestCase):
         self.assertEqual(suite.name, "Audio Transformer Primitives")
         self.assertEqual(suite.category, "kernels")
         self.assertEqual(suite.test_file.name, "test_audio_encoder.py")
+        source = suite.test_file.read_text(encoding="utf-8")
+        capability_pin = source.index(
+            'os.environ.setdefault("ATEN_CPU_CAPABILITY", "default")'
+        )
+        torch_import = source.index("import torch")
+        self.assertLess(capability_pin, torch_import)
+        requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+        self.assertIn("pytest", requirements.splitlines())
         parsed = nightly.parse_sub_tests(
             "audio_encoder_self_attention_equal "
             "max_diff=2.98e-08 tol=2.0e-06 [PASS]\n"
