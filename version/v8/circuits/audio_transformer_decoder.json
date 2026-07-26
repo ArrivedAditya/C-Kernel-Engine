@@ -35,7 +35,13 @@
         "causal": false,
         "query_source": "decoder_stream",
         "key_value_source": "encoder_memory",
-        "kv_layout": "immutable_encoder_context"
+        "kv_layout": "immutable_encoder_context",
+        "projection_cache": {
+          "populate_phase": "prefill",
+          "reuse_phase": "decode",
+          "invalidation": "encoder_memory_update",
+          "storage": "layer_major_head_major_fp32"
+        }
       }
     },
     "block_contract": {

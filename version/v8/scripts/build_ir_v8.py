@@ -1038,8 +1038,8 @@ OP_DATAFLOW = {
     "cross_attn": {
         "inputs": {
             "query": "cross_q_scratch",
-            "key": "cross_k_scratch",
-            "value": "cross_v_scratch"
+            "key": "cross_k_cache",
+            "value": "cross_v_cache"
         },
         "outputs": {"output": {"slot": "cross_attn_scratch", "dtype": "fp32"}},
     },
@@ -1053,11 +1053,11 @@ OP_DATAFLOW = {
     },
     "cross_k_proj": {
         "inputs": {"x": "external:encoder_memory"},
-        "outputs": {"y": {"slot": "cross_k_scratch", "dtype": "fp32"}},
+        "outputs": {"y": {"slot": "cross_k_cache", "dtype": "fp32"}},
     },
     "cross_v_proj": {
         "inputs": {"x": "external:encoder_memory"},
-        "outputs": {"y": {"slot": "cross_v_scratch", "dtype": "fp32"}},
+        "outputs": {"y": {"slot": "cross_v_cache", "dtype": "fp32"}},
     },
     "cross_out_proj": {
         "inputs": {"x": "cross_attn_scratch"},
@@ -2570,6 +2570,7 @@ def _encoder_decoder_activation_specs(
     embed_dim: int,
     num_heads: int,
     head_dim: int,
+    num_layers: int,
 ) -> List[Tuple[str, int, str]]:
     encoder_tokens = int(config.get("encoder_memory_length", 0) or 0)
     if not bool(config.get("uses_cross_attention", False)):
@@ -2595,14 +2596,14 @@ def _encoder_decoder_activation_specs(
             f"[{num_heads}, {seq_len}, {head_dim}]",
         ),
         (
-            "cross_k_scratch",
-            num_heads * encoder_tokens * head_dim * 4,
-            f"[{num_heads}, {encoder_tokens}, {head_dim}]",
+            "cross_k_cache",
+            num_layers * num_heads * encoder_tokens * head_dim * 4,
+            f"[{num_layers}, {num_heads}, {encoder_tokens}, {head_dim}]",
         ),
         (
-            "cross_v_scratch",
-            num_heads * encoder_tokens * head_dim * 4,
-            f"[{num_heads}, {encoder_tokens}, {head_dim}]",
+            "cross_v_cache",
+            num_layers * num_heads * encoder_tokens * head_dim * 4,
+            f"[{num_layers}, {num_heads}, {encoder_tokens}, {head_dim}]",
         ),
         (
             "cross_attn_scratch",
@@ -2719,7 +2720,7 @@ def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, 
     for name, size, shape in _audio_activation_specs(config, seq_len, embed_dim):
         add(name, size, shape)
     for name, size, shape in _encoder_decoder_activation_specs(
-        config, seq_len, embed_dim, num_heads, head_dim
+        config, seq_len, embed_dim, num_heads, head_dim, num_layers
     ):
         add(name, size, shape)
 
@@ -3759,6 +3760,39 @@ def _resolve_decode_kv_cache_dtype(template: Dict[str, Any], config: Optional[Di
     return "fp32"
 
 
+def _template_uses_persistent_cross_kv_cache(template: Dict[str, Any]) -> bool:
+    contract = template.get("contract") if isinstance(template.get("contract"), dict) else {}
+    attention = (
+        contract.get("attention_contract")
+        if isinstance(contract.get("attention_contract"), dict)
+        else {}
+    )
+    cross_attention = (
+        attention.get("cross_attention")
+        if isinstance(attention.get("cross_attention"), dict)
+        else {}
+    )
+    cache = (
+        cross_attention.get("projection_cache")
+        if isinstance(cross_attention.get("projection_cache"), dict)
+        else None
+    )
+    if cache is None:
+        return False
+    expected = {
+        "populate_phase": "prefill",
+        "reuse_phase": "decode",
+        "invalidation": "encoder_memory_update",
+        "storage": "layer_major_head_major_fp32",
+    }
+    if cache != expected:
+        raise RuntimeError(
+            "HARD CROSS-ATTENTION CACHE FAULT: projection_cache must declare "
+            f"the supported immutable encoder-context schedule; expected={expected} got={cache}."
+        )
+    return True
+
+
 def _backfill_template_runtime_flags(manifest: Dict[str, Any]) -> None:
     config = manifest.get("config")
     if not isinstance(config, dict):
@@ -3768,6 +3802,10 @@ def _backfill_template_runtime_flags(manifest: Dict[str, Any]) -> None:
     config.setdefault("_template_has_logits", _template_declares_logits(template, config))
     config.setdefault("_template_uses_kv_cache", _template_uses_kv_cache(template, config))
     config.setdefault("_template_uses_rope", _template_uses_rope(template, config))
+    config.setdefault(
+        "_template_uses_persistent_cross_kv_cache",
+        _template_uses_persistent_cross_kv_cache(template),
+    )
     config.setdefault("decode_kv_cache_dtype", _resolve_decode_kv_cache_dtype(template, config))
 
 
@@ -7513,6 +7551,9 @@ def generate_ir_lower_1(
     attention_contract = template_contract.get("attention_contract") if isinstance(template_contract.get("attention_contract"), dict) else {}
     decode_cache_contract = attention_contract.get("decode_cache_contract") if isinstance(attention_contract.get("decode_cache_contract"), dict) else {}
     explicit_mla_decode_cache = str(decode_cache_contract.get("type", "") or "").strip().lower() == "mla"
+    persistent_cross_kv_cache = bool(
+        config.get("_template_uses_persistent_cross_kv_cache", False)
+    )
     uses_kv_cache = bool(config.get("_template_uses_kv_cache", _template_uses_kv_cache(template, config)))
     has_logits = bool(config.get("_template_has_logits", _template_declares_logits(template, config)))
 
@@ -7834,11 +7875,19 @@ def generate_ir_lower_1(
     }
 
     for i, op in enumerate(lowered_ops):
+        op_name = str(op.get("op", ""))
+        if mode == "decode" and persistent_cross_kv_cache:
+            if op_name in {"cross_k_proj", "cross_v_proj"}:
+                continue
+            if op_name == "bias_add" and str(op.get("bias_for", "")) in {
+                "cross_k_proj",
+                "cross_v_proj",
+            }:
+                continue
         final_ops.append(op)
 
         if mode == "decode" and uses_kv_cache:
             layer = int(op.get("layer", 0))
-            op_name = str(op.get("op", ""))
             should_store_after_rope = op_name in {"rope_qk", "mrope_qk"}
             should_store_after_q_rope = (
                 op_name == "rope_q"
@@ -7904,7 +7953,7 @@ def generate_ir_lower_1(
 
             if op_name in ("cross_k_proj", "cross_v_proj"):
                 is_key = op_name == "cross_k_proj"
-                cross_buffer = "cross_k_scratch" if is_key else "cross_v_scratch"
+                cross_buffer = "cross_k_cache" if is_key else "cross_v_cache"
                 final_ops.append({
                     "idx": len(final_ops),
                     "kernel": "transpose_cross_kv_to_head_major",
@@ -8008,7 +8057,7 @@ def generate_ir_lower_1(
 
             if op["op"] in ("cross_k_proj", "cross_v_proj"):
                 is_key = op["op"] == "cross_k_proj"
-                cross_buffer = "cross_k_scratch" if is_key else "cross_v_scratch"
+                cross_buffer = "cross_k_cache" if is_key else "cross_v_cache"
                 final_ops.append({
                     "idx": len(final_ops),
                     "kernel": "transpose_cross_kv_to_head_major",
@@ -8666,6 +8715,17 @@ def generate_memory_layout(
             if isinstance(winfo, dict) and "name" in winfo:
                 ir1_used_weights.add(winfo["name"])
 
+    phase_cached_weights: set[str] = set()
+    if mode == "decode" and bool(
+        config.get("_template_uses_persistent_cross_kv_cache", False)
+    ):
+        phase_cached_weights = {
+            weight
+            for weight, owner in weight_to_op.items()
+            if owner.endswith(":cross_k_proj") or owner.endswith(":cross_v_proj")
+        }
+    effective_used_weights = ir1_used_weights | phase_cached_weights
+
     # ═══════════════════════════════════════════════════════════
     # STEP 4: VALIDATION - Check weight coverage
     # ═══════════════════════════════════════════════════════════
@@ -8696,17 +8756,19 @@ def generate_memory_layout(
             print(f"  Ignoring {count} circuit-declared manifest weight(s): {reason}")
 
     # Weights expected but not used by IR1
-    unused_by_ir1 = expected_weights - ir1_used_weights
+    unused_by_ir1 = expected_weights - effective_used_weights
 
     # Weights in manifest but not used at all
-    completely_unused = model_weights - expected_weights - ir1_used_weights
+    completely_unused = model_weights - expected_weights - effective_used_weights
 
-    coverage = len(ir1_used_weights) / len(model_weights) * 100 if model_weights else 0
+    coverage = len(effective_used_weights) / len(model_weights) * 100 if model_weights else 0
 
     print(f"\n🔍 Weight validation:")
     print(f"  Model weights in manifest: {len(model_weights)}")
     print(f"  Expected by template: {len(expected_weights)}")
     print(f"  Used by IR1 kernels: {len(ir1_used_weights)}")
+    if phase_cached_weights:
+        print(f"  Populated by prefill cache phase: {len(phase_cached_weights)}")
     print(f"  Coverage: {coverage:.1f}%")
 
     # ═══════════════════════════════════════════════════════════
@@ -8903,7 +8965,7 @@ def generate_memory_layout(
     for name, size, shape in _audio_activation_specs(config, seq_len, int(embed_dim)):
         add_buffer(name, size, shape)
     for name, size, shape in _encoder_decoder_activation_specs(
-        config, seq_len, int(embed_dim), int(num_heads), int(head_dim)
+        config, seq_len, int(embed_dim), int(num_heads), int(head_dim), int(num_layers)
     ):
         add_buffer(name, size, shape)
 
@@ -9613,6 +9675,21 @@ def generate_ir_lower_2(
         "kv_cache": "kv_cache",
     }
 
+    def scoped_activation_offset(buf_name: str, base_offset: int, op: Dict[str, Any]) -> int:
+        if buf_name not in {"cross_k_cache", "cross_v_cache"}:
+            return int(base_offset)
+        layer = int(op.get("layer", -1))
+        encoder_tokens = int(config.get("encoder_memory_length", 0) or 0)
+        embed = int(config.get("embed_dim", 0) or 0)
+        num_layers = int(config.get("num_layers", 0) or 0)
+        if layer < 0 or layer >= num_layers or encoder_tokens <= 0 or embed <= 0:
+            raise RuntimeError(
+                "HARD CROSS-ATTENTION CACHE FAULT: invalid layer-scoped cache geometry "
+                f"buffer={buf_name} layer={layer} layers={num_layers} "
+                f"encoder_tokens={encoder_tokens} embed_dim={embed}."
+            )
+        return int(base_offset) + layer * encoder_tokens * embed * 4
+
     # Legacy ping-pong tracking (kept for fallback, but should not be needed)
     current_input_buffer = "token_ids"
     current_output_buffer = "embedded_input"
@@ -9702,12 +9779,23 @@ def generate_ir_lower_2(
         if op_type == "bias_add":
             bias_for = ir_op.get("bias_for")
             target_buf = None
-            if bias_for in ("q_proj", "q_gate_proj", "k_proj", "v_proj"):
+            if bias_for in (
+                "q_proj",
+                "q_gate_proj",
+                "k_proj",
+                "v_proj",
+                "cross_q_proj",
+                "cross_k_proj",
+                "cross_v_proj",
+            ):
                 target_buf = {
                     "q_proj": "q_scratch",
                     "q_gate_proj": "attn_q_gate_packed",
                     "k_proj": "k_scratch",
                     "v_proj": "v_scratch",
+                    "cross_q_proj": "cross_q_scratch",
+                    "cross_k_proj": "cross_k_cache",
+                    "cross_v_proj": "cross_v_cache",
                 }.get(bias_for)
             elif bias_for == "qkv_packed_proj":
                 target_buf = "mlp_scratch"
@@ -9719,17 +9807,20 @@ def generate_ir_lower_2(
                 target_buf = last_output_buffer or current_output_buffer
             buf = activation_buffers.get(target_buf) if target_buf else None
             if buf:
+                activation_offset = scoped_activation_offset(
+                    target_buf, buf["offset"], ir_op
+                )
                 lowered_op["activations"]["y"] = {
                     "buffer": target_buf,
-                    "activation_offset": buf["offset"],
+                    "activation_offset": activation_offset,
                     "dtype": "fp32",
-                    "ptr_expr": f"activations + {buf['offset']}",
+                    "ptr_expr": f"activations + {activation_offset}",
                 }
                 lowered_op["outputs"]["y"] = {
                     "buffer": target_buf,
-                    "activation_offset": buf["offset"],
+                    "activation_offset": activation_offset,
                     "dtype": "fp32",
-                    "ptr_expr": f"activations + {buf['offset']}",
+                    "ptr_expr": f"activations + {activation_offset}",
                 }
             if target_buf:
                 last_output_buffer = target_buf
@@ -10330,11 +10421,14 @@ def generate_ir_lower_2(
                         buf_name = buffer_name_map.get(src_name, src_name)
                         buf = activation_buffers.get(buf_name)
                         if buf:
+                            activation_offset = scoped_activation_offset(
+                                buf_name, buf["offset"], ir_op
+                            )
                             lowered_op["activations"][input_name] = {
                                 "buffer": buf_name,
-                                "activation_offset": buf["offset"],
+                                "activation_offset": activation_offset,
                                 "dtype": input_info.get("dtype", "fp32"),
-                                "ptr_expr": f"activations + {buf['offset']}",
+                                "ptr_expr": f"activations + {activation_offset}",
                             }
                             continue
 
@@ -10463,11 +10557,14 @@ def generate_ir_lower_2(
                         buf_name = current_input_buffer
 
                 if buf:
+                    activation_offset = scoped_activation_offset(
+                        buf_name, buf["offset"], ir_op
+                    )
                     lowered_op["activations"][input_name] = {
                         "buffer": buf_name,
-                        "activation_offset": buf["offset"],
+                        "activation_offset": activation_offset,
                         "dtype": input_info.get("dtype", "fp32"),
-                        "ptr_expr": f"activations + {buf['offset']}",
+                        "ptr_expr": f"activations + {activation_offset}",
                     }
 
             # Process outputs - add concrete offsets (for non-QKV ops)
@@ -10489,11 +10586,14 @@ def generate_ir_lower_2(
                         output_buf_name = buffer_name_map.get(dst_name, dst_name)
                         buf = activation_buffers.get(output_buf_name)
                         if buf:
+                            activation_offset = scoped_activation_offset(
+                                output_buf_name, buf["offset"], ir_op
+                            )
                             lowered_op["outputs"][output_name] = {
                                 "buffer": output_buf_name,
-                                "activation_offset": buf["offset"],
+                                "activation_offset": activation_offset,
                                 "dtype": output_info.get("dtype", "fp32"),
-                                "ptr_expr": f"activations + {buf['offset']}",
+                                "ptr_expr": f"activations + {activation_offset}",
                             }
                             if not last_output_buffer:
                                 last_output_buffer = output_buf_name
@@ -10554,7 +10654,9 @@ def generate_ir_lower_2(
 
                 buf = activation_buffers.get(output_buf_name)
                 if buf:
-                    activation_offset = buf["offset"]
+                    activation_offset = scoped_activation_offset(
+                        output_buf_name, buf["offset"], ir_op
+                    )
                     if op_type == "branch_fc2" and output_buf_name == "branch_collect":
                         activation_offset += int(ir_op.get("params", {}).get("branch_collect_offset_bytes", 0) or 0)
                     lowered_op["outputs"][output_name] = {
