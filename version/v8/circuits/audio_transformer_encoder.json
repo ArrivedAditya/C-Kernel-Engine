@@ -98,6 +98,23 @@
         "axis_names": ["token", "channel"]
       }
     },
+    "audio.encoder.activation": {
+      "op": "gelu",
+      "template_ops": ["gelu"],
+      "phases": {
+        "prefill": {
+          "contract_id": "gelu_pytorch_erf_fp32_storage",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py PyTorch GELU approximate=none FP32 oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.encoder.activation.output",
+        "producer": "gelu",
+        "logical_layout": "contiguous",
+        "axis_names": ["element"]
+      }
+    },
     "audio.encoder.attention": {
       "op": "attention",
       "template_ops": ["attn"],
@@ -133,7 +150,17 @@
             "padding_from_config": "audio_conv1_padding"
           }
         },
-        {"id": "conv1_gelu", "op": "gelu"},
+        {
+          "id": "conv1_gelu",
+          "op": "gelu",
+          "params": {
+            "elements_from_config": "audio_conv1_elements"
+          },
+          "graph_slots": {
+            "inputs": {"x": "audio_conv_1"},
+            "outputs": {"out": "audio_conv_1"}
+          }
+        },
         {
           "id": "conv2",
           "op": "audio_conv1d_stem_2",
@@ -147,7 +174,17 @@
             "padding_from_config": "audio_conv2_padding"
           }
         },
-        {"id": "conv2_gelu", "op": "gelu"},
+        {
+          "id": "conv2_gelu",
+          "op": "gelu",
+          "params": {
+            "elements_from_config": "audio_conv2_elements"
+          },
+          "graph_slots": {
+            "inputs": {"x": "audio_conv_2"},
+            "outputs": {"out": "audio_conv_2"}
+          }
+        },
         {
           "id": "to_token_major",
           "op": "layout_channel_to_token",
@@ -184,6 +221,16 @@
               "query_tokens_from_config": "context_length",
               "key_tokens_from_config": "context_length",
               "attention_scale_from_config": "attention_scale"
+            },
+            "graph_slots": {
+              "inputs": {
+                "q": "q_scratch",
+                "k": "k_scratch",
+                "v": "v_scratch"
+              },
+              "outputs": {
+                "out": "attn_scratch"
+              }
             }
           },
           {

@@ -936,6 +936,27 @@ def _inject_prefill_multimodal_bridge(
     extra_parts = []
     if embedded_prefill:
         extra_parts.append(embedded_prefill)
+        if str(config.get("artifact_scope", "")).strip().lower() == "encoder_only":
+            encoder_tokens = int(
+                config.get(
+                    "context_length",
+                    config.get("audio_conv2_output_frames", 0),
+                )
+                or 0
+            )
+            if encoder_tokens <= 0:
+                raise RuntimeError(
+                    "encoder_only artifact requires a positive context_length execution extent"
+                )
+            extra_parts.append(
+                f"""
+CK_EXPORT int ck_model_run_encoder(void) {{
+    if (!g_model) return -1;
+    ck_prefill_from_embedded(g_model, {encoder_tokens});
+    return 0;
+}}
+"""
+            )
     if bridge_api:
         extra_parts.append(bridge_api)
     return code + "\n\n" + "\n\n".join(extra_parts)

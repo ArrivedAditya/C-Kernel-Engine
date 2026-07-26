@@ -16,6 +16,7 @@ V8 = ROOT / "version" / "v8"
 RESOLVER_PATH = V8 / "scripts" / "resolve_numerical_execution_contracts_v8.py"
 BUILD_IR_PATH = V8 / "scripts" / "build_ir_v8.py"
 CODEGEN_CORE_PATH = V8 / "scripts" / "codegen_core_v8.py"
+WHISPER_XRAY_PATH = V8 / "scripts" / "compare_whisper_encoder_pytorch_v8.py"
 NIGHTLY_PATH = ROOT / "scripts" / "nightly_runner.py"
 if str(BUILD_IR_PATH.parent) not in sys.path:
     sys.path.insert(0, str(BUILD_IR_PATH.parent))
@@ -33,6 +34,7 @@ def _load_module(name: str, path: Path):
 resolver = _load_module("audio_encoder_contract_resolver", RESOLVER_PATH)
 build_ir = _load_module("audio_encoder_build_ir", BUILD_IR_PATH)
 codegen_core = _load_module("audio_encoder_codegen_core", CODEGEN_CORE_PATH)
+whisper_xray = _load_module("audio_encoder_whisper_xray", WHISPER_XRAY_PATH)
 nightly = _load_module("audio_encoder_nightly", NIGHTLY_PATH)
 
 
@@ -68,10 +70,12 @@ def _make_audio_encoder_manifest() -> dict:
         "audio_conv1_stride": 1,
         "audio_conv1_padding": 1,
         "audio_conv1_output_frames": 8,
+        "audio_conv1_elements": 64,
         "audio_conv2_kernel_size": 3,
         "audio_conv2_stride": 2,
         "audio_conv2_padding": 1,
         "audio_conv2_output_frames": 4,
+        "audio_conv2_elements": 32,
         "attention_scale": 0.5,
         "rms_eps": 1.0e-5,
         "prefer_q8_activation": False,
@@ -143,6 +147,32 @@ class AudioEncoderContractTests(unittest.TestCase):
                     mode="production",
                 )
                 self.assertEqual(plan["kernel"]["id"], kernel_id)
+
+    def test_whisper_xray_maps_every_generated_operation(self):
+        config = _make_audio_encoder_manifest()["config"]
+        config["num_layers"] = 4
+        table = whisper_xray.checkpoint_table(config)
+        self.assertEqual(sorted(table), list(range(79)))
+        self.assertEqual(table[0].buffer, "audio_conv_1")
+        self.assertEqual(table[14].shape, (2, 4, 4))
+        self.assertEqual(table[21].shape, (4, 16))
+        self.assertEqual(table[78].name, "encoder.final_layer_norm")
+
+    def test_whisper_xray_rejects_inconsistent_layout_dimensions(self):
+        config = _make_audio_encoder_manifest()["config"]
+        config["audio_conv2_output_frames"] = 3
+        with self.assertRaisesRegex(ValueError, "layout contract"):
+            whisper_xray.checkpoint_table(config)
+
+    def test_whisper_xray_head_major_round_trip(self):
+        try:
+            import torch
+        except ImportError:
+            self.skipTest("PyTorch is unavailable")
+        token_major = torch.arange(32, dtype=torch.float32).reshape(1, 4, 8)
+        head_major = whisper_xray._head_major(token_major, 2, 4)
+        restored = whisper_xray._token_major(head_major)
+        self.assertTrue(torch.equal(restored, token_major[0]))
 
     def test_audio_primitive_contracts_resolve_all_exact_providers(self):
         cases = {
@@ -260,6 +290,28 @@ class AudioEncoderContractTests(unittest.TestCase):
             if row.get("errors")
         ]
         self.assertEqual(errors, [])
+        gelu_calls = [
+            row for row in call_ir["operations"]
+            if row.get("op") == "gelu" and int(row.get("layer", -1)) == -1
+        ]
+        self.assertEqual(len(gelu_calls), 2)
+        gelu_args = [
+            {arg["name"]: arg for arg in row["args"]}
+            for row in gelu_calls
+        ]
+        self.assertEqual(gelu_args[0]["data"]["buffer_ref"], "audio_conv_1")
+        self.assertEqual(gelu_args[0]["n"]["expr"], "64")
+        self.assertEqual(gelu_args[1]["data"]["buffer_ref"], "audio_conv_2")
+        self.assertEqual(gelu_args[1]["n"]["expr"], "32")
+        attention_call = next(
+            row for row in call_ir["operations"] if row.get("op") == "attn"
+        )
+        attention_args = {
+            arg["name"]: arg for arg in attention_call["args"]
+        }
+        self.assertEqual(attention_args["query"]["buffer_ref"], "q_scratch")
+        self.assertEqual(attention_args["key"]["buffer_ref"], "k_scratch")
+        self.assertEqual(attention_args["value"]["buffer_ref"], "v_scratch")
 
     def test_encoder_only_codegen_contract_is_capability_scoped_and_fail_closed(self):
         manifest = _make_audio_encoder_manifest()

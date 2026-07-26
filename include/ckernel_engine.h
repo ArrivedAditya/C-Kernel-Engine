@@ -1212,6 +1212,7 @@ void gelu_fast_inplace(float *data, size_t n);
 // Scalar-only exact GELU forward using standard library tanhf.
 // Slower but provides maximum accuracy. Used by BF16 wrapper.
 void gelu_exact_inplace(float *data, size_t n);
+void gelu_pytorch_erf_f32_inplace(float *data, size_t n);
 
 // GGML-compatible GELU forward matching llama.cpp's FP16 table semantics.
 void gelu_ggml_inplace(float *data, size_t n);

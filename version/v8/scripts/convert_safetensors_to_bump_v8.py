@@ -1109,10 +1109,12 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
                 "audio_conv1_stride": 1,
                 "audio_conv1_padding": 1,
                 "audio_conv1_output_frames": context_length * 2,
+                "audio_conv1_elements": embed_dim * context_length * 2,
                 "audio_conv2_kernel_size": 3,
                 "audio_conv2_stride": 2,
                 "audio_conv2_padding": 1,
                 "audio_conv2_output_frames": context_length,
+                "audio_conv2_elements": embed_dim * context_length,
                 "attention_scale": 1.0 / math.sqrt(float(embed_dim // num_heads)),
                 "rms_eps": 1.0e-5,
                 "prefer_q8_activation": False,
@@ -1910,13 +1912,14 @@ def main() -> int:
     missing: list[str] = []
     entries_preview: list[dict[str, Any]] = []
     dtype_table: list[int] = []
-    offset = DATA_START + 4 + len(refs) + len(tokenizer_payloads)
+    offset = align_up(DATA_START + 4 + len(refs) + len(tokenizer_payloads))
     for ref in refs:
         for src in ref.source_names:
             if src not in headers:
                 missing.append(src)
         if missing:
             continue
+        offset = align_up(offset)
         dt, size, shape = _entry_size_from_header(ref, headers, args.dtype)
         dtype_table.append(_dtype_code(dt))
         preview_entry = {
@@ -1974,6 +1977,7 @@ def main() -> int:
         config["special_tokens"] = special_tokens
     quant_summary: dict[str, Any] = {"source": "safetensors", "dtype_policy": args.dtype}
     for name, dt, payload, shape, source in tokenizer_payloads:
+        offset = align_up(offset)
         dtype_table.append(CK_DT_FP32)
         entries_preview.append({
             "name": name,
@@ -2050,6 +2054,10 @@ def main() -> int:
         entries: list[dict[str, Any]] = []
         current_offset = DATA_START + 4 + len(dtype_table)
         for ref in refs:
+            aligned_offset = align_up(current_offset)
+            if aligned_offset > current_offset:
+                w.write(b"\x00" * (aligned_offset - current_offset))
+                current_offset = aligned_offset
             start = current_offset
             dt, size, shape = _write_ref(w, model_dir, headers, ref, args.dtype, arch)
             current_offset += size
@@ -2066,6 +2074,10 @@ def main() -> int:
                 entry["transform"] = transform
             entries.append(entry)
         for name, dt, payload, shape, source in tokenizer_payloads:
+            aligned_offset = align_up(current_offset)
+            if aligned_offset > current_offset:
+                w.write(b"\x00" * (aligned_offset - current_offset))
+                current_offset = aligned_offset
             start = current_offset
             w.write(payload)
             current_offset += len(payload)

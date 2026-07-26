@@ -16,6 +16,7 @@ from lib_loader import load_lib
 
 lib = load_lib("libckernel_audio.so", "libckernel_engine.so")
 attention_lib = load_lib("libckernel_attention.so", "libckernel_engine.so")
+gelu_lib = load_lib("libckernel_gelu.so", "libckernel_engine.so")
 _FLOAT_P = ctypes.POINTER(ctypes.c_float)
 _I16_P = ctypes.POINTER(ctypes.c_int16)
 _U8_P = ctypes.POINTER(ctypes.c_uint8)
@@ -97,6 +98,8 @@ lib.audio_stft_power_fft400_f32.argtypes = [
     ctypes.c_int, _FLOAT_P, ctypes.c_int, _FLOAT_P,
 ]
 lib.audio_stft_power_fft400_f32.restype = ctypes.c_int
+gelu_lib.gelu_pytorch_erf_f32_inplace.argtypes = [_FLOAT_P, ctypes.c_size_t]
+gelu_lib.gelu_pytorch_erf_f32_inplace.restype = None
 
 
 def check_wav_pcm16() -> None:
@@ -330,6 +333,30 @@ def check_transpose() -> None:
     print("audio_channel_to_token_transpose max_diff=0 tol=0 [PASS]")
 
 
+def check_pytorch_erf_gelu() -> None:
+    edge = np.array(
+        [
+            -20.0, -10.0, -5.0, -3.0, -1.0, -0.5, -0.0,
+            0.0, 0.5, 1.0, 3.0, 5.0, 10.0, 20.0,
+        ],
+        dtype=np.float32,
+    )
+    random = np.random.default_rng(20260725).normal(0.0, 2.5, 16384).astype(np.float32)
+    source = np.concatenate((edge, random))
+    actual = source.copy()
+    gelu_lib.gelu_pytorch_erf_f32_inplace(_fptr(actual), actual.size)
+    expected = F.gelu(torch.from_numpy(source), approximate="none").numpy()
+    difference = np.abs(actual - expected)
+    max_diff = float(np.max(difference))
+    rmse = float(np.sqrt(np.mean(difference * difference)))
+    assert max_diff <= 5.0e-7, max_diff
+    assert rmse <= 1.25e-7, rmse
+    print(
+        f"audio_pytorch_erf_gelu max_diff={max_diff:.8e} tol=5.0e-07 [PASS] "
+        f"rmse={rmse:.8e} rmse_tol=1.25e-07"
+    )
+
+
 def _check_cross_attention(name: str, heads: int, query_tokens: int, key_tokens: int, dim: int) -> None:
     rng = np.random.default_rng(heads * 100000 + query_tokens * 1000 + key_tokens + dim)
     query = rng.normal(0.0, 0.12, (heads, query_tokens, dim)).astype(np.float32)
@@ -365,11 +392,12 @@ def main() -> None:
     check_precomputed_stft()
     _check_conv("audio_conv1d_whisper_stem1", 80, 384, 16, 1)
     _check_conv("audio_conv1d_whisper_stem2", 384, 384, 16, 2)
+    check_pytorch_erf_gelu()
     check_transpose()
     _check_cross_attention("audio_encoder_self_attention_equal", 6, 11, 11, 64)
     _check_cross_attention("audio_cross_attention_unequal_small", 3, 5, 17, 8)
     _check_cross_attention("audio_cross_attention_whisper_decode", 6, 1, 1500, 64)
-    print("ALL TESTS PASSED (13/13)")
+    print("ALL TESTS PASSED (14/14)")
 
 
 if __name__ == "__main__":

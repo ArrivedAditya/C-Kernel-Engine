@@ -1522,6 +1522,41 @@
       "position_transform": null,
       "description": "PyTorch tanh-approximate GELU over BF16-valued inputs with FP32 elementwise compute and BF16 RNE output storage."
     },
+    "gelu_pytorch_erf_fp32_storage": {
+      "operator_family": "gelu",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "evaluation_order": "pytorch_erf_approximate_none_scalar_fp32"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "PyTorch GELU approximate=none over FP32 storage using the scalar erf formulation."
+    },
     "gelu_pytorch_erf_sleef_bf16_storage": {
       "operator_family": "gelu",
       "status": "validated",

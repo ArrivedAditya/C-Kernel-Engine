@@ -8640,6 +8640,7 @@ def generate_memory_layout(
 
     def add_buffer(name, size, shape_desc, dtype="fp32"):
         nonlocal current_offset
+        current_offset = _align_up(current_offset, 64)
         activation_buffers.append({
             "name": name,
             "size": size,
@@ -8899,7 +8900,7 @@ def generate_memory_layout(
         "description": "Offsets: [0..header_size) header, [header_size..data_start) ext_metadata, [data_start..] dtype_table + weights"
     })
 
-    activations_base = weights_base_offset + total_weight_size
+    activations_base = _align_up(weights_base_offset + total_weight_size, 64)
     for buf in activation_buffers:
         buf["define"] = f"A_{_sanitize_macro(buf.get('name', 'buffer'))}"
         buf["abs_offset"] = activations_base + buf.get("offset", 0)
@@ -10172,6 +10173,9 @@ def generate_ir_lower_2(
                     "gate": "x",   # swiglu gate input -> reads from mlp_scratch
                     "up": "x",     # swiglu up input -> reads from mlp_scratch
                     # Attention decode/prefill kernel names -> dataflow names
+                    "query": "q",
+                    "key": "k",
+                    "value": "v",
                     "q_token": "q",
                     "k_cache": "k",
                     "v_cache": "v",
@@ -10713,7 +10717,8 @@ def generate_ir_lower_2(
                 * int(params.get("projector_hidden_dim", 0) or 0)
             )
         if op_type == "gelu":
-            params["gelu_elems"] = (
+            explicit_elements = int(params.get("elements", 0) or 0)
+            params["gelu_elems"] = explicit_elements or (
                 int(params.get("_m", params.get("seq_len", 0)) or 0)
                 * int(params.get("intermediate_size", 0) or 0)
             )
@@ -10874,18 +10879,32 @@ def validate_buffer_assignments(lowered_ir: Dict) -> None:
             outputs = op.get("outputs", {})
             x_in = activations.get("x") or activations.get("input") or activations.get("a")
             out = outputs.get("out") or outputs.get("y")
-            if x_in and x_in.get("buffer", "") != "mlp_scratch":
+            graph_slots = op.get("graph_slots", {}) if isinstance(op.get("graph_slots"), dict) else {}
+            graph_inputs = graph_slots.get("inputs", {}) if isinstance(graph_slots.get("inputs"), dict) else {}
+            graph_outputs = graph_slots.get("outputs", {}) if isinstance(graph_slots.get("outputs"), dict) else {}
+            expected_input = str(
+                graph_inputs.get("x")
+                or graph_inputs.get("input")
+                or graph_inputs.get("a")
+                or "mlp_scratch"
+            )
+            expected_output = str(
+                graph_outputs.get("out")
+                or graph_outputs.get("y")
+                or "mlp_scratch"
+            )
+            if x_in and x_in.get("buffer", "") != expected_input:
                 raise RuntimeError(
-                    f"\n❌ HARD FAULT: Invalid MLP activation input\n"
+                    f"\n❌ HARD FAULT: Invalid activation input\n"
                     f"   op={op_name} layer={layer}\n"
-                    f"   expected input: mlp_scratch\n"
+                    f"   expected input: {expected_input}\n"
                     f"   got: {x_in.get('buffer', '')}\n"
                 )
-            if out and out.get("buffer", "") != "mlp_scratch":
+            if out and out.get("buffer", "") != expected_output:
                 raise RuntimeError(
-                    f"\n❌ HARD FAULT: Invalid MLP activation output\n"
+                    f"\n❌ HARD FAULT: Invalid activation output\n"
                     f"   op={op_name} layer={layer}\n"
-                    f"   expected output: mlp_scratch\n"
+                    f"   expected output: {expected_output}\n"
                     f"   got: {out.get('buffer', '')}\n"
                 )
 
