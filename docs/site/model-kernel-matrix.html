@@ -954,6 +954,7 @@
                         <a href="cke-throughput-unit.html">CKE Throughput Unit<small>PB/s active-byte target</small></a>
                         <a href="gemma4-speculative-pair.html">Gemma4 Speculative Pair<small>Backbone + MTP drafter circuit</small></a>
                         <a href="v8-mla-kimi.html">v8 MLA / Kimi<small>Explicit decode cache contract</small></a>
+                        <a href="v8-whisper-tiny.html">Whisper Tiny E2E<small>Audio encoder/decoder circuits</small></a>
                         <a href="simd-architecture.html">SIMD Architecture<small>AVX-512, VNNI, AMX</small></a>
                         <a href="flash_attention.html" class="">Flash Attention Analysis<small>Why llama.cpp is faster</small></a>
                     </div>
@@ -1302,10 +1303,12 @@
     Every supported family enters through the same deterministic compile path. The artifact (GGUF) carries the numbers,
     the template carries the structure, and lowering turns both into a concrete C runtime with a fixed memory plan.
     Vision families add a second lane that produces an encoder prefix and bridges it into the decoder.
+    Audio families arrive as safetensors &rarr; BUMP and run an encoder&ndash;decoder pair: the audio encoder's output
+    becomes cross-attention memory that the decoder reads on every generated token.
   </p>
 
-  <svg viewBox="0 0 1180 520" width="100%" role="img"
-       aria-label="C-Kernel-Engine model compilation pipeline: GGUF and template lower to IR, memory plan, codegen and runtime, with a vision encoder lane bridging into the decoder."
+  <svg viewBox="0 0 1180 648" width="100%" role="img"
+       aria-label="C-Kernel-Engine model compilation pipeline: GGUF and template lower to IR, memory plan, codegen and runtime, with a vision encoder lane bridging into the decoder and an audio encoder-decoder lane feeding cross-attention memory."
        style="max-width: 1180px; margin: 0.5rem auto 1.75rem; display: block; font-family: 'Inter', system-ui, sans-serif;">
     <defs>
       <linearGradient id="mk-text" x1="0" y1="0" x2="1" y2="1">
@@ -1313,6 +1316,9 @@
       </linearGradient>
       <linearGradient id="mk-vision" x1="0" y1="0" x2="1" y2="1">
         <stop offset="0" stop-color="#07adf8"/><stop offset="1" stop-color="#00bcd4"/>
+      </linearGradient>
+      <linearGradient id="mk-audio" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#f59e0b"/><stop offset="1" stop-color="#d97706"/>
       </linearGradient>
       <linearGradient id="mk-run" x1="0" y1="0" x2="1" y2="1">
         <stop offset="0" stop-color="#47b475"/><stop offset="1" stop-color="#2f8d59"/>
@@ -1322,6 +1328,9 @@
       </marker>
       <marker id="mk-arrow-v" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto">
         <path d="M0,0 L7,3 L0,6 Z" fill="#07adf8"/>
+      </marker>
+      <marker id="mk-arrow-a" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="#f59e0b"/>
       </marker>
       <style>
         .mk-stage{fill:#323232;stroke:#454545;stroke-width:1.4;rx:12;}
@@ -1424,6 +1433,32 @@
     <!-- bridge climbs into decoder -->
     <path d="M934,460 C1010,440 1060,400 1070,354" fill="none" stroke="#00bcd4" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#mk-arrow-v)"/>
     <text x="750" y="400" class="mk-sub" fill="#7fd8ec">prefix rows stitch in before text tokens</text>
+
+    <!-- Row 4: audio lane -->
+    <text x="24" y="556" class="mk-band">Audio lane (encoder&#8211;decoder families)</text>
+    <g>
+      <rect x="24"  y="572" width="190" height="58" rx="12" fill="url(#mk-audio)" opacity="0.14" stroke="#f59e0b" stroke-width="1.5"/>
+      <text x="44" y="598" class="mk-title" font-size="16">WAV in</text>
+      <text x="44" y="618" class="mk-sub" fill="#ffd38a">pcm16 &#183; resample 16 kHz</text>
+
+      <rect x="244" y="572" width="210" height="58" rx="12" fill="url(#mk-audio)" opacity="0.14" stroke="#f59e0b" stroke-width="1.5"/>
+      <text x="264" y="598" class="mk-title" font-size="16">Log-Mel frontend</text>
+      <text x="264" y="618" class="mk-sub" fill="#ffd38a">stft &#183; mel &#183; conv stem</text>
+
+      <rect x="484" y="572" width="210" height="58" rx="12" fill="url(#mk-audio)" opacity="0.14" stroke="#f59e0b" stroke-width="1.5"/>
+      <text x="504" y="598" class="mk-title" font-size="16">Audio encoder</text>
+      <text x="504" y="618" class="mk-sub" fill="#ffd38a">self-attn &#183; GELU MLP</text>
+
+      <rect x="724" y="572" width="210" height="58" rx="12" fill="url(#mk-audio)" opacity="0.22" stroke="#f59e0b" stroke-width="1.8"/>
+      <text x="744" y="598" class="mk-title" font-size="16">Cross-attn memory</text>
+      <text x="744" y="618" class="mk-sub" fill="#ffd38a">K/V once &#8594; decoder</text>
+    </g>
+    <path d="M214,601 L240,601" fill="none" stroke="#f59e0b" stroke-width="1.6" marker-end="url(#mk-arrow-a)"/>
+    <path d="M454,601 L480,601" fill="none" stroke="#f59e0b" stroke-width="1.6" marker-end="url(#mk-arrow-a)"/>
+    <path d="M694,601 L720,601" fill="none" stroke="#f59e0b" stroke-width="1.6" marker-end="url(#mk-arrow-a)"/>
+    <!-- cross-attention memory climbs into decoder -->
+    <path d="M934,586 C1020,566 1075,420 1075,354" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#mk-arrow-a)"/>
+    <text x="920" y="540" text-anchor="end" class="mk-sub" fill="#ffd38a">safetensors &#8594; BUMP &#183; encoder K/V read every decode step</text>
   </svg>
 
   <div class="matrix-hero">
@@ -1931,7 +1966,24 @@ make build/libckernel_engine.so
       <div class="cell ok">SwiGLU</div>
       <div class="cell dim">No</div>
       <div class="cell ok">Untied head</div>
+
+      <div class="cell row-head">Whisper Tiny</div>
+      <div class="cell ok">BPE + task tokens</div>
+      <div class="cell ok">From weights</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Learned absolute</div>
+      <div class="cell ok">Self + cross (enc&#8211;dec)</div>
+      <div class="cell ok">GELU (erf)</div>
+      <div class="cell dim">No</div>
+      <div class="cell ok">Tied</div>
     </div>
+    <p class="source-note" style="margin-top: 0.75rem;">
+      Whisper Tiny is the first encoder&#8211;decoder row: the encoder runs full self-attention over 1500 audio frames,
+      the decoder adds the cross-attention lane (K/V from encoder memory, computed once) on top of causal self-attention.
+      Position is a learned absolute table on both sides &mdash; no RoPE anywhere. Kernel-level detail:
+      <a href="concepts.html#audio-frontend">Concepts &mdash; Audio Frontend &amp; Cross-Attention</a> and
+      <a href="v8-whisper-tiny.html">Whisper Tiny End-to-End</a>.
+    </p>
   </div>
 
   <div class="matrix-section">
@@ -2137,6 +2189,10 @@ make build/libckernel_engine.so
       <div class="test-item">bartowski--nvidia_NVIDIA-Nemotron-Nano-9B-v2-GGUF / Q4_K_M</div>
       <div class="test-item">unsloth--GLM-4-9B-0414-GGUF / Q4_K_M</div>
     </div>
+    <p class="source-note" style="margin-top: 0.75rem;">
+      Audio lane: <code>openai/whisper-tiny</code> safetensors &rarr; BUMP as an encoder + decoder run-directory pair,
+      validated through the opt-in E2E artifact gate (<code>make test-whisper-e2e-auto</code>) rather than the GGUF corpus above.
+    </p>
     <p class="source-note" style="margin-top: 0.75rem;">
       Bring-up note: if a Llama-family/Nanbeige first reply starts with <code>&lt;think&gt;</code> or echoes
       <code>&lt;|im_start|&gt;assistant</code>, the runtime is using the wrong chat wrapper or stop policy.
@@ -2462,7 +2518,7 @@ python3 version/v7/scripts/test_kv_cache_batch_copy_call_ir_v7.py \
             </div>
             <div style="text-align: right;">
                 <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
-                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-07-18</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-07-26</p>
             </div>
         </div>
     </footer>
