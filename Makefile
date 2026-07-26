@@ -1311,7 +1311,7 @@ test-audio: $(LIB_AUDIO) $(LIB_ATTENTION) $(LIB_GELU)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_audio_encoder.py
 	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_audio_contract -v
 	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_audio_encoder_contract -v
-	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_safetensors_to_bump.py -k whisper_encoder
+	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_safetensors_to_bump.py -k "whisper_encoder or whisper_decoder"
 
 # Policy:
 # - Keep public/operator-facing test entrypoints version-neutral (`make test`,

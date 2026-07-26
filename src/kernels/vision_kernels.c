@@ -184,6 +184,28 @@ void position_embeddings_add(float *x,
     }
 }
 
+void position_embeddings_add_at_offset(float *x,
+                                       const float *position_embd,
+                                       int num_tokens,
+                                       int embed_dim,
+                                       int num_positions,
+                                       int start_position)
+{
+    if (x == NULL || position_embd == NULL || num_tokens <= 0 || embed_dim <= 0 ||
+        num_positions <= 0 || start_position < 0 || start_position >= num_positions) {
+        return;
+    }
+    const int available = num_positions - start_position;
+    const int limit = num_tokens < available ? num_tokens : available;
+    for (int tok = 0; tok < limit; ++tok) {
+        float *dst = x + (size_t)tok * embed_dim;
+        const float *src = position_embd + (size_t)(start_position + tok) * embed_dim;
+        for (int d = 0; d < embed_dim; ++d) {
+            dst[d] += src[d];
+        }
+    }
+}
+
 void position_embeddings_add_gemma4v_xy(float *x,
                                        const float *position_embd,
                                        int grid_h,

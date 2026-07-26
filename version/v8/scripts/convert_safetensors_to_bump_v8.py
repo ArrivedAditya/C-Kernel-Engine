@@ -1063,13 +1063,27 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         "tie_word_embeddings",
         bool(text.get("tie_word_embeddings", hf.get("tie_word_embeddings", True))),
     )
-    if arch == "whisper_encoder":
+    if arch in {"whisper_encoder", "whisper_decoder"}:
         embed_dim = int(hf.get("d_model") or 0)
-        num_heads = int(hf.get("encoder_attention_heads") or 0)
-        context_length = int(hf.get("max_source_positions") or 0)
+        is_encoder = arch == "whisper_encoder"
+        num_heads = int(
+            hf.get("encoder_attention_heads" if is_encoder else "decoder_attention_heads")
+            or 0
+        )
+        context_length = int(
+            hf.get("max_source_positions" if is_encoder else "max_target_positions")
+            or 0
+        )
         feature_channels = int(hf.get("num_mel_bins") or 0)
-        num_layers = int(hf.get("encoder_layers") or hf.get("num_hidden_layers") or 0)
-        intermediate_size = int(hf.get("encoder_ffn_dim") or 0)
+        num_layers = int(
+            hf.get("encoder_layers" if is_encoder else "decoder_layers")
+            or hf.get("num_hidden_layers")
+            or 0
+        )
+        intermediate_size = int(
+            hf.get("encoder_ffn_dim" if is_encoder else "decoder_ffn_dim")
+            or 0
+        )
         if min(
             embed_dim,
             num_heads,
@@ -1078,10 +1092,10 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             num_layers,
             intermediate_size,
         ) <= 0:
-            raise SystemExit("Whisper encoder config is missing required dimensions")
+            raise SystemExit(f"{arch} config is missing required dimensions")
         if embed_dim % num_heads != 0:
             raise SystemExit(
-                f"Whisper encoder d_model={embed_dim} is not divisible by heads={num_heads}"
+                f"{arch} d_model={embed_dim} is not divisible by heads={num_heads}"
             )
         contract = _safetensors_arch_contract(arch)
         contract_cfg = (
@@ -1101,28 +1115,43 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
                 "num_key_value_heads": num_heads,
                 "head_dim": embed_dim // num_heads,
                 "context_length": context_length,
-                "audio_feature_channels": feature_channels,
-                "audio_feature_frames": context_length * 2,
-                "audio_conv1_output_channels": embed_dim,
-                "audio_conv2_output_channels": embed_dim,
-                "audio_conv1_kernel_size": 3,
-                "audio_conv1_stride": 1,
-                "audio_conv1_padding": 1,
-                "audio_conv1_output_frames": context_length * 2,
-                "audio_conv1_elements": embed_dim * context_length * 2,
-                "audio_conv2_kernel_size": 3,
-                "audio_conv2_stride": 2,
-                "audio_conv2_padding": 1,
-                "audio_conv2_output_frames": context_length,
-                "audio_conv2_elements": embed_dim * context_length,
                 "attention_scale": 1.0 / math.sqrt(float(embed_dim // num_heads)),
                 "rms_eps": 1.0e-5,
                 "prefer_q8_activation": False,
                 "numerical_contract_mode": "production",
-                "tie_word_embeddings": True,
-                "vocab_size": 1,
+                "tie_word_embeddings": bool(hf.get("tie_word_embeddings", True)),
+                "vocab_size": 1 if is_encoder else int(hf.get("vocab_size") or 0),
             }
         )
+        if is_encoder:
+            cfg.update(
+                {
+                    "audio_feature_channels": feature_channels,
+                    "audio_feature_frames": context_length * 2,
+                    "audio_conv1_output_channels": embed_dim,
+                    "audio_conv2_output_channels": embed_dim,
+                    "audio_conv1_kernel_size": 3,
+                    "audio_conv1_stride": 1,
+                    "audio_conv1_padding": 1,
+                    "audio_conv1_output_frames": context_length * 2,
+                    "audio_conv1_elements": embed_dim * context_length * 2,
+                    "audio_conv2_kernel_size": 3,
+                    "audio_conv2_stride": 2,
+                    "audio_conv2_padding": 1,
+                    "audio_conv2_output_frames": context_length,
+                    "audio_conv2_elements": embed_dim * context_length,
+                }
+            )
+        else:
+            cfg.update(
+                {
+                    "encoder_memory_length": int(hf.get("max_source_positions") or 0),
+                    "decoder_start_token_id": int(hf.get("decoder_start_token_id") or 0),
+                    "eos_token_id": int(hf.get("eos_token_id") or 0),
+                    "pad_token_id": int(hf.get("pad_token_id") or 0),
+                    "uses_cross_attention": True,
+                }
+            )
     if arch == "nemotron_h":
         layer_kinds = _parse_nemotron_h_pattern(str(text.get("hybrid_override_pattern") or ""), int(cfg.get("num_layers") or 0))
         mamba_num_heads = int(text.get("mamba_num_heads") or 0)
@@ -1684,6 +1713,8 @@ def _ignored_source_tensor(arch: str, name: str) -> str | None:
         name.startswith("model.decoder.") or name == "proj_out.weight"
     ):
         return "decoder_not_in_encoder_artifact"
+    if arch == "whisper_decoder" and name.startswith("model.encoder."):
+        return "encoder_not_in_decoder_artifact"
     return None
 
 
@@ -1885,7 +1916,7 @@ def main() -> int:
     ap.add_argument("--ram-dir", type=Path, default=Path("/dev/shm"), help="tmpfs directory for --ram-output; default: /dev/shm")
     ap.add_argument("--config-out", required=True, type=Path)
     ap.add_argument("--manifest-out", required=True, type=Path)
-    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma4_assistant", "gemma3", "llama", "qwen2", "qwen3", "qwen3vl", "qwen3_vl_vision", "qwen35", "nemotron_h", "glm4", "kimi_vl", "whisper_encoder"])
+    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma4_assistant", "gemma3", "llama", "qwen2", "qwen3", "qwen3vl", "qwen3_vl_vision", "qwen35", "nemotron_h", "glm4", "kimi_vl", "whisper_encoder", "whisper_decoder"])
     ap.add_argument("--config-template", type=Path, help="existing v8 config/manifest to reuse explicit runtime policy")
     ap.add_argument("--dtype", default="preserve", choices=["preserve", "bf16", "fp32"])
     ap.add_argument("--dry-run", action="store_true", help="validate mapping and write JSON reports only; do not write BUMP")

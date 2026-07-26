@@ -1036,8 +1036,32 @@ OP_DATAFLOW = {
         "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
     },
     "cross_attn": {
-        "inputs": {"query": "q_scratch", "key": "k_scratch", "value": "v_scratch"},
-        "outputs": {"output": {"slot": "attn_scratch", "dtype": "fp32"}},
+        "inputs": {
+            "query": "cross_q_scratch",
+            "key": "cross_k_scratch",
+            "value": "cross_v_scratch"
+        },
+        "outputs": {"output": {"slot": "cross_attn_scratch", "dtype": "fp32"}},
+    },
+    "cross_attn_norm": {
+        "inputs": {"input": "main_stream"},
+        "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
+    },
+    "cross_q_proj": {
+        "inputs": {"x": "main_stream"},
+        "outputs": {"y": {"slot": "cross_q_scratch", "dtype": "fp32"}},
+    },
+    "cross_k_proj": {
+        "inputs": {"x": "external:encoder_memory"},
+        "outputs": {"y": {"slot": "cross_k_scratch", "dtype": "fp32"}},
+    },
+    "cross_v_proj": {
+        "inputs": {"x": "external:encoder_memory"},
+        "outputs": {"y": {"slot": "cross_v_scratch", "dtype": "fp32"}},
+    },
+    "cross_out_proj": {
+        "inputs": {"x": "cross_attn_scratch"},
+        "outputs": {"y": {"slot": "main_stream", "dtype": "fp32"}},
     },
     "dense_embedding_lookup": {
         "inputs": {"token_ids": "external:token_ids"},
@@ -2540,6 +2564,59 @@ def _audio_activation_specs(
     ]
 
 
+def _encoder_decoder_activation_specs(
+    config: Dict[str, Any],
+    seq_len: int,
+    embed_dim: int,
+    num_heads: int,
+    head_dim: int,
+) -> List[Tuple[str, int, str]]:
+    encoder_tokens = int(config.get("encoder_memory_length", 0) or 0)
+    if not bool(config.get("uses_cross_attention", False)):
+        return []
+    if encoder_tokens <= 0:
+        raise ValueError(
+            "encoder-decoder artifacts require a positive encoder_memory_length"
+        )
+    if num_heads <= 0 or head_dim <= 0 or num_heads * head_dim != embed_dim:
+        raise ValueError(
+            "encoder-decoder attention geometry must satisfy "
+            "num_heads * head_dim == embed_dim"
+        )
+    return [
+        (
+            "encoder_memory",
+            encoder_tokens * embed_dim * 4,
+            f"[{encoder_tokens}, {embed_dim}]",
+        ),
+        (
+            "cross_q_scratch",
+            num_heads * seq_len * head_dim * 4,
+            f"[{num_heads}, {seq_len}, {head_dim}]",
+        ),
+        (
+            "cross_k_scratch",
+            num_heads * encoder_tokens * head_dim * 4,
+            f"[{num_heads}, {encoder_tokens}, {head_dim}]",
+        ),
+        (
+            "cross_v_scratch",
+            num_heads * encoder_tokens * head_dim * 4,
+            f"[{num_heads}, {encoder_tokens}, {head_dim}]",
+        ),
+        (
+            "cross_attn_scratch",
+            num_heads * seq_len * head_dim * 4,
+            f"[{num_heads}, {seq_len}, {head_dim}]",
+        ),
+        (
+            "cross_layout_scratch",
+            encoder_tokens * embed_dim * 4,
+            f"[{encoder_tokens}, {embed_dim}]",
+        ),
+    ]
+
+
 def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, num_layers_override: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
     """Return activation buffer specs keyed by name."""
     embed_dim = int(config.get("embed_dim", 896))
@@ -2640,6 +2717,10 @@ def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, 
         add("vision_positions", vision_num_patches * 4 * 4, f"[4, {vision_num_patches}]", "i32")
 
     for name, size, shape in _audio_activation_specs(config, seq_len, embed_dim):
+        add(name, size, shape)
+    for name, size, shape in _encoder_decoder_activation_specs(
+        config, seq_len, embed_dim, num_heads, head_dim
+    ):
         add(name, size, shape)
 
     # Embedding + layer buffers
@@ -2861,12 +2942,15 @@ TEMPLATE_TO_KERNEL_OP = {
     "qkv_proj": "qkv_projection",  # Or fallback to 3x matmul
     "qkv_packed_proj": "matmul",
     "q_proj": "matmul",
+    "cross_q_proj": "matmul",
     "assistant_pre_projection": "matmul",
     "assistant_post_projection": "matmul",
     "assistant_layer_scale": "assistant_layer_scale",
     "q_gate_proj": "matmul",
     "k_proj": "matmul",
     "v_proj": "matmul",
+    "cross_k_proj": "matmul",
+    "cross_v_proj": "matmul",
     "recurrent_qkv_proj": "matmul",
     "recurrent_gate_proj": "matmul",
     "recurrent_alpha_proj": "matmul",
@@ -2907,8 +2991,10 @@ TEMPLATE_TO_KERNEL_OP = {
     "kv_cache_store": "kv_cache_store",  # Store K,V to KV cache at pos
     "attn": "attention",
     "cross_attn": "attention",
+    "cross_attn_norm": "layernorm",
     "attn_sliding": "attention_sliding",
     "out_proj": "matmul",  # gemv (decode) or gemm (prefill)
+    "cross_out_proj": "matmul",
 
     # Residual
     "residual_add": "residual_add",
@@ -2958,6 +3044,7 @@ TEMPLATE_TO_KERNEL_OP = {
 WEIGHT_TO_KERNEL_INPUT = {
     # Matrix weights → W
     "wq": "W", "wk": "W", "wv": "W", "wo": "W",
+    "cross_wq": "W", "cross_wk": "W", "cross_wv": "W", "cross_wo": "W",
     "w1": "W", "w2": "W", "w3": "W",
     "attn_qkv": "W", "attn_gate": "W",
     "ssm_alpha": "W", "ssm_beta": "W", "ssm_out": "W",
@@ -2968,6 +3055,7 @@ WEIGHT_TO_KERNEL_INPUT = {
     "branch_fc1_w": "W", "branch_fc2_w": "W",
     # Biases → bias (if kernel has it)
     "bq": "bias", "bk": "bias", "bv": "bias", "bo": "bias",
+    "cross_bq": "bias", "cross_bk": "bias", "cross_bv": "bias", "cross_bo": "bias",
     "b1": "bias", "b2": "bias",
     "ssm_dt_bias": "bias",
     "patch_bias": "bias", "bqkv": "bias", "mm0_b": "bias", "mm1_b": "bias",
@@ -2975,6 +3063,7 @@ WEIGHT_TO_KERNEL_INPUT = {
     # Layer norms → gamma/beta
     "ln1_gamma": "gamma", "ln2_gamma": "gamma",
     "ln1_beta": "beta", "ln2_beta": "beta",
+    "cross_ln_gamma": "gamma", "cross_ln_beta": "beta",
     "branch_norm_gamma": "gamma", "branch_norm_beta": "beta",
     "attn_norm": "gamma", "post_attention_norm": "gamma",
     "ffn_norm": "gamma", "post_ffn_norm": "gamma",
@@ -3116,10 +3205,10 @@ def _dedupe_preserve_order(items: List[str]) -> List[str]:
     return out
 
 
-PRE_NORM_OP_NAMES = {"rmsnorm", "layernorm", "attn_norm", "ffn_norm", "post_attention_norm", "block_rmsnorm"}
+PRE_NORM_OP_NAMES = {"rmsnorm", "layernorm", "attn_norm", "cross_attn_norm", "ffn_norm", "post_attention_norm", "block_rmsnorm"}
 RESIDUAL_SOURCE_BRANCH_STARTERS = {
     # Attention branches
-    "q_proj", "q_gate_proj", "qkv_proj", "qkv_packed_proj",
+    "q_proj", "cross_q_proj", "q_gate_proj", "qkv_proj", "qkv_packed_proj",
     "recurrent_qkv_proj", "recurrent_gate_proj",
     "recurrent_alpha_proj", "recurrent_beta_proj", "mamba_in_proj",
     # Feed-forward / routed expert branches
@@ -3823,7 +3912,7 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
 
     q_gate_proj = int(config.get("q_gate_proj_dim", config.get("attn_q_gate_proj_dim", 0)) or 0)
     attn_gate_dim = int(config.get("attn_gate_dim", 0) or 0)
-    if op_name in ("q_proj",):
+    if op_name in ("q_proj", "cross_q_proj"):
         return heads * head_dim, embed
     if op_name in ("assistant_pre_projection",):
         return embed, int(config.get("backbone_hidden_size", embed) or embed)
@@ -3835,7 +3924,7 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
         if q_gate_proj <= 0:
             q_gate_proj = 2 * (heads * head_dim)
         return q_gate_proj, embed
-    if op_name in ("k_proj", "v_proj"):
+    if op_name in ("k_proj", "v_proj", "cross_k_proj", "cross_v_proj"):
         return kv_heads * head_dim, embed
     recurrent_q = int(config.get("q_dim", 0) or 0)
     recurrent_k = int(config.get("k_dim", 0) or 0)
@@ -3852,7 +3941,7 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
     attn_out = config.get("attn_out_dim", heads * head_dim)
     if int(config.get("kv_lora_rank", 0) or 0) > 0 and int(config.get("v_head_dim", 0) or 0) > 0:
         attn_out = heads * int(config.get("v_head_dim", 0) or 0)
-    if op_name in ("out_proj", "attn_proj"):
+    if op_name in ("out_proj", "attn_proj", "cross_out_proj"):
         return embed, attn_out
     if op_name in ("recurrent_out_proj",):
         return embed, int(config.get("ssm_inner_size", attn_out))
@@ -4585,6 +4674,10 @@ def _resolve_logical_buffer_name(
     if isinstance(slot, str) and slot:
         if slot == "kv_cache":
             return "kv_cache"
+        if slot.startswith("external:"):
+            external_buffer = slot.split(":", 1)[1]
+            if external_buffer in activation_buffers:
+                return external_buffer
         if slot in activation_buffers:
             return slot
     return buffer_name_map.get(planner_buffer, planner_buffer)
@@ -5571,11 +5664,14 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "qkv_packed_proj": ["attn_qkv"],
         "qkv_proj": ["wq", "wk", "wv"],  # Split into 3 matmuls if no fused kernel
         "q_proj": ["wq"],
+        "cross_q_proj": ["cross_wq"],
         "assistant_pre_projection": ["assistant_pre_projection"],
         "assistant_post_projection": ["assistant_post_projection"],
         "q_gate_proj": ["wq"],
         "k_proj": ["wk"],
         "v_proj": ["wv"],
+        "cross_k_proj": ["cross_wk"],
+        "cross_v_proj": ["cross_wv"],
         "recurrent_qkv_proj": ["attn_qkv"],
         "recurrent_gate_proj": ["attn_gate"],
         "recurrent_alpha_proj": ["ssm_alpha"],
@@ -5601,6 +5697,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     "partial_rope_concat": [],
     "mla_attention": [],
         "out_proj": ["wo"],
+        "cross_out_proj": ["cross_wo"],
         "mlp_gate_up": ["w1"],
         "mlp_up": ["w3"],
         "mlp_down": ["w2"],
@@ -5621,6 +5718,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "audio_conv1d_stem_2": ["audio_conv2_weight", "audio_conv2_bias"],
         "layout_channel_to_token": None,
         "cross_attn": None,
+        "cross_attn_norm": None,
         "rmsnorm": None,  # gamma is always fp32
         "layernorm": None,  # gamma/beta are fp32
         "attn_norm": None,
@@ -7242,10 +7340,14 @@ def insert_bias_add_ops(
     bias_key_by_op = {
         "qkv_packed_proj": "bqkv",
         "q_proj": "bq",
+        "cross_q_proj": "cross_bq",
         "q_gate_proj": "bq",
         "k_proj": "bk",
         "v_proj": "bv",
+        "cross_k_proj": "cross_bk",
+        "cross_v_proj": "cross_bv",
         "out_proj": "bo",
+        "cross_out_proj": "cross_bo",
         "mlp_gate_up": "b1",
         "mlp_up": "b1",
         "mlp_down": "b2",
@@ -7282,10 +7384,14 @@ def insert_bias_add_ops(
         # later GEMV specialization cannot silently drop them.
         decode_needs_explicit_bias = mode == "decode" and op_type in {
             "q_proj",
+            "cross_q_proj",
             "q_gate_proj",
             "k_proj",
             "v_proj",
+            "cross_k_proj",
+            "cross_v_proj",
             "out_proj",
+            "cross_out_proj",
             "mlp_gate_up",
             "mlp_up",
             "mlp_down",
@@ -7765,6 +7871,27 @@ def generate_ir_lower_1(
                 op["inputs"].pop("k", None)
                 op["inputs"].pop("v", None)
 
+            if op_name in ("cross_k_proj", "cross_v_proj"):
+                is_key = op_name == "cross_k_proj"
+                cross_buffer = "cross_k_scratch" if is_key else "cross_v_scratch"
+                final_ops.append({
+                    "idx": len(final_ops),
+                    "kernel": "transpose_cross_kv_to_head_major",
+                    "op": "transpose_cross_kv_to_head_major",
+                    "layer": layer,
+                    "section": op["section"],
+                    "function": "transpose_inplace",
+                    "weights": {},
+                    "inputs": {"buf": {"type": "scratch", "source": cross_buffer}},
+                    "outputs": {"buf": {"type": "scratch", "buffer": cross_buffer}},
+                    "scratch": [],
+                    "_auto_inserted": True,
+                    "_cross_kv_kind": "key" if is_key else "value",
+                    "_cross_num_heads": int(config.get("num_heads", 0) or 0),
+                    "_cross_encoder_tokens": int(config.get("encoder_memory_length", 0) or 0),
+                    "_cross_head_dim": int(config.get("head_dim", 0) or 0),
+                })
+
         elif mode == "prefill":
             # Prefill layout bridges are a graph contract, not a decoder/KV-cache
             # special case. Keep the lowerer architecture-agnostic: if one op
@@ -7832,6 +7959,57 @@ def generate_ir_lower_1(
                     "_is_k": False,
                 }
                 final_ops.append(transpose_v_op)
+
+            if op["op"] == "cross_q_proj":
+                final_ops.append({
+                    "idx": len(final_ops),
+                    "kernel": "transpose_cross_q_to_head_major",
+                    "op": "transpose_cross_q_to_head_major",
+                    "layer": op["layer"],
+                    "section": op["section"],
+                    "function": "transpose_inplace",
+                    "weights": {},
+                    "inputs": {"buf": {"type": "scratch", "source": "cross_q_scratch"}},
+                    "outputs": {"buf": {"type": "scratch", "buffer": "cross_q_scratch"}},
+                    "scratch": [],
+                    "_auto_inserted": True,
+                })
+
+            if op["op"] in ("cross_k_proj", "cross_v_proj"):
+                is_key = op["op"] == "cross_k_proj"
+                cross_buffer = "cross_k_scratch" if is_key else "cross_v_scratch"
+                final_ops.append({
+                    "idx": len(final_ops),
+                    "kernel": "transpose_cross_kv_to_head_major",
+                    "op": "transpose_cross_kv_to_head_major",
+                    "layer": op["layer"],
+                    "section": op["section"],
+                    "function": "transpose_inplace",
+                    "weights": {},
+                    "inputs": {"buf": {"type": "scratch", "source": cross_buffer}},
+                    "outputs": {"buf": {"type": "scratch", "buffer": cross_buffer}},
+                    "scratch": [],
+                    "_auto_inserted": True,
+                    "_cross_kv_kind": "key" if is_key else "value",
+                    "_cross_num_heads": int(config.get("num_heads", 0) or 0),
+                    "_cross_encoder_tokens": int(config.get("encoder_memory_length", 0) or 0),
+                    "_cross_head_dim": int(config.get("head_dim", 0) or 0),
+                })
+
+            if op["op"] == "cross_attn":
+                final_ops.append({
+                    "idx": len(final_ops),
+                    "kernel": "transpose_cross_attn_out_to_token_major",
+                    "op": "transpose_cross_attn_out_to_token_major",
+                    "layer": op["layer"],
+                    "section": op["section"],
+                    "function": "transpose_inplace",
+                    "weights": {},
+                    "inputs": {"buf": {"type": "scratch", "source": "cross_attn_scratch"}},
+                    "outputs": {"buf": {"type": "scratch", "buffer": "cross_attn_scratch"}},
+                    "scratch": [],
+                    "_auto_inserted": True,
+                })
 
             # Flash attention writes head-major [H, T, D], but the unfused
             # projection/residual path consumes token-major [T, H*D]. Emit the
@@ -7998,6 +8176,14 @@ WEIGHT_PATTERNS = {
     "bq": ["layer.{L}.bq", "layers.{L}.attention.bq"],
     "bk": ["layer.{L}.bk", "layers.{L}.attention.bk"],
     "bv": ["layer.{L}.bv", "layers.{L}.attention.bv"],
+    "cross_wq": ["layer.{L}.cross_wq"],
+    "cross_wk": ["layer.{L}.cross_wk"],
+    "cross_wv": ["layer.{L}.cross_wv"],
+    "cross_bq": ["layer.{L}.cross_bq"],
+    "cross_bk": ["layer.{L}.cross_bk"],
+    "cross_bv": ["layer.{L}.cross_bv"],
+    "cross_ln_gamma": ["layer.{L}.cross_ln_gamma"],
+    "cross_ln_beta": ["layer.{L}.cross_ln_beta"],
 
     # QK norm weights (per-head RMSNorm gamma for Q and K)
     "q_norm": ["layer.{L}.q_norm", "layers.{L}.attention.q_norm", "layer.{L}.attn_q_norm"],
@@ -8037,6 +8223,8 @@ WEIGHT_PATTERNS = {
     # Output projection
     "wo": ["layer.{L}.wo", "layers.{L}.attention.wo", "layer.{L}.attn_output", "layer.{L}.attn_o", "layer.{L}.mla_out_proj"],
     "bo": ["layer.{L}.bo", "layers.{L}.attention.bo"],
+    "cross_wo": ["layer.{L}.cross_wo"],
+    "cross_bo": ["layer.{L}.cross_bo"],
 
     # MLP weights and biases
     "w1": ["layer.{L}.w1", "layers.{L}.feed_forward.w1", "layer.{L}.ffn_gate", "layer.{L}.mlp_gate"],
@@ -8148,6 +8336,7 @@ TEMPLATE_OP_WEIGHTS = {
     # Footer: uses final_ln_weight, final_ln_bias (once)
     "rmsnorm": ["ln1_gamma", "ln2_gamma", "final_ln_weight", "final_ln_bias"],
     "layernorm": ["ln1_gamma", "ln1_beta", "ln2_gamma", "ln2_beta", "final_ln_weight", "final_ln_bias"],
+    "cross_attn_norm": ["cross_ln_gamma", "cross_ln_beta"],
     "attn_norm": ["ln1_gamma"],
     "block_rmsnorm": ["ln1_gamma", "post_attention_norm"],
     "post_attention_norm": ["post_attention_norm"],
@@ -8171,9 +8360,12 @@ TEMPLATE_OP_WEIGHTS = {
     "qkv_proj": ["wq", "wk", "wv", "bq", "bk", "bv"],  # QKV + optional biases (for fused kernel)
     "qkv_packed_proj": ["attn_qkv", "bqkv"],
     "q_proj": ["wq", "bq", "wq_input_min", "wq_input_max", "wq_output_min", "wq_output_max"],  # Q projection only (when split)
+    "cross_q_proj": ["cross_wq", "cross_bq"],
     "q_gate_proj": ["wq", "bq"],  # Joint Q + gate projection
     "k_proj": ["wk", "bk", "wk_input_min", "wk_input_max", "wk_output_min", "wk_output_max"],  # K projection only (when split)
     "v_proj": ["wv", "bv", "wv_input_min", "wv_input_max", "wv_output_min", "wv_output_max"],  # V projection only (when split)
+    "cross_k_proj": ["cross_wk", "cross_bk"],
+    "cross_v_proj": ["cross_wv", "cross_bv"],
     "split_q_gate": [],
     "recurrent_packed_proj": ["attn_qkv", "attn_gate", "ssm_alpha", "ssm_beta"],
     "recurrent_qkv_proj": ["attn_qkv"],
@@ -8224,6 +8416,7 @@ TEMPLATE_OP_WEIGHTS = {
     "kv_cache_store_shared_q": [],  # No model weights; writes q_scratch to K/V cache
     "attn_gate_sigmoid_mul": [],  # No model weights
     "out_proj": ["wo", "bo", "wo_input_min", "wo_input_max", "wo_output_min", "wo_output_max"],  # Output projection + optional bias
+    "cross_out_proj": ["cross_wo", "cross_bo"],
     "residual_add": [],  # No model weights
     "add_stream": [],
 
@@ -8677,6 +8870,10 @@ def generate_memory_layout(
         add_buffer("vision_positions", vision_num_patches * 4 * 4, f"[4, {vision_num_patches}]", "i32")
 
     for name, size, shape in _audio_activation_specs(config, seq_len, int(embed_dim)):
+        add_buffer(name, size, shape)
+    for name, size, shape in _encoder_decoder_activation_specs(
+        config, seq_len, int(embed_dim), int(num_heads), int(head_dim)
+    ):
         add_buffer(name, size, shape)
 
     # Embedded input: embedding lookup output [seq_len, embed_dim]
@@ -9434,6 +9631,15 @@ def generate_ir_lower_2(
             lowered_op["semantic_checkpoints"] = copy.deepcopy(ir_op["semantic_checkpoints"])
         if "_kv_cache_read_layer" in ir_op:
             lowered_op["_kv_cache_read_layer"] = int(ir_op["_kv_cache_read_layer"])
+        if "_cross_kv_kind" in ir_op:
+            lowered_op["_cross_kv_kind"] = str(ir_op["_cross_kv_kind"])
+        for cross_dim in (
+            "_cross_num_heads",
+            "_cross_encoder_tokens",
+            "_cross_head_dim",
+        ):
+            if cross_dim in ir_op:
+                lowered_op[cross_dim] = int(ir_op[cross_dim])
 
         # Process weights - add concrete bump offsets
         for wkey, winfo in ir_op.get("weights", {}).items():
@@ -10690,6 +10896,11 @@ def generate_ir_lower_2(
 
         # Keep _m aligned with effective seq_len for token-major kernels.
         params["_m"] = params.get("seq_len", 1)
+        if op_type in ("cross_k_proj", "cross_v_proj"):
+            params["_m"] = int(config.get("encoder_memory_length", 0) or 0)
+        if op_type == "cross_attn":
+            params["query_tokens"] = int(params.get("seq_len", 1) or 1)
+            params["key_tokens"] = int(config.get("encoder_memory_length", 0) or 0)
         if op_type in ("patch_projection_image", "patch_proj", "patch_proj_aux"):
             params["_m"] = int(params.get("vision_num_patches", params.get("_m", 1)) or 1)
         if op_type in (
@@ -10749,7 +10960,10 @@ def generate_ir_lower_2(
         elif op_type in ("patch_projection_image", "patch_proj", "patch_proj_aux", "position_embeddings", "patch_bias_add", "vision_position_ids", "position_ids_2d", "add_stream"):
             current_input_buffer = "embedded_input"
             current_output_buffer = "layer_input"
-        elif op_type in ("q_proj", "q_gate_proj", "split_q_gate", "split_qkv_packed", "attn_gate_sigmoid_mul", "k_proj", "v_proj", "qkv_proj", "qkv_packed_proj", "q_norm", "rope_qk", "rope_q", "mrope_qk",
+        elif op_type in ("q_proj", "cross_q_proj", "cross_k_proj", "cross_v_proj", "cross_attn",
+                         "transpose_cross_q_to_head_major", "transpose_cross_kv_to_head_major",
+                         "transpose_cross_attn_out_to_token_major",
+                         "q_gate_proj", "split_q_gate", "split_qkv_packed", "attn_gate_sigmoid_mul", "k_proj", "v_proj", "qkv_proj", "qkv_packed_proj", "q_norm", "rope_qk", "rope_q", "mrope_qk",
                          "recurrent_qk_l2_norm",
                          "mlp_gate_up", "mlp_up", "silu_mul", "geglu", "gelu", "mlp_down", "projector_fc1", "projector_gelu", "projector_prep", "projector_fc2", "branch_fc1", "branch_gelu", "branch_fc2", "branch_concat", "spatial_merge", "bias_add") or \
                 (ir_op.get("section", "") == "branch" and op_type == "layernorm") or \
@@ -11407,8 +11621,15 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
         # If we drop these ops here, generated prefill C skips all required
         # token-major <-> head-major transposes and attention consumes wrong layouts.
         op_name = op.get("op", "")
-        if op_name in ("transpose_qkv_to_head_major", "transpose_kv_to_head_major", "transpose_attn_out_to_token_major"):
-            call_ops.append({
+        if op_name in (
+            "transpose_qkv_to_head_major",
+            "transpose_kv_to_head_major",
+            "transpose_attn_out_to_token_major",
+            "transpose_cross_q_to_head_major",
+            "transpose_cross_kv_to_head_major",
+            "transpose_cross_attn_out_to_token_major",
+        ):
+            transpose_op = {
                 "idx": op.get("idx", -1),
                 "function": func,
                 "op": op_name,
@@ -11417,7 +11638,17 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                 "args": [],
                 "errors": [],
                 "warnings": [],
-            })
+            }
+            if "_cross_kv_kind" in op:
+                transpose_op["_cross_kv_kind"] = op["_cross_kv_kind"]
+            for cross_dim in (
+                "_cross_num_heads",
+                "_cross_encoder_tokens",
+                "_cross_head_dim",
+            ):
+                if cross_dim in op:
+                    transpose_op[cross_dim] = int(op[cross_dim])
+            call_ops.append(transpose_op)
             continue
 
         if not binding:

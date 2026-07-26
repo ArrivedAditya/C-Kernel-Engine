@@ -34,7 +34,7 @@
     {
       "contract_id": "gelu_pytorch_erf_fp32_storage",
       "status": "validated",
-      "phases": ["prefill"],
+      "phases": ["prefill", "decode"],
       "function": "gelu_pytorch_erf_f32_inplace",
       "explicit_selector": true,
       "implementation": {

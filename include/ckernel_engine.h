@@ -3728,6 +3728,12 @@ void embedding_forward_bf16_fp32(const int32_t *token_ids,
 	                            int num_tokens,
 	                            int embed_dim,
 	                            int num_positions);
+	void position_embeddings_add_at_offset(float *x,
+	                                      const float *position_embd,
+	                                      int num_tokens,
+	                                      int embed_dim,
+	                                      int num_positions,
+	                                      int start_position);
 	void position_embeddings_add_tiled_2d(float *x,
 	                                      const float *position_embd,
 	                                      int grid_h,
