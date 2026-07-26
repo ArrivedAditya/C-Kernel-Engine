@@ -1013,6 +1013,7 @@ the math, the way the C actually computes it, the memory layout, and the evidenc
     <li><a href="#k6-logmel">6. Log-Mel &mdash; <code>audio_whisper_log_mel_from_power_reference_f32</code></a></li>
     <li><a href="#k7-conv">7. Conv1D Stem &mdash; <code>audio_conv1d_channel_major_f32</code></a></li>
     <li><a href="#k8-transpose">8. Token Transpose &mdash; <code>audio_transpose_channel_to_token_f32</code></a></li>
+    <li><a href="#k9-supporting">9. Supporting Kernels &mdash; position embeddings, erf GELU, head-major attention</a></li>
     <li><a href="#parity">Parity &amp; Nightly Coverage</a></li>
 </ul>
 
@@ -1709,6 +1710,43 @@ reads.</p>
 <!-- ═══════════════════════════════════════════════════════════════════
      PARITY COVERAGE
      ═══════════════════════════════════════════════════════════════════ -->
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     KERNEL 9: SUPPORTING KERNELS
+     ═══════════════════════════════════════════════════════════════════ -->
+
+<h2 id="k9-supporting">9. Supporting Kernels: The Shared Glue</h2>
+
+<p>Three library kernels complete the audio path without being Whisper-specific. <code>position_embeddings_add</code>
+applies the learned 1D table after the token transpose &mdash; the same kernel the vision lane uses for its 2D table.
+<code>gelu_pytorch_erf_f32_inplace</code> is the exact erf GELU the stem contracts pin (note the naming trap:
+<code>gelu_exact_inplace</code> is historically the <em>tanh</em> approximation despite its name). And
+<code>attention_forward_query_key_head_major_f32</code> serves both attention oracles &mdash; the batched causal
+self-attention transition and the <code>Q=1, K=1500</code> cross-attention decode step &mdash; with head-major rows
+that keep the cached K/V slices contiguous.</p>
+
+<div class="img-container svg-viewer" data-title="Supporting kernels: position embeddings, exact erf GELU, head-major attention">
+    <img src="assets/audio-supporting-kernels.svg" alt="The three shared kernels the Whisper path relies on: position_embeddings_add, gelu_pytorch_erf_f32_inplace, and attention_forward_query_key_head_major_f32">
+</div>
+
+<div class="grid grid-2">
+    <div class="card">
+        <h3 style="margin-top: 0;">Why They Are Not Whisper Kernels</h3>
+        <ul>
+            <li>Each already has a numerical contract from the text or vision lanes &mdash; the audio path <em>inherits</em> parity rather than re-proving it.</li>
+            <li>This is the concrete form of "no Whisper model-name branch in codegen": the encoder is assembled from library pieces whose oracles predate Whisper.</li>
+        </ul>
+    </div>
+    <div class="card card-accent">
+        <h3 style="margin-top: 0;">Where They Are Pinned</h3>
+        <p><code>unittest/test_audio_encoder.py</code> exercises the erf GELU oracle (max&nbsp;diff &le; 5e-7) and the
+        head-major attention oracles &mdash; including the <code>Q=1, K=1500</code> cross case &mdash; against PyTorch
+        softmax(Q&#183;K&#7511;/&#8730;d)&#183;V. The positional add is pinned by the same suite's encoder
+        checkpoint-by-checkpoint X-ray.</p>
+    </div>
+</div>
 
 <h2 id="parity">Parity &amp; Nightly Coverage</h2>
 
