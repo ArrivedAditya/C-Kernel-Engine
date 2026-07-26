@@ -302,6 +302,11 @@ V8_GLM4_MIN_MEM_GB ?= 70
 V8_GLM4_CONTEXT ?= 1024
 V8_GLM4_MAX_TOKENS ?= 64
 V8_GLM4_PROMPT ?= Give me a concise example of C, Python, and SQL code.
+V8_KIMI_MODEL ?=
+V8_KIMI_MIN_MEM_GB ?= 100
+V8_KIMI_CONTEXT ?= 2048
+V8_KIMI_MAX_TOKENS ?= 64
+V8_KIMI_PROMPT ?= Give me a concise example of C, Python, and SQL code.
 
 # =============================================================================
 # Intel oneAPI Integration (MKL / oneDNN)
@@ -1489,7 +1494,19 @@ test-v8-gemma4-vision-smoke:
 
 test-v8-vision-smoke: test-v8-vision-kernels test-v8-qwen3vl test-v8-qwen3vl-e2e-smoke test-v8-gemma4-vision-smoke
 
-test-v8-model-smoke: test-v8-template-circuit-audit v8-regression-fast test-v8-gemma4-highmem test-v8-nemotron9-highmem test-v8-glm4-highmem
+test-v8-xeon-family-contracts:
+	@echo "Running Xeon/high-memory family compiler and circuit contracts..."
+	@$(PYTHON) -m unittest \
+		tests.test_v8_gemma4_scaffold \
+		tests.test_v8_glm4_template \
+		tests.test_v8_kimi_template \
+		tests.test_v8_template_circuit_audit \
+		-v
+
+test-v8-model-smoke: test-v8-template-circuit-audit v8-regression-fast test-v8-gemma4-highmem test-v8-nemotron9-highmem test-v8-glm4-highmem test-v8-kimi-highmem
+
+test-v8-xeon-highmem: test-v8-xeon-family-contracts test-v8-gemma4-highmem test-v8-nemotron9-highmem test-v8-glm4-highmem test-v8-kimi-highmem
+	@echo "Xeon/high-memory family suite complete."
 
 parity-v8-qwen3vl-mmproj:
 	@if [ ! -f "$(V8_QWEN3VL_MMPROJ)" ]; then \
@@ -3799,6 +3816,28 @@ test-v8-glm4-highmem:
 			--temperature 0.0; \
 	fi
 
+test-v8-kimi-highmem:
+	@if [ -z "$(strip $(V8_KIMI_MODEL))" ]; then \
+		echo "SKIP: Kimi high-memory smoke requires V8_KIMI_MODEL=/path/to/model-or-hf-uri"; \
+	else \
+		avail_kb=$$(awk '/MemAvailable:/ {print $$2}' /proc/meminfo 2>/dev/null || echo 0); \
+		threshold_kb=$$(( $(V8_KIMI_MIN_MEM_GB) * 1024 * 1024 )); \
+		if [ "$$avail_kb" -lt "$$threshold_kb" ]; then \
+			avail_gb=$$(( $$avail_kb / 1024 / 1024 )); \
+			echo "SKIP: Kimi v8 smoke needs >=$(V8_KIMI_MIN_MEM_GB) GiB MemAvailable; found $${avail_gb} GiB"; \
+		else \
+			echo "Running v8 Kimi high-memory smoke..."; \
+			CK_NUM_THREADS=$${CK_NUM_THREADS:-24} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+				$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/ck_run_v8.py run "$(V8_KIMI_MODEL)" \
+				--context-len $(V8_KIMI_CONTEXT) \
+				--force-convert --force-compile \
+				--prompt "$(V8_KIMI_PROMPT)" \
+				--chat-template kimi_vl \
+				--max-tokens $(V8_KIMI_MAX_TOKENS) \
+				--temperature 0.0; \
+		fi; \
+	fi
+
 profile-v8-prefill-ops: ck-cli-v8
 	@echo "Profiling v8 prefill operator costs..."
 	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
@@ -3848,7 +3887,7 @@ qwen3vl-ocr-perf-analyze:
 		--json-out build/qwen3vl_ocr_perf_pipeline.json \
 		--md-out build/qwen3vl_ocr_perf_pipeline.md
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q4k-gateup-swiglu-x16-chunk4-quick bench-qwen3vl-encoder-attention bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-routing-exact test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-gemma4-highmem test-v8-nemotron9-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick qwen3vl-ocr-perf-pipeline qwen3vl-ocr-perf-analyze qwen3vl-encoder-prefix-parity
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q4k-gateup-swiglu-x16-chunk4-quick bench-qwen3vl-encoder-attention bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-routing-exact test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-xeon-family-contracts test-v8-xeon-highmem test-v8-gemma4-highmem test-v8-nemotron9-highmem test-v8-glm4-highmem test-v8-kimi-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick qwen3vl-ocr-perf-pipeline qwen3vl-ocr-perf-analyze qwen3vl-encoder-prefix-parity
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

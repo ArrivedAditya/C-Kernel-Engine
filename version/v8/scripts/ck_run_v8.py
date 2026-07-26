@@ -1029,7 +1029,7 @@ def _apply_qwen3vl_ocr_fast_defaults(env: dict[str, str]) -> None:
     if not _qwen3vl_ocr_fast_profile_enabled(env):
         return
     env.setdefault("CK_ENABLE_Q80_FP32_M4N4", "1")
-    env.setdefault("CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP", "20")
+    env.setdefault("CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP", "16")
     env.setdefault("CK_ATTENTION_QBLOCK4", "1")
     env.setdefault("CK_ATTENTION_THREAD_CAP", "16")
     env.setdefault("CK_Q4K_PACKED_META_X8_MAX_M", "2048")

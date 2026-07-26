@@ -5827,7 +5827,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                 if explicit_weight_dtype == "fp32":
                     explicit_weight_dtype = str(header_quant.get(explicit_weight_info[0], explicit_weight_dtype) or explicit_weight_dtype).lower()
                 if explicit_weight_dtype == "bf16":
-                    return ["gemm_nt_bf16"]
+                    return ["gemm_nt_bf16" if mode == "prefill" else "gemv_bf16"]
             return [explicit_kernel]
 
         kernel_op = TEMPLATE_TO_KERNEL_OP.get(op)
@@ -5929,7 +5929,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             weight_dtype = str(weight_dtype or "fp32").lower()
             force_split_dense_qkv = op == "qkv_proj"
             if op in BF16_DENSE_MATMUL_OPS and weight_dtype == "bf16" and not force_split_dense_qkv:
-                return ["gemm_nt_bf16"]
+                return ["gemm_nt_bf16" if mode == "prefill" else "gemv_bf16"]
             kernel_prefer_q8_activation = _prefer_q8_activation_for_op(op, prefer_q8_activation)
             if op in ("mlp_gate_up", "mlp_up", "mlp_down") and prefer_fp32_mlp_matmuls:
                 kernel_prefer_q8_activation = False
@@ -5990,7 +5990,10 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                     kernels.append((str(split_plan["kernel"]["id"]), split_op))
                     continue
                 if split_op in BF16_DENSE_MATMUL_OPS and w_dtype == "bf16":
-                    kernels.append(("gemm_nt_bf16", split_op))
+                    kernels.append((
+                        "gemm_nt_bf16" if mode == "prefill" else "gemv_bf16",
+                        split_op,
+                    ))
                     continue
                 split_prefer_q8_activation = _prefer_q8_activation_for_op(split_op, prefer_q8_activation)
                 if split_op in ("mlp_gate_up", "mlp_down", "mlp_gate", "mlp_up") and prefer_fp32_mlp_matmuls:
