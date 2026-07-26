@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>v8 Numerical Contracts  | C-Kernel-Engine</title>
-    <meta name="description" content="C-Kernel-Engine documentation for a CPU-native AI runtime, kernels, code generation, training, and inference on Linux systems.">
+    <title>Whisper Tiny End-to-End | C-Kernel-Engine | C-Kernel-Engine</title>
+    <meta name="description" content="CKE v8 transcribes Whisper Tiny end to end from PCM16 WAV through generated FP32 encoder and decoder circuits: nightly audio gates, usage, evidence, and current limitations.">
     <meta name="robots" content="index,follow">
-    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/v8-numerical-contracts.html">
-    <meta property="og:title" content="v8 Numerical Contracts  | C-Kernel-Engine">
-    <meta property="og:description" content="C-Kernel-Engine documentation for a CPU-native AI runtime, kernels, code generation, training, and inference on Linux systems.">
+    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/v8-whisper-tiny.html">
+    <meta property="og:title" content="Whisper Tiny End-to-End | C-Kernel-Engine | C-Kernel-Engine">
+    <meta property="og:description" content="CKE v8 transcribes Whisper Tiny end to end from PCM16 WAV through generated FP32 encoder and decoder circuits: nightly audio gates, usage, evidence, and current limitations.">
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/v8-numerical-contracts.html">
+    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/v8-whisper-tiny.html">
     <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
     <style>
         :root {
@@ -903,14 +903,14 @@
         <nav class="site-nav">
             <a href="index.html" class="">Home</a>
             <a href="spectrum.html" class="" style="color:var(--orange)">⚡ Spectrum</a>
-            <a href="quickstart.html" class="">Getting Started</a>
+            <a href="quickstart.html" class="active">Getting Started</a>
             <a href="developer-guide.html" class="">Developer Guide</a>
             <a href="contributing.html" class="">Contribute</a>
             <a href="scaling.html" class="">Scaling</a>
             <a href="support-hardware.html" class="" style="color:var(--green)">Support Lab</a>
             <a href="cke-throughput-unit.html" class="" style="color:var(--orange)">CKU</a>
             <div class="nav-dropdown">
-                <span class="nav-trigger active">Architecture</span>
+                <span class="nav-trigger ">Architecture</span>
                 <div class="nav-dropdown-menu mega-menu">
                     <!-- Architecture Home Link -->
                     <div class="menu-section" style="grid-column: 1 / -1; border-bottom: 1px solid var(--grey); padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
@@ -979,294 +979,421 @@
     </header>
     <main>
 
-<style>
-.contract-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem;margin:1rem 0}.contract-card{border:1px solid var(--grey);border-left:4px solid var(--orange);border-radius:8px;padding:1rem;background:rgba(255,255,255,.02)}.contract-card h3{margin-top:0}.contract-flow{overflow-x:auto}.contract-flow img{display:block;width:100%;min-width:900px;height:auto}.contract-note{border:1px solid rgba(7,173,248,.45);border-radius:8px;padding:1rem;background:rgba(7,173,248,.06)}.contract-bad{border-color:rgba(251,113,133,.55);background:rgba(251,113,133,.06)}.contract-good{border-color:rgba(48,196,141,.55);background:rgba(48,196,141,.06)}.contract-table td:first-child{font-family:'JetBrains Mono',monospace;white-space:nowrap}
-</style>
+<h1>Whisper Tiny End-to-End</h1>
 
-<h1>v8 Numerical Contracts</h1>
-
-<p>v8 now treats numerical behavior as compiler input. A circuit does not merely say “run attention.” It can require the query precision, K/V storage and compute precision, score accumulator, online-softmax state, value accumulator, partition threshold, partial storage, and merge order. Kernel maps state which complete contracts their implementations support. The DSL resolves one provider or fails before C is emitted.</p>
-
-<div class="contract-note contract-good">
-  <strong>Core rule:</strong> weights and shapes do not uniquely define model math. Reduction order, intermediate precision, partitioning, and public routing are part of the model contract.
+<div class="alert alert-info">
+    <div class="alert-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    </div>
+    <div>
+        <strong>Kernel Source</strong><br>
+        <code>src/kernels/audio_kernels.c</code> and <code>include/ckernel_audio.h</code> &mdash; WAV decode,
+        resampling, pad/truncate, STFT/FFT-400, Slaney Mel, log-Mel, Conv1D stem, and layout primitives.
+        The frontend is the circuit <code>version/v8/circuits/whisper_audio_frontend.json</code>; encoder and
+        decoder topology lives in <code>version/v8/circuits/audio_transformer_encoder.json</code> and
+        <code>version/v8/circuits/audio_transformer_decoder.json</code>; lifecycle orchestration in
+        <code>version/v8/scripts/ck_run_v8.py</code> (unified <code>cks-v8-run audio</code> command). Per-kernel
+        math and diagrams:
+        <a href="concepts.html#audio-frontend">Concepts &mdash; Audio Frontend &amp; Cross-Attention</a>;
+        per-kernel deep dive: <a href="audio-kernels-deep-dive.html">Audio Kernels Deep Dive</a>.
+    </div>
 </div>
 
-<div class="img-container svg-viewer contract-flow" data-title="v8 Numerical Contract Architecture">
-  <img src="assets/v8-numerical-contracts.svg" alt="Weights, circuits, kernel maps and numerical contracts flowing through deterministic v8 lowering into generated C">
+<p>
+  CKE v8 runs a generated FP32 Whisper Tiny encoder and decoder from a
+  PCM16 WAV file &mdash; and the frontend is generated too. WAV decode,
+  windowed-sinc resampling, pad/truncate, STFT table construction, FFT400
+  power, Slaney Mel filters, and log-Mel normalization are seven explicit
+  circuit operations in
+  <code>version/v8/circuits/whisper_audio_frontend.json</code>, each with an
+  exact numerical contract and a map-owned call ABI. The resolved operation
+  sequence lowers through call IR into generated C exporting
+  <code>ck_model_run_audio_wav</code>. Python coordinates artifact lifecycles
+  and process isolation; it performs no frontend arithmetic. Codegen contains
+  no Whisper model-name branch; every arithmetic boundary resolves through a
+  kernel-map contract.
+</p>
+
+<h2>How the Audio Pipeline Works</h2>
+
+<p>
+  The diagram follows one WAV file through the full system: contract
+  kernels prepare the log-Mel grid, the generated encoder writes an
+  immutable encoder memory once, and the generated decoder reads it on
+  every cross-attention step while its own KV-cache grows token by token.
+</p>
+
+<div style="overflow-x:auto; margin:2rem 0;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 880" style="max-width:1100px; width:100%; height:auto; font-family:'Inter',system-ui,sans-serif;">
+  <defs>
+    <linearGradient id="aInputGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+    <linearGradient id="aOpGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+    <linearGradient id="aStateGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="aOutGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <marker id="aArrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8"/>
+    </marker>
+    <marker id="aArrowAmber" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f59e0b"/>
+    </marker>
+  </defs>
+
+  <!-- background -->
+  <rect x="0" y="0" width="1100" height="880" rx="18" fill="#0f172a"/>
+  <rect x="0" y="0" width="1100" height="880" rx="18" fill="none" stroke="#1e293b" stroke-width="2"/>
+
+  <!-- title -->
+  <text x="40" y="52" font-size="12" letter-spacing="3" fill="#818cf8" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">AUDIO PIPELINE &#183; GENERATED FP32 WHISPER TINY</text>
+  <text x="40" y="88" font-size="27" font-weight="700" fill="#f1f5f9">One WAV in, tokens out &#8212; every stage a kernel-map contract</text>
+  <text x="40" y="112" font-size="13.5" fill="#94a3b8">Python orchestrates; C kernels and generated model libraries compute. No Whisper model-name branch anywhere in codegen.</text>
+
+  <!-- ============ ROW A : 01 WAV -> 02 FRONTEND -> 03 STEM ============ -->
+
+  <!-- 01 INPUT -->
+  <g>
+    <rect x="30" y="140" width="320" height="216" rx="12" fill="#111c33" stroke="url(#aInputGrad)" stroke-width="1.6"/>
+    <rect x="30" y="140" width="320" height="34" rx="12" fill="url(#aInputGrad)"/>
+    <text x="46" y="162" font-size="12.5" font-weight="700" letter-spacing="1.5" fill="#eff6ff">01 &#183; WAV IN</text>
+    <text x="46" y="196" font-size="13" font-weight="600" fill="#e2e8f0">PCM16 &#183; mono &#183; 16 kHz</text>
+    <text x="46" y="216" font-size="11.5" fill="#94a3b8">Any format converted with ffmpeg:</text>
+    <text x="46" y="234" font-size="11" fill="#7dd3fc" font-family="ui-monospace,Menlo,monospace">ffmpeg -ac 1 -ar 16000 -c:a pcm_s16le</text>
+    <line x1="46" y1="250" x2="334" y2="250" stroke="#1e3a5f" stroke-width="1"/>
+    <text x="46" y="272" font-size="11.5" font-weight="600" fill="#93c5fd">CIRCUIT OPS &#8594; MAP-OWNED KERNELS</text>
+    <text x="46" y="290" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_wav_decode_memory_pcm16_mono_f32</text>
+    <text x="46" y="306" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_resample_windowed_sinc_f32</text>
+    <text x="46" y="322" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_pad_or_truncate_f32</text>
+    <text x="46" y="342" font-size="10.5" fill="#64748b">&#8804; 30 s today &#8212; truncated, not chunked</text>
+  </g>
+
+  <line x1="354" y1="248" x2="386" y2="248" stroke="#94a3b8" stroke-width="2" marker-end="url(#aArrow)"/>
+
+  <!-- 02 FRONTEND -->
+  <g>
+    <rect x="390" y="140" width="320" height="216" rx="12" fill="#16123a" stroke="url(#aOpGrad)" stroke-width="1.6"/>
+    <rect x="390" y="140" width="320" height="34" rx="12" fill="url(#aOpGrad)"/>
+    <text x="406" y="162" font-size="12.5" font-weight="700" letter-spacing="1.5" fill="#eef2ff">02 &#183; LOG-MEL FRONTEND</text>
+    <text x="406" y="196" font-size="13" font-weight="600" fill="#e2e8f0">STFT power &#8594; 80-band log-Mel</text>
+    <text x="406" y="216" font-size="11.5" fill="#94a3b8">n_fft 400 &#183; hop 160 &#183; Slaney mel</text>
+    <line x1="406" y1="232" x2="694" y2="232" stroke="#2b2660" stroke-width="1"/>
+    <text x="406" y="254" font-size="11.5" font-weight="600" fill="#a5b4fc">CIRCUIT OPS &#8594; MAP-OWNED KERNELS</text>
+    <text x="406" y="272" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_stft_precompute_tables_f32</text>
+    <text x="406" y="288" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_stft_power_fft400_f32</text>
+    <text x="406" y="303" font-size="10" fill="#64748b" font-family="ui-monospace,Menlo,monospace">20&#215;20 mixed-radix FFT + direct-DFT reference</text>
+    <text x="406" y="320" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_whisper_mel_filters_slaney_f32</text>
+    <text x="406" y="336" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_whisper_log_mel_from_power_reference_f32</text>
+    <text x="406" y="352" font-size="10.5" fill="#34d399">vs Hugging Face: 1.54e-4 max|&#916;| &#183; 1.37e-6 RMSE</text>
+  </g>
+
+  <line x1="714" y1="248" x2="746" y2="248" stroke="#94a3b8" stroke-width="2" marker-end="url(#aArrow)"/>
+
+  <!-- 03 STEM -->
+  <g>
+    <rect x="750" y="140" width="320" height="216" rx="12" fill="#16123a" stroke="url(#aOpGrad)" stroke-width="1.6"/>
+    <rect x="750" y="140" width="320" height="34" rx="12" fill="url(#aOpGrad)"/>
+    <text x="766" y="162" font-size="12.5" font-weight="700" letter-spacing="1.5" fill="#eef2ff">03 &#183; CONV STEM + LAYOUT</text>
+    <text x="766" y="196" font-size="13" font-weight="600" fill="#e2e8f0">Conv1D &#215;2 + GELU &#8594; tokens</text>
+    <text x="766" y="216" font-size="11.5" fill="#94a3b8">Mel frames become the encoder token grid</text>
+    <line x1="766" y1="232" x2="1054" y2="232" stroke="#2b2660" stroke-width="1"/>
+    <text x="766" y="254" font-size="11.5" font-weight="600" fill="#a5b4fc">CIRCUIT OPS &#8594; MAP-OWNED KERNELS</text>
+    <text x="766" y="274" font-size="11" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_conv1d_channel_major_f32</text>
+    <text x="766" y="292" font-size="11" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">gelu_pytorch_erf_f32_inplace</text>
+    <text x="766" y="310" font-size="11" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_transpose_channel_to_token_f32</text>
+    <text x="766" y="338" font-size="10.5" fill="#64748b">unequal-length primitives, no model branch</text>
+  </g>
+
+  <!-- connector down from stem to encoder row -->
+  <path d="M 910 356 L 910 378 L 240 378 L 240 396" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#aArrow)"/>
+
+  <!-- ============ ROW B : 04 ENCODER -> memory -> 05 DECODER ============ -->
+
+  <!-- 04 ENCODER -->
+  <g>
+    <rect x="30" y="400" width="470" height="220" rx="12" fill="#111c33" stroke="url(#aInputGrad)" stroke-width="1.6"/>
+    <rect x="30" y="400" width="470" height="34" rx="12" fill="url(#aInputGrad)"/>
+    <text x="46" y="422" font-size="12.5" font-weight="700" letter-spacing="1.5" fill="#eff6ff">04 &#183; ENCODER &#8212; GENERATED C LIBRARY</text>
+    <text x="46" y="456" font-size="13" font-weight="600" fill="#e2e8f0">Transformer blocks &#183; bidirectional self-attention</text>
+    <text x="46" y="476" font-size="11.5" fill="#94a3b8">whisper-tiny safetensors &#8594; BUMP &#8594; call IR &#8594; generated C</text>
+    <text x="46" y="494" font-size="11.5" fill="#94a3b8">67 source tensors &#8594; 71 BUMP entries &#183; 100% weight coverage</text>
+    <line x1="46" y1="510" x2="484" y2="510" stroke="#1e3a5f" stroke-width="1"/>
+    <text x="46" y="532" font-size="11.5" font-weight="600" fill="#93c5fd">PARITY EVIDENCE</text>
+    <text x="46" y="552" font-size="11.5" fill="#94a3b8">79-edge PyTorch X-ray, checkpoint by checkpoint</text>
+    <text x="46" y="570" font-size="11" fill="#34d399" font-family="ui-monospace,Menlo,monospace">max_abs &#8776; 5.05e-4 &#183; RMSE &#8776; 6.7e-6 (FP32)</text>
+    <text x="46" y="598" font-size="10.5" fill="#64748b">runs in an isolated child process &#8212; encoder and decoder share one ABI,</text>
+    <text x="46" y="613" font-size="10.5" fill="#64748b">so one process could bind a call to the wrong artifact</text>
+  </g>
+
+  <!-- ENCODER MEMORY (amber state) -->
+  <g>
+    <rect x="524" y="446" width="140" height="128" rx="12" fill="#2b1d07" stroke="url(#aStateGrad)" stroke-width="1.8"/>
+    <text x="594" y="474" font-size="10.5" font-weight="700" letter-spacing="1" fill="#fbbf24" text-anchor="middle">ENCODER</text>
+    <text x="594" y="490" font-size="10.5" font-weight="700" letter-spacing="1" fill="#fbbf24" text-anchor="middle">MEMORY</text>
+    <text x="594" y="514" font-size="10" fill="#d6b370" text-anchor="middle">immutable</text>
+    <text x="594" y="530" font-size="10" fill="#d6b370" text-anchor="middle">n_audio rows</text>
+    <text x="594" y="552" font-size="9.5" fill="#8a6d3b" text-anchor="middle">written once,</text>
+    <text x="594" y="565" font-size="9.5" fill="#8a6d3b" text-anchor="middle">read every decode step</text>
+  </g>
+
+  <line x1="500" y1="510" x2="520" y2="510" stroke="#f59e0b" stroke-width="2" marker-end="url(#aArrowAmber)"/>
+  <line x1="664" y1="510" x2="684" y2="510" stroke="#f59e0b" stroke-width="2" marker-end="url(#aArrowAmber)"/>
+
+  <!-- 05 DECODER -->
+  <g>
+    <rect x="688" y="400" width="382" height="220" rx="12" fill="#0d2818" stroke="url(#aOutGrad)" stroke-width="1.6"/>
+    <rect x="688" y="400" width="382" height="34" rx="12" fill="url(#aOutGrad)"/>
+    <text x="704" y="422" font-size="12.5" font-weight="700" letter-spacing="1.5" fill="#ecfdf5">05 &#183; DECODER &#8212; PERSISTENT KV-CACHE</text>
+    <text x="704" y="456" font-size="13" font-weight="600" fill="#e2e8f0">forced prefix &#8594; greedy tokens &#8594; EOS</text>
+    <text x="704" y="478" font-size="11.5" fill="#94a3b8">self-attn: decode provider, pos + 1 valid KV rows</text>
+    <text x="704" y="496" font-size="11.5" fill="#94a3b8">cross-attn: K/V from encoder memory (immutable</text>
+    <text x="704" y="512" font-size="11.5" fill="#94a3b8">length), Q from active decoder-token count</text>
+    <line x1="704" y1="528" x2="1054" y2="528" stroke="#14532d" stroke-width="1"/>
+    <text x="704" y="550" font-size="11.5" font-weight="600" fill="#6ee7b7">REFERENCE EVIDENCE</text>
+    <text x="704" y="570" font-size="11.5" fill="#94a3b8">JFK sample: same 23 greedy tokens as</text>
+    <text x="704" y="588" font-size="11.5" fill="#94a3b8">Hugging Face Whisper Tiny, followed by EOS</text>
+    <text x="704" y="606" font-size="10.5" fill="#64748b">English &#183; no-timestamp decoding certified</text>
+  </g>
+
+  <!-- ============ CONTRACT CALLOUTS ============ -->
+  <text x="40" y="662" font-size="11" letter-spacing="2.5" fill="#f59e0b" font-family="ui-monospace,Menlo,monospace">THE THREE CONTRACT FINDINGS THAT MADE E2E WORK</text>
+
+  <g>
+    <rect x="30" y="676" width="340" height="98" rx="10" fill="#1a1533" stroke="#4f46e5" stroke-width="1.2"/>
+    <text x="46" y="702" font-size="11.5" font-weight="700" fill="#c7d2fe">1 &#183; CROSS-ATTN K/V EXTENT</text>
+    <text x="46" y="724" font-size="10.5" fill="#94a3b8">K/V projections keep the immutable</text>
+    <text x="46" y="740" font-size="10.5" fill="#94a3b8">encoder-memory length &#8212; not the active</text>
+    <text x="46" y="756" font-size="10.5" fill="#94a3b8">decoder-token count.</text>
+  </g>
+  <g>
+    <rect x="386" y="676" width="340" height="98" rx="10" fill="#1a1533" stroke="#4f46e5" stroke-width="1.2"/>
+    <text x="402" y="702" font-size="11.5" font-weight="700" fill="#c7d2fe">2 &#183; CROSS-ATTN Q EXTENT</text>
+    <text x="402" y="724" font-size="10.5" fill="#94a3b8">Query length uses the active decoder-token</text>
+    <text x="402" y="740" font-size="10.5" fill="#94a3b8">count &#8212; not the decoder&#8217;s physical</text>
+    <text x="402" y="756" font-size="10.5" fill="#94a3b8">capacity.</text>
+  </g>
+  <g>
+    <rect x="742" y="676" width="328" height="98" rx="10" fill="#1a1533" stroke="#4f46e5" stroke-width="1.2"/>
+    <text x="758" y="702" font-size="11.5" font-weight="700" fill="#c7d2fe">3 &#183; INCREMENTAL SELF-ATTN</text>
+    <text x="758" y="724" font-size="10.5" fill="#94a3b8">Decode provider attends model-&gt;pos + 1</text>
+    <text x="758" y="740" font-size="10.5" fill="#94a3b8">valid KV rows &#8212; a one-token prefill read</text>
+    <text x="758" y="756" font-size="10.5" fill="#94a3b8">only cache row zero.</text>
+  </g>
+
+  <!-- ============ GATE STRIP ============ -->
+  <rect x="30" y="800" width="1040" height="52" rx="10" fill="#0b1120" stroke="#1e293b" stroke-width="1"/>
+  <text x="50" y="822" font-size="10.5" font-weight="700" letter-spacing="1.5" fill="#34d399" font-family="ui-monospace,Menlo,monospace">NIGHTLY</text>
+  <text x="130" y="822" font-size="11" fill="#94a3b8">log-Mel frontend vs PyTorch &#183; audio transformer primitives &#183; v8 audio circuit/codegen regression</text>
+  <text x="50" y="841" font-size="10.5" font-weight="700" letter-spacing="1.5" fill="#f59e0b" font-family="ui-monospace,Menlo,monospace">OPT-IN</text>
+  <text x="130" y="841" font-size="11" fill="#94a3b8">full model-and-WAV transcription &#8212; artifact gate: full reference token sequence + EOS, no tolerance relaxation</text>
+</svg>
+
 </div>
 
-<h2>Why the Architecture Needed Hardening</h2>
+<h2>Generated Frontend: Circuit Ops to Generated C</h2>
 
-<p>The earlier v8 path had strong kernel maps, generated C, and E2E tests, but some numerical semantics were inferred inside runtime code. A function name established one part of the contract, an environment flag selected another part, tensor metadata implied a third part, and a sequence-length threshold could silently change the reduction algorithm. Leaf kernels could all pass while the stitched model selected the wrong public route.</p>
+<p>
+  The frontend began as direct C calls selected by the Python runner &mdash;
+  useful correctness bring-up, but provider selection sat outside the v8
+  architecture. It is now seven explicit circuit operations
+  (<code>audio_wav_decode</code>, <code>audio_resample</code>,
+  <code>audio_pad_or_truncate</code>, <code>audio_stft_tables</code>,
+  <code>audio_stft</code>, <code>audio_mel_filters</code>,
+  <code>audio_log_mel</code>), each carrying an exact numerical contract and
+  a map-owned call ABI. Lowering plans the frontend buffers and lowers the
+  runtime WAV metadata into call IR; the resolved sequence generates C
+  exporting <code>ck_model_run_audio_wav</code>.
+</p>
 
-<div class="contract-grid">
-  <div class="contract-card contract-bad"><h3>Before</h3><p>Circuits declared op order. Runtime dispatch inferred precision and partition semantics from function choice, strict mode, cache dtype, token count, and thread count.</p></div>
-  <div class="contract-card"><h3>Failure Mode</h3><p>Two mathematically different kernels looked interchangeable because both were called “attention.” Unit tests exercised a correct leaf while generated code reached another route.</p></div>
-  <div class="contract-card contract-good"><h3>After</h3><p>Circuits request complete semantic IDs. Executable kernel maps advertise complete providers. Lowering rejects missing or ambiguous matches.</p></div>
+<div class="img-container svg-viewer" data-title="Circuit to native execution: ops, contracts, kernel maps, call IR, generated C">
+    <img src="assets/audio-circuit-to-native.svg" alt="Whisper audio frontend lowering from circuit operations through kernel maps and call IR to generated C">
 </div>
-
-<h2>The Attention Bug That Exposed It</h2>
-
-<p>Three full-attention tests had long-standing errors of roughly <code>5.68e-4</code> to <code>1.06e-3</code>. The public full-attention contract expected FP32 Q with K/V rounded through FP16, matching the GGML-style vision path. The optimized AVX2 route consumed raw FP32 K/V. Pre-rounding only K/V reduced the error to <code>4.77e-7</code>, proving this was a contract mismatch rather than a tolerance problem.</p>
-
-<table class="contract-table">
-  <tr><th>Boundary</th><th>Required behavior</th><th>Former behavior</th><th>Guard</th></tr>
-  <tr><td>full attention Q</td><td>FP32 compute</td><td>FP32 compute</td><td>Qwen3-VL head_dim=72 test</td></tr>
-  <tr><td>full attention K/V</td><td>round through FP16</td><td>raw FP32</td><td>contiguous, strided, threaded tests</td></tr>
-  <tr><td>decode KV &lt; 512</td><td>single FP16 online range</td><td>implicit route</td><td>KV=511 oracle</td></tr>
-  <tr><td>decode KV ≥ 512</td><td>worker chunks, FP16 partials, FP32 merge</td><td>single FP32-style reduction possible</td><td>KV=512 and KV=1058 oracle</td></tr>
-</table>
-
-<h2>Compiler Inputs</h2>
-
-<div class="contract-grid">
-  <div class="contract-card"><h3>Weights</h3><p><code>weights_manifest.json</code> supplies tensor names, shapes, dtypes, quant formats, offsets, and model dimensions. It does not choose graph order.</p></div>
-  <div class="contract-card"><h3>Circuits</h3><p><code>version/v8/circuits/*.json</code> supplies operations, explicit edges, branches, stitch points, and <code>required_contracts</code>. Circuits state semantics, never a numerical implementation ID.</p></div>
-  <div class="contract-card"><h3>Kernel Maps</h3><p><code>version/v8/kernel_maps/*.json</code> supplies ABI, layouts, implementation function, <code>provides</code>, and <code>supported_reductions</code>.</p></div>
-  <div class="contract-card"><h3>Contract Registry</h3><p><code>version/v8/contracts/attention_reductions.json</code> defines each semantic ID completely so two kernels cannot reuse a name for different mathematics.</p></div>
-</div>
-
-<h2>Complete Reduction Semantics</h2>
-
-<p>A reduction ID is not a loose dtype such as <code>fp16</code> or <code>strict</code>. Those names are rejected as ambiguous. A registered contract includes:</p>
 
 <ul>
-  <li>query and key compute precision;</li>
-  <li>score accumulator and softmax-statistics precision;</li>
-  <li>value compute and accumulator precision;</li>
-  <li>partial storage and merge order;</li>
-  <li>partition kind, threshold, and chunk policy.</li>
+  <li>
+    <strong>Provider selection is a kernel-map decision.</strong> The map
+    alone names the registered provider and its call ABI; tests fail closed
+    when an operation is missing or the provider inventory bypasses
+    map-owned ABI accounting.
+  </li>
+  <li>
+    <strong>Scheduling is a call-IR decision.</strong> Operation order and
+    buffer lifetimes come from the circuit through lowering &mdash; not from
+    Python control flow, and not from a codegen branch.
+  </li>
+  <li>
+    <strong>Python owns lifecycle, generated C owns arithmetic.</strong>
+    The runner coordinates artifact directories, encoder/decoder process
+    isolation, and report writing; every sample-level computation executes
+    inside the generated artifact.
+  </li>
 </ul>
 
-<pre><code>{
-  "id": "f16_online_fp32_merge",
-  "q_compute": "fp16_rounded",
-  "k_compute": "fp16",
-  "score_accumulator": "fp32",
-  "softmax_statistics": "fp32",
-  "value_accumulator": "fp16_rounded_each_update",
-  "partial_storage": "fp16",
-  "partial_merge": "fp32_chunk_order",
-  "partition": {
-    "kind": "kv_chunks_by_workers",
-    "threshold": 512
-  }
-}</code></pre>
+<h2>What Nightly Proves, and What Stays Opt-In</h2>
 
-<h2>Deterministic Resolution</h2>
-
-<ol>
-  <li>The builder hydrates the current built-in circuit into cached manifests, so old converted models receive current graph and contract defaults.</li>
-  <li>The resolver reads each active <code>required_contracts</code> entry for the requested phase.</li>
-  <li>It matches op, phase, tensor dtype, layout, and complete reduction ID against executable kernel maps.</li>
-  <li>Zero providers fail as unsupported. Multiple providers fail as ambiguous.</li>
-  <li>The resolver selects the provider before GraphIR construction. Contract-bearing operations do not consult legacy circuit overrides or heuristic dispatch.</li>
-  <li>GraphIR records requirements and the resolved kernel/contract IDs. LoweredIR and call-ready IR carry that decision and hard-fail if a later stage changes it.</li>
-  <li>Production promotion additionally requires validated circuit, contract definition, implementation route, stitched parity, and E2E evidence.</li>
-</ol>
-
-<h2>Compatibility and Migration</h2>
-
-<p>The repository directory is now <code>version/v8/circuits</code>. Embedded BUMP metadata continues to use the historical <code>template</code> key, and chat templates keep their established name; changing serialized formats is not required to correct compiler architecture.</p>
-
-<p>The authoritative migration preserves executable behavior while making the decision visible. Contract metadata is added to GraphIR, LoweredIR, and call-ready IR, while kernel IDs, memory layout, call arguments, and generated C remain unchanged. Gemma3, Qwen2, Qwen3, Qwen3.5, Nanbeige, and Qwen3-VL attention routes resolve without legacy selection.</p>
-
-<h3>Call ABI Ownership</h3>
-
-<p>A resolved kernel map now owns its ordered C call ABI through <code>call_abi.version</code> and <code>call_abi.params</code>. Lower 3 consumes that exact kernel-ID-owned declaration and records its owner in call-ready IR. A contract-governed operation may not fall back to <code>kernel_bindings.json</code> or <code>kernel_bindings.overlay.json</code>; missing ABI metadata, unknown source namespaces, function drift, and duplicate map/legacy ownership hard-fail.</p>
-
-<p>The two legacy binding registries remain only for uncontracted compatibility helpers while migration continues. They are not authoritative inputs for attention reductions, BF16 storage boundaries, vision M-RoPE, or Q4/Q6 numerical execution contracts.</p>
-
-<h2>Compiler Policy Gate</h2>
-
-<p><code>make v8-regression-fast</code> begins with an AST-based DSL policy audit. Generic compiler and code-generation entry points may branch on exact operation IDs, resolved kernel IDs, tensor metadata, and declared capability fields. They may not branch on model, architecture, or family names. Aliasing a family value through local variables does not bypass the audit.</p>
-
-<p>The builder also treats operation families as exact inputs. A missing <code>attention_sliding</code> implementation cannot silently resolve to ordinary <code>attention</code>; missing and ambiguous routes fail with an instruction to fix the circuit or kernel map. Per-layer dimensions are validated arrays, circuit weight policies own aliases and intentionally unused tensors, and unknown policy fields fail schema validation.</p>
-
-<p>The same policy now protects v7 training and backprop through <code>make test-v7-dsl-policy</code>, which is part of <code>make v7-regression-fast</code>. This does not make v7 and v8 share one graph, but it enforces the same ownership rule: the training IR owns backward ordering and the emitter may not acquire model-family behavior.</p>
-
-<pre><code>make test-v8-dsl
-make v8-regression-fast
-make test-v7-dsl-policy
-make v7-regression-fast</code></pre>
-
-<h3>Remaining Migration Debt</h3>
-
-<table>
-  <thead><tr><th>Measured category</th><th>Before this PR</th><th>Current</th><th>Meaning</th></tr></thead>
-  <tbody>
-    <tr><td>Executable model-literal AST sites</td><td>78</td><td>76</td><td>A checked-in per-file ceiling now fails on any increase. Reductions must lower the ceiling.</td></tr>
-    <tr><td>Build and IR model-literal sites</td><td>39</td><td>37</td><td>Lower 1 no longer reselects decode attention from model-specific defaults or function-name patterns.</td></tr>
-    <tr><td>Code-generation model-literal sites</td><td>39</td><td>39</td><td>Bridge, tokenizer, debug, and specialized emission remain the largest migration area.</td></tr>
-    <tr><td>Lower-1 decode-attention reselection branches</td><td>7</td><td>0</td><td>Lower 1 validates the exact IR1 kernel and resolved contract, then only wires KV-cache inputs.</td></tr>
-    <tr><td>Compiler functions governed by the no-family-dispatch policy</td><td>8</td><td>9</td><td>The authoritative decode-attention validator is now covered directly.</td></tr>
-    <tr><td>Forbidden family dispatch in governed generic paths</td><td>0</td><td>0</td><td>Direct and aliased model/family dispatch continues to hard-fail.</td></tr>
-  </tbody>
-</table>
-
-<p>The 76-site inventory is deliberately broader than the previous 41-site estimate: it counts executable module-level and function-level string literals containing model-family names across the four principal compiler and code-generation modules, while excluding comments, docstrings, and standalone documentation strings. Not every site selects mathematics, but every site is visible debt that cannot increase silently. The audit reports a per-function inventory so cleanup can proceed in bounded groups instead of relying on an informal grep count.</p>
-
-<p>The next priority is Qwen3-VL bridge generation: multimodal fallback injection, deepstack handling, M-RoPE calls, and position advancement should be explicit call-IR operations. Kimi/DeepSeek MLA decode and prefill selection follows after both phases have exact kernel-map providers. Tokenizer adapters may retain family knowledge only while hydrating external metadata into canonical configuration.</p>
-
-<p>This refactor prevents four concrete failure classes: model names silently changing tensor dimensions, undeclared weights being ignored by family branches, unavailable sliding attention falling back to ordinary attention, and generated runtimes enabling multimodal or quantized behavior from a family-name test instead of a hydrated capability.</p>
-
-<p>Tokenizer and format adapters may identify an external model family while translating source metadata into the canonical circuit/config representation. That knowledge must stop at hydration. It is not permission for GraphIR construction, lowering, memory planning, or codegen to select mathematics from a family name.</p>
-
-<h2>Threading Is an Execution Contract</h2>
-
-<p>Kernel maps also declare ISA dispatch, threading runtime, possible work partitions, dispatch mechanisms, and whether scheduling can alter reduction order. Q4/Q6 GEMM and GEMV maps therefore expose serial, row, column, or output-tile policies instead of hiding threadpool behavior in generated wrappers. GraphIR records this as <code>resolved_execution</code>, and LoweredIR plus call-ready IR hard-fail if the kernel ID changes. When partitioning changes arithmetic order, the numerical contract must define the corresponding reduction and merge behavior.</p>
-
-<h2>Scalar, Production, and Threadpool Evidence</h2>
-
-<p>Quantized linear maps bind three exact functions: the scalar contract oracle, the public production function, and the threadpool dispatch function. The compiler validates these names and carries them into IR; it does not rank or guess functions from ISA, dimensions, or benchmark results. Dimensions and thread counts remain ordinary function inputs.</p>
-
-<ol>
-  <li>Compare an external backend or independent mathematical oracle with the scalar contract implementation.</li>
-  <li>Compare the optimized public function with that scalar implementation.</li>
-  <li>Compare threadpool dispatch with the same scalar implementation at representative thread counts and shapes.</li>
-</ol>
-
-<p>Independent output rows or tiles must preserve each output's reduction order. Split-K is a different numerical contract and must declare its partial accumulator, partition, and merge order. Unavailable llama.cpp or PyTorch evidence is recorded as <code>unresolved</code>, never counted as a pass.</p>
-
-<div class="contract-note contract-bad">
-  <strong>Hard-fail policy:</strong> agents must fix the circuit, canonical contract, or kernel map. They must not add fallbacks, silent defaults, bypass flags, or looser tolerances to make a new model compile.
-</div>
-
-<div class="contract-note">
-  <strong>Migration policy:</strong> add one operator family at a time. Record current semantics, add leaf and public-route tests, declare circuit requirements, enrich real kernel maps, prove generated artifact equivalence, run stitched parity, then promote the route.
-</div>
-
-<h2>X-Ray Fix Progression</h2>
-
-<p>Every X-ray failure follows the same additive progression. The report embeds these steps so another agent does not repeat an already diagnosed numerical bug.</p>
-
-<ol>
-  <li>Compare execution policy first: prefill segmentation, kernel batch shapes, position progression, cache reset/append behavior, and cache strides. A combined 1,307-row prefill is not numerically equivalent evidence for a backend that executes 33, 1,008, and 266-row segments.</li>
-  <li>For incremental decode, prove cache state before attention math: compare append index, current post-RoPE K/V, stored-row readback, the previous row, and hashes for every valid cache row.</li>
-  <li>Only when query and valid cache bytes agree, compare attention providers, split thresholds, worker partitions, probability/value rounding, and merge order.</li>
-  <li>Stop at the first divergent semantic edge and classify its storage, compute, reduction, position, layout, circuit, binding, and threading contract.</li>
-  <li>Resolve an exact compatible kernel-map capability. Zero or multiple providers hard-fail.</li>
-  <li>Fix the existing implementation or add one new additive variant. Do not alter unrelated numerical variants.</li>
-  <li>Extend the kernel-family matrix across input storage, compute and accumulator precision, reduction and merge order, rounding points, output storage, and threading semantics.</li>
-  <li>Test the leaf kernel against an independent formula and the requested PyTorch or llama.cpp backend oracle.</li>
-  <li>Register the exact validated function in the kernel map, then run isolated, contract-resolution, stitched-checkpoint, mixed-prefill, and teacher-forced gates.</li>
-  <li>Rerun X-ray from the last passing checkpoint. The accepted fix must move the first divergence to a later semantic edge.</li>
-  <li>Publish the capability evidence in the test-report accordion and nightly artifacts before promoting the route.</li>
-</ol>
-
-<p>The bounded execution-state comparator preserves this order in a machine-readable report:</p>
-
-<pre><code>python version/v8/scripts/xray_execution_state_v8.py \
-  --subject-trace build/xray/ck-execution-trace.json \
-  --oracle-trace build/xray/llama-execution-trace.json \
-  --output build/xray/execution-state-report.json</code></pre>
-
-<p>It stops at one of four useful boundaries: execution-policy mismatch, cache metadata/content mismatch, attention-input mismatch, or attention-arithmetic mismatch. Tensor bisection begins only after the execution and state contracts agree.</p>
-
-<h3>Testing the Diagnostic, Not Only the Model</h3>
-
-<p>X-ray has its own nightly injected-fault gate. The fixtures are small public two-layer vision/decoder circuits; no production kernel contains a hidden fault switch. Each fixture changes one tensor, metadata field, circuit edge, or state transition and requires X-ray to report the predetermined first semantic boundary.</p>
-
-<table>
-  <thead><tr><th>Injected fixture</th><th>Required first diagnosis</th></tr></thead>
-  <tbody>
-    <tr><td>BF16 storage boundary at encoder layer 1 attention</td><td><code>STORAGE_CONTRACT_MISMATCH</code></td></tr>
-    <tr><td>Wrong visual-prefix producer</td><td><code>CIRCUIT_PRODUCER_MISMATCH</code></td></tr>
-    <tr><td>Decoder layer output arithmetic change</td><td><code>KERNEL_IMPLEMENTATION_DIVERGENCE</code> with the exact logical coordinate</td></tr>
-    <tr><td>Combined instead of segmented mixed prefill</td><td><code>EXECUTION_POLICY_MISMATCH</code></td></tr>
-    <tr><td>Off-by-one KV-cache append index</td><td><code>CACHE_STATE_METADATA_MISMATCH</code></td></tr>
-    <tr><td>Different attention output with identical Q and cache inputs</td><td><code>ATTENTION_ARITHMETIC_DIVERGENCE</code></td></tr>
-  </tbody>
-</table>
-
-<pre><code>make test-xray-validator-selftest
-# Evidence: build/xray/validator_selftest_report.json</code></pre>
-
-<p>The gate also runs a clean control. It fails if X-ray reports an earlier false positive, accepts an incompatible execution contract, misses the injected edge, or misclassifies state corruption as kernel arithmetic. The nightly test-report publishes this as a dedicated <em>v8 X-ray Injected-Fault Validator</em> row.</p>
-
-<h2>Measured BF16 Vision Progression</h2>
-
-<p>The Qwen3-VL BF16 investigation demonstrates the closure rule on a real 1152&times;896 form image with 4,032 visual tokens. Each row was reached through the normal compiler and exact kernel-map resolution; no generated C was edited by hand.</p>
-
-<table>
-  <thead><tr><th>Semantic edge</th><th>Before relative RMSE</th><th>After relative RMSE</th><th>Resolved capability</th></tr></thead>
-  <tbody>
-    <tr><td>Frontend position output</td><td>1.899e-2</td><td>2.361e-5</td><td>BF16 align-corners position storage</td></tr>
-    <tr><td>Layer 0 norm1</td><td>1.225e-2</td><td>5.538e-5</td><td>BF16 storage with matched FP32 reduction</td></tr>
-    <tr><td>Packed QKV projection</td><td>Not yet isolated</td><td>7.129e-5</td><td>BF16 input/weight, FP32 dot, BF16 output</td></tr>
-    <tr><td>Q after M-RoPE</td><td>Wrong generated sections</td><td>7.811e-5</td><td>Full-width multi-section BF16 output</td></tr>
-    <tr><td>Attention context</td><td>1.744e-3</td><td>9.258e-4</td><td>BF16 Q/K/V, FP32 online reduction, BF16 output</td></tr>
-    <tr><td>Output projection</td><td>Not yet isolated</td><td>6.059e-4</td><td>BF16 input/weight, FP32 dot, BF16 output</td></tr>
-  </tbody>
-</table>
-
-<p>The next edge is always explicit. After output projection the resolver selects the BF16 residual capability, then X-ray continues through norm2, MLP, spatial merge, projector, final prefix, mixed-prefill logits, and teacher-forced generation. A green leaf test without this forward movement is evidence for a kernel only, not closure of the model bug.</p>
-
-<h2>Forward Sensitivity Before Backward Attribution</h2>
-
-<p>A small BF16 forward difference can be numerically harmless or it can be amplified by attention, normalization, or a later residual path. X-ray can now test that distinction without first trusting a CK backward kernel. The sensitivity runner sends both the PyTorch reference tensor and the CK-perturbed tensor through the same authoritative PyTorch operator, applies one deterministic upstream probe, and reports forward and vector-Jacobian-product amplification.</p>
-
-<pre><code>python version/v8/scripts/xray_attention_sensitivity_v8.py \
-  --reference-q build/xray/torch-q.f32 \
-  --reference-k build/xray/torch-k.f32 \
-  --reference-v build/xray/torch-v.f32 \
-  --subject-q build/xray/ck-q.f32 \
-  --subject-k build/xray/ck-k.f32 \
-  --subject-v build/xray/ck-v.f32 \
-  --q-shape 16 4032 72 \
-  --kv-shape 16 4032 72 \
-  --storage-dtype bf16 \
-  --query-start 0 --query-count 32 \
-  --output build/xray/attention-sensitivity.json</code></pre>
-
-<p>The report performs Q-only, K-only, V-only, and combined perturbation ablations. It records the stored input delta, downstream output delta, fixed-probe gradient delta, amplification ratios, and worst logical coordinates. Query bounding limits memory while retaining the complete K/V context for full non-causal vision attention.</p>
-
-<p>This report is diagnostic evidence, not a parity verdict. It proves which existing forward perturbation is amplified by PyTorch's downstream math. It does not prove that a CK backward provider is correct. A CK training provider must separately declare the same full-attention storage, accumulation, reduction, rounding, and threading contract and pass direct gradient parity. Pass/fail thresholds remain in parity profiles rather than circuits or the sensitivity report.</p>
-
-<h2>Execution-Contract X-Ray</h2>
-
-<p>Tensor parity cannot diagnose a backend that executes the same mixed prefix with a different schedule. X-ray therefore records prefill segmentation, cache transitions, position transitions, exact shared-library identity, and the manifest-map identity alongside numerical checkpoints.</p>
-
-<table>
-  <thead><tr><th>Mixed-prefix contract</th><th>Required behavior</th><th>Failure meaning</th></tr></thead>
-  <tbody>
-    <tr><td>Segments</td><td><code>text_before -&gt; visual -&gt; text_after</code></td><td>A combined prefix changes projection reduction shape and rounding.</td></tr>
-    <tr><td>Cache transition</td><td><code>append_preserve</code></td><td>A segment must retain all prior K/V rows and append at the physical token offset.</td></tr>
-    <tr><td>Position transition</td><td><code>segment_defined</code></td><td>Physical cache position and semantic M-RoPE text position must not be conflated.</td></tr>
-    <tr><td>Runtime evidence</td><td>Exact generated library and manifest-map hashes</td><td>A stale converted manifest or rebuilt runtime invalidates attribution.</td></tr>
-  </tbody>
-</table>
-
-<p>On the 1,008-token Qwen3-VL form cases, the old single-call path diverged from llama.cpp as early as generated step 4. Circuit-driven segmented append removed the cache-state failure, but a later close-ranking flip remained. X-ray then showed that the visual M-RoPE cache was exact while only the rotated second half differed. Basis-vector replay isolated two compiler-visible rounding points: llama.cpp rounds the partner product before each <code>fmaf</code>, and its frequency recurrence uses the system <code>powf</code>, <code>sinf</code>, and <code>cosf</code> behavior. CK now names that evaluation order in the numerical contract and implements it explicitly.</p>
-
-<p>The resulting production gate is exact for both canonical OCR forms: each full <code>1008 x 16384</code> decoder-facing visual prefix matches llama.cpp across all 16,515,072 FP32 values, and both 128-token greedy runs match 128/128 top-1 tokens. Minimum logits cosine was 0.98892 and 0.99168 respectively, with at least 14/16 top-k overlap. This closes these two fixtures, not the unexecuted 40-image sweep or every multimodal family.</p>
-
-<p>The investigation also invalidated an earlier packed Q4_K&times;Q8_K diagnosis. The apparent packed-reduction failure was downstream of the M-RoPE ULP and a report that recorded the generated decoder library but not its dynamically loaded engine library. X-ray now defaults the raw llama.cpp oracle to one thread, rejects multi-threaded exact capture without an explicit opt-in, and records the engine, generated model, llama shim, and manifest identities. A downstream kernel is not blamed until exact-input replay and complete runtime provenance both pass.</p>
-
-<h2>Validation Commands</h2>
-
-<p><code>make test-numerical-contracts</code> is an executable gate, not only a schema check. It builds the engine and runs contract resolution, full attention numerics, and FP16 split-KV reduction cases. The focused commands below remain useful when attributing a failure.</p>
-
-<pre><code>make test-numerical-contracts
-make test-threadpool-parity
-PYTHONPATH=unittest .venv/bin/python unittest/test_attention_full.py -v
-V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT=./llama.cpp \
-  make test-attention-f16-split-kv
-make test-v8-qwen3vl
-make v8-regression-fast</code></pre>
-
-<h2>What This Prevents</h2>
+<p>
+  Coverage is split deliberately, because GitHub runners do not carry the
+  generated Whisper artifacts:
+</p>
 
 <ul>
-  <li>A correct leaf kernel hidden behind the wrong production wrapper.</li>
-  <li>Prefill and decode silently using different accumulation contracts.</li>
-  <li>KV=511 and KV=512 changing mathematics without a declared threshold.</li>
-  <li>Thread count changing reduction structure without a declared partition policy.</li>
-  <li>A model-specific Python conditional becoming permanent compiler architecture.</li>
-  <li>A fast path being enabled because it is faster while long-token parity is worse.</li>
+  <li>
+    <strong>Nightly &mdash; Audio Log-Mel Frontend.</strong> The optimized C
+    FFT/log-Mel frontend is compared against a PyTorch oracle on every
+    nightly run.
+  </li>
+  <li>
+    <strong>Nightly &mdash; Audio Transformer Primitives.</strong>
+    Resampling, FFT, Conv1D, GELU, layout transforms, self-attention, and
+    cross-attention are exercised against their contracts on every nightly
+    run.
+  </li>
+  <li>
+    <strong>Nightly &mdash; v8 audio circuit/codegen regression.</strong>
+    The generated-circuit lowering and codegen path is gated portably,
+    without model weights. These rows now cover the full frontend sequence:
+    native arithmetic, exact provider resolution for all seven ops, the
+    generated <code>ck_model_run_audio_wav</code> ABI, unified-command CLI
+    ownership, and synthetic compilation.
+  </li>
+  <li>
+    <strong>Opt-in artifact test &mdash; full model-and-WAV
+    transcription.</strong> End-to-end transcription runs where the
+    generated encoder and decoder artifacts exist, via
+    <code>make test-whisper-e2e-auto</code>. The gate requires the full
+    reference token sequence and EOS without tolerance relaxation.
+  </li>
 </ul>
 
-<p>Related: <a href="architecture.html">System Architecture</a>, <a href="ir-pipeline.html">IR Pipeline</a>, <a href="v8-vision-encoder.html">v8 Vision Encoder</a>, and <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a>.</p>
+<h2>Transcribe Arbitrary Audio</h2>
+
+<p>
+  Convert any source format to mono 16&nbsp;kHz PCM16 WAV first:
+</p>
+
+<pre><code>ffmpeg -i your-audio.mp3 \
+  -ac 1 -ar 16000 -c:a pcm_s16le \
+  /tmp/test-audio.wav</code></pre>
+
+<p>Then run the generated pipeline through the unified v8 command surface:</p>
+
+<pre><code>version/v8/scripts/cks-v8-run audio \
+  --encoder-run-dir /path/to/whisper-tiny-encoder \
+  --decoder-run-dir /path/to/whisper-tiny-decoder \
+  --wav /tmp/test-audio.wav \
+  --language en \
+  --task transcribe \
+  --max-tokens 128 \
+  --output build/whisper-test-report.json</code></pre>
+
+<p>
+  Encoder and decoder execution occurs in isolated child processes. Both
+  generated artifacts export the same model ABI and shared-library symbol
+  names, so loading both into one process can bind a call to the wrong
+  artifact.
+</p>
+
+<h2>Current Limitations</h2>
+
+<ul>
+  <li>Whisper Tiny, FP32 only.</li>
+  <li>
+    PCM16 WAV input; use <code>ffmpeg</code> to convert MP3, FLAC, or other
+    formats.
+  </li>
+  <li>
+    Audio is limited to 30 seconds; longer files are currently truncated,
+    not chunked.
+  </li>
+  <li>English transcription and no-timestamp decoding are certified.</li>
+  <li>
+    The JFK sample matches Hugging Face exactly; arbitrary recordings are
+    functional rather than corpus-certified yet.
+  </li>
+</ul>
+
+<h2>Correctness Findings</h2>
+
+<ol>
+  <li>
+    Cross-attention K/V projections must use the immutable encoder-memory
+    length. Generic prefill code previously replaced their matrix row count
+    with the active decoder-token count.
+  </li>
+  <li>
+    Cross-attention query length must use the active decoder-token count.
+    The generated prefill call previously retained the decoder's physical
+    capacity.
+  </li>
+  <li>
+    Incremental self-attention must use the decode provider and attend
+    <code>model-&gt;pos + 1</code> valid KV rows. A causal prefill provider
+    invoked with one active token attended only cache row zero.
+  </li>
+  <li>
+    Encoder-side cross-attention K/V projections are immutable for an audio
+    segment. The circuit declares a prefill-populated, layer-major FP32 cache;
+    decode consumes the cached head-major slices instead of projecting and
+    transposing all 1,500 encoder rows for every generated token. Binding new
+    encoder memory invalidates the cache, and decode fails closed until prefill
+    repopulates it.
+  </li>
+</ol>
+
+<p>
+  These dimensions are now represented in call IR and phase-specific
+  circuit contracts. Codegen consumes the resolved semantics and contains
+  no Whisper model-name branch.
+</p>
+
+<h2>Reference Evidence</h2>
+
+<p>
+  On the public JFK Whisper sample, CKE emitted the same 23 greedy text
+  tokens as Hugging Face Whisper Tiny, followed by EOS:
+</p>
+
+<pre><code>And so my fellow Americans ask not what your country can do for you
+ask what you can do for your country.</code></pre>
+
+<p>
+  The optimized C FFT/log-Mel frontend differed from Hugging Face by
+  approximately 1.54e-4 maximum absolute error and 1.37e-6 RMSE, without
+  changing any generated token. Before persistent cross-attention caching, one
+  measured run used 0.16 seconds for the frontend, 11.17 seconds for the
+  encoder, 0.75 seconds for decoder prefill, and 16.57 seconds for 23 decode
+  tokens. With the cache, the same exact token sequence used 0.12 seconds for
+  the frontend, 11.15 seconds for the encoder, 0.73 seconds for prefill, and
+  0.21 seconds for decode. Decoder time improved by approximately 79x, and
+  total time fell from 28.64 seconds to approximately 12.22 seconds.
+</p>
+
+<h2>Regression Gates</h2>
+
+<pre><code>make test-audio
+
+CK_WHISPER_ENCODER_RUN_DIR=/path/to/encoder \
+CK_WHISPER_DECODER_RUN_DIR=/path/to/decoder \
+CK_WHISPER_WAV=/path/to/jfk.wav \
+make test-whisper-e2e-auto</code></pre>
+
+<p>
+  Nightly publishes separate PyTorch-backed audio frontend and transformer
+  primitive rows, plus a portable v8 audio circuit/codegen row. Together
+  they fix the Slaney filter identity, forced decoder prefix, projection
+  extents, phase-specific attention providers, and generated call
+  arguments. The artifact gate requires the full reference token sequence
+  and EOS without tolerance relaxation.
+</p>
     </main>
 
     <!-- SVG Viewer Overlay (shared across all pages) -->
