@@ -34,6 +34,53 @@ class _FakeCFunc:
 
 
 class TestCKChatRuntimeContract(unittest.TestCase):
+    def test_generated_runtime_root_recognizes_only_supported_directory_names(self) -> None:
+        model_root = Path("/tmp/model")
+
+        self.assertEqual(
+            ck_chat._model_root_for_runtime(model_root / ".ck_build"),
+            model_root,
+        )
+        self.assertEqual(
+            ck_chat._model_root_for_runtime(model_root / ".ck_build_v8"),
+            model_root,
+        )
+        self.assertEqual(
+            ck_chat._model_root_for_runtime(model_root / ".ck_builder"),
+            model_root / ".ck_builder",
+        )
+
+    def test_auto_mode_uses_exported_python_tokenizer_chat_template(self) -> None:
+        class _Tokenizer:
+            chat_template = "exported-template"
+
+            def apply_chat_template(self, messages, *, tokenize, add_generation_prompt):
+                self.last_call = (messages, tokenize, add_generation_prompt)
+                return "<rendered>"
+
+        model = ck_chat.CKModel("/tmp/nonexistent")
+        model.tokenizer = _Tokenizer()
+        model._configure_chat_template("auto")
+
+        rendered = model.format_chat_conversation(
+            [("user", "Hi")],
+            system_prompt="System",
+        )
+
+        self.assertEqual(rendered, "<rendered>")
+        self.assertEqual(model.chat_template_mode, "tokenizer")
+        self.assertEqual(
+            model.tokenizer.last_call,
+            (
+                [
+                    {"role": "system", "content": "System"},
+                    {"role": "user", "content": "Hi"},
+                ],
+                False,
+                True,
+            ),
+        )
+
     def test_first_token_llama_root_honors_environment(self) -> None:
         old = os.environ.get("CK_LLAMA_CPP_ROOT")
         try:
@@ -869,6 +916,64 @@ class TestCKChatRuntimeContract(unittest.TestCase):
             tok_mod.from_file.assert_called_once_with(str(contract_tok))
             apply_mock.assert_called_once()
             self.assertIs(model.tokenizer, sentinel)
+
+    def test_v8_build_runtime_discovers_tokenizer_in_source_model_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ck_chat_v8_build_tok_") as td:
+            model_root = Path(td) / "model"
+            run_dir = model_root / ".ck_build_v8"
+            run_dir.mkdir(parents=True)
+            tokenizer_json = model_root / "tokenizer.json"
+            tokenizer_json.write_text(
+                json.dumps({"model": {"type": "BPE", "vocab": {}, "merges": []}}),
+                encoding="utf-8",
+            )
+            model = ck_chat.CKModel(str(run_dir))
+            sentinel = object()
+
+            with mock.patch.object(ck_chat, "HF_TOKENIZER_AVAILABLE", True):
+                with mock.patch.object(ck_chat, "Tokenizer", create=True) as tok_mod:
+                    tok_mod.from_file.return_value = sentinel
+                    with mock.patch.object(model, "_apply_python_tokenizer_contract"):
+                        ok = model._load_python_tokenizer()
+
+            self.assertTrue(ok)
+            tok_mod.from_file.assert_called_once_with(str(tokenizer_json))
+            self.assertIs(model.tokenizer, sentinel)
+
+    def test_custom_transformers_tokenizer_loads_locally_from_source_model_root(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ck_chat_custom_tok_") as td:
+            model_root = Path(td) / "model"
+            run_dir = model_root / ".ck_build_v8"
+            run_dir.mkdir(parents=True)
+            (model_root / "tokenizer_config.json").write_text(
+                json.dumps({"auto_map": {"AutoTokenizer": ["tokenization_custom.Custom", None]}}),
+                encoding="utf-8",
+            )
+            (model_root / "tiktoken.model").write_bytes(b"fixture")
+            (model_root / "tokenization_custom.py").write_text(
+                "# local custom tokenizer fixture\n",
+                encoding="utf-8",
+            )
+            model = ck_chat.CKModel(str(run_dir))
+            sentinel = mock.Mock()
+            sentinel.chat_template = "exported-template"
+            auto_tokenizer = mock.Mock()
+            auto_tokenizer.from_pretrained.return_value = sentinel
+
+            with mock.patch.object(
+                ck_chat,
+                "_load_transformers_auto_tokenizer",
+                return_value=auto_tokenizer,
+            ), mock.patch.object(model, "_apply_python_tokenizer_contract"):
+                ok = model._load_python_tokenizer()
+
+            self.assertTrue(ok)
+            self.assertIs(model.tokenizer, sentinel)
+            auto_tokenizer.from_pretrained.assert_called_once_with(
+                str(model_root),
+                trust_remote_code=True,
+                local_files_only=True,
+            )
 
     def test_chat_template_marker_support_accepts_atomic_eos_marker_even_if_decode_hides_it(self) -> None:
         model = ck_chat.CKModel("/tmp/unused")
