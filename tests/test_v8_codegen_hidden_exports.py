@@ -156,6 +156,168 @@ class HiddenExportExtentTests(unittest.TestCase):
         self.assertIn('"attn_pregate", (const float*)ATTN, (8) * (1) * (256)', attention)
         self.assertIn('"attn_out", (const float*)ATTN, (8) * (18) * (256)', gated)
 
+    def test_mla_exports_each_semantic_attention_boundary(self) -> None:
+        kv_a = codegen.emit_op(
+            {
+                "op": "kv_a_proj",
+                "function": "gemm_nt_bf16",
+                "layer": 0,
+                "args": [
+                    _arg("output", "KV_A"),
+                    _arg("M", "30"),
+                    _arg("N", "576"),
+                ],
+            }
+        )
+        kv_norm = codegen.emit_op(
+            {
+                "op": "kv_a_layernorm",
+                "function": "rmsnorm_forward_kv_lora",
+                "layer": 0,
+                "args": [
+                    _arg("output", "KV_NORM"),
+                    _arg("tokens", "30"),
+                    _arg("d_model", "512"),
+                ],
+            }
+        )
+        decompress = codegen.emit_op(
+            {
+                "op": "kv_lora_decompress",
+                "function": "deepseek_mla_kv_decompress_f32",
+                "layer": 0,
+                "args": [
+                    _arg("k_nope", "K_NOPE"),
+                    _arg("value", "VALUE"),
+                    _arg("tokens", "30"),
+                    _arg("heads", "16"),
+                    _arg("qk_nope_dim", "128"),
+                    _arg("v_dim", "128"),
+                ],
+            }
+        )
+        rope = codegen.emit_op(
+            {
+                "op": "partial_rope_concat",
+                "function": "deepseek_mla_partial_rope_concat_packed_f32",
+                "layer": 0,
+                "args": [
+                    _arg("query", "QUERY"),
+                    _arg("key", "KEY"),
+                    _arg("tokens", "30"),
+                    _arg("heads", "16"),
+                    _arg("qk_nope_dim", "128"),
+                    _arg("qk_rope_dim", "64"),
+                ],
+            }
+        )
+        attention = codegen.emit_op(
+            {
+                "op": "mla_attention",
+                "function": "deepseek_mla_attention_f32",
+                "layer": 0,
+                "args": [
+                    _arg("output", "CONTEXT"),
+                    _arg("num_tokens", "30"),
+                    _arg("num_heads", "16"),
+                    _arg("v_head_dim", "128"),
+                ],
+            }
+        )
+
+        self.assertIn('"mla_kv_a", (const float*)KV_A, (30) * (576)', kv_a)
+        self.assertIn('"mla_kv_norm", (const float*)KV_NORM, (30) * (512)', kv_norm)
+        self.assertIn('"mla_k_nope", (const float*)K_NOPE, (30) * (16) * (128)', decompress)
+        self.assertIn('"mla_value", (const float*)VALUE, (30) * (16) * (128)', decompress)
+        self.assertIn('"mla_query", (const float*)QUERY, (30) * (16) * ((128 + 64))', rope)
+        self.assertIn('"mla_key", (const float*)KEY, (30) * (16) * ((128 + 64))', rope)
+        self.assertIn('"mla_context", (const float*)CONTEXT, (30) * (16) * (128)', attention)
+
+    def test_kimi_block_norm_exports_distinguish_attention_and_ffn_inputs(self) -> None:
+        first = codegen.emit_op(
+            {
+                "op": "block_rmsnorm",
+                "function": "rmsnorm_forward",
+                "layer": 0,
+                "args": [
+                    _arg("output", "ATTN_NORM"),
+                    _arg("rows", "30"),
+                ],
+            },
+            op_instance_idx=0,
+        )
+        second = codegen.emit_op(
+            {
+                "op": "block_rmsnorm",
+                "function": "rmsnorm_forward",
+                "layer": 0,
+                "args": [
+                    _arg("output", "FFN_NORM"),
+                    _arg("rows", "30"),
+                ],
+            },
+            op_instance_idx=1,
+        )
+
+        self.assertIn('"block_rmsnorm", (const float*)ATTN_NORM', first)
+        self.assertNotIn('"ffn_norm"', first)
+        self.assertIn('"ffn_norm", (const float*)FFN_NORM', second)
+        self.assertNotIn('"block_rmsnorm"', second)
+
+    def test_moe_exports_router_and_expert_boundaries(self) -> None:
+        router = codegen.emit_op(
+            {
+                "op": "moe_router",
+                "function": "gemm_blocked_serial",
+                "layer": 1,
+                "args": [
+                    _arg("C", "ROUTER"),
+                    _arg("M", "30"),
+                    _arg("N", "64"),
+                ],
+            }
+        )
+        selection = codegen.emit_op(
+            {
+                "op": "group_limited_topk_router",
+                "function": "group_limited_topk_router_sigmoid_f32",
+                "layer": 1,
+                "args": [
+                    _arg("weights", "ROUTING"),
+                    _arg("rows", "30"),
+                    _arg("top_k", "6"),
+                ],
+            }
+        )
+        routed = codegen.emit_op(
+            {
+                "op": "moe_swiglu_expert_mlp",
+                "function": "moe_swiglu_expert_forward_bf16",
+                "layer": 1,
+                "args": [
+                    _arg("output", "ROUTED"),
+                    _arg("rows", "30"),
+                    _arg("hidden_dim", "2048"),
+                ],
+            }
+        )
+        combined = codegen.emit_op(
+            {
+                "op": "shared_swiglu_expert_mlp",
+                "function": "moe_swiglu_shared_forward_bf16",
+                "layer": 1,
+                "args": [
+                    _arg("output", "COMBINED"),
+                    _arg("rows", "30"),
+                    _arg("hidden_dim", "2048"),
+                ],
+            }
+        )
+        self.assertIn('"moe_router_logits", (const float*)ROUTER, (30) * (64)', router)
+        self.assertIn('"moe_routing_weights", (const float*)ROUTING, (30) * (6)', selection)
+        self.assertIn('"moe_routed_output", (const float*)ROUTED, (30) * (2048)', routed)
+        self.assertIn('"moe_combined_output", (const float*)COMBINED, (30) * (2048)', combined)
+
     def test_attention_checkpoint_name_comes_from_call_ir_contract(self) -> None:
         emitted = codegen.emit_op(
             {

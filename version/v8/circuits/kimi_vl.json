@@ -57,6 +57,7 @@
     "attention_contract": {
       "attn_variant": "mla",
       "rope_layout": "partial_pairwise_concat",
+      "rope_type": "partial_rope_concat",
       "qk_norm": false,
       "kv_layout": "compressed_kv_then_expanded_cache",
       "layer_policy_config_key": "layer_kinds",
@@ -95,6 +96,8 @@
     "block_contract": {
       "norm_type": "rmsnorm",
       "body_type": "mla_dense_mlp_or_moe",
+      "activation": "swiglu",
+      "mlp_formula": "gate_up -> silu_mul -> down or routed/shared swiglu experts",
       "attention_formula": "q_proj + kv_a_proj_with_mqa -> kv_a_layernorm -> kv_b_proj split(k_nope,value); partial_rope(q_pe,k_pe); mla_attention -> o_proj",
       "dense_mlp_formula": "gate_proj/up_proj -> silu_mul -> down_proj",
       "moe_formula": "router(sigmoid) -> group_limited_topk -> routed_swiglu_experts + shared_swiglu_experts",
@@ -114,11 +117,18 @@
       "kernel_select": "weight_dtype_registry",
       "activation_policy": "manifest_defined",
       "per_tensor_mixed_quant": true
+    },
+    "runtime_invariants": {
+      "required_call_args": {}
     }
   },
   "kernels": {
+    "block_rmsnorm": "rmsnorm_forward_pytorch_bf16_storage",
+    "kv_a_layernorm": "rmsnorm_forward_strided_f32",
     "kv_lora_decompress": "deepseek_mla_kv_decompress_f32",
     "partial_rope_concat": "deepseek_mla_partial_rope_concat_packed_f32",
+    "moe_router": "gemm_nt_fp32_exact",
+    "group_limited_topk_router": "group_limited_topk_router_sigmoid_f32",
     "router": "nemotron_group_limited_topk_router_f32",
     "moe_swiglu_expert": "moe_swiglu_expert_forward_f32",
     "moe_swiglu_shared": "moe_swiglu_shared_forward_f32"

@@ -708,6 +708,22 @@ def _prepare_runtime_dir_from_local_artifacts(model_dir: Path, work_dir: Path) -
     return dst_bump, dst_config, dst_manifest
 
 
+def _stage_safetensors_tokenizer_assets(checkpoint_dir: Path, output_dir: Path) -> None:
+    for name in (
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "generation_config.json",
+        "tiktoken.model",
+        "tokenizer.model",
+    ):
+        _copy_optional(checkpoint_dir / name, output_dir / name)
+    for path in checkpoint_dir.glob("tokenization_*.py"):
+        _copy_optional(path, output_dir / path.name)
+    if (checkpoint_dir / "tokenizer_bin").is_dir() and not (output_dir / "tokenizer_bin").exists():
+        shutil.copytree(checkpoint_dir / "tokenizer_bin", output_dir / "tokenizer_bin")
+
+
 def step_convert_safetensors(
     checkpoint_dir: Path,
     output_dir: Path,
@@ -720,6 +736,7 @@ def step_convert_safetensors(
     manifest_path = output_dir / "weights_manifest.json"
     if weights_path.exists() and config_path.exists() and manifest_path.exists() and not force:
         log(f"  Using cached weights at {weights_path}", C_DIM)
+        _stage_safetensors_tokenizer_assets(checkpoint_dir, output_dir)
         return weights_path, config_path, manifest_path
     output_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -737,15 +754,7 @@ def step_convert_safetensors(
         "auto",
     ]
     run_cmd(cmd, cwd=PROJECT_ROOT)
-    for name in (
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "special_tokens_map.json",
-        "generation_config.json",
-    ):
-        _copy_optional(checkpoint_dir / name, output_dir / name)
-    if (checkpoint_dir / "tokenizer_bin").is_dir() and not (output_dir / "tokenizer_bin").exists():
-        shutil.copytree(checkpoint_dir / "tokenizer_bin", output_dir / "tokenizer_bin")
+    _stage_safetensors_tokenizer_assets(checkpoint_dir, output_dir)
     return weights_path, config_path, manifest_path
 
 
@@ -1133,7 +1142,7 @@ def _resolve_run_dir(model_input: str, input_type: str, info: dict[str, Any], re
     if input_type == "hf_gguf":
         return CACHE_DIR / info["repo_id"].replace("/", "--")
     if input_type == "hf_id":
-        return CACHE_DIR / info["model_id"].replace("/", "--")
+        return CACHE_DIR / info["model_id"].replace("/", "--") / ".ck_build_v8"
     if input_type == "gguf":
         return CACHE_DIR / info["path"].stem
     if input_type == "local_dir":

@@ -1,0 +1,30 @@
+{
+  "id": "rmsnorm_forward_strided_f32",
+  "op": "rmsnorm",
+  "variant": "fp32_independent_row_strides",
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {"name": "input", "dtype": "fp32", "shape": ["T", "INPUT_STRIDE"]}
+  ],
+  "weights": [
+    {"name": "gamma", "dtype": "fp32", "shape": ["D"]}
+  ],
+  "outputs": [
+    {"name": "output", "dtype": "fp32", "shape": ["T", "OUTPUT_STRIDE"]},
+    {"name": "rstd", "dtype": "fp32", "shape": ["T"], "optional": true}
+  ],
+  "dims": ["T", "D", "INPUT_STRIDE", "OUTPUT_STRIDE"],
+  "params": [
+    {"name": "eps", "dtype": "float32"}
+  ],
+  "impl": {
+    "function": "rmsnorm_forward_strided_f32",
+    "c_declaration": "void rmsnorm_forward_strided_f32(const float *input, const float *gamma, float *output, float *rstd_cache, int tokens, int d_model, int input_stride, int output_stride, float eps);",
+    "sources": ["src/kernels/rmsnorm_kernels.c"]
+  },
+  "notes": "RMSNorm over D logical values with independent physical input and output row strides."
+}

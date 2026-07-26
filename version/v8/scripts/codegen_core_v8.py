@@ -1752,6 +1752,52 @@ def emit_op(
             "qkv_packed",
             _hidden_arg("N", "out_dim"),
         )
+    elif op_name == "kv_a_proj":
+        out_expr = _hidden_arg("output", "out", "c", "y")
+        rows = _hidden_arg("M", "m", "rows", "tokens")
+        width = _hidden_arg("N", "n", "out_dim")
+        _emit_hidden_export(out_expr, "mla_kv_a", _mul_expr(rows, width))
+        _emit_hidden_export_last_row(out_expr, "mla_kv_a", width)
+    elif op_name == "kv_a_layernorm":
+        out_expr = _hidden_arg("output", "out", "y")
+        rows = _hidden_arg("tokens", "rows", "num_tokens")
+        width = _hidden_arg("d_model", "kv_lora_rank")
+        _emit_hidden_export(out_expr, "mla_kv_norm", _mul_expr(rows, width))
+        _emit_hidden_export_last_row(out_expr, "mla_kv_norm", width)
+    elif op_name == "kv_lora_decompress":
+        rows = _hidden_arg("tokens", "rows", "num_tokens")
+        heads = _hidden_arg("heads", "num_heads")
+        _emit_hidden_export(
+            _hidden_arg("k_nope"),
+            "mla_k_nope",
+            _mul_expr(rows, heads, _hidden_arg("qk_nope_dim")),
+        )
+        _emit_hidden_export(
+            _hidden_arg("value", "v"),
+            "mla_value",
+            _mul_expr(rows, heads, _hidden_arg("v_dim", "v_head_dim")),
+        )
+    elif op_name == "partial_rope_concat":
+        rows = _hidden_arg("tokens", "rows", "num_tokens")
+        heads = _hidden_arg("heads", "num_heads")
+        qk_width = (
+            f"({_hidden_arg('qk_nope_dim')} + {_hidden_arg('qk_rope_dim')})"
+            if _hidden_arg("qk_nope_dim") and _hidden_arg("qk_rope_dim")
+            else None
+        )
+        count_expr = _mul_expr(rows, heads, qk_width)
+        _emit_hidden_export(_hidden_arg("query", "q"), "mla_query", count_expr)
+        _emit_hidden_export(_hidden_arg("key", "k"), "mla_key", count_expr)
+    elif op_name == "mla_attention":
+        _emit_hidden_export(
+            _hidden_arg("output", "out"),
+            "mla_context",
+            _mul_expr(
+                _hidden_arg("num_tokens", "tokens", "rows", "cache_len"),
+                _hidden_arg("num_heads", "heads"),
+                _hidden_arg("v_head_dim", "v_dim"),
+            ),
+        )
     elif op_name == "patchify":
         patch_h = f"(({_hidden_arg('H')}) / ({_hidden_arg('P')}))" if _hidden_arg("H") and _hidden_arg("P") else None
         patch_w = f"(({_hidden_arg('W')}) / ({_hidden_arg('P')}))" if _hidden_arg("W") and _hidden_arg("P") else None
@@ -1917,6 +1963,15 @@ def emit_op(
             label,
             _hidden_arg("d_model", "embed_dim", "dim"),
         )
+    elif op_name == "block_rmsnorm":
+        out_expr = _hidden_arg("output", "out", "x", "y")
+        count_expr = _mul_expr(
+            _hidden_arg("tokens", "num_tokens", "rows"),
+            _hidden_arg("d_model", "aligned_embed_dim", "embed_dim", "dim"),
+        ) or "EMBED_DIM"
+        label = "block_rmsnorm" if op_instance_idx == 0 else "ffn_norm"
+        _emit_hidden_export(out_expr, label, count_expr)
+        _emit_hidden_export_last_row(out_expr, label, "EMBED_DIM")
     elif op_name in {"rmsnorm", "attn_norm"}:
         out_expr = _hidden_arg("output", "out", "x", "y")
         count_expr = _mul_expr(
@@ -1954,6 +2009,30 @@ def emit_op(
         if out_expr:
             lines.append(f'    ck_debug_export_hidden(model, {layer}, "post_ffn_norm", (const float*){out_expr}, EMBED_DIM);')
             _emit_hidden_export_last_row(out_expr, "post_ffn_norm", "EMBED_DIM")
+    elif op_name == "moe_router":
+        output = _hidden_arg("C", "output", "out")
+        rows = _hidden_arg("M", "m", "rows", "tokens")
+        width = _hidden_arg("N", "n", "n_experts")
+        _emit_hidden_export(output, "moe_router_logits", _mul_expr(rows, width))
+        _emit_hidden_export_last_row(output, "moe_router_logits", width)
+    elif op_name == "group_limited_topk_router":
+        weights = _hidden_arg("weights")
+        rows = _hidden_arg("rows", "M", "m", "tokens")
+        width = _hidden_arg("top_k")
+        _emit_hidden_export(weights, "moe_routing_weights", _mul_expr(rows, width))
+        _emit_hidden_export_last_row(weights, "moe_routing_weights", width)
+    elif op_name == "moe_swiglu_expert_mlp":
+        output = _hidden_arg("output", "out")
+        rows = _hidden_arg("rows", "M", "m", "tokens")
+        width = _hidden_arg("hidden_dim", "embed_dim") or "EMBED_DIM"
+        _emit_hidden_export(output, "moe_routed_output", _mul_expr(rows, width))
+        _emit_hidden_export_last_row(output, "moe_routed_output", width)
+    elif op_name == "shared_swiglu_expert_mlp":
+        output = _hidden_arg("output", "out")
+        rows = _hidden_arg("rows", "M", "m", "tokens")
+        width = _hidden_arg("hidden_dim", "embed_dim") or "EMBED_DIM"
+        _emit_hidden_export(output, "moe_combined_output", _mul_expr(rows, width))
+        _emit_hidden_export_last_row(output, "moe_combined_output", width)
     elif op_name == "mlp_gate_up":
         out_expr = _hidden_arg("output", "out", "c", "y")
         rows_expr = _hidden_arg("m", "M", "rows", "tokens")

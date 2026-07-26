@@ -4065,12 +4065,23 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
     num_kv_heads = int(config.get("num_kv_heads", config.get("num_key_value_heads", num_heads)) or num_heads)
     q_head_dim = _config_layer_int(config, "layer_q_head_dim", layer, int(config.get("head_dim", 0) or 0))
     k_head_dim = _config_layer_int(config, "layer_k_head_dim", layer, q_head_dim)
-    v_head_dim = _config_layer_int(config, "layer_v_head_dim", layer, k_head_dim)
+    v_head_dim = _config_layer_int(
+        config,
+        "layer_v_head_dim",
+        layer,
+        int(config.get("v_head_dim", k_head_dim) or k_head_dim),
+    )
     q_dim = _config_layer_int(
         config,
         "layer_q_dim",
         layer,
-        int(config.get("attn_out_dim", num_heads * q_head_dim) or (num_heads * q_head_dim)),
+        num_heads * q_head_dim,
+    )
+    attention_output_dim = _config_layer_int(
+        config,
+        "layer_attention_output_dim",
+        layer,
+        int(config.get("attn_out_dim", num_heads * v_head_dim) or (num_heads * v_head_dim)),
     )
     k_dim = num_kv_heads * k_head_dim
     v_dim = num_kv_heads * v_head_dim
@@ -4104,12 +4115,12 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
         params["output_dim"] = v_dim
     elif op_name == "out_proj":
         params["_output_dim"] = embed_dim
-        params["_input_dim"] = q_dim
-        params["input_dim"] = q_dim
+        params["_input_dim"] = attention_output_dim
+        params["input_dim"] = attention_output_dim
     elif op_name == "quantize_out_proj_input":
-        params["_output_dim"] = q_dim
-        params["_input_dim"] = q_dim
-        params["input_dim"] = q_dim
+        params["_output_dim"] = attention_output_dim
+        params["_input_dim"] = attention_output_dim
+        params["input_dim"] = attention_output_dim
     elif op_name in (
         "qk_norm",
         "q_norm",
@@ -4420,7 +4431,11 @@ def _normalize_manifest_config(config: Dict) -> Dict:
             out["recurrent_state_cols"] = int(ssm_state)
         elif state_layout != "grouped_state":
             raise ValueError(f"unsupported recurrent_state_layout: {state_layout!r}")
-    attn_out = _pick("attn_out_dim", default=(out.get("num_heads", 0) * out.get("head_dim", 0)))
+    attn_value_head_dim = int(out.get("v_head_dim", out.get("head_dim", 0)) or 0)
+    attn_out = _pick(
+        "attn_out_dim",
+        default=(int(out.get("num_heads", 0) or 0) * attn_value_head_dim),
+    )
     if attn_out is not None:
         out["attn_out_dim"] = int(attn_out)
     if out.get("q_gate_proj_dim") is None and out.get("attn_out_dim") is not None:

@@ -1,0 +1,34 @@
+{
+  "id": "moe_swiglu_shared_forward_bf16",
+  "op": "shared_swiglu_expert_mlp",
+  "variant": "bf16_weight_fp32_activation",
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "quant": {
+    "weight": "bf16",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {"name": "hidden", "dtype": "fp32", "shape": ["R", "H"]},
+    {"name": "routed", "dtype": "fp32", "shape": ["R", "H"], "optional": true}
+  ],
+  "weights": [
+    {"name": "shared_gate", "dtype": "bf16", "shape": ["I", "H"]},
+    {"name": "shared_up", "dtype": "bf16", "shape": ["I", "H"]},
+    {"name": "shared_down", "dtype": "bf16", "shape": ["H", "I"]}
+  ],
+  "outputs": [
+    {"name": "output", "dtype": "fp32", "shape": ["R", "H"]}
+  ],
+  "dims": ["R", "H", "I"],
+  "impl": {
+    "function": "moe_swiglu_shared_forward_bf16",
+    "c_declaration": "void moe_swiglu_shared_forward_bf16(const float *hidden, const float *routed, const uint16_t *shared_gate, const uint16_t *shared_up, const uint16_t *shared_down, float *output, int rows, int hidden_dim, int intermediate_dim);",
+    "sources": ["src/kernels/axpy_kernels.c"]
+  },
+  "notes": "Reference shared SwiGLU expert provider with BF16 weight storage and FP32 activation/accumulation."
+}
