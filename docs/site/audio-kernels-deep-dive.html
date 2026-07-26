@@ -1015,6 +1015,7 @@ the math, the way the C actually computes it, the memory layout, and the evidenc
     <li><a href="#k7-conv">7. Conv1D Stem &mdash; <code>audio_conv1d_channel_major_f32</code></a></li>
     <li><a href="#k8-transpose">8. Token Transpose &mdash; <code>audio_transpose_channel_to_token_f32</code></a></li>
     <li><a href="#k9-supporting">9. Supporting Kernels &mdash; position embeddings, erf GELU, head-major attention</a></li>
+    <li><a href="#k10-encoder">10. The Encoder Body &mdash; four bidirectional blocks</a></li>
     <li><a href="#parity">Parity &amp; Nightly Coverage</a></li>
 </ul>
 
@@ -1746,6 +1747,46 @@ that keep the cached K/V slices contiguous.</p>
         head-major attention oracles &mdash; including the <code>Q=1, K=1500</code> cross case &mdash; against PyTorch
         softmax(Q&#183;K&#7511;/&#8730;d)&#183;V. The positional add is pinned by the same suite's encoder
         checkpoint-by-checkpoint X-ray.</p>
+    </div>
+</div>
+
+<h2 id="k10-encoder">10. The Encoder Body: Four Bidirectional Blocks</h2>
+
+<p>Everything so far produced tokens. The encoder's job is to <strong>contextualize</strong> them: four identical
+pre-LayerNorm blocks turn the raw <code>[1500 &times; 384]</code> frame sequence into a memory where each frame's
+vector has absorbed meaning from the whole 30 seconds. The block contract is explicit in
+<code>audio_transformer_encoder.json</code>: <code>layernorm &rarr; q/k/v_proj &rarr; attn &rarr; out_proj &rarr;
+residual &rarr; layernorm &rarr; mlp_up &rarr; gelu &rarr; mlp_down &rarr; residual</code>, then one final LayerNorm.</p>
+
+<p>The attention itself is where the audio encoder differs from the decoder you already know. Three facts,
+all declared in the circuit's <code>attention_contract</code>: it is <strong>dense bidirectional</strong>
+(<code>causal: false</code>) &mdash; the score grid is the full 1500&times;1500 square, not the decoder's causal
+triangle, so the frame under the word "country" borrows from frames before <em>and</em> after it. There is
+<strong>no RoPE</strong> &mdash; position comes from the absolute learned table added back at the transpose. And the
+K/V are <strong>ephemeral</strong> (<code>ephemeral_full_context</code>) &mdash; computed per layer, used once, freed;
+caching belongs to the decoder, not here. Per head (6 heads &times; 64 dims) the math is the usual
+<code>softmax(Q&#183;K&#7511;/&#8730;64)&#183;V</code> &mdash; softmax row-normalizes the square, so each frame's output
+is a weighted mixture of all 1500 value rows.</p>
+
+<div class="img-container svg-viewer" data-title="Audio encoder anatomy: four pre-LN blocks, dense bidirectional attention, ephemeral K/V">
+    <img src="assets/audio-encoder-anatomy.svg" alt="The Whisper Tiny audio encoder: 1500 tokens through four pre-LayerNorm blocks with dense bidirectional self-attention and a GELU MLP, producing the immutable encoder memory">
+</div>
+
+<div class="grid grid-2">
+    <div class="card">
+        <h3 style="margin-top: 0;">What The Encoder Buys The Decoder</h3>
+        <ul>
+            <li><strong>Context per frame:</strong> after 4 layers, row <code>t</code> is no longer "20 ms of spectrum" &mdash; it is that spectrum disambiguated by its acoustic surroundings, which is what makes cross-attention retrieval meaningful.</li>
+            <li><strong>A stable retrieval target:</strong> because the memory is immutable for the segment, the decoder can project K/V from it <em>once</em> and cache them &mdash; the measured 79&times; decode win lives downstream of exactly this property.</li>
+        </ul>
+    </div>
+    <div class="card card-accent">
+        <h3 style="margin-top: 0;">Where It Is Pinned</h3>
+        <p>The 79-edge PyTorch X-ray (<code>compare_whisper_encoder_pytorch_v8.py</code>) checkpoints the encoder
+        block by block &mdash; stem, positional add, per-layer attention and MLP, final norm &mdash; with
+        max&nbsp;abs &asymp; 5.05e-4 and RMSE &asymp; 6.7e-6 in FP32. The encoder is the dominant stage at
+        &asymp;11.15&nbsp;s of the &asymp;12.22&nbsp;s end-to-end run, which is why it carries the deepest parity
+        evidence on this page.</p>
     </div>
 </div>
 
