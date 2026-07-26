@@ -35,6 +35,8 @@ def _load() -> ctypes.CDLL:
         ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_float),
         ctypes.c_int, ctypes.c_int, ctypes.c_int,
     ]
+    ck.ck_gemm_nt_f16_simd_lanes.argtypes = []
+    ck.ck_gemm_nt_f16_simd_lanes.restype = ctypes.c_int
     ck.ck_gemm_nt_f16_ggml_oracle.argtypes = ck.gemm_nt_f16.argtypes
     ck.ck_gemm_nt_f16_ggml_oracle.restype = ctypes.c_int
     return ck
@@ -107,6 +109,7 @@ def _metrics(actual: np.ndarray, expected: np.ndarray) -> dict[str, object]:
 
 def main() -> int:
     ck = _load()
+    simd_lanes = int(ck.ck_gemm_nt_f16_simd_lanes())
     activation, weights, bias = _fixture()
     oracle_no_bias = _run_oracle(ck, activation, weights, None)
     production_no_bias = _run_production(ck, activation, weights, None)
@@ -118,7 +121,7 @@ def main() -> int:
         str(threads): _metrics(
             _run_production(ck, activation, weights, bias, threads), oracle_bias
         )
-        for threads in (1, 8, 20)
+        for threads in (1, 16, 20, 24)
     }
 
     no_bias = _metrics(production_no_bias, oracle_no_bias)
@@ -139,7 +142,14 @@ def main() -> int:
             "weight_storage": "fp16",
             "activation_rounding": "fp16_rne_before_dot",
             "accumulator": "fp32_simd_lanes",
-            "horizontal_reduction": "llamafile_avx_movehl_movehdup",
+            "simd_lanes": simd_lanes,
+            "horizontal_reduction": (
+                "llamafile_avx512_reduce_add"
+                if simd_lanes == 16
+                else "llamafile_avx_movehl_movehdup"
+                if simd_lanes == 8
+                else "ascending_scalar"
+            ),
             "output_storage": "fp32",
         },
         "before_bias": no_bias,

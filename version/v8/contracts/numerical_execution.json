@@ -1595,7 +1595,7 @@
       "position_transform": null,
       "description": "llama.cpp CPU GELU semantics: round FP32 input to FP16, index the GGML FP16 GELU table, then widen the FP16 result to FP32."
     },
-    "fp16_weight_fp16_input_llamafile_avx_fp32_output": {
+    "fp16_weight_fp16_input_llamafile_x86_native_fp32_output": {
       "operator_family": "gemm",
       "status": "validated",
       "storage": {
@@ -1608,7 +1608,7 @@
         "weight": "fp16",
         "accumulator": "fp32",
         "contraction": "enabled",
-        "evaluation_order": "single_simd_accumulator_ascending_k_then_llamafile_avx_movehl_movehdup_horizontal_reduce"
+        "evaluation_order": "single_simd_accumulator_ascending_k_then_compile_time_llamafile_x86_horizontal_reduce"
       },
       "rounding": {
         "mode": "rne",
@@ -1630,7 +1630,7 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "FP16-weight GEMM matching llama.cpp's AVX llamafile path, including FP16-RNE activation conversion, FMA lane accumulation, and movehl/movehdup horizontal reduction."
+      "description": "FP16-weight GEMM matching llama.cpp's native x86 llamafile path, including FP16-RNE activation conversion and the compile-time ISA-specific FMA lane accumulation and horizontal reduction: AVX2/F16C uses 8 FP32 lanes with movehl/movehdup reduction; AVX-512/F16C uses 16 FP32 lanes with _mm512_reduce_add_ps."
     },
     "bf16_weight_bf16_input_amx_tile32_dot_bf16_output": {
       "status": "validated",

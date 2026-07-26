@@ -49,7 +49,7 @@
   "modes": {"inference": true, "training": false, "backward": false},
   "numerical_capabilities": [
     {
-      "contract_id": "fp16_weight_fp16_input_llamafile_avx_fp32_output",
+      "contract_id": "fp16_weight_fp16_input_llamafile_x86_native_fp32_output",
       "status": "validated",
       "phases": ["prefill"],
       "function": "gemm_nt_f16",
