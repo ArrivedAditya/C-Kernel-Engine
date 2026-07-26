@@ -508,6 +508,51 @@ def test_whisper_decoder_safetensors_keeps_self_and_cross_attention_distinct(
     assert decode_position["function"] == "position_embeddings_add_at_offset"
     assert decode_position_args["start_position"]["expr"] == "model->pos"
 
+    for op_name in (
+        "q_proj",
+        "v_proj",
+        "out_proj",
+        "cross_q_proj",
+        "cross_out_proj",
+        "mlp_up",
+        "mlp_down",
+    ):
+        projection_args = args_by_name(first_call("decode", op_name))
+        assert projection_args["bias"]["expr"] == "NULL"
+    decode_bias_adds = [
+        row for row in calls["decode"]["operations"] if row["op"] == "bias_add"
+    ]
+    assert len(decode_bias_adds) == 7
+    assert all(args_by_name(row)["b"]["expr"] != "NULL" for row in decode_bias_adds)
+    cross_v_args = args_by_name(first_call("decode", "cross_v_proj"))
+    assert cross_v_args["bias"]["expr"] != "NULL"
+    decode_layer_ops = [
+        row
+        for row in calls["decode"]["operations"]
+        if int(row.get("layer", -1)) == 0
+    ]
+    v_projection_index = next(
+        i for i, row in enumerate(decode_layer_ops) if row["op"] == "v_proj"
+    )
+    v_bias_index = next(
+        i
+        for i, row in enumerate(decode_layer_ops)
+        if row["op"] == "bias_add"
+        and args_by_name(row)["a"].get("buffer_ref") == "v_scratch"
+    )
+    kv_store_index = next(
+        i for i, row in enumerate(decode_layer_ops) if row["op"] == "kv_cache_store"
+    )
+    attention_index = next(
+        i for i, row in enumerate(decode_layer_ops) if row["op"] == "attn"
+    )
+    assert v_projection_index < v_bias_index < kv_store_index < attention_index
+    decode_attention_args = args_by_name(decode_layer_ops[attention_index])
+    assert "model->kv_cache" in decode_attention_args["k"]["expr"]
+    assert "model->kv_cache" in decode_attention_args["v"]["expr"]
+    assert "model->bump" not in decode_attention_args["k"]["expr"]
+    assert "model->bump" not in decode_attention_args["v"]["expr"]
+
     for mode, query_tokens in (("prefill", "8"), ("decode", "1")):
         cross_k = args_by_name(first_call(mode, "cross_k_proj"))
         cross_v = args_by_name(first_call(mode, "cross_v_proj"))

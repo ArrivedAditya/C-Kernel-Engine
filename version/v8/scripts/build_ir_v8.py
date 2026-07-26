@@ -7379,17 +7379,17 @@ def insert_bias_add_ops(
             continue
 
         # Prefill GEMM kernels bind optional bias directly, but decode lowering
-        # rewrites these projection ops to GEMV kernels that do not take bias.
-        # Keep Gemma4/Qwen-style projection biases explicit in decode so the
-        # later GEMV specialization cannot silently drop them.
+        # rewrites token-row projections to GEMV kernels that do not take bias.
+        # Keep those biases explicit so specialization cannot drop them.
+        # Cross K/V still project the full encoder-memory matrix during decode;
+        # their GEMM provider must retain bias so every encoder row receives it
+        # before the token-major result is transposed to head-major storage.
         decode_needs_explicit_bias = mode == "decode" and op_type in {
             "q_proj",
             "cross_q_proj",
             "q_gate_proj",
             "k_proj",
             "v_proj",
-            "cross_k_proj",
-            "cross_v_proj",
             "out_proj",
             "cross_out_proj",
             "mlp_gate_up",
@@ -7399,13 +7399,18 @@ def insert_bias_add_ops(
         if kernel_supports_bias(op.get("kernel", "")) and not decode_needs_explicit_bias:
             continue
 
+        # The explicit bias node becomes the sole owner of this weight. Remove
+        # it from the projection so providers that can fuse bias receive NULL
+        # instead of applying the same tensor before bias_add applies it again.
+        op["weights"].pop(bias_key, None)
+        op["bias_application"] = "explicit_following_op"
         out_dim, _ = compute_matmul_dims(op_type, config)
         bias_op = {
             "kernel": "bias_add",
             "op": "bias_add",
             "layer": op.get("layer", -1),
             "section": op.get("section", ""),
-            "weights": {bias_key: op["weights"][bias_key]},
+            "weights": {bias_key: bias_weight_ref},
             "params": {},
             "bias_for": op_type,
             "_auto_inserted": True,
@@ -7725,6 +7730,17 @@ def generate_ir_lower_1(
         for op in lowered_ops
         if str(op.get("op", "")) == "mla_attention"
     }
+    decode_explicit_v_bias_layers = {
+        int(op.get("layer", 0))
+        for op in lowered_ops
+        if str(op.get("op", "")) == "bias_add"
+        and str(op.get("bias_for", "")) == "v_proj"
+    }
+    decode_v_projection_by_layer = {
+        int(op.get("layer", 0)): op
+        for op in lowered_ops
+        if str(op.get("op", "")) == "v_proj"
+    }
 
     def _kv_read_layer_for(layer: int) -> int:
         try:
@@ -7829,9 +7845,21 @@ def generate_ir_lower_1(
                 op_name == "v_proj"
                 and layer in decode_attention_layers
                 and layer not in decode_rope_layers
+                and layer not in decode_explicit_v_bias_layers
+            )
+            should_store_after_v_bias = (
+                op_name == "bias_add"
+                and str(op.get("bias_for", "")) == "v_proj"
+                and layer in decode_attention_layers
+                and layer not in decode_rope_layers
             )
             if should_store_after_rope or should_store_after_v:
                 final_ops.append(_make_decode_kv_store_op(op))
+                kv_store_count += 1
+            elif should_store_after_v_bias:
+                final_ops.append(
+                    _make_decode_kv_store_op(decode_v_projection_by_layer[layer])
+                )
                 kv_store_count += 1
             elif should_store_after_q_rope:
                 final_ops.append(_make_decode_shared_q_kv_store_op(op))
@@ -9633,6 +9661,8 @@ def generate_ir_lower_2(
             lowered_op["_kv_cache_read_layer"] = int(ir_op["_kv_cache_read_layer"])
         if "_cross_kv_kind" in ir_op:
             lowered_op["_cross_kv_kind"] = str(ir_op["_cross_kv_kind"])
+        if "bias_for" in ir_op:
+            lowered_op["bias_for"] = str(ir_op["bias_for"])
         for cross_dim in (
             "_cross_num_heads",
             "_cross_encoder_tokens",
@@ -10635,15 +10665,30 @@ def generate_ir_lower_2(
                     layer_idx = int(ir_op.get("_kv_cache_read_layer", ir_op.get("layer", 0)))
                     kv_offs = kv_layer_offsets(layer_idx)
                     if kv_offs:
-                        k_off, v_off = kv_offs
-                        off = k_off if scratch_name == "k_scratch" else v_off
+                        cache_kind = "k" if scratch_name == "k_scratch" else "v"
+                        layer_offsets = (
+                            layer_k_cache_offset
+                            if cache_kind == "k"
+                            else layer_v_cache_offset
+                        )
+                        if 0 <= layer_idx < len(layer_offsets):
+                            cache_expr = (
+                                f"(model->kv_cache + "
+                                f"{int(layer_offsets[layer_idx])}ULL*MAX_SEQ_LEN)"
+                            )
+                        else:
+                            kv_slot = layer_idx * 2 + (1 if cache_kind == "v" else 0)
+                            cache_expr = (
+                                f"(model->kv_cache + ({kv_slot})"
+                                f"*NUM_KV_HEADS*MAX_SEQ_LEN*{int(head_dim)})"
+                            )
                         lowered_op["scratch"].append({
                             "name": scratch_name,
-                            "scratch_offset": off,
+                            "scratch_offset": 0,
                             "size": activation_buffers.get(scratch_name, {}).get("size", 0),
                             "dtype": "fp32",
-                            "ptr_expr": f"activations + {off}",
-                            "force_offset": True,
+                            "ptr_expr": cache_expr,
+                            "runtime_expr": cache_expr,
                         })
                         continue
                 buf = activation_buffers.get(scratch_name)
@@ -11743,11 +11788,11 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     offset = info.get("scratch_offset", 0)
                     buf_name = info.get("name", key)
                     if use_bump_base:
-                        if info.get("force_offset"):
-                            off_expr = str(activations_base + int(offset))
+                        if info.get("runtime_expr"):
+                            expr = f"({cast or 'float*'}){info['runtime_expr']}"
                         else:
                             off_expr = activation_off_expr(buf_name, offset)
-                        expr = ptr_expr("model->bump", off_expr, cast or "float*")
+                            expr = ptr_expr("model->bump", off_expr, cast or "float*")
                     else:
                         expr = ptr_expr("ACT", offset, cast or "float*")
 
