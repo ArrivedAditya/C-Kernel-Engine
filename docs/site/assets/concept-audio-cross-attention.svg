@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="620" viewBox="0 0 1100 620" role="img" aria-labelledby="aca-title aca-desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="700" viewBox="0 0 1100 700" role="img" aria-labelledby="aca-title aca-desc">
   <title id="aca-title">Cross-attention: decoder queries over encoder memory</title>
-  <desc id="aca-desc">In an encoder-decoder audio transformer the decoder's queries attend over keys and values projected from the encoder's 1500 audio frames. The encoder K/V are computed once and held in a persistent FP32 cache; each decode step adds one query row and attends all valid rows.</desc>
+  <desc id="aca-desc">In an encoder-decoder audio transformer the decoder's queries attend over keys and values projected from the encoder's 1500 audio frames. The encoder K/V are computed once and held in a persistent FP32 cache; each decode step adds one query row and attends all valid rows. Caching the immutable cross K/V cut measured decoder time from 16.57 seconds to 0.21 seconds on the JFK fixture.</desc>
   <defs>
     <linearGradient id="aca-bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#07111f"/>
@@ -25,7 +25,7 @@
     </marker>
   </defs>
 
-  <rect width="1100" height="620" fill="url(#aca-bg)"/>
+  <rect width="1100" height="700" fill="url(#aca-bg)"/>
   <g opacity="0.25" stroke="#26364f" stroke-width="1">
     <path d="M0 110H1100M0 220H1100M0 330H1100M0 440H1100M0 550H1100"/>
     <path d="M100 0V620M300 0V620M500 0V620M700 0V620M900 0V620"/>
@@ -86,26 +86,35 @@
   <path d="M 550 340 L 550 386" fill="none" stroke="#fbbf24" stroke-width="2" marker-end="url(#aca-arrow-amber)"/>
   <text x="566" y="372" font-size="12" fill="#fbbf24" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">context &#8594; MLP &#8594; next token</text>
 
+  <!-- Measured evidence band -->
+  <g filter="url(#aca-shadow)">
+    <rect x="40" y="458" width="1020" height="66" rx="12" fill="#10203a" stroke="#f59e0b" stroke-width="1.4"/>
+    <text x="64" y="484" font-size="11" letter-spacing="2" fill="#fbbf24" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">MEASURED &#183; JFK FIXTURE &#183; WHISPER TINY FP32</text>
+    <text x="64" y="508" font-size="13" fill="#e2e8f0" font-family="'Inter',system-ui,sans-serif">decoder <tspan font-weight="700" fill="#fbbf24">16.57 s &#8594; 0.21 s (&#8776;79&#215;)</tspan> &#183; total 28.64 s &#8594; 12.22 s &#183; prefill 0.73 s &#8212; the work moved once, it did not disappear</text>
+    <text x="800" y="484" font-size="10.5" fill="#8a6d3b" font-family="'Inter',system-ui,sans-serif">same exact 23 tokens as Hugging Face,</text>
+    <text x="800" y="500" font-size="10.5" fill="#8a6d3b" font-family="'Inter',system-ui,sans-serif">3 repeated runs &#183; this host</text>
+  </g>
+
   <!-- Bottom band -->
   <g filter="url(#aca-shadow)">
-    <rect x="40" y="470" width="330" height="118" rx="12" fill="#0b1729" stroke="#2b3f5f"/>
-    <text x="60" y="498" font-size="12" letter-spacing="2" fill="#7dd3fc" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">SELF-ATTENTION</text>
-    <text x="60" y="524" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">Q, K, V all projected from the</text>
-    <text x="60" y="542" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">same sequence &#8212; text decoders and</text>
-    <text x="60" y="560" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">the audio encoder both work this way</text>
+    <rect x="40" y="550" width="330" height="118" rx="12" fill="#0b1729" stroke="#2b3f5f"/>
+    <text x="60" y="578" font-size="12" letter-spacing="2" fill="#7dd3fc" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">SELF-ATTENTION</text>
+    <text x="60" y="604" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">Q, K, V all projected from the</text>
+    <text x="60" y="622" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">same sequence &#8212; text decoders and</text>
+    <text x="60" y="640" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">the audio encoder both work this way</text>
   </g>
   <g filter="url(#aca-shadow)">
-    <rect x="385" y="470" width="330" height="118" rx="12" fill="#0b1729" stroke="#2b3f5f"/>
-    <text x="405" y="498" font-size="12" letter-spacing="2" fill="#fbbf24" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">CROSS-ATTENTION</text>
-    <text x="405" y="524" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">Q from the decoder, K/V from the</text>
-    <text x="405" y="542" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">encoder's 1500 frames &#8212; the bridge</text>
-    <text x="405" y="560" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">every word is conditioned on audio</text>
+    <rect x="385" y="550" width="330" height="118" rx="12" fill="#0b1729" stroke="#2b3f5f"/>
+    <text x="405" y="578" font-size="12" letter-spacing="2" fill="#fbbf24" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">CROSS-ATTENTION</text>
+    <text x="405" y="604" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">Q from the decoder, K/V from the</text>
+    <text x="405" y="622" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">encoder's 1500 frames &#8212; the bridge</text>
+    <text x="405" y="640" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">every word is conditioned on audio</text>
   </g>
   <g filter="url(#aca-shadow)">
-    <rect x="730" y="470" width="330" height="118" rx="12" fill="#0b1729" stroke="#2b3f5f"/>
-    <text x="750" y="498" font-size="12" letter-spacing="2" fill="#34d399" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">KERNEL CONTRACT</text>
-    <text x="750" y="524" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">prefill: batched causal self-attn oracle</text>
-    <text x="750" y="542" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">decode: all pos+1 valid rows, persistent</text>
-    <text x="750" y="560" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">FP32 KV &#8212; Q=1, K=1500 cross oracle</text>
+    <rect x="730" y="550" width="330" height="118" rx="12" fill="#0b1729" stroke="#2b3f5f"/>
+    <text x="750" y="578" font-size="12" letter-spacing="2" fill="#34d399" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">KERNEL CONTRACT</text>
+    <text x="750" y="604" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">prefill populates the layer-major cache;</text>
+    <text x="750" y="622" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">decode reads cached head-major slices,</text>
+    <text x="750" y="640" font-size="12.5" fill="#cbd5e1" font-family="'Inter',system-ui,sans-serif">fails closed until prefill repopulates</text>
   </g>
 </svg>

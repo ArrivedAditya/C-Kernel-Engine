@@ -1005,12 +1005,14 @@ the math, the way the C actually computes it, the memory layout, and the evidenc
 
 <h2>Table of Contents</h2>
 <ul>
-    <li><a href="#k1-wav">1. WAV Decode &mdash; <code>audio_wav_parse_memory</code> + <code>audio_wav_decode_pcm16_mono_f32</code></a></li>
+    <li><a href="#k1-wav">1. WAV Decode &mdash; <code>audio_wav_decode_memory_pcm16_mono_f32</code></a></li>
     <li><a href="#k2-resample">2. Resample &mdash; <code>audio_resample_linear_f32</code> / <code>audio_resample_windowed_sinc_f32</code></a></li>
-    <li><a href="#k3-stft">3. STFT Power &mdash; <code>audio_stft_power_fft400_f32</code> (20&times;20 mixed radix)</a></li>
-    <li><a href="#k4-logmel">4. Log-Mel &mdash; <code>audio_whisper_log_mel_from_power_reference_f32</code></a></li>
-    <li><a href="#k5-conv">5. Conv1D Stem &mdash; <code>audio_conv1d_channel_major_f32</code></a></li>
-    <li><a href="#k6-transpose">6. Token Transpose &mdash; <code>audio_transpose_channel_to_token_f32</code></a></li>
+    <li><a href="#k3-pad">3. Pad / Truncate &mdash; <code>audio_pad_or_truncate_f32</code></a></li>
+    <li><a href="#k4-stft">4. STFT Power &mdash; <code>audio_stft_power_fft400_f32</code> (20&times;20 mixed radix)</a></li>
+    <li><a href="#k5-mel">5. Mel Filters &mdash; <code>audio_whisper_mel_filters_slaney_f32</code></a></li>
+    <li><a href="#k6-logmel">6. Log-Mel &mdash; <code>audio_whisper_log_mel_from_power_reference_f32</code></a></li>
+    <li><a href="#k7-conv">7. Conv1D Stem &mdash; <code>audio_conv1d_channel_major_f32</code></a></li>
+    <li><a href="#k8-transpose">8. Token Transpose &mdash; <code>audio_transpose_channel_to_token_f32</code></a></li>
     <li><a href="#parity">Parity &amp; Nightly Coverage</a></li>
 </ul>
 
@@ -1026,8 +1028,9 @@ the math, the way the C actually computes it, the memory layout, and the evidenc
 input contract is part of the numerical evidence: <strong>PCM (format tag 1), 16-bit, any channel count, any sample
 rate</strong> &mdash; anything else is rejected with a distinct error code before a single float is produced.
 <code>audio_wav_parse_memory</code> validates the container, <code>audio_wav_decode_pcm16_mono_f32</code> turns it
-into mono f32. For audio that is already interleaved int16 in memory, <code>audio_pcm_s16_to_mono_f32</code> applies
-the same conversion without the container walk.</p>
+into mono f32, and the frontend circuit's map-owned provider <code>audio_wav_decode_memory_pcm16_mono_f32</code>
+fuses the two into the single call the generated code makes. For audio that is already interleaved int16 in memory,
+<code>audio_pcm_s16_to_mono_f32</code> applies the same conversion without the container walk.</p>
 
 <div style="overflow-x:auto; margin:2rem 0;">
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 400" style="max-width:1100px; width:100%; height:auto; font-family:'Inter',system-ui,sans-serif;">
@@ -1191,10 +1194,83 @@ shrinks silently by a rounding choice.</p>
 <hr>
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     KERNEL 3: STFT POWER
+     KERNEL 3: PAD / TRUNCATE
      ═══════════════════════════════════════════════════════════════════ -->
 
-<h2 id="k3-stft">3. STFT Power: Whisper Geometry as a 20&times;20 Mixed-Radix FFT</h2>
+<h2 id="k3-pad">3. Pad / Truncate: The Fixed 480,000-Sample Contract</h2>
+
+<p>Everything downstream of resampling assumes a fixed time extent: the STFT frame count, the encoder's positional
+embedding table, and the 1500-token cross-attention bridge all derive from <strong>exactly 480,000 samples
+(30&nbsp;s at 16&nbsp;kHz)</strong>. <code>audio_pad_or_truncate_f32</code> is the kernel that makes that true for
+arbitrary input &mdash; short clips are zero-padded, long clips are truncated (not chunked), and the function
+returns how many frames were real.</p>
+
+<div style="overflow-x:auto; margin:2rem 0;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 400" style="max-width:1100px; width:100%; height:auto; font-family:'Inter',system-ui,sans-serif;">
+  <defs>
+    <linearGradient id="pd-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/><stop offset="0.55" stop-color="#0f1b2d"/><stop offset="1" stop-color="#17243a"/>
+    </linearGradient>
+    <marker id="pd-ar" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#7dd3fc"/>
+    </marker>
+  </defs>
+  <rect width="1100" height="400" fill="url(#pd-bg)" rx="14"/>
+
+  <text x="40" y="40" font-size="12" letter-spacing="3" fill="#7dd3fc" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">KERNEL 3 &#183; EXTENT NORMALIZATION</text>
+  <text x="40" y="72" font-size="22" font-weight="700" fill="#f1f5f9">Every Clip Becomes Exactly 30 Seconds</text>
+
+  <!-- short clip case -->
+  <rect x="40" y="100" width="500" height="120" rx="12" fill="#13233c" stroke="#2b3f5f"/>
+  <text x="64" y="130" font-size="12" letter-spacing="2" fill="#34d399" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">SHORT CLIP &#183; n &lt; 480,000</text>
+  <rect x="64" y="150" width="180" height="26" rx="4" fill="#0ea5e9" opacity="0.5"/>
+  <rect x="244" y="150" width="256" height="26" rx="4" fill="#1e293b" stroke="#334155" stroke-dasharray="4 3"/>
+  <text x="64" y="196" font-size="12.5" fill="#cbd5e1">memmove the n real frames, then memset the tail to 0.0</text>
+
+  <!-- long clip case -->
+  <rect x="560" y="100" width="500" height="120" rx="12" fill="#13233c" stroke="#2b3f5f"/>
+  <text x="584" y="130" font-size="12" letter-spacing="2" fill="#fbbf24" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">LONG CLIP &#183; n &gt; 480,000</text>
+  <rect x="584" y="150" width="416" height="26" rx="4" fill="#0ea5e9" opacity="0.5"/>
+  <rect x="1000" y="150" width="36" height="26" rx="4" fill="#7f1d1d" opacity="0.7"/>
+  <text x="584" y="196" font-size="12.5" fill="#cbd5e1">memmove the first 480,000 frames; the rest is dropped &#8212; not chunked</text>
+
+  <line x1="550" y1="230" x2="550" y2="262" stroke="#7dd3fc" stroke-width="2" marker-end="url(#pd-ar)"/>
+
+  <!-- contract strip -->
+  <rect x="40" y="270" width="660" height="100" rx="12" fill="#13233c" stroke="#2b3f5f"/>
+  <text x="64" y="300" font-size="12" letter-spacing="2" fill="#7dd3fc" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">THE WHOLE KERNEL</text>
+  <text x="64" y="330" font-size="14.5" fill="#e2e8f0" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">copied = min(input_frames, output_frames)</text>
+  <text x="64" y="356" font-size="14.5" fill="#e2e8f0" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">out[copied:] = 0 &#183; return copied</text>
+
+  <rect x="730" y="270" width="330" height="100" rx="12" fill="#0b1729" stroke="#2b3f5f"/>
+  <text x="754" y="300" font-size="12" letter-spacing="2" fill="#fbbf24" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">WHY IT IS A CIRCUIT OP</text>
+  <text x="754" y="328" font-size="12.5" fill="#cbd5e1">the extent is a numerical contract,</text>
+  <text x="754" y="348" font-size="12.5" fill="#cbd5e1">so the compiler owns it &#8212; not Python</text>
+</svg>
+</div>
+
+<div class="grid grid-2">
+    <div class="card">
+        <h3 style="margin-top: 0;">How The C Reads</h3>
+        <ul>
+            <li><code>memmove</code>, not <code>memcpy</code> &mdash; the copy is overlap-safe even if caller and callee ever share a buffer.</li>
+            <li>Only the tail beyond <code>copied</code> is zeroed; real samples are never touched, so a full 30&nbsp;s clip is a pure pass-through.</li>
+            <li>The return value is the real frame count &mdash; downstream stages can distinguish signal from padding without a side channel.</li>
+        </ul>
+    </div>
+    <div class="card card-accent">
+        <h3 style="margin-top: 0;">Why Not Implicit In Resample</h3>
+        <p>Extent normalization is a separate circuit operation (<code>audio_pad_or_truncate</code>) because the 30&nbsp;s limit is a <strong>policy with numerical consequences</strong> &mdash; zero-padding changes the STFT energy and truncation loses content. Naming it keeps the policy auditable, keeps the resampler's contract purely about rate, and lets the limitation docs point at one honest line: longer files are truncated, not chunked.</p>
+    </div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     KERNEL 4: STFT POWER
+     ═══════════════════════════════════════════════════════════════════ -->
+
+<h2 id="k4-stft">4. STFT Power: Whisper Geometry as a 20&times;20 Mixed-Radix FFT</h2>
 
 <p>The spectrum is where the frontend spends nearly all of its FLOPs, and where parity is easiest to break.
 Whisper's geometry is fixed: <code>n_fft = 400</code>, <code>hop = 160</code>, <strong>201 bins</strong>, a
@@ -1216,7 +1292,7 @@ CK has three implementations of the same contract &mdash; a table-driven direct 
   </defs>
   <rect width="1100" height="460" fill="url(#ft-bg)" rx="14"/>
 
-  <text x="40" y="40" font-size="12" letter-spacing="3" fill="#7dd3fc" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">KERNEL 3 &#183; SHORT-TIME FOURIER TRANSFORM, POWER SPECTRUM</text>
+  <text x="40" y="40" font-size="12" letter-spacing="3" fill="#7dd3fc" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">KERNEL 4 &#183; SHORT-TIME FOURIER TRANSFORM, POWER SPECTRUM</text>
   <text x="40" y="72" font-size="22" font-weight="700" fill="#f1f5f9">Frame &#8594; Reflect-Pad &#8594; Window &#8594; 20&#215;20 FFT &#8594; |X|&#178;</text>
 
   <!-- stage 1: framing -->
@@ -1284,10 +1360,81 @@ CK has three implementations of the same contract &mdash; a table-driven direct 
 <hr>
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     KERNEL 4: LOG-MEL
+     KERNEL 5: MEL FILTERS
      ═══════════════════════════════════════════════════════════════════ -->
 
-<h2 id="k4-logmel">4. Log-Mel: Perceptual Compression With a Global Clamp</h2>
+<h2 id="k5-mel">5. Mel Filters: The Slaney Filterbank, Built Once</h2>
+
+<p>Between the STFT power grid and the log-Mel projection sits the filterbank itself: 80 triangular filters over the
+201 power bins, spaced evenly on the <strong>Slaney mel scale</strong> between 0 Hz and Nyquist.
+<code>audio_whisper_mel_filters_slaney_f32</code> constructs the matrix once at table-build time &mdash; in double
+precision &mdash; so the per-frame work stays a single f32 matmul and the triangle geometry can never drift between
+runs.</p>
+
+<div style="overflow-x:auto; margin:2rem 0;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 400" style="max-width:1100px; width:100%; height:auto; font-family:'Inter',system-ui,sans-serif;">
+  <defs>
+    <linearGradient id="mf-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/><stop offset="0.55" stop-color="#0f1b2d"/><stop offset="1" stop-color="#17243a"/>
+    </linearGradient>
+  </defs>
+  <rect width="1100" height="400" fill="url(#mf-bg)" rx="14"/>
+
+  <text x="40" y="40" font-size="12" letter-spacing="3" fill="#7dd3fc" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">KERNEL 5 &#183; SLANEY TRIANGULAR FILTERBANK</text>
+  <text x="40" y="72" font-size="22" font-weight="700" fill="#f1f5f9">80 Triangles, Evenly Spaced in Mel, Area-Normalized</text>
+
+  <!-- triangles -->
+  <g>
+    <rect x="40" y="100" width="620" height="240" rx="12" fill="#13233c" stroke="#2b3f5f"/>
+    <line x1="80" y1="300" x2="620" y2="300" stroke="#334155" stroke-width="1.5"/>
+    <text x="80" y="322" font-size="11" fill="#64748b" font-family="ui-monospace,Menlo,monospace">0 Hz</text>
+    <text x="560" y="322" font-size="11" fill="#64748b" font-family="ui-monospace,Menlo,monospace">8 kHz &#183; 201 bins</text>
+    <path d="M 90 300 L 130 160 L 170 300 Z" fill="#0ea5e9" opacity="0.45"/>
+    <path d="M 140 300 L 185 170 L 230 300 Z" fill="#38bdf8" opacity="0.35"/>
+    <path d="M 195 300 L 245 180 L 295 300 Z" fill="#7dd3fc" opacity="0.3"/>
+    <path d="M 255 300 L 310 195 L 365 300 Z" fill="#fbbf24" opacity="0.35"/>
+    <path d="M 325 300 L 385 210 L 445 300 Z" fill="#fbbf24" opacity="0.28"/>
+    <path d="M 405 300 L 470 228 L 535 300 Z" fill="#f59e0b" opacity="0.24"/>
+    <text x="96" y="150" font-size="11" fill="#7dd3fc" font-family="'Inter',system-ui,sans-serif">narrow at low Hz</text>
+    <text x="420" y="200" font-size="11" fill="#fbbf24" font-family="'Inter',system-ui,sans-serif">wider at high Hz</text>
+    <text x="80" y="130" font-size="12" fill="#94a3b8" font-family="'Inter',system-ui,sans-serif">82 mel points (n_mels + 2) &#8594; 80 triangles &#183; peak = 2 / (right &#8722; left)</text>
+  </g>
+
+  <!-- construction math -->
+  <rect x="700" y="100" width="360" height="240" rx="12" fill="#13233c" stroke="#2b3f5f"/>
+  <text x="724" y="130" font-size="12" letter-spacing="2" fill="#7dd3fc" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">CONSTRUCTION &#183; DOUBLE PRECISION</text>
+  <text x="724" y="162" font-size="13" fill="#e2e8f0" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">mel(hz) &#8212; Slaney: linear &lt; 1 kHz,</text>
+  <text x="724" y="184" font-size="13" fill="#e2e8f0" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">log above &#183; points at i/(n_mels+1)</text>
+  <text x="724" y="216" font-size="13" fill="#e2e8f0" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">lower = (hz &#8722; left)/(center &#8722; left)</text>
+  <text x="724" y="238" font-size="13" fill="#e2e8f0" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">upper = (right &#8722; hz)/(right &#8722; center)</text>
+  <text x="724" y="270" font-size="13" fill="#e2e8f0" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">w = max(0, min(lower, upper)) &#215; norm</text>
+  <text x="724" y="302" font-size="12" fill="#64748b" font-family="'Inter',system-ui,sans-serif">norm = 2/(right&#8722;left) &#8212; Slaney area weighting,</text>
+  <text x="724" y="322" font-size="12" fill="#64748b" font-family="'Inter',system-ui,sans-serif">so loudness sums comparably across bands</text>
+</svg>
+</div>
+
+<div class="grid grid-2">
+    <div class="card">
+        <h3 style="margin-top: 0;">How The C Reads</h3>
+        <ul>
+            <li>All geometry is computed in <code>double</code> &mdash; mel conversions, triangle edges, and the area normalization &mdash; then stored as f32; the table is built once and reused for every frame.</li>
+            <li>Triangles come from <code>n_mels + 2</code> mel-spaced points converted back to Hz; each bin's weight is <code>max(0, min(lower, upper))</code> scaled by <code>2/(right&#8722;left)</code>.</li>
+            <li>Arguments are validated with typed rejections (&minus;1 null, &minus;2 bad geometry: odd <code>n_fft</code>, non-positive rates or counts).</li>
+        </ul>
+    </div>
+    <div class="card card-accent">
+        <h3 style="margin-top: 0;">Why A Separate Circuit Op</h3>
+        <p>The filterbank used to live inside the composite log-Mel reference. Promoting it to its own operation (<code>audio_mel_filters</code>) makes the <strong>Slaney identity a named, parity-gated artifact</strong>: the mel scale choice, the +2 point convention, and the area normalization each appear in the numerical contract, and the generated frontend passes the matrix into log-Mel as data &mdash; the way PyTorch passes a buffer, not a re-computation.</p>
+    </div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     KERNEL 6: LOG-MEL
+     ═══════════════════════════════════════════════════════════════════ -->
+
+<h2 id="k6-logmel">6. Log-Mel: Perceptual Compression With a Global Clamp</h2>
 
 <p><code>audio_whisper_log_mel_from_power_reference_f32</code> turns the <code>[201 &times; T]</code> power spectrum
 into the <code>[80 &times; T]</code> log-Mel matrix the conv stem consumes. Three distinct numerical decisions live
@@ -1308,7 +1455,7 @@ rescale. The fused entry point <code>audio_whisper_log_mel_reference_f32</code> 
   </defs>
   <rect width="1100" height="430" fill="url(#ml-bg)" rx="14"/>
 
-  <text x="40" y="40" font-size="12" letter-spacing="3" fill="#34d399" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">KERNEL 4 &#183; MEL FILTERBANK + LOG COMPRESSION</text>
+  <text x="40" y="40" font-size="12" letter-spacing="3" fill="#34d399" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">KERNEL 6 &#183; MEL FILTERBANK + LOG COMPRESSION</text>
   <text x="40" y="72" font-size="22" font-weight="700" fill="#f1f5f9">201 Bins &#8594; 80 Mels &#8594; log10 &#8594; Clamp max&#8722;8 &#8594; (x+4)/4</text>
 
   <!-- filterbank -->
@@ -1378,10 +1525,10 @@ rescale. The fused entry point <code>audio_whisper_log_mel_reference_f32</code> 
 <hr>
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     KERNEL 5: CONV1D STEM
+     KERNEL 7: CONV1D STEM
      ═══════════════════════════════════════════════════════════════════ -->
 
-<h2 id="k5-conv">5. Conv1D Stem: The Only Learned Layers Before Attention</h2>
+<h2 id="k7-conv">7. Conv1D Stem: The Only Learned Layers Before Attention</h2>
 
 <p><code>audio_conv1d_channel_major_f32</code> is the frontend's first <em>weighted</em> kernel &mdash; everything
 before it is fixed signal processing. The Whisper stem is two 3-tap convolutions with GELU between them:
@@ -1402,7 +1549,7 @@ padding are parameters &mdash; because the same contraction serves any 1D conv f
   </defs>
   <rect width="1100" height="430" fill="url(#cv-bg)" rx="14"/>
 
-  <text x="40" y="40" font-size="12" letter-spacing="3" fill="#7dd3fc" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">KERNEL 5 &#183; CHANNEL-MAJOR 1D CONVOLUTION</text>
+  <text x="40" y="40" font-size="12" letter-spacing="3" fill="#7dd3fc" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">KERNEL 7 &#183; CHANNEL-MAJOR 1D CONVOLUTION</text>
   <text x="40" y="72" font-size="22" font-weight="700" fill="#f1f5f9">Two 3-Tap Convs; Stride 2 Halves Time</text>
 
   <!-- input grid -->
@@ -1475,10 +1622,10 @@ padding are parameters &mdash; because the same contraction serves any 1D conv f
 <hr>
 
 <!-- ═══════════════════════════════════════════════════════════════════
-     KERNEL 6: TOKEN TRANSPOSE
+     KERNEL 8: TOKEN TRANSPOSE
      ═══════════════════════════════════════════════════════════════════ -->
 
-<h2 id="k6-transpose">6. Token Transpose: The Named Layout Seam</h2>
+<h2 id="k8-transpose">8. Token Transpose: The Named Layout Seam</h2>
 
 <p><code>audio_transpose_channel_to_token_f32</code> is eight lines of C and one of the most important kernels in the
 frontend. Everything upstream is <strong>channel-major</strong> (<code>[C &times; T]</code>) because convolutions want
@@ -1499,7 +1646,7 @@ reads.</p>
   </defs>
   <rect width="1100" height="380" fill="url(#tp-bg)" rx="14"/>
 
-  <text x="40" y="40" font-size="12" letter-spacing="3" fill="#fbbf24" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">KERNEL 6 &#183; LAYOUT TRANSFORM</text>
+  <text x="40" y="40" font-size="12" letter-spacing="3" fill="#fbbf24" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">KERNEL 8 &#183; LAYOUT TRANSFORM</text>
   <text x="40" y="72" font-size="22" font-weight="700" fill="#f1f5f9">Column t Becomes Row t &mdash; One Token, 384 Features</text>
 
   <!-- left grid: channel major -->

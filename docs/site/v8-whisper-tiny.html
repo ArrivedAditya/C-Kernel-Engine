@@ -987,11 +987,13 @@
     </div>
     <div>
         <strong>Kernel Source</strong><br>
-        <code>src/kernels/audio_kernels.c</code> and <code>include/ckernel_audio.h</code> &mdash; PCM conversion,
-        resampling, STFT/FFT-400, log-Mel, Conv1D stem, and layout primitives. Encoder and decoder topology
-        lives in <code>version/v8/circuits/audio_transformer_encoder.json</code> and
-        <code>version/v8/circuits/audio_transformer_decoder.json</code>; orchestration in
-        <code>version/v8/scripts/run_whisper_v8.py</code>. Per-kernel math and diagrams:
+        <code>src/kernels/audio_kernels.c</code> and <code>include/ckernel_audio.h</code> &mdash; WAV decode,
+        resampling, pad/truncate, STFT/FFT-400, Slaney Mel, log-Mel, Conv1D stem, and layout primitives.
+        The frontend is the circuit <code>version/v8/circuits/whisper_audio_frontend.json</code>; encoder and
+        decoder topology lives in <code>version/v8/circuits/audio_transformer_encoder.json</code> and
+        <code>version/v8/circuits/audio_transformer_decoder.json</code>; lifecycle orchestration in
+        <code>version/v8/scripts/ck_run_v8.py</code> (unified <code>cks-v8-run audio</code> command). Per-kernel
+        math and diagrams:
         <a href="concepts.html#audio-frontend">Concepts &mdash; Audio Frontend &amp; Cross-Attention</a>;
         per-kernel deep dive: <a href="audio-kernels-deep-dive.html">Audio Kernels Deep Dive</a>.
     </div>
@@ -999,11 +1001,17 @@
 
 <p>
   CKE v8 runs a generated FP32 Whisper Tiny encoder and decoder from a
-  PCM16 WAV file. The orchestration is Python, while WAV decoding,
-  resampling, FFT/log-Mel generation, encoder execution, decoder prefill,
-  persistent KV-cache decode, and attention execute through C kernels and
-  generated model libraries. Codegen contains no Whisper model-name branch;
-  every arithmetic boundary resolves through a kernel-map contract.
+  PCM16 WAV file &mdash; and the frontend is generated too. WAV decode,
+  windowed-sinc resampling, pad/truncate, STFT table construction, FFT400
+  power, Slaney Mel filters, and log-Mel normalization are seven explicit
+  circuit operations in
+  <code>version/v8/circuits/whisper_audio_frontend.json</code>, each with an
+  exact numerical contract and a map-owned call ABI. The resolved operation
+  sequence lowers through call IR into generated C exporting
+  <code>ck_model_run_audio_wav</code>. Python coordinates artifact lifecycles
+  and process isolation; it performs no frontend arithmetic. Codegen contains
+  no Whisper model-name branch; every arithmetic boundary resolves through a
+  kernel-map contract.
 </p>
 
 <h2>How the Audio Pipeline Works</h2>
@@ -1062,10 +1070,11 @@
     <text x="46" y="216" font-size="11.5" fill="#94a3b8">Any format converted with ffmpeg:</text>
     <text x="46" y="234" font-size="11" fill="#7dd3fc" font-family="ui-monospace,Menlo,monospace">ffmpeg -ac 1 -ar 16000 -c:a pcm_s16le</text>
     <line x1="46" y1="250" x2="334" y2="250" stroke="#1e3a5f" stroke-width="1"/>
-    <text x="46" y="272" font-size="11.5" font-weight="600" fill="#93c5fd">CONTRACT KERNELS</text>
-    <text x="46" y="292" font-size="11" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_pcm_s16_to_mono_f32</text>
-    <text x="46" y="310" font-size="11" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_resample_linear_f32</text>
-    <text x="46" y="338" font-size="10.5" fill="#64748b">&#8804; 30 s today &#8212; truncated, not chunked</text>
+    <text x="46" y="272" font-size="11.5" font-weight="600" fill="#93c5fd">CIRCUIT OPS &#8594; MAP-OWNED KERNELS</text>
+    <text x="46" y="290" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_wav_decode_memory_pcm16_mono_f32</text>
+    <text x="46" y="306" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_resample_windowed_sinc_f32</text>
+    <text x="46" y="322" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_pad_or_truncate_f32</text>
+    <text x="46" y="342" font-size="10.5" fill="#64748b">&#8804; 30 s today &#8212; truncated, not chunked</text>
   </g>
 
   <line x1="354" y1="248" x2="386" y2="248" stroke="#94a3b8" stroke-width="2" marker-end="url(#aArrow)"/>
@@ -1078,11 +1087,13 @@
     <text x="406" y="196" font-size="13" font-weight="600" fill="#e2e8f0">STFT power &#8594; 80-band log-Mel</text>
     <text x="406" y="216" font-size="11.5" fill="#94a3b8">n_fft 400 &#183; hop 160 &#183; Slaney mel</text>
     <line x1="406" y1="232" x2="694" y2="232" stroke="#2b2660" stroke-width="1"/>
-    <text x="406" y="254" font-size="11.5" font-weight="600" fill="#a5b4fc">CONTRACT KERNELS</text>
-    <text x="406" y="274" font-size="11" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_stft_power_fft400_f32</text>
-    <text x="406" y="291" font-size="10.5" fill="#64748b" font-family="ui-monospace,Menlo,monospace">radix-20 Cooley&#8211;Tukey + direct-DFT reference</text>
-    <text x="406" y="309" font-size="11" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_whisper_log_mel_reference_f32</text>
-    <text x="406" y="338" font-size="10.5" fill="#34d399">vs Hugging Face: 1.54e-4 max|&#916;| &#183; 1.37e-6 RMSE</text>
+    <text x="406" y="254" font-size="11.5" font-weight="600" fill="#a5b4fc">CIRCUIT OPS &#8594; MAP-OWNED KERNELS</text>
+    <text x="406" y="272" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_stft_precompute_tables_f32</text>
+    <text x="406" y="288" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_stft_power_fft400_f32</text>
+    <text x="406" y="303" font-size="10" fill="#64748b" font-family="ui-monospace,Menlo,monospace">20&#215;20 mixed-radix FFT + direct-DFT reference</text>
+    <text x="406" y="320" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_whisper_mel_filters_slaney_f32</text>
+    <text x="406" y="336" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_whisper_log_mel_from_power_reference_f32</text>
+    <text x="406" y="352" font-size="10.5" fill="#34d399">vs Hugging Face: 1.54e-4 max|&#916;| &#183; 1.37e-6 RMSE</text>
   </g>
 
   <line x1="714" y1="248" x2="746" y2="248" stroke="#94a3b8" stroke-width="2" marker-end="url(#aArrow)"/>
@@ -1095,7 +1106,7 @@
     <text x="766" y="196" font-size="13" font-weight="600" fill="#e2e8f0">Conv1D &#215;2 + GELU &#8594; tokens</text>
     <text x="766" y="216" font-size="11.5" fill="#94a3b8">Mel frames become the encoder token grid</text>
     <line x1="766" y1="232" x2="1054" y2="232" stroke="#2b2660" stroke-width="1"/>
-    <text x="766" y="254" font-size="11.5" font-weight="600" fill="#a5b4fc">CONTRACT KERNELS</text>
+    <text x="766" y="254" font-size="11.5" font-weight="600" fill="#a5b4fc">CIRCUIT OPS &#8594; MAP-OWNED KERNELS</text>
     <text x="766" y="274" font-size="11" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_conv1d_channel_major_f32</text>
     <text x="766" y="292" font-size="11" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">gelu_pytorch_erf_f32_inplace</text>
     <text x="766" y="310" font-size="11" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_transpose_channel_to_token_f32</text>
@@ -1188,6 +1199,45 @@
 
 </div>
 
+<h2>Generated Frontend: Circuit Ops to Generated C</h2>
+
+<p>
+  The frontend began as direct C calls selected by the Python runner &mdash;
+  useful correctness bring-up, but provider selection sat outside the v8
+  architecture. It is now seven explicit circuit operations
+  (<code>audio_wav_decode</code>, <code>audio_resample</code>,
+  <code>audio_pad_or_truncate</code>, <code>audio_stft_tables</code>,
+  <code>audio_stft</code>, <code>audio_mel_filters</code>,
+  <code>audio_log_mel</code>), each carrying an exact numerical contract and
+  a map-owned call ABI. Lowering plans the frontend buffers and lowers the
+  runtime WAV metadata into call IR; the resolved sequence generates C
+  exporting <code>ck_model_run_audio_wav</code>.
+</p>
+
+<div class="img-container svg-viewer" data-title="Circuit to native execution: ops, contracts, kernel maps, call IR, generated C">
+    <img src="assets/audio-circuit-to-native.svg" alt="Whisper audio frontend lowering from circuit operations through kernel maps and call IR to generated C">
+</div>
+
+<ul>
+  <li>
+    <strong>Provider selection is a kernel-map decision.</strong> The map
+    alone names the registered provider and its call ABI; tests fail closed
+    when an operation is missing or the provider inventory bypasses
+    map-owned ABI accounting.
+  </li>
+  <li>
+    <strong>Scheduling is a call-IR decision.</strong> Operation order and
+    buffer lifetimes come from the circuit through lowering &mdash; not from
+    Python control flow, and not from a codegen branch.
+  </li>
+  <li>
+    <strong>Python owns lifecycle, generated C owns arithmetic.</strong>
+    The runner coordinates artifact directories, encoder/decoder process
+    isolation, and report writing; every sample-level computation executes
+    inside the generated artifact.
+  </li>
+</ul>
+
 <h2>What Nightly Proves, and What Stays Opt-In</h2>
 
 <p>
@@ -1210,7 +1260,10 @@
   <li>
     <strong>Nightly &mdash; v8 audio circuit/codegen regression.</strong>
     The generated-circuit lowering and codegen path is gated portably,
-    without model weights.
+    without model weights. These rows now cover the full frontend sequence:
+    native arithmetic, exact provider resolution for all seven ops, the
+    generated <code>ck_model_run_audio_wav</code> ABI, unified-command CLI
+    ownership, and synthetic compilation.
   </li>
   <li>
     <strong>Opt-in artifact test &mdash; full model-and-WAV
@@ -1231,9 +1284,9 @@
   -ac 1 -ar 16000 -c:a pcm_s16le \
   /tmp/test-audio.wav</code></pre>
 
-<p>Then run the generated pipeline:</p>
+<p>Then run the generated pipeline through the unified v8 command surface:</p>
 
-<pre><code>python version/v8/scripts/run_whisper_v8.py run \
+<pre><code>python version/v8/scripts/cks-v8-run audio \
   --encoder-run-dir /path/to/whisper-tiny-encoder \
   --decoder-run-dir /path/to/whisper-tiny-decoder \
   --wav /tmp/test-audio.wav \
@@ -1286,6 +1339,14 @@
     <code>model-&gt;pos + 1</code> valid KV rows. A causal prefill provider
     invoked with one active token attended only cache row zero.
   </li>
+  <li>
+    Encoder-side cross-attention K/V projections are immutable for an audio
+    segment. The circuit declares a prefill-populated, layer-major FP32 cache;
+    decode consumes the cached head-major slices instead of projecting and
+    transposing all 1,500 encoder rows for every generated token. Binding new
+    encoder memory invalidates the cache, and decode fails closed until prefill
+    repopulates it.
+  </li>
 </ol>
 
 <p>
@@ -1307,9 +1368,13 @@ ask what you can do for your country.</code></pre>
 <p>
   The optimized C FFT/log-Mel frontend differed from Hugging Face by
   approximately 1.54e-4 maximum absolute error and 1.37e-6 RMSE, without
-  changing any generated token. One measured run used 0.16 seconds for the
-  frontend, 11.17 seconds for the encoder, 0.75 seconds for decoder prefill,
-  and 16.57 seconds for 23 decode tokens.
+  changing any generated token. Before persistent cross-attention caching, one
+  measured run used 0.16 seconds for the frontend, 11.17 seconds for the
+  encoder, 0.75 seconds for decoder prefill, and 16.57 seconds for 23 decode
+  tokens. With the cache, the same exact token sequence used 0.12 seconds for
+  the frontend, 11.15 seconds for the encoder, 0.73 seconds for prefill, and
+  0.21 seconds for decode. Decoder time improved by approximately 79x, and
+  total time fell from 28.64 seconds to approximately 12.22 seconds.
 </p>
 
 <h2>Regression Gates</h2>

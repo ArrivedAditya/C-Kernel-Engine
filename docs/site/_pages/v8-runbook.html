@@ -131,7 +131,7 @@
             <span class="v8-chip">version/v8/scripts/cks-v8-run</span>
             <span class="v8-chip">ck_run_v8.py</span>
             <span class="v8-chip">Qwen3-VL</span>
-            <span class="v8-chip">run_whisper_v8.py</span>
+            <span class="v8-chip">cks-v8-run audio</span>
             <span class="v8-chip">Whisper Tiny</span>
             <span class="v8-chip">inference only</span>
         </div>
@@ -431,8 +431,10 @@ V8_NEMOTRON9_MIN_MEM_GB=24 make test-v8-nemotron9-highmem</pre>
 <div class="card card-accent">
     <h3 style="margin-top: 0;">Audio Runbook &mdash; WAV To Transcript</h3>
     <p>
-        The audio lane runs a generated FP32 Whisper Tiny encoder and decoder. One orchestrator,
-        <code>version/v8/scripts/run_whisper_v8.py</code>, drives both stages and emits a single JSON report.
+        The audio lane runs a generated FP32 Whisper Tiny encoder and decoder &mdash; and a generated frontend:
+        WAV decode through log-Mel is seven circuit ops lowered into <code>ck_model_run_audio_wav</code>, so the
+        Python layer coordinates lifecycles only. The unified entrypoint
+        <code>version/v8/scripts/cks-v8-run audio</code> drives both stages and emits a single JSON report.
         Codegen contains no Whisper model-name branch &mdash; the same v8 lowering path that carries text and vision
         carries the audio circuits in <code>version/v8/circuits/</code>.
     </p>
@@ -455,7 +457,7 @@ export CK_WHISPER_DECODER_RUN_DIR=/path/to/whisper-tiny-decoder</pre>
     <p><strong>Step 3 &mdash; Run the transcription.</strong></p>
     <div class="cmd-block">
         <button class="copy-btn" type="button">Copy</button>
-<pre>python version/v8/scripts/run_whisper_v8.py run \
+<pre>python version/v8/scripts/cks-v8-run audio \
   --encoder-run-dir $CK_WHISPER_ENCODER_RUN_DIR \
   --decoder-run-dir $CK_WHISPER_DECODER_RUN_DIR \
   --wav /tmp/test-audio.wav \
