@@ -2,6 +2,7 @@
 torch
 numpy
 safetensors
+pytest
 requests
 tqdm
 jsonschema>=4.18
