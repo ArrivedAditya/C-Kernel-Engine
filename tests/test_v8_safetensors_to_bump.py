@@ -548,10 +548,22 @@ def test_whisper_decoder_safetensors_keeps_self_and_cross_attention_distinct(
     )
     assert v_projection_index < v_bias_index < kv_store_index < attention_index
     decode_attention_args = args_by_name(decode_layer_ops[attention_index])
-    assert "model->kv_cache" in decode_attention_args["k"]["expr"]
-    assert "model->kv_cache" in decode_attention_args["v"]["expr"]
-    assert "model->bump" not in decode_attention_args["k"]["expr"]
-    assert "model->bump" not in decode_attention_args["v"]["expr"]
+    assert (
+        decode_layer_ops[attention_index]["function"]
+        == "attention_forward_decode_head_major_gqa_flash"
+    )
+    assert decode_attention_args["kv_tokens"]["expr"] == "model->pos + 1"
+    assert decode_attention_args["cache_capacity"]["expr"] == "8"
+    assert "model->kv_cache" in decode_attention_args["k_cache"]["expr"]
+    assert "model->kv_cache" in decode_attention_args["v_cache"]["expr"]
+    assert "model->bump" not in decode_attention_args["k_cache"]["expr"]
+    assert "model->bump" not in decode_attention_args["v_cache"]["expr"]
+
+    prefill_attention = first_call("prefill", "attn")
+    assert (
+        prefill_attention["function"]
+        == "attention_forward_causal_head_major_gqa_flash_strided"
+    )
 
     for mode, query_tokens in (("prefill", "8"), ("decode", "1")):
         cross_k = args_by_name(first_call(mode, "cross_k_proj"))
@@ -561,7 +573,10 @@ def test_whisper_decoder_safetensors_keeps_self_and_cross_attention_distinct(
         assert cross_v["A"]["buffer_ref"] == "encoder_memory"
         assert cross_k["M"]["expr"] == "4"
         assert cross_v["M"]["expr"] == "4"
+        assert cross_k["M"]["source"] == "dim:encoder_memory_length"
+        assert cross_v["M"]["source"] == "dim:encoder_memory_length"
         assert cross_attn["query_tokens"]["expr"] == query_tokens
+        assert cross_attn["query_tokens"]["source"] == "runtime:query_tokens"
         assert cross_attn["key_tokens"]["expr"] == "4"
         assert cross_attn["query"]["buffer_ref"] == "cross_q_scratch"
         assert cross_attn["key"]["buffer_ref"] == "cross_k_scratch"
@@ -616,6 +631,29 @@ def test_whisper_decoder_safetensors_keeps_self_and_cross_attention_distinct(
     assert "CK_EXPORT int ck_model_set_encoder_memory(" in generated
     assert "if (tokens != 4 || dim != 8) return -2;" in generated
     assert "g_model->bump + A_ENCODER_MEMORY" in generated
+    encoder_projection_calls = generated.count(
+        "(const float*)(model->bump + A_ENCODER_MEMORY),"
+    )
+    assert encoder_projection_calls == 6
+    assert generated.count(
+        "(float*)(model->bump + A_CROSS_K_SCRATCH),\n"
+        "        4,\n"
+        "        8,\n"
+        "        8"
+    ) == 3
+    assert generated.count(
+        "(float*)(model->bump + A_CROSS_V_SCRATCH),\n"
+        "        4,\n"
+        "        8,\n"
+        "        8"
+    ) == 3
+    assert generated.count(
+        "        2,\n"
+        "        num_tokens,\n"
+        "        4,\n"
+        "        4,\n"
+        "        0.5"
+    ) == 2
     subprocess.run(
         [
             "cc",

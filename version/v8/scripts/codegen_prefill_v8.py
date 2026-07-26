@@ -575,6 +575,8 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             expr = "num_tokens"
         elif source in ("param:seq_len", "runtime:seq_len"):
             expr = "num_tokens"
+        elif source == "runtime:query_tokens":
+            expr = "num_tokens"
         elif source == "runtime:prefill_start_pos":
             expr = "prefill_start_pos"
         elif name_lc in dynamic_token_arg_names and source in {"dim:_m", "param:_m", "runtime:kv_tokens", "runtime:cache_len"}:
