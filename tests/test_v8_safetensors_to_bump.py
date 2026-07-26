@@ -365,7 +365,7 @@ def test_whisper_decoder_safetensors_keeps_self_and_cross_attention_distinct(
                 "architectures": ["WhisperForConditionalGeneration"],
                 "model_type": "whisper",
                 "d_model": 8,
-                "decoder_layers": 1,
+                "decoder_layers": 2,
                 "decoder_attention_heads": 2,
                 "decoder_ffn_dim": 16,
                 "max_source_positions": 4,
@@ -416,6 +416,9 @@ def test_whisper_decoder_safetensors_keeps_self_and_cross_attention_distinct(
         "model.decoder.layers.0.fc2.bias": torch.randn(8),
         "model.encoder.layer_norm.weight": torch.randn(8),
     }
+    for name, tensor in list(tensors.items()):
+        if "model.decoder.layers.0." in name:
+            tensors[name.replace("layers.0.", "layers.1.")] = tensor.clone()
     st.save_file(tensors, checkpoint / "model.safetensors")
 
     subprocess.run(
@@ -522,9 +525,9 @@ def test_whisper_decoder_safetensors_keeps_self_and_cross_attention_distinct(
     decode_bias_adds = [
         row for row in calls["decode"]["operations"] if row["op"] == "bias_add"
     ]
-    assert len(decode_bias_adds) == 7
+    assert len(decode_bias_adds) == 14
     assert all(args_by_name(row)["b"]["expr"] != "NULL" for row in decode_bias_adds)
-    cross_v_args = args_by_name(first_call("decode", "cross_v_proj"))
+    cross_v_args = args_by_name(first_call("prefill", "cross_v_proj"))
     assert cross_v_args["bias"]["expr"] != "NULL"
     decode_layer_ops = [
         row
@@ -565,22 +568,29 @@ def test_whisper_decoder_safetensors_keeps_self_and_cross_attention_distinct(
         == "attention_forward_causal_head_major_gqa_flash_strided"
     )
 
+    decode_ops = [row["op"] for row in calls["decode"]["operations"]]
+    assert "cross_k_proj" not in decode_ops
+    assert "cross_v_proj" not in decode_ops
+    assert "transpose_cross_kv_to_head_major" not in decode_ops
+
     for mode, query_tokens in (("prefill", "8"), ("decode", "1")):
-        cross_k = args_by_name(first_call(mode, "cross_k_proj"))
-        cross_v = args_by_name(first_call(mode, "cross_v_proj"))
         cross_attn = args_by_name(first_call(mode, "cross_attn"))
-        assert cross_k["A"]["buffer_ref"] == "encoder_memory"
-        assert cross_v["A"]["buffer_ref"] == "encoder_memory"
-        assert cross_k["M"]["expr"] == "4"
-        assert cross_v["M"]["expr"] == "4"
-        assert cross_k["M"]["source"] == "dim:encoder_memory_length"
-        assert cross_v["M"]["source"] == "dim:encoder_memory_length"
         assert cross_attn["query_tokens"]["expr"] == query_tokens
         assert cross_attn["query_tokens"]["source"] == "runtime:query_tokens"
         assert cross_attn["key_tokens"]["expr"] == "4"
         assert cross_attn["query"]["buffer_ref"] == "cross_q_scratch"
-        assert cross_attn["key"]["buffer_ref"] == "cross_k_scratch"
-        assert cross_attn["value"]["buffer_ref"] == "cross_v_scratch"
+        assert cross_attn["key"]["buffer_ref"] == "cross_k_cache"
+        assert cross_attn["value"]["buffer_ref"] == "cross_v_cache"
+
+    for op_name, cache_name in (
+        ("cross_k_proj", "cross_k_cache"),
+        ("cross_v_proj", "cross_v_cache"),
+    ):
+        projection = args_by_name(first_call("prefill", op_name))
+        assert projection["A"]["buffer_ref"] == "encoder_memory"
+        assert projection["C"]["buffer_ref"] == cache_name
+        assert projection["M"]["expr"] == "4"
+        assert projection["M"]["source"] == "dim:encoder_memory_length"
 
     prefill_ops = [
         row["op"]
@@ -595,16 +605,24 @@ def test_whisper_decoder_safetensors_keeps_self_and_cross_attention_distinct(
         "transpose_cross_attn_out_to_token_major"
     )
 
-    decode_cross_transposes = [
-        row
-        for row in calls["decode"]["operations"]
-        if row["op"] == "transpose_cross_kv_to_head_major"
-        and int(row.get("layer", -1)) == 0
-    ]
-    assert [row["_cross_kv_kind"] for row in decode_cross_transposes] == [
-        "key",
-        "value",
-    ]
+    layout_decode = json.loads((out / "layout_decode.json").read_text(encoding="utf-8"))
+    activation_buffers = {
+        row["name"]: row
+        for row in layout_decode["memory"]["activations"]["buffers"]
+    }
+    assert activation_buffers["cross_k_cache"]["shape"] == "[2, 2, 4, 4]"
+    assert activation_buffers["cross_v_cache"]["shape"] == "[2, 2, 4, 4]"
+    layer_stride_bytes = 2 * 4 * 4 * 4
+    for mode in ("prefill", "decode"):
+        for op_name, macro in (
+            ("cross_attn", "A_CROSS_K_CACHE"),
+            ("cross_attn", "A_CROSS_V_CACHE"),
+        ):
+            args = args_by_name(first_call(mode, op_name, layer=1))
+            cache_arg = "key" if macro.endswith("K_CACHE") else "value"
+            assert args[cache_arg]["expr"] == (
+                f"(const float*)(model->bump + ({macro} + {layer_stride_bytes}))"
+            )
 
     generated_c = out / "whisper_decoder_v8.c"
     subprocess.run(
@@ -630,30 +648,33 @@ def test_whisper_decoder_safetensors_keeps_self_and_cross_attention_distinct(
     assert "attention_forward_query_key_head_major_f32" in generated
     assert "CK_EXPORT int ck_model_set_encoder_memory(" in generated
     assert "if (tokens != 4 || dim != 8) return -2;" in generated
+    assert "g_model->encoder_kv_ready = 0;" in generated
+    assert "if (!g_model->encoder_kv_ready) return -2;" in generated
+    assert generated.count("model->encoder_kv_ready = 1;") == 2
     assert "g_model->bump + A_ENCODER_MEMORY" in generated
     encoder_projection_calls = generated.count(
         "(const float*)(model->bump + A_ENCODER_MEMORY),"
     )
-    assert encoder_projection_calls == 6
+    assert encoder_projection_calls == 8
     assert generated.count(
-        "(float*)(model->bump + A_CROSS_K_SCRATCH),\n"
+        "(float*)(model->bump + A_CROSS_K_CACHE),\n"
         "        4,\n"
         "        8,\n"
         "        8"
-    ) == 3
+    ) == 2
     assert generated.count(
-        "(float*)(model->bump + A_CROSS_V_SCRATCH),\n"
+        "(float*)(model->bump + A_CROSS_V_CACHE),\n"
         "        4,\n"
         "        8,\n"
         "        8"
-    ) == 3
+    ) == 2
     assert generated.count(
         "        2,\n"
         "        num_tokens,\n"
         "        4,\n"
         "        4,\n"
         "        0.5"
-    ) == 2
+    ) == 4
     subprocess.run(
         [
             "cc",

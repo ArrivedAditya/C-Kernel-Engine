@@ -2919,6 +2919,9 @@ CK_EXPORT void ck_model_profile_dump(void) {
     layout = layout or {}
     config = config or {}
     encoder_memory_api = ""
+    uses_persistent_cross_kv_cache = bool(
+        config.get("_template_uses_persistent_cross_kv_cache", False)
+    )
     if bool(config.get("uses_cross_attention", False)):
         encoder_tokens = int(config.get("encoder_memory_length", 0) or 0)
         encoder_dim = int(config.get("embed_dim", 0) or 0)
@@ -2955,6 +2958,7 @@ CK_EXPORT int ck_model_set_encoder_memory(const float *data, int tokens, int dim
         data,
         (size_t){encoder_tokens} * (size_t){encoder_dim} * sizeof(float)
     );
+    g_model->encoder_kv_ready = 0;
     return 0;
 }}
 
@@ -2968,6 +2972,14 @@ CK_EXPORT int ck_model_get_encoder_memory_dim(void) {{ return {encoder_dim}; }}
         prefill_guard = " && (getenv(\"CK_V8_FORCE_BATCHED_PREFILL\") && atoi(getenv(\"CK_V8_FORCE_BATCHED_PREFILL\")) != 0)"
     else:
         prefill_guard = " && !(getenv(\"CK_V8_FORCE_DECODE_PREFILL\") && atoi(getenv(\"CK_V8_FORCE_DECODE_PREFILL\")) != 0)"
+    prefill_count_guard = (
+        "count > 0" if uses_persistent_cross_kv_cache else "count > 1"
+    )
+    decode_encoder_cache_guard = (
+        "    if (!g_model->encoder_kv_ready) return -2;\n"
+        if uses_persistent_cross_kv_cache
+        else ""
+    )
     for buf_name, macro_name in (
         ("recurrent_conv_state", "A_RECURRENT_CONV_STATE"),
         ("recurrent_ssm_state", "A_RECURRENT_SSM_STATE"),
@@ -3000,6 +3012,7 @@ typedef struct {{
     float *logits;           /* Output logits */
     int pos;                 /* Current KV slot / active token count */
     int rope_pos;            /* Text-position counter used by RoPE */
+    int encoder_kv_ready;    /* Immutable cross-attention projections populated */
     int bridge_has_explicit_positions;
     int32_t bridge_positions[4];
 {tokenizer_field_line}
@@ -3345,7 +3358,7 @@ CK_EXPORT int ck_model_embed_tokens(const int32_t *tokens, int count) {{
 
 #ifdef CK_HAS_PREFILL
     /* Use batched prefill for multiple tokens unless the model requires decode replay. */
-    if (count > 1{prefill_guard}) {{
+    if ({prefill_count_guard}{prefill_guard}) {{
         ck_prefill(g_model, tokens, count);{profile_dump_after_prefill}
         ck_trace_pos("embed_prefill_end", tokens[count - 1], count, before_pos, g_model->pos);
         return 0;
@@ -3373,7 +3386,7 @@ CK_EXPORT int ck_model_forward(float *output) {{
 /* Decode single token */
 CK_EXPORT int ck_model_decode(int32_t token, float *output) {{
     if (!g_model) return -1;
-    /* Capture position before decode (ck_decode increments pos at end) */
+{decode_encoder_cache_guard}    /* Capture position before decode (ck_decode increments pos at end) */
     int token_pos = g_model->pos;
     ck_trace_pos("decode_begin", token, 1, token_pos, g_model->pos);
     g_ck_skip_decode_logits = 0;

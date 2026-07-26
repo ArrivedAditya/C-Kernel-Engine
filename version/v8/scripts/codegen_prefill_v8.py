@@ -381,13 +381,14 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         head_dim = config.get("head_dim", 1)
         encoder_tokens = config.get("encoder_memory_length", 0)
         kind = str(op.get("_cross_kv_kind", "key"))
-        scratch_name = "A_CROSS_K_SCRATCH" if kind == "key" else "A_CROSS_V_SCRATCH"
+        cache_name = "A_CROSS_K_CACHE" if kind == "key" else "A_CROSS_V_CACHE"
         return f"""    /* Op {seq_idx}: transpose_cross_{kind}_to_head_major layer={layer} */
     {{
         const int H = {num_heads};
         const int T = {encoder_tokens};
         const int D = {head_dim};
-        float *buf = (float*)(model->bump + {scratch_name});
+        const size_t layer_stride = (size_t)H * (size_t)T * (size_t)D;
+        float *buf = (float*)(model->bump + {cache_name}) + (size_t){layer} * layer_stride;
         float *tmp = (float*)(model->bump + A_CROSS_LAYOUT_SCRATCH);
         for (int t = 0; t < T; ++t) {{
             for (int h = 0; h < H; ++h) {{
@@ -1587,6 +1588,8 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
 
     lines.append("    model->pos = num_tokens;")
     lines.append("    model->rope_pos = num_tokens;")
+    if bool(config.get("_template_uses_persistent_cross_kv_cache", False)):
+        lines.append("    model->encoder_kv_ready = 1;")
     lines.append("}")
     return "\n".join(lines)
 
@@ -2467,6 +2470,8 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
         lines.append("    ck_multimodal_prefill_bridge_clear();")
     else:
         lines.append("    model->rope_pos = num_tokens;")
+    if bool(config.get("_template_uses_persistent_cross_kv_cache", False)):
+        lines.append("    model->encoder_kv_ready = 1;")
     lines.append("}")
     lines.append("")
     lines.append("static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {")
