@@ -1820,7 +1820,7 @@
       <tr>
         <td>3</td>
         <td><strong>Whisper tiny/base inference</strong><br>Slated for v10, but the v8 compiler lane is incorporating and hardening it ahead of the original plan: Whisper Tiny already transcribes end to end &mdash; WAV parsing, an optimized FFT/log-Mel frontend, and the generated FP32 encoder and decoder compose through the same circuit and kernel-contract path, with no Whisper compiler branch. On the public JFK sample CKE emits the same 23 greedy tokens as Hugging Face, followed by EOS. See the <a href="v8-whisper-tiny.html">Whisper Tiny end-to-end page</a>.</td>
-        <td>Done: WAV container parsing, optimized FFT, generated encoder/decoder composition, English no-timestamp transcript parity on the JFK fixture. Remaining: a band-limited resampler, timestamp decoding, corpus certification beyond the JFK sample, whisper.cpp fixtures, and Whisper base.</td>
+        <td>Done: WAV container parsing, band-limited windowed-sinc resampling, optimized FFT, generated encoder/decoder composition, English no-timestamp transcript parity on the JFK fixture. Remaining: timestamp decoding, corpus certification beyond the JFK sample, whisper.cpp fixtures, and Whisper base.</td>
         <td><span class="version-status status-building">Active</span></td>
       </tr>
       <tr>
@@ -1890,7 +1890,7 @@
       <tr>
         <td><strong>v10.0</strong></td>
         <td>Audio Inference</td>
-        <td>Whisper tiny/base. The first audio lane landed early: v8 already transcribes Whisper Tiny end to end from PCM16 WAV through generated FP32 encoder and decoder circuits &mdash; English, no-timestamp decoding, JFK fixture exact against Hugging Face (<a href="v8-whisper-tiny.html">details and limitations</a>). v10 remains the full audio release: band-limited resampling, timestamps, corpus certification beyond the JFK sample, whisper.cpp fixtures, and Whisper base.</td>
+        <td>Whisper tiny/base. The first audio lane landed early: v8 already transcribes Whisper Tiny end to end from PCM16 WAV through generated FP32 frontend, encoder, and decoder circuits &mdash; band-limited windowed-sinc resampling included, English, no-timestamp decoding, JFK fixture exact against Hugging Face (<a href="v8-whisper-tiny.html">details and limitations</a>). v10 remains the full audio release: timestamps, corpus certification beyond the JFK sample, whisper.cpp fixtures, and Whisper base.</td>
         <td>v8 exact resolution + X-ray gates</td>
         <td><span class="version-status status-building">Building</span></td>
       </tr>

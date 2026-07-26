@@ -28,9 +28,9 @@
     <path d="M100 0V660M300 0V660M500 0V660M700 0V660M900 0V660"/>
   </g>
 
-  <text x="40" y="42" font-size="12" letter-spacing="3" fill="#7dd3fc" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">AUDIO FRONTEND &#183; SIX CIRCUIT OPS + ENCODER STEM</text>
+  <text x="40" y="42" font-size="12" letter-spacing="3" fill="#7dd3fc" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">AUDIO FRONTEND &#183; SEVEN CIRCUIT OPS + ENCODER STEM</text>
   <text x="40" y="80" font-size="30" font-weight="700" fill="#f1f5f9" font-family="'Inter',system-ui,sans-serif">Waveform to Encoder Tokens</text>
-  <text x="40" y="106" font-size="13.5" fill="#94a3b8" font-family="'Inter',system-ui,sans-serif">Stages 1&#8211;6 are the whisper_audio_frontend circuit lowered into ck_model_run_audio_wav; 7&#8211;8 open the encoder. Each a named kernel, parity-checked against PyTorch.</text>
+  <text x="40" y="106" font-size="13.5" fill="#94a3b8" font-family="'Inter',system-ui,sans-serif">Stages 1&#8211;6 are the whisper_audio_frontend circuit's seven ops &#8212; STFT table construction and execution are separate &#8212; lowered into ck_model_run_audio_wav; 7&#8211;8 open the encoder. Each a named kernel, parity-checked against PyTorch.</text>
 
   <!-- Row 1 -->
   <g filter="url(#afe-shadow)">

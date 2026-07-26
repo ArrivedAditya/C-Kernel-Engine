@@ -1435,7 +1435,7 @@ export CK_WHISPER_DECODER_RUN_DIR=/path/to/whisper-tiny-decoder</pre>
     <p><strong>Step 3 &mdash; Run the transcription.</strong></p>
     <div class="cmd-block">
         <button class="copy-btn" type="button">Copy</button>
-<pre>python version/v8/scripts/cks-v8-run audio \
+<pre>version/v8/scripts/cks-v8-run audio \
   --encoder-run-dir $CK_WHISPER_ENCODER_RUN_DIR \
   --decoder-run-dir $CK_WHISPER_DECODER_RUN_DIR \
   --wav /tmp/test-audio.wav \

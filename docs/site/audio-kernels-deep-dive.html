@@ -979,7 +979,7 @@
     </header>
     <main>
 
-<h1>Audio Kernels Deep Dive: Six Kernels From WAV to Encoder Tokens</h1>
+<h1>Audio Kernels Deep Dive: From WAV to Encoder Tokens, Kernel by Kernel</h1>
 
 <div class="alert alert-info">
     <div class="alert-icon">
@@ -995,11 +995,12 @@
 </div>
 
 <p>The Whisper Tiny frontend turns a PCM16 WAV into the <code>[1500 &times; 384]</code> token matrix the audio
-encoder consumes. CK breaks that transformation into six kernels, each with one job, one layout contract, and one
+encoder consumes. CK breaks that transformation into seven circuit operations across six frontend stages &mdash;
+STFT table construction and STFT execution are separate ops &mdash; each with one job, one layout contract, and one
 parity oracle. This page walks each kernel the same way the DeltaNet deep dive walks the recurrent update:
 the math, the way the C actually computes it, the memory layout, and the evidence that pins it to PyTorch.</p>
 
-<div class="img-container svg-viewer" data-title="Audio frontend: the six kernels this page walks">
+<div class="img-container svg-viewer" data-title="Audio frontend: the six frontend stages this page walks">
     <img src="assets/concept-audio-frontend.svg" alt="Audio frontend kernel dataflow from waveform to encoder tokens">
 </div>
 
@@ -1097,7 +1098,7 @@ fuses the two into the single call the generated code makes. For audio that is a
     </div>
     <div class="card card-accent">
         <h3 style="margin-top: 0;">Why Not libsndfile</h3>
-        <p>The frontend's whole job is to be a <strong>numerical contract</strong>. A hand-rolled 60-line parser means the exact set of accepted inputs is auditable, the downmix rule is explicit, and no platform codec version can drift the parity gates. The generated encoder never sees a WAV at all &mdash; it sees the f32 mono buffer this kernel guarantees.</p>
+        <p>The frontend's whole job is to be a <strong>numerical contract</strong>. A hand-rolled 60-line parser means the exact set of accepted inputs is auditable, the downmix rule is explicit, and no platform codec version can drift the parity gates. The generated artifact owns WAV-to-encoder execution through <code>ck_model_run_audio_wav</code>; the transformer body itself never sees a WAV &mdash; it consumes the log-Mel tensors this kernel chain guarantees.</p>
     </div>
 </div>
 
@@ -1512,7 +1513,7 @@ rescale. The fused entry point <code>audio_whisper_log_mel_reference_f32</code> 
     <div class="card">
         <h3 style="margin-top: 0;">How The C Reads</h3>
         <ul>
-            <li>The filterbank arrives as a caller-supplied <code>[n_mels &times; 201]</code> matrix &mdash; the kernel owns the contraction, not the filter design, so the exact Whisper filters ship with the weights.</li>
+            <li>The filterbank is constructed in planned memory by <code>audio_whisper_mel_filters_slaney_f32</code> and passed in as a <code>[n_mels &times; 201]</code> matrix &mdash; this kernel owns the contraction, while the mel-filter op upstream owns the design.</li>
             <li>Pass one computes <code>log10(max(M, 1e-10))</code> per entry while tracking the global maximum; pass two applies the floor and the <code>(x+4)/4</code> rescale in place.</li>
             <li>The output layout is <strong>mel-major</strong> (<code>log_mel[mel &middot; T + frame]</code>) &mdash; which is precisely the channel-major layout the Conv1D stem wants, so no copy sits between the two kernels.</li>
         </ul>
