@@ -1314,6 +1314,9 @@ test-vision: $(LIB_VISION)
 test-audio: $(LIB_AUDIO) $(LIB_ATTENTION) $(LIB_GELU)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_audio.py
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_audio_encoder.py
+	$(MAKE) --no-print-directory test-audio-v8-contracts
+
+test-audio-v8-contracts:
 	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_audio_contract -v
 	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_audio_encoder_contract -v
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_safetensors_to_bump.py -k "whisper_encoder or whisper_decoder"
@@ -5021,7 +5024,7 @@ nightly-list:
 	@$(PYTHON) scripts/nightly_runner.py --list
 
 .PHONY: nightly nightly-quick nightly-json nightly-baseline nightly-kernels nightly-bf16 nightly-quant nightly-inference nightly-parity nightly-archive nightly-list
-.PHONY: test-audio test-whisper-e2e-auto libckernel_audio.so
+.PHONY: test-audio test-audio-v8-contracts test-whisper-e2e-auto libckernel_audio.so
 
 # ============================================================================
 # Status Reports (reads from meta/kernel_meta.json)

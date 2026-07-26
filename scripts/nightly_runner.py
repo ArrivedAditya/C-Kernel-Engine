@@ -384,6 +384,12 @@ TEST_SUITES = {
 
 # Make targets to run (non-Python tests)
 MAKE_TARGETS = {
+    "v8_audio_contracts": {
+        "name": "v8 Audio Circuit/Codegen Contracts",
+        "category": "inference",
+        "target": "test-audio-v8-contracts",
+        "timeout_sec": 180,
+    },
     "tokenizer_byte_fallback_parity": {
         "name": "Tokenizer Byte/UTF-8 Parity",
         "category": "inference",
