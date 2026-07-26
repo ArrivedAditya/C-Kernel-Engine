@@ -56,6 +56,7 @@ static ck_gelu_ggml_fp16_to_fp32_fn ck_gelu_runtime_fp16_to_fp32 = NULL;
 static void *ck_gelu_runtime_handle = NULL;
 static int ck_gelu_runtime_ready = 0;
 static ck_gelu_math_f32_fn ck_gelu_reference_tanhf = NULL;
+static ck_gelu_math_f32_fn ck_gelu_reference_erff = NULL;
 static pthread_once_t ck_gelu_reference_math_once = PTHREAD_ONCE_INIT;
 
 static void ck_gelu_reference_math_init(void) {
@@ -63,6 +64,7 @@ static void ck_gelu_reference_math_init(void) {
     void *handle = dlopen("libm.so.6", RTLD_NOW | RTLD_LOCAL);
     if (handle) {
         ck_gelu_reference_tanhf = (ck_gelu_math_f32_fn) dlsym(handle, "tanhf");
+        ck_gelu_reference_erff = (ck_gelu_math_f32_fn) dlsym(handle, "erff");
     }
 #endif
 }
@@ -70,6 +72,11 @@ static void ck_gelu_reference_math_init(void) {
 static ck_gelu_math_f32_fn ck_gelu_system_tanhf(void) {
     pthread_once(&ck_gelu_reference_math_once, ck_gelu_reference_math_init);
     return ck_gelu_reference_tanhf;
+}
+
+static ck_gelu_math_f32_fn ck_gelu_system_erff(void) {
+    pthread_once(&ck_gelu_reference_math_once, ck_gelu_reference_math_init);
+    return ck_gelu_reference_erff;
 }
 
 #if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
@@ -559,9 +566,12 @@ void gelu_exact_inplace(float *data, size_t n)
 void gelu_pytorch_erf_f32_inplace(float *data, size_t n)
 {
     const float inv_sqrt_2 = 0.70710678118654752440f;
+    ck_gelu_math_f32_fn reference_erff = ck_gelu_system_erff();
     for (size_t i = 0; i < n; ++i) {
         const float x = data[i];
-        data[i] = (0.5f * x) * (1.0f + erff(x * inv_sqrt_2));
+        const float erf_value =
+            reference_erff ? reference_erff(x * inv_sqrt_2) : erff(x * inv_sqrt_2);
+        data[i] = (0.5f * x) * (1.0f + erf_value);
     }
 }
 

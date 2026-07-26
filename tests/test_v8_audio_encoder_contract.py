@@ -509,6 +509,22 @@ class AudioEncoderContractTests(unittest.TestCase):
         self.assertEqual(len(parsed), 1)
         self.assertEqual(parsed[0].status, "pass")
 
+    def test_pytorch_erf_gelu_uses_host_independent_scalar_libm(self):
+        kernel = json.loads(
+            (V8 / "kernel_maps" / "gelu_pytorch_erf_f32_inplace.json")
+            .read_text(encoding="utf-8")
+        )
+        capability = kernel["numerical_capabilities"][0]
+        self.assertEqual(capability["implementation"]["isa_dispatch"], "scalar")
+        source = (ROOT / "src" / "kernels" / "gelu_kernels.c").read_text(
+            encoding="utf-8"
+        )
+        function = source.split(
+            "void gelu_pytorch_erf_f32_inplace(float *data, size_t n)", 1
+        )[1].split("\n}", 1)[0]
+        self.assertIn("ck_gelu_system_erff()", function)
+        self.assertIn("reference_erff(", function)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
