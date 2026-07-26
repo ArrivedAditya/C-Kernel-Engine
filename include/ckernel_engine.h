@@ -192,6 +192,8 @@ void gemm_nt_f16(const float *A,
                  const float *bias,
                  float *C,
                  int M, int N, int K);
+// SIMD lane count used by the compile-time llama-compatible FP16 dot provider.
+int ck_gemm_nt_f16_simd_lanes(void);
 
 // Diagnostic oracle backed by the dynamically loaded ggml mul_mat graph.
 // Returns zero instead of falling back when the independent oracle is unavailable.
@@ -1726,6 +1728,9 @@ ck_attention_status_t attention_forward_decode_head_major_gqa_bf16cache_pytorch_
     int head_dim,
     int aligned_head_dim,
     ck_attention_reduction_t reduction);
+// Returns whether the exact native PyTorch BF16 GQA provider can execute in
+// this build and process. This probes required MKL and SLEEF symbols.
+int ck_attention_bf16_pytorch_gqa_available(void);
 
 // Causal prefill over a cache-preserving segment. Current-segment K/V rows
 // must already be appended at [past_tokens, past_tokens + q_tokens).

@@ -492,11 +492,31 @@ def main():
             norm_sources = {os.path.normpath(s) for s in extra_sources}
             strict_src = os.path.normpath("src/ckernel_strict.c")
             threadpool_src = os.path.normpath("src/ck_threadpool.c")
+            source_dependencies = {
+                os.path.normpath("src/kernels/attention_kernels.c"): (
+                    "src/kernels/gemm_kernels_bf16.c",
+                ),
+            }
             # ckernel_strict.c now references global threadpool helpers.
             # Ensure standalone litmus links the required implementation.
             if strict_src in norm_sources and threadpool_src not in norm_sources:
                 extra_sources.append("src/ck_threadpool.c")
                 norm_sources.add(threadpool_src)
+            # Kernel manifests list selected providers. Resolve the providers'
+            # direct C dependencies as a closure so standalone generated
+            # programs obey the same link contract as libckernel_engine.
+            changed = True
+            while changed:
+                changed = False
+                for source, dependencies in source_dependencies.items():
+                    if source not in norm_sources:
+                        continue
+                    for dependency in dependencies:
+                        normalized = os.path.normpath(dependency)
+                        if normalized not in norm_sources:
+                            extra_sources.append(dependency)
+                            norm_sources.add(normalized)
+                            changed = True
             cmd.extend(extra_sources)
             cmd.insert(1, openmp_flag(cc))
             if "src/ck_threadpool.c" in extra_sources and "-lpthread" not in cmd:

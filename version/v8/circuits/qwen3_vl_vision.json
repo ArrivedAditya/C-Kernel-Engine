@@ -578,7 +578,7 @@
       },
       "phases": {
         "prefill": {
-          "contract_id": "fp16_weight_fp16_input_llamafile_avx_fp32_output",
+          "contract_id": "fp16_weight_fp16_input_llamafile_x86_native_fp32_output",
           "validation": "validated",
           "evidence": "unittest/test_f16_gemm_llama_contract.py and Qwen3-VL layer-0 production X-ray at 4032x4304x1152"
         }

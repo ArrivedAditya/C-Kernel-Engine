@@ -6810,6 +6810,17 @@ static ck_attention_status_t ck_attention_decode_bf16_pytorch_cpu_flash(
 }
 #endif
 
+int ck_attention_bf16_pytorch_gqa_available(void)
+{
+#if defined(__AVX512F__)
+    pthread_once(&ck_pytorch_attention_once, ck_bind_pytorch_attention_primitives);
+    return ck_pytorch_sgemm_batch != NULL &&
+           ck_pytorch_attention_expf16 != NULL;
+#else
+    return 1;
+#endif
+}
+
 ck_attention_status_t attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract(
     const float *q_token,
     const uint16_t *k_cache,

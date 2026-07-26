@@ -17,6 +17,7 @@ LIB_PATH = Path(
 ).resolve()
 TORCH_CPU = Path(torch.__file__).resolve().parent / "lib" / "libtorch_cpu.so"
 os.environ.setdefault("CK_SLEEF_LIBRARY", str(TORCH_CPU))
+os.environ.setdefault("CK_MKL_LIBRARY", str(TORCH_CPU))
 
 LIB = ctypes.CDLL(str(LIB_PATH))
 KERNEL = LIB.attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract
@@ -59,6 +60,9 @@ FULL_PREFILL_KERNEL = (
 )
 FULL_PREFILL_KERNEL.argtypes = PREFILL_KERNEL.argtypes
 FULL_PREFILL_KERNEL.restype = ctypes.c_int
+PROVIDER_AVAILABLE = LIB.ck_attention_bf16_pytorch_gqa_available
+PROVIDER_AVAILABLE.argtypes = []
+PROVIDER_AVAILABLE.restype = ctypes.c_int
 
 CK_ATTN_REDUCTION_BF16_PYTORCH_SDPA = 4
 CK_ATTENTION_STATUS_OK = 0
@@ -399,6 +403,12 @@ def main() -> None:
         return
     if not TORCH_CPU.is_file():
         print("SKIP: PyTorch CPU SLEEF oracle library is unavailable")
+        return
+    if not PROVIDER_AVAILABLE():
+        print(
+            "SKIP: exact PyTorch BF16 GQA provider requires "
+            "MKL cblas_sgemm_batch and SLEEF Sleef_expf16_u10"
+        )
         return
 
     torch.set_num_threads(int(os.environ.get("CK_NUM_THREADS", "24")))
