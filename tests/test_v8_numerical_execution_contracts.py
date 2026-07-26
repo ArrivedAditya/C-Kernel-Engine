@@ -509,13 +509,13 @@ class NumericalExecutionContractTests(unittest.TestCase):
                     plan["kernel"]["function"], "swiglu_forward_ggml"
                 )
 
-    def test_qwen35_circuit_resolves_exact_recurrent_qkv_projection(self):
+    def test_qwen35_circuit_resolves_exact_q5_recurrent_qkv_projection(self):
         circuit_doc = resolver.load_json(
             ROOT / "version" / "v8" / "circuits" / "qwen35.json"
         )
         expected = {
-            "prefill": ("decoder.recurrent_qkv_projection.prefill", "gemm_nt_q5_k"),
-            "decode": ("decoder.recurrent_qkv_projection.decode", "gemv_q5_k"),
+            "prefill": ("decoder.recurrent_qkv_projection.q5_k.prefill", "gemm_nt_q5_k"),
+            "decode": ("decoder.recurrent_qkv_projection.q5_k.decode", "gemv_q5_k"),
         }
         for phase, (operation, kernel_id) in expected.items():
             with self.subTest(phase=phase):
@@ -536,6 +536,58 @@ class NumericalExecutionContractTests(unittest.TestCase):
                 semantics = plan["contract"]["semantics"]
                 self.assertEqual(semantics["compute"]["weight"], "int5")
                 self.assertEqual(semantics["reduction"]["merge_order"], "pairwise_tree")
+
+    def test_qwen35_circuit_resolves_exact_q8_recurrent_qkv_projection(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        expected = {
+            "prefill": (
+                "decoder.recurrent_qkv_projection.q8_0.prefill",
+                "gemm_nt_q8_0_q8_0_contract",
+            ),
+            "decode": (
+                "decoder.recurrent_qkv_projection.q8_0.decode",
+                "gemv_q8_0_q8_0_contract",
+            ),
+        }
+        for phase, (operation, kernel_id) in expected.items():
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    operation,
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "q8_0_weight_q8_0_input_llama_fp32_output",
+                )
+                self.assertEqual(plan["kernel"]["id"], kernel_id)
+                self.assertEqual(plan["kernel"]["function"], kernel_id)
+                semantics = plan["contract"]["semantics"]
+                self.assertEqual(semantics["compute"]["weight"], "int8")
+                self.assertEqual(semantics["reduction"]["merge_order"], "none")
+                kernel_map = resolver.load_json(
+                    ROOT / "version" / "v8" / "kernel_maps" / f"{kernel_id}.json"
+                )
+                self.assertEqual(kernel_map["call_abi"]["version"], 1)
+                self.assertEqual(
+                    [param["name"] for param in kernel_map["call_abi"]["params"]],
+                    ["A", "B", "bias", "C", "M", "N", "K"]
+                    if phase == "prefill"
+                    else ["y", "W", "x", "M", "K"],
+                )
+        legacy_bindings = resolver.load_json(
+            ROOT / "version" / "v8" / "kernel_maps" / "kernel_bindings.json"
+        )["bindings"]
+        for kernel_id in (
+            "gemm_nt_q8_0_q8_0_contract",
+            "gemv_q8_0_q8_0_contract",
+        ):
+            self.assertNotIn(kernel_id, legacy_bindings)
 
     def test_unsupported_mrope_storage_contract_hard_fails(self):
         doc = mrope_circuit("vision_mrope_fp64_input_fp64_compute_fp64_output")

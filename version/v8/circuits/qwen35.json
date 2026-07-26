@@ -205,9 +205,14 @@
         "axis_names": ["token", "head", "channel"]
       }
     },
-    "decoder.recurrent_qkv_projection.prefill": {
+    "decoder.recurrent_qkv_projection.q5_k.prefill": {
       "op": "gemm",
       "template_ops": ["recurrent_qkv_proj"],
+      "selector": {
+        "config_equals": {
+          "recurrent_qkv_weight_dtype": "q5_k"
+        }
+      },
       "phases": {
         "prefill": {
           "contract_id": "q5_k_weight_q8_k_input_avx2_fma_fp32_output",
@@ -222,14 +227,63 @@
         "axis_names": ["token", "channel"]
       }
     },
-    "decoder.recurrent_qkv_projection.decode": {
+    "decoder.recurrent_qkv_projection.q5_k.decode": {
       "op": "gemv",
       "template_ops": ["recurrent_qkv_proj"],
+      "selector": {
+        "config_equals": {
+          "recurrent_qkv_weight_dtype": "q5_k"
+        }
+      },
       "phases": {
         "decode": {
           "contract_id": "q5_k_weight_q8_k_input_avx2_fma_fp32_output",
           "validation": "validated",
           "evidence": "Q5_K adapter is bit-exact against the llama.cpp x86 production graph at M=1,N=6144,K=1024."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_qkv_projection.output",
+        "producer": "recurrent_qkv_proj",
+        "logical_layout": "row_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.recurrent_qkv_projection.q8_0.prefill": {
+      "op": "gemm",
+      "template_ops": ["recurrent_qkv_proj"],
+      "selector": {
+        "config_equals": {
+          "recurrent_qkv_weight_dtype": "q8_0"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "q8_0_weight_q8_0_input_llama_fp32_output",
+          "validation": "validated",
+          "evidence": "Canonical Q8_0 activation quantization and Q8_0 dot products pass the production llama.cpp vision and decoder parity corpus."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_qkv_projection.output",
+        "producer": "recurrent_qkv_proj",
+        "logical_layout": "row_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.recurrent_qkv_projection.q8_0.decode": {
+      "op": "gemv",
+      "template_ops": ["recurrent_qkv_proj"],
+      "selector": {
+        "config_equals": {
+          "recurrent_qkv_weight_dtype": "q8_0"
+        }
+      },
+      "phases": {
+        "decode": {
+          "contract_id": "q8_0_weight_q8_0_input_llama_fp32_output",
+          "validation": "validated",
+          "evidence": "Canonical Q8_0 activation quantization and Q8_0 dot products pass the production llama.cpp vision and decoder parity corpus."
         }
       },
       "checkpoint": {

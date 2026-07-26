@@ -741,7 +741,8 @@ def test_qwen35_safetensors_to_bump_smoke(tmp_path: Path) -> None:
                     "tie_word_embeddings": True,
                     "rope_parameters": {
                         "rope_theta": 10000000.0,
-                        "partial_rotary_factor": 0.25,
+                        "partial_rotary_factor": 1.0,
+                        "mrope_interleaved": True,
                         "mrope_section": [1, 1, 0],
                         "rope_type": "default",
                     },
@@ -822,6 +823,10 @@ def test_qwen35_safetensors_to_bump_smoke(tmp_path: Path) -> None:
     assert config["k_dim"] == 8
     assert config["v_dim"] == 8
     assert config["gate_dim"] == 8
+    assert config["rotary_dim"] == 4
+    assert config["mrope_sections"] == [1, 1, 0, 0]
+    assert config["mrope_n_dims"] == 4
+    assert config["mrope_interleaved"] is True
     dtypes = {entry["name"]: entry["dtype"] for entry in manifest["entries"]}
     assert dtypes["layer.0.ssm_conv1d"] == "fp32"
     assert "layer.0.attn_qkv" in names

@@ -8,11 +8,38 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str((REPO_ROOT / "version" / "v8" / "scripts").resolve()))
 
-from convert_gguf_to_bump_v8 import build_qwen35_execution_plan  # type: ignore
+from convert_gguf_to_bump_v8 import (  # type: ignore
+    GGUFError,
+    build_qwen35_execution_plan,
+    resolve_qwen35_recurrent_qkv_weight_dtype,
+)
 from build_ir_v8 import _hydrate_manifest_template  # type: ignore
 
 
 class V8Qwen35PolicyTests(unittest.TestCase):
+    def test_recurrent_qkv_dtype_uses_normalized_layer_kinds(self) -> None:
+        self.assertEqual(
+            resolve_qwen35_recurrent_qkv_weight_dtype(
+                ["recurrent", "full_attention", "recurrent"],
+                {
+                    "layer.0": {"attn_qkv": "q8_0"},
+                    "layer.1": {"attn_q": "q8_0"},
+                    "layer.2": {"attn_qkv": "q8_0"},
+                },
+            ),
+            "q8_0",
+        )
+
+    def test_mixed_recurrent_qkv_dtypes_hard_fail(self) -> None:
+        with self.assertRaisesRegex(GGUFError, "mixed dtypes"):
+            resolve_qwen35_recurrent_qkv_weight_dtype(
+                ["recurrent", "recurrent"],
+                {
+                    "layer.0": {"attn_qkv": "q5_k"},
+                    "layer.1": {"attn_qkv": "q8_0"},
+                },
+            )
+
     def test_build_qwen35_execution_plan_makes_state_ownership_explicit(self) -> None:
         plan = build_qwen35_execution_plan(
             ["recurrent", "recurrent", "recurrent", "full_attention"]

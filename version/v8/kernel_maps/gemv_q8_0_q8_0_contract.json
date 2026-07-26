@@ -27,5 +27,40 @@
     "c_declaration": "void gemv_q8_0_q8_0_contract(float *y, const void *W, const float *x, int M, int K);",
     "sources": ["src/kernels/gemm_kernels_q8_0_q8_0_contract.c", "src/kernels/gemm_kernels_q8_0.c"]
   },
+  "numerical_capabilities": [
+    {
+      "contract_id": "q8_0_weight_q8_0_input_llama_fp32_output",
+      "status": "validated",
+      "phases": ["decode"],
+      "function": "gemv_q8_0_q8_0_contract",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "compile_time",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": ["independent_rows"],
+          "dispatch": ["inline"],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp32",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"name": "y", "source": "output:y", "cast": "float*"},
+      {"name": "W", "source": "weight:_first_weight"},
+      {"name": "x", "source": "activation:x", "cast": "const float*"},
+      {"name": "M", "source": "dim:_output_dim"},
+      {"name": "K", "source": "dim:_input_dim"}
+    ]
+  },
   "notes": "Opt-in contract path: internally quantizes FP32 activations to Q8_0 before compute."
 }
