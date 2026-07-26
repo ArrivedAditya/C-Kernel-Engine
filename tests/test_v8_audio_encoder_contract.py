@@ -500,6 +500,7 @@ class AudioEncoderContractTests(unittest.TestCase):
         )
         torch_import = source.index("import torch")
         self.assertLess(capability_pin, torch_import)
+        self.assertIn('{"DEFAULT", "NO AVX"}', source)
         requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
         self.assertIn("pytest", requirements.splitlines())
         parsed = nightly.parse_sub_tests(
@@ -508,6 +509,21 @@ class AudioEncoderContractTests(unittest.TestCase):
         )
         self.assertEqual(len(parsed), 1)
         self.assertEqual(parsed[0].status, "pass")
+        failed = nightly.parse_sub_tests(
+            "audio_pytorch_erf_gelu "
+            "max_diff=1.19209290e-06 tol=5.0e-07 [FAIL] "
+            "rmse=1.3e-07 rmse_tol=1.25e-07\n"
+        )
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0].name, "audio_pytorch_erf_gelu")
+        self.assertEqual(failed[0].status, "fail")
+        self.assertEqual(failed[0].max_diff, 1.1920929e-6)
+        self.assertEqual(failed[0].tolerance, 5.0e-7)
+
+    def test_standalone_attention_library_links_its_bf16_gemm_dependency(self):
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        rule = makefile.split("$(LIB_ATTENTION):", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("src/kernels/gemm_kernels_bf16.c", rule)
 
     def test_pytorch_erf_gelu_uses_host_independent_scalar_libm(self):
         kernel = json.loads(
