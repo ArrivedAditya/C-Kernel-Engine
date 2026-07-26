@@ -125,6 +125,21 @@ int audio_wav_decode_pcm16_mono_f32(
     return info->frames;
 }
 
+int audio_wav_decode_memory_pcm16_mono_f32(
+    const uint8_t *bytes,
+    size_t byte_count,
+    float *mono,
+    int mono_capacity,
+    CKAudioWavInfo *info)
+{
+    const int status = audio_wav_parse_memory(bytes, byte_count, info);
+    if (status != 0) {
+        return status;
+    }
+    return audio_wav_decode_pcm16_mono_f32(
+        bytes, byte_count, info, mono, mono_capacity);
+}
+
 int audio_pcm_s16_to_mono_f32(
     const int16_t *interleaved,
     int n_frames,
@@ -229,6 +244,29 @@ int audio_resample_windowed_sinc_f32(
     return 0;
 }
 
+int audio_pad_or_truncate_f32(
+    const float *input,
+    int input_frames,
+    float *output,
+    int output_frames)
+{
+    if (input == NULL || output == NULL) {
+        return -1;
+    }
+    if (input_frames <= 0 || output_frames <= 0) {
+        return -2;
+    }
+    const int copied = input_frames < output_frames ? input_frames : output_frames;
+    memmove(output, input, (size_t)copied * sizeof(float));
+    if (copied < output_frames) {
+        memset(
+            output + copied,
+            0,
+            (size_t)(output_frames - copied) * sizeof(float));
+    }
+    return copied;
+}
+
 int audio_stft_precompute_tables_f32(
     int n_fft,
     float *window,
@@ -253,6 +291,61 @@ int audio_stft_precompute_tables_f32(
             const size_t index = (size_t)bin * n_fft + sample;
             cos_table[index] = cosf(angle);
             sin_table[index] = sinf(angle);
+        }
+    }
+    return 0;
+}
+
+static double audio_hz_to_mel_slaney(double hz)
+{
+    if (hz < 1000.0) {
+        return hz / (200.0 / 3.0);
+    }
+    return 15.0 + log(hz / 1000.0) / (log(6.4) / 27.0);
+}
+
+static double audio_mel_to_hz_slaney(double mel)
+{
+    if (mel < 15.0) {
+        return (200.0 / 3.0) * mel;
+    }
+    return 1000.0 * exp((log(6.4) / 27.0) * (mel - 15.0));
+}
+
+int audio_whisper_mel_filters_slaney_f32(
+    int sample_rate,
+    int n_fft,
+    int n_mels,
+    float *mel_filters)
+{
+    if (mel_filters == NULL) {
+        return -1;
+    }
+    if (sample_rate <= 0 || n_fft <= 0 || (n_fft & 1) != 0 || n_mels <= 0) {
+        return -2;
+    }
+    const int bins = n_fft / 2 + 1;
+    const double mel_min = audio_hz_to_mel_slaney(0.0);
+    const double mel_max = audio_hz_to_mel_slaney((double)sample_rate / 2.0);
+    for (int mel = 0; mel < n_mels; ++mel) {
+        const double left_mel =
+            mel_min + (mel_max - mel_min) * (double)mel / (double)(n_mels + 1);
+        const double center_mel =
+            mel_min + (mel_max - mel_min) * (double)(mel + 1) / (double)(n_mels + 1);
+        const double right_mel =
+            mel_min + (mel_max - mel_min) * (double)(mel + 2) / (double)(n_mels + 1);
+        const double left = audio_mel_to_hz_slaney(left_mel);
+        const double center = audio_mel_to_hz_slaney(center_mel);
+        const double right = audio_mel_to_hz_slaney(right_mel);
+        const double normalization = 2.0 / (right - left);
+        for (int bin = 0; bin < bins; ++bin) {
+            const double hz =
+                ((double)sample_rate / 2.0) * (double)bin / (double)(bins - 1);
+            const double lower = (hz - left) / (center - left);
+            const double upper = (right - hz) / (right - center);
+            const double triangle = fmax(0.0, fmin(lower, upper));
+            mel_filters[(size_t)mel * bins + bin] =
+                (float)(triangle * normalization);
         }
     }
     return 0;

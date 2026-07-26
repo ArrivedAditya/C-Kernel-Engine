@@ -1126,6 +1126,13 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         if is_encoder:
             cfg.update(
                 {
+                    "audio_sample_rate": 16000,
+                    "audio_sample_extent": context_length * 2 * 160,
+                    "audio_max_source_frames": context_length * 2 * 160 * 3,
+                    "audio_resample_radius": 16,
+                    "audio_n_fft": 400,
+                    "audio_hop_length": 160,
+                    "audio_power_bins": 201,
                     "audio_feature_channels": feature_channels,
                     "audio_feature_frames": context_length * 2,
                     "audio_conv1_output_channels": embed_dim,

@@ -12,6 +12,10 @@ inference lane only:
 and adds a v8-native multimodal route:
 
   decoder GGUF + mmproj GGUF + image -> run_multimodal_bridge_v8.py
+
+and a generated audio-transformer route:
+
+  generated encoder + generated decoder + WAV -> ck_model_run_audio_wav
 """
 
 import argparse
@@ -1343,6 +1347,33 @@ def run_pipeline(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_audio_pipeline(args: argparse.Namespace) -> int:
+    module_path = SCRIPTS_DIR / "run_whisper_v8.py"
+    spec = importlib.util.spec_from_file_location("ck_v8_audio_runtime", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load v8 audio runtime: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    argv = [
+        "run",
+        "--encoder-run-dir",
+        str(args.encoder_run_dir),
+        "--decoder-run-dir",
+        str(args.decoder_run_dir),
+        "--wav",
+        str(args.wav),
+        "--language",
+        str(args.language),
+        "--task",
+        str(args.task),
+        "--max-tokens",
+        str(int(args.max_tokens)),
+    ]
+    if args.output is not None:
+        argv.extend(["--output", str(args.output)])
+    return int(module.main(argv))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="C-Kernel-Engine v8 inference runner",
@@ -1358,6 +1389,11 @@ Examples:
   version/v8/scripts/cks-v8-run run hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/Qwen3VL-8B-Instruct-Q4_K_M.gguf \\
     --mmproj hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf \\
     --image-path version/v8/test_assets/v8_vision_doc_card_72.png --prompt "Explain this image."
+
+  version/v8/scripts/cks-v8-run audio \\
+    --encoder-run-dir /path/to/whisper-tiny-encoder \\
+    --decoder-run-dir /path/to/whisper-tiny-decoder \\
+    --wav /path/to/audio.wav
 """,
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -1415,6 +1451,19 @@ Examples:
         help="Optional vision encoder activation override(s) in op=dtype form, e.g. out_proj=q8",
     )
 
+    audio_parser = subparsers.add_parser(
+        "audio", help="Transcribe or translate WAV audio with generated runtimes"
+    )
+    audio_parser.add_argument("--encoder-run-dir", type=Path, required=True)
+    audio_parser.add_argument("--decoder-run-dir", type=Path, required=True)
+    audio_parser.add_argument("--wav", type=Path, required=True)
+    audio_parser.add_argument("--language", default="en")
+    audio_parser.add_argument(
+        "--task", choices=("transcribe", "translate"), default="transcribe"
+    )
+    audio_parser.add_argument("--max-tokens", type=int, default=128)
+    audio_parser.add_argument("--output", type=Path)
+
     subparsers.add_parser("list", help="List cached models")
 
     clean_parser = subparsers.add_parser("clean", help="Clean cached models")
@@ -1426,6 +1475,8 @@ Examples:
     try:
         if args.command == "run":
             return run_pipeline(args)
+        if args.command == "audio":
+            return run_audio_pipeline(args)
         if args.command == "list":
             if CACHE_DIR.exists():
                 models = sorted(path for path in CACHE_DIR.iterdir() if path.is_dir())

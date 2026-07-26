@@ -3,12 +3,13 @@
   "op": "audio_stft",
   "variant": "centered_hann_precomputed_radix20x20_fft400_fp32",
   "quant": {"weight": "fp32", "activation": "fp32", "output": "fp32"},
-  "inputs": [{"name": "samples", "dtype": "fp32", "shape": ["N_samples"]}],
-  "weights": [
+  "inputs": [
+    {"name": "samples", "dtype": "fp32", "shape": ["N_samples"]},
     {"name": "window", "dtype": "fp32", "shape": [400]},
     {"name": "cos_table", "dtype": "fp32", "shape": [201, 400]},
     {"name": "sin_table", "dtype": "fp32", "shape": [201, 400]}
   ],
+  "weights": [],
   "outputs": [{"name": "power", "dtype": "fp32", "shape": ["N_frames", 201]}],
   "scratch": [{"name": "fft_scratch", "dtype": "fp32", "shape": [800]}],
   "dims": ["n_samples", "hop_length", "n_frames"],
@@ -30,9 +31,9 @@
   "call_abi": {"version": 1, "params": [
     {"name": "samples", "source": "activation:samples", "cast": "const float*"},
     {"name": "n_samples", "source": "dim:n_samples"},
-    {"name": "window", "source": "weight:window", "cast": "const float*"},
-    {"name": "cos_table", "source": "weight:cos_table", "cast": "const float*"},
-    {"name": "sin_table", "source": "weight:sin_table", "cast": "const float*"},
+    {"name": "window", "source": "activation:window", "cast": "const float*"},
+    {"name": "cos_table", "source": "activation:cos_table", "cast": "const float*"},
+    {"name": "sin_table", "source": "activation:sin_table", "cast": "const float*"},
     {"name": "hop_length", "source": "dim:hop_length"},
     {"name": "power", "source": "output:power", "cast": "float*"},
     {"name": "n_frames", "source": "dim:n_frames"},

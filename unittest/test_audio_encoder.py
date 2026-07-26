@@ -95,11 +95,20 @@ lib.audio_wav_decode_pcm16_mono_f32.argtypes = [
     _U8_P, ctypes.c_size_t, ctypes.POINTER(CKAudioWavInfo), _FLOAT_P, ctypes.c_int,
 ]
 lib.audio_wav_decode_pcm16_mono_f32.restype = ctypes.c_int
+lib.audio_wav_decode_memory_pcm16_mono_f32.argtypes = [
+    _U8_P, ctypes.c_size_t, _FLOAT_P, ctypes.c_int,
+    ctypes.POINTER(CKAudioWavInfo),
+]
+lib.audio_wav_decode_memory_pcm16_mono_f32.restype = ctypes.c_int
 lib.audio_resample_windowed_sinc_f32.argtypes = [
     _FLOAT_P, ctypes.c_int, ctypes.c_int, _FLOAT_P, ctypes.c_int,
     ctypes.c_int, ctypes.c_int,
 ]
 lib.audio_resample_windowed_sinc_f32.restype = ctypes.c_int
+lib.audio_pad_or_truncate_f32.argtypes = [
+    _FLOAT_P, ctypes.c_int, _FLOAT_P, ctypes.c_int,
+]
+lib.audio_pad_or_truncate_f32.restype = ctypes.c_int
 lib.audio_stft_power_fft400_f32.argtypes = [
     _FLOAT_P, ctypes.c_int, _FLOAT_P, _FLOAT_P, _FLOAT_P,
     ctypes.c_int, _FLOAT_P, ctypes.c_int, _FLOAT_P,
@@ -141,6 +150,18 @@ def check_wav_pcm16() -> None:
         [-1.0, 32767.0 / 32768.0, 0.0, 3456.0 / 32768.0], dtype=np.float32,
     )
     assert np.array_equal(actual, expected)
+    fused_actual = np.empty(info.frames, dtype=np.float32)
+    fused_info = CKAudioWavInfo()
+    assert lib.audio_wav_decode_memory_pcm16_mono_f32(
+        wav.ctypes.data_as(_U8_P), wav.size, _fptr(fused_actual),
+        fused_actual.size, ctypes.byref(fused_info),
+    ) == info.frames
+    assert np.array_equal(fused_actual, expected)
+    assert (
+        fused_info.channels,
+        fused_info.sample_rate,
+        fused_info.frames,
+    ) == (2, 48000, 4)
     truncated = wav[:-1].copy()
     assert lib.audio_wav_parse_memory(
         truncated.ctypes.data_as(_U8_P), truncated.size, ctypes.byref(info)
@@ -160,6 +181,21 @@ def check_pcm() -> None:
     expected = np.array([-1.0, 32767.0 / 32768.0, 0.0, 3456.0 / 32768.0], dtype=np.float32)
     assert np.array_equal(actual, expected)
     print("audio_pcm_s16_stereo_to_mono max_diff=0 tol=0 [PASS]")
+
+
+def check_pad_or_truncate() -> None:
+    source = np.array([1.0, -2.0, 3.0], dtype=np.float32)
+    padded = np.full(5, 99.0, dtype=np.float32)
+    assert lib.audio_pad_or_truncate_f32(
+        _fptr(source), source.size, _fptr(padded), padded.size
+    ) == source.size
+    assert np.array_equal(padded, np.array([1.0, -2.0, 3.0, 0.0, 0.0], dtype=np.float32))
+    truncated = np.empty(2, dtype=np.float32)
+    assert lib.audio_pad_or_truncate_f32(
+        _fptr(source), source.size, _fptr(truncated), truncated.size
+    ) == truncated.size
+    assert np.array_equal(truncated, source[:2])
+    print("audio_pad_or_truncate max_diff=0 tol=0 [PASS]")
 
 
 def check_resample() -> None:
@@ -395,6 +431,7 @@ def main() -> None:
     torch.set_num_threads(1)
     check_wav_pcm16()
     check_pcm()
+    check_pad_or_truncate()
     check_resample()
     check_bandlimited_resample()
     check_precomputed_stft()
@@ -405,7 +442,7 @@ def main() -> None:
     _check_cross_attention("audio_encoder_self_attention_equal", 6, 11, 11, 64)
     _check_cross_attention("audio_cross_attention_unequal_small", 3, 5, 17, 8)
     _check_cross_attention("audio_cross_attention_whisper_decode", 6, 1, 1500, 64)
-    print("ALL TESTS PASSED (14/14)")
+    print("ALL TESTS PASSED (15/15)")
 
 
 if __name__ == "__main__":

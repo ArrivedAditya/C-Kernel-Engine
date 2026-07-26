@@ -1,0 +1,34 @@
+{
+  "id": "audio_wav_decode_memory_pcm16_mono_f32",
+  "op": "audio_wav_decode",
+  "variant": "riff_wave_pcm16_parse_channel_mean_fp32",
+  "quant": {"weight": "none", "activation": "uint8", "output": "fp32"},
+  "inputs": [{"name": "wav_bytes", "dtype": "uint8", "shape": ["N_bytes"]}],
+  "weights": [],
+  "outputs": [{"name": "mono", "dtype": "fp32", "shape": ["N_source_frames"]}],
+  "scratch": [{"name": "wav_info", "dtype": "uint8", "shape": ["sizeof_CKAudioWavInfo"]}],
+  "dims": ["wav_byte_count", "mono_capacity"],
+  "impl": {
+    "function": "audio_wav_decode_memory_pcm16_mono_f32",
+    "c_declaration": "int audio_wav_decode_memory_pcm16_mono_f32(const uint8_t *bytes, size_t byte_count, float *mono, int mono_capacity, CKAudioWavInfo *info);",
+    "sources": ["src/kernels/audio_kernels.c"]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [{
+    "contract_id": "audio_wav_pcm16_parse_channel_mean_fp32",
+    "status": "validated",
+    "phases": ["prefill"],
+    "function": "audio_wav_decode_memory_pcm16_mono_f32",
+    "explicit_selector": true,
+    "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "contract_defined"}},
+    "arithmetic": {"partial_accumulator": "fp32", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "independent_outputs"}
+  }],
+  "call_abi": {"version": 1, "params": [
+    {"name": "bytes", "source": "runtime:audio_wav_bytes", "cast": "const uint8_t*"},
+    {"name": "byte_count", "source": "runtime:audio_wav_byte_count"},
+    {"name": "mono", "source": "runtime:audio_mono", "cast": "float*"},
+    {"name": "mono_capacity", "source": "runtime:audio_mono_capacity"},
+    {"name": "info", "source": "runtime:audio_wav_info", "cast": "CKAudioWavInfo*"}
+  ]},
+  "tests": {"unit": ["unittest/test_audio_encoder.py"]}
+}

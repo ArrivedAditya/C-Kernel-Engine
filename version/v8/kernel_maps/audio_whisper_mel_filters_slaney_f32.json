@@ -1,0 +1,33 @@
+{
+  "id": "audio_whisper_mel_filters_slaney_f32",
+  "op": "audio_mel_filters",
+  "variant": "slaney_normalized_triangular_fp32",
+  "quant": {"weight": "none", "activation": "none", "output": "fp32"},
+  "inputs": [],
+  "weights": [],
+  "outputs": [{"name": "mel_filters", "dtype": "fp32", "shape": ["N_mels", "N_bins"]}],
+  "scratch": [],
+  "dims": ["sample_rate", "n_fft", "n_mels"],
+  "impl": {
+    "function": "audio_whisper_mel_filters_slaney_f32",
+    "c_declaration": "int audio_whisper_mel_filters_slaney_f32(int sample_rate, int n_fft, int n_mels, float *mel_filters);",
+    "sources": ["src/kernels/audio_kernels.c"]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [{
+    "contract_id": "audio_whisper_mel_filters_slaney_fp32",
+    "status": "validated",
+    "phases": ["prefill"],
+    "function": "audio_whisper_mel_filters_slaney_f32",
+    "explicit_selector": true,
+    "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "contract_defined"}},
+    "arithmetic": {"partial_accumulator": "fp64", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "independent_outputs"}
+  }],
+  "call_abi": {"version": 1, "params": [
+    {"name": "sample_rate", "source": "dim:sample_rate"},
+    {"name": "n_fft", "source": "dim:n_fft"},
+    {"name": "n_mels", "source": "dim:n_mels"},
+    {"name": "mel_filters", "source": "output:mel_filters", "cast": "float*"}
+  ]},
+  "tests": {"unit": ["unittest/test_audio_encoder.py"]}
+}
