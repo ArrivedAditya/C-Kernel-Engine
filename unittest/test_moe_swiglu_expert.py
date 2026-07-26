@@ -27,6 +27,7 @@ if not LIB_PATH.exists():  # pragma: no cover
 LIB = ctypes.CDLL(str(LIB_PATH))
 fptr = ctypes.POINTER(ctypes.c_float)
 iptr = ctypes.POINTER(ctypes.c_int)
+u16ptr = ctypes.POINTER(ctypes.c_uint16)
 
 LIB.moe_swiglu_expert_forward_f32.argtypes = [fptr, iptr, fptr, fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 LIB.moe_swiglu_expert_forward_f32.restype = None
@@ -34,6 +35,10 @@ LIB.moe_swiglu_expert_backward_f32.argtypes = [fptr, fptr, iptr, fptr, fptr, fpt
 LIB.moe_swiglu_expert_backward_f32.restype = None
 LIB.moe_swiglu_shared_forward_f32.argtypes = [fptr, fptr, fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 LIB.moe_swiglu_shared_forward_f32.restype = None
+LIB.moe_swiglu_expert_forward_bf16.argtypes = [fptr, iptr, fptr, u16ptr, u16ptr, u16ptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+LIB.moe_swiglu_expert_forward_bf16.restype = None
+LIB.moe_swiglu_shared_forward_bf16.argtypes = [fptr, fptr, u16ptr, u16ptr, u16ptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+LIB.moe_swiglu_shared_forward_bf16.restype = None
 LIB.moe_swiglu_shared_backward_f32.argtypes = [fptr, fptr, fptr, fptr, fptr, fptr, fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 LIB.moe_swiglu_shared_backward_f32.restype = None
 
@@ -44,6 +49,19 @@ def _fptr(a: np.ndarray) -> ctypes.POINTER(ctypes.c_float):
 
 def _iptr(a: np.ndarray) -> ctypes.POINTER(ctypes.c_int):
     return a.ctypes.data_as(iptr)
+
+def _u16ptr(a: np.ndarray) -> ctypes.POINTER(ctypes.c_uint16):
+    return a.ctypes.data_as(u16ptr)
+
+
+def _bf16_bits(a: np.ndarray) -> np.ndarray:
+    values = torch.tensor(a, dtype=torch.float32).to(torch.bfloat16)
+    return np.ascontiguousarray(values.view(torch.uint16).numpy())
+
+
+def _bf16_float(a: np.ndarray) -> np.ndarray:
+    bits = _bf16_bits(a)
+    return np.ascontiguousarray((bits.astype(np.uint32) << 16).view(np.float32))
 
 
 def torch_routed(hidden, indices, weights, gate, up, down):
@@ -68,6 +86,59 @@ def torch_shared(hidden, routed, gate, up, down):
 
 
 class TestMoESwiGLUExpert(unittest.TestCase):
+    def test_bf16_weight_forward_matches_pytorch_bf16_values(self) -> None:
+        rows, hidden_dim, intermediate_dim, n_experts, top_k = 3, 8, 6, 5, 2
+        rng = np.random.default_rng(109)
+        hidden_np = np.ascontiguousarray((0.2 * rng.standard_normal((rows, hidden_dim))).astype(np.float32))
+        gate_np = np.ascontiguousarray((0.13 * rng.standard_normal((n_experts, intermediate_dim, hidden_dim))).astype(np.float32))
+        up_np = np.ascontiguousarray((0.11 * rng.standard_normal((n_experts, intermediate_dim, hidden_dim))).astype(np.float32))
+        down_np = np.ascontiguousarray((0.09 * rng.standard_normal((n_experts, hidden_dim, intermediate_dim))).astype(np.float32))
+        shared_gate_np = np.ascontiguousarray(gate_np[0])
+        shared_up_np = np.ascontiguousarray(up_np[0])
+        shared_down_np = np.ascontiguousarray(down_np[0])
+        idx_np = np.ascontiguousarray(np.array([[0, 2], [3, 1], [4, 0]], dtype=np.int32))
+        weight_np = np.ascontiguousarray(np.array([[0.7, 0.3], [0.4, 0.6], [0.2, 0.8]], dtype=np.float32))
+        routed_np = np.ascontiguousarray((0.1 * rng.standard_normal((rows, hidden_dim))).astype(np.float32))
+
+        gate_bits, up_bits, down_bits = _bf16_bits(gate_np), _bf16_bits(up_np), _bf16_bits(down_np)
+        shared_gate_bits = _bf16_bits(shared_gate_np)
+        shared_up_bits = _bf16_bits(shared_up_np)
+        shared_down_bits = _bf16_bits(shared_down_np)
+
+        routed_out = np.empty_like(hidden_np)
+        shared_out = np.empty_like(hidden_np)
+        LIB.moe_swiglu_expert_forward_bf16(
+            _fptr(hidden_np), _iptr(idx_np), _fptr(weight_np),
+            _u16ptr(gate_bits), _u16ptr(up_bits), _u16ptr(down_bits),
+            _fptr(routed_out), rows, hidden_dim, intermediate_dim, n_experts, top_k,
+        )
+        LIB.moe_swiglu_shared_forward_bf16(
+            _fptr(hidden_np), _fptr(routed_np),
+            _u16ptr(shared_gate_bits), _u16ptr(shared_up_bits), _u16ptr(shared_down_bits),
+            _fptr(shared_out), rows, hidden_dim, intermediate_dim,
+        )
+
+        hidden = torch.tensor(hidden_np, dtype=torch.float32)
+        indices = torch.tensor(idx_np, dtype=torch.long)
+        weights = torch.tensor(weight_np, dtype=torch.float32)
+        routed_ref = torch_routed(
+            hidden,
+            indices,
+            weights,
+            torch.tensor(_bf16_float(gate_np)),
+            torch.tensor(_bf16_float(up_np)),
+            torch.tensor(_bf16_float(down_np)),
+        )
+        shared_ref = torch_shared(
+            hidden,
+            torch.tensor(routed_np),
+            torch.tensor(_bf16_float(shared_gate_np)),
+            torch.tensor(_bf16_float(shared_up_np)),
+            torch.tensor(_bf16_float(shared_down_np)),
+        )
+        np.testing.assert_allclose(routed_out, routed_ref.numpy(), atol=2e-6, rtol=0.0)
+        np.testing.assert_allclose(shared_out, shared_ref.numpy(), atol=2e-6, rtol=0.0)
+
     def test_routed_forward_backward(self) -> None:
         rows, hidden_dim, intermediate_dim, n_experts, top_k = 4, 9, 7, 6, 3
         rng = np.random.default_rng(101)

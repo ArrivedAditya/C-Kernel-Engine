@@ -29,6 +29,7 @@
 
 #include "ckernel_engine.h"
 #include "ckernel_dtype.h"
+#include "bf16_utils.h"
 
 #ifdef __AVX512F__
 #include <immintrin.h>
@@ -450,6 +451,61 @@ void moe_swiglu_expert_forward_f32(const float *hidden,
     }
 }
 
+void moe_swiglu_expert_forward_bf16(const float *hidden,
+                                    const int *indices,
+                                    const float *routing_weights,
+                                    const uint16_t *expert_gate,
+                                    const uint16_t *expert_up,
+                                    const uint16_t *expert_down,
+                                    float *output,
+                                    int rows,
+                                    int hidden_dim,
+                                    int intermediate_dim,
+                                    int n_experts,
+                                    int top_k)
+{
+    if (!hidden || !indices || !routing_weights || !expert_gate || !expert_up || !expert_down || !output ||
+        rows <= 0 || hidden_dim <= 0 || intermediate_dim <= 0 || n_experts <= 0 || top_k <= 0) {
+        return;
+    }
+
+    for (size_t p = 0; p < (size_t)rows * (size_t)hidden_dim; ++p) output[p] = 0.0f;
+
+    float gate[intermediate_dim];
+    float up[intermediate_dim];
+    float act[intermediate_dim];
+
+    for (int r = 0; r < rows; ++r) {
+        const float *x = hidden + (size_t)r * (size_t)hidden_dim;
+        float *y = output + (size_t)r * (size_t)hidden_dim;
+        for (int slot = 0; slot < top_k; ++slot) {
+            const int e = indices[(size_t)r * (size_t)top_k + (size_t)slot];
+            if (e < 0 || e >= n_experts) continue;
+            const float route_w = routing_weights[(size_t)r * (size_t)top_k + (size_t)slot];
+
+            for (int i = 0; i < intermediate_dim; ++i) {
+                float gv = 0.0f;
+                float uv = 0.0f;
+                for (int h = 0; h < hidden_dim; ++h) {
+                    gv += bf16_to_float(expert_gate[ck_moe_up_idx(e, i, h, intermediate_dim, hidden_dim)]) * x[h];
+                    uv += bf16_to_float(expert_up[ck_moe_up_idx(e, i, h, intermediate_dim, hidden_dim)]) * x[h];
+                }
+                gate[i] = gv;
+                up[i] = uv;
+                act[i] = ck_moe_silu_f32(gv) * uv;
+            }
+
+            for (int h = 0; h < hidden_dim; ++h) {
+                float v = 0.0f;
+                for (int i = 0; i < intermediate_dim; ++i) {
+                    v += bf16_to_float(expert_down[ck_moe_down_idx(e, h, i, hidden_dim, intermediate_dim)]) * act[i];
+                }
+                y[h] += route_w * v;
+            }
+        }
+    }
+}
+
 void moe_swiglu_expert_backward_f32(const float *d_output,
                                     const float *hidden,
                                     const int *indices,
@@ -583,6 +639,50 @@ void moe_swiglu_shared_forward_f32(const float *hidden,
             float v = route ? route[h] : 0.0f;
             for (int i = 0; i < intermediate_dim; ++i) {
                 v += shared_down[(size_t)h * (size_t)intermediate_dim + (size_t)i] * act[i];
+            }
+            y[h] = v;
+        }
+    }
+}
+
+void moe_swiglu_shared_forward_bf16(const float *hidden,
+                                    const float *routed,
+                                    const uint16_t *shared_gate,
+                                    const uint16_t *shared_up,
+                                    const uint16_t *shared_down,
+                                    float *output,
+                                    int rows,
+                                    int hidden_dim,
+                                    int intermediate_dim)
+{
+    if (!hidden || !shared_gate || !shared_up || !shared_down || !output ||
+        rows <= 0 || hidden_dim <= 0 || intermediate_dim <= 0) {
+        return;
+    }
+
+    float gate[intermediate_dim];
+    float up[intermediate_dim];
+    float act[intermediate_dim];
+
+    for (int r = 0; r < rows; ++r) {
+        const float *x = hidden + (size_t)r * (size_t)hidden_dim;
+        const float *route = routed ? (routed + (size_t)r * (size_t)hidden_dim) : NULL;
+        float *y = output + (size_t)r * (size_t)hidden_dim;
+        for (int i = 0; i < intermediate_dim; ++i) {
+            float gv = 0.0f;
+            float uv = 0.0f;
+            for (int h = 0; h < hidden_dim; ++h) {
+                gv += bf16_to_float(shared_gate[(size_t)i * (size_t)hidden_dim + (size_t)h]) * x[h];
+                uv += bf16_to_float(shared_up[(size_t)i * (size_t)hidden_dim + (size_t)h]) * x[h];
+            }
+            gate[i] = gv;
+            up[i] = uv;
+            act[i] = ck_moe_silu_f32(gv) * uv;
+        }
+        for (int h = 0; h < hidden_dim; ++h) {
+            float v = route ? route[h] : 0.0f;
+            for (int i = 0; i < intermediate_dim; ++i) {
+                v += bf16_to_float(shared_down[(size_t)h * (size_t)intermediate_dim + (size_t)i]) * act[i];
             }
             y[h] = v;
         }

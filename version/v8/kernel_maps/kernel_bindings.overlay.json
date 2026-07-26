@@ -1950,6 +1950,22 @@
         }
       ]
     },
+    "group_limited_topk_router_sigmoid_f32": {
+      "note": "Group-limited noaux_tc routing from raw logits with an internal FP32 sigmoid.",
+      "params": [
+        {"name": "logits", "source": "activation:logits", "cast": "const float*"},
+        {"name": "correction_bias", "source": "weight_f:moe_router_bias"},
+        {"name": "indices", "source": "output:indices", "cast": "int*"},
+        {"name": "weights", "source": "output:weights", "cast": "float*"},
+        {"name": "rows", "source": "dim:_m"},
+        {"name": "n_experts", "source": "dim:n_routed_experts"},
+        {"name": "top_k", "source": "dim:num_experts_per_tok"},
+        {"name": "n_group", "source": "dim:router_num_groups"},
+        {"name": "topk_group", "source": "dim:router_topk_group"},
+        {"name": "norm_topk_prob", "source": "dim:router_norm_topk_prob"},
+        {"name": "routed_scaling_factor", "source": "dim:routed_scaling_factor"}
+      ]
+    },
     "moe_relu2_expert_forward_q5_0_q8_0": {
       "params": [
         {
@@ -2826,6 +2842,49 @@
         {
           "name": "aligned_embed_dim",
           "source": "dim:kv_lora_input_dim"
+        },
+        {
+          "name": "eps",
+          "source": "dim:rms_eps"
+        }
+      ]
+    },
+    "rmsnorm_forward_strided_f32": {
+      "note": "Generic RMSNorm with independent physical input and output row strides.",
+      "params": [
+        {
+          "name": "input",
+          "source": "activation:input",
+          "cast": "const float*"
+        },
+        {
+          "name": "gamma",
+          "source": "weight_f:mla_kv_a_norm"
+        },
+        {
+          "name": "output",
+          "source": "output:output",
+          "cast": "float*"
+        },
+        {
+          "name": "rstd_cache",
+          "source": "null"
+        },
+        {
+          "name": "tokens",
+          "source": "dim:seq_len"
+        },
+        {
+          "name": "d_model",
+          "source": "dim:kv_lora_rank"
+        },
+        {
+          "name": "input_stride",
+          "source": "dim:kv_lora_input_dim"
+        },
+        {
+          "name": "output_stride",
+          "source": "dim:kv_lora_rank"
         },
         {
           "name": "eps",

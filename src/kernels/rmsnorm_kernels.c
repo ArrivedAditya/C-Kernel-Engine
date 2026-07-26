@@ -90,13 +90,14 @@ static void rmsnorm_forward_strict_scalar(const float *input,
                                           float *rstd_cache,
                                           int tokens,
                                           int d_model,
-                                          int aligned_embed_dim,
+                                          int input_stride,
+                                          int output_stride,
                                           float eps)
 {
     const float inv_d = 1.0f / (float)d_model;
     for (int t = 0; t < tokens; ++t) {
-        const float *x = input + (size_t)t * (size_t)aligned_embed_dim;
-        float *y = output + (size_t)t * (size_t)aligned_embed_dim;
+        const float *x = input + (size_t)t * (size_t)input_stride;
+        float *y = output + (size_t)t * (size_t)output_stride;
 
         float sum_sq = 0.0f;
         for (int d = 0; d < d_model; ++d) {
@@ -113,7 +114,7 @@ static void rmsnorm_forward_strict_scalar(const float *input,
             const float x_hat = x[d] * rstd;
             y[d] = x_hat * gamma[d];
         }
-        for (int d = d_model; d < aligned_embed_dim; ++d) {
+        for (int d = d_model; d < output_stride; ++d) {
             y[d] = 0.0f;
         }
     }
@@ -408,28 +409,30 @@ static void rmsnorm_backward_strict_scalar(const float *d_output,
  *
  * After changes: make test && make llamacpp-parity-full
  */
-void rmsnorm_forward(const float *input,
-                     const float *gamma,
-                     float *output,
-                     float *rstd_cache,
-                     int tokens,
-                     int d_model,
-                     int aligned_embed_dim,
-                     float eps)
+void rmsnorm_forward_strided_f32(const float *input,
+                                 const float *gamma,
+                                 float *output,
+                                 float *rstd_cache,
+                                 int tokens,
+                                 int d_model,
+                                 int input_stride,
+                                 int output_stride,
+                                 float eps)
 {
     int T = tokens;
     int D = d_model;
-    int aligned = aligned_embed_dim;
 
     const char *exact_env = getenv("CK_RMSNORM_EXACT");
     if (ck_strict_parity_enabled() || (exact_env && atoi(exact_env) != 0)) {
-        rmsnorm_forward_strict_scalar(input, gamma, output, rstd_cache, T, D, aligned, eps);
+        rmsnorm_forward_strict_scalar(
+            input, gamma, output, rstd_cache, T, D, input_stride, output_stride, eps
+        );
         return;
     }
 
     for (int t = 0; t < T; ++t) {
-        const float *x = input + (size_t)t * aligned;
-        float *y = output + (size_t)t * aligned;
+        const float *x = input + (size_t)t * (size_t)input_stride;
+        float *y = output + (size_t)t * (size_t)output_stride;
 
 #if defined(__AVX512F__)
         // AVX-512: Process 16 floats at a time
@@ -529,10 +532,44 @@ void rmsnorm_forward(const float *input,
 #endif
 
         // Zero padding (if any)
-        for (int d = D; d < aligned; ++d) {
+        for (int d = D; d < output_stride; ++d) {
             y[d] = 0.0f;
         }
     }
+}
+
+void rmsnorm_forward(const float *input,
+                     const float *gamma,
+                     float *output,
+                     float *rstd_cache,
+                     int tokens,
+                     int d_model,
+                     int aligned_embed_dim,
+                     float eps)
+{
+    rmsnorm_forward_strided_f32(
+        input,
+        gamma,
+        output,
+        rstd_cache,
+        tokens,
+        d_model,
+        aligned_embed_dim,
+        aligned_embed_dim,
+        eps
+    );
+}
+
+void rmsnorm_forward_kv_lora(const float *input,
+                             const float *gamma,
+                             float *output,
+                             float *rstd_cache,
+                             int tokens,
+                             int d_model,
+                             int aligned_embed_dim,
+                             float eps)
+{
+    rmsnorm_forward(input, gamma, output, rstd_cache, tokens, d_model, aligned_embed_dim, eps);
 }
 
 void rmsnorm_forward_no_weight(const float *input,

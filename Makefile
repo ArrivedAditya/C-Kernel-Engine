@@ -3630,7 +3630,7 @@ test-numerical-contracts: $(LIB)
 	@$(MAKE) --no-print-directory test-q6k-prefill-routing-exact
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_attention_contracts_v8.py
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_numerical_execution_contracts_v8.py
-	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/xray_execution_state_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py
+	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/xray_execution_state_v8.py version/v8/scripts/xray_decoder_pytorch_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py
 	@$(PYTHON) tests/test_v8_attention_contracts.py
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
 	@$(PYTHON) unittest/bf16/test_layernorm_storage_contract_bf16.py
@@ -3642,6 +3642,9 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) unittest/bf16/test_residual_storage_contract_bf16.py
 	@$(PYTHON) unittest/bf16/test_gelu_pytorch_tanh_storage_bf16.py
 	@$(PYTHON) unittest/test_rmsnorm_numerical_contract.py
+	@$(PYTHON) unittest/test_rmsnorm_strided.py
+	@$(PYTHON) unittest/test_nemotron_router.py
+	@$(PYTHON) unittest/test_moe_swiglu_expert.py
 	@if [ -n "$${CK_LLAMA_CPP_ROOT:-}" ] && [ -d "$${CK_LLAMA_CPP_ROOT}/build/bin" ]; then \
 		$(MAKE) --no-print-directory test-rmsnorm-llama-production \
 			Q4Q6_LLAMA_CPP_DIR="$${CK_LLAMA_CPP_ROOT}" \
@@ -3657,6 +3660,7 @@ test-numerical-contracts: $(LIB)
 	fi
 	@PYTHONPATH=unittest CK_NUMERICAL_CAPABILITY_REPORT=version/v8/.cache/reports/mrope_capabilities_latest.json $(PYTHON) -c "import test_vision; test_vision.test_mrope_qk_vision_storage_matrix()"
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
+	@$(PYTHON) tests/test_v8_xray_decoder_pytorch.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
 	@$(PYTHON) tests/test_v8_xray_text_recurrent.py
 	@$(PYTHON) tests/test_v8_text_prompt_certification.py
@@ -3698,6 +3702,7 @@ test-bf16-xray:
 		version/v8/scripts/xray_vision_parity_v8.py \
 		version/v8/scripts/xray_numerical_parity_v8.py \
 		version/v8/scripts/xray_attention_sensitivity_v8.py \
+		version/v8/scripts/xray_decoder_pytorch_v8.py \
 		version/v8/scripts/xray_execution_state_v8.py \
 		version/v8/scripts/xray_text_recurrent_v8.py \
 		version/v8/scripts/build_xray_checkpoint_manifest_v8.py \
@@ -3708,6 +3713,7 @@ test-bf16-xray:
 	@$(PYTHON) -c 'import json; from jsonschema import Draft202012Validator; Draft202012Validator.check_schema(json.load(open("version/v8/schemas/xray_attention_sensitivity.schema.json", encoding="utf-8")))'
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
+	@$(PYTHON) tests/test_v8_xray_decoder_pytorch.py
 	@$(PYTHON) tests/test_v8_xray_attention_sensitivity.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
 	@$(PYTHON) tests/test_v8_xray_text_recurrent.py

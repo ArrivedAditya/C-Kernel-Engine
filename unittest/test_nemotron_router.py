@@ -33,6 +33,12 @@ LIB.nemotron_group_limited_topk_router_f32.argtypes = [
     ctypes.c_int, ctypes.c_float,
 ]
 LIB.nemotron_group_limited_topk_router_f32.restype = None
+LIB.group_limited_topk_router_sigmoid_f32.argtypes = [
+    fptr, fptr, iptr, fptr,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    ctypes.c_int, ctypes.c_float,
+]
+LIB.group_limited_topk_router_sigmoid_f32.restype = None
 
 
 def _fptr(a: np.ndarray) -> ctypes.POINTER(ctypes.c_float):
@@ -126,6 +132,34 @@ class TestNemotronRouter(unittest.TestCase):
 
     def test_kimi_vl_like_router(self) -> None:
         self._run_case(rows=9, n_experts=64, top_k=6, n_group=1, topk_group=1, norm=True, scale=2.446, seed=41)
+
+    def test_kimi_vl_raw_logits_sigmoid_contract(self) -> None:
+        rows, n_experts, top_k = 9, 64, 6
+        rng = np.random.default_rng(43)
+        logits = np.ascontiguousarray(
+            (0.7 * rng.standard_normal((rows, n_experts))).astype(np.float32)
+        )
+        bias = np.ascontiguousarray(
+            (0.05 * rng.standard_normal(n_experts)).astype(np.float32)
+        )
+        ck_idx = np.empty((rows, top_k), dtype=np.int32)
+        ck_w = np.empty((rows, top_k), dtype=np.float32)
+        LIB.group_limited_topk_router_sigmoid_f32(
+            _fptr(logits), _fptr(bias), _iptr(ck_idx), _fptr(ck_w),
+            rows, n_experts, top_k, 1, 1, 1, ctypes.c_float(2.446),
+        )
+        scores = torch.sigmoid(torch.tensor(logits, dtype=torch.float32))
+        ref_idx, ref_w = torch_router(
+            scores,
+            torch.tensor(bias, dtype=torch.float32),
+            top_k,
+            1,
+            1,
+            True,
+            2.446,
+        )
+        np.testing.assert_array_equal(ck_idx, ref_idx.numpy().astype(np.int32))
+        np.testing.assert_allclose(ck_w, ref_w.numpy(), atol=1e-6, rtol=0.0)
 
 
 if __name__ == "__main__":

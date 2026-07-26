@@ -55,7 +55,7 @@ def _make_tiny_kimi_manifest() -> dict:
         add(f"layer.{layer}.mla_kv_a_proj", "bf16", [6, 8])
         add(f"layer.{layer}.mla_kv_a_norm", "fp32", [4])
         add(f"layer.{layer}.mla_kv_b_proj", "bf16", [8, 4])
-        add(f"layer.{layer}.mla_out_proj", "bf16", [8, 8])
+        add(f"layer.{layer}.mla_out_proj", "bf16", [8, 4])
     add("layer.0.mlp_gate", "bf16", [16, 8])
     add("layer.0.mlp_up", "bf16", [16, 8])
     add("layer.0.mlp_down", "bf16", [8, 16])
@@ -132,6 +132,22 @@ def _make_tiny_kimi_manifest() -> dict:
 
 
 class V8KimiTemplateTests(unittest.TestCase):
+    def test_kimi_selected_providers_are_registered(self) -> None:
+        registry = build_ir_v8.load_kernel_registry()
+        registered = {
+            str(row.get("id") or row.get("name"))
+            for row in registry.get("kernels", [])
+        }
+        required = {
+            "gemm_nt_fp32_exact",
+            "rmsnorm_forward_strided_f32",
+            "group_limited_topk_router_sigmoid_f32",
+            "deepseek_mla_attention_f32",
+            "moe_swiglu_expert_forward_bf16",
+            "moe_swiglu_shared_forward_bf16",
+        }
+        self.assertEqual(required - registered, set())
+
     def test_kimi_mla_moe_template_lowers_to_reference_kernels(self) -> None:
         manifest = _make_tiny_kimi_manifest()
         ops = build_ir_v8.build_ir1_direct(manifest, ROOT / "tests" / "kimi.synthetic.json", mode="decode")
@@ -145,15 +161,58 @@ class V8KimiTemplateTests(unittest.TestCase):
             (op.get("layer"), op.get("op"), op.get("instance", 0)): op
             for op in prefill_ops
         }
+        registry = build_ir_v8.load_kernel_registry()
+        lowered_decode_1 = build_ir_v8.generate_ir_lower_1(ops, registry, manifest, "decode")
+        decode_layout = build_ir_v8.generate_memory_layout(
+            lowered_decode_1, manifest, registry, mode="decode", context_len=16
+        )
+        lowered_decode_2 = build_ir_v8.generate_ir_lower_2(
+            lowered_decode_1, decode_layout, manifest, registry, mode="decode"
+        )
+        lowered_prefill_1 = build_ir_v8.generate_ir_lower_1(
+            prefill_ops, registry, manifest, "prefill"
+        )
+        prefill_layout = build_ir_v8.generate_memory_layout(
+            lowered_prefill_1, manifest, registry, mode="prefill", context_len=16
+        )
+        lowered_prefill_2 = build_ir_v8.generate_ir_lower_2(
+            lowered_prefill_1, prefill_layout, manifest, registry, mode="prefill"
+        )
+        call_decode = build_ir_v8.generate_ir_lower_3(lowered_decode_2, "decode")
+        call_prefill = build_ir_v8.generate_ir_lower_3(lowered_prefill_2, "prefill")
+        lowered_decode_by_layer_op = {
+            (op.get("layer"), op.get("op")): op
+            for op in lowered_decode_2["operations"]
+        }
+        lowered_prefill_by_layer_op = {
+            (op.get("layer"), op.get("op")): op
+            for op in lowered_prefill_2["operations"]
+        }
 
         self.assertEqual([op["op"] for op in ops].count("residual_save"), 4)
         self.assertEqual(by_layer_op[(0, "q_proj", 0)]["kernel"], "gemv_bf16")
         self.assertEqual(prefill_by_layer_op[(0, "q_proj", 0)]["kernel"], "gemm_nt_bf16")
+        self.assertEqual(lowered_decode_by_layer_op[(0, "q_proj")]["params"]["_output_dim"], 8)
+        self.assertEqual(lowered_decode_by_layer_op[(0, "out_proj")]["params"]["_input_dim"], 4)
+        self.assertEqual(lowered_prefill_by_layer_op[(0, "out_proj")]["params"]["_input_dim"], 4)
         self.assertEqual(by_layer_op[(0, "kv_a_proj", 0)]["kernel"], "gemv_bf16")
+        self.assertEqual(
+            by_layer_op[(0, "kv_a_layernorm", 0)]["kernel"],
+            "rmsnorm_forward_strided_f32",
+        )
         self.assertEqual(by_layer_op[(0, "kv_lora_decompress", 0)]["kernel"], "deepseek_mla_kv_decompress_bf16")
         self.assertEqual(by_layer_op[(0, "partial_rope_concat", 0)]["kernel"], "deepseek_mla_partial_rope_concat_packed_f32")
         self.assertEqual(by_layer_op[(1, "moe_swiglu_expert_mlp", 0)]["kernel"], "moe_swiglu_expert_forward_bf16")
         self.assertEqual(by_layer_op[(1, "shared_swiglu_expert_mlp", 0)]["kernel"], "moe_swiglu_shared_forward_bf16")
+        self.assertEqual(by_layer_op[(1, "moe_router", 0)]["kernel"], "gemm_nt_fp32_exact")
+        self.assertEqual(
+            prefill_by_layer_op[(1, "moe_router", 0)]["kernel"],
+            "gemm_nt_fp32_exact",
+        )
+        self.assertEqual(
+            by_layer_op[(1, "group_limited_topk_router", 0)]["kernel"],
+            "group_limited_topk_router_sigmoid_f32",
+        )
 
         q_source = by_layer_op[(0, "q_proj", 0)]["dataflow"]["inputs"]["x"]
         kv_source = by_layer_op[(0, "kv_a_proj", 0)]["dataflow"]["inputs"]["x"]
@@ -163,6 +222,20 @@ class V8KimiTemplateTests(unittest.TestCase):
         self.assertEqual(kv_source["slot"], "layer_input")
         self.assertEqual(router_source["slot"], "layer_input")
         self.assertEqual(router_source["from_op"], by_layer_op[(1, "block_rmsnorm", 1)]["op_id"])
+
+        decode_norm = next(
+            op for op in call_decode["operations"]
+            if op.get("layer") == 0 and op.get("op") == "kv_a_layernorm"
+        )
+        prefill_norm = next(
+            op for op in call_prefill["operations"]
+            if op.get("layer") == 0 and op.get("op") == "kv_a_layernorm"
+        )
+        for norm in (decode_norm, prefill_norm):
+            args = {arg["name"]: arg["expr"] for arg in norm["args"]}
+            self.assertEqual(args["d_model"], "4")
+            self.assertEqual(args["input_stride"], "6")
+            self.assertEqual(args["output_stride"], "4")
 
         routed_weights = by_layer_op[(1, "moe_swiglu_expert_mlp", 0)]["weights"]
         self.assertIn("moe_expert_gate", routed_weights)

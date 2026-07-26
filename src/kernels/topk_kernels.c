@@ -457,17 +457,18 @@ static void ck_topk_insert_desc(int idx, float val, int *indices, float *values,
     }
 }
 
-void nemotron_group_limited_topk_router_f32(const float *scores,
-                                            const float *correction_bias,
-                                            int *indices,
-                                            float *weights,
-                                            int rows,
-                                            int n_experts,
-                                            int top_k,
-                                            int n_group,
-                                            int topk_group,
-                                            int norm_topk_prob,
-                                            float routed_scaling_factor)
+static void group_limited_topk_router_f32_impl(const float *scores,
+                                               const float *correction_bias,
+                                               int *indices,
+                                               float *weights,
+                                               int rows,
+                                               int n_experts,
+                                               int top_k,
+                                               int n_group,
+                                               int topk_group,
+                                               int norm_topk_prob,
+                                               float routed_scaling_factor,
+                                               int apply_sigmoid)
 {
     if (!scores || !indices || !weights || rows <= 0 || n_experts <= 0 ||
         top_k <= 0 || n_group <= 0 || topk_group <= 0) {
@@ -485,7 +486,9 @@ void nemotron_group_limited_topk_router_f32(const float *scores,
         const float *row_probs = scores + (size_t)r * (size_t)n_experts;
         float row_scores[n_experts];
         for (int e = 0; e < n_experts; ++e) {
-            row_scores[e] = row_probs[e];
+            row_scores[e] = apply_sigmoid
+                ? (1.0f / (1.0f + expf(-row_probs[e])))
+                : row_probs[e];
         }
         int *row_indices = indices + (size_t)r * (size_t)top_k;
         float *row_weights = weights + (size_t)r * (size_t)top_k;
@@ -549,4 +552,40 @@ void nemotron_group_limited_topk_router_f32(const float *scores,
             row_weights[i] = w * routed_scaling_factor;
         }
     }
+}
+
+void nemotron_group_limited_topk_router_f32(const float *scores,
+                                            const float *correction_bias,
+                                            int *indices,
+                                            float *weights,
+                                            int rows,
+                                            int n_experts,
+                                            int top_k,
+                                            int n_group,
+                                            int topk_group,
+                                            int norm_topk_prob,
+                                            float routed_scaling_factor)
+{
+    group_limited_topk_router_f32_impl(
+        scores, correction_bias, indices, weights, rows, n_experts, top_k,
+        n_group, topk_group, norm_topk_prob, routed_scaling_factor, 0
+    );
+}
+
+void group_limited_topk_router_sigmoid_f32(const float *logits,
+                                           const float *correction_bias,
+                                           int *indices,
+                                           float *weights,
+                                           int rows,
+                                           int n_experts,
+                                           int top_k,
+                                           int n_group,
+                                           int topk_group,
+                                           int norm_topk_prob,
+                                           float routed_scaling_factor)
+{
+    group_limited_topk_router_f32_impl(
+        logits, correction_bias, indices, weights, rows, n_experts, top_k,
+        n_group, topk_group, norm_topk_prob, routed_scaling_factor, 1
+    );
 }

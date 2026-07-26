@@ -540,15 +540,15 @@ def _kimi_vl_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor])
                 if expert_down_shape is None:
                     expert_down_shape = tuple([n_experts] + list(headers[down].shape))
             refs.extend([
-                TensorRef(f"layer.{layer}.moe_expert_gate", tuple(expert_gate_sources), dtype="fp32", shape=expert_gate_shape),
-                TensorRef(f"layer.{layer}.moe_expert_up", tuple(expert_up_sources), dtype="fp32", shape=expert_up_shape),
-                TensorRef(f"layer.{layer}.moe_expert_down", tuple(expert_down_sources), dtype="fp32", shape=expert_down_shape),
+                TensorRef(f"layer.{layer}.moe_expert_gate", tuple(expert_gate_sources), shape=expert_gate_shape),
+                TensorRef(f"layer.{layer}.moe_expert_up", tuple(expert_up_sources), shape=expert_up_shape),
+                TensorRef(f"layer.{layer}.moe_expert_down", tuple(expert_down_sources), shape=expert_down_shape),
             ])
             sp = f"{mlp}.shared_experts"
             refs.extend([
-                TensorRef(f"layer.{layer}.moe_shared_gate", (_require_existing(headers, (f"{sp}.gate_proj.weight",), f"layer {layer} shared gate_proj"),), dtype="fp32"),
-                TensorRef(f"layer.{layer}.moe_shared_up", (_require_existing(headers, (f"{sp}.up_proj.weight",), f"layer {layer} shared up_proj"),), dtype="fp32"),
-                TensorRef(f"layer.{layer}.moe_shared_down", (_require_existing(headers, (f"{sp}.down_proj.weight",), f"layer {layer} shared down_proj"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.moe_shared_gate", (_require_existing(headers, (f"{sp}.gate_proj.weight",), f"layer {layer} shared gate_proj"),)),
+                TensorRef(f"layer.{layer}.moe_shared_up", (_require_existing(headers, (f"{sp}.up_proj.weight",), f"layer {layer} shared up_proj"),)),
+                TensorRef(f"layer.{layer}.moe_shared_down", (_require_existing(headers, (f"{sp}.down_proj.weight",), f"layer {layer} shared down_proj"),)),
             ])
         else:
             raise SystemExit(f"Unsupported Kimi-VL layer kind at {layer}: {kind}")
@@ -1715,6 +1715,17 @@ def _ignored_source_tensor(arch: str, name: str) -> str | None:
         return "decoder_not_in_encoder_artifact"
     if arch == "whisper_decoder" and name.startswith("model.encoder."):
         return "encoder_not_in_decoder_artifact"
+    if arch == "kimi_vl" and (
+        name.startswith("vision_tower.")
+        or name.startswith("multi_modal_projector.")
+    ):
+        return "vision_tower_not_in_decoder_pass"
+    if (
+        arch == "kimi_vl"
+        and name.startswith("language_model.model.layers.")
+        and name.endswith(".self_attn.rotary_emb.inv_freq")
+    ):
+        return "rope_frequencies_derived_from_runtime_contract"
     return None
 
 
