@@ -65,5 +65,5 @@
   "tests": {
     "unit": ["unittest/test_audio_encoder.py"]
   },
-  "notes": "FP32 Whisper/PyTorch GELU provider. Does not replace the historical tanh-based gelu_exact_inplace provider."
+  "notes": "FP32 Whisper/PyTorch GELU provider. The scalar libm erff entry point is bound indirectly so -fno-math-errno cannot replace it with host-specific AVX2 or AVX-512 vector libm arithmetic. Does not replace the historical tanh-based gelu_exact_inplace provider."
 }
