@@ -1,0 +1,66 @@
+{
+  "source": "Qwen/Qwen3.6-27B",
+  "model_type": "qwen3_5",
+  "architectures": [
+    "Qwen3_5ForConditionalGeneration"
+  ],
+  "image_token_id": 248056,
+  "video_token_id": 248057,
+  "vision_start_token_id": 248053,
+  "vision_end_token_id": 248054,
+  "language_model_only": false,
+  "tie_word_embeddings": false,
+  "text_config": {
+    "model_type": "qwen3_5_text",
+    "dtype": "bfloat16",
+    "num_hidden_layers": 64,
+    "hidden_size": 5120,
+    "intermediate_size": 17408,
+    "num_attention_heads": 24,
+    "num_key_value_heads": 4,
+    "head_dim": 256,
+    "vocab_size": 248320,
+    "max_position_embeddings": 262144,
+    "full_attention_interval": 4,
+    "linear_conv_kernel_dim": 4,
+    "linear_key_head_dim": 128,
+    "linear_num_key_heads": 16,
+    "linear_num_value_heads": 48,
+    "linear_value_head_dim": 128,
+    "mtp_num_hidden_layers": 1,
+    "mtp_use_dedicated_embeddings": false,
+    "rope_parameters": {
+      "mrope_interleaved": true,
+      "mrope_section": [
+        11,
+        11,
+        10
+      ],
+      "partial_rotary_factor": 0.25,
+      "rope_theta": 10000000,
+      "rope_type": "default"
+    }
+  },
+  "vision_config": {
+    "deepstack_visual_indexes": [],
+    "depth": 27,
+    "hidden_act": "gelu_pytorch_tanh",
+    "hidden_size": 1152,
+    "in_channels": 3,
+    "intermediate_size": 4304,
+    "num_heads": 16,
+    "num_position_embeddings": 2304,
+    "out_hidden_size": 5120,
+    "patch_size": 16,
+    "spatial_merge_size": 2,
+    "temporal_patch_size": 2
+  },
+  "official_tensor_inventory": {
+    "total_size_bytes": 55562855904,
+    "tensor_count": 1199,
+    "decoder_tensor_count": 851,
+    "vision_tensor_count": 333,
+    "mtp_tensor_count": 15,
+    "sorted_name_sha256": "9b7ff830c287587cc6e63580e11c1658da33dabccc9b704052beaf947d3e6cf0"
+  }
+}

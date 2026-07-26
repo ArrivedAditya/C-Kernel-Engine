@@ -1264,6 +1264,36 @@
       "position_transform": null,
       "description": "llama.cpp x86 Q5_K projection: canonical Q8_K activation quantization, integer sub-block dots, FP32 FMA super-block accumulation, and movehl/movehdup lane reduction."
     },
+    "q8_0_weight_q8_0_input_llama_fp32_output": {
+      "operator_family": "gemm",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "q8_0", "output": "fp32"},
+      "compute": {
+        "input": "int8",
+        "weight": "int8",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "q8_0_quantize_then_int32_block_dot_then_fp32_scaled_block_accumulation"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "weighted_product", "reduction_update", "output_store"]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "ascending_k",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "llama.cpp-compatible Q8_0 projection with canonical per-block Q8_0 activation quantization and FP32 scaled block accumulation."
+    },
     "bf16_weight_bf16_input_native_pair_dot_bf16_output": {
       "status": "validated",
       "storage": {

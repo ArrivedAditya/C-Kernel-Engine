@@ -1502,12 +1502,17 @@ test-v8-gemma4-vision-smoke:
 
 test-v8-vision-smoke: test-v8-vision-kernels test-v8-qwen3vl test-v8-qwen3vl-e2e-smoke test-v8-gemma4-vision-smoke
 
+test-v8-qwen36-contract:
+	@echo "Running Qwen3.6-27B official config and tensor-inventory contracts..."
+	@$(PYTHON) -m unittest tests.test_v8_qwen36_contract -v
+
 test-v8-xeon-family-contracts:
 	@echo "Running Xeon/high-memory family compiler and circuit contracts..."
 	@$(PYTHON) -m unittest \
 		tests.test_v8_gemma4_scaffold \
 		tests.test_v8_glm4_template \
 		tests.test_v8_kimi_template \
+		tests.test_v8_qwen36_contract \
 		tests.test_v8_template_circuit_audit \
 		-v
 
@@ -3901,7 +3906,7 @@ qwen3vl-ocr-perf-analyze:
 		--json-out build/qwen3vl_ocr_perf_pipeline.json \
 		--md-out build/qwen3vl_ocr_perf_pipeline.md
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q4k-gateup-swiglu-x16-chunk4-quick bench-qwen3vl-encoder-attention bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-routing-exact test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-xeon-family-contracts test-v8-xeon-highmem test-v8-gemma4-highmem test-v8-nemotron9-highmem test-v8-glm4-highmem test-v8-kimi-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick qwen3vl-ocr-perf-pipeline qwen3vl-ocr-perf-analyze qwen3vl-encoder-prefix-parity
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q4k-gateup-swiglu-x16-chunk4-quick bench-qwen3vl-encoder-attention bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-routing-exact test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-qwen36-contract test-v8-xeon-family-contracts test-v8-xeon-highmem test-v8-gemma4-highmem test-v8-nemotron9-highmem test-v8-glm4-highmem test-v8-kimi-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick qwen3vl-ocr-perf-pipeline qwen3vl-ocr-perf-analyze qwen3vl-encoder-prefix-parity
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)

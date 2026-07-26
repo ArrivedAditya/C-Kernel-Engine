@@ -456,6 +456,80 @@ def _qwen35_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor]) 
     return refs
 
 
+def _qwen35_architecture_metadata(config: dict[str, Any]) -> dict[str, Any]:
+    """Validate and preserve execution metadata shared by Qwen3.5-family checkpoints."""
+    text = config.get("text_config") if isinstance(config.get("text_config"), dict) else config
+    vision = config.get("vision_config") if isinstance(config.get("vision_config"), dict) else {}
+    num_layers = int(text.get("num_hidden_layers") or 0)
+    hidden_size = int(text.get("hidden_size") or 0)
+    intermediate_size = int(text.get("intermediate_size") or 0)
+    num_heads = int(text.get("num_attention_heads") or 0)
+    num_kv_heads = int(text.get("num_key_value_heads") or 0)
+    head_dim = int(text.get("head_dim") or 0)
+    if min(num_layers, hidden_size, intermediate_size, num_heads, num_kv_heads, head_dim) <= 0:
+        raise SystemExit("Qwen3.5 config missing required decoder dimensions")
+
+    interval = int(text.get("full_attention_interval") or 4)
+    if interval <= 0:
+        raise SystemExit("Qwen3.5 full_attention_interval must be positive")
+    layer_types = [str(value) for value in (text.get("layer_types") or [])]
+    if not layer_types:
+        layer_types = [
+            "full_attention" if (layer + 1) % interval == 0 else "linear_attention"
+            for layer in range(num_layers)
+        ]
+    if len(layer_types) != num_layers:
+        raise SystemExit(
+            f"Qwen3.5 layer_types length {len(layer_types)} != num_layers {num_layers}"
+        )
+    unsupported = sorted(set(layer_types) - {"linear_attention", "recurrent", "full_attention"})
+    if unsupported:
+        raise SystemExit(f"Unsupported Qwen3.5 layer types: {unsupported}")
+
+    rope = text.get("rope_parameters") if isinstance(text.get("rope_parameters"), dict) else {}
+    partial_rotary_factor = float(
+        rope.get("partial_rotary_factor", text.get("partial_rotary_factor", 1.0))
+    )
+    rotary_width = int(head_dim * partial_rotary_factor)
+    if rotary_width <= 0 or rotary_width > head_dim or rotary_width % 2:
+        raise SystemExit(
+            "Qwen3.5 partial rotary width must be positive, even, and no larger than head_dim"
+        )
+    sections = [int(value) for value in (rope.get("mrope_section") or [])]
+    interleaved = bool(rope.get("mrope_interleaved", False))
+    if sections and interleaved and 2 * sum(sections) != rotary_width:
+        raise SystemExit(
+            "Qwen3.5 interleaved M-RoPE sections must describe the configured rotary width"
+        )
+
+    mtp_layers = int(text.get("mtp_num_hidden_layers") or 0)
+    has_vision = bool(vision) and not bool(config.get("language_model_only", False))
+    return {
+        "layer_types": layer_types,
+        "layer_kinds": [
+            "full_attention" if kind == "full_attention" else "recurrent"
+            for kind in layer_types
+        ],
+        "full_attention_interval": interval,
+        "rotary_dim": rotary_width,
+        "mrope_sections": sections,
+        "mrope_n_dims": rotary_width,
+        "mrope_interleaved": interleaved,
+        "has_vision_encoder": has_vision,
+        "vision_arch": "qwen3_vl_vision" if has_vision else "",
+        "vision_depth": int(vision.get("depth") or vision.get("num_hidden_layers") or 0),
+        "vision_hidden_size": int(vision.get("hidden_size") or 0),
+        "vision_output_size": int(vision.get("out_hidden_size") or hidden_size),
+        "image_token_id": int(config.get("image_token_id") or 0),
+        "video_token_id": int(config.get("video_token_id") or 0),
+        "vision_start_token_id": int(config.get("vision_start_token_id") or 0),
+        "vision_end_token_id": int(config.get("vision_end_token_id") or 0),
+        "has_mtp_assistant": mtp_layers > 0,
+        "mtp_num_layers": mtp_layers,
+        "mtp_use_dedicated_embeddings": bool(text.get("mtp_use_dedicated_embeddings", False)),
+    }
+
+
 def _parse_nemotron_h_pattern(pattern: str, num_layers: int) -> list[str]:
     mapping = {"M": "mamba", "*": "attention", "-": "mlp", "E": "moe"}
     chars = [ch for ch in str(pattern or "").strip() if not ch.isspace()]
@@ -1561,6 +1635,7 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         })
 
     if arch == "qwen35":
+        architecture = _qwen35_architecture_metadata(hf)
         headers = _load_safetensors_headers(model_dir)
         q_gate_proj_dim = 0
         attn_out_dim = 0
@@ -1588,12 +1663,8 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         if ssm_time_step_rank <= 0:
             ssm_time_step_rank = int(text.get("linear_num_key_heads") or text.get("linear_num_value_heads") or 0)
 
-        layer_types = [str(x) for x in (text.get("layer_types") or [])]
-        layer_kinds = ["full_attention" if x == "full_attention" else "recurrent" for x in layer_types]
-        if not layer_kinds:
-            n_layers = int(cfg.get("num_layers") or 0)
-            interval = int(text.get("full_attention_interval") or 4)
-            layer_kinds = ["full_attention" if (i + 1) % interval == 0 else "recurrent" for i in range(n_layers)]
+        layer_types = list(architecture["layer_types"])
+        layer_kinds = list(architecture["layer_kinds"])
         execution_plan = build_qwen35_execution_plan(layer_kinds)
         cfg.update({
             "model": "qwen35",
@@ -1603,7 +1674,10 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "attn_q_gate_proj_dim": int(q_gate_proj_dim),
             "intermediate_dim": int(cfg.get("intermediate_size") or 0),
             "max_seq_len": int(cfg.get("context_length") or 0),
-            "rotary_dim": int(int(text.get("head_dim", cfg.get("head_dim", 0))) * float(rope_parameters.get("partial_rotary_factor", 1.0))),
+            "rotary_dim": int(architecture["rotary_dim"]),
+            "mrope_sections": list(architecture["mrope_sections"]),
+            "mrope_n_dims": int(architecture["mrope_n_dims"]),
+            "mrope_interleaved": bool(architecture["mrope_interleaved"]),
             "has_qk_norm": any(kind == "full_attention" for kind in layer_kinds),
             "has_attention_biases": False,
             "layer_types": layer_types,
@@ -1615,7 +1689,7 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "layer_recurrent_policy": execution_plan["layer_recurrent_policy"],
             "layer_kv_policy": execution_plan["layer_kv_policy"],
             "prefill_policy": "batched",
-            "full_attention_interval": int(text.get("full_attention_interval") or 4),
+            "full_attention_interval": int(architecture["full_attention_interval"]),
             "ssm_conv_kernel": int(text.get("linear_conv_kernel_dim") or 4),
             "ssm_state_size": int(text.get("linear_key_head_dim") or max(1, recurrent_q_dim)),
             "ssm_group_count": int(text.get("linear_num_key_heads") or max(1, recurrent_q_dim // max(1, int(text.get("linear_key_head_dim") or recurrent_q_dim)))),
@@ -1629,6 +1703,23 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "recurrent_num_heads": int(ssm_time_step_rank),
             "recurrent_head_dim": int(recurrent_v_dim // max(1, ssm_time_step_rank)) if ssm_time_step_rank else int(text.get("linear_key_head_dim") or 0),
             "sampler_defaults": {"repeat_penalty": 1.12, "repeat_last_n": 96, "no_repeat_ngram_size": 4},
+        })
+        cfg.update({
+            key: architecture[key]
+            for key in (
+                "has_vision_encoder",
+                "vision_arch",
+                "vision_depth",
+                "vision_hidden_size",
+                "vision_output_size",
+                "image_token_id",
+                "video_token_id",
+                "vision_start_token_id",
+                "vision_end_token_id",
+                "has_mtp_assistant",
+                "mtp_num_layers",
+                "mtp_use_dedicated_embeddings",
+            )
         })
         mrope = list(rope_parameters.get("mrope_section") or [])
         if mrope:
