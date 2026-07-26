@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "name": "audio_transformer_decoder",
+  "family": "audio_transformer",
+  "status": "contract_mapping",
+  "flags": {
+    "activation": "gelu",
+    "normalization": "layernorm",
+    "tokenizer": "bpe",
+    "position_encoding": "absolute"
+  },
+  "contract": {
+    "tokenizer_contract": {
+      "tokenizer_type": "bpe",
+      "bos_policy": "decoder_start_token",
+      "eos_policy": "model_defined",
+      "special_tokens": {
+        "source": "manifest_or_hf"
+      }
+    },
+    "audio_decoder": {
+      "input": "decoder_token_ids",
+      "encoder_memory": "immutable_token_major",
+      "output": "token_logits"
+    },
+    "attention_contract": {
+      "rope_type": "none",
+      "kv_layout": "layer_major_kv_cache",
+      "self_attention": {
+        "causal": true,
+        "kv_layout": "layer_major_kv_cache",
+        "position_encoding": "absolute"
+      },
+      "cross_attention": {
+        "causal": false,
+        "query_source": "decoder_stream",
+        "key_value_source": "encoder_memory",
+        "kv_layout": "immutable_encoder_context"
+      }
+    },
+    "block_contract": {
+      "norm_type": "layernorm",
+      "activation": "gelu",
+      "attention_order": "self_attention -> cross_attention -> mlp",
+      "mlp_formula": "up -> gelu -> down"
+    },
+    "logits_contract": {
+      "final_norm": "layernorm",
+      "lm_head": "weight_tying",
+      "logits_layout": "last"
+    },
+    "quant_contract": {
+      "kernel_select": "weight_dtype_registry",
+      "activation_dtype": "fp32",
+      "per_tensor_mixed_quant": false
+    },
+    "runtime_invariants": {
+      "required_call_args": {
+        "kv_cache_batch_copy": [
+          "activation:k_src",
+          "activation:v_src",
+          "output:k_dst",
+          "output:v_dst",
+          "dim:_kv_copy_bytes"
+        ]
+      }
+    }
+  },
+  "required_numerical_contracts": {
+    "audio.decoder.position": {
+      "op": "position_embeddings",
+      "template_ops": ["position_embeddings"],
+      "phases": {
+        "prefill": {
+          "contract_id": "position_embeddings_add_token_major_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_vision.py exact learned absolute position addition"
+        },
+        "decode": {
+          "contract_id": "position_embeddings_add_offset_token_major_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_vision.py exact learned absolute position addition at runtime decode offset"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.decoder.position.output",
+        "producer": "position_embeddings",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "audio.decoder.activation": {
+      "op": "gelu",
+      "template_ops": ["gelu"],
+      "phases": {
+        "prefill": {
+          "contract_id": "gelu_pytorch_erf_fp32_storage",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py PyTorch GELU approximate=none FP32 oracle"
+        },
+        "decode": {
+          "contract_id": "gelu_pytorch_erf_fp32_storage",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py PyTorch GELU approximate=none FP32 oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.decoder.layer.{layer}.activation.output",
+        "producer": "gelu",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "audio.decoder.cross_attention": {
+      "op": "attention",
+      "template_ops": ["cross_attn"],
+      "phases": {
+        "prefill": {
+          "contract_id": "attention_query_key_scaled_ordered_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py unequal-length PyTorch attention oracle"
+        },
+        "decode": {
+          "contract_id": "attention_query_key_scaled_ordered_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py Q=1 K=1500 Whisper decode oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.decoder.layer.{layer}.cross_attention.output",
+        "producer": "cross_attn",
+        "logical_layout": "head_major",
+        "axis_names": ["head", "query_token", "channel"]
+      }
+    }
+  },
+  "block_types": {
+    "decoder": {
+      "sequence": ["header", "body", "footer"],
+      "header": [
+        "bpe_tokenizer",
+        "dense_embedding_lookup",
+        "position_embeddings"
+      ],
+      "body": {
+        "type": "dense",
+        "ops": [
+          "layernorm",
+          "q_proj",
+          "k_proj",
+          "v_proj",
+          "attn",
+          "out_proj",
+          "residual_add",
+          "cross_attn_norm",
+          "cross_q_proj",
+          "cross_k_proj",
+          "cross_v_proj",
+          "cross_attn",
+          "cross_out_proj",
+          "residual_add",
+          "layernorm",
+          "mlp_up",
+          "gelu",
+          "mlp_down",
+          "residual_add"
+        ]
+      },
+      "footer": [
+        "layernorm",
+        "weight_tying",
+        "logits"
+      ]
+    }
+  },
+  "sequence": ["decoder"]
+}

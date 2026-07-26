@@ -2659,6 +2659,7 @@
       "notes": "Q5_1 with internal FP32->Q8_1 activation contract."
     },
     "gemm_blocked_serial": {
+      "last_token_dispatch": "preserve_provider",
       "params": [
         {
           "name": "A",

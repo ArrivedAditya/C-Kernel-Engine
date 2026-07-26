@@ -312,11 +312,14 @@ def _build_hybrid_decode_prefill_layout(
     decode_layout_obj: Dict[str, Any],
     prefill_layout_obj: Dict[str, Any] | None,
 ) -> Dict[str, Any]:
-    """Use prefill-sized activations with decode-runtime config/contracts."""
+    """Select one fail-closed activation layout for the combined runtime."""
     if prefill_layout_obj is None:
         return decode_layout_obj
 
-    out = json.loads(json.dumps(prefill_layout_obj))
+    out = codegen_core_v8._select_combined_runtime_layout(
+        decode_layout_obj,
+        prefill_layout_obj,
+    )
     out["mode"] = decode_layout_obj.get("mode", out.get("mode", "decode"))
 
     out_cfg = dict(out.get("config", {}) or {})

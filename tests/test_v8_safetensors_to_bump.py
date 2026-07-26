@@ -349,6 +349,286 @@ def test_whisper_encoder_safetensors_maps_and_generates_call_ir(tmp_path: Path) 
     )
 
 
+def test_whisper_decoder_safetensors_keeps_self_and_cross_attention_distinct(
+    tmp_path: Path,
+) -> None:
+    torch, st = _require_torch_safetensors()
+    checkpoint = tmp_path / "whisper_tiny"
+    out = tmp_path / "out_whisper_decoder"
+    checkpoint.mkdir()
+    out.mkdir()
+    _write_tiny_bpe_tokenizer(checkpoint, vocab_size=32)
+
+    (checkpoint / "config.json").write_text(
+        json.dumps(
+            {
+                "architectures": ["WhisperForConditionalGeneration"],
+                "model_type": "whisper",
+                "d_model": 8,
+                "decoder_layers": 1,
+                "decoder_attention_heads": 2,
+                "decoder_ffn_dim": 16,
+                "max_source_positions": 4,
+                "max_target_positions": 8,
+                "num_mel_bins": 4,
+                "vocab_size": 32,
+                "tie_word_embeddings": True,
+                "decoder_start_token_id": 1,
+                "eos_token_id": 2,
+                "pad_token_id": 2,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def matrix(rows: int, cols: int):
+        return torch.randn(rows, cols)
+
+    tensors = {
+        "model.decoder.embed_tokens.weight": matrix(32, 8),
+        "model.decoder.embed_positions.weight": matrix(8, 8),
+        "model.decoder.layer_norm.weight": torch.randn(8),
+        "model.decoder.layer_norm.bias": torch.randn(8),
+        "model.decoder.layers.0.self_attn_layer_norm.weight": torch.randn(8),
+        "model.decoder.layers.0.self_attn_layer_norm.bias": torch.randn(8),
+        "model.decoder.layers.0.self_attn.q_proj.weight": matrix(8, 8),
+        "model.decoder.layers.0.self_attn.q_proj.bias": torch.randn(8),
+        "model.decoder.layers.0.self_attn.k_proj.weight": matrix(8, 8),
+        "model.decoder.layers.0.self_attn.v_proj.weight": matrix(8, 8),
+        "model.decoder.layers.0.self_attn.v_proj.bias": torch.randn(8),
+        "model.decoder.layers.0.self_attn.out_proj.weight": matrix(8, 8),
+        "model.decoder.layers.0.self_attn.out_proj.bias": torch.randn(8),
+        "model.decoder.layers.0.encoder_attn_layer_norm.weight": torch.randn(8),
+        "model.decoder.layers.0.encoder_attn_layer_norm.bias": torch.randn(8),
+        "model.decoder.layers.0.encoder_attn.q_proj.weight": matrix(8, 8),
+        "model.decoder.layers.0.encoder_attn.q_proj.bias": torch.randn(8),
+        "model.decoder.layers.0.encoder_attn.k_proj.weight": matrix(8, 8),
+        "model.decoder.layers.0.encoder_attn.v_proj.weight": matrix(8, 8),
+        "model.decoder.layers.0.encoder_attn.v_proj.bias": torch.randn(8),
+        "model.decoder.layers.0.encoder_attn.out_proj.weight": matrix(8, 8),
+        "model.decoder.layers.0.encoder_attn.out_proj.bias": torch.randn(8),
+        "model.decoder.layers.0.final_layer_norm.weight": torch.randn(8),
+        "model.decoder.layers.0.final_layer_norm.bias": torch.randn(8),
+        "model.decoder.layers.0.fc1.weight": matrix(16, 8),
+        "model.decoder.layers.0.fc1.bias": torch.randn(16),
+        "model.decoder.layers.0.fc2.weight": matrix(8, 16),
+        "model.decoder.layers.0.fc2.bias": torch.randn(8),
+        "model.encoder.layer_norm.weight": torch.randn(8),
+    }
+    st.save_file(tensors, checkpoint / "model.safetensors")
+
+    subprocess.run(
+        [
+            sys.executable,
+            "version/v8/scripts/convert_safetensors_to_bump_v8.py",
+            "--checkpoint",
+            str(checkpoint),
+            "--output",
+            str(out / "weights.bump"),
+            "--config-out",
+            str(out / "config.json"),
+            "--manifest-out",
+            str(out / "weights_manifest.json"),
+            "--arch",
+            "whisper_decoder",
+        ],
+        check=True,
+    )
+
+    manifest = json.loads((out / "weights_manifest.json").read_text(encoding="utf-8"))
+    audit = json.loads((out / "conversion_audit.json").read_text(encoding="utf-8"))
+    entries = {entry["name"]: entry for entry in manifest["entries"]}
+    assert manifest["model"] == "whisper_decoder"
+    assert manifest["template"]["name"] == "audio_transformer_decoder"
+    assert manifest["config"]["artifact_scope"] == "decoder_only"
+    assert manifest["config"]["context_length"] == 8
+    assert manifest["config"]["encoder_memory_length"] == 4
+    assert manifest["config"]["uses_cross_attention"] is True
+    assert entries["layer.0.wq"]["source_name"].endswith("self_attn.q_proj.weight")
+    assert entries["layer.0.cross_wq"]["source_name"].endswith(
+        "encoder_attn.q_proj.weight"
+    )
+    assert entries["layer.0.wk"]["source_name"].endswith("self_attn.k_proj.weight")
+    assert entries["layer.0.cross_wk"]["source_name"].endswith(
+        "encoder_attn.k_proj.weight"
+    )
+    assert entries["layer.0.bk"]["source_name"] == "synthetic:zeros_fp32"
+    assert entries["layer.0.cross_bk"]["source_name"] == "synthetic:zeros_fp32"
+    assert audit["verdict"] == "pass"
+    assert audit["unmapped_source_tensors"] == []
+    assert {
+        row["source"]: row["reason"] for row in audit["ignored_source_tensors"]
+    } == {
+        "model.encoder.layer_norm.weight": "encoder_not_in_decoder_artifact"
+    }
+
+    for mode in ("prefill", "decode"):
+        subprocess.run(
+            [
+                sys.executable,
+                "version/v8/scripts/build_ir_v8.py",
+                "--manifest",
+                str(out / "weights_manifest.json"),
+                "--mode",
+                mode,
+                "--output",
+                str(out / f"lowered_{mode}.json"),
+                "--layout-output",
+                str(out / f"layout_{mode}.json"),
+                "--call-output",
+                str(out / f"lowered_{mode}_call.json"),
+                "--context-len",
+                "8",
+            ],
+            check=True,
+        )
+
+    calls = {
+        mode: json.loads(
+            (out / f"lowered_{mode}_call.json").read_text(encoding="utf-8")
+        )
+        for mode in ("prefill", "decode")
+    }
+    assert calls["prefill"]["errors"] == []
+    assert calls["decode"]["errors"] == []
+
+    def first_call(mode: str, op_name: str, layer: int = 0) -> dict:
+        return next(
+            row
+            for row in calls[mode]["operations"]
+            if row["op"] == op_name and int(row.get("layer", -1)) == layer
+        )
+
+    def args_by_name(call: dict) -> dict:
+        return {arg["name"]: arg for arg in call["args"]}
+
+    decode_position = first_call("decode", "position_embeddings", layer=-1)
+    decode_position_args = args_by_name(decode_position)
+    assert decode_position["function"] == "position_embeddings_add_at_offset"
+    assert decode_position_args["start_position"]["expr"] == "model->pos"
+
+    for op_name in (
+        "q_proj",
+        "v_proj",
+        "out_proj",
+        "cross_q_proj",
+        "cross_out_proj",
+        "mlp_up",
+        "mlp_down",
+    ):
+        projection_args = args_by_name(first_call("decode", op_name))
+        assert projection_args["bias"]["expr"] == "NULL"
+    decode_bias_adds = [
+        row for row in calls["decode"]["operations"] if row["op"] == "bias_add"
+    ]
+    assert len(decode_bias_adds) == 7
+    assert all(args_by_name(row)["b"]["expr"] != "NULL" for row in decode_bias_adds)
+    cross_v_args = args_by_name(first_call("decode", "cross_v_proj"))
+    assert cross_v_args["bias"]["expr"] != "NULL"
+    decode_layer_ops = [
+        row
+        for row in calls["decode"]["operations"]
+        if int(row.get("layer", -1)) == 0
+    ]
+    v_projection_index = next(
+        i for i, row in enumerate(decode_layer_ops) if row["op"] == "v_proj"
+    )
+    v_bias_index = next(
+        i
+        for i, row in enumerate(decode_layer_ops)
+        if row["op"] == "bias_add"
+        and args_by_name(row)["a"].get("buffer_ref") == "v_scratch"
+    )
+    kv_store_index = next(
+        i for i, row in enumerate(decode_layer_ops) if row["op"] == "kv_cache_store"
+    )
+    attention_index = next(
+        i for i, row in enumerate(decode_layer_ops) if row["op"] == "attn"
+    )
+    assert v_projection_index < v_bias_index < kv_store_index < attention_index
+    decode_attention_args = args_by_name(decode_layer_ops[attention_index])
+    assert "model->kv_cache" in decode_attention_args["k"]["expr"]
+    assert "model->kv_cache" in decode_attention_args["v"]["expr"]
+    assert "model->bump" not in decode_attention_args["k"]["expr"]
+    assert "model->bump" not in decode_attention_args["v"]["expr"]
+
+    for mode, query_tokens in (("prefill", "8"), ("decode", "1")):
+        cross_k = args_by_name(first_call(mode, "cross_k_proj"))
+        cross_v = args_by_name(first_call(mode, "cross_v_proj"))
+        cross_attn = args_by_name(first_call(mode, "cross_attn"))
+        assert cross_k["A"]["buffer_ref"] == "encoder_memory"
+        assert cross_v["A"]["buffer_ref"] == "encoder_memory"
+        assert cross_k["M"]["expr"] == "4"
+        assert cross_v["M"]["expr"] == "4"
+        assert cross_attn["query_tokens"]["expr"] == query_tokens
+        assert cross_attn["key_tokens"]["expr"] == "4"
+        assert cross_attn["query"]["buffer_ref"] == "cross_q_scratch"
+        assert cross_attn["key"]["buffer_ref"] == "cross_k_scratch"
+        assert cross_attn["value"]["buffer_ref"] == "cross_v_scratch"
+
+    prefill_ops = [
+        row["op"]
+        for row in calls["prefill"]["operations"]
+        if int(row.get("layer", -1)) == 0
+    ]
+    assert prefill_ops.index("cross_q_proj") < prefill_ops.index(
+        "transpose_cross_q_to_head_major"
+    )
+    assert prefill_ops.count("transpose_cross_kv_to_head_major") == 2
+    assert prefill_ops.index("cross_attn") < prefill_ops.index(
+        "transpose_cross_attn_out_to_token_major"
+    )
+
+    decode_cross_transposes = [
+        row
+        for row in calls["decode"]["operations"]
+        if row["op"] == "transpose_cross_kv_to_head_major"
+        and int(row.get("layer", -1)) == 0
+    ]
+    assert [row["_cross_kv_kind"] for row in decode_cross_transposes] == [
+        "key",
+        "value",
+    ]
+
+    generated_c = out / "whisper_decoder_v8.c"
+    subprocess.run(
+        [
+            sys.executable,
+            "version/v8/scripts/codegen_v8.py",
+            "--ir",
+            str(out / "lowered_decode_call.json"),
+            "--prefill",
+            str(out / "lowered_prefill_call.json"),
+            "--prefill-layout",
+            str(out / "layout_prefill.json"),
+            "--layout",
+            str(out / "layout_decode.json"),
+            "--output",
+            str(generated_c),
+            "--strict-contracts",
+        ],
+        check=True,
+    )
+    generated = generated_c.read_text(encoding="utf-8")
+    assert "position_embeddings_add_at_offset" in generated
+    assert "attention_forward_query_key_head_major_f32" in generated
+    assert "CK_EXPORT int ck_model_set_encoder_memory(" in generated
+    assert "if (tokens != 4 || dim != 8) return -2;" in generated
+    assert "g_model->bump + A_ENCODER_MEMORY" in generated
+    subprocess.run(
+        [
+            "cc",
+            "-fsyntax-only",
+            "-fopenmp",
+            "-Iinclude",
+            "-Iversion/v8/src",
+            str(generated_c),
+        ],
+        check=True,
+    )
+
+
 def test_qwen35_safetensors_to_bump_smoke(tmp_path: Path) -> None:
     torch, st = _require_torch_safetensors()
     checkpoint = tmp_path / "qwen35"

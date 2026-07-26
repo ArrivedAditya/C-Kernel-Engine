@@ -89,6 +89,9 @@ def _annotate_kv_transpose_roles(ops: List[Dict]) -> None:
             "transpose_qkv_to_head_major",
             "transpose_kv_to_head_major",
             "transpose_attn_out_to_token_major",
+            "transpose_cross_q_to_head_major",
+            "transpose_cross_kv_to_head_major",
+            "transpose_cross_attn_out_to_token_major",
             "kv_cache_batch_copy",
             "kv_cache_store_batch_bf16",
             "kv_cache_store_batch_f16",
@@ -351,6 +354,68 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
                 (size_t)num_tokens * D * sizeof(float)
             );
         }}
+    }}"""
+
+    # Handle transpose_kv_to_head_major: convert from [T, Hkv*D] to [Hkv, T, D]
+    if op_type == "transpose_cross_q_to_head_major":
+        num_heads = config.get("num_heads", 1)
+        head_dim = config.get("head_dim", 1)
+        return f"""    /* Op {seq_idx}: transpose_cross_q_to_head_major layer={layer} */
+    {{
+        const int H = {num_heads};
+        const int D = {head_dim};
+        float *buf = (float*)(model->bump + A_CROSS_Q_SCRATCH);
+        float *tmp = (float*)(model->bump + A_CROSS_LAYOUT_SCRATCH);
+        for (int t = 0; t < num_tokens; ++t) {{
+            for (int h = 0; h < H; ++h) {{
+                memcpy(tmp + ((size_t)h*num_tokens + t)*D,
+                       buf + ((size_t)t*H + h)*D,
+                       (size_t)D*sizeof(float));
+            }}
+        }}
+        memcpy(buf, tmp, (size_t)H*num_tokens*D*sizeof(float));
+    }}"""
+
+    if op_type == "transpose_cross_kv_to_head_major":
+        num_heads = config.get("num_heads", 1)
+        head_dim = config.get("head_dim", 1)
+        encoder_tokens = config.get("encoder_memory_length", 0)
+        kind = str(op.get("_cross_kv_kind", "key"))
+        scratch_name = "A_CROSS_K_SCRATCH" if kind == "key" else "A_CROSS_V_SCRATCH"
+        return f"""    /* Op {seq_idx}: transpose_cross_{kind}_to_head_major layer={layer} */
+    {{
+        const int H = {num_heads};
+        const int T = {encoder_tokens};
+        const int D = {head_dim};
+        float *buf = (float*)(model->bump + {scratch_name});
+        float *tmp = (float*)(model->bump + A_CROSS_LAYOUT_SCRATCH);
+        for (int t = 0; t < T; ++t) {{
+            for (int h = 0; h < H; ++h) {{
+                memcpy(tmp + ((size_t)h*T + t)*D,
+                       buf + ((size_t)t*H + h)*D,
+                       (size_t)D*sizeof(float));
+            }}
+        }}
+        memcpy(buf, tmp, (size_t)H*T*D*sizeof(float));
+    }}"""
+
+    if op_type == "transpose_cross_attn_out_to_token_major":
+        num_heads = config.get("num_heads", 1)
+        head_dim = config.get("head_dim", 1)
+        return f"""    /* Op {seq_idx}: transpose_cross_attn_out_to_token_major layer={layer} */
+    {{
+        const int H = {num_heads};
+        const int D = {head_dim};
+        float *buf = (float*)(model->bump + A_CROSS_ATTN_SCRATCH);
+        float *tmp = (float*)(model->bump + A_CROSS_LAYOUT_SCRATCH);
+        for (int h = 0; h < H; ++h) {{
+            for (int t = 0; t < num_tokens; ++t) {{
+                memcpy(tmp + ((size_t)t*H + h)*D,
+                       buf + ((size_t)h*num_tokens + t)*D,
+                       (size_t)D*sizeof(float));
+            }}
+        }}
+        memcpy(buf, tmp, (size_t)H*num_tokens*D*sizeof(float));
     }}"""
 
     # Handle transpose_kv_to_head_major: convert from [T, Hkv*D] to [Hkv, T, D]

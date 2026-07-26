@@ -822,6 +822,37 @@ def emit_op(
             lines.append(f"    if (stop_seq == {seq_idx}) return;")
         return "\n".join(lines)
 
+    if op_name == "transpose_cross_kv_to_head_major":
+        kind = str(op.get("_cross_kv_kind", "key"))
+        scratch_name = "A_CROSS_K_SCRATCH" if kind == "key" else "A_CROSS_V_SCRATCH"
+        encoder_tokens = int(op.get("_cross_encoder_tokens", 0) or 0)
+        num_heads = int(op.get("_cross_num_heads", 0) or 0)
+        head_dim = int(op.get("_cross_head_dim", 0) or 0)
+        if encoder_tokens <= 0 or num_heads <= 0 or head_dim <= 0:
+            raise RuntimeError(
+                "cross-K/V transpose requires explicit encoder-token and head geometry in call IR"
+            )
+        lines.append(
+            f"""    {{
+        const int H = {num_heads};
+        const int T = {encoder_tokens};
+        const int D = {head_dim};
+        float *buf = (float*)(model->bump + {scratch_name});
+        float *tmp = (float*)(model->bump + A_CROSS_LAYOUT_SCRATCH);
+        for (int t = 0; t < T; ++t) {{
+            for (int h = 0; h < H; ++h) {{
+                memcpy(tmp + ((size_t)h*T + t)*D,
+                       buf + ((size_t)t*H + h)*D,
+                       (size_t)D*sizeof(float));
+            }}
+        }}
+        memcpy(buf, tmp, (size_t)H*T*D*sizeof(float));
+    }}"""
+        )
+        if seq_idx is not None:
+            lines.append(f"    if (stop_seq == {seq_idx}) return;")
+        return "\n".join(lines)
+
     if op_name == "transpose_qkv_to_head_major":
         lines.append(
             """    {
@@ -2887,6 +2918,49 @@ CK_EXPORT void ck_model_profile_dump(void) {
 
     layout = layout or {}
     config = config or {}
+    encoder_memory_api = ""
+    if bool(config.get("uses_cross_attention", False)):
+        encoder_tokens = int(config.get("encoder_memory_length", 0) or 0)
+        encoder_dim = int(config.get("embed_dim", 0) or 0)
+        encoder_buffers = [
+            row
+            for row in layout.get("memory", {}).get("activations", {}).get("buffers", [])
+            if row.get("name") == "encoder_memory"
+        ]
+        if encoder_tokens <= 0 or encoder_dim <= 0:
+            raise RuntimeError(
+                "cross-attention artifacts require positive encoder memory dimensions"
+            )
+        if len(encoder_buffers) != 1:
+            raise RuntimeError(
+                "cross-attention artifacts require exactly one encoder_memory buffer"
+            )
+        encoder_buffer = encoder_buffers[0]
+        expected_bytes = encoder_tokens * encoder_dim * 4
+        if (
+            encoder_buffer.get("dtype") != "fp32"
+            or int(encoder_buffer.get("size", 0) or 0) != expected_bytes
+            or encoder_buffer.get("define") != "A_ENCODER_MEMORY"
+        ):
+            raise RuntimeError(
+                "encoder_memory layout does not match the declared FP32 cross-attention contract"
+            )
+        encoder_memory_api = f"""
+/* Immutable encoder context consumed by encoder-decoder cross-attention. */
+CK_EXPORT int ck_model_set_encoder_memory(const float *data, int tokens, int dim) {{
+    if (!g_model || !data) return -1;
+    if (tokens != {encoder_tokens} || dim != {encoder_dim}) return -2;
+    memcpy(
+        g_model->bump + A_ENCODER_MEMORY,
+        data,
+        (size_t){encoder_tokens} * (size_t){encoder_dim} * sizeof(float)
+    );
+    return 0;
+}}
+
+CK_EXPORT int ck_model_get_encoder_memory_tokens(void) {{ return {encoder_tokens}; }}
+CK_EXPORT int ck_model_get_encoder_memory_dim(void) {{ return {encoder_dim}; }}
+"""
     recurrent_reset_lines: list[str] = []
     prefill_policy = str(config.get("prefill_policy") or "").strip().lower()
     force_sequential_prefill = prefill_policy in {"sequential_decode", "decode"}
@@ -3344,6 +3418,7 @@ CK_EXPORT int ck_model_get_logits_stride(void) {{ return {logits_stride}; }}
 CK_EXPORT float* ck_model_get_logits(void) {{ return g_model ? g_model->logits : NULL; }}
 CK_EXPORT uintptr_t ck_model_get_base_ptr(void) {{ return (uintptr_t)(g_model ? g_model->bump : NULL); }}
 
+{encoder_memory_api}
 {tokenizer_api_functions}
 {stop_tokens_api}
 {profile_dump_api}
