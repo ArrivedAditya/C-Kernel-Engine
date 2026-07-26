@@ -1007,6 +1007,10 @@ def _validate_segmented_prefill_contract(
 
 OP_DATAFLOW = {
     # Header ops
+    "audio_wav_decode": {
+        "inputs": {"wav_bytes": "external:audio_wav_bytes"},
+        "outputs": {"mono": {"slot": "audio_samples", "dtype": "fp32"}},
+    },
     "audio_pcm_decode": {
         "inputs": {"interleaved": "external:audio_pcm"},
         "outputs": {"mono": {"slot": "audio_samples", "dtype": "fp32"}},
@@ -1015,12 +1019,38 @@ OP_DATAFLOW = {
         "inputs": {"input": "audio_samples"},
         "outputs": {"output": {"slot": "audio_resampled", "dtype": "fp32"}},
     },
+    "audio_pad_or_truncate": {
+        "inputs": {"input": "audio_resampled"},
+        "outputs": {"output": {"slot": "audio_normalized", "dtype": "fp32"}},
+    },
+    "audio_stft_tables": {
+        "inputs": {},
+        "outputs": {
+            "window": {"slot": "audio_window", "dtype": "fp32"},
+            "cos_table": {"slot": "audio_cos_table", "dtype": "fp32"},
+            "sin_table": {"slot": "audio_sin_table", "dtype": "fp32"},
+        },
+    },
     "audio_stft": {
-        "inputs": {"samples": "audio_resampled"},
+        "inputs": {
+            "samples": "audio_normalized",
+            "window": "audio_window",
+            "cos_table": "audio_cos_table",
+            "sin_table": "audio_sin_table",
+        },
         "outputs": {"power": {"slot": "audio_power", "dtype": "fp32"}},
     },
+    "audio_mel_filters": {
+        "inputs": {},
+        "outputs": {
+            "mel_filters": {"slot": "audio_mel_filters", "dtype": "fp32"}
+        },
+    },
     "audio_log_mel": {
-        "inputs": {"power": "audio_power"},
+        "inputs": {
+            "power": "audio_power",
+            "mel_filters": "audio_mel_filters",
+        },
         "outputs": {"log_mel": {"slot": "audio_features", "dtype": "fp32"}},
     },
     "audio_conv1d_stem_1": {
@@ -2527,6 +2557,12 @@ def _audio_activation_specs(
     feature_channels = int(config.get("audio_feature_channels", 0) or 0)
     if feature_frames <= 0 or feature_channels <= 0:
         return []
+    sample_extent = int(config.get("audio_sample_extent", 0) or 0)
+    max_source_frames = int(config.get("audio_max_source_frames", sample_extent) or 0)
+    n_fft = int(config.get("audio_n_fft", 400) or 400)
+    power_bins = int(config.get("audio_power_bins", n_fft // 2 + 1) or 0)
+    if sample_extent <= 0 or max_source_frames <= 0 or power_bins != n_fft // 2 + 1:
+        raise ValueError("audio frontend configuration has invalid sample/FFT extents")
     conv1_channels = int(config.get("audio_conv1_output_channels", embed_dim) or embed_dim)
     conv2_channels = int(config.get("audio_conv2_output_channels", embed_dim) or embed_dim)
     conv1_kernel = int(config.get("audio_conv1_kernel_size", 1) or 1)
@@ -2558,6 +2594,15 @@ def _audio_activation_specs(
             f"conv2={declared_conv2_frames}/{conv2_frames}"
         )
     return [
+        ("audio_samples", max_source_frames * 4, f"[{max_source_frames}]"),
+        ("audio_resampled", max_source_frames * 4, f"[{max_source_frames}]"),
+        ("audio_normalized", sample_extent * 4, f"[{sample_extent}]"),
+        ("audio_window", n_fft * 4, f"[{n_fft}]"),
+        ("audio_cos_table", power_bins * n_fft * 4, f"[{power_bins}, {n_fft}]"),
+        ("audio_sin_table", power_bins * n_fft * 4, f"[{power_bins}, {n_fft}]"),
+        ("audio_power", feature_frames * power_bins * 4, f"[{feature_frames}, {power_bins}]"),
+        ("audio_mel_filters", feature_channels * power_bins * 4, f"[{feature_channels}, {power_bins}]"),
+        ("audio_fft_scratch", n_fft * 2 * 4, f"[{n_fft * 2}]"),
         ("audio_features", feature_channels * feature_frames * 4, f"[{feature_channels}, {feature_frames}]"),
         ("audio_conv_1", conv1_channels * conv1_frames * 4, f"[{conv1_channels}, {conv1_frames}]"),
         ("audio_conv_2", conv2_channels * conv2_frames * 4, f"[{conv2_channels}, {conv2_frames}]"),
@@ -2903,9 +2948,13 @@ def _validated_kernel_codegen_capability(kernel_id: str, kernel_map: Dict) -> Op
 # Note: "matmul" is a logical op that maps to gemv (decode) or gemm (prefill) based on mode
 TEMPLATE_TO_KERNEL_OP = {
     # Header ops
+    "audio_wav_decode": "audio_wav_decode",
     "audio_pcm_decode": "audio_pcm_decode",
     "audio_resample": "audio_resample",
+    "audio_pad_or_truncate": "audio_pad_or_truncate",
+    "audio_stft_tables": "audio_stft_tables",
     "audio_stft": "audio_stft",
+    "audio_mel_filters": "audio_mel_filters",
     "audio_log_mel": "audio_log_mel",
     "audio_conv1d_stem_1": "audio_conv1d",
     "audio_conv1d_stem_2": "audio_conv1d",
@@ -5763,10 +5812,14 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "logits": [],  # Uses lm_head/token_emb, usually q8_0
 
         # Ops with fp32 weights (no quant lookup needed)
+        "audio_wav_decode": None,
         "audio_pcm_decode": None,
         "audio_resample": None,
-        "audio_stft": ["audio_window", "audio_cos_table", "audio_sin_table"],
-        "audio_log_mel": ["audio_mel_filters"],
+        "audio_pad_or_truncate": None,
+        "audio_stft_tables": None,
+        "audio_stft": None,
+        "audio_mel_filters": None,
+        "audio_log_mel": None,
         "audio_conv1d_stem_1": ["audio_conv1_weight", "audio_conv1_bias"],
         "audio_conv1d_stem_2": ["audio_conv2_weight", "audio_conv2_bias"],
         "layout_channel_to_token": None,
@@ -8404,10 +8457,14 @@ WEIGHT_PATTERNS = {
 # This tells us which weights each template op needs
 TEMPLATE_OP_WEIGHTS = {
     # Header (tokenizer is metadata, not model weights)
+    "audio_wav_decode": [],
     "audio_pcm_decode": [],
     "audio_resample": [],
-    "audio_stft": ["audio_window", "audio_cos_table", "audio_sin_table"],
-    "audio_log_mel": ["audio_mel_filters"],
+    "audio_pad_or_truncate": [],
+    "audio_stft_tables": [],
+    "audio_stft": [],
+    "audio_mel_filters": [],
+    "audio_log_mel": [],
     "audio_conv1d_stem_1": ["audio_conv1_weight", "audio_conv1_bias"],
     "audio_conv1d_stem_2": ["audio_conv2_weight", "audio_conv2_bias"],
     "layout_channel_to_token": [],
@@ -12032,7 +12089,20 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     v_expr = f"(model->kv_cache + ({kv_layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
                     k_expr_f16 = f"(model->kv_cache_f16 + ({kv_layer}*2)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
                     v_expr_f16 = f"(model->kv_cache_f16 + ({kv_layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
-                if key in ("kv_cache_k_layer", "kv_k"):
+                audio_runtime_exprs = {
+                    "audio_wav_bytes": "audio_wav_bytes",
+                    "audio_wav_byte_count": "audio_wav_byte_count",
+                    "audio_mono": "audio_mono",
+                    "audio_mono_capacity": "audio_mono_capacity",
+                    "audio_wav_info": "audio_wav_info",
+                    "audio_source_frames": "audio_source_frames",
+                    "audio_source_rate": "audio_source_rate",
+                    "audio_resampled": "audio_resampled",
+                    "audio_resampled_frames": "audio_resampled_frames",
+                }
+                if key in audio_runtime_exprs:
+                    expr = audio_runtime_exprs[key]
+                elif key in ("kv_cache_k_layer", "kv_k"):
                     expr = k_expr
                 elif key in ("kv_cache_v_layer", "kv_v"):
                     expr = v_expr

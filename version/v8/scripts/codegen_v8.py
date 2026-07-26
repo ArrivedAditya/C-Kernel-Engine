@@ -29,6 +29,92 @@ import codegen_prefill_v8  # type: ignore  # noqa: E402
 from vision_bridge_runtime_v8 import resolve_vision_bridge_contract  # type: ignore  # noqa: E402
 
 
+_AUDIO_FRONTEND_OPS = {
+    "audio_wav_decode",
+    "audio_resample",
+    "audio_pad_or_truncate",
+    "audio_stft_tables",
+    "audio_stft",
+    "audio_mel_filters",
+    "audio_log_mel",
+}
+
+
+def _audio_call_expression(op: Dict[str, Any]) -> str:
+    function = str(op.get("function", "") or "").strip()
+    args = op.get("args")
+    if not function or not isinstance(args, list) or op.get("errors"):
+        raise RuntimeError(
+            "audio frontend codegen requires error-free call IR with a resolved function"
+        )
+    expressions = []
+    for arg in args:
+        if not isinstance(arg, dict) or not str(arg.get("expr", "") or "").strip():
+            raise RuntimeError(
+                f"audio frontend call IR for {function} has an incomplete argument"
+            )
+        expressions.append(str(arg["expr"]))
+    return f"{function}({', '.join(expressions)})"
+
+
+def _emit_audio_wav_entrypoint(
+    ops: list[Dict[str, Any]],
+    config: Dict[str, Any],
+) -> str:
+    by_op = {
+        str(op.get("op", "")): op
+        for op in ops
+        if str(op.get("op", "")) in _AUDIO_FRONTEND_OPS
+    }
+    if not by_op:
+        return ""
+    missing = sorted(_AUDIO_FRONTEND_OPS - set(by_op))
+    if missing:
+        raise RuntimeError(
+            "audio frontend circuit did not lower every required operation: "
+            + ", ".join(missing)
+        )
+    sample_rate = int(config.get("audio_sample_rate", 0) or 0)
+    sample_extent = int(config.get("audio_sample_extent", 0) or 0)
+    max_source_frames = int(config.get("audio_max_source_frames", 0) or 0)
+    if min(sample_rate, sample_extent, max_source_frames) <= 0:
+        raise RuntimeError("audio frontend codegen requires explicit positive extents")
+
+    calls = {name: _audio_call_expression(by_op[name]) for name in _AUDIO_FRONTEND_OPS}
+    return f"""
+/* Generated from the resolved audio frontend call IR. Python must not select
+ * or invoke individual frontend kernels. */
+CK_EXPORT int ck_model_run_audio_wav(const uint8_t *audio_wav_bytes,
+                                     size_t audio_wav_byte_count,
+                                     CKAudioWavInfo *audio_metadata) {{
+    if (!g_model || !audio_wav_bytes || audio_wav_byte_count == 0) return -1;
+    CKModel *model = g_model;
+    CKAudioWavInfo local_info;
+    CKAudioWavInfo *audio_wav_info = audio_metadata ? audio_metadata : &local_info;
+    float *audio_mono = (float*)(g_model->bump + A_AUDIO_SAMPLES);
+    const int audio_mono_capacity = {max_source_frames};
+    int audio_source_frames = {calls["audio_wav_decode"]};
+    if (audio_source_frames <= 0 || audio_source_frames != audio_wav_info->frames) return -2;
+    const int audio_source_rate = audio_wav_info->sample_rate;
+    int audio_resampled_frames = audio_resampled_frame_count(
+        audio_source_frames, audio_source_rate, {sample_rate});
+    if (audio_resampled_frames <= 0 || audio_resampled_frames > {max_source_frames}) return -3;
+    float *audio_resampled = audio_mono;
+    if (audio_source_rate != {sample_rate}) {{
+        audio_resampled = (float*)(g_model->bump + A_AUDIO_RESAMPLED);
+        if ({calls["audio_resample"]} != 0) return -4;
+    }}
+    if ({calls["audio_pad_or_truncate"]} < 0) return -5;
+    if ({calls["audio_stft_tables"]} != 0) return -6;
+    if ({calls["audio_stft"]} != 0) return -7;
+    if ({calls["audio_mel_filters"]} != 0) return -8;
+    if ({calls["audio_log_mel"]} != 0) return -9;
+    ck_prefill_from_embedded(g_model, {int(config.get("context_length", 0) or 0)});
+    return 0;
+}}
+"""
+
+
 def _patch_codegen_config(obj: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(obj)
     cfg = dict(out.get("config", {}) or {})
@@ -926,8 +1012,11 @@ def _inject_prefill_multimodal_bridge(
     if not isinstance(ops, list) or not isinstance(config, dict):
         return code
 
+    encoder_ops = [
+        op for op in ops if str(op.get("op", "")) not in _AUDIO_FRONTEND_OPS
+    ]
     embedded_prefill = codegen_prefill_v8.emit_prefill_from_embedded_function(
-        ops,
+        encoder_ops,
         config,
         profile=profile,
         dump=dump,
@@ -960,6 +1049,9 @@ CK_EXPORT int ck_model_run_encoder(void) {{
 }}
 """
             )
+            audio_entrypoint = _emit_audio_wav_entrypoint(ops, config)
+            if audio_entrypoint:
+                extra_parts.append(audio_entrypoint)
     if bridge_api:
         extra_parts.append(bridge_api)
     return code + "\n\n" + "\n\n".join(extra_parts)
@@ -1078,7 +1170,15 @@ def main(argv: list[str] | None = None) -> int:
         td_path = Path(td)
         ir_path = td_path / "call.v8.json"
         layout_path = td_path / "layout.v8.json"
-        ir_path.write_text(json.dumps(ir_obj, indent=2), encoding="utf-8")
+        core_ir_obj = ir_obj
+        if str((ir_obj.get("config") or {}).get("artifact_scope", "")).strip().lower() == "encoder_only":
+            core_ir_obj = dict(ir_obj)
+            core_ir_obj["operations"] = [
+                op
+                for op in ir_obj.get("operations", [])
+                if str(op.get("op", "")) not in _AUDIO_FRONTEND_OPS
+            ]
+        ir_path.write_text(json.dumps(core_ir_obj, indent=2), encoding="utf-8")
         layout_path.write_text(json.dumps(layout_obj, indent=2), encoding="utf-8")
         prefill_code = ""
         if prefill_obj is not None:

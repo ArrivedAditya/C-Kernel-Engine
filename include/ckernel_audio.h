@@ -35,6 +35,13 @@ int audio_wav_decode_pcm16_mono_f32(
     float *mono,
     int mono_capacity);
 
+int audio_wav_decode_memory_pcm16_mono_f32(
+    const uint8_t *bytes,
+    size_t byte_count,
+    float *mono,
+    int mono_capacity,
+    CKAudioWavInfo *info);
+
 int audio_pcm_s16_to_mono_f32(
     const int16_t *interleaved,
     int n_frames,
@@ -63,11 +70,23 @@ int audio_resample_windowed_sinc_f32(
     int output_rate,
     int radius);
 
+int audio_pad_or_truncate_f32(
+    const float *input,
+    int input_frames,
+    float *output,
+    int output_frames);
+
 int audio_stft_precompute_tables_f32(
     int n_fft,
     float *window,
     float *cos_table,
     float *sin_table);
+
+int audio_whisper_mel_filters_slaney_f32(
+    int sample_rate,
+    int n_fft,
+    int n_mels,
+    float *mel_filters);
 
 int audio_stft_power_precomputed_f32(
     const float *samples,

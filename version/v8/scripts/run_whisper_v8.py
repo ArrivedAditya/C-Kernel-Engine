@@ -7,7 +7,6 @@ import argparse
 import ctypes
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import subprocess
@@ -19,13 +18,6 @@ from typing import Any
 import numpy as np
 
 
-SAMPLE_RATE = 16000
-N_SAMPLES = 480000
-N_FFT = 400
-HOP_LENGTH = 160
-POWER_BINS = N_FFT // 2 + 1
-N_MELS = 80
-N_FRAMES = N_SAMPLES // HOP_LENGTH
 _FLOAT_P = ctypes.POINTER(ctypes.c_float)
 _U8_P = ctypes.POINTER(ctypes.c_uint8)
 
@@ -67,213 +59,6 @@ def _require_artifact(run_dir: Path) -> None:
             raise FileNotFoundError(path)
 
 
-def _hz_to_mel(frequencies: np.ndarray) -> np.ndarray:
-    values = np.asarray(frequencies, dtype=np.float64)
-    result = values / (200.0 / 3.0)
-    logarithmic = values >= 1000.0
-    result[logarithmic] = 15.0 + np.log(values[logarithmic] / 1000.0) / (
-        math.log(6.4) / 27.0
-    )
-    return result
-
-
-def _mel_to_hz(mels: np.ndarray) -> np.ndarray:
-    values = np.asarray(mels, dtype=np.float64)
-    result = (200.0 / 3.0) * values
-    logarithmic = values >= 15.0
-    result[logarithmic] = 1000.0 * np.exp(
-        (math.log(6.4) / 27.0) * (values[logarithmic] - 15.0)
-    )
-    return result
-
-
-def whisper_mel_filters() -> np.ndarray:
-    """Return Whisper's fixed Slaney 80x201 FP32 filter bank."""
-    fft_frequencies = np.linspace(0.0, 8000.0, POWER_BINS, dtype=np.float64)
-    mel_edges = np.linspace(
-        _hz_to_mel(np.array([0.0]))[0],
-        _hz_to_mel(np.array([8000.0]))[0],
-        N_MELS + 2,
-        dtype=np.float64,
-    )
-    filter_frequencies = _mel_to_hz(mel_edges)
-    differences = np.diff(filter_frequencies)
-    ramps = filter_frequencies[:, None] - fft_frequencies[None, :]
-    lower = -ramps[:-2] / differences[:-1, None]
-    upper = ramps[2:] / differences[1:, None]
-    filters = np.maximum(0.0, np.minimum(lower, upper))
-    filters *= (
-        2.0 / (filter_frequencies[2:] - filter_frequencies[:-2])
-    )[:, None]
-    return np.ascontiguousarray(filters.astype(np.float32))
-
-
-def _load_audio_api(engine_path: Path) -> ctypes.CDLL:
-    lib = ctypes.CDLL(str(engine_path), mode=ctypes.RTLD_GLOBAL)
-    lib.audio_wav_parse_memory.argtypes = [
-        _U8_P,
-        ctypes.c_size_t,
-        ctypes.POINTER(CKAudioWavInfo),
-    ]
-    lib.audio_wav_parse_memory.restype = ctypes.c_int
-    lib.audio_wav_decode_pcm16_mono_f32.argtypes = [
-        _U8_P,
-        ctypes.c_size_t,
-        ctypes.POINTER(CKAudioWavInfo),
-        _FLOAT_P,
-        ctypes.c_int,
-    ]
-    lib.audio_wav_decode_pcm16_mono_f32.restype = ctypes.c_int
-    lib.audio_resampled_frame_count.argtypes = [
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
-    ]
-    lib.audio_resampled_frame_count.restype = ctypes.c_int
-    lib.audio_resample_windowed_sinc_f32.argtypes = [
-        _FLOAT_P,
-        ctypes.c_int,
-        ctypes.c_int,
-        _FLOAT_P,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
-    ]
-    lib.audio_resample_windowed_sinc_f32.restype = ctypes.c_int
-    lib.audio_stft_precompute_tables_f32.argtypes = [
-        ctypes.c_int,
-        _FLOAT_P,
-        _FLOAT_P,
-        _FLOAT_P,
-    ]
-    lib.audio_stft_precompute_tables_f32.restype = ctypes.c_int
-    lib.audio_stft_power_fft400_f32.argtypes = [
-        _FLOAT_P,
-        ctypes.c_int,
-        _FLOAT_P,
-        _FLOAT_P,
-        _FLOAT_P,
-        ctypes.c_int,
-        _FLOAT_P,
-        ctypes.c_int,
-        _FLOAT_P,
-    ]
-    lib.audio_stft_power_fft400_f32.restype = ctypes.c_int
-    lib.audio_whisper_log_mel_from_power_reference_f32.argtypes = [
-        _FLOAT_P,
-        _FLOAT_P,
-        ctypes.c_int,
-        ctypes.c_int,
-        _FLOAT_P,
-    ]
-    lib.audio_whisper_log_mel_from_power_reference_f32.restype = ctypes.c_int
-    return lib
-
-
-def _wav_features(lib: ctypes.CDLL, wav_path: Path) -> tuple[np.ndarray, dict[str, Any]]:
-    wav = np.frombuffer(wav_path.read_bytes(), dtype=np.uint8)
-    info = CKAudioWavInfo()
-    status = int(
-        lib.audio_wav_parse_memory(
-            wav.ctypes.data_as(_U8_P), wav.size, ctypes.byref(info)
-        )
-    )
-    if status != 0:
-        raise RuntimeError(f"audio_wav_parse_memory failed with code {status}")
-    if info.format_tag != 1 or info.bits_per_sample != 16:
-        raise ValueError("the initial Whisper runner accepts PCM16 WAV input")
-
-    mono = np.empty(info.frames, dtype=np.float32)
-    decoded = int(
-        lib.audio_wav_decode_pcm16_mono_f32(
-            wav.ctypes.data_as(_U8_P),
-            wav.size,
-            ctypes.byref(info),
-            _fptr(mono),
-            mono.size,
-        )
-    )
-    if decoded != info.frames:
-        raise RuntimeError(f"PCM decode returned {decoded}, expected {info.frames}")
-
-    if info.sample_rate != SAMPLE_RATE:
-        output_frames = int(
-            lib.audio_resampled_frame_count(
-                mono.size, info.sample_rate, SAMPLE_RATE
-            )
-        )
-        resampled = np.empty(output_frames, dtype=np.float32)
-        status = int(
-            lib.audio_resample_windowed_sinc_f32(
-                _fptr(mono),
-                mono.size,
-                info.sample_rate,
-                _fptr(resampled),
-                resampled.size,
-                SAMPLE_RATE,
-                16,
-            )
-        )
-        if status != 0:
-            raise RuntimeError(
-                f"audio_resample_windowed_sinc_f32 failed with code {status}"
-            )
-        mono = resampled
-
-    samples = np.zeros(N_SAMPLES, dtype=np.float32)
-    copied = min(samples.size, mono.size)
-    samples[:copied] = mono[:copied]
-    window = np.empty(N_FFT, dtype=np.float32)
-    cosine = np.empty((POWER_BINS, N_FFT), dtype=np.float32)
-    sine = np.empty_like(cosine)
-    status = int(
-        lib.audio_stft_precompute_tables_f32(
-            N_FFT, _fptr(window), _fptr(cosine), _fptr(sine)
-        )
-    )
-    if status != 0:
-        raise RuntimeError(
-            f"audio_stft_precompute_tables_f32 failed with code {status}"
-        )
-    power = np.empty((N_FRAMES, POWER_BINS), dtype=np.float32)
-    fft_scratch = np.empty(N_FFT * 2, dtype=np.float32)
-    status = int(
-        lib.audio_stft_power_fft400_f32(
-            _fptr(samples),
-            samples.size,
-            _fptr(window),
-            _fptr(cosine),
-            _fptr(sine),
-            HOP_LENGTH,
-            _fptr(power),
-            N_FRAMES,
-            _fptr(fft_scratch),
-        )
-    )
-    if status != 0:
-        raise RuntimeError(f"audio_stft_power_fft400_f32 failed with code {status}")
-    filters = whisper_mel_filters()
-    features = np.empty((N_MELS, N_FRAMES), dtype=np.float32)
-    status = int(
-        lib.audio_whisper_log_mel_from_power_reference_f32(
-            _fptr(power), _fptr(filters), N_MELS, N_FRAMES, _fptr(features)
-        )
-    )
-    if status != 0:
-        raise RuntimeError(
-            "audio_whisper_log_mel_from_power_reference_f32 "
-            f"failed with code {status}"
-        )
-    return features, {
-        "source_sample_rate": info.sample_rate,
-        "source_channels": info.channels,
-        "source_frames": info.frames,
-        "resampled_frames": int(mono.size),
-        "consumed_frames": copied,
-        "truncated": mono.size > samples.size,
-    }
-
-
 def _load_generated_model(run_dir: Path) -> ctypes.CDLL:
     ctypes.CDLL(str(run_dir / "libckernel_engine.so"), mode=ctypes.RTLD_GLOBAL)
     model = ctypes.CDLL(str(run_dir / "libmodel.so"))
@@ -287,18 +72,17 @@ def _load_generated_model(run_dir: Path) -> ctypes.CDLL:
 def _encoder_worker(args: argparse.Namespace) -> int:
     run_dir = args.encoder_run_dir.resolve()
     _require_artifact(run_dir)
-    audio = _load_audio_api(run_dir / "libckernel_engine.so")
-    started = time.perf_counter()
-    features, audio_metadata = _wav_features(audio, args.wav.resolve())
-    frontend_seconds = time.perf_counter() - started
-
     model = _load_generated_model(run_dir)
     model.ck_model_get_named_activation_ptr.argtypes = [ctypes.c_char_p]
     model.ck_model_get_named_activation_ptr.restype = ctypes.c_void_p
     model.ck_model_get_named_activation_nbytes.argtypes = [ctypes.c_char_p]
     model.ck_model_get_named_activation_nbytes.restype = ctypes.c_ssize_t
-    model.ck_model_run_encoder.argtypes = []
-    model.ck_model_run_encoder.restype = ctypes.c_int
+    model.ck_model_run_audio_wav.argtypes = [
+        _U8_P,
+        ctypes.c_size_t,
+        ctypes.POINTER(CKAudioWavInfo),
+    ]
+    model.ck_model_run_audio_wav.restype = ctypes.c_int
     status = int(
         model.ck_model_init_with_manifest(
             str(run_dir / "weights.bump").encode(),
@@ -308,24 +92,33 @@ def _encoder_worker(args: argparse.Namespace) -> int:
     if status != 0:
         raise RuntimeError(f"encoder initialization failed with code {status}")
     try:
-        input_ptr = int(
-            model.ck_model_get_named_activation_ptr(b"audio_features") or 0
-        )
-        input_bytes = int(
-            model.ck_model_get_named_activation_nbytes(b"audio_features")
-        )
-        if input_ptr == 0 or input_bytes != features.nbytes:
-            raise RuntimeError(
-                "audio feature ABI mismatch: "
-                f"ptr={input_ptr} bytes={input_bytes} expected={features.nbytes}"
-            )
-        ctypes.memmove(input_ptr, features.ctypes.data, features.nbytes)
+        wav = np.frombuffer(args.wav.resolve().read_bytes(), dtype=np.uint8)
+        info = CKAudioWavInfo()
         started = time.perf_counter()
-        status = int(model.ck_model_run_encoder())
+        status = int(
+            model.ck_model_run_audio_wav(
+                wav.ctypes.data_as(_U8_P), wav.size, ctypes.byref(info)
+            )
+        )
         encoder_seconds = time.perf_counter() - started
         if status != 0:
-            raise RuntimeError(f"encoder execution failed with code {status}")
+            raise RuntimeError(f"generated audio runtime failed with code {status}")
         config = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+        feature_channels = int(config["audio_feature_channels"])
+        feature_frames = int(config["audio_feature_frames"])
+        feature_ptr = int(
+            model.ck_model_get_named_activation_ptr(b"audio_features") or 0
+        )
+        feature_bytes = int(
+            model.ck_model_get_named_activation_nbytes(b"audio_features")
+        )
+        feature_required = feature_channels * feature_frames * 4
+        if feature_ptr == 0 or feature_bytes < feature_required:
+            raise RuntimeError("generated audio feature checkpoint is unavailable")
+        features = np.ctypeslib.as_array(
+            ctypes.cast(feature_ptr, _FLOAT_P),
+            shape=(feature_channels * feature_frames,),
+        ).copy().reshape(feature_channels, feature_frames)
         tokens = int(config["context_length"])
         embed = int(config["embed_dim"])
         output_ptr = int(
@@ -350,10 +143,15 @@ def _encoder_worker(args: argparse.Namespace) -> int:
     args.worker_report.write_text(
         json.dumps(
             {
-                "audio": audio_metadata,
+                "audio": {
+                    "source_sample_rate": info.sample_rate,
+                    "source_channels": info.channels,
+                    "source_frames": info.frames,
+                },
                 "features_shape": list(features.shape),
                 "encoder_shape": list(output.shape),
-                "frontend_seconds": frontend_seconds,
+                "frontend_seconds": None,
+                "audio_encoder_seconds": encoder_seconds,
                 "encoder_seconds": encoder_seconds,
                 "feature_sha256": hashlib.sha256(features.tobytes()).hexdigest(),
                 "encoder_sha256": hashlib.sha256(output.tobytes()).hexdigest(),
@@ -567,10 +365,9 @@ def _run_parent(args: argparse.Namespace) -> int:
         )
     print(decoder["text"])
     print(
-        "frontend={:.3f}s encoder={:.3f}s prefill={:.3f}s "
-        "decode={:.3f}s tokens={} stop={}".format(
-            encoder["frontend_seconds"],
-            encoder["encoder_seconds"],
+        "audio+encoder={:.3f}s prefill={:.3f}s decode={:.3f}s "
+        "tokens={} stop={}".format(
+            encoder["audio_encoder_seconds"],
             decoder["prefill_seconds"],
             decoder["decode_seconds"],
             decoder["generated_count"],

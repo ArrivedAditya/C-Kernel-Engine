@@ -1,0 +1,37 @@
+{
+  "id": "audio_stft_precompute_tables_f32",
+  "op": "audio_stft_tables",
+  "variant": "periodic_hann_trigonometric_tables_fp32",
+  "quant": {"weight": "none", "activation": "none", "output": "fp32"},
+  "inputs": [],
+  "weights": [],
+  "outputs": [
+    {"name": "window", "dtype": "fp32", "shape": ["N_fft"]},
+    {"name": "cos_table", "dtype": "fp32", "shape": ["N_bins", "N_fft"]},
+    {"name": "sin_table", "dtype": "fp32", "shape": ["N_bins", "N_fft"]}
+  ],
+  "scratch": [],
+  "dims": ["n_fft"],
+  "impl": {
+    "function": "audio_stft_precompute_tables_f32",
+    "c_declaration": "int audio_stft_precompute_tables_f32(int n_fft, float *window, float *cos_table, float *sin_table);",
+    "sources": ["src/kernels/audio_kernels.c"]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [{
+    "contract_id": "audio_stft_periodic_hann_tables_fp32",
+    "status": "validated",
+    "phases": ["prefill"],
+    "function": "audio_stft_precompute_tables_f32",
+    "explicit_selector": true,
+    "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "contract_defined"}},
+    "arithmetic": {"partial_accumulator": "none", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "independent_outputs"}
+  }],
+  "call_abi": {"version": 1, "params": [
+    {"name": "n_fft", "source": "dim:n_fft"},
+    {"name": "window", "source": "output:window", "cast": "float*"},
+    {"name": "cos_table", "source": "output:cos_table", "cast": "float*"},
+    {"name": "sin_table", "source": "output:sin_table", "cast": "float*"}
+  ]},
+  "tests": {"unit": ["unittest/test_audio_encoder.py"]}
+}

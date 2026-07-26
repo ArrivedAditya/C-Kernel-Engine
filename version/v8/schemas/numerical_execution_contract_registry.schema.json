@@ -58,9 +58,13 @@
             "attention",
             "attention_gate",
             "audio_log_mel",
+            "audio_mel_filters",
+            "audio_pad_or_truncate",
             "audio_pcm_decode",
             "audio_resample",
             "audio_stft",
+            "audio_stft_tables",
+            "audio_wav_decode",
             "audio_conv1d",
             "layout_transform",
             "position_embeddings",
@@ -93,6 +97,7 @@
                 "bf16",
                 "q8_0",
                 "q8_k",
+                "uint8",
                 "int16"
               ]
             },
@@ -111,6 +116,7 @@
             "output": {
               "enum": [
                 "fp32",
+                "fp64",
                 "fp16",
                 "bf16",
                 "q8_0",
@@ -131,6 +137,7 @@
             "input": {
               "enum": [
                 "fp32",
+                "fp64",
                 "fp16",
                 "fp16_rne",
                 "bf16",

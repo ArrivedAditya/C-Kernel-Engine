@@ -13,6 +13,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "version" / "v8" / "scripts" / "run_whisper_v8.py"
+UNIFIED_SCRIPT = ROOT / "version" / "v8" / "scripts" / "ck_run_v8.py"
 
 
 def _module():
@@ -23,14 +24,13 @@ def _module():
     return module
 
 
-def test_whisper_filter_bank_and_forced_prefix_are_stable() -> None:
+def test_whisper_runner_uses_generated_frontend_and_forced_prefix_is_stable() -> None:
     runner = _module()
-    filters = runner.whisper_mel_filters()
-    assert filters.shape == (80, 201)
-    assert int((filters != 0).sum()) == 391
-    assert hashlib.sha256(filters.tobytes()).hexdigest() == (
-        "2150c30cbbeb6029f52002ffa666c1c72d83dbf53f463cb8462052055806e891"
-    )
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "ck_model_run_audio_wav" in source
+    assert "audio_resample_windowed_sinc_f32" not in source
+    assert "audio_stft_power_fft400_f32" not in source
+    assert "audio_whisper_log_mel_from_power_reference_f32" not in source
     generation = {
         "decoder_start_token_id": 50258,
         "lang_to_id": {"<|en|>": 50259},
@@ -43,6 +43,22 @@ def test_whisper_filter_bank_and_forced_prefix_are_stable() -> None:
         50359,
         50363,
     ]
+
+
+def test_unified_v8_cli_owns_the_public_audio_command() -> None:
+    source = UNIFIED_SCRIPT.read_text(encoding="utf-8")
+    assert 'subparsers.add_parser(\n        "audio"' in source
+    assert "run_audio_pipeline(args)" in source
+    completed = subprocess.run(
+        [sys.executable, str(UNIFIED_SCRIPT), "audio", "--help"],
+        check=True,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+    )
+    assert "--encoder-run-dir" in completed.stdout
+    assert "--decoder-run-dir" in completed.stdout
+    assert "--wav" in completed.stdout
 
 
 def test_whisper_tiny_jfk_exact_transcript_when_artifacts_are_configured(

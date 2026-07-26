@@ -16,6 +16,7 @@ V8 = ROOT / "version" / "v8"
 RESOLVER_PATH = V8 / "scripts" / "resolve_numerical_execution_contracts_v8.py"
 BUILD_IR_PATH = V8 / "scripts" / "build_ir_v8.py"
 CODEGEN_CORE_PATH = V8 / "scripts" / "codegen_core_v8.py"
+CODEGEN_PATH = V8 / "scripts" / "codegen_v8.py"
 WHISPER_XRAY_PATH = V8 / "scripts" / "compare_whisper_encoder_pytorch_v8.py"
 NIGHTLY_PATH = ROOT / "scripts" / "nightly_runner.py"
 if str(BUILD_IR_PATH.parent) not in sys.path:
@@ -34,6 +35,7 @@ def _load_module(name: str, path: Path):
 resolver = _load_module("audio_encoder_contract_resolver", RESOLVER_PATH)
 build_ir = _load_module("audio_encoder_build_ir", BUILD_IR_PATH)
 codegen_core = _load_module("audio_encoder_codegen_core", CODEGEN_CORE_PATH)
+codegen = _load_module("audio_encoder_codegen", CODEGEN_PATH)
 whisper_xray = _load_module("audio_encoder_whisper_xray", WHISPER_XRAY_PATH)
 nightly = _load_module("audio_encoder_nightly", NIGHTLY_PATH)
 
@@ -62,6 +64,13 @@ def _make_audio_encoder_manifest() -> dict:
         "head_dim": 4,
         "intermediate_size": 16,
         "context_length": 4,
+        "audio_sample_rate": 16000,
+        "audio_sample_extent": 1280,
+        "audio_max_source_frames": 3840,
+        "audio_resample_radius": 16,
+        "audio_n_fft": 400,
+        "audio_hop_length": 160,
+        "audio_power_bins": 201,
         "audio_feature_channels": 4,
         "audio_feature_frames": 8,
         "audio_conv1_output_channels": 8,
@@ -130,6 +139,13 @@ class AudioEncoderContractTests(unittest.TestCase):
 
     def test_audio_encoder_contracts_resolve_exact_providers(self):
         expected = {
+            "audio.frontend.wav_decode": "audio_wav_decode_memory_pcm16_mono_f32",
+            "audio.frontend.resample": "audio_resample_windowed_sinc_f32",
+            "audio.frontend.pad": "audio_pad_or_truncate_f32",
+            "audio.frontend.stft_tables": "audio_stft_precompute_tables_f32",
+            "audio.frontend.stft": "audio_stft_power_fft400_f32",
+            "audio.frontend.mel_filters": "audio_whisper_mel_filters_slaney_f32",
+            "audio.frontend.log_mel": "audio_whisper_log_mel_from_power_f32",
             "audio.encoder.stem.conv1": "audio_conv1d_channel_major_f32",
             "audio.encoder.stem.conv2": "audio_conv1d_channel_major_f32",
             "audio.encoder.layout": "audio_transpose_channel_to_token_f32",
@@ -241,6 +257,23 @@ class AudioEncoderContractTests(unittest.TestCase):
         self.assertNotIn("kernels", self.frontend)
         self.assertNotIn("kernels", self.circuit)
 
+    def test_reusable_frontend_and_encoder_prefix_cannot_drift(self):
+        frontend_requirements = self.frontend["required_numerical_contracts"]
+        encoder_requirements = {
+            name: requirement
+            for name, requirement in self.circuit[
+                "required_numerical_contracts"
+            ].items()
+            if name.startswith("audio.frontend.")
+        }
+        self.assertEqual(frontend_requirements, encoder_requirements)
+        reusable_sequence = self.frontend["block_types"]["audio_frontend"]["sequence"]
+        encoder_header = self.circuit["block_types"]["audio_encoder"]["header"]
+        self.assertEqual(
+            [row["op"] for row in reusable_sequence],
+            [row["op"] for row in encoder_header[: len(reusable_sequence)]],
+        )
+
     def test_audio_encoder_generates_complete_noncausal_call_ir(self):
         manifest = _make_audio_encoder_manifest()
         ir1 = build_ir.build_ir1_direct(
@@ -277,6 +310,19 @@ class AudioEncoderContractTests(unittest.TestCase):
             row["name"]: row
             for row in layout["memory"]["activations"]["buffers"]
         }
+        for name in (
+            "audio_samples",
+            "audio_resampled",
+            "audio_normalized",
+            "audio_window",
+            "audio_cos_table",
+            "audio_sin_table",
+            "audio_power",
+            "audio_mel_filters",
+            "audio_fft_scratch",
+        ):
+            with self.subTest(frontend_buffer=name):
+                self.assertIn(name, buffers)
         self.assertEqual(buffers["audio_features"]["shape"], "[4, 8]")
         self.assertEqual(buffers["audio_conv_1"]["shape"], "[8, 8]")
         self.assertEqual(buffers["audio_conv_2"]["shape"], "[8, 4]")
@@ -290,6 +336,61 @@ class AudioEncoderContractTests(unittest.TestCase):
             if row.get("errors")
         ]
         self.assertEqual(errors, [])
+        frontend_calls = {
+            row["op"]: row
+            for row in call_ir["operations"]
+            if row.get("op")
+            in {
+                "audio_wav_decode",
+                "audio_resample",
+                "audio_pad_or_truncate",
+                "audio_stft_tables",
+                "audio_stft",
+                "audio_mel_filters",
+                "audio_log_mel",
+            }
+        }
+        expected_frontend_functions = {
+            "audio_wav_decode": "audio_wav_decode_memory_pcm16_mono_f32",
+            "audio_resample": "audio_resample_windowed_sinc_f32",
+            "audio_pad_or_truncate": "audio_pad_or_truncate_f32",
+            "audio_stft_tables": "audio_stft_precompute_tables_f32",
+            "audio_stft": "audio_stft_power_fft400_f32",
+            "audio_mel_filters": "audio_whisper_mel_filters_slaney_f32",
+            "audio_log_mel": "audio_whisper_log_mel_from_power_reference_f32",
+        }
+        self.assertEqual(set(frontend_calls), set(expected_frontend_functions))
+        for op, function in expected_frontend_functions.items():
+            with self.subTest(frontend_call=op):
+                self.assertEqual(frontend_calls[op]["function"], function)
+                self.assertTrue(frontend_calls[op]["args"])
+        wav_args = {
+            arg["name"]: arg["expr"]
+            for arg in frontend_calls["audio_wav_decode"]["args"]
+        }
+        self.assertEqual(wav_args["byte_count"], "audio_wav_byte_count")
+        resample_args = {
+            arg["name"]: arg["expr"]
+            for arg in frontend_calls["audio_resample"]["args"]
+        }
+        self.assertEqual(resample_args["input_frames"], "audio_source_frames")
+        self.assertEqual(resample_args["input_rate"], "audio_source_rate")
+
+        entrypoint = codegen._emit_audio_wav_entrypoint(
+            call_ir["operations"], manifest["config"]
+        )
+        self.assertIn("CK_EXPORT int ck_model_run_audio_wav(", entrypoint)
+        for function in expected_frontend_functions.values():
+            self.assertIn(function + "(", entrypoint)
+        missing = [
+            row
+            for row in call_ir["operations"]
+            if row.get("op") != "audio_mel_filters"
+        ]
+        with self.assertRaisesRegex(
+            RuntimeError, "did not lower every required operation"
+        ):
+            codegen._emit_audio_wav_entrypoint(missing, manifest["config"])
         gelu_calls = [
             row for row in call_ir["operations"]
             if row.get("op") == "gelu" and int(row.get("layer", -1)) == -1
@@ -343,9 +444,13 @@ class AudioEncoderContractTests(unittest.TestCase):
 
     def test_audio_ops_are_generic_dsl_vocabulary(self):
         expected = {
+            "audio_wav_decode": "audio_wav_decode",
             "audio_pcm_decode": "audio_pcm_decode",
             "audio_resample": "audio_resample",
+            "audio_pad_or_truncate": "audio_pad_or_truncate",
+            "audio_stft_tables": "audio_stft_tables",
             "audio_stft": "audio_stft",
+            "audio_mel_filters": "audio_mel_filters",
             "audio_log_mel": "audio_log_mel",
             "audio_conv1d_stem_1": "audio_conv1d",
             "audio_conv1d_stem_2": "audio_conv1d",
