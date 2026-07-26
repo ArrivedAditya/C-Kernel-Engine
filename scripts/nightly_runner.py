@@ -671,6 +671,18 @@ MAKE_TARGETS = {
         "target": "test-v8-glm4-highmem",
         "timeout_sec": 7200,
     },
+    "v8_kimi_highmem": {
+        "name": "v8 Kimi High-Memory Smoke",
+        "category": "inference",
+        "target": "test-v8-kimi-highmem",
+        "timeout_sec": 7200,
+    },
+    "v8_xeon_family_contracts": {
+        "name": "v8 Xeon Family Compiler/Circuit Contracts",
+        "category": "inference",
+        "target": "test-v8-xeon-family-contracts",
+        "timeout_sec": 1800,
+    },
 }
 
 # Benchmark targets with perf extraction

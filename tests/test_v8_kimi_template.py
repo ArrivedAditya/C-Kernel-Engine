@@ -135,10 +135,20 @@ class V8KimiTemplateTests(unittest.TestCase):
     def test_kimi_mla_moe_template_lowers_to_reference_kernels(self) -> None:
         manifest = _make_tiny_kimi_manifest()
         ops = build_ir_v8.build_ir1_direct(manifest, ROOT / "tests" / "kimi.synthetic.json", mode="decode")
+        prefill_ops = build_ir_v8.build_ir1_direct(
+            manifest,
+            ROOT / "tests" / "kimi.synthetic.json",
+            mode="prefill",
+        )
         by_layer_op = {(op.get("layer"), op.get("op"), op.get("instance", 0)): op for op in ops}
+        prefill_by_layer_op = {
+            (op.get("layer"), op.get("op"), op.get("instance", 0)): op
+            for op in prefill_ops
+        }
 
         self.assertEqual([op["op"] for op in ops].count("residual_save"), 4)
         self.assertEqual(by_layer_op[(0, "q_proj", 0)]["kernel"], "gemv_bf16")
+        self.assertEqual(prefill_by_layer_op[(0, "q_proj", 0)]["kernel"], "gemm_nt_bf16")
         self.assertEqual(by_layer_op[(0, "kv_a_proj", 0)]["kernel"], "gemv_bf16")
         self.assertEqual(by_layer_op[(0, "kv_lora_decompress", 0)]["kernel"], "deepseek_mla_kv_decompress_bf16")
         self.assertEqual(by_layer_op[(0, "partial_rope_concat", 0)]["kernel"], "deepseek_mla_partial_rope_concat_packed_f32")
