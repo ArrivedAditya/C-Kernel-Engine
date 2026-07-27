@@ -1,0 +1,15 @@
+{
+  "schema": "cke.xray_ranking_report",
+  "schema_version": 1,
+  "checks": [
+    {"kind": "mixed_prefill", "position": 0, "status": "pass", "ck_top1": 3183, "oracle_top1": 3183, "cosine": 1.0, "rmse": 0.0, "topk_overlap_count": 16, "topk": 16},
+    {"kind": "mixed_prefill", "position": 1, "status": "pass", "ck_top1": 990, "oracle_top1": 990, "cosine": 0.9999998, "rmse": 1.1e-06, "topk_overlap_count": 16, "topk": 16},
+    {"kind": "mixed_prefill", "position": 2, "status": "pass", "ck_top1": 12041, "oracle_top1": 12041, "cosine": 0.9999995, "rmse": 3.4e-06, "topk_overlap_count": 15, "topk": 16},
+    {"kind": "teacher_forced", "position": 0, "status": "pass", "ck_top1": 526, "oracle_top1": 526, "cosine": 1.0, "rmse": 0.0, "topk_overlap_count": 16, "topk": 16},
+    {"kind": "teacher_forced", "position": 1, "status": "pass", "ck_top1": 8804, "oracle_top1": 8804, "cosine": 0.9999997, "rmse": 2.0e-06, "topk_overlap_count": 16, "topk": 16},
+    {"kind": "teacher_forced", "position": 2, "status": "fail", "ck_top1": 15532, "oracle_top1": 9021, "cosine": 0.99912, "rmse": 4.7e-04, "topk_overlap_count": 11, "topk": 16},
+    {"kind": "teacher_forced", "position": 3, "status": "pass", "ck_top1": 9021, "oracle_top1": 9021, "cosine": 0.9999989, "rmse": 8.8e-06, "topk_overlap_count": 15, "topk": 16},
+    {"kind": "persistent_vs_replay", "position": 0, "status": "pass", "ck_top1": 2310, "oracle_top1": 2310, "cosine": 1.0, "rmse": 0.0, "topk_overlap_count": 16, "topk": 16},
+    {"kind": "persistent_vs_replay", "position": 1, "status": "fail", "ck_top1": 7745, "oracle_top1": 203, "cosine": 0.99874, "rmse": 9.3e-04, "topk_overlap_count": 9, "topk": 16}
+  ]
+}

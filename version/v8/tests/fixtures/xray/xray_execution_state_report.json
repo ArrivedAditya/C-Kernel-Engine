@@ -1,0 +1,22 @@
+{
+  "schema": "cke.xray_execution_state_report",
+  "schema_version": 1,
+  "subject_backend": "ck",
+  "oracle_backend": "llamacpp",
+  "status": "fail",
+  "checks": [
+    {"stage": "execution_contract", "status": "pass"},
+    {"stage": "kernel_contracts", "status": "pass"},
+    {"stage": "kernel_batches", "status": "pass"},
+    {"stage": "position_state", "status": "pass"},
+    {"stage": "cache_metadata", "status": "pass"},
+    {"stage": "cache_append_source", "status": "pass"},
+    {"stage": "cache_append_roundtrip", "status": "pass"},
+    {"stage": "all_valid_cache_rows", "status": "fail", "classification": "CACHE_CONTENT_DIVERGENCE", "recommended_action": "Inspect kv_append kernel storage rounding at append_index 8.", "metrics": {"cosine": 0.99987, "rmse": 4.2e-04, "max_abs": 2.1e-03, "mean_abs": 1.6e-04, "worst_flat_index": 18342, "finite": true}, "first_differing_row": 8},
+    {"stage": "attention_inputs", "status": "pass"},
+    {"stage": "attention_arithmetic", "status": "pass"},
+    {"stage": "ranking", "status": "fail", "classification": "RANKING_DIVERGENCE", "recommended_action": "Compare logits at position 1 against the oracle trace."}
+  ],
+  "first_divergence": {"stage": "all_valid_cache_rows", "status": "fail", "classification": "CACHE_CONTENT_DIVERGENCE", "recommended_action": "Inspect kv_append kernel storage rounding at append_index 8.", "first_differing_row": 8},
+  "diagnostic_order": ["execution_contract", "kernel_contracts", "kernel_batches", "position_state", "cache_metadata", "cache_append_source", "cache_append_roundtrip", "all_valid_cache_rows", "attention_inputs", "attention_arithmetic", "ranking"]
+}

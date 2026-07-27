@@ -1,0 +1,638 @@
+{
+  "backend": "llamacpp",
+  "circuit_scope": "vision_encoder",
+  "execution_mode": "strict",
+  "final_report": {
+    "architecture_policy": {
+      "allowed_dsl_changes": [
+        "generic validation",
+        "fail-closed resolution",
+        "metadata propagation",
+        "deterministic code generation",
+        "removal of implicit assumptions"
+      ],
+      "dsl_role": "deterministically stitch and emit the circuit and resolved kernel-map decisions",
+      "forbidden_fix": "Do not add model-name or checkpoint-specific kernel-selection branches to DSL/codegen.",
+      "required_kernel_validation": "Kernel arithmetic fixes require isolated scalar/reference parity plus the applicable llama.cpp or PyTorch parity gate."
+    },
+    "circuit_scope": "vision_encoder",
+    "comparisons": [
+      {
+        "checkpoint_id": "vision.frontend.patch_bias.output",
+        "classification": "KERNEL_IMPLEMENTATION_DIVERGENCE",
+        "fix_owner": "kernel",
+        "legacy_tensor": "patch_bias",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 1.9538347721099854,
+          "max_rel_err": 4957.529296875,
+          "mean_abs": 0.023876352235674858,
+          "mean_rel_err": 0.7372592687606812,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "recommended_action": "Reproduce the checkpoint in the isolated kernel parity test and fix its arithmetic.",
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": -1,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "patch_bias_add",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.frontend.position.output",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "inp_pos_emb",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 1.9538347721099854,
+          "max_rel_err": 2986.323974609375,
+          "mean_abs": 0.023876352235674858,
+          "mean_rel_err": 0.8532440066337585,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": -1,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "position_embeddings",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.layer.0.norm1.output",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "ln1",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 5.435006618499756,
+          "max_rel_err": 6616.609375,
+          "mean_abs": 0.04056883603334427,
+          "mean_rel_err": 0.888549268245697,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": 0,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "attn_norm",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.layer.0.q.pre_rope",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "q_proj",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 3.7380547523498535,
+          "max_rel_err": 5025.41015625,
+          "mean_abs": 0.0779515877366066,
+          "mean_rel_err": 0.4870687425136566,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": 0,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "split_qkv",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.layer.0.k.pre_rope",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "k_proj",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 4.162534713745117,
+          "max_rel_err": 7422.64111328125,
+          "mean_abs": 0.0542113222181797,
+          "mean_rel_err": 0.4757571816444397,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": 0,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "split_qkv",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.layer.0.v.output",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "v_proj",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 1.2882425785064697,
+          "max_rel_err": 3389.566162109375,
+          "mean_abs": 0.032007988542318344,
+          "mean_rel_err": 1.699602484703064,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": 0,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "split_qkv",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.layer.0.q.post_rope",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "Qcur_rope",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 3.7334890365600586,
+          "max_rel_err": 12757.1533203125,
+          "mean_abs": 0.07838234305381775,
+          "mean_rel_err": 0.4985518753528595,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": 0,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "vision_mrope",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.layer.0.k.post_rope",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "Kcur_rope",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 4.1071600914001465,
+          "max_rel_err": 6568.43505859375,
+          "mean_abs": 0.054723769426345825,
+          "mean_rel_err": 0.474497526884079,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": 0,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "vision_mrope",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.layer.0.attention.output",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "kqv_out",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 2.0359508991241455,
+          "max_rel_err": 248.2673797607422,
+          "mean_abs": 0.04772143438458443,
+          "mean_rel_err": 3.106151580810547,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": 0,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "attn",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.layer.0.out_proj.output",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "attn_output",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 1.1949381828308105,
+          "max_rel_err": 797.9341430664062,
+          "mean_abs": 0.009073006920516491,
+          "mean_rel_err": 0.13680118322372437,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": 0,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "attn_out_proj",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.layer.0.residual1.output",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "ffn_inp",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 1.901223063468933,
+          "max_rel_err": 2620.31201171875,
+          "mean_abs": 0.029176844283938408,
+          "mean_rel_err": 0.9758992791175842,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": 0,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "attn_residual",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.layer.0.norm2.output",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "ffn_inp_normed",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 19.20294189453125,
+          "max_rel_err": 14612.1298828125,
+          "mean_abs": 0.1500210016965866,
+          "mean_rel_err": 1.2506661415100098,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": 0,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "ffn_norm",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.layer.0.mlp.up",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "ffn_up_b",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 13.704967498779297,
+          "max_rel_err": 28180.02734375,
+          "mean_abs": 0.1767929196357727,
+          "mean_rel_err": 0.7250823378562927,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": 0,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "mlp_up",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.layer.0.mlp.activation",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "ffn_gelu",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 8.75067138671875,
+          "max_rel_err": 76601.5625,
+          "mean_abs": 0.03463883697986603,
+          "mean_rel_err": 3.321547508239746,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": 0,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "mlp_gelu",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.layer.0.mlp.down",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "ffn_out",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 1.8673081398010254,
+          "max_rel_err": 3884.392822265625,
+          "mean_abs": 0.053950097411870956,
+          "mean_rel_err": 1.0180381536483765,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": 0,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "mlp_down",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      },
+      {
+        "checkpoint_id": "vision.layer.0.output",
+        "classification": "OBSERVED_DIVERGENCE",
+        "legacy_tensor": "layer_out",
+        "metrics": {
+          "byte_exact": false,
+          "diverge_idx": 0,
+          "exact_ratio": null,
+          "max_abs": 2.0928802490234375,
+          "max_rel_err": 4531.34130859375,
+          "mean_abs": 0.06179801747202873,
+          "mean_rel_err": 1.1912444829940796,
+          "relative_rmse": null,
+          "rmse": null
+        },
+        "resolved_execution": {
+          "exported_dtype": null,
+          "function": null,
+          "kernel_id": null,
+          "layer": 0,
+          "observed_dtype": "fp32",
+          "op_idx": null,
+          "phase": "prefill",
+          "producer": "mlp_residual",
+          "resolved_contract_id": null,
+          "storage_dtype": null
+        },
+        "status": "fail"
+      }
+    ],
+    "execution_mode": "strict",
+    "first_divergence": {
+      "checkpoint_id": "vision.frontend.patch_bias.output",
+      "classification": "KERNEL_IMPLEMENTATION_DIVERGENCE",
+      "fix_owner": "kernel",
+      "legacy_tensor": "patch_bias",
+      "metrics": {
+        "byte_exact": false,
+        "diverge_idx": 0,
+        "exact_ratio": null,
+        "max_abs": 1.9538347721099854,
+        "max_rel_err": 4957.529296875,
+        "mean_abs": 0.023876352235674858,
+        "mean_rel_err": 0.7372592687606812,
+        "relative_rmse": null,
+        "rmse": null
+      },
+      "recommended_action": "Reproduce the checkpoint in the isolated kernel parity test and fix its arithmetic.",
+      "resolved_execution": {
+        "exported_dtype": null,
+        "function": null,
+        "kernel_id": null,
+        "layer": -1,
+        "observed_dtype": "fp32",
+        "op_idx": null,
+        "phase": "prefill",
+        "producer": "patch_bias_add",
+        "resolved_contract_id": null,
+        "storage_dtype": null
+      },
+      "status": "fail"
+    },
+    "first_non_exact_checkpoint": null,
+    "fix_progression": {
+      "policy": "advance_only_after_numerical_evidence",
+      "steps": [
+        "Stop at the first divergent semantic edge; do not debug later outputs.",
+        "Classify storage, compute, reduction, position, layout, circuit, binding, or implementation semantics.",
+        "Check the kernel map for an exact compatible numerical capability; never choose the nearest variant.",
+        "If absent, add one additive kernel variant. If present but wrong, fix that implementation without changing unrelated variants.",
+        "Extend the kernel-family unit matrix for the complete input-storage, compute, accumulator/reduction, rounding, output-storage, and threading contract.",
+        "Validate against an independent scalar formula and the requested PyTorch or llama.cpp backend oracle.",
+        "Register the exact function and validated contract in the kernel map; unsupported and ambiguous resolutions must hard-fail.",
+        "When a small stored delta precedes a later failure, run same-backend forward/VJP sensitivity ablations before blaming a backward provider; Q, K, and V perturbations must be isolated.",
+        "If the final encoder prefix is byte-exact but teacher-forced ranking fails, close the encoder interval and switch X-ray to decoder mixed-prefill/decode checkpoints at the first failing position.",
+        "When sparse tensors pass but ranking fails, expand only the measured interval with the largest positive relative-RMSE growth; never reopen an all-exact phase.",
+        "Run isolated kernel tests, numerical-contract resolution, stitched checkpoint parity, mixed-prefill logits, and teacher-forced parity in that order.",
+        "Rerun X-ray from the last passing checkpoint and confirm the first failure progresses to a later semantic edge.",
+        "Preserve the new evidence in nightly and the HTML test-report capability accordion so the bug cannot silently recur."
+      ]
+    },
+    "last_passing_checkpoint": null,
+    "next_plan": {
+      "first_failure": "vision.frontend.patch_bias.output",
+      "next_checkpoints": [],
+      "passing_lower_bound": null,
+      "status": "first_divergence_attributed"
+    },
+    "oracle_backend": "llamacpp",
+    "ranking_divergence": null,
+    "schema": "cke.xray_numerical_report",
+    "schema_version": 1,
+    "status": "fail",
+    "subject_backend": "ck",
+    "unmatched_capture_rows": [
+      {
+        "layer": -1,
+        "op": "ffn_gelu",
+        "status": "MISSING"
+      },
+      {
+        "layer": -1,
+        "op": "ffn_up_b",
+        "status": "MISSING"
+      }
+    ],
+    "unresolved_contract_checkpoints": []
+  },
+  "oracle_execution": {
+    "deterministic": true,
+    "nondeterministic_opt_in": false,
+    "threads": 1
+  },
+  "phase": "prefill",
+  "preflight": null,
+  "provenance": {
+    "model_sha256": "c6ba85508d82f42590e6eb77d5340369ab6fecf107a7561d809523d8aa5f3bfd",
+    "oracle": {
+      "backend": "llamacpp",
+      "commit": "f3e182816421c648188b5eab269853bf1531d950",
+      "components": [
+        {
+          "name": "libggml-base.so.0.15.1",
+          "path": "/home/antshiv/Workspace/C-Kernel-Engine/.worktrees/qwen3vl-40-sweep/llama.cpp/build/bin/libggml-base.so.0.15.1",
+          "sha256": "1481750f15441ab6add51f25dcaa8664c06e3a07c0ebc50ee6c55fb7cfeea69b"
+        },
+        {
+          "name": "libggml-cpu.so.0.15.1",
+          "path": "/home/antshiv/Workspace/C-Kernel-Engine/.worktrees/qwen3vl-40-sweep/llama.cpp/build/bin/libggml-cpu.so.0.15.1",
+          "sha256": "0ccfe1e5f730ae66d10c8850365d1c2b388f6ff10d2841d5249ce75c51d81e9d"
+        },
+        {
+          "name": "libggml.so.0.15.1",
+          "path": "/home/antshiv/Workspace/C-Kernel-Engine/.worktrees/qwen3vl-40-sweep/llama.cpp/build/bin/libggml.so.0.15.1",
+          "sha256": "899797a49b686dab141b0f72e84bcf7b344f34e9db2fdb0fdd7c038ba9842cf4"
+        },
+        {
+          "name": "libllama.so.0.0.9692",
+          "path": "/home/antshiv/Workspace/C-Kernel-Engine/.worktrees/qwen3vl-40-sweep/llama.cpp/build/bin/libllama.so.0.0.9692",
+          "sha256": "6d77627bab0d76e8643b636e6eb5b3d12c992c738dad2048c1c81ca4e89a460f"
+        },
+        {
+          "name": "libmtmd.so.0.0.9692",
+          "path": "/home/antshiv/Workspace/C-Kernel-Engine/.worktrees/qwen3vl-40-sweep/llama.cpp/build/bin/libmtmd.so.0.0.9692",
+          "sha256": "22376c501aec114f20da00e373ae739fca80f3cea985cd714db6ca8526d9ec58"
+        },
+        {
+          "name": "libmtmd_clip_shim.so",
+          "path": "/tmp/cke-pr250-review-PyhLrA/build/xray/qwen3vl_llamacpp_real3/capture/libmtmd_clip_shim.so",
+          "sha256": "68b3a2cfba3855d6ce226d23549945fa9f95f788345f50232353b332a6b6e52a"
+        }
+      ],
+      "fingerprint_sha256": "f1ddc951ada839c5c5591ae52563e8a22bd8ff26af6bfb1305203bb75c2197d3",
+      "mode": "flash-disabled",
+      "runtime_sha256": "68b3a2cfba3855d6ce226d23549945fa9f95f788345f50232353b332a6b6e52a"
+    },
+    "phase": "prefill",
+    "run_id": "xray-qwen3vl-llamacpp-final-pass",
+    "subject": {
+      "backend": "ck",
+      "compiler": null,
+      "generated_model_sha256": "6c7969330887f373b40664e2d5687224e27a818a4d22ee590fb5f7ae67d0d664",
+      "isa": null,
+      "runtime_sha256": "e50df5c2299059f6b8dfcbb5b3c5a0a49a8d5a8e82842c8e6af79b8ce08175d3"
+    }
+  },
+  "rounds": [
+    {
+      "capture_report": "build/xray/qwen3vl_llamacpp_real3/capture_report.json",
+      "layer": 0,
+      "round": 0,
+      "status": "fail"
+    }
+  ],
+  "run_id": "xray-qwen3vl-llamacpp-final-pass",
+  "schema": "cke.xray_orchestration_report",
+  "schema_version": 1,
+  "status": "fail",
+  "subject_execution": {
+    "threads": 20
+  }
+}

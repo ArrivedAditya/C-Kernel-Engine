@@ -1,0 +1,74 @@
+{
+  "schema": "cke.xray_orchestration_report",
+  "schema_version": 1,
+  "status": "pass",
+  "rounds": [
+    {
+      "round": 0,
+      "checkpoints": ["layer_input", "after_attn", "after_mlp"],
+      "selectors": ["hidden@0"],
+      "report": "build/xray/qwen3vl_bf16/round_00/xray_report.json",
+      "status": "pass"
+    }
+  ],
+  "preflight": null,
+  "final_report": {
+    "schema": "cke.xray_numerical_report",
+    "schema_version": 1,
+    "subject_backend": "ck",
+    "oracle_backend": "pytorch",
+    "status": "pass",
+    "comparisons": [
+      {
+        "checkpoint_id": "layer.0.input",
+        "status": "pass",
+        "classification": "MATCH",
+        "metrics": {"cosine": 1.0, "rmse": 0.0, "relative_rmse": 0.0, "mean_abs": 0.0, "max_abs": 0.0, "finite": true, "exact_elements": 8192, "total_elements": 8192, "exact_ratio": 1.0, "byte_exact": true},
+        "failed_metrics": [],
+        "threshold": {"cosine_min": 0.999999, "rmse_max": 1e-4, "relative_rmse_max": 1e-4, "max_abs_max": 1e-4, "finite_required": true},
+        "resolved_execution": {"producer": "embedding", "phase": "prefill", "layer": 0, "storage_dtype": "bf16", "exported_dtype": "fp32", "resolved_contract_id": "bf16_storage_fp32_compute", "kernel_id": "ck_embed", "function": "ck_op_embed"}
+      },
+      {
+        "checkpoint_id": "layer.0.after_attn",
+        "status": "pass",
+        "classification": "MATCH",
+        "metrics": {"cosine": 1.0, "rmse": 3.1e-08, "relative_rmse": 2.7e-08, "mean_abs": 1.2e-08, "max_abs": 2.9e-07, "finite": true, "exact_elements": 8104, "total_elements": 8192, "exact_ratio": 0.989258, "byte_exact": false},
+        "failed_metrics": [],
+        "threshold": {"cosine_min": 0.999999, "rmse_max": 1e-4, "relative_rmse_max": 1e-4, "max_abs_max": 1e-4, "finite_required": true},
+        "resolved_execution": {"producer": "attention", "phase": "prefill", "layer": 0, "storage_dtype": "bf16", "exported_dtype": "fp32", "resolved_contract_id": "bf16_storage_fp32_compute", "kernel_id": "ck_attn", "function": "ck_op_attention"}
+      },
+      {
+        "checkpoint_id": "layer.0.after_mlp",
+        "status": "pass",
+        "classification": "MATCH",
+        "metrics": {"cosine": 1.0, "rmse": 7.6e-08, "relative_rmse": 6.4e-08, "mean_abs": 2.8e-08, "max_abs": 6.3e-07, "finite": true, "exact_elements": 8001, "total_elements": 8192, "exact_ratio": 0.976685, "byte_exact": false},
+        "failed_metrics": [],
+        "threshold": {"cosine_min": 0.999999, "rmse_max": 1e-4, "relative_rmse_max": 1e-4, "max_abs_max": 1e-4, "finite_required": true},
+        "resolved_execution": {"producer": "mlp", "phase": "prefill", "layer": 0, "storage_dtype": "bf16", "exported_dtype": "fp32", "resolved_contract_id": "bf16_storage_fp32_compute", "kernel_id": "ck_mlp", "function": "ck_op_mlp"}
+      }
+    ],
+    "first_divergence": null,
+    "first_non_exact_checkpoint": {
+      "checkpoint_id": "layer.0.after_attn",
+      "status": "pass",
+      "classification": "NON_BYTE_EXACT",
+      "metrics": {"cosine": 1.0, "rmse": 3.1e-08, "relative_rmse": 2.7e-08, "mean_abs": 1.2e-08, "max_abs": 2.9e-07, "finite": true, "exact_elements": 8104, "total_elements": 8192, "exact_ratio": 0.989258, "byte_exact": false}
+    },
+    "drift_progression": {
+      "metric": "relative_rmse",
+      "policy": "observational_no_additional_tolerance",
+      "first_non_exact": "layer.0.after_attn",
+      "largest_amplification_boundary": null,
+      "checkpoints": [
+        {"checkpoint_id": "layer.0.input", "status": "pass", "relative_rmse": 0.0, "rmse": 0.0, "max_abs": 0.0, "byte_exact": true, "resolved_execution": {"layer": 0, "function": "ck_op_embed", "kernel_id": "ck_embed", "resolved_contract_id": "bf16_storage_fp32_compute"}, "previous_checkpoint_id": null, "relative_rmse_delta": 0.0, "relative_rmse_ratio": null},
+        {"checkpoint_id": "layer.0.after_attn", "status": "pass", "relative_rmse": 2.7e-08, "rmse": 3.1e-08, "max_abs": 2.9e-07, "byte_exact": false, "resolved_execution": {"layer": 0, "function": "ck_op_attention", "kernel_id": "ck_attn", "resolved_contract_id": "bf16_storage_fp32_compute"}, "previous_checkpoint_id": "layer.0.input", "relative_rmse_delta": 2.7e-08, "relative_rmse_ratio": null},
+        {"checkpoint_id": "layer.0.after_mlp", "status": "pass", "relative_rmse": 6.4e-08, "rmse": 7.6e-08, "max_abs": 6.3e-07, "byte_exact": false, "resolved_execution": {"layer": 0, "function": "ck_op_mlp", "kernel_id": "ck_mlp", "resolved_contract_id": "bf16_storage_fp32_compute"}, "previous_checkpoint_id": "layer.0.after_attn", "relative_rmse_delta": 3.7e-08, "relative_rmse_ratio": 2.37},
+        {"checkpoint_id": "layer.1.after_attn", "status": "pass", "relative_rmse": 9.8e-08, "rmse": 1.2e-07, "max_abs": 9.1e-07, "byte_exact": false, "resolved_execution": {"layer": 1, "function": "ck_op_attention", "kernel_id": "ck_attn", "resolved_contract_id": "bf16_storage_fp32_compute"}, "previous_checkpoint_id": "layer.0.after_mlp", "relative_rmse_delta": 3.4e-08, "relative_rmse_ratio": 1.53},
+        {"checkpoint_id": "layer.1.after_mlp", "status": "pass", "relative_rmse": 1.6e-07, "rmse": 2.0e-07, "max_abs": 1.4e-06, "byte_exact": false, "resolved_execution": {"layer": 1, "function": "ck_op_mlp", "kernel_id": "ck_mlp", "resolved_contract_id": "bf16_storage_fp32_compute"}, "previous_checkpoint_id": "layer.1.after_attn", "relative_rmse_delta": 6.2e-08, "relative_rmse_ratio": 1.63}
+      ]
+    },
+    "last_passing_checkpoint": "layer.1.after_mlp",
+    "unresolved_contract_checkpoints": [],
+    "ranking_divergence": null
+  }
+}

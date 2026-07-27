@@ -1,0 +1,67 @@
+{
+  "schema": "cke.xray_execution_trace",
+  "schema_version": 1,
+  "backend": "ck",
+  "run": {
+    "model": "qwen3vl-demo",
+    "phase": "decode",
+    "source": "xray_fixture"
+  },
+  "execution": {
+    "policy_id": "decode_persistent_v1",
+    "calls": [
+      {
+        "call_id": "decode.step.0",
+        "kind": "decode",
+        "start": 0,
+        "count": 1,
+        "position_start": 7,
+        "cache_action": "append",
+        "kernel_batches": [
+          {
+            "checkpoint_id": "layer.0.attention.kv_append",
+            "kernel_id": "ck_kv_append_fp32",
+            "numerical_contract_id": "fp32_compute",
+            "effective_contract_id": "fp32_compute",
+            "m": 1,
+            "n": 256,
+            "k": 64
+          }
+        ]
+      },
+      {
+        "call_id": "decode.step.1",
+        "kind": "decode",
+        "start": 1,
+        "count": 1,
+        "position_start": 8,
+        "cache_action": "append"
+      }
+    ]
+  },
+  "state": {
+    "position_policy_id": "increment_by_count",
+    "position": 8,
+    "cache_token_count": 9,
+    "append_index": 8,
+    "cache_layout": {
+      "layout_id": "kv_cache_v1",
+      "base_address": "0x7f2a0000",
+      "layer_stride_bytes": 1048576,
+      "head_stride_bytes": 131072,
+      "token_stride_bytes": 512,
+      "channel_stride_bytes": 4
+    }
+  },
+  "artifacts": [
+    {
+      "checkpoint_id": "layer.0.attention.kv_append",
+      "role": "new_key",
+      "tensor_path": "tensors/layer0_new_key.f32",
+      "dtype": "fp32",
+      "shape": [1, 8, 1, 64],
+      "row_axis": 2,
+      "sha256": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b"
+    }
+  ]
+}

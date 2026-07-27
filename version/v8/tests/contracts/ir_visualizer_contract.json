@@ -84,6 +84,13 @@
       "description": "CK vs llama.cpp parity results"
     },
     {
+      "id": "xray",
+      "label": "X-Ray",
+      "render_fn": "renderXray",
+      "panel_id": "xray",
+      "description": "Backend parity X-ray: per-checkpoint numerical drift, ranking, execution trace"
+    },
+    {
       "id": "tests",
       "label": "Tests",
       "panel_id": "tests",
@@ -117,7 +124,11 @@
       "renderVisionArtifactsPanel",
       "renderProfile",
       "renderDataPipeline",
-      "renderParityCockpit"
+      "renderParityCockpit",
+      "renderXray",
+      "renderXrayContext",
+      "renderXrayCircuit",
+      "renderXrayRunbook"
     ],
     "utilities": [
       "normalizeShapeInput",
@@ -128,7 +139,20 @@
       "normalizePathString",
       "pathDirname",
       "extractGgufStem",
-      "relativePathFromTo"
+      "relativePathFromTo",
+      "xrayDriftRows",
+      "xrayPhaseOf",
+      "xrayContractState",
+      "xrayCircuitRows",
+      "xrayGrowthEdges",
+      "xrayRunIdentityOf",
+      "xrayRankingMatchesReport",
+      "xrayBoardVerdict",
+      "xrayCircuitScope",
+      "xraySelectCircuitCallIr",
+      "xrayLiveKeyForFile",
+      "xrayEmptyStateContext",
+      "buildXrayPanelEmptyState"
     ]
   },
 
@@ -139,7 +163,14 @@
     "perfFlops",
     "bumpSize",
     "bumpLayers",
-    "bumpWeights"
+    "bumpWeights",
+    "xrayBoard",
+    "xrayContext",
+    "xrayCircuit",
+    "xrayDrift",
+    "xrayRanking",
+    "xrayTrace",
+    "xrayRunbook"
   ],
 
   "pure_function_tests": {
@@ -228,6 +259,379 @@
           { "name": "child",   "call": "relativePathFromTo('/a/b', '/a/b/c')", "expect": "c" },
           { "name": "same",    "call": "relativePathFromTo('/a/b', '/a/b')",   "expect": "." },
           { "name": "nonabs",  "call": "relativePathFromTo('a/b', '/c')",      "expect": null }
+        ]
+      },
+      {
+        "name": "xrayReportKindLabel",
+        "tests": [
+          { "name": "whisper",  "call": "xrayReportKindLabel({schema:'cke.whisper_encoder_pytorch_xray'})", "expect": "Whisper Encoder X-Ray" },
+          { "name": "ranking",  "call": "xrayReportKindLabel({schema:'cke.xray_ranking_report'})",          "expect": "Ranking Report" },
+          { "name": "decoder",  "call": "xrayReportKindLabel({schema:'cke.xray.decoder_pytorch'})",         "expect": "Decoder X-Ray" },
+          { "name": "fallback", "call": "xrayReportKindLabel({})",                                          "expect": "X-Ray Report" }
+        ]
+      },
+      {
+        "name": "xrayBackendLabel",
+        "tests": [
+          { "name": "whisper_torch",   "call": "xrayBackendLabel({schema:'cke.whisper_encoder_pytorch_xray'})",                          "expect": "PyTorch" },
+          { "name": "ranking_oracle",  "call": "xrayBackendLabel({schema:'cke.xray_ranking_report'})",                                     "expect": "ggml-oracle" },
+          { "name": "orch_llamacpp",   "call": "xrayBackendLabel({schema:'cke.xray_orchestration_report', final_report:{oracle_backend:'llamacpp'}})", "expect": "llama.cpp" },
+          { "name": "orch_pytorch",    "call": "xrayBackendLabel({schema:'cke.xray_orchestration_report', final_report:{oracle_backend:'pytorch'}})",    "expect": "PyTorch" },
+          { "name": "trace_backend",   "call": "xrayBackendLabel({schema:'cke.xray_execution_trace', backend:'ck'})",                      "expect": "ck" }
+        ]
+      },
+      {
+        "name": "xrayReportStatus",
+        "tests": [
+          { "name": "explicit",       "call": "xrayReportStatus({status:'pass'})",                                  "expect": "pass" },
+          { "name": "checks_all_pass","call": "xrayReportStatus({checks:[{status:'pass'},{status:'pass'}]})",       "expect": "pass" },
+          { "name": "checks_one_fail","call": "xrayReportStatus({checks:[{status:'pass'},{status:'fail'}]})",       "expect": "fail" },
+          { "name": "unknown",        "call": "xrayReportStatus({})",                                               "expect": "unknown" }
+        ]
+      },
+      {
+        "name": "xrayDriftRows",
+        "tests": [
+          {
+            "name": "whisper_checkpoints",
+            "call": "xrayDriftRows({checkpoints:[{stop:0, checkpoint:'stem.conv1', layer:null, metrics:{max_abs:0, rmse:0, byte_exact:true, exact_ratio:1}}, {stop:1, checkpoint:'layer.0.mlp.fc1', layer:0, metrics:{max_abs:1.7e-4, rmse:1.8e-5, byte_exact:false, exact_ratio:0.997}}]})",
+            "expect_fn": "(r) => r.length === 2 && r[0].label === 'stem.conv1' && r[0].byteExact === true && r[1].layer === 0 && r[1].maxAbs === 1.7e-4 && r[1].rmse === 1.8e-5 && r[1].byteExact === false"
+          },
+          {
+            "name": "orchestration_drift_progression",
+            "call": "xrayDriftRows({final_report:{drift_progression:{checkpoints:[{checkpoint_id:'layer.0.input', max_abs:0, rmse:0, byte_exact:true, resolved_execution:{layer:0}}, {checkpoint_id:'layer.0.after_attn', max_abs:2.7e-2, rmse:4.8e-3, byte_exact:false, resolved_execution:{layer:0}}]}}})",
+            "expect_fn": "(r) => r.length === 2 && r[0].label === 'layer.0.input' && r[0].byteExact === true && r[1].maxAbs === 2.7e-2 && r[1].layer === 0"
+          },
+          {
+            "name": "empty_for_non_table_report",
+            "call": "xrayDriftRows({schema:'cke.xray_ranking_report', checks:[{kind:'teacher_forced'}]})",
+            "expect": []
+          },
+          {
+            "name": "comparisons_only_producer",
+            "call": "xrayDriftRows({final_report:{comparisons:[{checkpoint_id:'vision.layer.0.attention.output', status:'fail', metrics:{max_abs:2.7e-2, rmse:4.8e-3, relative_rmse:4.1e-3, byte_exact:false, exact_ratio:0.625}, resolved_execution:{phase:'prefill', layer:0, function:'ck_op_attention', kernel_id:'ck_attn', resolved_contract_id:'q8_storage_fp32_compute'}}]}})",
+            "expect_fn": "(r) => r.length === 1 && r[0].checkpointId === 'vision.layer.0.attention.output' && r[0].raw.resolved_execution.phase === 'prefill' && r[0].maxAbs === 2.7e-2 && r[0].relativeRmse === 4.1e-3"
+          },
+          {
+            "name": "sequence_index_not_array_position",
+            "call": "xrayDriftRows({final_report:{comparisons:[{checkpoint_id:'a', sequence_index:5, metrics:{max_abs:1}, resolved_execution:{layer:0}}, {checkpoint_id:'b', sequence_index:6, metrics:{max_abs:2}, resolved_execution:{layer:0}}]}})",
+            "expect_fn": "(r) => r.length === 2 && r[0].stop === 5 && r[1].stop === 6"
+          },
+          {
+            "name": "mean_abs_passthrough_null_rmse",
+            "call": "xrayDriftRows({final_report:{comparisons:[{checkpoint_id:'vision.frontend.patch_bias.output', status:'fail', metrics:{max_abs:1.9538, mean_abs:2.39e-2, rmse:null, relative_rmse:null, byte_exact:false, exact_ratio:null}, resolved_execution:{phase:'prefill', layer:-1}}]}})",
+            "expect_fn": "(r) => r.length === 1 && r[0].maxAbs === 1.9538 && r[0].meanAbs === 2.39e-2 && r[0].rmse === null && r[0].relativeRmse === null"
+          }
+        ]
+      },
+      {
+        "name": "buildXrayRunbookHtml",
+        "tests": [
+          {
+            "name": "empty_state_lists_producer_commands",
+            "call": "buildXrayRunbookHtml({runDir:null, modelPath:null})",
+            "expect_fn": "(h) => h.indexOf('No X-ray artifacts loaded') >= 0 && h.indexOf('compare_whisper_encoder_pytorch_v8.py') >= 0 && h.indexOf('xray-vision-parity') >= 0 && h.indexOf('xray_execution_state_v8.py') >= 0"
+          },
+          {
+            "name": "no_run_dir_placeholders_escaped",
+            "call": "buildXrayRunbookHtml({runDir:null, modelPath:null})",
+            "expect_fn": "(h) => h.indexOf('&lt;run_dir&gt;') >= 0 && h.indexOf('<run_dir>') < 0"
+          },
+          {
+            "name": "run_scoped_output_paths",
+            "call": "buildXrayRunbookHtml({runDir:'/tmp/ckrun', modelPath:null})",
+            "expect_fn": "(h) => h.indexOf('/tmp/ckrun/whisper-encoder-xray.json') >= 0 && h.indexOf('--run /tmp/ckrun') >= 0"
+          }
+        ]
+      },
+      {
+        "name": "xrayPhaseOf",
+        "tests": [
+          { "name": "whisper_is_prefill", "call": "xrayPhaseOf({schema:'cke.whisper_encoder_pytorch_xray'})", "expect": "prefill" },
+          { "name": "decoder_is_decode",  "call": "xrayPhaseOf({schema:'cke.xray.decoder_pytorch'})",        "expect": "decode" },
+          { "name": "run_phase_wins",     "call": "xrayPhaseOf({run:{phase:'teacher_forced'}})",             "expect": "teacher_forced" },
+          { "name": "from_comparisons",   "call": "xrayPhaseOf({final_report:{comparisons:[{resolved_execution:{phase:'prefill'}}]}})", "expect": "prefill" },
+          { "name": "unknown",            "call": "xrayPhaseOf({schema:'cke.xray_ranking_report', checks:[]})", "expect": null }
+        ]
+      },
+      {
+        "name": "xrayContractState",
+        "tests": [
+          { "name": "match",        "call": "xrayContractState({required_contract:{'numerics.attention_reduction':'fp32_online'}, resolved_contract:{contract_id:'fp32_online'}})", "expect": "match" },
+          { "name": "substitution", "call": "xrayContractState({required_contract:{contract_id:'fp32_exact'}, resolved_contract:{contract_id:'fp32_fastgelu'}})", "expect": "substitution" },
+          { "name": "unresolved",   "call": "xrayContractState({required_contract:{'execution.phase':'decode'}})", "expect": "unresolved" },
+          { "name": "resolved_only","call": "xrayContractState({resolved_contract:{contract_id:'fp32_compute'}})", "expect": "resolved" },
+          { "name": "none",         "call": "xrayContractState({op:'matmul'})", "expect": "none" }
+        ]
+      },
+      {
+        "name": "xrayCircuitRows",
+        "tests": [
+          {
+            "name": "joins_stops_and_marks_coverage",
+            "call": "xrayCircuitRows({operations:[{idx:0, function:'ck_op_conv1d', op:'conv1d', layer:-1, call_abi:{kernel_id:'ck_op_conv1d'}}, {idx:1, function:'ck_op_gelu', op:'gelu', layer:0, call_abi:{kernel_id:'ck_op_gelu'}}]}, [{stop:0, sequenceIndex:0, checkpointId:'stem.conv1', label:'stem.conv1', layer:null, maxAbs:0, rmse:0, byteExact:true, exactRatio:1, raw:{resolved_execution:{function:'ck_op_conv1d', kernel_id:'ck_op_conv1d'}}}], {kernels:[{id:'ck_op_gelu', name:'gelu_fp32'}]})",
+            "expect_fn": "(r) => r.rows.length === 2 && r.rows[0].hasCheckpoint === true && r.rows[0].maxAbs === 0 && r.rows[1].hasCheckpoint === false && r.rows[1].maxAbs === null && r.rows[1].provider === 'gelu_fp32' && r.rows[0].provider === 'ck_op_conv1d' && r.mappedCount === 1 && r.unmappedCount === 0"
+          },
+          {
+            "name": "explicit_op_idx_wins_over_position",
+            "call": "xrayCircuitRows({operations:[{idx:0, function:'ck_op_embed', op:'embed', layer:0, call_abi:{kernel_id:'ck_embed'}}, {idx:1, function:'ck_op_attention', op:'attention', layer:0, call_abi:{kernel_id:'ck_attn'}}]}, [{stop:1, sequenceIndex:1, checkpointId:'attn', opIdx:1, label:'attn', layer:0, maxAbs:1e-2, raw:{resolved_execution:{layer:0, function:'ck_op_attention', kernel_id:'ck_attn'}}}], null)",
+            "expect_fn": "(r) => r.rows.length === 2 && r.rows[1].hasCheckpoint === true && r.rows[1].checkpointId === 'attn' && r.rows[0].hasCheckpoint === false && r.mappedCount === 1"
+          },
+          {
+            "name": "semantic_sequence_index_not_op_idx",
+            "call": "xrayCircuitRows({operations:[{idx:0, function:'ck_op_embed', op:'embed', layer:0}, {idx:1, function:'ck_op_attention', op:'attention', layer:0, call_abi:{kernel_id:'ck_attn'}}]}, [{stop:5, sequenceIndex:5, checkpointId:'attn', label:'attn', layer:0, maxAbs:1e-2, raw:{resolved_execution:{layer:0, function:'ck_op_attention', kernel_id:'ck_attn'}}}], null)",
+            "expect_fn": "(r) => r.rows.length === 2 && r.rows[1].hasCheckpoint === true && r.rows[0].hasCheckpoint === false"
+          },
+          {
+            "name": "ambiguous_function_remains_unmapped",
+            "call": "xrayCircuitRows({operations:[{idx:0, function:'ck_op_attention', op:'attention', layer:0}, {idx:1, function:'ck_op_attention', op:'attention', layer:0}]}, [{stop:0, sequenceIndex:0, checkpointId:'attn', label:'attn', layer:0, maxAbs:1e-2, raw:{resolved_execution:{layer:0, function:'ck_op_attention', kernel_id:'ck_attn'}}}], null)",
+            "expect_fn": "(r) => r.rows.length === 2 && r.rows.every(x => !x.hasCheckpoint) && r.unmappedCount === 1 && r.unmapped[0].checkpointId === 'attn'"
+          },
+          {
+            "name": "unresolved_identity_stays_unmapped",
+            "call": "xrayCircuitRows({operations:[{idx:0, function:'ck_op_patch_bias_add', op:'patch_bias_add', layer:-1}]}, [{stop:0, sequenceIndex:0, checkpointId:'vision.frontend.patch_bias.output', label:'vision.frontend.patch_bias.output', layer:-1, maxAbs:1.95, raw:{resolved_execution:{phase:'prefill', layer:-1, producer:'patch_bias_add', op_idx:null, function:null, kernel_id:null, resolved_contract_id:null}}}], null)",
+            "expect_fn": "(r) => r.rows.length === 1 && r.rows.every(x => !x.hasCheckpoint) && r.mappedCount === 0 && r.unmappedCount === 1"
+          },
+          {
+            "name": "empty_ops",
+            "call": "xrayCircuitRows({}, [{stop:0, sequenceIndex:0, checkpointId:'orphan', raw:{resolved_execution:{function:'ck_op_x', kernel_id:'ck_x'}}}], null)",
+            "expect_fn": "(r) => r.rows.length === 0 && r.mappedCount === 0 && r.unmappedCount === 1 && r.unmapped[0].checkpointId === 'orphan'"
+          }
+        ]
+      },
+      {
+        "name": "xrayGrowthEdges",
+        "tests": [
+          {
+            "name": "detects_gt_3x_jump",
+            "call": "xrayGrowthEdges([{maxAbs:1e-7},{maxAbs:2e-7},{maxAbs:1.7e-4}], 3)",
+            "expect_fn": "(e) => e.length === 1 && e[0].index === 2 && e[0].ratio > 3"
+          },
+          {
+            "name": "skips_zero_prefix",
+            "call": "xrayGrowthEdges([{maxAbs:0},{maxAbs:0},{maxAbs:5e-8}], 3)",
+            "expect": []
+          },
+          {
+            "name": "monotonic_quiet",
+            "call": "xrayGrowthEdges([{maxAbs:1e-7},{maxAbs:2e-7},{maxAbs:2.5e-7}], 3)",
+            "expect": []
+          }
+        ]
+      },
+      {
+        "name": "xrayRankingMatchesReport",
+        "tests": [
+          {
+            "name": "complete_identity_agrees",
+            "call": "xrayRankingMatchesReport({schema:'cke.xray_orchestration_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}}, {schema:'cke.xray_ranking_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}, checks:[]})",
+            "expect": true
+          },
+          {
+            "name": "missing_run_id_fails_closed",
+            "call": "xrayRankingMatchesReport({schema:'cke.xray_orchestration_report', phase:'prefill'}, {schema:'cke.xray_ranking_report', phase:'prefill', checks:[]})",
+            "expect": false
+          },
+          {
+            "name": "missing_model_identity_fails_closed",
+            "call": "xrayRankingMatchesReport({schema:'cke.xray_orchestration_report', run_id:'run-42', phase:'prefill', subject:{backend:'ck'}, oracle:{backend:'llamacpp'}}, {schema:'cke.xray_ranking_report', run_id:'run-42', phase:'prefill', subject:{backend:'ck'}, oracle:{backend:'llamacpp'}, checks:[]})",
+            "expect": false
+          },
+          {
+            "name": "missing_subject_fingerprint_fails_closed",
+            "call": "xrayRankingMatchesReport({schema:'cke.xray_orchestration_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}}, {schema:'cke.xray_ranking_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}, checks:[]})",
+            "expect": false
+          },
+          {
+            "name": "missing_generated_model_identity_fails_closed",
+            "call": "xrayRankingMatchesReport({schema:'cke.xray_orchestration_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}}, {schema:'cke.xray_ranking_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}, checks:[]})",
+            "expect": false
+          },
+          {
+            "name": "generated_model_mismatch_blocks",
+            "call": "xrayRankingMatchesReport({schema:'cke.xray_orchestration_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}}, {schema:'cke.xray_ranking_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}, checks:[]})",
+            "expect": false
+          },
+          {
+            "name": "missing_oracle_fingerprint_fails_closed",
+            "call": "xrayRankingMatchesReport({schema:'cke.xray_orchestration_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}}, {schema:'cke.xray_ranking_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'}, oracle:{backend:'llamacpp', runtime_sha256:'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'}, checks:[]})",
+            "expect": false
+          },
+          {
+            "name": "oracle_fingerprint_mismatch_blocks",
+            "call": "xrayRankingMatchesReport({schema:'cke.xray_orchestration_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}}, {schema:'cke.xray_ranking_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'}, oracle:{backend:'llamacpp', fingerprint_sha256:'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'}, checks:[]})",
+            "expect": false
+          },
+          {
+            "name": "phase_mismatch_blocks",
+            "call": "xrayRankingMatchesReport({schema:'cke.xray_orchestration_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}}, {schema:'cke.xray_ranking_report', run_id:'run-42', phase:'decode', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}, checks:[]})",
+            "expect": false
+          },
+          {
+            "name": "oracle_backend_mismatch_blocks",
+            "call": "xrayRankingMatchesReport({schema:'cke.xray_orchestration_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}}, {schema:'cke.xray_ranking_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'}, oracle:{backend:'pytorch', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}, checks:[]})",
+            "expect": false
+          },
+          {
+            "name": "unscoped_ranking_never_matches",
+            "call": "xrayRankingMatchesReport({schema:'cke.xray_orchestration_report', run_id:'run-42', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}}, {schema:'cke.xray_ranking_report', checks:[]})",
+            "expect": false
+          }
+        ]
+      },
+      {
+        "name": "xrayBoardVerdict",
+        "tests": [
+          {
+            "name": "green_pass",
+            "call": "xrayBoardVerdict({status:'pass'}, null)",
+            "expect_fn": "(v) => v.level === 'pass'"
+          },
+          {
+            "name": "amber_cosmetic_when_ranking_agrees",
+            "call": "xrayBoardVerdict({status:'fail'}, {checks:[{kind:'teacher_forced', position:0, status:'pass', ck_top1:5, oracle_top1:5}]})",
+            "expect_fn": "(v) => v.level === 'cosmetic'"
+          },
+          {
+            "name": "red_behavioral_on_flip",
+            "call": "xrayBoardVerdict({status:'fail'}, {checks:[{kind:'teacher_forced', position:2, status:'fail', ck_top1:5, oracle_top1:9}]})",
+            "expect_fn": "(v) => v.level === 'behavioral' && v.line.indexOf('1 top-1 flip') >= 0"
+          },
+          {
+            "name": "pass_with_top1_flip_is_behavioral",
+            "call": "xrayBoardVerdict({status:'pass'}, {checks:[{kind:'mixed_prefill', position:1, status:'fail', ck_top1:1, oracle_top1:2}]})",
+            "expect_fn": "(v) => v.level === 'behavioral'"
+          },
+          {
+            "name": "fail_unclassified_without_ranking",
+            "call": "xrayBoardVerdict({status:'diverged'}, null)",
+            "expect_fn": "(v) => v.level === 'fail'"
+          }
+        ]
+      },
+      {
+        "name": "buildXrayPanelEmptyState",
+        "tests": [
+          {
+            "name": "ranking_panel_has_producer_command_and_provenance_note",
+            "call": "buildXrayPanelEmptyState('ranking', {})",
+            "expect_fn": "(h) => h.indexOf('No ranking report loaded') >= 0 && h.indexOf('normalize_xray_ranking_report_v8.py') >= 0 && h.indexOf('--oracle-fingerprint-sha256') >= 0 && h.indexOf('--subject-generated-model-sha256') >= 0 && h.indexOf('unscoped') >= 0"
+          },
+          {
+            "name": "trace_panel_discloses_missing_prerequisite",
+            "call": "buildXrayPanelEmptyState('trace', {})",
+            "expect_fn": "(h) => h.indexOf('xray_execution_state_v8.py') >= 0 && h.indexOf('no in-tree producer') >= 0 && h.indexOf('xray_execution_trace.schema.json') >= 0 && h.indexOf('unusable until both trace files exist') >= 0"
+          },
+          {
+            "name": "circuit_panel_vision_scope_shows_bridge_command",
+            "call": "buildXrayPanelEmptyState('circuit', {scope:'vision_encoder'})",
+            "expect_fn": "(h) => h.indexOf('No call IR loaded for circuit scope vision_encoder') >= 0 && h.indexOf('multimodal_bridge/encoder/call.json') >= 0 && h.indexOf('run_multimodal_bridge_v8.py') >= 0"
+          },
+          {
+            "name": "drift_panel_lists_all_four_producers",
+            "call": "buildXrayPanelEmptyState('drift', {})",
+            "expect_fn": "(h) => h.indexOf('xray_qwen3vl_llamacpp_v8.py') >= 0 && h.indexOf('xray_qwen3vl_bf16_v8.py') >= 0 && h.indexOf('compare_whisper_encoder_pytorch_v8.py') >= 0 && h.indexOf('xray_decoder_pytorch_v8.py') >= 0"
+          },
+          {
+            "name": "known_context_interpolates_provenance_and_paths",
+            "call": "buildXrayPanelEmptyState('ranking', {xrayDir:'/tmp/xout', referenceReport:{run_id:'r1', phase:'prefill', model_sha256:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', subject:{backend:'ck', runtime_sha256:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', generated_model_sha256:'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'}, oracle:{backend:'llamacpp', fingerprint_sha256:'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'}}})",
+            "expect_fn": "(h) => h.indexOf('--run-id r1') >= 0 && h.indexOf('--phase prefill') >= 0 && h.indexOf('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') >= 0 && h.indexOf('ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff') >= 0 && h.indexOf('/tmp/xout/xray_ranking_report.json') >= 0 && h.indexOf('&lt;run_id&gt;') < 0"
+          },
+          {
+            "name": "unknown_context_stays_visible_placeholders",
+            "call": "buildXrayPanelEmptyState('ranking', {})",
+            "expect_fn": "(h) => h.indexOf('&lt;run_id&gt;') >= 0 && h.indexOf('&lt;phase&gt;') >= 0 && h.indexOf('&lt;model_sha256&gt;') >= 0 && h.indexOf('&lt;oracle_fingerprint_sha256&gt;') >= 0"
+          },
+          {
+            "name": "paths_with_spaces_are_safely_quoted",
+            "call": "buildXrayPanelEmptyState('ranking', {xrayDir:'/tmp/x ray'})",
+            "expect_fn": "(h) => h.indexOf('--output &quot;/tmp/x ray/xray_ranking_report.json&quot;') >= 0"
+          },
+          {
+            "name": "refresh_command_is_not_a_producer_command",
+            "call": "buildXrayPanelEmptyState('drift', {})",
+            "expect_fn": "(h) => h.indexOf('Refresh only (produces no evidence)') >= 0 && h.indexOf('open_ir_visualizer_v8.py --generate') > h.indexOf('Refresh only (produces no evidence)') && h.indexOf('open_ir_visualizer_v8.py --generate') > h.indexOf('Produces evidence')"
+          }
+        ]
+      },
+      {
+        "name": "xrayCircuitScope",
+        "tests": [
+          {
+            "name": "explicit_field_wins",
+            "call": "xrayCircuitScope({circuit_scope:'vision_encoder', schema:'cke.xray.decoder_pytorch'})",
+            "expect": "vision_encoder"
+          },
+          {
+            "name": "final_report_scope",
+            "call": "xrayCircuitScope({final_report:{circuit_scope:'vision_encoder', comparisons:[]}})",
+            "expect": "vision_encoder"
+          },
+          {
+            "name": "vision_prefix_inferred",
+            "call": "xrayCircuitScope({final_report:{comparisons:[{checkpoint_id:'vision.frontend.patch_bias.output', metrics:{}, resolved_execution:{phase:'prefill'}}]}})",
+            "expect": "vision_encoder"
+          },
+          {
+            "name": "whisper_schema_is_audio",
+            "call": "xrayCircuitScope({schema:'cke.whisper_encoder_pytorch_xray'})",
+            "expect": "audio_encoder"
+          },
+          {
+            "name": "decoder_schema",
+            "call": "xrayCircuitScope({schema:'cke.xray.decoder_pytorch'})",
+            "expect": "decoder"
+          },
+          {
+            "name": "mixed_prefill_phase",
+            "call": "xrayCircuitScope({run:{phase:'mixed_prefill'}})",
+            "expect": "mixed_prefill"
+          }
+        ]
+      },
+      {
+        "name": "xraySelectCircuitCallIr",
+        "tests": [
+          {
+            "name": "vision_scope_prefers_encoder_call",
+            "call": "xraySelectCircuitCallIr({bridge_encoder_call:{operations:[{idx:0}]}, lowered_decode_call:{operations:[{idx:0},{idx:1}]}, lowered_prefill_call:{operations:[{idx:0}]}}, 'vision_encoder')",
+            "expect_fn": "(s) => s !== null && s.key === 'bridge_encoder_call'"
+          },
+          {
+            "name": "decoder_scope_prefers_decode_call",
+            "call": "xraySelectCircuitCallIr({bridge_encoder_call:{operations:[{idx:0}]}, lowered_decode_call:{operations:[{idx:0},{idx:1}]}}, 'decoder')",
+            "expect_fn": "(s) => s !== null && s.key === 'lowered_decode_call'"
+          },
+          {
+            "name": "missing_scoped_ir_returns_null",
+            "call": "xraySelectCircuitCallIr({lowered_decode_call:{operations:[{idx:0}]}}, 'vision_encoder')",
+            "expect": null
+          }
+        ]
+      },
+      {
+        "name": "xrayLiveKeyForFile",
+        "tests": [
+          {
+            "name": "canonical_llamacpp_filename",
+            "call": "xrayLiveKeyForFile('xray_qwen3vl_llamacpp_summary.json', {})",
+            "expect": "xray_qwen3vl_llamacpp"
+          },
+          {
+            "name": "generic_summary_llamacpp_backend",
+            "call": "xrayLiveKeyForFile('xray_summary.json', {backend:'llamacpp'})",
+            "expect": "xray_qwen3vl_llamacpp"
+          },
+          {
+            "name": "generic_summary_pytorch_oracle",
+            "call": "xrayLiveKeyForFile('xray_summary.json', {final_report:{oracle_backend:'pytorch'}})",
+            "expect": "xray_qwen3vl_pytorch"
+          },
+          {
+            "name": "generic_summary_unknown_backend_not_guessed",
+            "call": "xrayLiveKeyForFile('xray_summary.json', {backend:'tensorrt'})",
+            "expect": null
+          }
         ]
       }
     ]
