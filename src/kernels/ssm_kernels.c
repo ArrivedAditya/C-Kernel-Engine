@@ -24,6 +24,7 @@
  *   d_kernel : same as kernel
  */
 
+#include "bf16_utils.h"
 #include "ckernel_engine.h"
 
 #include <stddef.h>
@@ -127,6 +128,23 @@ void ssm_conv1d_forward(const float *conv_x,
                         int num_seqs)
 {
     ssm_conv1d_forward_ref(conv_x, kernel, out, kernel_size, num_channels, num_tokens, num_seqs);
+}
+
+void ssm_conv1d_forward_pytorch_bf16_storage(const float *conv_x,
+                                              const float *kernel,
+                                              float *out,
+                                              int kernel_size,
+                                              int num_channels,
+                                              int num_tokens,
+                                              int num_seqs)
+{
+    ssm_conv1d_forward_ref(
+        conv_x, kernel, out, kernel_size, num_channels, num_tokens, num_seqs);
+    const size_t count =
+        (size_t)num_seqs * (size_t)num_tokens * (size_t)num_channels;
+    for (size_t i = 0; i < count; ++i) {
+        out[i] = bf16_to_float(float_to_bf16(out[i]));
+    }
 }
 
 void ssm_conv1d_backward(const float *d_out,

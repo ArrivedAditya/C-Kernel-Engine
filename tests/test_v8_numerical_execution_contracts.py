@@ -486,6 +486,179 @@ class NumericalExecutionContractTests(unittest.TestCase):
                     "llama_avx2_vector_expf_then_add_then_divide_with_scalar_expf_tail",
                 )
 
+    def test_qwen35_circuit_resolves_pytorch_bf16_recurrent_conv_and_silu(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        expected = {
+            "decoder.recurrent_ssm_conv_bf16_pytorch": (
+                "ssm_conv1d_pytorch_fp32_compute_bf16_output",
+                "ssm_conv1d_forward_pytorch_bf16_storage",
+            ),
+            "decoder.recurrent_silu_bf16_pytorch": (
+                "recurrent_silu_pytorch_sleef_bf16_input_bf16_output",
+                "recurrent_silu_forward_pytorch_bf16_storage",
+            ),
+        }
+        for operation, (contract_id, kernel_id) in expected.items():
+            for phase in ("prefill", "decode"):
+                with self.subTest(operation=operation, phase=phase):
+                    plan = resolver.resolve_contract(
+                        circuit_doc,
+                        self.contracts,
+                        self.kernels,
+                        operation,
+                        phase,
+                        mode="production",
+                    )
+                    self.assertEqual(plan["contract"]["id"], contract_id)
+                    self.assertEqual(plan["kernel"]["id"], kernel_id)
+                    self.assertEqual(plan["kernel"]["function"], kernel_id)
+                    self.assertEqual(
+                        plan["contract"]["semantics"]["storage"]["output"],
+                        "bf16",
+                    )
+
+    def test_qwen35_circuit_resolves_pytorch_bf16_grouped_deltanet(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        expected = {
+            "prefill": "gated_deltanet_pytorch_grouped_bf16_prefill_forward",
+            "decode": "gated_deltanet_pytorch_grouped_bf16_forward",
+        }
+        for phase, kernel_id in expected.items():
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.recurrent_core_bf16_pytorch",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "gated_deltanet_pytorch_grouped_qk_fp32_state_bf16_output",
+                )
+                self.assertEqual(plan["kernel"]["id"], kernel_id)
+                self.assertEqual(plan["kernel"]["function"], kernel_id)
+
+    def test_qwen35_circuit_resolves_pytorch_bf16_recurrent_qk_l2(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.recurrent_qk_l2_norm_bf16_pytorch",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "recurrent_qk_l2_pytorch_bf16_vector_tail_bf16_output",
+                )
+                self.assertEqual(
+                    plan["kernel"]["id"],
+                    "recurrent_qk_l2_norm_pytorch_bf16_storage",
+                )
+
+    def test_qwen35_circuit_resolves_pytorch_bf16_recurrent_norm_gate(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.recurrent_norm_gate_bf16_pytorch",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "recurrent_norm_gate_pytorch_bf16_storage",
+                )
+                self.assertEqual(
+                    plan["kernel"]["id"],
+                    "recurrent_norm_gate_pytorch_bf16_storage",
+                )
+
+    def test_qwen35_circuit_resolves_pytorch_bf16_residual_add(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.residual_add_bf16_pytorch",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "residual_add_bf16_input_fp32_add_bf16_output",
+                )
+                self.assertEqual(
+                    plan["kernel"]["id"],
+                    "ck_residual_add_token_major_bf16_storage",
+                )
+
+    def test_qwen35_circuit_resolves_pytorch_bf16_rmsnorm(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.rmsnorm_bf16_pytorch",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "rmsnorm_qwen3next_pytorch_avx2_bf16_storage",
+                )
+                self.assertEqual(
+                    plan["kernel"]["id"],
+                    "rmsnorm_forward_qwen3next_pytorch_bf16_storage",
+                )
+
+    def test_qwen35_circuit_resolves_pytorch_bf16_swiglu(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.swiglu_bf16_pytorch",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "swiglu_pytorch_sleef_bf16_intermediate_bf16_output",
+                )
+                self.assertEqual(
+                    plan["kernel"]["id"],
+                    "swiglu_forward_pytorch_bf16_storage",
+                )
+
     def test_qwen35_circuit_resolves_exact_swiglu(self):
         circuit_doc = resolver.load_json(
             ROOT / "version" / "v8" / "circuits" / "qwen35.json"
@@ -588,6 +761,43 @@ class NumericalExecutionContractTests(unittest.TestCase):
             "gemv_q8_0_q8_0_contract",
         ):
             self.assertNotIn(kernel_id, legacy_bindings)
+
+    def test_qwen35_circuit_resolves_pytorch_bf16_projection_boundary(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        expected = {
+            "prefill": (
+                "decoder.projections_bf16_pytorch.prefill",
+                "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+            ),
+            "decode": (
+                "decoder.projections_bf16_pytorch.decode",
+                "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+            ),
+        }
+        for phase, (operation, kernel_id) in expected.items():
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    operation,
+                    phase,
+                    mode="bringup",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output",
+                )
+                self.assertEqual(plan["kernel"]["id"], kernel_id)
+                self.assertEqual(plan["kernel"]["function"], kernel_id)
+                semantics = plan["contract"]["semantics"]
+                self.assertEqual(semantics["compute"]["weight"], "bf16")
+                self.assertEqual(
+                    semantics["reduction"]["merge_order"],
+                    "implementation_defined",
+                )
 
     def test_unsupported_mrope_storage_contract_hard_fails(self):
         doc = mrope_circuit("vision_mrope_fp64_input_fp64_compute_fp64_output")

@@ -34,6 +34,7 @@
  *     is enabled, in which case it falls back to *_ref.
  */
 
+#include "bf16_utils.h"
 #include "ckernel_engine.h"
 
 #include <math.h>
@@ -94,9 +95,11 @@ static float ck_deltanet_llama_avx2_dot(const float *x, const float *y, int n)
     }
     return result;
 }
+
 #endif
 
-void gated_deltanet_llama_avx2_forward(const float *q,
+static void gated_deltanet_llama_avx2_grouped_forward_impl(
+                                       const float *q,
                                        const float *k,
                                        const float *v,
                                        const float *g,
@@ -105,29 +108,41 @@ void gated_deltanet_llama_avx2_forward(const float *q,
                                        float *state_out,
                                        float *out,
                                        int num_heads,
+                                       int group_count,
                                        int state_dim,
-                                       float norm_eps)
+                                       float norm_eps,
+                                       int pytorch_bf16_boundaries)
 {
 #if defined(__AVX2__)
     (void) norm_eps;
     if (!q || !k || !v || !g || !beta || !state_in || !state_out || !out ||
-        num_heads <= 0 || state_dim <= 0 || state_dim > CK_DELTANET_MAX_STACK_DIM) {
+        num_heads <= 0 || group_count <= 0 || num_heads % group_count != 0 ||
+        state_dim <= 0 || state_dim > CK_DELTANET_MAX_STACK_DIM) {
         return;
     }
+    const int heads_per_group = num_heads / group_count;
     const float scale = 1.0f / sqrtf((float) state_dim);
     const size_t vector_stride = (size_t) state_dim;
     const size_t state_stride = (size_t) state_dim * (size_t) state_dim;
     float column[CK_DELTANET_MAX_STACK_DIM];
+    float q_scaled[CK_DELTANET_MAX_STACK_DIM];
 
     for (int h = 0; h < num_heads; ++h) {
-        const float *q_head = q + (size_t) h * vector_stride;
-        const float *k_head = k + (size_t) h * vector_stride;
+        const int group = h / heads_per_group;
+        const float *q_head = q + (size_t) group * vector_stride;
+        const float *k_head = k + (size_t) group * vector_stride;
         const float *v_head = v + (size_t) h * vector_stride;
         const float *state_prev = state_in + (size_t) h * state_stride;
         float *state_cur = state_out + (size_t) h * state_stride;
         float *out_head = out + (size_t) h * vector_stride;
         const float gate = expf(g[h]);
-        const float beta_s = ck_deltanet_sigmoidf(beta[h]);
+        float beta_s = ck_deltanet_sigmoidf(beta[h]);
+        if (pytorch_bf16_boundaries) {
+            beta_s = bf16_to_float(float_to_bf16(beta_s));
+            for (int row = 0; row < state_dim; ++row) {
+                q_scaled[row] = q_head[row] * scale;
+            }
+        }
 
         for (int row = 0; row < state_dim; ++row) {
             const size_t row_offset = (size_t) row * (size_t) state_dim;
@@ -153,14 +168,62 @@ void gated_deltanet_llama_avx2_forward(const float *q,
                 state_cur[offset] = updated;
                 column[row] = updated;
             }
-            out_head[col] = ck_deltanet_llama_avx2_dot(column, q_head, state_dim) * scale;
+            if (pytorch_bf16_boundaries) {
+                out_head[col] =
+                    ck_deltanet_llama_avx2_dot(column, q_scaled, state_dim);
+            } else {
+                out_head[col] =
+                    ck_deltanet_llama_avx2_dot(column, q_head, state_dim) * scale;
+            }
         }
     }
 #else
+    if (group_count != num_heads) {
+        return;
+    }
     gated_deltanet_autoregressive_forward_ref(
         q, k, v, g, beta, state_in, state_out, out,
         num_heads, state_dim, norm_eps);
 #endif
+}
+
+void gated_deltanet_llama_avx2_forward(const float *q,
+                                       const float *k,
+                                       const float *v,
+                                       const float *g,
+                                       const float *beta,
+                                       const float *state_in,
+                                       float *state_out,
+                                       float *out,
+                                       int num_heads,
+                                       int state_dim,
+                                       float norm_eps)
+{
+    gated_deltanet_llama_avx2_grouped_forward_impl(
+        q, k, v, g, beta, state_in, state_out, out,
+        num_heads, num_heads, state_dim, norm_eps, 0);
+}
+
+void gated_deltanet_pytorch_grouped_bf16_forward(const float *q,
+                                                  const float *k,
+                                                  const float *v,
+                                                  const float *g,
+                                                  const float *beta,
+                                                  const float *state_in,
+                                                  float *state_out,
+                                                  float *out,
+                                                  int num_heads,
+                                                  int group_count,
+                                                  int state_dim,
+                                                  float norm_eps)
+{
+    gated_deltanet_llama_avx2_grouped_forward_impl(
+        q, k, v, g, beta, state_in, state_out, out,
+        num_heads, group_count, state_dim, norm_eps, 1);
+    const size_t count = (size_t)num_heads * (size_t)state_dim;
+    for (size_t i = 0; i < count; ++i) {
+        out[i] = bf16_to_float(float_to_bf16(out[i]));
+    }
 }
 
 void gated_deltanet_llama_avx2_prefill_forward(const float *q,
@@ -193,6 +256,43 @@ void gated_deltanet_llama_avx2_prefill_forward(const float *q,
             state_out,
             out + (size_t) row * vector_stride,
             num_heads, state_dim, norm_eps);
+    }
+}
+
+void gated_deltanet_pytorch_grouped_bf16_prefill_forward(
+                                               const float *q,
+                                               const float *k,
+                                               const float *v,
+                                               const float *g,
+                                               const float *beta,
+                                               const float *state_in,
+                                               float *state_out,
+                                               float *out,
+                                               int rows,
+                                               int num_heads,
+                                               int group_count,
+                                               int state_dim,
+                                               float norm_eps)
+{
+    if (!q || !k || !v || !g || !beta || !state_in || !state_out || !out ||
+        rows <= 0 || num_heads <= 0 || group_count <= 0 ||
+        num_heads % group_count != 0 || state_dim <= 0) {
+        return;
+    }
+    const size_t qk_stride = (size_t)group_count * (size_t)state_dim;
+    const size_t value_stride = (size_t)num_heads * (size_t)state_dim;
+    const size_t gate_stride = (size_t)num_heads;
+    for (int row = 0; row < rows; ++row) {
+        gated_deltanet_pytorch_grouped_bf16_forward(
+            q + (size_t)row * qk_stride,
+            k + (size_t)row * qk_stride,
+            v + (size_t)row * value_stride,
+            g + (size_t)row * gate_stride,
+            beta + (size_t)row * gate_stride,
+            row == 0 ? state_in : state_out,
+            state_out,
+            out + (size_t)row * value_stride,
+            num_heads, group_count, state_dim, norm_eps);
     }
 }
 

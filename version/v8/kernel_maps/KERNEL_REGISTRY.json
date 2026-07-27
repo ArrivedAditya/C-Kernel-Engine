@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 258,
+      "total": 265,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -34,7 +34,7 @@
         "fused_linear_bias": 3,
         "fused_mlp_block": 1,
         "fused_qkv_block": 1,
-        "gated_deltanet": 5,
+        "gated_deltanet": 7,
         "geglu": 4,
         "gelu": 6,
         "gemm": 21,
@@ -76,16 +76,16 @@
         "recurrent_conv_state_update": 2,
         "recurrent_dt_gate": 1,
         "recurrent_dt_gate_backward": 1,
-        "recurrent_norm_gate": 3,
-        "recurrent_qk_l2_norm": 2,
-        "recurrent_silu": 3,
+        "recurrent_norm_gate": 4,
+        "recurrent_qk_l2_norm": 3,
+        "recurrent_silu": 4,
         "recurrent_split_conv_qkv": 2,
         "recurrent_split_qkv": 1,
         "recurrent_split_qkv_backward": 1,
         "relu2": 2,
         "residual_add": 2,
         "residual_save": 1,
-        "rmsnorm": 7,
+        "rmsnorm": 8,
         "rope": 16,
         "rope_backward": 2,
         "rope_init": 2,
@@ -99,7 +99,7 @@
         "split_q_gate": 1,
         "split_q_gate_backward": 1,
         "split_qkv_packed_head_major": 1,
-        "ssm_conv1d": 1,
+        "ssm_conv1d": 2,
         "ssm_conv1d_backward": 1,
         "swiglu": 5,
         "tokenizer": 1,
@@ -11737,6 +11737,445 @@
       "_source_file": "gated_deltanet_prefill_forward.json"
     },
     {
+      "id": "gated_deltanet_pytorch_grouped_bf16_forward",
+      "op": "gated_deltanet",
+      "variant": "pytorch_grouped_qk_decode_bf16_output",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32_bf16_values",
+        "output": "fp32_bf16_values"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "G",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "G",
+            "D"
+          ]
+        },
+        {
+          "name": "v",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "D"
+          ]
+        },
+        {
+          "name": "g",
+          "dtype": "fp32",
+          "shape": [
+            "H"
+          ]
+        },
+        {
+          "name": "beta",
+          "dtype": "fp32",
+          "shape": [
+            "H"
+          ]
+        },
+        {
+          "name": "state_in",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "D",
+            "D"
+          ]
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "state_out",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "D",
+            "D"
+          ]
+        },
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "D"
+          ]
+        }
+      ],
+      "dims": [
+        "H",
+        "G",
+        "D"
+      ],
+      "params": [
+        {
+          "name": "norm_eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "gated_deltanet_pytorch_grouped_bf16_forward",
+        "c_declaration": "void gated_deltanet_pytorch_grouped_bf16_forward(const float *q, const float *k, const float *v, const float *g, const float *beta, const float *state_in, float *state_out, float *out, int num_heads, int group_count, int state_dim, float norm_eps);",
+        "sources": [
+          "src/kernels/deltanet_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx2",
+            "requires": [
+              "avx2",
+              "fma"
+            ],
+            "compile_flags": [
+              "-mavx2",
+              "-mfma"
+            ]
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "gated_deltanet_pytorch_grouped_qk_fp32_state_bf16_output",
+          "status": "validated",
+          "phases": [
+            "decode"
+          ],
+          "function": "gated_deltanet_pytorch_grouped_bf16_forward",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "pairwise_tree",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "activation:q",
+            "cast": "const float*"
+          },
+          {
+            "name": "k",
+            "source": "activation:k",
+            "cast": "const float*"
+          },
+          {
+            "name": "v",
+            "source": "activation:v",
+            "cast": "const float*"
+          },
+          {
+            "name": "g",
+            "source": "activation:g",
+            "cast": "const float*"
+          },
+          {
+            "name": "beta",
+            "source": "activation:beta",
+            "cast": "const float*"
+          },
+          {
+            "name": "state_in",
+            "source": "activation:state_in",
+            "cast": "const float*"
+          },
+          {
+            "name": "state_out",
+            "source": "output:state_out",
+            "cast": "float*"
+          },
+          {
+            "name": "out",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:ssm_time_step_rank"
+          },
+          {
+            "name": "group_count",
+            "source": "dim:ssm_group_count"
+          },
+          {
+            "name": "state_dim",
+            "source": "dim:recurrent_head_dim"
+          },
+          {
+            "name": "norm_eps",
+            "source": "dim:rms_eps"
+          }
+        ]
+      },
+      "tests": {
+        "parity": [
+          "Real Qwen3.6-27B grouped Q/K buffers; no out-of-bounds head reads."
+        ]
+      },
+      "name": "gated_deltanet_pytorch_grouped_bf16_forward",
+      "_source_file": "gated_deltanet_pytorch_grouped_bf16_forward.json"
+    },
+    {
+      "id": "gated_deltanet_pytorch_grouped_bf16_prefill_forward",
+      "op": "gated_deltanet",
+      "variant": "pytorch_grouped_qk_prefill_bf16_output",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32_bf16_values",
+        "output": "fp32_bf16_values"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "G",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "G",
+            "D"
+          ]
+        },
+        {
+          "name": "v",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H",
+            "D"
+          ]
+        },
+        {
+          "name": "g",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        },
+        {
+          "name": "beta",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        },
+        {
+          "name": "state_in",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "D",
+            "D"
+          ]
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "state_out",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "D",
+            "D"
+          ]
+        },
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H",
+            "D"
+          ]
+        }
+      ],
+      "dims": [
+        "R",
+        "H",
+        "G",
+        "D"
+      ],
+      "params": [
+        {
+          "name": "norm_eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "gated_deltanet_pytorch_grouped_bf16_prefill_forward",
+        "c_declaration": "void gated_deltanet_pytorch_grouped_bf16_prefill_forward(const float *q, const float *k, const float *v, const float *g, const float *beta, const float *state_in, float *state_out, float *out, int rows, int num_heads, int group_count, int state_dim, float norm_eps);",
+        "sources": [
+          "src/kernels/deltanet_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx2",
+            "requires": [
+              "avx2",
+              "fma"
+            ],
+            "compile_flags": [
+              "-mavx2",
+              "-mfma"
+            ]
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "gated_deltanet_pytorch_grouped_qk_fp32_state_bf16_output",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "gated_deltanet_pytorch_grouped_bf16_prefill_forward",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "pairwise_tree",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "activation:q",
+            "cast": "const float*"
+          },
+          {
+            "name": "k",
+            "source": "activation:k",
+            "cast": "const float*"
+          },
+          {
+            "name": "v",
+            "source": "activation:v",
+            "cast": "const float*"
+          },
+          {
+            "name": "g",
+            "source": "activation:g",
+            "cast": "const float*"
+          },
+          {
+            "name": "beta",
+            "source": "activation:beta",
+            "cast": "const float*"
+          },
+          {
+            "name": "state_in",
+            "source": "activation:state_in",
+            "cast": "const float*"
+          },
+          {
+            "name": "state_out",
+            "source": "output:state_out",
+            "cast": "float*"
+          },
+          {
+            "name": "out",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:seq_len"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:ssm_time_step_rank"
+          },
+          {
+            "name": "group_count",
+            "source": "dim:ssm_group_count"
+          },
+          {
+            "name": "state_dim",
+            "source": "dim:recurrent_head_dim"
+          },
+          {
+            "name": "norm_eps",
+            "source": "dim:rms_eps"
+          }
+        ]
+      },
+      "tests": {
+        "parity": [
+          "Real Qwen3.6-27B grouped Q/K buffers across the full prompt."
+        ]
+      },
+      "name": "gated_deltanet_pytorch_grouped_bf16_prefill_forward",
+      "_source_file": "gated_deltanet_pytorch_grouped_bf16_prefill_forward.json"
+    },
+    {
       "id": "geglu_backward_exact",
       "op": "geglu",
       "variant": "fp32_backward_exact",
@@ -12938,6 +13377,7 @@
       "notes": "Exact safetensors/BUMP BF16 weight inference path for prefill. Activation rows are rounded to BF16 before multiply.",
       "call_abi": {
         "version": 1,
+        "last_token_dispatch": "preserve_provider",
         "params": [
           {
             "cast": "const float*",
@@ -16124,6 +16564,64 @@
         "inference": true,
         "training": false,
         "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "bf16_weight_bf16_input_fp32_dot_fp32_output",
+          "status": "observed",
+          "phases": [
+            "decode"
+          ],
+          "function": "gemv_bf16",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "y",
+            "source": "output:y",
+            "cast": "float*"
+          },
+          {
+            "name": "W",
+            "source": "weight:_first_weight"
+          },
+          {
+            "name": "x",
+            "source": "activation:x",
+            "cast": "const float*"
+          },
+          {
+            "name": "M",
+            "source": "dim:_output_dim"
+          },
+          {
+            "name": "K",
+            "source": "dim:_input_dim"
+          }
+        ]
       },
       "notes": "Exact safetensors/BUMP BF16 weight inference path for decode. Activation is rounded to BF16 before multiply.",
       "name": "gemv_bf16",
@@ -28501,6 +28999,176 @@
       "_source_file": "recurrent_norm_gate_llama_avx2_forward.json"
     },
     {
+      "id": "recurrent_norm_gate_pytorch_bf16_storage",
+      "op": "recurrent_norm_gate",
+      "variant": "pytorch_bf16_storage",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32_bf16_values",
+        "output": "fp32_bf16_values"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H",
+            "D"
+          ]
+        },
+        {
+          "name": "gate",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H",
+            "D"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "weight",
+          "dtype": "fp32",
+          "shape": [
+            "D"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H",
+            "D"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "R",
+        "H",
+        "D"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "recurrent_norm_gate_pytorch_bf16_storage",
+        "c_declaration": "void recurrent_norm_gate_pytorch_bf16_storage(const float *x, const float *gate, const float *weight, float *out, int rows, int num_heads, int head_dim, float eps);",
+        "sources": [
+          "src/kernels/recurrent_norm_kernels.c",
+          "src/kernels/rmsnorm_kernels.c",
+          "src/kernels/recurrent_gate_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx512",
+            "requires": [
+              "avx512f",
+              "avx2"
+            ],
+            "compile_flags": [
+              "-mavx512f",
+              "-mavx2"
+            ]
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "recurrent_norm_gate_pytorch_bf16_storage",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "recurrent_norm_gate_pytorch_bf16_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows",
+                "independent_heads"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "hierarchical_cascade",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "x",
+            "source": "activation:x",
+            "cast": "const float*"
+          },
+          {
+            "name": "gate",
+            "source": "activation:gate",
+            "cast": "const float*"
+          },
+          {
+            "name": "weight",
+            "source": "weight:ssm_norm",
+            "cast": "const float*"
+          },
+          {
+            "name": "out",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:seq_len"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:recurrent_num_heads"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:recurrent_head_dim"
+          },
+          {
+            "name": "eps",
+            "source": "dim:rms_eps"
+          }
+        ]
+      },
+      "tests": {
+        "parity": [
+          "Real Qwen3.6-27B BF16 layer-0 RMSNormGated call boundary."
+        ]
+      },
+      "name": "recurrent_norm_gate_pytorch_bf16_storage",
+      "_source_file": "recurrent_norm_gate_pytorch_bf16_storage.json"
+    },
+    {
       "id": "recurrent_qk_l2_norm_backward_f32",
       "op": "recurrent_qk_l2_norm",
       "variant": "fp32_backward",
@@ -28859,6 +29527,171 @@
       "_source_file": "recurrent_qk_l2_norm_forward.json"
     },
     {
+      "id": "recurrent_qk_l2_norm_pytorch_bf16_storage",
+      "op": "recurrent_qk_l2_norm",
+      "variant": "pytorch_bf16_vector_tail",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32_bf16_values",
+        "output": "fp32_bf16_values"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "Q"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "K"
+          ]
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "Q"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "K"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "R",
+        "Q",
+        "K",
+        "H",
+        "D"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "recurrent_qk_l2_norm_pytorch_bf16_storage",
+        "c_declaration": "void recurrent_qk_l2_norm_pytorch_bf16_storage(float *q, float *k, int rows, int q_dim, int k_dim, int expanded_heads, int head_dim, float eps);",
+        "sources": [
+          "src/kernels/recurrent_qk_norm_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx2",
+            "requires": [
+              "avx2"
+            ],
+            "compile_flags": [
+              "-mavx2"
+            ]
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "recurrent_qk_l2_pytorch_bf16_vector_tail_bf16_output",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "recurrent_qk_l2_norm_pytorch_bf16_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows",
+                "independent_heads"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "hierarchical_cascade",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "activation:q",
+            "cast": "float*"
+          },
+          {
+            "name": "k",
+            "source": "activation:k",
+            "cast": "float*"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:seq_len"
+          },
+          {
+            "name": "q_dim",
+            "source": "dim:q_dim"
+          },
+          {
+            "name": "k_dim",
+            "source": "dim:k_dim"
+          },
+          {
+            "name": "expanded_heads",
+            "source": "dim:ssm_time_step_rank"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:recurrent_head_dim"
+          },
+          {
+            "name": "eps",
+            "source": "dim:rms_eps"
+          }
+        ]
+      },
+      "tests": {
+        "parity": [
+          "PyTorch 2.8 CPU BF16 l2norm at R=1,2,3,31,32,33,353; byte-exact."
+        ]
+      },
+      "notes": "Compact grouped recurrent Q/K normalization carried in FP32 buffers with explicit BF16 operation boundaries.",
+      "name": "recurrent_qk_l2_norm_pytorch_bf16_storage",
+      "_source_file": "recurrent_qk_l2_norm_pytorch_bf16_storage.json"
+    },
+    {
       "id": "recurrent_silu_backward_f32",
       "op": "recurrent_silu",
       "variant": "backward_fp32",
@@ -29202,6 +30035,155 @@
       },
       "name": "recurrent_silu_forward_ggml",
       "_source_file": "recurrent_silu_forward_ggml.json"
+    },
+    {
+      "id": "recurrent_silu_forward_pytorch_bf16_storage",
+      "op": "recurrent_silu",
+      "variant": "pytorch_sleef_bf16_input_bf16_output",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32_bf16_values",
+        "output": "fp32_bf16_values"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "D"
+          ]
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "D"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "R",
+        "D"
+      ],
+      "params": [],
+      "parallelization": {
+        "supported": [
+          "row"
+        ],
+        "preferred": {
+          "prefill": "row",
+          "decode": "row"
+        },
+        "strategies": [
+          {
+            "name": "row",
+            "partition_dim": "R",
+            "param_style": "range",
+            "range": {
+              "min_chunk": 1
+            }
+          }
+        ]
+      },
+      "constraints": {
+        "alignment": {
+          "D": 16
+        },
+        "notes": "Requires Sleef_expf16_u10 from CK_SLEEF_LIBRARY or the process symbol table."
+      },
+      "impl": {
+        "function": "recurrent_silu_forward_pytorch_bf16_storage",
+        "c_declaration": "void recurrent_silu_forward_pytorch_bf16_storage(const float *x, float *out, int rows, int dim);",
+        "sources": [
+          "src/kernels/recurrent_gate_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx512_sleef",
+            "requires": [
+              "avx512f"
+            ],
+            "compile_flags": [
+              "-mavx512f"
+            ]
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "recurrent_silu_pytorch_sleef_bf16_input_bf16_output",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "recurrent_silu_forward_pytorch_bf16_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "runtime",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "x",
+            "source": "activation:x",
+            "cast": "const float*"
+          },
+          {
+            "name": "out",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:seq_len"
+          },
+          {
+            "name": "dim",
+            "source": "dim:ssm_conv_channels"
+          }
+        ]
+      },
+      "tests": {
+        "parity": [
+          "PyTorch BF16 recurrent SiLU on the real Qwen3.6-27B layer-0 convolution output."
+        ]
+      },
+      "notes": "PyTorch BF16 recurrent SiLU provider with an explicit BF16 input and output boundary.",
+      "name": "recurrent_silu_forward_pytorch_bf16_storage",
+      "_source_file": "recurrent_silu_forward_pytorch_bf16_storage.json"
     },
     {
       "id": "recurrent_split_conv_qkv_backward_f32",
@@ -30745,6 +31727,164 @@
       "notes": "PyTorch CPU AVX2 cascade-sum BF16 RMSNorm storage contract carried in FP32 BUMP buffers. The oracle provider ISA is determined by the PyTorch build.",
       "name": "rmsnorm_forward_pytorch_bf16_storage",
       "_source_file": "rmsnorm_forward_pytorch_bf16_storage.json"
+    },
+    {
+      "id": "rmsnorm_forward_qwen3next_pytorch_bf16_storage",
+      "op": "rmsnorm",
+      "variant": "qwen3next_pytorch_avx2_bf16_storage",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32_bf16_values",
+        "output": "fp32_bf16_values"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "gamma",
+          "dtype": "fp32",
+          "shape": [
+            "E"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ]
+        },
+        {
+          "name": "rstd",
+          "dtype": "fp32",
+          "shape": [
+            "T"
+          ]
+        }
+      ],
+      "dims": [
+        "T",
+        "E"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "rmsnorm_forward_qwen3next_pytorch_bf16_storage",
+        "c_declaration": "void rmsnorm_forward_qwen3next_pytorch_bf16_storage(const float *input, const float *gamma, float *output, float *rstd_cache, int tokens, int d_model, int aligned_embed_dim, float eps);",
+        "sources": [
+          "src/kernels/rmsnorm_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "avx2",
+            "requires": [
+              "avx2"
+            ],
+            "compile_flags": [
+              "-mavx2"
+            ]
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "rmsnorm_qwen3next_pytorch_avx2_bf16_storage",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "rmsnorm_forward_qwen3next_pytorch_bf16_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "hierarchical_cascade",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*"
+          },
+          {
+            "name": "gamma",
+            "source": "weight:gamma",
+            "alt": [
+              "ln1_gamma",
+              "ln2_gamma",
+              "final_ln_weight"
+            ],
+            "cast": "const float*"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*"
+          },
+          {
+            "name": "rstd_cache",
+            "source": "null"
+          },
+          {
+            "name": "tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "d_model",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "aligned_embed_dim",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "eps",
+            "source": "dim:rms_eps"
+          }
+        ]
+      },
+      "tests": {
+        "parity": [
+          "Qwen3Next PyTorch BF16 RMSNorm call boundary."
+        ]
+      },
+      "name": "rmsnorm_forward_qwen3next_pytorch_bf16_storage",
+      "_source_file": "rmsnorm_forward_qwen3next_pytorch_bf16_storage.json"
     },
     {
       "id": "rmsnorm_forward_strided_f32",
@@ -33428,6 +34568,165 @@
       "notes": "SSM causal depthwise convolution used by qwen3next/Qwen3.5 recurrent blocks.",
       "name": "ssm_conv1d_forward",
       "_source_file": "ssm_conv1d_forward.json"
+    },
+    {
+      "id": "ssm_conv1d_forward_pytorch_bf16_storage",
+      "op": "ssm_conv1d",
+      "variant": "pytorch_fp32_compute_bf16_output",
+      "quant": {
+        "weight": "fp32_bf16_values",
+        "activation": "fp32_bf16_values",
+        "output": "fp32_bf16_values"
+      },
+      "inputs": [
+        {
+          "name": "conv_x",
+          "dtype": "fp32",
+          "shape": [
+            "S",
+            "C",
+            "K-1+T"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "kernel",
+          "dtype": "fp32",
+          "shape": [
+            "C",
+            "K"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "S",
+            "T",
+            "C"
+          ]
+        }
+      ],
+      "dims": [
+        "K",
+        "C",
+        "T",
+        "S"
+      ],
+      "params": [],
+      "parallelization": {
+        "supported": [
+          "channel",
+          "sequence"
+        ],
+        "preferred": {
+          "prefill": "channel",
+          "decode": "channel"
+        },
+        "strategies": [
+          {
+            "name": "channel",
+            "partition_dim": "C",
+            "param_style": "range",
+            "range": {
+              "min_chunk": 1
+            }
+          }
+        ]
+      },
+      "impl": {
+        "function": "ssm_conv1d_forward_pytorch_bf16_storage",
+        "c_declaration": "void ssm_conv1d_forward_pytorch_bf16_storage(const float *conv_x, const float *kernel, float *out, int kernel_size, int num_channels, int num_tokens, int num_seqs);",
+        "sources": [
+          "src/kernels/ssm_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "ref_bf16_store",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "ssm_conv1d_pytorch_fp32_compute_bf16_output",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "ssm_conv1d_forward_pytorch_bf16_storage",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "conv_x",
+            "source": "activation:conv_x",
+            "cast": "const float*"
+          },
+          {
+            "name": "kernel",
+            "source": "weight:ssm_conv1d",
+            "cast": "const float*"
+          },
+          {
+            "name": "out",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "kernel_size",
+            "source": "dim:ssm_conv_kernel"
+          },
+          {
+            "name": "num_channels",
+            "source": "dim:ssm_conv_channels"
+          },
+          {
+            "name": "num_tokens",
+            "source": "runtime:seq_len"
+          },
+          {
+            "name": "num_seqs",
+            "source": "dim:num_seqs"
+          }
+        ]
+      },
+      "tests": {
+        "parity": [
+          "Real Qwen3.6-27B layer-0 raw convolution output is byte-exact after BF16 storage."
+        ]
+      },
+      "notes": "PyTorch BF16 storage boundary after the recurrent causal depthwise convolution.",
+      "name": "ssm_conv1d_forward_pytorch_bf16_storage",
+      "_source_file": "ssm_conv1d_forward_pytorch_bf16_storage.json"
     },
     {
       "id": "swiglu_backward_exact",

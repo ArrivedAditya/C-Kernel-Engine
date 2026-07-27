@@ -140,6 +140,147 @@ class TestV8PrefillCodegen(unittest.TestCase):
         self.assertNotIn("(const float*)", emitted.split("ck_debug_export_hidden", 1)[0])
         self.assertNotIn("last-only exact GEMM contract", emitted)
 
+    def test_last_logits_generic_bf16_preserves_registered_gemm(self) -> None:
+        op = {
+            "function": "gemm_nt_bf16",
+            "op": "logits",
+            "layer": -1,
+            "call_abi": {
+                "version": 1,
+                "owner": "kernel_map",
+                "kernel_id": "gemm_nt_bf16",
+                "last_token_dispatch": "preserve_provider",
+            },
+            "args": [
+                {
+                    "name": "A",
+                    "source": "activation:a",
+                    "expr": "(const float*)(model->bump + A_MAIN_STREAM)",
+                },
+                {
+                    "name": "B",
+                    "source": "weight:_first_weight",
+                    "expr": "(const void*)(model->bump + W_LM_HEAD)",
+                },
+                {
+                    "name": "bias",
+                    "source": "weight_f:_bias",
+                    "expr": "NULL",
+                },
+                {
+                    "name": "C",
+                    "source": "output:c",
+                    "expr": "(float*)(model->bump + A_LOGITS)",
+                },
+            ],
+        }
+
+        emitted = codegen_prefill_v8.emit_prefill_op(
+            op,
+            460,
+            {"embed_dim": 2048, "vocab_size": 163840, "logits_layout": "last"},
+        )
+
+        self.assertIn("gemm_nt_bf16(", emitted)
+        self.assertIn("(size_t)(num_tokens - 1) * 2048", emitted)
+        self.assertNotIn("gemv_bf16(", emitted)
+
+    def test_last_logits_q4_provider_uses_registered_row_gemv(self) -> None:
+        op = {
+            "function": "gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch",
+            "op": "logits",
+            "layer": -1,
+            "call_abi": {
+                "version": 1,
+                "owner": "kernel_map",
+                "kernel_id": "gemm_nt_q4_k_q8_k",
+            },
+            "resolved_execution": {
+                "kernel_id": "gemm_nt_q4_k_q8_k",
+                "implementation": {
+                    "weight_storage": {
+                        "format": "q4_k",
+                        "block_elements": 256,
+                        "block_bytes": 144,
+                    },
+                    "activation_storage": {
+                        "format": "q8_k",
+                        "block_elements": 256,
+                    },
+                    "diagnostic_providers": {
+                        "fp32_activation": "gemm_nt_q4_k",
+                        "row_quantized": "gemv_q4_k_q8_k",
+                    },
+                },
+                "numerical_contract": "q4_k_x_q8_k_repacked_matmul_fp32",
+            },
+            "args": [
+                {
+                    "name": "A",
+                    "source": "activation:a",
+                    "expr": "(const void*)(model->bump + A_LAYER_INPUT)",
+                },
+                {
+                    "name": "B",
+                    "source": "weight:_first_weight",
+                    "expr": "(const void*)(model->bump + W_TOKEN_EMB)",
+                },
+                {
+                    "name": "C",
+                    "source": "output:c",
+                    "expr": "(float*)(model->bump + A_LOGITS)",
+                },
+            ],
+        }
+
+        emitted = codegen_prefill_v8.emit_prefill_op(
+            op,
+            1222,
+            {"embed_dim": 2560, "vocab_size": 262144, "logits_layout": "last"},
+        )
+
+        self.assertIn("gemv_q4_k_q8_k(", emitted)
+        self.assertNotIn("gemv_q4_k_q8_k_pairwise_split_min_parallel_dispatch", emitted)
+
+    def test_last_logits_legacy_provider_keeps_bounded_row_dispatch(self) -> None:
+        op = {
+            "function": "gemm_nt_q8_0_q8_0",
+            "op": "logits",
+            "layer": -1,
+            "call_abi": {
+                "version": 0,
+                "owner": "legacy_compatibility",
+                "kernel_id": "gemm_nt_q8_0_q8_0",
+                "source_file": "kernel_bindings*.json",
+            },
+            "args": [
+                {
+                    "name": "A",
+                    "source": "activation:a",
+                    "expr": "(const void*)(model->bump + A_MAIN_STREAM)",
+                },
+                {
+                    "name": "B",
+                    "source": "weight:_first_weight",
+                    "expr": "(const void*)(model->bump + W_LM_HEAD)",
+                },
+                {
+                    "name": "C",
+                    "source": "output:c",
+                    "expr": "(float*)(model->bump + A_LOGITS)",
+                },
+            ],
+        }
+
+        emitted = codegen_prefill_v8.emit_prefill_op(
+            op,
+            460,
+            {"embed_dim": 2048, "vocab_size": 163840, "logits_layout": "last"},
+        )
+
+        self.assertIn("gemv_q8_0_q8_0(", emitted)
+        self.assertNotIn("gemm_nt_q8_0_q8_0(", emitted)
+
     def test_residual_save_exports_prefill_layer_input_before_normalization(self) -> None:
         op = {
             "function": "memcpy",
