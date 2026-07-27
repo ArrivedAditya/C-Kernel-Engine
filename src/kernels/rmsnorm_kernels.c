@@ -225,14 +225,15 @@ void rmsnorm_forward_llama_production(const float *input,
  * a1cb3cc05d46d198467bebbb6e8fba50a325d4e7. oneDNN is not the RMSNorm
  * oracle; it is used by adjacent BF16 linear projections.
  */
-void rmsnorm_forward_pytorch_bf16_storage(const float *input,
-                                          const float *gamma,
-                                          float *output,
-                                          float *rstd_cache,
-                                          int tokens,
-                                          int d_model,
-                                          int aligned_embed_dim,
-                                          float eps)
+static void rmsnorm_forward_pytorch_bf16_storage_impl(const float *input,
+                                                       const float *gamma,
+                                                       float *output,
+                                                       float *rstd_cache,
+                                                       int tokens,
+                                                       int d_model,
+                                                       int aligned_embed_dim,
+                                                       float eps,
+                                                       int qwen3next_weight_order)
 {
     for (int t = 0; t < tokens; ++t) {
         const float *x = input + (size_t)t * (size_t)aligned_embed_dim;
@@ -348,12 +349,49 @@ void rmsnorm_forward_pytorch_bf16_storage(const float *input,
         if (rstd_cache) rstd_cache[t] = rstd;
         for (int d = 0; d < d_model; ++d) {
             const float value = bf16_to_float(float_to_bf16(x[d]));
-            const float normalized = bf16_to_float(float_to_bf16(value * rstd));
-            const float weight = bf16_to_float(float_to_bf16(gamma[d]));
-            y[d] = bf16_to_float(float_to_bf16(normalized * weight));
+            if (qwen3next_weight_order) {
+                /* Qwen3Next: (FP32 normalized * FP32 weight).to(BF16). */
+                y[d] = bf16_to_float(float_to_bf16(
+                    (value * rstd) * gamma[d]));
+            } else {
+                const float weight =
+                    bf16_to_float(float_to_bf16(gamma[d]));
+                const float normalized =
+                    bf16_to_float(float_to_bf16(value * rstd));
+                y[d] = bf16_to_float(float_to_bf16(normalized * weight));
+            }
         }
         for (int d = d_model; d < aligned_embed_dim; ++d) y[d] = 0.0f;
     }
+}
+
+void rmsnorm_forward_pytorch_bf16_storage(const float *input,
+                                          const float *gamma,
+                                          float *output,
+                                          float *rstd_cache,
+                                          int tokens,
+                                          int d_model,
+                                          int aligned_embed_dim,
+                                          float eps)
+{
+    rmsnorm_forward_pytorch_bf16_storage_impl(
+        input, gamma, output, rstd_cache, tokens, d_model,
+        aligned_embed_dim, eps, 0);
+}
+
+void rmsnorm_forward_qwen3next_pytorch_bf16_storage(
+                                          const float *input,
+                                          const float *gamma,
+                                          float *output,
+                                          float *rstd_cache,
+                                          int tokens,
+                                          int d_model,
+                                          int aligned_embed_dim,
+                                          float eps)
+{
+    rmsnorm_forward_pytorch_bf16_storage_impl(
+        input, gamma, output, rstd_cache, tokens, d_model,
+        aligned_embed_dim, eps, 1);
 }
 
 static void rmsnorm_backward_strict_scalar(const float *d_output,

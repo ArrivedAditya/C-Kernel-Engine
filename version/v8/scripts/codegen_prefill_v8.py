@@ -248,11 +248,32 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         {embed_dim}
     );
     ck_debug_export_hidden(model, -1, "logits", (const float*){gemm_c_expr}, VOCAB_SIZE);"""
-            gemv_func = func
-            if gemv_func.startswith("gemm_nt_"):
-                gemv_func = "gemv_" + gemv_func[len("gemm_nt_"):]
-            elif gemv_func.startswith("gemm_"):
-                gemv_func = "gemv_" + gemv_func[len("gemm_"):]
+            if linear_emission is None:
+                call_abi = op.get("call_abi") or {}
+                if call_abi.get("owner") != "legacy_compatibility":
+                    raise RuntimeError(
+                        "prefill logits(last): resolved GEMM provider must declare "
+                        "a map-owned row-quantized provider or preserve the provider"
+                    )
+                # Legacy families still carry version-0 ABI bindings. Keep their
+                # established row-provider mapping bounded to that explicit owner.
+                gemv_func = func
+                if gemv_func.startswith("gemm_nt_"):
+                    gemv_func = "gemv_" + gemv_func[len("gemm_nt_"):]
+                elif gemv_func.startswith("gemm_"):
+                    gemv_func = "gemv_" + gemv_func[len("gemm_"):]
+                else:
+                    raise RuntimeError(
+                        "prefill logits(last): legacy GEMM provider has no "
+                        "registered row-provider naming contract"
+                    )
+            else:
+                gemv_func = linear_emission.get("row_quantized_function")
+                if not gemv_func:
+                    raise RuntimeError(
+                        "prefill logits(last): resolved quantized linear capability "
+                        "has no row_quantized provider"
+                    )
             weight_expr = _find_arg_expr(args_list, source_prefix="weight:", arg_name="B") or _find_arg_expr(
                 args_list, source_prefix="weight:"
             )
