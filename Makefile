@@ -1265,8 +1265,8 @@ $(LIB_VISION): $(BUILD_STAMP) src/kernels/vision_kernels.c src/kernels/vision_ke
 $(LIB_AUDIO): $(BUILD_STAMP) src/kernels/audio_kernels.c include/ckernel_audio.h
 	$(CC) $(CFLAGS) -shared -o $@ src/kernels/audio_kernels.c -lm
 
-$(LIB_ATTENTION): $(BUILD_STAMP) src/kernels/attention_kernels.c src/kernels/attention_kernels_sliding.c src/kernels/attention_flash_true.c src/kernels/softmax_kernels.c src/ckernel_strict.c src/ck_threadpool.c include/ckernel_engine.h
-	$(CC) $(CFLAGS) -shared -o $@ src/kernels/attention_kernels.c src/kernels/attention_kernels_sliding.c src/kernels/attention_flash_true.c src/kernels/softmax_kernels.c src/ckernel_strict.c src/ck_threadpool.c -lm -lpthread
+$(LIB_ATTENTION): $(BUILD_STAMP) src/kernels/attention_kernels.c src/kernels/attention_kernels_sliding.c src/kernels/attention_flash_true.c src/kernels/softmax_kernels.c src/kernels/gemm_kernels_bf16.c src/ckernel_strict.c src/ck_threadpool.c include/ckernel_engine.h
+	$(CC) $(CFLAGS) -shared -o $@ src/kernels/attention_kernels.c src/kernels/attention_kernels_sliding.c src/kernels/attention_flash_true.c src/kernels/softmax_kernels.c src/kernels/gemm_kernels_bf16.c src/ckernel_strict.c src/ck_threadpool.c -lm -lpthread
 
 $(LIB_ROPE): $(BUILD_STAMP) src/kernels/rope_kernels.c src/kernels/rope_kernels_bf16.c src/ckernel_strict.c src/ck_threadpool.c include/ckernel_engine.h
 	$(CC) $(CFLAGS) -shared -o $@ src/kernels/rope_kernels.c src/kernels/rope_kernels_bf16.c src/ckernel_strict.c src/ck_threadpool.c -lm -lpthread
@@ -2225,7 +2225,7 @@ test-bf16: $(LIB) test-libs
 	fi
 
 .PHONY: test-qwen3vl-bf16-kernel-oracles
-test-qwen3vl-bf16-kernel-oracles:
+test-qwen3vl-bf16-kernel-oracles: $(LIB)
 	@failed=0; \
 	for t in $(PY_TESTS_QWEN3VL_BF16_ORACLES); do \
 	  echo "Running $$t"; \

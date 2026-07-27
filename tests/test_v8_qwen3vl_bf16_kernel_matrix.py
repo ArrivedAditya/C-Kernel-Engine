@@ -34,6 +34,15 @@ attention_resolver = _load_module(
 
 
 class Qwen3VLBf16KernelMatrixTests(unittest.TestCase):
+    def test_oracle_matrix_builds_the_engine_it_loads(self) -> None:
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        declaration = next(
+            line
+            for line in makefile.splitlines()
+            if line.startswith("test-qwen3vl-bf16-kernel-oracles:")
+        )
+        self.assertIn("$(LIB)", declaration)
+
     def test_every_selected_numerical_provider_has_a_pytorch_oracle(self) -> None:
         template = build_ir_v8._load_builtin_template_doc("qwen3vl")
         manifest = {

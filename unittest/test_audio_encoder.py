@@ -392,12 +392,15 @@ def check_pytorch_erf_gelu() -> None:
     difference = np.abs(actual - expected)
     max_diff = float(np.max(difference))
     rmse = float(np.sqrt(np.mean(difference * difference)))
+    passed = max_diff <= 5.0e-7 and rmse <= 1.25e-7
+    print(
+        f"audio_pytorch_erf_gelu max_diff={max_diff:.8e} tol=5.0e-07 "
+        f"[{'PASS' if passed else 'FAIL'}] rmse={rmse:.8e} "
+        f"rmse_tol=1.25e-07",
+        flush=True,
+    )
     assert max_diff <= 5.0e-7, max_diff
     assert rmse <= 1.25e-7, rmse
-    print(
-        f"audio_pytorch_erf_gelu max_diff={max_diff:.8e} tol=5.0e-07 [PASS] "
-        f"rmse={rmse:.8e} rmse_tol=1.25e-07"
-    )
 
 
 def _check_cross_attention(name: str, heads: int, query_tokens: int, key_tokens: int, dim: int) -> None:
@@ -427,7 +430,8 @@ def _check_cross_attention(name: str, heads: int, query_tokens: int, key_tokens:
 
 
 def main() -> None:
-    assert torch.backends.cpu.get_cpu_capability() == "DEFAULT"
+    capability = torch.backends.cpu.get_cpu_capability()
+    assert capability in {"DEFAULT", "NO AVX"}, capability
     torch.set_num_threads(1)
     check_wav_pcm16()
     check_pcm()
