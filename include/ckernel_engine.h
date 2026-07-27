@@ -982,6 +982,15 @@ void rmsnorm_forward_fp32_square_fp64_sum(const float *input,
                                           int d_model,
                                           int aligned_embed_dim,
                                           float eps);
+void rmsnorm_forward_strided_f32(const float *input,
+                                 const float *gamma,
+                                 float *output,
+                                 float *rstd_cache,
+                                 int tokens,
+                                 int d_model,
+                                 int input_stride,
+                                 int output_stride,
+                                 float eps);
 void rmsnorm_forward_kv_lora(const float *input,
                              const float *gamma,
                              float *output,
@@ -1212,6 +1221,7 @@ void gelu_fast_inplace(float *data, size_t n);
 // Scalar-only exact GELU forward using standard library tanhf.
 // Slower but provides maximum accuracy. Used by BF16 wrapper.
 void gelu_exact_inplace(float *data, size_t n);
+void gelu_pytorch_erf_f32_inplace(float *data, size_t n);
 
 // GGML-compatible GELU forward matching llama.cpp's FP16 table semantics.
 void gelu_ggml_inplace(float *data, size_t n);
@@ -2842,6 +2852,18 @@ void moe_swiglu_shared_forward_bf16(const float *hidden,
                                     int hidden_dim,
                                     int intermediate_dim);
 
+void group_limited_topk_router_sigmoid_f32(const float *logits,
+                                           const float *correction_bias,
+                                           int *indices,
+                                           float *weights,
+                                           int rows,
+                                           int n_experts,
+                                           int top_k,
+                                           int n_group,
+                                           int topk_group,
+                                           int norm_topk_prob,
+                                           float routed_scaling_factor);
+
 void moe_relu2_expert_backward_f32(const float *d_output,
                                    const float *hidden,
                                    const int *indices,
@@ -3727,6 +3749,12 @@ void embedding_forward_bf16_fp32(const int32_t *token_ids,
 	                            int num_tokens,
 	                            int embed_dim,
 	                            int num_positions);
+	void position_embeddings_add_at_offset(float *x,
+	                                      const float *position_embd,
+	                                      int num_tokens,
+	                                      int embed_dim,
+	                                      int num_positions,
+	                                      int start_position);
 	void position_embeddings_add_tiled_2d(float *x,
 	                                      const float *position_embd,
 	                                      int grid_h,

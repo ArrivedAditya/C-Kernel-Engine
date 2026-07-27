@@ -5,9 +5,16 @@ from __future__ import annotations
 
 import ctypes
 import math
+import os
 import struct
 
 import numpy as np
+
+# This file validates scalar C providers. Pin the PyTorch oracle before import
+# so a runner's AVX2/AVX-512 SLEEF dispatch cannot silently change reference
+# arithmetic while the C provider remains scalar.
+os.environ.setdefault("ATEN_CPU_CAPABILITY", "default")
+
 import torch
 import torch.nn.functional as F
 
@@ -16,6 +23,7 @@ from lib_loader import load_lib
 
 lib = load_lib("libckernel_audio.so", "libckernel_engine.so")
 attention_lib = load_lib("libckernel_attention.so", "libckernel_engine.so")
+gelu_lib = load_lib("libckernel_gelu.so", "libckernel_engine.so")
 _FLOAT_P = ctypes.POINTER(ctypes.c_float)
 _I16_P = ctypes.POINTER(ctypes.c_int16)
 _U8_P = ctypes.POINTER(ctypes.c_uint8)
@@ -87,16 +95,27 @@ lib.audio_wav_decode_pcm16_mono_f32.argtypes = [
     _U8_P, ctypes.c_size_t, ctypes.POINTER(CKAudioWavInfo), _FLOAT_P, ctypes.c_int,
 ]
 lib.audio_wav_decode_pcm16_mono_f32.restype = ctypes.c_int
+lib.audio_wav_decode_memory_pcm16_mono_f32.argtypes = [
+    _U8_P, ctypes.c_size_t, _FLOAT_P, ctypes.c_int,
+    ctypes.POINTER(CKAudioWavInfo),
+]
+lib.audio_wav_decode_memory_pcm16_mono_f32.restype = ctypes.c_int
 lib.audio_resample_windowed_sinc_f32.argtypes = [
     _FLOAT_P, ctypes.c_int, ctypes.c_int, _FLOAT_P, ctypes.c_int,
     ctypes.c_int, ctypes.c_int,
 ]
 lib.audio_resample_windowed_sinc_f32.restype = ctypes.c_int
+lib.audio_pad_or_truncate_f32.argtypes = [
+    _FLOAT_P, ctypes.c_int, _FLOAT_P, ctypes.c_int,
+]
+lib.audio_pad_or_truncate_f32.restype = ctypes.c_int
 lib.audio_stft_power_fft400_f32.argtypes = [
     _FLOAT_P, ctypes.c_int, _FLOAT_P, _FLOAT_P, _FLOAT_P,
     ctypes.c_int, _FLOAT_P, ctypes.c_int, _FLOAT_P,
 ]
 lib.audio_stft_power_fft400_f32.restype = ctypes.c_int
+gelu_lib.gelu_pytorch_erf_f32_inplace.argtypes = [_FLOAT_P, ctypes.c_size_t]
+gelu_lib.gelu_pytorch_erf_f32_inplace.restype = None
 
 
 def check_wav_pcm16() -> None:
@@ -131,6 +150,18 @@ def check_wav_pcm16() -> None:
         [-1.0, 32767.0 / 32768.0, 0.0, 3456.0 / 32768.0], dtype=np.float32,
     )
     assert np.array_equal(actual, expected)
+    fused_actual = np.empty(info.frames, dtype=np.float32)
+    fused_info = CKAudioWavInfo()
+    assert lib.audio_wav_decode_memory_pcm16_mono_f32(
+        wav.ctypes.data_as(_U8_P), wav.size, _fptr(fused_actual),
+        fused_actual.size, ctypes.byref(fused_info),
+    ) == info.frames
+    assert np.array_equal(fused_actual, expected)
+    assert (
+        fused_info.channels,
+        fused_info.sample_rate,
+        fused_info.frames,
+    ) == (2, 48000, 4)
     truncated = wav[:-1].copy()
     assert lib.audio_wav_parse_memory(
         truncated.ctypes.data_as(_U8_P), truncated.size, ctypes.byref(info)
@@ -150,6 +181,21 @@ def check_pcm() -> None:
     expected = np.array([-1.0, 32767.0 / 32768.0, 0.0, 3456.0 / 32768.0], dtype=np.float32)
     assert np.array_equal(actual, expected)
     print("audio_pcm_s16_stereo_to_mono max_diff=0 tol=0 [PASS]")
+
+
+def check_pad_or_truncate() -> None:
+    source = np.array([1.0, -2.0, 3.0], dtype=np.float32)
+    padded = np.full(5, 99.0, dtype=np.float32)
+    assert lib.audio_pad_or_truncate_f32(
+        _fptr(source), source.size, _fptr(padded), padded.size
+    ) == source.size
+    assert np.array_equal(padded, np.array([1.0, -2.0, 3.0, 0.0, 0.0], dtype=np.float32))
+    truncated = np.empty(2, dtype=np.float32)
+    assert lib.audio_pad_or_truncate_f32(
+        _fptr(source), source.size, _fptr(truncated), truncated.size
+    ) == truncated.size
+    assert np.array_equal(truncated, source[:2])
+    print("audio_pad_or_truncate max_diff=0 tol=0 [PASS]")
 
 
 def check_resample() -> None:
@@ -330,6 +376,33 @@ def check_transpose() -> None:
     print("audio_channel_to_token_transpose max_diff=0 tol=0 [PASS]")
 
 
+def check_pytorch_erf_gelu() -> None:
+    edge = np.array(
+        [
+            -20.0, -10.0, -5.0, -3.0, -1.0, -0.5, -0.0,
+            0.0, 0.5, 1.0, 3.0, 5.0, 10.0, 20.0,
+        ],
+        dtype=np.float32,
+    )
+    random = np.random.default_rng(20260725).normal(0.0, 2.5, 16384).astype(np.float32)
+    source = np.concatenate((edge, random))
+    actual = source.copy()
+    gelu_lib.gelu_pytorch_erf_f32_inplace(_fptr(actual), actual.size)
+    expected = F.gelu(torch.from_numpy(source), approximate="none").numpy()
+    difference = np.abs(actual - expected)
+    max_diff = float(np.max(difference))
+    rmse = float(np.sqrt(np.mean(difference * difference)))
+    passed = max_diff <= 5.0e-7 and rmse <= 1.25e-7
+    print(
+        f"audio_pytorch_erf_gelu max_diff={max_diff:.8e} tol=5.0e-07 "
+        f"[{'PASS' if passed else 'FAIL'}] rmse={rmse:.8e} "
+        f"rmse_tol=1.25e-07",
+        flush=True,
+    )
+    assert max_diff <= 5.0e-7, max_diff
+    assert rmse <= 1.25e-7, rmse
+
+
 def _check_cross_attention(name: str, heads: int, query_tokens: int, key_tokens: int, dim: int) -> None:
     rng = np.random.default_rng(heads * 100000 + query_tokens * 1000 + key_tokens + dim)
     query = rng.normal(0.0, 0.12, (heads, query_tokens, dim)).astype(np.float32)
@@ -357,19 +430,23 @@ def _check_cross_attention(name: str, heads: int, query_tokens: int, key_tokens:
 
 
 def main() -> None:
+    capability = torch.backends.cpu.get_cpu_capability()
+    assert capability in {"DEFAULT", "NO AVX"}, capability
     torch.set_num_threads(1)
     check_wav_pcm16()
     check_pcm()
+    check_pad_or_truncate()
     check_resample()
     check_bandlimited_resample()
     check_precomputed_stft()
     _check_conv("audio_conv1d_whisper_stem1", 80, 384, 16, 1)
     _check_conv("audio_conv1d_whisper_stem2", 384, 384, 16, 2)
+    check_pytorch_erf_gelu()
     check_transpose()
     _check_cross_attention("audio_encoder_self_attention_equal", 6, 11, 11, 64)
     _check_cross_attention("audio_cross_attention_unequal_small", 3, 5, 17, 8)
     _check_cross_attention("audio_cross_attention_whisper_decode", 6, 1, 1500, 64)
-    print("ALL TESTS PASSED (13/13)")
+    print("ALL TESTS PASSED (15/15)")
 
 
 if __name__ == "__main__":

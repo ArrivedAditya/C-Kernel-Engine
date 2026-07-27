@@ -3,15 +3,21 @@
   "name": "whisper_audio_frontend",
   "family": "audio_transformer_frontend",
   "flags": {
-    "input_storage": "fp32",
+    "input_storage": "uint8",
     "sample_rate": 16000,
     "feature_layout": "mel_major"
   },
   "contract": {
     "audio_frontend": {
-      "input_modality": "audio",
-      "channel_layout": "mono",
+      "input_modality": "wav_bytes",
+      "container": "riff_wave",
+      "sample_encoding": "pcm_s16_le",
+      "channel_layout": "mono_mean",
       "sample_rate": 16000,
+      "sample_extent": 480000,
+      "resample": "hann_windowed_sinc",
+      "resample_radius": 16,
+      "resample_identity_when_rate_matches": true,
       "n_fft": 400,
       "hop_length": 160,
       "centering": "reflect",
@@ -21,22 +27,137 @@
     }
   },
   "required_numerical_contracts": {
-    "audio.frontend.log_mel": {
-      "op": "audio_log_mel",
-      "template_ops": ["log_mel"],
+    "audio.frontend.wav_decode": {
+      "op": "audio_wav_decode",
+      "template_ops": ["audio_wav_decode"],
       "phases": {
         "prefill": {
-          "contract_id": "audio_whisper_log_mel_reference_fp32",
+          "contract_id": "audio_wav_pcm16_parse_channel_mean_fp32",
           "validation": "validated",
-          "evidence": "unittest/test_audio.py PyTorch STFT/log-Mel oracle and fixed Slaney-80 filter identity"
+          "evidence": "unittest/test_audio_encoder.py RIFF bounds, PCM16 mono, and channel-mean oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.decode.output",
+        "producer": "audio_wav_decode",
+        "logical_layout": "sample_major",
+        "axis_names": ["sample"]
+      }
+    },
+    "audio.frontend.resample": {
+      "op": "audio_resample",
+      "template_ops": ["audio_resample"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_resample_windowed_sinc_fp64_accum_fp32_output",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py band-limited resampling oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.resample.output",
+        "producer": "audio_resample",
+        "logical_layout": "sample_major",
+        "axis_names": ["sample"]
+      }
+    },
+    "audio.frontend.pad": {
+      "op": "audio_pad_or_truncate",
+      "template_ops": ["audio_pad_or_truncate"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_pad_or_truncate_prefix_zero_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py exact prefix, truncation, and zero-tail matrix"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.samples.output",
+        "producer": "audio_pad_or_truncate",
+        "logical_layout": "sample_major",
+        "axis_names": ["sample"]
+      }
+    },
+    "audio.frontend.stft_tables": {
+      "op": "audio_stft_tables",
+      "template_ops": ["audio_stft_tables"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_stft_periodic_hann_tables_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py periodic-Hann and trigonometric-table identities"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.stft_tables.output",
+        "producer": "audio_stft_tables",
+        "logical_layout": "frequency_sample",
+        "axis_names": ["frequency", "sample"]
+      }
+    },
+    "audio.frontend.stft": {
+      "op": "audio_stft",
+      "template_ops": ["audio_stft"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_stft_centered_hann_fft400_radix20_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py optimized FFT400 power oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.stft.output",
+        "producer": "audio_stft",
+        "logical_layout": "frame_major",
+        "axis_names": ["frame", "frequency"]
+      }
+    },
+    "audio.frontend.mel_filters": {
+      "op": "audio_mel_filters",
+      "template_ops": ["audio_mel_filters"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_whisper_mel_filters_slaney_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio.py fixed Whisper Slaney filter identity"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.mel_filters.output",
+        "producer": "audio_mel_filters",
+        "logical_layout": "mel_frequency",
+        "axis_names": ["mel", "frequency"]
+      }
+    },
+    "audio.frontend.log_mel": {
+      "op": "audio_log_mel",
+      "template_ops": ["audio_log_mel"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_whisper_log_mel_from_power_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio.py PyTorch STFT/log-Mel oracle"
         }
       },
       "checkpoint": {
         "id": "audio.frontend.log_mel.output",
-        "producer": "log_mel",
+        "producer": "audio_log_mel",
         "logical_layout": "mel_major",
         "axis_names": ["mel", "frame"]
       }
+    }
+  },
+  "block_types": {
+    "audio_frontend": {
+      "sequence": [
+        {"id": "wav_decode", "op": "audio_wav_decode"},
+        {"id": "resample", "op": "audio_resample"},
+        {"id": "pad_or_truncate", "op": "audio_pad_or_truncate"},
+        {"id": "stft_tables", "op": "audio_stft_tables"},
+        {"id": "stft", "op": "audio_stft"},
+        {"id": "mel_filters", "op": "audio_mel_filters"},
+        {"id": "log_mel", "op": "audio_log_mel"}
+      ]
     }
   }
 }

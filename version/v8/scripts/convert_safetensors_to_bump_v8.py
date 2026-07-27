@@ -456,6 +456,80 @@ def _qwen35_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor]) 
     return refs
 
 
+def _qwen35_architecture_metadata(config: dict[str, Any]) -> dict[str, Any]:
+    """Validate and preserve execution metadata shared by Qwen3.5-family checkpoints."""
+    text = config.get("text_config") if isinstance(config.get("text_config"), dict) else config
+    vision = config.get("vision_config") if isinstance(config.get("vision_config"), dict) else {}
+    num_layers = int(text.get("num_hidden_layers") or 0)
+    hidden_size = int(text.get("hidden_size") or 0)
+    intermediate_size = int(text.get("intermediate_size") or 0)
+    num_heads = int(text.get("num_attention_heads") or 0)
+    num_kv_heads = int(text.get("num_key_value_heads") or 0)
+    head_dim = int(text.get("head_dim") or 0)
+    if min(num_layers, hidden_size, intermediate_size, num_heads, num_kv_heads, head_dim) <= 0:
+        raise SystemExit("Qwen3.5 config missing required decoder dimensions")
+
+    interval = int(text.get("full_attention_interval") or 4)
+    if interval <= 0:
+        raise SystemExit("Qwen3.5 full_attention_interval must be positive")
+    layer_types = [str(value) for value in (text.get("layer_types") or [])]
+    if not layer_types:
+        layer_types = [
+            "full_attention" if (layer + 1) % interval == 0 else "linear_attention"
+            for layer in range(num_layers)
+        ]
+    if len(layer_types) != num_layers:
+        raise SystemExit(
+            f"Qwen3.5 layer_types length {len(layer_types)} != num_layers {num_layers}"
+        )
+    unsupported = sorted(set(layer_types) - {"linear_attention", "recurrent", "full_attention"})
+    if unsupported:
+        raise SystemExit(f"Unsupported Qwen3.5 layer types: {unsupported}")
+
+    rope = text.get("rope_parameters") if isinstance(text.get("rope_parameters"), dict) else {}
+    partial_rotary_factor = float(
+        rope.get("partial_rotary_factor", text.get("partial_rotary_factor", 1.0))
+    )
+    rotary_width = int(head_dim * partial_rotary_factor)
+    if rotary_width <= 0 or rotary_width > head_dim or rotary_width % 2:
+        raise SystemExit(
+            "Qwen3.5 partial rotary width must be positive, even, and no larger than head_dim"
+        )
+    sections = [int(value) for value in (rope.get("mrope_section") or [])]
+    interleaved = bool(rope.get("mrope_interleaved", False))
+    if sections and interleaved and 2 * sum(sections) != rotary_width:
+        raise SystemExit(
+            "Qwen3.5 interleaved M-RoPE sections must describe the configured rotary width"
+        )
+
+    mtp_layers = int(text.get("mtp_num_hidden_layers") or 0)
+    has_vision = bool(vision) and not bool(config.get("language_model_only", False))
+    return {
+        "layer_types": layer_types,
+        "layer_kinds": [
+            "full_attention" if kind == "full_attention" else "recurrent"
+            for kind in layer_types
+        ],
+        "full_attention_interval": interval,
+        "rotary_dim": rotary_width,
+        "mrope_sections": sections,
+        "mrope_n_dims": rotary_width,
+        "mrope_interleaved": interleaved,
+        "has_vision_encoder": has_vision,
+        "vision_arch": "qwen3_vl_vision" if has_vision else "",
+        "vision_depth": int(vision.get("depth") or vision.get("num_hidden_layers") or 0),
+        "vision_hidden_size": int(vision.get("hidden_size") or 0),
+        "vision_output_size": int(vision.get("out_hidden_size") or hidden_size),
+        "image_token_id": int(config.get("image_token_id") or 0),
+        "video_token_id": int(config.get("video_token_id") or 0),
+        "vision_start_token_id": int(config.get("vision_start_token_id") or 0),
+        "vision_end_token_id": int(config.get("vision_end_token_id") or 0),
+        "has_mtp_assistant": mtp_layers > 0,
+        "mtp_num_layers": mtp_layers,
+        "mtp_use_dedicated_embeddings": bool(text.get("mtp_use_dedicated_embeddings", False)),
+    }
+
+
 def _parse_nemotron_h_pattern(pattern: str, num_layers: int) -> list[str]:
     mapping = {"M": "mamba", "*": "attention", "-": "mlp", "E": "moe"}
     chars = [ch for ch in str(pattern or "").strip() if not ch.isspace()]
@@ -540,15 +614,15 @@ def _kimi_vl_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor])
                 if expert_down_shape is None:
                     expert_down_shape = tuple([n_experts] + list(headers[down].shape))
             refs.extend([
-                TensorRef(f"layer.{layer}.moe_expert_gate", tuple(expert_gate_sources), dtype="fp32", shape=expert_gate_shape),
-                TensorRef(f"layer.{layer}.moe_expert_up", tuple(expert_up_sources), dtype="fp32", shape=expert_up_shape),
-                TensorRef(f"layer.{layer}.moe_expert_down", tuple(expert_down_sources), dtype="fp32", shape=expert_down_shape),
+                TensorRef(f"layer.{layer}.moe_expert_gate", tuple(expert_gate_sources), shape=expert_gate_shape),
+                TensorRef(f"layer.{layer}.moe_expert_up", tuple(expert_up_sources), shape=expert_up_shape),
+                TensorRef(f"layer.{layer}.moe_expert_down", tuple(expert_down_sources), shape=expert_down_shape),
             ])
             sp = f"{mlp}.shared_experts"
             refs.extend([
-                TensorRef(f"layer.{layer}.moe_shared_gate", (_require_existing(headers, (f"{sp}.gate_proj.weight",), f"layer {layer} shared gate_proj"),), dtype="fp32"),
-                TensorRef(f"layer.{layer}.moe_shared_up", (_require_existing(headers, (f"{sp}.up_proj.weight",), f"layer {layer} shared up_proj"),), dtype="fp32"),
-                TensorRef(f"layer.{layer}.moe_shared_down", (_require_existing(headers, (f"{sp}.down_proj.weight",), f"layer {layer} shared down_proj"),), dtype="fp32"),
+                TensorRef(f"layer.{layer}.moe_shared_gate", (_require_existing(headers, (f"{sp}.gate_proj.weight",), f"layer {layer} shared gate_proj"),)),
+                TensorRef(f"layer.{layer}.moe_shared_up", (_require_existing(headers, (f"{sp}.up_proj.weight",), f"layer {layer} shared up_proj"),)),
+                TensorRef(f"layer.{layer}.moe_shared_down", (_require_existing(headers, (f"{sp}.down_proj.weight",), f"layer {layer} shared down_proj"),)),
             ])
         else:
             raise SystemExit(f"Unsupported Kimi-VL layer kind at {layer}: {kind}")
@@ -1063,13 +1137,27 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         "tie_word_embeddings",
         bool(text.get("tie_word_embeddings", hf.get("tie_word_embeddings", True))),
     )
-    if arch == "whisper_encoder":
+    if arch in {"whisper_encoder", "whisper_decoder"}:
         embed_dim = int(hf.get("d_model") or 0)
-        num_heads = int(hf.get("encoder_attention_heads") or 0)
-        context_length = int(hf.get("max_source_positions") or 0)
+        is_encoder = arch == "whisper_encoder"
+        num_heads = int(
+            hf.get("encoder_attention_heads" if is_encoder else "decoder_attention_heads")
+            or 0
+        )
+        context_length = int(
+            hf.get("max_source_positions" if is_encoder else "max_target_positions")
+            or 0
+        )
         feature_channels = int(hf.get("num_mel_bins") or 0)
-        num_layers = int(hf.get("encoder_layers") or hf.get("num_hidden_layers") or 0)
-        intermediate_size = int(hf.get("encoder_ffn_dim") or 0)
+        num_layers = int(
+            hf.get("encoder_layers" if is_encoder else "decoder_layers")
+            or hf.get("num_hidden_layers")
+            or 0
+        )
+        intermediate_size = int(
+            hf.get("encoder_ffn_dim" if is_encoder else "decoder_ffn_dim")
+            or 0
+        )
         if min(
             embed_dim,
             num_heads,
@@ -1078,10 +1166,10 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             num_layers,
             intermediate_size,
         ) <= 0:
-            raise SystemExit("Whisper encoder config is missing required dimensions")
+            raise SystemExit(f"{arch} config is missing required dimensions")
         if embed_dim % num_heads != 0:
             raise SystemExit(
-                f"Whisper encoder d_model={embed_dim} is not divisible by heads={num_heads}"
+                f"{arch} d_model={embed_dim} is not divisible by heads={num_heads}"
             )
         contract = _safetensors_arch_contract(arch)
         contract_cfg = (
@@ -1101,26 +1189,50 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
                 "num_key_value_heads": num_heads,
                 "head_dim": embed_dim // num_heads,
                 "context_length": context_length,
-                "audio_feature_channels": feature_channels,
-                "audio_feature_frames": context_length * 2,
-                "audio_conv1_output_channels": embed_dim,
-                "audio_conv2_output_channels": embed_dim,
-                "audio_conv1_kernel_size": 3,
-                "audio_conv1_stride": 1,
-                "audio_conv1_padding": 1,
-                "audio_conv1_output_frames": context_length * 2,
-                "audio_conv2_kernel_size": 3,
-                "audio_conv2_stride": 2,
-                "audio_conv2_padding": 1,
-                "audio_conv2_output_frames": context_length,
                 "attention_scale": 1.0 / math.sqrt(float(embed_dim // num_heads)),
                 "rms_eps": 1.0e-5,
                 "prefer_q8_activation": False,
                 "numerical_contract_mode": "production",
-                "tie_word_embeddings": True,
-                "vocab_size": 1,
+                "tie_word_embeddings": bool(hf.get("tie_word_embeddings", True)),
+                "vocab_size": 1 if is_encoder else int(hf.get("vocab_size") or 0),
             }
         )
+        if is_encoder:
+            cfg.update(
+                {
+                    "audio_sample_rate": 16000,
+                    "audio_sample_extent": context_length * 2 * 160,
+                    "audio_max_source_frames": context_length * 2 * 160 * 3,
+                    "audio_resample_radius": 16,
+                    "audio_n_fft": 400,
+                    "audio_hop_length": 160,
+                    "audio_power_bins": 201,
+                    "audio_feature_channels": feature_channels,
+                    "audio_feature_frames": context_length * 2,
+                    "audio_conv1_output_channels": embed_dim,
+                    "audio_conv2_output_channels": embed_dim,
+                    "audio_conv1_kernel_size": 3,
+                    "audio_conv1_stride": 1,
+                    "audio_conv1_padding": 1,
+                    "audio_conv1_output_frames": context_length * 2,
+                    "audio_conv1_elements": embed_dim * context_length * 2,
+                    "audio_conv2_kernel_size": 3,
+                    "audio_conv2_stride": 2,
+                    "audio_conv2_padding": 1,
+                    "audio_conv2_output_frames": context_length,
+                    "audio_conv2_elements": embed_dim * context_length,
+                }
+            )
+        else:
+            cfg.update(
+                {
+                    "encoder_memory_length": int(hf.get("max_source_positions") or 0),
+                    "decoder_start_token_id": int(hf.get("decoder_start_token_id") or 0),
+                    "eos_token_id": int(hf.get("eos_token_id") or 0),
+                    "pad_token_id": int(hf.get("pad_token_id") or 0),
+                    "uses_cross_attention": True,
+                }
+            )
     if arch == "nemotron_h":
         layer_kinds = _parse_nemotron_h_pattern(str(text.get("hybrid_override_pattern") or ""), int(cfg.get("num_layers") or 0))
         mamba_num_heads = int(text.get("mamba_num_heads") or 0)
@@ -1523,6 +1635,7 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         })
 
     if arch == "qwen35":
+        architecture = _qwen35_architecture_metadata(hf)
         headers = _load_safetensors_headers(model_dir)
         q_gate_proj_dim = 0
         attn_out_dim = 0
@@ -1550,12 +1663,8 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         if ssm_time_step_rank <= 0:
             ssm_time_step_rank = int(text.get("linear_num_key_heads") or text.get("linear_num_value_heads") or 0)
 
-        layer_types = [str(x) for x in (text.get("layer_types") or [])]
-        layer_kinds = ["full_attention" if x == "full_attention" else "recurrent" for x in layer_types]
-        if not layer_kinds:
-            n_layers = int(cfg.get("num_layers") or 0)
-            interval = int(text.get("full_attention_interval") or 4)
-            layer_kinds = ["full_attention" if (i + 1) % interval == 0 else "recurrent" for i in range(n_layers)]
+        layer_types = list(architecture["layer_types"])
+        layer_kinds = list(architecture["layer_kinds"])
         execution_plan = build_qwen35_execution_plan(layer_kinds)
         cfg.update({
             "model": "qwen35",
@@ -1565,7 +1674,10 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "attn_q_gate_proj_dim": int(q_gate_proj_dim),
             "intermediate_dim": int(cfg.get("intermediate_size") or 0),
             "max_seq_len": int(cfg.get("context_length") or 0),
-            "rotary_dim": int(int(text.get("head_dim", cfg.get("head_dim", 0))) * float(rope_parameters.get("partial_rotary_factor", 1.0))),
+            "rotary_dim": int(architecture["rotary_dim"]),
+            "mrope_sections": list(architecture["mrope_sections"]),
+            "mrope_n_dims": int(architecture["mrope_n_dims"]),
+            "mrope_interleaved": bool(architecture["mrope_interleaved"]),
             "has_qk_norm": any(kind == "full_attention" for kind in layer_kinds),
             "has_attention_biases": False,
             "layer_types": layer_types,
@@ -1577,7 +1689,7 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "layer_recurrent_policy": execution_plan["layer_recurrent_policy"],
             "layer_kv_policy": execution_plan["layer_kv_policy"],
             "prefill_policy": "batched",
-            "full_attention_interval": int(text.get("full_attention_interval") or 4),
+            "full_attention_interval": int(architecture["full_attention_interval"]),
             "ssm_conv_kernel": int(text.get("linear_conv_kernel_dim") or 4),
             "ssm_state_size": int(text.get("linear_key_head_dim") or max(1, recurrent_q_dim)),
             "ssm_group_count": int(text.get("linear_num_key_heads") or max(1, recurrent_q_dim // max(1, int(text.get("linear_key_head_dim") or recurrent_q_dim)))),
@@ -1591,6 +1703,23 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "recurrent_num_heads": int(ssm_time_step_rank),
             "recurrent_head_dim": int(recurrent_v_dim // max(1, ssm_time_step_rank)) if ssm_time_step_rank else int(text.get("linear_key_head_dim") or 0),
             "sampler_defaults": {"repeat_penalty": 1.12, "repeat_last_n": 96, "no_repeat_ngram_size": 4},
+        })
+        cfg.update({
+            key: architecture[key]
+            for key in (
+                "has_vision_encoder",
+                "vision_arch",
+                "vision_depth",
+                "vision_hidden_size",
+                "vision_output_size",
+                "image_token_id",
+                "video_token_id",
+                "vision_start_token_id",
+                "vision_end_token_id",
+                "has_mtp_assistant",
+                "mtp_num_layers",
+                "mtp_use_dedicated_embeddings",
+            )
         })
         mrope = list(rope_parameters.get("mrope_section") or [])
         if mrope:
@@ -1682,6 +1811,19 @@ def _ignored_source_tensor(arch: str, name: str) -> str | None:
         name.startswith("model.decoder.") or name == "proj_out.weight"
     ):
         return "decoder_not_in_encoder_artifact"
+    if arch == "whisper_decoder" and name.startswith("model.encoder."):
+        return "encoder_not_in_decoder_artifact"
+    if arch == "kimi_vl" and (
+        name.startswith("vision_tower.")
+        or name.startswith("multi_modal_projector.")
+    ):
+        return "vision_tower_not_in_decoder_pass"
+    if (
+        arch == "kimi_vl"
+        and name.startswith("language_model.model.layers.")
+        and name.endswith(".self_attn.rotary_emb.inv_freq")
+    ):
+        return "rope_frequencies_derived_from_runtime_contract"
     return None
 
 
@@ -1883,7 +2025,7 @@ def main() -> int:
     ap.add_argument("--ram-dir", type=Path, default=Path("/dev/shm"), help="tmpfs directory for --ram-output; default: /dev/shm")
     ap.add_argument("--config-out", required=True, type=Path)
     ap.add_argument("--manifest-out", required=True, type=Path)
-    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma4_assistant", "gemma3", "llama", "qwen2", "qwen3", "qwen3vl", "qwen3_vl_vision", "qwen35", "nemotron_h", "glm4", "kimi_vl", "whisper_encoder"])
+    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma4_assistant", "gemma3", "llama", "qwen2", "qwen3", "qwen3vl", "qwen3_vl_vision", "qwen35", "nemotron_h", "glm4", "kimi_vl", "whisper_encoder", "whisper_decoder"])
     ap.add_argument("--config-template", type=Path, help="existing v8 config/manifest to reuse explicit runtime policy")
     ap.add_argument("--dtype", default="preserve", choices=["preserve", "bf16", "fp32"])
     ap.add_argument("--dry-run", action="store_true", help="validate mapping and write JSON reports only; do not write BUMP")
@@ -1910,13 +2052,14 @@ def main() -> int:
     missing: list[str] = []
     entries_preview: list[dict[str, Any]] = []
     dtype_table: list[int] = []
-    offset = DATA_START + 4 + len(refs) + len(tokenizer_payloads)
+    offset = align_up(DATA_START + 4 + len(refs) + len(tokenizer_payloads))
     for ref in refs:
         for src in ref.source_names:
             if src not in headers:
                 missing.append(src)
         if missing:
             continue
+        offset = align_up(offset)
         dt, size, shape = _entry_size_from_header(ref, headers, args.dtype)
         dtype_table.append(_dtype_code(dt))
         preview_entry = {
@@ -1974,6 +2117,7 @@ def main() -> int:
         config["special_tokens"] = special_tokens
     quant_summary: dict[str, Any] = {"source": "safetensors", "dtype_policy": args.dtype}
     for name, dt, payload, shape, source in tokenizer_payloads:
+        offset = align_up(offset)
         dtype_table.append(CK_DT_FP32)
         entries_preview.append({
             "name": name,
@@ -2050,6 +2194,10 @@ def main() -> int:
         entries: list[dict[str, Any]] = []
         current_offset = DATA_START + 4 + len(dtype_table)
         for ref in refs:
+            aligned_offset = align_up(current_offset)
+            if aligned_offset > current_offset:
+                w.write(b"\x00" * (aligned_offset - current_offset))
+                current_offset = aligned_offset
             start = current_offset
             dt, size, shape = _write_ref(w, model_dir, headers, ref, args.dtype, arch)
             current_offset += size
@@ -2066,6 +2214,10 @@ def main() -> int:
                 entry["transform"] = transform
             entries.append(entry)
         for name, dt, payload, shape, source in tokenizer_payloads:
+            aligned_offset = align_up(current_offset)
+            if aligned_offset > current_offset:
+                w.write(b"\x00" * (aligned_offset - current_offset))
+                current_offset = aligned_offset
             start = current_offset
             w.write(payload)
             current_offset += len(payload)

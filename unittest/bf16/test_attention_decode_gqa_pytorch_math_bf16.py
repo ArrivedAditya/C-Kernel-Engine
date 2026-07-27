@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from torch.nn.attention import SDPBackend, sdpa_kernel
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -97,13 +98,14 @@ def run_case(kv_tokens: int, seed: int) -> None:
         dtype=torch.float32,
     ).to(torch.bfloat16)
 
-    expected = torch.nn.functional.scaled_dot_product_attention(
-        q,
-        k,
-        v,
-        enable_gqa=True,
-        scale=head_dim**-0.5,
-    )[0, :, 0, :].float().numpy()
+    with sdpa_kernel(SDPBackend.MATH):
+        expected = torch.nn.functional.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            enable_gqa=True,
+            scale=head_dim**-0.5,
+        )[0, :, 0, :].float().numpy()
     q_f32 = q.float().numpy().reshape(-1).copy()
     k_bf16 = k.view(torch.uint16).numpy().reshape(-1).copy()
     v_bf16 = v.view(torch.uint16).numpy().reshape(-1).copy()
@@ -158,9 +160,10 @@ def run_prefill_tail_case(seed: int) -> None:
     v = torch.randn(
         (1, kv_heads, kv_tokens, head_dim), generator=generator, dtype=torch.float32
     ).to(torch.bfloat16)
-    expected = torch.nn.functional.scaled_dot_product_attention(
-        q, k, v, enable_gqa=True, scale=head_dim**-0.5
-    )[0].float().numpy()
+    with sdpa_kernel(SDPBackend.MATH):
+        expected = torch.nn.functional.scaled_dot_product_attention(
+            q, k, v, enable_gqa=True, scale=head_dim**-0.5
+        )[0].float().numpy()
     q_f32 = q.float().numpy()[0].copy()
     k_bf16 = k.view(torch.uint16).numpy().reshape(-1).copy()
     v_bf16 = v.view(torch.uint16).numpy().reshape(-1).copy()
@@ -196,8 +199,6 @@ def run_prefill_tail_case(seed: int) -> None:
 
 
 def run_full_prefill_case(tokens: int, seed: int) -> None:
-    from torch.nn.attention import SDPBackend, sdpa_kernel
-
     heads = 32
     kv_heads = 8
     head_dim = 128
@@ -337,7 +338,7 @@ def run_qwen3vl_activation_case(checkpoint: Path, image_path: Path) -> None:
 
     qwen3vl.ALL_ATTENTION_FUNCTIONS["sdpa"] = capture_attention
     try:
-        with torch.inference_mode():
+        with torch.inference_mode(), sdpa_kernel(SDPBackend.MATH):
             model(**inputs, use_cache=True)
     finally:
         qwen3vl.ALL_ATTENTION_FUNCTIONS["sdpa"] = original_attention

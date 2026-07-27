@@ -1007,6 +1007,10 @@ def _validate_segmented_prefill_contract(
 
 OP_DATAFLOW = {
     # Header ops
+    "audio_wav_decode": {
+        "inputs": {"wav_bytes": "external:audio_wav_bytes"},
+        "outputs": {"mono": {"slot": "audio_samples", "dtype": "fp32"}},
+    },
     "audio_pcm_decode": {
         "inputs": {"interleaved": "external:audio_pcm"},
         "outputs": {"mono": {"slot": "audio_samples", "dtype": "fp32"}},
@@ -1015,12 +1019,38 @@ OP_DATAFLOW = {
         "inputs": {"input": "audio_samples"},
         "outputs": {"output": {"slot": "audio_resampled", "dtype": "fp32"}},
     },
+    "audio_pad_or_truncate": {
+        "inputs": {"input": "audio_resampled"},
+        "outputs": {"output": {"slot": "audio_normalized", "dtype": "fp32"}},
+    },
+    "audio_stft_tables": {
+        "inputs": {},
+        "outputs": {
+            "window": {"slot": "audio_window", "dtype": "fp32"},
+            "cos_table": {"slot": "audio_cos_table", "dtype": "fp32"},
+            "sin_table": {"slot": "audio_sin_table", "dtype": "fp32"},
+        },
+    },
     "audio_stft": {
-        "inputs": {"samples": "audio_resampled"},
+        "inputs": {
+            "samples": "audio_normalized",
+            "window": "audio_window",
+            "cos_table": "audio_cos_table",
+            "sin_table": "audio_sin_table",
+        },
         "outputs": {"power": {"slot": "audio_power", "dtype": "fp32"}},
     },
+    "audio_mel_filters": {
+        "inputs": {},
+        "outputs": {
+            "mel_filters": {"slot": "audio_mel_filters", "dtype": "fp32"}
+        },
+    },
     "audio_log_mel": {
-        "inputs": {"power": "audio_power"},
+        "inputs": {
+            "power": "audio_power",
+            "mel_filters": "audio_mel_filters",
+        },
         "outputs": {"log_mel": {"slot": "audio_features", "dtype": "fp32"}},
     },
     "audio_conv1d_stem_1": {
@@ -1036,8 +1066,32 @@ OP_DATAFLOW = {
         "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
     },
     "cross_attn": {
-        "inputs": {"query": "q_scratch", "key": "k_scratch", "value": "v_scratch"},
-        "outputs": {"output": {"slot": "attn_scratch", "dtype": "fp32"}},
+        "inputs": {
+            "query": "cross_q_scratch",
+            "key": "cross_k_cache",
+            "value": "cross_v_cache"
+        },
+        "outputs": {"output": {"slot": "cross_attn_scratch", "dtype": "fp32"}},
+    },
+    "cross_attn_norm": {
+        "inputs": {"input": "main_stream"},
+        "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
+    },
+    "cross_q_proj": {
+        "inputs": {"x": "main_stream"},
+        "outputs": {"y": {"slot": "cross_q_scratch", "dtype": "fp32"}},
+    },
+    "cross_k_proj": {
+        "inputs": {"x": "external:encoder_memory"},
+        "outputs": {"y": {"slot": "cross_k_cache", "dtype": "fp32"}},
+    },
+    "cross_v_proj": {
+        "inputs": {"x": "external:encoder_memory"},
+        "outputs": {"y": {"slot": "cross_v_cache", "dtype": "fp32"}},
+    },
+    "cross_out_proj": {
+        "inputs": {"x": "cross_attn_scratch"},
+        "outputs": {"y": {"slot": "main_stream", "dtype": "fp32"}},
     },
     "dense_embedding_lookup": {
         "inputs": {"token_ids": "external:token_ids"},
@@ -2503,6 +2557,12 @@ def _audio_activation_specs(
     feature_channels = int(config.get("audio_feature_channels", 0) or 0)
     if feature_frames <= 0 or feature_channels <= 0:
         return []
+    sample_extent = int(config.get("audio_sample_extent", 0) or 0)
+    max_source_frames = int(config.get("audio_max_source_frames", sample_extent) or 0)
+    n_fft = int(config.get("audio_n_fft", 400) or 400)
+    power_bins = int(config.get("audio_power_bins", n_fft // 2 + 1) or 0)
+    if sample_extent <= 0 or max_source_frames <= 0 or power_bins != n_fft // 2 + 1:
+        raise ValueError("audio frontend configuration has invalid sample/FFT extents")
     conv1_channels = int(config.get("audio_conv1_output_channels", embed_dim) or embed_dim)
     conv2_channels = int(config.get("audio_conv2_output_channels", embed_dim) or embed_dim)
     conv1_kernel = int(config.get("audio_conv1_kernel_size", 1) or 1)
@@ -2534,9 +2594,72 @@ def _audio_activation_specs(
             f"conv2={declared_conv2_frames}/{conv2_frames}"
         )
     return [
+        ("audio_samples", max_source_frames * 4, f"[{max_source_frames}]"),
+        ("audio_resampled", max_source_frames * 4, f"[{max_source_frames}]"),
+        ("audio_normalized", sample_extent * 4, f"[{sample_extent}]"),
+        ("audio_window", n_fft * 4, f"[{n_fft}]"),
+        ("audio_cos_table", power_bins * n_fft * 4, f"[{power_bins}, {n_fft}]"),
+        ("audio_sin_table", power_bins * n_fft * 4, f"[{power_bins}, {n_fft}]"),
+        ("audio_power", feature_frames * power_bins * 4, f"[{feature_frames}, {power_bins}]"),
+        ("audio_mel_filters", feature_channels * power_bins * 4, f"[{feature_channels}, {power_bins}]"),
+        ("audio_fft_scratch", n_fft * 2 * 4, f"[{n_fft * 2}]"),
         ("audio_features", feature_channels * feature_frames * 4, f"[{feature_channels}, {feature_frames}]"),
         ("audio_conv_1", conv1_channels * conv1_frames * 4, f"[{conv1_channels}, {conv1_frames}]"),
         ("audio_conv_2", conv2_channels * conv2_frames * 4, f"[{conv2_channels}, {conv2_frames}]"),
+    ]
+
+
+def _encoder_decoder_activation_specs(
+    config: Dict[str, Any],
+    seq_len: int,
+    embed_dim: int,
+    num_heads: int,
+    head_dim: int,
+    num_layers: int,
+) -> List[Tuple[str, int, str]]:
+    encoder_tokens = int(config.get("encoder_memory_length", 0) or 0)
+    if not bool(config.get("uses_cross_attention", False)):
+        return []
+    if encoder_tokens <= 0:
+        raise ValueError(
+            "encoder-decoder artifacts require a positive encoder_memory_length"
+        )
+    if num_heads <= 0 or head_dim <= 0 or num_heads * head_dim != embed_dim:
+        raise ValueError(
+            "encoder-decoder attention geometry must satisfy "
+            "num_heads * head_dim == embed_dim"
+        )
+    return [
+        (
+            "encoder_memory",
+            encoder_tokens * embed_dim * 4,
+            f"[{encoder_tokens}, {embed_dim}]",
+        ),
+        (
+            "cross_q_scratch",
+            num_heads * seq_len * head_dim * 4,
+            f"[{num_heads}, {seq_len}, {head_dim}]",
+        ),
+        (
+            "cross_k_cache",
+            num_layers * num_heads * encoder_tokens * head_dim * 4,
+            f"[{num_layers}, {num_heads}, {encoder_tokens}, {head_dim}]",
+        ),
+        (
+            "cross_v_cache",
+            num_layers * num_heads * encoder_tokens * head_dim * 4,
+            f"[{num_layers}, {num_heads}, {encoder_tokens}, {head_dim}]",
+        ),
+        (
+            "cross_attn_scratch",
+            num_heads * seq_len * head_dim * 4,
+            f"[{num_heads}, {seq_len}, {head_dim}]",
+        ),
+        (
+            "cross_layout_scratch",
+            encoder_tokens * embed_dim * 4,
+            f"[{encoder_tokens}, {embed_dim}]",
+        ),
     ]
 
 
@@ -2640,6 +2763,10 @@ def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, 
         add("vision_positions", vision_num_patches * 4 * 4, f"[4, {vision_num_patches}]", "i32")
 
     for name, size, shape in _audio_activation_specs(config, seq_len, embed_dim):
+        add(name, size, shape)
+    for name, size, shape in _encoder_decoder_activation_specs(
+        config, seq_len, embed_dim, num_heads, head_dim, num_layers
+    ):
         add(name, size, shape)
 
     # Embedding + layer buffers
@@ -2821,9 +2948,13 @@ def _validated_kernel_codegen_capability(kernel_id: str, kernel_map: Dict) -> Op
 # Note: "matmul" is a logical op that maps to gemv (decode) or gemm (prefill) based on mode
 TEMPLATE_TO_KERNEL_OP = {
     # Header ops
+    "audio_wav_decode": "audio_wav_decode",
     "audio_pcm_decode": "audio_pcm_decode",
     "audio_resample": "audio_resample",
+    "audio_pad_or_truncate": "audio_pad_or_truncate",
+    "audio_stft_tables": "audio_stft_tables",
     "audio_stft": "audio_stft",
+    "audio_mel_filters": "audio_mel_filters",
     "audio_log_mel": "audio_log_mel",
     "audio_conv1d_stem_1": "audio_conv1d",
     "audio_conv1d_stem_2": "audio_conv1d",
@@ -2861,12 +2992,15 @@ TEMPLATE_TO_KERNEL_OP = {
     "qkv_proj": "qkv_projection",  # Or fallback to 3x matmul
     "qkv_packed_proj": "matmul",
     "q_proj": "matmul",
+    "cross_q_proj": "matmul",
     "assistant_pre_projection": "matmul",
     "assistant_post_projection": "matmul",
     "assistant_layer_scale": "assistant_layer_scale",
     "q_gate_proj": "matmul",
     "k_proj": "matmul",
     "v_proj": "matmul",
+    "cross_k_proj": "matmul",
+    "cross_v_proj": "matmul",
     "recurrent_qkv_proj": "matmul",
     "recurrent_gate_proj": "matmul",
     "recurrent_alpha_proj": "matmul",
@@ -2907,8 +3041,10 @@ TEMPLATE_TO_KERNEL_OP = {
     "kv_cache_store": "kv_cache_store",  # Store K,V to KV cache at pos
     "attn": "attention",
     "cross_attn": "attention",
+    "cross_attn_norm": "layernorm",
     "attn_sliding": "attention_sliding",
     "out_proj": "matmul",  # gemv (decode) or gemm (prefill)
+    "cross_out_proj": "matmul",
 
     # Residual
     "residual_add": "residual_add",
@@ -2958,6 +3094,7 @@ TEMPLATE_TO_KERNEL_OP = {
 WEIGHT_TO_KERNEL_INPUT = {
     # Matrix weights → W
     "wq": "W", "wk": "W", "wv": "W", "wo": "W",
+    "cross_wq": "W", "cross_wk": "W", "cross_wv": "W", "cross_wo": "W",
     "w1": "W", "w2": "W", "w3": "W",
     "attn_qkv": "W", "attn_gate": "W",
     "ssm_alpha": "W", "ssm_beta": "W", "ssm_out": "W",
@@ -2968,6 +3105,7 @@ WEIGHT_TO_KERNEL_INPUT = {
     "branch_fc1_w": "W", "branch_fc2_w": "W",
     # Biases → bias (if kernel has it)
     "bq": "bias", "bk": "bias", "bv": "bias", "bo": "bias",
+    "cross_bq": "bias", "cross_bk": "bias", "cross_bv": "bias", "cross_bo": "bias",
     "b1": "bias", "b2": "bias",
     "ssm_dt_bias": "bias",
     "patch_bias": "bias", "bqkv": "bias", "mm0_b": "bias", "mm1_b": "bias",
@@ -2975,6 +3113,7 @@ WEIGHT_TO_KERNEL_INPUT = {
     # Layer norms → gamma/beta
     "ln1_gamma": "gamma", "ln2_gamma": "gamma",
     "ln1_beta": "beta", "ln2_beta": "beta",
+    "cross_ln_gamma": "gamma", "cross_ln_beta": "beta",
     "branch_norm_gamma": "gamma", "branch_norm_beta": "beta",
     "attn_norm": "gamma", "post_attention_norm": "gamma",
     "ffn_norm": "gamma", "post_ffn_norm": "gamma",
@@ -3116,10 +3255,10 @@ def _dedupe_preserve_order(items: List[str]) -> List[str]:
     return out
 
 
-PRE_NORM_OP_NAMES = {"rmsnorm", "layernorm", "attn_norm", "ffn_norm", "post_attention_norm", "block_rmsnorm"}
+PRE_NORM_OP_NAMES = {"rmsnorm", "layernorm", "attn_norm", "cross_attn_norm", "ffn_norm", "post_attention_norm", "block_rmsnorm"}
 RESIDUAL_SOURCE_BRANCH_STARTERS = {
     # Attention branches
-    "q_proj", "q_gate_proj", "qkv_proj", "qkv_packed_proj",
+    "q_proj", "cross_q_proj", "q_gate_proj", "qkv_proj", "qkv_packed_proj",
     "recurrent_qkv_proj", "recurrent_gate_proj",
     "recurrent_alpha_proj", "recurrent_beta_proj", "mamba_in_proj",
     # Feed-forward / routed expert branches
@@ -3670,6 +3809,39 @@ def _resolve_decode_kv_cache_dtype(template: Dict[str, Any], config: Optional[Di
     return "fp32"
 
 
+def _template_uses_persistent_cross_kv_cache(template: Dict[str, Any]) -> bool:
+    contract = template.get("contract") if isinstance(template.get("contract"), dict) else {}
+    attention = (
+        contract.get("attention_contract")
+        if isinstance(contract.get("attention_contract"), dict)
+        else {}
+    )
+    cross_attention = (
+        attention.get("cross_attention")
+        if isinstance(attention.get("cross_attention"), dict)
+        else {}
+    )
+    cache = (
+        cross_attention.get("projection_cache")
+        if isinstance(cross_attention.get("projection_cache"), dict)
+        else None
+    )
+    if cache is None:
+        return False
+    expected = {
+        "populate_phase": "prefill",
+        "reuse_phase": "decode",
+        "invalidation": "encoder_memory_update",
+        "storage": "layer_major_head_major_fp32",
+    }
+    if cache != expected:
+        raise RuntimeError(
+            "HARD CROSS-ATTENTION CACHE FAULT: projection_cache must declare "
+            f"the supported immutable encoder-context schedule; expected={expected} got={cache}."
+        )
+    return True
+
+
 def _backfill_template_runtime_flags(manifest: Dict[str, Any]) -> None:
     config = manifest.get("config")
     if not isinstance(config, dict):
@@ -3679,6 +3851,10 @@ def _backfill_template_runtime_flags(manifest: Dict[str, Any]) -> None:
     config.setdefault("_template_has_logits", _template_declares_logits(template, config))
     config.setdefault("_template_uses_kv_cache", _template_uses_kv_cache(template, config))
     config.setdefault("_template_uses_rope", _template_uses_rope(template, config))
+    config.setdefault(
+        "_template_uses_persistent_cross_kv_cache",
+        _template_uses_persistent_cross_kv_cache(template),
+    )
     config.setdefault("decode_kv_cache_dtype", _resolve_decode_kv_cache_dtype(template, config))
 
 
@@ -3823,7 +3999,7 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
 
     q_gate_proj = int(config.get("q_gate_proj_dim", config.get("attn_q_gate_proj_dim", 0)) or 0)
     attn_gate_dim = int(config.get("attn_gate_dim", 0) or 0)
-    if op_name in ("q_proj",):
+    if op_name in ("q_proj", "cross_q_proj"):
         return heads * head_dim, embed
     if op_name in ("assistant_pre_projection",):
         return embed, int(config.get("backbone_hidden_size", embed) or embed)
@@ -3835,7 +4011,7 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
         if q_gate_proj <= 0:
             q_gate_proj = 2 * (heads * head_dim)
         return q_gate_proj, embed
-    if op_name in ("k_proj", "v_proj"):
+    if op_name in ("k_proj", "v_proj", "cross_k_proj", "cross_v_proj"):
         return kv_heads * head_dim, embed
     recurrent_q = int(config.get("q_dim", 0) or 0)
     recurrent_k = int(config.get("k_dim", 0) or 0)
@@ -3852,7 +4028,7 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
     attn_out = config.get("attn_out_dim", heads * head_dim)
     if int(config.get("kv_lora_rank", 0) or 0) > 0 and int(config.get("v_head_dim", 0) or 0) > 0:
         attn_out = heads * int(config.get("v_head_dim", 0) or 0)
-    if op_name in ("out_proj", "attn_proj"):
+    if op_name in ("out_proj", "attn_proj", "cross_out_proj"):
         return embed, attn_out
     if op_name in ("recurrent_out_proj",):
         return embed, int(config.get("ssm_inner_size", attn_out))
@@ -3938,12 +4114,23 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
     num_kv_heads = int(config.get("num_kv_heads", config.get("num_key_value_heads", num_heads)) or num_heads)
     q_head_dim = _config_layer_int(config, "layer_q_head_dim", layer, int(config.get("head_dim", 0) or 0))
     k_head_dim = _config_layer_int(config, "layer_k_head_dim", layer, q_head_dim)
-    v_head_dim = _config_layer_int(config, "layer_v_head_dim", layer, k_head_dim)
+    v_head_dim = _config_layer_int(
+        config,
+        "layer_v_head_dim",
+        layer,
+        int(config.get("v_head_dim", k_head_dim) or k_head_dim),
+    )
     q_dim = _config_layer_int(
         config,
         "layer_q_dim",
         layer,
-        int(config.get("attn_out_dim", num_heads * q_head_dim) or (num_heads * q_head_dim)),
+        num_heads * q_head_dim,
+    )
+    attention_output_dim = _config_layer_int(
+        config,
+        "layer_attention_output_dim",
+        layer,
+        int(config.get("attn_out_dim", num_heads * v_head_dim) or (num_heads * v_head_dim)),
     )
     k_dim = num_kv_heads * k_head_dim
     v_dim = num_kv_heads * v_head_dim
@@ -3977,12 +4164,12 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
         params["output_dim"] = v_dim
     elif op_name == "out_proj":
         params["_output_dim"] = embed_dim
-        params["_input_dim"] = q_dim
-        params["input_dim"] = q_dim
+        params["_input_dim"] = attention_output_dim
+        params["input_dim"] = attention_output_dim
     elif op_name == "quantize_out_proj_input":
-        params["_output_dim"] = q_dim
-        params["_input_dim"] = q_dim
-        params["input_dim"] = q_dim
+        params["_output_dim"] = attention_output_dim
+        params["_input_dim"] = attention_output_dim
+        params["input_dim"] = attention_output_dim
     elif op_name in (
         "qk_norm",
         "q_norm",
@@ -4293,7 +4480,11 @@ def _normalize_manifest_config(config: Dict) -> Dict:
             out["recurrent_state_cols"] = int(ssm_state)
         elif state_layout != "grouped_state":
             raise ValueError(f"unsupported recurrent_state_layout: {state_layout!r}")
-    attn_out = _pick("attn_out_dim", default=(out.get("num_heads", 0) * out.get("head_dim", 0)))
+    attn_value_head_dim = int(out.get("v_head_dim", out.get("head_dim", 0)) or 0)
+    attn_out = _pick(
+        "attn_out_dim",
+        default=(int(out.get("num_heads", 0) or 0) * attn_value_head_dim),
+    )
     if attn_out is not None:
         out["attn_out_dim"] = int(attn_out)
     if out.get("q_gate_proj_dim") is None and out.get("attn_out_dim") is not None:
@@ -4585,6 +4776,10 @@ def _resolve_logical_buffer_name(
     if isinstance(slot, str) and slot:
         if slot == "kv_cache":
             return "kv_cache"
+        if slot.startswith("external:"):
+            external_buffer = slot.split(":", 1)[1]
+            if external_buffer in activation_buffers:
+                return external_buffer
         if slot in activation_buffers:
             return slot
     return buffer_name_map.get(planner_buffer, planner_buffer)
@@ -5571,11 +5766,14 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "qkv_packed_proj": ["attn_qkv"],
         "qkv_proj": ["wq", "wk", "wv"],  # Split into 3 matmuls if no fused kernel
         "q_proj": ["wq"],
+        "cross_q_proj": ["cross_wq"],
         "assistant_pre_projection": ["assistant_pre_projection"],
         "assistant_post_projection": ["assistant_post_projection"],
         "q_gate_proj": ["wq"],
         "k_proj": ["wk"],
         "v_proj": ["wv"],
+        "cross_k_proj": ["cross_wk"],
+        "cross_v_proj": ["cross_wv"],
         "recurrent_qkv_proj": ["attn_qkv"],
         "recurrent_gate_proj": ["attn_gate"],
         "recurrent_alpha_proj": ["ssm_alpha"],
@@ -5601,6 +5799,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     "partial_rope_concat": [],
     "mla_attention": [],
         "out_proj": ["wo"],
+        "cross_out_proj": ["cross_wo"],
         "mlp_gate_up": ["w1"],
         "mlp_up": ["w3"],
         "mlp_down": ["w2"],
@@ -5613,14 +5812,19 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "logits": [],  # Uses lm_head/token_emb, usually q8_0
 
         # Ops with fp32 weights (no quant lookup needed)
+        "audio_wav_decode": None,
         "audio_pcm_decode": None,
         "audio_resample": None,
-        "audio_stft": ["audio_window", "audio_cos_table", "audio_sin_table"],
-        "audio_log_mel": ["audio_mel_filters"],
+        "audio_pad_or_truncate": None,
+        "audio_stft_tables": None,
+        "audio_stft": None,
+        "audio_mel_filters": None,
+        "audio_log_mel": None,
         "audio_conv1d_stem_1": ["audio_conv1_weight", "audio_conv1_bias"],
         "audio_conv1d_stem_2": ["audio_conv2_weight", "audio_conv2_bias"],
         "layout_channel_to_token": None,
         "cross_attn": None,
+        "cross_attn_norm": None,
         "rmsnorm": None,  # gamma is always fp32
         "layernorm": None,  # gamma/beta are fp32
         "attn_norm": None,
@@ -5827,7 +6031,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                 if explicit_weight_dtype == "fp32":
                     explicit_weight_dtype = str(header_quant.get(explicit_weight_info[0], explicit_weight_dtype) or explicit_weight_dtype).lower()
                 if explicit_weight_dtype == "bf16":
-                    return ["gemm_nt_bf16"]
+                    return ["gemm_nt_bf16" if mode == "prefill" else "gemv_bf16"]
             return [explicit_kernel]
 
         kernel_op = TEMPLATE_TO_KERNEL_OP.get(op)
@@ -5929,7 +6133,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             weight_dtype = str(weight_dtype or "fp32").lower()
             force_split_dense_qkv = op == "qkv_proj"
             if op in BF16_DENSE_MATMUL_OPS and weight_dtype == "bf16" and not force_split_dense_qkv:
-                return ["gemm_nt_bf16"]
+                return ["gemm_nt_bf16" if mode == "prefill" else "gemv_bf16"]
             kernel_prefer_q8_activation = _prefer_q8_activation_for_op(op, prefer_q8_activation)
             if op in ("mlp_gate_up", "mlp_up", "mlp_down") and prefer_fp32_mlp_matmuls:
                 kernel_prefer_q8_activation = False
@@ -5990,7 +6194,10 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                     kernels.append((str(split_plan["kernel"]["id"]), split_op))
                     continue
                 if split_op in BF16_DENSE_MATMUL_OPS and w_dtype == "bf16":
-                    kernels.append(("gemm_nt_bf16", split_op))
+                    kernels.append((
+                        "gemm_nt_bf16" if mode == "prefill" else "gemv_bf16",
+                        split_op,
+                    ))
                     continue
                 split_prefer_q8_activation = _prefer_q8_activation_for_op(split_op, prefer_q8_activation)
                 if split_op in ("mlp_gate_up", "mlp_down", "mlp_gate", "mlp_up") and prefer_fp32_mlp_matmuls:
@@ -7242,10 +7449,14 @@ def insert_bias_add_ops(
     bias_key_by_op = {
         "qkv_packed_proj": "bqkv",
         "q_proj": "bq",
+        "cross_q_proj": "cross_bq",
         "q_gate_proj": "bq",
         "k_proj": "bk",
         "v_proj": "bv",
+        "cross_k_proj": "cross_bk",
+        "cross_v_proj": "cross_bv",
         "out_proj": "bo",
+        "cross_out_proj": "cross_bo",
         "mlp_gate_up": "b1",
         "mlp_up": "b1",
         "mlp_down": "b2",
@@ -7277,15 +7488,19 @@ def insert_bias_add_ops(
             continue
 
         # Prefill GEMM kernels bind optional bias directly, but decode lowering
-        # rewrites these projection ops to GEMV kernels that do not take bias.
-        # Keep Gemma4/Qwen-style projection biases explicit in decode so the
-        # later GEMV specialization cannot silently drop them.
+        # rewrites token-row projections to GEMV kernels that do not take bias.
+        # Keep those biases explicit so specialization cannot drop them.
+        # Cross K/V still project the full encoder-memory matrix during decode;
+        # their GEMM provider must retain bias so every encoder row receives it
+        # before the token-major result is transposed to head-major storage.
         decode_needs_explicit_bias = mode == "decode" and op_type in {
             "q_proj",
+            "cross_q_proj",
             "q_gate_proj",
             "k_proj",
             "v_proj",
             "out_proj",
+            "cross_out_proj",
             "mlp_gate_up",
             "mlp_up",
             "mlp_down",
@@ -7293,13 +7508,18 @@ def insert_bias_add_ops(
         if kernel_supports_bias(op.get("kernel", "")) and not decode_needs_explicit_bias:
             continue
 
+        # The explicit bias node becomes the sole owner of this weight. Remove
+        # it from the projection so providers that can fuse bias receive NULL
+        # instead of applying the same tensor before bias_add applies it again.
+        op["weights"].pop(bias_key, None)
+        op["bias_application"] = "explicit_following_op"
         out_dim, _ = compute_matmul_dims(op_type, config)
         bias_op = {
             "kernel": "bias_add",
             "op": "bias_add",
             "layer": op.get("layer", -1),
             "section": op.get("section", ""),
-            "weights": {bias_key: op["weights"][bias_key]},
+            "weights": {bias_key: bias_weight_ref},
             "params": {},
             "bias_for": op_type,
             "_auto_inserted": True,
@@ -7399,6 +7619,9 @@ def generate_ir_lower_1(
     attention_contract = template_contract.get("attention_contract") if isinstance(template_contract.get("attention_contract"), dict) else {}
     decode_cache_contract = attention_contract.get("decode_cache_contract") if isinstance(attention_contract.get("decode_cache_contract"), dict) else {}
     explicit_mla_decode_cache = str(decode_cache_contract.get("type", "") or "").strip().lower() == "mla"
+    persistent_cross_kv_cache = bool(
+        config.get("_template_uses_persistent_cross_kv_cache", False)
+    )
     uses_kv_cache = bool(config.get("_template_uses_kv_cache", _template_uses_kv_cache(template, config)))
     has_logits = bool(config.get("_template_has_logits", _template_declares_logits(template, config)))
 
@@ -7619,6 +7842,17 @@ def generate_ir_lower_1(
         for op in lowered_ops
         if str(op.get("op", "")) == "mla_attention"
     }
+    decode_explicit_v_bias_layers = {
+        int(op.get("layer", 0))
+        for op in lowered_ops
+        if str(op.get("op", "")) == "bias_add"
+        and str(op.get("bias_for", "")) == "v_proj"
+    }
+    decode_v_projection_by_layer = {
+        int(op.get("layer", 0)): op
+        for op in lowered_ops
+        if str(op.get("op", "")) == "v_proj"
+    }
 
     def _kv_read_layer_for(layer: int) -> int:
         try:
@@ -7709,11 +7943,19 @@ def generate_ir_lower_1(
     }
 
     for i, op in enumerate(lowered_ops):
+        op_name = str(op.get("op", ""))
+        if mode == "decode" and persistent_cross_kv_cache:
+            if op_name in {"cross_k_proj", "cross_v_proj"}:
+                continue
+            if op_name == "bias_add" and str(op.get("bias_for", "")) in {
+                "cross_k_proj",
+                "cross_v_proj",
+            }:
+                continue
         final_ops.append(op)
 
         if mode == "decode" and uses_kv_cache:
             layer = int(op.get("layer", 0))
-            op_name = str(op.get("op", ""))
             should_store_after_rope = op_name in {"rope_qk", "mrope_qk"}
             should_store_after_q_rope = (
                 op_name == "rope_q"
@@ -7723,9 +7965,21 @@ def generate_ir_lower_1(
                 op_name == "v_proj"
                 and layer in decode_attention_layers
                 and layer not in decode_rope_layers
+                and layer not in decode_explicit_v_bias_layers
+            )
+            should_store_after_v_bias = (
+                op_name == "bias_add"
+                and str(op.get("bias_for", "")) == "v_proj"
+                and layer in decode_attention_layers
+                and layer not in decode_rope_layers
             )
             if should_store_after_rope or should_store_after_v:
                 final_ops.append(_make_decode_kv_store_op(op))
+                kv_store_count += 1
+            elif should_store_after_v_bias:
+                final_ops.append(
+                    _make_decode_kv_store_op(decode_v_projection_by_layer[layer])
+                )
                 kv_store_count += 1
             elif should_store_after_q_rope:
                 final_ops.append(_make_decode_shared_q_kv_store_op(op))
@@ -7764,6 +8018,27 @@ def generate_ir_lower_1(
                 # Remove scratch K/V references if present
                 op["inputs"].pop("k", None)
                 op["inputs"].pop("v", None)
+
+            if op_name in ("cross_k_proj", "cross_v_proj"):
+                is_key = op_name == "cross_k_proj"
+                cross_buffer = "cross_k_cache" if is_key else "cross_v_cache"
+                final_ops.append({
+                    "idx": len(final_ops),
+                    "kernel": "transpose_cross_kv_to_head_major",
+                    "op": "transpose_cross_kv_to_head_major",
+                    "layer": layer,
+                    "section": op["section"],
+                    "function": "transpose_inplace",
+                    "weights": {},
+                    "inputs": {"buf": {"type": "scratch", "source": cross_buffer}},
+                    "outputs": {"buf": {"type": "scratch", "buffer": cross_buffer}},
+                    "scratch": [],
+                    "_auto_inserted": True,
+                    "_cross_kv_kind": "key" if is_key else "value",
+                    "_cross_num_heads": int(config.get("num_heads", 0) or 0),
+                    "_cross_encoder_tokens": int(config.get("encoder_memory_length", 0) or 0),
+                    "_cross_head_dim": int(config.get("head_dim", 0) or 0),
+                })
 
         elif mode == "prefill":
             # Prefill layout bridges are a graph contract, not a decoder/KV-cache
@@ -7832,6 +8107,57 @@ def generate_ir_lower_1(
                     "_is_k": False,
                 }
                 final_ops.append(transpose_v_op)
+
+            if op["op"] == "cross_q_proj":
+                final_ops.append({
+                    "idx": len(final_ops),
+                    "kernel": "transpose_cross_q_to_head_major",
+                    "op": "transpose_cross_q_to_head_major",
+                    "layer": op["layer"],
+                    "section": op["section"],
+                    "function": "transpose_inplace",
+                    "weights": {},
+                    "inputs": {"buf": {"type": "scratch", "source": "cross_q_scratch"}},
+                    "outputs": {"buf": {"type": "scratch", "buffer": "cross_q_scratch"}},
+                    "scratch": [],
+                    "_auto_inserted": True,
+                })
+
+            if op["op"] in ("cross_k_proj", "cross_v_proj"):
+                is_key = op["op"] == "cross_k_proj"
+                cross_buffer = "cross_k_cache" if is_key else "cross_v_cache"
+                final_ops.append({
+                    "idx": len(final_ops),
+                    "kernel": "transpose_cross_kv_to_head_major",
+                    "op": "transpose_cross_kv_to_head_major",
+                    "layer": op["layer"],
+                    "section": op["section"],
+                    "function": "transpose_inplace",
+                    "weights": {},
+                    "inputs": {"buf": {"type": "scratch", "source": cross_buffer}},
+                    "outputs": {"buf": {"type": "scratch", "buffer": cross_buffer}},
+                    "scratch": [],
+                    "_auto_inserted": True,
+                    "_cross_kv_kind": "key" if is_key else "value",
+                    "_cross_num_heads": int(config.get("num_heads", 0) or 0),
+                    "_cross_encoder_tokens": int(config.get("encoder_memory_length", 0) or 0),
+                    "_cross_head_dim": int(config.get("head_dim", 0) or 0),
+                })
+
+            if op["op"] == "cross_attn":
+                final_ops.append({
+                    "idx": len(final_ops),
+                    "kernel": "transpose_cross_attn_out_to_token_major",
+                    "op": "transpose_cross_attn_out_to_token_major",
+                    "layer": op["layer"],
+                    "section": op["section"],
+                    "function": "transpose_inplace",
+                    "weights": {},
+                    "inputs": {"buf": {"type": "scratch", "source": "cross_attn_scratch"}},
+                    "outputs": {"buf": {"type": "scratch", "buffer": "cross_attn_scratch"}},
+                    "scratch": [],
+                    "_auto_inserted": True,
+                })
 
             # Flash attention writes head-major [H, T, D], but the unfused
             # projection/residual path consumes token-major [T, H*D]. Emit the
@@ -7998,6 +8324,14 @@ WEIGHT_PATTERNS = {
     "bq": ["layer.{L}.bq", "layers.{L}.attention.bq"],
     "bk": ["layer.{L}.bk", "layers.{L}.attention.bk"],
     "bv": ["layer.{L}.bv", "layers.{L}.attention.bv"],
+    "cross_wq": ["layer.{L}.cross_wq"],
+    "cross_wk": ["layer.{L}.cross_wk"],
+    "cross_wv": ["layer.{L}.cross_wv"],
+    "cross_bq": ["layer.{L}.cross_bq"],
+    "cross_bk": ["layer.{L}.cross_bk"],
+    "cross_bv": ["layer.{L}.cross_bv"],
+    "cross_ln_gamma": ["layer.{L}.cross_ln_gamma"],
+    "cross_ln_beta": ["layer.{L}.cross_ln_beta"],
 
     # QK norm weights (per-head RMSNorm gamma for Q and K)
     "q_norm": ["layer.{L}.q_norm", "layers.{L}.attention.q_norm", "layer.{L}.attn_q_norm"],
@@ -8037,6 +8371,8 @@ WEIGHT_PATTERNS = {
     # Output projection
     "wo": ["layer.{L}.wo", "layers.{L}.attention.wo", "layer.{L}.attn_output", "layer.{L}.attn_o", "layer.{L}.mla_out_proj"],
     "bo": ["layer.{L}.bo", "layers.{L}.attention.bo"],
+    "cross_wo": ["layer.{L}.cross_wo"],
+    "cross_bo": ["layer.{L}.cross_bo"],
 
     # MLP weights and biases
     "w1": ["layer.{L}.w1", "layers.{L}.feed_forward.w1", "layer.{L}.ffn_gate", "layer.{L}.mlp_gate"],
@@ -8121,10 +8457,14 @@ WEIGHT_PATTERNS = {
 # This tells us which weights each template op needs
 TEMPLATE_OP_WEIGHTS = {
     # Header (tokenizer is metadata, not model weights)
+    "audio_wav_decode": [],
     "audio_pcm_decode": [],
     "audio_resample": [],
-    "audio_stft": ["audio_window", "audio_cos_table", "audio_sin_table"],
-    "audio_log_mel": ["audio_mel_filters"],
+    "audio_pad_or_truncate": [],
+    "audio_stft_tables": [],
+    "audio_stft": [],
+    "audio_mel_filters": [],
+    "audio_log_mel": [],
     "audio_conv1d_stem_1": ["audio_conv1_weight", "audio_conv1_bias"],
     "audio_conv1d_stem_2": ["audio_conv2_weight", "audio_conv2_bias"],
     "layout_channel_to_token": [],
@@ -8148,6 +8488,7 @@ TEMPLATE_OP_WEIGHTS = {
     # Footer: uses final_ln_weight, final_ln_bias (once)
     "rmsnorm": ["ln1_gamma", "ln2_gamma", "final_ln_weight", "final_ln_bias"],
     "layernorm": ["ln1_gamma", "ln1_beta", "ln2_gamma", "ln2_beta", "final_ln_weight", "final_ln_bias"],
+    "cross_attn_norm": ["cross_ln_gamma", "cross_ln_beta"],
     "attn_norm": ["ln1_gamma"],
     "block_rmsnorm": ["ln1_gamma", "post_attention_norm"],
     "post_attention_norm": ["post_attention_norm"],
@@ -8171,9 +8512,12 @@ TEMPLATE_OP_WEIGHTS = {
     "qkv_proj": ["wq", "wk", "wv", "bq", "bk", "bv"],  # QKV + optional biases (for fused kernel)
     "qkv_packed_proj": ["attn_qkv", "bqkv"],
     "q_proj": ["wq", "bq", "wq_input_min", "wq_input_max", "wq_output_min", "wq_output_max"],  # Q projection only (when split)
+    "cross_q_proj": ["cross_wq", "cross_bq"],
     "q_gate_proj": ["wq", "bq"],  # Joint Q + gate projection
     "k_proj": ["wk", "bk", "wk_input_min", "wk_input_max", "wk_output_min", "wk_output_max"],  # K projection only (when split)
     "v_proj": ["wv", "bv", "wv_input_min", "wv_input_max", "wv_output_min", "wv_output_max"],  # V projection only (when split)
+    "cross_k_proj": ["cross_wk", "cross_bk"],
+    "cross_v_proj": ["cross_wv", "cross_bv"],
     "split_q_gate": [],
     "recurrent_packed_proj": ["attn_qkv", "attn_gate", "ssm_alpha", "ssm_beta"],
     "recurrent_qkv_proj": ["attn_qkv"],
@@ -8224,6 +8568,7 @@ TEMPLATE_OP_WEIGHTS = {
     "kv_cache_store_shared_q": [],  # No model weights; writes q_scratch to K/V cache
     "attn_gate_sigmoid_mul": [],  # No model weights
     "out_proj": ["wo", "bo", "wo_input_min", "wo_input_max", "wo_output_min", "wo_output_max"],  # Output projection + optional bias
+    "cross_out_proj": ["cross_wo", "cross_bo"],
     "residual_add": [],  # No model weights
     "add_stream": [],
 
@@ -8442,6 +8787,17 @@ def generate_memory_layout(
             if isinstance(winfo, dict) and "name" in winfo:
                 ir1_used_weights.add(winfo["name"])
 
+    phase_cached_weights: set[str] = set()
+    if mode == "decode" and bool(
+        config.get("_template_uses_persistent_cross_kv_cache", False)
+    ):
+        phase_cached_weights = {
+            weight
+            for weight, owner in weight_to_op.items()
+            if owner.endswith(":cross_k_proj") or owner.endswith(":cross_v_proj")
+        }
+    effective_used_weights = ir1_used_weights | phase_cached_weights
+
     # ═══════════════════════════════════════════════════════════
     # STEP 4: VALIDATION - Check weight coverage
     # ═══════════════════════════════════════════════════════════
@@ -8472,17 +8828,19 @@ def generate_memory_layout(
             print(f"  Ignoring {count} circuit-declared manifest weight(s): {reason}")
 
     # Weights expected but not used by IR1
-    unused_by_ir1 = expected_weights - ir1_used_weights
+    unused_by_ir1 = expected_weights - effective_used_weights
 
     # Weights in manifest but not used at all
-    completely_unused = model_weights - expected_weights - ir1_used_weights
+    completely_unused = model_weights - expected_weights - effective_used_weights
 
-    coverage = len(ir1_used_weights) / len(model_weights) * 100 if model_weights else 0
+    coverage = len(effective_used_weights) / len(model_weights) * 100 if model_weights else 0
 
     print(f"\n🔍 Weight validation:")
     print(f"  Model weights in manifest: {len(model_weights)}")
     print(f"  Expected by template: {len(expected_weights)}")
     print(f"  Used by IR1 kernels: {len(ir1_used_weights)}")
+    if phase_cached_weights:
+        print(f"  Populated by prefill cache phase: {len(phase_cached_weights)}")
     print(f"  Coverage: {coverage:.1f}%")
 
     # ═══════════════════════════════════════════════════════════
@@ -8640,6 +8998,7 @@ def generate_memory_layout(
 
     def add_buffer(name, size, shape_desc, dtype="fp32"):
         nonlocal current_offset
+        current_offset = _align_up(current_offset, 64)
         activation_buffers.append({
             "name": name,
             "size": size,
@@ -8676,6 +9035,10 @@ def generate_memory_layout(
         add_buffer("vision_positions", vision_num_patches * 4 * 4, f"[4, {vision_num_patches}]", "i32")
 
     for name, size, shape in _audio_activation_specs(config, seq_len, int(embed_dim)):
+        add_buffer(name, size, shape)
+    for name, size, shape in _encoder_decoder_activation_specs(
+        config, seq_len, int(embed_dim), int(num_heads), int(head_dim), int(num_layers)
+    ):
         add_buffer(name, size, shape)
 
     # Embedded input: embedding lookup output [seq_len, embed_dim]
@@ -8899,7 +9262,7 @@ def generate_memory_layout(
         "description": "Offsets: [0..header_size) header, [header_size..data_start) ext_metadata, [data_start..] dtype_table + weights"
     })
 
-    activations_base = weights_base_offset + total_weight_size
+    activations_base = _align_up(weights_base_offset + total_weight_size, 64)
     for buf in activation_buffers:
         buf["define"] = f"A_{_sanitize_macro(buf.get('name', 'buffer'))}"
         buf["abs_offset"] = activations_base + buf.get("offset", 0)
@@ -9384,6 +9747,21 @@ def generate_ir_lower_2(
         "kv_cache": "kv_cache",
     }
 
+    def scoped_activation_offset(buf_name: str, base_offset: int, op: Dict[str, Any]) -> int:
+        if buf_name not in {"cross_k_cache", "cross_v_cache"}:
+            return int(base_offset)
+        layer = int(op.get("layer", -1))
+        encoder_tokens = int(config.get("encoder_memory_length", 0) or 0)
+        embed = int(config.get("embed_dim", 0) or 0)
+        num_layers = int(config.get("num_layers", 0) or 0)
+        if layer < 0 or layer >= num_layers or encoder_tokens <= 0 or embed <= 0:
+            raise RuntimeError(
+                "HARD CROSS-ATTENTION CACHE FAULT: invalid layer-scoped cache geometry "
+                f"buffer={buf_name} layer={layer} layers={num_layers} "
+                f"encoder_tokens={encoder_tokens} embed_dim={embed}."
+            )
+        return int(base_offset) + layer * encoder_tokens * embed * 4
+
     # Legacy ping-pong tracking (kept for fallback, but should not be needed)
     current_input_buffer = "token_ids"
     current_output_buffer = "embedded_input"
@@ -9433,6 +9811,17 @@ def generate_ir_lower_2(
             lowered_op["semantic_checkpoints"] = copy.deepcopy(ir_op["semantic_checkpoints"])
         if "_kv_cache_read_layer" in ir_op:
             lowered_op["_kv_cache_read_layer"] = int(ir_op["_kv_cache_read_layer"])
+        if "_cross_kv_kind" in ir_op:
+            lowered_op["_cross_kv_kind"] = str(ir_op["_cross_kv_kind"])
+        if "bias_for" in ir_op:
+            lowered_op["bias_for"] = str(ir_op["bias_for"])
+        for cross_dim in (
+            "_cross_num_heads",
+            "_cross_encoder_tokens",
+            "_cross_head_dim",
+        ):
+            if cross_dim in ir_op:
+                lowered_op[cross_dim] = int(ir_op[cross_dim])
 
         # Process weights - add concrete bump offsets
         for wkey, winfo in ir_op.get("weights", {}).items():
@@ -9462,12 +9851,23 @@ def generate_ir_lower_2(
         if op_type == "bias_add":
             bias_for = ir_op.get("bias_for")
             target_buf = None
-            if bias_for in ("q_proj", "q_gate_proj", "k_proj", "v_proj"):
+            if bias_for in (
+                "q_proj",
+                "q_gate_proj",
+                "k_proj",
+                "v_proj",
+                "cross_q_proj",
+                "cross_k_proj",
+                "cross_v_proj",
+            ):
                 target_buf = {
                     "q_proj": "q_scratch",
                     "q_gate_proj": "attn_q_gate_packed",
                     "k_proj": "k_scratch",
                     "v_proj": "v_scratch",
+                    "cross_q_proj": "cross_q_scratch",
+                    "cross_k_proj": "cross_k_cache",
+                    "cross_v_proj": "cross_v_cache",
                 }.get(bias_for)
             elif bias_for == "qkv_packed_proj":
                 target_buf = "mlp_scratch"
@@ -9479,17 +9879,20 @@ def generate_ir_lower_2(
                 target_buf = last_output_buffer or current_output_buffer
             buf = activation_buffers.get(target_buf) if target_buf else None
             if buf:
+                activation_offset = scoped_activation_offset(
+                    target_buf, buf["offset"], ir_op
+                )
                 lowered_op["activations"]["y"] = {
                     "buffer": target_buf,
-                    "activation_offset": buf["offset"],
+                    "activation_offset": activation_offset,
                     "dtype": "fp32",
-                    "ptr_expr": f"activations + {buf['offset']}",
+                    "ptr_expr": f"activations + {activation_offset}",
                 }
                 lowered_op["outputs"]["y"] = {
                     "buffer": target_buf,
-                    "activation_offset": buf["offset"],
+                    "activation_offset": activation_offset,
                     "dtype": "fp32",
-                    "ptr_expr": f"activations + {buf['offset']}",
+                    "ptr_expr": f"activations + {activation_offset}",
                 }
             if target_buf:
                 last_output_buffer = target_buf
@@ -10090,11 +10493,14 @@ def generate_ir_lower_2(
                         buf_name = buffer_name_map.get(src_name, src_name)
                         buf = activation_buffers.get(buf_name)
                         if buf:
+                            activation_offset = scoped_activation_offset(
+                                buf_name, buf["offset"], ir_op
+                            )
                             lowered_op["activations"][input_name] = {
                                 "buffer": buf_name,
-                                "activation_offset": buf["offset"],
+                                "activation_offset": activation_offset,
                                 "dtype": input_info.get("dtype", "fp32"),
-                                "ptr_expr": f"activations + {buf['offset']}",
+                                "ptr_expr": f"activations + {activation_offset}",
                             }
                             continue
 
@@ -10172,6 +10578,9 @@ def generate_ir_lower_2(
                     "gate": "x",   # swiglu gate input -> reads from mlp_scratch
                     "up": "x",     # swiglu up input -> reads from mlp_scratch
                     # Attention decode/prefill kernel names -> dataflow names
+                    "query": "q",
+                    "key": "k",
+                    "value": "v",
                     "q_token": "q",
                     "k_cache": "k",
                     "v_cache": "v",
@@ -10220,11 +10629,14 @@ def generate_ir_lower_2(
                         buf_name = current_input_buffer
 
                 if buf:
+                    activation_offset = scoped_activation_offset(
+                        buf_name, buf["offset"], ir_op
+                    )
                     lowered_op["activations"][input_name] = {
                         "buffer": buf_name,
-                        "activation_offset": buf["offset"],
+                        "activation_offset": activation_offset,
                         "dtype": input_info.get("dtype", "fp32"),
-                        "ptr_expr": f"activations + {buf['offset']}",
+                        "ptr_expr": f"activations + {activation_offset}",
                     }
 
             # Process outputs - add concrete offsets (for non-QKV ops)
@@ -10246,11 +10658,14 @@ def generate_ir_lower_2(
                         output_buf_name = buffer_name_map.get(dst_name, dst_name)
                         buf = activation_buffers.get(output_buf_name)
                         if buf:
+                            activation_offset = scoped_activation_offset(
+                                output_buf_name, buf["offset"], ir_op
+                            )
                             lowered_op["outputs"][output_name] = {
                                 "buffer": output_buf_name,
-                                "activation_offset": buf["offset"],
+                                "activation_offset": activation_offset,
                                 "dtype": output_info.get("dtype", "fp32"),
-                                "ptr_expr": f"activations + {buf['offset']}",
+                                "ptr_expr": f"activations + {activation_offset}",
                             }
                             if not last_output_buffer:
                                 last_output_buffer = output_buf_name
@@ -10311,7 +10726,9 @@ def generate_ir_lower_2(
 
                 buf = activation_buffers.get(output_buf_name)
                 if buf:
-                    activation_offset = buf["offset"]
+                    activation_offset = scoped_activation_offset(
+                        output_buf_name, buf["offset"], ir_op
+                    )
                     if op_type == "branch_fc2" and output_buf_name == "branch_collect":
                         activation_offset += int(ir_op.get("params", {}).get("branch_collect_offset_bytes", 0) or 0)
                     lowered_op["outputs"][output_name] = {
@@ -10425,15 +10842,30 @@ def generate_ir_lower_2(
                     layer_idx = int(ir_op.get("_kv_cache_read_layer", ir_op.get("layer", 0)))
                     kv_offs = kv_layer_offsets(layer_idx)
                     if kv_offs:
-                        k_off, v_off = kv_offs
-                        off = k_off if scratch_name == "k_scratch" else v_off
+                        cache_kind = "k" if scratch_name == "k_scratch" else "v"
+                        layer_offsets = (
+                            layer_k_cache_offset
+                            if cache_kind == "k"
+                            else layer_v_cache_offset
+                        )
+                        if 0 <= layer_idx < len(layer_offsets):
+                            cache_expr = (
+                                f"(model->kv_cache + "
+                                f"{int(layer_offsets[layer_idx])}ULL*MAX_SEQ_LEN)"
+                            )
+                        else:
+                            kv_slot = layer_idx * 2 + (1 if cache_kind == "v" else 0)
+                            cache_expr = (
+                                f"(model->kv_cache + ({kv_slot})"
+                                f"*NUM_KV_HEADS*MAX_SEQ_LEN*{int(head_dim)})"
+                            )
                         lowered_op["scratch"].append({
                             "name": scratch_name,
-                            "scratch_offset": off,
+                            "scratch_offset": 0,
                             "size": activation_buffers.get(scratch_name, {}).get("size", 0),
                             "dtype": "fp32",
-                            "ptr_expr": f"activations + {off}",
-                            "force_offset": True,
+                            "ptr_expr": cache_expr,
+                            "runtime_expr": cache_expr,
                         })
                         continue
                 buf = activation_buffers.get(scratch_name)
@@ -10686,6 +11118,11 @@ def generate_ir_lower_2(
 
         # Keep _m aligned with effective seq_len for token-major kernels.
         params["_m"] = params.get("seq_len", 1)
+        if op_type in ("cross_k_proj", "cross_v_proj"):
+            params["_m"] = int(config.get("encoder_memory_length", 0) or 0)
+        if op_type == "cross_attn":
+            params["query_tokens"] = int(params.get("seq_len", 1) or 1)
+            params["key_tokens"] = int(config.get("encoder_memory_length", 0) or 0)
         if op_type in ("patch_projection_image", "patch_proj", "patch_proj_aux"):
             params["_m"] = int(params.get("vision_num_patches", params.get("_m", 1)) or 1)
         if op_type in (
@@ -10713,7 +11150,8 @@ def generate_ir_lower_2(
                 * int(params.get("projector_hidden_dim", 0) or 0)
             )
         if op_type == "gelu":
-            params["gelu_elems"] = (
+            explicit_elements = int(params.get("elements", 0) or 0)
+            params["gelu_elems"] = explicit_elements or (
                 int(params.get("_m", params.get("seq_len", 0)) or 0)
                 * int(params.get("intermediate_size", 0) or 0)
             )
@@ -10744,7 +11182,10 @@ def generate_ir_lower_2(
         elif op_type in ("patch_projection_image", "patch_proj", "patch_proj_aux", "position_embeddings", "patch_bias_add", "vision_position_ids", "position_ids_2d", "add_stream"):
             current_input_buffer = "embedded_input"
             current_output_buffer = "layer_input"
-        elif op_type in ("q_proj", "q_gate_proj", "split_q_gate", "split_qkv_packed", "attn_gate_sigmoid_mul", "k_proj", "v_proj", "qkv_proj", "qkv_packed_proj", "q_norm", "rope_qk", "rope_q", "mrope_qk",
+        elif op_type in ("q_proj", "cross_q_proj", "cross_k_proj", "cross_v_proj", "cross_attn",
+                         "transpose_cross_q_to_head_major", "transpose_cross_kv_to_head_major",
+                         "transpose_cross_attn_out_to_token_major",
+                         "q_gate_proj", "split_q_gate", "split_qkv_packed", "attn_gate_sigmoid_mul", "k_proj", "v_proj", "qkv_proj", "qkv_packed_proj", "q_norm", "rope_qk", "rope_q", "mrope_qk",
                          "recurrent_qk_l2_norm",
                          "mlp_gate_up", "mlp_up", "silu_mul", "geglu", "gelu", "mlp_down", "projector_fc1", "projector_gelu", "projector_prep", "projector_fc2", "branch_fc1", "branch_gelu", "branch_fc2", "branch_concat", "spatial_merge", "bias_add") or \
                 (ir_op.get("section", "") == "branch" and op_type == "layernorm") or \
@@ -10874,18 +11315,32 @@ def validate_buffer_assignments(lowered_ir: Dict) -> None:
             outputs = op.get("outputs", {})
             x_in = activations.get("x") or activations.get("input") or activations.get("a")
             out = outputs.get("out") or outputs.get("y")
-            if x_in and x_in.get("buffer", "") != "mlp_scratch":
+            graph_slots = op.get("graph_slots", {}) if isinstance(op.get("graph_slots"), dict) else {}
+            graph_inputs = graph_slots.get("inputs", {}) if isinstance(graph_slots.get("inputs"), dict) else {}
+            graph_outputs = graph_slots.get("outputs", {}) if isinstance(graph_slots.get("outputs"), dict) else {}
+            expected_input = str(
+                graph_inputs.get("x")
+                or graph_inputs.get("input")
+                or graph_inputs.get("a")
+                or "mlp_scratch"
+            )
+            expected_output = str(
+                graph_outputs.get("out")
+                or graph_outputs.get("y")
+                or "mlp_scratch"
+            )
+            if x_in and x_in.get("buffer", "") != expected_input:
                 raise RuntimeError(
-                    f"\n❌ HARD FAULT: Invalid MLP activation input\n"
+                    f"\n❌ HARD FAULT: Invalid activation input\n"
                     f"   op={op_name} layer={layer}\n"
-                    f"   expected input: mlp_scratch\n"
+                    f"   expected input: {expected_input}\n"
                     f"   got: {x_in.get('buffer', '')}\n"
                 )
-            if out and out.get("buffer", "") != "mlp_scratch":
+            if out and out.get("buffer", "") != expected_output:
                 raise RuntimeError(
-                    f"\n❌ HARD FAULT: Invalid MLP activation output\n"
+                    f"\n❌ HARD FAULT: Invalid activation output\n"
                     f"   op={op_name} layer={layer}\n"
-                    f"   expected output: mlp_scratch\n"
+                    f"   expected output: {expected_output}\n"
                     f"   got: {out.get('buffer', '')}\n"
                 )
 
@@ -11388,8 +11843,15 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
         # If we drop these ops here, generated prefill C skips all required
         # token-major <-> head-major transposes and attention consumes wrong layouts.
         op_name = op.get("op", "")
-        if op_name in ("transpose_qkv_to_head_major", "transpose_kv_to_head_major", "transpose_attn_out_to_token_major"):
-            call_ops.append({
+        if op_name in (
+            "transpose_qkv_to_head_major",
+            "transpose_kv_to_head_major",
+            "transpose_attn_out_to_token_major",
+            "transpose_cross_q_to_head_major",
+            "transpose_cross_kv_to_head_major",
+            "transpose_cross_attn_out_to_token_major",
+        ):
+            transpose_op = {
                 "idx": op.get("idx", -1),
                 "function": func,
                 "op": op_name,
@@ -11398,7 +11860,17 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                 "args": [],
                 "errors": [],
                 "warnings": [],
-            })
+            }
+            if "_cross_kv_kind" in op:
+                transpose_op["_cross_kv_kind"] = op["_cross_kv_kind"]
+            for cross_dim in (
+                "_cross_num_heads",
+                "_cross_encoder_tokens",
+                "_cross_head_dim",
+            ):
+                if cross_dim in op:
+                    transpose_op[cross_dim] = int(op[cross_dim])
+            call_ops.append(transpose_op)
             continue
 
         if not binding:
@@ -11493,11 +11965,11 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     offset = info.get("scratch_offset", 0)
                     buf_name = info.get("name", key)
                     if use_bump_base:
-                        if info.get("force_offset"):
-                            off_expr = str(activations_base + int(offset))
+                        if info.get("runtime_expr"):
+                            expr = f"({cast or 'float*'}){info['runtime_expr']}"
                         else:
                             off_expr = activation_off_expr(buf_name, offset)
-                        expr = ptr_expr("model->bump", off_expr, cast or "float*")
+                            expr = ptr_expr("model->bump", off_expr, cast or "float*")
                     else:
                         expr = ptr_expr("ACT", offset, cast or "float*")
 
@@ -11617,7 +12089,20 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     v_expr = f"(model->kv_cache + ({kv_layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
                     k_expr_f16 = f"(model->kv_cache_f16 + ({kv_layer}*2)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
                     v_expr_f16 = f"(model->kv_cache_f16 + ({kv_layer}*2+1)*NUM_KV_HEADS*MAX_SEQ_LEN*{kv_cache_head_dim})"
-                if key in ("kv_cache_k_layer", "kv_k"):
+                audio_runtime_exprs = {
+                    "audio_wav_bytes": "audio_wav_bytes",
+                    "audio_wav_byte_count": "audio_wav_byte_count",
+                    "audio_mono": "audio_mono",
+                    "audio_mono_capacity": "audio_mono_capacity",
+                    "audio_wav_info": "audio_wav_info",
+                    "audio_source_frames": "audio_source_frames",
+                    "audio_source_rate": "audio_source_rate",
+                    "audio_resampled": "audio_resampled",
+                    "audio_resampled_frames": "audio_resampled_frames",
+                }
+                if key in audio_runtime_exprs:
+                    expr = audio_runtime_exprs[key]
+                elif key in ("kv_cache_k_layer", "kv_k"):
                     expr = k_expr
                 elif key in ("kv_cache_v_layer", "kv_v"):
                     expr = v_expr
@@ -11720,6 +12205,21 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                 "source": src,
                 "expr": expr,
             }
+            # Record cross-attention extents semantically after resolving the
+            # map-owned ABI source. Prefill codegen uses these call-IR labels to
+            # distinguish active decoder rows from immutable encoder rows.
+            if (
+                op_name in ("cross_k_proj", "cross_v_proj")
+                and str(name).lower() == "m"
+                and src == "dim:_m"
+            ):
+                arg_doc["source"] = "dim:encoder_memory_length"
+            elif (
+                op_name == "cross_attn"
+                and str(name).lower() == "query_tokens"
+                and src == "dim:query_tokens"
+            ):
+                arg_doc["source"] = "runtime:query_tokens"
             if src.startswith(("activation:", "output:", "scratch:")):
                 info = None
                 if src.startswith("activation:"):

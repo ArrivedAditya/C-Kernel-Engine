@@ -89,6 +89,9 @@ def _annotate_kv_transpose_roles(ops: List[Dict]) -> None:
             "transpose_qkv_to_head_major",
             "transpose_kv_to_head_major",
             "transpose_attn_out_to_token_major",
+            "transpose_cross_q_to_head_major",
+            "transpose_cross_kv_to_head_major",
+            "transpose_cross_attn_out_to_token_major",
             "kv_cache_batch_copy",
             "kv_cache_store_batch_bf16",
             "kv_cache_store_batch_f16",
@@ -354,6 +357,69 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
     }}"""
 
     # Handle transpose_kv_to_head_major: convert from [T, Hkv*D] to [Hkv, T, D]
+    if op_type == "transpose_cross_q_to_head_major":
+        num_heads = config.get("num_heads", 1)
+        head_dim = config.get("head_dim", 1)
+        return f"""    /* Op {seq_idx}: transpose_cross_q_to_head_major layer={layer} */
+    {{
+        const int H = {num_heads};
+        const int D = {head_dim};
+        float *buf = (float*)(model->bump + A_CROSS_Q_SCRATCH);
+        float *tmp = (float*)(model->bump + A_CROSS_LAYOUT_SCRATCH);
+        for (int t = 0; t < num_tokens; ++t) {{
+            for (int h = 0; h < H; ++h) {{
+                memcpy(tmp + ((size_t)h*num_tokens + t)*D,
+                       buf + ((size_t)t*H + h)*D,
+                       (size_t)D*sizeof(float));
+            }}
+        }}
+        memcpy(buf, tmp, (size_t)H*num_tokens*D*sizeof(float));
+    }}"""
+
+    if op_type == "transpose_cross_kv_to_head_major":
+        num_heads = config.get("num_heads", 1)
+        head_dim = config.get("head_dim", 1)
+        encoder_tokens = config.get("encoder_memory_length", 0)
+        kind = str(op.get("_cross_kv_kind", "key"))
+        cache_name = "A_CROSS_K_CACHE" if kind == "key" else "A_CROSS_V_CACHE"
+        return f"""    /* Op {seq_idx}: transpose_cross_{kind}_to_head_major layer={layer} */
+    {{
+        const int H = {num_heads};
+        const int T = {encoder_tokens};
+        const int D = {head_dim};
+        const size_t layer_stride = (size_t)H * (size_t)T * (size_t)D;
+        float *buf = (float*)(model->bump + {cache_name}) + (size_t){layer} * layer_stride;
+        float *tmp = (float*)(model->bump + A_CROSS_LAYOUT_SCRATCH);
+        for (int t = 0; t < T; ++t) {{
+            for (int h = 0; h < H; ++h) {{
+                memcpy(tmp + ((size_t)h*T + t)*D,
+                       buf + ((size_t)t*H + h)*D,
+                       (size_t)D*sizeof(float));
+            }}
+        }}
+        memcpy(buf, tmp, (size_t)H*T*D*sizeof(float));
+    }}"""
+
+    if op_type == "transpose_cross_attn_out_to_token_major":
+        num_heads = config.get("num_heads", 1)
+        head_dim = config.get("head_dim", 1)
+        return f"""    /* Op {seq_idx}: transpose_cross_attn_out_to_token_major layer={layer} */
+    {{
+        const int H = {num_heads};
+        const int D = {head_dim};
+        float *buf = (float*)(model->bump + A_CROSS_ATTN_SCRATCH);
+        float *tmp = (float*)(model->bump + A_CROSS_LAYOUT_SCRATCH);
+        for (int h = 0; h < H; ++h) {{
+            for (int t = 0; t < num_tokens; ++t) {{
+                memcpy(tmp + ((size_t)t*H + h)*D,
+                       buf + ((size_t)h*num_tokens + t)*D,
+                       (size_t)D*sizeof(float));
+            }}
+        }}
+        memcpy(buf, tmp, (size_t)H*num_tokens*D*sizeof(float));
+    }}"""
+
+    # Handle transpose_kv_to_head_major: convert from [T, Hkv*D] to [Hkv, T, D]
     if op_type == "transpose_kv_to_head_major":
         num_kv_heads = op.get("_num_kv_heads", config.get("num_kv_heads", 2))
         head_dim = op.get("_head_dim", config.get("head_dim", 64))
@@ -509,6 +575,8 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         if source == "dim:seq_len":
             expr = "num_tokens"
         elif source in ("param:seq_len", "runtime:seq_len"):
+            expr = "num_tokens"
+        elif source == "runtime:query_tokens":
             expr = "num_tokens"
         elif source == "runtime:prefill_start_pos":
             expr = "prefill_start_pos"
@@ -1036,6 +1104,51 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             _hidden_mul(_hidden_arg("m", "rows", "num_tokens") or "num_tokens", q_width),
         )
         _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "q_proj", q_width)
+    elif op_type == "kv_a_proj":
+        width = _hidden_arg("n", "out_dim") or "KV_LORA_RANK + ROTARY_DIM"
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "mla_kv_a",
+            _hidden_mul(_hidden_arg("m", "rows", "num_tokens") or "num_tokens", width),
+        )
+        _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "mla_kv_a", width)
+    elif op_type == "kv_a_layernorm":
+        width = _hidden_arg("d_model", "kv_lora_rank")
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "y"),
+            "mla_kv_norm",
+            _hidden_mul(_hidden_arg("tokens", "rows", "num_tokens") or "num_tokens", width),
+        )
+        _emit_hidden_last(_hidden_arg("output", "out", "y"), "mla_kv_norm", width)
+    elif op_type == "kv_lora_decompress":
+        rows = _hidden_arg("tokens", "rows", "num_tokens") or "num_tokens"
+        heads = _hidden_arg("heads", "num_heads") or "NUM_HEADS"
+        k_width = _hidden_arg("qk_nope_dim")
+        v_width = _hidden_arg("v_dim", "v_head_dim")
+        _emit_hidden_full(
+            _hidden_arg("k_nope"), "mla_k_nope",
+            _hidden_mul(rows, heads, k_width),
+        )
+        _emit_hidden_full(
+            _hidden_arg("value", "v"), "mla_value",
+            _hidden_mul(rows, heads, v_width),
+        )
+    elif op_type == "partial_rope_concat":
+        rows = _hidden_arg("tokens", "rows", "num_tokens") or "num_tokens"
+        heads = _hidden_arg("heads", "num_heads") or "NUM_HEADS"
+        width = f"({_hidden_arg('qk_nope_dim')} + {_hidden_arg('qk_rope_dim')})"
+        _emit_hidden_full(_hidden_arg("query", "q"), "mla_query", _hidden_mul(rows, heads, width))
+        _emit_hidden_full(_hidden_arg("key", "k"), "mla_key", _hidden_mul(rows, heads, width))
+    elif op_type == "mla_attention":
+        _emit_hidden_full(
+            _hidden_arg("output", "out"),
+            "mla_context",
+            _hidden_mul(
+                _hidden_arg("num_tokens", "rows", "tokens") or "num_tokens",
+                _hidden_arg("num_heads", "heads") or "NUM_HEADS",
+                _hidden_arg("v_head_dim", "v_dim"),
+            ),
+        )
     elif op_type == "k_proj":
         k_width = _hidden_arg("n") or "NUM_KV_HEADS * HEAD_DIM"
         _emit_hidden_full(
@@ -1127,12 +1240,13 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         else:
             _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "rmsnorm", "EMBED_DIM")
     elif op_type == "block_rmsnorm":
+        label = "block_rmsnorm" if op_instance_idx == 0 else "ffn_norm"
         _emit_hidden_full(
             _hidden_arg("output", "out", "x", "y"),
-            "block_rmsnorm",
+            label,
             _hidden_mul(_hidden_arg("rows", "num_tokens") or "num_tokens", "EMBED_DIM"),
         )
-        _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "block_rmsnorm", "EMBED_DIM")
+        _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), label, "EMBED_DIM")
     elif op_type == "post_attention_norm":
         _emit_hidden_full(
             _hidden_arg("output", "out", "x", "y"),
@@ -1144,6 +1258,24 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "ffn_norm", "EMBED_DIM")
     elif op_type == "post_ffn_norm":
         _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "post_ffn_norm", "EMBED_DIM")
+    elif op_type == "moe_router":
+        width = _hidden_arg("N", "n", "n_experts") or "N_ROUTED_EXPERTS"
+        output = _hidden_arg("C", "output", "out")
+        _emit_hidden_full(output, "moe_router_logits", _hidden_mul("num_tokens", width))
+        _emit_hidden_last(output, "moe_router_logits", width)
+    elif op_type == "group_limited_topk_router":
+        width = _hidden_arg("top_k") or "NUM_EXPERTS_PER_TOK"
+        weights = _hidden_arg("weights")
+        _emit_hidden_full(weights, "moe_routing_weights", _hidden_mul("num_tokens", width))
+        _emit_hidden_last(weights, "moe_routing_weights", width)
+    elif op_type == "moe_swiglu_expert_mlp":
+        output = _hidden_arg("output", "out")
+        _emit_hidden_full(output, "moe_routed_output", _hidden_mul("num_tokens", "EMBED_DIM"))
+        _emit_hidden_last(output, "moe_routed_output", "EMBED_DIM")
+    elif op_type == "shared_swiglu_expert_mlp":
+        output = _hidden_arg("output", "out")
+        _emit_hidden_full(output, "moe_combined_output", _hidden_mul("num_tokens", "EMBED_DIM"))
+        _emit_hidden_last(output, "moe_combined_output", "EMBED_DIM")
     elif op_type == "residual_add":
         if op_instance_idx == 0:
             _emit_hidden_full(_hidden_arg("output", "out", "c", "y"), "after_attn", _hidden_mul("num_tokens", "EMBED_DIM"))
@@ -1431,7 +1563,7 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
             op = dict(op)
             op["op_instance_idx"] = inst
             residual_save_counts_by_layer[layer_for_instance] = inst + 1
-        elif op_type_for_instance in {"rmsnorm", "layernorm"} and "op_instance_idx" not in op and "instance" not in op:
+        elif op_type_for_instance in {"rmsnorm", "layernorm", "block_rmsnorm"} and "op_instance_idx" not in op and "instance" not in op:
             layer_for_instance = int(op.get("layer", -1))
             inst = rmsnorm_counts_by_layer.get(layer_for_instance, 0)
             op = dict(op)
@@ -1520,6 +1652,8 @@ static void ck_prefill(CKModel *model, const int32_t *tokens, int num_tokens) {
 
     lines.append("    model->pos = num_tokens;")
     lines.append("    model->rope_pos = num_tokens;")
+    if bool(config.get("_template_uses_persistent_cross_kv_cache", False)):
+        lines.append("    model->encoder_kv_ready = 1;")
     lines.append("}")
     return "\n".join(lines)
 
@@ -2235,7 +2369,7 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
             op = dict(op)
             op["op_instance_idx"] = inst
             residual_save_counts_by_layer[layer_for_instance] = inst + 1
-        if op_type in {"rmsnorm", "layernorm"} and "op_instance_idx" not in op and "instance" not in op:
+        if op_type in {"rmsnorm", "layernorm", "block_rmsnorm"} and "op_instance_idx" not in op and "instance" not in op:
             layer_for_instance = int(op.get("layer", -1))
             inst = rmsnorm_counts_by_layer.get(layer_for_instance, 0)
             op = dict(op)
@@ -2400,6 +2534,8 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
         lines.append("    ck_multimodal_prefill_bridge_clear();")
     else:
         lines.append("    model->rope_pos = num_tokens;")
+    if bool(config.get("_template_uses_persistent_cross_kv_cache", False)):
+        lines.append("    model->encoder_kv_ready = 1;")
     lines.append("}")
     lines.append("")
     lines.append("static void ck_prefill_from_embedded(CKModel *model, int num_tokens) {")

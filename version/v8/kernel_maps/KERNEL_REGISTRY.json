@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 244,
+      "total": 258,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -16,10 +16,14 @@
         "attn_gate_sigmoid_mul": 1,
         "attn_gate_sigmoid_mul_backward": 1,
         "audio_conv1d": 1,
-        "audio_log_mel": 1,
+        "audio_log_mel": 2,
+        "audio_mel_filters": 1,
+        "audio_pad_or_truncate": 1,
         "audio_pcm_decode": 1,
         "audio_resample": 2,
         "audio_stft": 2,
+        "audio_stft_tables": 1,
+        "audio_wav_decode": 1,
         "bias_add": 1,
         "embedding": 7,
         "embedding_backward": 1,
@@ -32,17 +36,17 @@
         "fused_qkv_block": 1,
         "gated_deltanet": 5,
         "geglu": 4,
-        "gelu": 5,
+        "gelu": 6,
         "gemm": 21,
         "gemm_backward": 1,
         "gemma4_per_layer_embed": 1,
         "gemma4_per_layer_prepare": 2,
         "gemv": 14,
-        "group_limited_topk_router": 1,
+        "group_limited_topk_router": 2,
         "kv_cache_store": 4,
         "kv_cache_store_batch_bf16": 1,
         "kv_cache_store_batch_f16": 1,
-        "kv_lora_decompress": 1,
+        "kv_lora_decompress": 2,
         "layernorm": 4,
         "layout_transform": 1,
         "logits_store_indexed": 1,
@@ -52,15 +56,15 @@
         "mamba_rmsnorm_gate": 1,
         "mamba_selective_scan": 1,
         "mamba_selective_state_update_decode": 1,
-        "mla_attention": 1,
+        "mla_attention": 2,
         "mla_kv_cache_batch_store": 1,
         "mla_kv_cache_store": 1,
         "moe_relu2_expert_mlp": 4,
-        "moe_swiglu_expert_mlp": 2,
+        "moe_swiglu_expert_mlp": 3,
         "optimizer": 4,
         "partial_rope_concat": 2,
         "patch_projection": 1,
-        "position_embeddings": 5,
+        "position_embeddings": 6,
         "position_ids": 1,
         "projector_prep": 1,
         "q_norm": 1,
@@ -81,13 +85,13 @@
         "relu2": 2,
         "residual_add": 2,
         "residual_save": 1,
-        "rmsnorm": 5,
+        "rmsnorm": 7,
         "rope": 16,
         "rope_backward": 2,
         "rope_init": 2,
         "rowwise_bias_add": 1,
         "shared_relu2_expert_mlp": 1,
-        "shared_swiglu_expert_mlp": 2,
+        "shared_swiglu_expert_mlp": 3,
         "softmax": 1,
         "spatial_merge": 3,
         "speculative_commit_or_reject": 1,
@@ -6502,6 +6506,113 @@
       "_source_file": "audio_conv1d_channel_major_f32.json"
     },
     {
+      "id": "audio_pad_or_truncate_f32",
+      "op": "audio_pad_or_truncate",
+      "variant": "prefix_copy_zero_tail_fp32",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "N_input"
+          ]
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "N_output"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "input_frames",
+        "output_frames"
+      ],
+      "impl": {
+        "function": "audio_pad_or_truncate_f32",
+        "c_declaration": "int audio_pad_or_truncate_f32(const float *input, int input_frames, float *output, int output_frames);",
+        "sources": [
+          "src/kernels/audio_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "audio_pad_or_truncate_prefix_zero_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_pad_or_truncate_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "runtime:audio_resampled",
+            "cast": "const float*"
+          },
+          {
+            "name": "input_frames",
+            "source": "runtime:audio_resampled_frames"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*"
+          },
+          {
+            "name": "output_frames",
+            "source": "dim:output_frames"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ]
+      },
+      "name": "audio_pad_or_truncate_f32",
+      "_source_file": "audio_pad_or_truncate_f32.json"
+    },
+    {
       "id": "audio_pcm_s16_to_mono_f32",
       "op": "audio_pcm_decode",
       "variant": "signed_16_interleaved_channel_mean_fp32",
@@ -6816,11 +6927,11 @@
           },
           {
             "name": "input_frames",
-            "source": "dim:input_frames"
+            "source": "runtime:audio_source_frames"
           },
           {
             "name": "input_rate",
-            "source": "dim:input_rate"
+            "source": "runtime:audio_source_rate"
           },
           {
             "name": "output",
@@ -6829,7 +6940,7 @@
           },
           {
             "name": "output_frames",
-            "source": "dim:output_frames"
+            "source": "runtime:audio_resampled_frames"
           },
           {
             "name": "output_rate",
@@ -6866,9 +6977,7 @@
           "shape": [
             "N_samples"
           ]
-        }
-      ],
-      "weights": [
+        },
         {
           "name": "window",
           "dtype": "fp32",
@@ -6893,6 +7002,7 @@
           ]
         }
       ],
+      "weights": [],
       "outputs": [
         {
           "name": "power",
@@ -6974,17 +7084,17 @@
           },
           {
             "name": "window",
-            "source": "weight:window",
+            "source": "activation:window",
             "cast": "const float*"
           },
           {
             "name": "cos_table",
-            "source": "weight:cos_table",
+            "source": "activation:cos_table",
             "cast": "const float*"
           },
           {
             "name": "sin_table",
-            "source": "weight:sin_table",
+            "source": "activation:sin_table",
             "cast": "const float*"
           },
           {
@@ -7174,6 +7284,121 @@
       "_source_file": "audio_stft_power_precomputed_f32.json"
     },
     {
+      "id": "audio_stft_precompute_tables_f32",
+      "op": "audio_stft_tables",
+      "variant": "periodic_hann_trigonometric_tables_fp32",
+      "quant": {
+        "weight": "none",
+        "activation": "none",
+        "output": "fp32"
+      },
+      "inputs": [],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "window",
+          "dtype": "fp32",
+          "shape": [
+            "N_fft"
+          ]
+        },
+        {
+          "name": "cos_table",
+          "dtype": "fp32",
+          "shape": [
+            "N_bins",
+            "N_fft"
+          ]
+        },
+        {
+          "name": "sin_table",
+          "dtype": "fp32",
+          "shape": [
+            "N_bins",
+            "N_fft"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "n_fft"
+      ],
+      "impl": {
+        "function": "audio_stft_precompute_tables_f32",
+        "c_declaration": "int audio_stft_precompute_tables_f32(int n_fft, float *window, float *cos_table, float *sin_table);",
+        "sources": [
+          "src/kernels/audio_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "audio_stft_periodic_hann_tables_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_stft_precompute_tables_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "n_fft",
+            "source": "dim:n_fft"
+          },
+          {
+            "name": "window",
+            "source": "output:window",
+            "cast": "float*"
+          },
+          {
+            "name": "cos_table",
+            "source": "output:cos_table",
+            "cast": "float*"
+          },
+          {
+            "name": "sin_table",
+            "source": "output:sin_table",
+            "cast": "float*"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ]
+      },
+      "name": "audio_stft_precompute_tables_f32",
+      "_source_file": "audio_stft_precompute_tables_f32.json"
+    },
+    {
       "id": "audio_transpose_channel_to_token_f32",
       "op": "layout_transform",
       "variant": "channel_major_to_token_major_fp32_copy",
@@ -7281,6 +7506,248 @@
       },
       "name": "audio_transpose_channel_to_token_f32",
       "_source_file": "audio_transpose_channel_to_token_f32.json"
+    },
+    {
+      "id": "audio_wav_decode_memory_pcm16_mono_f32",
+      "op": "audio_wav_decode",
+      "variant": "riff_wave_pcm16_parse_channel_mean_fp32",
+      "quant": {
+        "weight": "none",
+        "activation": "uint8",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "wav_bytes",
+          "dtype": "uint8",
+          "shape": [
+            "N_bytes"
+          ]
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "mono",
+          "dtype": "fp32",
+          "shape": [
+            "N_source_frames"
+          ]
+        }
+      ],
+      "scratch": [
+        {
+          "name": "wav_info",
+          "dtype": "uint8",
+          "shape": [
+            "sizeof_CKAudioWavInfo"
+          ]
+        }
+      ],
+      "dims": [
+        "wav_byte_count",
+        "mono_capacity"
+      ],
+      "impl": {
+        "function": "audio_wav_decode_memory_pcm16_mono_f32",
+        "c_declaration": "int audio_wav_decode_memory_pcm16_mono_f32(const uint8_t *bytes, size_t byte_count, float *mono, int mono_capacity, CKAudioWavInfo *info);",
+        "sources": [
+          "src/kernels/audio_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "audio_wav_pcm16_parse_channel_mean_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_wav_decode_memory_pcm16_mono_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "bytes",
+            "source": "runtime:audio_wav_bytes",
+            "cast": "const uint8_t*"
+          },
+          {
+            "name": "byte_count",
+            "source": "runtime:audio_wav_byte_count"
+          },
+          {
+            "name": "mono",
+            "source": "runtime:audio_mono",
+            "cast": "float*"
+          },
+          {
+            "name": "mono_capacity",
+            "source": "runtime:audio_mono_capacity"
+          },
+          {
+            "name": "info",
+            "source": "runtime:audio_wav_info",
+            "cast": "CKAudioWavInfo*"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ]
+      },
+      "name": "audio_wav_decode_memory_pcm16_mono_f32",
+      "_source_file": "audio_wav_decode_memory_pcm16_mono_f32.json"
+    },
+    {
+      "id": "audio_whisper_log_mel_from_power_f32",
+      "op": "audio_log_mel",
+      "variant": "whisper_power_slaney_log10_clip_normalize_fp32",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "power",
+          "dtype": "fp32",
+          "shape": [
+            "N_frames",
+            "N_bins"
+          ]
+        },
+        {
+          "name": "mel_filters",
+          "dtype": "fp32",
+          "shape": [
+            "N_mels",
+            "N_bins"
+          ]
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "log_mel",
+          "dtype": "fp32",
+          "shape": [
+            "N_mels",
+            "N_frames"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "n_mels",
+        "n_frames"
+      ],
+      "impl": {
+        "function": "audio_whisper_log_mel_from_power_reference_f32",
+        "c_declaration": "int audio_whisper_log_mel_from_power_reference_f32(const float *power, const float *mel_filters, int n_mels, int n_frames, float *log_mel);",
+        "sources": [
+          "src/kernels/audio_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "audio_whisper_log_mel_from_power_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_whisper_log_mel_from_power_reference_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "power",
+            "source": "activation:power",
+            "cast": "const float*"
+          },
+          {
+            "name": "mel_filters",
+            "source": "activation:mel_filters",
+            "cast": "const float*"
+          },
+          {
+            "name": "n_mels",
+            "source": "dim:n_mels"
+          },
+          {
+            "name": "n_frames",
+            "source": "dim:n_frames"
+          },
+          {
+            "name": "log_mel",
+            "source": "output:log_mel",
+            "cast": "float*"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ]
+      },
+      "name": "audio_whisper_log_mel_from_power_f32",
+      "_source_file": "audio_whisper_log_mel_from_power_f32.json"
     },
     {
       "id": "audio_whisper_log_mel_reference_f32",
@@ -7427,6 +7894,106 @@
       "notes": "Correctness-first audio frontend provider. Replace only through an exact compatible numerical contract after FFT optimization is independently validated.",
       "name": "audio_whisper_log_mel_reference_f32",
       "_source_file": "audio_whisper_log_mel_reference_f32.json"
+    },
+    {
+      "id": "audio_whisper_mel_filters_slaney_f32",
+      "op": "audio_mel_filters",
+      "variant": "slaney_normalized_triangular_fp32",
+      "quant": {
+        "weight": "none",
+        "activation": "none",
+        "output": "fp32"
+      },
+      "inputs": [],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "mel_filters",
+          "dtype": "fp32",
+          "shape": [
+            "N_mels",
+            "N_bins"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "sample_rate",
+        "n_fft",
+        "n_mels"
+      ],
+      "impl": {
+        "function": "audio_whisper_mel_filters_slaney_f32",
+        "c_declaration": "int audio_whisper_mel_filters_slaney_f32(int sample_rate, int n_fft, int n_mels, float *mel_filters);",
+        "sources": [
+          "src/kernels/audio_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "audio_whisper_mel_filters_slaney_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_whisper_mel_filters_slaney_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp64",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "sample_rate",
+            "source": "dim:sample_rate"
+          },
+          {
+            "name": "n_fft",
+            "source": "dim:n_fft"
+          },
+          {
+            "name": "n_mels",
+            "source": "dim:n_mels"
+          },
+          {
+            "name": "mel_filters",
+            "source": "output:mel_filters",
+            "cast": "float*"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ]
+      },
+      "name": "audio_whisper_mel_filters_slaney_f32",
+      "_source_file": "audio_whisper_mel_filters_slaney_f32.json"
     },
     {
       "id": "bias_add",
@@ -8210,6 +8777,73 @@
       "_source_file": "deepseek_mla_attention_decode_f32.json"
     },
     {
+      "id": "deepseek_mla_attention_f32",
+      "op": "mla_attention",
+      "variant": "prefill_ref_f32",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "QK"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "KV",
+            "QK"
+          ]
+        },
+        {
+          "name": "v",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "KV",
+            "V"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "V"
+          ]
+        }
+      ],
+      "dims": [
+        "T",
+        "H",
+        "KV",
+        "QK",
+        "V"
+      ],
+      "impl": {
+        "function": "deepseek_mla_attention_f32",
+        "c_declaration": "void deepseek_mla_attention_f32(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int qk_head_dim, int v_head_dim);",
+        "sources": [
+          "src/kernels/deepseek_kernels.c"
+        ]
+      },
+      "notes": "Reference causal MLA prefill attention over the current token sequence.",
+      "name": "deepseek_mla_attention_f32",
+      "_source_file": "deepseek_mla_attention_f32.json"
+    },
+    {
       "id": "deepseek_mla_kv_cache_batch_store_f32",
       "op": "mla_kv_cache_batch_store",
       "variant": "prefill_cache_store_f32",
@@ -8397,6 +9031,97 @@
       "notes": "MLA decode cache store with separate K and V logical dimensions inside a shared cache stride.",
       "name": "deepseek_mla_kv_cache_store_f32",
       "_source_file": "deepseek_mla_kv_cache_store_f32.json"
+    },
+    {
+      "id": "deepseek_mla_kv_decompress_bf16",
+      "op": "kv_lora_decompress",
+      "variant": "bf16_weight_fp32_activation",
+      "modes": {
+        "inference": true,
+        "training": true,
+        "backward": false
+      },
+      "quant": {
+        "weight": "bf16",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "compressed_kv",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "R"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "kv_b_proj",
+          "dtype": "bf16",
+          "shape": [
+            "H*(Dk+Dv)",
+            "R"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "k_nope",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "Dk"
+          ]
+        },
+        {
+          "name": "value",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "Dv"
+          ]
+        }
+      ],
+      "dims": [
+        "T",
+        "H",
+        "R",
+        "Dk",
+        "Dv"
+      ],
+      "impl": {
+        "sources": [
+          "src/kernels/deepseek_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "scalar_ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ],
+        "function": "deepseek_mla_kv_decompress_bf16",
+        "c_declaration": "void deepseek_mla_kv_decompress_bf16(const float *compressed_kv, const uint16_t *kv_b_proj, float *k_nope, float *value, int tokens, int heads, int kv_lora_rank, int qk_nope_dim, int v_dim);"
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_deepseek_reference_kernels.py"
+        ],
+        "parity": [
+          {
+            "kind": "pytorch",
+            "command": ".venv/bin/python unittest/test_deepseek_reference_kernels.py",
+            "tolerance": "1e-5"
+          }
+        ]
+      },
+      "notes": "DeepSeek/Kimi MLA KV LoRA decompression with BF16 projection weights and FP32 activations/output.",
+      "name": "deepseek_mla_kv_decompress_bf16",
+      "_source_file": "deepseek_mla_kv_decompress_bf16.json"
     },
     {
       "id": "deepseek_mla_kv_decompress_f32",
@@ -11555,6 +12280,101 @@
       "notes": "GGML-compatible FP16-table GELU used for llama.cpp activation parity.",
       "name": "gelu_ggml_inplace",
       "_source_file": "gelu_ggml_inplace.json"
+    },
+    {
+      "id": "gelu_pytorch_erf_f32_inplace",
+      "op": "gelu",
+      "variant": "pytorch_erf_inplace_fp32",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "desc": "Input/output buffer (in-place)"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "desc": "PyTorch approximate=none GELU output"
+        }
+      ],
+      "dims": [
+        "N"
+      ],
+      "impl": {
+        "function": "gelu_pytorch_erf_f32_inplace",
+        "c_declaration": "void gelu_pytorch_erf_f32_inplace(float *data, size_t n);",
+        "sources": [
+          "src/kernels/gelu_kernels.c"
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "gelu_pytorch_erf_fp32_storage",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "gelu_pytorch_erf_f32_inplace",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "data",
+            "source": "output:out"
+          },
+          {
+            "name": "n",
+            "source": "dim:gelu_elems"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ]
+      },
+      "notes": "FP32 Whisper/PyTorch GELU provider. The scalar libm erff entry point is bound indirectly so -fno-math-errno cannot replace it with host-specific AVX2 or AVX-512 vector libm arithmetic. Does not replace the historical tanh-based gelu_exact_inplace provider.",
+      "name": "gelu_pytorch_erf_f32_inplace",
+      "_source_file": "gelu_pytorch_erf_f32_inplace.json"
     },
     {
       "id": "gelu_pytorch_erf_sleef_bf16_storage",
@@ -14764,6 +15584,72 @@
           "src/kernels/gemm_kernels_q8_0.c"
         ]
       },
+      "numerical_capabilities": [
+        {
+          "contract_id": "q8_0_weight_q8_0_input_llama_fp32_output",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "gemm_nt_q8_0_q8_0_contract",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "openmp",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "A",
+            "source": "activation:a",
+            "cast": "const float*"
+          },
+          {
+            "name": "B",
+            "source": "weight:_first_weight"
+          },
+          {
+            "name": "bias",
+            "source": "weight_f:_bias"
+          },
+          {
+            "name": "C",
+            "source": "output:c",
+            "cast": "float*"
+          },
+          {
+            "name": "M",
+            "source": "dim:_m"
+          },
+          {
+            "name": "N",
+            "source": "dim:_output_dim"
+          },
+          {
+            "name": "K",
+            "source": "dim:_input_dim"
+          }
+        ]
+      },
       "notes": "Opt-in contract path: internally quantizes FP32 activations to Q8_0 before compute.",
       "name": "gemm_nt_q8_0_q8_0_contract",
       "_source_file": "gemm_nt_q8_0_q8_0_contract.json"
@@ -16919,6 +17805,64 @@
           "src/kernels/gemm_kernels_q8_0.c"
         ]
       },
+      "numerical_capabilities": [
+        {
+          "contract_id": "q8_0_weight_q8_0_input_llama_fp32_output",
+          "status": "validated",
+          "phases": [
+            "decode"
+          ],
+          "function": "gemv_q8_0_q8_0_contract",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "y",
+            "source": "output:y",
+            "cast": "float*"
+          },
+          {
+            "name": "W",
+            "source": "weight:_first_weight"
+          },
+          {
+            "name": "x",
+            "source": "activation:x",
+            "cast": "const float*"
+          },
+          {
+            "name": "M",
+            "source": "dim:_output_dim"
+          },
+          {
+            "name": "K",
+            "source": "dim:_input_dim"
+          }
+        ]
+      },
       "notes": "Opt-in contract path: internally quantizes FP32 activations to Q8_0 before compute.",
       "name": "gemv_q8_0_q8_0_contract",
       "_source_file": "gemv_q8_0_q8_0_contract.json"
@@ -17283,6 +18227,85 @@
       "notes": "FP32 in-place gradient scale kernel.",
       "name": "gradient_scale_f32",
       "_source_file": "gradient_scale_f32.json"
+    },
+    {
+      "id": "group_limited_topk_router_sigmoid_f32",
+      "op": "group_limited_topk_router",
+      "variant": "sigmoid_noaux_tc_fp32",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "logits",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "E"
+          ]
+        },
+        {
+          "name": "correction_bias",
+          "dtype": "fp32",
+          "shape": [
+            "E"
+          ],
+          "optional": true
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "indices",
+          "dtype": "i32",
+          "shape": [
+            "R",
+            "K"
+          ]
+        },
+        {
+          "name": "weights",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "K"
+          ]
+        }
+      ],
+      "dims": [
+        "R",
+        "E",
+        "K",
+        "G",
+        "TG"
+      ],
+      "params": [
+        {
+          "name": "norm_topk_prob",
+          "dtype": "i32"
+        },
+        {
+          "name": "routed_scaling_factor",
+          "dtype": "fp32"
+        }
+      ],
+      "impl": {
+        "function": "group_limited_topk_router_sigmoid_f32",
+        "c_declaration": "void group_limited_topk_router_sigmoid_f32(const float *logits, const float *correction_bias, int *indices, float *weights, int rows, int n_experts, int top_k, int n_group, int topk_group, int norm_topk_prob, float routed_scaling_factor);",
+        "sources": [
+          "src/kernels/topk_kernels.c"
+        ]
+      },
+      "notes": "Applies FP32 sigmoid to router logits before correction bias, group selection, top-k normalization, and routed scaling.",
+      "name": "group_limited_topk_router_sigmoid_f32",
+      "_source_file": "group_limited_topk_router_sigmoid_f32.json"
     },
     {
       "id": "im2patch",
@@ -21179,6 +22202,103 @@
       "_source_file": "moe_swiglu_expert_backward_f32.json"
     },
     {
+      "id": "moe_swiglu_expert_forward_bf16",
+      "op": "moe_swiglu_expert_mlp",
+      "variant": "bf16_weight_fp32_activation",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "bf16",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "hidden",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        },
+        {
+          "name": "indices",
+          "dtype": "i32",
+          "shape": [
+            "R",
+            "K"
+          ]
+        },
+        {
+          "name": "routing_weights",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "K"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "expert_gate",
+          "dtype": "bf16",
+          "shape": [
+            "E",
+            "I",
+            "H"
+          ]
+        },
+        {
+          "name": "expert_up",
+          "dtype": "bf16",
+          "shape": [
+            "E",
+            "I",
+            "H"
+          ]
+        },
+        {
+          "name": "expert_down",
+          "dtype": "bf16",
+          "shape": [
+            "E",
+            "H",
+            "I"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        }
+      ],
+      "dims": [
+        "R",
+        "H",
+        "I",
+        "E",
+        "K"
+      ],
+      "impl": {
+        "function": "moe_swiglu_expert_forward_bf16",
+        "c_declaration": "void moe_swiglu_expert_forward_bf16(const float *hidden, const int *indices, const float *routing_weights, const uint16_t *expert_gate, const uint16_t *expert_up, const uint16_t *expert_down, float *output, int rows, int hidden_dim, int intermediate_dim, int n_experts, int top_k);",
+        "sources": [
+          "src/kernels/axpy_kernels.c"
+        ]
+      },
+      "notes": "Reference routed SwiGLU MoE provider with BF16 weight storage and FP32 activation/accumulation.",
+      "name": "moe_swiglu_expert_forward_bf16",
+      "_source_file": "moe_swiglu_expert_forward_bf16.json"
+    },
+    {
       "id": "moe_swiglu_expert_forward_f32",
       "op": "moe_swiglu_expert_mlp",
       "variant": "fp32",
@@ -21428,6 +22548,91 @@
       "notes": "Backward pass for shared SwiGLU expert reference kernel.",
       "name": "moe_swiglu_shared_backward_f32",
       "_source_file": "moe_swiglu_shared_backward_f32.json"
+    },
+    {
+      "id": "moe_swiglu_shared_forward_bf16",
+      "op": "shared_swiglu_expert_mlp",
+      "variant": "bf16_weight_fp32_activation",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "bf16",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "hidden",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        },
+        {
+          "name": "routed",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ],
+          "optional": true
+        }
+      ],
+      "weights": [
+        {
+          "name": "shared_gate",
+          "dtype": "bf16",
+          "shape": [
+            "I",
+            "H"
+          ]
+        },
+        {
+          "name": "shared_up",
+          "dtype": "bf16",
+          "shape": [
+            "I",
+            "H"
+          ]
+        },
+        {
+          "name": "shared_down",
+          "dtype": "bf16",
+          "shape": [
+            "H",
+            "I"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        }
+      ],
+      "dims": [
+        "R",
+        "H",
+        "I"
+      ],
+      "impl": {
+        "function": "moe_swiglu_shared_forward_bf16",
+        "c_declaration": "void moe_swiglu_shared_forward_bf16(const float *hidden, const float *routed, const uint16_t *shared_gate, const uint16_t *shared_up, const uint16_t *shared_down, float *output, int rows, int hidden_dim, int intermediate_dim);",
+        "sources": [
+          "src/kernels/axpy_kernels.c"
+        ]
+      },
+      "notes": "Reference shared SwiGLU expert provider with BF16 weight storage and FP32 activation/accumulation.",
+      "name": "moe_swiglu_shared_forward_bf16",
+      "_source_file": "moe_swiglu_shared_forward_bf16.json"
     },
     {
       "id": "moe_swiglu_shared_forward_f32",
@@ -24374,6 +25579,132 @@
       "notes": "Add learned absolute position embeddings in-place. Fixed-size first path for v8 vision bring-up.",
       "name": "position_embeddings_add",
       "_source_file": "position_embeddings_add.json"
+    },
+    {
+      "id": "position_embeddings_add_at_offset",
+      "op": "position_embeddings",
+      "variant": "absolute_learned_runtime_offset_fp32",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "pos_emb",
+          "dtype": "fp32",
+          "shape": [
+            "P",
+            "E"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "E"
+          ]
+        }
+      ],
+      "dims": [
+        "T",
+        "E",
+        "P"
+      ],
+      "impl": {
+        "function": "position_embeddings_add_at_offset",
+        "c_declaration": "void position_embeddings_add_at_offset(float *x, const float *position_embd, int num_tokens, int embed_dim, int num_positions, int start_position);",
+        "sources": [
+          "src/kernels/vision_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "position_embeddings_add_offset_token_major_fp32",
+          "status": "validated",
+          "phases": [
+            "decode"
+          ],
+          "function": "position_embeddings_add_at_offset",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "x",
+            "source": "output:x",
+            "cast": "float*"
+          },
+          {
+            "name": "position_embd",
+            "source": "weight:pos_emb",
+            "cast": "const float*"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "embed_dim",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "num_positions",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "start_position",
+            "source": "runtime:pos"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_vision.py"
+        ]
+      },
+      "name": "position_embeddings_add_at_offset",
+      "_source_file": "position_embeddings_add_at_offset.json"
     },
     {
       "id": "position_embeddings_add_gemma4v_xy",
@@ -29041,6 +30372,74 @@
       "_source_file": "rmsnorm_forward_fp64_sum.json"
     },
     {
+      "id": "rmsnorm_forward_kv_lora",
+      "op": "rmsnorm",
+      "variant": "mla_kv_lora_fp32",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "A"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "gamma",
+          "dtype": "fp32",
+          "shape": [
+            "D"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "A"
+          ]
+        },
+        {
+          "name": "rstd",
+          "dtype": "fp32",
+          "shape": [
+            "T"
+          ],
+          "optional": true
+        }
+      ],
+      "dims": [
+        "T",
+        "D",
+        "A"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "rmsnorm_forward_kv_lora",
+        "c_declaration": "void rmsnorm_forward_kv_lora(const float *input, const float *gamma, float *output, float *rstd_cache, int tokens, int d_model, int aligned_embed_dim, float eps);",
+        "sources": [
+          "src/kernels/rmsnorm_kernels.c"
+        ]
+      },
+      "notes": "MLA latent RMSNorm. The normalized width D is kv_lora_rank while rows retain the aligned projection stride A.",
+      "name": "rmsnorm_forward_kv_lora",
+      "_source_file": "rmsnorm_forward_kv_lora.json"
+    },
+    {
       "id": "rmsnorm_forward_llama_production",
       "op": "rmsnorm",
       "variant": "llama_cpu_production_fp32_output",
@@ -29346,6 +30745,75 @@
       "notes": "PyTorch CPU AVX2 cascade-sum BF16 RMSNorm storage contract carried in FP32 BUMP buffers. The oracle provider ISA is determined by the PyTorch build.",
       "name": "rmsnorm_forward_pytorch_bf16_storage",
       "_source_file": "rmsnorm_forward_pytorch_bf16_storage.json"
+    },
+    {
+      "id": "rmsnorm_forward_strided_f32",
+      "op": "rmsnorm",
+      "variant": "fp32_independent_row_strides",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "INPUT_STRIDE"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "gamma",
+          "dtype": "fp32",
+          "shape": [
+            "D"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "OUTPUT_STRIDE"
+          ]
+        },
+        {
+          "name": "rstd",
+          "dtype": "fp32",
+          "shape": [
+            "T"
+          ],
+          "optional": true
+        }
+      ],
+      "dims": [
+        "T",
+        "D",
+        "INPUT_STRIDE",
+        "OUTPUT_STRIDE"
+      ],
+      "params": [
+        {
+          "name": "eps",
+          "dtype": "float32"
+        }
+      ],
+      "impl": {
+        "function": "rmsnorm_forward_strided_f32",
+        "c_declaration": "void rmsnorm_forward_strided_f32(const float *input, const float *gamma, float *output, float *rstd_cache, int tokens, int d_model, int input_stride, int output_stride, float eps);",
+        "sources": [
+          "src/kernels/rmsnorm_kernels.c"
+        ]
+      },
+      "notes": "RMSNorm over D logical values with independent physical input and output row strides.",
+      "name": "rmsnorm_forward_strided_f32",
+      "_source_file": "rmsnorm_forward_strided_f32.json"
     },
     {
       "id": "v_norm",

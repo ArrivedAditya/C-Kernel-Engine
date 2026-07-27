@@ -1,0 +1,37 @@
+{
+  "id": "audio_whisper_log_mel_from_power_f32",
+  "op": "audio_log_mel",
+  "variant": "whisper_power_slaney_log10_clip_normalize_fp32",
+  "quant": {"weight": "none", "activation": "fp32", "output": "fp32"},
+  "inputs": [
+    {"name": "power", "dtype": "fp32", "shape": ["N_frames", "N_bins"]},
+    {"name": "mel_filters", "dtype": "fp32", "shape": ["N_mels", "N_bins"]}
+  ],
+  "weights": [],
+  "outputs": [{"name": "log_mel", "dtype": "fp32", "shape": ["N_mels", "N_frames"]}],
+  "scratch": [],
+  "dims": ["n_mels", "n_frames"],
+  "impl": {
+    "function": "audio_whisper_log_mel_from_power_reference_f32",
+    "c_declaration": "int audio_whisper_log_mel_from_power_reference_f32(const float *power, const float *mel_filters, int n_mels, int n_frames, float *log_mel);",
+    "sources": ["src/kernels/audio_kernels.c"]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [{
+    "contract_id": "audio_whisper_log_mel_from_power_fp32",
+    "status": "validated",
+    "phases": ["prefill"],
+    "function": "audio_whisper_log_mel_from_power_reference_f32",
+    "explicit_selector": true,
+    "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "contract_defined"}},
+    "arithmetic": {"partial_accumulator": "fp32", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "independent_outputs"}
+  }],
+  "call_abi": {"version": 1, "params": [
+    {"name": "power", "source": "activation:power", "cast": "const float*"},
+    {"name": "mel_filters", "source": "activation:mel_filters", "cast": "const float*"},
+    {"name": "n_mels", "source": "dim:n_mels"},
+    {"name": "n_frames", "source": "dim:n_frames"},
+    {"name": "log_mel", "source": "output:log_mel", "cast": "float*"}
+  ]},
+  "tests": {"unit": ["unittest/test_audio_encoder.py"]}
+}

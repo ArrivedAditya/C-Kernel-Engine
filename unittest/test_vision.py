@@ -46,6 +46,15 @@ lib.position_embeddings_add.argtypes = [
     ctypes.c_int,
 ]
 lib.position_embeddings_add.restype = None
+lib.position_embeddings_add_at_offset.argtypes = [
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+]
+lib.position_embeddings_add_at_offset.restype = None
 
 lib.position_embeddings_add_tiled_2d.argtypes = [
     ctypes.POINTER(ctypes.c_float),
@@ -224,6 +233,22 @@ def run_c_position_embeddings_add(x: torch.Tensor, pos: torch.Tensor) -> torch.T
         num_tokens,
         embed_dim,
         num_positions,
+    )
+    return out
+
+
+def run_c_position_embeddings_add_at_offset(
+    x: torch.Tensor, pos: torch.Tensor, start_position: int
+) -> torch.Tensor:
+    out = x.clone()
+    num_tokens, embed_dim = out.shape
+    lib.position_embeddings_add_at_offset(
+        tensor_to_ptr(out),
+        tensor_to_ptr(pos),
+        num_tokens,
+        embed_dim,
+        pos.shape[0],
+        start_position,
     )
     return out
 
@@ -664,6 +689,15 @@ def test_position_embeddings_add(tokens=2304, embed_dim=1152):
 
     if diff > 1e-7:
         raise AssertionError("position_embeddings_add mismatch!")
+
+
+def test_position_embeddings_add_at_offset():
+    x = torch.arange(24, dtype=torch.float32).reshape(3, 8) / 16.0
+    pos = torch.arange(56, dtype=torch.float32).reshape(7, 8) / 32.0
+    start_position = 3
+    ref = x + pos[start_position:start_position + x.shape[0]]
+    out = run_c_position_embeddings_add_at_offset(x, pos, start_position)
+    torch.testing.assert_close(out, ref, rtol=0.0, atol=0.0)
 
 
 def test_position_embeddings_add_tiled_2d(grid_h=6, grid_w=6, embed_dim=8, merge_size=3):
@@ -1231,6 +1265,7 @@ if __name__ == "__main__":
     test_im2patch()
     test_patch2im()
     test_position_embeddings_add()
+    test_position_embeddings_add_at_offset()
     test_position_embeddings_add_tiled_2d()
     test_position_embeddings_add_tiled_2d_qwen3vl_resize_order()
     test_position_embeddings_add_tiled_2d_ragged_edges()

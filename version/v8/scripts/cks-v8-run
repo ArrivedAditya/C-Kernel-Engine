@@ -27,6 +27,11 @@ Raw CLI examples:
     --image-path version/v8/test_assets/v8_vision_doc_card_72.ppm \\
     --prompt "Explain this image."
 
+  version/v8/scripts/cks-v8-run audio \\
+    --encoder-run-dir /path/to/whisper-tiny-encoder \\
+    --decoder-run-dir /path/to/whisper-tiny-decoder \\
+    --wav /path/to/audio.wav
+
 After a run exists:
   ./build/ck-cli-v8 --list
 

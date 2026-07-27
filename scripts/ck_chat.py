@@ -357,8 +357,26 @@ def _is_true_bpe_bin_dir(path: Path) -> bool:
     return path.is_dir() and all((path / name).exists() for name in required)
 
 
+def _model_root_for_runtime(model_dir: Path) -> Path:
+    """Return the source model root for standard generated runtime directories."""
+    return (
+        model_dir.parent
+        if re.fullmatch(r"\.ck_build(?:_v[0-9]+)?", model_dir.name)
+        else model_dir
+    )
+
+
+def _load_transformers_auto_tokenizer():
+    """Load the heavyweight custom-tokenizer fallback only when it is needed."""
+    try:
+        from transformers import AutoTokenizer
+    except ImportError:
+        return None
+    return AutoTokenizer
+
+
 def _find_true_bpe_bin_dir(model_dir: Path) -> Optional[Path]:
-    model_root = model_dir.parent if model_dir.name == ".ck_build" else model_dir
+    model_root = _model_root_for_runtime(model_dir)
 
     # Prefer artifacts colocated with the loaded model first.
     preferred = (
@@ -386,7 +404,7 @@ def _find_true_bpe_bin_dir(model_dir: Path) -> Optional[Path]:
 
 
 def _find_true_bpe_lib(model_dir: Path) -> Optional[Path]:
-    model_root = model_dir.parent if model_dir.name == ".ck_build" else model_dir
+    model_root = _model_root_for_runtime(model_dir)
     project_root = Path(__file__).resolve().parents[1]
     candidates = (
         model_dir / "libckernel_tokenizer.so",
@@ -791,7 +809,7 @@ class CKModel:
     def _load_python_tokenizer(self, gguf_path: Optional[str] = None) -> bool:
         """Load Python tokenizer stack (true_bpe / HF / GGUF wrapper)."""
         # Tokenizer files may live either in model root or .ck_build output dir.
-        model_root = self.model_dir.parent if self.model_dir.name == ".ck_build" else self.model_dir
+        model_root = _model_root_for_runtime(self.model_dir)
         tokenizer_candidates = self._tokenizer_json_candidates(model_root)
         vocab_candidates = [self.model_dir / "vocab.json", model_root / "vocab.json"]
 
@@ -833,6 +851,30 @@ class CKModel:
             self._apply_python_tokenizer_contract()
             print(f"Loaded tokenizer via GGUF wrapper from {tokenizer_json}")
             return True
+        auto_tokenizer = _load_transformers_auto_tokenizer()
+        if auto_tokenizer is not None:
+            tokenizer_roots = [self.model_dir, model_root]
+            for tokenizer_root in tokenizer_roots:
+                if not (tokenizer_root / "tokenizer_config.json").exists():
+                    continue
+                if not any(
+                    (tokenizer_root / name).exists()
+                    for name in ("tiktoken.model", "tokenizer.model")
+                ):
+                    continue
+                try:
+                    self.tokenizer = auto_tokenizer.from_pretrained(
+                        str(tokenizer_root),
+                        trust_remote_code=True,
+                        local_files_only=True,
+                    )
+                except Exception as exc:
+                    print(f"Warning: failed to load local Transformers tokenizer ({exc})")
+                    self.tokenizer = None
+                    continue
+                self._apply_python_tokenizer_contract()
+                print(f"Loaded local Transformers tokenizer from {tokenizer_root}")
+                return True
         if gguf_path and Path(gguf_path).exists():
             # Extract directly from GGUF
             print(f"Extracting tokenizer from GGUF: {gguf_path}")
@@ -851,7 +893,7 @@ class CKModel:
         return False
 
     def _runtime_json_candidates(self) -> List[Path]:
-        model_root = self.model_dir.parent if self.model_dir.name == ".ck_build" else self.model_dir
+        model_root = _model_root_for_runtime(self.model_dir)
         candidates = [
             self.model_dir / "weights_manifest.json",
             self.model_dir / "config.json",
@@ -886,7 +928,7 @@ class CKModel:
         return docs
 
     def _runtime_sidecar_candidates(self, filename: str) -> List[Path]:
-        model_root = self.model_dir.parent if self.model_dir.name == ".ck_build" else self.model_dir
+        model_root = _model_root_for_runtime(self.model_dir)
         candidates = [
             self.model_dir / filename,
             model_root / filename,
@@ -978,7 +1020,7 @@ class CKModel:
             if str(token).strip()
         }
 
-        model_root = self.model_dir.parent if self.model_dir.name == ".ck_build" else self.model_dir
+        model_root = _model_root_for_runtime(self.model_dir)
         for tokenizer_json in self._tokenizer_json_candidates(model_root):
             if not tokenizer_json.exists():
                 continue
@@ -1158,8 +1200,8 @@ class CKModel:
         candidates = [
             self.model_dir / "config.json",
             self.model_dir / "weights_manifest.json",
-            (self.model_dir.parent / "config.json") if self.model_dir.name == ".ck_build" else None,
-            (self.model_dir.parent / "weights_manifest.json") if self.model_dir.name == ".ck_build" else None,
+            _model_root_for_runtime(self.model_dir) / "config.json",
+            _model_root_for_runtime(self.model_dir) / "weights_manifest.json",
         ]
         for path in candidates:
             if path is None or not path.exists():
@@ -1207,6 +1249,18 @@ class CKModel:
         self.chat_contract = normalize_chat_contract(resolved_contract)
 
         if self.chat_contract is None:
+            tokenizer_template = getattr(self.tokenizer, "chat_template", None)
+            apply_template = getattr(self.tokenizer, "apply_chat_template", None)
+            if (
+                requested_mode in {"", "auto"}
+                and isinstance(tokenizer_template, str)
+                and tokenizer_template.strip()
+                and callable(apply_template)
+            ):
+                self.use_chat_template = True
+                self.chat_template_mode = "tokenizer"
+                self.default_system_prompt = ""
+                return
             self.use_chat_template = False
             self.chat_template_mode = "none"
             self.default_system_prompt = ""
@@ -1418,7 +1472,8 @@ class CKModel:
                 return [token_buf_ptr[i] for i in range(num_tokens)]
             return []
         else:
-            return self.tokenizer.encode(text).ids
+            encoded = self.tokenizer.encode(text)
+            return list(encoded.ids if hasattr(encoded, "ids") else encoded)
 
     def encode_to_buffer(self, text: str) -> int:
         """Encode text directly into model's token buffer (C tokenizer only).
@@ -1433,7 +1488,8 @@ class CKModel:
         else:
             # Fallback: encode with Python, then we'd need to copy to buffer
             # This path shouldn't be hit in normal usage
-            token_ids = self.tokenizer.encode(text).ids
+            encoded = self.tokenizer.encode(text)
+            token_ids = list(encoded.ids if hasattr(encoded, "ids") else encoded)
             return len(token_ids)
 
     def decode(self, token_ids: list, skip_special_tokens: bool = True) -> str:
@@ -1506,6 +1562,15 @@ class CKModel:
         if callable(id_to_token):
             try:
                 piece = id_to_token(tid)
+                if isinstance(piece, str):
+                    return piece
+            except Exception:
+                pass
+
+        convert_ids_to_tokens = getattr(self.tokenizer, "convert_ids_to_tokens", None)
+        if callable(convert_ids_to_tokens):
+            try:
+                piece = convert_ids_to_tokens(tid)
                 if isinstance(piece, str):
                     return piece
             except Exception:
@@ -1586,6 +1651,23 @@ class CKModel:
             if not messages:
                 return ""
             return messages[-1][1]
+
+        if self.chat_template_mode == "tokenizer":
+            tokenizer_messages = []
+            if system_prompt:
+                tokenizer_messages.append({"role": "system", "content": str(system_prompt)})
+            tokenizer_messages.extend(
+                {"role": str(role), "content": str(content)}
+                for role, content in messages
+                if str(role) in {"system", "user", "assistant"}
+            )
+            return str(
+                self.tokenizer.apply_chat_template(
+                    tokenizer_messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+            )
 
         contract = normalize_chat_contract(self.chat_contract) or self._load_chat_contract() or {}
         role_labels = contract.get("role_labels") if isinstance(contract.get("role_labels"), dict) else {}

@@ -80,7 +80,7 @@ def _apply_qwen3vl_ocr_fast_defaults(env: dict[str, str]) -> None:
         return
     env.setdefault("CK_ENABLE_Q80_FP32_M4N4", "1")
     env.setdefault("CK_ENABLE_Q4K_GATEUP_SWIGLU_X16", "1")
-    env.setdefault("CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP", "20")
+    env.setdefault("CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP", "16")
     env.setdefault("CK_Q4K_X16_CHUNK4", "1")
     env.setdefault("CK_ATTENTION_QBLOCK4", "1")
     env.setdefault("CK_ATTENTION_THREAD_CAP", "16")
@@ -95,6 +95,7 @@ def _run_one(
     mmproj: str,
     image: Path,
     prompt: str,
+    chat_template: str,
     threads: int,
     max_tokens: int,
     context_len: int,
@@ -125,6 +126,8 @@ def _run_one(
         str(image_min_tokens),
         "--prompt",
         prompt,
+        "--chat-template",
+        chat_template,
         "--context-len",
         str(context_len),
         "--thinking-mode",
@@ -233,6 +236,11 @@ def main() -> int:
     parser.add_argument("--mmproj", default=DEFAULT_MMPROJ)
     parser.add_argument("--images", nargs="*", type=Path, default=DEFAULT_IMAGES)
     parser.add_argument("--prompt", default="Read the text in this image. Return only the visible text.")
+    parser.add_argument(
+        "--chat-template",
+        default="qwen3vl",
+        help="Chat template passed to ck_run_v8.py. Keep explicit for benchmark/certification identity.",
+    )
     parser.add_argument("--threads", type=int, default=int(os.environ.get("CK_NUM_THREADS", "24")))
     parser.add_argument("--max-tokens", type=int, default=8)
     parser.add_argument("--context-len", type=int, default=1024)
@@ -271,6 +279,7 @@ def main() -> int:
                 mmproj=str(args.mmproj),
                 image=image,
                 prompt=str(args.prompt),
+                chat_template=str(args.chat_template),
                 threads=int(args.threads),
                 max_tokens=int(args.max_tokens),
                 context_len=int(args.context_len),
@@ -292,6 +301,7 @@ def main() -> int:
             "model": str(args.model),
             "mmproj": str(args.mmproj),
             "images": [str(p) for p in args.images],
+            "chat_template": str(args.chat_template),
             "threads": int(args.threads),
             "max_tokens": int(args.max_tokens),
             "context_len": int(args.context_len),

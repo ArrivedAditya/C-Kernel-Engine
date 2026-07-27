@@ -1,0 +1,1632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Whisper Tiny End-to-End | C-Kernel-Engine | C-Kernel-Engine</title>
+    <meta name="description" content="CKE v8 transcribes Whisper Tiny end to end from PCM16 WAV through generated FP32 encoder and decoder circuits: nightly audio gates, usage, evidence, and current limitations.">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/v8-whisper-tiny.html">
+    <meta property="og:title" content="Whisper Tiny End-to-End | C-Kernel-Engine | C-Kernel-Engine">
+    <meta property="og:description" content="CKE v8 transcribes Whisper Tiny end to end from PCM16 WAV through generated FP32 encoder and decoder circuits: nightly audio gates, usage, evidence, and current limitations.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/v8-whisper-tiny.html">
+    <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+    <style>
+        :root {
+            /* Antsand Brand Colors - Lightened */
+            --orange: #ffb400;
+            --orange-dark: #e5a200;
+            --orange-light: #ffc933;
+            --dark: #2a2a2a;
+            --dark-lighter: #363636;
+            --dark-card: #323232;
+            --grey: #454545;
+            --grey-light: #555555;
+            --text-primary: #f5f5f5;
+            --text-secondary: #b0b0b0;
+            --text-muted: #808080;
+            --bg-dark: #232323;
+            --white: #ffffff;
+            --code-bg: #1a1a1a;
+            --green: #47b475;
+            --blue: #07adf8;
+            --gradient-header: linear-gradient(135deg, #2a2a2a 0%, #363636 50%, #2a2a2a 100%);
+            --shadow-sm: 0 2px 4px rgba(0,0,0,0.3);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+            --transition: all 0.3s ease;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: var(--text-primary);
+            background: var(--bg-dark);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .site-header {
+            background: var(--gradient-header);
+            border-bottom: 3px solid var(--orange);
+            padding: 0.5rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 1rem;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            box-shadow: var(--shadow-md);
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            text-decoration: none;
+        }
+
+        .header-logo {
+            width: 40px;
+            height: 40px;
+            background: var(--orange);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            color: var(--dark);
+            font-size: 1.1rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .header-title {
+            color: var(--white);
+            font-size: 1.4rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+        }
+
+        .header-subtitle {
+            color: var(--orange);
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        /* Navigation */
+        .site-nav {
+            display: flex;
+            gap: 0.25rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .site-nav > a,
+        .nav-dropdown > .nav-trigger {
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 0.6rem 1rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: var(--transition);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            border: none;
+            background: transparent;
+            font-family: inherit;
+        }
+
+        .site-nav > a:hover,
+        .nav-dropdown:hover > .nav-trigger {
+            color: var(--white);
+            background: var(--grey);
+        }
+
+        .site-nav > a.active,
+        .nav-dropdown > .nav-trigger.active {
+            background: var(--orange);
+            color: var(--dark);
+            font-weight: 600;
+        }
+
+        /* Dropdown */
+        .nav-dropdown {
+            position: relative;
+        }
+
+        .nav-trigger::after {
+            content: '';
+            border: solid currentColor;
+            border-width: 0 2px 2px 0;
+            display: inline-block;
+            padding: 3px;
+            transform: rotate(45deg);
+            margin-top: -3px;
+            transition: transform 0.2s;
+        }
+
+        .nav-dropdown:hover .nav-trigger::after {
+            transform: rotate(-135deg);
+            margin-top: 3px;
+        }
+
+        .nav-dropdown-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: var(--dark-card);
+            border-radius: 8px;
+            box-shadow: var(--shadow-lg);
+            min-width: 220px;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-10px);
+            transition: var(--transition);
+            overflow: hidden;
+            margin-top: 0.5rem;
+            border: 1px solid var(--grey);
+        }
+
+        .nav-dropdown:hover .nav-dropdown-menu {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .nav-dropdown-menu a {
+            display: block;
+            padding: 0.75rem 1rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: var(--transition);
+            border-left: 3px solid transparent;
+        }
+
+        .nav-dropdown-menu a:hover {
+            background: var(--grey);
+            border-left-color: var(--orange);
+            color: var(--white);
+        }
+
+        .nav-dropdown-menu a small {
+            display: block;
+            color: var(--text-muted);
+            font-size: 0.75rem;
+            margin-top: 0.2rem;
+        }
+
+        /* Last dropdown aligns to the right edge */
+        .nav-dropdown:last-child .nav-dropdown-menu {
+            left: auto;
+            right: 0;
+        }
+
+        /* Mega menu for Architecture dropdown */
+        .nav-dropdown-menu.mega-menu {
+            width: min(1180px, calc(100vw - 2rem));
+            min-width: 0;
+            max-height: calc(100vh - 90px);
+            padding: 1.25rem 1.5rem;
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.75rem 1.25rem;
+            left: auto;
+            right: 0;
+            overflow-y: auto;
+            transform: translateY(-10px);
+        }
+
+        .nav-dropdown:hover .nav-dropdown-menu.mega-menu {
+            transform: translateY(0);
+        }
+
+        .mega-menu .menu-section {
+            margin-bottom: 0.75rem;
+        }
+
+        .mega-menu .menu-shortcuts {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .mega-menu .menu-shortcuts a {
+            padding: 0.55rem 0.75rem;
+            background: rgba(255, 180, 0, 0.055);
+            border: 1px solid rgba(255, 180, 0, 0.18);
+        }
+
+        .mega-menu .menu-heading {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--orange);
+            padding: 0.5rem 0.75rem 0.35rem;
+            border-bottom: 1px solid var(--grey);
+            margin-bottom: 0.35rem;
+        }
+
+        .mega-menu a {
+            padding: 0.6rem 0.75rem;
+            font-size: 0.9rem;
+            border-radius: 4px;
+            border-left: none;
+            line-height: 1.3;
+        }
+
+        .mega-menu a:hover {
+            border-left: none;
+            background: var(--grey);
+        }
+
+        .mega-menu a small {
+            font-size: 0.75rem;
+            margin-top: 0.15rem;
+        }
+
+        /* Main Content */
+        main {
+            box-sizing: border-box;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+            flex: 1;
+            width: 100%;
+        }
+
+        /* Hero Section */
+        .hero {
+            background: var(--gradient-header);
+            border: 1px solid var(--grey);
+            color: var(--white);
+            padding: 3rem 2rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            text-align: center;
+            box-shadow: var(--shadow-lg);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--orange), var(--orange-light), var(--orange));
+        }
+
+        .hero h1 {
+            color: var(--white);
+            border: none;
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .hero p {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        /* Typography */
+        h1 {
+            color: var(--white);
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            border-bottom: 2px solid var(--orange);
+            padding-bottom: 0.5rem;
+        }
+
+        h2 {
+            color: var(--white);
+            font-size: 1.4rem;
+            margin: 2rem 0 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        h2::before {
+            content: '';
+            width: 4px;
+            height: 1.4rem;
+            background: var(--orange);
+            border-radius: 2px;
+        }
+
+        h3 {
+            color: var(--orange);
+            font-size: 1.15rem;
+            margin: 1.5rem 0 0.75rem;
+        }
+
+        p {
+            margin-bottom: 1rem;
+            color: var(--text-secondary);
+        }
+
+        /* Cards */
+        .card {
+            background: var(--dark-card);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow-sm);
+            border-left: 3px solid var(--grey-light);
+            transition: var(--transition);
+            border: 1px solid var(--grey);
+        }
+
+        .card:hover {
+            box-shadow: var(--shadow-md);
+            border-left-color: var(--orange);
+        }
+
+        .card-accent {
+            border-left-color: var(--orange);
+        }
+
+        .card-green {
+            border-left-color: var(--green);
+        }
+
+        .card-blue {
+            border-left-color: var(--blue);
+        }
+
+        .card h3 {
+            margin-top: 0;
+        }
+
+        /* Clickable Cards */
+        a.card-link {
+            display: block;
+            text-decoration: none;
+            color: inherit;
+        }
+
+        a.card-link .card {
+            cursor: pointer;
+        }
+
+        a.card-link .card:hover {
+            border-left-width: 5px;
+        }
+
+        .card-arrow {
+            color: var(--orange);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            transition: var(--transition);
+        }
+
+        a.card-link:hover .card-arrow {
+            gap: 0.75rem;
+        }
+
+        /* Feature Icons */
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .feature-icon.orange { background: rgba(255, 180, 0, 0.15); color: var(--orange); }
+        .feature-icon.green { background: rgba(71, 180, 117, 0.15); color: var(--green); }
+        .feature-icon.blue { background: rgba(7, 173, 248, 0.15); color: var(--blue); }
+        .feature-icon.grey { background: rgba(255, 255, 255, 0.1); color: var(--text-secondary); }
+
+        /* Stats */
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: var(--orange);
+            line-height: 1;
+        }
+
+        .stat-label {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        /* Code blocks */
+        pre {
+            background: var(--code-bg);
+            color: #e0e0e0;
+            padding: 1.25rem;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 1rem 0;
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 0.85rem;
+            border: 1px solid var(--grey);
+        }
+
+        code {
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            background: var(--grey);
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            font-size: 0.85rem;
+            color: var(--orange);
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            color: #e0e0e0;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            background: var(--dark-card);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--grey);
+        }
+
+        th {
+            background: var(--dark);
+            color: var(--orange);
+            padding: 0.875rem 1rem;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 0.875rem 1rem;
+            border-bottom: 1px solid var(--grey);
+            color: var(--text-secondary);
+        }
+
+        tr:hover {
+            background: var(--grey);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Lists */
+        ul, ol {
+            margin: 1rem 0;
+            padding-left: 1.5rem;
+            color: var(--text-secondary);
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+        }
+
+        /* Links */
+        a {
+            color: var(--orange);
+            transition: var(--transition);
+        }
+
+        a:hover {
+            color: var(--orange-light);
+        }
+
+        /* Grid */
+        .grid {
+            display: grid;
+            gap: 1.5rem;
+        }
+
+        .grid-2 {
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        }
+
+        .grid-3 {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        }
+
+        .grid-4 {
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        }
+
+        /* Alerts */
+        .alert {
+            padding: 1rem 1.25rem;
+            border-radius: 6px;
+            margin: 1rem 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            border: 1px solid;
+        }
+
+        .alert-icon {
+            font-size: 1.25rem;
+            flex-shrink: 0;
+        }
+
+        .alert-info {
+            background: rgba(7, 173, 248, 0.1);
+            border-color: var(--blue);
+            color: var(--blue);
+        }
+
+        .alert-warning {
+            background: rgba(255, 180, 0, 0.1);
+            border-color: var(--orange);
+            color: var(--orange);
+        }
+
+        .alert-success {
+            background: rgba(71, 180, 117, 0.1);
+            border-color: var(--green);
+            color: var(--green);
+        }
+
+        /* Image containers */
+        .img-container {
+            margin: 1.5rem 0;
+            text-align: center;
+        }
+
+        .img-container img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: var(--shadow-lg);
+            border: 1px solid var(--grey);
+        }
+
+        /* Badge */
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .badge-orange {
+            background: var(--orange);
+            color: var(--dark);
+        }
+
+        .badge-green {
+            background: var(--green);
+            color: white;
+        }
+
+        .badge-grey {
+            background: var(--grey);
+            color: var(--text-secondary);
+        }
+
+        /* Diagram blocks (monospace pre with colored spans) */
+        .diagram {
+            background: var(--code-bg);
+            border: 1px solid var(--grey);
+            border-radius: 6px;
+            padding: 1.25rem;
+            margin: 1rem 0;
+            overflow-x: auto;
+            font-family: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+            font-size: 0.8rem;
+            line-height: 1.55;
+            white-space: pre;
+            color: var(--text-muted);
+        }
+        .diagram .hl     { color: var(--blue); font-weight: 700; }
+        .diagram .grn    { color: var(--green); }
+        .diagram .wrn    { color: var(--orange); }
+        .diagram .err    { color: #f85149; }
+        .diagram .purple { color: #bc8cff; }
+        .diagram .dim    { color: #484f58; }
+
+        /* Inline status colors */
+        .good { color: var(--green); font-weight: 600; }
+        .bad  { color: #f85149; font-weight: 600; }
+        .meh  { color: var(--orange); font-weight: 600; }
+
+        /* Section numbering */
+        .section-num {
+            color: var(--orange);
+            font-weight: 400;
+            margin-right: 0.25rem;
+        }
+
+        /* Accordion */
+        details {
+            background: var(--dark-card);
+            border-radius: 6px;
+            margin-bottom: 0.75rem;
+            border: 1px solid var(--grey);
+            border-left: 3px solid var(--grey-light);
+            overflow: hidden;
+            transition: var(--transition);
+        }
+
+        details:hover {
+            border-left-color: var(--orange);
+        }
+
+        details[open] {
+            border-left-color: var(--orange);
+        }
+
+        summary {
+            padding: 1rem 1.25rem;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--white);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            list-style: none;
+            user-select: none;
+            transition: var(--transition);
+        }
+
+        summary::-webkit-details-marker {
+            display: none;
+        }
+
+        summary::after {
+            content: '';
+            border: solid var(--orange);
+            border-width: 0 2px 2px 0;
+            display: inline-block;
+            padding: 4px;
+            transform: rotate(-45deg);
+            transition: transform 0.2s ease;
+            flex-shrink: 0;
+            margin-left: 1rem;
+        }
+
+        details[open] summary::after {
+            transform: rotate(45deg);
+        }
+
+        summary:hover {
+            background: var(--grey);
+        }
+
+        details[open] summary {
+            border-bottom: 1px solid var(--grey);
+        }
+
+        .accordion-content {
+            padding: 1rem 1.25rem;
+        }
+
+        /* Mobile hamburger button */
+        .nav-toggle {
+            display: none;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 0.5rem;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .nav-toggle span {
+            display: block;
+            width: 24px;
+            height: 3px;
+            background: var(--orange);
+            border-radius: 2px;
+            transition: var(--transition);
+        }
+
+        .nav-toggle.active span:nth-child(1) {
+            transform: rotate(45deg) translate(5px, 5px);
+        }
+
+        .nav-toggle.active span:nth-child(2) {
+            opacity: 0;
+        }
+
+        .nav-toggle.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(6px, -6px);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .site-header {
+                flex-direction: row;
+                justify-content: space-between;
+                padding: 0.75rem 1rem;
+            }
+
+            .nav-toggle {
+                display: flex;
+            }
+
+            .site-nav {
+                position: fixed;
+                top: 60px;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: var(--dark);
+                flex-direction: column;
+                flex-wrap: nowrap;
+                align-items: stretch;
+                padding: 1rem;
+                gap: 0.5rem;
+                overflow-y: auto;
+                transform: translateX(-100%);
+                transition: transform 0.3s ease;
+                z-index: 999;
+            }
+
+            .site-nav.open {
+                transform: translateX(0);
+            }
+
+            .site-nav > a,
+            .nav-dropdown > .nav-trigger {
+                width: 100%;
+                padding: 1rem;
+                font-size: 1rem;
+            }
+
+            .nav-dropdown {
+                width: 100%;
+            }
+
+            .nav-dropdown-menu {
+                position: static;
+                opacity: 1;
+                visibility: hidden;
+                max-height: 0;
+                overflow: hidden;
+                transform: none;
+                margin-top: 0;
+                transition: max-height 0.3s ease, visibility 0.3s ease;
+                background: var(--dark-lighter);
+                border-radius: 0;
+                border: none;
+                box-shadow: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu {
+                visibility: visible;
+                max-height: 500px;
+            }
+
+            .nav-dropdown-menu a {
+                padding: 0.75rem 1.5rem;
+            }
+
+            /* Disable hover on mobile */
+            .nav-dropdown:hover .nav-dropdown-menu {
+                opacity: 1;
+                visibility: hidden;
+                max-height: 0;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu,
+            .nav-dropdown.open:hover .nav-dropdown-menu {
+                visibility: visible;
+                max-height: 500px;
+            }
+
+            .nav-dropdown-menu.mega-menu {
+                display: block;
+                width: 100%;
+                min-width: 0;
+                max-height: 0;
+                padding: 0.5rem;
+                left: auto;
+                right: auto;
+                overflow: hidden;
+                transform: none;
+            }
+
+            .nav-dropdown.open .nav-dropdown-menu.mega-menu,
+            .nav-dropdown.open:hover .nav-dropdown-menu.mega-menu {
+                max-height: 70vh;
+                overflow-y: auto;
+                transform: none;
+            }
+
+            .mega-menu .menu-shortcuts {
+                grid-template-columns: 1fr;
+            }
+
+            main {
+                padding: 1rem;
+            }
+
+            h1 {
+                font-size: 1.75rem;
+            }
+
+            .hero {
+                padding: 2rem 1rem;
+            }
+
+            .hero h1 {
+                font-size: 1.75rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="site-header">
+        <a href="index.html" class="header-brand">
+            <div class="header-logo">CK</div>
+            <div>
+                <div class="header-title">C-Kernel-Engine</div>
+                <div class="header-subtitle">High-Performance ML Kernels</div>
+            </div>
+        </a>
+        <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <nav class="site-nav">
+            <a href="index.html" class="">Home</a>
+            <a href="spectrum.html" class="" style="color:var(--orange)">⚡ Spectrum</a>
+            <a href="quickstart.html" class="active">Getting Started</a>
+            <a href="developer-guide.html" class="">Developer Guide</a>
+            <a href="contributing.html" class="">Contribute</a>
+            <a href="scaling.html" class="">Scaling</a>
+            <a href="support-hardware.html" class="" style="color:var(--green)">Support Lab</a>
+            <a href="cke-throughput-unit.html" class="" style="color:var(--orange)">CKU</a>
+            <div class="nav-dropdown">
+                <span class="nav-trigger ">Architecture</span>
+                <div class="nav-dropdown-menu mega-menu">
+                    <!-- Architecture Home Link -->
+                    <div class="menu-section" style="grid-column: 1 / -1; border-bottom: 1px solid var(--grey); padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
+                        <a href="architecture-links.html" style="font-weight: 600; color: var(--orange);">
+                            View All Architecture Docs
+                            <small>Complete documentation index</small>
+                        </a>
+                        <div class="menu-shortcuts">
+                            <a href="pytorch-parity.html">PyTorch Parity<small>Numerical evidence</small></a>
+                            <a href="research.html">Research<small>Current investigations</small></a>
+                            <a href="decisions.html">Architecture Decisions<small>ADRs and tradeoffs</small></a>
+                            <a href="api.html">API &amp; Source Docs<small>Reference and Doxygen</small></a>
+                        </div>
+                    </div>
+                    <!-- Left Column -->
+                    <div class="menu-section">
+                        <div class="menu-heading">Core</div>
+                        <a href="architecture.html">System Overview<small>IR, Codegen, Kernels</small></a>
+                        <a href="tokenizer.html">Tokenizer<small>BPE, WordPiece, Trie</small></a>
+                        <a href="sentencepiece.html">SentencePiece<small>Viterbi DP, byte fallback</small></a>
+                        <a href="kernels.html">Kernel Reference<small>Forward/backward ops</small></a>
+                        <a href="codegen.html">Code Generation<small>IR to C compilation</small></a>
+                        <a href="iteration-philosophy.html">Iteration Philosophy<small>Why v1→v6 matters</small></a>
+                        <a href="ir-v2.html">IR v2 Format<small>Case study: symbolic dimensions</small></a>
+                        <a href="v7-backprop-ir.html">v7 Backprop IR<small>IR1/IR2 + layout/codegen flow</small></a>
+                        <a href="v7-cross-entropy-parity.html">v7 Cross-Entropy Parity<small>p - one_hot, reduction semantics, drift fixes</small></a>
+                        <a href="concepts.html">Deep Dive Concepts<small>RoPE, Flash Attention, GQA</small></a>
+                    </div>
+                    <div class="menu-section">
+                        <div class="menu-heading">Quantization</div>
+                        <a href="quantization.html">Quant Fundamentals<small>Block formats, grouping</small></a>
+                        <a href="gguf-bump.html">GGUF to Bump<small>Weight conversion</small></a>
+                        <a href="gguf-conversion.html">GGUF Parsing<small>Byte-level guide</small></a>
+                    </div>
+                    <!-- Right Column -->
+                    <div class="menu-section">
+                        <div class="menu-heading">Optimization</div>
+                        <a href="gemm-memory-layout.html">GEMM Memory Layout<small>NN/NT layouts, offsets</small></a>
+                        <a href="gemm-optimization.html">GEMM Optimization<small>AVX, MKL, blocking</small></a>
+                        <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>VTune, Advisor, roofline, parity gates</small></a>
+                        <a href="cke-throughput-unit.html">CKE Throughput Unit<small>PB/s active-byte target</small></a>
+                        <a href="gemma4-speculative-pair.html">Gemma4 Speculative Pair<small>Backbone + MTP drafter circuit</small></a>
+                        <a href="v8-mla-kimi.html">v8 MLA / Kimi<small>Explicit decode cache contract</small></a>
+                        <a href="v8-whisper-tiny.html">Whisper Tiny E2E<small>Audio encoder/decoder circuits</small></a>
+                        <a href="simd-architecture.html">SIMD Architecture<small>AVX-512, VNNI, AMX</small></a>
+                        <a href="flash_attention.html" class="">Flash Attention Analysis<small>Why llama.cpp is faster</small></a>
+                    </div>
+                    <div class="menu-section">
+                        <div class="menu-heading">Infrastructure</div>
+                        <a href="memory-safety.html">Memory Safety<small>Bump allocator, canaries</small></a>
+                        <a href="deterministic-memory.html">Deterministic Memory<small>RDMA, interpretability</small></a>
+                        <a href="profiling.html">Profiling Guide<small>Valgrind, perf, flamegraphs</small></a>
+                        <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology<small>CPU-node performance runbook</small></a>
+                        <a href="v7-profiling.html">v7 Profiling Runbook<small>Train kernels: VTune, Advisor, perf</small></a>
+                        <a href="v7-runbook.html">v7 Inference + Training Runbook<small>Copy/paste train + infer workflow</small></a>
+                        <a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook<small>Pretrain + midtrain data generation</small></a>
+                        <a href="testing.html">Testing<small>Numerical parity verification</small></a>
+                        <a href="divergence-harness.html">Stitched Divergence Harness<small>llama.cpp/PyTorch tensor attribution</small></a>
+                        <a href="threadpool.html">Thread Pool<small>Persistent pthreads, dispatch</small></a>
+                    </div>
+                </div>
+            </div>
+            <a href="test-report.html" class="">Test Report</a>
+            <a href="version-history.html" class="">Versions</a>
+        </nav>
+    </header>
+    <main>
+
+<h1>Whisper Tiny End-to-End</h1>
+
+<div class="alert alert-info">
+    <div class="alert-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    </div>
+    <div>
+        <strong>Kernel Source</strong><br>
+        <code>src/kernels/audio_kernels.c</code> and <code>include/ckernel_audio.h</code> &mdash; WAV decode,
+        resampling, pad/truncate, STFT/FFT-400, Slaney Mel, log-Mel, Conv1D stem, and layout primitives.
+        The frontend is the circuit <code>version/v8/circuits/whisper_audio_frontend.json</code>; encoder and
+        decoder topology lives in <code>version/v8/circuits/audio_transformer_encoder.json</code> and
+        <code>version/v8/circuits/audio_transformer_decoder.json</code>; lifecycle orchestration in
+        <code>version/v8/scripts/ck_run_v8.py</code> (unified <code>cks-v8-run audio</code> command). Per-kernel
+        math and diagrams:
+        <a href="concepts.html#audio-frontend">Concepts &mdash; Audio Frontend &amp; Cross-Attention</a>;
+        per-kernel deep dive: <a href="audio-kernels-deep-dive.html">Audio Kernels Deep Dive</a>.
+    </div>
+</div>
+
+<p>
+  CKE v8 runs a generated FP32 Whisper Tiny encoder and decoder from a
+  PCM16 WAV file &mdash; and the frontend is generated too. WAV decode,
+  windowed-sinc resampling, pad/truncate, STFT table construction, FFT400
+  power, Slaney Mel filters, and log-Mel normalization are seven explicit
+  circuit operations in
+  <code>version/v8/circuits/whisper_audio_frontend.json</code>, each with an
+  exact numerical contract and a map-owned call ABI. The resolved operation
+  sequence lowers through call IR into generated C exporting
+  <code>ck_model_run_audio_wav</code>. Python coordinates artifact lifecycles
+  and process isolation; it performs no frontend arithmetic. Codegen contains
+  no Whisper model-name branch; every arithmetic boundary resolves through a
+  kernel-map contract.
+</p>
+
+<h2>How the Audio Pipeline Works</h2>
+
+<p>
+  The diagram follows one WAV file through the full system: contract
+  kernels prepare the log-Mel grid, the generated encoder writes an
+  immutable encoder memory once, and the generated decoder reads it on
+  every cross-attention step while its own KV-cache grows token by token.
+</p>
+
+<div style="overflow-x:auto; margin:2rem 0;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 880" style="max-width:1100px; width:100%; height:auto; font-family:'Inter',system-ui,sans-serif;">
+  <defs>
+    <linearGradient id="aInputGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+    <linearGradient id="aOpGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+    <linearGradient id="aStateGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="aOutGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <marker id="aArrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8"/>
+    </marker>
+    <marker id="aArrowAmber" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f59e0b"/>
+    </marker>
+  </defs>
+
+  <!-- background -->
+  <rect x="0" y="0" width="1100" height="880" rx="18" fill="#0f172a"/>
+  <rect x="0" y="0" width="1100" height="880" rx="18" fill="none" stroke="#1e293b" stroke-width="2"/>
+
+  <!-- title -->
+  <text x="40" y="52" font-size="12" letter-spacing="3" fill="#818cf8" font-family="ui-monospace,'JetBrains Mono',Menlo,monospace">AUDIO PIPELINE &#183; GENERATED FP32 WHISPER TINY</text>
+  <text x="40" y="88" font-size="27" font-weight="700" fill="#f1f5f9">One WAV in, tokens out &#8212; every stage a kernel-map contract</text>
+  <text x="40" y="112" font-size="13.5" fill="#94a3b8">Python orchestrates; C kernels and generated model libraries compute. No Whisper model-name branch anywhere in codegen.</text>
+
+  <!-- ============ ROW A : 01 WAV -> 02 FRONTEND -> 03 STEM ============ -->
+
+  <!-- 01 INPUT -->
+  <g>
+    <rect x="30" y="140" width="320" height="216" rx="12" fill="#111c33" stroke="url(#aInputGrad)" stroke-width="1.6"/>
+    <rect x="30" y="140" width="320" height="34" rx="12" fill="url(#aInputGrad)"/>
+    <text x="46" y="162" font-size="12.5" font-weight="700" letter-spacing="1.5" fill="#eff6ff">01 &#183; WAV IN</text>
+    <text x="46" y="196" font-size="13" font-weight="600" fill="#e2e8f0">PCM16 &#183; mono &#183; 16 kHz</text>
+    <text x="46" y="216" font-size="11.5" fill="#94a3b8">Any format converted with ffmpeg:</text>
+    <text x="46" y="234" font-size="11" fill="#7dd3fc" font-family="ui-monospace,Menlo,monospace">ffmpeg -ac 1 -ar 16000 -c:a pcm_s16le</text>
+    <line x1="46" y1="250" x2="334" y2="250" stroke="#1e3a5f" stroke-width="1"/>
+    <text x="46" y="272" font-size="11.5" font-weight="600" fill="#93c5fd">CIRCUIT OPS &#8594; MAP-OWNED KERNELS</text>
+    <text x="46" y="290" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_wav_decode_memory_pcm16_mono_f32</text>
+    <text x="46" y="306" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_resample_windowed_sinc_f32</text>
+    <text x="46" y="322" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_pad_or_truncate_f32</text>
+    <text x="46" y="342" font-size="10.5" fill="#64748b">&#8804; 30 s today &#8212; truncated, not chunked</text>
+  </g>
+
+  <line x1="354" y1="248" x2="386" y2="248" stroke="#94a3b8" stroke-width="2" marker-end="url(#aArrow)"/>
+
+  <!-- 02 FRONTEND -->
+  <g>
+    <rect x="390" y="140" width="320" height="216" rx="12" fill="#16123a" stroke="url(#aOpGrad)" stroke-width="1.6"/>
+    <rect x="390" y="140" width="320" height="34" rx="12" fill="url(#aOpGrad)"/>
+    <text x="406" y="162" font-size="12.5" font-weight="700" letter-spacing="1.5" fill="#eef2ff">02 &#183; LOG-MEL FRONTEND</text>
+    <text x="406" y="196" font-size="13" font-weight="600" fill="#e2e8f0">STFT power &#8594; 80-band log-Mel</text>
+    <text x="406" y="216" font-size="11.5" fill="#94a3b8">n_fft 400 &#183; hop 160 &#183; Slaney mel</text>
+    <line x1="406" y1="232" x2="694" y2="232" stroke="#2b2660" stroke-width="1"/>
+    <text x="406" y="254" font-size="11.5" font-weight="600" fill="#a5b4fc">CIRCUIT OPS &#8594; MAP-OWNED KERNELS</text>
+    <text x="406" y="272" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_stft_precompute_tables_f32</text>
+    <text x="406" y="288" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_stft_power_fft400_f32</text>
+    <text x="406" y="303" font-size="10" fill="#64748b" font-family="ui-monospace,Menlo,monospace">20&#215;20 mixed-radix FFT + direct-DFT reference</text>
+    <text x="406" y="320" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_whisper_mel_filters_slaney_f32</text>
+    <text x="406" y="336" font-size="10.5" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_whisper_log_mel_from_power_reference_f32</text>
+    <text x="406" y="352" font-size="10.5" fill="#34d399">vs Hugging Face: 1.54e-4 max|&#916;| &#183; 1.37e-6 RMSE</text>
+  </g>
+
+  <line x1="714" y1="248" x2="746" y2="248" stroke="#94a3b8" stroke-width="2" marker-end="url(#aArrow)"/>
+
+  <!-- 03 STEM -->
+  <g>
+    <rect x="750" y="140" width="320" height="216" rx="12" fill="#16123a" stroke="url(#aOpGrad)" stroke-width="1.6"/>
+    <rect x="750" y="140" width="320" height="34" rx="12" fill="url(#aOpGrad)"/>
+    <text x="766" y="162" font-size="12.5" font-weight="700" letter-spacing="1.5" fill="#eef2ff">03 &#183; CONV STEM + LAYOUT</text>
+    <text x="766" y="196" font-size="13" font-weight="600" fill="#e2e8f0">Conv1D &#215;2 + GELU &#8594; tokens</text>
+    <text x="766" y="216" font-size="11.5" fill="#94a3b8">Mel frames become the encoder token grid</text>
+    <line x1="766" y1="232" x2="1054" y2="232" stroke="#2b2660" stroke-width="1"/>
+    <text x="766" y="254" font-size="11.5" font-weight="600" fill="#a5b4fc">CIRCUIT OPS &#8594; MAP-OWNED KERNELS</text>
+    <text x="766" y="274" font-size="11" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_conv1d_channel_major_f32</text>
+    <text x="766" y="292" font-size="11" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">gelu_pytorch_erf_f32_inplace</text>
+    <text x="766" y="310" font-size="11" fill="#94a3b8" font-family="ui-monospace,Menlo,monospace">audio_transpose_channel_to_token_f32</text>
+    <text x="766" y="338" font-size="10.5" fill="#64748b">unequal-length primitives, no model branch</text>
+  </g>
+
+  <!-- connector down from stem to encoder row -->
+  <path d="M 910 356 L 910 378 L 240 378 L 240 396" fill="none" stroke="#94a3b8" stroke-width="2" marker-end="url(#aArrow)"/>
+
+  <!-- ============ ROW B : 04 ENCODER -> memory -> 05 DECODER ============ -->
+
+  <!-- 04 ENCODER -->
+  <g>
+    <rect x="30" y="400" width="470" height="220" rx="12" fill="#111c33" stroke="url(#aInputGrad)" stroke-width="1.6"/>
+    <rect x="30" y="400" width="470" height="34" rx="12" fill="url(#aInputGrad)"/>
+    <text x="46" y="422" font-size="12.5" font-weight="700" letter-spacing="1.5" fill="#eff6ff">04 &#183; ENCODER &#8212; GENERATED C LIBRARY</text>
+    <text x="46" y="456" font-size="13" font-weight="600" fill="#e2e8f0">Transformer blocks &#183; bidirectional self-attention</text>
+    <text x="46" y="476" font-size="11.5" fill="#94a3b8">whisper-tiny safetensors &#8594; BUMP &#8594; call IR &#8594; generated C</text>
+    <text x="46" y="494" font-size="11.5" fill="#94a3b8">67 source tensors &#8594; 71 BUMP entries &#183; 100% weight coverage</text>
+    <line x1="46" y1="510" x2="484" y2="510" stroke="#1e3a5f" stroke-width="1"/>
+    <text x="46" y="532" font-size="11.5" font-weight="600" fill="#93c5fd">PARITY EVIDENCE</text>
+    <text x="46" y="552" font-size="11.5" fill="#94a3b8">79-edge PyTorch X-ray, checkpoint by checkpoint</text>
+    <text x="46" y="570" font-size="11" fill="#34d399" font-family="ui-monospace,Menlo,monospace">max_abs &#8776; 5.05e-4 &#183; RMSE &#8776; 6.7e-6 (FP32)</text>
+    <text x="46" y="598" font-size="10.5" fill="#64748b">runs in an isolated child process &#8212; encoder and decoder share one ABI,</text>
+    <text x="46" y="613" font-size="10.5" fill="#64748b">so one process could bind a call to the wrong artifact</text>
+  </g>
+
+  <!-- ENCODER MEMORY (amber state) -->
+  <g>
+    <rect x="524" y="446" width="140" height="128" rx="12" fill="#2b1d07" stroke="url(#aStateGrad)" stroke-width="1.8"/>
+    <text x="594" y="474" font-size="10.5" font-weight="700" letter-spacing="1" fill="#fbbf24" text-anchor="middle">ENCODER</text>
+    <text x="594" y="490" font-size="10.5" font-weight="700" letter-spacing="1" fill="#fbbf24" text-anchor="middle">MEMORY</text>
+    <text x="594" y="514" font-size="10" fill="#d6b370" text-anchor="middle">immutable</text>
+    <text x="594" y="530" font-size="10" fill="#d6b370" text-anchor="middle">n_audio rows</text>
+    <text x="594" y="552" font-size="9.5" fill="#8a6d3b" text-anchor="middle">written once,</text>
+    <text x="594" y="565" font-size="9.5" fill="#8a6d3b" text-anchor="middle">read every decode step</text>
+  </g>
+
+  <line x1="500" y1="510" x2="520" y2="510" stroke="#f59e0b" stroke-width="2" marker-end="url(#aArrowAmber)"/>
+  <line x1="664" y1="510" x2="684" y2="510" stroke="#f59e0b" stroke-width="2" marker-end="url(#aArrowAmber)"/>
+
+  <!-- 05 DECODER -->
+  <g>
+    <rect x="688" y="400" width="382" height="220" rx="12" fill="#0d2818" stroke="url(#aOutGrad)" stroke-width="1.6"/>
+    <rect x="688" y="400" width="382" height="34" rx="12" fill="url(#aOutGrad)"/>
+    <text x="704" y="422" font-size="12.5" font-weight="700" letter-spacing="1.5" fill="#ecfdf5">05 &#183; DECODER &#8212; PERSISTENT KV-CACHE</text>
+    <text x="704" y="456" font-size="13" font-weight="600" fill="#e2e8f0">forced prefix &#8594; greedy tokens &#8594; EOS</text>
+    <text x="704" y="478" font-size="11.5" fill="#94a3b8">self-attn: decode provider, pos + 1 valid KV rows</text>
+    <text x="704" y="496" font-size="11.5" fill="#94a3b8">cross-attn: K/V from encoder memory (immutable</text>
+    <text x="704" y="512" font-size="11.5" fill="#94a3b8">length), Q from active decoder-token count</text>
+    <line x1="704" y1="528" x2="1054" y2="528" stroke="#14532d" stroke-width="1"/>
+    <text x="704" y="550" font-size="11.5" font-weight="600" fill="#6ee7b7">REFERENCE EVIDENCE</text>
+    <text x="704" y="570" font-size="11.5" fill="#94a3b8">JFK sample: same 23 greedy tokens as</text>
+    <text x="704" y="588" font-size="11.5" fill="#94a3b8">Hugging Face Whisper Tiny, followed by EOS</text>
+    <text x="704" y="606" font-size="10.5" fill="#64748b">English &#183; no-timestamp decoding certified</text>
+  </g>
+
+  <!-- ============ CONTRACT CALLOUTS ============ -->
+  <text x="40" y="662" font-size="11" letter-spacing="2.5" fill="#f59e0b" font-family="ui-monospace,Menlo,monospace">THE THREE CONTRACT FINDINGS THAT MADE E2E WORK</text>
+
+  <g>
+    <rect x="30" y="676" width="340" height="98" rx="10" fill="#1a1533" stroke="#4f46e5" stroke-width="1.2"/>
+    <text x="46" y="702" font-size="11.5" font-weight="700" fill="#c7d2fe">1 &#183; CROSS-ATTN K/V EXTENT</text>
+    <text x="46" y="724" font-size="10.5" fill="#94a3b8">K/V projections keep the immutable</text>
+    <text x="46" y="740" font-size="10.5" fill="#94a3b8">encoder-memory length &#8212; not the active</text>
+    <text x="46" y="756" font-size="10.5" fill="#94a3b8">decoder-token count.</text>
+  </g>
+  <g>
+    <rect x="386" y="676" width="340" height="98" rx="10" fill="#1a1533" stroke="#4f46e5" stroke-width="1.2"/>
+    <text x="402" y="702" font-size="11.5" font-weight="700" fill="#c7d2fe">2 &#183; CROSS-ATTN Q EXTENT</text>
+    <text x="402" y="724" font-size="10.5" fill="#94a3b8">Query length uses the active decoder-token</text>
+    <text x="402" y="740" font-size="10.5" fill="#94a3b8">count &#8212; not the decoder&#8217;s physical</text>
+    <text x="402" y="756" font-size="10.5" fill="#94a3b8">capacity.</text>
+  </g>
+  <g>
+    <rect x="742" y="676" width="328" height="98" rx="10" fill="#1a1533" stroke="#4f46e5" stroke-width="1.2"/>
+    <text x="758" y="702" font-size="11.5" font-weight="700" fill="#c7d2fe">3 &#183; INCREMENTAL SELF-ATTN</text>
+    <text x="758" y="724" font-size="10.5" fill="#94a3b8">Decode provider attends model-&gt;pos + 1</text>
+    <text x="758" y="740" font-size="10.5" fill="#94a3b8">valid KV rows &#8212; a one-token prefill read</text>
+    <text x="758" y="756" font-size="10.5" fill="#94a3b8">only cache row zero.</text>
+  </g>
+
+  <!-- ============ GATE STRIP ============ -->
+  <rect x="30" y="800" width="1040" height="52" rx="10" fill="#0b1120" stroke="#1e293b" stroke-width="1"/>
+  <text x="50" y="822" font-size="10.5" font-weight="700" letter-spacing="1.5" fill="#34d399" font-family="ui-monospace,Menlo,monospace">NIGHTLY</text>
+  <text x="130" y="822" font-size="11" fill="#94a3b8">log-Mel frontend vs PyTorch &#183; audio transformer primitives &#183; v8 audio circuit/codegen regression</text>
+  <text x="50" y="841" font-size="10.5" font-weight="700" letter-spacing="1.5" fill="#f59e0b" font-family="ui-monospace,Menlo,monospace">OPT-IN</text>
+  <text x="130" y="841" font-size="11" fill="#94a3b8">full model-and-WAV transcription &#8212; artifact gate: full reference token sequence + EOS, no tolerance relaxation</text>
+</svg>
+
+</div>
+
+<h2>Generated Frontend: Circuit Ops to Generated C</h2>
+
+<p>
+  The frontend began as direct C calls selected by the Python runner &mdash;
+  useful correctness bring-up, but provider selection sat outside the v8
+  architecture. It is now seven explicit circuit operations
+  (<code>audio_wav_decode</code>, <code>audio_resample</code>,
+  <code>audio_pad_or_truncate</code>, <code>audio_stft_tables</code>,
+  <code>audio_stft</code>, <code>audio_mel_filters</code>,
+  <code>audio_log_mel</code>), each carrying an exact numerical contract and
+  a map-owned call ABI. Lowering plans the frontend buffers and lowers the
+  runtime WAV metadata into call IR; the resolved sequence generates C
+  exporting <code>ck_model_run_audio_wav</code>.
+</p>
+
+<div class="img-container svg-viewer" data-title="Circuit to native execution: ops, contracts, kernel maps, call IR, generated C">
+    <img src="assets/audio-circuit-to-native.svg" alt="Whisper audio frontend lowering from circuit operations through kernel maps and call IR to generated C">
+</div>
+
+<ul>
+  <li>
+    <strong>Provider selection is a kernel-map decision.</strong> The map
+    alone names the registered provider and its call ABI; tests fail closed
+    when an operation is missing or the provider inventory bypasses
+    map-owned ABI accounting.
+  </li>
+  <li>
+    <strong>Scheduling is a call-IR decision.</strong> Operation order and
+    buffer lifetimes come from the circuit through lowering &mdash; not from
+    Python control flow, and not from a codegen branch.
+  </li>
+  <li>
+    <strong>Python owns lifecycle, generated C owns arithmetic.</strong>
+    The runner coordinates artifact directories, encoder/decoder process
+    isolation, and report writing; every sample-level computation executes
+    inside the generated artifact.
+  </li>
+</ul>
+
+<h2>What Nightly Proves, and What Stays Opt-In</h2>
+
+<p>
+  Coverage is split deliberately, because GitHub runners do not carry the
+  generated Whisper artifacts:
+</p>
+
+<ul>
+  <li>
+    <strong>Nightly &mdash; Audio Log-Mel Frontend.</strong> The optimized C
+    FFT/log-Mel frontend is compared against a PyTorch oracle on every
+    nightly run.
+  </li>
+  <li>
+    <strong>Nightly &mdash; Audio Transformer Primitives.</strong>
+    Resampling, FFT, Conv1D, GELU, layout transforms, self-attention, and
+    cross-attention are exercised against their contracts on every nightly
+    run.
+  </li>
+  <li>
+    <strong>Nightly &mdash; v8 audio circuit/codegen regression.</strong>
+    The generated-circuit lowering and codegen path is gated portably,
+    without model weights. These rows now cover the full frontend sequence:
+    native arithmetic, exact provider resolution for all seven ops, the
+    generated <code>ck_model_run_audio_wav</code> ABI, unified-command CLI
+    ownership, and synthetic compilation.
+  </li>
+  <li>
+    <strong>Opt-in artifact test &mdash; full model-and-WAV
+    transcription.</strong> End-to-end transcription runs where the
+    generated encoder and decoder artifacts exist, via
+    <code>make test-whisper-e2e-auto</code>. The gate requires the full
+    reference token sequence and EOS without tolerance relaxation.
+  </li>
+</ul>
+
+<h2>Transcribe Arbitrary Audio</h2>
+
+<p>
+  Convert any source format to mono 16&nbsp;kHz PCM16 WAV first:
+</p>
+
+<pre><code>ffmpeg -i your-audio.mp3 \
+  -ac 1 -ar 16000 -c:a pcm_s16le \
+  /tmp/test-audio.wav</code></pre>
+
+<p>Then run the generated pipeline through the unified v8 command surface:</p>
+
+<pre><code>version/v8/scripts/cks-v8-run audio \
+  --encoder-run-dir /path/to/whisper-tiny-encoder \
+  --decoder-run-dir /path/to/whisper-tiny-decoder \
+  --wav /tmp/test-audio.wav \
+  --language en \
+  --task transcribe \
+  --max-tokens 128 \
+  --output build/whisper-test-report.json</code></pre>
+
+<p>
+  Encoder and decoder execution occurs in isolated child processes. Both
+  generated artifacts export the same model ABI and shared-library symbol
+  names, so loading both into one process can bind a call to the wrong
+  artifact.
+</p>
+
+<h2>Current Limitations</h2>
+
+<ul>
+  <li>Whisper Tiny, FP32 only.</li>
+  <li>
+    PCM16 WAV input; use <code>ffmpeg</code> to convert MP3, FLAC, or other
+    formats.
+  </li>
+  <li>
+    Audio is limited to 30 seconds; longer files are currently truncated,
+    not chunked.
+  </li>
+  <li>English transcription and no-timestamp decoding are certified.</li>
+  <li>
+    The JFK sample matches Hugging Face exactly; arbitrary recordings are
+    functional rather than corpus-certified yet.
+  </li>
+</ul>
+
+<h2>Correctness Findings</h2>
+
+<ol>
+  <li>
+    Cross-attention K/V projections must use the immutable encoder-memory
+    length. Generic prefill code previously replaced their matrix row count
+    with the active decoder-token count.
+  </li>
+  <li>
+    Cross-attention query length must use the active decoder-token count.
+    The generated prefill call previously retained the decoder's physical
+    capacity.
+  </li>
+  <li>
+    Incremental self-attention must use the decode provider and attend
+    <code>model-&gt;pos + 1</code> valid KV rows. A causal prefill provider
+    invoked with one active token attended only cache row zero.
+  </li>
+  <li>
+    Encoder-side cross-attention K/V projections are immutable for an audio
+    segment. The circuit declares a prefill-populated, layer-major FP32 cache;
+    decode consumes the cached head-major slices instead of projecting and
+    transposing all 1,500 encoder rows for every generated token. Binding new
+    encoder memory invalidates the cache, and decode fails closed until prefill
+    repopulates it.
+  </li>
+</ol>
+
+<p>
+  These dimensions are now represented in call IR and phase-specific
+  circuit contracts. Codegen consumes the resolved semantics and contains
+  no Whisper model-name branch.
+</p>
+
+<h2>Reference Evidence</h2>
+
+<p>
+  On the public JFK Whisper sample, CKE emitted the same 23 greedy text
+  tokens as Hugging Face Whisper Tiny, followed by EOS:
+</p>
+
+<pre><code>And so my fellow Americans ask not what your country can do for you
+ask what you can do for your country.</code></pre>
+
+<p>
+  The optimized C FFT/log-Mel frontend differed from Hugging Face by
+  approximately 1.54e-4 maximum absolute error and 1.37e-6 RMSE, without
+  changing any generated token. Before persistent cross-attention caching, one
+  measured run used 0.16 seconds for the frontend, 11.17 seconds for the
+  encoder, 0.75 seconds for decoder prefill, and 16.57 seconds for 23 decode
+  tokens. With the cache, the same exact token sequence used 0.12 seconds for
+  the frontend, 11.15 seconds for the encoder, 0.73 seconds for prefill, and
+  0.21 seconds for decode. Decoder time improved by approximately 79x, and
+  total time fell from 28.64 seconds to approximately 12.22 seconds.
+</p>
+
+<h2>Regression Gates</h2>
+
+<pre><code>make test-audio
+
+CK_WHISPER_ENCODER_RUN_DIR=/path/to/encoder \
+CK_WHISPER_DECODER_RUN_DIR=/path/to/decoder \
+CK_WHISPER_WAV=/path/to/jfk.wav \
+make test-whisper-e2e-auto</code></pre>
+
+<p>
+  Nightly publishes separate PyTorch-backed audio frontend and transformer
+  primitive rows, plus a portable v8 audio circuit/codegen row. Together
+  they fix the Slaney filter identity, forced decoder prefix, projection
+  extents, phase-specific attention providers, and generated call
+  arguments. The artifact gate requires the full reference token sequence
+  and EOS without tolerance relaxation.
+</p>
+    </main>
+
+    <!-- SVG Viewer Overlay (shared across all pages) -->
+    <style>
+    .svg-viewer { cursor: pointer; transition: transform 0.2s, box-shadow 0.2s; }
+    .svg-viewer:hover { transform: scale(1.01); box-shadow: 0 8px 32px rgba(255, 180, 0, 0.3); }
+    #svg-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.95); z-index: 999999; }
+    #svg-overlay .toolbar { position: fixed; top: 0; left: 0; right: 0; padding: 10px 20px; background: rgba(0,0,0,0.9); display: flex; justify-content: space-between; align-items: center; z-index: 1000000; border-bottom: 1px solid #333; }
+    #svg-overlay .toolbar .title { color: #ccc; font-size: 14px; }
+    #svg-overlay .toolbar .controls { display: flex; gap: 8px; align-items: center; }
+    #svg-overlay .toolbar button { background: #333; color: #ffb400; border: 1px solid #555; padding: 8px 14px; cursor: pointer; border-radius: 4px; font-size: 14px; }
+    #svg-overlay .toolbar button:hover { background: #444; border-color: #ffb400; }
+    #svg-overlay .toolbar .close-btn { font-size: 20px; padding: 4px 12px; }
+    #svg-overlay .toolbar .zoom-display { color: #888; font-size: 12px; min-width: 45px; text-align: center; }
+    #svg-overlay .toolbar .separator { color: #444; }
+    #svg-overlay .image-container { display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 60px 20px 20px; cursor: grab; }
+    #svg-overlay .image-container:active { cursor: grabbing; }
+    #svg-overlay .image-container img { max-width: 95%; max-height: 90vh; transform-origin: center center; }
+    #svg-overlay .nav-btn { position: fixed; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,0.7); color: #ffb400; border: 1px solid #555; font-size: 30px; padding: 20px 15px; cursor: pointer; z-index: 1000000; border-radius: 4px; }
+    #svg-overlay .nav-btn:hover { background: rgba(255,180,0,0.2); border-color: #ffb400; }
+    #svg-overlay .nav-prev { left: 10px; }
+    #svg-overlay .nav-next { right: 10px; }
+    #svg-overlay .hint { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); color: #666; font-size: 12px; background: rgba(0,0,0,0.8); padding: 8px 20px; border-radius: 20px; }
+    </style>
+
+    <div id="svg-overlay">
+        <div class="toolbar">
+            <span class="title" id="svg-title">Image</span>
+            <div class="controls">
+                <button onclick="svgViewer.zoomOut()" title="Zoom Out (-)">-</button>
+                <span class="zoom-display" id="zoom-display">100%</span>
+                <button onclick="svgViewer.zoomIn()" title="Zoom In (+)">+</button>
+                <span class="separator">|</span>
+                <button onclick="svgViewer.fitWidth()" title="Fit Width (W)">Width</button>
+                <button onclick="svgViewer.fitHeight()" title="Fit Height (H)">Height</button>
+                <button onclick="svgViewer.resetZoom()" title="Reset (0)">Reset</button>
+                <span class="separator">|</span>
+                <button class="close-btn" onclick="svgViewer.close()" title="Close (ESC)">&times;</button>
+            </div>
+        </div>
+        <button class="nav-btn nav-prev" onclick="svgViewer.prev()" title="Previous">&larr;</button>
+        <button class="nav-btn nav-next" onclick="svgViewer.next()" title="Next">&rarr;</button>
+        <div class="image-container" id="svg-container">
+            <img id="svg-image" src="" alt="">
+        </div>
+        <div class="hint">Scroll to zoom | Drag to pan | W/H to fit | 0 to reset | ESC to close</div>
+    </div>
+
+    <script>
+    var svgViewer = (function() {
+        var overlay, img, titleEl, container;
+        var images = [];
+        var currentIndex = 0;
+        var scale = 1, panX = 0, panY = 0;
+        var isDragging = false, dragStartX, dragStartY, panStartX, panStartY;
+
+        function init() {
+            overlay = document.getElementById('svg-overlay');
+            img = document.getElementById('svg-image');
+            titleEl = document.getElementById('svg-title');
+            container = document.getElementById('svg-container');
+            if (!overlay || !img) return;
+
+            document.querySelectorAll('.svg-viewer').forEach(function(viewer, index) {
+                var viewerImg = viewer.querySelector('img');
+                if (viewerImg) {
+                    images.push({ src: viewerImg.src, title: viewer.getAttribute('data-title') || viewerImg.alt || 'Diagram' });
+                    viewer.onclick = function(e) { e.preventDefault(); open(index); };
+                }
+            });
+
+            container.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                scale = Math.max(0.5, Math.min(10, scale + (e.deltaY > 0 ? -0.2 : 0.2)));
+                updateTransform();
+            });
+
+            container.addEventListener('mousedown', function(e) { isDragging = true; dragStartX = e.clientX; dragStartY = e.clientY; panStartX = panX; panStartY = panY; });
+            document.addEventListener('mousemove', function(e) { if (!isDragging) return; panX = panStartX + (e.clientX - dragStartX); panY = panStartY + (e.clientY - dragStartY); updateTransform(); });
+            document.addEventListener('mouseup', function() { isDragging = false; });
+
+            document.addEventListener('keydown', function(e) {
+                if (overlay.style.display !== 'block') return;
+                if (e.key === 'Escape') close();
+                if (e.key === 'ArrowLeft') prev();
+                if (e.key === 'ArrowRight') next();
+                if (e.key === '+' || e.key === '=') zoomIn();
+                if (e.key === '-') zoomOut();
+                if (e.key === '0') resetZoom();
+                if (e.key === 'w' || e.key === 'W') fitWidth();
+                if (e.key === 'h' || e.key === 'H') fitHeight();
+            });
+
+            overlay.addEventListener('click', function(e) { if (e.target === overlay || e.target === container) close(); });
+        }
+
+        function updateTransform() {
+            img.style.transform = 'translate(' + panX + 'px, ' + panY + 'px) scale(' + scale + ')';
+            var zd = document.getElementById('zoom-display');
+            if (zd) zd.textContent = Math.round(scale * 100) + '%';
+        }
+
+        function open(index) {
+            if (!images[index]) return;
+            currentIndex = index; scale = 1; panX = 0; panY = 0;
+            img.src = images[index].src;
+            titleEl.textContent = images[index].title + ' (' + (index + 1) + '/' + images.length + ')';
+            updateTransform();
+            overlay.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function close() { overlay.style.display = 'none'; document.body.style.overflow = ''; }
+        function prev() { open((currentIndex - 1 + images.length) % images.length); }
+        function next() { open((currentIndex + 1) % images.length); }
+        function zoomIn() { scale = Math.min(10, scale + 0.25); updateTransform(); }
+        function zoomOut() { scale = Math.max(0.5, scale - 0.25); updateTransform(); }
+        function resetZoom() { scale = 1; panX = 0; panY = 0; updateTransform(); }
+
+        function fitWidth() {
+            if (!img.naturalWidth || !img.complete) { img.onload = fitWidth; return; }
+            scale = Math.max(0.1, Math.min(10, (window.innerWidth - 150) / img.naturalWidth));
+            panX = 0; panY = 0; updateTransform();
+        }
+
+        function fitHeight() {
+            if (!img.naturalHeight || !img.complete) { img.onload = fitHeight; return; }
+            scale = Math.max(0.1, Math.min(10, (window.innerHeight - 120) / img.naturalHeight));
+            panX = 0; panY = 0; updateTransform();
+        }
+
+        if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', init); } else { init(); }
+
+        return { open: open, close: close, prev: prev, next: next, zoomIn: zoomIn, zoomOut: zoomOut, resetZoom: resetZoom, fitWidth: fitWidth, fitHeight: fitHeight };
+    })();
+
+    // Mobile navigation
+    (function() {
+        var navToggle = document.querySelector('.nav-toggle');
+        var siteNav = document.querySelector('.site-nav');
+        var dropdowns = document.querySelectorAll('.nav-dropdown');
+
+        if (navToggle && siteNav) {
+            navToggle.addEventListener('click', function() {
+                navToggle.classList.toggle('active');
+                siteNav.classList.toggle('open');
+                navToggle.setAttribute('aria-expanded', siteNav.classList.contains('open'));
+            });
+
+            // Close menu when clicking a non-dropdown link
+            siteNav.querySelectorAll('a:not(.nav-dropdown-menu a)').forEach(function(link) {
+                link.addEventListener('click', function() {
+                    if (window.innerWidth <= 768) {
+                        navToggle.classList.remove('active');
+                        siteNav.classList.remove('open');
+                    }
+                });
+            });
+        }
+
+        // Handle dropdowns on mobile
+        dropdowns.forEach(function(dropdown) {
+            var trigger = dropdown.querySelector('.nav-trigger');
+            if (trigger) {
+                trigger.addEventListener('click', function(e) {
+                    if (window.innerWidth <= 768) {
+                        e.preventDefault();
+                        // Close other dropdowns
+                        dropdowns.forEach(function(d) {
+                            if (d !== dropdown) d.classList.remove('open');
+                        });
+                        dropdown.classList.toggle('open');
+                    }
+                });
+            }
+        });
+
+        // Close dropdowns when clicking outside on mobile
+        document.addEventListener('click', function(e) {
+            if (window.innerWidth <= 768 && !e.target.closest('.nav-dropdown')) {
+                dropdowns.forEach(function(d) { d.classList.remove('open'); });
+            }
+        });
+    })();
+    </script>
+
+    <!-- MathJax for LaTeX equations across docs pages -->
+    <script>
+    window.MathJax = {
+        tex: {
+            inlineMath: [['\\(', '\\)'], ['$', '$']],
+            displayMath: [['\\[', '\\]'], ['$$', '$$']],
+            processEscapes: true,
+            processEnvironments: true
+        },
+        options: {
+            skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+        },
+        svg: {
+            fontCache: 'global'
+        }
+    };
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js"></script>
+
+    <footer style="background: #2a2a2a; border-top: 1px solid #454545; color: #b0b0b0; padding: 3rem 2rem; margin-top: auto;">
+        <div style="max-width: 1200px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 2rem;">
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">C-Kernel-Engine</h4>
+                <p style="color: #707070; font-size: 0.875rem; margin: 0;">High-performance ML kernels with full PyTorch parity.</p>
+            </div>
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">Resources</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.5rem;"><a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine" style="color: #909090; text-decoration: none; font-size: 0.875rem;">GitHub</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="contributing.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Contributor Path</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="architecture.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Architecture</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="api.html" style="color: #909090; text-decoration: none; font-size: 0.875rem;">API Reference</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4 style="color: #ffb400; margin-bottom: 0.75rem; font-size: 1rem;">Related</h4>
+                <ul style="list-style: none; padding: 0; margin: 0;">
+                    <li style="margin-bottom: 0.5rem;"><a href="https://www.shivasnotes.com/" style="color: #909090; text-decoration: none; font-size: 0.875rem;">ShivasNotes</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="https://www.shivasnotes.com/work-with-us" style="color: #909090; text-decoration: none; font-size: 0.875rem;">Work With Us</a></li>
+                    <li style="margin-bottom: 0.5rem;"><a href="https://antshiv.com/" style="color: #909090; text-decoration: none; font-size: 0.875rem;">antshiv.com</a></li>
+                </ul>
+            </div>
+            <div style="text-align: right;">
+                <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-07-26</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

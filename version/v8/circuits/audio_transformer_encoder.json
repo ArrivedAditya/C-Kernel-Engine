@@ -9,6 +9,22 @@
     "encoder_layout": "token_major"
   },
   "contract": {
+    "audio_frontend": {
+      "input_modality": "wav_bytes",
+      "container": "riff_wave",
+      "sample_encoding": "pcm_s16_le",
+      "channel_layout": "mono_mean",
+      "sample_rate": 16000,
+      "sample_extent": 480000,
+      "resample": "hann_windowed_sinc",
+      "resample_radius": 16,
+      "n_fft": 400,
+      "hop_length": 160,
+      "centering": "reflect",
+      "window": "periodic_hann",
+      "mel_scale": "slaney",
+      "output": "normalized_log_mel"
+    },
     "audio_encoder": {
       "input_modality": "audio_features",
       "stem": "two_stage_conv1d",
@@ -30,6 +46,125 @@
     }
   },
   "required_numerical_contracts": {
+    "audio.frontend.wav_decode": {
+      "op": "audio_wav_decode",
+      "template_ops": ["audio_wav_decode"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_wav_pcm16_parse_channel_mean_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py RIFF bounds, PCM16 mono, and channel-mean oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.decode.output",
+        "producer": "audio_wav_decode",
+        "logical_layout": "sample_major",
+        "axis_names": ["sample"]
+      }
+    },
+    "audio.frontend.resample": {
+      "op": "audio_resample",
+      "template_ops": ["audio_resample"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_resample_windowed_sinc_fp64_accum_fp32_output",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py band-limited resampling oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.resample.output",
+        "producer": "audio_resample",
+        "logical_layout": "sample_major",
+        "axis_names": ["sample"]
+      }
+    },
+    "audio.frontend.pad": {
+      "op": "audio_pad_or_truncate",
+      "template_ops": ["audio_pad_or_truncate"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_pad_or_truncate_prefix_zero_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py exact prefix, truncation, and zero-tail matrix"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.samples.output",
+        "producer": "audio_pad_or_truncate",
+        "logical_layout": "sample_major",
+        "axis_names": ["sample"]
+      }
+    },
+    "audio.frontend.stft_tables": {
+      "op": "audio_stft_tables",
+      "template_ops": ["audio_stft_tables"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_stft_periodic_hann_tables_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py periodic-Hann and trigonometric-table identities"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.stft_tables.output",
+        "producer": "audio_stft_tables",
+        "logical_layout": "frequency_sample",
+        "axis_names": ["frequency", "sample"]
+      }
+    },
+    "audio.frontend.stft": {
+      "op": "audio_stft",
+      "template_ops": ["audio_stft"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_stft_centered_hann_fft400_radix20_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py optimized FFT400 power oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.stft.output",
+        "producer": "audio_stft",
+        "logical_layout": "frame_major",
+        "axis_names": ["frame", "frequency"]
+      }
+    },
+    "audio.frontend.mel_filters": {
+      "op": "audio_mel_filters",
+      "template_ops": ["audio_mel_filters"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_whisper_mel_filters_slaney_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio.py fixed Whisper Slaney filter identity"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.mel_filters.output",
+        "producer": "audio_mel_filters",
+        "logical_layout": "mel_frequency",
+        "axis_names": ["mel", "frequency"]
+      }
+    },
+    "audio.frontend.log_mel": {
+      "op": "audio_log_mel",
+      "template_ops": ["audio_log_mel"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_whisper_log_mel_from_power_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio.py PyTorch STFT/log-Mel oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.log_mel.output",
+        "producer": "audio_log_mel",
+        "logical_layout": "mel_major",
+        "axis_names": ["mel", "frame"]
+      }
+    },
     "audio.encoder.stem.conv1": {
       "op": "audio_conv1d",
       "template_ops": ["audio_conv1d_stem_1"],
@@ -98,6 +233,23 @@
         "axis_names": ["token", "channel"]
       }
     },
+    "audio.encoder.activation": {
+      "op": "gelu",
+      "template_ops": ["gelu"],
+      "phases": {
+        "prefill": {
+          "contract_id": "gelu_pytorch_erf_fp32_storage",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py PyTorch GELU approximate=none FP32 oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.encoder.activation.output",
+        "producer": "gelu",
+        "logical_layout": "contiguous",
+        "axis_names": ["element"]
+      }
+    },
     "audio.encoder.attention": {
       "op": "attention",
       "template_ops": ["attn"],
@@ -121,6 +273,61 @@
       "sequence": ["header", "body", "footer"],
       "header": [
         {
+          "id": "wav_decode",
+          "op": "audio_wav_decode",
+          "params": {
+            "mono_capacity_from_config": "audio_max_source_frames"
+          }
+        },
+        {
+          "id": "resample",
+          "op": "audio_resample",
+          "params": {
+            "output_rate_from_config": "audio_sample_rate",
+            "radius_from_config": "audio_resample_radius"
+          }
+        },
+        {
+          "id": "pad_or_truncate",
+          "op": "audio_pad_or_truncate",
+          "params": {
+            "output_frames_from_config": "audio_sample_extent"
+          }
+        },
+        {
+          "id": "stft_tables",
+          "op": "audio_stft_tables",
+          "params": {
+            "n_fft_from_config": "audio_n_fft"
+          }
+        },
+        {
+          "id": "stft",
+          "op": "audio_stft",
+          "params": {
+            "n_samples_from_config": "audio_sample_extent",
+            "hop_length_from_config": "audio_hop_length",
+            "n_frames_from_config": "audio_feature_frames"
+          }
+        },
+        {
+          "id": "mel_filters",
+          "op": "audio_mel_filters",
+          "params": {
+            "sample_rate_from_config": "audio_sample_rate",
+            "n_fft_from_config": "audio_n_fft",
+            "n_mels_from_config": "audio_feature_channels"
+          }
+        },
+        {
+          "id": "log_mel",
+          "op": "audio_log_mel",
+          "params": {
+            "n_mels_from_config": "audio_feature_channels",
+            "n_frames_from_config": "audio_feature_frames"
+          }
+        },
+        {
           "id": "conv1",
           "op": "audio_conv1d_stem_1",
           "params": {
@@ -133,7 +340,17 @@
             "padding_from_config": "audio_conv1_padding"
           }
         },
-        {"id": "conv1_gelu", "op": "gelu"},
+        {
+          "id": "conv1_gelu",
+          "op": "gelu",
+          "params": {
+            "elements_from_config": "audio_conv1_elements"
+          },
+          "graph_slots": {
+            "inputs": {"x": "audio_conv_1"},
+            "outputs": {"out": "audio_conv_1"}
+          }
+        },
         {
           "id": "conv2",
           "op": "audio_conv1d_stem_2",
@@ -147,7 +364,17 @@
             "padding_from_config": "audio_conv2_padding"
           }
         },
-        {"id": "conv2_gelu", "op": "gelu"},
+        {
+          "id": "conv2_gelu",
+          "op": "gelu",
+          "params": {
+            "elements_from_config": "audio_conv2_elements"
+          },
+          "graph_slots": {
+            "inputs": {"x": "audio_conv_2"},
+            "outputs": {"out": "audio_conv_2"}
+          }
+        },
         {
           "id": "to_token_major",
           "op": "layout_channel_to_token",
@@ -184,6 +411,16 @@
               "query_tokens_from_config": "context_length",
               "key_tokens_from_config": "context_length",
               "attention_scale_from_config": "attention_scale"
+            },
+            "graph_slots": {
+              "inputs": {
+                "q": "q_scratch",
+                "k": "k_scratch",
+                "v": "v_scratch"
+              },
+              "outputs": {
+                "out": "attn_scratch"
+              }
             }
           },
           {

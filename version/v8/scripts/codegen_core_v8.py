@@ -822,6 +822,37 @@ def emit_op(
             lines.append(f"    if (stop_seq == {seq_idx}) return;")
         return "\n".join(lines)
 
+    if op_name == "transpose_cross_kv_to_head_major":
+        kind = str(op.get("_cross_kv_kind", "key"))
+        scratch_name = "A_CROSS_K_SCRATCH" if kind == "key" else "A_CROSS_V_SCRATCH"
+        encoder_tokens = int(op.get("_cross_encoder_tokens", 0) or 0)
+        num_heads = int(op.get("_cross_num_heads", 0) or 0)
+        head_dim = int(op.get("_cross_head_dim", 0) or 0)
+        if encoder_tokens <= 0 or num_heads <= 0 or head_dim <= 0:
+            raise RuntimeError(
+                "cross-K/V transpose requires explicit encoder-token and head geometry in call IR"
+            )
+        lines.append(
+            f"""    {{
+        const int H = {num_heads};
+        const int T = {encoder_tokens};
+        const int D = {head_dim};
+        float *buf = (float*)(model->bump + {scratch_name});
+        float *tmp = (float*)(model->bump + A_CROSS_LAYOUT_SCRATCH);
+        for (int t = 0; t < T; ++t) {{
+            for (int h = 0; h < H; ++h) {{
+                memcpy(tmp + ((size_t)h*T + t)*D,
+                       buf + ((size_t)t*H + h)*D,
+                       (size_t)D*sizeof(float));
+            }}
+        }}
+        memcpy(buf, tmp, (size_t)H*T*D*sizeof(float));
+    }}"""
+        )
+        if seq_idx is not None:
+            lines.append(f"    if (stop_seq == {seq_idx}) return;")
+        return "\n".join(lines)
+
     if op_name == "transpose_qkv_to_head_major":
         lines.append(
             """    {
@@ -1721,6 +1752,52 @@ def emit_op(
             "qkv_packed",
             _hidden_arg("N", "out_dim"),
         )
+    elif op_name == "kv_a_proj":
+        out_expr = _hidden_arg("output", "out", "c", "y")
+        rows = _hidden_arg("M", "m", "rows", "tokens")
+        width = _hidden_arg("N", "n", "out_dim")
+        _emit_hidden_export(out_expr, "mla_kv_a", _mul_expr(rows, width))
+        _emit_hidden_export_last_row(out_expr, "mla_kv_a", width)
+    elif op_name == "kv_a_layernorm":
+        out_expr = _hidden_arg("output", "out", "y")
+        rows = _hidden_arg("tokens", "rows", "num_tokens")
+        width = _hidden_arg("d_model", "kv_lora_rank")
+        _emit_hidden_export(out_expr, "mla_kv_norm", _mul_expr(rows, width))
+        _emit_hidden_export_last_row(out_expr, "mla_kv_norm", width)
+    elif op_name == "kv_lora_decompress":
+        rows = _hidden_arg("tokens", "rows", "num_tokens")
+        heads = _hidden_arg("heads", "num_heads")
+        _emit_hidden_export(
+            _hidden_arg("k_nope"),
+            "mla_k_nope",
+            _mul_expr(rows, heads, _hidden_arg("qk_nope_dim")),
+        )
+        _emit_hidden_export(
+            _hidden_arg("value", "v"),
+            "mla_value",
+            _mul_expr(rows, heads, _hidden_arg("v_dim", "v_head_dim")),
+        )
+    elif op_name == "partial_rope_concat":
+        rows = _hidden_arg("tokens", "rows", "num_tokens")
+        heads = _hidden_arg("heads", "num_heads")
+        qk_width = (
+            f"({_hidden_arg('qk_nope_dim')} + {_hidden_arg('qk_rope_dim')})"
+            if _hidden_arg("qk_nope_dim") and _hidden_arg("qk_rope_dim")
+            else None
+        )
+        count_expr = _mul_expr(rows, heads, qk_width)
+        _emit_hidden_export(_hidden_arg("query", "q"), "mla_query", count_expr)
+        _emit_hidden_export(_hidden_arg("key", "k"), "mla_key", count_expr)
+    elif op_name == "mla_attention":
+        _emit_hidden_export(
+            _hidden_arg("output", "out"),
+            "mla_context",
+            _mul_expr(
+                _hidden_arg("num_tokens", "tokens", "rows", "cache_len"),
+                _hidden_arg("num_heads", "heads"),
+                _hidden_arg("v_head_dim", "v_dim"),
+            ),
+        )
     elif op_name == "patchify":
         patch_h = f"(({_hidden_arg('H')}) / ({_hidden_arg('P')}))" if _hidden_arg("H") and _hidden_arg("P") else None
         patch_w = f"(({_hidden_arg('W')}) / ({_hidden_arg('P')}))" if _hidden_arg("W") and _hidden_arg("P") else None
@@ -1886,6 +1963,15 @@ def emit_op(
             label,
             _hidden_arg("d_model", "embed_dim", "dim"),
         )
+    elif op_name == "block_rmsnorm":
+        out_expr = _hidden_arg("output", "out", "x", "y")
+        count_expr = _mul_expr(
+            _hidden_arg("tokens", "num_tokens", "rows"),
+            _hidden_arg("d_model", "aligned_embed_dim", "embed_dim", "dim"),
+        ) or "EMBED_DIM"
+        label = "block_rmsnorm" if op_instance_idx == 0 else "ffn_norm"
+        _emit_hidden_export(out_expr, label, count_expr)
+        _emit_hidden_export_last_row(out_expr, label, "EMBED_DIM")
     elif op_name in {"rmsnorm", "attn_norm"}:
         out_expr = _hidden_arg("output", "out", "x", "y")
         count_expr = _mul_expr(
@@ -1923,6 +2009,30 @@ def emit_op(
         if out_expr:
             lines.append(f'    ck_debug_export_hidden(model, {layer}, "post_ffn_norm", (const float*){out_expr}, EMBED_DIM);')
             _emit_hidden_export_last_row(out_expr, "post_ffn_norm", "EMBED_DIM")
+    elif op_name == "moe_router":
+        output = _hidden_arg("C", "output", "out")
+        rows = _hidden_arg("M", "m", "rows", "tokens")
+        width = _hidden_arg("N", "n", "n_experts")
+        _emit_hidden_export(output, "moe_router_logits", _mul_expr(rows, width))
+        _emit_hidden_export_last_row(output, "moe_router_logits", width)
+    elif op_name == "group_limited_topk_router":
+        weights = _hidden_arg("weights")
+        rows = _hidden_arg("rows", "M", "m", "tokens")
+        width = _hidden_arg("top_k")
+        _emit_hidden_export(weights, "moe_routing_weights", _mul_expr(rows, width))
+        _emit_hidden_export_last_row(weights, "moe_routing_weights", width)
+    elif op_name == "moe_swiglu_expert_mlp":
+        output = _hidden_arg("output", "out")
+        rows = _hidden_arg("rows", "M", "m", "tokens")
+        width = _hidden_arg("hidden_dim", "embed_dim") or "EMBED_DIM"
+        _emit_hidden_export(output, "moe_routed_output", _mul_expr(rows, width))
+        _emit_hidden_export_last_row(output, "moe_routed_output", width)
+    elif op_name == "shared_swiglu_expert_mlp":
+        output = _hidden_arg("output", "out")
+        rows = _hidden_arg("rows", "M", "m", "tokens")
+        width = _hidden_arg("hidden_dim", "embed_dim") or "EMBED_DIM"
+        _emit_hidden_export(output, "moe_combined_output", _mul_expr(rows, width))
+        _emit_hidden_export_last_row(output, "moe_combined_output", width)
     elif op_name == "mlp_gate_up":
         out_expr = _hidden_arg("output", "out", "c", "y")
         rows_expr = _hidden_arg("m", "M", "rows", "tokens")
@@ -2887,6 +2997,53 @@ CK_EXPORT void ck_model_profile_dump(void) {
 
     layout = layout or {}
     config = config or {}
+    encoder_memory_api = ""
+    uses_persistent_cross_kv_cache = bool(
+        config.get("_template_uses_persistent_cross_kv_cache", False)
+    )
+    if bool(config.get("uses_cross_attention", False)):
+        encoder_tokens = int(config.get("encoder_memory_length", 0) or 0)
+        encoder_dim = int(config.get("embed_dim", 0) or 0)
+        encoder_buffers = [
+            row
+            for row in layout.get("memory", {}).get("activations", {}).get("buffers", [])
+            if row.get("name") == "encoder_memory"
+        ]
+        if encoder_tokens <= 0 or encoder_dim <= 0:
+            raise RuntimeError(
+                "cross-attention artifacts require positive encoder memory dimensions"
+            )
+        if len(encoder_buffers) != 1:
+            raise RuntimeError(
+                "cross-attention artifacts require exactly one encoder_memory buffer"
+            )
+        encoder_buffer = encoder_buffers[0]
+        expected_bytes = encoder_tokens * encoder_dim * 4
+        if (
+            encoder_buffer.get("dtype") != "fp32"
+            or int(encoder_buffer.get("size", 0) or 0) != expected_bytes
+            or encoder_buffer.get("define") != "A_ENCODER_MEMORY"
+        ):
+            raise RuntimeError(
+                "encoder_memory layout does not match the declared FP32 cross-attention contract"
+            )
+        encoder_memory_api = f"""
+/* Immutable encoder context consumed by encoder-decoder cross-attention. */
+CK_EXPORT int ck_model_set_encoder_memory(const float *data, int tokens, int dim) {{
+    if (!g_model || !data) return -1;
+    if (tokens != {encoder_tokens} || dim != {encoder_dim}) return -2;
+    memcpy(
+        g_model->bump + A_ENCODER_MEMORY,
+        data,
+        (size_t){encoder_tokens} * (size_t){encoder_dim} * sizeof(float)
+    );
+    g_model->encoder_kv_ready = 0;
+    return 0;
+}}
+
+CK_EXPORT int ck_model_get_encoder_memory_tokens(void) {{ return {encoder_tokens}; }}
+CK_EXPORT int ck_model_get_encoder_memory_dim(void) {{ return {encoder_dim}; }}
+"""
     recurrent_reset_lines: list[str] = []
     prefill_policy = str(config.get("prefill_policy") or "").strip().lower()
     force_sequential_prefill = prefill_policy in {"sequential_decode", "decode"}
@@ -2894,6 +3051,14 @@ CK_EXPORT void ck_model_profile_dump(void) {
         prefill_guard = " && (getenv(\"CK_V8_FORCE_BATCHED_PREFILL\") && atoi(getenv(\"CK_V8_FORCE_BATCHED_PREFILL\")) != 0)"
     else:
         prefill_guard = " && !(getenv(\"CK_V8_FORCE_DECODE_PREFILL\") && atoi(getenv(\"CK_V8_FORCE_DECODE_PREFILL\")) != 0)"
+    prefill_count_guard = (
+        "count > 0" if uses_persistent_cross_kv_cache else "count > 1"
+    )
+    decode_encoder_cache_guard = (
+        "    if (!g_model->encoder_kv_ready) return -2;\n"
+        if uses_persistent_cross_kv_cache
+        else ""
+    )
     for buf_name, macro_name in (
         ("recurrent_conv_state", "A_RECURRENT_CONV_STATE"),
         ("recurrent_ssm_state", "A_RECURRENT_SSM_STATE"),
@@ -2926,6 +3091,7 @@ typedef struct {{
     float *logits;           /* Output logits */
     int pos;                 /* Current KV slot / active token count */
     int rope_pos;            /* Text-position counter used by RoPE */
+    int encoder_kv_ready;    /* Immutable cross-attention projections populated */
     int bridge_has_explicit_positions;
     int32_t bridge_positions[4];
 {tokenizer_field_line}
@@ -3271,7 +3437,7 @@ CK_EXPORT int ck_model_embed_tokens(const int32_t *tokens, int count) {{
 
 #ifdef CK_HAS_PREFILL
     /* Use batched prefill for multiple tokens unless the model requires decode replay. */
-    if (count > 1{prefill_guard}) {{
+    if ({prefill_count_guard}{prefill_guard}) {{
         ck_prefill(g_model, tokens, count);{profile_dump_after_prefill}
         ck_trace_pos("embed_prefill_end", tokens[count - 1], count, before_pos, g_model->pos);
         return 0;
@@ -3299,7 +3465,7 @@ CK_EXPORT int ck_model_forward(float *output) {{
 /* Decode single token */
 CK_EXPORT int ck_model_decode(int32_t token, float *output) {{
     if (!g_model) return -1;
-    /* Capture position before decode (ck_decode increments pos at end) */
+{decode_encoder_cache_guard}    /* Capture position before decode (ck_decode increments pos at end) */
     int token_pos = g_model->pos;
     ck_trace_pos("decode_begin", token, 1, token_pos, g_model->pos);
     g_ck_skip_decode_logits = 0;
@@ -3344,6 +3510,7 @@ CK_EXPORT int ck_model_get_logits_stride(void) {{ return {logits_stride}; }}
 CK_EXPORT float* ck_model_get_logits(void) {{ return g_model ? g_model->logits : NULL; }}
 CK_EXPORT uintptr_t ck_model_get_base_ptr(void) {{ return (uintptr_t)(g_model ? g_model->bump : NULL); }}
 
+{encoder_memory_api}
 {tokenizer_api_functions}
 {stop_tokens_api}
 {profile_dump_api}

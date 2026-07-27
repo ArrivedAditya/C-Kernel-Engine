@@ -12,6 +12,10 @@ inference lane only:
 and adds a v8-native multimodal route:
 
   decoder GGUF + mmproj GGUF + image -> run_multimodal_bridge_v8.py
+
+and a generated audio-transformer route:
+
+  generated encoder + generated decoder + WAV -> ck_model_run_audio_wav
 """
 
 import argparse
@@ -708,6 +712,22 @@ def _prepare_runtime_dir_from_local_artifacts(model_dir: Path, work_dir: Path) -
     return dst_bump, dst_config, dst_manifest
 
 
+def _stage_safetensors_tokenizer_assets(checkpoint_dir: Path, output_dir: Path) -> None:
+    for name in (
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "generation_config.json",
+        "tiktoken.model",
+        "tokenizer.model",
+    ):
+        _copy_optional(checkpoint_dir / name, output_dir / name)
+    for path in checkpoint_dir.glob("tokenization_*.py"):
+        _copy_optional(path, output_dir / path.name)
+    if (checkpoint_dir / "tokenizer_bin").is_dir() and not (output_dir / "tokenizer_bin").exists():
+        shutil.copytree(checkpoint_dir / "tokenizer_bin", output_dir / "tokenizer_bin")
+
+
 def step_convert_safetensors(
     checkpoint_dir: Path,
     output_dir: Path,
@@ -720,6 +740,7 @@ def step_convert_safetensors(
     manifest_path = output_dir / "weights_manifest.json"
     if weights_path.exists() and config_path.exists() and manifest_path.exists() and not force:
         log(f"  Using cached weights at {weights_path}", C_DIM)
+        _stage_safetensors_tokenizer_assets(checkpoint_dir, output_dir)
         return weights_path, config_path, manifest_path
     output_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -737,15 +758,7 @@ def step_convert_safetensors(
         "auto",
     ]
     run_cmd(cmd, cwd=PROJECT_ROOT)
-    for name in (
-        "tokenizer.json",
-        "tokenizer_config.json",
-        "special_tokens_map.json",
-        "generation_config.json",
-    ):
-        _copy_optional(checkpoint_dir / name, output_dir / name)
-    if (checkpoint_dir / "tokenizer_bin").is_dir() and not (output_dir / "tokenizer_bin").exists():
-        shutil.copytree(checkpoint_dir / "tokenizer_bin", output_dir / "tokenizer_bin")
+    _stage_safetensors_tokenizer_assets(checkpoint_dir, output_dir)
     return weights_path, config_path, manifest_path
 
 
@@ -1029,7 +1042,7 @@ def _apply_qwen3vl_ocr_fast_defaults(env: dict[str, str]) -> None:
     if not _qwen3vl_ocr_fast_profile_enabled(env):
         return
     env.setdefault("CK_ENABLE_Q80_FP32_M4N4", "1")
-    env.setdefault("CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP", "20")
+    env.setdefault("CK_Q4K_GATEUP_SWIGLU_X16_THREAD_CAP", "16")
     env.setdefault("CK_ATTENTION_QBLOCK4", "1")
     env.setdefault("CK_ATTENTION_THREAD_CAP", "16")
     env.setdefault("CK_Q4K_PACKED_META_X8_MAX_M", "2048")
@@ -1136,7 +1149,7 @@ def _resolve_run_dir(model_input: str, input_type: str, info: dict[str, Any], re
     if input_type == "hf_gguf":
         return CACHE_DIR / info["repo_id"].replace("/", "--")
     if input_type == "hf_id":
-        return CACHE_DIR / info["model_id"].replace("/", "--")
+        return CACHE_DIR / info["model_id"].replace("/", "--") / ".ck_build_v8"
     if input_type == "gguf":
         return CACHE_DIR / info["path"].stem
     if input_type == "local_dir":
@@ -1337,6 +1350,33 @@ def run_pipeline(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_audio_pipeline(args: argparse.Namespace) -> int:
+    module_path = SCRIPTS_DIR / "run_whisper_v8.py"
+    spec = importlib.util.spec_from_file_location("ck_v8_audio_runtime", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load v8 audio runtime: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    argv = [
+        "run",
+        "--encoder-run-dir",
+        str(args.encoder_run_dir),
+        "--decoder-run-dir",
+        str(args.decoder_run_dir),
+        "--wav",
+        str(args.wav),
+        "--language",
+        str(args.language),
+        "--task",
+        str(args.task),
+        "--max-tokens",
+        str(int(args.max_tokens)),
+    ]
+    if args.output is not None:
+        argv.extend(["--output", str(args.output)])
+    return int(module.main(argv))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="C-Kernel-Engine v8 inference runner",
@@ -1352,6 +1392,11 @@ Examples:
   version/v8/scripts/cks-v8-run run hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/Qwen3VL-8B-Instruct-Q4_K_M.gguf \\
     --mmproj hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf \\
     --image-path version/v8/test_assets/v8_vision_doc_card_72.png --prompt "Explain this image."
+
+  version/v8/scripts/cks-v8-run audio \\
+    --encoder-run-dir /path/to/whisper-tiny-encoder \\
+    --decoder-run-dir /path/to/whisper-tiny-decoder \\
+    --wav /path/to/audio.wav
 """,
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
@@ -1410,6 +1455,18 @@ Examples:
     )
 
     run_parser.add_argument("--port", default=int, help="Acesss model I/O locally using OpenAI API")
+    audio_parser = subparsers.add_parser(
+        "audio", help="Transcribe or translate WAV audio with generated runtimes"
+    )
+    audio_parser.add_argument("--encoder-run-dir", type=Path, required=True)
+    audio_parser.add_argument("--decoder-run-dir", type=Path, required=True)
+    audio_parser.add_argument("--wav", type=Path, required=True)
+    audio_parser.add_argument("--language", default="en")
+    audio_parser.add_argument(
+        "--task", choices=("transcribe", "translate"), default="transcribe"
+    )
+    audio_parser.add_argument("--max-tokens", type=int, default=128)
+    audio_parser.add_argument("--output", type=Path)
 
     subparsers.add_parser("list", help="List cached models")
 
@@ -1422,6 +1479,8 @@ Examples:
     try:
         if args.command == "run":
             return run_pipeline(args)
+        if args.command == "audio":
+            return run_audio_pipeline(args)
         if args.command == "list":
             if CACHE_DIR.exists():
                 models = sorted(path for path in CACHE_DIR.iterdir() if path.is_dir())

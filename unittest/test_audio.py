@@ -34,6 +34,10 @@ lib.audio_whisper_log_mel_reference_f32.argtypes = [
     ctypes.c_int,
 ]
 lib.audio_whisper_log_mel_reference_f32.restype = ctypes.c_int
+lib.audio_whisper_mel_filters_slaney_f32.argtypes = [
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, _FLOAT_P,
+]
+lib.audio_whisper_mel_filters_slaney_f32.restype = ctypes.c_int
 
 
 def _ptr(array: np.ndarray) -> _FLOAT_P:
@@ -187,6 +191,11 @@ def _check_invalid_shapes() -> None:
 
 def _check_filter_identity() -> None:
     filters = _whisper_mel_filters()
+    generated = np.empty_like(filters)
+    assert lib.audio_whisper_mel_filters_slaney_f32(
+        16000, N_FFT, N_MELS, _ptr(generated)
+    ) == 0
+    assert np.array_equal(generated, filters)
     digest = hashlib.sha256(filters.tobytes()).hexdigest()
     assert digest == "2150c30cbbeb6029f52002ffa666c1c72d83dbf53f463cb8462052055806e891"
     assert filters.shape == (80, 201)

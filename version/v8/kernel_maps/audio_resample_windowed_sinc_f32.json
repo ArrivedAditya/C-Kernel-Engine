@@ -25,10 +25,10 @@
   }],
   "call_abi": {"version": 1, "params": [
     {"name": "input", "source": "activation:input", "cast": "const float*"},
-    {"name": "input_frames", "source": "dim:input_frames"},
-    {"name": "input_rate", "source": "dim:input_rate"},
+    {"name": "input_frames", "source": "runtime:audio_source_frames"},
+    {"name": "input_rate", "source": "runtime:audio_source_rate"},
     {"name": "output", "source": "output:output", "cast": "float*"},
-    {"name": "output_frames", "source": "dim:output_frames"},
+    {"name": "output_frames", "source": "runtime:audio_resampled_frames"},
     {"name": "output_rate", "source": "dim:output_rate"},
     {"name": "radius", "source": "dim:radius"}
   ]},

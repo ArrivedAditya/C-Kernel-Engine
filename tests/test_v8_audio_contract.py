@@ -26,30 +26,46 @@ class AudioFrontendContractTests(unittest.TestCase):
         cls.contracts = resolver.load_json(resolver.DEFAULT_CONTRACTS)
         cls.kernels = resolver.load_kernel_capabilities(contracts=cls.contracts)
 
-    def test_log_mel_resolves_exact_reference_provider(self):
-        plan = resolver.resolve_contract(
-            self.circuit,
-            self.contracts,
-            self.kernels,
-            "audio.frontend.log_mel",
-            "prefill",
-            mode="production",
-        )
-        self.assertEqual(plan["kernel"]["id"], "audio_whisper_log_mel_reference_f32")
+    def test_complete_frontend_resolves_exact_providers(self):
+        expected = {
+            "audio.frontend.wav_decode": "audio_wav_decode_memory_pcm16_mono_f32",
+            "audio.frontend.resample": "audio_resample_windowed_sinc_f32",
+            "audio.frontend.pad": "audio_pad_or_truncate_f32",
+            "audio.frontend.stft_tables": "audio_stft_precompute_tables_f32",
+            "audio.frontend.stft": "audio_stft_power_fft400_f32",
+            "audio.frontend.mel_filters": "audio_whisper_mel_filters_slaney_f32",
+            "audio.frontend.log_mel": "audio_whisper_log_mel_from_power_f32",
+        }
+        for requirement, kernel_id in expected.items():
+            with self.subTest(requirement=requirement):
+                plan = resolver.resolve_contract(
+                    self.circuit,
+                    self.contracts,
+                    self.kernels,
+                    requirement,
+                    "prefill",
+                    mode="production",
+                )
+                self.assertEqual(plan["kernel"]["id"], kernel_id)
+
+    def test_frontend_sequence_is_explicit_and_complete(self):
+        sequence = self.circuit["block_types"]["audio_frontend"]["sequence"]
         self.assertEqual(
-            plan["kernel"]["function"], "audio_whisper_log_mel_reference_f32"
-        )
-        semantics = plan["contract"]["semantics"]
-        self.assertEqual(semantics["operator_family"], "audio_log_mel")
-        self.assertEqual(semantics["reduction"]["kind"], "composite")
-        self.assertEqual(semantics["reduction"]["order"], "stage_ordered")
-        self.assertEqual(
-            plan["checkpoint"]["axis_names"], ["mel", "frame"]
+            [row["op"] for row in sequence],
+            [
+                "audio_wav_decode",
+                "audio_resample",
+                "audio_pad_or_truncate",
+                "audio_stft_tables",
+                "audio_stft",
+                "audio_mel_filters",
+                "audio_log_mel",
+            ],
         )
 
     def test_unregistered_audio_arithmetic_is_a_hard_failure(self):
         circuit = copy.deepcopy(self.circuit)
-        circuit["required_numerical_contracts"]["audio.frontend.log_mel"]["phases"][
+        circuit["required_numerical_contracts"]["audio.frontend.stft"]["phases"][
             "prefill"
         ]["contract_id"] = "audio_whisper_log_mel_unregistered_fp16"
         with self.assertRaises(resolver.ContractError):
@@ -57,7 +73,7 @@ class AudioFrontendContractTests(unittest.TestCase):
                 circuit,
                 self.contracts,
                 self.kernels,
-                "audio.frontend.log_mel",
+                "audio.frontend.stft",
                 "prefill",
                 mode="production",
             )

@@ -3,6 +3,17 @@
   "schema_version": 1,
   "engine_contract_version": "8",
   "contracts": {
+    "audio_wav_pcm16_parse_channel_mean_fp32": {
+      "operator_family": "audio_wav_decode",
+      "status": "validated",
+      "storage": {"input": "uint8", "weight": "none", "output": "fp32"},
+      "compute": {"input": "int16", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "riff_wave_bounds_validation_then_ascending_interleaved_channel_sum_then_channel_mean_then_signed_16_bit_scale"},
+      "rounding": {"mode": "rne", "points": ["input_load", "reduction_update", "output_divide", "output_store"]},
+      "reduction": {"kind": "sum", "order": "left_to_right", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Bounds-checked RIFF/WAVE PCM16 parsing followed by deterministic ascending-channel mono FP32 decoding."
+    },
     "audio_pcm_s16_mono_fp32": {
       "operator_family": "audio_pcm_decode",
       "status": "validated",
@@ -36,6 +47,28 @@
       "position_transform": null,
       "description": "Band-limited resampling with exact integer-rate output positions, cutoff=min(1, output_rate/input_rate), a finite Hann-windowed sinc radius, ascending-tap FP64 accumulation, normalization, and FP32 storage."
     },
+    "audio_pad_or_truncate_prefix_zero_fp32": {
+      "operator_family": "audio_pad_or_truncate",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "copy_valid_prefix_then_zero_output_tail"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Copies the available sample prefix exactly, truncates excess input, and zero-fills a short input to the circuit-declared sample extent."
+    },
+    "audio_stft_periodic_hann_tables_fp32": {
+      "operator_family": "audio_stft_tables",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "ascending_window_sample_then_ascending_frequency_sample_trigonometric_table"},
+      "rounding": {"mode": "rne", "points": ["weighted_product", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Constructs the periodic Hann window and FP32 cosine/sine tables consumed by the selected STFT provider."
+    },
     "audio_stft_centered_hann_precomputed_fp32": {
       "operator_family": "audio_stft",
       "status": "validated",
@@ -57,6 +90,28 @@
       "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
       "position_transform": null,
       "description": "Whisper-width 400-point centered periodic-Hann STFT power using a fixed 20x20 Cooley-Tukey factorization and precomputed FP32 trigonometric tables. This provider intentionally has a different reduction tree from the direct DFT reference."
+    },
+    "audio_whisper_mel_filters_slaney_fp32": {
+      "operator_family": "audio_mel_filters",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp64", "weight": "none", "accumulator": "fp64", "contraction": "disabled", "evaluation_order": "slaney_frequency_edges_then_ascending_mel_frequency_triangular_filter_then_fp32_store"},
+      "rounding": {"mode": "rne", "points": ["weighted_product", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "fp64", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Constructs Whisper's Slaney-normalized triangular Mel filter bank from explicit sample-rate, FFT-width, and Mel-count dimensions."
+    },
+    "audio_whisper_log_mel_from_power_fp32": {
+      "operator_family": "audio_log_mel",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32", "contraction": "enabled", "evaluation_order": "ascending_bin_mel_projection_then_log10_global_clamp_affine"},
+      "rounding": {"mode": "rne", "points": ["mel_projection", "logarithm", "dynamic_range_clamp", "affine_normalization", "output_store"]},
+      "reduction": {"kind": "composite", "order": "stage_ordered", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Projects a frame-major STFT power checkpoint through explicit Slaney Mel filters, then applies Whisper log10 clipping and normalization."
     },
     "audio_conv1d_channel_major_ascending_fp32": {
       "operator_family": "audio_conv1d",
@@ -90,6 +145,17 @@
       "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
       "position_transform": null,
       "description": "In-place token-major addition of learned absolute FP32 position embeddings with no interpolation or reduction."
+    },
+    "position_embeddings_add_offset_token_major_fp32": {
+      "operator_family": "position_embeddings",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "ascending_token_then_channel_single_fp32_add"},
+      "rounding": {"mode": "rne", "points": ["input_load", "weighted_product", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "In-place token-major addition of learned absolute FP32 position embeddings beginning at the explicit runtime decode position."
     },
     "attention_query_key_scaled_ordered_fp32": {
       "operator_family": "attention",
@@ -1198,6 +1264,36 @@
       "position_transform": null,
       "description": "llama.cpp x86 Q5_K projection: canonical Q8_K activation quantization, integer sub-block dots, FP32 FMA super-block accumulation, and movehl/movehdup lane reduction."
     },
+    "q8_0_weight_q8_0_input_llama_fp32_output": {
+      "operator_family": "gemm",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "q8_0", "output": "fp32"},
+      "compute": {
+        "input": "int8",
+        "weight": "int8",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "q8_0_quantize_then_int32_block_dot_then_fp32_scaled_block_accumulation"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "weighted_product", "reduction_update", "output_store"]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "ascending_k",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "llama.cpp-compatible Q8_0 projection with canonical per-block Q8_0 activation quantization and FP32 scaled block accumulation."
+    },
     "bf16_weight_bf16_input_native_pair_dot_bf16_output": {
       "status": "validated",
       "storage": {
@@ -1521,6 +1617,41 @@
       },
       "position_transform": null,
       "description": "PyTorch tanh-approximate GELU over BF16-valued inputs with FP32 elementwise compute and BF16 RNE output storage."
+    },
+    "gelu_pytorch_erf_fp32_storage": {
+      "operator_family": "gelu",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "evaluation_order": "pytorch_erf_approximate_none_scalar_fp32"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "PyTorch GELU approximate=none over FP32 storage using the scalar erf formulation."
     },
     "gelu_pytorch_erf_sleef_bf16_storage": {
       "operator_family": "gelu",

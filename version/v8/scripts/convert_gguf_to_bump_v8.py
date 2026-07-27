@@ -737,6 +737,30 @@ class GGUFError(RuntimeError):
     pass
 
 
+def resolve_attention_head_dim(
+    embed_dim: int,
+    num_heads: int,
+    explicit_key_length: Optional[int] = None,
+) -> int:
+    """Resolve head width without assuming attention partitions hidden size."""
+    if embed_dim <= 0:
+        raise GGUFError(f"hidden_size must be positive, got {embed_dim}")
+    if num_heads <= 0:
+        raise GGUFError(f"num_heads must be positive, got {num_heads}")
+    if explicit_key_length is not None:
+        if explicit_key_length <= 0:
+            raise GGUFError(
+                f"explicit attention key_length must be positive, got {explicit_key_length}"
+            )
+        return int(explicit_key_length)
+    if embed_dim % num_heads != 0:
+        raise GGUFError(
+            f"hidden_size {embed_dim} not divisible by num_heads {num_heads} "
+            "and no explicit attention key_length is available"
+        )
+    return embed_dim // num_heads
+
+
 class GGUFReader:
     def __init__(self, f: BinaryIO) -> None:
         self._f = f
@@ -1294,6 +1318,25 @@ def build_qwen35_execution_plan(layer_kinds: list[str]) -> Dict[str, object]:
         "layer_recurrent_policy": layer_recurrent_policy,
         "layer_kv_policy": layer_kv_policy,
     }
+
+
+def resolve_qwen35_recurrent_qkv_weight_dtype(
+    layer_kinds: list[str],
+    layer_quant_summary: Dict[str, Dict[str, str]],
+) -> Optional[str]:
+    """Return the uniform recurrent-QKV storage dtype used by the circuit."""
+    dtypes = sorted({
+        str(layer_quant_summary.get(f"layer.{layer}", {}).get("attn_qkv", "")).strip().lower()
+        for layer, kind in enumerate(layer_kinds)
+        if str(kind).strip().lower() == "recurrent"
+        and layer_quant_summary.get(f"layer.{layer}", {}).get("attn_qkv")
+    })
+    if len(dtypes) > 1:
+        raise GGUFError(
+            "qwen35 recurrent QKV tensors use mixed dtypes that cannot share one "
+            f"numerical contract: {dtypes}"
+        )
+    return dtypes[0] if dtypes else None
 
 
 def extract_mrope_sections_for_arch(meta: Dict[str, object], arch: str) -> Optional[list]:
@@ -3899,10 +3942,7 @@ def main() -> None:
 
         if embed_dim != tok.ne0:
             raise GGUFError(f"{tok_name}: embedding_length mismatch (meta={embed_dim}, tensor.ne0={tok.ne0})")
-        if embed_dim % num_heads != 0:
-            raise GGUFError(f"hidden_size {embed_dim} not divisible by num_heads {num_heads}")
-
-        head_dim = key_length_meta or (embed_dim // num_heads)
+        head_dim = resolve_attention_head_dim(embed_dim, num_heads, key_length_meta)
         if value_length_meta is not None and value_length_meta != head_dim:
             print(f"Warning: value_length {value_length_meta} != key_length {head_dim}; using key_length for head_dim")
         rotary_dim = rotary_dim_meta or key_length_meta or head_dim
@@ -4237,6 +4277,10 @@ def main() -> None:
                 "pass": not unconsumed_sources,
             }
             qwen35_execution_plan = build_qwen35_execution_plan(layer_kinds)
+            recurrent_qkv_weight_dtype = resolve_qwen35_recurrent_qkv_weight_dtype(
+                layer_kinds,
+                layer_quant_summary,
+            )
 
             qwen35_config = {
                 "model": arch,
@@ -4293,6 +4337,8 @@ def main() -> None:
                 # until the replacement policy is proven across multi-token
                 # parity, not just one borderline prefix.
             }
+            if recurrent_qkv_weight_dtype:
+                qwen35_config["recurrent_qkv_weight_dtype"] = recurrent_qkv_weight_dtype
             if rope_layout:
                 qwen35_config["rope_layout"] = rope_layout
             if mrope_sections:
