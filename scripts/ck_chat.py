@@ -2587,6 +2587,8 @@ def main():
                        help="Path to a compiled draft model directory for greedy speculative decoding")
     parser.add_argument("--speculative-draft-tokens", type=int, default=4,
                        help="Number of draft tokens to propose per speculative batch (default: 4)")
+
+    parser.add_argument("--port", default=int, help="Acesss model I/O locally using OpenAI API")
     args = parser.parse_args()
 
     # Determine parity directory
