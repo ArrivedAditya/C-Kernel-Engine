@@ -3699,6 +3699,7 @@ def load_model_data(
         "xray_decoder_pytorch",
         "xray_qwen3vl_pytorch",
         "xray_qwen3vl_llamacpp",
+        "xray_monotonic",
     ]
 
     def model_candidates(name: str) -> list[Path]:
@@ -3833,6 +3834,11 @@ def load_model_data(
         "xray_qwen3vl_llamacpp": (
             model_candidates("xray_qwen3vl_llamacpp_summary.json")
             + [PROJECT_ROOT / "build" / "xray" / "qwen3vl_llamacpp" / "xray_summary.json"]
+        ),
+        # compare_xray_monotonic_v8.py provider-gate report (cke.xray_monotonic_provider_gate)
+        "xray_monotonic": (
+            model_candidates("xray_monotonic.json")
+            + model_candidates("xray_monotonic_provider_gate.json")
         ),
     }
 

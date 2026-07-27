@@ -22,6 +22,8 @@ XRAY_EXPECTED_KEYS = [
     "xray_decoder_pytorch",
     "xray_qwen3vl_pytorch",
     "xray_qwen3vl_llamacpp",
+    "xray_monotonic",
+    "lowered_decode_call",
 ]
 XRAY_EXPECTED_SCHEMAS = [
     "cke.whisper_encoder_pytorch_xray",
@@ -30,11 +32,19 @@ XRAY_EXPECTED_SCHEMAS = [
     "cke.xray_execution_state_report",
     "cke.xray.decoder_pytorch",
     "cke.xray_orchestration_report",
+    "cke.xray_monotonic_provider_gate",
 ]
 XRAY_RUNBOOK_MARKERS = [
     "No X-ray artifacts loaded",
     "compare_whisper_encoder_pytorch_v8.py",
     "xray_execution_state_v8.py",
+    "xray_numerical_parity_v8.py",
+    "test-bf16-xray",
+]
+XRAY_VIEW_MARKERS = [
+    "Circuit X-Ray",
+    "X-Ray Operator Runbook",
+    "backend selection works",
 ]
 
 
@@ -74,6 +84,9 @@ def run_xray_stage() -> int:
             for marker in XRAY_EXPECTED_SCHEMAS:
                 if marker not in html:
                     failures.append(f"missing_schema:{marker}")
+            for marker in XRAY_VIEW_MARKERS:
+                if marker not in html:
+                    failures.append(f"missing_view:{marker}")
 
         # 2) Empty run dir -> empty-state runbook commands present.
         empty_dir = Path(tmp) / "empty"
@@ -85,6 +98,9 @@ def run_xray_stage() -> int:
             for marker in XRAY_RUNBOOK_MARKERS:
                 if marker not in html_empty:
                     failures.append(f"missing_runbook:{marker}")
+            for marker in XRAY_VIEW_MARKERS:
+                if marker not in html_empty:
+                    failures.append(f"missing_view_empty:{marker}")
 
     if failures:
         for f in failures:

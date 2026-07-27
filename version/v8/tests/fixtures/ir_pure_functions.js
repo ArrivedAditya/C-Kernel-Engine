@@ -235,6 +235,112 @@ function buildXrayRunbookHtml(runCtx) {
         + '</div>';
 }
 
+// Phase of a report's subject run: prefill / decode / teacher_forced / mixed_prefill.
+function xrayPhaseOf(report) {
+    if (!report || typeof report !== 'object') return null;
+    const runPhase = report.run && typeof report.run.phase === 'string' ? report.run.phase : null;
+    if (runPhase) return runPhase;
+    const schema = String(report.schema || '');
+    if (schema === 'cke.whisper_encoder_pytorch_xray') return 'prefill';
+    if (schema === 'cke.xray.decoder_pytorch') return 'decode';
+    const comps = (report.final_report && Array.isArray(report.final_report.comparisons)) ? report.final_report.comparisons
+        : (Array.isArray(report.comparisons) ? report.comparisons : []);
+    for (const c of comps) {
+        const ph = c && c.resolved_execution && c.resolved_execution.phase;
+        if (typeof ph === 'string' && ph) return ph;
+    }
+    const drift = (report.final_report && report.final_report.drift_progression) || report.drift_progression;
+    if (drift && Array.isArray(drift.checkpoints)) {
+        for (const cp of drift.checkpoints) {
+            const ph = cp && cp.resolved_execution && cp.resolved_execution.phase;
+            if (typeof ph === 'string' && ph) return ph;
+        }
+    }
+    return null;
+}
+
+// Contract chip state for one call-IR op.
+function xrayContractState(op) {
+    if (!op || typeof op !== 'object') return 'none';
+    const req = op.required_contract != null ? op.required_contract : null;
+    const res = op.resolved_contract || op.resolved_codegen_capability || null;
+    if (req && res) {
+        const reqId = (typeof req === 'object')
+            ? (req.contract_id || req['numerics.attention_reduction'] || null) : null;
+        const resId = (typeof res === 'object')
+            ? (res.resolved_contract_id || res.contract_id || null) : null;
+        if (reqId && resId && reqId !== resId) return 'substitution';
+        return 'match';
+    }
+    if (req) return 'unresolved';
+    if (res) return 'resolved';
+    return 'none';
+}
+
+// Join call-IR ops (execution order) with X-ray drift rows by stop == op idx.
+function xrayCircuitRows(callIr, driftRows, registry) {
+    const ops = callIr && Array.isArray(callIr.operations) ? callIr.operations : [];
+    const byStop = {};
+    (Array.isArray(driftRows) ? driftRows : []).forEach(r => {
+        if (r && r.stop != null) byStop[r.stop] = r;
+    });
+    const names = {};
+    const kernels = registry && Array.isArray(registry.kernels) ? registry.kernels : [];
+    kernels.forEach(k => { if (k && k.id != null) names[String(k.id)] = k.name || String(k.id); });
+    return ops.map(op => {
+        const idx = op.idx != null ? op.idx : null;
+        const xr = idx != null ? (byStop[idx] || null) : null;
+        const kernelId = (op.call_abi && op.call_abi.kernel_id) || op.function || null;
+        return {
+            idx,
+            op: op.op || '',
+            function: op.function || '',
+            provider: (kernelId && names[String(kernelId)]) || kernelId || '',
+            layer: op.layer != null ? op.layer : null,
+            contract: xrayContractState(op),
+            phase: (op.required_contract && op.required_contract['execution.phase']) || op.mode || op.section || null,
+            hasCheckpoint: !!xr,
+            maxAbs: xr ? xr.maxAbs : null,
+            rmse: xr ? xr.rmse : null,
+            exactRatio: xr ? xr.exactRatio : null,
+            byteExact: xr ? xr.byteExact : false,
+        };
+    });
+}
+
+// Edges where max_abs grows faster than `threshold`× between consecutive stops.
+function xrayGrowthEdges(rows, threshold) {
+    const t = threshold != null ? threshold : 3;
+    const edges = [];
+    const rs = Array.isArray(rows) ? rows : [];
+    for (let i = 1; i < rs.length; i++) {
+        const prev = rs[i - 1] && rs[i - 1].maxAbs;
+        const cur = rs[i] && rs[i].maxAbs;
+        if (prev != null && cur != null && prev > 0 && cur > 0 && cur / prev > t) {
+            edges.push({ index: i, ratio: cur / prev });
+        }
+    }
+    return edges;
+}
+
+// Board verdict: pass (green) / cosmetic drift (amber) / behavioral divergence (red).
+function xrayBoardVerdict(report, rankingReport) {
+    const status = xrayReportStatus(report);
+    if (status === 'pass') return { level: 'pass', line: 'all within gate' };
+    const checks = rankingReport && Array.isArray(rankingReport.checks) ? rankingReport.checks : [];
+    const flips = checks.filter(c => c && (c.status === 'fail' || c.ck_top1 !== c.oracle_top1)).length;
+    if (status === 'fail' || status === 'diverged' || status === 'error') {
+        if (flips > 0) {
+            return { level: 'behavioral', line: flips + ' top-1 flip(s) vs oracle — behavioral divergence' };
+        }
+        if (checks.length) {
+            return { level: 'cosmetic', line: 'thresholds crossed, ranking top-1 agrees — drift, output unchanged' };
+        }
+        return { level: 'fail', line: 'thresholds crossed (no ranking report to classify)' };
+    }
+    return { level: 'unknown', line: 'no gate status' };
+}
+
 // Export for test harness (CommonJS for Node.js compatibility)
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -242,6 +348,8 @@ if (typeof module !== 'undefined' && module.exports) {
         normalizeMode, escapeHtml, quoteShell, normalizePathString,
         pathDirname, extractGgufStem, relativePathFromTo,
         xrayReportKindLabel, xrayBackendLabel, xrayReportStatus,
-        xrayDriftRows, buildXrayRunbookHtml
+        xrayDriftRows, buildXrayRunbookHtml,
+        xrayPhaseOf, xrayContractState, xrayCircuitRows,
+        xrayGrowthEdges, xrayBoardVerdict
     };
 }

@@ -125,7 +125,10 @@
       "renderProfile",
       "renderDataPipeline",
       "renderParityCockpit",
-      "renderXray"
+      "renderXray",
+      "renderXrayContext",
+      "renderXrayCircuit",
+      "renderXrayRunbook"
     ],
     "utilities": [
       "normalizeShapeInput",
@@ -147,7 +150,14 @@
     "perfFlops",
     "bumpSize",
     "bumpLayers",
-    "bumpWeights"
+    "bumpWeights",
+    "xrayBoard",
+    "xrayContext",
+    "xrayCircuit",
+    "xrayDrift",
+    "xrayRanking",
+    "xrayTrace",
+    "xrayRunbook"
   ],
 
   "pure_function_tests": {
@@ -303,6 +313,91 @@
             "name": "run_scoped_output_paths",
             "call": "buildXrayRunbookHtml({runDir:'/tmp/ckrun', modelPath:null})",
             "expect_fn": "(h) => h.indexOf('/tmp/ckrun/whisper-encoder-xray.json') >= 0 && h.indexOf('--run /tmp/ckrun') >= 0"
+          }
+        ]
+      },
+      {
+        "name": "xrayPhaseOf",
+        "tests": [
+          { "name": "whisper_is_prefill", "call": "xrayPhaseOf({schema:'cke.whisper_encoder_pytorch_xray'})", "expect": "prefill" },
+          { "name": "decoder_is_decode",  "call": "xrayPhaseOf({schema:'cke.xray.decoder_pytorch'})",        "expect": "decode" },
+          { "name": "run_phase_wins",     "call": "xrayPhaseOf({run:{phase:'teacher_forced'}})",             "expect": "teacher_forced" },
+          { "name": "from_comparisons",   "call": "xrayPhaseOf({final_report:{comparisons:[{resolved_execution:{phase:'prefill'}}]}})", "expect": "prefill" },
+          { "name": "unknown",            "call": "xrayPhaseOf({schema:'cke.xray_ranking_report', checks:[]})", "expect": null }
+        ]
+      },
+      {
+        "name": "xrayContractState",
+        "tests": [
+          { "name": "match",        "call": "xrayContractState({required_contract:{'numerics.attention_reduction':'fp32_online'}, resolved_contract:{contract_id:'fp32_online'}})", "expect": "match" },
+          { "name": "substitution", "call": "xrayContractState({required_contract:{contract_id:'fp32_exact'}, resolved_contract:{contract_id:'fp32_fastgelu'}})", "expect": "substitution" },
+          { "name": "unresolved",   "call": "xrayContractState({required_contract:{'execution.phase':'decode'}})", "expect": "unresolved" },
+          { "name": "resolved_only","call": "xrayContractState({resolved_contract:{contract_id:'fp32_compute'}})", "expect": "resolved" },
+          { "name": "none",         "call": "xrayContractState({op:'matmul'})", "expect": "none" }
+        ]
+      },
+      {
+        "name": "xrayCircuitRows",
+        "tests": [
+          {
+            "name": "joins_stops_and_marks_coverage",
+            "call": "xrayCircuitRows({operations:[{idx:0, function:'ck_op_conv1d', op:'conv1d', layer:-1, call_abi:{kernel_id:'ck_op_conv1d'}}, {idx:1, function:'ck_op_gelu', op:'gelu', layer:0, call_abi:{kernel_id:'ck_op_gelu'}}]}, [{stop:0, label:'stem.conv1', layer:null, maxAbs:0, rmse:0, byteExact:true, exactRatio:1}], {kernels:[{id:'ck_op_gelu', name:'gelu_fp32'}]})",
+            "expect_fn": "(r) => r.length === 2 && r[0].hasCheckpoint === true && r[0].maxAbs === 0 && r[1].hasCheckpoint === false && r[1].maxAbs === null && r[1].provider === 'gelu_fp32' && r[0].provider === 'ck_op_conv1d'"
+          },
+          {
+            "name": "empty_ops",
+            "call": "xrayCircuitRows({}, [{stop:0}], null)",
+            "expect": []
+          }
+        ]
+      },
+      {
+        "name": "xrayGrowthEdges",
+        "tests": [
+          {
+            "name": "detects_gt_3x_jump",
+            "call": "xrayGrowthEdges([{maxAbs:1e-7},{maxAbs:2e-7},{maxAbs:1.7e-4}], 3)",
+            "expect_fn": "(e) => e.length === 1 && e[0].index === 2 && e[0].ratio > 3"
+          },
+          {
+            "name": "skips_zero_prefix",
+            "call": "xrayGrowthEdges([{maxAbs:0},{maxAbs:0},{maxAbs:5e-8}], 3)",
+            "expect": []
+          },
+          {
+            "name": "monotonic_quiet",
+            "call": "xrayGrowthEdges([{maxAbs:1e-7},{maxAbs:2e-7},{maxAbs:2.5e-7}], 3)",
+            "expect": []
+          }
+        ]
+      },
+      {
+        "name": "xrayBoardVerdict",
+        "tests": [
+          {
+            "name": "green_pass",
+            "call": "xrayBoardVerdict({status:'pass'}, null)",
+            "expect_fn": "(v) => v.level === 'pass'"
+          },
+          {
+            "name": "amber_cosmetic_when_ranking_agrees",
+            "call": "xrayBoardVerdict({status:'fail'}, {checks:[{kind:'teacher_forced', position:0, status:'pass', ck_top1:5, oracle_top1:5}]})",
+            "expect_fn": "(v) => v.level === 'cosmetic'"
+          },
+          {
+            "name": "red_behavioral_on_flip",
+            "call": "xrayBoardVerdict({status:'fail'}, {checks:[{kind:'teacher_forced', position:2, status:'fail', ck_top1:5, oracle_top1:9}]})",
+            "expect_fn": "(v) => v.level === 'behavioral' && v.line.indexOf('1 top-1 flip') >= 0"
+          },
+          {
+            "name": "pass_stays_green_even_with_flips",
+            "call": "xrayBoardVerdict({status:'pass'}, {checks:[{kind:'mixed_prefill', position:1, status:'fail', ck_top1:1, oracle_top1:2}]})",
+            "expect_fn": "(v) => v.level === 'pass'"
+          },
+          {
+            "name": "fail_unclassified_without_ranking",
+            "call": "xrayBoardVerdict({status:'diverged'}, null)",
+            "expect_fn": "(v) => v.level === 'fail'"
           }
         ]
       }
