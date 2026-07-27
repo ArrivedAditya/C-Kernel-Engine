@@ -1,0 +1,74 @@
+{
+  "schema": "cke.xray_orchestration_report",
+  "schema_version": 1,
+  "backend": "llamacpp",
+  "execution_mode": "strict",
+  "oracle_execution": {"threads": 1, "deterministic": true, "nondeterministic_opt_in": false},
+  "subject_execution": {"threads": 20},
+  "status": "fail",
+  "rounds": [
+    {"round": 0, "layer": 0, "capture_report": "build/xray/qwen3vl_llamacpp/capture_report.json", "status": "fail"}
+  ],
+  "preflight": null,
+  "final_report": {
+    "schema": "cke.xray_numerical_report",
+    "schema_version": 1,
+    "subject_backend": "ck",
+    "oracle_backend": "llamacpp",
+    "status": "fail",
+    "execution_mode": "strict",
+    "comparisons": [
+      {
+        "checkpoint_id": "layer.0.input",
+        "status": "pass",
+        "classification": "MATCH",
+        "metrics": {"cosine": 1.0, "rmse": 0.0, "relative_rmse": 0.0, "mean_abs": 0.0, "max_abs": 0.0, "finite": true, "exact_elements": 8192, "total_elements": 8192, "exact_ratio": 1.0, "byte_exact": true},
+        "failed_metrics": [],
+        "resolved_execution": {"producer": "embedding", "phase": "prefill", "layer": 0, "storage_dtype": "q8_0", "exported_dtype": "fp32", "resolved_contract_id": "q8_storage_fp32_compute", "kernel_id": "ck_embed", "function": "ck_op_embed"}
+      },
+      {
+        "checkpoint_id": "layer.0.after_attn",
+        "status": "fail",
+        "classification": "KERNEL_IMPLEMENTATION_DIVERGENCE",
+        "metrics": {"cosine": 0.99871, "rmse": 4.8e-03, "relative_rmse": 4.1e-03, "mean_abs": 1.9e-03, "max_abs": 2.7e-02, "finite": true, "exact_elements": 5122, "total_elements": 8192, "exact_ratio": 0.625244, "byte_exact": false},
+        "failed_metrics": ["max_abs", "relative_rmse"],
+        "resolved_execution": {"producer": "attention", "phase": "prefill", "layer": 0, "storage_dtype": "q8_0", "exported_dtype": "fp32", "resolved_contract_id": "q8_storage_fp32_compute", "kernel_id": "ck_attn", "function": "ck_op_attention"}
+      }
+    ],
+    "first_divergence": {
+      "checkpoint_id": "layer.0.after_attn",
+      "status": "fail",
+      "classification": "KERNEL_IMPLEMENTATION_DIVERGENCE",
+      "fix_owner": "attention_kernel",
+      "recommended_action": "Compare attention accumulation order against the llama.cpp oracle at layer 0."
+    },
+    "first_non_exact_checkpoint": {
+      "checkpoint_id": "layer.0.after_attn",
+      "status": "fail",
+      "classification": "NON_BYTE_EXACT",
+      "metrics": {"cosine": 0.99871, "rmse": 4.8e-03, "relative_rmse": 4.1e-03, "mean_abs": 1.9e-03, "max_abs": 2.7e-02, "finite": true, "exact_elements": 5122, "total_elements": 8192, "exact_ratio": 0.625244, "byte_exact": false}
+    },
+    "drift_progression": {
+      "metric": "relative_rmse",
+      "policy": "observational_no_additional_tolerance",
+      "first_non_exact": "layer.0.after_attn",
+      "largest_amplification_boundary": {
+        "from_checkpoint_id": "layer.0.after_attn",
+        "to_checkpoint_id": "layer.0.after_mlp",
+        "relative_rmse_before": 4.1e-03,
+        "relative_rmse_after": 9.6e-03,
+        "relative_rmse_delta": 5.5e-03,
+        "relative_rmse_ratio": 2.34,
+        "resolved_execution": {"layer": 0, "function": "ck_op_mlp", "kernel_id": "ck_mlp", "resolved_contract_id": "q8_storage_fp32_compute"}
+      },
+      "checkpoints": [
+        {"checkpoint_id": "layer.0.input", "status": "pass", "relative_rmse": 0.0, "rmse": 0.0, "max_abs": 0.0, "byte_exact": true, "resolved_execution": {"layer": 0, "function": "ck_op_embed", "kernel_id": "ck_embed", "resolved_contract_id": "q8_storage_fp32_compute"}, "previous_checkpoint_id": null, "relative_rmse_delta": 0.0, "relative_rmse_ratio": null},
+        {"checkpoint_id": "layer.0.after_attn", "status": "fail", "relative_rmse": 4.1e-03, "rmse": 4.8e-03, "max_abs": 2.7e-02, "byte_exact": false, "resolved_execution": {"layer": 0, "function": "ck_op_attention", "kernel_id": "ck_attn", "resolved_contract_id": "q8_storage_fp32_compute"}, "previous_checkpoint_id": "layer.0.input", "relative_rmse_delta": 4.1e-03, "relative_rmse_ratio": null},
+        {"checkpoint_id": "layer.0.after_mlp", "status": "fail", "relative_rmse": 9.6e-03, "rmse": 1.1e-02, "max_abs": 5.9e-02, "byte_exact": false, "resolved_execution": {"layer": 0, "function": "ck_op_mlp", "kernel_id": "ck_mlp", "resolved_contract_id": "q8_storage_fp32_compute"}, "previous_checkpoint_id": "layer.0.after_attn", "relative_rmse_delta": 5.5e-03, "relative_rmse_ratio": 2.34}
+      ]
+    },
+    "last_passing_checkpoint": "layer.0.input",
+    "unresolved_contract_checkpoints": [],
+    "ranking_divergence": null
+  }
+}

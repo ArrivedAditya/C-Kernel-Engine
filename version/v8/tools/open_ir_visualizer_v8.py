@@ -646,6 +646,13 @@ def copy_artifacts_if_needed(src_model_dir: Path, dst_model_dir: Path) -> None:
         "regimen_backend_xray.json",
         "training_canary_summary.json",
         "regression_ledger.json",
+        "whisper-encoder-xray.json",
+        "xray_ranking_report.json",
+        "xray_execution_trace.json",
+        "xray_execution_state_report.json",
+        "xray_decoder_summary.json",
+        "xray_qwen3vl_bf16_summary.json",
+        "xray_qwen3vl_llamacpp_summary.json",
     ]
     copied = 0
     dst_model_dir.mkdir(parents=True, exist_ok=True)
@@ -3685,6 +3692,13 @@ def load_model_data(
         "bridge_encoder_layout",
         "bridge_encoder_call",
         "bridge_encoder_lowered",
+        "xray_whisper_encoder",
+        "xray_ranking",
+        "xray_execution_trace",
+        "xray_execution_state",
+        "xray_decoder_pytorch",
+        "xray_qwen3vl_pytorch",
+        "xray_qwen3vl_llamacpp",
     ]
 
     def model_candidates(name: str) -> list[Path]:
@@ -3792,6 +3806,34 @@ def load_model_data(
         "bridge_encoder_layout": [bridge_encoder_root / "layout.json"] if bridge_encoder_root is not None else [],
         "bridge_encoder_call": [bridge_encoder_root / "call.json"] if bridge_encoder_root is not None else [],
         "bridge_encoder_lowered": [bridge_encoder_root / "lowered.json"] if bridge_encoder_root is not None else [],
+        # Backend parity X-ray reports (per-checkpoint numerical drift).
+        # Emitters: compare_whisper_encoder_pytorch_v8.py, xray_decoder_pytorch_v8.py,
+        # xray_qwen3vl_{bf16,llamacpp}_v8.py, normalize_xray_ranking_report_v8.py,
+        # xray_execution_state_v8.py. First existing candidate wins (standard convention).
+        "xray_whisper_encoder": (
+            model_candidates("whisper-encoder-xray.json")
+            + model_candidates("whisper_encoder_xray.json")
+            + [PROJECT_ROOT / "build" / "whisper-encoder-xray.json"]
+        ),
+        "xray_ranking": (
+            model_candidates("xray_ranking_report.json")
+            + model_candidates("xray_ranking.json")
+        ),
+        "xray_execution_trace": model_candidates("xray_execution_trace.json"),
+        "xray_execution_state": model_candidates("xray_execution_state_report.json"),
+        "xray_decoder_pytorch": (
+            model_candidates("xray_decoder_summary.json")
+            + model_candidates("xray_decoder_pytorch_summary.json")
+            + [PROJECT_ROOT / "build" / "xray" / "decoder_pytorch" / "xray_summary.json"]
+        ),
+        "xray_qwen3vl_pytorch": (
+            model_candidates("xray_qwen3vl_bf16_summary.json")
+            + [PROJECT_ROOT / "build" / "xray" / "qwen3vl_bf16" / "xray_summary.json"]
+        ),
+        "xray_qwen3vl_llamacpp": (
+            model_candidates("xray_qwen3vl_llamacpp_summary.json")
+            + [PROJECT_ROOT / "build" / "xray" / "qwen3vl_llamacpp" / "xray_summary.json"]
+        ),
     }
 
     if strict_run_scope:
@@ -4787,6 +4829,11 @@ def serve_live(run_dir: Path, html_path: Path, port: int = 7700, interval_ms: in
         "training_checkpoint_policy_latest.json",
         "corpus_sampling_log_latest.json",
         "run_index.json",
+        "whisper-encoder-xray.json",
+        "xray_ranking_report.json",
+        "xray_execution_trace.json",
+        "xray_execution_state_report.json",
+        "xray_decoder_summary.json",
     ]
 
     # Inject window.CK_LIVE_MODE before </body> so the visualizer uses the

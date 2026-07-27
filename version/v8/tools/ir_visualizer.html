@@ -7,9 +7,9 @@
   │                                                                          │
   │  ⚠️  DO NOT DELETE OR REGRESS EXISTING TABS OR FUNCTIONS  ⚠️              │
   │                                                                          │
-  │  TABS (12 tabs):                                                         │
+  │  TABS (13 tabs):                                                         │
   │   Memory · Kernel Flow · Stats · Multimodal · Training · Quantization ·  │
-  │   Dataflow · Interpretability · Profile · Data Pipeline · Parity         │
+  │   Dataflow · Interpretability · Profile · Data Pipeline · Parity · X-Ray │
   │                                                                          │
   │  HOW TO EDIT:                                                            │
   │   • Each tab has a render function (e.g. renderMemory, renderTraining)   │
@@ -2378,6 +2378,7 @@
         <div class="tab" data-tab="interpretability" data-mode="inference" onclick="showTab('interpretability')">Interpretability</div>
         <div class="tab" data-tab="quantization" data-mode="inference" onclick="showTab('quantization')">Weight Dtype Audit</div>
         <div class="tab" data-tab="parity" data-mode="inference" onclick="showTab('parity')">Parity Debug</div>
+        <div class="tab" data-tab="xray" data-mode="inference,training" onclick="showTab('xray')">X-Ray</div>
         <div class="tab" data-tab="dataflow" data-mode="inference" onclick="showTab('dataflow')">Dataflow Graph</div>
         <div class="tab" data-tab="multimodal" data-mode="inference" onclick="showTab('multimodal')">Multimodal Bridge</div>
         <div class="tab" data-tab="tests" data-mode="inference" onclick="showTab('tests')">Tests</div>
@@ -2894,6 +2895,34 @@ swish(z) = z · σ(z),   σ(z)=1/(1+e^{-z})</div>
                 <h3><span class="badge badge-blue">Guide</span> Graph Intersection Verification</h3>
                 <p style="color: var(--text-muted); margin: 0.5rem 0 1rem;">For any specific operation in the IR graph, these are the exact tests you can run to verify numerical parity at that intersection. Click an operation family to see the targeted test commands.</p>
                 <div id="parityGraphGuide"></div>
+            </div>
+        </div>
+
+        <div id="xray" class="panel">
+            <!-- ═══ Backend Parity X-Ray ═══ -->
+            <div class="parity-section">
+                <h3><span class="badge badge-orange">X-Ray</span> Backend Status Board</h3>
+                <p style="color: var(--text-muted); margin: 0.5rem 0 1rem;">Live view of backend parity X-ray artifacts (per-checkpoint numerical drift) as agent processes produce them. Each card is one loaded report.</p>
+                <div id="xrayBoard"></div>
+            </div>
+
+            <div class="parity-section">
+                <h3><span class="badge badge-red">Drift</span> Per-Checkpoint Numerical Drift</h3>
+                <p style="color: var(--text-muted); margin: 0.5rem 0 1rem;">Log-scale max-abs and RMSE drift across execution stops. Click a point for checkpoint detail.</p>
+                <div id="xrayDrift"></div>
+                <div id="xrayDetail" style="margin-top:1rem;"></div>
+            </div>
+
+            <div class="parity-section">
+                <h3><span class="badge badge-blue">Ranking</span> Logits Ranking vs Oracle</h3>
+                <p style="color: var(--text-muted); margin: 0.5rem 0 1rem;">Top-1 agreement between CK runtime and the ggml/llama.cpp-style oracle, per position.</p>
+                <div id="xrayRanking"></div>
+            </div>
+
+            <div class="parity-section">
+                <h3><span class="badge badge-green">Trace</span> Execution Trace &amp; State Stages</h3>
+                <p style="color: var(--text-muted); margin: 0.5rem 0 1rem;">Ordered divergence stages (execution contract → cache append → ranking) and raw execution-trace calls.</p>
+                <div id="xrayTrace"></div>
             </div>
         </div>
 
@@ -5296,6 +5325,7 @@ python3 trace_divergence.py --model "$MODEL_DIR" --token 25 --threads 1 --contex
                 memory: true, kernels: true, stats: true, multimodal: true, training: true,
                 quantization: true, dataflow: true, interpretability: true,
                 profile: true, tests: true, parity: true, 'data-pipeline': true,
+                xray: true,
                 'train-dashboard': true, 'train-grad-flow': true,
                 'train-weights': true, 'train-attention': true,
                 'train-compare': true, 'train-memory-canary': true,
@@ -5348,6 +5378,9 @@ python3 trace_divergence.py --model "$MODEL_DIR" --token 25 --threads 1 --contex
                 case 'parity':
                     renderParityCockpit();
                     renderParityGraphGuide();
+                    break;
+                case 'xray':
+                    renderXray();
                     break;
                 default:
                     /* train-* extension tabs: render directly so renderAll()
@@ -17658,6 +17691,614 @@ ${globalRefreshCmd}</pre>
             el.innerHTML = html;
         }
 
+        /* ── X-Ray tab: backend parity drift cockpit ────────────────────── */
+        // Pure helpers below are mirrored in version/v8/tests/fixtures/ir_pure_functions.js
+        // (L2 unit tests). Keep them DOM-free and in sync.
+
+        function xrayReportKindLabel(report) {
+            if (!report || typeof report !== 'object') return 'X-Ray Report';
+            const schema = String(report.schema || '');
+            if (schema === 'cke.whisper_encoder_pytorch_xray') return 'Whisper Encoder X-Ray';
+            if (schema === 'cke.xray_ranking_report') return 'Ranking Report';
+            if (schema === 'cke.xray_execution_trace') return 'Execution Trace';
+            if (schema === 'cke.xray_execution_state_report') return 'Execution State Report';
+            if (schema === 'cke.xray.decoder_pytorch') return 'Decoder X-Ray';
+            if (schema === 'cke.xray_orchestration_report') return 'Vision X-Ray (orchestration)';
+            if (schema === 'cke.xray_numerical_report') return 'Numerical Parity X-Ray';
+            return schema || 'X-Ray Report';
+        }
+
+        function xrayBackendLabel(report) {
+            if (!report || typeof report !== 'object') return 'unknown';
+            const schema = String(report.schema || '');
+            if (schema === 'cke.whisper_encoder_pytorch_xray') return 'PyTorch';
+            if (schema === 'cke.xray.decoder_pytorch') return 'PyTorch';
+            if (schema === 'cke.xray_ranking_report') return 'ggml-oracle';
+            if (schema === 'cke.xray_execution_trace') return String(report.backend || 'unknown');
+            const oracle = report.oracle_backend
+                || (report.final_report && report.final_report.oracle_backend)
+                || (report.provenance && report.provenance.pytorch ? 'pytorch' : null)
+                || report.backend;
+            const b = String(oracle || 'unknown').toLowerCase();
+            if (b.indexOf('llama') >= 0) return 'llama.cpp';
+            if (b.indexOf('torch') >= 0) return 'PyTorch';
+            if (b.indexOf('ggml') >= 0) return 'ggml-oracle';
+            return oracle ? String(oracle) : 'unknown';
+        }
+
+        function xrayReportStatus(report) {
+            if (!report || typeof report !== 'object') return 'unknown';
+            if (typeof report.status === 'string' && report.status) return report.status;
+            if (Array.isArray(report.checks) && report.checks.length) {
+                return report.checks.every(c => c && c.status === 'pass') ? 'pass' : 'fail';
+            }
+            return 'unknown';
+        }
+
+        // Normalize any checkpoint-table X-ray report into chart rows:
+        // [{stop, label, layer, maxAbs, rmse, byteExact, exactRatio, raw}]
+        function xrayDriftRows(report) {
+            if (!report || typeof report !== 'object') return [];
+            const cps = Array.isArray(report.checkpoints) ? report.checkpoints : null;
+            if (cps && cps.length && cps[0] && cps[0].metrics) {
+                return cps.map((cp, i) => ({
+                    stop: (cp.stop != null ? cp.stop : i),
+                    label: String(cp.checkpoint != null ? cp.checkpoint : ('stop ' + i)),
+                    layer: (cp.layer != null ? cp.layer : null),
+                    maxAbs: (cp.metrics && cp.metrics.max_abs != null) ? Number(cp.metrics.max_abs) : null,
+                    rmse: (cp.metrics && cp.metrics.rmse != null) ? Number(cp.metrics.rmse) : null,
+                    byteExact: !!(cp.metrics && cp.metrics.byte_exact),
+                    exactRatio: (cp.metrics && cp.metrics.exact_ratio != null) ? Number(cp.metrics.exact_ratio) : null,
+                    raw: cp,
+                }));
+            }
+            const num = (report.final_report && report.final_report.drift_progression) ? report.final_report
+                : (report.drift_progression ? report : null);
+            if (num && Array.isArray(num.drift_progression.checkpoints)) {
+                return num.drift_progression.checkpoints.map((cp, i) => ({
+                    stop: i,
+                    label: String(cp.checkpoint_id != null ? cp.checkpoint_id : ('stop ' + i)),
+                    layer: (cp.resolved_execution && cp.resolved_execution.layer != null) ? cp.resolved_execution.layer : null,
+                    maxAbs: (cp.max_abs != null) ? Number(cp.max_abs) : null,
+                    rmse: (cp.rmse != null) ? Number(cp.rmse) : null,
+                    byteExact: !!cp.byte_exact,
+                    exactRatio: null,
+                    raw: cp,
+                }));
+            }
+            return [];
+        }
+
+        function buildXrayRunbookHtml(runCtx) {
+            const hasRun = !!(runCtx && runCtx.runDir);
+            const runDir = hasRun ? quoteShell(runCtx.runDir) : '<run_dir>';
+            const out = (name) => hasRun ? quoteShell(runCtx.runDir + '/' + name) : ('<run_dir>/' + name);
+            const whisperCmd = 'python3 version/v8/scripts/compare_whisper_encoder_pytorch_v8.py \\\n'
+                + '  --run-dir ' + runDir + ' \\\n'
+                + '  --checkpoint <hf_whisper_checkpoint> \\\n'
+                + '  --stops key \\\n'
+                + '  --output ' + out('whisper-encoder-xray.json');
+            const visionLlamaCmd = 'make xray-vision-parity BACKEND=llamacpp GGUF=<mmproj.gguf> XRAY_OUTPUT_DIR=build/xray/qwen3vl_llamacpp';
+            const visionTorchCmd = 'make xray-vision-parity BACKEND=pytorch CHECKPOINT=<hf_qwen3vl_ckpt> RUNTIME_DIR=<runtime_dir> WEIGHTS_BUMP=<weights.bump> CALL_IR=<call.json> XRAY_OUTPUT_DIR=build/xray/qwen3vl_bf16';
+            const decoderCmd = 'python3 version/v8/scripts/xray_decoder_pytorch_v8.py \\\n'
+                + '  --checkpoint <hf_decoder_ckpt> --runtime <libdecoder.so> --call-ir <call.json> \\\n'
+                + '  --token-ids 1,2,3 --output-dir build/xray/decoder_pytorch';
+            const rankingCmd = 'python3 version/v8/scripts/normalize_xray_ranking_report_v8.py \\\n'
+                + '  --input <logits_trace.json> --kind teacher_forced \\\n'
+                + '  --output ' + out('xray_ranking_report.json');
+            const stateCmd = 'python3 version/v8/scripts/xray_execution_state_v8.py \\\n'
+                + '  --subject-trace <ck_trace.json> --oracle-trace <oracle_trace.json> \\\n'
+                + '  --output ' + out('xray_execution_state_report.json');
+            const refreshCmd = hasRun
+                ? 'python3 version/v8/tools/open_ir_visualizer_v8.py --generate --run ' + runDir + ' --html-only --strict-run-artifacts --output ' + out('ir_report.html')
+                : 'python3 version/v8/tools/open_ir_visualizer_v8.py --generate --run <run_dir> --html-only --strict-run-artifacts --output <run_dir>/ir_report.html';
+            const block = (title, cmd) => ''
+                + '<div style="margin-top:0.45rem;">' + escapeHtml(title) + '</div>'
+                + '<pre style="font-size:0.72rem;white-space:pre-wrap;margin-top:0.35rem;">' + escapeHtml(cmd) + '</pre>';
+            return ''
+                + '<div style="margin-top:0.5rem; padding:0.75rem 1rem; background:rgba(255,180,0,0.08); border:1px solid rgba(255,180,0,0.3); border-radius:8px; font-size:0.72rem; color:var(--text-secondary); line-height:1.6;">'
+                + '<strong style="color:var(--orange);">No X-ray artifacts loaded.</strong>'
+                + '<div style="margin-top:0.35rem;">Produce backend parity X-ray reports with any of these, then refresh this report:</div>'
+                + block('Whisper encoder vs PyTorch (per-checkpoint drift):', whisperCmd)
+                + block('Qwen3-VL vision parity vs llama.cpp:', visionLlamaCmd)
+                + block('Qwen3-VL vision parity vs PyTorch (bf16):', visionTorchCmd)
+                + block('Decoder parity vs PyTorch:', decoderCmd)
+                + block('Logits ranking report (ggml oracle):', rankingCmd)
+                + block('Execution-state divergence stages:', stateCmd)
+                + block('Refresh this report after artifacts land:', refreshCmd)
+                + '</div>';
+        }
+
+        function renderXray() {
+            const files = (window.EMBEDDED_IR_DATA && window.EMBEDDED_IR_DATA.files)
+                ? window.EMBEDDED_IR_DATA.files
+                : {};
+            const meta = (window.EMBEDDED_IR_DATA && window.EMBEDDED_IR_DATA.meta) || {};
+            const loadedPaths = (meta && typeof meta.loaded_paths === 'object') ? meta.loaded_paths : {};
+            const runCtx = (typeof getRunContext === 'function') ? getRunContext() : { runDir: null, modelPath: null };
+
+            const XRAY_KEYS = [
+                'xray_whisper_encoder', 'xray_qwen3vl_pytorch', 'xray_qwen3vl_llamacpp',
+                'xray_decoder_pytorch', 'xray_ranking', 'xray_execution_state', 'xray_execution_trace',
+            ];
+            const reports = [];
+            XRAY_KEYS.forEach(key => {
+                const rep = files[key];
+                if (rep && typeof rep === 'object') reports.push({ key, report: rep });
+            });
+
+            renderXrayBoard(reports, loadedPaths);
+            renderXrayDrift(reports);
+            renderXrayRanking(files.xray_ranking || null);
+            renderXrayTrace(files.xray_execution_state || null, files.xray_execution_trace || null);
+        }
+
+        function renderXrayBoard(reports, loadedPaths) {
+            const el = document.getElementById('xrayBoard');
+            if (!el) return;
+            if (!reports.length) {
+                const runCtx = (typeof getRunContext === 'function') ? getRunContext() : { runDir: null, modelPath: null };
+                el.innerHTML = buildXrayRunbookHtml(runCtx);
+                return;
+            }
+            const liveMs = Number(window.__ckLiveLastUpdateMs || 0);
+            const liveHint = liveMs > 0
+                ? `<span class="status-chip status-chip-good" style="margin-left:0.5rem;">↺ live update ${Math.max(0, Math.round((Date.now() - liveMs) / 1000))}s ago</span>`
+                : '';
+            const statusChip = (st) => {
+                if (st === 'pass') return '<span class="status-chip status-chip-good">pass</span>';
+                if (st === 'fail' || st === 'diverged' || st === 'error') return '<span class="status-chip status-chip-bad">' + escapeHtml(st) + '</span>';
+                return '<span class="status-chip status-chip-muted">' + escapeHtml(st) + '</span>';
+            };
+            const backendChip = (b) => {
+                const cls = (b === 'PyTorch') ? 'status-chip-warn' : (b === 'llama.cpp' ? '' : 'status-chip-muted');
+                return `<span class="status-chip ${cls}">${escapeHtml(b)}</span>`;
+            };
+            let html = `<div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:0.6rem;">${reports.length} X-ray report(s) loaded.${liveHint}</div>`;
+            html += '<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:0.75rem;">';
+            reports.forEach(({ key, report }) => {
+                const kind = xrayReportKindLabel(report);
+                const backend = xrayBackendLabel(report);
+                const status = xrayReportStatus(report);
+                const border = (status === 'pass') ? '#47b475' : ((status === 'fail' || status === 'diverged' || status === 'error') ? '#e74c3c' : 'var(--grey)');
+                const fne = report.first_non_exact_stop != null ? report.first_non_exact_stop
+                    : (report.sparse_first_non_exact != null ? report.sparse_first_non_exact
+                    : (report.first_non_exact_checkpoint && report.first_non_exact_checkpoint.checkpoint_id) || null);
+                const fmd = report.first_material_divergence_stop != null ? report.first_material_divergence_stop
+                    : (report.sparse_first_material != null ? report.sparse_first_material
+                    : (report.first_divergence && (report.first_divergence.checkpoint_id || report.first_divergence.stage)) || null);
+                const th = report.thresholds || null;
+                const prov = report.provenance || null;
+                let lines = '';
+                if (fne != null) lines += `<div>first non-exact: <code>${escapeHtml(String(fne))}</code></div>`;
+                if (fmd != null) lines += `<div>first material: <code>${escapeHtml(String(fmd))}</code></div>`;
+                if (th && th.max_abs != null) lines += `<div>thresholds: max_abs=${escapeHtml(String(th.max_abs))} rel_rmse=${escapeHtml(String(th.relative_rmse != null ? th.relative_rmse : '—'))}</div>`;
+                if (prov) {
+                    const pv = [prov.pytorch ? 'torch ' + prov.pytorch : null, prov.transformers ? 'hf ' + prov.transformers : null].filter(Boolean).join(' · ');
+                    if (pv) lines += `<div>provenance: ${escapeHtml(pv)}</div>`;
+                    if (prov.checkpoint) lines += `<div>checkpoint: <code>${escapeHtml(String(prov.checkpoint).split('/').pop())}</code></div>`;
+                }
+                if (loadedPaths && loadedPaths[key]) lines += `<div style="color:var(--text-muted);">src: <code>${escapeHtml(String(loadedPaths[key]))}</code></div>`;
+                html += `
+                <div style="background:var(--dark-card); border:1px solid var(--grey); border-left:3px solid ${border}; border-radius:8px; padding:0.75rem 1rem;">
+                    <div style="display:flex; align-items:center; gap:0.4rem; flex-wrap:wrap; margin-bottom:0.4rem;">
+                        <strong style="color:var(--white); font-size:0.8rem;">${escapeHtml(kind)}</strong>
+                        ${backendChip(backend)}
+                        ${statusChip(status)}
+                    </div>
+                    <div style="font-size:0.7rem; color:var(--text-secondary); line-height:1.7;">${lines || '<span style="color:var(--text-muted);">no summary fields</span>'}</div>
+                </div>`;
+            });
+            html += '</div>';
+            el.innerHTML = html;
+        }
+
+        function xrayCheckpointReports(reports) {
+            return reports
+                .map(r => ({ key: r.key, report: r.report, rows: xrayDriftRows(r.report) }))
+                .filter(r => r.rows.length > 0);
+        }
+
+        function renderXrayDrift(reports) {
+            const el = document.getElementById('xrayDrift');
+            if (!el) return;
+            const detail = document.getElementById('xrayDetail');
+            if (detail) detail.innerHTML = '';
+            const driftReports = xrayCheckpointReports(reports);
+            if (!driftReports.length) {
+                window.__xrayDrift = null;
+                el.innerHTML = '<div style="font-size:0.72rem; color:var(--text-muted);">No checkpoint-table X-ray reports loaded (whisper encoder, vision parity, or decoder drift progression).</div>';
+                return;
+            }
+            const cur = window.__xrayDrift && window.__xrayDrift.key;
+            const sel = driftReports.find(r => r.key === cur) || driftReports[0];
+            window.__xrayDrift = { key: sel.key, report: sel.report, rows: sel.rows };
+
+            let html = '<div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.5rem;">';
+            driftReports.forEach(r => {
+                const active = r.key === sel.key;
+                html += `<button onclick="xraySelectDriftReport('${r.key}')" style="background:${active ? 'var(--orange)' : 'none'}; color:${active ? 'var(--dark)' : 'var(--text-secondary)'}; border:1px solid var(--grey); border-radius:4px; padding:2px 8px; cursor:pointer; font-size:0.68rem;">${escapeHtml(xrayBackendLabel(r.report))} · ${escapeHtml(xrayReportKindLabel(r.report))}</button>`;
+            });
+            html += `<button onclick="exportXrayDriftSvg()" style="margin-left:auto; background:none; color:var(--text-muted); border:1px solid var(--grey); border-radius:4px; padding:2px 8px; cursor:pointer; font-size:0.68rem;" title="Download drift chart as SVG">Export SVG</button>`;
+            html += '</div>';
+            html += '<div style="font-size:0.68rem; color:var(--text-muted); margin-bottom:0.25rem;">'
+                + '<span style="color:#ffb400;">●</span> max_abs &nbsp; <span style="color:#07adf8;">●</span> rmse &nbsp; '
+                + '<span style="color:#47b475;">▮</span> byte-exact prefix &nbsp; '
+                + '<span style="color:#ffd58a;">▲</span> first non-exact &nbsp; <span style="color:#e74c3c;">▲</span> first material divergence'
+                + '</div>';
+            html += '<svg id="xrayDriftSvg" style="width:100%; height:280px; background:var(--bg-dark); border:1px solid var(--grey); border-radius:6px;"></svg>';
+            el.innerHTML = html;
+
+            const svgEl = document.getElementById('xrayDriftSvg');
+            const thresholds = sel.report.thresholds
+                || (sel.report.final_report && sel.report.final_report.thresholds)
+                || null;
+            const fneStop = sel.report.first_non_exact_stop != null ? sel.report.first_non_exact_stop
+                : firstStopWhere(sel.rows, r => !r.byteExact);
+            const fmdStop = sel.report.first_material_divergence_stop != null ? sel.report.first_material_divergence_stop : null;
+            drawXrayDriftChart(svgEl, sel.rows, {
+                thresholdMaxAbs: thresholds && thresholds.max_abs != null ? Number(thresholds.max_abs) : null,
+                firstNonExactStop: fneStop,
+                firstMaterialStop: fmdStop,
+            });
+        }
+
+        function firstStopWhere(rows, pred) {
+            for (const r of rows) { if (pred(r)) return r.stop; }
+            return null;
+        }
+
+        function xraySelectDriftReport(key) {
+            if (window.__xrayDrift) window.__xrayDrift.key = key;
+            else window.__xrayDrift = { key };
+            renderXray();
+        }
+
+        function drawXrayDriftChart(svgEl, rows, opts) {
+            if (!svgEl || !Array.isArray(rows) || rows.length === 0) return;
+            const NS = 'http://www.w3.org/2000/svg';
+            const optsSafe = opts || {};
+            const n = rows.length;
+            const width = Math.max(svgEl.clientWidth || 680, n * 36 + 140);
+            const height = 280;
+            const margin = { top: 20, right: 16, bottom: 64, left: 64 };
+            const plotW = width - margin.left - margin.right;
+            const plotH = height - margin.top - margin.bottom;
+
+            const vals = [];
+            rows.forEach(r => { if (r.maxAbs > 0) vals.push(r.maxAbs); if (r.rmse > 0) vals.push(r.rmse); });
+            if (optsSafe.thresholdMaxAbs > 0) vals.push(optsSafe.thresholdMaxAbs);
+            if (!vals.length) return;
+            let vMin = Math.min.apply(null, vals);
+            let vMax = Math.max.apply(null, vals);
+            vMin = Math.max(vMin * 0.8, 1e-12);
+            vMax = vMax * 1.25;
+            const logMin = Math.log10(vMin);
+            const logMax = Math.log10(vMax);
+            const xAt = (i) => margin.left + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+            const yAt = (v) => margin.top + (1 - (Math.log10(Math.max(v, vMin)) - logMin) / (logMax - logMin)) * plotH;
+
+            while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
+            svgEl.setAttribute('viewBox', `0 0 ${width} ${height}`);
+            const mk = (tag, attrs) => {
+                const node = document.createElementNS(NS, tag);
+                Object.keys(attrs || {}).forEach(k => node.setAttribute(k, attrs[k]));
+                return node;
+            };
+
+            // Layer facet bands: alternate shading per contiguous layer value.
+            let bandIdx = 0;
+            for (let i = 0; i < n; i++) {
+                const layer = rows[i].layer;
+                const isBoundary = (i === 0) || (rows[i - 1].layer !== layer);
+                if (!isBoundary) continue;
+                let j = i;
+                while (j + 1 < n && rows[j + 1].layer === layer) j++;
+                const x0 = i === 0 ? margin.left : (xAt(i - 1) + xAt(i)) / 2;
+                const x1 = j === n - 1 ? width - margin.right : (xAt(j) + xAt(j + 1)) / 2;
+                if (layer != null) {
+                    if (bandIdx % 2 === 1) {
+                        svgEl.appendChild(mk('rect', { x: x0, y: margin.top, width: x1 - x0, height: plotH, fill: 'rgba(255,255,255,0.035)' }));
+                    }
+                    const lbl = mk('text', { x: x0 + 3, y: margin.top + 10, 'font-size': 8, fill: '#6b7280' });
+                    lbl.textContent = 'L' + layer;
+                    svgEl.appendChild(lbl);
+                    bandIdx++;
+                }
+            }
+
+            // Byte-exact prefix shading.
+            let prefixEnd = 0;
+            while (prefixEnd < n && rows[prefixEnd].byteExact) prefixEnd++;
+            if (prefixEnd > 0) {
+                const x1 = prefixEnd >= n ? width - margin.right : (xAt(prefixEnd - 1) + xAt(prefixEnd)) / 2;
+                svgEl.appendChild(mk('rect', { x: margin.left, y: margin.top, width: Math.max(0, x1 - margin.left), height: plotH, fill: 'rgba(71,180,117,0.10)' }));
+            }
+
+            // Axes.
+            svgEl.appendChild(mk('line', { x1: margin.left, y1: height - margin.bottom, x2: width - margin.right, y2: height - margin.bottom, stroke: '#4b5563' }));
+            svgEl.appendChild(mk('line', { x1: margin.left, y1: margin.top, x2: margin.left, y2: height - margin.bottom, stroke: '#4b5563' }));
+            // Y log ticks at integer powers of ten (fall back to range ends
+            // when the data spans less than one decade).
+            const e0 = Math.ceil(logMin);
+            const e1 = Math.floor(logMax);
+            const exps = [];
+            if (e1 >= e0) {
+                const step = Math.max(1, Math.ceil((e1 - e0) / 5));
+                for (let e = e0; e <= e1; e += step) exps.push(e);
+            } else {
+                exps.push(logMin, logMax);
+            }
+            exps.forEach((exp) => {
+                const y = margin.top + (1 - (exp - logMin) / (logMax - logMin)) * plotH;
+                svgEl.appendChild(mk('line', { x1: margin.left - 4, y1: y, x2: width - margin.right, y2: y, stroke: '#374151', 'stroke-dasharray': '2,4' }));
+                const txt = mk('text', { x: margin.left - 8, y: y + 3, 'font-size': 9, fill: '#9ca3af', 'text-anchor': 'end' });
+                txt.textContent = '1e' + (Number.isInteger(exp) ? exp : exp.toFixed(1));
+                svgEl.appendChild(txt);
+            });
+            // X ticks: checkpoint names, rotated.
+            const stride = Math.max(1, Math.ceil(n / 16));
+            rows.forEach((r, i) => {
+                if (i % stride !== 0 && i !== n - 1) return;
+                const short = r.label.length > 26 ? r.label.slice(0, 24) + '…' : r.label;
+                const txt = mk('text', {
+                    x: xAt(i), y: height - margin.bottom + 8, 'font-size': 8.5, fill: '#9ca3af',
+                    'text-anchor': 'end', transform: `rotate(-40 ${xAt(i)} ${height - margin.bottom + 8})`,
+                });
+                txt.textContent = short;
+                svgEl.appendChild(txt);
+            });
+
+            // Threshold line (max_abs).
+            if (optsSafe.thresholdMaxAbs > 0) {
+                const y = yAt(optsSafe.thresholdMaxAbs);
+                svgEl.appendChild(mk('line', { x1: margin.left, y1: y, x2: width - margin.right, y2: y, stroke: '#ffb400', 'stroke-dasharray': '6,4', 'stroke-width': 1.2 }));
+                const txt = mk('text', { x: width - margin.right - 4, y: y - 4, 'font-size': 9, fill: '#ffb400', 'text-anchor': 'end' });
+                txt.textContent = 'max_abs threshold ' + optsSafe.thresholdMaxAbs.toExponential(1);
+                svgEl.appendChild(txt);
+            }
+
+            // Series polylines.
+            const seriesFor = (field, color) => {
+                const pts = [];
+                rows.forEach((r, i) => { if (r[field] != null && r[field] > 0) pts.push(`${xAt(i)},${yAt(r[field])}`); });
+                if (pts.length > 1) svgEl.appendChild(mk('polyline', { points: pts.join(' '), fill: 'none', stroke: color, 'stroke-width': 1.6 }));
+            };
+            seriesFor('maxAbs', '#ffb400');
+            seriesFor('rmse', '#07adf8');
+
+            // Pins at first non-exact / first material divergence stops.
+            const pinAt = (stop, color, dy) => {
+                const idx = rows.findIndex(r => r.stop === stop);
+                if (idx < 0) return;
+                const x = xAt(idx);
+                svgEl.appendChild(mk('line', { x1: x, y1: margin.top, x2: x, y2: height - margin.bottom, stroke: color, 'stroke-dasharray': '3,3', 'stroke-width': 1 }));
+                svgEl.appendChild(mk('polygon', { points: `${x - 5},${margin.top + dy + 8} ${x + 5},${margin.top + dy + 8} ${x},${margin.top + dy}`, fill: color }));
+            };
+            if (optsSafe.firstNonExactStop != null) pinAt(optsSafe.firstNonExactStop, '#ffd58a', 2);
+            if (optsSafe.firstMaterialStop != null) pinAt(optsSafe.firstMaterialStop, '#e74c3c', 14);
+
+            // Clickable points.
+            rows.forEach((r, i) => {
+                const field = r.maxAbs != null && r.maxAbs > 0 ? 'maxAbs' : (r.rmse != null && r.rmse > 0 ? 'rmse' : null);
+                if (!field) return;
+                const c = mk('circle', { cx: xAt(i), cy: yAt(r[field]), r: 4.5, fill: field === 'maxAbs' ? '#ffb400' : '#07adf8', stroke: '#232323', 'stroke-width': 1, cursor: 'pointer' });
+                const title = mk('title', {});
+                title.textContent = `${r.label}\nmax_abs=${r.maxAbs != null ? r.maxAbs.toExponential(3) : '—'} rmse=${r.rmse != null ? r.rmse.toExponential(3) : '—'}${r.byteExact ? ' (byte exact)' : ''}`;
+                c.appendChild(title);
+                c.addEventListener('click', () => showXrayCheckpoint(i));
+                svgEl.appendChild(c);
+            });
+        }
+
+        function showXrayCheckpoint(idx) {
+            const el = document.getElementById('xrayDetail');
+            const ctx = window.__xrayDrift;
+            if (!el || !ctx || !ctx.rows || !ctx.rows[idx]) return;
+            const row = ctx.rows[idx];
+            const raw = row.raw || {};
+            const metrics = raw.metrics || raw;
+            const trunc = (s) => {
+                const v = String(s || '');
+                return v.length > 16 ? v.slice(0, 12) + '…' : v;
+            };
+            const field = (label, value) => value != null && value !== ''
+                ? `<div style="margin-bottom:2px;"><span style="color:var(--text-muted);">${label}:</span> <code style="font-size:0.68rem;">${escapeHtml(String(value))}</code></div>`
+                : '';
+            const shapeTxt = Array.isArray(raw.shape) ? raw.shape.join(' × ') : null;
+            const axesTxt = Array.isArray(raw.axes) ? raw.axes.join(', ') : null;
+            const exec = raw.resolved_execution || null;
+            window.__xrayDetailFunction = raw.function || (exec && exec.function) || null;
+            el.innerHTML = `
+            <div style="background:var(--bg-dark); border:1px solid var(--grey); border-left:3px solid var(--orange); border-radius:6px; padding:0.75rem 1rem;">
+                <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.5rem;">
+                    <strong style="color:var(--white); font-size:0.78rem;">${escapeHtml(row.label)}</strong>
+                    ${row.byteExact ? '<span class="status-chip status-chip-good">byte exact</span>' : '<span class="status-chip status-chip-warn">not byte exact</span>'}
+                    <span style="margin-left:auto; display:flex; gap:0.4rem;">
+                        <button onclick="xrayOpenInKernels()" style="background:none; color:var(--orange-light); border:1px solid var(--grey); border-radius:4px; padding:2px 8px; cursor:pointer; font-size:0.66rem;">Open in Kernel Flow</button>
+                        <button onclick="showTab('memory')" style="background:none; color:var(--text-secondary); border:1px solid var(--grey); border-radius:4px; padding:2px 8px; cursor:pointer; font-size:0.66rem;">Open Memory Layout</button>
+                    </span>
+                </div>
+                <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:0 1.5rem; font-size:0.7rem; color:var(--text-secondary);">
+                    <div>
+                        ${field('operation', raw.operation || (exec && exec.producer))}
+                        ${field('function', raw.function || (exec && exec.function))}
+                        ${field('kernel', exec && exec.kernel_id)}
+                        ${field('buffer', raw.buffer)}
+                        ${field('layer', row.layer)}
+                        ${field('shape', shapeTxt)}
+                        ${field('axes', axesTxt)}
+                    </div>
+                    <div>
+                        ${field('max_abs', metrics.max_abs != null ? Number(metrics.max_abs).toExponential(4) : null)}
+                        ${field('rmse', metrics.rmse != null ? Number(metrics.rmse).toExponential(4) : null)}
+                        ${field('relative_rmse', metrics.relative_rmse != null ? Number(metrics.relative_rmse).toExponential(4) : null)}
+                        ${field('exact_ratio', metrics.exact_ratio != null ? Number(metrics.exact_ratio).toFixed(6) : null)}
+                        ${field('elapsed_s', raw.elapsed_seconds != null ? Number(raw.elapsed_seconds).toFixed(4) : null)}
+                        ${field('reference_sha256', trunc(raw.reference_sha256))}
+                        ${field('actual_sha256', trunc(raw.actual_sha256))}
+                    </div>
+                    <div>
+                        ${field('required_contract', raw.required_contract || raw.numerical_contract_id)}
+                        ${field('resolved_contract', raw.resolved_contract || raw.effective_contract_id || (exec && exec.resolved_contract_id))}
+                        ${field('storage_dtype', exec && exec.storage_dtype)}
+                        ${field('exported_dtype', exec && exec.exported_dtype)}
+                        ${field('material_divergence', raw.material_divergence != null ? String(raw.material_divergence) : null)}
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        function xrayOpenInKernels() {
+            const fn = window.__xrayDetailFunction;
+            showTab('kernels');
+            if (fn) {
+                const box = document.getElementById('kernelSearch');
+                if (box) {
+                    box.value = fn;
+                    if (typeof filterKernels === 'function') filterKernels(fn);
+                }
+            }
+        }
+
+        function exportXrayDriftSvg() {
+            const svgEl = document.getElementById('xrayDriftSvg');
+            if (!svgEl) { alert('No X-ray drift chart to export.'); return; }
+            const clone = svgEl.cloneNode(true);
+            clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+            const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            bg.setAttribute('width', '100%');
+            bg.setAttribute('height', '100%');
+            bg.setAttribute('fill', '#232323');
+            clone.insertBefore(bg, clone.firstChild);
+            const src = '<?xml version="1.0" encoding="utf-8"?>\n' + new XMLSerializer().serializeToString(clone);
+            const blob = new Blob([src], { type: 'image/svg+xml' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'ck-xray-drift-' + Date.now() + '.svg';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(a.href);
+        }
+
+        function renderXrayRanking(report) {
+            const el = document.getElementById('xrayRanking');
+            if (!el) return;
+            const checks = report && Array.isArray(report.checks) ? report.checks : [];
+            if (!checks.length) {
+                el.innerHTML = '<div style="font-size:0.72rem; color:var(--text-muted);">No ranking report loaded (cke.xray_ranking_report).</div>';
+                return;
+            }
+            const NS = 'http://www.w3.org/2000/svg';
+            const byKind = {};
+            checks.forEach(c => {
+                const k = String(c.kind || 'unknown');
+                (byKind[k] = byKind[k] || []).push(c);
+            });
+            el.innerHTML = '';
+            Object.keys(byKind).forEach(kind => {
+                const rows = byKind[kind].slice().sort((a, b) => (a.position || 0) - (b.position || 0));
+                const wrap = document.createElement('div');
+                wrap.style.marginBottom = '0.9rem';
+                const head = document.createElement('div');
+                head.style.cssText = 'font-size:0.74rem; color:var(--text-secondary); margin-bottom:0.3rem;';
+                const mismatches = rows.filter(c => c.ck_top1 !== c.oracle_top1).length;
+                head.innerHTML = `<strong style="color:var(--white);">${escapeHtml(kind)}</strong> — ${rows.length} position(s), ${mismatches === 0 ? '<span style="color:#47b475;">all top-1 agree</span>' : `<span style="color:#e74c3c;">${mismatches} mismatch(es)</span>`} · line: cosine`;
+                wrap.appendChild(head);
+                const width = Math.max(420, rows.length * 30 + 90);
+                const height = 96;
+                const margin = { top: 8, right: 62, bottom: 20, left: 44 };
+                const plotW = width - margin.left - margin.right;
+                const svg = document.createElementNS(NS, 'svg');
+                svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+                svg.setAttribute('style', 'width:100%; height:110px; background:var(--bg-dark); border:1px solid var(--grey); border-radius:6px;');
+                const mk = (tag, attrs) => {
+                    const node = document.createElementNS(NS, tag);
+                    Object.keys(attrs || {}).forEach(k => node.setAttribute(k, attrs[k]));
+                    return node;
+                };
+                const xAt = (i) => margin.left + (rows.length === 1 ? plotW / 2 : (i / (rows.length - 1)) * plotW);
+                const stripY = margin.top + 8;
+                rows.forEach((c, i) => {
+                    const match = c.ck_top1 === c.oracle_top1;
+                    const rect = mk('rect', { x: xAt(i) - 9, y: stripY, width: 18, height: 18, rx: 2, fill: match ? 'rgba(71,180,117,0.85)' : 'rgba(231,76,60,0.9)' });
+                    const title = mk('title', {});
+                    title.textContent = `pos ${c.position}: ck=${c.ck_top1} oracle=${c.oracle_top1}${c.cosine != null ? ' cosine=' + Number(c.cosine).toFixed(5) : ''}${c.rmse != null ? ' rmse=' + Number(c.rmse).toExponential(2) : ''}`;
+                    rect.appendChild(title);
+                    svg.appendChild(rect);
+                    const pl = mk('text', { x: xAt(i), y: stripY + 34, 'font-size': 8, fill: '#9ca3af', 'text-anchor': 'middle' });
+                    pl.textContent = String(c.position != null ? c.position : i);
+                    svg.appendChild(pl);
+                });
+                // Cosine line on a secondary 0..1 axis (right side).
+                const cosPts = [];
+                rows.forEach((c, i) => {
+                    if (c.cosine == null) return;
+                    const y = stripY + 44 - Math.max(0, Math.min(1, Number(c.cosine))) * 30;
+                    cosPts.push(`${xAt(i)},${y}`);
+                });
+                if (cosPts.length > 1) {
+                    svg.appendChild(mk('polyline', { points: cosPts.join(' '), fill: 'none', stroke: '#07adf8', 'stroke-width': 1.4 }));
+                    const lbl = mk('text', { x: width - margin.right + 6, y: stripY + 16, 'font-size': 8, fill: '#07adf8' });
+                    lbl.textContent = 'cos 0..1';
+                    svg.appendChild(lbl);
+                }
+                wrap.appendChild(svg);
+                el.appendChild(wrap);
+            });
+        }
+
+        function renderXrayTrace(stateReport, traceReport) {
+            const el = document.getElementById('xrayTrace');
+            if (!el) return;
+            let html = '';
+            const checks = stateReport && Array.isArray(stateReport.checks) ? stateReport.checks : [];
+            if (checks.length) {
+                const order = Array.isArray(stateReport.diagnostic_order) ? stateReport.diagnostic_order : null;
+                const sorted = order
+                    ? checks.slice().sort((a, b) => order.indexOf(a.stage) - order.indexOf(b.stage))
+                    : checks;
+                html += '<div style="font-size:0.74rem; color:var(--text-secondary); margin-bottom:0.4rem;">'
+                    + `Execution-state stages (${escapeHtml(String(stateReport.subject_backend || '?'))} vs ${escapeHtml(String(stateReport.oracle_backend || '?'))}) — status: `
+                    + (stateReport.status === 'pass' ? '<span style="color:#47b475;">pass</span>' : '<span style="color:#e74c3c;">' + escapeHtml(String(stateReport.status || 'fail')) + '</span>')
+                    + '</div>';
+                sorted.forEach(c => {
+                    const ok = c.status === 'pass';
+                    html += `
+                    <div style="display:flex; align-items:baseline; gap:0.55rem; padding:0.3rem 0.5rem; border-bottom:1px solid var(--grey); font-size:0.72rem;">
+                        <span>${ok ? '✅' : '❌'}</span>
+                        <code style="color:${ok ? 'var(--text-secondary)' : '#ffb8b0'}; min-width:220px;">${escapeHtml(String(c.stage || '?'))}</code>
+                        ${c.classification ? `<span class="status-chip status-chip-bad">${escapeHtml(String(c.classification))}</span>` : ''}
+                        ${c.recommended_action ? `<span style="color:var(--text-muted); font-size:0.68rem;">${escapeHtml(String(c.recommended_action))}</span>` : ''}
+                    </div>`;
+                });
+            }
+            const calls = traceReport && traceReport.execution && Array.isArray(traceReport.execution.calls)
+                ? traceReport.execution.calls : [];
+            if (calls.length) {
+                const run = traceReport.run || {};
+                const state = traceReport.state || {};
+                html += `<div style="font-size:0.74rem; color:var(--text-secondary); margin:${checks.length ? '0.9rem' : '0'} 0 0.4rem;">`
+                    + `Execution trace — backend <code>${escapeHtml(String(traceReport.backend || '?'))}</code>, model <code>${escapeHtml(String(run.model || '?'))}</code>, phase <code>${escapeHtml(String(run.phase || '?'))}</code>`
+                    + (state.cache_token_count != null ? `, cache tokens ${escapeHtml(String(state.cache_token_count))}` : '')
+                    + '</div>';
+                calls.forEach(c => {
+                    const batches = Array.isArray(c.kernel_batches) ? c.kernel_batches.length : 0;
+                    html += `
+                    <div style="display:flex; align-items:baseline; gap:0.55rem; padding:0.3rem 0.5rem; border-bottom:1px solid var(--grey); font-size:0.72rem;">
+                        <span style="color:var(--orange);">▸</span>
+                        <code style="color:var(--text-secondary); min-width:160px;">${escapeHtml(String(c.call_id || '?'))}</code>
+                        <span style="color:var(--text-muted);">${escapeHtml(String(c.kind || ''))} · start ${escapeHtml(String(c.start != null ? c.start : '?'))} · count ${escapeHtml(String(c.count != null ? c.count : '?'))} · cache ${escapeHtml(String(c.cache_action || '?'))}${batches ? ' · ' + batches + ' kernel batch(es)' : ''}</span>
+                    </div>`;
+                });
+            }
+            if (!html) {
+                html = '<div style="font-size:0.72rem; color:var(--text-muted);">No execution trace / state report loaded (cke.xray_execution_trace, cke.xray_execution_state_report).</div>';
+            }
+            el.innerHTML = html;
+        }
+
         // Graph intersection guide: clickable op families with specific test commands
         function renderParityGraphGuide() {
             const el = document.getElementById('parityGraphGuide');
@@ -24689,6 +25330,11 @@ const _LIVE_FILES = [
     'training_step_profile_latest.json',
     'training_checkpoint_policy_latest.json',
     'corpus_sampling_log_latest.json',
+    'whisper-encoder-xray.json',
+    'xray_ranking_report.json',
+    'xray_execution_trace.json',
+    'xray_execution_state_report.json',
+    'xray_decoder_summary.json',
 ];
 
 const _LIVE_KEY_MAP = {
@@ -24699,6 +25345,11 @@ const _LIVE_KEY_MAP = {
     'training_step_profile_latest.json':       'training_step_profile',
     'training_checkpoint_policy_latest.json':  'training_checkpoint_policy',
     'corpus_sampling_log_latest.json':         'corpus_sampling_log',
+    'whisper-encoder-xray.json':               'xray_whisper_encoder',
+    'xray_ranking_report.json':                'xray_ranking',
+    'xray_execution_trace.json':               'xray_execution_trace',
+    'xray_execution_state_report.json':        'xray_execution_state',
+    'xray_decoder_summary.json':               'xray_decoder_pytorch',
 };
 
 let _liveTimer  = null;
@@ -24754,6 +25405,7 @@ async function _pollFiles(cfg) {
     await Promise.all(fetches);
     if (changed.length > 0) _rerender();
     _lastUpdateMs = Date.now();
+    window.__ckLiveLastUpdateMs = _lastUpdateMs;
     _setLiveStatus((changed.length > 0 ? '↺ ' : '') + _buildSummary(), 'ok');
 }
 
@@ -24778,6 +25430,7 @@ async function _pollSnapshot(cfg) {
         }
         if (anyChanged) _rerender();
         _lastUpdateMs = Date.now();
+        window.__ckLiveLastUpdateMs = _lastUpdateMs;
         _setLiveStatus((anyChanged ? '↺ ' : '') + _buildSummary(), 'ok');
     } catch (e) {
         _setLiveStatus('network error — is the live server running?', 'error');
@@ -24791,6 +25444,11 @@ function _rerender() {
     const tabId = active ? (active.dataset.tab || '') : '';
     if (typeof renderTrainingTab === 'function' && tabId) {
         try { renderTrainingTab(tabId); } catch (_) {}
+    }
+    // X-Ray is a classic-script tab (not a train-* extension): re-render it
+    // directly so backend parity reports hot-reload while agents emit them.
+    if (tabId === 'xray' && typeof window.renderXray === 'function') {
+        try { window.renderXray(); } catch (_) {}
     }
 }
 

@@ -84,6 +84,13 @@
       "description": "CK vs llama.cpp parity results"
     },
     {
+      "id": "xray",
+      "label": "X-Ray",
+      "render_fn": "renderXray",
+      "panel_id": "xray",
+      "description": "Backend parity X-ray: per-checkpoint numerical drift, ranking, execution trace"
+    },
+    {
       "id": "tests",
       "label": "Tests",
       "panel_id": "tests",
@@ -117,7 +124,8 @@
       "renderVisionArtifactsPanel",
       "renderProfile",
       "renderDataPipeline",
-      "renderParityCockpit"
+      "renderParityCockpit",
+      "renderXray"
     ],
     "utilities": [
       "normalizeShapeInput",
@@ -228,6 +236,74 @@
           { "name": "child",   "call": "relativePathFromTo('/a/b', '/a/b/c')", "expect": "c" },
           { "name": "same",    "call": "relativePathFromTo('/a/b', '/a/b')",   "expect": "." },
           { "name": "nonabs",  "call": "relativePathFromTo('a/b', '/c')",      "expect": null }
+        ]
+      },
+      {
+        "name": "xrayReportKindLabel",
+        "tests": [
+          { "name": "whisper",  "call": "xrayReportKindLabel({schema:'cke.whisper_encoder_pytorch_xray'})", "expect": "Whisper Encoder X-Ray" },
+          { "name": "ranking",  "call": "xrayReportKindLabel({schema:'cke.xray_ranking_report'})",          "expect": "Ranking Report" },
+          { "name": "decoder",  "call": "xrayReportKindLabel({schema:'cke.xray.decoder_pytorch'})",         "expect": "Decoder X-Ray" },
+          { "name": "fallback", "call": "xrayReportKindLabel({})",                                          "expect": "X-Ray Report" }
+        ]
+      },
+      {
+        "name": "xrayBackendLabel",
+        "tests": [
+          { "name": "whisper_torch",   "call": "xrayBackendLabel({schema:'cke.whisper_encoder_pytorch_xray'})",                          "expect": "PyTorch" },
+          { "name": "ranking_oracle",  "call": "xrayBackendLabel({schema:'cke.xray_ranking_report'})",                                     "expect": "ggml-oracle" },
+          { "name": "orch_llamacpp",   "call": "xrayBackendLabel({schema:'cke.xray_orchestration_report', final_report:{oracle_backend:'llamacpp'}})", "expect": "llama.cpp" },
+          { "name": "orch_pytorch",    "call": "xrayBackendLabel({schema:'cke.xray_orchestration_report', final_report:{oracle_backend:'pytorch'}})",    "expect": "PyTorch" },
+          { "name": "trace_backend",   "call": "xrayBackendLabel({schema:'cke.xray_execution_trace', backend:'ck'})",                      "expect": "ck" }
+        ]
+      },
+      {
+        "name": "xrayReportStatus",
+        "tests": [
+          { "name": "explicit",       "call": "xrayReportStatus({status:'pass'})",                                  "expect": "pass" },
+          { "name": "checks_all_pass","call": "xrayReportStatus({checks:[{status:'pass'},{status:'pass'}]})",       "expect": "pass" },
+          { "name": "checks_one_fail","call": "xrayReportStatus({checks:[{status:'pass'},{status:'fail'}]})",       "expect": "fail" },
+          { "name": "unknown",        "call": "xrayReportStatus({})",                                               "expect": "unknown" }
+        ]
+      },
+      {
+        "name": "xrayDriftRows",
+        "tests": [
+          {
+            "name": "whisper_checkpoints",
+            "call": "xrayDriftRows({checkpoints:[{stop:0, checkpoint:'stem.conv1', layer:null, metrics:{max_abs:0, rmse:0, byte_exact:true, exact_ratio:1}}, {stop:1, checkpoint:'layer.0.mlp.fc1', layer:0, metrics:{max_abs:1.7e-4, rmse:1.8e-5, byte_exact:false, exact_ratio:0.997}}]})",
+            "expect_fn": "(r) => r.length === 2 && r[0].label === 'stem.conv1' && r[0].byteExact === true && r[1].layer === 0 && r[1].maxAbs === 1.7e-4 && r[1].rmse === 1.8e-5 && r[1].byteExact === false"
+          },
+          {
+            "name": "orchestration_drift_progression",
+            "call": "xrayDriftRows({final_report:{drift_progression:{checkpoints:[{checkpoint_id:'layer.0.input', max_abs:0, rmse:0, byte_exact:true, resolved_execution:{layer:0}}, {checkpoint_id:'layer.0.after_attn', max_abs:2.7e-2, rmse:4.8e-3, byte_exact:false, resolved_execution:{layer:0}}]}}})",
+            "expect_fn": "(r) => r.length === 2 && r[0].label === 'layer.0.input' && r[0].byteExact === true && r[1].maxAbs === 2.7e-2 && r[1].layer === 0"
+          },
+          {
+            "name": "empty_for_non_table_report",
+            "call": "xrayDriftRows({schema:'cke.xray_ranking_report', checks:[{kind:'teacher_forced'}]})",
+            "expect": []
+          }
+        ]
+      },
+      {
+        "name": "buildXrayRunbookHtml",
+        "tests": [
+          {
+            "name": "empty_state_lists_producer_commands",
+            "call": "buildXrayRunbookHtml({runDir:null, modelPath:null})",
+            "expect_fn": "(h) => h.indexOf('No X-ray artifacts loaded') >= 0 && h.indexOf('compare_whisper_encoder_pytorch_v8.py') >= 0 && h.indexOf('xray-vision-parity') >= 0 && h.indexOf('xray_execution_state_v8.py') >= 0"
+          },
+          {
+            "name": "no_run_dir_placeholders_escaped",
+            "call": "buildXrayRunbookHtml({runDir:null, modelPath:null})",
+            "expect_fn": "(h) => h.indexOf('&lt;run_dir&gt;') >= 0 && h.indexOf('<run_dir>') < 0"
+          },
+          {
+            "name": "run_scoped_output_paths",
+            "call": "buildXrayRunbookHtml({runDir:'/tmp/ckrun', modelPath:null})",
+            "expect_fn": "(h) => h.indexOf('/tmp/ckrun/whisper-encoder-xray.json') >= 0 && h.indexOf('--run /tmp/ckrun') >= 0"
+          }
         ]
       }
     ]
