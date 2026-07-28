@@ -740,6 +740,42 @@ class NumericalExecutionContractTests(unittest.TestCase):
                 self.assertEqual(semantics["compute"]["weight"], "int5")
                 self.assertEqual(semantics["reduction"]["merge_order"], "pairwise_tree")
 
+    def test_qwen35_circuit_resolves_exact_q6_recurrent_qkv_projection(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        expected = {
+            "prefill": (
+                "decoder.recurrent_qkv_projection.q6_k.prefill",
+                "gemm_nt_q6_k_q8_k",
+            ),
+            "decode": (
+                "decoder.recurrent_qkv_projection.q6_k.decode",
+                "gemv_q6_k_q8_k",
+            ),
+        }
+        for phase, (operation, kernel_id) in expected.items():
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    operation,
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "q6_k_weight_q8_k_input_llama_fp32_output",
+                )
+                self.assertEqual(plan["kernel"]["id"], kernel_id)
+                self.assertEqual(plan["kernel"]["function"], kernel_id)
+                semantics = plan["contract"]["semantics"]
+                self.assertEqual(semantics["compute"]["weight"], "int6")
+                self.assertEqual(
+                    semantics["reduction"]["merge_order"], "pairwise_tree"
+                )
+
     def test_qwen35_circuit_resolves_exact_q8_recurrent_qkv_projection(self):
         circuit_doc = resolver.load_json(
             ROOT / "version" / "v8" / "circuits" / "qwen35.json"
