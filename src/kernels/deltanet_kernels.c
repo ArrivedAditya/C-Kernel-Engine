@@ -120,7 +120,6 @@ static void gated_deltanet_llama_avx2_grouped_forward_impl(
         state_dim <= 0 || state_dim > CK_DELTANET_MAX_STACK_DIM) {
         return;
     }
-    const int heads_per_group = num_heads / group_count;
     const float scale = 1.0f / sqrtf((float) state_dim);
     const size_t vector_stride = (size_t) state_dim;
     const size_t state_stride = (size_t) state_dim * (size_t) state_dim;
@@ -128,7 +127,9 @@ static void gated_deltanet_llama_avx2_grouped_forward_impl(
     float q_scaled[CK_DELTANET_MAX_STACK_DIM];
 
     for (int h = 0; h < num_heads; ++h) {
-        const int group = h / heads_per_group;
+        /* ggml_repeat_4d tiles the compact Q/K head axis.  For H=48,G=16
+         * the value heads bind Q/K groups 0..15, 0..15, 0..15. */
+        const int group = h % group_count;
         const float *q_head = q + (size_t) group * vector_stride;
         const float *k_head = k + (size_t) group * vector_stride;
         const float *v_head = v + (size_t) h * vector_stride;
@@ -196,12 +197,13 @@ void gated_deltanet_llama_avx2_forward(const float *q,
                                        float *state_out,
                                        float *out,
                                        int num_heads,
+                                       int group_count,
                                        int state_dim,
                                        float norm_eps)
 {
     gated_deltanet_llama_avx2_grouped_forward_impl(
         q, k, v, g, beta, state_in, state_out, out,
-        num_heads, num_heads, state_dim, norm_eps, 0);
+        num_heads, group_count, state_dim, norm_eps, 0);
 }
 
 void gated_deltanet_pytorch_grouped_bf16_forward(const float *q,
@@ -236,26 +238,29 @@ void gated_deltanet_llama_avx2_prefill_forward(const float *q,
                                                float *out,
                                                int rows,
                                                int num_heads,
+                                               int group_count,
                                                int state_dim,
                                                float norm_eps)
 {
     if (!q || !k || !v || !g || !beta || !state_in || !state_out || !out ||
-        rows <= 0 || num_heads <= 0 || state_dim <= 0) {
+        rows <= 0 || num_heads <= 0 || group_count <= 0 ||
+        num_heads % group_count != 0 || state_dim <= 0) {
         return;
     }
-    const size_t vector_stride = (size_t) num_heads * (size_t) state_dim;
+    const size_t qk_stride = (size_t) group_count * (size_t) state_dim;
+    const size_t value_stride = (size_t) num_heads * (size_t) state_dim;
     const size_t gate_stride = (size_t) num_heads;
     for (int row = 0; row < rows; ++row) {
         gated_deltanet_llama_avx2_forward(
-            q + (size_t) row * vector_stride,
-            k + (size_t) row * vector_stride,
-            v + (size_t) row * vector_stride,
+            q + (size_t) row * qk_stride,
+            k + (size_t) row * qk_stride,
+            v + (size_t) row * value_stride,
             g + (size_t) row * gate_stride,
             beta + (size_t) row * gate_stride,
             row == 0 ? state_in : state_out,
             state_out,
-            out + (size_t) row * vector_stride,
-            num_heads, state_dim, norm_eps);
+            out + (size_t) row * value_stride,
+            num_heads, group_count, state_dim, norm_eps);
     }
 }
 

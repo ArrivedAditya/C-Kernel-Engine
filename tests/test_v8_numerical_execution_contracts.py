@@ -331,6 +331,18 @@ class NumericalExecutionContractTests(unittest.TestCase):
                 )
                 self.assertEqual(plan["contract"]["id"], contract_id)
                 self.assertEqual(plan["kernel"]["function"], function)
+                kernel_capability = self.kernels["kernels"][plan["kernel"]["id"]]
+                kernel = resolver.load_json(ROOT / kernel_capability["source"])
+                abi_sources = {
+                    param["name"]: param["source"]
+                    for param in kernel["call_abi"]["params"]
+                }
+                self.assertEqual(
+                    abi_sources["group_count"],
+                    "dim:ssm_group_count",
+                )
+                self.assertEqual(kernel["inputs"][0]["shape"][-2:], ["G", "D"])
+                self.assertEqual(kernel["inputs"][1]["shape"][-2:], ["G", "D"])
 
     def test_qwen35_full_attention_qk_norm_resolves_llama_provider(self):
         circuit_doc = resolver.load_json(

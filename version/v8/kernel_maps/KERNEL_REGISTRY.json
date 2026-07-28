@@ -11068,7 +11068,7 @@
           "name": "q",
           "dtype": "fp32",
           "shape": [
-            "H",
+            "G",
             "D"
           ]
         },
@@ -11076,7 +11076,7 @@
           "name": "k",
           "dtype": "fp32",
           "shape": [
-            "H",
+            "G",
             "D"
           ]
         },
@@ -11135,6 +11135,7 @@
       "scratch": [],
       "dims": [
         "H",
+        "G",
         "D"
       ],
       "params": [
@@ -11145,7 +11146,7 @@
       ],
       "impl": {
         "function": "gated_deltanet_llama_avx2_forward",
-        "c_declaration": "void gated_deltanet_llama_avx2_forward(const float *q, const float *k, const float *v, const float *g, const float *beta, const float *state_in, float *state_out, float *out, int num_heads, int state_dim, float norm_eps);",
+        "c_declaration": "void gated_deltanet_llama_avx2_forward(const float *q, const float *k, const float *v, const float *g, const float *beta, const float *state_in, float *state_out, float *out, int num_heads, int group_count, int state_dim, float norm_eps);",
         "sources": [
           "src/kernels/deltanet_kernels.c"
         ],
@@ -11200,7 +11201,7 @@
         ],
         "parity": [
           {
-            "kind": "llama.cpp_production_graph",
+            "kind": "llama.cpp_fused_cpu_operator",
             "command": "make test-deltanet-llamacpp-production",
             "tolerance": "0"
           }
@@ -11254,6 +11255,10 @@
             "source": "dim:ssm_time_step_rank"
           },
           {
+            "name": "group_count",
+            "source": "dim:ssm_group_count"
+          },
+          {
             "name": "state_dim",
             "source": "dim:recurrent_head_dim"
           },
@@ -11286,7 +11291,7 @@
           "dtype": "fp32",
           "shape": [
             "R",
-            "H",
+            "G",
             "D"
           ]
         },
@@ -11295,7 +11300,7 @@
           "dtype": "fp32",
           "shape": [
             "R",
-            "H",
+            "G",
             "D"
           ]
         },
@@ -11359,6 +11364,7 @@
       "dims": [
         "R",
         "H",
+        "G",
         "D"
       ],
       "params": [
@@ -11369,7 +11375,7 @@
       ],
       "impl": {
         "function": "gated_deltanet_llama_avx2_prefill_forward",
-        "c_declaration": "void gated_deltanet_llama_avx2_prefill_forward(const float *q, const float *k, const float *v, const float *g, const float *beta, const float *state_in, float *state_out, float *out, int rows, int num_heads, int state_dim, float norm_eps);",
+        "c_declaration": "void gated_deltanet_llama_avx2_prefill_forward(const float *q, const float *k, const float *v, const float *g, const float *beta, const float *state_in, float *state_out, float *out, int rows, int num_heads, int group_count, int state_dim, float norm_eps);",
         "sources": [
           "src/kernels/deltanet_kernels.c"
         ],
@@ -11424,7 +11430,7 @@
         ],
         "parity": [
           {
-            "kind": "llama.cpp_production_graph",
+            "kind": "llama.cpp_fused_cpu_operator",
             "command": "make test-deltanet-llamacpp-production",
             "tolerance": "0"
           }
@@ -11480,6 +11486,10 @@
           {
             "name": "num_heads",
             "source": "dim:ssm_time_step_rank"
+          },
+          {
+            "name": "group_count",
+            "source": "dim:ssm_group_count"
           },
           {
             "name": "state_dim",

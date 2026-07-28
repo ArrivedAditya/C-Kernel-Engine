@@ -1,4 +1,6 @@
-// Authoritative Gated DeltaNet parity against llama.cpp's production CPU graph.
+// Grouped Gated DeltaNet parity against llama.cpp's fused CPU operator.
+// The default batched chunk graph has a different FP32 evaluation order and is
+// covered by the real-model X-ray/trajectory probes instead.
 
 #include "ggml.h"
 #include "ggml-cpu.h"
@@ -13,10 +15,10 @@
 extern "C" {
 void gated_deltanet_llama_avx2_forward(
         const float *, const float *, const float *, const float *, const float *,
-        const float *, float *, float *, int, int, float);
+        const float *, float *, float *, int, int, int, float);
 void gated_deltanet_llama_avx2_prefill_forward(
         const float *, const float *, const float *, const float *, const float *,
-        const float *, float *, float *, int, int, int, float);
+        const float *, float *, float *, int, int, int, int, float);
 void recurrent_norm_gate_llama_avx2_forward(
         const float *, const float *, const float *, float *, int, int, int, float);
 }
@@ -54,7 +56,7 @@ static bool exact(const char * label, const float * ck, const float * oracle, si
     return false;
 }
 
-static bool llama_graph(
+static bool llama_fused_graph(
         const std::vector<float> & q,
         const std::vector<float> & k,
         const std::vector<float> & v,
@@ -63,14 +65,14 @@ static bool llama_graph(
         const std::vector<float> & state_ck,
         std::vector<float> & output,
         std::vector<float> & state_ck_out,
-        int rows, int heads, int dim) {
+        int rows, int heads, int groups, int dim) {
     const size_t arena = 64u * 1024u * 1024u;
     ggml_init_params params = {arena, nullptr, false};
     ggml_context * ctx = ggml_init(params);
     if (!ctx) return false;
 
-    ggml_tensor * tq = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, dim, heads, rows, 1);
-    ggml_tensor * tk = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, dim, heads, rows, 1);
+    ggml_tensor * tq = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, dim, groups, rows, 1);
+    ggml_tensor * tk = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, dim, groups, rows, 1);
     ggml_tensor * tv = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, dim, heads, rows, 1);
     ggml_tensor * tg = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 1, heads, rows, 1);
     ggml_tensor * tb = ggml_new_tensor_4d(ctx, GGML_TYPE_F32, 1, heads, rows, 1);
@@ -121,15 +123,19 @@ static bool llama_graph(
 }
 
 static bool run_case(int rows) {
-    constexpr int heads = 16;
+    constexpr int heads = 48;
+    constexpr int groups = 16;
     constexpr int dim = 128;
+    const size_t qk_vectors = static_cast<size_t>(rows) * groups * dim;
     const size_t vectors = static_cast<size_t>(rows) * heads * dim;
     const size_t gates = static_cast<size_t>(rows) * heads;
     const size_t states = static_cast<size_t>(heads) * dim * dim;
-    std::vector<float> q(vectors), k(vectors), v(vectors), g(gates), beta(gates), state(states);
-    for (size_t i = 0; i < vectors; ++i) {
+    std::vector<float> q(qk_vectors), k(qk_vectors), v(vectors), g(gates), beta(gates), state(states);
+    for (size_t i = 0; i < qk_vectors; ++i) {
         q[i] = fixture(i, 0.09f, 0.13f);
         k[i] = fixture(i, 0.08f, 0.29f);
+    }
+    for (size_t i = 0; i < vectors; ++i) {
         v[i] = fixture(i, 0.21f, 0.47f);
     }
     for (size_t i = 0; i < gates; ++i) {
@@ -140,16 +146,18 @@ static bool run_case(int rows) {
 
     std::vector<float> ck_out(vectors), llama_out(vectors);
     std::vector<float> ck_state(states), llama_state(states);
-    if (!llama_graph(q, k, v, g, beta, state, llama_out, llama_state, rows, heads, dim)) {
+    if (!llama_fused_graph(
+            q, k, v, g, beta, state, llama_out, llama_state,
+            rows, heads, groups, dim)) {
         std::printf("llama.cpp graph execution failed\n");
         return false;
     }
     if (rows == 1) {
         gated_deltanet_llama_avx2_forward(q.data(), k.data(), v.data(), g.data(), beta.data(),
-                state.data(), ck_state.data(), ck_out.data(), heads, dim, 1e-6f);
+                state.data(), ck_state.data(), ck_out.data(), heads, groups, dim, 1e-6f);
     } else {
         gated_deltanet_llama_avx2_prefill_forward(q.data(), k.data(), v.data(), g.data(), beta.data(),
-                state.data(), ck_state.data(), ck_out.data(), rows, heads, dim, 1e-6f);
+                state.data(), ck_state.data(), ck_out.data(), rows, heads, groups, dim, 1e-6f);
     }
     std::printf("rows=%d heads=%d dim=%d threads=%s\n", rows, heads, dim,
             std::getenv("CK_NUM_THREADS") ? std::getenv("CK_NUM_THREADS") : "1");
