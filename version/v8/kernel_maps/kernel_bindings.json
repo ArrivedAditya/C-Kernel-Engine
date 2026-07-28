@@ -3017,34 +3017,6 @@
       ],
       "notes": "Copy logits from scratch to position-indexed location. Used in decode mode."
     },
-    "rope_precompute_cache": {
-      "params": [
-        {
-          "name": "cos_cache",
-          "source": "output:rope_cos",
-          "cast": "float*"
-        },
-        {
-          "name": "sin_cache",
-          "source": "output:rope_sin",
-          "cast": "float*"
-        },
-        {
-          "name": "max_seq_len",
-          "source": "dim:max_seq_len"
-        },
-        {
-          "name": "head_dim",
-          "source": "dim:head_dim"
-        },
-        {
-          "name": "base",
-          "source": "dim:rope_theta",
-          "cast": "float"
-        }
-      ],
-      "notes": "Precompute RoPE cos/sin cache. Called ONCE at model init with rope_theta from config. Different models use different theta: Llama2=10000, Llama3=500000, Qwen2=1000000."
-    },
     "rope_forward_qk_with_rotary_dim": {
       "note": "RoPE is typically in-place: input q,k are modified and returned as output q,k",
       "params": [

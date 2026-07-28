@@ -93,7 +93,9 @@
     }
   },
   "kernels": {
-    "rope_qk": "rope_forward_qk_pairwise"
+    "rmsnorm": "rmsnorm_forward_llama_production",
+    "rope_qk": "rope_forward_qk_pairwise",
+    "attn_decode": "attention_forward_decode_head_major_gqa_flash"
   },
   "sequence": [
     "decoder"

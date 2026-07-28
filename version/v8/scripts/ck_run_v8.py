@@ -808,6 +808,7 @@ def step_build_ir(
     log_step(3, "Building v8 IR")
     output_dir.mkdir(parents=True, exist_ok=True)
     step_regenerate_kernel_registry(force=force)
+    force = _refresh_manifest_circuit_snapshot(manifest_path) or force
 
     outputs = {
         "init_ir": output_dir / "init.json",
@@ -857,6 +858,28 @@ def step_build_ir(
     _build_mode("prefill")
     _build_mode("decode")
     return outputs
+
+
+def _refresh_manifest_circuit_snapshot(manifest_path: Path) -> bool:
+    """Refresh cached graph policy without reconverting immutable weights."""
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    embedded = manifest.get("template") if isinstance(manifest.get("template"), dict) else {}
+    config = manifest.get("config") if isinstance(manifest.get("config"), dict) else {}
+    circuit_name = str(embedded.get("name") or config.get("model") or "").strip().lower()
+    if not circuit_name:
+        return False
+    circuit_path = V8_ROOT / "circuits" / f"{circuit_name}.json"
+    if not circuit_path.is_file():
+        return False
+    current = json.loads(circuit_path.read_text(encoding="utf-8"))
+    if not isinstance(current, dict):
+        raise RuntimeError(f"versioned circuit is not a JSON object: {circuit_path}")
+    if embedded == current:
+        return False
+    manifest["template"] = current
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    log(f"  Refreshed cached circuit snapshot: {circuit_name}", C_DIM)
+    return True
 
 
 def step_codegen(output_dir: Path, ir_paths: dict[str, Path], *, force: bool = False, profile: bool = False) -> Path:

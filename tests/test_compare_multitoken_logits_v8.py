@@ -56,8 +56,51 @@ class MultitokenParityEOSContractTests(unittest.TestCase):
         self.assertIsNone(report["matched_stop_token"])
         self.assertEqual(report["first_divergence"]["ck_next"], 2)
 
+    def test_replay_configures_ck_threads_before_loading_runtime(self) -> None:
+        logits = np.asarray([0.0, 1.0, 4.0], dtype=np.float32)
+        configured = {
+            "CK_NUM_THREADS": "7",
+            "CK_THREADPOOL_THREADS": "7",
+            "OMP_NUM_THREADS": "7",
+        }
+        with mock.patch.object(runner, "run_llama_logits", return_value={"logits": logits}), \
+             mock.patch.object(runner, "load_ck_logits", return_value={"logits": logits}), \
+             mock.patch.object(
+                 runner, "_configure_ck_threads", return_value=configured
+             ) as configure:
+            report = runner.run_multitoken_parity(
+                model_dir=Path("/tmp/model"),
+                gguf_path=Path("/tmp/model.gguf"),
+                prompt_tokens=[7],
+                max_new_tokens=1,
+                ctx_len=128,
+                top_k=3,
+                threads=7,
+                append_on_divergence="stop",
+                ck_prefill_mode="batched",
+                llama_decode_mode="batched",
+                llama_no_repack=False,
+            )
+        configure.assert_called_once_with(7)
+        self.assertEqual(report["ck_thread_environment"], configured)
+
 
 class PersistentTrajectoryParityTests(unittest.TestCase):
+    def test_thread_configuration_is_applied_before_runtime_load(self) -> None:
+        with mock.patch.dict(runner.os.environ, {}, clear=True):
+            configured = runner._configure_ck_threads(12)
+            self.assertEqual(
+                configured,
+                {
+                    "CK_NUM_THREADS": "12",
+                    "CK_THREADPOOL_THREADS": "12",
+                    "OMP_NUM_THREADS": "12",
+                },
+            )
+            self.assertEqual(runner.os.environ["CK_NUM_THREADS"], "12")
+            self.assertEqual(runner.os.environ["CK_THREADPOOL_THREADS"], "12")
+            self.assertEqual(runner.os.environ["OMP_NUM_THREADS"], "12")
+
     def test_exact_trajectory_stops_at_shared_eos(self) -> None:
         rows = np.asarray([
             [0.0, 4.0, 1.0],
@@ -129,6 +172,45 @@ class PersistentTrajectoryParityTests(unittest.TestCase):
                 llama_no_repack=False,
             )
         self.assertEqual(calls, ["ck", "llama"])
+
+    def test_requested_threads_reach_isolated_ck_capture(self) -> None:
+        rows = np.asarray([[0.0, 4.0, 1.0]], dtype=np.float32)
+        captured: dict = {}
+
+        def ck_capture(**kwargs):
+            captured.update(kwargs)
+            return {
+                "logits": rows,
+                "generated_tokens": [1],
+                "vocab": 3,
+                "thread_environment": {
+                    "CK_NUM_THREADS": "7",
+                    "CK_THREADPOOL_THREADS": "7",
+                    "OMP_NUM_THREADS": "7",
+                },
+            }
+
+        with mock.patch.object(
+            runner, "load_ck_greedy_trajectory_isolated", side_effect=ck_capture
+        ), mock.patch.object(
+            runner,
+            "run_llama_greedy_trajectory",
+            return_value={"logits": rows, "generated_tokens": [1], "meta": {}},
+        ):
+            report = runner.run_multitoken_trajectory_parity(
+                model_dir=Path("/tmp/model"),
+                gguf_path=Path("/tmp/model.gguf"),
+                prompt_tokens=[7],
+                max_new_tokens=1,
+                ctx_len=128,
+                top_k=3,
+                threads=7,
+                llama_no_repack=False,
+            )
+
+        self.assertEqual(captured["threads"], 7)
+        self.assertEqual(report["threads"], 7)
+        self.assertEqual(report["ck_thread_environment"]["CK_NUM_THREADS"], "7")
 
 
 if __name__ == "__main__":

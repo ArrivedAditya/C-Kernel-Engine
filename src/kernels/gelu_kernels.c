@@ -49,6 +49,7 @@ typedef void (*ck_gelu_ggml_cpu_init_fn)(void);
 typedef ck_half (*ck_gelu_ggml_fp32_to_fp16_fn)(float);
 typedef float (*ck_gelu_ggml_fp16_to_fp32_fn)(ck_half);
 typedef float (*ck_gelu_math_f32_fn)(float);
+typedef double (*ck_gelu_math_f64_fn)(double);
 
 static const ck_half *ck_gelu_runtime_table_f16 = NULL;
 static ck_gelu_ggml_fp32_to_fp16_fn ck_gelu_runtime_fp32_to_fp16 = NULL;
@@ -56,7 +57,7 @@ static ck_gelu_ggml_fp16_to_fp32_fn ck_gelu_runtime_fp16_to_fp32 = NULL;
 static void *ck_gelu_runtime_handle = NULL;
 static int ck_gelu_runtime_ready = 0;
 static ck_gelu_math_f32_fn ck_gelu_reference_tanhf = NULL;
-static ck_gelu_math_f32_fn ck_gelu_reference_erff = NULL;
+static ck_gelu_math_f64_fn ck_gelu_reference_erf = NULL;
 static pthread_once_t ck_gelu_reference_math_once = PTHREAD_ONCE_INIT;
 
 static void ck_gelu_reference_math_init(void) {
@@ -64,7 +65,7 @@ static void ck_gelu_reference_math_init(void) {
     void *handle = dlopen("libm.so.6", RTLD_NOW | RTLD_LOCAL);
     if (handle) {
         ck_gelu_reference_tanhf = (ck_gelu_math_f32_fn) dlsym(handle, "tanhf");
-        ck_gelu_reference_erff = (ck_gelu_math_f32_fn) dlsym(handle, "erff");
+        ck_gelu_reference_erf = (ck_gelu_math_f64_fn) dlsym(handle, "erf");
     }
 #endif
 }
@@ -74,9 +75,9 @@ static ck_gelu_math_f32_fn ck_gelu_system_tanhf(void) {
     return ck_gelu_reference_tanhf;
 }
 
-static ck_gelu_math_f32_fn ck_gelu_system_erff(void) {
+static ck_gelu_math_f64_fn ck_gelu_system_erf(void) {
     pthread_once(&ck_gelu_reference_math_once, ck_gelu_reference_math_init);
-    return ck_gelu_reference_erff;
+    return ck_gelu_reference_erf;
 }
 
 #if defined(__clang__) || defined(__INTEL_LLVM_COMPILER)
@@ -565,13 +566,13 @@ void gelu_exact_inplace(float *data, size_t n)
 // approximation despite its name.
 void gelu_pytorch_erf_f32_inplace(float *data, size_t n)
 {
-    const float inv_sqrt_2 = 0.70710678118654752440f;
-    ck_gelu_math_f32_fn reference_erff = ck_gelu_system_erff();
+    const double inv_sqrt_2 = 0.707106781186547524400844362104849039;
+    ck_gelu_math_f64_fn reference_erf = ck_gelu_system_erf();
     for (size_t i = 0; i < n; ++i) {
         const float x = data[i];
-        const float erf_value =
-            reference_erff ? reference_erff(x * inv_sqrt_2) : erff(x * inv_sqrt_2);
-        data[i] = (0.5f * x) * (1.0f + erf_value);
+        const double scaled = (double)x * inv_sqrt_2;
+        const double erf_value = reference_erf ? reference_erf(scaled) : erf(scaled);
+        data[i] = (float)(0.5 * (double)x * (1.0 + erf_value));
     }
 }
 

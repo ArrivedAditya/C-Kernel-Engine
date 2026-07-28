@@ -12821,7 +12821,7 @@
           "unittest/test_audio_encoder.py"
         ]
       },
-      "notes": "FP32 Whisper/PyTorch GELU provider. The scalar libm erff entry point is bound indirectly so -fno-math-errno cannot replace it with host-specific AVX2 or AVX-512 vector libm arithmetic. Does not replace the historical tanh-based gelu_exact_inplace provider.",
+      "notes": "FP32 Whisper/PyTorch GELU provider. The provider widens its ERF argument and final expression to FP64, then narrows once to FP32. This avoids the cross-glibc float-erff drift observed between local and GitHub runners while retaining the existing PyTorch error bounds. The scalar libm erf entry point is bound indirectly so the compiler cannot replace it with host-specific vector math. Does not replace the historical tanh-based gelu_exact_inplace provider.",
       "name": "gelu_pytorch_erf_f32_inplace",
       "_source_file": "gelu_pytorch_erf_f32_inplace.json"
     },
@@ -33493,6 +33493,45 @@
             "name": "ref",
             "requires": [],
             "compile_flags": []
+          }
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "cos_cache",
+            "source": "output:cos_cache",
+            "cast": "float*"
+          },
+          {
+            "name": "sin_cache",
+            "source": "output:sin_cache",
+            "cast": "float*"
+          },
+          {
+            "name": "max_seq_len",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "base",
+            "source": "config:rope_theta"
+          },
+          {
+            "name": "rotary_dim",
+            "source": "dim:rotary_dim"
+          },
+          {
+            "name": "scaling_type",
+            "source": "config:rope_scaling_type"
+          },
+          {
+            "name": "scaling_factor",
+            "source": "config:rope_scaling_factor"
           }
         ]
       },

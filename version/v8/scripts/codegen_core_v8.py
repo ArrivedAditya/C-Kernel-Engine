@@ -816,6 +816,13 @@ def emit_op(
             }}
         }}
         memcpy(buf, _temp_buf, (size_t)Hkv * num_tokens * D * sizeof(float));
+        ck_debug_export_hidden(
+            model,
+            {layer},
+            "{("k" if is_k else "v")}_head_major",
+            (const float*)buf,
+            Hkv * num_tokens * D
+        );
     }}"""
         )
         if seq_idx is not None:
@@ -1877,6 +1884,15 @@ def emit_op(
             "attn_gate",
             _mul_expr(_hidden_arg("rows", "num_tokens", "tokens"), _hidden_arg("gate_dim")),
         )
+    elif op_name == "bias_add" and op.get("bias_for") in {
+        "q_proj",
+        "k_proj",
+        "v_proj",
+    }:
+        # Decode keeps Q/K/V bias as separate operations while prefill providers
+        # fuse it. Export the shared post-bias boundary for phase-safe X-ray.
+        label = f"{op['bias_for']}_post_bias"
+        _emit_hidden_export(_hidden_arg("a", "y", "output", "out"), label, _hidden_arg("n", "N"))
     elif op_name in ("rope_qk", "mrope_qk"):
         q_count = _mul_expr(
             _hidden_arg("num_heads"),

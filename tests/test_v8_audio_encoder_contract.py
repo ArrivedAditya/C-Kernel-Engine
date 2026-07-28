@@ -525,7 +525,7 @@ class AudioEncoderContractTests(unittest.TestCase):
         rule = makefile.split("$(LIB_ATTENTION):", 1)[1].split("\n\n", 1)[0]
         self.assertIn("src/kernels/gemm_kernels_bf16.c", rule)
 
-    def test_pytorch_erf_gelu_uses_host_independent_scalar_libm(self):
+    def test_pytorch_erf_gelu_uses_fp64_scalar_libm(self):
         kernel = json.loads(
             (V8 / "kernel_maps" / "gelu_pytorch_erf_f32_inplace.json")
             .read_text(encoding="utf-8")
@@ -538,8 +538,10 @@ class AudioEncoderContractTests(unittest.TestCase):
         function = source.split(
             "void gelu_pytorch_erf_f32_inplace(float *data, size_t n)", 1
         )[1].split("\n}", 1)[0]
-        self.assertIn("ck_gelu_system_erff()", function)
-        self.assertIn("reference_erff(", function)
+        self.assertIn("ck_gelu_system_erf()", function)
+        self.assertIn("reference_erf(", function)
+        self.assertIn("const double scaled", function)
+        self.assertIn("data[i] = (float)", function)
 
 
 if __name__ == "__main__":

@@ -469,6 +469,13 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         }}
         /* Copy back */
         memcpy(buf, _temp_buf, (size_t)Hkv * num_tokens * D * sizeof(float));
+        ck_debug_export_hidden(
+            model,
+            {layer},
+            "{("k" if is_k else "v")}_head_major",
+            (const float*)buf,
+            Hkv * num_tokens * D
+        );
     }}"""
 
     # Handle transpose_qkv_to_head_major for Q: convert from [T, H*D] to [H, T, D]
@@ -1124,6 +1131,11 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             "q_proj",
             _hidden_mul(_hidden_arg("m", "rows", "num_tokens") or "num_tokens", q_width),
         )
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "q_proj_post_bias",
+            _hidden_mul(_hidden_arg("m", "rows", "num_tokens") or "num_tokens", q_width),
+        )
         _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "q_proj", q_width)
     elif op_type == "kv_a_proj":
         width = _hidden_arg("n", "out_dim") or "KV_LORA_RANK + ROTARY_DIM"
@@ -1177,12 +1189,22 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             "k_proj",
             _hidden_mul(_hidden_arg("m", "rows", "num_tokens") or "num_tokens", k_width),
         )
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "k_proj_post_bias",
+            _hidden_mul(_hidden_arg("m", "rows", "num_tokens") or "num_tokens", k_width),
+        )
         _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "k_proj", k_width)
     elif op_type == "v_proj":
         v_width = _hidden_arg("n") or "NUM_KV_HEADS * HEAD_DIM"
         _emit_hidden_full(
             _hidden_arg("output", "out", "c", "y"),
             "v_proj",
+            _hidden_mul(_hidden_arg("m", "rows", "num_tokens") or "num_tokens", v_width),
+        )
+        _emit_hidden_full(
+            _hidden_arg("output", "out", "c", "y"),
+            "v_proj_post_bias",
             _hidden_mul(_hidden_arg("m", "rows", "num_tokens") or "num_tokens", v_width),
         )
         _emit_hidden_last(_hidden_arg("output", "out", "c", "y"), "v_proj", v_width)
