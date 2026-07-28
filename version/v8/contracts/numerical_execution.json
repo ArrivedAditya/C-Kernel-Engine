@@ -1839,8 +1839,8 @@
       "compute": {
         "input": "fp32",
         "weight": "fp32",
-        "accumulator": "fp32",
-        "evaluation_order": "pytorch_erf_approximate_none_scalar_fp32"
+        "accumulator": "fp64",
+        "evaluation_order": "widen_fp32_to_fp64_erf_then_single_fp32_store"
       },
       "rounding": {
         "mode": "rne",
@@ -1861,7 +1861,7 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "PyTorch GELU approximate=none over FP32 storage using the scalar erf formulation."
+      "description": "PyTorch GELU approximate=none over FP32 storage using a host-stable FP64 scalar erf formulation and one FP32 output rounding."
     },
     "gelu_pytorch_erf_sleef_bf16_storage": {
       "operator_family": "gelu",
