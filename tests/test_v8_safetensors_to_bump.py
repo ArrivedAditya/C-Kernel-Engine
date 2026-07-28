@@ -823,6 +823,10 @@ def test_qwen35_safetensors_to_bump_smoke(tmp_path: Path) -> None:
     assert config["k_dim"] == 8
     assert config["v_dim"] == 8
     assert config["gate_dim"] == 8
+    assert config["recurrent_qkv_weight_dtype"] == "bf16"
+    assert config["decoder_norm_storage_boundary"] == "bf16"
+    assert config["decoder_qk_norm_reduction_policy"] == "pytorch_avx2_cascade_exact"
+    assert config["decode_kv_cache_dtype"] == "bf16"
     assert config["rotary_dim"] == 4
     assert config["mrope_sections"] == [1, 1, 0, 0]
     assert config["mrope_n_dims"] == 4
