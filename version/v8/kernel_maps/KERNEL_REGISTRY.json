@@ -33496,6 +33496,45 @@
           }
         ]
       },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "cos_cache",
+            "source": "output:cos_cache",
+            "cast": "float*"
+          },
+          {
+            "name": "sin_cache",
+            "source": "output:sin_cache",
+            "cast": "float*"
+          },
+          {
+            "name": "max_seq_len",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "base",
+            "source": "config:rope_theta"
+          },
+          {
+            "name": "rotary_dim",
+            "source": "dim:rotary_dim"
+          },
+          {
+            "name": "scaling_type",
+            "source": "config:rope_scaling_type"
+          },
+          {
+            "name": "scaling_factor",
+            "source": "config:rope_scaling_factor"
+          }
+        ]
+      },
       "tests": {
         "unit": [
           "unittest/test_rope.py"

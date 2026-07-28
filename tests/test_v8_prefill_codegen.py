@@ -27,6 +27,30 @@ codegen_prefill_v8 = _load_module("codegen_prefill_v8_tests", CODEGEN_PREFILL_PA
 
 
 class TestV8PrefillCodegen(unittest.TestCase):
+    def test_kv_transpose_exports_attention_consumed_layout(self) -> None:
+        config = {"num_kv_heads": 8, "head_dim": 128, "context_len": 1034}
+        for is_k, label in ((True, "k_head_major"), (False, "v_head_major")):
+            with self.subTest(label=label):
+                emitted = codegen_prefill_v8.emit_prefill_op(
+                    {
+                        "function": "transpose_inplace",
+                        "op": "transpose_kv_to_head_major",
+                        "layer": 3,
+                        "section": "body",
+                        "_is_k": is_k,
+                        "_num_kv_heads": 8,
+                        "_head_dim": 128,
+                    },
+                    17,
+                    config,
+                )
+                copy_back = "memcpy(buf, _temp_buf, (size_t)Hkv * num_tokens * D * sizeof(float));"
+                export = f'"{label}"'
+                self.assertIn(copy_back, emitted)
+                self.assertIn(export, emitted)
+                self.assertLess(emitted.index(copy_back), emitted.index(export))
+                self.assertIn("Hkv * num_tokens * D", emitted)
+
     def test_last_logits_preserves_resolved_exact_gemm_provider(self) -> None:
         function = "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage"
         op = {

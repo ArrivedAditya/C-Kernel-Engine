@@ -35,6 +35,17 @@ from compare_first_token_logits_v8 import (  # type: ignore
 )
 
 
+def _configure_ck_threads(threads: int) -> dict[str, str]:
+    value = str(max(1, int(threads)))
+    configured = {
+        "CK_NUM_THREADS": value,
+        "CK_THREADPOOL_THREADS": value,
+        "OMP_NUM_THREADS": value,
+    }
+    os.environ.update(configured)
+    return configured
+
+
 def load_ck_greedy_trajectory(
     *,
     model_dir: Path,
@@ -142,14 +153,17 @@ def _load_ck_greedy_trajectory_worker(
     prompt_tokens: list[int],
     max_new_tokens: int,
     stop_token_ids: set[int],
+    threads: int,
 ) -> None:
     try:
+        thread_environment = _configure_ck_threads(threads)
         result = load_ck_greedy_trajectory(
             model_dir=model_dir,
             prompt_tokens=prompt_tokens,
             max_new_tokens=max_new_tokens,
             stop_token_ids=stop_token_ids,
         )
+        result["thread_environment"] = thread_environment
         connection.send(("ok", result))
     except BaseException:
         connection.send(("error", traceback.format_exc()))
@@ -163,6 +177,7 @@ def load_ck_greedy_trajectory_isolated(
     prompt_tokens: list[int],
     max_new_tokens: int,
     stop_token_ids: set[int] | None = None,
+    threads: int = 1,
 ) -> dict[str, Any]:
     """Capture CK logits in a short-lived process so model mappings are released."""
     context = multiprocessing.get_context("fork")
@@ -175,6 +190,7 @@ def load_ck_greedy_trajectory_isolated(
             prompt_tokens,
             int(max_new_tokens),
             {int(token) for token in (stop_token_ids or set())},
+            max(1, int(threads)),
         ),
     )
     process.start()
@@ -219,6 +235,7 @@ def run_multitoken_trajectory_parity(
         prompt_tokens=prompt_tokens,
         max_new_tokens=max_new_tokens,
         stop_token_ids=stops,
+        threads=threads,
     )
     llama = run_llama_greedy_trajectory(
         gguf_path, prompt_tokens, max_new_tokens, ctx_len, top_k, threads, llama_no_repack
@@ -271,6 +288,7 @@ def run_multitoken_trajectory_parity(
         "ctx_len": int(ctx_len),
         "top_k": int(top_k),
         "threads": int(threads),
+        "ck_thread_environment": dict(ck.get("thread_environment", {})),
         "execution_mode": "persistent_greedy_trajectory",
         "ck_prefill_mode": "hybrid",
         "llama_decode_mode": "hybrid",
@@ -297,6 +315,7 @@ def run_multitoken_parity(
     llama_no_repack: bool,
     stop_token_ids: set[int] | None = None,
 ) -> dict[str, Any]:
+    thread_environment = _configure_ck_threads(threads)
     tokens = [int(t) for t in prompt_tokens]
     steps: list[dict[str, Any]] = []
     first_divergence: dict[str, Any] | None = None
@@ -390,6 +409,7 @@ def run_multitoken_parity(
         "ctx_len": int(ctx_len),
         "top_k": int(top_k),
         "threads": int(threads),
+        "ck_thread_environment": thread_environment,
         "append_on_divergence": str(append_on_divergence),
         "ck_prefill_mode": str(ck_prefill_mode),
         "llama_decode_mode": str(llama_decode_mode),

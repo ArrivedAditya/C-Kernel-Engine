@@ -3635,7 +3635,7 @@ test-numerical-contracts: $(LIB)
 	@$(MAKE) --no-print-directory test-q6k-prefill-routing-exact
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_attention_contracts_v8.py
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_numerical_execution_contracts_v8.py
-	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/xray_execution_state_v8.py version/v8/scripts/xray_decoder_pytorch_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py
+	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/xray_execution_state_v8.py version/v8/scripts/xray_decoder_pytorch_v8.py version/v8/scripts/xray_ck_persistent_replay_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py
 	@$(PYTHON) tests/test_v8_attention_contracts.py
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
 	@$(PYTHON) unittest/bf16/test_layernorm_storage_contract_bf16.py
@@ -3667,6 +3667,7 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
 	@$(PYTHON) tests/test_v8_xray_decoder_pytorch.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
+	@$(PYTHON) -m pytest -q tests/test_xray_ck_persistent_replay_v8.py
 	@$(PYTHON) tests/test_v8_xray_text_recurrent.py
 	@$(PYTHON) tests/test_v8_text_prompt_certification.py
 	@$(PYTHON) -m unittest tests.test_v8_numerical_replay_fixtures -v
@@ -3709,6 +3710,7 @@ test-bf16-xray:
 		version/v8/scripts/xray_attention_sensitivity_v8.py \
 		version/v8/scripts/xray_decoder_pytorch_v8.py \
 		version/v8/scripts/xray_execution_state_v8.py \
+		version/v8/scripts/xray_ck_persistent_replay_v8.py \
 		version/v8/scripts/xray_text_recurrent_v8.py \
 		version/v8/scripts/build_xray_checkpoint_manifest_v8.py \
 		version/v8/scripts/xray_qwen3vl_bf16_v8.py \
@@ -3721,6 +3723,7 @@ test-bf16-xray:
 	@$(PYTHON) tests/test_v8_xray_decoder_pytorch.py
 	@$(PYTHON) tests/test_v8_xray_attention_sensitivity.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
+	@$(PYTHON) -m pytest -q tests/test_xray_ck_persistent_replay_v8.py
 	@$(PYTHON) tests/test_v8_xray_text_recurrent.py
 	@$(PYTHON) tests/test_v8_xray_vision_interface.py
 	@$(PYTHON) tests/test_v8_xray_qwen3vl_bf16_decoder.py
