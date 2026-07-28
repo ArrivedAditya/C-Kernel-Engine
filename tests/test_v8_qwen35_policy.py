@@ -30,6 +30,19 @@ class V8Qwen35PolicyTests(unittest.TestCase):
             "q8_0",
         )
 
+    def test_recurrent_qkv_dtype_accepts_uniform_q6_k(self) -> None:
+        self.assertEqual(
+            resolve_qwen35_recurrent_qkv_weight_dtype(
+                ["recurrent", "full_attention", "recurrent"],
+                {
+                    "layer.0": {"attn_qkv": "q6_k"},
+                    "layer.1": {"attn_q": "q4_k"},
+                    "layer.2": {"attn_qkv": "q6_k"},
+                },
+            ),
+            "q6_k",
+        )
+
     def test_mixed_recurrent_qkv_dtypes_hard_fail(self) -> None:
         with self.assertRaisesRegex(GGUFError, "mixed dtypes"):
             resolve_qwen35_recurrent_qkv_weight_dtype(

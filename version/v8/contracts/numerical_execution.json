@@ -1414,6 +1414,36 @@
       "description": "BF16 weights and BF16-rounded FP32 activation loads with ascending-K FP32 dot products and BF16 RNE output storage.",
       "operator_family": "gemm"
     },
+    "q6_k_weight_q8_k_input_llama_fp32_output": {
+      "operator_family": "gemm",
+      "status": "validated",
+      "storage": {"input": "q8_k", "weight": "q6_k", "output": "fp32"},
+      "compute": {
+        "input": "int8",
+        "weight": "int6",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "q8_k_quantize_then_q6_k_int32_subblock_dot_with_zero_point_correction_then_fp32_scaled_superblock_accumulation"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "weighted_product", "reduction_update", "reduction_finalize", "output_store"]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "pairwise_tree"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "llama.cpp-compatible Q6_K projection with canonical Q8_K activations, int32 sub-block dots and zero-point correction, and FP32 scaled super-block accumulation."
+    },
     "q5_k_weight_q8_k_input_avx2_fma_fp32_output": {
       "operator_family": "gemm",
       "status": "validated",

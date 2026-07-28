@@ -422,6 +422,28 @@
         "axis_names": ["token", "channel"]
       }
     },
+    "decoder.recurrent_qkv_projection.q6_k.prefill": {
+      "op": "gemm",
+      "template_ops": ["recurrent_qkv_proj"],
+      "selector": {
+        "config_equals": {
+          "recurrent_qkv_weight_dtype": "q6_k"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "q6_k_weight_q8_k_input_llama_fp32_output",
+          "validation": "validated",
+          "evidence": "Q6_K x Q8_K production GEMM matches the llama.cpp CPU graph contract and the Qwen3.6 Q4_K_M recurrent QKV tensors are uniformly Q6_K."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_qkv_projection.output",
+        "producer": "recurrent_qkv_proj",
+        "logical_layout": "row_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
     "decoder.recurrent_qkv_projection.q5_k.decode": {
       "op": "gemv",
       "template_ops": ["recurrent_qkv_proj"],
@@ -435,6 +457,28 @@
           "contract_id": "q5_k_weight_q8_k_input_avx2_fma_fp32_output",
           "validation": "validated",
           "evidence": "Q5_K adapter is bit-exact against the llama.cpp x86 production graph at M=1,N=6144,K=1024."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_qkv_projection.output",
+        "producer": "recurrent_qkv_proj",
+        "logical_layout": "row_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.recurrent_qkv_projection.q6_k.decode": {
+      "op": "gemv",
+      "template_ops": ["recurrent_qkv_proj"],
+      "selector": {
+        "config_equals": {
+          "recurrent_qkv_weight_dtype": "q6_k"
+        }
+      },
+      "phases": {
+        "decode": {
+          "contract_id": "q6_k_weight_q8_k_input_llama_fp32_output",
+          "validation": "validated",
+          "evidence": "Q6_K x Q8_K production GEMV is bit-exact against the llama.cpp CPU graph and uses independent output partitioning."
         }
       },
       "checkpoint": {
