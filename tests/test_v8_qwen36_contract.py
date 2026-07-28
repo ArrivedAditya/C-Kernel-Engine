@@ -3,8 +3,10 @@ import copy
 import hashlib
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -165,6 +167,23 @@ class Qwen36ContractTests(unittest.TestCase):
         self.assertTrue(self.metadata["has_mtp_assistant"])
         self.assertEqual(self.metadata["mtp_num_layers"], 1)
         self.assertFalse(self.metadata["mtp_use_dedicated_embeddings"])
+
+    def test_runtime_config_preserves_partial_mrope_width(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            model_dir = Path(tmp)
+            (model_dir / "config.json").write_text(
+                json.dumps(self.config), encoding="utf-8"
+            )
+            with mock.patch.object(
+                converter, "_load_safetensors_headers", return_value=self.headers
+            ):
+                runtime = converter._build_config(model_dir, "qwen35", None)
+
+        self.assertEqual(runtime["head_dim"], 256)
+        self.assertEqual(runtime["rotary_dim"], 64)
+        self.assertEqual(runtime["mrope_n_dims"], 64)
+        self.assertEqual(runtime["mrope_sections"], [11, 11, 10, 0])
+        self.assertTrue(runtime["mrope_interleaved"])
 
     def test_explicit_attention_head_width_does_not_require_hidden_partition(self):
         self.assertEqual(

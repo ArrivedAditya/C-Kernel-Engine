@@ -1748,7 +1748,16 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         mrope = list(rope_parameters.get("mrope_section") or [])
         if mrope:
             cfg["mrope_sections"] = [int(v) for v in mrope] + ([0] if len(mrope) == 3 else [])
-            cfg["mrope_n_dims"] = int(cfg.get("head_dim") or cfg.get("hidden_size", 0) // max(1, int(cfg.get("num_attention_heads", 1))) or sum(int(v) for v in mrope))
+            # Qwen3.5 may rotate only a fraction of each attention head. Keep
+            # the validated architecture width instead of expanding M-RoPE
+            # back to the full head dimension.
+            cfg["mrope_n_dims"] = int(
+                cfg.get("rotary_dim")
+                or cfg.get("head_dim")
+                or cfg.get("hidden_size", 0)
+                // max(1, int(cfg.get("num_attention_heads", 1)))
+                or 2 * sum(int(v) for v in mrope)
+            )
     cfg = _inject_runtime_config_defaults(cfg, arch)
     if arch == "gemma4" and "layer_kinds" not in cfg:
         raise SystemExit("Gemma4 safetensors conversion currently requires --config-template with explicit layer_kinds/shared KV policy")
