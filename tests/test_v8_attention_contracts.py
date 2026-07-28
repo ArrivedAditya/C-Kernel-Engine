@@ -382,6 +382,8 @@ class AttentionContractV8Tests(unittest.TestCase):
             ("qwen3", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash"),
             ("qwen35", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_prefill_append_f16cache_single_range"),
             ("qwen35", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash_f16cache_contract"),
+            ("qwen35", "decoder.attention_bf16_pytorch", "prefill", "attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract"),
+            ("qwen35", "decoder.attention_bf16_pytorch", "decode", "attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract"),
             ("nemotron_h", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_flash_strided"),
             ("nemotron_h", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash"),
             ("llama", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_flash_strided_f16kv"),
@@ -410,6 +412,18 @@ class AttentionContractV8Tests(unittest.TestCase):
                     {"serial", "ck_threadpool", "external_blas"},
                 )
                 self.assertTrue(result["implementation"]["threading"]["work_partition"])
+
+    def test_qwen35_attention_storage_selectors_use_kv_contract_metadata(self) -> None:
+        circuit = resolver.load_json(V8_ROOT / "circuits" / "qwen35.json")
+        contracts = circuit["required_contracts"]
+        self.assertEqual(
+            contracts["decoder.attention"]["selector"],
+            {"config_not_equals": {"decode_kv_cache_dtype": "bf16"}},
+        )
+        self.assertEqual(
+            contracts["decoder.attention_bf16_pytorch"]["selector"],
+            {"config_equals": {"decode_kv_cache_dtype": "bf16"}},
+        )
 
     def test_execution_schema_is_operator_generic(self) -> None:
         resolver.validate_schema(
