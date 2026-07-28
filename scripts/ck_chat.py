@@ -1169,6 +1169,7 @@ class CKModel:
     def _load_runtime_contract(self) -> dict:
         """Load generic runtime behavior flags from config/manifest/template."""
         contract = {"prefill_policy": "batched"}
+        bf16_batched_prefill = False
 
         def _merge_sampler_defaults(src: object) -> None:
             if not isinstance(src, dict):
@@ -1218,10 +1219,16 @@ class CKModel:
                 explicit_prefill = cfg.get("prefill_policy")
                 if isinstance(explicit_prefill, str) and explicit_prefill.strip():
                     contract["prefill_policy"] = explicit_prefill.strip()
+                    bf16_batched_prefill = bf16_batched_prefill or (
+                        explicit_prefill.strip().lower() == "batched"
+                        and str(cfg.get("recurrent_qkv_weight_dtype") or "").strip().lower()
+                        == "bf16"
+                    )
 
                 layer_kinds = cfg.get("layer_kinds")
                 if (
                     contract["prefill_policy"] == "batched"
+                    and not bf16_batched_prefill
                     and isinstance(layer_kinds, list)
                     and any(str(kind).strip().lower() not in {"full_attention", "attention", "dense_attention"} for kind in layer_kinds)
                 ):
@@ -1237,7 +1244,11 @@ class CKModel:
                 flags = template.get("flags")
                 if isinstance(flags, dict):
                     template_prefill = flags.get("prefill_policy")
-                    if isinstance(template_prefill, str) and template_prefill.strip():
+                    if (
+                        not bf16_batched_prefill
+                        and isinstance(template_prefill, str)
+                        and template_prefill.strip()
+                    ):
                         contract["prefill_policy"] = template_prefill.strip()
         return contract
 

@@ -161,6 +161,52 @@ class TestCKChatRuntimeContract(unittest.TestCase):
             contract = model._load_runtime_contract()
             self.assertEqual(contract.get("prefill_policy"), "sequential_decode")
 
+    def test_runtime_contract_keeps_explicit_bf16_hybrid_prefill_batched(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ck_chat_bf16_prefill_") as td:
+            run_dir = Path(td)
+            (run_dir / "weights_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "config": {
+                            "prefill_policy": "batched",
+                            "recurrent_qkv_weight_dtype": "bf16",
+                            "layer_kinds": ["recurrent", "full_attention"],
+                        },
+                        "template": {
+                            "flags": {"prefill_policy": "sequential_decode"}
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            model = ck_chat.CKModel(str(run_dir))
+            contract = model._load_runtime_contract()
+
+        self.assertEqual(contract.get("prefill_policy"), "batched")
+
+    def test_runtime_contract_keeps_q5_hybrid_prefill_sequential(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ck_chat_q5_prefill_") as td:
+            run_dir = Path(td)
+            (run_dir / "weights_manifest.json").write_text(
+                json.dumps(
+                    {
+                        "config": {
+                            "prefill_policy": "batched",
+                            "recurrent_qkv_weight_dtype": "q5_k",
+                            "layer_kinds": ["recurrent", "full_attention"],
+                        },
+                        "template": {
+                            "flags": {"prefill_policy": "sequential_decode"}
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            model = ck_chat.CKModel(str(run_dir))
+            contract = model._load_runtime_contract()
+
+        self.assertEqual(contract.get("prefill_policy"), "sequential_decode")
+
     def test_runtime_contract_loads_sampler_defaults_from_config(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ck_chat_sampler_") as td:
             run_dir = Path(td)
