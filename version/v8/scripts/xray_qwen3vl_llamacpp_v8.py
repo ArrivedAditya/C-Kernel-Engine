@@ -196,6 +196,7 @@ def normalize_capture_report(
 
     if first_divergence is not None:
         if first_non_exact is not None:
+            first_divergence["classification"] = "DOWNSTREAM_OR_PROPAGATED_DIVERGENCE"
             first_divergence["causal_origin_candidate"] = first_non_exact
             first_divergence["fix_owner"] = "exact_input_control"
             first_divergence["recommended_action"] = (
