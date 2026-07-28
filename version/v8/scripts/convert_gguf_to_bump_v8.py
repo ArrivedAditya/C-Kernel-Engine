@@ -1112,6 +1112,67 @@ def describe_layer_contract(tensors: Dict[str, "TensorInfo"], layer: int, arch: 
     return None
 
 
+_QWEN35_MTP_TENSOR_SUFFIXES = frozenset({
+    "eh_proj",
+    "embed_tokens",
+    "enorm",
+    "hnorm",
+    "shared_head_head",
+    "shared_head_norm",
+})
+_QWEN35_MTP_DECODER_SUFFIXES = frozenset({
+    "attn_k.weight",
+    "attn_k_norm.weight",
+    "attn_norm.weight",
+    "attn_output.weight",
+    "attn_q.weight",
+    "attn_q_norm.weight",
+    "attn_v.weight",
+    "ffn_down.weight",
+    "ffn_gate.weight",
+    "ffn_up.weight",
+    "post_attention_norm.weight",
+})
+
+
+def qwen35_mtp_source_reason(
+    name: str,
+    *,
+    decoder_layers: int,
+    nextn_layers: int,
+) -> Optional[str]:
+    """Classify GGUF NextN tensors excluded from the base decoder artifact."""
+    parts = name.split(".")
+    if len(parts) < 4 or parts[0] != "blk" or not parts[1].isdigit():
+        return None
+    layer = int(parts[1])
+    if not (decoder_layers <= layer < decoder_layers + nextn_layers):
+        return None
+    suffix = ".".join(parts[2:])
+    is_decoder_tensor = suffix in _QWEN35_MTP_DECODER_SUFFIXES
+    is_nextn_tensor = (
+        len(parts) == 5
+        and parts[2] == "nextn"
+        and parts[3] in _QWEN35_MTP_TENSOR_SUFFIXES
+        and parts[4] == "weight"
+    )
+    if is_decoder_tensor or is_nextn_tensor:
+        return "mtp_decoder_block_not_in_main_pass"
+    return None
+
+
+def qwen35_decoder_layer_count(block_count: int, nextn_layers: int) -> int:
+    """Remove auxiliary NextN blocks from GGUF's inclusive block count."""
+    if block_count <= 0:
+        raise GGUFError(f"qwen35 block_count must be positive, got {block_count}")
+    if nextn_layers < 0 or nextn_layers >= block_count:
+        raise GGUFError(
+            "qwen35 nextn_predict_layers must be non-negative and smaller than "
+            f"block_count (got nextn={nextn_layers}, block_count={block_count})"
+        )
+    return block_count - nextn_layers
+
+
 def build_gemma4_attention_plan(meta: Dict[str, object], num_layers: int) -> Dict[str, object]:
     """Resolve Gemma4 attention/cache policy from GGUF metadata.
 
@@ -2332,6 +2393,7 @@ def main() -> None:
         "qwen35.ssm.time_step_rank",
         "qwen35.ssm.inner_size",
         "qwen35.full_attention_interval",
+        "qwen35.nextn_predict_layers",
         # Nemotron-H Mamba/MLP/attention and MoE/Mamba hybrid keys
         "nemotron_h.block_count",
         "nemotron_h.context_length",
@@ -2473,8 +2535,7 @@ def main() -> None:
     if args.extract_vocab:
         import subprocess
         print(f"[convert] Extracting vocabulary to {args.extract_vocab}...")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        vocab_script = os.path.join(script_dir, "extract_gguf_vocab.py")
+        vocab_script = str(ROOT_SCRIPTS_DIR / "extract_gguf_vocab.py")
         
         try:
             subprocess.run(
@@ -3750,6 +3811,15 @@ def main() -> None:
             if not layer_ids:
                 raise GGUFError("Could not infer num_layers (missing block_count and no blk.* tensors found)")
             num_layers = max(layer_ids) + 1
+        qwen35_nextn_layers = 0
+        if arch == "qwen35":
+            qwen35_nextn_layers = int(
+                meta_int("qwen35.nextn_predict_layers") or 0
+            )
+            num_layers = qwen35_decoder_layer_count(
+                int(num_layers),
+                qwen35_nextn_layers,
+            )
 
         intermediate = meta_int_or_list(
             "deepseek2.feed_forward_length", "mistral3.feed_forward_length", "mistral.feed_forward_length",
@@ -4262,7 +4332,28 @@ def main() -> None:
 
             _add_qwen35_entry(qwen35_plan, consumed_sources, "final_ln_weight", "output_norm.weight", label="output_norm.weight")
 
-            unconsumed_sources = sorted(set(tensors.keys()) - consumed_sources)
+            nextn_layers = qwen35_nextn_layers
+            remaining_sources = sorted(set(tensors.keys()) - consumed_sources)
+            ignored_sources = [
+                {
+                    "source": name,
+                    "reason": qwen35_mtp_source_reason(
+                        name,
+                        decoder_layers=num_layers,
+                        nextn_layers=nextn_layers,
+                    ),
+                }
+                for name in remaining_sources
+                if qwen35_mtp_source_reason(
+                    name,
+                    decoder_layers=num_layers,
+                    nextn_layers=nextn_layers,
+                )
+            ]
+            ignored_source_names = {row["source"] for row in ignored_sources}
+            unconsumed_sources = [
+                name for name in remaining_sources if name not in ignored_source_names
+            ]
             if unconsumed_sources:
                 raise GGUFError(
                     f"qwen35 conversion plan left {len(unconsumed_sources)} source tensors unconsumed: "
@@ -4273,6 +4364,7 @@ def main() -> None:
                 "arch": arch,
                 "total_source_tensors": len(tensors),
                 "consumed_source_tensors": len(consumed_sources),
+                "ignored_source_tensors": ignored_sources,
                 "unconsumed_source_tensors": unconsumed_sources,
                 "pass": not unconsumed_sources,
             }
@@ -4310,6 +4402,8 @@ def main() -> None:
                 "tie_word_embeddings": bool(tie_word_embeddings),
                 "has_qk_norm": any(kind == "full_attention" for kind in layer_kinds),
                 "has_attention_biases": False,
+                "has_mtp_assistant": nextn_layers > 0,
+                "mtp_num_layers": nextn_layers,
                 "dtype": "fp32",
                 "layer_kinds": layer_kinds,
                 "hybrid_block_pattern": layer_kinds[:],

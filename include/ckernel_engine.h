@@ -2312,6 +2312,7 @@ void gated_deltanet_llama_avx2_forward(const float *q,
                                        float *state_out,
                                        float *out,
                                        int num_heads,
+                                       int group_count,
                                        int state_dim,
                                        float norm_eps);
 
@@ -2325,6 +2326,7 @@ void gated_deltanet_llama_avx2_prefill_forward(const float *q,
                                                float *out,
                                                int rows,
                                                int num_heads,
+                                               int group_count,
                                                int state_dim,
                                                float norm_eps);
 

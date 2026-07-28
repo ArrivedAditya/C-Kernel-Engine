@@ -246,7 +246,7 @@
         "weight": "none",
         "accumulator": "fp32",
         "contraction": "enabled",
-        "evaluation_order": "llama_avx2_four_accumulator_dot_then_scale_with_fma_state_update"
+        "evaluation_order": "llama_group_tiled_qk_then_avx2_four_accumulator_dot_then_scale_with_fma_state_update"
       },
       "rounding": {
         "mode": "rne",
@@ -265,7 +265,7 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "Single-token Gated DeltaNet matching llama.cpp's AVX2 CPU graph: four-vector FMA dot reduction, FMA state update, and query scaling after reduction."
+      "description": "Single-token Gated DeltaNet matching llama.cpp's grouped-Q/K CPU graph: compact Q/K groups tile over value heads, followed by four-vector FMA dot reduction, FMA state update, and query scaling after reduction."
     },
     "gated_deltanet_llama_avx2_prefill_fp32_state": {
       "operator_family": "gated_deltanet",
@@ -276,7 +276,7 @@
         "weight": "none",
         "accumulator": "fp32",
         "contraction": "enabled",
-        "evaluation_order": "ascending_token_then_llama_avx2_decode_provider"
+        "evaluation_order": "ascending_token_then_llama_group_tiled_qk_avx2_decode_provider"
       },
       "rounding": {
         "mode": "rne",
@@ -295,7 +295,7 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "Prompt Gated DeltaNet carries state in token order while invoking the exact llama.cpp AVX2 decode arithmetic for every row."
+      "description": "Prompt Gated DeltaNet tiles compact Q/K groups over value heads and carries state in token order while invoking the llama.cpp AVX2 decode arithmetic for every row."
     },
     "recurrent_norm_gate_llama_avx2_fp32_output": {
       "operator_family": "recurrent_norm_gate",

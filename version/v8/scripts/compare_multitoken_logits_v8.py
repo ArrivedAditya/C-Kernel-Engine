@@ -13,8 +13,10 @@ generation collapse can be separated from sampling/template issues.
 import argparse
 import ctypes
 import json
+import multiprocessing
 import os
 from pathlib import Path
+import traceback
 from typing import Any
 
 import numpy as np
@@ -134,6 +136,68 @@ def load_ck_greedy_trajectory(
             lib.ck_model_free()
 
 
+def _load_ck_greedy_trajectory_worker(
+    connection: Any,
+    model_dir: Path,
+    prompt_tokens: list[int],
+    max_new_tokens: int,
+    stop_token_ids: set[int],
+) -> None:
+    try:
+        result = load_ck_greedy_trajectory(
+            model_dir=model_dir,
+            prompt_tokens=prompt_tokens,
+            max_new_tokens=max_new_tokens,
+            stop_token_ids=stop_token_ids,
+        )
+        connection.send(("ok", result))
+    except BaseException:
+        connection.send(("error", traceback.format_exc()))
+    finally:
+        connection.close()
+
+
+def load_ck_greedy_trajectory_isolated(
+    *,
+    model_dir: Path,
+    prompt_tokens: list[int],
+    max_new_tokens: int,
+    stop_token_ids: set[int] | None = None,
+) -> dict[str, Any]:
+    """Capture CK logits in a short-lived process so model mappings are released."""
+    context = multiprocessing.get_context("fork")
+    receive, send = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_load_ck_greedy_trajectory_worker,
+        args=(
+            send,
+            model_dir,
+            prompt_tokens,
+            int(max_new_tokens),
+            {int(token) for token in (stop_token_ids or set())},
+        ),
+    )
+    process.start()
+    send.close()
+    try:
+        status, payload = receive.recv()
+    except EOFError as exc:
+        process.join()
+        raise RuntimeError(
+            f"isolated CK trajectory failed with exit code {process.exitcode}"
+        ) from exc
+    finally:
+        receive.close()
+    process.join()
+    if process.exitcode != 0:
+        raise RuntimeError(
+            f"isolated CK trajectory failed with exit code {process.exitcode}"
+        )
+    if status != "ok":
+        raise RuntimeError(f"isolated CK trajectory failed:\n{payload}")
+    return payload
+
+
 def run_multitoken_trajectory_parity(
     *,
     model_dir: Path,
@@ -147,15 +211,17 @@ def run_multitoken_trajectory_parity(
     stop_token_ids: set[int] | None = None,
 ) -> dict[str, Any]:
     stops = {int(token) for token in (stop_token_ids or set())}
-    # Fork the llama helper before CK initializes OpenMP and its thread pool.
-    llama = run_llama_greedy_trajectory(
-        gguf_path, prompt_tokens, max_new_tokens, ctx_len, top_k, threads, llama_no_repack
-    )
-    ck = load_ck_greedy_trajectory(
+    # CK must run first: a completed llama.cpp process can leave enough GGUF
+    # page cache charged to a tight cgroup to OOM the 27B CK runtime. Isolating
+    # CK also guarantees its mmap and thread-pool lifetime ends before llama.
+    ck = load_ck_greedy_trajectory_isolated(
         model_dir=model_dir,
         prompt_tokens=prompt_tokens,
         max_new_tokens=max_new_tokens,
         stop_token_ids=stops,
+    )
+    llama = run_llama_greedy_trajectory(
+        gguf_path, prompt_tokens, max_new_tokens, ctx_len, top_k, threads, llama_no_repack
     )
     steps: list[dict[str, Any]] = []
     first_divergence: dict[str, Any] | None = None

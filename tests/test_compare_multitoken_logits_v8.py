@@ -66,7 +66,7 @@ class PersistentTrajectoryParityTests(unittest.TestCase):
         llama = {"logits": rows, "generated_tokens": [1, 2], "meta": {}}
         ck = {"logits": rows, "generated_tokens": [1, 2], "vocab": 3}
         with mock.patch.object(runner, "run_llama_greedy_trajectory", return_value=llama), \
-             mock.patch.object(runner, "load_ck_greedy_trajectory", return_value=ck):
+             mock.patch.object(runner, "load_ck_greedy_trajectory_isolated", return_value=ck):
             report = runner.run_multitoken_trajectory_parity(
                 model_dir=Path("/tmp/model"),
                 gguf_path=Path("/tmp/model.gguf"),
@@ -88,7 +88,7 @@ class PersistentTrajectoryParityTests(unittest.TestCase):
         llama_rows = np.asarray([[0.0, 1.0, 4.0]], dtype=np.float32)
         with mock.patch.object(runner, "run_llama_greedy_trajectory", return_value={
             "logits": llama_rows, "generated_tokens": [2], "meta": {},
-        }), mock.patch.object(runner, "load_ck_greedy_trajectory", return_value={
+        }), mock.patch.object(runner, "load_ck_greedy_trajectory_isolated", return_value={
             "logits": ck_rows, "generated_tokens": [1], "vocab": 3,
         }):
             report = runner.run_multitoken_trajectory_parity(
@@ -100,6 +100,35 @@ class PersistentTrajectoryParityTests(unittest.TestCase):
         self.assertEqual(report["first_divergence"]["step"], 0)
         self.assertEqual(report["first_divergence"]["ck_next"], 1)
         self.assertEqual(report["first_divergence"]["llama_next"], 2)
+
+    def test_trajectory_captures_isolated_ck_before_llama(self) -> None:
+        rows = np.asarray([[0.0, 4.0, 1.0]], dtype=np.float32)
+        calls = []
+
+        def ck_capture(**_kwargs):
+            calls.append("ck")
+            return {"logits": rows, "generated_tokens": [1], "vocab": 3}
+
+        def llama_capture(*_args, **_kwargs):
+            calls.append("llama")
+            return {"logits": rows, "generated_tokens": [1], "meta": {}}
+
+        with mock.patch.object(
+            runner, "load_ck_greedy_trajectory_isolated", side_effect=ck_capture
+        ), mock.patch.object(
+            runner, "run_llama_greedy_trajectory", side_effect=llama_capture
+        ):
+            runner.run_multitoken_trajectory_parity(
+                model_dir=Path("/tmp/model"),
+                gguf_path=Path("/tmp/model.gguf"),
+                prompt_tokens=[7],
+                max_new_tokens=1,
+                ctx_len=128,
+                top_k=3,
+                threads=1,
+                llama_no_repack=False,
+            )
+        self.assertEqual(calls, ["ck", "llama"])
 
 
 if __name__ == "__main__":

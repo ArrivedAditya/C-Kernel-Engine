@@ -4,6 +4,7 @@ import importlib.util
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,59 @@ SPEC.loader.exec_module(XRAY)
 
 
 class TextRecurrentXRayTests(unittest.TestCase):
+    def test_ck_capture_runs_in_short_lived_worker(self) -> None:
+        process = mock.Mock()
+        process.exitcode = 0
+        context = mock.Mock()
+        context.Process.return_value = process
+        with mock.patch.object(
+            XRAY.multiprocessing, "get_context", return_value=context
+        ) as get_context:
+            XRAY._run_isolated_ck_capture(
+                Path("/runtime"),
+                [1, 2],
+                [3],
+                "hybrid",
+                {"CK_DEBUG_EXPORT_HIDDEN": "/captures"},
+            )
+        get_context.assert_called_once_with("fork")
+        process.start.assert_called_once_with()
+        process.join.assert_called_once_with()
+
+    def test_ck_capture_worker_failure_is_reported(self) -> None:
+        process = mock.Mock()
+        process.exitcode = -9
+        context = mock.Mock()
+        context.Process.return_value = process
+        with mock.patch.object(XRAY.multiprocessing, "get_context", return_value=context):
+            with self.assertRaisesRegex(RuntimeError, "exit code -9"):
+                XRAY._run_isolated_ck_capture(
+                    Path("/runtime"), [1], [], "hybrid", {}
+                )
+
+    def test_reuse_ck_capture_requires_existing_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            model = root / "model"
+            model.mkdir()
+            (model / "config.json").write_text(
+                '{"ssm_state_size": 4, "num_heads": 2, "num_kv_heads": 1}'
+            )
+            parity = root / "parity.json"
+            parity.write_text('{"initial_tokens": [1], "final_prefix": [1]}')
+            with self.assertRaisesRegex(ValueError, "checkpoint is missing"):
+                XRAY.capture_and_analyze(
+                    model,
+                    root / "model.gguf",
+                    parity,
+                    root / "captures",
+                    0,
+                    16,
+                    1,
+                    "hybrid",
+                    True,
+                )
+
     def test_named_axis_state_transform_prevents_flat_layout_false_positive(self) -> None:
         ck = np.arange(2 * 128 * 128, dtype=np.float32).reshape(2, 128, 128)
         oracle = ck.transpose(0, 2, 1).copy()

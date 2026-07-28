@@ -277,12 +277,12 @@
         "prefill": {
           "contract_id": "gated_deltanet_llama_avx2_prefill_fp32_state",
           "validation": "validated",
-          "evidence": "Matched-schedule X-ray requires llama.cpp's AVX2 four-accumulator dot tree, post-dot query scaling, FMA state update, and ascending prompt-token transitions."
+          "evidence": "Qwen3.6 stores 16 compact Q/K groups for 48 value heads; llama.cpp tiles groups 0..15 three times before its prompt DeltaNet arithmetic."
         },
         "decode": {
           "contract_id": "gated_deltanet_llama_avx2_decode_fp32_state",
           "validation": "validated",
-          "evidence": "The production provider preserves llama.cpp AVX2 state-update and reduction order; the generic provider's sub-ULP drift crossed a later Q8 projection threshold."
+          "evidence": "The production provider tiles compact Q/K groups over value heads and preserves llama.cpp AVX2 decode state-update and reduction order."
         }
       },
       "checkpoint": {
