@@ -327,6 +327,36 @@
       "position_transform": null,
       "description": "Qwen3.5 recurrent gated normalization matches llama.cpp's separate RMSNorm, weight multiply, AVX2 SiLU, and final elementwise multiply operations."
     },
+    "recurrent_norm_gate_pytorch_bf16_storage": {
+      "operator_family": "recurrent_norm_gate",
+      "status": "validated",
+      "storage": {"input": "bf16", "weight": "bf16", "output": "bf16"},
+      "compute": {
+        "input": "fp32",
+        "weight": "bf16",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "aten_avx2_rmsnorm_then_bf16_normalized_store_then_bf16_weight_mul_then_fp32_sleef_silu_gate_then_bf16_output"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "reduction_finalize", "normalization_scale", "activation_intermediate_store", "weight_scale", "vector_exponential", "weighted_product", "output_store"]
+      },
+      "reduction": {
+        "kind": "normalization",
+        "order": "hierarchical_cascade",
+        "partial_accumulator": "fp32",
+        "merge_order": "hierarchical_cascade"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "PyTorch Qwen3Next BF16 RMSNormGated boundaries: FP32 RMS statistics, BF16 norm/weight product, FP32 SLEEF SiLU, and BF16 final storage."
+    },
     "rmsnorm_fp32_square_fp64_sum_fp32_output": {
       "operator_family": "rmsnorm",
       "status": "validated",
@@ -426,6 +456,36 @@
       },
       "position_transform": null,
       "description": "PyTorch CPU AVX2-dispatched BF16 RMSNorm: materialized FP32 squares, ATen cascade_sum reduction, ordered FP32 division/rsqrt sequence, BF16 normalized storage, then BF16 weight multiplication and output storage. Provider ISA follows the PyTorch build, not the host maximum ISA."
+    },
+    "rmsnorm_qwen3next_pytorch_avx2_bf16_storage": {
+      "operator_family": "rmsnorm",
+      "status": "validated",
+      "storage": {"input": "bf16", "weight": "bf16", "output": "bf16"},
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "materialized_square_then_avx2_cascade_then_fp32_normalization_times_fp32_weight_then_bf16_output"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["normalization_scale", "weight_scale", "output_store"]
+      },
+      "reduction": {
+        "kind": "normalization",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "hierarchical_cascade"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Qwen3Next BF16 RMSNorm keeps normalization and weight multiplication in FP32 and rounds only the final output to BF16."
     },
     "bf16_weight_bf16_input_fp32_dot_fp32_output": {
       "operator_family": "gemm",
@@ -604,6 +664,36 @@
       "position_transform": null,
       "description": "llama.cpp CPU L2 normalization: FP32 products, ascending FP64 sum, and epsilon as a minimum denominator."
     },
+    "recurrent_qk_l2_pytorch_bf16_vector_tail_bf16_output": {
+      "operator_family": "recurrent_qk_l2_norm",
+      "status": "validated",
+      "storage": {"input": "bf16", "weight": "none", "output": "bf16"},
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "bf16_square_then_aten_avx2_cascade_sum_then_bf16_sum_store_then_32_value_vector_rsqrt_with_scalar_tail_then_bf16_multiply"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "square_product", "reduction_finalize", "norm_sqrt", "reciprocal", "normalization_scale", "output_store"]
+      },
+      "reduction": {
+        "kind": "normalization",
+        "order": "hierarchical_cascade",
+        "partial_accumulator": "fp32",
+        "merge_order": "hierarchical_cascade"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "PyTorch CPU BF16 recurrent Q/K l2norm, including BF16 square storage, ATen cascade reduction, Vec<BF16> 32-value rsqrt iterations, the distinct scalar tail, and BF16 output storage."
+    },
     "recurrent_silu_llama_avx2_fp32_output": {
       "operator_family": "recurrent_silu",
       "status": "validated",
@@ -627,6 +717,96 @@
       },
       "position_transform": null,
       "description": "llama.cpp x86 AVX2 SiLU provider, including its vector exponential approximation and scalar tail."
+    },
+    "ssm_conv1d_pytorch_fp32_compute_bf16_output": {
+      "operator_family": "ssm_conv1d",
+      "status": "validated",
+      "storage": {"input": "bf16", "weight": "bf16", "output": "bf16"},
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "ascending_kernel_fma_then_bf16_rne_output_store"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "weighted_product", "reduction_update", "output_store"]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "left_to_right",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "PyTorch BF16 causal depthwise convolution: BF16-valued operands are accumulated in FP32 in ascending kernel order and the raw convolution result is stored to BF16 before SiLU."
+    },
+    "recurrent_silu_pytorch_sleef_bf16_input_bf16_output": {
+      "operator_family": "recurrent_silu",
+      "status": "validated",
+      "storage": {"input": "bf16", "weight": "none", "output": "bf16"},
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "bf16_input_load_then_sleef_expf16_u10_then_add_divide_then_bf16_rne_output_store"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "vector_exponential", "denominator_add", "output_divide", "output_store"]
+      },
+      "reduction": {
+        "kind": "none",
+        "order": "none",
+        "partial_accumulator": "none",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "PyTorch CPU BF16 SiLU boundary for the recurrent convolution path: consume BF16 storage, use the SLEEF vector exponential lane, and store the SiLU result to BF16."
+    },
+    "gated_deltanet_pytorch_grouped_qk_fp32_state_bf16_output": {
+      "operator_family": "gated_deltanet",
+      "status": "validated",
+      "storage": {"input": "bf16", "weight": "none", "output": "bf16"},
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "ascending_token_grouped_qk_repeat_then_avx2_state_update_then_bf16_output_store"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "weighted_product", "reduction_update", "output_store"]
+      },
+      "reduction": {
+        "kind": "composite",
+        "order": "stage_ordered",
+        "partial_accumulator": "fp32",
+        "merge_order": "pairwise_tree"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Qwen3.6 BF16 Gated DeltaNet provider: repeat each grouped Q/K head across its value-head group without reading beyond the compact Q/K buffers, retain FP32 recurrent state, and store the attention output to BF16."
     },
     "text_mrope_fp32_input_fp32_compute_fp32_output": {
       "operator_family": "text_mrope",

@@ -1,0 +1,63 @@
+{
+  "id": "recurrent_qk_l2_norm_pytorch_bf16_storage",
+  "op": "recurrent_qk_l2_norm",
+  "variant": "pytorch_bf16_vector_tail",
+  "modes": {"inference": true, "training": false, "backward": false},
+  "quant": {"weight": "none", "activation": "fp32_bf16_values", "output": "fp32_bf16_values"},
+  "inputs": [
+    {"name": "q", "dtype": "fp32", "shape": ["R", "Q"]},
+    {"name": "k", "dtype": "fp32", "shape": ["R", "K"]}
+  ],
+  "weights": [],
+  "activations": [],
+  "outputs": [
+    {"name": "q", "dtype": "fp32", "shape": ["R", "Q"]},
+    {"name": "k", "dtype": "fp32", "shape": ["R", "K"]}
+  ],
+  "scratch": [],
+  "dims": ["R", "Q", "K", "H", "D"],
+  "params": [{"name": "eps", "dtype": "float32"}],
+  "impl": {
+    "function": "recurrent_qk_l2_norm_pytorch_bf16_storage",
+    "c_declaration": "void recurrent_qk_l2_norm_pytorch_bf16_storage(float *q, float *k, int rows, int q_dim, int k_dim, int expanded_heads, int head_dim, float eps);",
+    "sources": ["src/kernels/recurrent_qk_norm_kernels.c"],
+    "variants": [{"name": "avx2", "requires": ["avx2"], "compile_flags": ["-mavx2"]}]
+  },
+  "numerical_capabilities": [{
+    "contract_id": "recurrent_qk_l2_pytorch_bf16_vector_tail_bf16_output",
+    "status": "validated",
+    "phases": ["prefill", "decode"],
+    "function": "recurrent_qk_l2_norm_pytorch_bf16_storage",
+    "explicit_selector": true,
+    "implementation": {
+      "isa_dispatch": "compile_time",
+      "threading": {
+        "runtime": "serial",
+        "work_partition": ["independent_rows", "independent_heads"],
+        "dispatch": ["inline"],
+        "reduction_order_effect": "none"
+      }
+    },
+    "arithmetic": {
+      "partial_accumulator": "fp32",
+      "merge_order": "hierarchical_cascade",
+      "deterministic": true,
+      "thread_count_changes_arithmetic_order": false,
+      "split_strategy": "independent_outputs"
+    }
+  }],
+  "call_abi": {"version": 1, "params": [
+    {"name": "q", "source": "activation:q", "cast": "float*"},
+    {"name": "k", "source": "activation:k", "cast": "float*"},
+    {"name": "rows", "source": "runtime:seq_len"},
+    {"name": "q_dim", "source": "dim:q_dim"},
+    {"name": "k_dim", "source": "dim:k_dim"},
+    {"name": "expanded_heads", "source": "dim:ssm_time_step_rank"},
+    {"name": "head_dim", "source": "dim:recurrent_head_dim"},
+    {"name": "eps", "source": "dim:rms_eps"}
+  ]},
+  "tests": {
+    "parity": ["PyTorch 2.8 CPU BF16 l2norm at R=1,2,3,31,32,33,353; byte-exact."]
+  },
+  "notes": "Compact grouped recurrent Q/K normalization carried in FP32 buffers with explicit BF16 operation boundaries."
+}

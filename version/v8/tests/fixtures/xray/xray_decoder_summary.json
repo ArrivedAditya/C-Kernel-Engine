@@ -1,0 +1,33 @@
+{
+  "schema": "cke.xray.decoder_pytorch",
+  "schema_version": 1,
+  "status": "diverged",
+  "ranking_status": "pass",
+  "numerical_status": "diverged",
+  "persistent_state_status": "pass",
+  "token_count": 4,
+  "ranking": {
+    "ck_top1": 8804,
+    "pytorch_top1": 8804,
+    "top1_match": true
+  },
+  "sparse_first_non_exact": 11,
+  "sparse_first_material": 23,
+  "all_layers_first_non_exact": {"layer": 3, "checkpoint": "layer.3.self_attn.q_proj"},
+  "all_layers_first_material": {"layer": 5, "checkpoint": "layer.5.mlp.down_proj"},
+  "granular_layer": 5,
+  "granular_first_non_exact": "layer.5.input_layernorm",
+  "granular_first_material": "layer.5.mlp.down_proj",
+  "persistent_vs_replay": {
+    "prompt_token_count": 8,
+    "forced_token_count": 4,
+    "ranking": {"ck_top1": 8804, "pytorch_top1": 8804, "top1_match": true},
+    "first_non_exact": 11,
+    "first_material": 23,
+    "granular_layer": 5,
+    "granular_first_non_exact": "layer.5.input_layernorm",
+    "granular_first_material": "layer.5.mlp.down_proj"
+  },
+  "attribution_scope": "persistent_vs_replay",
+  "next_action": "Inspect layer 5 down_proj resolved contract; drift amplifies across the MLP boundary."
+}

@@ -53,6 +53,7 @@
 ,
   "call_abi": {
     "version": 1,
+    "last_token_dispatch": "preserve_provider",
     "params": [
       {
         "cast": "const float*",

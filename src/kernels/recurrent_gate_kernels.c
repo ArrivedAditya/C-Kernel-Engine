@@ -1,7 +1,16 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#include "bf16_utils.h"
 #include "ckernel_engine.h"
 
+#include <dlfcn.h>
 #include <math.h>
-#if defined(__AVX2__)
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#if defined(__AVX2__) || defined(__AVX512F__)
 #include <immintrin.h>
 #endif
 
@@ -109,6 +118,115 @@ void recurrent_silu_forward(const float *x,
             const float xv = x_row[col];
             out_row[col] = xv * recurrent_sigmoid(xv);
         }
+    }
+}
+
+#if defined(__AVX512F__)
+typedef __m512 (*ck_recurrent_sleef_expf16_fn)(__m512);
+static ck_recurrent_sleef_expf16_fn ck_recurrent_pytorch_expf16 = NULL;
+static void *ck_recurrent_sleef_handle = NULL;
+static pthread_once_t ck_recurrent_sleef_once = PTHREAD_ONCE_INIT;
+
+static void ck_bind_recurrent_pytorch_sleef(void)
+{
+    const char *library = getenv("CK_SLEEF_LIBRARY");
+    if (library && *library) {
+        ck_recurrent_sleef_handle = dlopen(library, RTLD_NOW | RTLD_LOCAL);
+        if (ck_recurrent_sleef_handle) {
+            ck_recurrent_pytorch_expf16 = (ck_recurrent_sleef_expf16_fn)dlsym(
+                ck_recurrent_sleef_handle, "Sleef_expf16_u10");
+        }
+    } else {
+        ck_recurrent_pytorch_expf16 =
+            (ck_recurrent_sleef_expf16_fn)dlsym(RTLD_DEFAULT, "Sleef_expf16_u10");
+    }
+}
+#endif
+
+void recurrent_silu_forward_pytorch_bf16_storage(const float *x,
+                                                  float *out,
+                                                  int rows,
+                                                  int dim)
+{
+    if (!x || !out || rows < 0 || dim < 0) {
+        fprintf(stderr, "HARD KERNEL CONTRACT FAULT: invalid PyTorch BF16 recurrent SiLU arguments\n");
+        abort();
+    }
+#if defined(__AVX512F__)
+    pthread_once(&ck_recurrent_sleef_once, ck_bind_recurrent_pytorch_sleef);
+    if (!ck_recurrent_pytorch_expf16) {
+        fprintf(stderr,
+                "HARD KERNEL CONTRACT FAULT: PyTorch BF16 recurrent SiLU requires "
+                "SLEEF Sleef_expf16_u10; set CK_SLEEF_LIBRARY\n");
+        abort();
+    }
+#endif
+    for (int row = 0; row < rows; ++row) {
+        const float *src = x + (size_t)row * (size_t)dim;
+        float *dst = out + (size_t)row * (size_t)dim;
+        int col = 0;
+#if defined(__AVX512F__)
+        for (; col + 16 <= dim; col += 16) {
+            float lanes[16] __attribute__((aligned(64)));
+            for (int lane = 0; lane < 16; ++lane) {
+                lanes[lane] = bf16_to_float(float_to_bf16(src[col + lane]));
+            }
+            const __m512 values = _mm512_load_ps(lanes);
+            const __m512 denominator = _mm512_add_ps(
+                _mm512_set1_ps(1.0f),
+                ck_recurrent_pytorch_expf16(
+                    _mm512_sub_ps(_mm512_setzero_ps(), values)));
+            _mm512_store_ps(lanes, _mm512_div_ps(values, denominator));
+            for (int lane = 0; lane < 16; ++lane) {
+                dst[col + lane] = bf16_to_float(float_to_bf16(lanes[lane]));
+            }
+        }
+#endif
+        for (; col < dim; ++col) {
+            const float value = bf16_to_float(float_to_bf16(src[col]));
+            const float silu = value / (1.0f + expf(-value));
+            dst[col] = bf16_to_float(float_to_bf16(silu));
+        }
+    }
+}
+
+void recurrent_silu_forward_pytorch_bf16_input_fp32_output(const float *x,
+                                                            float *out,
+                                                            int rows,
+                                                            int dim)
+{
+    if (!x || !out || rows < 0 || dim < 0) {
+        fprintf(stderr, "HARD KERNEL CONTRACT FAULT: invalid BF16-input FP32-output SiLU arguments\n");
+        abort();
+    }
+#if defined(__AVX512F__)
+    pthread_once(&ck_recurrent_sleef_once, ck_bind_recurrent_pytorch_sleef);
+    if (!ck_recurrent_pytorch_expf16) {
+        fprintf(stderr,
+                "HARD KERNEL CONTRACT FAULT: PyTorch BF16-input SiLU requires "
+                "SLEEF Sleef_expf16_u10; set CK_SLEEF_LIBRARY\n");
+        abort();
+    }
+#endif
+    const int count = rows * dim;
+    int i = 0;
+#if defined(__AVX512F__)
+    for (; i + 16 <= count; i += 16) {
+        float lanes[16] __attribute__((aligned(64)));
+        for (int lane = 0; lane < 16; ++lane) {
+            lanes[lane] = bf16_to_float(float_to_bf16(x[i + lane]));
+        }
+        const __m512 values = _mm512_load_ps(lanes);
+        const __m512 denominator = _mm512_add_ps(
+            _mm512_set1_ps(1.0f),
+            ck_recurrent_pytorch_expf16(
+                _mm512_sub_ps(_mm512_setzero_ps(), values)));
+        _mm512_storeu_ps(out + i, _mm512_div_ps(values, denominator));
+    }
+#endif
+    for (; i < count; ++i) {
+        const float value = bf16_to_float(float_to_bf16(x[i]));
+        out[i] = value / (1.0f + expf(-value));
     }
 }
 

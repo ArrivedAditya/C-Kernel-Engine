@@ -974,6 +974,14 @@ void rmsnorm_forward_pytorch_bf16_storage(const float *input,
                                           int d_model,
                                           int aligned_embed_dim,
                                           float eps);
+void rmsnorm_forward_qwen3next_pytorch_bf16_storage(const float *input,
+                                                     const float *gamma,
+                                                     float *output,
+                                                     float *rstd_cache,
+                                                     int tokens,
+                                                     int d_model,
+                                                     int aligned_embed_dim,
+                                                     float eps);
 void rmsnorm_forward_fp32_square_fp64_sum(const float *input,
                                           const float *gamma,
                                           float *output,
@@ -1880,6 +1888,13 @@ void ssm_conv1d_forward(const float *conv_x,
                         int num_channels,
                         int num_tokens,
                         int num_seqs);
+void ssm_conv1d_forward_pytorch_bf16_storage(const float *conv_x,
+                                             const float *kernel,
+                                             float *out,
+                                             int kernel_size,
+                                             int num_channels,
+                                             int num_tokens,
+                                             int num_seqs);
 
 // Backward for the causal depthwise SSM convolution used in qwen3next/Qwen3.5.
 // Layout:
@@ -2067,6 +2082,14 @@ void recurrent_silu_forward(const float *x,
                             float *out,
                             int rows,
                             int dim);
+void recurrent_silu_forward_pytorch_bf16_storage(const float *x,
+                                                  float *out,
+                                                  int rows,
+                                                  int dim);
+void recurrent_silu_forward_pytorch_bf16_input_fp32_output(const float *x,
+                                                            float *out,
+                                                            int rows,
+                                                            int dim);
 void recurrent_silu_forward_ggml(const float *x,
                                  float *out,
                                  int rows,
@@ -2112,6 +2135,14 @@ void recurrent_qk_l2_norm_forward(float *q,
                                   int k_dim,
                                   int head_dim,
                                   float eps);
+void recurrent_qk_l2_norm_pytorch_bf16_storage(float *q,
+                                                float *k,
+                                                int rows,
+                                                int q_dim,
+                                                int k_dim,
+                                                int expanded_heads,
+                                                int head_dim,
+                                                float eps);
 
 // Backward for recurrent_qk_l2_norm_forward.
 void recurrent_qk_l2_norm_backward(const float *d_q_out,
@@ -2297,6 +2328,34 @@ void gated_deltanet_llama_avx2_prefill_forward(const float *q,
                                                int state_dim,
                                                float norm_eps);
 
+void gated_deltanet_pytorch_grouped_bf16_forward(const float *q,
+                                                  const float *k,
+                                                  const float *v,
+                                                  const float *g,
+                                                  const float *beta,
+                                                  const float *state_in,
+                                                  float *state_out,
+                                                  float *out,
+                                                  int num_heads,
+                                                  int group_count,
+                                                  int state_dim,
+                                                  float norm_eps);
+
+void gated_deltanet_pytorch_grouped_bf16_prefill_forward(
+                                               const float *q,
+                                               const float *k,
+                                               const float *v,
+                                               const float *g,
+                                               const float *beta,
+                                               const float *state_in,
+                                               float *state_out,
+                                               float *out,
+                                               int rows,
+                                               int num_heads,
+                                               int group_count,
+                                               int state_dim,
+                                               float norm_eps);
+
 void recurrent_norm_gate_llama_avx2_forward(const float *x,
                                              const float *gate,
                                              const float *weight,
@@ -2305,6 +2364,14 @@ void recurrent_norm_gate_llama_avx2_forward(const float *x,
                                              int num_heads,
                                              int head_dim,
                                              float eps);
+void recurrent_norm_gate_pytorch_bf16_storage(const float *x,
+                                               const float *gate,
+                                               const float *weight,
+                                               float *out,
+                                               int rows,
+                                               int num_heads,
+                                               int head_dim,
+                                               float eps);
 
 // Gated DeltaNet recurrent backward used by qwen3next/Qwen3.5 linear attention.
 // Layout:

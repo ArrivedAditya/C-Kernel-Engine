@@ -31,6 +31,7 @@ import platform
 import webbrowser
 import argparse
 import subprocess
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,15 @@ CK_RUN_SCRIPT = V8_ROOT / "scripts" / "ck_run_v8.py"
 MEMORY_SIGNOFF_SCRIPT = V8_ROOT / "scripts" / "memory_signoff_v8.py"
 V8_REPORT_PATH = Path(os.environ.get("CK_V8_REPORT_DIR", str(CACHE_PATH / "reports"))).expanduser()
 V8_REPORT_PATH_LEGACY = V8_ROOT / "reports"
+
+
+def _sha256_file(path: Path) -> str:
+    """Return the SHA-256 hex digest of a file (streaming, 1 MiB chunks)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _read_os_release() -> dict[str, str]:
@@ -646,6 +656,13 @@ def copy_artifacts_if_needed(src_model_dir: Path, dst_model_dir: Path) -> None:
         "regimen_backend_xray.json",
         "training_canary_summary.json",
         "regression_ledger.json",
+        "whisper-encoder-xray.json",
+        "xray_ranking_report.json",
+        "xray_execution_trace.json",
+        "xray_execution_state_report.json",
+        "xray_decoder_summary.json",
+        "xray_qwen3vl_bf16_summary.json",
+        "xray_qwen3vl_llamacpp_summary.json",
     ]
     copied = 0
     dst_model_dir.mkdir(parents=True, exist_ok=True)
@@ -3545,6 +3562,8 @@ def load_model_data(
     ck_build_path: Path,
     run_dir: Path | None = None,
     strict_run_artifacts: bool = False,
+    xray_dir: Path | None = None,
+    allow_xray_fallback: bool = False,
 ) -> dict:
     """Load all IR/profile/training data for a model or run directory."""
     strict_run_scope = bool(strict_run_artifacts and run_dir is not None)
@@ -3571,6 +3590,8 @@ def load_model_data(
         search_roots.append(bridge_root)
     if bridge_encoder_root is not None:
         search_roots.append(bridge_encoder_root)
+    if xray_dir is not None:
+        search_roots.append(xray_dir)
 
     deduped_roots: list[Path] = []
     seen_roots: set[str] = set()
@@ -3685,10 +3706,62 @@ def load_model_data(
         "bridge_encoder_layout",
         "bridge_encoder_call",
         "bridge_encoder_lowered",
+        "xray_whisper_encoder",
+        "xray_ranking",
+        "xray_execution_trace",
+        "xray_execution_state",
+        "xray_decoder_pytorch",
+        "xray_qwen3vl_pytorch",
+        "xray_qwen3vl_llamacpp",
+        "xray_monotonic",
     ]
 
     def model_candidates(name: str) -> list[Path]:
         return [root / name for root in search_roots]
+
+    def xray_candidates(name: str) -> list[Path]:
+        """X-Ray artifact search paths for one filename.
+
+        With --xray-dir and no --allow-xray-fallback the explicit directory
+        is exclusive: a file that is absent there stays missing rather than
+        being silently sourced from model/global locations.
+        """
+        candidates: list[Path] = []
+        if xray_dir is not None:
+            candidates.append(xray_dir / name)
+            if not allow_xray_fallback:
+                return candidates
+        candidates.extend(model_candidates(name))
+        return candidates
+
+    def xray_global(path: Path) -> list[Path]:
+        """Hard-coded global X-Ray artifact path under the same policy.
+
+        No X-Ray path may bypass --xray-dir exclusivity: global build/report
+        locations are offered only when fallback was explicitly allowed.
+        """
+        if xray_dir is not None and not allow_xray_fallback:
+            return []
+        return [path]
+
+    xray_fallback_used: list[str] = []
+
+    def _xray_summary_backend(path: Path) -> str | None:
+        """Peek at an xray_summary.json to learn its orchestration backend."""
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return payload.get("backend") or (payload.get("final_report") or {}).get("oracle_backend")
+
+    # Legacy producers emit xray_summary.json. When --xray-dir points at a
+    # single-backend output directory, bind the generic summary to the correct
+    # backend key so both Qwen X-Ray cards do not load the same file.
+    xray_summary_backend: str | None = None
+    if xray_dir is not None:
+        xray_summary_path = xray_dir / "xray_summary.json"
+        if xray_summary_path.exists():
+            xray_summary_backend = _xray_summary_backend(xray_summary_path)
 
     data_files = {
         "ir1_decode": model_candidates("ir1_decode.json"),
@@ -3792,6 +3865,41 @@ def load_model_data(
         "bridge_encoder_layout": [bridge_encoder_root / "layout.json"] if bridge_encoder_root is not None else [],
         "bridge_encoder_call": [bridge_encoder_root / "call.json"] if bridge_encoder_root is not None else [],
         "bridge_encoder_lowered": [bridge_encoder_root / "lowered.json"] if bridge_encoder_root is not None else [],
+        # Backend parity X-ray reports (per-checkpoint numerical drift).
+        # Emitters: compare_whisper_encoder_pytorch_v8.py, xray_decoder_pytorch_v8.py,
+        # xray_qwen3vl_{bf16,llamacpp}_v8.py, normalize_xray_ranking_report_v8.py,
+        # xray_execution_state_v8.py. First existing candidate wins (standard convention).
+        "xray_whisper_encoder": (
+            xray_candidates("whisper-encoder-xray.json")
+            + xray_candidates("whisper_encoder_xray.json")
+            + xray_global(PROJECT_ROOT / "build" / "whisper-encoder-xray.json")
+        ),
+        "xray_ranking": (
+            xray_candidates("xray_ranking_report.json")
+            + xray_candidates("xray_ranking.json")
+        ),
+        "xray_execution_trace": xray_candidates("xray_execution_trace.json"),
+        "xray_execution_state": xray_candidates("xray_execution_state_report.json"),
+        "xray_decoder_pytorch": (
+            xray_candidates("xray_decoder_summary.json")
+            + xray_candidates("xray_decoder_pytorch_summary.json")
+            + xray_global(PROJECT_ROOT / "build" / "xray" / "decoder_pytorch" / "xray_summary.json")
+        ),
+        "xray_qwen3vl_pytorch": (
+            xray_candidates("xray_qwen3vl_bf16_summary.json")
+            + ([xray_dir / "xray_summary.json"] if xray_summary_backend == "pytorch" else [])
+            + xray_global(PROJECT_ROOT / "build" / "xray" / "qwen3vl_bf16" / "xray_summary.json")
+        ),
+        "xray_qwen3vl_llamacpp": (
+            xray_candidates("xray_qwen3vl_llamacpp_summary.json")
+            + ([xray_dir / "xray_summary.json"] if xray_summary_backend == "llamacpp" else [])
+            + xray_global(PROJECT_ROOT / "build" / "xray" / "qwen3vl_llamacpp" / "xray_summary.json")
+        ),
+        # compare_xray_monotonic_v8.py provider-gate report (cke.xray_monotonic_provider_gate)
+        "xray_monotonic": (
+            xray_candidates("xray_monotonic.json")
+            + xray_candidates("xray_monotonic_provider_gate.json")
+        ),
     }
 
     if strict_run_scope:
@@ -3808,6 +3916,7 @@ def load_model_data(
             "model": model_name,
             "path": str(ck_build_path),
             "run_dir": str(run_dir) if run_dir is not None else None,
+            "xray_dir": str(xray_dir) if xray_dir is not None else None,
             "project_root": str(PROJECT_ROOT),
             "has_train_runtime": bool(train_runtime_available),
             "has_inference_runtime": bool(inference_runtime_available),
@@ -3821,6 +3930,7 @@ def load_model_data(
 
     loaded = []
     loaded_paths: dict[str, str] = {}
+    loaded_hashes: dict[str, str] = {}
     missing_required = []
     missing_optional = []
 
@@ -3875,7 +3985,21 @@ def load_model_data(
         if picked_payload is not None:
             data["files"][key] = picked_payload
             loaded.append(key)
+            if (
+                key.startswith("xray_")
+                and xray_dir is not None
+                and allow_xray_fallback
+                and picked_path is not None
+            ):
+                try:
+                    picked_path.relative_to(xray_dir)
+                except ValueError:
+                    xray_fallback_used.append(f"{key} -> {picked_path}")
             loaded_paths[key] = str(picked_path)
+            try:
+                loaded_hashes[key] = _sha256_file(picked_path)
+            except Exception:
+                loaded_hashes[key] = ""
         else:
             if first_error is not None:
                 err_path, err = first_error
@@ -4669,6 +4793,13 @@ def load_model_data(
 
     if loaded_paths:
         data["meta"]["loaded_paths"] = loaded_paths
+    if loaded_hashes:
+        data["meta"]["loaded_hashes"] = loaded_hashes
+    if xray_dir is not None:
+        data["meta"]["xray_dir_exclusive"] = not allow_xray_fallback
+        if xray_fallback_used:
+            data["meta"]["xray_fallback_used"] = xray_fallback_used
+            print(f"  - X-Ray fallback used (--allow-xray-fallback): {xray_fallback_used}")
     if profile_alias_roots:
         data["meta"]["profile_roots"] = [str(p) for p in profile_alias_roots]
     if strict_run_scope:
@@ -4707,6 +4838,8 @@ def generate_html_report(
     output_path: Path = None,
     run_dir: Path | None = None,
     strict_run_artifacts: bool = False,
+    xray_dir: Path | None = None,
+    allow_xray_fallback: bool = False,
 ):
     """Generate standalone HTML report."""
     from datetime import datetime
@@ -4719,6 +4852,8 @@ def generate_html_report(
         ck_build_path,
         run_dir=run_dir,
         strict_run_artifacts=strict_run_artifacts,
+        xray_dir=xray_dir,
+        allow_xray_fallback=allow_xray_fallback,
     )
     data["meta"]["generated_at"] = datetime.now().isoformat()
     data["meta"]["engine_version"] = "v8"
@@ -4787,6 +4922,16 @@ def serve_live(run_dir: Path, html_path: Path, port: int = 7700, interval_ms: in
         "training_checkpoint_policy_latest.json",
         "corpus_sampling_log_latest.json",
         "run_index.json",
+        "whisper-encoder-xray.json",
+        "xray_ranking_report.json",
+        "xray_execution_trace.json",
+        "xray_execution_state_report.json",
+        "xray_decoder_summary.json",
+        "xray_qwen3vl_bf16_summary.json",
+        "xray_qwen3vl_llamacpp_summary.json",
+        "xray_summary.json",
+        "xray_monotonic.json",
+        "xray_monotonic_provider_gate.json",
     ]
 
     # Inject window.CK_LIVE_MODE before </body> so the visualizer uses the
@@ -4941,6 +5086,17 @@ Examples:
         "--run",
         type=Path,
         help="Run directory produced by cks-v8-run (single source of training/profile artifacts)"
+    )
+    parser.add_argument(
+        "--xray-dir",
+        type=Path,
+        metavar="DIR",
+        help="Explicit directory containing X-ray parity artifacts (e.g., build/xray/qwen3vl_llamacpp). Exclusive by default: X-ray files are loaded only from this directory."
+    )
+    parser.add_argument(
+        "--allow-xray-fallback",
+        action="store_true",
+        help="With --xray-dir, also search model/global locations for X-ray files missing from the explicit directory (fallbacks are reported)."
     )
     parser.add_argument(
         "--run-model",
@@ -5438,6 +5594,8 @@ Examples:
             output,
             run_dir=run_dir,
             strict_run_artifacts=bool(args.strict_run_artifacts),
+            xray_dir=args.xray_dir,
+            allow_xray_fallback=bool(args.allow_xray_fallback),
         )
         print(f"\nGenerated: {report_path}")
 

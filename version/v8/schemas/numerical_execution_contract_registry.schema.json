@@ -52,6 +52,7 @@
             "layernorm",
             "rmsnorm",
             "recurrent_qk_l2_norm",
+            "ssm_conv1d",
             "recurrent_silu",
             "recurrent_norm_gate",
             "gated_deltanet",

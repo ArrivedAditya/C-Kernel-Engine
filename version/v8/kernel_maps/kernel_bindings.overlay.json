@@ -998,33 +998,6 @@
         }
       ]
     },
-    "gemv_bf16": {
-      "note": "BF16-weight dense GEMV wrapper with the standard matmul ABI.",
-      "params": [
-        {
-          "cast": "float*",
-          "name": "y",
-          "source": "output:y"
-        },
-        {
-          "name": "W",
-          "source": "weight:_first_weight"
-        },
-        {
-          "cast": "const float*",
-          "name": "x",
-          "source": "activation:x"
-        },
-        {
-          "name": "M",
-          "source": "dim:_output_dim"
-        },
-        {
-          "name": "K",
-          "source": "dim:_input_dim"
-        }
-      ]
-    },
     "im2patch": {
       "note": "Allow rectangular vision inputs by binding explicit image_height/image_width.",
       "params": [

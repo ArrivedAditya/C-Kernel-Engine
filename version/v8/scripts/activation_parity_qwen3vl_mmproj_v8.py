@@ -71,6 +71,98 @@ def _binary_provenance(path: Path) -> dict[str, Any]:
     }
 
 
+def _git_head(root: Path) -> str | None:
+    result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    head = result.stdout.strip()
+    return head or None
+
+
+def _oracle_library_closure(shim_so: Path) -> list[dict[str, Any]]:
+    """Resolved llama.cpp shared libraries backing the oracle shim.
+
+    The shim hash alone cannot identify the oracle: libmtmd_clip_shim.so is
+    dynamically linked against libmtmd / libllama / libggml*, which execute
+    the oracle math and can change while the shim stays identical. Resolve
+    the shim's dependency closure with ldd and hash every llama.cpp
+    component. Returns [] when resolution fails (fingerprint then stays null
+    and correlation fails closed).
+    """
+    result = subprocess.run(
+        ["ldd", str(shim_so)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return []
+    llama_root = npv8.LLAMA_CPP_ROOT
+    components: list[dict[str, Any]] = [{
+        "name": shim_so.name,
+        "path": str(shim_so.resolve()),
+        "sha256": _sha256(shim_so),
+    }]
+    seen: set[str] = {components[0]["path"]}
+    for line in result.stdout.splitlines():
+        candidate = None
+        if "=>" in line:
+            rhs = line.split("=>", 1)[1].strip().split(" ")[0]
+            if rhs.startswith("/"):
+                candidate = rhs
+        else:
+            lhs = line.strip().split(" ")[0]
+            if lhs.startswith("/"):
+                candidate = lhs
+        if not candidate:
+            continue
+        path = Path(candidate)
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(llama_root)
+        except (ValueError, OSError):
+            continue
+        key = str(resolved)
+        if key in seen or not resolved.is_file():
+            continue
+        seen.add(key)
+        components.append({"name": resolved.name, "path": key, "sha256": _sha256(resolved)})
+    components.sort(key=lambda c: c["name"])
+    return components
+
+
+def _oracle_fingerprint(
+    components: list[dict[str, Any]],
+    commit: str | None,
+    mode: str | None,
+) -> str | None:
+    """Canonical digest of the complete oracle identity.
+
+    Hashes (soname, sha256) pairs — not absolute paths — plus the llama.cpp
+    commit and oracle mode. Null when any component is unknown: correlation
+    must fail closed rather than treat the shim hash as the whole oracle.
+    """
+    if not components or not commit or not mode:
+        return None
+    canonical = json.dumps(
+        {
+            "commit": commit,
+            "mode": mode,
+            "components": [
+                {"name": c["name"], "sha256": c["sha256"]} for c in components
+            ],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _compile_generated_dump_model(output_dir: Path, c_path: Path) -> Path:
     so_path = output_dir / "libqwen3vl_mmproj_v8_parity_dump.so"
     if so_path.exists() and so_path.stat().st_mtime >= c_path.stat().st_mtime:
@@ -356,10 +448,24 @@ def main(argv: list[str] | None = None) -> int:
     model_so = _compile_generated_dump_model(output_dir, c_path)
     shim_so = npv8._compile_mtmd_shim(output_dir)
     engine_so = BUILD_DIR / "libckernel_engine.so"
+    oracle_mode = (
+        "flash-disabled" if args.llama_flash_attn == "disabled"
+        else f"flash-{args.llama_flash_attn}"
+    )
+    oracle_components = _oracle_library_closure(shim_so)
+    oracle_commit = _git_head(npv8.LLAMA_CPP_ROOT)
     binary_provenance = {
         "engine": _binary_provenance(engine_so),
         "generated_model": _binary_provenance(model_so),
         "llama_shim": _binary_provenance(shim_so),
+        "llama_oracle": {
+            "commit": oracle_commit,
+            "mode": oracle_mode,
+            "components": oracle_components,
+            "fingerprint_sha256": _oracle_fingerprint(
+                oracle_components, oracle_commit, oracle_mode
+            ),
+        },
     }
 
     config = report["config"]
