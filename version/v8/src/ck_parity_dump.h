@@ -89,6 +89,8 @@ static inline int ck_dump_op_allowed(int layer_id, const char *op_name) {
 }
 
 static inline int ck_dump_should_emit(int layer_id, const char *op_name) {
+    const char *enabled = getenv("CK_PARITY_CAPTURE_ENABLED");
+    if (enabled && enabled[0] && atoi(enabled) == 0) return 0;
     return ck_dump_layer_allowed(layer_id) && ck_dump_op_allowed(layer_id, op_name);
 }
 

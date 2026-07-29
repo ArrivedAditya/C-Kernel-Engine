@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 265,
+      "total": 267,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -86,9 +86,9 @@
         "residual_add": 2,
         "residual_save": 1,
         "rmsnorm": 8,
-        "rope": 16,
+        "rope": 17,
         "rope_backward": 2,
-        "rope_init": 2,
+        "rope_init": 3,
         "rowwise_bias_add": 1,
         "shared_relu2_expert_mlp": 1,
         "shared_swiglu_expert_mlp": 3,
@@ -33091,6 +33091,214 @@
       "_source_file": "rope_forward_qk_pairwise.json"
     },
     {
+      "id": "rope_forward_qk_pairwise_llama_cpu",
+      "op": "rope",
+      "variant": "fp32_head_major_llama_cpu",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor rotated in-place"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Key tensor rotated in-place"
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "runtime_buffers": [
+        {
+          "name": "cos_cache",
+          "dtype": "fp32",
+          "shape": [
+            "max_T",
+            "rotary_dim",
+            2
+          ]
+        },
+        {
+          "name": "sin_cache",
+          "dtype": "fp32",
+          "shape": [
+            "max_T",
+            "rotary_dim",
+            2
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D",
+        "rotary_dim"
+      ],
+      "params": [
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32"
+        },
+        {
+          "name": "pos_offset",
+          "dtype": "int32"
+        },
+        {
+          "name": "rotary_dim",
+          "dtype": "int32"
+        }
+      ],
+      "parallelization": {
+        "supported": [
+          "head",
+          "token"
+        ],
+        "preferred": {
+          "prefill": "token",
+          "decode": "head"
+        }
+      },
+      "numerical_contract": {
+        "id": "llama_cpu_pairwise_rope_fp32_v1",
+        "accumulator_dtype": "fp32",
+        "rotation_layout": "consecutive_pairs",
+        "frequency_schedule": "recursive_fp32_theta",
+        "arithmetic": {
+          "first": "fmaf(x0, cosine, -x1 * sine)",
+          "second": "fmaf(x0, sine, x1 * cosine)"
+        },
+        "determinism": "bit_exact"
+      },
+      "constraints": {
+        "alignment": {
+          "D": 2
+        },
+        "notes": "Provider identity includes ggml-compatible recursive cache and FMA operand order."
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "scratch:q_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "k",
+            "source": "scratch:k_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "cos_cache",
+            "source": "runtime:rope_cos"
+          },
+          {
+            "name": "sin_cache",
+            "source": "runtime:rope_sin"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "pos_offset",
+            "source": "runtime:pos"
+          },
+          {
+            "name": "rotary_dim",
+            "source": "dim:rotary_dim"
+          }
+        ]
+      },
+      "impl": {
+        "function": "rope_forward_qk_pairwise_llama_cpu",
+        "c_declaration": "void rope_forward_qk_pairwise_llama_cpu(float *q, float *k, const float *cos_cache, const float *sin_cache, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int rotary_dim);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "x86_fma",
+            "requires": [
+              "fma"
+            ],
+            "compile_flags": [
+              "-mfma"
+            ]
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_rope.py"
+        ],
+        "parity": [
+          {
+            "kind": "llama.cpp",
+            "command": "make test-rope",
+            "tolerance": "0",
+            "notes": "Production GLM decode rows must be byte-exact against the pinned llama.cpp CPU provider."
+          }
+        ]
+      },
+      "notes": "Numerically exact llama.cpp CPU consecutive-pair RoPE provider for GLM production parity.",
+      "name": "rope_forward_qk_pairwise_llama_cpu",
+      "_source_file": "rope_forward_qk_pairwise_llama_cpu.json"
+    },
+    {
       "id": "rope_forward_qk_split",
       "op": "rope",
       "variant": "fp32_head_major",
@@ -33552,6 +33760,164 @@
       "notes": "Precompute RoPE cos/sin cache for rotary position embeddings. Called ONCE at model init, not per-token. Different models use different base/theta values:\n- Llama 2, Mistral: 10000.0\n- Llama 3: 500000.0\n- Qwen2: 1000000.0\n\nRoPE Scaling:\n- none: Standard RoPE\n- linear: Scale positions by 1/factor (extends context)\n- dynamic: NTK-aware dynamic scaling\n- yarn: YaRN (Yet another RoPE extensioN)\n\nUsage: codegen should call this in do_init() with the model's rope_theta from config, NOT hardcode the value.",
       "name": "rope_precompute_cache",
       "_source_file": "rope_precompute_cache.json"
+    },
+    {
+      "id": "rope_precompute_cache_llama_cpu",
+      "op": "rope_init",
+      "variant": "fp32_llama_cpu_recursive_theta",
+      "mode": "init",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [],
+      "weights": [],
+      "activations": [],
+      "runtime_buffers": [],
+      "outputs": [
+        {
+          "name": "cos_cache",
+          "dtype": "fp32",
+          "shape": [
+            "max_seq_len",
+            "half_rotary_dim"
+          ],
+          "desc": "llama.cpp-compatible FP32 cosine cache"
+        },
+        {
+          "name": "sin_cache",
+          "dtype": "fp32",
+          "shape": [
+            "max_seq_len",
+            "half_rotary_dim"
+          ],
+          "desc": "llama.cpp-compatible FP32 sine cache"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "max_seq_len",
+        "head_dim",
+        "rotary_dim"
+      ],
+      "params": [
+        {
+          "name": "base",
+          "dtype": "fp32"
+        },
+        {
+          "name": "rotary_dim",
+          "dtype": "int32"
+        },
+        {
+          "name": "scaling_type",
+          "dtype": "string"
+        },
+        {
+          "name": "scaling_factor",
+          "dtype": "fp32"
+        }
+      ],
+      "parallelization": {
+        "supported": [
+          "position"
+        ],
+        "preferred": {
+          "init": "position"
+        },
+        "strategies": [
+          {
+            "name": "position",
+            "partition_dim": "max_seq_len",
+            "param_style": "range",
+            "range": {
+              "min_chunk": 64
+            }
+          }
+        ]
+      },
+      "constraints": {
+        "alignment": {
+          "head_dim": 2
+        },
+        "notes": "rotary_dim must be positive and even"
+      },
+      "numerical_contract": {
+        "reference": "llama.cpp ggml CPU RoPE",
+        "frequency_order": "theta_scale=powf(base,-2/rotary_dim) once; theta=position; theta*=theta_scale after each pair",
+        "transcendentals": "platform libm cosf/sinf/powf",
+        "storage": "fp32",
+        "deterministic": true
+      },
+      "impl": {
+        "function": "rope_precompute_cache_llama_cpu",
+        "c_declaration": "void rope_precompute_cache_llama_cpu(float *cos_cache, float *sin_cache, int max_seq_len, int head_dim, float base, int rotary_dim, const char *scaling_type, float scaling_factor);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "cos_cache",
+            "source": "output:cos_cache",
+            "cast": "float*"
+          },
+          {
+            "name": "sin_cache",
+            "source": "output:sin_cache",
+            "cast": "float*"
+          },
+          {
+            "name": "max_seq_len",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "base",
+            "source": "config:rope_theta"
+          },
+          {
+            "name": "rotary_dim",
+            "source": "dim:rotary_dim"
+          },
+          {
+            "name": "scaling_type",
+            "source": "config:rope_scaling_type"
+          },
+          {
+            "name": "scaling_factor",
+            "source": "config:rope_scaling_factor"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_glm4_template.py"
+        ],
+        "parity": [
+          {
+            "kind": "llama.cpp",
+            "command": "python -m pytest -q tests/test_v8_glm4_template.py",
+            "tolerance": "byte-exact cache values"
+          }
+        ]
+      },
+      "notes": "Dedicated cache initialization for models whose oracle uses ggml's recursive FP32 theta schedule. This provider coexists with the independent-frequency generic cache.",
+      "name": "rope_precompute_cache_llama_cpu",
+      "_source_file": "rope_precompute_cache_llama_cpu.json"
     },
     {
       "id": "rope_precompute_cache_split",

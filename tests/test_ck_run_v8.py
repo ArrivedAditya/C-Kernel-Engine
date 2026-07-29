@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -25,6 +27,44 @@ def _load_module():
 
 
 ck_run_v8 = _load_module()
+
+
+def test_scratch_defaults_to_persistent_cache(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cache_home = tmp_path / "cache home"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache_home))
+    monkeypatch.delenv("CK_V8_TMPDIR", raising=False)
+    monkeypatch.delenv("TMPDIR", raising=False)
+    monkeypatch.setattr(tempfile, "tempdir", "/tmp/cached-before-test")
+
+    scratch = ck_run_v8._configure_scratch_environment()
+
+    assert scratch == (cache_home / "ck-engine-v8" / "tmp").resolve()
+    assert os.environ["TMPDIR"] == str(scratch)
+    assert tempfile.tempdir is None
+    assert scratch.is_dir()
+
+
+def test_scratch_honors_explicit_v8_override(
+    tmp_path: Path, monkeypatch
+) -> None:
+    explicit = tmp_path / "compiler scratch"
+    monkeypatch.setenv("CK_V8_TMPDIR", str(explicit))
+    monkeypatch.setenv("TMPDIR", "/tmp/should-not-win")
+
+    scratch = ck_run_v8._configure_scratch_environment()
+
+    assert scratch == explicit.resolve()
+    assert os.environ["TMPDIR"] == str(explicit.resolve())
+
+
+def test_make_compiler_probe_uses_configured_scratch() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "CK_COMPILER_PROBE_DIR ?=" in makefile
+    assert 'probe="$(CK_COMPILER_PROBE_DIR)/ck_cc_flag_test.$$$$.o"' in makefile
+    assert "-o /tmp/ck_cc_flag_test.o" not in makefile
 
 
 def test_refresh_manifest_circuit_snapshot_replaces_stale_graph_policy(
@@ -66,3 +106,50 @@ def test_refresh_manifest_circuit_snapshot_replaces_stale_graph_policy(
 
 def manifest_path_data(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_bundle_stamp_rejects_changed_inputs_and_outputs(tmp_path: Path) -> None:
+    source = tmp_path / "model_v8.c"
+    output = tmp_path / "libmodel.so"
+    stamp = tmp_path / ".ck_runtime_bundle.json"
+    source.write_text("generated-v1", encoding="utf-8")
+    output.write_bytes(b"runtime-v1")
+    inputs = {"model_source": ck_run_v8._file_identity(source)}
+    ck_run_v8._write_bundle_stamp(
+        stamp,
+        {
+            "inputs": inputs,
+            "outputs": {"libmodel.so": ck_run_v8._file_identity(output)},
+        },
+    )
+
+    assert ck_run_v8._bundle_is_current(
+        stamp, inputs=inputs, outputs={"libmodel.so": output}
+    )
+
+    source.write_text("generated-v2", encoding="utf-8")
+    changed_inputs = {"model_source": ck_run_v8._file_identity(source)}
+    assert not ck_run_v8._bundle_is_current(
+        stamp, inputs=changed_inputs, outputs={"libmodel.so": output}
+    )
+
+    source.write_text("generated-v1", encoding="utf-8")
+    output.write_bytes(b"runtime-corrupt")
+    assert not ck_run_v8._bundle_is_current(
+        stamp, inputs=inputs, outputs={"libmodel.so": output}
+    )
+
+
+def test_bundle_stamp_rejects_missing_or_malformed_stamp(tmp_path: Path) -> None:
+    output = tmp_path / "libmodel.so"
+    output.write_bytes(b"runtime")
+    stamp = tmp_path / ".ck_runtime_bundle.json"
+    inputs = {"schema": "fixture"}
+
+    assert not ck_run_v8._bundle_is_current(
+        stamp, inputs=inputs, outputs={"libmodel.so": output}
+    )
+    stamp.write_text("{broken", encoding="utf-8")
+    assert not ck_run_v8._bundle_is_current(
+        stamp, inputs=inputs, outputs={"libmodel.so": output}
+    )

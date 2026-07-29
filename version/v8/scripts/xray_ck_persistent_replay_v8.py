@@ -114,6 +114,44 @@ def _metrics(subject: np.ndarray, oracle: np.ndarray) -> dict[str, Any]:
     }
 
 
+def _model_layer_count(*call_irs: dict[str, Any]) -> int:
+    for call_ir in call_irs:
+        config = call_ir.get("config")
+        if not isinstance(config, dict):
+            continue
+        for key in ("num_layers", "block_count", "n_layer"):
+            value = config.get(key)
+            if value is not None and int(value) > 0:
+                return int(value)
+    layers = {
+        int(op["layer"])
+        for call_ir in call_irs
+        for op in call_ir.get("operations", [])
+        if op.get("layer") is not None and int(op["layer"]) >= 0
+    }
+    return max(layers) + 1 if layers else 0
+
+
+def _capture_scope(
+    *,
+    comparison: str,
+    phase: str,
+    model_layer_count: int,
+    selected_layers: list[int],
+    checkpoint_granularity: str,
+) -> dict[str, Any]:
+    covered = len(set(selected_layers))
+    return {
+        "comparison": comparison,
+        "phase": phase,
+        "model_layer_count": model_layer_count,
+        "selected_layers": selected_layers,
+        "covered_layer_count": covered,
+        "coverage_complete": model_layer_count > 0 and covered == model_layer_count,
+        "checkpoint_granularity": checkpoint_granularity,
+    }
+
+
 def _same_execution_contract(
     subject: dict[str, Any], oracle: dict[str, Any]
 ) -> bool:
@@ -256,6 +294,7 @@ def compare_captures(
                 ),
             }
     observed_only = first_observed_divergence is not None and first_causal_divergence is None
+    model_layer_count = _model_layer_count(decode_call_ir, prefill_call_ir)
     return {
         "schema": "cke.xray_numerical_report",
         "schema_version": 1,
@@ -268,6 +307,13 @@ def compare_captures(
             "logical_token": logical_token,
             "replay_tokens": replay_tokens,
         },
+        "capture_scope": _capture_scope(
+            comparison="CK persistent decode vs CK full replay",
+            phase="decoder",
+            model_layer_count=model_layer_count,
+            selected_layers=[layer],
+            checkpoint_granularity="detailed_operator_chain",
+        ),
         "status": (
             "observed"
             if observed_only
@@ -292,28 +338,165 @@ def compare_captures(
     }
 
 
+def compare_layer_sweep(
+    *,
+    persistent_dir: Path,
+    replay_dir: Path,
+    decode_call_ir: dict[str, Any],
+    prefill_call_ir: dict[str, Any],
+    logical_token: int,
+    replay_tokens: int,
+    checkpoint: str = "layer_out",
+    amplification_ratio: float = 100.0,
+) -> dict[str, Any]:
+    model_layer_count = _model_layer_count(decode_call_ir, prefill_call_ir)
+    if model_layer_count <= 0:
+        raise ValueError("cannot determine model layer count from call IR")
+    rows: list[dict[str, Any]] = []
+    first_observed = None
+    first_amplification = None
+    previous_rmse = 0.0
+    for layer in range(model_layer_count):
+        persistent_path = persistent_dir / (
+            f"tok_{logical_token:04d}_layer_{layer:03d}_{checkpoint}.f32"
+        )
+        replay_path = replay_dir / (
+            f"tok_0000_layer_{layer:03d}_{checkpoint}.f32"
+        )
+        if not persistent_path.is_file() or not replay_path.is_file():
+            continue
+        persistent = np.fromfile(persistent_path, dtype=np.float32)
+        replay = _last_replay_row(
+            np.fromfile(replay_path, dtype=np.float32),
+            layout="token_major",
+            tokens=replay_tokens,
+            config={},
+        )
+        metrics = _metrics(persistent, replay)
+        rmse = float(metrics["rmse"])
+        growth = (
+            float(rmse / previous_rmse)
+            if previous_rmse > 0.0
+            else (float("inf") if rmse > 0.0 else 1.0)
+        )
+        op_name = "residual_add" if checkpoint == "layer_out" else "residual_save"
+        operation = _operation(decode_call_ir, layer, op_name, 0)
+        row = {
+            "sequence_index": len(rows),
+            "checkpoint_id": f"text.layer.{layer}.{checkpoint}",
+            "op_idx": int(operation["idx"]) if operation and operation.get("idx") is not None else None,
+            "layer": layer,
+            "status": "pass" if metrics["byte_exact"] else "observed",
+            "classification": "MATCH" if metrics["byte_exact"] else "CROSS_PHASE_SCHEDULE_DRIFT",
+            "attribution_status": "coarse_sweep",
+            "metrics": metrics,
+            "rmse_growth_from_previous_layer": growth,
+            "subject_tensor": {
+                "path": str(persistent_path),
+                "sha256": _sha256(persistent_path),
+            },
+            "oracle_tensor": {
+                "path": str(replay_path),
+                "sha256": _sha256(replay_path),
+                "row_selection": f"last logical token {replay_tokens - 1}",
+            },
+        }
+        rows.append(row)
+        if first_observed is None and not metrics["byte_exact"]:
+            first_observed = dict(row)
+        if (
+            first_amplification is None
+            and previous_rmse > 0.0
+            and growth >= amplification_ratio
+        ):
+            first_amplification = {
+                **row,
+                "classification": "LAYER_AMPLIFICATION_CANDIDATE",
+                "recommended_action": (
+                    f"Capture the detailed operator chain for layer {layer}; "
+                    f"RMSE grew {growth:.1f}x from the previous layer."
+                ),
+            }
+        previous_rmse = rmse
+    selected_layers = [int(row["layer"]) for row in rows]
+    return {
+        "schema": "cke.xray_numerical_report",
+        "schema_version": 1,
+        "backend": "ck_persistent_vs_full_replay",
+        "subject_backend": "ck_persistent",
+        "oracle_backend": "ck_full_replay",
+        "run": {
+            "phase": "decode",
+            "logical_token": logical_token,
+            "replay_tokens": replay_tokens,
+        },
+        "capture_scope": _capture_scope(
+            comparison="CK persistent decode vs CK full replay",
+            phase="decoder",
+            model_layer_count=model_layer_count,
+            selected_layers=selected_layers,
+            checkpoint_granularity=f"coarse_{checkpoint}_layer_sweep",
+        ),
+        "status": "observed" if first_observed else "pass",
+        "comparisons": rows,
+        "first_divergence": None,
+        "first_observed_divergence": first_observed,
+        "first_layer_amplification": first_amplification,
+        "amplification_rule": {
+            "metric": "rmse_growth_from_previous_layer",
+            "minimum_ratio": amplification_ratio,
+            "classification_only": True,
+        },
+        "acceptance_policy": (
+            "coarse cross-phase diagnostic; differences are observations until "
+            "a detailed same-provider or external-oracle capture attributes them"
+        ),
+        "provenance": {
+            "persistent_dir": str(persistent_dir),
+            "replay_dir": str(replay_dir),
+        },
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--persistent-dir", type=Path, required=True)
     parser.add_argument("--replay-dir", type=Path, required=True)
     parser.add_argument("--decode-call-ir", type=Path, required=True)
     parser.add_argument("--prefill-call-ir", type=Path, required=True)
-    parser.add_argument("--layer", type=int, default=0)
+    parser.add_argument("--layer", type=int)
+    parser.add_argument("--sweep-all-layers", action="store_true")
+    parser.add_argument("--sweep-checkpoint", default="layer_out")
+    parser.add_argument("--amplification-ratio", type=float, default=100.0)
     parser.add_argument("--logical-token", type=int, required=True)
     parser.add_argument("--replay-tokens", type=int, required=True)
     parser.add_argument("--profile", type=Path, default=DEFAULT_PROFILE)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    report = compare_captures(
-        persistent_dir=args.persistent_dir.resolve(),
-        replay_dir=args.replay_dir.resolve(),
-        decode_call_ir=json.loads(args.decode_call_ir.read_text(encoding="utf-8")),
-        prefill_call_ir=json.loads(args.prefill_call_ir.read_text(encoding="utf-8")),
-        layer=int(args.layer),
-        logical_token=int(args.logical_token),
-        replay_tokens=int(args.replay_tokens),
-        profile=json.loads(args.profile.read_text(encoding="utf-8")),
-    )
+    if args.sweep_all_layers and args.layer is not None:
+        parser.error("--layer and --sweep-all-layers are mutually exclusive")
+    decode_call_ir = json.loads(args.decode_call_ir.read_text(encoding="utf-8"))
+    prefill_call_ir = json.loads(args.prefill_call_ir.read_text(encoding="utf-8"))
+    common = {
+        "persistent_dir": args.persistent_dir.resolve(),
+        "replay_dir": args.replay_dir.resolve(),
+        "decode_call_ir": decode_call_ir,
+        "prefill_call_ir": prefill_call_ir,
+        "logical_token": int(args.logical_token),
+        "replay_tokens": int(args.replay_tokens),
+    }
+    if args.sweep_all_layers:
+        report = compare_layer_sweep(
+            **common,
+            checkpoint=str(args.sweep_checkpoint),
+            amplification_ratio=float(args.amplification_ratio),
+        )
+    else:
+        report = compare_captures(
+            **common,
+            layer=int(args.layer if args.layer is not None else 0),
+            profile=json.loads(args.profile.read_text(encoding="utf-8")),
+        )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report.get("first_divergence"), sort_keys=True))

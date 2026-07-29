@@ -384,6 +384,8 @@ class AttentionContractV8Tests(unittest.TestCase):
             ("qwen35", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash_f16cache_contract"),
             ("qwen35", "decoder.attention_bf16_pytorch", "prefill", "attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract"),
             ("qwen35", "decoder.attention_bf16_pytorch", "decode", "attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract"),
+            ("glm4", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_prefill_append_f16cache_single_range"),
+            ("glm4", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash_f16cache_contract"),
             ("nemotron_h", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_flash_strided"),
             ("nemotron_h", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash"),
             ("llama", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_flash_strided_f16kv"),

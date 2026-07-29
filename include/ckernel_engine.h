@@ -3234,6 +3234,15 @@ void rope_precompute_cache(float *cos_cache,
                            const char *scaling_type,
                            float scaling_factor);
 
+void rope_precompute_cache_llama_cpu(float *cos_cache,
+                                     float *sin_cache,
+                                     int max_seq_len,
+                                     int head_dim,
+                                     float base,
+                                     int rotary_dim,
+                                     const char *scaling_type,
+                                     float scaling_factor);
+
 // Apply RoPE forward in-place: x[num_heads, num_tokens, aligned_head_dim].
 void rope_forward(float *x,
                   const float *cos_cache,
@@ -3403,6 +3412,18 @@ void rope_forward_qk_pairwise_with_rotary_dim(float *q,
                                               int aligned_head_dim,
                                               int pos_offset,
                                               int rotary_dim);
+
+void rope_forward_qk_pairwise_llama_cpu(float *q,
+                                        float *k,
+                                        const float *cos_cache,
+                                        const float *sin_cache,
+                                        int num_heads,
+                                        int num_kv_heads,
+                                        int num_tokens,
+                                        int head_dim,
+                                        int aligned_head_dim,
+                                        int pos_offset,
+                                        int rotary_dim);
 
 void mrope_qk_text(float *q,
                    float *k,

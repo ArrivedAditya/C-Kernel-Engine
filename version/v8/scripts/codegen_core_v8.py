@@ -3013,6 +3013,21 @@ CK_EXPORT void ck_model_profile_dump(void) {
 
     layout = layout or {}
     config = config or {}
+    decode_kv_dtype = str(
+        config.get("decode_kv_cache_dtype", "fp32") or "fp32"
+    ).strip().lower()
+    if decode_kv_dtype in {"fp16", "f16"}:
+        debug_kv_pointer = "g_model->kv_cache_f16"
+        debug_kv_ctype = "uint16_t"
+        debug_kv_dtype = 1
+    elif decode_kv_dtype in {"bf16", "bfloat16"}:
+        debug_kv_pointer = "g_model->kv_cache_f16"
+        debug_kv_ctype = "uint16_t"
+        debug_kv_dtype = 2
+    else:
+        debug_kv_pointer = "g_model->kv_cache"
+        debug_kv_ctype = "float"
+        debug_kv_dtype = 0
     encoder_memory_api = ""
     uses_persistent_cross_kv_cache = bool(
         config.get("_template_uses_persistent_cross_kv_cache", False)
@@ -3396,23 +3411,23 @@ CK_EXPORT int ck_model_kv_cache_enable(int capacity) {{
     return 0;
 }}
 
-/* Bounded X-ray ABI: export one layer and only currently valid FP16 KV rows.
+/* Bounded X-ray ABI: export one layer and only currently valid KV rows.
  * The file is diagnostic evidence, not a runtime checkpoint format. */
-CK_EXPORT int ck_model_debug_export_kv_f16(const char *path, int layer) {{
-    if (!g_model || !path || !path[0] || !g_model->kv_cache_f16) return -1;
+CK_EXPORT int ck_model_debug_export_kv(const char *path, int layer) {{
+    if (!g_model || !path || !path[0] || !{debug_kv_pointer}) return -1;
     if (layer < 0 || layer >= NUM_LAYERS || g_model->pos < 0 || g_model->pos > MAX_SEQ_LEN) return -2;
     FILE *f = fopen(path, "wb");
     if (!f) return -3;
     const uint32_t header[8] = {{
-        UINT32_C(0x564b5843), UINT32_C(1), (uint32_t)layer, (uint32_t)g_model->pos,
-        (uint32_t)NUM_KV_HEADS, (uint32_t)MAX_SEQ_LEN, (uint32_t)HEAD_DIM, UINT32_C(0)
+        UINT32_C(0x564b5843), UINT32_C(2), (uint32_t)layer, (uint32_t)g_model->pos,
+        (uint32_t)NUM_KV_HEADS, (uint32_t)MAX_SEQ_LEN, (uint32_t)HEAD_DIM, UINT32_C({debug_kv_dtype})
     }};
     if (fwrite(header, sizeof(header), 1, f) != 1) {{ fclose(f); return -4; }}
     const size_t head_stride = (size_t)MAX_SEQ_LEN * (size_t)HEAD_DIM;
-    const size_t valid_bytes = (size_t)g_model->pos * (size_t)HEAD_DIM * sizeof(uint16_t);
-    const uint16_t *layer_k = g_model->kv_cache_f16 +
+    const size_t valid_bytes = (size_t)g_model->pos * (size_t)HEAD_DIM * sizeof({debug_kv_ctype});
+    const {debug_kv_ctype} *layer_k = {debug_kv_pointer} +
         (size_t)(layer * 2) * (size_t)NUM_KV_HEADS * head_stride;
-    const uint16_t *layer_v = g_model->kv_cache_f16 +
+    const {debug_kv_ctype} *layer_v = {debug_kv_pointer} +
         (size_t)(layer * 2 + 1) * (size_t)NUM_KV_HEADS * head_stride;
     for (int h = 0; h < NUM_KV_HEADS; ++h) {{
         if (fwrite(layer_k + (size_t)h * head_stride, valid_bytes, 1, f) != 1) {{ fclose(f); return -5; }}
@@ -3422,6 +3437,12 @@ CK_EXPORT int ck_model_debug_export_kv_f16(const char *path, int layer) {{
     }}
     fclose(f);
     return 0;
+}}
+
+/* Compatibility ABI for existing FP16-only X-ray consumers. */
+CK_EXPORT int ck_model_debug_export_kv_f16(const char *path, int layer) {{
+    if (UINT32_C({debug_kv_dtype}) != UINT32_C(1)) return -7;
+    return ck_model_debug_export_kv(path, layer);
 }}
 
 static int ck_trace_pos_enabled(void) {{
