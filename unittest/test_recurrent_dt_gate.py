@@ -156,6 +156,31 @@ class TestRecurrentDTGateParity(unittest.TestCase):
     def test_qwen35_like_case(self) -> None:
         self._run_case(rows=7, dim=16, seed=29)
 
+    def test_extreme_negative_softplus_does_not_round_to_zero(self) -> None:
+        alpha = np.array([[-21.0, -40.0]], dtype=np.float32)
+        dt_bias = np.zeros(2, dtype=np.float32)
+        a = np.ones(2, dtype=np.float32)
+        ck_gate = np.zeros_like(alpha)
+
+        LIB.recurrent_dt_gate_forward(
+            _as_ptr(alpha),
+            _as_ptr(dt_bias),
+            _as_ptr(a),
+            _as_ptr(ck_gate),
+            1,
+            1,
+            2,
+        )
+
+        expected = F.softplus(torch.tensor(alpha)).numpy()
+        self.assertTrue(np.all(ck_gate > 0.0))
+        np.testing.assert_allclose(
+            ck_gate,
+            expected,
+            atol=0.0,
+            rtol=2e-6,
+        )
+
     def test_qwen35_expanded_vector_gate_forward(self) -> None:
         if not hasattr(LIB, "recurrent_dt_gate_expanded_forward"):
             self.skipTest("recurrent_dt_gate_expanded_forward not exported")

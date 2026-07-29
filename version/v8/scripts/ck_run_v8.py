@@ -494,6 +494,12 @@ def _sync_runtime_lib(src: Path, dst: Path, label: str) -> None:
                 dst.stat().st_size == src.stat().st_size
                 and _sha256_file(dst) == _sha256_file(src)
             ):
+                src_stat = src.stat()
+                os.utime(
+                    dst,
+                    ns=(src_stat.st_atime_ns, src_stat.st_mtime_ns),
+                )
+                log(f"  Refreshed identical {label} -> {dst}", C_DIM)
                 return
         except OSError:
             pass

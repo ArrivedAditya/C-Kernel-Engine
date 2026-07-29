@@ -30,6 +30,10 @@
 #include <stddef.h>
 #include <string.h>
 
+#if defined(CK_TARGET_X86)
+#include <immintrin.h>
+#endif
+
 void ssm_conv1d_forward_ref(const float *conv_x,
                             const float *kernel,
                             float *out,
@@ -128,6 +132,55 @@ void ssm_conv1d_forward(const float *conv_x,
                         int num_seqs)
 {
     ssm_conv1d_forward_ref(conv_x, kernel, out, kernel_size, num_channels, num_tokens, num_seqs);
+}
+
+/*
+ * llama.cpp's production GGML_OP_SSM_CONV CPU implementation accumulates
+ * every channel/token dot product as an ascending scalar multiply/add chain.
+ * Preserve the rounded product before each addition: contraction or
+ * vectorization changes FP32 rounding boundaries.
+ */
+void ssm_conv1d_forward_llama_production(const float *conv_x,
+                                         const float *kernel,
+                                         float *out,
+                                         int kernel_size,
+                                         int num_channels,
+                                         int num_tokens,
+                                         int num_seqs)
+{
+    if (!conv_x || !kernel || !out) {
+        return;
+    }
+    if (kernel_size <= 0 || num_channels <= 0 || num_tokens < 0 || num_seqs <= 0) {
+        return;
+    }
+
+    const size_t seq_width = (size_t)kernel_size - 1u + (size_t)num_tokens;
+    const size_t conv_seq_stride = (size_t)num_channels * seq_width;
+    const size_t out_seq_stride = (size_t)num_tokens * (size_t)num_channels;
+
+    for (int seq = 0; seq < num_seqs; ++seq) {
+        const float *conv_seq = conv_x + (size_t)seq * conv_seq_stride;
+        float *out_seq = out + (size_t)seq * out_seq_stride;
+
+        for (int tok = 0; tok < num_tokens; ++tok) {
+            float *out_tok = out_seq + (size_t)tok * (size_t)num_channels;
+
+            for (int ch = 0; ch < num_channels; ++ch) {
+                const float *conv_row =
+                    conv_seq + (size_t)ch * seq_width + (size_t)tok;
+                const float *kernel_row =
+                    kernel + (size_t)ch * (size_t)kernel_size;
+                float sum = 0.0f;
+                for (int k = 0; k < kernel_size; ++k) {
+                    volatile float product = conv_row[k] * kernel_row[k];
+                    volatile float next = sum + product;
+                    sum = next;
+                }
+                out_tok[ch] = sum;
+            }
+        }
+    }
 }
 
 void ssm_conv1d_forward_pytorch_bf16_storage(const float *conv_x,

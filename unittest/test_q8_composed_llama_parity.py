@@ -19,7 +19,10 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = ROOT / os.environ.get("CK_BUILD_DIR", "build")
-LLAMA_BIN = ROOT / "llama.cpp" / "build" / "bin"
+LLAMA_ROOT = Path(
+    os.environ.get("V8_QWEN3VL_ENCODER_PARITY_LLAMA_CPP_ROOT", ROOT / "llama.cpp")
+)
+LLAMA_BIN = LLAMA_ROOT / "build" / "bin"
 K = 1152
 ROWS = 8
 PROJECTIONS = (
@@ -85,6 +88,11 @@ def _vision_stress_rows() -> np.ndarray:
             start = block * QK8_0
             peak = np.float32((1.0 + 0.07 * row + 0.003 * block) * (-1 if (row + block) & 1 else 1))
             x[row, start + ((row * 7 + block * 11) % QK8_0)] = peak
+    # Real Qwen3.6-27B layer-30 activation that puts max/127 exactly at
+    # an FP16 rounding boundary.  This catches compiler-strength-reduced
+    # division selecting scale 0x1002 instead of llama.cpp's 0x1003.
+    x[0, :QK8_0] = np.float32(0.0)
+    x[0, 3] = np.float32(float.fromhex("0x1.fd3d82p-5"))
     return x
 
 

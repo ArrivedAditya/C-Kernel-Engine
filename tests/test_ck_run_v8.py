@@ -171,6 +171,26 @@ def test_sync_runtime_lib_replaces_same_size_stale_binary_atomically(
     assert not list(destination.parent.glob(".library.so.*.tmp"))
 
 
+def test_sync_runtime_lib_refreshes_identical_rebuild_timestamp(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.so"
+    destination = tmp_path / "runtime" / "library.so"
+    source.write_bytes(b"same-runtime")
+    destination.parent.mkdir()
+    destination.write_bytes(source.read_bytes())
+    old_time_ns = 1_700_000_000_000_000_000
+    new_time_ns = old_time_ns + 5_000_000_000
+    os.utime(destination, ns=(old_time_ns, old_time_ns))
+    os.utime(source, ns=(new_time_ns, new_time_ns))
+
+    ck_run_v8._sync_runtime_lib(source, destination, "fixture")
+
+    assert destination.read_bytes() == b"same-runtime"
+    assert destination.stat().st_mtime_ns == new_time_ns
+    assert not list(destination.parent.glob(".library.so.*.tmp"))
+
+
 def test_validate_runtime_bundle_reports_dynamic_loader_failure(
     tmp_path: Path, monkeypatch
 ) -> None:

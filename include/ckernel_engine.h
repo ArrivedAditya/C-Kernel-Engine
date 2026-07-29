@@ -97,6 +97,12 @@ void gemm_fine_grained_parallel(const float *A,
 	                         float *C,
 	                         int M, int N, int K);
 
+	void gemm_nt_f32_llama_production(const float *A,
+	                                  const float *B,
+	                                  const float *bias,
+	                                  float *C,
+	                                  int M, int N, int K);
+
 	/* Training dispatch wrapper: same contract as gemm_blocked_serial.
 	 * Uses CK threadpool for row/column partitioning and falls back to serial. */
 	void gemm_blocked_serial_train_parallel_dispatch(const float *A,
@@ -1888,6 +1894,13 @@ void ssm_conv1d_forward(const float *conv_x,
                         int num_channels,
                         int num_tokens,
                         int num_seqs);
+void ssm_conv1d_forward_llama_production(const float *conv_x,
+                                         const float *kernel,
+                                         float *out,
+                                         int kernel_size,
+                                         int num_channels,
+                                         int num_tokens,
+                                         int num_seqs);
 void ssm_conv1d_forward_pytorch_bf16_storage(const float *conv_x,
                                              const float *kernel,
                                              float *out,

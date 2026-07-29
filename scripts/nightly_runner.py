@@ -28,6 +28,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -41,6 +42,7 @@ ROOT = SCRIPT_DIR.parent
 UNITTEST_DIR = ROOT / "unittest"
 BF16_DIR = UNITTEST_DIR / "bf16"
 BASELINE_FILE = ROOT / ".test_baseline.json"
+XEON_SWEEP_CACHE_SENTINEL = ".ck-xeon-e2e-managed-cache.json"
 
 # Keep pass logs compact, but preserve substantially more context for failures.
 PASS_STDOUT_CHARS = 5000
@@ -58,6 +60,63 @@ def _trim_output(text: str, limit: int, keep_head_tail: bool = False) -> str:
     head = max(0, int(limit * 0.4))
     tail = max(0, limit - head - len(marker))
     return text[:head] + marker + text[-tail:]
+
+
+def _prepare_xeon_sweep_cache(path: Path) -> Path:
+    """Create or validate a cache that this runner is allowed to prune."""
+    root = path.expanduser().resolve()
+    forbidden = {Path("/").resolve(), Path.home().resolve(), ROOT.resolve()}
+    forbidden.update(ROOT.resolve().parents)
+    if root in forbidden:
+        raise ValueError(f"refusing broad Xeon sweep cache path: {root}")
+    root.mkdir(parents=True, exist_ok=True)
+    sentinel = root / XEON_SWEEP_CACHE_SENTINEL
+    if sentinel.exists():
+        try:
+            payload = json.loads(sentinel.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"invalid Xeon sweep cache sentinel: {sentinel}") from exc
+        if payload.get("owner") != "ck-nightly-xeon-e2e":
+            raise ValueError(f"unrecognized Xeon sweep cache sentinel: {sentinel}")
+        return root
+    if any(root.iterdir()):
+        raise ValueError(
+            f"refusing non-empty unmarked Xeon sweep cache: {root}; "
+            f"use an empty directory or one containing {XEON_SWEEP_CACHE_SENTINEL}"
+        )
+    sentinel.write_text(
+        json.dumps({"owner": "ck-nightly-xeon-e2e", "schema": 1}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def _prune_xeon_sweep_cache(path: Path) -> int:
+    """Delete only children of a validated sweep-owned cache."""
+    root = _prepare_xeon_sweep_cache(path)
+    sentinel = root / XEON_SWEEP_CACHE_SENTINEL
+    free_before = shutil.disk_usage(root).free
+    for child in root.iterdir():
+        if child == sentinel:
+            continue
+        if child.is_symlink() or child.is_file():
+            child.unlink()
+        elif child.is_dir():
+            shutil.rmtree(child)
+        else:
+            raise ValueError(f"unsupported sweep cache entry: {child}")
+    return max(0, shutil.disk_usage(root).free - free_before)
+
+
+def _sweep_required_bytes(target_info: dict) -> int:
+    storage = target_info.get("sweep_storage") or {}
+    model_env = str(storage.get("model_env") or "")
+    configured_model = os.environ.get(model_env, "").strip() if model_env else ""
+    if storage.get("skip_when_model_unset") and not configured_model:
+        return 0
+    if configured_model and not configured_model.startswith(("hf://", "http://", "https://")):
+        return 1 << 30
+    return int(float(storage.get("required_gb", 0)) * (1 << 30))
 
 
 def parse_sub_tests(stdout: str) -> list:
@@ -578,6 +637,7 @@ MAKE_TARGETS = {
         "category": "bf16",
         "target": "test-qwen3vl-bf16-private-corpus-parity-auto",
         "timeout_sec": 21600,
+        "redact_output": True,
     },
     "v8_dsl_policy": {
         "name": "v8 DSL Zero-Hardcoding Policy",
@@ -632,6 +692,8 @@ MAKE_TARGETS = {
         "category": "parity",
         "target": "test-qwen3vl-private-corpus-parity-auto",
         "timeout_sec": 21600,
+        "redact_output": True,
+        "env": {"QWEN3VL_PRIVATE_CORPUS_PRETTY": "0"},
     },
     "v8_qwen3vl_vision_smoke": {
         "name": "v8 Qwen3-VL Vision Smoke",
@@ -664,6 +726,10 @@ MAKE_TARGETS = {
         "category": "inference",
         "target": "test-v8-gemma4-highmem",
         "timeout_sec": 5400,
+        "sweep_storage": {
+            "required_gb": 20,
+            "model_env": "V8_GEMMA4_MODEL",
+        },
     },
     "v8_nemotron9_highmem": {
         "name": "v8 Nemotron Nano 9B High-Memory Smoke",
@@ -676,11 +742,37 @@ MAKE_TARGETS = {
         "category": "inference",
         "target": "test-v8-glm4-highmem",
         "timeout_sec": 7200,
+        "sweep_storage": {
+            "required_gb": 24,
+            "model_env": "V8_GLM4_MODEL",
+        },
     },
     "v8_kimi_highmem": {
         "name": "v8 Kimi High-Memory Smoke",
         "category": "inference",
         "target": "test-v8-kimi-highmem",
+        "timeout_sec": 7200,
+        "sweep_storage": {
+            "required_gb": 48,
+            "model_env": "V8_KIMI_MODEL",
+            "skip_when_model_unset": True,
+        },
+    },
+    "v8_qwen36_highmem": {
+        "name": "v8 Qwen3.6-27B High-Memory Coherent-Answer Smoke",
+        "category": "inference",
+        "target": "test-v8-qwen36-highmem",
+        "timeout_sec": 7200,
+        "sweep_storage": {
+            "required_gb": 45,
+            "model_env": "V8_QWEN36_MODEL",
+            "skip_when_model_unset": True,
+        },
+    },
+    "v8_xeon_decoder_family_sweep": {
+        "name": "v8 Xeon Qwen2/Qwen3/Qwen3.5 Decoder-Family Sweep",
+        "category": "inference",
+        "target": "test-v8-xeon-decoder-family-sweep",
         "timeout_sec": 7200,
     },
     "v8_xeon_family_contracts": {
@@ -734,6 +826,20 @@ QUICK_TESTS = [
     "relu_bf16", "rmsnorm_bf16",
     "q4k_kernels",
 ]
+
+NIGHTLY_PROFILES = {
+    "xeon-e2e": [
+        "v8_xeon_family_contracts",
+        "v8_qwen36_highmem",
+        "v8_qwen3vl_vision_smoke",
+        "qwen3vl_private_corpus_parity",
+        "qwen3vl_bf16_private_corpus_parity",
+        "v8_glm4_highmem",
+        "v8_kimi_highmem",
+        "v8_gemma4_highmem",
+        "v8_xeon_decoder_family_sweep",
+    ],
+}
 
 MAKE_TARGET_FAILURE_ARTIFACTS = {
     "v6.6-validate-matrix-nightly": ROOT / "version" / "v6.6" / "tools" / "model_matrix_report_latest.json",
@@ -993,6 +1099,7 @@ def run_make_target(target_info: dict, verbose: bool = False) -> TestResult:
             capture_output=True,
             text=True,
             timeout=target_info["timeout_sec"],
+            env={**os.environ, **target_info.get("env", {})},
         )
         duration = time.time() - start
 
@@ -1052,18 +1159,31 @@ def run_make_target(target_info: dict, verbose: bool = False) -> TestResult:
                 error_msg = f"{error_msg}\n{artifact_summary}" if error_msg else artifact_summary
 
         sub_tests = parse_sub_tests(result.stdout)
+        result_stdout = result.stdout
+        result_stderr = result.stderr
+        if target_info.get("redact_output"):
+            sub_tests = []
+            result_stdout = (
+                "[private corpus output redacted from nightly report; "
+                "inspect the configured local certification output directory]"
+            )
+            result_stderr = ""
+            if status == "fail":
+                error_msg = "Private corpus lane failed; inspect local private artifacts."
+            elif status == "skip":
+                error_msg = "Private corpus lane is not configured on this runner."
         return TestResult(
             name=target_info["name"],
             category=target_info["category"],
             status=status,
             duration_sec=duration,
             stdout=_trim_output(
-                result.stdout,
+                result_stdout,
                 FAIL_STDOUT_CHARS if status == "fail" else PASS_STDOUT_CHARS,
                 keep_head_tail=(status == "fail"),
             ),
             stderr=_trim_output(
-                result.stderr,
+                result_stderr,
                 FAIL_STDERR_CHARS if status == "fail" else PASS_STDERR_CHARS,
                 keep_head_tail=(status == "fail"),
             ),
@@ -1322,6 +1442,21 @@ def update_nightly_index(results_dir=None):
 def main():
     parser = argparse.ArgumentParser(description="C-Kernel-Engine Nightly Test Runner")
     parser.add_argument("--quick", action="store_true", help="Run quick subset only")
+    parser.add_argument(
+        "--profile",
+        choices=sorted(NIGHTLY_PROFILES),
+        help="Run a named hardware/artifact profile",
+    )
+    parser.add_argument(
+        "--xeon-sweep-cache",
+        type=Path,
+        help="Dedicated empty/sentinel-marked cache for disposable Xeon sweep downloads",
+    )
+    parser.add_argument(
+        "--keep-sweep-cache",
+        action="store_true",
+        help="Retain disposable Xeon sweep downloads after each model lane",
+    )
     parser.add_argument("--ci", action="store_true", help="CI mode: skip tests requiring full shared library")
     parser.add_argument("--category", type=str, help="Run specific category (kernels, bf16, quant, inference, training, parity, archive, bench)")
     parser.add_argument("--json", type=str, metavar="FILE", help="Save JSON report to file")
@@ -1357,7 +1492,9 @@ def main():
     make_targets_to_run = []
     bench_targets_to_run = []
 
-    if args.quick:
+    if args.profile:
+        make_targets_to_run = list(NIGHTLY_PROFILES[args.profile])
+    elif args.quick:
         tests_to_run = [k for k in QUICK_TESTS if k in TEST_SUITES]
     elif args.category:
         tests_to_run = [k for k, v in TEST_SUITES.items() if v.category == args.category]
@@ -1375,6 +1512,19 @@ def main():
         make_targets_to_run = [t for t in make_targets_to_run if t not in CI_SKIP_TESTS]
         if skipped_count > 0:
             print(f"  [CI MODE] Skipping {skipped_count} tests requiring full shared library")
+
+    xeon_sweep_cache = None
+    if args.profile == "xeon-e2e":
+        configured_cache = (
+            args.xeon_sweep_cache
+            or os.environ.get("CK_XEON_SWEEP_CACHE")
+            or (ROOT / "build" / "xeon-e2e-managed-cache")
+        )
+        try:
+            xeon_sweep_cache = _prepare_xeon_sweep_cache(Path(configured_cache))
+        except (OSError, ValueError) as exc:
+            print(f"ERROR: cannot prepare Xeon sweep cache: {exc}", file=sys.stderr)
+            return 2
 
     print("\n" + "=" * 70)
     print("  C-KERNEL-ENGINE NIGHTLY TEST RUNNER")
@@ -1403,9 +1553,57 @@ def main():
 
     # Run make targets
     for i, target_key in enumerate(make_targets_to_run, 1):
-        info = MAKE_TARGETS[target_key]
+        info = dict(MAKE_TARGETS[target_key])
         print(f"  [make {i}/{len(make_targets_to_run)}] {info['name']}...", end=" ", flush=True)
-        result = run_make_target(info, verbose=args.verbose)
+        storage = info.get("sweep_storage")
+        if xeon_sweep_cache is not None and storage:
+            info["env"] = {
+                **info.get("env", {}),
+                "CK_CACHE_DIR": str(xeon_sweep_cache),
+            }
+            try:
+                if not args.keep_sweep_cache:
+                    _prune_xeon_sweep_cache(xeon_sweep_cache)
+                required = _sweep_required_bytes(info)
+                free = shutil.disk_usage(xeon_sweep_cache).free
+                if required > free:
+                    result = TestResult(
+                        name=info["name"],
+                        category=info["category"],
+                        status="fail",
+                        duration_sec=0.0,
+                        error_msg=(
+                            f"Insufficient disk for managed model lane: "
+                            f"required={required / (1 << 30):.1f} GiB "
+                            f"free={free / (1 << 30):.1f} GiB "
+                            f"cache={xeon_sweep_cache}"
+                        ),
+                    )
+                else:
+                    result = run_make_target(info, verbose=args.verbose)
+            except (OSError, ValueError) as exc:
+                result = TestResult(
+                    name=info["name"],
+                    category=info["category"],
+                    status="fail",
+                    duration_sec=0.0,
+                    error_msg=f"Xeon sweep cache safety failure: {exc}",
+                )
+            finally:
+                if not args.keep_sweep_cache:
+                    try:
+                        freed = _prune_xeon_sweep_cache(xeon_sweep_cache)
+                        result.stdout += (
+                            f"\n[storage] pruned sweep-managed cache; "
+                            f"freed={freed / (1 << 30):.2f} GiB"
+                        )
+                    except (OSError, ValueError) as exc:
+                        result.status = "fail"
+                        result.error_msg = (
+                            f"{result.error_msg}\n" if result.error_msg else ""
+                        ) + f"Post-lane cache cleanup failed: {exc}"
+        else:
+            result = run_make_target(info, verbose=args.verbose)
         results.append(result)
 
         status_icon = {"pass": "✓", "fail": "✗", "skip": "○", "timeout": "⏱"}[result.status]

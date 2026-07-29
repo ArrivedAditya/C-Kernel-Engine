@@ -135,6 +135,7 @@ int main() {
         {"qk_norm_decode", 40, 128, 1.0e-6f},
         {"qk_norm_prefill", 40 * 17, 128, 1.0e-6f},
         {"decoder_rmsnorm", 4, 4096, 1.0e-6f},
+        {"qwen36_rmsnorm", 4, 5120, 1.0e-6f},
     };
     int passed = 0;
     for (const case_spec & spec : cases) {

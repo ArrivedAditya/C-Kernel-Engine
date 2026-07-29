@@ -26,6 +26,7 @@ BOUNDARIES = (
     "q_conv_predelta",
     "k_conv_predelta",
     "alpha",
+    "gate",
     "beta",
     "new_state",
     "attn_output",

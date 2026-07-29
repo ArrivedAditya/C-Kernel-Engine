@@ -525,7 +525,7 @@ class NumericalExecutionContractTests(unittest.TestCase):
                 self.assertEqual(semantics["reduction"]["kind"], "none")
                 self.assertEqual(
                     semantics["compute"]["evaluation_order"],
-                    "llama_avx2_vector_expf_then_add_then_divide_with_scalar_expf_tail",
+                    "llama_x86_isa_vector_expf_then_add_then_divide_with_scalar_expf_tail",
                 )
 
     def test_qwen35_circuit_resolves_pytorch_bf16_recurrent_conv_and_silu(self):
@@ -560,6 +560,42 @@ class NumericalExecutionContractTests(unittest.TestCase):
                         plan["contract"]["semantics"]["storage"]["output"],
                         "bf16",
                     )
+
+    def test_qwen35_circuit_resolves_llama_ssm_conv(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.recurrent_ssm_conv",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "ssm_conv1d_llama_scalar_mul_add_fp32_output",
+                )
+                self.assertEqual(
+                    plan["kernel"]["id"],
+                    "ssm_conv1d_forward_llama_production",
+                )
+                self.assertEqual(
+                    plan["kernel"]["function"],
+                    "ssm_conv1d_forward_llama_production",
+                )
+                semantics = plan["contract"]["semantics"]
+                self.assertEqual(semantics["storage"]["output"], "fp32")
+                self.assertEqual(
+                    semantics["compute"]["evaluation_order"],
+                    "ascending_kernel_rounded_multiply_then_add",
+                )
+                self.assertEqual(
+                    semantics["reduction"]["order"], "left_to_right"
+                )
 
     def test_qwen35_circuit_resolves_pytorch_bf16_grouped_deltanet(self):
         circuit_doc = resolver.load_json(
@@ -785,7 +821,8 @@ class NumericalExecutionContractTests(unittest.TestCase):
                 semantics = plan["contract"]["semantics"]
                 self.assertEqual(semantics["compute"]["weight"], "int6")
                 self.assertEqual(
-                    semantics["reduction"]["merge_order"], "pairwise_tree"
+                    semantics["reduction"]["merge_order"],
+                    "pairwise_tree",
                 )
 
     def test_qwen35_circuit_resolves_exact_q8_recurrent_qkv_projection(self):
@@ -876,6 +913,95 @@ class NumericalExecutionContractTests(unittest.TestCase):
                     semantics["reduction"]["merge_order"],
                     "implementation_defined",
                 )
+
+    def test_qwen35_circuit_resolves_llama_fp32_recurrent_gate_scalars(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        operation = "decoder.recurrent_gate_scalar_projections_llama"
+        requirement = circuit_doc["required_numerical_contracts"][operation]
+        self.assertEqual(
+            requirement["selector"],
+            {
+                "config_equals": {"ssm_time_step_rank": 48},
+                "config_not_equals": {"recurrent_qkv_weight_dtype": "bf16"},
+            },
+        )
+
+        scripts = ROOT / "version" / "v8" / "scripts"
+        sys.path.insert(0, str(scripts))
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "build_ir_v8_qwen36_gate_contract_test",
+                scripts / "build_ir_v8.py",
+            )
+            assert spec is not None and spec.loader is not None
+            build_ir = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(build_ir)
+        finally:
+            sys.path.pop(0)
+        selector = requirement["selector"]
+        self.assertTrue(
+            build_ir._contract_selector_matches(
+                selector,
+                {
+                    "ssm_time_step_rank": 48,
+                    "recurrent_qkv_weight_dtype": "q6_k",
+                },
+                operation,
+            )
+        )
+        self.assertFalse(
+            build_ir._contract_selector_matches(
+                selector,
+                {
+                    "ssm_time_step_rank": 16,
+                    "recurrent_qkv_weight_dtype": "q5_k",
+                },
+                operation,
+            )
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    operation,
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "fp32_weight_fp32_input_llamafile_x86_native_fp32_output",
+                )
+                self.assertEqual(
+                    plan["kernel"]["id"], "gemm_nt_f32_llama_production"
+                )
+                self.assertEqual(
+                    plan["kernel"]["function"], "gemm_nt_f32_llama_production"
+                )
+                semantics = plan["contract"]["semantics"]
+                self.assertEqual(
+                    semantics["reduction"]["merge_order"], "pairwise_tree"
+                )
+                self.assertFalse(
+                    semantics["threading"][
+                        "thread_count_changes_arithmetic_order"
+                    ]
+                )
+                kernel_map = resolver.load_json(
+                    ROOT
+                    / "version"
+                    / "v8"
+                    / "kernel_maps"
+                    / "gemm_nt_f32_llama_production.json"
+                )
+                call_sources = {
+                    param["name"]: param["source"]
+                    for param in kernel_map["call_abi"]["params"]
+                }
+                self.assertEqual(call_sources["M"], "runtime:seq_len")
 
     def test_unsupported_mrope_storage_contract_hard_fails(self):
         doc = mrope_circuit("vision_mrope_fp64_input_fp64_compute_fp64_output")

@@ -33,9 +33,9 @@
     "function": "gated_deltanet_llama_avx2_prefill_forward",
     "explicit_selector": true,
     "implementation": {"isa_dispatch": "compile_time", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "contract_defined"}},
-    "arithmetic": {"partial_accumulator": "fp32", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "serial"}
+    "arithmetic": {"partial_accumulator": "fp32", "merge_order": "ascending_chunk", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "serial"}
   }],
-  "tests": {"unit": ["tests/test_deltanet.py"], "parity": [{"kind": "llama.cpp_fused_cpu_operator", "command": "make test-deltanet-llamacpp-production", "tolerance": "0"}]},
+  "tests": {"unit": ["tests/test_deltanet.py"], "parity": [{"kind": "llama.cpp_chunk64_production_graph", "command": "make test-deltanet-llamacpp-production", "tolerance": "2e-8"}]},
   "call_abi": {"version": 1, "params": [
     {"name": "q", "source": "activation:q", "cast": "const float*"},
     {"name": "k", "source": "activation:k", "cast": "const float*"},
