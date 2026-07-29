@@ -503,6 +503,17 @@ class AudioEncoderContractTests(unittest.TestCase):
         self.assertIn('{"DEFAULT", "NO AVX"}', source)
         requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
         self.assertIn("pytest", requirements.splitlines())
+        constraints = (
+            ROOT / "requirements-nightly-constraints.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn("torch==2.12.1", constraints.splitlines())
+        workflow = (
+            ROOT / ".github" / "workflows" / "nightly.yml"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(
+            workflow.count("-c requirements-nightly-constraints.txt"),
+            3,
+        )
         parsed = nightly.parse_sub_tests(
             "audio_encoder_self_attention_equal "
             "max_diff=2.98e-08 tol=2.0e-06 [PASS]\n"
