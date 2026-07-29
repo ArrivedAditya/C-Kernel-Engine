@@ -19,6 +19,7 @@ and a generated audio-transformer route:
 """
 
 import argparse
+import hashlib
 import importlib.util
 import inspect
 import json
@@ -55,6 +56,108 @@ AUTO_MMPROJ_SPECS = (
         "mmproj": "hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf",
     },
 )
+CODEGEN_STAMP_NAME = ".ck_codegen_bundle.json"
+RUNTIME_STAMP_NAME = ".ck_runtime_bundle.json"
+
+
+def _configure_scratch_environment() -> Path:
+    """Keep compiler and helper temporaries in persistent, writable storage."""
+    configured = os.environ.get("CK_V8_TMPDIR") or os.environ.get("TMPDIR")
+    if configured:
+        scratch = Path(configured).expanduser()
+    else:
+        cache_home = Path(
+            os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
+        ).expanduser()
+        scratch = cache_home / "ck-engine-v8" / "tmp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    if not _can_write_dir(scratch):
+        raise RuntimeError(f"v8 scratch directory is not writable: {scratch}")
+    scratch = scratch.resolve()
+    os.environ["TMPDIR"] = str(scratch)
+    tempfile.tempdir = None
+    return scratch
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _file_identity(path: Path) -> dict[str, Any]:
+    resolved = path.resolve()
+    return {
+        "path": str(resolved),
+        "size": resolved.stat().st_size,
+        "sha256": _sha256_file(resolved),
+    }
+
+
+def _optional_file_identity(path: Path) -> dict[str, Any]:
+    if path.is_file():
+        return _file_identity(path)
+    return {"path": str(path), "missing": True}
+
+
+def _tree_identity(paths: list[Path]) -> dict[str, str]:
+    rows: dict[str, str] = {}
+    for root in paths:
+        if root.is_file():
+            rows[str(root.resolve())] = _sha256_file(root)
+            continue
+        if not root.is_dir():
+            rows[str(root.resolve())] = "missing"
+            continue
+        for path in sorted(item for item in root.rglob("*") if item.is_file()):
+            rows[str(path.resolve())] = _sha256_file(path)
+    return rows
+
+
+def _read_bundle_stamp(path: Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _write_bundle_stamp(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as handle:
+        json.dump(value, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        temp_path = Path(handle.name)
+    temp_path.replace(path)
+
+
+def _bundle_is_current(
+    stamp_path: Path,
+    *,
+    inputs: dict[str, Any],
+    outputs: dict[str, Path],
+) -> bool:
+    stamp = _read_bundle_stamp(stamp_path)
+    if stamp is None or stamp.get("inputs") != inputs:
+        return False
+    recorded_outputs = stamp.get("outputs")
+    if not isinstance(recorded_outputs, dict):
+        return False
+    for name, path in outputs.items():
+        if not path.is_file():
+            return False
+        if recorded_outputs.get(name) != _file_identity(path):
+            return False
+    return True
 
 
 def _can_write_dir(path: Path) -> bool:
@@ -885,14 +988,33 @@ def _refresh_manifest_circuit_snapshot(manifest_path: Path) -> bool:
 def step_codegen(output_dir: Path, ir_paths: dict[str, Path], *, force: bool = False, profile: bool = False) -> Path:
     log_step(4, "Generating C code")
     model_c_path = output_dir / "model_v8.c"
-    if (
-        model_c_path.exists()
-        and not force
-        and model_c_path.stat().st_mtime >= ir_paths["decode_call"].stat().st_mtime
-        and model_c_path.stat().st_mtime >= ir_paths["prefill_call"].stat().st_mtime
+    stamp_path = output_dir / CODEGEN_STAMP_NAME
+    codegen_inputs = {
+        "schema": "ck-v8-codegen-bundle-v1",
+        "profile": bool(profile),
+        "artifacts": {
+            name: _file_identity(path)
+            for name, path in sorted(ir_paths.items())
+            if path.is_file()
+        },
+        "generator_sources": _tree_identity(
+            [
+                SCRIPTS_DIR / "codegen_v8.py",
+                SCRIPTS_DIR / "codegen_core_v8.py",
+                SCRIPTS_DIR / "codegen_prefill_v8.py",
+                KERNEL_REGISTRY_PATH,
+            ]
+        ),
+    }
+    if not force and _bundle_is_current(
+        stamp_path,
+        inputs=codegen_inputs,
+        outputs={"model_v8.c": model_c_path},
     ):
         log(f"  Using cached C code at {model_c_path}", C_DIM)
         return model_c_path
+    if model_c_path.exists() and not force:
+        log("  Cached C code provenance is stale; regenerating", C_DIM)
 
     cmd = [
         sys.executable,
@@ -911,6 +1033,13 @@ def step_codegen(output_dir: Path, ir_paths: dict[str, Path], *, force: bool = F
     if profile:
         cmd.append("--profile")
     run_cmd(cmd, cwd=PROJECT_ROOT)
+    _write_bundle_stamp(
+        stamp_path,
+        {
+            "inputs": codegen_inputs,
+            "outputs": {"model_v8.c": _file_identity(model_c_path)},
+        },
+    )
     return model_c_path
 
 
@@ -922,18 +1051,55 @@ def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -
 
     requested_compiler = (os.environ.get("CK_V8_COMPILER", "") or os.environ.get("CK_V7_COMPILER", "")).strip()
     compiler = requested_compiler or "gcc"
-    if not shutil.which(compiler):
+    compiler_path_value = shutil.which(compiler)
+    if not compiler_path_value:
         log_error(f"Requested CK_V8_COMPILER not found in PATH: {compiler}")
         sys.exit(1)
+    compiler_path = Path(compiler_path_value)
 
-    if force or not kernel_lib.exists() or not tokenizer_lib.exists():
-        targets = [_path_to_make_target(kernel_lib), _path_to_make_target(tokenizer_lib)]
-        make_cmd = ["make", "--no-print-directory", f"CC={compiler}"]
-        run_cmd([*make_cmd, *targets], cwd=PROJECT_ROOT)
-
-    if lib_path.exists() and not force and lib_path.stat().st_mtime >= model_c_path.stat().st_mtime:
-        _sync_runtime_lib(kernel_lib, output_dir / "libckernel_engine.so", "libckernel_engine.so")
-        _sync_runtime_lib(tokenizer_lib, output_dir / "libckernel_tokenizer.so", "libckernel_tokenizer.so")
+    machine = _host_machine()
+    omp_flag = "-qopenmp" if compiler == "icx" else "-fopenmp"
+    extra_cflags = (os.environ.get("CK_V8_EXTRA_CFLAGS", "") or os.environ.get("CK_V7_EXTRA_CFLAGS", "")).strip()
+    extra_ldflags = (os.environ.get("CK_V8_EXTRA_LDFLAGS", "") or os.environ.get("CK_V7_EXTRA_LDFLAGS", "")).strip()
+    compile_inputs = {
+        "schema": "ck-v8-runtime-bundle-v1",
+        "model_source": _file_identity(model_c_path),
+        "compiler": _optional_file_identity(compiler_path),
+        "compiler_name": compiler,
+        "machine": machine,
+        "openmp_flag": omp_flag,
+        "extra_cflags": extra_cflags,
+        "extra_ldflags": extra_ldflags,
+        "engine_sources": _tree_identity(
+            [
+                PROJECT_ROOT / "Makefile",
+                PROJECT_ROOT / "include",
+                PROJECT_ROOT / "src" / "kernels",
+                PROJECT_ROOT / "src" / "ckernel_alloc.c",
+                V8_ROOT / "src",
+                KERNEL_REGISTRY_PATH,
+            ]
+        ),
+        "linked_libraries": {
+            name: _file_identity(path)
+            for name, path in (
+                ("engine", kernel_lib),
+                ("tokenizer", tokenizer_lib),
+            )
+            if path.is_file()
+        },
+    }
+    stamp_path = output_dir / RUNTIME_STAMP_NAME
+    runtime_outputs = {
+        "libmodel.so": lib_path,
+        "libckernel_engine.so": output_dir / "libckernel_engine.so",
+        "libckernel_tokenizer.so": output_dir / "libckernel_tokenizer.so",
+    }
+    if not force and _bundle_is_current(
+        stamp_path,
+        inputs=compile_inputs,
+        outputs=runtime_outputs,
+    ):
         symlink_path = output_dir / "ck-kernel-inference.so"
         try:
             if symlink_path.exists() or symlink_path.is_symlink():
@@ -941,12 +1107,17 @@ def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -
             symlink_path.symlink_to("libmodel.so")
         except Exception:
             pass
+        log(f"  Using provenance-verified runtime at {lib_path}", C_DIM)
         return lib_path
+
+    if lib_path.exists() and not force:
+        log("  Cached runtime provenance is stale; rebuilding", C_DIM)
+    targets = [_path_to_make_target(kernel_lib), _path_to_make_target(tokenizer_lib)]
+    make_cmd = ["make", "--no-print-directory", f"CC={compiler}"]
+    run_cmd([*make_cmd, *targets], cwd=PROJECT_ROOT)
 
     include_dir = PROJECT_ROOT / "include"
     v8_src = V8_ROOT / "src"
-    omp_flag = "-qopenmp" if compiler == "icx" else "-fopenmp"
-    machine = _host_machine()
     use_openmp = _compiler_supports_openmp(compiler, omp_flag)
     cmd = [
         compiler,
@@ -979,8 +1150,6 @@ def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -
         cmd.insert(3, "-mcmodel=large")
     if use_openmp:
         cmd.insert(8 if _is_x86_machine(machine) else 7, omp_flag)
-    extra_cflags = (os.environ.get("CK_V8_EXTRA_CFLAGS", "") or os.environ.get("CK_V7_EXTRA_CFLAGS", "")).strip()
-    extra_ldflags = (os.environ.get("CK_V8_EXTRA_LDFLAGS", "") or os.environ.get("CK_V7_EXTRA_LDFLAGS", "")).strip()
     if extra_cflags:
         try:
             cmd.extend(shlex.split(extra_cflags))
@@ -1003,6 +1172,20 @@ def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -
         symlink_path.symlink_to("libmodel.so")
     except Exception:
         pass
+    compile_inputs["linked_libraries"] = {
+        "engine": _file_identity(kernel_lib),
+        "tokenizer": _file_identity(tokenizer_lib),
+    }
+    _write_bundle_stamp(
+        stamp_path,
+        {
+            "inputs": compile_inputs,
+            "outputs": {
+                name: _file_identity(path)
+                for name, path in runtime_outputs.items()
+            },
+        },
+    )
     return lib_path
 
 
@@ -1398,6 +1581,7 @@ def run_audio_pipeline(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_scratch_environment()
     parser = argparse.ArgumentParser(
         description="C-Kernel-Engine v8 inference runner",
         formatter_class=argparse.RawDescriptionHelpFormatter,

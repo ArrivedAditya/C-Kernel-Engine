@@ -41,6 +41,23 @@ def _hash_file(digest: Any, path: Path) -> None:
             digest.update(block)
 
 
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    _hash_file(digest, path)
+    return digest.hexdigest()
+
+
+def _llama_trajectory_temp_root() -> Path:
+    configured = os.environ.get("CK_LLAMA_TMPDIR")
+    if configured:
+        root = Path(configured).expanduser().resolve()
+    else:
+        cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+        root = cache_home.expanduser().resolve() / "ck-engine-v8" / "tmp"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def _llama_helper_paths() -> tuple[Path, Path, list[Path]]:
     llama_cpp = LLAMA_CPP.resolve()
     lib_dir = llama_cpp / "build" / "bin"
@@ -144,10 +161,15 @@ def load_runtime_contract(model_dir: Path) -> dict[str, Any]:
     return contract
 
 
-def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    cmd: list[str],
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
         cwd=str(cwd or ROOT),
+        env=env,
         text=True,
         errors="replace",
         capture_output=True,
@@ -174,7 +196,8 @@ def ensure_llama_helper() -> Path:
             "llama shared libraries missing: " + ", ".join(str(path) for path in missing)
         )
 
-    helper_bin = Path(tempfile.gettempdir()) / f"ckv8_llama_token_replay_{_llama_helper_fingerprint()}"
+    scratch_root = _llama_trajectory_temp_root()
+    helper_bin = scratch_root / f"ckv8_llama_token_replay_{_llama_helper_fingerprint()}"
     if helper_bin.is_file():
         return helper_bin
 
@@ -199,7 +222,9 @@ def ensure_llama_helper() -> Path:
         "-o",
         str(helper_bin),
     ]
-    proc = _run(cmd, cwd=ROOT)
+    compile_env = os.environ.copy()
+    compile_env["TMPDIR"] = str(scratch_root)
+    proc = _run(cmd, cwd=ROOT, env=compile_env)
     if proc.returncode != 0:
         raise RuntimeError(
             "Failed to compile llama_token_replay helper\n"
@@ -344,9 +369,31 @@ def run_llama_greedy_trajectory(
     top_k: int,
     threads: int,
     no_repack: bool = False,
+    dump_step: int | None = None,
+    dump_dir: Path | None = None,
+    dump_names: str = "",
+    dump_flash_inputs: bool = False,
 ) -> dict[str, Any]:
+    capture_step = None if dump_step is None else int(dump_step)
+    if capture_step is not None:
+        if capture_step < 0 or capture_step >= int(max_new_tokens):
+            raise ValueError(
+                f"dump_step={capture_step} is outside trajectory [0, {int(max_new_tokens) - 1}]"
+            )
+        if dump_dir is None:
+            raise ValueError("dump_dir is required when dump_step is set")
+        resolved_dump_dir = dump_dir.expanduser().resolve()
+        if resolved_dump_dir.exists() and any(resolved_dump_dir.iterdir()):
+            raise ValueError(
+                f"llama dump directory must be empty to prevent stale evidence: {resolved_dump_dir}"
+            )
+        resolved_dump_dir.mkdir(parents=True, exist_ok=True)
+
     helper = ensure_llama_helper()
-    with tempfile.TemporaryDirectory(prefix="llama_token_trajectory_") as td:
+    with tempfile.TemporaryDirectory(
+        prefix="llama_token_trajectory_",
+        dir=_llama_trajectory_temp_root(),
+    ) as td:
         logits_path = Path(td) / "llama_logits.f32"
         sequence_path = Path(td) / "llama_logits_sequence.f32"
         cmd = [
@@ -363,6 +410,16 @@ def run_llama_greedy_trajectory(
         ]
         if no_repack:
             cmd.append("--no-repack")
+        if capture_step is not None:
+            cmd.extend([
+                "--dump-greedy-decode-step", str(capture_step),
+                "--dump-dir", str(resolved_dump_dir),
+            ])
+            names = str(dump_names).strip()
+            if names:
+                cmd.extend(["--dump-names", names])
+            if dump_flash_inputs:
+                cmd.append("--dump-flash-inputs")
         if threads > 0:
             cmd.extend(["--threads", str(int(threads))])
         proc = _run(cmd, cwd=ROOT)
@@ -386,10 +443,37 @@ def run_llama_greedy_trajectory(
                 f"llama trajectory token count mismatch: got={len(generated)} "
                 f"expected={max_new_tokens}"
             )
+        capture_paths: list[Path] = []
+        if capture_step is not None:
+            capture_paths = sorted(
+                path
+                for path in resolved_dump_dir.iterdir()
+                if path.is_file() and path.stat().st_size > 0
+            )
+            if not capture_paths:
+                raise RuntimeError(
+                    "requested llama trajectory dump was not emitted; "
+                    "verify the selected tensor names exist in the production graph"
+                )
         return {
             "meta": meta,
             "logits": logits.reshape(int(max_new_tokens), n_vocab),
             "generated_tokens": generated,
+            "capture": {
+                "execution_mode": "persistent_greedy_trajectory",
+                "step": capture_step,
+                "op_filter": str(dump_names).strip(),
+                "flash_inputs": bool(dump_flash_inputs),
+                "attention_mode": str(meta.get("flash_attention_mode") or "unknown"),
+                "artifacts": [
+                    {
+                        "path": str(path),
+                        "sha256": _sha256_path(path),
+                        "size": int(path.stat().st_size),
+                    }
+                    for path in capture_paths
+                ],
+            },
         }
 
 

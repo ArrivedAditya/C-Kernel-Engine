@@ -35,7 +35,8 @@ endif
 # Return a compiler flag only when the selected compiler accepts it. This keeps
 # host CPU feature detection from adding flags that older GCC/Clang/icx releases
 # or non-x86 toolchains do not understand.
-cc-option = $(shell printf 'int main(void){return 0;}\n' | $(CC) $(1) -x c - -c -o /tmp/ck_cc_flag_test.o >/dev/null 2>&1 && rm -f /tmp/ck_cc_flag_test.o && echo $(1) || true)
+CK_COMPILER_PROBE_DIR ?= $(if $(CK_V8_TMPDIR),$(CK_V8_TMPDIR),$(if $(TMPDIR),$(TMPDIR),/tmp))
+cc-option = $(shell probe="$(CK_COMPILER_PROBE_DIR)/ck_cc_flag_test.$$$$.o"; mkdir -p "$(CK_COMPILER_PROBE_DIR)" >/dev/null 2>&1 && printf 'int main(void){return 0;}\n' | TMPDIR="$(CK_COMPILER_PROBE_DIR)" $(CC) $(1) -x c - -c -o "$$probe" >/dev/null 2>&1 && rm -f "$$probe" && echo $(1) || { rm -f "$$probe"; true; })
 cc-options = $(strip $(foreach flag,$(1),$(call cc-option,$(flag))))
 
 # OpenMP is opt-in for runtime stability (v6.6 uses threadpool parallelism).

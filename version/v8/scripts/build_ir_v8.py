@@ -4692,15 +4692,25 @@ def _normalize_rope_layout_value(value: Any) -> str:
     return aliases.get(rope_layout, rope_layout)
 
 
-def _resolve_rope_qk_kernel(config: Dict, template_kernels: Dict[str, Any]) -> str:
+def _resolve_rope_qk_kernel(
+    config: Dict,
+    template_kernels: Dict[str, Any],
+    mode: str = "",
+) -> str:
     rope_layout = _normalize_rope_layout_value(config.get("rope_layout"))
     rope_param_mode = str(config.get("rope_param_mode", "") or "").strip().lower()
-    override = str(template_kernels.get("rope_qk", "") or "").strip()
+    phase_key = f"rope_qk_{mode}" if mode else ""
+    override = str(
+        (template_kernels.get(phase_key) if phase_key else None)
+        or template_kernels.get("rope_qk")
+        or ""
+    ).strip()
 
     if not override:
         raise RuntimeError(
             "HARD KERNEL RESOLUTION FAULT: rope_qk requires an exact circuit kernel mapping "
-            f"for rope_layout={rope_layout!r}, rope_param_mode={rope_param_mode!r}."
+            f"for phase={mode!r}, rope_layout={rope_layout!r}, "
+            f"rope_param_mode={rope_param_mode!r}."
         )
     if rope_layout == "pairwise" and "pairwise" not in override.lower():
         raise RuntimeError(
@@ -5953,7 +5963,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             return [str(resolved_plan["kernel"]["id"])]
         # Template-specified kernel overrides (keeps IR dumb and data-driven)
         if op == "rope_qk":
-            return [_resolve_rope_qk_kernel(config, template_kernels)]
+            return [_resolve_rope_qk_kernel(config, template_kernels, mode)]
         if op == "rope_q":
             override = str(template_kernels.get("rope_q", "") or "").strip()
             if not override:

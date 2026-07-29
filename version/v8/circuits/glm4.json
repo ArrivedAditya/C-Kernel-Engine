@@ -61,6 +61,7 @@
       "rope_type": "rope",
       "qk_norm": false,
       "kv_layout": "layer_major_kv_cache",
+      "decode_kv_cache_dtype": "fp16",
       "attn_variant": "dense",
       "partial_rotary": true
     },
@@ -92,9 +93,49 @@
       }
     }
   },
+  "required_contracts": {
+    "decoder.attention": {
+      "op": "attention",
+      "template_ops": ["attn"],
+      "selector": {
+        "config_equals": {
+          "decode_kv_cache_dtype": "fp16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "requires": {
+            "execution.phase": "prefill",
+            "execution.prefill_batching": "batch_append",
+            "tensor.q.dtype": "fp32",
+            "tensor.kv.dtype": "fp16",
+            "tensor.layout": "head_major",
+            "numerics.attention_reduction": "f16_online_single_range"
+          },
+          "validation": "observed",
+          "evidence": "GLM-4 production prefill writes FP16 K/V for persistent decode; generated-IR and cache write-through tests guard the phase boundary."
+        },
+        "decode": {
+          "requires": {
+            "execution.phase": "decode",
+            "tensor.q.dtype": "fp32",
+            "tensor.kv.dtype": "fp16",
+            "tensor.layout": "head_major",
+            "numerics.attention_reduction": "f16_online_fp32_merge"
+          },
+          "validation": "validated",
+          "evidence": "Real GLM-4 H=32/Hkv=2/D=128 captures and the llama.cpp production flash oracle are byte-exact at the attention boundary."
+        }
+      }
+    }
+  },
   "kernels": {
     "rmsnorm": "rmsnorm_forward_llama_production",
+    "post_ffn_norm": "rmsnorm_forward_llama_production",
+    "rope_init": "rope_precompute_cache_llama_cpu",
     "rope_qk": "rope_forward_qk_pairwise",
+    "rope_qk_decode": "rope_forward_qk_pairwise_llama_cpu",
+    "rope_qk_prefill": "rope_forward_qk_pairwise",
     "attn_decode": "attention_forward_decode_head_major_gqa_flash"
   },
   "sequence": [

@@ -632,11 +632,12 @@ class V8NativeBridgeHostTests(unittest.TestCase):
 
             def fake_run_cmd(cmd: list[str], *, cwd=None, env=None, capture=False):
                 calls.append([str(part) for part in cmd])
-                Path(cmd[cmd.index("-o") + 1]).write_bytes(b"so")
+                if cmd[0] != "make":
+                    Path(cmd[cmd.index("-o") + 1]).write_bytes(b"so")
                 return subprocess.CompletedProcess(cmd, 0, "", "")
 
-            def fake_sync_runtime_lib(*args, **kwargs):
-                return None
+            def fake_sync_runtime_lib(source, destination, *args, **kwargs):
+                Path(destination).write_bytes(Path(source).read_bytes())
 
             def fake_which(binary: str) -> str | None:
                 if binary == "icx":
@@ -655,8 +656,9 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 lib_path = ck_run_v8.step_compile(model_c, out_dir, force=False)
 
         self.assertEqual(lib_path, out_dir / "libmodel.so")
-        self.assertEqual(len(calls), 1)
-        cmd = calls[0]
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][0], "make")
+        cmd = calls[1]
         self.assertEqual(cmd[0], "gcc")
         self.assertIn("-fopenmp", cmd)
 
@@ -675,19 +677,24 @@ class V8NativeBridgeHostTests(unittest.TestCase):
 
             def fake_run_cmd(cmd: list[str], *, cwd=None, env=None, capture=False):
                 calls.append([str(part) for part in cmd])
-                Path(cmd[cmd.index("-o") + 1]).write_bytes(b"so")
+                if cmd[0] != "make":
+                    Path(cmd[cmd.index("-o") + 1]).write_bytes(b"so")
                 return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            def fake_sync_runtime_lib(source, destination, *args, **kwargs):
+                Path(destination).write_bytes(Path(source).read_bytes())
 
             with mock.patch.object(ck_run_v8, "PROJECT_ROOT", tmp), \
                  mock.patch.object(ck_run_v8, "BUILD_DIR", build_dir), \
                  mock.patch.object(ck_run_v8, "run_cmd", side_effect=fake_run_cmd), \
-                 mock.patch.object(ck_run_v8, "_sync_runtime_lib"), \
+                 mock.patch.object(ck_run_v8, "_sync_runtime_lib", side_effect=fake_sync_runtime_lib), \
                  mock.patch.object(ck_run_v8.shutil, "which", return_value="/opt/intel/bin/icx"), \
                  mock.patch.dict(ck_run_v8.os.environ, {"CK_V8_COMPILER": "icx"}, clear=True):
                 ck_run_v8.step_compile(model_c, out_dir, force=False)
 
-        self.assertEqual(calls[0][0], "icx")
-        self.assertIn("-qopenmp", calls[0])
+        self.assertEqual(calls[0][0], "make")
+        self.assertEqual(calls[1][0], "icx")
+        self.assertIn("-qopenmp", calls[1])
 
     def test_ck_run_v8_step_compile_propagates_requested_compiler_to_engine(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_step_compile_gcc_") as tmpdir:
@@ -710,10 +717,13 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                     Path(call[call.index("-o") + 1]).write_bytes(b"model")
                 return subprocess.CompletedProcess(cmd, 0, "", "")
 
+            def fake_sync_runtime_lib(source, destination, *args, **kwargs):
+                Path(destination).write_bytes(Path(source).read_bytes())
+
             with mock.patch.object(ck_run_v8, "PROJECT_ROOT", tmp), \
                  mock.patch.object(ck_run_v8, "BUILD_DIR", build_dir), \
                  mock.patch.object(ck_run_v8, "run_cmd", side_effect=fake_run_cmd), \
-                 mock.patch.object(ck_run_v8, "_sync_runtime_lib"), \
+                 mock.patch.object(ck_run_v8, "_sync_runtime_lib", side_effect=fake_sync_runtime_lib), \
                  mock.patch.object(ck_run_v8.shutil, "which", return_value="/usr/bin/gcc"), \
                  mock.patch.dict(ck_run_v8.os.environ, {"CK_V8_COMPILER": "gcc"}, clear=True):
                 ck_run_v8.step_compile(model_c, out_dir, force=True)
@@ -742,10 +752,13 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                     Path(call[call.index("-o") + 1]).write_bytes(b"model")
                 return subprocess.CompletedProcess(cmd, 0, "", "")
 
+            def fake_sync_runtime_lib(source, destination, *args, **kwargs):
+                Path(destination).write_bytes(Path(source).read_bytes())
+
             with mock.patch.object(ck_run_v8, "PROJECT_ROOT", tmp), \
                  mock.patch.object(ck_run_v8, "BUILD_DIR", build_dir), \
                  mock.patch.object(ck_run_v8, "run_cmd", side_effect=fake_run_cmd), \
-                 mock.patch.object(ck_run_v8, "_sync_runtime_lib"), \
+                 mock.patch.object(ck_run_v8, "_sync_runtime_lib", side_effect=fake_sync_runtime_lib), \
                  mock.patch.object(ck_run_v8.shutil, "which", return_value="/usr/bin/gcc"), \
                  mock.patch.dict(ck_run_v8.os.environ, {"CC": "icx"}, clear=True):
                 ck_run_v8.step_compile(model_c, out_dir, force=True)

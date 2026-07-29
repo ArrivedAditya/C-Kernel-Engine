@@ -62,6 +62,15 @@ def test_layout_aware_capture_comparison_finds_first_consumed_edge(tmp_path: Pat
     )
 
     assert report["status"] == "observed"
+    assert report["capture_scope"] == {
+        "comparison": "CK persistent decode vs CK full replay",
+        "phase": "decoder",
+        "model_layer_count": 1,
+        "selected_layers": [0],
+        "covered_layer_count": 1,
+        "coverage_complete": True,
+        "checkpoint_granularity": "detailed_operator_chain",
+    }
     assert report["comparisons"][0]["metrics"]["byte_exact"]
     assert report["first_divergence"] is None
     observed = report["first_observed_divergence"]
@@ -116,3 +125,54 @@ def test_matching_provider_difference_is_a_causal_candidate(tmp_path: Path) -> N
     assert report["first_divergence"]["checkpoint_id"] == "text.layer.0.block_rmsnorm"
     assert report["first_divergence"]["classification"] == "PERSISTENT_REPLAY_DIVERGENCE"
     assert report["first_divergence"]["attribution_status"] == "causal_candidate"
+
+
+def test_coarse_layer_sweep_finds_first_amplification(tmp_path: Path) -> None:
+    persistent = tmp_path / "persistent"
+    replay = tmp_path / "replay"
+    persistent.mkdir()
+    replay.mkdir()
+    decode_ops = []
+    prefill_ops = []
+    for layer in range(3):
+        decode_ops.append(
+            {"idx": layer * 10 + 1, "layer": layer, "op": "residual_add"}
+        )
+        prefill_ops.append(
+            {"idx": layer * 10 + 2, "layer": layer, "op": "residual_add"}
+        )
+        oracle = np.arange(8, dtype=np.float32).reshape(2, 4)
+        oracle.tofile(
+            replay / f"tok_0000_layer_{layer:03d}_layer_out.f32"
+        )
+        subject = oracle[-1].copy()
+        subject[0] += np.float32([1e-6, 2e-4, 4e-4][layer])
+        subject.tofile(
+            persistent / f"tok_0001_layer_{layer:03d}_layer_out.f32"
+        )
+
+    report = xray.compare_layer_sweep(
+        persistent_dir=persistent,
+        replay_dir=replay,
+        decode_call_ir={
+            "config": {"num_layers": 3},
+            "operations": decode_ops,
+        },
+        prefill_call_ir={
+            "config": {"num_layers": 3},
+            "operations": prefill_ops,
+        },
+        logical_token=1,
+        replay_tokens=2,
+        amplification_ratio=100.0,
+    )
+
+    assert len(report["comparisons"]) == 3
+    assert report["capture_scope"]["covered_layer_count"] == 3
+    assert report["capture_scope"]["coverage_complete"]
+    assert report["capture_scope"]["checkpoint_granularity"] == (
+        "coarse_layer_out_layer_sweep"
+    )
+    candidate = report["first_layer_amplification"]
+    assert candidate["layer"] == 1
+    assert candidate["classification"] == "LAYER_AMPLIFICATION_CANDIDATE"

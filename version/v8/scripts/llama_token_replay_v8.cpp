@@ -56,6 +56,7 @@ struct DumpState {
     int requested_greedy_decode_step = -1;
     bool dump_flash_inputs = false;
     std::unordered_map<std::string, int> occurrences;
+    std::unordered_set<std::string> matched_names;
 };
 
 static std::vector<std::string> split_csv(const std::string & s) {
@@ -543,7 +544,11 @@ static bool dump_tensor_bytes(
     }
     const size_t nbytes = ggml_nbytes(tensor);
     std::vector<uint8_t> raw(nbytes);
-    ggml_backend_tensor_get(tensor, raw.data(), 0, nbytes);
+    if (tensor->buffer && ggml_backend_buffer_is_host(tensor->buffer) && tensor->data) {
+        std::memcpy(raw.data(), tensor->data, nbytes);
+    } else {
+        ggml_backend_tensor_get(tensor, raw.data(), 0, nbytes);
+    }
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     output.write(reinterpret_cast<const char *>(raw.data()),
                  static_cast<std::streamsize>(raw.size()));
@@ -605,13 +610,18 @@ static bool dump_eval_callback(struct ggml_tensor * t, bool ask, void * user_dat
     }
 
     DumpState * mut = static_cast<DumpState *>(user_data);
+    mut->matched_names.insert(base_name);
     const int occurrence = mut->occurrences[base_name]++;
     const std::string dump_name = make_dump_name(base_name, mut->current_token_id, occurrence);
 
     std::filesystem::create_directories(mut->dump_dir);
     if (!mut->list_only) {
         std::vector<uint8_t> raw(static_cast<size_t>(nbytes));
-        ggml_backend_tensor_get(t, raw.data(), 0, static_cast<size_t>(nbytes));
+        if (t->buffer && ggml_backend_buffer_is_host(t->buffer) && t->data) {
+            std::memcpy(raw.data(), t->data, static_cast<size_t>(nbytes));
+        } else {
+            ggml_backend_tensor_get(t, raw.data(), 0, static_cast<size_t>(nbytes));
+        }
         const std::filesystem::path bin_path = mut->dump_dir / (dump_name + ".bin");
         std::ofstream f(bin_path, std::ios::binary | std::ios::trunc);
         if (!f) {
@@ -989,6 +999,9 @@ int main(int argc, char ** argv) {
         segmented ? args.tokens_after.begin() : args.tokens.begin(),
         segmented ? args.tokens_after.end() : args.tokens.end()
     );
+    // Trajectory step 0 is produced by the initial prompt/prefix evaluation.
+    // Subsequent decode calls produce logits for step N + 1.
+    dump_state.current_greedy_decode_step = 0;
     if (!tokens_before.empty()) {
         int32_t rc = decode_tokens(
             ctx,
@@ -1124,7 +1137,14 @@ int main(int argc, char ** argv) {
         for (int step = 0; step < args.greedy_steps; ++step) {
             seq.write(reinterpret_cast<const char *>(logits), static_cast<std::streamsize>(n_vocab) * sizeof(float));
             if (!seq.good()) {
-                print_json_error("failed writing logits-seq-out file");
+                std::ostringstream oss;
+                oss << "failed writing logits-seq-out file"
+                    << " step=" << step
+                    << " bytes=" << (static_cast<int64_t>(n_vocab) * sizeof(float))
+                    << " stream_state=" << seq.rdstate()
+                    << " errno=" << errno
+                    << " error=" << std::strerror(errno);
+                print_json_error(oss.str());
                 llama_free(ctx);
                 llama_model_free(model);
                 llama_backend_free();
@@ -1136,7 +1156,7 @@ int main(int argc, char ** argv) {
             if (step + 1 >= args.greedy_steps) {
                 break;
             }
-            dump_state.current_greedy_decode_step = step;
+            dump_state.current_greedy_decode_step = step + 1;
             begin_dump_batch(dump_state.dump_dir.empty() ? nullptr : &dump_state, prefix_text_pos + static_cast<int32_t>(tokens_after.size()) + step);
             llama_batch batch = llama_batch_init(1, 0, 1);
             batch.n_tokens = 1;
@@ -1186,6 +1206,32 @@ int main(int argc, char ** argv) {
             llama_model_free(model);
             llama_backend_free();
             return 10;
+        }
+    }
+
+    if (!dump_state.dump_all && !dump_state.names.empty()) {
+        std::vector<std::string> missing_names;
+        for (const std::string & requested : dump_state.names) {
+            if (dump_state.matched_names.find(requested) == dump_state.matched_names.end()) {
+                missing_names.push_back(requested);
+            }
+        }
+        if (!missing_names.empty()) {
+            std::sort(missing_names.begin(), missing_names.end());
+            std::ostringstream oss;
+            oss << "requested dump tensor names were not observed at greedy step "
+                << dump_state.requested_greedy_decode_step << ": ";
+            for (size_t i = 0; i < missing_names.size(); ++i) {
+                if (i) {
+                    oss << ",";
+                }
+                oss << missing_names[i];
+            }
+            print_json_error(oss.str());
+            llama_free(ctx);
+            llama_model_free(model);
+            llama_backend_free();
+            return 22;
         }
     }
 

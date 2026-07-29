@@ -678,7 +678,8 @@ def _case(name, seed, heads, kv_heads, kv_tokens, head_dim, aligned, chunks, tol
 
 
 def _padded_decode_contract_case(
-    name, seed, heads, kv_heads, valid_kv, capacity, head_dim, threads
+    name, seed, heads, kv_heads, valid_kv, capacity, head_dim, threads,
+    scheduling_extent=None,
 ):
     q, valid_k, valid_v = _inputs(
         seed, heads, kv_heads, valid_kv, head_dim, head_dim
@@ -692,13 +693,102 @@ def _padded_decode_contract_case(
         _f32_ptr(q), _u16_ptr(k), _u16_ptr(v), _f32_ptr(actual),
         heads, kv_heads, valid_kv, capacity, head_dim, head_dim, 1,
     )
-    scheduling_extent = _llama_kv_partition_extent(valid_kv)
+    scheduling_extent = (
+        _llama_kv_partition_extent(valid_kv)
+        if scheduling_extent is None
+        else int(scheduling_extent)
+    )
     expected = _llama_split_output(
         q, valid_k, valid_v, head_dim, threads,
         padded_kv_tokens=scheduling_extent,
     )
     diff = float(np.max(np.abs(actual - expected))) if status == 0 else math.inf
     return Result(name, diff, 0.0, status == 0 and np.array_equal(actual, expected))
+
+
+def _glm4_cache_write_through_case(threads):
+    heads, kv_heads, head_dim = 32, 2, 128
+    prefill_tokens, valid_kv, capacity = 20, 33, 1034
+    llama_physical_extent = 1280
+    rng = np.random.default_rng(2026072833)
+    prefill_k = np.ascontiguousarray(
+        rng.normal(0.0, 0.55, (kv_heads, prefill_tokens, head_dim)).astype(np.float32)
+    )
+    prefill_v = np.ascontiguousarray(
+        rng.normal(0.0, 0.75, (kv_heads, prefill_tokens, head_dim)).astype(np.float32)
+    )
+    decode_k = np.ascontiguousarray(
+        rng.normal(
+            0.0, 0.55, (valid_kv - prefill_tokens, kv_heads, head_dim)
+        ).astype(np.float32)
+    )
+    decode_v = np.ascontiguousarray(
+        rng.normal(
+            0.0, 0.75, (valid_kv - prefill_tokens, kv_heads, head_dim)
+        ).astype(np.float32)
+    )
+    q = np.ascontiguousarray(
+        rng.normal(0.0, 0.55, (heads, head_dim)).astype(np.float32)
+    )
+
+    sentinel = np.uint16(0x3666)
+    k_cache = np.full((kv_heads, capacity, head_dim), sentinel, dtype=np.uint16)
+    v_cache = np.full_like(k_cache, sentinel)
+    lib.kv_cache_store_batch_f16(
+        _u16_ptr(k_cache), _u16_ptr(v_cache),
+        _f32_ptr(prefill_k), _f32_ptr(prefill_v),
+        0, prefill_tokens, kv_heads, head_dim, capacity,
+    )
+    for token in range(prefill_tokens, valid_kv):
+        lib.kv_cache_store_f16(
+            _u16_ptr(k_cache), _u16_ptr(v_cache),
+            _f32_ptr(decode_k[token - prefill_tokens]),
+            _f32_ptr(decode_v[token - prefill_tokens]),
+            0, token, kv_heads, head_dim, capacity,
+        )
+
+    expected_k = np.concatenate(
+        (prefill_k, decode_k.transpose(1, 0, 2)), axis=1
+    )
+    expected_v = np.concatenate(
+        (prefill_v, decode_v.transpose(1, 0, 2)), axis=1
+    )
+    storage_exact = bool(
+        np.array_equal(k_cache[:, :valid_kv], _half_bits(expected_k))
+        and np.array_equal(v_cache[:, :valid_kv], _half_bits(expected_v))
+        and np.all(k_cache[:, valid_kv:] == sentinel)
+        and np.all(v_cache[:, valid_kv:] == sentinel)
+    )
+
+    actual = np.full_like(q, np.nan)
+    status = lib.attention_forward_decode_head_major_gqa_flash_f16cache_contract(
+        _f32_ptr(q), _u16_ptr(k_cache), _u16_ptr(v_cache), _f32_ptr(actual),
+        heads, kv_heads, valid_kv, capacity, head_dim, head_dim, 1,
+    )
+    expected = _llama_split_output(
+        q,
+        k_cache[:, :valid_kv],
+        v_cache[:, :valid_kv],
+        head_dim,
+        threads,
+        padded_kv_tokens=llama_physical_extent,
+    )
+    attention_exact = status == 0 and np.array_equal(actual, expected)
+    diff = float(np.max(np.abs(actual - expected))) if status == 0 else math.inf
+    return [
+        Result(
+            "glm4_f16_cache_prefill_then_decode(KV=33,CAP=1034)",
+            0.0 if storage_exact else 1.0,
+            0.0,
+            storage_exact,
+        ),
+        Result(
+            f"llama_oracle_glm4_cache_write_through(KV=33,P=1280,H=32,Hkv=2,D=128,C={threads})",
+            diff,
+            0.0,
+            attention_exact,
+        ),
+    ]
 
 
 def _qwen35_cache_write_through_cases(threads):
@@ -861,6 +951,12 @@ def main():
         20260720257, 8, 2, 257, 1034, 256, threads,
     ))
     results.extend(_qwen35_cache_write_through_cases(threads))
+    results.append(_padded_decode_contract_case(
+        f"llama_oracle_glm4_short_decode(KV=21,CAP=1034,P=1280,H=32,Hkv=2,D=128,C={threads})",
+        2026072821, 32, 2, 21, 1034, 128, threads,
+        scheduling_extent=1280,
+    ))
+    results.extend(_glm4_cache_write_through_case(threads))
 
     for name, data in (
         ("explicit_contract_route_below(KV=256,S=256)", below_data),
