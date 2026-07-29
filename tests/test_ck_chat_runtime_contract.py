@@ -34,6 +34,34 @@ class _FakeCFunc:
 
 
 class TestCKChatRuntimeContract(unittest.TestCase):
+    def test_glm4_contract_matches_gguf_generation_prompt_exactly(self) -> None:
+        model = ck_chat.CKModel("/tmp/nonexistent")
+        model._configure_chat_template("glm4")
+
+        prompt = model.format_chat_prompt("Hello!")
+
+        self.assertEqual(
+            prompt,
+            "[gMASK]<sop>\n<|user|>\nHello!\n<|assistant|>",
+        )
+        self.assertFalse(prompt.endswith("\n"))
+
+    def test_glm4_gguf_jinja_compiles_to_exact_generation_prefix(self) -> None:
+        contract = chat_contract.build_chat_contract(
+            template_data={},
+            chat_template=(
+                "[gMASK]<sop>\n"
+                "{% for message in messages %}"
+                "{% if message.role == 'user' %}<|user|>\n{{ message.content }}"
+                "{% endif %}{% endfor %}"
+                "{% if add_generation_prompt %}<|assistant|>{% endif %}"
+            ),
+            model_type="glm4",
+        )
+
+        self.assertIsNotNone(contract)
+        self.assertEqual(contract["assistant_generation_prefix"], "<|assistant|>")
+
     def test_generated_runtime_root_recognizes_only_supported_directory_names(self) -> None:
         model_root = Path("/tmp/model")
 

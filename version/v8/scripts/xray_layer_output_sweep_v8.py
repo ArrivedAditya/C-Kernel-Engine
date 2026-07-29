@@ -78,7 +78,18 @@ def build_report(
     logical_token: int,
     subject_pattern: str,
     oracle_pattern: str,
+    phase: str = "prefill",
+    comparison_mode: str = "full_replay",
 ) -> dict[str, Any]:
+    if phase not in {"prefill", "decode"}:
+        raise ValueError(f"unsupported phase: {phase}")
+    if comparison_mode not in {"full_replay", "production_decode"}:
+        raise ValueError(f"unsupported comparison mode: {comparison_mode}")
+    comparison_label = (
+        "CK persistent decode vs llama.cpp production decode"
+        if comparison_mode == "production_decode"
+        else "CK full replay vs llama.cpp diagnostic full replay"
+    )
     comparisons: list[dict[str, Any]] = []
     selected_layers: list[int] = []
     source_artifacts: list[dict[str, Any]] = []
@@ -113,7 +124,7 @@ def build_report(
             ),
             "metrics": metrics,
             "resolved_execution": {
-                "phase": "prefill",
+                "phase": phase,
                 "layer": layer,
                 "function": None,
                 "kernel_id": None,
@@ -161,22 +172,22 @@ def build_report(
         "status": status,
         "circuit_scope": "decoder",
         "run_id": f"xray-{model}-layer-output-final-row-{logical_token}",
-        "phase": "prefill",
+        "phase": phase,
         "run": {
             "id": f"xray-{model}-layer-output-final-row-{logical_token}",
-            "phase": "prefill",
+            "phase": phase,
             "logical_token": logical_token,
             "token_count": token_count,
-            "comparison_mode": "full_replay",
+            "comparison_mode": comparison_mode,
         },
         "model": model,
         "capture_scope": {
-            "phase": "prefill",
+            "phase": phase,
             "checkpoint_granularity": "layer_output_final_causal_row",
             "covered_layer_count": len(selected_layers),
             "model_layer_count": layers,
             "selected_layers": selected_layers,
-            "comparison": "CK full replay vs llama.cpp diagnostic full replay",
+            "comparison": comparison_label,
             "logical_token": logical_token,
             "token_count": token_count,
             "hidden_size": hidden_size,
@@ -191,7 +202,11 @@ def build_report(
             },
             "oracle": {
                 "backend": "llama.cpp",
-                "mode": "diagnostic_tensor_dump",
+                "mode": (
+                    "production_graph_tensor_dump"
+                    if comparison_mode == "production_decode"
+                    else "diagnostic_tensor_dump"
+                ),
                 "flash_inputs": (parity_report.get("llama_capture") or {}).get("flash_inputs"),
                 "attention_mode": (parity_report.get("llama_capture") or {}).get("attention_mode"),
             },
@@ -212,6 +227,11 @@ def build_report(
         "diagnostic_ranking": {
             "first_divergence": parity_divergence,
             "note": (
+                "Production layer outputs are compared at the recorded persistent "
+                "decode boundary; this sweep localizes drift but does not by itself "
+                "identify the first offending primitive."
+                if comparison_mode == "production_decode"
+                else
                 "Full replay reproduces the production token flip, excluding persistent "
                 "KV state as the primary cause."
             ),
@@ -244,7 +264,13 @@ def build_report(
             "Only the final causal row is compared consistently across all layers.",
             "No call-IR operation identity is inferred from filenames.",
             "Layer-output drift localizes accumulation but does not identify a leaf kernel.",
-            "Diagnostic llama.cpp tensor capture may use a different execution mode than production.",
+            (
+                "Production decode capture preserves the recorded llama.cpp graph mode, "
+                "but callback observation is still disclosed in source provenance."
+                if comparison_mode == "production_decode"
+                else
+                "Diagnostic llama.cpp tensor capture may use a different execution mode than production."
+            ),
         ],
     }
 
@@ -260,6 +286,18 @@ def main() -> int:
     parser.add_argument("--token-count", type=int, required=True)
     parser.add_argument("--hidden-size", type=int, required=True)
     parser.add_argument("--logical-token", type=int, required=True)
+    parser.add_argument(
+        "--phase",
+        choices=("prefill", "decode"),
+        default="prefill",
+        help="Execution phase represented by both captures.",
+    )
+    parser.add_argument(
+        "--comparison-mode",
+        choices=("full_replay", "production_decode"),
+        default="full_replay",
+        help="Controls truthful comparison labels and oracle provenance.",
+    )
     parser.add_argument(
         "--subject-pattern",
         default="tok_0000_layer_{layer:03d}_layer_out.f32",
@@ -288,6 +326,8 @@ def main() -> int:
         logical_token=args.logical_token,
         subject_pattern=args.subject_pattern,
         oracle_pattern=args.oracle_pattern,
+        phase=str(args.phase),
+        comparison_mode=str(args.comparison_mode),
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
     output = args.output_dir / "xray_summary.json"

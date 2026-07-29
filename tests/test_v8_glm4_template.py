@@ -193,6 +193,10 @@ class V8GLM4TemplateTests(unittest.TestCase):
         self.assertTrue(doc["contract"]["block_contract"]["qkv_bias"])
         self.assertEqual(doc["contract"]["chat_contract"]["force_bos_text_if_tokenizer_add_bos_false"], "[gMASK]<sop>\n")
         self.assertEqual(
+            doc["contract"]["chat_contract"]["assistant_generation_prefix"],
+            "<|assistant|>",
+        )
+        self.assertEqual(
             doc["kernels"]["attn_decode"],
             "attention_forward_decode_head_major_gqa_flash",
         )
