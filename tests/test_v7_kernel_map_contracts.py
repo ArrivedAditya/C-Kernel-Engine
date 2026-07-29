@@ -59,6 +59,13 @@ class TestV7KernelMapContracts(unittest.TestCase):
             f"kernel registry source-file mismatches: {mismatched_source}",
         )
 
+    def test_registry_metadata_is_checkout_independent(self) -> None:
+        self.assertEqual(
+            self.registry.get("_meta", {}).get("source_dir"),
+            "version/v7/kernel_maps",
+        )
+        self.assertTrue(REGISTRY_PATH.read_bytes().endswith(b"\n"))
+
     def test_rmsnorm_binding_contract_stays_split(self) -> None:
         rmsnorm_forward = self.bindings.get("bindings", {}).get("rmsnorm_forward")
         rmsnorm_backward = self.bindings.get("bindings", {}).get("rmsnorm_backward")

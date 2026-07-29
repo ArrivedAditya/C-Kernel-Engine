@@ -3,7 +3,7 @@
     "description": "Kernel registry generated from v7 kernel maps",
     "version": "v7",
     "generated_by": "gen_kernel_registry_from_maps.py",
-    "source_dir": "/home/antshiv/Workspace/C-Kernel-Engine/version/v7/kernel_maps",
+    "source_dir": "version/v7/kernel_maps",
     "counts": {
       "total": 112,
       "by_op": {

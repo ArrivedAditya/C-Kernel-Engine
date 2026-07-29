@@ -13,6 +13,7 @@ Usage:
 import argparse
 import json
 import os
+from pathlib import Path
 from typing import Dict, List, Tuple
 
 
@@ -39,6 +40,15 @@ def load_kernel_maps(kernel_dir: str) -> List[Dict]:
         entry['_source_file'] = fname
         maps.append(entry)
     return maps
+
+
+def stable_source_dir(kernel_dir: str) -> str:
+    repo_root = Path(__file__).resolve().parents[3]
+    resolved = Path(kernel_dir).resolve()
+    try:
+        return resolved.relative_to(repo_root).as_posix()
+    except ValueError:
+        return resolved.as_posix()
 
 
 def summarize_maps(maps: List[Dict]) -> Dict:
@@ -147,7 +157,7 @@ def main() -> int:
             'description': 'Kernel registry generated from v7 kernel maps',
             'version': 'v7',
             'generated_by': os.path.basename(__file__),
-            'source_dir': args.dir,
+            'source_dir': stable_source_dir(args.dir),
             'counts': summary,
         },
         'kernels': maps,
@@ -178,6 +188,7 @@ def main() -> int:
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
     with open(args.output, 'w') as f:
         json.dump(registry, f, indent=2)
+        f.write('\n')
 
     print(f'[ok] wrote {args.output}')
     return 0
