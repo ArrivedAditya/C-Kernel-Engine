@@ -27,6 +27,7 @@ extern void pack_q4_k_to_packed_vnni_x8(
 extern void gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
         const void *a_q8, const void *b_packed_vnni_x8, const float *bias,
         float *c, int m, int n, int k, int active_threads);
+extern int ck_q4k_packed_vnni_x8_available(void);
 
 static uint32_t rng_state = 0x12345678u;
 
@@ -115,7 +116,7 @@ int main(int argc, char **argv)
     int tile_m = 8;
     int warmup = 1;
     int iterations = 3;
-    const char *provider = "baseline";
+    const char *provider = "mreuse";
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--m") == 0 && i + 1 < argc) m = parse_positive(argv[++i], m);
@@ -128,12 +129,21 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--provider") == 0 && i + 1 < argc) provider = argv[++i];
     }
 
-    if ((k % QK_K) != 0 || m <= 0 || n <= 0 ||
-        (strcmp(provider, "baseline") != 0 && strcmp(provider, "4m") != 0 &&
+    if ((k % QK_K) != 0 || (m % 4) != 0 || m <= 0 || n <= 0 ||
+        (strcmp(provider, "baseline") != 0 && strcmp(provider, "mreuse") != 0 &&
+         strcmp(provider, "4m") != 0 &&
          strcmp(provider, "8m") != 0 &&
          strcmp(provider, "4m-vnni-x8") != 0)) {
-        fprintf(stderr, "invalid shape M=%d N=%d K=%d\n", m, n, k);
+        fprintf(stderr,
+                "invalid packed-prefill shape M=%d N=%d K=%d "
+                "(M must contain complete four-row groups)\n",
+                m, n, k);
         return 2;
+    }
+    if (strcmp(provider, "4m-vnni-x8") == 0 &&
+        !ck_q4k_packed_vnni_x8_available()) {
+        fprintf(stderr, "provider unavailable: %s\n", provider);
+        return 4;
     }
 
     const size_t a_count = (size_t)m * (size_t)k;
@@ -179,21 +189,25 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    if (strcmp(provider, "baseline") != 0) {
-        run_provider("baseline", a_q8, weights_packed,
-                     weights_packed_vnni, bias, reference,
-                     m, n, k, tile_m, threads);
-        run_provider(provider, a_q8, weights_packed,
-                     weights_packed_vnni, bias, output,
-                     m, n, k, tile_m, threads);
-        if (memcmp(reference, output, c_count * sizeof(float)) != 0) {
-            size_t first = 0;
-            while (first < c_count && reference[first] == output[first]) ++first;
-            fprintf(stderr,
-                    "provider mismatch at index=%zu baseline=%.9g candidate=%.9g\n",
-                    first, reference[first], output[first]);
-            return 3;
-        }
+    /*
+     * Keep fast candidate iteration anchored to one production-exact CKE
+     * provider. The separate llama.cpp graph oracle certifies this reference;
+     * every provider and configurable M-reuse tile must then remain bit-exact
+     * with it before its timing is reportable.
+     */
+    run_provider("4m", a_q8, weights_packed,
+                 weights_packed_vnni, bias, reference,
+                 m, n, k, 4, threads);
+    run_provider(provider, a_q8, weights_packed,
+                 weights_packed_vnni, bias, output,
+                 m, n, k, tile_m, threads);
+    if (memcmp(reference, output, c_count * sizeof(float)) != 0) {
+        size_t first = 0;
+        while (first < c_count && reference[first] == output[first]) ++first;
+        fprintf(stderr,
+                "provider mismatch at index=%zu reference_4m=%.9g candidate=%.9g\n",
+                first, reference[first], output[first]);
+        return 3;
     }
 
     for (int i = 0; i < warmup; ++i) {
@@ -213,7 +227,8 @@ int main(int argc, char **argv)
     double checksum = 0.0;
     for (size_t i = 0; i < c_count; ++i) checksum += (double)output[i];
     const double operations = 2.0 * (double)m * (double)n * (double)k;
-    printf("provider=%s M=%d N=%d K=%d threads=%d tile_m=%d "
+    printf("provider=%s reference_provider=4m exact=true "
+           "M=%d N=%d K=%d threads=%d tile_m=%d "
            "time_ms=%.3f gflops=%.3f checksum=%.17g\n",
            provider, m, n, k, threads, tile_m, elapsed_ms,
            operations / (elapsed_ms * 1.0e6), checksum);
