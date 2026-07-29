@@ -73,7 +73,7 @@ if [ "$should_run_v7_regression" != "1" ] && [ "$should_run_v8_regression" != "1
     exit 0
 fi
 
-PRECOMMIT_LOCK_PATH="${CK_PRECOMMIT_LOCK_PATH:-${HOME_DIR}/.cache/ck-engine/precommit/precommit.lock}"
+PRECOMMIT_LOCK_PATH="${CK_PRECOMMIT_LOCK_PATH:-${HOME_DIR}/.cache/ck-engine/model-regression.lock}"
 PRECOMMIT_MIN_AVAILABLE_GB="${CK_PRECOMMIT_MIN_AVAILABLE_GB:-16}"
 PRECOMMIT_MIN_SWAP_FREE_GB="${CK_PRECOMMIT_MIN_SWAP_FREE_GB:-2}"
 PRECOMMIT_THREADS="${CK_PRECOMMIT_THREADS:-8}"
