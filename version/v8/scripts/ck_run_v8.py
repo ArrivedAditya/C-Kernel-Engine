@@ -58,6 +58,7 @@ AUTO_MMPROJ_SPECS = (
 )
 CODEGEN_STAMP_NAME = ".ck_codegen_bundle.json"
 RUNTIME_STAMP_NAME = ".ck_runtime_bundle.json"
+RUNTIME_BUNDLE_SCHEMA = "ck-v8-runtime-bundle-v2"
 
 
 def _configure_scratch_environment() -> Path:
@@ -489,13 +490,70 @@ def _sync_runtime_lib(src: Path, dst: Path, label: str) -> None:
         raise RuntimeError(f"missing required runtime lib: {src}")
     if dst.exists():
         try:
-            if dst.stat().st_mtime >= src.stat().st_mtime and dst.stat().st_size == src.stat().st_size:
+            if (
+                dst.stat().st_size == src.stat().st_size
+                and _sha256_file(dst) == _sha256_file(src)
+            ):
                 return
         except OSError:
             pass
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+    with tempfile.NamedTemporaryFile(
+        dir=dst.parent,
+        prefix=f".{dst.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as handle:
+        temporary = Path(handle.name)
+    try:
+        shutil.copy2(src, temporary)
+        os.replace(temporary, dst)
+    finally:
+        temporary.unlink(missing_ok=True)
     log(f"  Synced {label} -> {dst}", C_DIM)
+
+
+def _validate_runtime_bundle(bundle_dir: Path) -> None:
+    """Load the assembled model exactly as chat will before publishing it."""
+    model_lib = bundle_dir / "libmodel.so"
+    engine_lib = bundle_dir / "libckernel_engine.so"
+    tokenizer_lib = bundle_dir / "libckernel_tokenizer.so"
+    missing = [
+        path.name
+        for path in (model_lib, engine_lib, tokenizer_lib)
+        if not path.is_file()
+    ]
+    if missing:
+        raise RuntimeError(
+            "incomplete v8 runtime bundle; missing " + ", ".join(missing)
+        )
+
+    probe = (
+        "import ctypes, pathlib, sys\n"
+        "bundle = pathlib.Path(sys.argv[1])\n"
+        "ctypes.CDLL(str(bundle / 'libmodel.so'), mode=ctypes.RTLD_GLOBAL)\n"
+    )
+    env = os.environ.copy()
+    current_ld_path = env.get("LD_LIBRARY_PATH", "")
+    env["LD_LIBRARY_PATH"] = (
+        str(bundle_dir)
+        if not current_ld_path
+        else f"{bundle_dir}{os.pathsep}{current_ld_path}"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe, str(bundle_dir)],
+        cwd=str(PROJECT_ROOT),
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "dynamic loader failed").strip()
+        raise RuntimeError(
+            "v8 runtime bundle failed dynamic-load validation before publication:\n"
+            f"{detail}"
+        )
 
 
 def detect_input_type(model_input: str) -> tuple[str, dict[str, Any]]:
@@ -1062,7 +1120,7 @@ def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -
     extra_cflags = (os.environ.get("CK_V8_EXTRA_CFLAGS", "") or os.environ.get("CK_V7_EXTRA_CFLAGS", "")).strip()
     extra_ldflags = (os.environ.get("CK_V8_EXTRA_LDFLAGS", "") or os.environ.get("CK_V7_EXTRA_LDFLAGS", "")).strip()
     compile_inputs = {
-        "schema": "ck-v8-runtime-bundle-v1",
+        "schema": RUNTIME_BUNDLE_SCHEMA,
         "model_source": _file_identity(model_c_path),
         "compiler": _optional_file_identity(compiler_path),
         "compiler_name": compiler,
@@ -1113,58 +1171,81 @@ def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -
     if lib_path.exists() and not force:
         log("  Cached runtime provenance is stale; rebuilding", C_DIM)
     targets = [_path_to_make_target(kernel_lib), _path_to_make_target(tokenizer_lib)]
-    make_cmd = ["make", "--no-print-directory", f"CC={compiler}"]
+    # A stale bundle means source identity changed even when checkout/build
+    # mtimes make the old libraries look newer. Force both runtime libraries
+    # through Make so generated model code can never be paired with an engine
+    # from another branch or worktree.
+    make_cmd = ["make", "-B", "--no-print-directory", f"CC={compiler}"]
     run_cmd([*make_cmd, *targets], cwd=PROJECT_ROOT)
 
     include_dir = PROJECT_ROOT / "include"
     v8_src = V8_ROOT / "src"
     use_openmp = _compiler_supports_openmp(compiler, omp_flag)
-    cmd = [
-        compiler,
-        "-shared",
-        "-fPIC",
-        "-O3",
-        "-march=native",
-        "-std=c11",
-        "-fvisibility=default",
-        *_arch_defines(machine),
-        f"-I{include_dir}",
-        f"-I{v8_src}",
-        "-o",
-        str(lib_path),
-        str(model_c_path),
-        str(PROJECT_ROOT / "src" / "ckernel_alloc.c"),
-        str(v8_src / "ckernel_model_load_v8.c"),
-        str(v8_src / "ck_parallel_decode_v8.c"),
-        str(v8_src / "ck_parallel_prefill_v8.c"),
-        f"-L{BUILD_DIR}",
-        f"-L{output_dir}",
-        "-lckernel_tokenizer",
-        "-lckernel_engine",
-        "-lm",
-        "-lpthread",
-        "-Wl,-rpath,$ORIGIN",
-        f"-Wl,-rpath,{BUILD_DIR}",
-    ]
-    if _is_x86_machine(machine):
-        cmd.insert(3, "-mcmodel=large")
-    if use_openmp:
-        cmd.insert(8 if _is_x86_machine(machine) else 7, omp_flag)
-    if extra_cflags:
-        try:
-            cmd.extend(shlex.split(extra_cflags))
-        except ValueError:
-            log_error("Invalid CK_V8_EXTRA_CFLAGS value")
-            sys.exit(1)
-    if extra_ldflags:
-        try:
-            cmd.extend(shlex.split(extra_ldflags))
-        except ValueError:
-            log_error("Invalid CK_V8_EXTRA_LDFLAGS value")
-            sys.exit(1)
-    run_cmd(cmd, cwd=PROJECT_ROOT)
-    _sync_runtime_lib(kernel_lib, output_dir / "libckernel_engine.so", "libckernel_engine.so")
-    _sync_runtime_lib(tokenizer_lib, output_dir / "libckernel_tokenizer.so", "libckernel_tokenizer.so")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        dir=output_dir,
+        prefix=".ck-runtime-stage-",
+    ) as stage_name:
+        stage_dir = Path(stage_name)
+        staged_model = stage_dir / "libmodel.so"
+        cmd = [
+            compiler,
+            "-shared",
+            "-fPIC",
+            "-O3",
+            "-march=native",
+            "-std=c11",
+            "-fvisibility=default",
+            *_arch_defines(machine),
+            f"-I{include_dir}",
+            f"-I{v8_src}",
+            "-o",
+            str(staged_model),
+            str(model_c_path),
+            str(PROJECT_ROOT / "src" / "ckernel_alloc.c"),
+            str(v8_src / "ckernel_model_load_v8.c"),
+            str(v8_src / "ck_parallel_decode_v8.c"),
+            str(v8_src / "ck_parallel_prefill_v8.c"),
+            f"-L{BUILD_DIR}",
+            "-lckernel_tokenizer",
+            "-lckernel_engine",
+            "-lm",
+            "-lpthread",
+            "-Wl,-rpath,$ORIGIN",
+        ]
+        if _is_x86_machine(machine):
+            cmd.insert(3, "-mcmodel=large")
+        if use_openmp:
+            cmd.insert(8 if _is_x86_machine(machine) else 7, omp_flag)
+        if extra_cflags:
+            try:
+                cmd.extend(shlex.split(extra_cflags))
+            except ValueError:
+                log_error("Invalid CK_V8_EXTRA_CFLAGS value")
+                sys.exit(1)
+        if extra_ldflags:
+            try:
+                cmd.extend(shlex.split(extra_ldflags))
+            except ValueError:
+                log_error("Invalid CK_V8_EXTRA_LDFLAGS value")
+                sys.exit(1)
+        run_cmd(cmd, cwd=PROJECT_ROOT)
+        shutil.copy2(kernel_lib, stage_dir / "libckernel_engine.so")
+        shutil.copy2(tokenizer_lib, stage_dir / "libckernel_tokenizer.so")
+        _validate_runtime_bundle(stage_dir)
+        _sync_runtime_lib(
+            stage_dir / "libckernel_engine.so",
+            output_dir / "libckernel_engine.so",
+            "libckernel_engine.so",
+        )
+        _sync_runtime_lib(
+            stage_dir / "libckernel_tokenizer.so",
+            output_dir / "libckernel_tokenizer.so",
+            "libckernel_tokenizer.so",
+        )
+        # Publish the generated model last. It is the bundle consumer and may
+        # require symbols that exist only in the newly staged dependencies.
+        _sync_runtime_lib(staged_model, lib_path, "libmodel.so")
     symlink_path = output_dir / "ck-kernel-inference.so"
     try:
         if symlink_path.exists() or symlink_path.is_symlink():

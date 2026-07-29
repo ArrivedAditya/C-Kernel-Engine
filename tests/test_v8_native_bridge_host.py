@@ -650,6 +650,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                  mock.patch.object(ck_run_v8, "BUILD_DIR", build_dir), \
                  mock.patch.object(ck_run_v8, "run_cmd", side_effect=fake_run_cmd), \
                  mock.patch.object(ck_run_v8, "_sync_runtime_lib", side_effect=fake_sync_runtime_lib), \
+                 mock.patch.object(ck_run_v8, "_validate_runtime_bundle"), \
                  mock.patch.object(ck_run_v8, "_compiler_supports_openmp", return_value=True), \
                  mock.patch.object(ck_run_v8.shutil, "which", side_effect=fake_which), \
                  mock.patch.dict(ck_run_v8.os.environ, {}, clear=True):
@@ -688,6 +689,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                  mock.patch.object(ck_run_v8, "BUILD_DIR", build_dir), \
                  mock.patch.object(ck_run_v8, "run_cmd", side_effect=fake_run_cmd), \
                  mock.patch.object(ck_run_v8, "_sync_runtime_lib", side_effect=fake_sync_runtime_lib), \
+                 mock.patch.object(ck_run_v8, "_validate_runtime_bundle"), \
                  mock.patch.object(ck_run_v8.shutil, "which", return_value="/opt/intel/bin/icx"), \
                  mock.patch.dict(ck_run_v8.os.environ, {"CK_V8_COMPILER": "icx"}, clear=True):
                 ck_run_v8.step_compile(model_c, out_dir, force=False)
@@ -724,11 +726,12 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                  mock.patch.object(ck_run_v8, "BUILD_DIR", build_dir), \
                  mock.patch.object(ck_run_v8, "run_cmd", side_effect=fake_run_cmd), \
                  mock.patch.object(ck_run_v8, "_sync_runtime_lib", side_effect=fake_sync_runtime_lib), \
+                 mock.patch.object(ck_run_v8, "_validate_runtime_bundle"), \
                  mock.patch.object(ck_run_v8.shutil, "which", return_value="/usr/bin/gcc"), \
                  mock.patch.dict(ck_run_v8.os.environ, {"CK_V8_COMPILER": "gcc"}, clear=True):
                 ck_run_v8.step_compile(model_c, out_dir, force=True)
 
-        self.assertEqual(calls[0][:3], ["make", "--no-print-directory", "CC=gcc"])
+        self.assertEqual(calls[0][:4], ["make", "-B", "--no-print-directory", "CC=gcc"])
         self.assertEqual(calls[1][0], "gcc")
 
     def test_ck_run_v8_step_compile_overrides_exported_cc_with_default_gcc(self) -> None:
@@ -759,12 +762,49 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                  mock.patch.object(ck_run_v8, "BUILD_DIR", build_dir), \
                  mock.patch.object(ck_run_v8, "run_cmd", side_effect=fake_run_cmd), \
                  mock.patch.object(ck_run_v8, "_sync_runtime_lib", side_effect=fake_sync_runtime_lib), \
+                 mock.patch.object(ck_run_v8, "_validate_runtime_bundle"), \
                  mock.patch.object(ck_run_v8.shutil, "which", return_value="/usr/bin/gcc"), \
                  mock.patch.dict(ck_run_v8.os.environ, {"CC": "icx"}, clear=True):
                 ck_run_v8.step_compile(model_c, out_dir, force=True)
 
-        self.assertEqual(calls[0][:3], ["make", "--no-print-directory", "CC=gcc"])
+        self.assertEqual(calls[0][:4], ["make", "-B", "--no-print-directory", "CC=gcc"])
         self.assertEqual(calls[1][0], "gcc")
+
+    def test_ck_run_v8_step_compile_does_not_publish_invalid_staged_bundle(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_step_compile_atomic_") as tmpdir:
+            tmp = Path(tmpdir)
+            build_dir = tmp / "build"
+            build_dir.mkdir(parents=True)
+            (build_dir / "libckernel_engine.so").write_bytes(b"new-engine")
+            (build_dir / "libckernel_tokenizer.so").write_bytes(b"new-tokenizer")
+            model_c = tmp / "model_v8.c"
+            model_c.write_text("/* generated */", encoding="utf-8")
+            out_dir = tmp / "run"
+            out_dir.mkdir()
+            old_bundle = {
+                "libmodel.so": b"old-model",
+                "libckernel_engine.so": b"old-engine",
+                "libckernel_tokenizer.so": b"old-tokenizer",
+            }
+            for name, contents in old_bundle.items():
+                (out_dir / name).write_bytes(contents)
+
+            def fake_run_cmd(cmd: list[str], *, cwd=None, env=None, capture=False):
+                if cmd[0] != "make":
+                    Path(cmd[cmd.index("-o") + 1]).write_bytes(b"new-model")
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            with mock.patch.object(ck_run_v8, "PROJECT_ROOT", tmp), \
+                 mock.patch.object(ck_run_v8, "BUILD_DIR", build_dir), \
+                 mock.patch.object(ck_run_v8, "run_cmd", side_effect=fake_run_cmd), \
+                 mock.patch.object(ck_run_v8, "_validate_runtime_bundle", side_effect=RuntimeError("undefined symbol")), \
+                 mock.patch.object(ck_run_v8.shutil, "which", return_value="/usr/bin/gcc"), \
+                 mock.patch.dict(ck_run_v8.os.environ, {}, clear=True):
+                with self.assertRaisesRegex(RuntimeError, "undefined symbol"):
+                    ck_run_v8.step_compile(model_c, out_dir, force=True)
+
+            for name, contents in old_bundle.items():
+                self.assertEqual((out_dir / name).read_bytes(), contents)
 
     def test_ck_run_v8_parser_accepts_visualizer_and_llama_template(self) -> None:
         with mock.patch.object(ck_run_v8, "_ensure_v8_python_requirements"), \

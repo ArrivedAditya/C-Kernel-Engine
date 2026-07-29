@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -153,3 +154,58 @@ def test_bundle_stamp_rejects_missing_or_malformed_stamp(tmp_path: Path) -> None
     assert not ck_run_v8._bundle_is_current(
         stamp, inputs=inputs, outputs={"libmodel.so": output}
     )
+
+
+def test_sync_runtime_lib_replaces_same_size_stale_binary_atomically(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.so"
+    destination = tmp_path / "runtime" / "library.so"
+    source.write_bytes(b"new-runtime")
+    destination.parent.mkdir()
+    destination.write_bytes(b"old-runtime")
+
+    ck_run_v8._sync_runtime_lib(source, destination, "fixture")
+
+    assert destination.read_bytes() == b"new-runtime"
+    assert not list(destination.parent.glob(".library.so.*.tmp"))
+
+
+def test_validate_runtime_bundle_reports_dynamic_loader_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    for name in (
+        "libmodel.so",
+        "libckernel_engine.so",
+        "libckernel_tokenizer.so",
+    ):
+        (tmp_path / name).write_bytes(b"fixture")
+
+    failure = subprocess.CompletedProcess(
+        args=["python"],
+        returncode=1,
+        stdout="",
+        stderr="OSError: undefined symbol: required_provider",
+    )
+    monkeypatch.setattr(ck_run_v8.subprocess, "run", lambda *args, **kwargs: failure)
+
+    try:
+        ck_run_v8._validate_runtime_bundle(tmp_path)
+    except RuntimeError as exc:
+        assert "undefined symbol: required_provider" in str(exc)
+    else:
+        raise AssertionError("invalid runtime bundle was accepted")
+
+
+def test_validate_runtime_bundle_requires_all_three_libraries(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "libmodel.so").write_bytes(b"fixture")
+
+    try:
+        ck_run_v8._validate_runtime_bundle(tmp_path)
+    except RuntimeError as exc:
+        assert "libckernel_engine.so" in str(exc)
+        assert "libckernel_tokenizer.so" in str(exc)
+    else:
+        raise AssertionError("incomplete runtime bundle was accepted")
