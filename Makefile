@@ -3713,6 +3713,7 @@ test-bf16-xray:
 		version/v8/scripts/xray_execution_state_v8.py \
 		version/v8/scripts/xray_ck_persistent_replay_v8.py \
 		version/v8/scripts/xray_text_recurrent_v8.py \
+		version/v8/scripts/xray_layer_output_sweep_v8.py \
 		version/v8/scripts/build_xray_checkpoint_manifest_v8.py \
 		version/v8/scripts/xray_qwen3vl_bf16_v8.py \
 		version/v8/scripts/xray_qwen3vl_bf16_decoder_v8.py \
@@ -3726,6 +3727,7 @@ test-bf16-xray:
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
 	@$(PYTHON) -m pytest -q tests/test_xray_ck_persistent_replay_v8.py
 	@$(PYTHON) tests/test_v8_xray_text_recurrent.py
+	@$(PYTHON) -m pytest -q tests/test_v8_xray_layer_output_sweep.py
 	@$(PYTHON) tests/test_v8_xray_vision_interface.py
 	@$(PYTHON) tests/test_v8_xray_qwen3vl_bf16_decoder.py
 	@$(PYTHON) tests/test_v8_normalize_xray_ranking_report.py
