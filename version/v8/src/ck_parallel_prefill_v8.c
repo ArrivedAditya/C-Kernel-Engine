@@ -809,10 +809,14 @@ static int ck_should_use_qwen36_q4k_avx512_x16(
 {
     /*
      * Keep the AVX-512 provider sweep-only until a real generated graph shows
-     * a stable end-to-end win.  The isolated batched GEMM wins, but Qwen3.6's
-     * current recurrent prefill reaches one-row GEMV calls and measured flat.
+     * a stable end-to-end win.  The isolated and live batched GEMMs win, but
+     * Qwen3.6's certified chat policy currently uses sequential decode because
+     * the complete hybrid batched graph has a different numerical trajectory.
      */
-    if (!ck_env_enabled("CK_ENABLE_Q4K_AVX512_X16_EXPERIMENTAL")) return 0;
+    if (!ck_env_enabled("CK_ENABLE_Q4K_AVX512_X16_EXPERIMENTAL") &&
+        !ck_env_enabled("CK_V8_FORCE_BATCHED_PREFILL")) {
+        return 0;
+    }
     if (ck_env_enabled("CK_DISABLE_Q4K_AVX512_X16_PREFILL")) return 0;
     if (!ck_q4k_packed_vnni_x16_available() || M < 16 || K != 5120) return 0;
 
@@ -1465,30 +1469,6 @@ void gemv_q4_k_q8_k_repacked_parallel_dispatch(
     float *y, const void *W, const void *x_q8, int N, int K)
 {
     if (!y || !W || !x_q8 || N <= 0 || K <= 0 || (K % QK_K) != 0) return;
-
-    /*
-     * Qwen3.6 recurrent prefill currently reaches this one-row dispatcher,
-     * rather than the batched GEMM dispatcher, for every prompt token.  Use
-     * the same shape-scoped AVX-512/VNNI layout here so the production graph
-     * can benefit from the wider provider.  Decode has the same arithmetic
-     * contract, and CK_DISABLE_Q4K_AVX512_X16_PREFILL remains the common
-     * certification/escape hatch.
-     */
-    if (ck_should_use_qwen36_q4k_avx512_x16(16, N, K)) {
-        void *packed_x16 = ck_get_q4k_packed_vnni_x16_cached(W, N, K);
-        if (packed_x16) {
-            ck_threadpool_t *pool = ck_threadpool_global();
-            const int active =
-                    ck_select_qwen36_q4k_avx512_x16_threads(
-                            pool, 16, N, K);
-            ck_q4k_prefill_debug_dispatch(
-                    "avx512_vnni_x16_gemv", 1, N, K, active);
-            run_gemv_q4_k_q8_k_repacked_x16_parallel(
-                    pool, x_q8, packed_x16, NULL, y,
-                    N, K, active);
-            return;
-        }
-    }
 
     void *packed_x8 = ck_get_q4k_packed_meta_x8_cached(W, N, K);
     if (!packed_x8) {

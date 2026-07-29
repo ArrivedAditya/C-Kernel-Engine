@@ -68,20 +68,28 @@ the llama.cpp graph oracle. On the same Xeon it was roughly 2x faster than
 CKE's x8 provider at the isolated 32-row hot shapes and also won at the
 synthetic 1032-row shapes.
 
-That result did not translate to the current Qwen3.6 runtime. Inspection of the
-generated C showed that recurrent prompt evaluation executes each token through
-`gemv_q4_k_q8_k_repacked_parallel_dispatch` with `M=1`; it does not present the
-32-row projection GEMMs used by the first sweep. A same-binary real-model A/B
-on the 33-token C/Python/SQL prompt measured:
+The generated C does contain batched Qwen3.6 projection GEMMs, but the packaged
+hybrid-model chat contract intentionally selects sequential decode. Consequently
+normal chat executes each prompt token through
+`gemv_q4_k_q8_k_repacked_parallel_dispatch` with `M=1`. Direct batched execution
+proved that the x16 provider is reached at `M=23/33`, is exact with the x8
+provider at its covered rows, and reduces the live batched projection time.
+A profile-enabled same-binary real-model A/B on the 33-token C/Python/SQL
+prompt measured:
 
-- experimental x16: 416.85 ms/token prompt, 319.94 ms/token decode
-- certified x8 reference: 415.78 ms/token prompt, 320.95 ms/token decode
+- batched x8: 16.61 s prompt
+- batched x16: 14.40 s prompt (13.3% faster than batched x8)
+- certified sequential production: 13.75 s prompt (4.7% faster than x16)
 
-Those differences are noise, not a promotion-quality win. The x16 provider is
-therefore sweep-only and requires
+The batched-vs-sequential first-token comparison retained top-1 and all top-20
+tokens but was not numerically exact (cosine 0.998852, RMSE 0.097598), and the
+128-token greedy answer diverged coherently around token 40-50. The x16 provider
+is therefore sweep-only. It can be selected directly with
 `CK_ENABLE_Q4K_AVX512_X16_EXPERIMENTAL=1`; production remains on the certified
-x8 layout. The next optimization target is the generated recurrent prefill
-schedule: batch safe projection work across prompt tokens or otherwise remove
-the token-by-token graph barrier, then rerun the provider table. A separate
-real `M=1` GEMV sweep should also be added so future candidates are evaluated
-against the call graph they will actually serve.
+x8/GEMV path. `CK_V8_FORCE_BATCHED_PREFILL=1` exists only to make the complete
+graph reachable for certification and benchmarking; on a capable native
+AVX-512 build it also selects the measured x16 provider automatically, while
+unsupported builds retain the exact x8 fallback. The next optimization target is
+the actual sequential profile: Q4 GEMV, Q8 recurrent output projection, and
+DeltaNet. A separate real `M=1` GEMV sweep should be added so future candidates
+are evaluated against the call graph they will actually serve.

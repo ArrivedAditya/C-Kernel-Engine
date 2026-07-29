@@ -226,7 +226,7 @@
       }
     ]
   },
-  "notes": "General matrix multiplication with Q4_K weights and Q8_K activations. The production dispatcher preserves llama.cpp pairwise split-min arithmetic. AVX-VNNI prefill interleaves Q4 bytes across eight outputs so each vpdpbusd lane advances one output column without a horizontal reduction. The experimental AVX-512 provider widens this to sixteen outputs and schedules sixteen token rows while retaining eight-row register groups. It is available to sweeps and opt-in graph tests but is not selected by default: Qwen3.6's current recurrent prompt graph reaches one-row GEMV calls and did not show an end-to-end win. The persistent production weight cache removes steady-state x8 repacking; forced AVX2 retains the exact 8M provider, and residual rows retain the distinct repacked GEMV contract."
+  "notes": "General matrix multiplication with Q4_K weights and Q8_K activations. The production dispatcher preserves llama.cpp pairwise split-min arithmetic. AVX-VNNI prefill interleaves Q4 bytes across eight outputs so each vpdpbusd lane advances one output column without a horizontal reduction. The experimental AVX-512 provider widens this to sixteen outputs and schedules sixteen token rows while retaining eight-row register groups. It is available to sweeps and opt-in batched-graph tests but is not selected by default: Qwen3.6's certified chat policy uses sequential decode because the complete hybrid batched graph still has a different numerical trajectory and was slower end to end despite faster Q4 GEMMs. The persistent production weight cache removes steady-state x8 repacking; forced AVX2 retains the exact 8M provider, and residual rows retain the distinct repacked GEMV contract."
 ,
   "call_abi": {
     "version": 1,

@@ -150,6 +150,7 @@ class Q4KLlamaPerformanceGateTests(unittest.TestCase):
         self.assertIn("N == 34816 || N == 6144", dispatcher)
         self.assertIn("K != 5120", dispatcher)
         self.assertIn("CK_ENABLE_Q4K_AVX512_X16_EXPERIMENTAL", dispatcher)
+        self.assertIn("CK_V8_FORCE_BATCHED_PREFILL", dispatcher)
         self.assertIn("CK_DISABLE_Q4K_AVX512_X16_PREFILL", dispatcher)
 
     def test_production_uses_persistent_weight_pack_not_q8_repack(self) -> None:

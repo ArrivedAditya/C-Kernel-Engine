@@ -1250,6 +1250,13 @@ class CKModel:
                         and template_prefill.strip()
                     ):
                         contract["prefill_policy"] = template_prefill.strip()
+
+        # Certification/benchmark override for hybrid models whose packaged
+        # template still defaults to sequential decode.  This is deliberately
+        # opt-in until batched prefill is numerically certified for the model.
+        force_batched = os.environ.get("CK_V8_FORCE_BATCHED_PREFILL", "")
+        if force_batched and force_batched != "0":
+            contract["prefill_policy"] = "batched"
         return contract
 
     def _configure_chat_template(self, mode: str) -> None:
