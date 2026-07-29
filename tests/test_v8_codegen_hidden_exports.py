@@ -104,6 +104,30 @@ class HiddenExportExtentTests(unittest.TestCase):
 
         self.assertIn('"attn_norm", (const float*)Y, (1) * (1024)', emitted)
 
+    def test_recurrent_scalar_projections_export_every_output_channel(self) -> None:
+        for op_name, label in (
+            ("recurrent_alpha_proj", "alpha"),
+            ("recurrent_beta_proj", "beta"),
+        ):
+            emitted = codegen.emit_op(
+                {
+                    "op": op_name,
+                    "function": "gemm_nt_f32_llama_production",
+                    "layer": 1,
+                    "args": [
+                        _arg("a", "A"),
+                        _arg("b", "B"),
+                        _arg("bias", "NULL"),
+                        _arg("c", "OUT"),
+                        _arg("m", "1"),
+                        _arg("n", "48"),
+                        _arg("k", "5120"),
+                    ],
+                }
+            )
+
+            self.assertIn(f'"{label}", (const float*)OUT, (1) * (48)', emitted)
+
     def test_qwen35_attention_exports_gate_and_pregate_boundaries(self) -> None:
         split = codegen.emit_op(
             {

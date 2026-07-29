@@ -711,6 +711,25 @@ def compare_logits(
     }
 
 
+def resolve_llama_decode_mode(
+    requested_llama_mode: str,
+    requested_ck_mode: str,
+    contract_prefill_policy: str,
+) -> str:
+    llama_mode = str(requested_llama_mode or "auto").strip().lower()
+    if llama_mode != "auto":
+        return llama_mode
+
+    ck_mode = str(requested_ck_mode or "auto").strip().lower()
+    if ck_mode == "sequential":
+        return "sequential"
+    if ck_mode in {"batched", "hybrid"}:
+        return "batched"
+
+    contract_mode = str(contract_prefill_policy or "batched").strip().lower()
+    return "sequential" if contract_mode == "sequential_decode" else "batched"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Tokenizer-free first-token logits parity (CK vs llama.cpp)")
     ap.add_argument("--model-dir", required=True, type=Path, help="run dir or .ck_build dir containing libmodel.so")
@@ -719,6 +738,12 @@ def main() -> int:
     ap.add_argument("--ctx-len", type=int, default=256)
     ap.add_argument("--top-k", type=int, default=16)
     ap.add_argument("--threads", type=int, default=0)
+    ap.add_argument(
+        "--ck-prefill-mode",
+        choices=["auto", "batched", "sequential", "hybrid"],
+        default="auto",
+        help="CK replay mode; auto follows the model runtime contract.",
+    )
     ap.add_argument(
         "--llama-decode-mode",
         choices=["auto", "batched", "sequential"],
@@ -740,9 +765,14 @@ def main() -> int:
     gguf_path = discover_gguf(args.gguf, model_dir)
     tokens = parse_tokens_csv(args.tokens)
     runtime_contract = load_runtime_contract(model_dir)
-    llama_decode_mode = str(args.llama_decode_mode)
-    if llama_decode_mode == "auto":
-        llama_decode_mode = "batched"
+    contract_prefill_policy = str(
+        runtime_contract.get("prefill_policy") or "batched"
+    ).strip().lower()
+    llama_decode_mode = resolve_llama_decode_mode(
+        str(args.llama_decode_mode),
+        str(args.ck_prefill_mode),
+        contract_prefill_policy,
+    )
 
     # Run llama helper first. CK runtime initializes OpenMP/threadpool state;
     # forking a subprocess after that can crash on some systems.
@@ -755,7 +785,7 @@ def main() -> int:
         decode_mode=llama_decode_mode,
         no_repack=bool(args.llama_no_repack),
     )
-    ck = load_ck_logits(model_dir, tokens)
+    ck = load_ck_logits(model_dir, tokens, ck_prefill_mode=str(args.ck_prefill_mode))
     cmp = compare_logits(ck["logits"], ll["logits"], int(args.top_k))
 
     overlap_ok = cmp["topk_overlap_ratio"] >= float(args.min_topk_overlap)
@@ -775,12 +805,22 @@ def main() -> int:
             "min_topk_overlap": float(args.min_topk_overlap),
             "max_abs_threshold": float(args.max_abs_threshold),
         },
+        "schedule_pairing": {
+            "matched": (
+                (str(ck.get("prefill_policy")) == "sequential_decode")
+                == (llama_decode_mode == "sequential")
+            ),
+            "ck": str(ck.get("prefill_policy", "batched")),
+            "llama": llama_decode_mode,
+        },
         "ck": {
             "vocab": int(ck["vocab"]),
             "active_tokens": int(ck["active_tokens"]),
             "logits_stride": int(ck["stride"]),
             "init_dir": str(ck.get("init_dir", "")),
             "prefill_policy": str(ck.get("prefill_policy", "batched")),
+            "contract_prefill_policy": str(ck.get("contract_prefill_policy", "batched")),
+            "requested_prefill_mode": str(ck.get("ck_prefill_mode", "auto")),
         },
         "llama": {
             "n_vocab": int(ll["meta"]["n_vocab"]),
