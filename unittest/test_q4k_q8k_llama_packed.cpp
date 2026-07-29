@@ -56,6 +56,14 @@ void gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
         const void * a_q8, const void * w_packed_vnni_x8,
         const float * bias, float * out,
         int m, int n, int k, int threads);
+size_t q4_k_packed_vnni_x16_block_size(void);
+int ck_q4k_packed_vnni_x16_available(void);
+void pack_q4_k_to_packed_vnni_x16(
+        const void * src, void * dst, int n, int k);
+void gemm_nt_q4_k_packed_vnni_x16_q8_k_split_min_threaded_16m(
+        const void * a_q8, const void * w_packed_vnni_x16,
+        const float * bias, float * out,
+        int m, int n, int k, int threads);
 void gemm_nt_q4_k_packed_meta_x16_q8_k_llama_order(
         const void * a_q8, const void * w_packed_x8, const float * bias, float * out,
         int m, int n, int k);
@@ -475,6 +483,7 @@ static bool run_real_artifact_case(void) {
     std::vector<float> ck_x16_llama_order(ck_output.size());
     std::vector<float> ck_x16_repack_q8(ck_output.size());
     std::vector<float> ck_repacked_prefill(ck_output.size());
+    std::vector<float> ck_vnni_x16(ck_output.size());
     std::vector<float> ck_repacked_decode(ck_output.size());
     std::vector<float> production_expected;
     const char * production_expected_path = std::getenv("CK_Q4K_Q8K_REAL_EXPECTED_F32");
@@ -603,6 +612,31 @@ static bool run_real_artifact_case(void) {
     gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
             ck_q8.data(), weights.data(), bias.empty() ? nullptr : bias.data(),
             ck_repacked_prefill.data(), m, n, k);
+    const int complete_prefill_rows = m - (m % 4);
+    if (complete_prefill_rows > 0 && ck_q4k_packed_vnni_x16_available()) {
+        const size_t packed_x16_blocks =
+                static_cast<size_t>((n + 15) / 16) *
+                static_cast<size_t>(k / QK_K);
+        std::vector<uint8_t> packed_vnni_x16(
+                packed_x16_blocks * q4_k_packed_vnni_x16_block_size());
+        pack_q4_k_to_packed_vnni_x16(
+                weights.data(), packed_vnni_x16.data(), n, k);
+        gemm_nt_q4_k_packed_vnni_x16_q8_k_split_min_threaded_16m(
+                ck_q8.data(),
+                packed_vnni_x16.data(),
+                bias.empty() ? nullptr : bias.data(),
+                ck_vnni_x16.data(),
+                complete_prefill_rows,
+                n,
+                k,
+                4);
+        passed &= compare_f32(
+                "real AVX-512 VNNI x16 provider",
+                ck_vnni_x16.data(),
+                ck_repacked_prefill.data(),
+                complete_prefill_rows,
+                n);
+    }
     if (m == 1) {
         gemv_q4_k_q8_k_repacked_parallel_dispatch(
                 ck_repacked_decode.data(), weights.data(), ck_q8.data(), n, k);
@@ -730,6 +764,7 @@ static bool run_case(const case_spec & spec) {
     std::vector<float> ck_exact_4m_output(ck_output.size());
     std::vector<float> ck_exact_8m_output(ck_output.size());
     std::vector<float> ck_exact_vnni_x8_output(ck_output.size());
+    std::vector<float> ck_exact_vnni_x16_output(ck_output.size());
     std::vector<float> bias(spec.with_bias ? spec.n : 0);
     for (int col = 0; col < spec.n && spec.with_bias; ++col) {
         bias[col] = fixture_value(0, col, 0.017f, 0.83f);
@@ -839,6 +874,23 @@ static bool run_case(const case_spec & spec) {
                             spec.n, spec.k, 4);
                 }
             }
+            if (ck_q4k_packed_vnni_x16_available()) {
+                const size_t packed_blocks =
+                        static_cast<size_t>((spec.n + 15) / 16) *
+                        static_cast<size_t>(spec.k / QK_K);
+                std::vector<uint8_t> packed_vnni_x16(
+                        packed_blocks * q4_k_packed_vnni_x16_block_size());
+                pack_q4_k_to_packed_vnni_x16(
+                        weights.data(), packed_vnni_x16.data(), spec.n, spec.k);
+                const int grouped_rows = spec.m - (spec.m % 4);
+                if (grouped_rows > 0) {
+                    gemm_nt_q4_k_packed_vnni_x16_q8_k_split_min_threaded_16m(
+                            ck_repack_q8.data(), packed_vnni_x16.data(),
+                            spec.with_bias ? bias.data() : nullptr,
+                            ck_exact_vnni_x16_output.data(), grouped_rows,
+                            spec.n, spec.k, 4);
+                }
+            }
         }
     }
     if (spec.with_bias) {
@@ -907,6 +959,14 @@ static bool run_case(const case_spec & spec) {
             if (grouped_rows > 0) {
                 passed &= compare_f32("exact VNNI 4M x 8N provider",
                         ck_exact_vnni_x8_output.data(),
+                        llama_repacked_output.data(), grouped_rows, spec.n);
+            }
+        }
+        if (spec.production_dispatch && ck_q4k_packed_vnni_x16_available()) {
+            const int grouped_rows = spec.m - (spec.m % 4);
+            if (grouped_rows > 0) {
+                passed &= compare_f32("exact AVX-512 VNNI 16M x 16N provider",
+                        ck_exact_vnni_x16_output.data(),
                         llama_repacked_output.data(), grouped_rows, spec.n);
             }
         }

@@ -28,6 +28,13 @@ extern void gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
         const void *a_q8, const void *b_packed_vnni_x8, const float *bias,
         float *c, int m, int n, int k, int active_threads);
 extern int ck_q4k_packed_vnni_x8_available(void);
+extern size_t q4_k_packed_vnni_x16_block_size(void);
+extern void pack_q4_k_to_packed_vnni_x16(
+        const void *src, void *dst, int n, int k);
+extern void gemm_nt_q4_k_packed_vnni_x16_q8_k_split_min_threaded_16m(
+        const void *a_q8, const void *b_packed_vnni_x16, const float *bias,
+        float *c, int m, int n, int k, int active_threads);
+extern int ck_q4k_packed_vnni_x16_available(void);
 
 static uint32_t rng_state = 0x12345678u;
 
@@ -81,6 +88,7 @@ static void run_provider(const char *provider,
                          const void *a_q8,
                          const void *weights_packed,
                          const void *weights_packed_vnni,
+                         const void *weights_packed_vnni_x16,
                          const float *bias,
                          float *output,
                          int m, int n, int k,
@@ -99,6 +107,12 @@ static void run_provider(const char *provider,
     if (strcmp(provider, "4m-vnni-x8") == 0) {
         gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
                 a_q8, weights_packed_vnni, bias, output,
+                m, n, k, threads);
+        return;
+    }
+    if (strcmp(provider, "16m-vnni-x16") == 0) {
+        gemm_nt_q4_k_packed_vnni_x16_q8_k_split_min_threaded_16m(
+                a_q8, weights_packed_vnni_x16, bias, output,
                 m, n, k, threads);
         return;
     }
@@ -133,7 +147,8 @@ int main(int argc, char **argv)
         (strcmp(provider, "baseline") != 0 && strcmp(provider, "mreuse") != 0 &&
          strcmp(provider, "4m") != 0 &&
          strcmp(provider, "8m") != 0 &&
-         strcmp(provider, "4m-vnni-x8") != 0)) {
+         strcmp(provider, "4m-vnni-x8") != 0 &&
+         strcmp(provider, "16m-vnni-x16") != 0)) {
         fprintf(stderr,
                 "invalid packed-prefill shape M=%d N=%d K=%d "
                 "(M must contain complete four-row groups)\n",
@@ -142,6 +157,11 @@ int main(int argc, char **argv)
     }
     if (strcmp(provider, "4m-vnni-x8") == 0 &&
         !ck_q4k_packed_vnni_x8_available()) {
+        fprintf(stderr, "provider unavailable: %s\n", provider);
+        return 4;
+    }
+    if (strcmp(provider, "16m-vnni-x16") == 0 &&
+        !ck_q4k_packed_vnni_x16_available()) {
         fprintf(stderr, "provider unavailable: %s\n", provider);
         return 4;
     }
@@ -155,18 +175,28 @@ int main(int argc, char **argv)
     const size_t w_packed_vnni_bytes = (size_t)((n + 7) / 8) *
                                        (size_t)(k / QK_K) *
                                        q4_k_packed_vnni_x8_block_size();
+    const size_t w_packed_vnni_x16_bytes = (size_t)((n + 15) / 16) *
+                                           (size_t)(k / QK_K) *
+                                           q4_k_packed_vnni_x16_block_size();
     const size_t c_count = (size_t)m * (size_t)n;
 
     float *a = alloc_aligned(a_count * sizeof(float));
     void *a_q8 = alloc_aligned(a_q8_bytes);
     block_q4_K *weights = alloc_aligned(w_count * sizeof(block_q4_K));
     void *weights_packed = alloc_aligned(w_packed_bytes);
-    void *weights_packed_vnni = alloc_aligned(w_packed_vnni_bytes);
+    void *weights_packed_vnni =
+            strcmp(provider, "4m-vnni-x8") == 0
+                    ? alloc_aligned(w_packed_vnni_bytes) : NULL;
+    void *weights_packed_vnni_x16 =
+            strcmp(provider, "16m-vnni-x16") == 0
+                    ? alloc_aligned(w_packed_vnni_x16_bytes) : NULL;
     float *bias = alloc_aligned((size_t)n * sizeof(float));
     float *output = alloc_aligned(c_count * sizeof(float));
     float *reference = alloc_aligned(c_count * sizeof(float));
     if (!a || !a_q8 || !weights || !weights_packed ||
-        !weights_packed_vnni ||
+        (strcmp(provider, "4m-vnni-x8") == 0 && !weights_packed_vnni) ||
+        (strcmp(provider, "16m-vnni-x16") == 0 &&
+         !weights_packed_vnni_x16) ||
         !bias || !output || !reference) {
         fprintf(stderr, "allocation failed\n");
         return 2;
@@ -181,7 +211,14 @@ int main(int argc, char **argv)
                           (size_t)(k / QK_K) * sizeof(block_q8_K), k);
     }
     pack_q4_k_to_packed_meta_x8(weights, weights_packed, n, k);
-    pack_q4_k_to_packed_vnni_x8(weights, weights_packed_vnni, n, k);
+    if (weights_packed_vnni) {
+        pack_q4_k_to_packed_vnni_x8(
+                weights, weights_packed_vnni, n, k);
+    }
+    if (weights_packed_vnni_x16) {
+        pack_q4_k_to_packed_vnni_x16(
+                weights, weights_packed_vnni_x16, n, k);
+    }
 
     ck_threadpool_t *pool = ck_threadpool_global();
     if (!pool) {
@@ -196,10 +233,12 @@ int main(int argc, char **argv)
      * with it before its timing is reportable.
      */
     run_provider("4m", a_q8, weights_packed,
-                 weights_packed_vnni, bias, reference,
+                 weights_packed_vnni, weights_packed_vnni_x16,
+                 bias, reference,
                  m, n, k, 4, threads);
     run_provider(provider, a_q8, weights_packed,
-                 weights_packed_vnni, bias, output,
+                 weights_packed_vnni, weights_packed_vnni_x16,
+                 bias, output,
                  m, n, k, tile_m, threads);
     if (memcmp(reference, output, c_count * sizeof(float)) != 0) {
         size_t first = 0;
@@ -212,14 +251,16 @@ int main(int argc, char **argv)
 
     for (int i = 0; i < warmup; ++i) {
         run_provider(provider, a_q8, weights_packed,
-                     weights_packed_vnni, bias, output,
+                     weights_packed_vnni, weights_packed_vnni_x16,
+                     bias, output,
                      m, n, k, tile_m, threads);
     }
 
     const double start = now_ms();
     for (int i = 0; i < iterations; ++i) {
         run_provider(provider, a_q8, weights_packed,
-                     weights_packed_vnni, bias, output,
+                     weights_packed_vnni, weights_packed_vnni_x16,
+                     bias, output,
                      m, n, k, tile_m, threads);
     }
     const double elapsed_ms = (now_ms() - start) / (double)iterations;
@@ -239,6 +280,7 @@ int main(int argc, char **argv)
     free(weights);
     free(weights_packed);
     free(weights_packed_vnni);
+    free(weights_packed_vnni_x16);
     free(bias);
     free(output);
     free(reference);

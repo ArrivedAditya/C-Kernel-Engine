@@ -62,8 +62,26 @@ disassembly attribution explain why:
   `requested_M=33`; only the production oracle measures the complete M=33
   operation.
 
-The next candidate should be an AVX-512 VNNI 16M x 16N (with smaller exact
-tails), using the existing 4M provider as the fast internal exactness reference
-and llama.cpp as the external oracle. It must enter the sweep as a new provider;
-do not replace production dispatch until the table demonstrates exactness and
-a stable win at both Qwen3.6 hot shapes.
+An AVX-512 VNNI 16M x 16N candidate was subsequently implemented as
+`16m-vnni-x16`. It remains bit-exact with the existing 4M CKE reference and
+the llama.cpp graph oracle. On the same Xeon it was roughly 2x faster than
+CKE's x8 provider at the isolated 32-row hot shapes and also won at the
+synthetic 1032-row shapes.
+
+That result did not translate to the current Qwen3.6 runtime. Inspection of the
+generated C showed that recurrent prompt evaluation executes each token through
+`gemv_q4_k_q8_k_repacked_parallel_dispatch` with `M=1`; it does not present the
+32-row projection GEMMs used by the first sweep. A same-binary real-model A/B
+on the 33-token C/Python/SQL prompt measured:
+
+- experimental x16: 416.85 ms/token prompt, 319.94 ms/token decode
+- certified x8 reference: 415.78 ms/token prompt, 320.95 ms/token decode
+
+Those differences are noise, not a promotion-quality win. The x16 provider is
+therefore sweep-only and requires
+`CK_ENABLE_Q4K_AVX512_X16_EXPERIMENTAL=1`; production remains on the certified
+x8 layout. The next optimization target is the generated recurrent prefill
+schedule: batch safe projection work across prompt tokens or otherwise remove
+the token-by-token graph barrier, then rerun the provider table. A separate
+real `M=1` GEMV sweep should also be added so future candidates are evaluated
+against the call graph they will actually serve.

@@ -14866,6 +14866,13 @@
           "size_bytes": "ceil(N / 8) * (K / 256) * sizeof(q4_k_packed_vnni_x8)",
           "lifetime": "model_runtime",
           "desc": "Weight-identity cache for the AVX-VNNI eight-output layout; never rebuilt in the steady-state call"
+        },
+        {
+          "name": "packed_weight_cache_avx512_candidate",
+          "dtype": "u8",
+          "size_bytes": "ceil(N / 16) * (K / 256) * sizeof(q4_k_packed_vnni_x16)",
+          "lifetime": "model_runtime",
+          "desc": "Shape-scoped Qwen3.6 AVX-512 VNNI sixteen-output layout; never allocated on unsupported CPUs or unrelated shapes"
         }
       ],
       "dims": [
@@ -14995,6 +15002,29 @@
                 "prefill_phase",
                 "pairwise_split_min_reduction"
               ]
+            },
+            {
+              "name": "packed_vnni_x16_split_min_16m16n",
+              "function": "gemm_nt_q4_k_packed_vnni_x16_q8_k_split_min_threaded_16m",
+              "layout": "q4_k_packed_vnni_x16",
+              "activation_layout": "canonical_q8_k",
+              "threading": {
+                "default_concurrency": "physical_cores",
+                "tile": {
+                  "M": 16,
+                  "N": 16
+                },
+                "internal_row_register_group": 8,
+                "reduction_order_effect": "none"
+              },
+              "promotion": "experimental_sweep_only",
+              "requires": [
+                "avx512_vnni",
+                "avx512_bw",
+                "packed_weight_layout",
+                "prefill_phase",
+                "pairwise_split_min_reduction"
+              ]
             }
           ],
           "dispatch_owner": "gemm_nt_q4_k_q8_k_parallel_dispatch",
@@ -15038,6 +15068,21 @@
               "-mavxvnni",
               "-mfma"
             ]
+          },
+          {
+            "name": "avx512_vnni",
+            "requires": [
+              "avx512f",
+              "avx512bw",
+              "avx512_vnni",
+              "fma"
+            ],
+            "compile_flags": [
+              "-mavx512f",
+              "-mavx512bw",
+              "-mavx512vnni",
+              "-mfma"
+            ]
           }
         ]
       },
@@ -15065,7 +15110,7 @@
           }
         ]
       },
-      "notes": "General matrix multiplication with Q4_K weights and Q8_K activations. The production dispatcher preserves llama.cpp pairwise split-min arithmetic. AVX-VNNI prefill interleaves Q4 bytes across eight outputs so each vpdpbusd lane advances one output column without a horizontal reduction. The persistent weight cache removes steady-state repacking; forced AVX2 retains the exact 8M provider, and residual rows retain the distinct repacked GEMV contract.",
+      "notes": "General matrix multiplication with Q4_K weights and Q8_K activations. The production dispatcher preserves llama.cpp pairwise split-min arithmetic. AVX-VNNI prefill interleaves Q4 bytes across eight outputs so each vpdpbusd lane advances one output column without a horizontal reduction. The experimental AVX-512 provider widens this to sixteen outputs and schedules sixteen token rows while retaining eight-row register groups. It is available to sweeps and opt-in graph tests but is not selected by default: Qwen3.6's current recurrent prompt graph reaches one-row GEMV calls and did not show an end-to-end win. The persistent production weight cache removes steady-state x8 repacking; forced AVX2 retains the exact 8M provider, and residual rows retain the distinct repacked GEMV contract.",
       "call_abi": {
         "version": 1,
         "params": [

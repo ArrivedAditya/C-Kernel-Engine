@@ -37,6 +37,7 @@ PROVIDER_LAYOUTS = {
     "4m": "q4_k_packed_meta_x8",
     "8m": "q4_k_packed_meta_x8",
     "4m-vnni-x8": "q4_k_packed_vnni_x8",
+    "16m-vnni-x16": "q4_k_packed_vnni_x16",
 }
 PROVIDER_LINE = re.compile(
     r"provider=(?P<provider>\S+)\s+"
@@ -436,7 +437,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--threads", default="1,4,8,12,16,24")
     parser.add_argument("--tiles", default="4,6,8,12,16,32")
-    parser.add_argument("--providers", default="mreuse,4m,8m,4m-vnni-x8")
+    parser.add_argument(
+        "--providers",
+        default="mreuse,4m,8m,4m-vnni-x8,16m-vnni-x16",
+    )
     parser.add_argument("--fixed-tile", type=int, default=8)
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--iterations", type=int, default=3)

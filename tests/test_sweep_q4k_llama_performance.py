@@ -37,11 +37,19 @@ class Q4KLlamaSweepTests(unittest.TestCase):
 
     def test_mreuse_expands_tiles_but_fixed_providers_do_not(self) -> None:
         jobs = self.sweep.build_provider_jobs(
-            ["mreuse", "4m", "8m", "4m-vnni-x8"],
+            ["mreuse", "4m", "8m", "4m-vnni-x8", "16m-vnni-x16"],
             [4, 6, 8, 12, 16, 32],
         )
         self.assertEqual(jobs[:6], [("mreuse", value) for value in [4, 6, 8, 12, 16, 32]])
-        self.assertEqual(jobs[6:], [("4m", 0), ("8m", 0), ("4m-vnni-x8", 0)])
+        self.assertEqual(
+            jobs[6:],
+            [
+                ("4m", 0),
+                ("8m", 0),
+                ("4m-vnni-x8", 0),
+                ("16m-vnni-x16", 0),
+            ],
+        )
 
     def test_provider_output_parser_requires_exact_reference(self) -> None:
         row = self.sweep.parse_provider_output(
