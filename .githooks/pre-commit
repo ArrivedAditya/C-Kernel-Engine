@@ -73,6 +73,78 @@ if [ "$should_run_v7_regression" != "1" ] && [ "$should_run_v8_regression" != "1
     exit 0
 fi
 
+PRECOMMIT_LOCK_PATH="${CK_PRECOMMIT_LOCK_PATH:-${HOME_DIR}/.cache/ck-engine/precommit/precommit.lock}"
+PRECOMMIT_MIN_AVAILABLE_GB="${CK_PRECOMMIT_MIN_AVAILABLE_GB:-16}"
+PRECOMMIT_MIN_SWAP_FREE_GB="${CK_PRECOMMIT_MIN_SWAP_FREE_GB:-2}"
+PRECOMMIT_THREADS="${CK_PRECOMMIT_THREADS:-8}"
+PRECOMMIT_TIMEOUT_SECONDS="${CK_PRECOMMIT_TIMEOUT_SECONDS:-1800}"
+
+require_nonnegative_integer() {
+    local name="$1"
+    local value="$2"
+    if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}✗ ${name} must be a non-negative integer; got ${value}${NC}" >&2
+        exit 2
+    fi
+}
+
+require_nonnegative_integer CK_PRECOMMIT_MIN_AVAILABLE_GB "$PRECOMMIT_MIN_AVAILABLE_GB"
+require_nonnegative_integer CK_PRECOMMIT_MIN_SWAP_FREE_GB "$PRECOMMIT_MIN_SWAP_FREE_GB"
+require_nonnegative_integer CK_PRECOMMIT_THREADS "$PRECOMMIT_THREADS"
+require_nonnegative_integer CK_PRECOMMIT_TIMEOUT_SECONDS "$PRECOMMIT_TIMEOUT_SECONDS"
+if [ "$PRECOMMIT_THREADS" -eq 0 ] || [ "$PRECOMMIT_TIMEOUT_SECONDS" -eq 0 ]; then
+    echo -e "${RED}✗ CK_PRECOMMIT_THREADS and CK_PRECOMMIT_TIMEOUT_SECONDS must be positive${NC}" >&2
+    exit 2
+fi
+
+mkdir -p "$(dirname "$PRECOMMIT_LOCK_PATH")"
+exec 9>"$PRECOMMIT_LOCK_PATH"
+if ! flock -n 9; then
+    echo -e "${RED}✗ Another CK-Engine pre-commit regression is already running${NC}" >&2
+    echo "  Lock: $PRECOMMIT_LOCK_PATH" >&2
+    echo "  Wait for that run to finish; do not start overlapping model regressions." >&2
+    exit 2
+fi
+
+check_resource_headroom() {
+    local available_kb
+    local swap_total_kb
+    local swap_free_kb
+    local min_available_kb=$((PRECOMMIT_MIN_AVAILABLE_GB * 1024 * 1024))
+    local min_swap_free_kb=$((PRECOMMIT_MIN_SWAP_FREE_GB * 1024 * 1024))
+    available_kb="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+    swap_total_kb="$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)"
+    swap_free_kb="$(awk '/^SwapFree:/ {print $2}' /proc/meminfo)"
+    if [ -n "${CK_PRECOMMIT_ALLOW_LOW_RESOURCES:-}" ]; then
+        return 0
+    fi
+    if [ -z "$available_kb" ] || [ "$available_kb" -lt "$min_available_kb" ]; then
+        echo -e "${RED}✗ Insufficient memory headroom for model regression${NC}" >&2
+        echo "  Required: ${PRECOMMIT_MIN_AVAILABLE_GB} GiB MemAvailable" >&2
+        echo "  Observed: $(( ${available_kb:-0} / 1024 / 1024 )) GiB" >&2
+        echo "  Finish other model jobs or set CK_PRECOMMIT_ALLOW_LOW_RESOURCES=1 explicitly." >&2
+        exit 2
+    fi
+    if [ "${swap_total_kb:-0}" -gt 0 ] \
+        && { [ -z "$swap_free_kb" ] || [ "$swap_free_kb" -lt "$min_swap_free_kb" ]; }; then
+        echo -e "${RED}✗ Insufficient free swap headroom for model regression${NC}" >&2
+        echo "  Required: ${PRECOMMIT_MIN_SWAP_FREE_GB} GiB SwapFree" >&2
+        echo "  Observed: $(( ${swap_free_kb:-0} / 1024 / 1024 )) GiB" >&2
+        echo "  Finish other model jobs or set CK_PRECOMMIT_ALLOW_LOW_RESOURCES=1 explicitly." >&2
+        exit 2
+    fi
+}
+
+run_precommit_make() {
+    local log_path="$1"
+    shift
+    CK_NUM_THREADS="$PRECOMMIT_THREADS" \
+    OMP_NUM_THREADS=1 \
+        timeout --signal=TERM --kill-after=30s "$PRECOMMIT_TIMEOUT_SECONDS" \
+        nice -n 10 ionice -c 2 -n 7 \
+        make "$@" >"$log_path" 2>&1
+}
+
 nearest_existing_path() {
     local probe="$1"
     while [ ! -e "$probe" ]; do
@@ -283,6 +355,8 @@ echo -e "${YELLOW}  ↳ run root: ${RUN_ROOT}${NC}"
 echo -e "${YELLOW}  ↳ report root: ${REPORT_ROOT}${NC}"
 echo -e "${YELLOW}  ↳ cache root: ${CACHE_ROOT}${NC}"
 echo -e "${YELLOW}  ↳ staged snapshot: ${SNAPSHOT_PREFIX}.XXXXXX${NC}"
+echo -e "${YELLOW}  ↳ resource floor: ${PRECOMMIT_MIN_AVAILABLE_GB} GiB available RAM, ${PRECOMMIT_MIN_SWAP_FREE_GB} GiB free swap${NC}"
+echo -e "${YELLOW}  ↳ execution: ${PRECOMMIT_THREADS} CK threads, OMP=1, timeout=${PRECOMMIT_TIMEOUT_SECONDS}s${NC}"
 if [ "$should_run_v7_regression" = "1" ]; then
     echo -e "${YELLOW}  ↳ enabled: v7-regression-fast${NC}"
 fi
@@ -290,12 +364,13 @@ if [ "$should_run_v8_regression" = "1" ]; then
     echo -e "${YELLOW}  ↳ enabled: v8-regression-fast${NC}"
 fi
 
+check_resource_headroom
 build_staged_snapshot
 seed_precommit_cache
 
 if [ "$should_run_v7_regression" = "1" ]; then
     echo -e "${YELLOW}Running v7-kernel-map-contracts in staged snapshot...${NC}"
-    if ! make -C "$SNAPSHOT_DIR" v7-kernel-map-contracts > /tmp/ck_precommit_kernel_maps.log 2>&1; then
+    if ! run_precommit_make /tmp/ck_precommit_kernel_maps.log -C "$SNAPSHOT_DIR" v7-kernel-map-contracts; then
         echo -e "${RED}✗ v7-kernel-map-contracts failed${NC}"
         echo "  See /tmp/ck_precommit_kernel_maps.log for details"
         tail -40 /tmp/ck_precommit_kernel_maps.log || true
@@ -306,7 +381,8 @@ fi
 
 regression_failed=0
 if [ "$should_run_v7_regression" = "1" ]; then
-    if CK_CACHE_DIR="${CACHE_ROOT}" make -C "$SNAPSHOT_DIR" v7-regression-fast REGRESSION_ARGS="--run-root ${RUN_ROOT}/v7 --report-root ${REPORT_ROOT}/v7" > /tmp/ck_precommit_regression_v7.log 2>&1; then
+    check_resource_headroom
+    if CK_CACHE_DIR="${CACHE_ROOT}" run_precommit_make /tmp/ck_precommit_regression_v7.log -C "$SNAPSHOT_DIR" v7-regression-fast REGRESSION_ARGS="--run-root ${RUN_ROOT}/v7 --report-root ${REPORT_ROOT}/v7"; then
         echo -e "${GREEN}✓ v7-regression-fast passed${NC}"
     else
         echo -e "${RED}✗ v7-regression-fast failed${NC}"
@@ -317,7 +393,8 @@ if [ "$should_run_v7_regression" = "1" ]; then
 fi
 
 if [ "$should_run_v8_regression" = "1" ]; then
-    if CK_CACHE_DIR="${CACHE_ROOT}" make -C "$SNAPSHOT_DIR" v8-regression-fast REGRESSION_ARGS="--run-root ${RUN_ROOT}/v8 --report-root ${REPORT_ROOT}/v8" > /tmp/ck_precommit_regression_v8.log 2>&1; then
+    check_resource_headroom
+    if CK_CACHE_DIR="${CACHE_ROOT}" run_precommit_make /tmp/ck_precommit_regression_v8.log -C "$SNAPSHOT_DIR" v8-regression-fast REGRESSION_ARGS="--run-root ${RUN_ROOT}/v8 --report-root ${REPORT_ROOT}/v8"; then
         echo -e "${GREEN}✓ v8-regression-fast passed${NC}"
     else
         echo -e "${RED}✗ v8-regression-fast failed${NC}"
