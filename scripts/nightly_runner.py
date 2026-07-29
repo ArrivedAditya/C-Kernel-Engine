@@ -774,6 +774,7 @@ MAKE_TARGETS = {
         "category": "inference",
         "target": "test-v8-xeon-decoder-family-sweep",
         "timeout_sec": 7200,
+        "profile_only": "xeon-e2e",
     },
     "v8_xeon_family_contracts": {
         "name": "v8 Xeon Family Compiler/Circuit Contracts",
@@ -840,6 +841,18 @@ NIGHTLY_PROFILES = {
         "v8_xeon_decoder_family_sweep",
     ],
 }
+
+
+def _select_make_targets(*, category: Optional[str] = None) -> list[str]:
+    """Select ordinary nightly targets, excluding named artifact profiles."""
+    return [
+        key
+        for key, value in MAKE_TARGETS.items()
+        if (category is None or value["category"] == category)
+        and (category is not None or value["category"] != "archive")
+        and not value.get("profile_only")
+    ]
+
 
 MAKE_TARGET_FAILURE_ARTIFACTS = {
     "v6.6-validate-matrix-nightly": ROOT / "version" / "v6.6" / "tools" / "model_matrix_report_latest.json",
@@ -1498,11 +1511,11 @@ def main():
         tests_to_run = [k for k in QUICK_TESTS if k in TEST_SUITES]
     elif args.category:
         tests_to_run = [k for k, v in TEST_SUITES.items() if v.category == args.category]
-        make_targets_to_run = [k for k, v in MAKE_TARGETS.items() if v["category"] == args.category]
+        make_targets_to_run = _select_make_targets(category=args.category)
         bench_targets_to_run = [k for k, v in BENCH_TARGETS.items() if v["category"] == args.category]
     else:
         tests_to_run = list(TEST_SUITES.keys())
-        make_targets_to_run = [k for k, v in MAKE_TARGETS.items() if v["category"] != "archive"]
+        make_targets_to_run = _select_make_targets()
         bench_targets_to_run = list(BENCH_TARGETS.keys())
 
     # In CI mode, skip tests that require the full shared library

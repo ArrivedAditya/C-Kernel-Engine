@@ -1,0 +1,7 @@
+# Numerical reference builds used by GitHub nightly.
+#
+# Oracle tests compare native kernels against exact framework behavior. Keep the
+# framework version stable here; rolling compatibility belongs in a separate
+# observational lane so a dependency update cannot silently redefine a
+# numerical contract.
+torch==2.12.1

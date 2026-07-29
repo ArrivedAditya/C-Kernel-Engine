@@ -110,6 +110,19 @@ class NightlyArtifactStatusTests(unittest.TestCase):
         }
         self.assertTrue(expected.issubset(profile))
         self.assertTrue(all(key in runner.MAKE_TARGETS for key in profile))
+        sweep = runner.MAKE_TARGETS["v8_xeon_decoder_family_sweep"]
+        self.assertEqual(sweep["profile_only"], "xeon-e2e")
+
+    def test_profile_only_sweep_is_not_part_of_default_or_category_nightly(self) -> None:
+        runner = _load_runner()
+        default_targets = runner._select_make_targets()
+        inference_targets = runner._select_make_targets(category="inference")
+        self.assertNotIn("v8_xeon_decoder_family_sweep", default_targets)
+        self.assertNotIn("v8_xeon_decoder_family_sweep", inference_targets)
+        self.assertIn(
+            "v8_xeon_decoder_family_sweep",
+            runner.NIGHTLY_PROFILES["xeon-e2e"],
+        )
 
     def test_make_target_explicit_skip_is_not_reported_as_pass(self) -> None:
         runner = _load_runner()
