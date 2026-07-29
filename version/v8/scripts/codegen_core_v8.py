@@ -2167,13 +2167,15 @@ def emit_op(
         _emit_hidden_export(
             _hidden_arg("output", "out", "c", "y"),
             "alpha",
-            _hidden_count("m", "n", "rows", "dim", default="0"),
+            _mul_expr(_hidden_arg("m", "M", "rows"), _hidden_arg("n", "N", "dim"))
+            or _hidden_count("n", "N", "dim", "m", "M", "rows", default="0"),
         )
     elif op_name == "recurrent_beta_proj":
         _emit_hidden_export(
             _hidden_arg("output", "out", "c", "y"),
             "beta",
-            _hidden_count("m", "n", "rows", "dim", default="0"),
+            _mul_expr(_hidden_arg("m", "M", "rows"), _hidden_arg("n", "N", "dim"))
+            or _hidden_count("n", "N", "dim", "m", "M", "rows", default="0"),
         )
     elif op_name == "recurrent_dt_gate":
         gate_count = _mul_expr(_hidden_arg("rows"), _hidden_arg("num_heads"), _hidden_arg("state_dim")) or _mul_expr(_hidden_arg("rows"), _hidden_arg("dim"))
@@ -2541,9 +2543,17 @@ def emit_op(
                 _emit_dump(out_expr, "post_ffn", size_expr)
                 _emit_dump(out_expr, "layer_out", size_expr)
         elif op_name == "recurrent_alpha_proj":
-            _emit_dump(_get_arg("output", "out", "c", "y"), "alpha", m_dim or n_dim)
+            _emit_dump(
+                _get_arg("output", "out", "c", "y"),
+                "alpha",
+                _mul_expr(m_dim, n_dim) if m_dim and n_dim else (m_dim or n_dim),
+            )
         elif op_name == "recurrent_beta_proj":
-            _emit_dump(_get_arg("output", "out", "c", "y"), "beta", m_dim or n_dim)
+            _emit_dump(
+                _get_arg("output", "out", "c", "y"),
+                "beta",
+                _mul_expr(m_dim, n_dim) if m_dim and n_dim else (m_dim or n_dim),
+            )
         elif op_name == "recurrent_dt_gate":
             gate_count = _mul_expr(_get_arg("rows"), _get_arg("num_heads"), _get_arg("state_dim")) or _mul_expr(_get_arg("rows"), _get_arg("dim"))
             _emit_dump(_get_arg("gate", "output", "out"), "gate", gate_count)
