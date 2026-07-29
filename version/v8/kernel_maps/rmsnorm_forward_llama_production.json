@@ -57,6 +57,15 @@
       { "name": "eps", "source": "dim:rms_eps" }
     ]
   },
-  "notes": "FP32 RMSNorm matching llama.cpp CPU production 1.0f / sqrtf(mean + eps) evaluation for every ISA.",
+  "tests": {
+    "unit": ["unittest/test_rmsnorm_llama_production.cpp"],
+    "parity": [
+      {
+        "oracle": "llama.cpp fused GGML_OP_RMS_NORM + GGML_OP_MUL CPU graph",
+        "criteria": "bit exact at widths 128, 4096, and 5120 across 1, 16, 20, and 24 threads"
+      }
+    ]
+  },
+  "notes": "FP32 RMSNorm matching llama.cpp CPU production with ordered FP32 square, FP64 scalar accumulation, scalar sqrt then scalar divide, and fused left-associative scale multiplication. The explicit sqrt/divide boundary prevents ICX from substituting vrsqrt14ss plus Newton refinement.",
   "name": "rmsnorm_forward_llama_production"
 }

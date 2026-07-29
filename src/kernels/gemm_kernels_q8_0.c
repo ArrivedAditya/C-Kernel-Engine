@@ -80,6 +80,30 @@ static inline int ck_nearest_int_q8_0(float fval) {
     return (i & 0x007fffff) - 0x00400000;
 }
 
+#if defined(__INTEL_LLVM_COMPILER)
+#if defined(__clang__)
+#define CK_Q80_NOINLINE_OPTNONE __attribute__((noinline, optnone))
+#elif defined(__GNUC__)
+#define CK_Q80_NOINLINE_OPTNONE __attribute__((noinline, optimize("O0")))
+#else
+#define CK_Q80_NOINLINE_OPTNONE
+#endif
+
+static CK_Q80_NOINLINE_OPTNONE float
+ck_q8_0_div_rounded_f32(float numerator, float denominator)
+{
+    /*
+     * Preserve llama.cpp's scalar IEEE-754 division before the FP16 scale
+     * conversion.  ICX can otherwise strength-reduce division by 127 at -O3;
+     * inputs near an FP16 midpoint then select the adjacent Q8_0 scale.
+     */
+    volatile float n = numerator;
+    volatile float d = denominator;
+    volatile float result = n / d;
+    return result;
+}
+#endif
+
 /* ============================================================================
  * Q8_0 Quantization
  *
@@ -124,8 +148,15 @@ void quantize_row_q8_0(const float *x, void *vy, int k)
         max4 = _mm_max_ss(max4, _mm_movehdup_ps(max4));
         const float max_scalar = _mm_cvtss_f32(max4);
 
+#if defined(__INTEL_LLVM_COMPILER)
+        const float d = ck_q8_0_div_rounded_f32(max_scalar, 127.0f);
+        const float id = max_scalar != 0.0f
+            ? ck_q8_0_div_rounded_f32(127.0f, max_scalar)
+            : 0.0f;
+#else
         const float d = max_scalar / 127.0f;
         const float id = max_scalar != 0.0f ? 127.0f / max_scalar : 0.0f;
+#endif
         y[i].d = CK_FP32_TO_FP16(d);
 
         const __m256 mul = _mm256_set1_ps(id);

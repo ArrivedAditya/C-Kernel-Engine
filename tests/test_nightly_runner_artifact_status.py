@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -22,6 +23,94 @@ def _load_runner():
 
 
 class NightlyArtifactStatusTests(unittest.TestCase):
+    def test_xeon_cache_refuses_nonempty_unmarked_directory(self) -> None:
+        runner = _load_runner()
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / "cache"
+            cache.mkdir()
+            retained = cache / "private-weight.gguf"
+            retained.write_text("do not delete", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                runner._prune_xeon_sweep_cache(cache)
+            self.assertTrue(retained.exists())
+
+    def test_xeon_cache_prunes_only_sentinel_marked_children(self) -> None:
+        runner = _load_runner()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache = runner._prepare_xeon_sweep_cache(root / "managed")
+            disposable = cache / "downloaded-model" / "weights.bump"
+            disposable.parent.mkdir()
+            disposable.write_text("temporary", encoding="utf-8")
+            private = root / "private-corpus" / "image01.png"
+            private.parent.mkdir()
+            private.write_text("private", encoding="utf-8")
+
+            runner._prune_xeon_sweep_cache(cache)
+
+            self.assertFalse(disposable.exists())
+            self.assertTrue(private.exists())
+            self.assertTrue((cache / runner.XEON_SWEEP_CACHE_SENTINEL).exists())
+
+    def test_private_corpus_output_is_redacted_from_nightly_result(self) -> None:
+        runner = _load_runner()
+        private_path = "/confidential/corpus/customer-01.png"
+        target = {
+            "name": "private corpus",
+            "category": "parity",
+            "target": "fake-private",
+            "timeout_sec": 10,
+            "redact_output": True,
+        }
+        completed = subprocess.CompletedProcess(
+            ["make", "fake-private"],
+            1,
+            stdout=f"processing {private_path}\n",
+            stderr=f"failure for {private_path}\n",
+        )
+        with mock.patch.object(runner.subprocess, "run", return_value=completed):
+            result = runner.run_make_target(target)
+        serialized = f"{result.stdout}\n{result.stderr}\n{result.error_msg}"
+        self.assertNotIn(private_path, serialized)
+        self.assertIn("Private corpus lane failed", result.error_msg)
+
+    def test_local_model_path_avoids_remote_download_disk_reservation(self) -> None:
+        runner = _load_runner()
+        target = {
+            "sweep_storage": {
+                "required_gb": 45,
+                "model_env": "V8_QWEN36_MODEL",
+            }
+        }
+        with mock.patch.dict(
+            runner.os.environ,
+            {"V8_QWEN36_MODEL": "/local/runtime"},
+            clear=False,
+        ):
+            self.assertEqual(runner._sweep_required_bytes(target), 1 << 30)
+        with mock.patch.dict(
+            runner.os.environ,
+            {"V8_QWEN36_MODEL": "hf://repo/model.gguf"},
+            clear=False,
+        ):
+            self.assertEqual(runner._sweep_required_bytes(target), 45 * (1 << 30))
+
+    def test_xeon_e2e_profile_registers_real_artifact_lanes(self) -> None:
+        runner = _load_runner()
+        profile = runner.NIGHTLY_PROFILES["xeon-e2e"]
+        expected = {
+            "v8_qwen36_highmem",
+            "v8_qwen3vl_vision_smoke",
+            "qwen3vl_private_corpus_parity",
+            "qwen3vl_bf16_private_corpus_parity",
+            "v8_glm4_highmem",
+            "v8_kimi_highmem",
+            "v8_gemma4_highmem",
+            "v8_xeon_decoder_family_sweep",
+        }
+        self.assertTrue(expected.issubset(profile))
+        self.assertTrue(all(key in runner.MAKE_TARGETS for key in profile))
+
     def test_make_target_explicit_skip_is_not_reported_as_pass(self) -> None:
         runner = _load_runner()
         target = {

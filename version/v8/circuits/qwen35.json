@@ -109,9 +109,9 @@
       },
       "phases": {
         "prefill": {
-          "requires": {"execution.phase": "prefill", "execution.prefill_batching": "batch_append", "tensor.q.dtype": "fp32", "tensor.kv.dtype": "fp16", "tensor.layout": "head_major", "numerics.attention_reduction": "f16_online_single_range"},
+          "requires": {"execution.phase": "prefill", "execution.prefill_batching": "batch_append", "tensor.q.dtype": "fp32", "tensor.kv.dtype": "fp16", "tensor.layout": "head_major", "numerics.attention_reduction": "f16_flash_auto_qtile64"},
           "validation": "validated",
-          "evidence": "v8 Qwen3.5 E2E regression validates dense-attention layers; recurrent layers use a separate state contract."
+          "evidence": "Qwen3.6-27B Q4_K_M production replay is bit-exact against llama.cpp for all 353 rows with the 64x64 tiled prefill schedule; batches shorter than 64 retain the provider's single-range path."
         },
         "decode": {
           "requires": {"execution.phase": "decode", "tensor.q.dtype": "fp32", "tensor.kv.dtype": "fp16", "tensor.layout": "head_major", "numerics.attention_reduction": "f16_online_fp32_merge"},
@@ -422,6 +422,39 @@
         "axis_names": ["token", "channel"]
       }
     },
+    "decoder.recurrent_gate_scalar_projections_llama": {
+      "op": "gemm",
+      "template_ops": [
+        "recurrent_alpha_proj",
+        "recurrent_beta_proj"
+      ],
+      "selector": {
+        "config_equals": {
+          "ssm_time_step_rank": 48
+        },
+        "config_not_equals": {
+          "recurrent_qkv_weight_dtype": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "fp32_weight_fp32_input_llamafile_x86_native_fp32_output",
+          "validation": "validated",
+          "evidence": "Real Qwen3.6-27B Q4_K_M layer-0 X-ray is exact through recurrent Q/K pre-delta and first differs in the raw 48-wide FP32 alpha/beta projections; llama.cpp's llamafile single-vector FMA order is bit-exact."
+        },
+        "decode": {
+          "contract_id": "fp32_weight_fp32_input_llamafile_x86_native_fp32_output",
+          "validation": "validated",
+          "evidence": "The one-token provider follows llama.cpp's ggml_vec_dot four-accumulator reduction rather than the multi-token llamafile path."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_gate_scalar_projection.output",
+        "producer": "recurrent_alpha_proj",
+        "logical_layout": "row_major",
+        "axis_names": ["token", "head"]
+      }
+    },
     "decoder.recurrent_qkv_projection.q6_k.prefill": {
       "op": "gemm",
       "template_ops": ["recurrent_qkv_proj"],
@@ -654,6 +687,33 @@
         "producer": "recurrent_qk_l2_norm",
         "logical_layout": "head_major",
         "axis_names": ["head", "token", "channel"]
+      }
+    },
+    "decoder.recurrent_ssm_conv": {
+      "op": "ssm_conv1d",
+      "template_ops": ["recurrent_ssm_conv"],
+      "selector": {
+        "config_not_equals": {
+          "recurrent_qkv_weight_dtype": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "ssm_conv1d_llama_scalar_mul_add_fp32_output",
+          "validation": "validated",
+          "evidence": "Production ggml graph parity is bit-exact for Qwen3.6 dimensions only with ascending rounded FP32 multiply/add operations; contraction or an optimized generic loop changes multi-token prefill rounding."
+        },
+        "decode": {
+          "contract_id": "ssm_conv1d_llama_scalar_mul_add_fp32_output",
+          "validation": "validated",
+          "evidence": "The scoped provider is bit-exact against the production ggml graph at one-token decode and preserves the same arithmetic contract across phases."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_ssm_conv.output",
+        "producer": "recurrent_ssm_conv",
+        "logical_layout": "row_major",
+        "axis_names": ["token", "channel"]
       }
     },
     "decoder.recurrent_ssm_conv_bf16_pytorch": {

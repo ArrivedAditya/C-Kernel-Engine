@@ -1,7 +1,7 @@
 {
   "id": "recurrent_silu_forward_ggml",
   "op": "recurrent_silu",
-  "variant": "llama_avx2_fp32",
+  "variant": "llama_x86_isa_fp32",
   "modes": {"inference": true, "training": false, "backward": false},
   "quant": {"weight": "none", "activation": "fp32", "output": "fp32"},
   "inputs": [{"name": "x", "dtype": "fp32", "shape": ["R", "D"]}],
@@ -20,7 +20,10 @@
     "function": "recurrent_silu_forward_ggml",
     "c_declaration": "void recurrent_silu_forward_ggml(const float *x, float *out, int rows, int dim);",
     "sources": ["src/kernels/recurrent_gate_kernels.c"],
-    "variants": [{"name": "llama_avx2", "requires": ["avx2", "fma"], "compile_flags": ["-mavx2", "-mfma"]}]
+    "variants": [
+      {"name": "llama_avx512", "requires": ["avx512f", "avx512dq"], "compile_flags": ["-mavx512f", "-mavx512dq"]},
+      {"name": "llama_avx2", "requires": ["avx2", "fma"], "compile_flags": ["-mavx2", "-mfma"]}
+    ]
   },
   "numerical_capabilities": [
     {
@@ -49,7 +52,7 @@
   ],
   "tests": {
     "unit": ["unittest/test_recurrent_silu.py"],
-    "parity": [{"kind": "llamacpp", "command": ".venv/bin/python unittest/test_recurrent_silu.py", "tolerance": "0"}]
+    "parity": [{"kind": "llamacpp", "command": "make test-recurrent-silu-llama-production", "tolerance": "0"}]
   },
   "call_abi": {
     "version": 1,

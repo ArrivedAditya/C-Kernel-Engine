@@ -63,6 +63,15 @@
       { "name": "eps", "source": "dim:rms_eps" }
     ]
   },
-  "notes": "Per-head Q/K RMSNorm matching the active llama.cpp CPU production reciprocal-square-root sequence.",
+  "tests": {
+    "unit": ["unittest/test_rmsnorm_llama_production.cpp"],
+    "parity": [
+      {
+        "oracle": "llama.cpp fused GGML_OP_RMS_NORM + GGML_OP_MUL CPU graph",
+        "criteria": "bit exact for decode and multi-token prefill across 1, 16, 20, and 24 threads"
+      }
+    ]
+  },
+  "notes": "Per-head Q/K RMSNorm reusing the llama.cpp CPU production provider with ordered FP64 accumulation, scalar FP32 sqrt/divide, and fused scale multiplication.",
   "name": "qk_norm_forward_llama_production"
 }

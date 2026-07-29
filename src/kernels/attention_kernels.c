@@ -1032,6 +1032,21 @@ static float ck_attention_reference_expf(float value)
     return expf(value);
 }
 
+#if defined(__INTEL_LLVM_COMPILER)
+static CK_NOINLINE CK_OPTNONE float
+ck_attention_mul_add_rounded_f32(float lhs, float rhs, float addend)
+{
+    /*
+     * The ICX llama.cpp graph observes the rounded product before the
+     * addition. Keep this boundary explicit because ICX otherwise contracts
+     * the expression at -O3. GCC's AVX2 graph uses FMA at this boundary.
+     */
+    volatile float product = lhs * rhs;
+    volatile float result = product + addend;
+    return result;
+}
+#endif
+
 static CK_NOINLINE CK_OPTNONE double ck_ggml_vec_soft_max_row(int n,
                                                               float *y,
                                                               const float *x,
@@ -5458,22 +5473,9 @@ typedef struct {
     int partition_tokens;
 } ck_attention_f16_split_args_t;
 
-#if defined(__INTEL_LLVM_COMPILER)
-extern float __svml_expf1_l9(float);
-#endif
-
 static inline float ck_attention_f16_reduce_expf(float value)
 {
-#if defined(__INTEL_LLVM_COMPILER)
-    /*
-     * ICX vectorizes llama.cpp's split-KV reducer through SVML expf4_l9.
-     * The scalar l9 entry point has the same lane result and avoids making
-     * the reduction depend on whether the C or C++ frontend vectorizes it.
-     */
-    return __svml_expf1_l9(value);
-#else
-    return expf(value);
-#endif
+    return ck_attention_reference_expf(value);
 }
 
 static inline float ck_attention_dot_f16_llama(const uint16_t *x,
@@ -5683,18 +5685,22 @@ static void ck_attention_f16_split_work(int ith, int nth, void *opaque)
 
             if (score > max_score) {
                 max_score = score;
-                max_scale = isfinite(old_max) ? expf(old_max - max_score) : 0.0f;
+                max_scale = isfinite(old_max)
+                    ? ck_attention_reference_expf(old_max - max_score)
+                    : 0.0f;
                 ck_attention_scale_f16_llama(acc_half, max_scale, args->head_dim);
             } else {
-                value_scale = expf(score - max_score);
+                value_scale = ck_attention_reference_expf(score - max_score);
             }
 
             ck_attention_mad_f16_llama(
                 acc_half, v_vec, value_scale, args->head_dim);
-            /* Keep the online-softmax denominator on the same fused graph as
-             * llama.cpp. Relying on compiler contraction made Q=63 differ by
-             * one FP32 ULP between hosted C and C++ builds. */
+#if defined(__INTEL_LLVM_COMPILER)
+            sum = ck_attention_mul_add_rounded_f32(
+                sum, max_scale, value_scale);
+#else
             sum = fmaf(sum, max_scale, value_scale);
+#endif
         }
 
         partial[0] = max_score;
@@ -5804,10 +5810,13 @@ static void attention_forward_decode_head_major_gqa_flash_f16cache_split_partiti
                 const float chunk_term = partial[2 + d] * chunk_scale;
                 out_head[d] = fmaf(out_head[d], old_scale, chunk_term);
             }
-            /* llama.cpp's production build contracts the old partial into the
-             * new chunk contribution. Keep this explicit: one FP32 ULP in the
-             * denominator crosses downstream Q8 quantization boundaries. */
-            final_sum = fmaf(final_sum, old_scale, chunk_sum * chunk_scale);
+#if defined(__INTEL_LLVM_COMPILER)
+            const float scaled_chunk_sum = chunk_sum * chunk_scale;
+            final_sum = fmaf(final_sum, old_scale, scaled_chunk_sum);
+#else
+            final_sum = fmaf(
+                final_sum, old_scale, chunk_sum * chunk_scale);
+#endif
             final_max = new_max;
         }
 

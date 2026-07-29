@@ -1071,6 +1071,16 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             "beta",
             _hidden_mul("num_tokens", _hidden_arg("N", "n")),
         )
+    elif op_type == "recurrent_dt_gate":
+        _emit_hidden_full(
+            _hidden_arg("gate", "output", "out"),
+            "gate",
+            _hidden_mul(
+                _hidden_arg("rows", "num_tokens"),
+                _hidden_arg("num_heads"),
+                _hidden_arg("state_dim"),
+            ),
+        )
     elif op_type == "recurrent_ssm_conv":
         _emit_hidden_full(
             _hidden_arg("out", "output"),

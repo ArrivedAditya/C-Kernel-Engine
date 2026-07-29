@@ -37,7 +37,10 @@
 #include "bf16_utils.h"
 #include "ckernel_engine.h"
 
+#include <dlfcn.h>
 #include <math.h>
+#include <pthread.h>
+#include <stdio.h>
 #include <stddef.h>
 #include <stdlib.h>
 
@@ -46,10 +49,44 @@
 #endif
 
 #define CK_DELTANET_MAX_STACK_DIM 4096
+#define CK_DELTANET_LLAMA_CHUNK_SIZE 64
+#define CK_DELTANET_LLAMA_CHUNK_MAX_DIM 256
+
+#if defined(__GNUC__) || defined(__clang__)
+#define CK_DELTANET_NOINLINE __attribute__((noinline))
+#else
+#define CK_DELTANET_NOINLINE
+#endif
+
+typedef float (*ck_deltanet_libm_f32_fn)(float);
+static ck_deltanet_libm_f32_fn ck_deltanet_llama_expf = NULL;
+static void *ck_deltanet_libm_handle = NULL;
+static pthread_once_t ck_deltanet_libm_once = PTHREAD_ONCE_INIT;
+
+static void ck_bind_deltanet_llama_libm(void)
+{
+    ck_deltanet_libm_handle = dlopen("libm.so.6", RTLD_NOW | RTLD_LOCAL);
+    if (ck_deltanet_libm_handle) {
+        ck_deltanet_llama_expf =
+            (ck_deltanet_libm_f32_fn)dlsym(ck_deltanet_libm_handle, "expf");
+    }
+    if (!ck_deltanet_llama_expf) {
+        fprintf(stderr,
+                "HARD KERNEL CONTRACT FAULT: llama.cpp DeltaNet requires "
+                "expf from libm.so.6\n");
+        abort();
+    }
+}
 
 static inline float ck_deltanet_sigmoidf(float x)
 {
     return 1.0f / (1.0f + expf(-x));
+}
+
+static inline float ck_deltanet_llama_sigmoidf(float x)
+{
+    pthread_once(&ck_deltanet_libm_once, ck_bind_deltanet_llama_libm);
+    return 1.0f / (1.0f + ck_deltanet_llama_expf(-x));
 }
 
 void gated_deltanet_autoregressive_forward_ref(const float *q,
@@ -65,8 +102,42 @@ void gated_deltanet_autoregressive_forward_ref(const float *q,
                                                float norm_eps);
 
 #if defined(__AVX2__)
-static float ck_deltanet_llama_avx2_dot(const float *x, const float *y, int n)
+#if defined(__AVX512F__)
+static inline float ck_deltanet_gcc_reduce_add_ps(__m512 value)
 {
+    const __m256 hi = _mm512_extractf32x8_ps(value, 1);
+    const __m256 lo = _mm512_castps512_ps256(value);
+    const __m256 sum8 = _mm256_add_ps(hi, lo);
+    const __m128 hi4 = _mm256_extractf128_ps(sum8, 1);
+    const __m128 lo4 = _mm256_castps256_ps128(sum8);
+    const __m128 sum4 = _mm_add_ps(hi4, lo4);
+    const __m128 swapped = _mm_shuffle_ps(sum4, sum4, _MM_SHUFFLE(1, 0, 3, 2));
+    const __m128 sum2 = _mm_add_ps(sum4, swapped);
+    return _mm_cvtss_f32(_mm_add_ss(sum2, _mm_shuffle_ps(sum2, sum2, 1)));
+}
+#endif
+
+static CK_DELTANET_NOINLINE float ck_deltanet_llama_avx2_dot(
+        const float *x, const float *y, int n)
+{
+#if defined(__AVX512F__)
+    const int np = n & ~63;
+    __m512 sum[4] = {
+        _mm512_setzero_ps(), _mm512_setzero_ps(),
+        _mm512_setzero_ps(), _mm512_setzero_ps()
+    };
+    for (int i = 0; i < np; i += 64) {
+        for (int j = 0; j < 4; ++j) {
+            const __m512 xv = _mm512_loadu_ps(x + i + j * 16);
+            const __m512 yv = _mm512_loadu_ps(y + i + j * 16);
+            sum[j] = _mm512_fmadd_ps(xv, yv, sum[j]);
+        }
+    }
+    sum[0] = _mm512_add_ps(sum[0], sum[2]);
+    sum[1] = _mm512_add_ps(sum[1], sum[3]);
+    sum[0] = _mm512_add_ps(sum[0], sum[1]);
+    float result = ck_deltanet_gcc_reduce_add_ps(sum[0]);
+#else
     const int np = n & ~31;
     __m256 sum[4] = {
         _mm256_setzero_ps(), _mm256_setzero_ps(),
@@ -90,10 +161,225 @@ static float ck_deltanet_llama_avx2_dot(const float *x, const float *y, int n)
         _mm256_castps256_ps128(sum[0]), _mm256_extractf128_ps(sum[0], 1));
     const __m128 pairs = _mm_hadd_ps(halves, halves);
     float result = _mm_cvtss_f32(_mm_hadd_ps(pairs, pairs));
+#endif
     for (int i = np; i < n; ++i) {
         result += x[i] * y[i];
     }
     return result;
+}
+
+static inline float ck_deltanet_llama_scale(int state_dim)
+{
+#if defined(__SSE__)
+    const __m128 dim = _mm_set_ss((float) state_dim);
+    return _mm_cvtss_f32(_mm_div_ss(_mm_set_ss(1.0f), _mm_sqrt_ss(dim)));
+#else
+    return 1.0f / sqrtf((float) state_dim);
+#endif
+}
+
+/*
+ * llama.cpp evaluates multi-token scalar-gate DeltaNet in 64-token chunks.
+ * This is algebraically equivalent to the recurrent update above, but its
+ * reduction tree is observably different after many recurrent layers.
+ *
+ * Layouts below are row-major:
+ *   token vectors  [chunk, state_dim]
+ *   recurrent S    [key_dim, value_dim]
+ *   temporal mats  [chunk, chunk]
+ *
+ * The fixed upper bound keeps the provider allocation-free. Qwen3.5/3.6 use
+ * state_dim=128; unsupported shapes retain the sequential fallback.
+ */
+static void gated_deltanet_llama_chunk64_head(
+                                       const float *q,
+                                       const float *k,
+                                       const float *v,
+                                       const float *g,
+                                       const float *beta,
+                                       const float *state_in,
+                                       float *state_out,
+                                       float *out,
+                                       int rows,
+                                       int num_heads,
+                                       int group_count,
+                                       int head,
+                                       int state_dim)
+{
+    enum { C = CK_DELTANET_LLAMA_CHUNK_SIZE };
+    const int group = head % group_count;
+    const size_t qk_row_stride = (size_t)group_count * (size_t)state_dim;
+    const size_t value_row_stride = (size_t)num_heads * (size_t)state_dim;
+    const size_t gate_row_stride = (size_t)num_heads;
+    const size_t state_count = (size_t)state_dim * (size_t)state_dim;
+    const float scale = 1.0f / sqrtf((float)state_dim);
+
+    float gcum[C];
+    float beta_chunk[C];
+    float decay[C * C];
+    float transform[C * C];
+    float q_chunk[C * CK_DELTANET_LLAMA_CHUNK_MAX_DIM];
+    float k_chunk[C * CK_DELTANET_LLAMA_CHUNK_MAX_DIM];
+    float value_beta[C * CK_DELTANET_LLAMA_CHUNK_MAX_DIM];
+    float k_cumdecay[C * CK_DELTANET_LLAMA_CHUNK_MAX_DIM];
+    float v_new[C * CK_DELTANET_LLAMA_CHUNK_MAX_DIM];
+    float matrix_work[C * CK_DELTANET_LLAMA_CHUNK_MAX_DIM];
+    float work_row[C];
+    float gate_exp[C];
+
+    float *state = state_out + (size_t)head * state_count;
+    const float *initial = state_in + (size_t)head * state_count;
+    if (state != initial) {
+        for (size_t i = 0; i < state_count; ++i) {
+            state[i] = initial[i];
+        }
+    }
+
+    for (int chunk_start = 0; chunk_start < rows; chunk_start += C) {
+        const int valid = rows - chunk_start < C ? rows - chunk_start : C;
+
+        for (int i = 0; i < C; ++i) {
+            const int token = chunk_start + i;
+            const int present = i < valid;
+            const float gate_value = present
+                ? g[(size_t)token * gate_row_stride + (size_t)head]
+                : 0.0f;
+            gcum[i] = gate_value + (i ? gcum[i - 1] : 0.0f);
+            gate_exp[i] = expf(gcum[i]);
+
+            float beta_value = 0.0f;
+            const float *q_src = NULL;
+            const float *k_src = NULL;
+            const float *v_src = NULL;
+            if (present) {
+                beta_value = ck_deltanet_sigmoidf(
+                    beta[(size_t)token * gate_row_stride + (size_t)head]);
+                q_src = q + (size_t)token * qk_row_stride +
+                    (size_t)group * (size_t)state_dim;
+                k_src = k + (size_t)token * qk_row_stride +
+                    (size_t)group * (size_t)state_dim;
+                v_src = v + (size_t)token * value_row_stride +
+                    (size_t)head * (size_t)state_dim;
+            }
+            beta_chunk[i] = beta_value;
+            for (int d = 0; d < state_dim; ++d) {
+                const size_t offset = (size_t)i * (size_t)state_dim + (size_t)d;
+                q_chunk[offset] = present ? q_src[d] * scale : 0.0f;
+                k_chunk[offset] = present ? k_src[d] : 0.0f;
+                value_beta[offset] = present ? v_src[d] * beta_value : 0.0f;
+                k_cumdecay[offset] =
+                    present ? k_src[d] * beta_value * gate_exp[i] : 0.0f;
+            }
+        }
+
+        /*
+         * kb[i,j] = beta_i * <k_i,k_j> * exp(gcum_i-gcum_j).
+         * llama solves (I + tril(kb,-1)) X = -tril(kb,-1), then adds I.
+         * Forward substitution is performed a column at a time to retain the
+         * same dependency order as ggml_solve_tri.
+         */
+        for (int i = 0; i < C; ++i) {
+            for (int j = 0; j < C; ++j) {
+                const float d = j <= i ? expf(gcum[i] - gcum[j]) : 0.0f;
+                decay[(size_t)i * C + (size_t)j] = d;
+                transform[(size_t)i * C + (size_t)j] = j < i
+                    ? ck_deltanet_llama_avx2_dot(
+                          k_chunk + (size_t)i * (size_t)state_dim,
+                          k_chunk + (size_t)j * (size_t)state_dim,
+                          state_dim) * beta_chunk[i] * d
+                    : 0.0f;
+            }
+        }
+        for (int i = 0; i < C; ++i) {
+            for (int j = 0; j < i; ++j) {
+                work_row[j] = transform[(size_t)i * C + (size_t)j];
+            }
+            for (int col = 0; col <= i; ++col) {
+                const float rhs = i == col ? 1.0f : 0.0f;
+                float solved = rhs;
+                for (int j = 0; j < i; ++j) {
+                    solved -= work_row[j] * transform[(size_t)j * C + (size_t)col];
+                }
+                transform[(size_t)i * C + (size_t)col] = solved;
+            }
+        }
+
+        /*
+         * transformed V and cumulative-decay K use the solved temporal
+         * transform.  Subtract the contribution of the incoming state to form
+         * V_new, matching llama's v_t_new node.
+         */
+        for (int i = 0; i < C; ++i) {
+            for (int d = 0; d < state_dim; ++d) {
+                float value_sum = 0.0f;
+                float key_sum = 0.0f;
+                for (int j = 0; j < C; ++j) {
+                    const float coefficient = transform[(size_t)i * C + (size_t)j];
+                    value_sum += coefficient *
+                        value_beta[(size_t)j * (size_t)state_dim + (size_t)d];
+                    key_sum += coefficient *
+                        k_cumdecay[(size_t)j * (size_t)state_dim + (size_t)d];
+                }
+                v_new[(size_t)i * (size_t)state_dim + (size_t)d] = value_sum;
+                matrix_work[(size_t)i * (size_t)state_dim + (size_t)d] = key_sum;
+            }
+        }
+        for (int i = 0; i < C; ++i) {
+            for (int d = 0; d < state_dim; ++d) {
+                float v_prime = 0.0f;
+                for (int r = 0; r < state_dim; ++r) {
+                    v_prime +=
+                        matrix_work[(size_t)i * (size_t)state_dim + (size_t)r] *
+                        state[(size_t)r * (size_t)state_dim + (size_t)d];
+                }
+                v_new[(size_t)i * (size_t)state_dim + (size_t)d] -= v_prime;
+            }
+        }
+
+        for (int i = 0; i < valid; ++i) {
+            float *out_token = out +
+                (size_t)(chunk_start + i) * value_row_stride +
+                (size_t)head * (size_t)state_dim;
+            for (int j = 0; j <= i; ++j) {
+                work_row[j] = ck_deltanet_llama_avx2_dot(
+                    q_chunk + (size_t)i * (size_t)state_dim,
+                    k_chunk + (size_t)j * (size_t)state_dim,
+                    state_dim) * decay[(size_t)i * C + (size_t)j];
+            }
+            for (int d = 0; d < state_dim; ++d) {
+                float result = 0.0f;
+                for (int r = 0; r < state_dim; ++r) {
+                    result +=
+                        q_chunk[(size_t)i * (size_t)state_dim + (size_t)r] *
+                        gate_exp[i] *
+                        state[(size_t)r * (size_t)state_dim + (size_t)d];
+                }
+                for (int j = 0; j <= i; ++j) {
+                    result += work_row[j] *
+                        v_new[(size_t)j * (size_t)state_dim + (size_t)d];
+                }
+                out_token[d] = result;
+            }
+        }
+
+        const float last_decay = gate_exp[C - 1];
+        for (int i = 0; i < C; ++i) {
+            gate_exp[i] = expf(gcum[C - 1] - gcum[i]);
+        }
+        for (int r = 0; r < state_dim; ++r) {
+            for (int d = 0; d < state_dim; ++d) {
+                float updated =
+                    state[(size_t)r * (size_t)state_dim + (size_t)d] * last_decay;
+                for (int i = 0; i < C; ++i) {
+                    updated +=
+                        k_chunk[(size_t)i * (size_t)state_dim + (size_t)r] *
+                        gate_exp[i] *
+                        v_new[(size_t)i * (size_t)state_dim + (size_t)d];
+                }
+                state[(size_t)r * (size_t)state_dim + (size_t)d] = updated;
+            }
+        }
+    }
 }
 
 #endif
@@ -120,7 +406,7 @@ static void gated_deltanet_llama_avx2_grouped_forward_impl(
         state_dim <= 0 || state_dim > CK_DELTANET_MAX_STACK_DIM) {
         return;
     }
-    const float scale = 1.0f / sqrtf((float) state_dim);
+    const float scale = ck_deltanet_llama_scale(state_dim);
     const size_t vector_stride = (size_t) state_dim;
     const size_t state_stride = (size_t) state_dim * (size_t) state_dim;
     float column[CK_DELTANET_MAX_STACK_DIM];
@@ -136,8 +422,16 @@ static void gated_deltanet_llama_avx2_grouped_forward_impl(
         const float *state_prev = state_in + (size_t) h * state_stride;
         float *state_cur = state_out + (size_t) h * state_stride;
         float *out_head = out + (size_t) h * vector_stride;
-        const float gate = expf(g[h]);
-        float beta_s = ck_deltanet_sigmoidf(beta[h]);
+        float gate;
+        float beta_s;
+        if (pytorch_bf16_boundaries) {
+            gate = expf(g[h]);
+            beta_s = ck_deltanet_sigmoidf(beta[h]);
+        } else {
+            pthread_once(&ck_deltanet_libm_once, ck_bind_deltanet_llama_libm);
+            gate = ck_deltanet_llama_expf(g[h]);
+            beta_s = ck_deltanet_llama_sigmoidf(beta[h]);
+        }
         if (pytorch_bf16_boundaries) {
             beta_s = bf16_to_float(float_to_bf16(beta_s));
             for (int row = 0; row < state_dim; ++row) {

@@ -1,10 +1,37 @@
 #include "ckernel_engine.h"
 
+#include <dlfcn.h>
 #include <math.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-static inline float hybrid_sigmoid(float x) {
-    return 1.0f / (1.0f + expf(-x));
+typedef float (*ck_hybrid_libm_f32_fn)(float);
+static ck_hybrid_libm_f32_fn ck_hybrid_llama_expf = NULL;
+static void *ck_hybrid_libm_handle = NULL;
+static pthread_once_t ck_hybrid_libm_once = PTHREAD_ONCE_INIT;
+
+static void ck_bind_hybrid_llama_libm(void) {
+    ck_hybrid_libm_handle = dlopen("libm.so.6", RTLD_NOW | RTLD_LOCAL);
+    if (ck_hybrid_libm_handle) {
+        ck_hybrid_llama_expf =
+            (ck_hybrid_libm_f32_fn)dlsym(ck_hybrid_libm_handle, "expf");
+    }
+    if (!ck_hybrid_llama_expf) {
+        fprintf(stderr,
+                "HARD KERNEL CONTRACT FAULT: llama.cpp attention gate "
+                "requires expf from libm.so.6\n");
+        abort();
+    }
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+static float hybrid_sigmoid(float x) {
+    pthread_once(&ck_hybrid_libm_once, ck_bind_hybrid_llama_libm);
+    return 1.0f / (1.0f + ck_hybrid_llama_expf(-x));
 }
 
 void split_q_gate_forward(const float *packed_qg,

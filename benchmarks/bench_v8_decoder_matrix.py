@@ -194,6 +194,11 @@ def main() -> int:
     parser.add_argument("--threads", type=int, default=12)
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail when any selected model artifact is missing or either engine fails.",
+    )
     parser.add_argument("--json-out", type=Path, default=ROOT / "build" / "v8_decoder_matrix.json")
     args = parser.parse_args()
 
@@ -215,6 +220,11 @@ def main() -> int:
         row["llama"] = _run_llama(gguf, prompt=args.prompt, decode=args.decode, threads=args.threads, repeats=args.repeats, timeout=args.timeout)
         ck_context = args.context if args.context > 0 else args.prompt + args.decode + 8
         row["cke"] = _run_cke(run_dir, prompt=args.prompt, decode=args.decode, threads=args.threads, context=ck_context, timeout=args.timeout)
+        row["status"] = (
+            "pass"
+            if row["llama"].get("status") == "pass" and row["cke"].get("status") == "pass"
+            else "fail"
+        )
         results.append(row)
 
     args.json_out.parent.mkdir(parents=True, exist_ok=True)
@@ -236,6 +246,12 @@ def main() -> int:
             f"{_fmt(ld)} tok/s | {_fmt(cd)} tok/s | {_ratio(cd, ld)} |"
         )
     print(f"\nWrote {args.json_out}")
+    if args.strict:
+        failures = [row for row in results if row.get("status") != "pass"]
+        if failures:
+            failed_ids = ", ".join(str(row.get("id")) for row in failures)
+            print(f"ERROR: strict decoder-family sweep did not pass: {failed_ids}")
+            return 1
     return 0
 
 
