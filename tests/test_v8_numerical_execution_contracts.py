@@ -316,7 +316,7 @@ class NumericalExecutionContractTests(unittest.TestCase):
             ),
             "decode": (
                 "gated_deltanet_llama_avx2_decode_fp32_state",
-                "gated_deltanet_llama_avx2_forward",
+                "gated_deltanet_llama_avx2_parallel_forward",
             ),
         }
         for phase, (contract_id, function) in expected.items():

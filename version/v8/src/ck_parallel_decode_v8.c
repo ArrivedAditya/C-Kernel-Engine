@@ -48,6 +48,18 @@ extern void gemv_q5_1_q8_1(float *y, const void *W, const float *x, int M, int K
 extern void gemv_q5_k(float *y, const void *W, const float *x, int M, int K);
 extern void gemv_q8_0_q8_0_contract(float *y, const void *W, const float *x, int M, int K);
 
+extern void gated_deltanet_llama_avx2_forward(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int num_heads, int group_count, int state_dim, float norm_eps);
+extern void gated_deltanet_llama_avx2_forward_head_range(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int num_heads, int group_count, int state_dim, float norm_eps,
+    int head_begin, int head_end);
+
 /* Serial fused fallback */
 extern void gemv_fused_q5_0_bias_dispatch(float *y, const void *W, const float *x,
                                            const float *bias, int M, int K);
@@ -96,6 +108,21 @@ typedef struct {
     int          K;
     size_t       W_row_bytes;
 } gemv_fp32_args_t;
+
+typedef struct {
+    const float *q;
+    const float *k;
+    const float *v;
+    const float *g;
+    const float *beta;
+    const float *state_in;
+    float *state_out;
+    float *out;
+    int num_heads;
+    int group_count;
+    int state_dim;
+    float norm_eps;
+} deltanet_decode_args_t;
 
 static int ck_min_int(int a, int b) { return a < b ? a : b; }
 
@@ -168,6 +195,59 @@ static void work_gemv_q5_0_q8_0(int ith, int nth, void *args)
 {
     const gemv_args_t *a = (const gemv_args_t *)args;
     gemv_q5_0_q8_0_parallel_simd(a->y, a->W, a->x_q8, a->M, a->K, ith, nth);
+}
+
+static void work_gated_deltanet_llama_avx2(
+    int ith, int nth, void *opaque)
+{
+    const deltanet_decode_args_t *a =
+        (const deltanet_decode_args_t *)opaque;
+    const int head_begin = (a->num_heads * ith) / nth;
+    const int head_end = (a->num_heads * (ith + 1)) / nth;
+    gated_deltanet_llama_avx2_forward_head_range(
+        a->q, a->k, a->v, a->g, a->beta,
+        a->state_in, a->state_out, a->out,
+        a->num_heads, a->group_count, a->state_dim, a->norm_eps,
+        head_begin, head_end);
+}
+
+void gated_deltanet_llama_avx2_parallel_forward(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int num_heads, int group_count, int state_dim, float norm_eps)
+{
+#if defined(__AVX2__)
+    ck_threadpool_t *pool = ck_threadpool_global();
+    if (!pool || ck_threadpool_n_threads(pool) <= 1 || num_heads <= 1) {
+        gated_deltanet_llama_avx2_forward(
+            q, k, v, g, beta, state_in, state_out, out,
+            num_heads, group_count, state_dim, norm_eps);
+        return;
+    }
+    int active = ck_threadpool_n_threads(pool);
+    if (active > num_heads) active = num_heads;
+    deltanet_decode_args_t args = {
+        .q = q,
+        .k = k,
+        .v = v,
+        .g = g,
+        .beta = beta,
+        .state_in = state_in,
+        .state_out = state_out,
+        .out = out,
+        .num_heads = num_heads,
+        .group_count = group_count,
+        .state_dim = state_dim,
+        .norm_eps = norm_eps,
+    };
+    ck_threadpool_dispatch_n(
+        pool, active, work_gated_deltanet_llama_avx2, &args);
+#else
+    gated_deltanet_llama_avx2_forward(
+        q, k, v, g, beta, state_in, state_out, out,
+        num_heads, group_count, state_dim, norm_eps);
+#endif
 }
 
 static void work_gemv_q6_k_q8_k(int ith, int nth, void *args)

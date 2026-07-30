@@ -15,6 +15,9 @@ extern "C" {
 void gated_deltanet_llama_avx2_forward(
         const float *, const float *, const float *, const float *, const float *,
         const float *, float *, float *, int, int, int, float);
+void gated_deltanet_llama_avx2_parallel_forward(
+        const float *, const float *, const float *, const float *, const float *,
+        const float *, float *, float *, int, int, int, float);
 void gated_deltanet_llama_avx2_prefill_forward(
         const float *, const float *, const float *, const float *, const float *,
         const float *, float *, float *, int, int, int, int, float);
@@ -70,8 +73,7 @@ static bool llama_fused_graph(
         const std::vector<float> & state_ck,
         std::vector<float> & output,
         std::vector<float> & state_ck_out,
-        int rows, int heads, int dim) {
-    const int groups = heads / 4;
+        int rows, int heads, int groups, int dim) {
     const size_t arena = 64u * 1024u * 1024u;
     ggml_init_params params = {arena, nullptr, false};
     ggml_context * ctx = ggml_init(params);
@@ -291,9 +293,8 @@ static bool llama_chunk_graph(
     return ok;
 }
 
-static bool run_case(int rows) {
-    constexpr int heads = 16;
-    constexpr int groups = heads / 4;
+static bool run_case(int rows, int heads = 16, int groups = 4,
+                     bool parallel_decode = false) {
     constexpr int dim = 128;
     const size_t qk_vectors = static_cast<size_t>(rows) * groups * dim;
     const size_t vectors = static_cast<size_t>(rows) * heads * dim;
@@ -317,19 +318,29 @@ static bool run_case(int rows) {
     std::vector<float> ck_state(states), llama_state(states);
     const bool oracle_ok =
         llama_fused_graph(q, k, v, g, beta, state, llama_out, llama_state,
-                rows, heads, dim);
+                rows, heads, groups, dim);
     if (!oracle_ok) {
         std::printf("llama.cpp graph execution failed\n");
         return false;
     }
     if (rows == 1) {
-        gated_deltanet_llama_avx2_forward(q.data(), k.data(), v.data(), g.data(), beta.data(),
-                state.data(), ck_state.data(), ck_out.data(), heads, groups, dim, 1e-6f);
+        if (parallel_decode) {
+            gated_deltanet_llama_avx2_parallel_forward(
+                    q.data(), k.data(), v.data(), g.data(), beta.data(),
+                    state.data(), ck_state.data(), ck_out.data(),
+                    heads, groups, dim, 1e-6f);
+        } else {
+            gated_deltanet_llama_avx2_forward(
+                    q.data(), k.data(), v.data(), g.data(), beta.data(),
+                    state.data(), ck_state.data(), ck_out.data(),
+                    heads, groups, dim, 1e-6f);
+        }
     } else {
         gated_deltanet_llama_avx2_prefill_forward(q.data(), k.data(), v.data(), g.data(), beta.data(),
                 state.data(), ck_state.data(), ck_out.data(), rows, heads, groups, dim, 1e-6f);
     }
-    std::printf("rows=%d heads=%d dim=%d threads=%s\n", rows, heads, dim,
+    std::printf("rows=%d heads=%d groups=%d dim=%d provider=%s threads=%s\n",
+            rows, heads, groups, dim, parallel_decode ? "parallel" : "serial",
             std::getenv("CK_NUM_THREADS") ? std::getenv("CK_NUM_THREADS") : "1");
     const bool output_ok =
         close("attention output", ck_out.data(), llama_out.data(), vectors, 2e-8f);
@@ -425,13 +436,14 @@ static bool run_norm_gate_case(int rows) {
 
 int main() {
     const bool decode = run_case(1);
+    const bool qwen36_parallel_decode = run_case(1, 48, 16, true);
     const bool prefill = run_case(18);
     const bool prefill_cross_chunk = run_case(65);
     const bool chunk_prefill = run_chunk_case(18);
     const bool chunk_cross_chunk = run_chunk_case(65);
     const bool norm_decode = run_norm_gate_case(1);
     const bool norm_prefill = run_norm_gate_case(18);
-    return decode && prefill && prefill_cross_chunk &&
+    return decode && qwen36_parallel_decode && prefill && prefill_cross_chunk &&
         chunk_prefill && chunk_cross_chunk &&
         norm_decode && norm_prefill ? 0 : 1;
 }
