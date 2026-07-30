@@ -3116,6 +3116,8 @@ Q5K_Q8K_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q5k_q8k_llama_production
 RMSNORM_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_rmsnorm_llama_production
 RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_recurrent_qk_l2_norm_llama_production
 DELTANET_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_deltanet_llamacpp_production
+DELTANET_PARALLEL_DECODE_OBJ := $(BUILD_DIR)/test_deltanet_parallel_decode.o
+DELTANET_GROUPED_DECODE_BENCH_BIN := $(BUILD_DIR)/bench_deltanet_grouped_decode
 SSM_CONV_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_ssm_conv_llama_production
 RECURRENT_SILU_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_recurrent_silu_llama_production
 F32_GEMM_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_f32_gemm_llama_production
@@ -3239,11 +3241,16 @@ test-q5k-q8k-llama-production-quick: $(Q5K_Q8K_LLAMA_PRODUCTION_BIN)
 		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
 		$(Q5K_Q8K_LLAMA_PRODUCTION_BIN) --quick
 
-$(DELTANET_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_deltanet_llamacpp_production.cpp
+$(DELTANET_PARALLEL_DECODE_OBJ): $(V8_SRC_DIR)/ck_parallel_decode_v8.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) -c $< -o $@
+
+$(DELTANET_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_deltanet_llamacpp_production.cpp $(DELTANET_PARALLEL_DECODE_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
 		-I$(Q4Q6_LLAMA_CPP_DIR)/ggml/include -I$(Q4Q6_LLAMA_CPP_DIR)/ggml/src \
 		unittest/test_deltanet_llamacpp_production.cpp \
+		$(DELTANET_PARALLEL_DECODE_OBJ) \
 		-L$(BUILD_DIR) -lckernel_engine \
 		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
 		-lm -lpthread -ldl \
@@ -3258,6 +3265,20 @@ test-deltanet-llamacpp-production: $(DELTANET_LLAMA_PRODUCTION_BIN)
 			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
 			$(DELTANET_LLAMA_PRODUCTION_BIN); \
 	done
+
+$(DELTANET_GROUPED_DECODE_BENCH_BIN): $(LIB) benchmarks/bench_deltanet_grouped_decode.c $(DELTANET_PARALLEL_DECODE_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		benchmarks/bench_deltanet_grouped_decode.c \
+		$(DELTANET_PARALLEL_DECODE_OBJ) \
+		-L$(BUILD_DIR) -lckernel_engine -lm -lpthread -ldl \
+		-Wl,-rpath,$(BUILD_DIR) \
+		-o $(DELTANET_GROUPED_DECODE_BENCH_BIN)
+
+.PHONY: bench-deltanet-grouped-decode
+bench-deltanet-grouped-decode: $(DELTANET_GROUPED_DECODE_BENCH_BIN)
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH \
+		$(DELTANET_GROUPED_DECODE_BENCH_BIN)
 
 $(SSM_CONV_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_ssm_conv_llama_production.cpp
 	@mkdir -p $(BUILD_DIR)

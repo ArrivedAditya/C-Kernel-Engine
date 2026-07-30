@@ -406,6 +406,7 @@ def run_multitoken_trajectory_parity(
     llama_dump_dir: Path | None = None,
     llama_dump_names: str = "",
     llama_dump_flash_inputs: bool = False,
+    llama_profile_layers_out: Path | None = None,
 ) -> dict[str, Any]:
     stops = {int(token) for token in (stop_token_ids or set())}
     # CK must run first: a completed llama.cpp process can leave enough GGUF
@@ -437,6 +438,7 @@ def run_multitoken_trajectory_parity(
         dump_dir=llama_dump_dir,
         dump_names=llama_dump_names,
         dump_flash_inputs=llama_dump_flash_inputs,
+        profile_layers_out=llama_profile_layers_out,
     )
     steps: list[dict[str, Any]] = []
     first_divergence: dict[str, Any] | None = None
@@ -500,6 +502,7 @@ def run_multitoken_trajectory_parity(
         "matched_stop_token": matched_stop_token,
         "first_divergence": first_divergence,
         "steps": steps,
+        "llama_layer_profile": llama.get("layer_profile"),
     }
 
 
@@ -739,6 +742,15 @@ def main() -> int:
         action="store_true",
         help="Capture Q/K/V/mask inputs for a selected production flash-attention node.",
     )
+    ap.add_argument(
+        "--llama-profile-layers-out",
+        type=Path,
+        default=None,
+        help=(
+            "Write persistent llama.cpp decode layer-boundary wall times to "
+            "a new CSV using the public cb_eval oracle hook."
+        ),
+    )
     args = ap.parse_args()
 
     model_dir = discover_ck_model_dir(args.model_dir)
@@ -780,6 +792,7 @@ def main() -> int:
             llama_dump_dir=args.llama_dump_dir,
             llama_dump_names=args.llama_dump_names,
             llama_dump_flash_inputs=bool(args.llama_dump_flash_inputs),
+            llama_profile_layers_out=args.llama_profile_layers_out,
         )
     else:
         report = run_multitoken_parity(

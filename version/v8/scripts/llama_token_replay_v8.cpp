@@ -2,6 +2,7 @@
 #include "ggml-cpu.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -27,6 +28,7 @@ struct Args {
     std::string logits_seq_out_path;
     std::string embeddings_out_path;
     std::string dump_dir;
+    std::string profile_layers_out_path;
     std::vector<std::string> dump_names;
     std::string decode_mode = "batched";
     std::string prefix_decode_mode = "batched";
@@ -44,6 +46,15 @@ struct Args {
     bool dump_flash_inputs = false;
 };
 
+struct LayerProfileEntry {
+    int32_t token_id;
+    int greedy_decode_step;
+    int layer;
+    double time_us;
+    double cumulative_us;
+    std::string tensor;
+};
+
 struct DumpState {
     std::filesystem::path dump_dir;
     std::filesystem::path index_path;
@@ -57,6 +68,11 @@ struct DumpState {
     bool dump_flash_inputs = false;
     std::unordered_map<std::string, int> occurrences;
     std::unordered_set<std::string> matched_names;
+    std::string profile_layers_out_path;
+    std::chrono::steady_clock::time_point profile_batch_start;
+    std::chrono::steady_clock::time_point profile_last_boundary;
+    bool profile_batch_started = false;
+    std::vector<LayerProfileEntry> profile_entries;
 };
 
 static std::vector<std::string> split_csv(const std::string & s) {
@@ -226,6 +242,12 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
             args.dump_dir = v;
             continue;
         }
+        if (a == "--profile-layers-out") {
+            const char * v = need_value("--profile-layers-out");
+            if (!v) return false;
+            args.profile_layers_out_path = v;
+            continue;
+        }
         if (a == "--dump-names") {
             const char * v = need_value("--dump-names");
             if (!v) return false;
@@ -272,6 +294,7 @@ static bool parse_args(int argc, char ** argv, Args & args, std::string & err) {
                 << "[--prefix-grid-x N --prefix-grid-y N] [--prefix-row-dim N] [--prefix-text-pos N] [--ctx N] [--top-k K] [--threads N] "
                 << "[--decode-mode batched|sequential] [--prefix-decode-mode batched|sequential] "
                 << "[--dump-dir dir --dump-names a,b,c] [--dump-greedy-decode-step N] "
+                << "[--profile-layers-out path.csv] "
                 << "[--dump-list-only] [--no-repack]\n";
             std::exit(0);
         }
@@ -460,6 +483,60 @@ static void begin_dump_batch(DumpState * state, int32_t token_id) {
     }
     state->current_token_id = std::max<int32_t>(0, token_id);
     state->occurrences.clear();
+    if (!state->profile_layers_out_path.empty()) {
+        state->profile_batch_start = std::chrono::steady_clock::now();
+        state->profile_last_boundary = state->profile_batch_start;
+        state->profile_batch_started = true;
+    }
+}
+
+static int layer_boundary_id(const ggml_tensor * t) {
+    if (!t) {
+        return -1;
+    }
+    const char * raw_name = ggml_get_name(t);
+    static constexpr const char prefix[] = "l_out-";
+    if (!raw_name || std::strncmp(raw_name, prefix, sizeof(prefix) - 1) != 0) {
+        return -1;
+    }
+    const char * digits = raw_name + sizeof(prefix) - 1;
+    if (!digits[0]) {
+        return -1;
+    }
+    char * end = nullptr;
+    const long value = std::strtol(digits, &end, 10);
+    if (!end || end == digits || *end != '\0' || value < 0 || value > INT32_MAX) {
+        return -1;
+    }
+    return static_cast<int>(value);
+}
+
+static bool should_profile_layer(const DumpState * state, const ggml_tensor * t) {
+    return state && !state->profile_layers_out_path.empty() &&
+           layer_boundary_id(t) >= 0;
+}
+
+static bool write_layer_profile(const DumpState & state) {
+    if (state.profile_layers_out_path.empty()) {
+        return true;
+    }
+    std::ofstream out(
+        state.profile_layers_out_path,
+        std::ios::binary | std::ios::trunc);
+    if (!out) {
+        return false;
+    }
+    out << "token_id,greedy_decode_step,layer,time_us,cumulative_us,tensor\n";
+    out << std::fixed << std::setprecision(1);
+    for (const LayerProfileEntry & entry : state.profile_entries) {
+        out << entry.token_id << ","
+            << entry.greedy_decode_step << ","
+            << entry.layer << ","
+            << entry.time_us << ","
+            << entry.cumulative_us << ","
+            << entry.tensor << "\n";
+    }
+    return out.good();
 }
 
 static std::string make_dump_name(const std::string & base_name, int32_t token_id, int occurrence) {
@@ -590,8 +667,10 @@ static void append_flash_attention_metadata(std::ostream & out, const ggml_tenso
 }
 
 static bool dump_eval_callback(struct ggml_tensor * t, bool ask, void * user_data) {
-    const DumpState * state = static_cast<const DumpState *>(user_data);
-    if (!should_dump_tensor(state, t)) {
+    DumpState * mut = static_cast<DumpState *>(user_data);
+    const bool wants_dump = should_dump_tensor(mut, t);
+    const bool wants_profile = should_profile_layer(mut, t);
+    if (!wants_dump && !wants_profile) {
         return false;
     }
     if (ask) {
@@ -604,12 +683,33 @@ static bool dump_eval_callback(struct ggml_tensor * t, bool ask, void * user_dat
     }
     std::string base_name(raw_name);
 
+    if (wants_profile && mut->profile_batch_started) {
+        const auto now = std::chrono::steady_clock::now();
+        const double time_us =
+            std::chrono::duration<double, std::micro>(
+                now - mut->profile_last_boundary).count();
+        const double cumulative_us =
+            std::chrono::duration<double, std::micro>(
+                now - mut->profile_batch_start).count();
+        mut->profile_entries.push_back(LayerProfileEntry{
+            mut->current_token_id,
+            mut->current_greedy_decode_step,
+            layer_boundary_id(t),
+            time_us,
+            cumulative_us,
+            base_name,
+        });
+        mut->profile_last_boundary = now;
+    }
+    if (!wants_dump) {
+        return true;
+    }
+
     const int64_t nbytes = ggml_nbytes(t);
     if (nbytes <= 0) {
         return true;
     }
 
-    DumpState * mut = static_cast<DumpState *>(user_data);
     mut->matched_names.insert(base_name);
     const int occurrence = mut->occurrences[base_name]++;
     const std::string dump_name = make_dump_name(base_name, mut->current_token_id, occurrence);
@@ -967,6 +1067,7 @@ int main(int argc, char ** argv) {
     DumpState dump_state;
     dump_state.requested_greedy_decode_step = args.dump_greedy_decode_step;
     dump_state.dump_flash_inputs = args.dump_flash_inputs;
+    dump_state.profile_layers_out_path = args.profile_layers_out_path;
     if (!args.dump_dir.empty()) {
         dump_state.dump_dir = args.dump_dir;
         dump_state.index_path = dump_state.dump_dir / "index.json";
@@ -981,9 +1082,12 @@ int main(int argc, char ** argv) {
             std::filesystem::create_directories(dump_state.dump_dir);
             std::error_code ec;
             std::filesystem::remove(dump_state.index_path, ec);
-            cparams.cb_eval = dump_eval_callback;
-            cparams.cb_eval_user_data = &dump_state;
         }
+    }
+    if (dump_state.dump_all || !dump_state.names.empty() ||
+        !dump_state.profile_layers_out_path.empty()) {
+        cparams.cb_eval = dump_eval_callback;
+        cparams.cb_eval_user_data = &dump_state;
     }
 
     llama_context * ctx = llama_init_from_model(model, cparams);
@@ -1002,13 +1106,16 @@ int main(int argc, char ** argv) {
     // Trajectory step 0 is produced by the initial prompt/prefix evaluation.
     // Subsequent decode calls produce logits for step N + 1.
     dump_state.current_greedy_decode_step = 0;
+    const bool capture_active =
+        !dump_state.dump_dir.empty() ||
+        !dump_state.profile_layers_out_path.empty();
     if (!tokens_before.empty()) {
         int32_t rc = decode_tokens(
             ctx,
             tokens_before,
             args.prefix_decode_mode,
             0,
-            dump_state.dump_dir.empty() ? nullptr : &dump_state
+            capture_active ? &dump_state : nullptr
         );
         if (rc != 0) {
             std::ostringstream oss;
@@ -1033,7 +1140,7 @@ int main(int argc, char ** argv) {
             static_cast<int32_t>(tokens_before.size()),
             args.prefix_text_pos,
             args.prefix_decode_mode,
-            dump_state.dump_dir.empty() ? nullptr : &dump_state,
+            capture_active ? &dump_state : nullptr,
             &prefix_text_pos
         );
         if (rc != 0) {
@@ -1052,7 +1159,7 @@ int main(int argc, char ** argv) {
             tokens_after,
             args.decode_mode,
             prefix_text_pos,
-            dump_state.dump_dir.empty() ? nullptr : &dump_state
+            capture_active ? &dump_state : nullptr
         );
         if (rc != 0) {
             std::ostringstream oss;
@@ -1157,7 +1264,9 @@ int main(int argc, char ** argv) {
                 break;
             }
             dump_state.current_greedy_decode_step = step + 1;
-            begin_dump_batch(dump_state.dump_dir.empty() ? nullptr : &dump_state, prefix_text_pos + static_cast<int32_t>(tokens_after.size()) + step);
+            begin_dump_batch(
+                capture_active ? &dump_state : nullptr,
+                prefix_text_pos + static_cast<int32_t>(tokens_after.size()) + step);
             llama_batch batch = llama_batch_init(1, 0, 1);
             batch.n_tokens = 1;
             batch.token[0] = next;
@@ -1233,6 +1342,13 @@ int main(int argc, char ** argv) {
             llama_backend_free();
             return 22;
         }
+    }
+    if (!write_layer_profile(dump_state)) {
+        print_json_error("failed writing profile-layers-out file");
+        llama_free(ctx);
+        llama_model_free(model);
+        llama_backend_free();
+        return 23;
     }
 
     std::vector<int> ids(n_vocab);

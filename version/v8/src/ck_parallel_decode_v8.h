@@ -36,6 +36,16 @@ void ck_parallel_decode_init(void);
 /** Shutdown thread pool. Call at model teardown. */
 void ck_parallel_decode_shutdown(void);
 
+/**
+ * Parallel grouped DeltaNet decode. Heads own disjoint recurrent-state and
+ * output slices, so this preserves the serial provider's per-head arithmetic.
+ */
+void gated_deltanet_llama_avx2_parallel_forward(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int num_heads, int group_count, int state_dim, float norm_eps);
+
 /* ============================================================================
  * Parallel GEMV Wrappers
  *

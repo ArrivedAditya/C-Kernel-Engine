@@ -373,6 +373,7 @@ def run_llama_greedy_trajectory(
     dump_dir: Path | None = None,
     dump_names: str = "",
     dump_flash_inputs: bool = False,
+    profile_layers_out: Path | None = None,
 ) -> dict[str, Any]:
     capture_step = None if dump_step is None else int(dump_step)
     if capture_step is not None:
@@ -422,6 +423,19 @@ def run_llama_greedy_trajectory(
                 cmd.append("--dump-flash-inputs")
         if threads > 0:
             cmd.extend(["--threads", str(int(threads))])
+        resolved_profile_layers_out: Path | None = None
+        if profile_layers_out is not None:
+            resolved_profile_layers_out = profile_layers_out.expanduser().resolve()
+            if resolved_profile_layers_out.exists():
+                raise ValueError(
+                    "llama layer profile output must not already exist; "
+                    f"refusing stale evidence: {resolved_profile_layers_out}"
+                )
+            resolved_profile_layers_out.parent.mkdir(parents=True, exist_ok=True)
+            cmd.extend([
+                "--profile-layers-out",
+                str(resolved_profile_layers_out),
+            ])
         proc = _run(cmd, cwd=ROOT)
         if proc.returncode != 0:
             raise RuntimeError(
@@ -455,6 +469,23 @@ def run_llama_greedy_trajectory(
                     "requested llama trajectory dump was not emitted; "
                     "verify the selected tensor names exist in the production graph"
                 )
+        profile_artifact: dict[str, Any] | None = None
+        if resolved_profile_layers_out is not None:
+            if (
+                not resolved_profile_layers_out.is_file()
+                or resolved_profile_layers_out.stat().st_size <= 0
+            ):
+                raise RuntimeError(
+                    "requested llama layer profile was not emitted; "
+                    "verify the pinned llama.cpp graph exposes l_out-N boundaries"
+                )
+            profile_artifact = {
+                "path": str(resolved_profile_layers_out),
+                "sha256": _sha256_path(resolved_profile_layers_out),
+                "size": int(resolved_profile_layers_out.stat().st_size),
+                "boundary": "l_out-N",
+                "observer": "ggml_backend_sched_eval_callback",
+            }
         return {
             "meta": meta,
             "logits": logits.reshape(int(max_new_tokens), n_vocab),
@@ -474,6 +505,7 @@ def run_llama_greedy_trajectory(
                     for path in capture_paths
                 ],
             },
+            "layer_profile": profile_artifact,
         }
 
 

@@ -397,13 +397,16 @@ static void gated_deltanet_llama_avx2_grouped_forward_impl(
                                        int group_count,
                                        int state_dim,
                                        float norm_eps,
+                                       int head_begin,
+                                       int head_end,
                                        int pytorch_bf16_boundaries)
 {
 #if defined(__AVX2__)
     (void) norm_eps;
     if (!q || !k || !v || !g || !beta || !state_in || !state_out || !out ||
         num_heads <= 0 || group_count <= 0 || num_heads % group_count != 0 ||
-        state_dim <= 0 || state_dim > CK_DELTANET_MAX_STACK_DIM) {
+        state_dim <= 0 || state_dim > CK_DELTANET_MAX_STACK_DIM ||
+        head_begin < 0 || head_end < head_begin || head_end > num_heads) {
         return;
     }
     const float scale = ck_deltanet_llama_scale(state_dim);
@@ -412,7 +415,7 @@ static void gated_deltanet_llama_avx2_grouped_forward_impl(
     float column[CK_DELTANET_MAX_STACK_DIM];
     float q_scaled[CK_DELTANET_MAX_STACK_DIM];
 
-    for (int h = 0; h < num_heads; ++h) {
+    for (int h = head_begin; h < head_end; ++h) {
         /* ggml_repeat_4d tiles the compact Q/K head axis.  For H=48,G=16
          * the value heads bind Q/K groups 0..15, 0..15, 0..15. */
         const int group = h % group_count;
@@ -497,7 +500,34 @@ void gated_deltanet_llama_avx2_forward(const float *q,
 {
     gated_deltanet_llama_avx2_grouped_forward_impl(
         q, k, v, g, beta, state_in, state_out, out,
-        num_heads, group_count, state_dim, norm_eps, 0);
+        num_heads, group_count, state_dim, norm_eps, 0, num_heads, 0);
+}
+
+/*
+ * Orchestrator-facing range entry point. Heads own disjoint state/output
+ * slices, so a threadpool can partition them without changing any per-head
+ * reduction tree. Keep dispatch out of the numerical kernel itself.
+ */
+void gated_deltanet_llama_avx2_forward_head_range(
+                                       const float *q,
+                                       const float *k,
+                                       const float *v,
+                                       const float *g,
+                                       const float *beta,
+                                       const float *state_in,
+                                       float *state_out,
+                                       float *out,
+                                       int num_heads,
+                                       int group_count,
+                                       int state_dim,
+                                       float norm_eps,
+                                       int head_begin,
+                                       int head_end)
+{
+    gated_deltanet_llama_avx2_grouped_forward_impl(
+        q, k, v, g, beta, state_in, state_out, out,
+        num_heads, group_count, state_dim, norm_eps,
+        head_begin, head_end, 0);
 }
 
 void gated_deltanet_pytorch_grouped_bf16_forward(const float *q,
@@ -515,7 +545,7 @@ void gated_deltanet_pytorch_grouped_bf16_forward(const float *q,
 {
     gated_deltanet_llama_avx2_grouped_forward_impl(
         q, k, v, g, beta, state_in, state_out, out,
-        num_heads, group_count, state_dim, norm_eps, 1);
+        num_heads, group_count, state_dim, norm_eps, 0, num_heads, 1);
     const size_t count = (size_t)num_heads * (size_t)state_dim;
     for (size_t i = 0; i < count; ++i) {
         out[i] = bf16_to_float(float_to_bf16(out[i]));
