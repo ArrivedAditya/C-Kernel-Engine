@@ -86,6 +86,48 @@ class MultitokenParityEOSContractTests(unittest.TestCase):
 
 
 class PersistentTrajectoryParityTests(unittest.TestCase):
+    def test_llama_layer_profiler_is_a_persistent_public_callback_hook(self) -> None:
+        source = (
+            ROOT / "version" / "v8" / "scripts" / "llama_token_replay_v8.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn("--profile-layers-out", source)
+        self.assertIn('static constexpr const char prefix[] = "l_out-";', source)
+        self.assertIn("cparams.cb_eval = dump_eval_callback", source)
+        self.assertIn("write_layer_profile(dump_state)", source)
+
+    def test_trajectory_passes_llama_layer_profile_to_oracle(self) -> None:
+        rows = np.asarray([[0.0, 4.0, 1.0]], dtype=np.float32)
+        profile = Path("/tmp/llama-layers.csv")
+        with mock.patch.object(runner, "run_llama_greedy_trajectory", return_value={
+            "logits": rows,
+            "generated_tokens": [1],
+            "meta": {},
+            "layer_profile": {"path": str(profile)},
+        }) as llama_run, mock.patch.object(
+            runner,
+            "load_ck_greedy_trajectory_isolated",
+            return_value={"logits": rows, "generated_tokens": [1], "vocab": 3},
+        ):
+            report = runner.run_multitoken_trajectory_parity(
+                model_dir=Path("/tmp/model"),
+                gguf_path=Path("/tmp/model.gguf"),
+                prompt_tokens=[7],
+                max_new_tokens=1,
+                ctx_len=128,
+                top_k=3,
+                threads=1,
+                llama_no_repack=False,
+                llama_profile_layers_out=profile,
+            )
+        self.assertEqual(
+            llama_run.call_args.kwargs["profile_layers_out"],
+            profile,
+        )
+        self.assertEqual(
+            report["llama_layer_profile"],
+            {"path": str(profile)},
+        )
+
     def test_llama_helper_rejects_partially_matched_named_capture(self) -> None:
         source = (
             ROOT / "version" / "v8" / "scripts" / "llama_token_replay_v8.cpp"
