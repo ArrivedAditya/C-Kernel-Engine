@@ -31,6 +31,7 @@ closed with a list of missing kernels/templates.
 | Qwen2/Qwen3/Gemma3/Llama-style dense decoders | Supported at contract level | parity and perf | Uses standard attention + MLP path. |
 | Qwen3.5 text | Bring-up active, usable | safetensors + GGUF parity | Hybrid DeltaNet/full-attention decoder. Safetensors require Qwen3.5 norm `+1` transform except `linear_attn.norm.weight`. |
 | Gemma4 text | Bring-up active, usable | GGUF/safetensors parity | Hybrid full/sliding attention with per-layer embedding and per-layer RoPE control. |
+| Whisper Tiny/Base/Small | Supported for FP32 transcription | safetensors + PyTorch parity | Generated audio frontend, encoder, and decoder. JFK tokens match exactly; Base has a 33-second long-form fixture. Longer PCM16 WAV recordings use sequential source windows. |
 | Nematron-H | Not yet lowerable | Mamba kernels | Hybrid Mamba/attention decoder. Existing DeltaNet kernels are not a substitute for Mamba selective scan. |
 | Cohere Command-style models | Needs config access | tensor-name mapping audit | Main public checkpoints are gated in this environment. Start with config/weights access, then determine whether dense decoder mapping is enough. |
 
