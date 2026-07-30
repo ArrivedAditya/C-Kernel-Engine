@@ -343,9 +343,15 @@ def _run_parent(args: argparse.Namespace) -> int:
         encoder = json.loads(encoder_report.read_text(encoding="utf-8"))
         decoder = json.loads(decoder_report.read_text(encoding="utf-8"))
 
+    encoder_config = json.loads(
+        (encoder_dir / "config.json").read_text(encoding="utf-8")
+    )
+    decoder_config = json.loads(
+        (decoder_dir / "config.json").read_text(encoding="utf-8")
+    )
     report = {
         "schema": "cke.whisper_e2e",
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "ok",
         "wav": str(wav_path),
         "wav_sha256": _sha256(wav_path),
@@ -353,6 +359,38 @@ def _run_parent(args: argparse.Namespace) -> int:
         "decoder_run_dir": str(decoder_dir),
         "encoder_runtime_sha256": _sha256(encoder_dir / "libmodel.so"),
         "decoder_runtime_sha256": _sha256(decoder_dir / "libmodel.so"),
+        "provenance": {
+            "encoder": {
+                "config_sha256": _sha256(encoder_dir / "config.json"),
+                "weights_sha256": _sha256(encoder_dir / "weights.bump"),
+                "manifest_sha256": _sha256(
+                    encoder_dir / "weights_manifest.map"
+                ),
+                "layers": int(encoder_config["num_layers"]),
+                "embed_dim": int(encoder_config["embed_dim"]),
+                "heads": int(encoder_config["num_heads"]),
+                "context_length": int(encoder_config["context_length"]),
+            },
+            "decoder": {
+                "config_sha256": _sha256(decoder_dir / "config.json"),
+                "weights_sha256": _sha256(decoder_dir / "weights.bump"),
+                "manifest_sha256": _sha256(
+                    decoder_dir / "weights_manifest.map"
+                ),
+                "generation_config_sha256": _sha256(
+                    decoder_dir / "generation_config.json"
+                ),
+                "tokenizer_sha256": _sha256(decoder_dir / "tokenizer.json"),
+                "layers": int(decoder_config["num_layers"]),
+                "embed_dim": int(decoder_config["embed_dim"]),
+                "heads": int(decoder_config["num_heads"]),
+                "context_length": int(decoder_config["context_length"]),
+                "encoder_memory_length": int(
+                    decoder_config["encoder_memory_length"]
+                ),
+                "vocab_size": int(decoder_config["vocab_size"]),
+            },
+        },
         "language": args.language,
         "task": args.task,
         "encoder": encoder,

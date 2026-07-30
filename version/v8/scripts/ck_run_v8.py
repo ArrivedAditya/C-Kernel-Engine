@@ -1654,7 +1654,233 @@ def run_pipeline(args: argparse.Namespace) -> int:
     return 0
 
 
+def _whisper_checkpoint_identity(checkpoint_dir: Path) -> dict[str, Any]:
+    files = sorted(
+        path
+        for path in checkpoint_dir.iterdir()
+        if path.is_file()
+        and path.suffix in {".json", ".safetensors", ".txt", ".model"}
+    )
+    return {
+        str(path.relative_to(checkpoint_dir)): _file_identity(path)
+        for path in files
+    }
+
+
+def _whisper_build_inputs(checkpoint_dir: Path, role: str) -> dict[str, Any]:
+    return {
+        "schema": "ck-v8-whisper-runtime-inputs-v1",
+        "role": role,
+        "checkpoint": _whisper_checkpoint_identity(checkpoint_dir),
+        "sources": _tree_identity(
+            [
+                SCRIPTS_DIR / "convert_safetensors_to_bump_v8.py",
+                SCRIPTS_DIR / "build_ir_v8.py",
+                SCRIPTS_DIR / "codegen_v8.py",
+                SCRIPTS_DIR / "codegen_core_v8.py",
+                SCRIPTS_DIR / "codegen_prefill_v8.py",
+                V8_ROOT / "circuits" / f"audio_transformer_{role}.json",
+                V8_ROOT / "model_maps" / "safetensors_ck_map.json",
+                KERNEL_REGISTRY_PATH,
+            ]
+        ),
+    }
+
+
+def _whisper_runtime_outputs(run_dir: Path) -> dict[str, Path]:
+    return {
+        name: run_dir / name
+        for name in (
+            "weights.bump",
+            "weights_manifest.json",
+            "weights_manifest.map",
+            "config.json",
+            "model_v8.c",
+            "libmodel.so",
+            "libckernel_engine.so",
+            "libckernel_tokenizer.so",
+        )
+    }
+
+
+def _build_whisper_role(
+    checkpoint_dir: Path,
+    run_dir: Path,
+    role: str,
+    *,
+    force_convert: bool,
+    force_compile: bool,
+) -> None:
+    if role not in {"encoder", "decoder"}:
+        raise ValueError(f"unsupported Whisper role: {role}")
+    run_dir.mkdir(parents=True, exist_ok=True)
+    step_regenerate_kernel_registry(force=False)
+    inputs = _whisper_build_inputs(checkpoint_dir, role)
+    stamp = run_dir / ".ck-whisper-runtime.json"
+    if (
+        not force_convert
+        and not force_compile
+        and _bundle_is_current(
+            stamp,
+            inputs=inputs,
+            outputs=_whisper_runtime_outputs(run_dir),
+        )
+    ):
+        log(f"  Using provenance-verified Whisper {role}: {run_dir}", C_DIM)
+        return
+
+    weights = run_dir / "weights.bump"
+    config = run_dir / "config.json"
+    manifest = run_dir / "weights_manifest.json"
+    run_cmd(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "convert_safetensors_to_bump_v8.py"),
+            "--checkpoint",
+            str(checkpoint_dir),
+            "--output",
+            str(weights),
+            "--config-out",
+            str(config),
+            "--manifest-out",
+            str(manifest),
+            "--arch",
+            f"whisper_{role}",
+        ],
+        cwd=PROJECT_ROOT,
+    )
+    _stage_safetensors_tokenizer_assets(checkpoint_dir, run_dir)
+
+    if role == "encoder":
+        ir = run_dir / "ir1.json"
+        layout = run_dir / "layout.json"
+        lowered = run_dir / "lowered.json"
+        call = run_dir / "call.json"
+        run_cmd(
+            [
+                sys.executable,
+                str(SCRIPTS_DIR / "build_ir_v8.py"),
+                "--manifest",
+                str(manifest),
+                "--mode",
+                "prefill",
+                "--output",
+                str(ir),
+                "--layout-output",
+                str(layout),
+                "--lowered-output",
+                str(lowered),
+                "--call-output",
+                str(call),
+                "--manifest-map-output",
+                str(run_dir / "weights_manifest.map"),
+                "--init-output",
+                str(run_dir / "init.json"),
+            ],
+            cwd=PROJECT_ROOT,
+        )
+        model_c = run_dir / "model_v8.c"
+        run_cmd(
+            [
+                sys.executable,
+                str(SCRIPTS_DIR / "codegen_v8.py"),
+                "--ir",
+                str(call),
+                "--layout",
+                str(layout),
+                "--output",
+                str(model_c),
+                "--strict-contracts",
+            ],
+            cwd=PROJECT_ROOT,
+        )
+    else:
+        ir_paths = step_build_ir(manifest, run_dir, force=True)
+        model_c = step_codegen(run_dir, ir_paths, force=True)
+
+    step_compile(model_c, run_dir, force=force_compile)
+    outputs = _whisper_runtime_outputs(run_dir)
+    _write_bundle_stamp(
+        stamp,
+        {
+            "inputs": inputs,
+            "outputs": {
+                name: _file_identity(path) for name, path in outputs.items()
+            },
+        },
+    )
+
+
+def step_build_whisper_runtimes(
+    model_input: str,
+    *,
+    run_dir: Path | None,
+    force_download: bool,
+    force_convert: bool,
+    force_compile: bool,
+) -> tuple[Path, Path]:
+    input_type, info = detect_input_type(model_input)
+    if input_type == "hf_id":
+        checkpoint_dir = step_download(
+            info["model_id"], CACHE_DIR, force=force_download
+        )
+        default_name = info["model_id"].replace("/", "--")
+    elif input_type == "local_dir":
+        checkpoint_dir = info["path"]
+        default_name = checkpoint_dir.name
+    else:
+        raise RuntimeError(
+            "audio checkpoint must be a Hugging Face model ID or local "
+            "safetensors directory"
+        )
+    if not _is_safetensors_checkpoint_dir(checkpoint_dir):
+        raise RuntimeError(
+            f"Whisper checkpoint has no safetensors weights: {checkpoint_dir}"
+        )
+
+    root = (
+        run_dir.expanduser().resolve()
+        if run_dir is not None
+        else CACHE_DIR / f"{default_name}--audio"
+    )
+    encoder = root / "encoder"
+    decoder = root / "decoder"
+    log_step(2, "Building generated Whisper encoder and decoder")
+    _build_whisper_role(
+        checkpoint_dir,
+        encoder,
+        "encoder",
+        force_convert=force_convert,
+        force_compile=force_compile,
+    )
+    _build_whisper_role(
+        checkpoint_dir,
+        decoder,
+        "decoder",
+        force_convert=force_convert,
+        force_compile=force_compile,
+    )
+    return encoder, decoder
+
+
 def run_audio_pipeline(args: argparse.Namespace) -> int:
+    encoder_run_dir = args.encoder_run_dir
+    decoder_run_dir = args.decoder_run_dir
+    model_input = getattr(args, "model", None)
+    if model_input:
+        encoder_run_dir, decoder_run_dir = step_build_whisper_runtimes(
+            str(model_input),
+            run_dir=getattr(args, "run_dir", None),
+            force_download=bool(getattr(args, "force_download", False)),
+            force_convert=bool(getattr(args, "force_convert", False)),
+            force_compile=bool(getattr(args, "force_compile", False)),
+        )
+    elif encoder_run_dir is None or decoder_run_dir is None:
+        raise RuntimeError(
+            "audio requires either a Whisper checkpoint or both "
+            "--encoder-run-dir and --decoder-run-dir"
+        )
+
     module_path = SCRIPTS_DIR / "run_whisper_v8.py"
     spec = importlib.util.spec_from_file_location("ck_v8_audio_runtime", module_path)
     if spec is None or spec.loader is None:
@@ -1664,9 +1890,9 @@ def run_audio_pipeline(args: argparse.Namespace) -> int:
     argv = [
         "run",
         "--encoder-run-dir",
-        str(args.encoder_run_dir),
+        str(encoder_run_dir),
         "--decoder-run-dir",
-        str(args.decoder_run_dir),
+        str(decoder_run_dir),
         "--wav",
         str(args.wav),
         "--language",
@@ -1698,9 +1924,7 @@ Examples:
     --mmproj hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf \\
     --image-path version/v8/test_assets/v8_vision_doc_card_72.png --prompt "Explain this image."
 
-  version/v8/scripts/cks-v8-run audio \\
-    --encoder-run-dir /path/to/whisper-tiny-encoder \\
-    --decoder-run-dir /path/to/whisper-tiny-decoder \\
+  version/v8/scripts/cks-v8-run audio hf://openai/whisper-base \\
     --wav /path/to/audio.wav
 """,
     )
@@ -1762,8 +1986,14 @@ Examples:
     audio_parser = subparsers.add_parser(
         "audio", help="Transcribe or translate WAV audio with generated runtimes"
     )
-    audio_parser.add_argument("--encoder-run-dir", type=Path, required=True)
-    audio_parser.add_argument("--decoder-run-dir", type=Path, required=True)
+    audio_parser.add_argument(
+        "model",
+        nargs="?",
+        help="Optional hf:// repository or local Whisper safetensors checkpoint",
+    )
+    audio_parser.add_argument("--run", dest="run_dir", type=Path)
+    audio_parser.add_argument("--encoder-run-dir", type=Path)
+    audio_parser.add_argument("--decoder-run-dir", type=Path)
     audio_parser.add_argument("--wav", type=Path, required=True)
     audio_parser.add_argument("--language", default="en")
     audio_parser.add_argument(
@@ -1771,6 +2001,9 @@ Examples:
     )
     audio_parser.add_argument("--max-tokens", type=int, default=128)
     audio_parser.add_argument("--output", type=Path)
+    audio_parser.add_argument("--force-download", action="store_true")
+    audio_parser.add_argument("--force-convert", action="store_true")
+    audio_parser.add_argument("--force-compile", action="store_true")
 
     subparsers.add_parser("list", help="List cached models")
 
