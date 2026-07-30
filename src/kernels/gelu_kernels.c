@@ -561,10 +561,9 @@ void gelu_exact_inplace(float *data, size_t n)
     }
 }
 
-// PyTorch GELU with approximate="none" over FP32 storage. Keep this provider
-// separate from gelu_exact_inplace, whose historical contract is the tanh
-// approximation despite its name.
-void gelu_pytorch_erf_f32_inplace(float *data, size_t n)
+// Deterministic scalar ERF GELU over FP32 storage. The computation widens to
+// FP64 and rounds once at the output boundary.
+void gelu_erf_fp64_f32_inplace(float *data, size_t n)
 {
     const double inv_sqrt_2 = 0.707106781186547524400844362104849039;
     ck_gelu_math_f64_fn reference_erf = ck_gelu_system_erf();
@@ -574,6 +573,13 @@ void gelu_pytorch_erf_f32_inplace(float *data, size_t n)
         const double erf_value = reference_erf ? reference_erf(scaled) : erf(scaled);
         data[i] = (float)(0.5 * (double)x * (1.0 + erf_value));
     }
+}
+
+// Retain the former public symbol for generated bundles built before the
+// numerical contract was given a provider-accurate name.
+void gelu_pytorch_erf_f32_inplace(float *data, size_t n)
+{
+    gelu_erf_fp64_f32_inplace(data, n);
 }
 
 // GGML-compatible GELU forward used by llama.cpp CPU F32 paths when

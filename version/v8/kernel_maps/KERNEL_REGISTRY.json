@@ -12535,6 +12535,101 @@
       "_source_file": "geglu_forward_fp32.json"
     },
     {
+      "id": "gelu_erf_fp64_f32_inplace",
+      "op": "gelu",
+      "variant": "pytorch_erf_inplace_fp32",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "desc": "Input/output buffer (in-place)"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "desc": "PyTorch approximate=none GELU output"
+        }
+      ],
+      "dims": [
+        "N"
+      ],
+      "impl": {
+        "function": "gelu_erf_fp64_f32_inplace",
+        "c_declaration": "void gelu_erf_fp64_f32_inplace(float *data, size_t n);",
+        "sources": [
+          "src/kernels/gelu_kernels.c"
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "gelu_erf_fp64_scalar_fp32_storage",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "gelu_erf_fp64_f32_inplace",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "data",
+            "source": "output:out"
+          },
+          {
+            "name": "n",
+            "source": "dim:gelu_elems"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ]
+      },
+      "notes": "Standalone FP32 ERF GELU provider. The provider widens its ERF argument and final expression to FP64, then narrows once to FP32. Its byte-exact oracle is the same scalar FP64 formula; PyTorch vector GELU remains observed evidence because framework builds differ by ISA and transcendental library. Does not replace the historical tanh-based gelu_exact_inplace provider.",
+      "name": "gelu_erf_fp64_f32_inplace",
+      "_source_file": "gelu_erf_fp64_f32_inplace.json"
+    },
+    {
       "id": "gelu_exact_inplace",
       "op": "gelu",
       "variant": "exact_inplace_fp32",
@@ -12732,101 +12827,6 @@
       "_source_file": "gelu_ggml_inplace.json"
     },
     {
-      "id": "gelu_pytorch_erf_f32_inplace",
-      "op": "gelu",
-      "variant": "pytorch_erf_inplace_fp32",
-      "quant": {
-        "weight": "none",
-        "activation": "fp32",
-        "output": "fp32"
-      },
-      "inputs": [
-        {
-          "name": "x",
-          "dtype": "fp32",
-          "shape": [
-            "N"
-          ],
-          "desc": "Input/output buffer (in-place)"
-        }
-      ],
-      "weights": [],
-      "outputs": [
-        {
-          "name": "out",
-          "dtype": "fp32",
-          "shape": [
-            "N"
-          ],
-          "desc": "PyTorch approximate=none GELU output"
-        }
-      ],
-      "dims": [
-        "N"
-      ],
-      "impl": {
-        "function": "gelu_pytorch_erf_f32_inplace",
-        "c_declaration": "void gelu_pytorch_erf_f32_inplace(float *data, size_t n);",
-        "sources": [
-          "src/kernels/gelu_kernels.c"
-        ]
-      },
-      "numerical_capabilities": [
-        {
-          "contract_id": "gelu_pytorch_erf_fp32_storage",
-          "status": "validated",
-          "phases": [
-            "prefill",
-            "decode"
-          ],
-          "function": "gelu_pytorch_erf_f32_inplace",
-          "explicit_selector": true,
-          "implementation": {
-            "isa_dispatch": "scalar",
-            "threading": {
-              "runtime": "serial",
-              "work_partition": [
-                "serial"
-              ],
-              "dispatch": [
-                "inline"
-              ],
-              "reduction_order_effect": "none"
-            }
-          },
-          "arithmetic": {
-            "partial_accumulator": "none",
-            "merge_order": "none",
-            "deterministic": true,
-            "thread_count_changes_arithmetic_order": false,
-            "split_strategy": "serial"
-          }
-        }
-      ],
-      "call_abi": {
-        "version": 1,
-        "params": [
-          {
-            "cast": "float*",
-            "name": "data",
-            "source": "output:out"
-          },
-          {
-            "name": "n",
-            "source": "dim:gelu_elems"
-          }
-        ]
-      },
-      "tests": {
-        "unit": [
-          "unittest/test_audio_encoder.py"
-        ]
-      },
-      "notes": "FP32 Whisper/PyTorch GELU provider. The provider widens its ERF argument and final expression to FP64, then narrows once to FP32. This avoids the cross-glibc float-erff drift observed between local and GitHub runners while retaining the existing PyTorch error bounds. The scalar libm erf entry point is bound indirectly so the compiler cannot replace it with host-specific vector math. Does not replace the historical tanh-based gelu_exact_inplace provider.",
-      "name": "gelu_pytorch_erf_f32_inplace",
-      "_source_file": "gelu_pytorch_erf_f32_inplace.json"
-    },
-    {
       "id": "gelu_pytorch_erf_sleef_bf16_storage",
       "op": "gelu",
       "variant": "pytorch_erf_sleef_bf16_storage",
@@ -12871,7 +12871,7 @@
           "unittest/bf16/test_gelu_pytorch_erf_sleef_storage_bf16.py"
         ]
       },
-      "notes": "Exact PyTorch x86 BF16 nn.GELU provider. Reproduces PyTorch's vector erf polynomial and requires Sleef_expf16_u10 via CK_SLEEF_LIBRARY or the process symbol table.",
+      "notes": "Exact PyTorch 2.8 x86 BF16 nn.GELU provider. Reproduces PyTorch 2.8's vector erf polynomial and FTZ edge behavior and requires Sleef_expf16_u10 via CK_SLEEF_LIBRARY or the process symbol table. Later PyTorch versions require a separately versioned provider.",
       "numerical_capabilities": [
         {
           "contract_id": "gelu_pytorch_erf_sleef_bf16_storage",

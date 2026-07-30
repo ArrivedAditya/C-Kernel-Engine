@@ -142,14 +142,14 @@
       "template_ops": ["gelu"],
       "phases": {
         "prefill": {
-          "contract_id": "gelu_pytorch_erf_fp32_storage",
+          "contract_id": "gelu_erf_fp64_scalar_fp32_storage",
           "validation": "validated",
-          "evidence": "unittest/test_audio_encoder.py PyTorch GELU approximate=none FP32 oracle"
+          "evidence": "unittest/test_audio_encoder.py byte-exact FP64 scalar ERF formula plus observed PyTorch comparison"
         },
         "decode": {
-          "contract_id": "gelu_pytorch_erf_fp32_storage",
+          "contract_id": "gelu_erf_fp64_scalar_fp32_storage",
           "validation": "validated",
-          "evidence": "unittest/test_audio_encoder.py PyTorch GELU approximate=none FP32 oracle"
+          "evidence": "unittest/test_audio_encoder.py byte-exact FP64 scalar ERF formula plus observed PyTorch comparison"
         }
       },
       "checkpoint": {

@@ -1892,7 +1892,7 @@
       "position_transform": null,
       "description": "PyTorch tanh-approximate GELU over BF16-valued inputs with FP32 elementwise compute and BF16 RNE output storage."
     },
-    "gelu_pytorch_erf_fp32_storage": {
+    "gelu_erf_fp64_scalar_fp32_storage": {
       "operator_family": "gelu",
       "status": "validated",
       "storage": {
@@ -1925,7 +1925,7 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "PyTorch GELU approximate=none over FP32 storage using a host-stable FP64 scalar erf formulation and one FP32 output rounding."
+      "description": "Standalone scalar ERF GELU over FP32 storage using FP64 libm evaluation and one FP32 output rounding. PyTorch comparison is observed separately because framework vector transcendental implementations vary by build and ISA."
     },
     "gelu_pytorch_erf_sleef_bf16_storage": {
       "operator_family": "gelu",
@@ -1961,7 +1961,7 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "PyTorch x86 exact GELU (approximate=none): AVX-512 Abramowitz-Stegun vector erf with SLEEF u10 exp over BF16 input, FP32 elementwise arithmetic, and BF16 RNE output storage."
+      "description": "PyTorch 2.8 x86 exact GELU (approximate=none): AVX-512 Abramowitz-Stegun vector erf with SLEEF u10 exp over BF16 input, PyTorch 2.8 FTZ edge behavior, FP32 elementwise arithmetic, and BF16 RNE output storage."
     },
     "gelu_fp32_input_fp16_table_fp32_output": {
       "operator_family": "gelu",

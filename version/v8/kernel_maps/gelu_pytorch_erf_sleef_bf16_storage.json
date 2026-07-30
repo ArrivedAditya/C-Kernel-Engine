@@ -33,7 +33,7 @@
   "tests": {
     "unit": ["unittest/bf16/test_gelu_pytorch_erf_sleef_storage_bf16.py"]
   },
-  "notes": "Exact PyTorch x86 BF16 nn.GELU provider. Reproduces PyTorch's vector erf polynomial and requires Sleef_expf16_u10 via CK_SLEEF_LIBRARY or the process symbol table.",
+  "notes": "Exact PyTorch 2.8 x86 BF16 nn.GELU provider. Reproduces PyTorch 2.8's vector erf polynomial and FTZ edge behavior and requires Sleef_expf16_u10 via CK_SLEEF_LIBRARY or the process symbol table. Later PyTorch versions require a separately versioned provider.",
   "numerical_capabilities": [
     {
       "contract_id": "gelu_pytorch_erf_sleef_bf16_storage",

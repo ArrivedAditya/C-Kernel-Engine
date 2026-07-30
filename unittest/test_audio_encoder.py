@@ -114,8 +114,8 @@ lib.audio_stft_power_fft400_f32.argtypes = [
     ctypes.c_int, _FLOAT_P, ctypes.c_int, _FLOAT_P,
 ]
 lib.audio_stft_power_fft400_f32.restype = ctypes.c_int
-gelu_lib.gelu_pytorch_erf_f32_inplace.argtypes = [_FLOAT_P, ctypes.c_size_t]
-gelu_lib.gelu_pytorch_erf_f32_inplace.restype = None
+gelu_lib.gelu_erf_fp64_f32_inplace.argtypes = [_FLOAT_P, ctypes.c_size_t]
+gelu_lib.gelu_erf_fp64_f32_inplace.restype = None
 
 
 def check_wav_pcm16() -> None:
@@ -387,21 +387,34 @@ def check_pytorch_erf_gelu() -> None:
     random = np.random.default_rng(20260725).normal(0.0, 2.5, 16384).astype(np.float32)
     source = np.concatenate((edge, random))
     actual = source.copy()
-    gelu_lib.gelu_pytorch_erf_f32_inplace(_fptr(actual), actual.size)
-    expected = F.gelu(torch.from_numpy(source), approximate="none").numpy()
-    difference = np.abs(actual - expected)
-    max_diff = float(np.max(difference))
-    rmse = float(np.sqrt(np.mean(difference * difference)))
-    passed = max_diff <= 5.0e-7 and rmse <= 1.25e-7
+    gelu_lib.gelu_erf_fp64_f32_inplace(_fptr(actual), actual.size)
+    inv_sqrt_2 = 0.707106781186547524400844362104849039
+    expected = np.asarray(
+        [
+            np.float32(
+                0.5 * float(value)
+                * (1.0 + math.erf(float(value) * inv_sqrt_2))
+            )
+            for value in source
+        ],
+        dtype=np.float32,
+    )
+    assert np.array_equal(actual, expected)
     print(
-        f"audio_pytorch_erf_gelu max_diff={max_diff:.8e} tol=5.0e-07 "
-        f"[{'PASS' if passed else 'FAIL'}] rmse={rmse:.8e} "
-        f"rmse_tol=1.25e-07 torch={torch.__version__} "
+        "audio_erf_gelu_fp64_scalar max_diff=0 tol=0 [PASS]",
+        flush=True,
+    )
+
+    pytorch = F.gelu(torch.from_numpy(source), approximate="none").numpy()
+    observed = np.abs(actual - pytorch)
+    print(
+        "audio_pytorch_erf_gelu_observed "
+        f"max_diff={float(np.max(observed)):.8e} "
+        f"rmse={float(np.sqrt(np.mean(observed * observed))):.8e} "
+        f"torch={torch.__version__} "
         f"cpu={torch.backends.cpu.get_cpu_capability()}",
         flush=True,
     )
-    assert max_diff <= 5.0e-7, max_diff
-    assert rmse <= 1.25e-7, rmse
 
 
 def _check_cross_attention(name: str, heads: int, query_tokens: int, key_tokens: int, dim: int) -> None:

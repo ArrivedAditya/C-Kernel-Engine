@@ -1,5 +1,5 @@
 {
-  "id": "gelu_pytorch_erf_f32_inplace",
+  "id": "gelu_erf_fp64_f32_inplace",
   "op": "gelu",
   "variant": "pytorch_erf_inplace_fp32",
   "quant": {
@@ -26,16 +26,16 @@
   ],
   "dims": ["N"],
   "impl": {
-    "function": "gelu_pytorch_erf_f32_inplace",
-    "c_declaration": "void gelu_pytorch_erf_f32_inplace(float *data, size_t n);",
+    "function": "gelu_erf_fp64_f32_inplace",
+    "c_declaration": "void gelu_erf_fp64_f32_inplace(float *data, size_t n);",
     "sources": ["src/kernels/gelu_kernels.c"]
   },
   "numerical_capabilities": [
     {
-      "contract_id": "gelu_pytorch_erf_fp32_storage",
+      "contract_id": "gelu_erf_fp64_scalar_fp32_storage",
       "status": "validated",
       "phases": ["prefill", "decode"],
-      "function": "gelu_pytorch_erf_f32_inplace",
+      "function": "gelu_erf_fp64_f32_inplace",
       "explicit_selector": true,
       "implementation": {
         "isa_dispatch": "scalar",
@@ -65,5 +65,5 @@
   "tests": {
     "unit": ["unittest/test_audio_encoder.py"]
   },
-  "notes": "FP32 Whisper/PyTorch GELU provider. The provider widens its ERF argument and final expression to FP64, then narrows once to FP32. This avoids the cross-glibc float-erff drift observed between local and GitHub runners while retaining the existing PyTorch error bounds. The scalar libm erf entry point is bound indirectly so the compiler cannot replace it with host-specific vector math. Does not replace the historical tanh-based gelu_exact_inplace provider."
+  "notes": "Standalone FP32 ERF GELU provider. The provider widens its ERF argument and final expression to FP64, then narrows once to FP32. Its byte-exact oracle is the same scalar FP64 formula; PyTorch vector GELU remains observed evidence because framework builds differ by ISA and transcendental library. Does not replace the historical tanh-based gelu_exact_inplace provider."
 }

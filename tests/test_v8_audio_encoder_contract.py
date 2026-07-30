@@ -521,24 +521,24 @@ class AudioEncoderContractTests(unittest.TestCase):
         self.assertEqual(len(parsed), 1)
         self.assertEqual(parsed[0].status, "pass")
         failed = nightly.parse_sub_tests(
-            "audio_pytorch_erf_gelu "
-            "max_diff=1.19209290e-06 tol=5.0e-07 [FAIL] "
+            "audio_erf_gelu_fp64_scalar "
+            "max_diff=1.19209290e-06 tol=0 [FAIL] "
             "rmse=1.3e-07 rmse_tol=1.25e-07\n"
         )
         self.assertEqual(len(failed), 1)
-        self.assertEqual(failed[0].name, "audio_pytorch_erf_gelu")
+        self.assertEqual(failed[0].name, "audio_erf_gelu_fp64_scalar")
         self.assertEqual(failed[0].status, "fail")
         self.assertEqual(failed[0].max_diff, 1.1920929e-6)
-        self.assertEqual(failed[0].tolerance, 5.0e-7)
+        self.assertEqual(failed[0].tolerance, 0.0)
 
     def test_standalone_attention_library_links_its_bf16_gemm_dependency(self):
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         rule = makefile.split("$(LIB_ATTENTION):", 1)[1].split("\n\n", 1)[0]
         self.assertIn("src/kernels/gemm_kernels_bf16.c", rule)
 
-    def test_pytorch_erf_gelu_uses_fp64_scalar_libm(self):
+    def test_audio_erf_gelu_uses_fp64_scalar_libm(self):
         kernel = json.loads(
-            (V8 / "kernel_maps" / "gelu_pytorch_erf_f32_inplace.json")
+            (V8 / "kernel_maps" / "gelu_erf_fp64_f32_inplace.json")
             .read_text(encoding="utf-8")
         )
         capability = kernel["numerical_capabilities"][0]
@@ -547,12 +547,29 @@ class AudioEncoderContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         function = source.split(
-            "void gelu_pytorch_erf_f32_inplace(float *data, size_t n)", 1
+            "void gelu_erf_fp64_f32_inplace(float *data, size_t n)", 1
         )[1].split("\n}", 1)[0]
         self.assertIn("ck_gelu_system_erf()", function)
         self.assertIn("reference_erf(", function)
         self.assertIn("const double scaled", function)
         self.assertIn("data[i] = (float)", function)
+
+    def test_bf16_erf_gelu_oracle_is_pytorch_version_scoped(self):
+        source = (
+            ROOT
+            / "unittest"
+            / "bf16"
+            / "test_gelu_pytorch_erf_sleef_storage_bf16.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('torch_version.startswith("2.8.")', source)
+        kernel = json.loads(
+            (
+                V8
+                / "kernel_maps"
+                / "gelu_pytorch_erf_sleef_bf16_storage.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertIn("PyTorch 2.8", kernel["notes"])
 
 
 if __name__ == "__main__":

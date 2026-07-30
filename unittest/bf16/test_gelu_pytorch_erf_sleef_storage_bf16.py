@@ -17,6 +17,17 @@ KERNEL.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_size_t]
 
 
 def main() -> int:
+    torch_version = torch.__version__.split("+", 1)[0]
+    if not (
+        torch_version == "2.8"
+        or torch_version.startswith("2.8.")
+    ):
+        print(
+            "SKIP: gelu_pytorch_erf_sleef_bf16_storage is certified "
+            f"against PyTorch 2.8 FTZ semantics; installed={torch.__version__}"
+        )
+        return 0
+
     if not os.environ.get("CK_SLEEF_LIBRARY"):
         candidate = Path(torch.__file__).resolve().parent / "lib" / "libtorch_cpu.so"
         if not candidate.is_file():
