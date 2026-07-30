@@ -2996,6 +2996,49 @@ CK_EXPORT int ck_model_forward_mixed(const float *prefix_embeddings,
 """
 
 
+def emit_prefill_weight_prepare_function(ops: List[Dict]) -> str:
+    """Emit load-time preparation for prefill-only packed weight providers.
+
+    The provider owns ISA, shape, and environment eligibility. Codegen supplies
+    only unique map-resolved weight pointers and dimensions.
+    """
+    weights: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for op in ops:
+        if "q4_k_q8_k" not in str(op.get("function", "")):
+            continue
+        args = op.get("args", []) or []
+        b_expr = _find_arg_expr(args, arg_name="B")
+        n_expr = _find_arg_expr(args, arg_name="N")
+        k_expr = _find_arg_expr(args, arg_name="K")
+        if not b_expr or not n_expr or not k_expr:
+            continue
+        key = (b_expr, n_expr, k_expr)
+        if key not in seen:
+            seen.add(key)
+            weights.append(key)
+
+    lines = [
+        "static void ck_prepare_prefill_weights(CKModel *model) {",
+        "    if (!model) return;",
+        "    int prepared = 0;",
+    ]
+    for b_expr, n_expr, k_expr in weights:
+        lines.append(
+            "    prepared += ck_q4k_prepare_vnni_x16_weight("
+            f"{b_expr}, {n_expr}, {k_expr});"
+        )
+    lines.extend(
+        [
+            "    if (prepared > 0) {",
+            '        fprintf(stderr, "[CK parallel prefill] Prepared %d AVX-512 VNNI x16 Q4_K weights at load time\\n", prepared);',
+            "    }",
+            "}",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def generate_prefill(ir_path: Path, layout_path: Path = None, profile: bool = False, dump: bool = False) -> str:
     """Generate prefill C code from IR.
 
@@ -3021,6 +3064,7 @@ def generate_prefill(ir_path: Path, layout_path: Path = None, profile: bool = Fa
  */
 ''')
 
+    parts.append(emit_prefill_weight_prepare_function(ops))
     parts.append(emit_prefill_function(ops, config, profile=profile, dump=dump))
     parts.append(emit_prefill_from_embedded_function(ops, config, profile=profile, dump=dump))
     bridge_api = emit_multimodal_bridge_api(ops, config)

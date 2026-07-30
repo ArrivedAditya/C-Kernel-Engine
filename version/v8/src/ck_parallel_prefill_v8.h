@@ -40,6 +40,21 @@ void ck_parallel_prefill_shutdown(void);
 /** Release lazily repacked Q4_K weights at model/test teardown. */
 void ck_q4k_packed_weight_cache_clear(void);
 
+/**
+ * Prepare one Q4_K weight for the AVX-512 VNNI x16 prefill provider.
+ *
+ * Returns 1 when the weight is eligible and resident in the cache, otherwise
+ * 0. Generated initialization uses this to keep repacking out of the first
+ * measured prompt without changing the on-disk weight format.
+ */
+int ck_q4k_prepare_vnni_x16_weight(const void *B, int N, int K);
+
+void gated_deltanet_llama_chunk64_prefill_parallel_dispatch(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int rows, int num_heads, int group_count, int state_dim, float norm_eps);
+
 /* Parallel GEMM Wrappers - same signatures as serial GEMM functions */
 void gemm_nt_q5_0_q8_0_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
@@ -47,6 +62,10 @@ void gemm_nt_q5_0_q8_0_parallel_dispatch(
 
 void gemm_nt_q8_0_q8_0_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K);
+
+void gemm_nt_q8_0_q8_0_contract_parallel_dispatch(
+    const float *A, const void *B, const float *bias, float *C,
     int M, int N, int K);
 
 void gemm_nt_q4_k_q8_k_parallel_dispatch(
@@ -86,6 +105,9 @@ void gemm_nt_q5_k_parallel_dispatch(
 #define gemm_nt_q8_0_q8_0(A, B, bias, C, M, N, K) \
     gemm_nt_q8_0_q8_0_parallel_dispatch(A, B, bias, C, M, N, K)
 
+#define gemm_nt_q8_0_q8_0_contract(A, B, bias, C, M, N, K) \
+    gemm_nt_q8_0_q8_0_contract_parallel_dispatch(A, B, bias, C, M, N, K)
+
 #define gemm_nt_q4_k_q8_k(A, B, bias, C, M, N, K) \
     gemm_nt_q4_k_q8_k_parallel_dispatch(A, B, bias, C, M, N, K)
 
@@ -97,6 +119,13 @@ void gemm_nt_q5_k_parallel_dispatch(
 
 #define gemm_nt_q5_k(A, B, bias, C, M, N, K) \
     gemm_nt_q5_k_parallel_dispatch(A, B, bias, C, M, N, K)
+
+#define gated_deltanet_llama_avx2_prefill_forward( \
+        q, k, v, g, beta, state_in, state_out, out, \
+        rows, num_heads, group_count, state_dim, norm_eps) \
+    gated_deltanet_llama_chunk64_prefill_parallel_dispatch( \
+        q, k, v, g, beta, state_in, state_out, out, \
+        rows, num_heads, group_count, state_dim, norm_eps)
 
 #endif /* CK_PARALLEL_PREFILL */
 

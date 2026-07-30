@@ -3162,6 +3162,9 @@ static int g_ck_skip_decode_logits = 0;
 /* Forward declarations */
 static void ck_decode(CKModel *model, int32_t token);
 static void ck_prefill(CKModel *model, const int32_t *tokens, int count);
+#ifdef CK_HAS_PREFILL
+static void ck_prepare_prefill_weights(CKModel *model);
+#endif
 static int ck_trace_pos_enabled(void);
 static void ck_trace_pos(const char *stage, int32_t token, int count, int before_pos, int after_pos);
 
@@ -3355,6 +3358,9 @@ CK_EXPORT int ck_model_init(const char *weights_path) {{
 #ifdef CK_PARALLEL_PREFILL
     ck_parallel_prefill_init();
 #endif
+#ifdef CK_HAS_PREFILL
+    ck_prepare_prefill_weights(g_model);
+#endif
 #ifdef CK_PARITY_DUMP
     ck_dump_init(NULL);  /* Initialize parity dumping to ck_parity_dumps/dump.bin */
 #endif
@@ -3372,6 +3378,9 @@ CK_EXPORT int ck_model_init_with_manifest(const char *weights_path, const char *
 #endif
 #ifdef CK_PARALLEL_PREFILL
     ck_parallel_prefill_init();
+#endif
+#ifdef CK_HAS_PREFILL
+    ck_prepare_prefill_weights(g_model);
 #endif
 #ifdef CK_PARITY_DUMP
     ck_dump_init(NULL);

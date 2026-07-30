@@ -155,6 +155,10 @@ extern void gemm_nt_q4_k_packed_meta_q8_k_tile(const void *A_q8,
                                                int m0, int m1, int n0, int n1);
 extern void gemm_nt_q6_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
+extern void gemm_nt_q8_0_q8_0_contract(const float *A, const void *B,
+                                        const float *bias, float *C,
+                                        int M, int N, int K);
+extern int ck_strict_parity_enabled(void);
 extern void swiglu_forward_exact(const float *input, float *output, int tokens, int dim);
 extern void gemm_nt_q6_k_q8_k_tile(const void *A, const void *B, const float *bias,
                                     float *C, int M, int N, int K,
@@ -165,6 +169,16 @@ extern void gemm_nt_q5_1_q8_1(const float *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q5_k(const float *A, const void *B, const float *bias,
                           float *C, int M, int N, int K);
+extern void gated_deltanet_llama_avx2_prefill_forward(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int rows, int num_heads, int group_count, int state_dim, float norm_eps);
+extern void gated_deltanet_llama_chunk64_head_forward(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int rows, int num_heads, int group_count, int head, int state_dim);
 
 /* ============================================================================
  * Lifecycle
@@ -205,7 +219,82 @@ typedef struct {
     int          K;
 } q4k_repacked_gemv_args_t;
 
+typedef struct {
+    const float *q;
+    const float *k;
+    const float *v;
+    const float *g;
+    const float *beta;
+    const float *state_in;
+    float *state_out;
+    float *out;
+    int rows;
+    int num_heads;
+    int group_count;
+    int state_dim;
+} deltanet_chunk64_args_t;
+
 static int ck_min_int(int a, int b) { return a < b ? a : b; }
+static int ck_env_enabled(const char *name);
+
+static int ck_deltanet_chunk64_available(void)
+{
+#if defined(__AVX2__)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+static void work_deltanet_chunk64_heads(int ith, int nth, void *userdata)
+{
+    deltanet_chunk64_args_t *args = (deltanet_chunk64_args_t *)userdata;
+    for (int head = ith; head < args->num_heads; head += nth) {
+        gated_deltanet_llama_chunk64_head_forward(
+            args->q, args->k, args->v, args->g, args->beta,
+            args->state_in, args->state_out, args->out,
+            args->rows, args->num_heads, args->group_count,
+            head, args->state_dim);
+    }
+}
+
+void gated_deltanet_llama_chunk64_prefill_parallel_dispatch(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int rows, int num_heads, int group_count, int state_dim, float norm_eps)
+{
+    ck_threadpool_t *pool = ck_threadpool_global();
+    if (!ck_env_enabled("CK_ENABLE_DELTANET_CHUNK64_PREFILL") ||
+        !ck_deltanet_chunk64_available() ||
+        !pool || ck_threadpool_n_threads(pool) <= 1 ||
+        rows <= 1 || num_heads <= 1 || group_count <= 0 ||
+        num_heads % group_count != 0 || state_dim <= 0 || state_dim > 256) {
+        gated_deltanet_llama_avx2_prefill_forward(
+            q, k, v, g, beta, state_in, state_out, out,
+            rows, num_heads, group_count, state_dim, norm_eps);
+        return;
+    }
+
+    deltanet_chunk64_args_t args = {
+        .q = q,
+        .k = k,
+        .v = v,
+        .g = g,
+        .beta = beta,
+        .state_in = state_in,
+        .state_out = state_out,
+        .out = out,
+        .rows = rows,
+        .num_heads = num_heads,
+        .group_count = group_count,
+        .state_dim = state_dim,
+    };
+    int active = ck_threadpool_n_threads(pool);
+    if (active > num_heads) active = num_heads;
+    ck_threadpool_dispatch_n(
+        pool, active, work_deltanet_chunk64_heads, &args);
+}
 
 static int ck_env_enabled(const char *name)
 {
@@ -828,6 +917,16 @@ static int ck_should_use_qwen36_q4k_avx512_x16(
     return N == 34816 || N == 6144;
 }
 
+int ck_q4k_prepare_vnni_x16_weight(const void *B, int N, int K)
+{
+    /*
+     * Reuse production eligibility so initialization cannot create a second,
+     * subtly different provider-selection policy.
+     */
+    if (!ck_should_use_qwen36_q4k_avx512_x16(16, N, K)) return 0;
+    return ck_get_q4k_packed_vnni_x16_cached(B, N, K) != NULL;
+}
+
 static int ck_select_qwen36_q4k_avx512_x16_threads(
         const ck_threadpool_t *pool, int M, int N, int K)
 {
@@ -882,6 +981,23 @@ static void work_gemm_nt_q8_0_q8_0(int ith, int nth, void *args)
         a->B,
         a->bias,
         a->C + (size_t)r0 * a->N,
+        r1 - r0, a->N, a->K
+    );
+}
+
+static void work_gemm_nt_q8_0_q8_0_contract(int ith, int nth, void *args)
+{
+    const gemm_args_t *a = (const gemm_args_t *)args;
+    const int dr = (a->M + nth - 1) / nth;
+    const int r0 = dr * ith;
+    const int r1 = ck_min_int(r0 + dr, a->M);
+    if (r0 >= a->M) return;
+
+    gemm_nt_q8_0_q8_0_contract(
+        (const float *)a->A + (size_t)r0 * (size_t)a->K,
+        a->B,
+        a->bias,
+        a->C + (size_t)r0 * (size_t)a->N,
         r1 - r0, a->N, a->K
     );
 }
@@ -1191,6 +1307,30 @@ void gemm_nt_q8_0_q8_0_parallel_dispatch(
         .A_row_bytes = A_row_bytes
     };
     ck_threadpool_dispatch_n(pool, ck_select_gemm_active_threads(pool, M, N, K), work_gemm_nt_q8_0_q8_0, &args);
+}
+
+void gemm_nt_q8_0_q8_0_contract_parallel_dispatch(
+    const float *A, const void *B, const float *bias, float *C,
+    int M, int N, int K)
+{
+    ck_threadpool_t *pool = ck_threadpool_global();
+    if (ck_strict_parity_enabled() ||
+        ck_env_enabled("CK_DISABLE_Q80_CONTRACT_PARALLEL_PREFILL") ||
+        !pool || ck_threadpool_n_threads(pool) <= 1 || M <= 1 ||
+        ck_should_run_gemm_serial(pool, M, N, K)) {
+        gemm_nt_q8_0_q8_0_contract(A, B, bias, C, M, N, K);
+        return;
+    }
+
+    gemm_args_t args = {
+        .A = A, .B = B, .bias = bias, .C = C,
+        .M = M, .N = N, .K = K,
+        .A_row_bytes = (size_t)K * sizeof(float),
+    };
+    int active = ck_select_gemm_active_threads(pool, M, N, K);
+    if (active > M) active = M;
+    ck_threadpool_dispatch_n(
+        pool, active, work_gemm_nt_q8_0_q8_0_contract, &args);
 }
 
 

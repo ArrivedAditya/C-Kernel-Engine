@@ -143,15 +143,13 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--provider") == 0 && i + 1 < argc) provider = argv[++i];
     }
 
-    if ((k % QK_K) != 0 || (m % 4) != 0 || m <= 0 || n <= 0 ||
+    if ((k % QK_K) != 0 || m <= 0 || n <= 0 ||
         (strcmp(provider, "baseline") != 0 && strcmp(provider, "mreuse") != 0 &&
          strcmp(provider, "4m") != 0 &&
          strcmp(provider, "8m") != 0 &&
          strcmp(provider, "4m-vnni-x8") != 0 &&
          strcmp(provider, "16m-vnni-x16") != 0)) {
-        fprintf(stderr,
-                "invalid packed-prefill shape M=%d N=%d K=%d "
-                "(M must contain complete four-row groups)\n",
+        fprintf(stderr, "invalid packed-prefill shape M=%d N=%d K=%d\n",
                 m, n, k);
         return 2;
     }
