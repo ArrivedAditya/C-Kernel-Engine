@@ -527,6 +527,18 @@ class AttentionContractV8Tests(unittest.TestCase):
                     "predicate": {"min_m": 2, "min_n": 2048, "min_k": 8192},
                 },
                 {
+                    "id": "qwen36_recurrent_qkv_output_tiles",
+                    "work_partition": "output_tiles",
+                    "predicate": {
+                        "min_m": 4,
+                        "max_m": 63,
+                        "min_n": 10240,
+                        "max_n": 10240,
+                        "min_k": 5120,
+                        "max_k": 5120,
+                    },
+                },
+                {
                     "id": "independent_rows_fallback",
                     "work_partition": "independent_rows",
                     "predicate": {"fallback": True},
@@ -540,17 +552,16 @@ class AttentionContractV8Tests(unittest.TestCase):
         predicate = kernel["implementation"]["work_partition_routing"]["routes"][0]["predicate"]
         source = (V8_ROOT / "src" / "ck_parallel_prefill_v8.c").read_text(encoding="utf-8")
         self.assertIn(f'N < {predicate["min_n"]} || K < {predicate["min_k"]}', source)
+        self.assertIn("N == 10240 && K == 5120", source)
         self.assertIn("M <= 1", source)
         self.assertNotIn("CK_ENABLE_Q6K_Q8K_2D_PREFILL", source)
 
     def test_q6_short_wide_prefill_uses_measured_m4_provider(self) -> None:
         source = (V8_ROOT / "src" / "ck_parallel_prefill_v8.c").read_text(encoding="utf-8")
-        self.assertIn(
-            "return M >= 4 && M <= 63 && N >= 4096 && K >= 8192;",
-            source,
-        )
+        self.assertIn("short_mlp_down || qwen36_recurrent_qkv", source)
+        self.assertIn("N == 10240 && K == 5120", source)
         self.assertIn("short_wide_q6 ? 8 : 16", source)
-        self.assertIn("short_wide_q6 ? 128 : 256", source)
+        self.assertIn("qwen36_recurrent_qkv ? 64", source)
         self.assertIn("gemm_nt_q6_k_q8_k_m4_tile", source)
 
     def test_q6_benchmark_defaults_to_gcc_provenance(self) -> None:

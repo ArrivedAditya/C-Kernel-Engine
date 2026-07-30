@@ -3636,6 +3636,18 @@ test-qwen36-q6k-m4-performance: $(LIB)
 			--warmup $${CK_QWEN36_Q6_WARMUP:-1} \
 			--iters $${CK_QWEN36_Q6_ITERS:-3} \
 			--min-m4-speedup $${CK_QWEN36_Q6_MIN_SPEEDUP:-1.05}
+	@echo "Running Qwen3.6 Q6_K recurrent-QKV M4 exactness + performance gate..."
+	@CK_NUM_THREADS=$${CK_NUM_THREADS:-24} OMP_NUM_THREADS=1 \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_q6k_prefill_tile.py \
+			--mode compare-m4 \
+			--m $${CK_QWEN36_Q6_RECURRENT_M:-23} \
+			--n $${CK_QWEN36_Q6_RECURRENT_N:-10240} \
+			--k $${CK_QWEN36_Q6_RECURRENT_K:-5120} \
+			--tile-m 8 --tile-n 64 \
+			--threads $${CK_NUM_THREADS:-24} \
+			--warmup $${CK_QWEN36_Q6_WARMUP:-1} \
+			--iters $${CK_QWEN36_Q6_ITERS:-3} \
+			--min-m4-speedup $${CK_QWEN36_Q6_RECURRENT_MIN_SPEEDUP:-1.10}
 
 test-q6k-prefill-dispatch-sweep: $(LIB)
 	@echo "Running Q6_K x Q8_K prefill dispatch sweep..."

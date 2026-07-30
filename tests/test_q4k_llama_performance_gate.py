@@ -153,6 +153,28 @@ class Q4KLlamaPerformanceGateTests(unittest.TestCase):
         self.assertIn("CK_V8_FORCE_BATCHED_PREFILL", dispatcher)
         self.assertIn("CK_DISABLE_Q4K_AVX512_X16_PREFILL", dispatcher)
 
+    def test_qwen36_x16_recurrent_tail_batches_only_exact_gemv_rows(self) -> None:
+        dispatcher = (
+            ROOT / "version" / "v8" / "src" / "ck_parallel_prefill_v8.c"
+        ).read_text(encoding="utf-8")
+        worker = re.search(
+            r"static void work_gemv_q4_k_q8_k_repacked_x16\(.*?^}",
+            dispatcher,
+            re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(worker)
+        self.assertIn("for (int row = 0; row < a->M; ++row)", worker.group(0))
+        self.assertIn("row * a->A_row_bytes", worker.group(0))
+        self.assertIn("row * (size_t)a->N", worker.group(0))
+        self.assertIn(
+            "gemm_nt_q4_k_packed_vnni_x16_q8_k_gemv_order",
+            worker.group(0),
+        )
+
+        self.assertIn("packed_vnni_x16 && N == 6144", dispatcher)
+        self.assertIn("CK_DISABLE_Q4K_X16_BATCHED_TAIL", dispatcher)
+        self.assertNotIn("packed_vnni_x16 && N == 34816", dispatcher)
+
     def test_production_uses_persistent_weight_pack_not_q8_repack(self) -> None:
         source = (ROOT / "version" / "v8" / "src" / "ck_parallel_prefill_v8.c").read_text(
             encoding="utf-8"

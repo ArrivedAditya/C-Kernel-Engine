@@ -42,6 +42,10 @@ class Qwen36Q6KM4PerformanceGateTests(unittest.TestCase):
         self.assertIn("CK_QWEN36_Q6_N:-5120", recipe)
         self.assertIn("CK_QWEN36_Q6_K:-17408", recipe)
         self.assertIn("CK_QWEN36_Q6_MIN_SPEEDUP:-1.05", recipe)
+        self.assertIn("CK_QWEN36_Q6_RECURRENT_M:-23", recipe)
+        self.assertIn("CK_QWEN36_Q6_RECURRENT_N:-10240", recipe)
+        self.assertIn("CK_QWEN36_Q6_RECURRENT_K:-5120", recipe)
+        self.assertIn("CK_QWEN36_Q6_RECURRENT_MIN_SPEEDUP:-1.10", recipe)
 
     def test_performance_gate_executes_dispatch_boundaries(self) -> None:
         benchmark = (
