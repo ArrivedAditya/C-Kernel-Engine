@@ -1902,6 +1902,8 @@ def run_audio_pipeline(args: argparse.Namespace) -> int:
         "--max-tokens",
         str(int(args.max_tokens)),
     ]
+    if args.timestamps:
+        argv.append("--timestamps")
     if args.output is not None:
         argv.extend(["--output", str(args.output)])
     return int(module.main(argv))
@@ -2000,6 +2002,11 @@ Examples:
         "--task", choices=("transcribe", "translate"), default="transcribe"
     )
     audio_parser.add_argument("--max-tokens", type=int, default=128)
+    audio_parser.add_argument(
+        "--timestamps",
+        action="store_true",
+        help="Generate monotonic paired Whisper timestamp tokens",
+    )
     audio_parser.add_argument("--output", type=Path)
     audio_parser.add_argument("--force-download", action="store_true")
     audio_parser.add_argument("--force-convert", action="store_true")

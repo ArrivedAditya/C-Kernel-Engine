@@ -165,7 +165,11 @@ def _encoder_worker(args: argparse.Namespace) -> int:
 
 
 def forced_decoder_prefix(
-    generation: dict[str, Any], language: str, task: str
+    generation: dict[str, Any],
+    language: str,
+    task: str,
+    *,
+    timestamps: bool = False,
 ) -> list[int]:
     start = int(generation["decoder_start_token_id"])
     language_token = generation.get("lang_to_id", {}).get(f"<|{language}|>")
@@ -177,7 +181,65 @@ def forced_decoder_prefix(
         raise ValueError(f"unsupported Whisper task: {task}")
     if no_timestamps is None:
         raise ValueError("generation_config.json has no no_timestamps_token_id")
-    return [start, int(language_token), int(task_token), int(no_timestamps)]
+    prefix = [start, int(language_token), int(task_token)]
+    if not timestamps:
+        prefix.append(int(no_timestamps))
+    return prefix
+
+
+def apply_timestamp_logits_contract(
+    logits: np.ndarray,
+    generated_tokens: list[int],
+    generation: dict[str, Any],
+) -> np.ndarray:
+    """Apply Whisper's timestamp sequence and probability constraints."""
+    scores = logits.copy()
+    no_timestamps = int(generation["no_timestamps_token_id"])
+    timestamp_begin = no_timestamps + 1
+    eos = int(generation["eos_token_id"])
+    scores[no_timestamps] = -np.inf
+
+    last_was_timestamp = (
+        bool(generated_tokens) and generated_tokens[-1] >= timestamp_begin
+    )
+    penultimate_was_timestamp = (
+        len(generated_tokens) < 2
+        or generated_tokens[-2] >= timestamp_begin
+    )
+    if last_was_timestamp:
+        if penultimate_was_timestamp:
+            scores[timestamp_begin:] = -np.inf
+        else:
+            scores[:eos] = -np.inf
+
+    timestamps = [
+        token for token in generated_tokens if token >= timestamp_begin
+    ]
+    if timestamps:
+        timestamp_last = timestamps[-1]
+        if not (last_was_timestamp and not penultimate_was_timestamp):
+            timestamp_last += 1
+        scores[timestamp_begin:timestamp_last] = -np.inf
+
+    if not generated_tokens:
+        scores[:timestamp_begin] = -np.inf
+        max_initial = generation.get("max_initial_timestamp_index")
+        if max_initial is not None:
+            last_allowed = timestamp_begin + int(max_initial)
+            scores[last_allowed + 1 :] = -np.inf
+
+    timestamp_scores = scores[timestamp_begin:]
+    finite_timestamps = timestamp_scores[np.isfinite(timestamp_scores)]
+    text_scores = scores[:timestamp_begin]
+    finite_text = text_scores[np.isfinite(text_scores)]
+    if finite_timestamps.size and finite_text.size:
+        maximum = float(np.max(finite_timestamps))
+        timestamp_logsumexp = maximum + float(
+            np.log(np.exp(finite_timestamps - maximum).sum())
+        )
+        if timestamp_logsumexp > float(np.max(finite_text)):
+            scores[:timestamp_begin] = -np.inf
+    return scores
 
 
 def _decoder_worker(args: argparse.Namespace) -> int:
@@ -228,7 +290,12 @@ def _decoder_worker(args: argparse.Namespace) -> int:
         )
         if status != 0:
             raise RuntimeError(f"encoder-memory binding failed with code {status}")
-        prefix = forced_decoder_prefix(generation, args.language, args.task)
+        prefix = forced_decoder_prefix(
+            generation,
+            args.language,
+            args.task,
+            timestamps=args.timestamps,
+        )
         prefix_array = (ctypes.c_int32 * len(prefix))(*prefix)
         started = time.perf_counter()
         status = int(model.ck_model_embed_tokens(prefix_array, len(prefix)))
@@ -253,7 +320,12 @@ def _decoder_worker(args: argparse.Namespace) -> int:
             logits[suppress] = -np.inf
             if step == 0:
                 logits[begin_suppress] = -np.inf
-            logits[no_timestamps:] = -np.inf
+            if args.timestamps:
+                logits = apply_timestamp_logits_contract(
+                    logits, tokens, generation
+                )
+            else:
+                logits[no_timestamps:] = -np.inf
             token = int(np.argmax(logits))
             if token == eos:
                 stop = "eos"
@@ -276,6 +348,7 @@ def _decoder_worker(args: argparse.Namespace) -> int:
         json.dumps(
             {
                 "forced_prefix": prefix,
+                "timestamps": bool(args.timestamps),
                 "generated_tokens": tokens,
                 "generated_count": len(tokens),
                 "stop": stop,
@@ -335,6 +408,7 @@ def _run_parent(args: argparse.Namespace) -> int:
                 args.task,
                 "--max-tokens",
                 str(args.max_tokens),
+                *(["--timestamps"] if args.timestamps else []),
                 "--worker-report",
                 str(decoder_report),
             ],
@@ -393,6 +467,7 @@ def _run_parent(args: argparse.Namespace) -> int:
         },
         "language": args.language,
         "task": args.task,
+        "timestamps": bool(args.timestamps),
         "encoder": encoder,
         "decoder": decoder,
     }
@@ -428,6 +503,11 @@ def _parser() -> argparse.ArgumentParser:
     run.add_argument("--language", default="en")
     run.add_argument("--task", choices=("transcribe", "translate"), default="transcribe")
     run.add_argument("--max-tokens", type=int, default=128)
+    run.add_argument(
+        "--timestamps",
+        action="store_true",
+        help="Generate Whisper timestamp tokens using the model contract",
+    )
     run.add_argument("--output", type=Path)
 
     encoder = subparsers.add_parser("_encoder", help=argparse.SUPPRESS)
@@ -442,6 +522,7 @@ def _parser() -> argparse.ArgumentParser:
     decoder.add_argument("--language", required=True)
     decoder.add_argument("--task", required=True)
     decoder.add_argument("--max-tokens", type=int, required=True)
+    decoder.add_argument("--timestamps", action="store_true")
     decoder.add_argument("--worker-report", type=Path, required=True)
     return parser
 
