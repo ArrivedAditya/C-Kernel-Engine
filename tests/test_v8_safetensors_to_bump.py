@@ -303,7 +303,7 @@ def test_whisper_encoder_safetensors_maps_and_generates_call_ir(tmp_path: Path) 
     call_ops = json.loads(call.read_text(encoding="utf-8"))["operations"]
     assert not [op for op in call_ops if op.get("errors")]
     functions = {op["op"]: op["function"] for op in call_ops}
-    assert functions["audio_wav_decode"] == "audio_wav_decode_memory_pcm16_mono_f32"
+    assert functions["audio_wav_decode"] == "audio_wav_decode_memory_pcm16_mono_window_f32"
     assert functions["audio_resample"] == "audio_resample_windowed_sinc_f32"
     assert functions["audio_pad_or_truncate"] == "audio_pad_or_truncate_f32"
     assert functions["audio_stft_tables"] == "audio_stft_precompute_tables_f32"
@@ -312,6 +312,10 @@ def test_whisper_encoder_safetensors_maps_and_generates_call_ir(tmp_path: Path) 
     assert (
         functions["audio_log_mel"]
         == "audio_whisper_log_mel_from_power_reference_f32"
+    )
+    assert (
+        functions["audio_feature_window"]
+        == "audio_whisper_log_mel_window_wav_pcm16_f32"
     )
     assert functions["audio_conv1d_stem_1"] == "audio_conv1d_channel_major_f32"
     assert functions["audio_conv1d_stem_2"] == "audio_conv1d_channel_major_f32"
@@ -347,13 +351,16 @@ def test_whisper_encoder_safetensors_maps_and_generates_call_ir(tmp_path: Path) 
     assert "attention_forward_query_key_head_major_f32" in generated
     assert "CK_EXPORT int ck_model_run_encoder(void)" in generated
     assert "CK_EXPORT int ck_model_run_audio_wav(" in generated
-    assert "audio_wav_decode_memory_pcm16_mono_f32(" in generated
+    assert "audio_wav_decode_memory_pcm16_mono_window_f32(" in generated
+    assert "CK_EXPORT int ck_model_run_audio_wav_window(" in generated
+    assert "CK_EXPORT int ck_model_prepare_audio_wav_window(" in generated
     assert "audio_resample_windowed_sinc_f32(" in generated
     assert "audio_pad_or_truncate_f32(" in generated
     assert "audio_stft_precompute_tables_f32(" in generated
     assert "audio_stft_power_fft400_f32(" in generated
     assert "audio_whisper_mel_filters_slaney_f32(" in generated
     assert "audio_whisper_log_mel_from_power_reference_f32(" in generated
+    assert "audio_whisper_log_mel_window_wav_pcm16_f32(" in generated
     subprocess.run(
         [
             "cc",

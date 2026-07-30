@@ -18,6 +18,13 @@ UNIFIED_SCRIPT = ROOT / "version" / "v8" / "scripts" / "ck_run_v8.py"
 PYTORCH_PARITY_SCRIPT = (
     ROOT / "version" / "v8" / "scripts" / "compare_whisper_e2e_pytorch_v8.py"
 )
+FRONTEND_XRAY_SCRIPT = (
+    ROOT
+    / "version"
+    / "v8"
+    / "scripts"
+    / "compare_whisper_frontend_pytorch_v8.py"
+)
 
 
 def _module():
@@ -39,6 +46,16 @@ def _unified_module():
 def _pytorch_parity_module():
     spec = importlib.util.spec_from_file_location(
         "compare_whisper_e2e_pytorch_v8", PYTORCH_PARITY_SCRIPT
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _frontend_xray_module():
+    spec = importlib.util.spec_from_file_location(
+        "compare_whisper_frontend_pytorch_v8", FRONTEND_XRAY_SCRIPT
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -68,6 +85,40 @@ def test_whisper_runner_uses_generated_frontend_and_forced_prefix_is_stable() ->
     assert runner.forced_decoder_prefix(
         generation, "en", "transcribe", timestamps=True
     ) == [50258, 50259, 50359]
+
+
+def test_whisper_frontend_xray_metrics_are_json_serializable() -> None:
+    xray = _frontend_xray_module()
+    reference = np.zeros((2, 3), dtype=np.float32)
+    actual = reference.copy()
+    actual[1, 2] = np.float32(0.25)
+    metrics = xray._metrics(reference, actual)
+    assert metrics["worst_coordinate"] == [1, 2]
+    assert metrics["max_abs"] == 0.25
+    json.dumps(metrics)
+
+
+def test_whisper_frontend_xray_resolves_scalar_call_ir_identity() -> None:
+    xray = _frontend_xray_module()
+    execution = xray._resolved_execution(
+        {
+            "function": "audio_feature_window",
+            "resolved_contract": {
+                "kernel_id": "audio.feature.window",
+                "function": "audio_feature_window",
+                "resolved_contract_id": "audio.feature.window.fp32",
+            },
+        }
+    )
+    assert execution == {
+        "kernel_id": "audio.feature.window",
+        "function": "audio_feature_window",
+        "resolved_contract_id": "audio.feature.window.fp32",
+    }
+    assert all(
+        value is None or isinstance(value, str)
+        for value in execution.values()
+    )
 
 
 def test_whisper_timestamp_contract_enforces_initial_pair_and_order() -> None:
@@ -121,6 +172,62 @@ def test_whisper_timestamp_contract_uses_aggregate_probability() -> None:
     )
     assert np.all(np.isneginf(result[:5]))
     assert np.isfinite(result[6])
+
+
+def test_whisper_long_audio_window_plan_is_complete_and_non_overlapping() -> None:
+    runner = _module()
+    assert runner.plan_audio_windows(480000, 16000, 16000, 480000) == [
+        (0, 480000)
+    ]
+    assert runner.plan_audio_windows(960001, 16000, 16000, 480000) == [
+        (0, 480000),
+        (480000, 960000),
+        (960000, 960001),
+    ]
+    with pytest.raises(ValueError, match="globally phased resampling"):
+        runner.plan_audio_windows(1_440_001, 48000, 16000, 480000)
+
+
+def test_whisper_segment_timestamps_are_offset_to_the_full_audio() -> None:
+    runner = _module()
+    generation = {"no_timestamps_token_id": 50363}
+    assert runner.global_timestamp_events(
+        [50364, 400, 50414], generation, 30.0
+    ) == [
+        {
+            "token_id": 50364,
+            "local_seconds": 0.0,
+            "global_seconds": 30.0,
+        },
+        {
+            "token_id": 50414,
+            "local_seconds": 1.0,
+            "global_seconds": 31.0,
+        },
+    ]
+
+
+def test_whisper_timestamp_seek_matches_reference_segment_rules() -> None:
+    runner = _module()
+    generation = {"no_timestamps_token_id": 50363}
+    assert runner.timestamp_seek_consumed_frames(
+        [50364, 400, 50914, 50914, 500, 51464, 51464],
+        generation,
+        16000,
+        480000,
+    ) == 352000
+    assert runner.timestamp_seek_consumed_frames(
+        [50364, 400, 50744, 50744, 500, 50894],
+        generation,
+        16000,
+        176000,
+    ) == 176000
+    assert runner.timestamp_seek_consumed_frames(
+        [50364, 400, 50894],
+        generation,
+        16000,
+        176000,
+    ) == 176000
 
 
 def test_whisper_timestamp_contract_matches_transformers_masks() -> None:
@@ -253,6 +360,10 @@ def test_whisper_checkpoint_identity_changes_with_source(
 
 def test_whisper_pytorch_parity_reports_first_token_or_length_difference() -> None:
     parity = _pytorch_parity_module()
+    source = PYTORCH_PARITY_SCRIPT.read_text(encoding="utf-8")
+    assert '"truncation": False' in source
+    assert '"return_attention_mask": True' in source
+    assert "inputs.attention_mask" in source
     assert parity.first_token_difference([1, 2, 3], [1, 2, 3]) is None
     assert parity.first_token_difference([1, 9, 3], [1, 2, 3]) == {
         "index": 1,

@@ -42,6 +42,14 @@ int audio_wav_decode_memory_pcm16_mono_f32(
     int mono_capacity,
     CKAudioWavInfo *info);
 
+int audio_wav_decode_memory_pcm16_mono_window_f32(
+    const uint8_t *bytes,
+    size_t byte_count,
+    int start_frame,
+    float *mono,
+    int mono_capacity,
+    CKAudioWavInfo *info);
+
 int audio_pcm_s16_to_mono_f32(
     const int16_t *interleaved,
     int n_frames,
@@ -140,6 +148,19 @@ int audio_whisper_log_mel_from_power_reference_f32(
     const float *mel_filters,
     int n_mels,
     int n_frames,
+    float *log_mel);
+
+int audio_whisper_log_mel_window_wav_pcm16_f32(
+    const uint8_t *bytes,
+    size_t byte_count,
+    int start_frame,
+    int target_sample_rate,
+    const float *window,
+    const float *cos_table,
+    const float *sin_table,
+    const float *mel_filters,
+    int n_mels,
+    int output_frames,
     float *log_mel);
 
 int audio_whisper_log_mel_reference_f32(

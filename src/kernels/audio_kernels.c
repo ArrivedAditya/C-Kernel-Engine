@@ -8,6 +8,7 @@
 #include <math.h>
 #include <limits.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CK_AUDIO_PI_F 3.14159265358979323846f
@@ -132,12 +133,40 @@ int audio_wav_decode_memory_pcm16_mono_f32(
     int mono_capacity,
     CKAudioWavInfo *info)
 {
+    return audio_wav_decode_memory_pcm16_mono_window_f32(
+        bytes, byte_count, 0, mono, mono_capacity, info);
+}
+
+int audio_wav_decode_memory_pcm16_mono_window_f32(
+    const uint8_t *bytes,
+    size_t byte_count,
+    int start_frame,
+    float *mono,
+    int mono_capacity,
+    CKAudioWavInfo *info)
+{
     const int status = audio_wav_parse_memory(bytes, byte_count, info);
     if (status != 0) {
         return status;
     }
-    return audio_wav_decode_pcm16_mono_f32(
-        bytes, byte_count, info, mono, mono_capacity);
+    if (start_frame < 0 || start_frame >= info->frames || mono_capacity <= 0) {
+        return -7;
+    }
+    const int available = info->frames - start_frame;
+    const int decoded = available < mono_capacity ? available : mono_capacity;
+    const uint8_t *pcm = bytes + info->data_offset;
+    const float scale = 1.0f / 32768.0f;
+    for (int frame = 0; frame < decoded; ++frame) {
+        float sum = 0.0f;
+        const size_t source_frame = (size_t)start_frame + (size_t)frame;
+        for (int channel = 0; channel < info->channels; ++channel) {
+            const size_t index =
+                (source_frame * (size_t)info->channels + (size_t)channel) * 2u;
+            sum += (float)(int16_t)read_u16_le(pcm + index);
+        }
+        mono[frame] = (sum / (float)info->channels) * scale;
+    }
+    return decoded;
 }
 
 int audio_pcm_s16_to_mono_f32(
@@ -395,6 +424,16 @@ int audio_stft_power_precomputed_f32(
     return 0;
 }
 
+static void audio_stft_power_fft400_frame_f32(
+    const float *samples,
+    int n_samples,
+    int frame,
+    const float *window,
+    const float *cos_table,
+    const float *sin_table,
+    float *power,
+    float *fft_scratch);
+
 int audio_stft_power_fft400_f32(
     const float *samples,
     int n_samples,
@@ -407,55 +446,169 @@ int audio_stft_power_fft400_f32(
     float *fft_scratch)
 {
     const int n_fft = CK_AUDIO_WHISPER_N_FFT;
-    const int radix = 20;
-    const int bins = CK_AUDIO_WHISPER_POWER_BINS;
     if (samples == NULL || window == NULL || cos_table == NULL ||
         sin_table == NULL || power == NULL || fft_scratch == NULL) {
         return -1;
     }
-    if (hop_length <= 0 || n_samples <= n_fft / 2 || n_frames <= 0 ||
+    if (hop_length != CK_AUDIO_WHISPER_HOP_LENGTH ||
+        n_samples <= n_fft / 2 || n_frames <= 0 ||
         n_frames != n_samples / hop_length) {
         return -2;
     }
-    float *stage_real = fft_scratch;
-    float *stage_imag = fft_scratch + n_fft;
-    const int center = n_fft / 2;
     for (int frame = 0; frame < n_frames; ++frame) {
-        for (int p = 0; p < radix; ++p) {
-            for (int k = 0; k < radix; ++k) {
-                float real = 0.0f;
-                float imag = 0.0f;
-                for (int q = 0; q < radix; ++q) {
-                    const int sample = p + radix * q;
-                    const int source = reflect_index(
-                        frame * hop_length + sample - center, n_samples);
-                    const float value = samples[source] * window[sample];
-                    const size_t twiddle = (size_t)k * n_fft + radix * q;
-                    real = fmaf(value, cos_table[twiddle], real);
-                    imag = fmaf(value, sin_table[twiddle], imag);
-                }
-                stage_real[p * radix + k] = real;
-                stage_imag[p * radix + k] = imag;
-            }
-        }
-        for (int frequency = 0; frequency < bins; ++frequency) {
-            const int k = frequency % radix;
-            float real = 0.0f;
-            float imag = 0.0f;
-            for (int p = 0; p < radix; ++p) {
-                const float a = stage_real[p * radix + k];
-                const float b = stage_imag[p * radix + k];
-                const size_t twiddle = (size_t)frequency * n_fft + p;
-                const float c = cos_table[twiddle];
-                const float s = sin_table[twiddle];
-                real = fmaf(a, c, fmaf(-b, s, real));
-                imag = fmaf(a, s, fmaf(b, c, imag));
-            }
-            power[(size_t)frame * bins + frequency] =
-                fmaf(real, real, imag * imag);
-        }
+        audio_stft_power_fft400_frame_f32(
+            samples,
+            n_samples,
+            frame,
+            window,
+            cos_table,
+            sin_table,
+            power + (size_t)frame * CK_AUDIO_WHISPER_POWER_BINS,
+            fft_scratch);
     }
     return 0;
+}
+
+static void audio_stft_power_fft400_frame_f32(
+    const float *samples,
+    int n_samples,
+    int frame,
+    const float *window,
+    const float *cos_table,
+    const float *sin_table,
+    float *power,
+    float *fft_scratch)
+{
+    const int radix = 20;
+    const int center = CK_AUDIO_WHISPER_N_FFT / 2;
+    float *stage_real = fft_scratch;
+    float *stage_imag = fft_scratch + CK_AUDIO_WHISPER_N_FFT;
+    for (int p = 0; p < radix; ++p) {
+        for (int k = 0; k < radix; ++k) {
+            float real = 0.0f;
+            float imag = 0.0f;
+            for (int q = 0; q < radix; ++q) {
+                const int sample = p + radix * q;
+                const int source = reflect_index(
+                    frame * CK_AUDIO_WHISPER_HOP_LENGTH + sample - center,
+                    n_samples);
+                const float value = samples[source] * window[sample];
+                const size_t twiddle =
+                    (size_t)k * CK_AUDIO_WHISPER_N_FFT + radix * q;
+                real = fmaf(value, cos_table[twiddle], real);
+                imag = fmaf(value, sin_table[twiddle], imag);
+            }
+            stage_real[p * radix + k] = real;
+            stage_imag[p * radix + k] = imag;
+        }
+    }
+    for (int frequency = 0;
+         frequency < CK_AUDIO_WHISPER_POWER_BINS;
+         ++frequency) {
+        const int k = frequency % radix;
+        float real = 0.0f;
+        float imag = 0.0f;
+        for (int p = 0; p < radix; ++p) {
+            const float a = stage_real[p * radix + k];
+            const float b = stage_imag[p * radix + k];
+            const size_t twiddle =
+                (size_t)frequency * CK_AUDIO_WHISPER_N_FFT + p;
+            const float c = cos_table[twiddle];
+            const float s = sin_table[twiddle];
+            real = fmaf(a, c, fmaf(-b, s, real));
+            imag = fmaf(a, s, fmaf(b, c, imag));
+        }
+        power[frequency] = fmaf(real, real, imag * imag);
+    }
+}
+
+int audio_whisper_log_mel_window_wav_pcm16_f32(
+    const uint8_t *bytes,
+    size_t byte_count,
+    int start_frame,
+    int target_sample_rate,
+    const float *window,
+    const float *cos_table,
+    const float *sin_table,
+    const float *mel_filters,
+    int n_mels,
+    int output_frames,
+    float *log_mel)
+{
+    if (bytes == NULL || window == NULL || cos_table == NULL ||
+        sin_table == NULL || mel_filters == NULL || log_mel == NULL) {
+        return -1;
+    }
+    CKAudioWavInfo info;
+    if (audio_wav_parse_memory(bytes, byte_count, &info) != 0 ||
+        info.sample_rate != target_sample_rate ||
+        target_sample_rate != CK_AUDIO_WHISPER_SAMPLE_RATE ||
+        start_frame < 0 ||
+        start_frame % CK_AUDIO_WHISPER_HOP_LENGTH != 0 ||
+        n_mels <= 0 || output_frames <= 0) {
+        return -2;
+    }
+    float *samples = (float *)malloc((size_t)info.frames * sizeof(float));
+    if (samples == NULL) {
+        return -3;
+    }
+    const int decoded = audio_wav_decode_pcm16_mono_f32(
+        bytes, byte_count, &info, samples, info.frames);
+    if (decoded != info.frames) {
+        free(samples);
+        return -4;
+    }
+
+    memset(
+        log_mel,
+        0,
+        (size_t)n_mels * (size_t)output_frames * sizeof(float));
+    const int global_frames = info.frames / CK_AUDIO_WHISPER_HOP_LENGTH;
+    const int start_feature = start_frame / CK_AUDIO_WHISPER_HOP_LENGTH;
+    float maximum = -INFINITY;
+    float power[CK_AUDIO_WHISPER_POWER_BINS];
+    float fft_scratch[2 * CK_AUDIO_WHISPER_N_FFT];
+    for (int frame = 0; frame < global_frames; ++frame) {
+        audio_stft_power_fft400_frame_f32(
+            samples,
+            info.frames,
+            frame,
+            window,
+            cos_table,
+            sin_table,
+            power,
+            fft_scratch);
+        for (int mel = 0; mel < n_mels; ++mel) {
+            const float *filter =
+                mel_filters + (size_t)mel * CK_AUDIO_WHISPER_POWER_BINS;
+            float sum = 0.0f;
+            for (int bin = 0; bin < CK_AUDIO_WHISPER_POWER_BINS; ++bin) {
+                sum = fmaf(filter[bin], power[bin], sum);
+            }
+            const float value = log10f(fmaxf(sum, 1.0e-10f));
+            maximum = fmaxf(maximum, value);
+            const int output_frame = frame - start_feature;
+            if (output_frame >= 0 && output_frame < output_frames) {
+                log_mel[(size_t)mel * output_frames + output_frame] = value;
+            }
+        }
+    }
+    free(samples);
+    if (!isfinite(maximum)) {
+        return -5;
+    }
+
+    const int available = global_frames - start_feature;
+    const int valid_frames =
+        available < output_frames ? (available > 0 ? available : 0) : output_frames;
+    const float floor = maximum - 8.0f;
+    for (int mel = 0; mel < n_mels; ++mel) {
+        float *output = log_mel + (size_t)mel * output_frames;
+        for (int frame = 0; frame < valid_frames; ++frame) {
+            output[frame] = (fmaxf(output[frame], floor) + 4.0f) / 4.0f;
+        }
+    }
+    return valid_frames;
 }
 
 int audio_conv1d_channel_major_f32(

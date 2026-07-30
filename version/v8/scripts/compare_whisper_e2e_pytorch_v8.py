@@ -117,13 +117,30 @@ def _pytorch_reference(args: argparse.Namespace) -> dict[str, object]:
     model = WhisperForConditionalGeneration.from_pretrained(
         args.checkpoint, local_files_only=True
     ).eval()
+    long_form = samples.size > int(processor.feature_extractor.n_samples)
     inputs = processor(
-        samples, sampling_rate=sample_rate, return_tensors="pt"
+        samples,
+        sampling_rate=sample_rate,
+        return_tensors="pt",
+        **(
+            {
+                "truncation": False,
+                "padding": "longest",
+                "return_attention_mask": True,
+            }
+            if long_form
+            else {}
+        ),
     )
     started = time.perf_counter()
     with torch.inference_mode():
         generated = model.generate(
             inputs.input_features,
+            **(
+                {"attention_mask": inputs.attention_mask}
+                if long_form
+                else {}
+            ),
             language=args.language,
             task=args.task,
             return_timestamps=args.timestamps,
@@ -132,15 +149,21 @@ def _pytorch_reference(args: argparse.Namespace) -> dict[str, object]:
         )
     elapsed = time.perf_counter() - started
     tokens = [int(value) for value in generated[0].tolist()]
-    text = processor.decode(
-        generated[0],
-        skip_special_tokens=True,
-        decode_with_timestamps=args.timestamps,
-        clean_up_tokenization_spaces=False,
-    )
     return {
         "tokens": tokens,
-        "text": text,
+        "text": processor.decode(
+            generated[0],
+            skip_special_tokens=True,
+            decode_with_timestamps=args.timestamps,
+            clean_up_tokenization_spaces=False,
+        ),
+        "transcript_text": processor.decode(
+            generated[0],
+            skip_special_tokens=True,
+            decode_with_timestamps=False,
+            clean_up_tokenization_spaces=False,
+        ),
+        "long_form": long_form,
         "seconds": elapsed,
         "pytorch": torch.__version__,
         "transformers": __import__("transformers").__version__,
@@ -206,10 +229,18 @@ def main(argv: list[str] | None = None) -> int:
     ]
     oracle_tokens = [int(value) for value in oracle["tokens"]]
     difference = first_token_difference(subject_tokens, oracle_tokens)
+    transcript_match = (
+        str(cke["decoder"]["transcript_text"])
+        == str(oracle["transcript_text"])
+    )
     report = {
         "schema": "cke.whisper_e2e_pytorch_parity",
-        "schema_version": 1,
-        "status": "pass" if difference is None else "fail",
+        "schema_version": 2,
+        "status": (
+            "pass"
+            if difference is None and transcript_match
+            else "fail"
+        ),
         "language": args.language,
         "task": args.task,
         "timestamps": bool(args.timestamps),
@@ -229,6 +260,7 @@ def main(argv: list[str] | None = None) -> int:
         "subject_token_count": len(subject_tokens),
         "oracle_token_count": len(oracle_tokens),
         "first_difference": difference,
+        "transcript_match": transcript_match,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(

@@ -139,7 +139,7 @@ class AudioEncoderContractTests(unittest.TestCase):
 
     def test_audio_encoder_contracts_resolve_exact_providers(self):
         expected = {
-            "audio.frontend.wav_decode": "audio_wav_decode_memory_pcm16_mono_f32",
+            "audio.frontend.wav_decode": "audio_wav_decode_memory_pcm16_mono_window_f32",
             "audio.frontend.resample": "audio_resample_windowed_sinc_f32",
             "audio.frontend.pad": "audio_pad_or_truncate_f32",
             "audio.frontend.stft_tables": "audio_stft_precompute_tables_f32",
@@ -348,16 +348,18 @@ class AudioEncoderContractTests(unittest.TestCase):
                 "audio_stft",
                 "audio_mel_filters",
                 "audio_log_mel",
+                "audio_feature_window",
             }
         }
         expected_frontend_functions = {
-            "audio_wav_decode": "audio_wav_decode_memory_pcm16_mono_f32",
+            "audio_wav_decode": "audio_wav_decode_memory_pcm16_mono_window_f32",
             "audio_resample": "audio_resample_windowed_sinc_f32",
             "audio_pad_or_truncate": "audio_pad_or_truncate_f32",
             "audio_stft_tables": "audio_stft_precompute_tables_f32",
             "audio_stft": "audio_stft_power_fft400_f32",
             "audio_mel_filters": "audio_whisper_mel_filters_slaney_f32",
             "audio_log_mel": "audio_whisper_log_mel_from_power_reference_f32",
+            "audio_feature_window": "audio_whisper_log_mel_window_wav_pcm16_f32",
         }
         self.assertEqual(set(frontend_calls), set(expected_frontend_functions))
         for op, function in expected_frontend_functions.items():
@@ -380,6 +382,9 @@ class AudioEncoderContractTests(unittest.TestCase):
             call_ir["operations"], manifest["config"]
         )
         self.assertIn("CK_EXPORT int ck_model_run_audio_wav(", entrypoint)
+        self.assertIn(
+            "CK_EXPORT int ck_model_prepare_audio_wav_window(", entrypoint
+        )
         for function in expected_frontend_functions.values():
             self.assertIn(function + "(", entrypoint)
         missing = [
@@ -452,6 +457,7 @@ class AudioEncoderContractTests(unittest.TestCase):
             "audio_stft": "audio_stft",
             "audio_mel_filters": "audio_mel_filters",
             "audio_log_mel": "audio_log_mel",
+            "audio_feature_window": "audio_feature_window",
             "audio_conv1d_stem_1": "audio_conv1d",
             "audio_conv1d_stem_2": "audio_conv1d",
             "layout_channel_to_token": "layout_transform",

@@ -28,13 +28,14 @@ class AudioFrontendContractTests(unittest.TestCase):
 
     def test_complete_frontend_resolves_exact_providers(self):
         expected = {
-            "audio.frontend.wav_decode": "audio_wav_decode_memory_pcm16_mono_f32",
+            "audio.frontend.wav_decode": "audio_wav_decode_memory_pcm16_mono_window_f32",
             "audio.frontend.resample": "audio_resample_windowed_sinc_f32",
             "audio.frontend.pad": "audio_pad_or_truncate_f32",
             "audio.frontend.stft_tables": "audio_stft_precompute_tables_f32",
             "audio.frontend.stft": "audio_stft_power_fft400_f32",
             "audio.frontend.mel_filters": "audio_whisper_mel_filters_slaney_f32",
             "audio.frontend.log_mel": "audio_whisper_log_mel_from_power_f32",
+            "audio.frontend.feature_window": "audio_whisper_log_mel_window_wav_pcm16_f32",
         }
         for requirement, kernel_id in expected.items():
             with self.subTest(requirement=requirement):
@@ -60,6 +61,7 @@ class AudioFrontendContractTests(unittest.TestCase):
                 "audio_stft",
                 "audio_mel_filters",
                 "audio_log_mel",
+                "audio_feature_window",
             ],
         )
 

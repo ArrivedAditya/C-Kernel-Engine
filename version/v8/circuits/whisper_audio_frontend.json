@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "name": "whisper_audio_frontend",
   "family": "audio_transformer_frontend",
   "flags": {
@@ -15,6 +15,10 @@
       "channel_layout": "mono_mean",
       "sample_rate": 16000,
       "sample_extent": 480000,
+      "windowing": "fixed_non_overlapping_source_windows",
+      "window_offset_unit": "source_frame",
+      "long_audio_resample": "require_identity_until_global_phase_is_validated",
+      "long_audio_feature_window": "global_stft_logmel_then_slice_and_zero_pad",
       "resample": "hann_windowed_sinc",
       "resample_radius": 16,
       "resample_identity_when_rate_matches": true,
@@ -145,6 +149,23 @@
         "logical_layout": "mel_major",
         "axis_names": ["mel", "frame"]
       }
+    },
+    "audio.frontend.feature_window": {
+      "op": "audio_feature_window",
+      "template_ops": ["audio_feature_window"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_whisper_global_log_mel_feature_window_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py global STFT/log-Mel slicing and feature-level zero-padding oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.feature_window.output",
+        "producer": "audio_feature_window",
+        "logical_layout": "mel_major",
+        "axis_names": ["mel", "frame"]
+      }
     }
   },
   "block_types": {
@@ -156,7 +177,8 @@
         {"id": "stft_tables", "op": "audio_stft_tables"},
         {"id": "stft", "op": "audio_stft"},
         {"id": "mel_filters", "op": "audio_mel_filters"},
-        {"id": "log_mel", "op": "audio_log_mel"}
+        {"id": "log_mel", "op": "audio_log_mel"},
+        {"id": "feature_window", "op": "audio_feature_window"}
       ]
     }
   }

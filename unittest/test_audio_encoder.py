@@ -100,6 +100,11 @@ lib.audio_wav_decode_memory_pcm16_mono_f32.argtypes = [
     ctypes.POINTER(CKAudioWavInfo),
 ]
 lib.audio_wav_decode_memory_pcm16_mono_f32.restype = ctypes.c_int
+lib.audio_wav_decode_memory_pcm16_mono_window_f32.argtypes = [
+    _U8_P, ctypes.c_size_t, ctypes.c_int, _FLOAT_P, ctypes.c_int,
+    ctypes.POINTER(CKAudioWavInfo),
+]
+lib.audio_wav_decode_memory_pcm16_mono_window_f32.restype = ctypes.c_int
 lib.audio_resample_windowed_sinc_f32.argtypes = [
     _FLOAT_P, ctypes.c_int, ctypes.c_int, _FLOAT_P, ctypes.c_int,
     ctypes.c_int, ctypes.c_int,
@@ -114,6 +119,20 @@ lib.audio_stft_power_fft400_f32.argtypes = [
     ctypes.c_int, _FLOAT_P, ctypes.c_int, _FLOAT_P,
 ]
 lib.audio_stft_power_fft400_f32.restype = ctypes.c_int
+lib.audio_whisper_mel_filters_slaney_f32.argtypes = [
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, _FLOAT_P,
+]
+lib.audio_whisper_mel_filters_slaney_f32.restype = ctypes.c_int
+lib.audio_whisper_log_mel_from_power_reference_f32.argtypes = [
+    _FLOAT_P, _FLOAT_P, ctypes.c_int, ctypes.c_int, _FLOAT_P,
+]
+lib.audio_whisper_log_mel_from_power_reference_f32.restype = ctypes.c_int
+lib.audio_whisper_log_mel_window_wav_pcm16_f32.argtypes = [
+    _U8_P, ctypes.c_size_t, ctypes.c_int, ctypes.c_int,
+    _FLOAT_P, _FLOAT_P, _FLOAT_P, _FLOAT_P,
+    ctypes.c_int, ctypes.c_int, _FLOAT_P,
+]
+lib.audio_whisper_log_mel_window_wav_pcm16_f32.restype = ctypes.c_int
 gelu_lib.gelu_erf_fp64_f32_inplace.argtypes = [_FLOAT_P, ctypes.c_size_t]
 gelu_lib.gelu_erf_fp64_f32_inplace.restype = None
 
@@ -162,6 +181,18 @@ def check_wav_pcm16() -> None:
         fused_info.sample_rate,
         fused_info.frames,
     ) == (2, 48000, 4)
+    window = np.empty(2, dtype=np.float32)
+    window_info = CKAudioWavInfo()
+    assert lib.audio_wav_decode_memory_pcm16_mono_window_f32(
+        wav.ctypes.data_as(_U8_P), wav.size, 2, _fptr(window),
+        window.size, ctypes.byref(window_info),
+    ) == 2
+    assert np.array_equal(window, expected[2:])
+    assert window_info.frames == 4
+    assert lib.audio_wav_decode_memory_pcm16_mono_window_f32(
+        wav.ctypes.data_as(_U8_P), wav.size, 4, _fptr(window),
+        window.size, ctypes.byref(window_info),
+    ) == -7
     truncated = wav[:-1].copy()
     assert lib.audio_wav_parse_memory(
         truncated.ctypes.data_as(_U8_P), truncated.size, ctypes.byref(info)
@@ -341,6 +372,57 @@ def check_precomputed_stft() -> None:
     )
 
 
+def check_global_log_mel_window() -> None:
+    sample_rate = 16000
+    samples = (
+        np.sin(np.arange(1920, dtype=np.float64) * (2.0 * np.pi * 440.0 / sample_rate))
+        * 12000.0
+    ).astype("<i2")
+    fmt = struct.pack("<HHIIHH", 1, 1, sample_rate, sample_rate * 2, 2, 16)
+    chunks = (
+        b"fmt " + struct.pack("<I", len(fmt)) + fmt
+        + b"data" + struct.pack("<I", samples.nbytes) + samples.tobytes()
+    )
+    wav = np.frombuffer(
+        b"RIFF" + struct.pack("<I", 4 + len(chunks)) + b"WAVE" + chunks,
+        dtype=np.uint8,
+    )
+    decoded = samples.astype(np.float32) / np.float32(32768.0)
+    window = np.empty(400, dtype=np.float32)
+    cos_table = np.empty((201, 400), dtype=np.float32)
+    sin_table = np.empty((201, 400), dtype=np.float32)
+    filters = np.empty((4, 201), dtype=np.float32)
+    assert lib.audio_stft_precompute_tables_f32(
+        400, _fptr(window), _fptr(cos_table), _fptr(sin_table)
+    ) == 0
+    assert lib.audio_whisper_mel_filters_slaney_f32(
+        sample_rate, 400, filters.shape[0], _fptr(filters)
+    ) == 0
+    power = np.empty((12, 201), dtype=np.float32)
+    scratch = np.empty(800, dtype=np.float32)
+    assert lib.audio_stft_power_fft400_f32(
+        _fptr(decoded), decoded.size, _fptr(window), _fptr(cos_table),
+        _fptr(sin_table), 160, _fptr(power), power.shape[0], _fptr(scratch)
+    ) == 0
+    complete = np.empty((4, 12), dtype=np.float32)
+    assert lib.audio_whisper_log_mel_from_power_reference_f32(
+        _fptr(power), _fptr(filters), complete.shape[0], complete.shape[1],
+        _fptr(complete)
+    ) == 0
+
+    actual = np.full((4, 12), 99.0, dtype=np.float32)
+    valid = lib.audio_whisper_log_mel_window_wav_pcm16_f32(
+        wav.ctypes.data_as(_U8_P), wav.size, 4 * 160, sample_rate,
+        _fptr(window), _fptr(cos_table), _fptr(sin_table), _fptr(filters),
+        actual.shape[0], actual.shape[1], _fptr(actual)
+    )
+    expected = np.zeros_like(actual)
+    expected[:, :8] = complete[:, 4:]
+    assert valid == 8
+    assert np.array_equal(actual, expected)
+    print("audio_global_log_mel_window max_diff=0 tol=0 tail_zero=1 [PASS]")
+
+
 def _check_conv(name: str, cin: int, cout: int, frames: int, stride: int) -> None:
     rng = np.random.default_rng(cin * 1000 + cout + frames + stride)
     source = rng.normal(0.0, 0.15, (cin, frames)).astype(np.float32)
@@ -453,6 +535,7 @@ def main() -> None:
     check_resample()
     check_bandlimited_resample()
     check_precomputed_stft()
+    check_global_log_mel_window()
     _check_conv("audio_conv1d_whisper_stem1", 80, 384, 16, 1)
     _check_conv("audio_conv1d_whisper_stem2", 384, 384, 16, 2)
     check_pytorch_erf_gelu()
@@ -460,7 +543,7 @@ def main() -> None:
     _check_cross_attention("audio_encoder_self_attention_equal", 6, 11, 11, 64)
     _check_cross_attention("audio_cross_attention_unequal_small", 3, 5, 17, 8)
     _check_cross_attention("audio_cross_attention_whisper_decode", 6, 1, 1500, 64)
-    print("ALL TESTS PASSED (15/15)")
+    print("ALL TESTS PASSED (16/16)")
 
 
 if __name__ == "__main__":
