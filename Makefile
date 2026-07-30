@@ -1328,10 +1328,31 @@ test-audio-v8-contracts:
 	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_audio_encoder_contract -v
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_safetensors_to_bump.py -k "whisper_encoder or whisper_decoder"
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_whisper_runner.py
+	$(MAKE) --no-print-directory test-whisper-pytorch-e2e-auto
 
 test-whisper-e2e-auto:
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_whisper_runner.py \
 		-k exact_transcript
+
+.PHONY: test-whisper-pytorch-e2e-auto
+test-whisper-pytorch-e2e-auto:
+	@if [ -z "$$CK_WHISPER_CHECKPOINT" ] || \
+	    [ -z "$$CK_WHISPER_ENCODER_RUN_DIR" ] || \
+	    [ -z "$$CK_WHISPER_DECODER_RUN_DIR" ] || \
+	    [ -z "$$CK_WHISPER_WAV" ]; then \
+		echo "SKIP: set CK_WHISPER_CHECKPOINT, CK_WHISPER_ENCODER_RUN_DIR, CK_WHISPER_DECODER_RUN_DIR, and CK_WHISPER_WAV"; \
+	else \
+		$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/compare_whisper_e2e_pytorch_v8.py \
+			--checkpoint "$$CK_WHISPER_CHECKPOINT" \
+			--encoder-run-dir "$$CK_WHISPER_ENCODER_RUN_DIR" \
+			--decoder-run-dir "$$CK_WHISPER_DECODER_RUN_DIR" \
+			--wav "$$CK_WHISPER_WAV" \
+			--language "$${CK_WHISPER_LANGUAGE:-en}" \
+			--task "$${CK_WHISPER_TASK:-transcribe}" \
+			--max-tokens "$${CK_WHISPER_MAX_TOKENS:-64}" \
+			--threads "$${CK_NUM_THREADS:-1}" \
+			--output "$${CK_WHISPER_PARITY_OUTPUT:-build/whisper-pytorch-parity.json}"; \
+	fi
 
 # Policy:
 # - Keep public/operator-facing test entrypoints version-neutral (`make test`,
