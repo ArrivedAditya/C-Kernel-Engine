@@ -3596,6 +3596,21 @@ test-q6k-prefill-routing-exact: $(LIB)
 		--mode default --m 128 --n 2048 --k 8192 --threads $${CK_NUM_THREADS:-12} \
 		--warmup 0 --iters 1 --verify-row-exact --engine-lib $(LIB)
 
+.PHONY: test-qwen36-q6k-m4-performance
+test-qwen36-q6k-m4-performance: $(LIB)
+	@echo "Running Qwen3.6 Q6_K MLP-down M4 exactness + performance gate..."
+	@CK_NUM_THREADS=$${CK_NUM_THREADS:-24} OMP_NUM_THREADS=1 \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_q6k_prefill_tile.py \
+			--mode compare-m4 \
+			--m $${CK_QWEN36_Q6_M:-23} \
+			--n $${CK_QWEN36_Q6_N:-5120} \
+			--k $${CK_QWEN36_Q6_K:-17408} \
+			--tile-m 8 --tile-n 128 \
+			--threads $${CK_NUM_THREADS:-24} \
+			--warmup $${CK_QWEN36_Q6_WARMUP:-1} \
+			--iters $${CK_QWEN36_Q6_ITERS:-3} \
+			--min-m4-speedup $${CK_QWEN36_Q6_MIN_SPEEDUP:-1.05}
+
 test-q6k-prefill-dispatch-sweep: $(LIB)
 	@echo "Running Q6_K x Q8_K prefill dispatch sweep..."
 	CK_Q6K_Q8K_SIMD=1 CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \

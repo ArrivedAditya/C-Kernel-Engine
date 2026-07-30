@@ -543,6 +543,16 @@ class AttentionContractV8Tests(unittest.TestCase):
         self.assertIn("M <= 1", source)
         self.assertNotIn("CK_ENABLE_Q6K_Q8K_2D_PREFILL", source)
 
+    def test_q6_short_wide_prefill_uses_measured_m4_provider(self) -> None:
+        source = (V8_ROOT / "src" / "ck_parallel_prefill_v8.c").read_text(encoding="utf-8")
+        self.assertIn(
+            "return M >= 4 && M <= 63 && N >= 4096 && K >= 8192;",
+            source,
+        )
+        self.assertIn("short_wide_q6 ? 8 : 16", source)
+        self.assertIn("short_wide_q6 ? 128 : 256", source)
+        self.assertIn("gemm_nt_q6_k_q8_k_m4_tile", source)
+
     def test_q6_benchmark_defaults_to_gcc_provenance(self) -> None:
         bench_path = REPO_ROOT / "benchmarks" / "bench_q6k_prefill_tile.py"
         spec = importlib.util.spec_from_file_location("bench_q6k_prefill_tile", bench_path)

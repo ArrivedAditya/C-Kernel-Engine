@@ -163,6 +163,9 @@ extern void swiglu_forward_exact(const float *input, float *output, int tokens, 
 extern void gemm_nt_q6_k_q8_k_tile(const void *A, const void *B, const float *bias,
                                     float *C, int M, int N, int K,
                                     int m0, int m1, int n0, int n1);
+extern void gemm_nt_q6_k_q8_k_m4_tile(const void *A, const void *B, const float *bias,
+                                      float *C, int M, int N, int K,
+                                      int m0, int m1, int n0, int n1);
 extern void gemm_nt_q6_k_q8_k_tiled(const void *A, const void *B, const float *bias,
                                       float *C, int M, int N, int K);
 extern void gemm_nt_q5_1_q8_1(const float *A, const void *B, const float *bias,
@@ -208,6 +211,7 @@ typedef struct {
     size_t       A_row_bytes; /* Bytes per row of A (for pointer arithmetic) */
     int          tile_m;      /* 2D scheduler token tile height */
     int          tile_n;      /* 2D scheduler output tile width */
+    int          use_q6_m4;   /* Reuse Q6 unpack across four token rows */
 } gemm_args_t;
 
 typedef struct {
@@ -854,6 +858,19 @@ static int ck_should_use_q6k_q8k_2d_prefill(const ck_threadpool_t *pool,
     return 1;
 }
 
+static int ck_should_use_q6k_q8k_m4_prefill(int M, int N, int K)
+{
+    if (ck_env_enabled("CK_DISABLE_Q6K_Q8K_M4_PREFILL")) return 0;
+    if (ck_env_enabled("CK_ENABLE_Q6K_Q8K_M4_PREFILL")) return 1;
+
+    /*
+     * Measured Qwen3.6 Q4_K_M MLP-down scope.  The provider is bit-exact with
+     * the independent-row and llama.cpp AVX2 reductions.  Keep other Q6 model
+     * shapes on the established provider until their own sweep records a win.
+     */
+    return M >= 4 && M <= 63 && N >= 4096 && K >= 8192;
+}
+
 static int ck_shape_aware_enabled(const ck_threadpool_t *pool)
 {
     const int pool_threads = ck_threadpool_n_threads(pool);
@@ -1198,8 +1215,13 @@ static void work_gemm_nt_q6_k_q8_k_2d(int ith, int nth, void *args)
         const int m1 = ck_min_int(m0 + tile_m, a->M);
         const int n0 = jn * tile_n;
         const int n1 = ck_min_int(n0 + tile_n, a->N);
-        gemm_nt_q6_k_q8_k_tile(a->A, a->B, a->bias, a->C,
-                               a->M, a->N, a->K, m0, m1, n0, n1);
+        if (a->use_q6_m4) {
+            gemm_nt_q6_k_q8_k_m4_tile(a->A, a->B, a->bias, a->C,
+                                      a->M, a->N, a->K, m0, m1, n0, n1);
+        } else {
+            gemm_nt_q6_k_q8_k_tile(a->A, a->B, a->bias, a->C,
+                                   a->M, a->N, a->K, m0, m1, n0, n1);
+        }
     }
 }
 
@@ -1634,12 +1656,14 @@ void gemm_nt_q6_k_q8_k_parallel_dispatch(
     /* A is Q8_K: row_bytes = (K / QK_K) * sizeof(block_q8_K) */
     size_t A_row_bytes = (size_t)(K / QK_K) * sizeof(block_q8_K);
 
+    const int short_wide_q6 = M <= 63 && N >= 4096 && K >= 8192;
     gemm_args_t args = {
         .A = A, .B = B, .bias = bias, .C = C,
         .M = M, .N = N, .K = K,
         .A_row_bytes = A_row_bytes,
-        .tile_m = ck_env_int_or2("CK_PREFILL_TILE_M", NULL, 16),
-        .tile_n = ck_env_int_or2("CK_PREFILL_TILE_N", NULL, 256)
+        .tile_m = ck_env_int_or2("CK_PREFILL_TILE_M", NULL, short_wide_q6 ? 8 : 16),
+        .tile_n = ck_env_int_or2("CK_PREFILL_TILE_N", NULL, short_wide_q6 ? 128 : 256),
+        .use_q6_m4 = ck_should_use_q6k_q8k_m4_prefill(M, N, K)
     };
     int active = ck_select_gemm_active_threads(pool, M, N, K);
     if (!getenv("CK_GEMM_THREAD_CAP") && !getenv("CK_GEMV_THREAD_CAP")) {

@@ -20,6 +20,7 @@ import argparse
 import ctypes
 import os
 import random
+import re
 import shutil
 import struct
 import subprocess
@@ -32,6 +33,16 @@ QK_K = 256
 BLOCK_Q6_K_SIZE = 210
 BLOCK_Q8_K_SIZE = 292
 DEFAULT_DISPATCH_LIB = ROOT / 'build' / 'bench_q6k_prefill_dispatch.so'
+BEST_MS_RE = re.compile(r'best_ms=([0-9.]+)')
+
+
+def _q6_provider_name(engine_lib: Path) -> str:
+    lib = ctypes.CDLL(str(engine_lib.resolve()))
+    provider = lib.ck_q6_k_q8_k_provider_name
+    provider.argtypes = []
+    provider.restype = ctypes.c_char_p
+    value = provider()
+    return value.decode('utf-8') if value else ''
 
 
 def _make_q8_rows(rows: int, blocks: int, rng: random.Random) -> bytearray:
@@ -118,12 +129,21 @@ def _run_one(args: argparse.Namespace) -> int:
     if args.mode == 'row':
         os.environ['CK_DISABLE_Q6K_Q8K_2D_PREFILL'] = '1'
         os.environ.pop('CK_FORCE_Q6K_Q8K_2D_PREFILL', None)
-    elif args.mode == '2d':
+    elif args.mode in {'2d', 'm4'}:
         os.environ['CK_FORCE_Q6K_Q8K_2D_PREFILL'] = '1'
         os.environ.pop('CK_DISABLE_Q6K_Q8K_2D_PREFILL', None)
     else:
         os.environ.pop('CK_FORCE_Q6K_Q8K_2D_PREFILL', None)
         os.environ.pop('CK_DISABLE_Q6K_Q8K_2D_PREFILL', None)
+    if args.mode == 'm4':
+        os.environ['CK_ENABLE_Q6K_Q8K_M4_PREFILL'] = '1'
+        os.environ.pop('CK_DISABLE_Q6K_Q8K_M4_PREFILL', None)
+    elif args.mode == '2d':
+        os.environ.pop('CK_ENABLE_Q6K_Q8K_M4_PREFILL', None)
+        os.environ['CK_DISABLE_Q6K_Q8K_M4_PREFILL'] = '1'
+    else:
+        os.environ.pop('CK_ENABLE_Q6K_Q8K_M4_PREFILL', None)
+        os.environ.pop('CK_DISABLE_Q6K_Q8K_M4_PREFILL', None)
 
     if args.k % QK_K != 0:
         raise ValueError(f'--k must be divisible by {QK_K}')
@@ -223,6 +243,83 @@ def _run_compare(args: argparse.Namespace) -> int:
     return 0 if row.returncode == 0 and tiled.returncode == 0 else 1
 
 
+def _run_compare_m4(args: argparse.Namespace) -> int:
+    provider = _q6_provider_name(args.engine_lib)
+    if 'avx2' not in provider:
+        print(
+            'SKIP: Qwen3.6 Q6_K M4 performance gate requires the AVX2 '
+            f'provider (active={provider or "unknown"})'
+        )
+        return 0
+
+    script = Path(__file__).resolve()
+    base = [
+        sys.executable,
+        str(script),
+        '--m', str(args.m), '--n', str(args.n), '--k', str(args.k),
+        '--threads', str(args.threads), '--warmup', str(args.warmup),
+        '--iters', str(args.iters), '--seed', str(args.seed),
+        '--tile-m', str(args.tile_m), '--tile-n', str(args.tile_n),
+        '--engine-lib', str(args.engine_lib),
+    ]
+    if args.model_lib is not None:
+        base.extend(['--model-lib', str(args.model_lib)])
+    env = os.environ.copy()
+    env.setdefault('CK_Q6K_Q8K_SIMD', '1')
+    env.setdefault('OMP_NUM_THREADS', '1')
+    env['CK_NUM_THREADS'] = str(args.threads)
+    env['CK_PREFILL_TILE_M'] = str(args.tile_m)
+    env['CK_PREFILL_TILE_N'] = str(args.tile_n)
+
+    tile = subprocess.run(
+        base + ['--mode', '2d'], env=env, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    m4 = subprocess.run(
+        base + ['--mode', 'm4', '--verify-row-exact'], env=env, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    print('2d-tile baseline:')
+    print(tile.stdout.rstrip())
+    print('\nM4 Q6-reuse candidate:')
+    print(m4.stdout.rstrip())
+    tile_match = BEST_MS_RE.search(tile.stdout)
+    m4_match = BEST_MS_RE.search(m4.stdout)
+    if tile.returncode != 0 or m4.returncode != 0 or not tile_match or not m4_match:
+        print('m4_performance_gate=FAIL reason=benchmark_or_exactness')
+        return 1
+    tile_ms = float(tile_match.group(1))
+    m4_ms = float(m4_match.group(1))
+    speedup = tile_ms / m4_ms if m4_ms > 0.0 else 0.0
+    boundaries_pass = True
+    for boundary_m in (63, 64):
+        boundary = subprocess.run(
+            [
+                sys.executable,
+                str(script),
+                '--m', str(boundary_m), '--n', str(args.n), '--k', str(args.k),
+                '--threads', str(args.threads), '--warmup', '0', '--iters', '1',
+                '--seed', str(args.seed), '--tile-m', str(args.tile_m),
+                '--tile-n', str(args.tile_n), '--engine-lib', str(args.engine_lib),
+                '--mode', 'default', '--verify-row-exact',
+            ],
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        print(f'\nautomatic dispatch boundary M={boundary_m}:')
+        print(boundary.stdout.rstrip())
+        boundaries_pass &= boundary.returncode == 0
+    passed = speedup >= args.min_m4_speedup and boundaries_pass
+    print(
+        f'm4_speedup={speedup:.4f} tile_ms={tile_ms:.3f} m4_ms={m4_ms:.3f} '
+        f'min_required={args.min_m4_speedup:.4f} '
+        f'boundary_exact={"PASS" if boundaries_pass else "FAIL"} '
+        f'm4_performance_gate={"PASS" if passed else "FAIL"}'
+    )
+    return 0 if passed else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--m', type=int, default=1024, help='token rows')
@@ -236,13 +333,19 @@ def main() -> int:
     ap.add_argument('--tile-n', type=int, default=256)
     ap.add_argument('--engine-lib', type=Path, default=ROOT / 'build' / 'libckernel_engine.so')
     ap.add_argument('--model-lib', type=Path, default=None)
-    ap.add_argument('--mode', choices=('compare', 'default', 'row', '2d'), default='compare')
+    ap.add_argument(
+        '--mode',
+        choices=('compare', 'compare-m4', 'default', 'row', '2d', 'm4'),
+        default='compare')
+    ap.add_argument('--min-m4-speedup', type=float, default=1.05)
     ap.add_argument('--verify-row-exact', action='store_true',
                     help='compare every output byte with forced independent-row scheduling')
     args = ap.parse_args()
 
     if args.mode == 'compare':
         return _run_compare(args)
+    if args.mode == 'compare-m4':
+        return _run_compare_m4(args)
     return _run_one(args)
 
 

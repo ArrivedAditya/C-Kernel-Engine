@@ -179,7 +179,7 @@ static bool run_case(const case_spec &spec) {
 
     bool pass = compare_bytes("Q8_K activation quantizer", ck_q8.data(), llama_q8.data(), ck_q8.size());
     std::vector<float> ck(static_cast<size_t>(spec.m) * spec.n);
-    std::vector<float> leaf(ck.size()), canonical(ck.size()), repack(ck.size());
+    std::vector<float> m4(ck.size()), leaf(ck.size()), canonical(ck.size()), repack(ck.size());
     for (int r = 0; r < spec.m; ++r) for (int c = 0; c < spec.n; ++c) {
         ggml_vec_dot_q6_K_q8_K(spec.k, &leaf[static_cast<size_t>(r) * spec.n + c], 0,
                 weights.data() + static_cast<size_t>(c) * q6_row, 0,
@@ -190,6 +190,12 @@ static bool run_case(const case_spec &spec) {
     } else {
         gemm_nt_q6_k_q8_k_parallel_dispatch(
                 ck_q8.data(), weights.data(), nullptr, ck.data(), spec.m, spec.n, spec.k);
+        setenv("CK_FORCE_Q6K_Q8K_2D_PREFILL", "1", 1);
+        setenv("CK_ENABLE_Q6K_Q8K_M4_PREFILL", "1", 1);
+        gemm_nt_q6_k_q8_k_parallel_dispatch(
+                ck_q8.data(), weights.data(), nullptr, m4.data(), spec.m, spec.n, spec.k);
+        unsetenv("CK_ENABLE_Q6K_Q8K_M4_PREFILL");
+        unsetenv("CK_FORCE_Q6K_Q8K_2D_PREFILL");
     }
     if (!llama_graph(weights, activations, canonical, spec.m, spec.n, spec.k, false)) return false;
     const bool llama_q6_repack_selected = ggml_cpu_has_neon();
@@ -206,6 +212,10 @@ static bool run_case(const case_spec &spec) {
     }
     pass &= compare_f32(spec.m == 1 ? "CK decode vs llama production" :
             "CK prefill vs llama production", ck.data(), repack.data(), ck.size());
+    if (spec.m > 1) {
+        pass &= compare_f32(
+            "CK M4 prefill vs llama production", m4.data(), repack.data(), ck.size());
+    }
     return pass;
 }
 

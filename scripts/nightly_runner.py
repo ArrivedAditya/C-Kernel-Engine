@@ -506,6 +506,12 @@ MAKE_TARGETS = {
         "target": "test-q4k-q8k-llama-performance",
         "timeout_sec": 300,
     },
+    "qwen36_q6k_m4_performance": {
+        "name": "Qwen3.6 Q6_K M4 Prefill Performance",
+        "category": "bench",
+        "target": "test-qwen36-q6k-m4-performance",
+        "timeout_sec": 300,
+    },
     "numerical_replay_fixture_contract": {
         "name": "Numerical Replay Fixture Contract",
         "category": "parity",
