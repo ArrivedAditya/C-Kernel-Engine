@@ -15926,6 +15926,18 @@
               }
             },
             {
+              "id": "qwen36_recurrent_qkv_output_tiles",
+              "work_partition": "output_tiles",
+              "predicate": {
+                "min_m": 4,
+                "max_m": 63,
+                "min_n": 10240,
+                "max_n": 10240,
+                "min_k": 5120,
+                "max_k": 5120
+              }
+            },
+            {
               "id": "independent_rows_fallback",
               "work_partition": "independent_rows",
               "predicate": {

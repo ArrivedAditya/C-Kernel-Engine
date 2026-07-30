@@ -1078,6 +1078,25 @@ int main(int argc, char ** argv) {
         }
         ck_q4k_packed_weight_cache_clear();
     }
+    if (!quick && ck_q4k_packed_vnni_x16_available()) {
+        /*
+         * Exercise the exact Qwen3.6 recurrent-gate shape, including its
+         * M=23 three-row residual tail, through production x16 dispatch.
+         * llama.cpp remains the independent oracle for both grouped GEMM rows
+         * and the batched exact-GEMV tail.
+         */
+        setenv("CK_ENABLE_Q4K_AVX512_X16_EXPERIMENTAL", "1", 1);
+        unsetenv("CK_DISABLE_Q4K_X16_BATCHED_TAIL");
+        const case_spec qwen36_recurrent_gate = {
+            "qwen36_recurrent_gate_x16_tail",
+            23, 6144, 5120, true, false, false
+        };
+        if (!run_case(qwen36_recurrent_gate)) {
+            ++quant_failed;
+        }
+        unsetenv("CK_ENABLE_Q4K_AVX512_X16_EXPERIMENTAL");
+        ck_q4k_packed_weight_cache_clear();
+    }
     if (!run_real_artifact_case()) {
         ++quant_failed;
     }

@@ -219,8 +219,10 @@ typedef struct {
     const void  *B_packed_x8;
     const float *bias;
     float       *C;
+    int          M;
     int          N;
     int          K;
+    size_t       A_row_bytes;
 } q4k_repacked_gemv_args_t;
 
 typedef struct {
@@ -853,7 +855,9 @@ static int ck_should_use_q6k_q8k_2d_prefill(const ck_threadpool_t *pool,
     /* Keep this predicate synchronized with implementation.work_partition_routing
      * in gemm_nt_q6_k_q8_k.json. The map owns the public capability; this
      * dispatch function implements that resolved shape contract. */
-    if (N < 2048 || K < 8192) return 0;
+    const int qwen36_recurrent_qkv =
+        M >= 4 && M <= 63 && N == 10240 && K == 5120;
+    if (!qwen36_recurrent_qkv && (N < 2048 || K < 8192)) return 0;
 
     return 1;
 }
@@ -864,11 +868,16 @@ static int ck_should_use_q6k_q8k_m4_prefill(int M, int N, int K)
     if (ck_env_enabled("CK_ENABLE_Q6K_Q8K_M4_PREFILL")) return 1;
 
     /*
-     * Measured Qwen3.6 Q4_K_M MLP-down scope.  The provider is bit-exact with
-     * the independent-row and llama.cpp AVX2 reductions.  Keep other Q6 model
-     * shapes on the established provider until their own sweep records a win.
+     * Measured Qwen3.6 Q4_K_M MLP-down and recurrent-QKV scopes.  The provider
+     * is bit-exact with the independent-row and llama.cpp AVX2 reductions.
+     * Keep other Q6 model shapes on the established provider until their own
+     * sweep records a win.
      */
-    return M >= 4 && M <= 63 && N >= 4096 && K >= 8192;
+    const int short_mlp_down =
+        M >= 4 && M <= 63 && N >= 4096 && K >= 8192;
+    const int qwen36_recurrent_qkv =
+        M >= 4 && M <= 63 && N == 10240 && K == 5120;
+    return short_mlp_down || qwen36_recurrent_qkv;
 }
 
 static int ck_shape_aware_enabled(const ck_threadpool_t *pool)
@@ -1108,15 +1117,17 @@ static void work_gemv_q4_k_q8_k_repacked_x16(int ith, int nth, void *args)
     const size_t packed_group_bytes =
             (size_t)(a->K / QK_K) *
             q4_k_packed_vnni_x16_block_size();
-    gemm_nt_q4_k_packed_vnni_x16_q8_k_gemv_order(
-            a->A,
-            (const char *)a->B_packed_x8 +
-                    (size_t)g0 * packed_group_bytes,
-            a->bias ? a->bias + n0 : NULL,
-            a->C + n0,
-            1,
-            n1 - n0,
-            a->K);
+    for (int row = 0; row < a->M; ++row) {
+        gemm_nt_q4_k_packed_vnni_x16_q8_k_gemv_order(
+                (const char *)a->A + (size_t)row * a->A_row_bytes,
+                (const char *)a->B_packed_x8 +
+                        (size_t)g0 * packed_group_bytes,
+                a->bias ? a->bias + n0 : NULL,
+                a->C + (size_t)row * (size_t)a->N + n0,
+                1,
+                n1 - n0,
+                a->K);
+    }
 }
 
 static void run_gemv_q4_k_q8_k_repacked_parallel(
@@ -1129,8 +1140,10 @@ static void run_gemv_q4_k_q8_k_repacked_parallel(
         .B_packed_x8 = B_packed_x8,
         .bias = bias,
         .C = C,
+        .M = 1,
         .N = N,
         .K = K,
+        .A_row_bytes = (size_t)(K / QK_K) * sizeof(block_q8_K),
     };
     const int groups = (N + 7) / 8;
     int active = pool ? ck_threadpool_n_threads(pool) : 1;
@@ -1148,15 +1161,17 @@ static void run_gemv_q4_k_q8_k_repacked_x16_parallel(
         ck_threadpool_t *pool,
         const void *A, const void *B_packed_x16,
         const float *bias, float *C,
-        int N, int K, int thread_cap)
+        int M, int N, int K, int thread_cap)
 {
     q4k_repacked_gemv_args_t args = {
         .A = A,
         .B_packed_x8 = B_packed_x16,
         .bias = bias,
         .C = C,
+        .M = M,
         .N = N,
         .K = K,
+        .A_row_bytes = (size_t)(K / QK_K) * sizeof(block_q8_K),
     };
     const int groups = (N + 15) / 16;
     int active = pool ? ck_threadpool_n_threads(pool) : 1;
@@ -1608,20 +1623,39 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
                 "pairwise_residual_gemv_parallel",
                 tail_rows, N, K,
                 pool ? ck_threadpool_n_threads(pool) : 1);
-        for (int row = 0; row < tail_rows; ++row) {
-            const void *a_row =
-                    (const char *)A +
-                    (size_t)(packed_rows + row) * row_bytes;
-            float *c_row =
-                    C + (size_t)(packed_rows + row) * (size_t)N;
-            if (packed_vnni_x16) {
-                run_gemv_q4_k_q8_k_repacked_x16_parallel(
-                        pool, a_row, packed_vnni_x16, bias, c_row,
-                        N, K, tail_thread_cap);
-            } else {
-                run_gemv_q4_k_q8_k_repacked_parallel(
-                        pool, a_row, packed_x8, bias, c_row,
-                        N, K, tail_thread_cap);
+        /*
+         * Qwen3.6 recurrent-gate prefill has three residual rows at the
+         * common M=23 shape.  Keep the exact GEMV reduction order for every
+         * output, but amortize the thread-pool dispatch and retain each
+         * worker's packed-weight range across those rows.  The much wider
+         * N=34816 gate/up projection does not benefit from this cache
+         * schedule, so it deliberately retains one dispatch per row.
+         */
+        if (packed_vnni_x16 && N == 6144 &&
+            !ck_env_enabled("CK_DISABLE_Q4K_X16_BATCHED_TAIL")) {
+            run_gemv_q4_k_q8_k_repacked_x16_parallel(
+                    pool,
+                    (const char *)A + (size_t)packed_rows * row_bytes,
+                    packed_vnni_x16,
+                    bias,
+                    C + (size_t)packed_rows * (size_t)N,
+                    tail_rows, N, K, tail_thread_cap);
+        } else {
+            for (int row = 0; row < tail_rows; ++row) {
+                const void *a_row =
+                        (const char *)A +
+                        (size_t)(packed_rows + row) * row_bytes;
+                float *c_row =
+                        C + (size_t)(packed_rows + row) * (size_t)N;
+                if (packed_vnni_x16) {
+                    run_gemv_q4_k_q8_k_repacked_x16_parallel(
+                            pool, a_row, packed_vnni_x16, bias, c_row,
+                            1, N, K, tail_thread_cap);
+                } else {
+                    run_gemv_q4_k_q8_k_repacked_parallel(
+                            pool, a_row, packed_x8, bias, c_row,
+                            N, K, tail_thread_cap);
+                }
             }
         }
     }
@@ -1656,13 +1690,18 @@ void gemm_nt_q6_k_q8_k_parallel_dispatch(
     /* A is Q8_K: row_bytes = (K / QK_K) * sizeof(block_q8_K) */
     size_t A_row_bytes = (size_t)(K / QK_K) * sizeof(block_q8_K);
 
-    const int short_wide_q6 = M <= 63 && N >= 4096 && K >= 8192;
+    const int qwen36_recurrent_qkv =
+        M >= 4 && M <= 63 && N == 10240 && K == 5120;
+    const int short_wide_q6 =
+        M <= 63 && N >= 4096 && K >= 8192;
     gemm_args_t args = {
         .A = A, .B = B, .bias = bias, .C = C,
         .M = M, .N = N, .K = K,
         .A_row_bytes = A_row_bytes,
         .tile_m = ck_env_int_or2("CK_PREFILL_TILE_M", NULL, short_wide_q6 ? 8 : 16),
-        .tile_n = ck_env_int_or2("CK_PREFILL_TILE_N", NULL, short_wide_q6 ? 128 : 256),
+        .tile_n = ck_env_int_or2(
+            "CK_PREFILL_TILE_N", NULL,
+            qwen36_recurrent_qkv ? 64 : (short_wide_q6 ? 128 : 256)),
         .use_q6_m4 = ck_should_use_q6k_q8k_m4_prefill(M, N, K)
     };
     int active = ck_select_gemm_active_threads(pool, M, N, K);
