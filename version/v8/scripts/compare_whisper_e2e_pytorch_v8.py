@@ -126,16 +126,18 @@ def _pytorch_reference(args: argparse.Namespace) -> dict[str, object]:
             inputs.input_features,
             language=args.language,
             task=args.task,
+            return_timestamps=args.timestamps,
             max_new_tokens=args.max_tokens,
             do_sample=False,
         )
     elapsed = time.perf_counter() - started
     tokens = [int(value) for value in generated[0].tolist()]
-    text = processor.batch_decode(
-        generated,
+    text = processor.decode(
+        generated[0],
         skip_special_tokens=True,
+        decode_with_timestamps=args.timestamps,
         clean_up_tokenization_spaces=False,
-    )[0]
+    )
     return {
         "tokens": tokens,
         "text": text,
@@ -156,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
         "--task", choices=("transcribe", "translate"), default="transcribe"
     )
     parser.add_argument("--max-tokens", type=int, default=128)
+    parser.add_argument("--timestamps", action="store_true")
     parser.add_argument("--threads", type=int, default=1)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -189,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.task,
                 "--max-tokens",
                 str(args.max_tokens),
+                *(["--timestamps"] if args.timestamps else []),
                 "--output",
                 str(cke_path),
             ],
@@ -208,6 +212,7 @@ def main(argv: list[str] | None = None) -> int:
         "status": "pass" if difference is None else "fail",
         "language": args.language,
         "task": args.task,
+        "timestamps": bool(args.timestamps),
         "max_tokens": args.max_tokens,
         "threads": args.threads,
         "wav": str(args.wav),

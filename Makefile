@@ -1342,6 +1342,10 @@ test-whisper-pytorch-e2e-auto:
 	    [ -z "$$CK_WHISPER_WAV" ]; then \
 		echo "SKIP: set CK_WHISPER_CHECKPOINT, CK_WHISPER_ENCODER_RUN_DIR, CK_WHISPER_DECODER_RUN_DIR, and CK_WHISPER_WAV"; \
 	else \
+		timestamp_arg=""; \
+		if [ "$${CK_WHISPER_TIMESTAMPS:-0}" = "1" ]; then \
+			timestamp_arg="--timestamps"; \
+		fi; \
 		$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/compare_whisper_e2e_pytorch_v8.py \
 			--checkpoint "$$CK_WHISPER_CHECKPOINT" \
 			--encoder-run-dir "$$CK_WHISPER_ENCODER_RUN_DIR" \
@@ -1349,6 +1353,7 @@ test-whisper-pytorch-e2e-auto:
 			--wav "$$CK_WHISPER_WAV" \
 			--language "$${CK_WHISPER_LANGUAGE:-en}" \
 			--task "$${CK_WHISPER_TASK:-transcribe}" \
+			$$timestamp_arg \
 			--max-tokens "$${CK_WHISPER_MAX_TOKENS:-64}" \
 			--threads "$${CK_NUM_THREADS:-1}" \
 			--output "$${CK_WHISPER_PARITY_OUTPUT:-build/whisper-pytorch-parity.json}"; \

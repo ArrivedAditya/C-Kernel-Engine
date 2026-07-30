@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+import numpy as np
 import pytest
 
 
@@ -64,6 +65,100 @@ def test_whisper_runner_uses_generated_frontend_and_forced_prefix_is_stable() ->
         50359,
         50363,
     ]
+    assert runner.forced_decoder_prefix(
+        generation, "en", "transcribe", timestamps=True
+    ) == [50258, 50259, 50359]
+
+
+def test_whisper_timestamp_contract_enforces_initial_pair_and_order() -> None:
+    runner = _module()
+    generation = {
+        "no_timestamps_token_id": 10,
+        "eos_token_id": 9,
+        "max_initial_timestamp_index": 2,
+    }
+    logits = np.arange(16, dtype=np.float32)
+
+    initial = runner.apply_timestamp_logits_contract(
+        logits, [], generation
+    )
+    assert np.all(np.isneginf(initial[:11]))
+    assert np.all(np.isfinite(initial[11:14]))
+    assert np.all(np.isneginf(initial[14:]))
+
+    after_open = runner.apply_timestamp_logits_contract(
+        logits, [12], generation
+    )
+    assert np.all(np.isfinite(after_open[:10]))
+    assert np.isneginf(after_open[10])
+    assert np.all(np.isneginf(after_open[11:]))
+
+    after_text = runner.apply_timestamp_logits_contract(
+        logits, [12, 4], generation
+    )
+    assert np.all(np.isneginf(after_text[11:13]))
+    assert np.all(np.isfinite(after_text[13:]))
+
+    after_close = runner.apply_timestamp_logits_contract(
+        logits, [12, 4, 13], generation
+    )
+    assert np.all(np.isneginf(after_close[10:13]))
+    assert np.all(np.isfinite(after_close[13:]))
+
+
+def test_whisper_timestamp_contract_uses_aggregate_probability() -> None:
+    runner = _module()
+    generation = {
+        "no_timestamps_token_id": 4,
+        "eos_token_id": 3,
+        "max_initial_timestamp_index": None,
+    }
+    logits = np.asarray(
+        [2.0, 0.0, 0.0, 0.0, -5.0, 1.5, 1.5, 1.5]
+    )
+    result = runner.apply_timestamp_logits_contract(
+        logits, [5, 1], generation
+    )
+    assert np.all(np.isneginf(result[:5]))
+    assert np.isfinite(result[6])
+
+
+def test_whisper_timestamp_contract_matches_transformers_masks() -> None:
+    torch = pytest.importorskip("torch")
+    generation_module = pytest.importorskip(
+        "transformers.generation.logits_process"
+    )
+    from types import SimpleNamespace
+
+    runner = _module()
+    generation = {
+        "no_timestamps_token_id": 10,
+        "eos_token_id": 9,
+        "max_initial_timestamp_index": 2,
+    }
+    config = SimpleNamespace(
+        **generation,
+        bos_token_id=0,
+        _detect_timestamp_from_logprob=True,
+    )
+    processor = generation_module.WhisperTimeStampLogitsProcessor(
+        config, begin_index=3
+    )
+    prefix = [1, 2, 3]
+    logits = np.asarray(
+        [2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+         0.0, 1.0, -5.0, 1.5, 1.5, 1.5, 1.0, 0.5],
+        dtype=np.float32,
+    )
+    for generated in ([], [12], [12, 4], [12, 4, 13]):
+        actual = runner.apply_timestamp_logits_contract(
+            logits, generated, generation
+        )
+        expected = processor(
+            torch.tensor([prefix + generated]),
+            torch.from_numpy(logits.copy()).reshape(1, -1),
+        )[0].numpy()
+        np.testing.assert_array_equal(actual, expected)
 
 
 def test_unified_v8_cli_owns_the_public_audio_command() -> None:
@@ -82,6 +177,15 @@ def test_unified_v8_cli_owns_the_public_audio_command() -> None:
     assert "--wav" in completed.stdout
     assert "model" in completed.stdout
     assert "--force-convert" in completed.stdout
+    assert "--timestamps" in completed.stdout
+
+
+def test_whisper_pytorch_target_exposes_timestamp_gate() -> None:
+    source = (ROOT / "Makefile").read_text(encoding="utf-8")
+    target = source.split("test-whisper-pytorch-e2e-auto:", 1)[1]
+    target = target.split("\nnightly-parity:", 1)[0]
+    assert "CK_WHISPER_TIMESTAMPS" in target
+    assert 'timestamp_arg="--timestamps"' in target
 
 
 def test_unified_audio_checkpoint_builds_distinct_generic_roles(
