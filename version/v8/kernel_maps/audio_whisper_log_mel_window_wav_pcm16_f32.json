@@ -1,0 +1,55 @@
+{
+  "id": "audio_whisper_log_mel_window_wav_pcm16_f32",
+  "op": "audio_feature_window",
+  "variant": "global_pcm16_stft_logmel_feature_slice_zero_pad_fp32",
+  "quant": {"weight": "none", "activation": "uint8", "output": "fp32"},
+  "inputs": [
+    {"name": "wav_bytes", "dtype": "uint8", "shape": ["N_bytes"]},
+    {"name": "window", "dtype": "fp32", "shape": ["N_fft"]},
+    {"name": "cos_table", "dtype": "fp32", "shape": ["N_bins", "N_fft"]},
+    {"name": "sin_table", "dtype": "fp32", "shape": ["N_bins", "N_fft"]},
+    {"name": "mel_filters", "dtype": "fp32", "shape": ["N_mels", "N_bins"]}
+  ],
+  "weights": [],
+  "outputs": [{"name": "log_mel", "dtype": "fp32", "shape": ["N_mels", "N_frames"]}],
+  "scratch": [],
+  "dims": ["wav_byte_count", "window_start_frame", "sample_rate", "n_mels", "n_frames"],
+  "impl": {
+    "function": "audio_whisper_log_mel_window_wav_pcm16_f32",
+    "c_declaration": "int audio_whisper_log_mel_window_wav_pcm16_f32(const uint8_t *bytes, size_t byte_count, int start_frame, int target_sample_rate, const float *window, const float *cos_table, const float *sin_table, const float *mel_filters, int n_mels, int output_frames, float *log_mel);",
+    "sources": ["src/kernels/audio_kernels.c"]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [{
+    "contract_id": "audio_whisper_global_log_mel_feature_window_fp32",
+    "status": "validated",
+    "phases": ["prefill"],
+    "function": "audio_whisper_log_mel_window_wav_pcm16_f32",
+    "explicit_selector": true,
+    "implementation": {
+      "isa_dispatch": "scalar",
+      "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "contract_defined"}
+    },
+    "arithmetic": {
+      "partial_accumulator": "fp32",
+      "merge_order": "none",
+      "deterministic": true,
+      "thread_count_changes_arithmetic_order": false,
+      "split_strategy": "serial"
+    }
+  }],
+  "call_abi": {"version": 1, "params": [
+    {"name": "bytes", "source": "runtime:audio_wav_bytes", "cast": "const uint8_t*"},
+    {"name": "byte_count", "source": "runtime:audio_wav_byte_count"},
+    {"name": "start_frame", "source": "runtime:audio_window_start_frame"},
+    {"name": "target_sample_rate", "source": "dim:sample_rate"},
+    {"name": "window", "source": "activation:window", "cast": "const float*"},
+    {"name": "cos_table", "source": "activation:cos_table", "cast": "const float*"},
+    {"name": "sin_table", "source": "activation:sin_table", "cast": "const float*"},
+    {"name": "mel_filters", "source": "activation:mel_filters", "cast": "const float*"},
+    {"name": "n_mels", "source": "dim:n_mels"},
+    {"name": "output_frames", "source": "dim:n_frames"},
+    {"name": "log_mel", "source": "output:log_mel", "cast": "float*"}
+  ]},
+  "tests": {"unit": ["unittest/test_audio_encoder.py"], "oracle": "Hugging Face WhisperFeatureExtractor global feature slicing"}
+}

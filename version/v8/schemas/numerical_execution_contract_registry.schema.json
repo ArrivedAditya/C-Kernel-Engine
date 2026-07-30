@@ -59,6 +59,7 @@
             "attention",
             "attention_gate",
             "audio_log_mel",
+            "audio_feature_window",
             "audio_mel_filters",
             "audio_pad_or_truncate",
             "audio_pcm_decode",

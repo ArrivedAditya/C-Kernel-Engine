@@ -6,6 +6,7 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import math
+import struct
 
 import numpy as np
 import torch
@@ -20,6 +21,7 @@ N_MELS = 80
 
 lib = load_lib("libckernel_audio.so", "libckernel_engine.so")
 _FLOAT_P = ctypes.POINTER(ctypes.c_float)
+_U8_P = ctypes.POINTER(ctypes.c_uint8)
 
 lib.audio_whisper_stft_power_reference_f32.argtypes = [
     _FLOAT_P, ctypes.c_int, _FLOAT_P, ctypes.c_int,
@@ -38,6 +40,16 @@ lib.audio_whisper_mel_filters_slaney_f32.argtypes = [
     ctypes.c_int, ctypes.c_int, ctypes.c_int, _FLOAT_P,
 ]
 lib.audio_whisper_mel_filters_slaney_f32.restype = ctypes.c_int
+lib.audio_stft_precompute_tables_f32.argtypes = [
+    ctypes.c_int, _FLOAT_P, _FLOAT_P, _FLOAT_P,
+]
+lib.audio_stft_precompute_tables_f32.restype = ctypes.c_int
+lib.audio_whisper_log_mel_window_wav_pcm16_f32.argtypes = [
+    _U8_P, ctypes.c_size_t, ctypes.c_int, ctypes.c_int,
+    _FLOAT_P, _FLOAT_P, _FLOAT_P, _FLOAT_P,
+    ctypes.c_int, ctypes.c_int, _FLOAT_P,
+]
+lib.audio_whisper_log_mel_window_wav_pcm16_f32.restype = ctypes.c_int
 
 
 def _ptr(array: np.ndarray) -> _FLOAT_P:
@@ -218,6 +230,49 @@ def _check_production_shape_silence() -> None:
     print("whisper_log_mel_30s_silence(shape=80x3000) max_diff=0 tol=0 [PASS]")
 
 
+def _check_global_feature_window() -> None:
+    source = _signal("tones", 5280)
+    pcm = np.rint(source * 32768.0).clip(-32768, 32767).astype("<i2")
+    decoded = pcm.astype(np.float32) / np.float32(32768.0)
+    fmt = struct.pack("<HHIIHH", 1, 1, 16000, 32000, 2, 16)
+    chunks = (
+        b"fmt " + struct.pack("<I", len(fmt)) + fmt
+        + b"data" + struct.pack("<I", pcm.nbytes) + pcm.tobytes()
+    )
+    wav = np.frombuffer(
+        b"RIFF" + struct.pack("<I", 4 + len(chunks)) + b"WAVE" + chunks,
+        dtype=np.uint8,
+    )
+    filters = _whisper_mel_filters()
+    _, complete = _torch_reference(decoded, filters)
+    window = np.empty(N_FFT, dtype=np.float32)
+    cos_table = np.empty((POWER_BINS, N_FFT), dtype=np.float32)
+    sin_table = np.empty((POWER_BINS, N_FFT), dtype=np.float32)
+    assert lib.audio_stft_precompute_tables_f32(
+        N_FFT, _ptr(window), _ptr(cos_table), _ptr(sin_table)
+    ) == 0
+    actual = np.full((N_MELS, 20), 99.0, dtype=np.float32)
+    valid = lib.audio_whisper_log_mel_window_wav_pcm16_f32(
+        wav.ctypes.data_as(_U8_P), wav.size, 20 * HOP_LENGTH, 16000,
+        _ptr(window), _ptr(cos_table), _ptr(sin_table), _ptr(filters),
+        N_MELS, actual.shape[1], _ptr(actual)
+    )
+    expected = np.zeros_like(actual)
+    expected[:, :13] = complete[:, 20:33]
+    difference = np.abs(actual - expected)
+    max_diff = float(np.max(difference))
+    rmse = float(np.sqrt(np.mean(difference * difference)))
+    assert valid == 13
+    assert np.array_equal(actual[:, 13:], expected[:, 13:])
+    assert max_diff <= 1.1e-3, max_diff
+    assert rmse <= 9.0e-5, rmse
+    print(
+        f"whisper_global_feature_window max_diff={max_diff:.8e} "
+        f"tol=1.1e-03 [PASS] rmse={rmse:.8e} rmse_tol=9.0e-05 "
+        "tail_zero=1"
+    )
+
+
 def main() -> None:
     torch.set_num_threads(1)
     for kind in ("tones", "noise", "impulse"):
@@ -226,7 +281,8 @@ def main() -> None:
     _check_invalid_shapes()
     _check_filter_identity()
     _check_production_shape_silence()
-    print("ALL TESTS PASSED (7/7)")
+    _check_global_feature_window()
+    print("ALL TESTS PASSED (8/8)")
 
 
 if __name__ == "__main__":

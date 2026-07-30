@@ -37,6 +37,7 @@ _AUDIO_FRONTEND_OPS = {
     "audio_stft",
     "audio_mel_filters",
     "audio_log_mel",
+    "audio_feature_window",
 }
 
 
@@ -84,18 +85,22 @@ def _emit_audio_wav_entrypoint(
     return f"""
 /* Generated from the resolved audio frontend call IR. Python must not select
  * or invoke individual frontend kernels. */
-CK_EXPORT int ck_model_run_audio_wav(const uint8_t *audio_wav_bytes,
-                                     size_t audio_wav_byte_count,
-                                     CKAudioWavInfo *audio_metadata) {{
+CK_EXPORT int ck_model_prepare_audio_wav_window(
+    const uint8_t *audio_wav_bytes,
+    size_t audio_wav_byte_count,
+    int audio_window_start_frame,
+    CKAudioWavInfo *audio_metadata) {{
     if (!g_model || !audio_wav_bytes || audio_wav_byte_count == 0) return -1;
+    if (audio_window_start_frame < 0) return -1;
     CKModel *model = g_model;
     CKAudioWavInfo local_info;
     CKAudioWavInfo *audio_wav_info = audio_metadata ? audio_metadata : &local_info;
     float *audio_mono = (float*)(g_model->bump + A_AUDIO_SAMPLES);
     const int audio_mono_capacity = {max_source_frames};
     int audio_source_frames = {calls["audio_wav_decode"]};
-    if (audio_source_frames <= 0 || audio_source_frames != audio_wav_info->frames) return -2;
+    if (audio_source_frames <= 0) return -2;
     const int audio_source_rate = audio_wav_info->sample_rate;
+    if (audio_window_start_frame != 0 && audio_source_rate != {sample_rate}) return -10;
     int audio_resampled_frames = audio_resampled_frame_count(
         audio_source_frames, audio_source_rate, {sample_rate});
     if (audio_resampled_frames <= 0 || audio_resampled_frames > {max_source_frames}) return -3;
@@ -104,13 +109,37 @@ CK_EXPORT int ck_model_run_audio_wav(const uint8_t *audio_wav_bytes,
         audio_resampled = (float*)(g_model->bump + A_AUDIO_RESAMPLED);
         if ({calls["audio_resample"]} != 0) return -4;
     }}
-    if ({calls["audio_pad_or_truncate"]} < 0) return -5;
     if ({calls["audio_stft_tables"]} != 0) return -6;
-    if ({calls["audio_stft"]} != 0) return -7;
     if ({calls["audio_mel_filters"]} != 0) return -8;
-    if ({calls["audio_log_mel"]} != 0) return -9;
+    if (audio_wav_info->frames > {sample_extent}) {{
+        if ({calls["audio_feature_window"]} <= 0) return -11;
+    }} else {{
+        if ({calls["audio_pad_or_truncate"]} < 0) return -5;
+        if ({calls["audio_stft"]} != 0) return -7;
+        if ({calls["audio_log_mel"]} != 0) return -9;
+    }}
+    return 0;
+}}
+
+CK_EXPORT int ck_model_run_audio_wav_window(const uint8_t *audio_wav_bytes,
+                                            size_t audio_wav_byte_count,
+                                            int audio_window_start_frame,
+                                            CKAudioWavInfo *audio_metadata) {{
+    const int status = ck_model_prepare_audio_wav_window(
+        audio_wav_bytes,
+        audio_wav_byte_count,
+        audio_window_start_frame,
+        audio_metadata);
+    if (status != 0) return status;
     ck_prefill_from_embedded(g_model, {int(config.get("context_length", 0) or 0)});
     return 0;
+}}
+
+CK_EXPORT int ck_model_run_audio_wav(const uint8_t *audio_wav_bytes,
+                                     size_t audio_wav_byte_count,
+                                     CKAudioWavInfo *audio_metadata) {{
+    return ck_model_run_audio_wav_window(
+        audio_wav_bytes, audio_wav_byte_count, 0, audio_metadata);
 }}
 """
 

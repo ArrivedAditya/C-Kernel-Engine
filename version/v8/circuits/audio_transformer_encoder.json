@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "name": "audio_transformer_encoder",
   "family": "audio_transformer",
   "flags": {
@@ -16,6 +16,10 @@
       "channel_layout": "mono_mean",
       "sample_rate": 16000,
       "sample_extent": 480000,
+      "windowing": "fixed_non_overlapping_source_windows",
+      "window_offset_unit": "source_frame",
+      "long_audio_resample": "require_identity_until_global_phase_is_validated",
+      "long_audio_feature_window": "global_stft_logmel_then_slice_and_zero_pad",
       "resample": "hann_windowed_sinc",
       "resample_radius": 16,
       "n_fft": 400,
@@ -165,6 +169,23 @@
         "axis_names": ["mel", "frame"]
       }
     },
+    "audio.frontend.feature_window": {
+      "op": "audio_feature_window",
+      "template_ops": ["audio_feature_window"],
+      "phases": {
+        "prefill": {
+          "contract_id": "audio_whisper_global_log_mel_feature_window_fp32",
+          "validation": "validated",
+          "evidence": "unittest/test_audio_encoder.py global STFT/log-Mel slicing and feature-level zero-padding oracle"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.frontend.feature_window.output",
+        "producer": "audio_feature_window",
+        "logical_layout": "mel_major",
+        "axis_names": ["mel", "frame"]
+      }
+    },
     "audio.encoder.stem.conv1": {
       "op": "audio_conv1d",
       "template_ops": ["audio_conv1d_stem_1"],
@@ -238,9 +259,9 @@
       "template_ops": ["gelu"],
       "phases": {
         "prefill": {
-          "contract_id": "gelu_pytorch_erf_fp32_storage",
+          "contract_id": "gelu_erf_fp64_scalar_fp32_storage",
           "validation": "validated",
-          "evidence": "unittest/test_audio_encoder.py PyTorch GELU approximate=none FP32 oracle"
+          "evidence": "unittest/test_audio_encoder.py byte-exact FP64 scalar ERF formula plus observed PyTorch comparison"
         }
       },
       "checkpoint": {
@@ -323,6 +344,15 @@
           "id": "log_mel",
           "op": "audio_log_mel",
           "params": {
+            "n_mels_from_config": "audio_feature_channels",
+            "n_frames_from_config": "audio_feature_frames"
+          }
+        },
+        {
+          "id": "feature_window",
+          "op": "audio_feature_window",
+          "params": {
+            "sample_rate_from_config": "audio_sample_rate",
             "n_mels_from_config": "audio_feature_channels",
             "n_frames_from_config": "audio_feature_frames"
           }

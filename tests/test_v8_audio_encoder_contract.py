@@ -139,7 +139,7 @@ class AudioEncoderContractTests(unittest.TestCase):
 
     def test_audio_encoder_contracts_resolve_exact_providers(self):
         expected = {
-            "audio.frontend.wav_decode": "audio_wav_decode_memory_pcm16_mono_f32",
+            "audio.frontend.wav_decode": "audio_wav_decode_memory_pcm16_mono_window_f32",
             "audio.frontend.resample": "audio_resample_windowed_sinc_f32",
             "audio.frontend.pad": "audio_pad_or_truncate_f32",
             "audio.frontend.stft_tables": "audio_stft_precompute_tables_f32",
@@ -348,16 +348,18 @@ class AudioEncoderContractTests(unittest.TestCase):
                 "audio_stft",
                 "audio_mel_filters",
                 "audio_log_mel",
+                "audio_feature_window",
             }
         }
         expected_frontend_functions = {
-            "audio_wav_decode": "audio_wav_decode_memory_pcm16_mono_f32",
+            "audio_wav_decode": "audio_wav_decode_memory_pcm16_mono_window_f32",
             "audio_resample": "audio_resample_windowed_sinc_f32",
             "audio_pad_or_truncate": "audio_pad_or_truncate_f32",
             "audio_stft_tables": "audio_stft_precompute_tables_f32",
             "audio_stft": "audio_stft_power_fft400_f32",
             "audio_mel_filters": "audio_whisper_mel_filters_slaney_f32",
             "audio_log_mel": "audio_whisper_log_mel_from_power_reference_f32",
+            "audio_feature_window": "audio_whisper_log_mel_window_wav_pcm16_f32",
         }
         self.assertEqual(set(frontend_calls), set(expected_frontend_functions))
         for op, function in expected_frontend_functions.items():
@@ -380,6 +382,9 @@ class AudioEncoderContractTests(unittest.TestCase):
             call_ir["operations"], manifest["config"]
         )
         self.assertIn("CK_EXPORT int ck_model_run_audio_wav(", entrypoint)
+        self.assertIn(
+            "CK_EXPORT int ck_model_prepare_audio_wav_window(", entrypoint
+        )
         for function in expected_frontend_functions.values():
             self.assertIn(function + "(", entrypoint)
         missing = [
@@ -452,6 +457,7 @@ class AudioEncoderContractTests(unittest.TestCase):
             "audio_stft": "audio_stft",
             "audio_mel_filters": "audio_mel_filters",
             "audio_log_mel": "audio_log_mel",
+            "audio_feature_window": "audio_feature_window",
             "audio_conv1d_stem_1": "audio_conv1d",
             "audio_conv1d_stem_2": "audio_conv1d",
             "layout_channel_to_token": "layout_transform",
@@ -521,24 +527,24 @@ class AudioEncoderContractTests(unittest.TestCase):
         self.assertEqual(len(parsed), 1)
         self.assertEqual(parsed[0].status, "pass")
         failed = nightly.parse_sub_tests(
-            "audio_pytorch_erf_gelu "
-            "max_diff=1.19209290e-06 tol=5.0e-07 [FAIL] "
+            "audio_erf_gelu_fp64_scalar "
+            "max_diff=1.19209290e-06 tol=0 [FAIL] "
             "rmse=1.3e-07 rmse_tol=1.25e-07\n"
         )
         self.assertEqual(len(failed), 1)
-        self.assertEqual(failed[0].name, "audio_pytorch_erf_gelu")
+        self.assertEqual(failed[0].name, "audio_erf_gelu_fp64_scalar")
         self.assertEqual(failed[0].status, "fail")
         self.assertEqual(failed[0].max_diff, 1.1920929e-6)
-        self.assertEqual(failed[0].tolerance, 5.0e-7)
+        self.assertEqual(failed[0].tolerance, 0.0)
 
     def test_standalone_attention_library_links_its_bf16_gemm_dependency(self):
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         rule = makefile.split("$(LIB_ATTENTION):", 1)[1].split("\n\n", 1)[0]
         self.assertIn("src/kernels/gemm_kernels_bf16.c", rule)
 
-    def test_pytorch_erf_gelu_uses_fp64_scalar_libm(self):
+    def test_audio_erf_gelu_uses_fp64_scalar_libm(self):
         kernel = json.loads(
-            (V8 / "kernel_maps" / "gelu_pytorch_erf_f32_inplace.json")
+            (V8 / "kernel_maps" / "gelu_erf_fp64_f32_inplace.json")
             .read_text(encoding="utf-8")
         )
         capability = kernel["numerical_capabilities"][0]
@@ -547,12 +553,29 @@ class AudioEncoderContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         function = source.split(
-            "void gelu_pytorch_erf_f32_inplace(float *data, size_t n)", 1
+            "void gelu_erf_fp64_f32_inplace(float *data, size_t n)", 1
         )[1].split("\n}", 1)[0]
         self.assertIn("ck_gelu_system_erf()", function)
         self.assertIn("reference_erf(", function)
         self.assertIn("const double scaled", function)
         self.assertIn("data[i] = (float)", function)
+
+    def test_bf16_erf_gelu_oracle_is_pytorch_version_scoped(self):
+        source = (
+            ROOT
+            / "unittest"
+            / "bf16"
+            / "test_gelu_pytorch_erf_sleef_storage_bf16.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('torch_version.startswith("2.8.")', source)
+        kernel = json.loads(
+            (
+                V8
+                / "kernel_maps"
+                / "gelu_pytorch_erf_sleef_bf16_storage.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertIn("PyTorch 2.8", kernel["notes"])
 
 
 if __name__ == "__main__":

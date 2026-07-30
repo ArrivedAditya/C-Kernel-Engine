@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 269,
+      "total": 270,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -16,6 +16,7 @@
         "attn_gate_sigmoid_mul": 1,
         "attn_gate_sigmoid_mul_backward": 1,
         "audio_conv1d": 1,
+        "audio_feature_window": 1,
         "audio_log_mel": 2,
         "audio_mel_filters": 1,
         "audio_pad_or_truncate": 1,
@@ -7509,9 +7510,9 @@
       "_source_file": "audio_transpose_channel_to_token_f32.json"
     },
     {
-      "id": "audio_wav_decode_memory_pcm16_mono_f32",
+      "id": "audio_wav_decode_memory_pcm16_mono_window_f32",
       "op": "audio_wav_decode",
-      "variant": "riff_wave_pcm16_parse_channel_mean_fp32",
+      "variant": "riff_wave_pcm16_window_parse_channel_mean_fp32",
       "quant": {
         "weight": "none",
         "activation": "uint8",
@@ -7547,11 +7548,12 @@
       ],
       "dims": [
         "wav_byte_count",
+        "window_start_frame",
         "mono_capacity"
       ],
       "impl": {
-        "function": "audio_wav_decode_memory_pcm16_mono_f32",
-        "c_declaration": "int audio_wav_decode_memory_pcm16_mono_f32(const uint8_t *bytes, size_t byte_count, float *mono, int mono_capacity, CKAudioWavInfo *info);",
+        "function": "audio_wav_decode_memory_pcm16_mono_window_f32",
+        "c_declaration": "int audio_wav_decode_memory_pcm16_mono_window_f32(const uint8_t *bytes, size_t byte_count, int start_frame, float *mono, int mono_capacity, CKAudioWavInfo *info);",
         "sources": [
           "src/kernels/audio_kernels.c"
         ]
@@ -7568,7 +7570,7 @@
           "phases": [
             "prefill"
           ],
-          "function": "audio_wav_decode_memory_pcm16_mono_f32",
+          "function": "audio_wav_decode_memory_pcm16_mono_window_f32",
           "explicit_selector": true,
           "implementation": {
             "isa_dispatch": "scalar",
@@ -7605,6 +7607,10 @@
             "source": "runtime:audio_wav_byte_count"
           },
           {
+            "name": "start_frame",
+            "source": "runtime:audio_window_start_frame"
+          },
+          {
             "name": "mono",
             "source": "runtime:audio_mono",
             "cast": "float*"
@@ -7625,8 +7631,8 @@
           "unittest/test_audio_encoder.py"
         ]
       },
-      "name": "audio_wav_decode_memory_pcm16_mono_f32",
-      "_source_file": "audio_wav_decode_memory_pcm16_mono_f32.json"
+      "name": "audio_wav_decode_memory_pcm16_mono_window_f32",
+      "_source_file": "audio_wav_decode_memory_pcm16_mono_window_f32.json"
     },
     {
       "id": "audio_whisper_log_mel_from_power_f32",
@@ -7895,6 +7901,181 @@
       "notes": "Correctness-first audio frontend provider. Replace only through an exact compatible numerical contract after FFT optimization is independently validated.",
       "name": "audio_whisper_log_mel_reference_f32",
       "_source_file": "audio_whisper_log_mel_reference_f32.json"
+    },
+    {
+      "id": "audio_whisper_log_mel_window_wav_pcm16_f32",
+      "op": "audio_feature_window",
+      "variant": "global_pcm16_stft_logmel_feature_slice_zero_pad_fp32",
+      "quant": {
+        "weight": "none",
+        "activation": "uint8",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "wav_bytes",
+          "dtype": "uint8",
+          "shape": [
+            "N_bytes"
+          ]
+        },
+        {
+          "name": "window",
+          "dtype": "fp32",
+          "shape": [
+            "N_fft"
+          ]
+        },
+        {
+          "name": "cos_table",
+          "dtype": "fp32",
+          "shape": [
+            "N_bins",
+            "N_fft"
+          ]
+        },
+        {
+          "name": "sin_table",
+          "dtype": "fp32",
+          "shape": [
+            "N_bins",
+            "N_fft"
+          ]
+        },
+        {
+          "name": "mel_filters",
+          "dtype": "fp32",
+          "shape": [
+            "N_mels",
+            "N_bins"
+          ]
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "log_mel",
+          "dtype": "fp32",
+          "shape": [
+            "N_mels",
+            "N_frames"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "wav_byte_count",
+        "window_start_frame",
+        "sample_rate",
+        "n_mels",
+        "n_frames"
+      ],
+      "impl": {
+        "function": "audio_whisper_log_mel_window_wav_pcm16_f32",
+        "c_declaration": "int audio_whisper_log_mel_window_wav_pcm16_f32(const uint8_t *bytes, size_t byte_count, int start_frame, int target_sample_rate, const float *window, const float *cos_table, const float *sin_table, const float *mel_filters, int n_mels, int output_frames, float *log_mel);",
+        "sources": [
+          "src/kernels/audio_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "audio_whisper_global_log_mel_feature_window_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "audio_whisper_log_mel_window_wav_pcm16_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "bytes",
+            "source": "runtime:audio_wav_bytes",
+            "cast": "const uint8_t*"
+          },
+          {
+            "name": "byte_count",
+            "source": "runtime:audio_wav_byte_count"
+          },
+          {
+            "name": "start_frame",
+            "source": "runtime:audio_window_start_frame"
+          },
+          {
+            "name": "target_sample_rate",
+            "source": "dim:sample_rate"
+          },
+          {
+            "name": "window",
+            "source": "activation:window",
+            "cast": "const float*"
+          },
+          {
+            "name": "cos_table",
+            "source": "activation:cos_table",
+            "cast": "const float*"
+          },
+          {
+            "name": "sin_table",
+            "source": "activation:sin_table",
+            "cast": "const float*"
+          },
+          {
+            "name": "mel_filters",
+            "source": "activation:mel_filters",
+            "cast": "const float*"
+          },
+          {
+            "name": "n_mels",
+            "source": "dim:n_mels"
+          },
+          {
+            "name": "output_frames",
+            "source": "dim:n_frames"
+          },
+          {
+            "name": "log_mel",
+            "source": "output:log_mel",
+            "cast": "float*"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ],
+        "oracle": "Hugging Face WhisperFeatureExtractor global feature slicing"
+      },
+      "name": "audio_whisper_log_mel_window_wav_pcm16_f32",
+      "_source_file": "audio_whisper_log_mel_window_wav_pcm16_f32.json"
     },
     {
       "id": "audio_whisper_mel_filters_slaney_f32",
@@ -12535,6 +12716,101 @@
       "_source_file": "geglu_forward_fp32.json"
     },
     {
+      "id": "gelu_erf_fp64_f32_inplace",
+      "op": "gelu",
+      "variant": "pytorch_erf_inplace_fp32",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "x",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "desc": "Input/output buffer (in-place)"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "desc": "PyTorch approximate=none GELU output"
+        }
+      ],
+      "dims": [
+        "N"
+      ],
+      "impl": {
+        "function": "gelu_erf_fp64_f32_inplace",
+        "c_declaration": "void gelu_erf_fp64_f32_inplace(float *data, size_t n);",
+        "sources": [
+          "src/kernels/gelu_kernels.c"
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "gelu_erf_fp64_scalar_fp32_storage",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "gelu_erf_fp64_f32_inplace",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "cast": "float*",
+            "name": "data",
+            "source": "output:out"
+          },
+          {
+            "name": "n",
+            "source": "dim:gelu_elems"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py"
+        ]
+      },
+      "notes": "Standalone FP32 ERF GELU provider. The provider widens its ERF argument and final expression to FP64, then narrows once to FP32. Its byte-exact oracle is the same scalar FP64 formula; PyTorch vector GELU remains observed evidence because framework builds differ by ISA and transcendental library. Does not replace the historical tanh-based gelu_exact_inplace provider.",
+      "name": "gelu_erf_fp64_f32_inplace",
+      "_source_file": "gelu_erf_fp64_f32_inplace.json"
+    },
+    {
       "id": "gelu_exact_inplace",
       "op": "gelu",
       "variant": "exact_inplace_fp32",
@@ -12732,101 +13008,6 @@
       "_source_file": "gelu_ggml_inplace.json"
     },
     {
-      "id": "gelu_pytorch_erf_f32_inplace",
-      "op": "gelu",
-      "variant": "pytorch_erf_inplace_fp32",
-      "quant": {
-        "weight": "none",
-        "activation": "fp32",
-        "output": "fp32"
-      },
-      "inputs": [
-        {
-          "name": "x",
-          "dtype": "fp32",
-          "shape": [
-            "N"
-          ],
-          "desc": "Input/output buffer (in-place)"
-        }
-      ],
-      "weights": [],
-      "outputs": [
-        {
-          "name": "out",
-          "dtype": "fp32",
-          "shape": [
-            "N"
-          ],
-          "desc": "PyTorch approximate=none GELU output"
-        }
-      ],
-      "dims": [
-        "N"
-      ],
-      "impl": {
-        "function": "gelu_pytorch_erf_f32_inplace",
-        "c_declaration": "void gelu_pytorch_erf_f32_inplace(float *data, size_t n);",
-        "sources": [
-          "src/kernels/gelu_kernels.c"
-        ]
-      },
-      "numerical_capabilities": [
-        {
-          "contract_id": "gelu_pytorch_erf_fp32_storage",
-          "status": "validated",
-          "phases": [
-            "prefill",
-            "decode"
-          ],
-          "function": "gelu_pytorch_erf_f32_inplace",
-          "explicit_selector": true,
-          "implementation": {
-            "isa_dispatch": "scalar",
-            "threading": {
-              "runtime": "serial",
-              "work_partition": [
-                "serial"
-              ],
-              "dispatch": [
-                "inline"
-              ],
-              "reduction_order_effect": "none"
-            }
-          },
-          "arithmetic": {
-            "partial_accumulator": "none",
-            "merge_order": "none",
-            "deterministic": true,
-            "thread_count_changes_arithmetic_order": false,
-            "split_strategy": "serial"
-          }
-        }
-      ],
-      "call_abi": {
-        "version": 1,
-        "params": [
-          {
-            "cast": "float*",
-            "name": "data",
-            "source": "output:out"
-          },
-          {
-            "name": "n",
-            "source": "dim:gelu_elems"
-          }
-        ]
-      },
-      "tests": {
-        "unit": [
-          "unittest/test_audio_encoder.py"
-        ]
-      },
-      "notes": "FP32 Whisper/PyTorch GELU provider. The provider widens its ERF argument and final expression to FP64, then narrows once to FP32. This avoids the cross-glibc float-erff drift observed between local and GitHub runners while retaining the existing PyTorch error bounds. The scalar libm erf entry point is bound indirectly so the compiler cannot replace it with host-specific vector math. Does not replace the historical tanh-based gelu_exact_inplace provider.",
-      "name": "gelu_pytorch_erf_f32_inplace",
-      "_source_file": "gelu_pytorch_erf_f32_inplace.json"
-    },
-    {
       "id": "gelu_pytorch_erf_sleef_bf16_storage",
       "op": "gelu",
       "variant": "pytorch_erf_sleef_bf16_storage",
@@ -12871,7 +13052,7 @@
           "unittest/bf16/test_gelu_pytorch_erf_sleef_storage_bf16.py"
         ]
       },
-      "notes": "Exact PyTorch x86 BF16 nn.GELU provider. Reproduces PyTorch's vector erf polynomial and requires Sleef_expf16_u10 via CK_SLEEF_LIBRARY or the process symbol table.",
+      "notes": "Exact PyTorch 2.8 x86 BF16 nn.GELU provider. Reproduces PyTorch 2.8's vector erf polynomial and FTZ edge behavior and requires Sleef_expf16_u10 via CK_SLEEF_LIBRARY or the process symbol table. Later PyTorch versions require a separately versioned provider.",
       "numerical_capabilities": [
         {
           "contract_id": "gelu_pytorch_erf_sleef_bf16_storage",
