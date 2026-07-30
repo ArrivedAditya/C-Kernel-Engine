@@ -69,6 +69,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -c requirements-nightly-constraints.txt -r requirements.txt
           pip install -c requirements-nightly-constraints.txt -r requirements-v7.txt
+          pip install -c requirements-nightly-constraints.txt -r server/requirements.txt
           pip install -c requirements-nightly-constraints.txt huggingface_hub torch
 
       - name: Build CK-Engine

@@ -1,0 +1,6 @@
+# Temporary dependencies for the experimental schema scaffold only. Native CKE
+# serving should not add these packages to the inference runtime.
+fastapi
+uvicorn
+httpx
+pytest

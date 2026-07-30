@@ -443,6 +443,12 @@ TEST_SUITES = {
 
 # Make targets to run (non-Python tests)
 MAKE_TARGETS = {
+    "server_schema_scaffold": {
+        "name": "Experimental Responses Server Schema",
+        "category": "inference",
+        "target": "test-server-schema",
+        "timeout_sec": 60,
+    },
     "v8_audio_contracts": {
         "name": "v8 Audio Circuit/Codegen Contracts",
         "category": "inference",

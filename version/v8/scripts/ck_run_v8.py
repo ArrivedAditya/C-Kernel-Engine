@@ -1412,7 +1412,6 @@ def step_run_chat(work_dir: Path, args: argparse.Namespace, *, gguf_path: Path |
         cmd.extend(["--speculative-draft-model-dir", str(args.speculative_draft_model_dir)])
     if getattr(args, "speculative_draft_tokens", None) is not None:
         cmd.extend(["--speculative-draft-tokens", str(int(args.speculative_draft_tokens))])
-
     os.execvpe(sys.executable, cmd, env)
 
 
