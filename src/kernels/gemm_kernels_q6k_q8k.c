@@ -723,6 +723,120 @@ static float dot_q6_k_q8_k_avx2(const block_q6_K *w,
     return ck_q6k_hsum_float_8(acc);
 }
 
+/*
+ * Four-token Q6_K x Q8_K microkernel.
+ *
+ * Each output keeps the same independent integer and FP32 reduction tree as
+ * dot_q6_k_q8_k_avx2().  The only changed ordering is between independent
+ * outputs: Q6 low/high-bit unpack and scale shuffles are performed once, then
+ * reused by as many as four Q8_K activation rows.  This makes the provider
+ * eligible for exact llama.cpp parity while removing repeated Q6 decode work.
+ */
+static void dot_q6_k_q8_k_avx2_m4(const block_q6_K *w,
+                                   const block_q8_K *x,
+                                   int x_row_blocks,
+                                   int rows,
+                                   int K,
+                                   float out[4])
+{
+    const int nb = K / QK_K;
+    const __m256i m3 = _mm256_set1_epi8(3);
+    const __m256i m15 = _mm256_set1_epi8(15);
+    __m256 acc[4] = {
+        _mm256_setzero_ps(), _mm256_setzero_ps(),
+        _mm256_setzero_ps(), _mm256_setzero_ps()
+    };
+
+    for (int i = 0; i < nb; ++i) {
+        const uint8_t *q4 = w[i].ql;
+        const uint8_t *qh = w[i].qh;
+        const __m128i scales = _mm_loadu_si128((const __m128i *)w[i].scales);
+        const __m256i scales_16 = _mm256_cvtepi8_epi16(scales);
+        const float wd = GGML_FP16_TO_FP32(w[i].d);
+        __m256i sumi[4] = {
+            _mm256_setzero_si256(), _mm256_setzero_si256(),
+            _mm256_setzero_si256(), _mm256_setzero_si256()
+        };
+        int is = 0;
+
+        for (int j = 0; j < QK_K / 128; ++j) {
+            const __m256i q4bits1 = _mm256_loadu_si256((const __m256i *)q4);
+            q4 += 32;
+            const __m256i q4bits2 = _mm256_loadu_si256((const __m256i *)q4);
+            q4 += 32;
+            const __m256i q4bitsH = _mm256_loadu_si256((const __m256i *)qh);
+            qh += 32;
+
+            const __m256i q4h_0 = _mm256_slli_epi16(_mm256_and_si256(q4bitsH, m3), 4);
+            const __m256i q4h_1 = _mm256_slli_epi16(
+                _mm256_and_si256(q4bitsH, _mm256_set1_epi8(12)), 2);
+            const __m256i q4h_2 = _mm256_and_si256(q4bitsH, _mm256_set1_epi8(48));
+            const __m256i q4h_3 = _mm256_srli_epi16(
+                _mm256_and_si256(q4bitsH, _mm256_set1_epi8(-64)), 2);
+
+            const __m256i q6_0 = _mm256_or_si256(_mm256_and_si256(q4bits1, m15), q4h_0);
+            const __m256i q6_1 = _mm256_or_si256(_mm256_and_si256(q4bits2, m15), q4h_1);
+            const __m256i q6_2 = _mm256_or_si256(
+                _mm256_and_si256(_mm256_srli_epi16(q4bits1, 4), m15), q4h_2);
+            const __m256i q6_3 = _mm256_or_si256(
+                _mm256_and_si256(_mm256_srli_epi16(q4bits2, 4), m15), q4h_3);
+
+            const __m128i scale_0 = _mm_shuffle_epi8(
+                scales, get_scale_shuffle_avx2(is + 0));
+            const __m128i scale_1 = _mm_shuffle_epi8(
+                scales, get_scale_shuffle_avx2(is + 1));
+            const __m128i scale_2 = _mm_shuffle_epi8(
+                scales, get_scale_shuffle_avx2(is + 2));
+            const __m128i scale_3 = _mm_shuffle_epi8(
+                scales, get_scale_shuffle_avx2(is + 3));
+            is += 4;
+            const __m256i scale16_0 = _mm256_cvtepi8_epi16(scale_0);
+            const __m256i scale16_1 = _mm256_cvtepi8_epi16(scale_1);
+            const __m256i scale16_2 = _mm256_cvtepi8_epi16(scale_2);
+            const __m256i scale16_3 = _mm256_cvtepi8_epi16(scale_3);
+
+            for (int r = 0; r < rows; ++r) {
+                const block_q8_K *xb = x + (size_t)r * (size_t)x_row_blocks + i;
+                const int8_t *q8 = xb->qs + j * 128;
+                const __m256i q8_0 = _mm256_loadu_si256((const __m256i *)(q8 + 0));
+                const __m256i q8_1 = _mm256_loadu_si256((const __m256i *)(q8 + 32));
+                const __m256i q8_2 = _mm256_loadu_si256((const __m256i *)(q8 + 64));
+                const __m256i q8_3 = _mm256_loadu_si256((const __m256i *)(q8 + 96));
+
+                __m256i p16_0 = _mm256_maddubs_epi16(q6_0, q8_0);
+                __m256i p16_1 = _mm256_maddubs_epi16(q6_1, q8_1);
+                __m256i p16_2 = _mm256_maddubs_epi16(q6_2, q8_2);
+                __m256i p16_3 = _mm256_maddubs_epi16(q6_3, q8_3);
+                p16_0 = _mm256_madd_epi16(scale16_0, p16_0);
+                p16_1 = _mm256_madd_epi16(scale16_1, p16_1);
+                p16_2 = _mm256_madd_epi16(scale16_2, p16_2);
+                p16_3 = _mm256_madd_epi16(scale16_3, p16_3);
+
+                sumi[r] = _mm256_add_epi32(
+                    sumi[r], _mm256_add_epi32(p16_0, p16_1));
+                sumi[r] = _mm256_add_epi32(
+                    sumi[r], _mm256_add_epi32(p16_2, p16_3));
+            }
+        }
+
+        for (int r = 0; r < rows; ++r) {
+            const block_q8_K *xb = x + (size_t)r * (size_t)x_row_blocks + i;
+            const __m256i q8sums =
+                _mm256_loadu_si256((const __m256i *)xb->bsums);
+            const __m256i q8sclsub = _mm256_slli_epi32(
+                _mm256_madd_epi16(q8sums, scales_16), 5);
+            sumi[r] = _mm256_sub_epi32(sumi[r], q8sclsub);
+            const float d = wd * xb->d;
+            acc[r] = _mm256_fmadd_ps(
+                _mm256_broadcast_ss(&d), _mm256_cvtepi32_ps(sumi[r]), acc[r]);
+        }
+    }
+
+    for (int r = 0; r < rows; ++r) {
+        out[r] = ck_q6k_hsum_float_8(acc[r]);
+    }
+}
+
 void gemv_q6_k_q8_k_avx2(float *y,
                           const void *W,
                           const void *x_q8,
@@ -1335,6 +1449,61 @@ void gemm_nt_q6_k_q8_k_tile(const void *A_q8,
             C[(size_t)m * (size_t)N + (size_t)n] = ck_dot_q6_k_q8_k_fast_or_ref(w_row, a_row, K) + b;
         }
     }
+}
+
+void gemm_nt_q6_k_q8_k_m4_tile(const void *A_q8,
+                                const void *B,
+                                const float *bias,
+                                float *C,
+                                int M, int N, int K,
+                                int m0, int m1,
+                                int n0, int n1)
+{
+    if (!A_q8 || !B || !C || M <= 0 || N <= 0 || K <= 0 ||
+        K % QK_K != 0) {
+        return;
+    }
+    if (m0 < 0) m0 = 0;
+    if (n0 < 0) n0 = 0;
+    if (m1 > M) m1 = M;
+    if (n1 > N) n1 = N;
+    if (m0 >= m1 || n0 >= n1) return;
+
+#if defined(__AVX2__)
+    if (!ck_strict_parity_enabled() && !ck_q6k_q8k_force_ref()) {
+        const block_q8_K *A = (const block_q8_K *)A_q8;
+        const block_q6_K *W = (const block_q6_K *)B;
+        const int blocks_per_vec = K / QK_K;
+        for (int n = n0; n < n1; ++n) {
+            const block_q6_K *w_row =
+                W + (size_t)n * (size_t)blocks_per_vec;
+            const float b = bias ? bias[n] : 0.0f;
+            int m = m0;
+            for (; m + 4 <= m1; m += 4) {
+                float values[4];
+                dot_q6_k_q8_k_avx2_m4(
+                    w_row, A + (size_t)m * (size_t)blocks_per_vec,
+                    blocks_per_vec, 4, K, values);
+                for (int r = 0; r < 4; ++r) {
+                    C[(size_t)(m + r) * (size_t)N + (size_t)n] = values[r] + b;
+                }
+            }
+            if (m < m1) {
+                float values[4];
+                const int rows = m1 - m;
+                dot_q6_k_q8_k_avx2_m4(
+                    w_row, A + (size_t)m * (size_t)blocks_per_vec,
+                    blocks_per_vec, rows, K, values);
+                for (int r = 0; r < rows; ++r) {
+                    C[(size_t)(m + r) * (size_t)N + (size_t)n] = values[r] + b;
+                }
+            }
+        }
+        return;
+    }
+#endif
+    gemm_nt_q6_k_q8_k_tile(
+        A_q8, B, bias, C, M, N, K, m0, m1, n0, n1);
 }
 
 /**
