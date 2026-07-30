@@ -1328,6 +1328,7 @@ test-audio-v8-contracts:
 	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_audio_encoder_contract -v
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_safetensors_to_bump.py -k "whisper_encoder or whisper_decoder"
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_whisper_runner.py
+	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_whisper_benchmark.py
 	$(MAKE) --no-print-directory test-whisper-pytorch-e2e-auto
 
 .PHONY: test-server-schema

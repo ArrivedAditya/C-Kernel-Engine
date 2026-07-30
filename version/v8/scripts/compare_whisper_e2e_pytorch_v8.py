@@ -111,13 +111,16 @@ def _pytorch_reference(args: argparse.Namespace) -> dict[str, object]:
     torch.set_num_threads(args.threads)
     torch.set_num_interop_threads(1)
     samples, sample_rate = _read_pcm16(args.wav)
+    load_started = time.perf_counter()
     processor = WhisperProcessor.from_pretrained(
         args.checkpoint, local_files_only=True
     )
     model = WhisperForConditionalGeneration.from_pretrained(
         args.checkpoint, local_files_only=True
     ).eval()
+    load_elapsed = time.perf_counter() - load_started
     long_form = samples.size > int(processor.feature_extractor.n_samples)
+    frontend_started = time.perf_counter()
     inputs = processor(
         samples,
         sampling_rate=sample_rate,
@@ -132,6 +135,7 @@ def _pytorch_reference(args: argparse.Namespace) -> dict[str, object]:
             else {}
         ),
     )
+    frontend_elapsed = time.perf_counter() - frontend_started
     started = time.perf_counter()
     with torch.inference_mode():
         generated = model.generate(
@@ -164,6 +168,9 @@ def _pytorch_reference(args: argparse.Namespace) -> dict[str, object]:
             clean_up_tokenization_spaces=False,
         ),
         "long_form": long_form,
+        "load_seconds": load_elapsed,
+        "frontend_seconds": frontend_elapsed,
+        "generation_seconds": elapsed,
         "seconds": elapsed,
         "pytorch": torch.__version__,
         "transformers": __import__("transformers").__version__,
