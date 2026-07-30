@@ -558,6 +558,82 @@ void gated_deltanet_llama_avx2_prefill_forward(const float *q,
     }
 }
 
+void gated_deltanet_llama_chunk64_prefill_forward(const float *q,
+                                                  const float *k,
+                                                  const float *v,
+                                                  const float *g,
+                                                  const float *beta,
+                                                  const float *state_in,
+                                                  float *state_out,
+                                                  float *out,
+                                                  int rows,
+                                                  int num_heads,
+                                                  int group_count,
+                                                  int state_dim,
+                                                  float norm_eps)
+{
+    if (!q || !k || !v || !g || !beta || !state_in || !state_out || !out ||
+        rows <= 0 || num_heads <= 0 || group_count <= 0 ||
+        num_heads % group_count != 0 || state_dim <= 0) {
+        return;
+    }
+#if defined(__AVX2__)
+    (void)norm_eps;
+    if (state_dim <= CK_DELTANET_LLAMA_CHUNK_MAX_DIM) {
+        for (int head = 0; head < num_heads; ++head) {
+            gated_deltanet_llama_chunk64_head(
+                q, k, v, g, beta, state_in, state_out, out,
+                rows, num_heads, group_count, head, state_dim);
+        }
+        return;
+    }
+#endif
+    gated_deltanet_llama_avx2_prefill_forward(
+        q, k, v, g, beta, state_in, state_out, out,
+        rows, num_heads, group_count, state_dim, norm_eps);
+}
+
+void gated_deltanet_llama_chunk64_head_forward(const float *q,
+                                               const float *k,
+                                               const float *v,
+                                               const float *g,
+                                               const float *beta,
+                                               const float *state_in,
+                                               float *state_out,
+                                               float *out,
+                                               int rows,
+                                               int num_heads,
+                                               int group_count,
+                                               int head,
+                                               int state_dim)
+{
+#if defined(__AVX2__)
+    if (!q || !k || !v || !g || !beta || !state_in || !state_out || !out ||
+        rows <= 0 || num_heads <= 0 || group_count <= 0 ||
+        num_heads % group_count != 0 || head < 0 || head >= num_heads ||
+        state_dim <= 0 || state_dim > CK_DELTANET_LLAMA_CHUNK_MAX_DIM) {
+        return;
+    }
+    gated_deltanet_llama_chunk64_head(
+        q, k, v, g, beta, state_in, state_out, out,
+        rows, num_heads, group_count, head, state_dim);
+#else
+    (void)q;
+    (void)k;
+    (void)v;
+    (void)g;
+    (void)beta;
+    (void)state_in;
+    (void)state_out;
+    (void)out;
+    (void)rows;
+    (void)num_heads;
+    (void)group_count;
+    (void)head;
+    (void)state_dim;
+#endif
+}
+
 void gated_deltanet_pytorch_grouped_bf16_prefill_forward(
                                                const float *q,
                                                const float *k,

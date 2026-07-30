@@ -18,6 +18,9 @@ void gated_deltanet_llama_avx2_forward(
 void gated_deltanet_llama_avx2_prefill_forward(
         const float *, const float *, const float *, const float *, const float *,
         const float *, float *, float *, int, int, int, int, float);
+void gated_deltanet_llama_chunk64_prefill_forward(
+        const float *, const float *, const float *, const float *, const float *,
+        const float *, float *, float *, int, int, int, int, float);
 void recurrent_norm_gate_llama_avx2_forward(
         const float *, const float *, const float *, float *, int, int, int, float);
 }
@@ -335,6 +338,49 @@ static bool run_case(int rows) {
     return output_ok && state_ok;
 }
 
+static bool run_chunk_case(int rows) {
+    constexpr int heads = 16;
+    constexpr int groups = heads / 4;
+    constexpr int dim = 128;
+    const size_t qk_vectors = static_cast<size_t>(rows) * groups * dim;
+    const size_t vectors = static_cast<size_t>(rows) * heads * dim;
+    const size_t gates = static_cast<size_t>(rows) * heads;
+    const size_t states = static_cast<size_t>(heads) * dim * dim;
+    std::vector<float> q(qk_vectors), k(qk_vectors), v(vectors), g(gates), beta(gates), state(states);
+    for (size_t i = 0; i < qk_vectors; ++i) {
+        q[i] = fixture(i, 0.09f, 0.13f);
+        k[i] = fixture(i, 0.08f, 0.29f);
+    }
+    for (size_t i = 0; i < vectors; ++i) {
+        v[i] = fixture(i, 0.21f, 0.47f);
+    }
+    for (size_t i = 0; i < gates; ++i) {
+        g[i] = -0.03f - std::fabs(fixture(i, 0.08f, 0.61f));
+        beta[i] = fixture(i, 0.7f, 0.83f);
+    }
+    for (size_t i = 0; i < states; ++i) state[i] = fixture(i, 0.04f, 1.07f);
+
+    std::vector<float> ck_out(vectors), llama_out(vectors);
+    std::vector<float> ck_state(states), llama_state(states);
+    if (!llama_chunk_graph(
+            q, k, v, g, beta, state, llama_out, llama_state,
+            rows, heads, groups, dim)) {
+        std::printf("llama.cpp chunk graph execution failed\n");
+        return false;
+    }
+    gated_deltanet_llama_chunk64_prefill_forward(
+        q.data(), k.data(), v.data(), g.data(), beta.data(),
+        state.data(), ck_state.data(), ck_out.data(),
+        rows, heads, groups, dim, 1e-6f);
+    std::printf("chunk rows=%d heads=%d dim=%d threads=%s\n", rows, heads, dim,
+            std::getenv("CK_NUM_THREADS") ? std::getenv("CK_NUM_THREADS") : "1");
+    const bool output_ok =
+        close("chunk attention output", ck_out.data(), llama_out.data(), vectors, 2e-8f);
+    const bool state_ok =
+        close("chunk recurrent state", ck_state.data(), llama_state.data(), states, 2e-8f);
+    return output_ok && state_ok;
+}
+
 static bool run_norm_gate_case(int rows) {
     constexpr int heads = 16;
     constexpr int dim = 128;
@@ -381,8 +427,11 @@ int main() {
     const bool decode = run_case(1);
     const bool prefill = run_case(18);
     const bool prefill_cross_chunk = run_case(65);
+    const bool chunk_prefill = run_chunk_case(18);
+    const bool chunk_cross_chunk = run_chunk_case(65);
     const bool norm_decode = run_norm_gate_case(1);
     const bool norm_prefill = run_norm_gate_case(18);
     return decode && prefill && prefill_cross_chunk &&
+        chunk_prefill && chunk_cross_chunk &&
         norm_decode && norm_prefill ? 0 : 1;
 }

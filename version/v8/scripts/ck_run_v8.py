@@ -1107,7 +1107,13 @@ def step_codegen(output_dir: Path, ir_paths: dict[str, Path], *, force: bool = F
     return model_c_path
 
 
-def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -> Path:
+def step_compile(
+    model_c_path: Path,
+    output_dir: Path,
+    *,
+    force: bool = False,
+    profile: bool = False,
+) -> Path:
     log_step(5, "Compiling shared library")
     lib_path = output_dir / "libmodel.so"
     kernel_lib = BUILD_DIR / "libckernel_engine.so"
@@ -1132,6 +1138,7 @@ def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -
         "compiler_name": compiler,
         "machine": machine,
         "openmp_flag": omp_flag,
+        "profile": bool(profile),
         "extra_cflags": extra_cflags,
         "extra_ldflags": extra_ldflags,
         "engine_sources": _tree_identity(
@@ -1223,6 +1230,8 @@ def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -
             cmd.insert(3, "-mcmodel=large")
         if use_openmp:
             cmd.insert(8 if _is_x86_machine(machine) else 7, omp_flag)
+        if profile:
+            cmd.append("-DCK_PROFILE=1")
         if extra_cflags:
             try:
                 cmd.extend(shlex.split(extra_cflags))
@@ -1614,7 +1623,12 @@ def run_pipeline(args: argparse.Namespace) -> int:
         force=args.force_compile,
         profile=getattr(args, "profile", False),
     )
-    lib_path = step_compile(model_c_path, work_dir, force=args.force_compile)
+    lib_path = step_compile(
+        model_c_path,
+        work_dir,
+        force=args.force_compile,
+        profile=getattr(args, "profile", False),
+    )
 
     if getattr(args, "sweep_kernels", False):
         step_sweep_kernels(

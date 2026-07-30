@@ -107,6 +107,16 @@ extern void pack_q4_k_to_packed_vnni_x8(
 extern void gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
     const void *A_q8, const void *B_packed_vnni_x8, const float *bias,
     float *C, int M, int N, int K, int threads);
+extern size_t q4_k_packed_vnni_x16_block_size(void);
+extern int ck_q4k_packed_vnni_x16_available(void);
+extern void pack_q4_k_to_packed_vnni_x16(
+    const void *src, void *dst, int N, int K);
+extern void gemm_nt_q4_k_packed_vnni_x16_q8_k_split_min_threaded_16m(
+    const void *A_q8, const void *B_packed_vnni_x16, const float *bias,
+    float *C, int M, int N, int K, int threads);
+extern void gemm_nt_q4_k_packed_vnni_x16_q8_k_gemv_order(
+    const void *A_q8, const void *B_packed_vnni_x16,
+    const float *bias, float *C, int M, int N, int K);
 extern void gemm_nt_q4_k_packed_meta_x8_q8_k_superblock_order(
     const void *A_q8, const void *B_packed_x8, const float *bias, float *C,
     int M, int N, int K);
@@ -145,6 +155,10 @@ extern void gemm_nt_q4_k_packed_meta_q8_k_tile(const void *A_q8,
                                                int m0, int m1, int n0, int n1);
 extern void gemm_nt_q6_k_q8_k(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
+extern void gemm_nt_q8_0_q8_0_contract(const float *A, const void *B,
+                                        const float *bias, float *C,
+                                        int M, int N, int K);
+extern int ck_strict_parity_enabled(void);
 extern void swiglu_forward_exact(const float *input, float *output, int tokens, int dim);
 extern void gemm_nt_q6_k_q8_k_tile(const void *A, const void *B, const float *bias,
                                     float *C, int M, int N, int K,
@@ -155,6 +169,16 @@ extern void gemm_nt_q5_1_q8_1(const float *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q5_k(const float *A, const void *B, const float *bias,
                           float *C, int M, int N, int K);
+extern void gated_deltanet_llama_avx2_prefill_forward(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int rows, int num_heads, int group_count, int state_dim, float norm_eps);
+extern void gated_deltanet_llama_chunk64_head_forward(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int rows, int num_heads, int group_count, int head, int state_dim);
 
 /* ============================================================================
  * Lifecycle
@@ -195,7 +219,82 @@ typedef struct {
     int          K;
 } q4k_repacked_gemv_args_t;
 
+typedef struct {
+    const float *q;
+    const float *k;
+    const float *v;
+    const float *g;
+    const float *beta;
+    const float *state_in;
+    float *state_out;
+    float *out;
+    int rows;
+    int num_heads;
+    int group_count;
+    int state_dim;
+} deltanet_chunk64_args_t;
+
 static int ck_min_int(int a, int b) { return a < b ? a : b; }
+static int ck_env_enabled(const char *name);
+
+static int ck_deltanet_chunk64_available(void)
+{
+#if defined(__AVX2__)
+    return 1;
+#else
+    return 0;
+#endif
+}
+
+static void work_deltanet_chunk64_heads(int ith, int nth, void *userdata)
+{
+    deltanet_chunk64_args_t *args = (deltanet_chunk64_args_t *)userdata;
+    for (int head = ith; head < args->num_heads; head += nth) {
+        gated_deltanet_llama_chunk64_head_forward(
+            args->q, args->k, args->v, args->g, args->beta,
+            args->state_in, args->state_out, args->out,
+            args->rows, args->num_heads, args->group_count,
+            head, args->state_dim);
+    }
+}
+
+void gated_deltanet_llama_chunk64_prefill_parallel_dispatch(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int rows, int num_heads, int group_count, int state_dim, float norm_eps)
+{
+    ck_threadpool_t *pool = ck_threadpool_global();
+    if (!ck_env_enabled("CK_ENABLE_DELTANET_CHUNK64_PREFILL") ||
+        !ck_deltanet_chunk64_available() ||
+        !pool || ck_threadpool_n_threads(pool) <= 1 ||
+        rows <= 1 || num_heads <= 1 || group_count <= 0 ||
+        num_heads % group_count != 0 || state_dim <= 0 || state_dim > 256) {
+        gated_deltanet_llama_avx2_prefill_forward(
+            q, k, v, g, beta, state_in, state_out, out,
+            rows, num_heads, group_count, state_dim, norm_eps);
+        return;
+    }
+
+    deltanet_chunk64_args_t args = {
+        .q = q,
+        .k = k,
+        .v = v,
+        .g = g,
+        .beta = beta,
+        .state_in = state_in,
+        .state_out = state_out,
+        .out = out,
+        .rows = rows,
+        .num_heads = num_heads,
+        .group_count = group_count,
+        .state_dim = state_dim,
+    };
+    int active = ck_threadpool_n_threads(pool);
+    if (active > num_heads) active = num_heads;
+    ck_threadpool_dispatch_n(
+        pool, active, work_deltanet_chunk64_heads, &args);
+}
 
 static int ck_env_enabled(const char *name)
 {
@@ -264,6 +363,17 @@ typedef struct ck_q4k_packed_vnni_x8_cache_entry {
 static pthread_mutex_t ck_q4k_packed_vnni_x8_cache_mu = PTHREAD_MUTEX_INITIALIZER;
 static ck_q4k_packed_vnni_x8_cache_entry_t *ck_q4k_packed_vnni_x8_cache_head = NULL;
 
+typedef struct ck_q4k_packed_vnni_x16_cache_entry {
+    const void *src;
+    int N;
+    int K;
+    void *packed;
+    struct ck_q4k_packed_vnni_x16_cache_entry *next;
+} ck_q4k_packed_vnni_x16_cache_entry_t;
+
+static pthread_mutex_t ck_q4k_packed_vnni_x16_cache_mu = PTHREAD_MUTEX_INITIALIZER;
+static ck_q4k_packed_vnni_x16_cache_entry_t *ck_q4k_packed_vnni_x16_cache_head = NULL;
+
 
 typedef struct ck_q4k_packed_meta_x16_cache_entry {
     const void *src;
@@ -305,6 +415,16 @@ void ck_q4k_packed_weight_cache_clear(void)
         free(entry);
     }
     pthread_mutex_unlock(&ck_q4k_packed_vnni_x8_cache_mu);
+
+    pthread_mutex_lock(&ck_q4k_packed_vnni_x16_cache_mu);
+    while (ck_q4k_packed_vnni_x16_cache_head) {
+        ck_q4k_packed_vnni_x16_cache_entry_t *entry =
+                ck_q4k_packed_vnni_x16_cache_head;
+        ck_q4k_packed_vnni_x16_cache_head = entry->next;
+        free(entry->packed);
+        free(entry);
+    }
+    pthread_mutex_unlock(&ck_q4k_packed_vnni_x16_cache_mu);
 
     pthread_mutex_lock(&ck_q4k_packed_meta_x16_cache_mu);
     while (ck_q4k_packed_meta_x16_cache_head) {
@@ -474,6 +594,45 @@ static void *ck_get_q4k_packed_vnni_x8_cached(const void *B, int N, int K)
     entry->next = ck_q4k_packed_vnni_x8_cache_head;
     ck_q4k_packed_vnni_x8_cache_head = entry;
     pthread_mutex_unlock(&ck_q4k_packed_vnni_x8_cache_mu);
+    return packed;
+}
+
+static void *ck_get_q4k_packed_vnni_x16_cached(const void *B, int N, int K)
+{
+    if (!B || N <= 0 || K <= 0 || (K % QK_K) != 0) return NULL;
+
+    pthread_mutex_lock(&ck_q4k_packed_vnni_x16_cache_mu);
+    for (ck_q4k_packed_vnni_x16_cache_entry_t *e =
+                 ck_q4k_packed_vnni_x16_cache_head;
+         e; e = e->next) {
+        if (e->src == B && e->N == N && e->K == K) {
+            void *packed = e->packed;
+            pthread_mutex_unlock(&ck_q4k_packed_vnni_x16_cache_mu);
+            return packed;
+        }
+    }
+
+    const size_t groups = (size_t)((N + 15) / 16);
+    const size_t blocks = groups * (size_t)(K / QK_K);
+    const size_t bytes = blocks * q4_k_packed_vnni_x16_block_size();
+    void *packed = malloc(bytes);
+    ck_q4k_packed_vnni_x16_cache_entry_t *entry =
+            (ck_q4k_packed_vnni_x16_cache_entry_t *)malloc(sizeof(*entry));
+    if (!packed || !entry) {
+        free(packed);
+        free(entry);
+        pthread_mutex_unlock(&ck_q4k_packed_vnni_x16_cache_mu);
+        return NULL;
+    }
+
+    pack_q4_k_to_packed_vnni_x16(B, packed, N, K);
+    entry->src = B;
+    entry->N = N;
+    entry->K = K;
+    entry->packed = packed;
+    entry->next = ck_q4k_packed_vnni_x16_cache_head;
+    ck_q4k_packed_vnni_x16_cache_head = entry;
+    pthread_mutex_unlock(&ck_q4k_packed_vnni_x16_cache_mu);
     return packed;
 }
 
@@ -734,6 +893,50 @@ static int ck_select_q4k_vnni_active_threads(
     return capacity;
 }
 
+static int ck_should_use_qwen36_q4k_avx512_x16(
+        int M, int N, int K)
+{
+    /*
+     * Keep the AVX-512 provider sweep-only until a real generated graph shows
+     * a stable end-to-end win.  The isolated and live batched GEMMs win, but
+     * Qwen3.6's certified chat policy currently uses sequential decode because
+     * the complete hybrid batched graph has a different numerical trajectory.
+     */
+    if (!ck_env_enabled("CK_ENABLE_Q4K_AVX512_X16_EXPERIMENTAL") &&
+        !ck_env_enabled("CK_V8_FORCE_BATCHED_PREFILL")) {
+        return 0;
+    }
+    if (ck_env_enabled("CK_DISABLE_Q4K_AVX512_X16_PREFILL")) return 0;
+    if (!ck_q4k_packed_vnni_x16_available() || M < 16 || K != 5120) return 0;
+
+    /*
+     * Initial production scope is the measured Qwen3.6 Q4_K_M hot set.
+     * Keep other models on their certified providers until their own sweep
+     * rows demonstrate a win for this packing and thread schedule.
+     */
+    return N == 34816 || N == 6144;
+}
+
+int ck_q4k_prepare_vnni_x16_weight(const void *B, int N, int K)
+{
+    /*
+     * Reuse production eligibility so initialization cannot create a second,
+     * subtly different provider-selection policy.
+     */
+    if (!ck_should_use_qwen36_q4k_avx512_x16(16, N, K)) return 0;
+    return ck_get_q4k_packed_vnni_x16_cached(B, N, K) != NULL;
+}
+
+static int ck_select_qwen36_q4k_avx512_x16_threads(
+        const ck_threadpool_t *pool, int M, int N, int K)
+{
+    int active = ck_select_gemm_active_threads(pool, M, N, K);
+    if (N == 34816 && active > 20) {
+        active = 20;
+    }
+    return active;
+}
+
 static int ck_should_run_gemm_serial(const ck_threadpool_t *pool, int M, int N, int K)
 {
     if (!ck_shape_aware_enabled(pool)) return 0;
@@ -778,6 +981,23 @@ static void work_gemm_nt_q8_0_q8_0(int ith, int nth, void *args)
         a->B,
         a->bias,
         a->C + (size_t)r0 * a->N,
+        r1 - r0, a->N, a->K
+    );
+}
+
+static void work_gemm_nt_q8_0_q8_0_contract(int ith, int nth, void *args)
+{
+    const gemm_args_t *a = (const gemm_args_t *)args;
+    const int dr = (a->M + nth - 1) / nth;
+    const int r0 = dr * ith;
+    const int r1 = ck_min_int(r0 + dr, a->M);
+    if (r0 >= a->M) return;
+
+    gemm_nt_q8_0_q8_0_contract(
+        (const float *)a->A + (size_t)r0 * (size_t)a->K,
+        a->B,
+        a->bias,
+        a->C + (size_t)r0 * (size_t)a->N,
         r1 - r0, a->N, a->K
     );
 }
@@ -854,6 +1074,83 @@ static void work_gemv_q4_k_q8_k_repacked(int ith, int nth, void *args)
         a->C + n0,
         1, n1 - n0, a->K
     );
+}
+
+static void work_gemv_q4_k_q8_k_repacked_x16(int ith, int nth, void *args)
+{
+    const q4k_repacked_gemv_args_t *a =
+            (const q4k_repacked_gemv_args_t *)args;
+    const int groups = (a->N + 15) / 16;
+    const int dg = (groups + nth - 1) / nth;
+    const int g0 = dg * ith;
+    const int g1 = ck_min_int(g0 + dg, groups);
+    if (g0 >= groups) return;
+
+    const int n0 = g0 * 16;
+    const int n1 = ck_min_int(g1 * 16, a->N);
+    const size_t packed_group_bytes =
+            (size_t)(a->K / QK_K) *
+            q4_k_packed_vnni_x16_block_size();
+    gemm_nt_q4_k_packed_vnni_x16_q8_k_gemv_order(
+            a->A,
+            (const char *)a->B_packed_x8 +
+                    (size_t)g0 * packed_group_bytes,
+            a->bias ? a->bias + n0 : NULL,
+            a->C + n0,
+            1,
+            n1 - n0,
+            a->K);
+}
+
+static void run_gemv_q4_k_q8_k_repacked_parallel(
+        ck_threadpool_t *pool,
+        const void *A, const void *B_packed_x8, const float *bias, float *C,
+        int N, int K, int thread_cap)
+{
+    q4k_repacked_gemv_args_t args = {
+        .A = A,
+        .B_packed_x8 = B_packed_x8,
+        .bias = bias,
+        .C = C,
+        .N = N,
+        .K = K,
+    };
+    const int groups = (N + 7) / 8;
+    int active = pool ? ck_threadpool_n_threads(pool) : 1;
+    if (thread_cap > 0 && active > thread_cap) active = thread_cap;
+    if (active > groups) active = groups;
+    if (active <= 1 || !pool) {
+        work_gemv_q4_k_q8_k_repacked(0, 1, &args);
+        return;
+    }
+    ck_threadpool_dispatch_n(
+            pool, active, work_gemv_q4_k_q8_k_repacked, &args);
+}
+
+static void run_gemv_q4_k_q8_k_repacked_x16_parallel(
+        ck_threadpool_t *pool,
+        const void *A, const void *B_packed_x16,
+        const float *bias, float *C,
+        int N, int K, int thread_cap)
+{
+    q4k_repacked_gemv_args_t args = {
+        .A = A,
+        .B_packed_x8 = B_packed_x16,
+        .bias = bias,
+        .C = C,
+        .N = N,
+        .K = K,
+    };
+    const int groups = (N + 15) / 16;
+    int active = pool ? ck_threadpool_n_threads(pool) : 1;
+    if (thread_cap > 0 && active > thread_cap) active = thread_cap;
+    if (active > groups) active = groups;
+    if (active <= 1 || !pool) {
+        work_gemv_q4_k_q8_k_repacked_x16(0, 1, &args);
+        return;
+    }
+    ck_threadpool_dispatch_n(
+            pool, active, work_gemv_q4_k_q8_k_repacked_x16, &args);
 }
 
 static void work_gemm_nt_q6_k_q8_k(int ith, int nth, void *args)
@@ -1010,6 +1307,30 @@ void gemm_nt_q8_0_q8_0_parallel_dispatch(
         .A_row_bytes = A_row_bytes
     };
     ck_threadpool_dispatch_n(pool, ck_select_gemm_active_threads(pool, M, N, K), work_gemm_nt_q8_0_q8_0, &args);
+}
+
+void gemm_nt_q8_0_q8_0_contract_parallel_dispatch(
+    const float *A, const void *B, const float *bias, float *C,
+    int M, int N, int K)
+{
+    ck_threadpool_t *pool = ck_threadpool_global();
+    if (ck_strict_parity_enabled() ||
+        ck_env_enabled("CK_DISABLE_Q80_CONTRACT_PARALLEL_PREFILL") ||
+        !pool || ck_threadpool_n_threads(pool) <= 1 || M <= 1 ||
+        ck_should_run_gemm_serial(pool, M, N, K)) {
+        gemm_nt_q8_0_q8_0_contract(A, B, bias, C, M, N, K);
+        return;
+    }
+
+    gemm_args_t args = {
+        .A = A, .B = B, .bias = bias, .C = C,
+        .M = M, .N = N, .K = K,
+        .A_row_bytes = (size_t)K * sizeof(float),
+    };
+    int active = ck_select_gemm_active_threads(pool, M, N, K);
+    if (active > M) active = M;
+    ck_threadpool_dispatch_n(
+        pool, active, work_gemm_nt_q8_0_q8_0_contract, &args);
 }
 
 
@@ -1182,14 +1503,22 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
     const int serial = packed_rows > 0 &&
             (!pool || ck_threadpool_n_threads(pool) <= 1 ||
              ck_should_run_gemm_serial(pool, packed_rows, N, K));
-    void *packed_vnni = NULL;
-    if (!serial && packed_rows >= 16 && N >= 512 && K >= 1024 &&
+    void *packed_vnni_x16 = NULL;
+    if (!serial &&
+        ck_should_use_qwen36_q4k_avx512_x16(packed_rows, N, K)) {
+        packed_vnni_x16 =
+                ck_get_q4k_packed_vnni_x16_cached(B, N, K);
+    }
+    void *packed_vnni_x8 = NULL;
+    if (!packed_vnni_x16 &&
+        !serial && packed_rows >= 16 && N >= 512 && K >= 1024 &&
         ck_q4k_packed_vnni_x8_available() &&
         !ck_env_enabled("CK_DISABLE_Q4K_VNNI_X8_PREFILL")) {
-        packed_vnni = ck_get_q4k_packed_vnni_x8_cached(B, N, K);
+        packed_vnni_x8 = ck_get_q4k_packed_vnni_x8_cached(B, N, K);
     }
     void *packed_x8 = NULL;
-    if (!packed_vnni || packed_rows < M) {
+    if ((!packed_vnni_x16 && !packed_vnni_x8) ||
+        (packed_rows < M && !packed_vnni_x16)) {
         packed_x8 = ck_get_q4k_packed_meta_x8_cached(B, N, K);
         if (!packed_x8) return;
     }
@@ -1208,17 +1537,27 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
         }
     } else if (packed_rows > 0) {
         int active = ck_select_gemm_active_threads(pool, packed_rows, N, K);
-        /* The VNNI layout interleaves Q4 bytes across eight output columns,
-         * so each dot-product lane advances one output without horizontal
-         * reduction. Packing is cached by weight identity and does not occur
-         * in the steady-state call. Exact 8M remains the allocation/ISA
-         * fallback and retains the same pairwise split-min contract. */
-        if (packed_vnni) {
+        /*
+         * The AVX-512 x16 provider is promoted only for the measured Qwen3.6
+         * hot shapes. It preserves the same pairwise split-min arithmetic as
+         * the x8 provider while doubling the output lanes per dot product.
+         */
+        if (packed_vnni_x16) {
+            active = ck_select_qwen36_q4k_avx512_x16_threads(
+                    pool, packed_rows, N, K);
+            ck_q4k_prefill_debug_dispatch(
+                    "avx512_vnni_x16_16m", M, N, K, active);
+            gemm_nt_q4_k_packed_vnni_x16_q8_k_split_min_threaded_16m(
+                    A, packed_vnni_x16, bias, C,
+                    packed_rows, N, K, active);
+        } else
+        if (packed_vnni_x8) {
             active = ck_select_q4k_vnni_active_threads(
                     pool, packed_rows, N, K);
             ck_q4k_prefill_debug_dispatch("vnni_x8_4m", M, N, K, active);
             gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
-                    A, packed_vnni, bias, C, packed_rows, N, K, active);
+                    A, packed_vnni_x8, bias, C,
+                    packed_rows, N, K, active);
         } else
         if (packed_rows >= 16 && N >= 512 && (N % 16) == 0) {
             ck_q4k_prefill_debug_dispatch(
@@ -1241,12 +1580,28 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
      * repacked matrix kernel and routes residual rows through its repacked
      * GEMV order. The two reduction boundaries are numerically distinct. */
     if (packed_rows < M) {
+        const int tail_rows = M - packed_rows;
+        const int tail_thread_cap = N == 34816 ? 20 : 0;
         ck_q4k_prefill_debug_dispatch(
-                "pairwise_residual_gemv", M - packed_rows, N, K, 1);
-        gemm_nt_q4_k_packed_meta_x8_q8_k_gemv_order(
-            (const char *)A + (size_t)packed_rows * row_bytes,
-            packed_x8, bias, C + (size_t)packed_rows * (size_t)N,
-            M - packed_rows, N, K);
+                "pairwise_residual_gemv_parallel",
+                tail_rows, N, K,
+                pool ? ck_threadpool_n_threads(pool) : 1);
+        for (int row = 0; row < tail_rows; ++row) {
+            const void *a_row =
+                    (const char *)A +
+                    (size_t)(packed_rows + row) * row_bytes;
+            float *c_row =
+                    C + (size_t)(packed_rows + row) * (size_t)N;
+            if (packed_vnni_x16) {
+                run_gemv_q4_k_q8_k_repacked_x16_parallel(
+                        pool, a_row, packed_vnni_x16, bias, c_row,
+                        N, K, tail_thread_cap);
+            } else {
+                run_gemv_q4_k_q8_k_repacked_parallel(
+                        pool, a_row, packed_x8, bias, c_row,
+                        N, K, tail_thread_cap);
+            }
+        }
     }
 }
 
@@ -1261,19 +1616,9 @@ void gemv_q4_k_q8_k_repacked_parallel_dispatch(
         abort();
     }
 
-    q4k_repacked_gemv_args_t args = {
-        .A = x_q8, .B_packed_x8 = packed_x8, .bias = NULL,
-        .C = y, .N = N, .K = K
-    };
     ck_threadpool_t *pool = ck_threadpool_global();
-    const int groups = (N + 7) / 8;
-    int active = pool ? ck_threadpool_n_threads(pool) : 1;
-    if (active > groups) active = groups;
-    if (active <= 1) {
-        work_gemv_q4_k_q8_k_repacked(0, 1, &args);
-        return;
-    }
-    ck_threadpool_dispatch_n(pool, active, work_gemv_q4_k_q8_k_repacked, &args);
+    run_gemv_q4_k_q8_k_repacked_parallel(
+            pool, x_q8, packed_x8, NULL, y, N, K, 0);
 }
 
 void gemm_nt_q6_k_q8_k_parallel_dispatch(

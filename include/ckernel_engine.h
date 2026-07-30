@@ -344,6 +344,7 @@ void gemv_q5_k(float *y, const void *W, const float *x, int M, int K);
 void gemv_q5_k_q8_k(float *y, const void *W, const void *x_q8, int M, int K);
 void gemv_q8_0(float *y, const void *W, const float *x, int M, int K);
 void gemv_q8_0_q8_0_contract(float *y, const void *W, const float *x, int M, int K);
+void gemv_q8_0_q8_0_x4(float *y, const void *W, const void *x_q8, int M, int K);
 
 /* Parallel Q5_0 versions - caller provides ith/nth from OpenMP region */
 void gemv_q5_0_parallel(float *y, const void *W, const float *x,
@@ -2342,6 +2343,34 @@ void gated_deltanet_llama_avx2_prefill_forward(const float *q,
                                                int group_count,
                                                int state_dim,
                                                float norm_eps);
+
+void gated_deltanet_llama_chunk64_prefill_forward(const float *q,
+                                                  const float *k,
+                                                  const float *v,
+                                                  const float *g,
+                                                  const float *beta,
+                                                  const float *state_in,
+                                                  float *state_out,
+                                                  float *out,
+                                                  int rows,
+                                                  int num_heads,
+                                                  int group_count,
+                                                  int state_dim,
+                                                  float norm_eps);
+
+void gated_deltanet_llama_chunk64_head_forward(const float *q,
+                                               const float *k,
+                                               const float *v,
+                                               const float *g,
+                                               const float *beta,
+                                               const float *state_in,
+                                               float *state_out,
+                                               float *out,
+                                               int rows,
+                                               int num_heads,
+                                               int group_count,
+                                               int head,
+                                               int state_dim);
 
 void gated_deltanet_pytorch_grouped_bf16_forward(const float *q,
                                                   const float *k,
