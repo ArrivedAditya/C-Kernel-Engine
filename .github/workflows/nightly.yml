@@ -67,9 +67,9 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -r requirements-v7.txt
-          pip install huggingface_hub torch
+          pip install -c requirements-nightly-constraints.txt -r requirements.txt
+          pip install -c requirements-nightly-constraints.txt -r requirements-v7.txt
+          pip install -c requirements-nightly-constraints.txt huggingface_hub torch
 
       - name: Build CK-Engine
         run: |

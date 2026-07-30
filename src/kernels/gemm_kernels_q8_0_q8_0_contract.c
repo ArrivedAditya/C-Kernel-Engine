@@ -408,7 +408,7 @@ void gemv_q8_0_q8_0_contract(float *y,
         return;
     }
     quantize_row_q8_0(x, x_q8, K);
-    gemv_q8_0_q8_0(y, W, x_q8, M, K);
+    gemv_q8_0_q8_0_x4(y, W, x_q8, M, K);
 }
 
 void gemm_nt_q8_0_q8_0_contract(const float *A,

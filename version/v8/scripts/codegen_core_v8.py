@@ -816,6 +816,13 @@ def emit_op(
             }}
         }}
         memcpy(buf, _temp_buf, (size_t)Hkv * num_tokens * D * sizeof(float));
+        ck_debug_export_hidden(
+            model,
+            {layer},
+            "{("k" if is_k else "v")}_head_major",
+            (const float*)buf,
+            Hkv * num_tokens * D
+        );
     }}"""
         )
         if seq_idx is not None:
@@ -1877,6 +1884,15 @@ def emit_op(
             "attn_gate",
             _mul_expr(_hidden_arg("rows", "num_tokens", "tokens"), _hidden_arg("gate_dim")),
         )
+    elif op_name == "bias_add" and op.get("bias_for") in {
+        "q_proj",
+        "k_proj",
+        "v_proj",
+    }:
+        # Decode keeps Q/K/V bias as separate operations while prefill providers
+        # fuse it. Export the shared post-bias boundary for phase-safe X-ray.
+        label = f"{op['bias_for']}_post_bias"
+        _emit_hidden_export(_hidden_arg("a", "y", "output", "out"), label, _hidden_arg("n", "N"))
     elif op_name in ("rope_qk", "mrope_qk"):
         q_count = _mul_expr(
             _hidden_arg("num_heads"),
@@ -2151,13 +2167,15 @@ def emit_op(
         _emit_hidden_export(
             _hidden_arg("output", "out", "c", "y"),
             "alpha",
-            _hidden_count("m", "n", "rows", "dim", default="0"),
+            _mul_expr(_hidden_arg("m", "M", "rows"), _hidden_arg("n", "N", "dim"))
+            or _hidden_count("n", "N", "dim", "m", "M", "rows", default="0"),
         )
     elif op_name == "recurrent_beta_proj":
         _emit_hidden_export(
             _hidden_arg("output", "out", "c", "y"),
             "beta",
-            _hidden_count("m", "n", "rows", "dim", default="0"),
+            _mul_expr(_hidden_arg("m", "M", "rows"), _hidden_arg("n", "N", "dim"))
+            or _hidden_count("n", "N", "dim", "m", "M", "rows", default="0"),
         )
     elif op_name == "recurrent_dt_gate":
         gate_count = _mul_expr(_hidden_arg("rows"), _hidden_arg("num_heads"), _hidden_arg("state_dim")) or _mul_expr(_hidden_arg("rows"), _hidden_arg("dim"))
@@ -2525,9 +2543,17 @@ def emit_op(
                 _emit_dump(out_expr, "post_ffn", size_expr)
                 _emit_dump(out_expr, "layer_out", size_expr)
         elif op_name == "recurrent_alpha_proj":
-            _emit_dump(_get_arg("output", "out", "c", "y"), "alpha", m_dim or n_dim)
+            _emit_dump(
+                _get_arg("output", "out", "c", "y"),
+                "alpha",
+                _mul_expr(m_dim, n_dim) if m_dim and n_dim else (m_dim or n_dim),
+            )
         elif op_name == "recurrent_beta_proj":
-            _emit_dump(_get_arg("output", "out", "c", "y"), "beta", m_dim or n_dim)
+            _emit_dump(
+                _get_arg("output", "out", "c", "y"),
+                "beta",
+                _mul_expr(m_dim, n_dim) if m_dim and n_dim else (m_dim or n_dim),
+            )
         elif op_name == "recurrent_dt_gate":
             gate_count = _mul_expr(_get_arg("rows"), _get_arg("num_heads"), _get_arg("state_dim")) or _mul_expr(_get_arg("rows"), _get_arg("dim"))
             _emit_dump(_get_arg("gate", "output", "out"), "gate", gate_count)
@@ -2997,6 +3023,21 @@ CK_EXPORT void ck_model_profile_dump(void) {
 
     layout = layout or {}
     config = config or {}
+    decode_kv_dtype = str(
+        config.get("decode_kv_cache_dtype", "fp32") or "fp32"
+    ).strip().lower()
+    if decode_kv_dtype in {"fp16", "f16"}:
+        debug_kv_pointer = "g_model->kv_cache_f16"
+        debug_kv_ctype = "uint16_t"
+        debug_kv_dtype = 1
+    elif decode_kv_dtype in {"bf16", "bfloat16"}:
+        debug_kv_pointer = "g_model->kv_cache_f16"
+        debug_kv_ctype = "uint16_t"
+        debug_kv_dtype = 2
+    else:
+        debug_kv_pointer = "g_model->kv_cache"
+        debug_kv_ctype = "float"
+        debug_kv_dtype = 0
     encoder_memory_api = ""
     uses_persistent_cross_kv_cache = bool(
         config.get("_template_uses_persistent_cross_kv_cache", False)
@@ -3121,6 +3162,9 @@ static int g_ck_skip_decode_logits = 0;
 /* Forward declarations */
 static void ck_decode(CKModel *model, int32_t token);
 static void ck_prefill(CKModel *model, const int32_t *tokens, int count);
+#ifdef CK_HAS_PREFILL
+static void ck_prepare_prefill_weights(CKModel *model);
+#endif
 static int ck_trace_pos_enabled(void);
 static void ck_trace_pos(const char *stage, int32_t token, int count, int before_pos, int after_pos);
 
@@ -3314,6 +3358,9 @@ CK_EXPORT int ck_model_init(const char *weights_path) {{
 #ifdef CK_PARALLEL_PREFILL
     ck_parallel_prefill_init();
 #endif
+#ifdef CK_HAS_PREFILL
+    ck_prepare_prefill_weights(g_model);
+#endif
 #ifdef CK_PARITY_DUMP
     ck_dump_init(NULL);  /* Initialize parity dumping to ck_parity_dumps/dump.bin */
 #endif
@@ -3331,6 +3378,9 @@ CK_EXPORT int ck_model_init_with_manifest(const char *weights_path, const char *
 #endif
 #ifdef CK_PARALLEL_PREFILL
     ck_parallel_prefill_init();
+#endif
+#ifdef CK_HAS_PREFILL
+    ck_prepare_prefill_weights(g_model);
 #endif
 #ifdef CK_PARITY_DUMP
     ck_dump_init(NULL);
@@ -3380,23 +3430,23 @@ CK_EXPORT int ck_model_kv_cache_enable(int capacity) {{
     return 0;
 }}
 
-/* Bounded X-ray ABI: export one layer and only currently valid FP16 KV rows.
+/* Bounded X-ray ABI: export one layer and only currently valid KV rows.
  * The file is diagnostic evidence, not a runtime checkpoint format. */
-CK_EXPORT int ck_model_debug_export_kv_f16(const char *path, int layer) {{
-    if (!g_model || !path || !path[0] || !g_model->kv_cache_f16) return -1;
+CK_EXPORT int ck_model_debug_export_kv(const char *path, int layer) {{
+    if (!g_model || !path || !path[0] || !{debug_kv_pointer}) return -1;
     if (layer < 0 || layer >= NUM_LAYERS || g_model->pos < 0 || g_model->pos > MAX_SEQ_LEN) return -2;
     FILE *f = fopen(path, "wb");
     if (!f) return -3;
     const uint32_t header[8] = {{
-        UINT32_C(0x564b5843), UINT32_C(1), (uint32_t)layer, (uint32_t)g_model->pos,
-        (uint32_t)NUM_KV_HEADS, (uint32_t)MAX_SEQ_LEN, (uint32_t)HEAD_DIM, UINT32_C(0)
+        UINT32_C(0x564b5843), UINT32_C(2), (uint32_t)layer, (uint32_t)g_model->pos,
+        (uint32_t)NUM_KV_HEADS, (uint32_t)MAX_SEQ_LEN, (uint32_t)HEAD_DIM, UINT32_C({debug_kv_dtype})
     }};
     if (fwrite(header, sizeof(header), 1, f) != 1) {{ fclose(f); return -4; }}
     const size_t head_stride = (size_t)MAX_SEQ_LEN * (size_t)HEAD_DIM;
-    const size_t valid_bytes = (size_t)g_model->pos * (size_t)HEAD_DIM * sizeof(uint16_t);
-    const uint16_t *layer_k = g_model->kv_cache_f16 +
+    const size_t valid_bytes = (size_t)g_model->pos * (size_t)HEAD_DIM * sizeof({debug_kv_ctype});
+    const {debug_kv_ctype} *layer_k = {debug_kv_pointer} +
         (size_t)(layer * 2) * (size_t)NUM_KV_HEADS * head_stride;
-    const uint16_t *layer_v = g_model->kv_cache_f16 +
+    const {debug_kv_ctype} *layer_v = {debug_kv_pointer} +
         (size_t)(layer * 2 + 1) * (size_t)NUM_KV_HEADS * head_stride;
     for (int h = 0; h < NUM_KV_HEADS; ++h) {{
         if (fwrite(layer_k + (size_t)h * head_stride, valid_bytes, 1, f) != 1) {{ fclose(f); return -5; }}
@@ -3406,6 +3456,12 @@ CK_EXPORT int ck_model_debug_export_kv_f16(const char *path, int layer) {{
     }}
     fclose(f);
     return 0;
+}}
+
+/* Compatibility ABI for existing FP16-only X-ray consumers. */
+CK_EXPORT int ck_model_debug_export_kv_f16(const char *path, int layer) {{
+    if (UINT32_C({debug_kv_dtype}) != UINT32_C(1)) return -7;
+    return ck_model_debug_export_kv(path, layer);
 }}
 
 static int ck_trace_pos_enabled(void) {{

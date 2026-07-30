@@ -246,7 +246,7 @@
         "weight": "none",
         "accumulator": "fp32",
         "contraction": "enabled",
-        "evaluation_order": "llama_avx2_four_accumulator_dot_then_scale_with_fma_state_update"
+        "evaluation_order": "llama_group_tiled_qk_then_avx2_four_accumulator_dot_then_scale_with_fma_state_update"
       },
       "rounding": {
         "mode": "rne",
@@ -265,7 +265,7 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "Single-token Gated DeltaNet matching llama.cpp's AVX2 CPU graph: four-vector FMA dot reduction, FMA state update, and query scaling after reduction."
+      "description": "Single-token Gated DeltaNet matching llama.cpp's grouped-Q/K CPU graph: compact Q/K groups tile over value heads, followed by four-vector FMA dot reduction, FMA state update, and query scaling after reduction."
     },
     "gated_deltanet_llama_avx2_prefill_fp32_state": {
       "operator_family": "gated_deltanet",
@@ -276,7 +276,7 @@
         "weight": "none",
         "accumulator": "fp32",
         "contraction": "enabled",
-        "evaluation_order": "ascending_token_then_llama_avx2_decode_provider"
+        "evaluation_order": "llama_scalar_gate_chunk64_cumsum_decay_then_lower_triangular_wy_solve_then_chunk_state_update_with_group_tiled_qk"
       },
       "rounding": {
         "mode": "rne",
@@ -284,9 +284,9 @@
       },
       "reduction": {
         "kind": "sum",
-        "order": "pairwise_tree",
+        "order": "contract_defined_chunks",
         "partial_accumulator": "fp32",
-        "merge_order": "none"
+        "merge_order": "ascending_chunk"
       },
       "threading": {
         "work_partition": "serial",
@@ -295,7 +295,7 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "Prompt Gated DeltaNet carries state in token order while invoking the exact llama.cpp AVX2 decode arithmetic for every row."
+      "description": "Prompt Gated DeltaNet matches llama.cpp's scalar-gate 64-token chunk graph: compact Q/K groups tile over value heads, cumulative gate decay and the lower-triangular WY transform are built per chunk, and recurrent state is carried across chunks in ascending order."
     },
     "recurrent_norm_gate_llama_avx2_fp32_output": {
       "operator_family": "recurrent_norm_gate",
@@ -702,7 +702,7 @@
         "input": "fp32",
         "weight": "none",
         "accumulator": "fp32",
-        "evaluation_order": "llama_avx2_vector_expf_then_add_then_divide_with_scalar_expf_tail"
+        "evaluation_order": "llama_x86_isa_vector_expf_then_add_then_divide_with_scalar_expf_tail"
       },
       "rounding": {
         "mode": "rne",
@@ -716,7 +716,37 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "llama.cpp x86 AVX2 SiLU provider, including its vector exponential approximation and scalar tail."
+      "description": "llama.cpp x86 SiLU provider, including the production AVX-512 or AVX2 vector exponential approximation selected at compile time and the scalar tail."
+    },
+    "ssm_conv1d_llama_scalar_mul_add_fp32_output": {
+      "operator_family": "ssm_conv1d",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "ascending_kernel_rounded_multiply_then_add"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["reduction_update", "output_store"]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "left_to_right",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "llama.cpp GGML_OP_SSM_CONV production arithmetic: each channel/token output is an ascending scalar FP32 chain with a rounded product before every addition. The provider prevents contraction or vectorization from changing rounding boundaries."
     },
     "ssm_conv1d_pytorch_fp32_compute_bf16_output": {
       "operator_family": "ssm_conv1d",
@@ -1414,6 +1444,70 @@
       "description": "BF16 weights and BF16-rounded FP32 activation loads with ascending-K FP32 dot products and BF16 RNE output storage.",
       "operator_family": "gemm"
     },
+    "fp32_weight_fp32_input_llamafile_x86_native_fp32_output": {
+      "operator_family": "gemm",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "llamafile_single_native_vector_accumulator_for_multi_token_then_high_low_lane_merge_then_0_plus_2_and_1_plus_3;ggml_vec_dot_four_native_vector_accumulators_for_single_token_then_pairwise_merge"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["weighted_product", "reduction_update", "reduction_finalize", "output_store"]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "pairwise_tree"
+      },
+      "threading": {
+        "work_partition": "output_tiles",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "llama.cpp CPU F32 projection order: llamafile native-width FMA accumulation with its high/low and lane 0+2, 1+3 horizontal merge for multi-token batches, and ggml_vec_dot's four-way accumulation for one-token decode."
+    },
+    "q6_k_weight_q8_k_input_llama_fp32_output": {
+      "operator_family": "gemm",
+      "status": "validated",
+      "storage": {"input": "q8_k", "weight": "q6_k", "output": "fp32"},
+      "compute": {
+        "input": "int8",
+        "weight": "int6",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "q8_k_quantize_then_q6_k_int32_subblock_dot_with_zero_point_correction_then_fp32_scaled_superblock_accumulation"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "weighted_product", "reduction_update", "reduction_finalize", "output_store"]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "contract_defined_chunks",
+        "partial_accumulator": "fp32",
+        "merge_order": "pairwise_tree"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "llama.cpp-compatible Q6_K projection with canonical Q8_K activations, int32 sub-block dots and zero-point correction, and FP32 scaled super-block accumulation."
+    },
     "q5_k_weight_q8_k_input_avx2_fma_fp32_output": {
       "operator_family": "gemm",
       "status": "validated",
@@ -1809,8 +1903,8 @@
       "compute": {
         "input": "fp32",
         "weight": "fp32",
-        "accumulator": "fp32",
-        "evaluation_order": "pytorch_erf_approximate_none_scalar_fp32"
+        "accumulator": "fp64",
+        "evaluation_order": "widen_fp32_to_fp64_erf_then_single_fp32_store"
       },
       "rounding": {
         "mode": "rne",
@@ -1831,7 +1925,7 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "PyTorch GELU approximate=none over FP32 storage using the scalar erf formulation."
+      "description": "PyTorch GELU approximate=none over FP32 storage using a host-stable FP64 scalar erf formulation and one FP32 output rounding."
     },
     "gelu_pytorch_erf_sleef_bf16_storage": {
       "operator_family": "gelu",

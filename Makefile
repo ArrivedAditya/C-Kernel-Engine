@@ -35,7 +35,8 @@ endif
 # Return a compiler flag only when the selected compiler accepts it. This keeps
 # host CPU feature detection from adding flags that older GCC/Clang/icx releases
 # or non-x86 toolchains do not understand.
-cc-option = $(shell printf 'int main(void){return 0;}\n' | $(CC) $(1) -x c - -c -o /tmp/ck_cc_flag_test.o >/dev/null 2>&1 && rm -f /tmp/ck_cc_flag_test.o && echo $(1) || true)
+CK_COMPILER_PROBE_DIR ?= $(if $(CK_V8_TMPDIR),$(CK_V8_TMPDIR),$(if $(TMPDIR),$(TMPDIR),/tmp))
+cc-option = $(shell probe="$(CK_COMPILER_PROBE_DIR)/ck_cc_flag_test.$$$$.o"; mkdir -p "$(CK_COMPILER_PROBE_DIR)" >/dev/null 2>&1 && printf 'int main(void){return 0;}\n' | TMPDIR="$(CK_COMPILER_PROBE_DIR)" $(CC) $(1) -x c - -c -o "$$probe" >/dev/null 2>&1 && rm -f "$$probe" && echo $(1) || { rm -f "$$probe"; true; })
 cc-options = $(strip $(foreach flag,$(1),$(call cc-option,$(flag))))
 
 # OpenMP is opt-in for runtime stability (v6.6 uses threadpool parallelism).
@@ -307,6 +308,12 @@ V8_KIMI_MIN_MEM_GB ?= 100
 V8_KIMI_CONTEXT ?= 2048
 V8_KIMI_MAX_TOKENS ?= 64
 V8_KIMI_PROMPT ?= Give me a concise example of C, Python, and SQL code.
+V8_QWEN36_MODEL ?=
+V8_QWEN36_MIN_MEM_GB ?= 40
+V8_QWEN36_CONTEXT ?= 1034
+V8_QWEN36_MAX_TOKENS ?= 256
+V8_QWEN36_PROMPT ?= Give me a detailed explanation with working examples of C, Python, and SQL code.
+V8_QWEN36_COMPILER ?= icx
 
 # =============================================================================
 # Intel oneAPI Integration (MKL / oneDNN)
@@ -1321,10 +1328,36 @@ test-audio-v8-contracts:
 	$(PYTHON) $(PYTHONFLAGS) -m unittest tests.test_v8_audio_encoder_contract -v
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_safetensors_to_bump.py -k "whisper_encoder or whisper_decoder"
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_whisper_runner.py
+	$(MAKE) --no-print-directory test-whisper-pytorch-e2e-auto
 
 test-whisper-e2e-auto:
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_whisper_runner.py \
 		-k exact_transcript
+
+.PHONY: test-whisper-pytorch-e2e-auto
+test-whisper-pytorch-e2e-auto:
+	@if [ -z "$$CK_WHISPER_CHECKPOINT" ] || \
+	    [ -z "$$CK_WHISPER_ENCODER_RUN_DIR" ] || \
+	    [ -z "$$CK_WHISPER_DECODER_RUN_DIR" ] || \
+	    [ -z "$$CK_WHISPER_WAV" ]; then \
+		echo "SKIP: set CK_WHISPER_CHECKPOINT, CK_WHISPER_ENCODER_RUN_DIR, CK_WHISPER_DECODER_RUN_DIR, and CK_WHISPER_WAV"; \
+	else \
+		timestamp_arg=""; \
+		if [ "$${CK_WHISPER_TIMESTAMPS:-0}" = "1" ]; then \
+			timestamp_arg="--timestamps"; \
+		fi; \
+		$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/compare_whisper_e2e_pytorch_v8.py \
+			--checkpoint "$$CK_WHISPER_CHECKPOINT" \
+			--encoder-run-dir "$$CK_WHISPER_ENCODER_RUN_DIR" \
+			--decoder-run-dir "$$CK_WHISPER_DECODER_RUN_DIR" \
+			--wav "$$CK_WHISPER_WAV" \
+			--language "$${CK_WHISPER_LANGUAGE:-en}" \
+			--task "$${CK_WHISPER_TASK:-transcribe}" \
+			$$timestamp_arg \
+			--max-tokens "$${CK_WHISPER_MAX_TOKENS:-64}" \
+			--threads "$${CK_NUM_THREADS:-1}" \
+			--output "$${CK_WHISPER_PARITY_OUTPUT:-build/whisper-pytorch-parity.json}"; \
+	fi
 
 # Policy:
 # - Keep public/operator-facing test entrypoints version-neutral (`make test`,
@@ -1516,9 +1549,9 @@ test-v8-xeon-family-contracts:
 		tests.test_v8_template_circuit_audit \
 		-v
 
-test-v8-model-smoke: test-v8-template-circuit-audit v8-regression-fast test-v8-gemma4-highmem test-v8-nemotron9-highmem test-v8-glm4-highmem test-v8-kimi-highmem
+test-v8-model-smoke: test-v8-template-circuit-audit v8-regression-fast test-v8-qwen36-highmem test-v8-gemma4-highmem test-v8-nemotron9-highmem test-v8-glm4-highmem test-v8-kimi-highmem
 
-test-v8-xeon-highmem: test-v8-xeon-family-contracts test-v8-gemma4-highmem test-v8-nemotron9-highmem test-v8-glm4-highmem test-v8-kimi-highmem
+test-v8-xeon-highmem: test-v8-xeon-family-contracts test-v8-qwen36-highmem test-v8-gemma4-highmem test-v8-nemotron9-highmem test-v8-glm4-highmem test-v8-kimi-highmem
 	@echo "Xeon/high-memory family suite complete."
 
 parity-v8-qwen3vl-mmproj:
@@ -3078,6 +3111,9 @@ Q5K_Q8K_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q5k_q8k_llama_production
 RMSNORM_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_rmsnorm_llama_production
 RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_recurrent_qk_l2_norm_llama_production
 DELTANET_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_deltanet_llamacpp_production
+SSM_CONV_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_ssm_conv_llama_production
+RECURRENT_SILU_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_recurrent_silu_llama_production
+F32_GEMM_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_f32_gemm_llama_production
 RECURRENT_QK_L2_LLAMA_PRODUCTION_OBJ := $(BUILD_DIR)/recurrent_qk_norm_llama_production.o
 MROPE_TEXT_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_mrope_text_llama_production
 Q4Q6_LLAMA_CPP_DIR ?= $(LLAMA_CPP_DIR)
@@ -3216,6 +3252,65 @@ test-deltanet-llamacpp-production: $(DELTANET_LLAMA_PRODUCTION_BIN)
 		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
 			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
 			$(DELTANET_LLAMA_PRODUCTION_BIN); \
+	done
+
+$(SSM_CONV_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_ssm_conv_llama_production.cpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		-I$(Q4Q6_LLAMA_CPP_DIR)/ggml/include -I$(Q4Q6_LLAMA_CPP_DIR)/ggml/src \
+		unittest/test_ssm_conv_llama_production.cpp \
+		-L$(BUILD_DIR) -lckernel_engine \
+		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
+		-lm -lpthread -ldl \
+		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
+		-o $(SSM_CONV_LLAMA_PRODUCTION_BIN)
+
+.PHONY: test-ssm-conv-llama-production
+test-ssm-conv-llama-production: $(SSM_CONV_LLAMA_PRODUCTION_BIN)
+	@set -e; for threads in $${CK_SSM_CONV_ORACLE_THREADS:-1 16 20 24}; do \
+		echo "SSM convolution llama.cpp production oracle: threads=$$threads"; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			$(SSM_CONV_LLAMA_PRODUCTION_BIN); \
+	done
+
+$(RECURRENT_SILU_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_recurrent_silu_llama_production.cpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		unittest/test_recurrent_silu_llama_production.cpp \
+		-L$(BUILD_DIR) -lckernel_engine \
+		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
+		-lm -lpthread -ldl \
+		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
+		-o $(RECURRENT_SILU_LLAMA_PRODUCTION_BIN)
+
+.PHONY: test-recurrent-silu-llama-production
+test-recurrent-silu-llama-production: $(RECURRENT_SILU_LLAMA_PRODUCTION_BIN)
+	@set -e; for threads in $${CK_RECURRENT_SILU_ORACLE_THREADS:-1 16 20 24}; do \
+		echo "Recurrent SiLU llama.cpp production oracle: threads=$$threads"; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			$(RECURRENT_SILU_LLAMA_PRODUCTION_BIN); \
+	done
+
+$(F32_GEMM_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_f32_gemm_llama_production.cpp
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		-I$(Q4Q6_LLAMA_CPP_DIR)/ggml/include -I$(Q4Q6_LLAMA_CPP_DIR)/ggml/src \
+		unittest/test_f32_gemm_llama_production.cpp \
+		-L$(BUILD_DIR) -lckernel_engine \
+		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
+		-lm -lpthread -ldl \
+		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
+		-o $(F32_GEMM_LLAMA_PRODUCTION_BIN)
+
+.PHONY: test-f32-gemm-llama-production
+test-f32-gemm-llama-production: $(F32_GEMM_LLAMA_PRODUCTION_BIN)
+	@set -e; for threads in $${CK_F32_GEMM_ORACLE_THREADS:-1 16 20 24}; do \
+		echo "FP32 GEMM llama.cpp production oracle: threads=$$threads"; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=$$threads \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			$(F32_GEMM_LLAMA_PRODUCTION_BIN); \
 	done
 
 $(RMSNORM_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_rmsnorm_llama_production.cpp
@@ -3527,6 +3622,21 @@ test-q6k-prefill-routing-exact: $(LIB)
 		--mode default --m 128 --n 2048 --k 8192 --threads $${CK_NUM_THREADS:-12} \
 		--warmup 0 --iters 1 --verify-row-exact --engine-lib $(LIB)
 
+.PHONY: test-qwen36-q6k-m4-performance
+test-qwen36-q6k-m4-performance: $(LIB)
+	@echo "Running Qwen3.6 Q6_K MLP-down M4 exactness + performance gate..."
+	@CK_NUM_THREADS=$${CK_NUM_THREADS:-24} OMP_NUM_THREADS=1 \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_q6k_prefill_tile.py \
+			--mode compare-m4 \
+			--m $${CK_QWEN36_Q6_M:-23} \
+			--n $${CK_QWEN36_Q6_N:-5120} \
+			--k $${CK_QWEN36_Q6_K:-17408} \
+			--tile-m 8 --tile-n 128 \
+			--threads $${CK_NUM_THREADS:-24} \
+			--warmup $${CK_QWEN36_Q6_WARMUP:-1} \
+			--iters $${CK_QWEN36_Q6_ITERS:-3} \
+			--min-m4-speedup $${CK_QWEN36_Q6_MIN_SPEEDUP:-1.05}
+
 test-q6k-prefill-dispatch-sweep: $(LIB)
 	@echo "Running Q6_K x Q8_K prefill dispatch sweep..."
 	CK_Q6K_Q8K_SIMD=1 CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
@@ -3621,6 +3731,18 @@ test-v8-decoder-matrix-quick: ck-cli-v8
 		--repeats $${CK_V8_DECODER_REPEATS:-1} \
 		--json-out build/v8_decoder_matrix_quick_t$${CK_NUM_THREADS:-12}_p$${CK_V8_DECODER_PROMPT:-128}_n$${CK_V8_DECODER_DECODE:-32}.json
 
+test-v8-xeon-decoder-family-sweep: ck-cli-v8
+	@echo "Running Xeon Qwen2/Qwen3/Qwen3.5 decoder-family sweep (CKE vs llama.cpp)..."
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-24} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_v8_decoder_matrix.py \
+		--models qwen2-0.5b-q4_k_m,qwen3-0.6b-q8_0,qwen35-0.8b-q4_k_m \
+		--threads $${CK_NUM_THREADS:-24} \
+		--prompt $${CK_V8_DECODER_PROMPT:-128} \
+		--decode $${CK_V8_DECODER_DECODE:-32} \
+		--repeats $${CK_V8_DECODER_REPEATS:-1} \
+		--strict \
+		--json-out build/v8_xeon_decoder_family_sweep_t$${CK_NUM_THREADS:-24}.json
+
 test-v8-template-circuit-audit:
 	@echo "Running v8 template circuit artifact audit tests..."
 	@$(PYTHON) -m py_compile version/v8/scripts/audit_template_circuit_v8.py
@@ -3635,7 +3757,7 @@ test-numerical-contracts: $(LIB)
 	@$(MAKE) --no-print-directory test-q6k-prefill-routing-exact
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_attention_contracts_v8.py
 	@$(PYTHON) -m py_compile version/v8/scripts/resolve_numerical_execution_contracts_v8.py
-	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/xray_execution_state_v8.py version/v8/scripts/xray_decoder_pytorch_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py
+	@$(PYTHON) -m py_compile version/v8/scripts/xray_numerical_parity_v8.py version/v8/scripts/xray_execution_state_v8.py version/v8/scripts/xray_decoder_pytorch_v8.py version/v8/scripts/xray_ck_persistent_replay_v8.py version/v8/scripts/build_xray_checkpoint_manifest_v8.py
 	@$(PYTHON) tests/test_v8_attention_contracts.py
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
 	@$(PYTHON) unittest/bf16/test_layernorm_storage_contract_bf16.py
@@ -3667,6 +3789,7 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
 	@$(PYTHON) tests/test_v8_xray_decoder_pytorch.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
+	@$(PYTHON) -m pytest -q tests/test_xray_ck_persistent_replay_v8.py
 	@$(PYTHON) tests/test_v8_xray_text_recurrent.py
 	@$(PYTHON) tests/test_v8_text_prompt_certification.py
 	@$(PYTHON) -m unittest tests.test_v8_numerical_replay_fixtures -v
@@ -3709,7 +3832,9 @@ test-bf16-xray:
 		version/v8/scripts/xray_attention_sensitivity_v8.py \
 		version/v8/scripts/xray_decoder_pytorch_v8.py \
 		version/v8/scripts/xray_execution_state_v8.py \
+		version/v8/scripts/xray_ck_persistent_replay_v8.py \
 		version/v8/scripts/xray_text_recurrent_v8.py \
+		version/v8/scripts/xray_layer_output_sweep_v8.py \
 		version/v8/scripts/build_xray_checkpoint_manifest_v8.py \
 		version/v8/scripts/xray_qwen3vl_bf16_v8.py \
 		version/v8/scripts/xray_qwen3vl_bf16_decoder_v8.py \
@@ -3721,7 +3846,9 @@ test-bf16-xray:
 	@$(PYTHON) tests/test_v8_xray_decoder_pytorch.py
 	@$(PYTHON) tests/test_v8_xray_attention_sensitivity.py
 	@$(PYTHON) tests/test_v8_xray_execution_state.py
+	@$(PYTHON) -m pytest -q tests/test_xray_ck_persistent_replay_v8.py
 	@$(PYTHON) tests/test_v8_xray_text_recurrent.py
+	@$(PYTHON) -m pytest -q tests/test_v8_xray_layer_output_sweep.py
 	@$(PYTHON) tests/test_v8_xray_vision_interface.py
 	@$(PYTHON) tests/test_v8_xray_qwen3vl_bf16_decoder.py
 	@$(PYTHON) tests/test_v8_normalize_xray_ranking_report.py
@@ -3857,6 +3984,31 @@ test-v8-kimi-highmem:
 		fi; \
 	fi
 
+test-v8-qwen36-highmem:
+	@if [ -z "$(strip $(V8_QWEN36_MODEL))" ]; then \
+		echo "SKIP: Qwen3.6 high-memory smoke requires V8_QWEN36_MODEL=/path/to/runtime-or-gguf"; \
+	else \
+		avail_kb=$$(awk '/MemAvailable:/ {print $$2}' /proc/meminfo 2>/dev/null || echo 0); \
+		threshold_kb=$$(( $(V8_QWEN36_MIN_MEM_GB) * 1024 * 1024 )); \
+		if [ "$$avail_kb" -lt "$$threshold_kb" ]; then \
+			avail_gb=$$(( $$avail_kb / 1024 / 1024 )); \
+			echo "SKIP: Qwen3.6-27B v8 smoke needs >=$(V8_QWEN36_MIN_MEM_GB) GiB MemAvailable; found $${avail_gb} GiB"; \
+		else \
+			echo "Running v8 Qwen3.6-27B coherent-answer smoke..."; \
+			CK_V8_COMPILER="$(V8_QWEN36_COMPILER)" \
+			CK_BUMP_FORCE_MIXED=1 \
+			CK_NUM_THREADS=$${CK_NUM_THREADS:-24} \
+			OMP_NUM_THREADS=$${OMP_NUM_THREADS:-24} \
+				$(PYTHON) $(PYTHONFLAGS) version/v8/scripts/ck_run_v8.py run "$(V8_QWEN36_MODEL)" \
+				--context-len $(V8_QWEN36_CONTEXT) \
+				--prompt "$(V8_QWEN36_PROMPT)" \
+				--chat-template qwen35 \
+				--thinking-mode suppressed \
+				--max-tokens $(V8_QWEN36_MAX_TOKENS) \
+				--temperature 0.0; \
+		fi; \
+	fi
+
 profile-v8-prefill-ops: ck-cli-v8
 	@echo "Profiling v8 prefill operator costs..."
 	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
@@ -3906,7 +4058,7 @@ qwen3vl-ocr-perf-analyze:
 		--json-out build/qwen3vl_ocr_perf_pipeline.json \
 		--md-out build/qwen3vl_ocr_perf_pipeline.md
 
-.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q4k-gateup-swiglu-x16-chunk4-quick bench-qwen3vl-encoder-attention bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-routing-exact test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-qwen36-contract test-v8-xeon-family-contracts test-v8-xeon-highmem test-v8-gemma4-highmem test-v8-nemotron9-highmem test-v8-glm4-highmem test-v8-kimi-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick qwen3vl-ocr-perf-pipeline qwen3vl-ocr-perf-analyze qwen3vl-encoder-prefix-parity
+.PHONY: test-threadpool-parity test-threadpool-parity-quick test-threadpool-parity-verbose bench-q4k-dispatch-matrix bench-q4k-dispatch-matrix-quick bench-q4k-gateup-swiglu-x16-chunk4-quick bench-qwen3vl-encoder-attention bench-q8-0-fp32-gemm bench-q8-0-fp32-gemm-quick test-q6k-prefill-tile-bench test-q6k-prefill-tile-bench-quick test-q6k-prefill-routing-exact test-q6k-prefill-dispatch-sweep test-q6k-prefill-dispatch-sweep-quick test-q6k-prefill-dispatch-sweep-avx2 test-q6k-prefill-thread-sweep-quick test-q4-q5-prefill-dispatch-sweep test-q4-q5-prefill-thread-sweep-quick profile-v8-prefill-perf-stat test-v8-decoder-matrix test-v8-decoder-matrix-quick test-v8-xeon-decoder-family-sweep test-v8-template-circuit-audit v8-model-kernel-inspect test-v8-gemma4-assistant-e2e test-v8-qwen3vl-e2e-smoke test-v8-qwen3vl-ocr-smoke test-v8-gemma4-vision-smoke test-v8-vision-smoke test-v8-model-smoke test-v8-qwen36-contract test-v8-xeon-family-contracts test-v8-xeon-highmem test-v8-qwen36-highmem test-v8-gemma4-highmem test-v8-nemotron9-highmem test-v8-glm4-highmem test-v8-kimi-highmem bench-v8-qwen3vl-ocr bench-v8-qwen3vl-ocr-quick bench-v8-qwen3vl-ocr-fast profile-v8-prefill-ops profile-v8-prefill-ops-quick qwen3vl-ocr-perf-pipeline qwen3vl-ocr-perf-analyze qwen3vl-encoder-prefix-parity
 
 # =============================================================================
 # GEMM AVX Benchmark: _avx (SSE4.1) vs _ref (scalar)
@@ -5028,13 +5180,16 @@ nightly-inference:
 nightly-parity:
 	@$(PYTHON) scripts/nightly_runner.py --category parity
 
+nightly-xeon-e2e:
+	@$(PYTHON) scripts/nightly_runner.py --profile xeon-e2e --json $(BUILD_DIR)/nightly_xeon_e2e_report.json
+
 nightly-archive:
 	@$(PYTHON) scripts/nightly_runner.py --category archive
 
 nightly-list:
 	@$(PYTHON) scripts/nightly_runner.py --list
 
-.PHONY: nightly nightly-quick nightly-json nightly-baseline nightly-kernels nightly-bf16 nightly-quant nightly-inference nightly-parity nightly-archive nightly-list
+.PHONY: nightly nightly-quick nightly-json nightly-baseline nightly-kernels nightly-bf16 nightly-quant nightly-inference nightly-parity nightly-xeon-e2e nightly-archive nightly-list
 .PHONY: test-audio test-audio-v8-contracts test-whisper-e2e-auto libckernel_audio.so
 
 # ============================================================================

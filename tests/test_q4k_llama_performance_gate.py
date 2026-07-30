@@ -114,6 +114,45 @@ class Q4KLlamaPerformanceGateTests(unittest.TestCase):
         self.assertIsNotNone(avx2_match)
         self.assertNotIn("mavxvnni", avx2_match.group(1))
 
+    def test_avx512_x16_provider_is_qwen36_scoped_capability(self) -> None:
+        path = ROOT / "version" / "v8" / "kernel_maps" / "gemm_nt_q4_k_q8_k.json"
+        kernel = json.loads(path.read_text(encoding="utf-8"))
+        candidates = {
+            row["name"]: row
+            for row in kernel["phase_selection"]["prefill"]["candidates"]
+        }
+        provider = candidates["packed_vnni_x16_split_min_16m16n"]
+        self.assertEqual(
+            provider["function"],
+            "gemm_nt_q4_k_packed_vnni_x16_q8_k_split_min_threaded_16m",
+        )
+        self.assertEqual(provider["layout"], "q4_k_packed_vnni_x16")
+        self.assertEqual(provider["threading"]["tile"], {"M": 16, "N": 16})
+        self.assertEqual(provider["threading"]["internal_row_register_group"], 8)
+        self.assertEqual(provider["promotion"], "experimental_sweep_only")
+        self.assertIn("avx512_vnni", provider["requires"])
+
+        source = (
+            ROOT / "src" / "kernels" / "gemm_kernels_q4k_q8k_vnni.c"
+        ).read_text(encoding="utf-8")
+        self.assertIn("CK_HAS_AVX512_VNNI_512", source)
+        self.assertIn("pack_q4_k_to_packed_vnni_x16", source)
+        self.assertIn(
+            "gemm_nt_q4_k_packed_vnni_x16_q8_k_split_min_threaded_16m",
+            source,
+        )
+
+        dispatcher = (
+            ROOT / "version" / "v8" / "src" / "ck_parallel_prefill_v8.c"
+        ).read_text(encoding="utf-8")
+        self.assertIn("ck_get_q4k_packed_vnni_x16_cached", dispatcher)
+        self.assertIn("ck_should_use_qwen36_q4k_avx512_x16", dispatcher)
+        self.assertIn("N == 34816 || N == 6144", dispatcher)
+        self.assertIn("K != 5120", dispatcher)
+        self.assertIn("CK_ENABLE_Q4K_AVX512_X16_EXPERIMENTAL", dispatcher)
+        self.assertIn("CK_V8_FORCE_BATCHED_PREFILL", dispatcher)
+        self.assertIn("CK_DISABLE_Q4K_AVX512_X16_PREFILL", dispatcher)
+
     def test_production_uses_persistent_weight_pack_not_q8_repack(self) -> None:
         source = (ROOT / "version" / "v8" / "src" / "ck_parallel_prefill_v8.c").read_text(
             encoding="utf-8"

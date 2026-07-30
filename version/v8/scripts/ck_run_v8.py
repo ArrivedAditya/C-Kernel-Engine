@@ -19,6 +19,7 @@ and a generated audio-transformer route:
 """
 
 import argparse
+import hashlib
 import importlib.util
 import inspect
 import json
@@ -55,6 +56,109 @@ AUTO_MMPROJ_SPECS = (
         "mmproj": "hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf",
     },
 )
+CODEGEN_STAMP_NAME = ".ck_codegen_bundle.json"
+RUNTIME_STAMP_NAME = ".ck_runtime_bundle.json"
+RUNTIME_BUNDLE_SCHEMA = "ck-v8-runtime-bundle-v2"
+
+
+def _configure_scratch_environment() -> Path:
+    """Keep compiler and helper temporaries in persistent, writable storage."""
+    configured = os.environ.get("CK_V8_TMPDIR") or os.environ.get("TMPDIR")
+    if configured:
+        scratch = Path(configured).expanduser()
+    else:
+        cache_home = Path(
+            os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
+        ).expanduser()
+        scratch = cache_home / "ck-engine-v8" / "tmp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    if not _can_write_dir(scratch):
+        raise RuntimeError(f"v8 scratch directory is not writable: {scratch}")
+    scratch = scratch.resolve()
+    os.environ["TMPDIR"] = str(scratch)
+    tempfile.tempdir = None
+    return scratch
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _file_identity(path: Path) -> dict[str, Any]:
+    resolved = path.resolve()
+    return {
+        "path": str(resolved),
+        "size": resolved.stat().st_size,
+        "sha256": _sha256_file(resolved),
+    }
+
+
+def _optional_file_identity(path: Path) -> dict[str, Any]:
+    if path.is_file():
+        return _file_identity(path)
+    return {"path": str(path), "missing": True}
+
+
+def _tree_identity(paths: list[Path]) -> dict[str, str]:
+    rows: dict[str, str] = {}
+    for root in paths:
+        if root.is_file():
+            rows[str(root.resolve())] = _sha256_file(root)
+            continue
+        if not root.is_dir():
+            rows[str(root.resolve())] = "missing"
+            continue
+        for path in sorted(item for item in root.rglob("*") if item.is_file()):
+            rows[str(path.resolve())] = _sha256_file(path)
+    return rows
+
+
+def _read_bundle_stamp(path: Path) -> dict[str, Any] | None:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _write_bundle_stamp(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as handle:
+        json.dump(value, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        temp_path = Path(handle.name)
+    temp_path.replace(path)
+
+
+def _bundle_is_current(
+    stamp_path: Path,
+    *,
+    inputs: dict[str, Any],
+    outputs: dict[str, Path],
+) -> bool:
+    stamp = _read_bundle_stamp(stamp_path)
+    if stamp is None or stamp.get("inputs") != inputs:
+        return False
+    recorded_outputs = stamp.get("outputs")
+    if not isinstance(recorded_outputs, dict):
+        return False
+    for name, path in outputs.items():
+        if not path.is_file():
+            return False
+        if recorded_outputs.get(name) != _file_identity(path):
+            return False
+    return True
 
 
 def _can_write_dir(path: Path) -> bool:
@@ -386,13 +490,76 @@ def _sync_runtime_lib(src: Path, dst: Path, label: str) -> None:
         raise RuntimeError(f"missing required runtime lib: {src}")
     if dst.exists():
         try:
-            if dst.stat().st_mtime >= src.stat().st_mtime and dst.stat().st_size == src.stat().st_size:
+            if (
+                dst.stat().st_size == src.stat().st_size
+                and _sha256_file(dst) == _sha256_file(src)
+            ):
+                src_stat = src.stat()
+                os.utime(
+                    dst,
+                    ns=(src_stat.st_atime_ns, src_stat.st_mtime_ns),
+                )
+                log(f"  Refreshed identical {label} -> {dst}", C_DIM)
                 return
         except OSError:
             pass
     dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+    with tempfile.NamedTemporaryFile(
+        dir=dst.parent,
+        prefix=f".{dst.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as handle:
+        temporary = Path(handle.name)
+    try:
+        shutil.copy2(src, temporary)
+        os.replace(temporary, dst)
+    finally:
+        temporary.unlink(missing_ok=True)
     log(f"  Synced {label} -> {dst}", C_DIM)
+
+
+def _validate_runtime_bundle(bundle_dir: Path) -> None:
+    """Load the assembled model exactly as chat will before publishing it."""
+    model_lib = bundle_dir / "libmodel.so"
+    engine_lib = bundle_dir / "libckernel_engine.so"
+    tokenizer_lib = bundle_dir / "libckernel_tokenizer.so"
+    missing = [
+        path.name
+        for path in (model_lib, engine_lib, tokenizer_lib)
+        if not path.is_file()
+    ]
+    if missing:
+        raise RuntimeError(
+            "incomplete v8 runtime bundle; missing " + ", ".join(missing)
+        )
+
+    probe = (
+        "import ctypes, pathlib, sys\n"
+        "bundle = pathlib.Path(sys.argv[1])\n"
+        "ctypes.CDLL(str(bundle / 'libmodel.so'), mode=ctypes.RTLD_GLOBAL)\n"
+    )
+    env = os.environ.copy()
+    current_ld_path = env.get("LD_LIBRARY_PATH", "")
+    env["LD_LIBRARY_PATH"] = (
+        str(bundle_dir)
+        if not current_ld_path
+        else f"{bundle_dir}{os.pathsep}{current_ld_path}"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe, str(bundle_dir)],
+        cwd=str(PROJECT_ROOT),
+        env=env,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "dynamic loader failed").strip()
+        raise RuntimeError(
+            "v8 runtime bundle failed dynamic-load validation before publication:\n"
+            f"{detail}"
+        )
 
 
 def detect_input_type(model_input: str) -> tuple[str, dict[str, Any]]:
@@ -808,6 +975,7 @@ def step_build_ir(
     log_step(3, "Building v8 IR")
     output_dir.mkdir(parents=True, exist_ok=True)
     step_regenerate_kernel_registry(force=force)
+    force = _refresh_manifest_circuit_snapshot(manifest_path) or force
 
     outputs = {
         "init_ir": output_dir / "init.json",
@@ -859,17 +1027,58 @@ def step_build_ir(
     return outputs
 
 
+def _refresh_manifest_circuit_snapshot(manifest_path: Path) -> bool:
+    """Refresh cached graph policy without reconverting immutable weights."""
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    embedded = manifest.get("template") if isinstance(manifest.get("template"), dict) else {}
+    config = manifest.get("config") if isinstance(manifest.get("config"), dict) else {}
+    circuit_name = str(embedded.get("name") or config.get("model") or "").strip().lower()
+    if not circuit_name:
+        return False
+    circuit_path = V8_ROOT / "circuits" / f"{circuit_name}.json"
+    if not circuit_path.is_file():
+        return False
+    current = json.loads(circuit_path.read_text(encoding="utf-8"))
+    if not isinstance(current, dict):
+        raise RuntimeError(f"versioned circuit is not a JSON object: {circuit_path}")
+    if embedded == current:
+        return False
+    manifest["template"] = current
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    log(f"  Refreshed cached circuit snapshot: {circuit_name}", C_DIM)
+    return True
+
+
 def step_codegen(output_dir: Path, ir_paths: dict[str, Path], *, force: bool = False, profile: bool = False) -> Path:
     log_step(4, "Generating C code")
     model_c_path = output_dir / "model_v8.c"
-    if (
-        model_c_path.exists()
-        and not force
-        and model_c_path.stat().st_mtime >= ir_paths["decode_call"].stat().st_mtime
-        and model_c_path.stat().st_mtime >= ir_paths["prefill_call"].stat().st_mtime
+    stamp_path = output_dir / CODEGEN_STAMP_NAME
+    codegen_inputs = {
+        "schema": "ck-v8-codegen-bundle-v1",
+        "profile": bool(profile),
+        "artifacts": {
+            name: _file_identity(path)
+            for name, path in sorted(ir_paths.items())
+            if path.is_file()
+        },
+        "generator_sources": _tree_identity(
+            [
+                SCRIPTS_DIR / "codegen_v8.py",
+                SCRIPTS_DIR / "codegen_core_v8.py",
+                SCRIPTS_DIR / "codegen_prefill_v8.py",
+                KERNEL_REGISTRY_PATH,
+            ]
+        ),
+    }
+    if not force and _bundle_is_current(
+        stamp_path,
+        inputs=codegen_inputs,
+        outputs={"model_v8.c": model_c_path},
     ):
         log(f"  Using cached C code at {model_c_path}", C_DIM)
         return model_c_path
+    if model_c_path.exists() and not force:
+        log("  Cached C code provenance is stale; regenerating", C_DIM)
 
     cmd = [
         sys.executable,
@@ -888,10 +1097,23 @@ def step_codegen(output_dir: Path, ir_paths: dict[str, Path], *, force: bool = F
     if profile:
         cmd.append("--profile")
     run_cmd(cmd, cwd=PROJECT_ROOT)
+    _write_bundle_stamp(
+        stamp_path,
+        {
+            "inputs": codegen_inputs,
+            "outputs": {"model_v8.c": _file_identity(model_c_path)},
+        },
+    )
     return model_c_path
 
 
-def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -> Path:
+def step_compile(
+    model_c_path: Path,
+    output_dir: Path,
+    *,
+    force: bool = False,
+    profile: bool = False,
+) -> Path:
     log_step(5, "Compiling shared library")
     lib_path = output_dir / "libmodel.so"
     kernel_lib = BUILD_DIR / "libckernel_engine.so"
@@ -899,18 +1121,56 @@ def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -
 
     requested_compiler = (os.environ.get("CK_V8_COMPILER", "") or os.environ.get("CK_V7_COMPILER", "")).strip()
     compiler = requested_compiler or "gcc"
-    if not shutil.which(compiler):
+    compiler_path_value = shutil.which(compiler)
+    if not compiler_path_value:
         log_error(f"Requested CK_V8_COMPILER not found in PATH: {compiler}")
         sys.exit(1)
+    compiler_path = Path(compiler_path_value)
 
-    if force or not kernel_lib.exists() or not tokenizer_lib.exists():
-        targets = [_path_to_make_target(kernel_lib), _path_to_make_target(tokenizer_lib)]
-        make_cmd = ["make", "--no-print-directory", f"CC={compiler}"]
-        run_cmd([*make_cmd, *targets], cwd=PROJECT_ROOT)
-
-    if lib_path.exists() and not force and lib_path.stat().st_mtime >= model_c_path.stat().st_mtime:
-        _sync_runtime_lib(kernel_lib, output_dir / "libckernel_engine.so", "libckernel_engine.so")
-        _sync_runtime_lib(tokenizer_lib, output_dir / "libckernel_tokenizer.so", "libckernel_tokenizer.so")
+    machine = _host_machine()
+    omp_flag = "-qopenmp" if compiler == "icx" else "-fopenmp"
+    extra_cflags = (os.environ.get("CK_V8_EXTRA_CFLAGS", "") or os.environ.get("CK_V7_EXTRA_CFLAGS", "")).strip()
+    extra_ldflags = (os.environ.get("CK_V8_EXTRA_LDFLAGS", "") or os.environ.get("CK_V7_EXTRA_LDFLAGS", "")).strip()
+    compile_inputs = {
+        "schema": RUNTIME_BUNDLE_SCHEMA,
+        "model_source": _file_identity(model_c_path),
+        "compiler": _optional_file_identity(compiler_path),
+        "compiler_name": compiler,
+        "machine": machine,
+        "openmp_flag": omp_flag,
+        "profile": bool(profile),
+        "extra_cflags": extra_cflags,
+        "extra_ldflags": extra_ldflags,
+        "engine_sources": _tree_identity(
+            [
+                PROJECT_ROOT / "Makefile",
+                PROJECT_ROOT / "include",
+                PROJECT_ROOT / "src" / "kernels",
+                PROJECT_ROOT / "src" / "ckernel_alloc.c",
+                V8_ROOT / "src",
+                KERNEL_REGISTRY_PATH,
+            ]
+        ),
+        "linked_libraries": {
+            name: _file_identity(path)
+            for name, path in (
+                ("engine", kernel_lib),
+                ("tokenizer", tokenizer_lib),
+            )
+            if path.is_file()
+        },
+    }
+    stamp_path = output_dir / RUNTIME_STAMP_NAME
+    runtime_outputs = {
+        "libmodel.so": lib_path,
+        "libckernel_engine.so": output_dir / "libckernel_engine.so",
+        "libckernel_tokenizer.so": output_dir / "libckernel_tokenizer.so",
+    }
+    if not force and _bundle_is_current(
+        stamp_path,
+        inputs=compile_inputs,
+        outputs=runtime_outputs,
+    ):
         symlink_path = output_dir / "ck-kernel-inference.so"
         try:
             if symlink_path.exists() or symlink_path.is_symlink():
@@ -918,61 +1178,89 @@ def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -
             symlink_path.symlink_to("libmodel.so")
         except Exception:
             pass
+        log(f"  Using provenance-verified runtime at {lib_path}", C_DIM)
         return lib_path
+
+    if lib_path.exists() and not force:
+        log("  Cached runtime provenance is stale; rebuilding", C_DIM)
+    targets = [_path_to_make_target(kernel_lib), _path_to_make_target(tokenizer_lib)]
+    # A stale bundle means source identity changed even when checkout/build
+    # mtimes make the old libraries look newer. Force both runtime libraries
+    # through Make so generated model code can never be paired with an engine
+    # from another branch or worktree.
+    make_cmd = ["make", "-B", "--no-print-directory", f"CC={compiler}"]
+    run_cmd([*make_cmd, *targets], cwd=PROJECT_ROOT)
 
     include_dir = PROJECT_ROOT / "include"
     v8_src = V8_ROOT / "src"
-    omp_flag = "-qopenmp" if compiler == "icx" else "-fopenmp"
-    machine = _host_machine()
     use_openmp = _compiler_supports_openmp(compiler, omp_flag)
-    cmd = [
-        compiler,
-        "-shared",
-        "-fPIC",
-        "-O3",
-        "-march=native",
-        "-std=c11",
-        "-fvisibility=default",
-        *_arch_defines(machine),
-        f"-I{include_dir}",
-        f"-I{v8_src}",
-        "-o",
-        str(lib_path),
-        str(model_c_path),
-        str(PROJECT_ROOT / "src" / "ckernel_alloc.c"),
-        str(v8_src / "ckernel_model_load_v8.c"),
-        str(v8_src / "ck_parallel_decode_v8.c"),
-        str(v8_src / "ck_parallel_prefill_v8.c"),
-        f"-L{BUILD_DIR}",
-        f"-L{output_dir}",
-        "-lckernel_tokenizer",
-        "-lckernel_engine",
-        "-lm",
-        "-lpthread",
-        "-Wl,-rpath,$ORIGIN",
-        f"-Wl,-rpath,{BUILD_DIR}",
-    ]
-    if _is_x86_machine(machine):
-        cmd.insert(3, "-mcmodel=large")
-    if use_openmp:
-        cmd.insert(8 if _is_x86_machine(machine) else 7, omp_flag)
-    extra_cflags = (os.environ.get("CK_V8_EXTRA_CFLAGS", "") or os.environ.get("CK_V7_EXTRA_CFLAGS", "")).strip()
-    extra_ldflags = (os.environ.get("CK_V8_EXTRA_LDFLAGS", "") or os.environ.get("CK_V7_EXTRA_LDFLAGS", "")).strip()
-    if extra_cflags:
-        try:
-            cmd.extend(shlex.split(extra_cflags))
-        except ValueError:
-            log_error("Invalid CK_V8_EXTRA_CFLAGS value")
-            sys.exit(1)
-    if extra_ldflags:
-        try:
-            cmd.extend(shlex.split(extra_ldflags))
-        except ValueError:
-            log_error("Invalid CK_V8_EXTRA_LDFLAGS value")
-            sys.exit(1)
-    run_cmd(cmd, cwd=PROJECT_ROOT)
-    _sync_runtime_lib(kernel_lib, output_dir / "libckernel_engine.so", "libckernel_engine.so")
-    _sync_runtime_lib(tokenizer_lib, output_dir / "libckernel_tokenizer.so", "libckernel_tokenizer.so")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        dir=output_dir,
+        prefix=".ck-runtime-stage-",
+    ) as stage_name:
+        stage_dir = Path(stage_name)
+        staged_model = stage_dir / "libmodel.so"
+        cmd = [
+            compiler,
+            "-shared",
+            "-fPIC",
+            "-O3",
+            "-march=native",
+            "-std=c11",
+            "-fvisibility=default",
+            *_arch_defines(machine),
+            f"-I{include_dir}",
+            f"-I{v8_src}",
+            "-o",
+            str(staged_model),
+            str(model_c_path),
+            str(PROJECT_ROOT / "src" / "ckernel_alloc.c"),
+            str(v8_src / "ckernel_model_load_v8.c"),
+            str(v8_src / "ck_parallel_decode_v8.c"),
+            str(v8_src / "ck_parallel_prefill_v8.c"),
+            f"-L{BUILD_DIR}",
+            "-lckernel_tokenizer",
+            "-lckernel_engine",
+            "-lm",
+            "-lpthread",
+            "-Wl,-rpath,$ORIGIN",
+        ]
+        if _is_x86_machine(machine):
+            cmd.insert(3, "-mcmodel=large")
+        if use_openmp:
+            cmd.insert(8 if _is_x86_machine(machine) else 7, omp_flag)
+        if profile:
+            cmd.append("-DCK_PROFILE=1")
+        if extra_cflags:
+            try:
+                cmd.extend(shlex.split(extra_cflags))
+            except ValueError:
+                log_error("Invalid CK_V8_EXTRA_CFLAGS value")
+                sys.exit(1)
+        if extra_ldflags:
+            try:
+                cmd.extend(shlex.split(extra_ldflags))
+            except ValueError:
+                log_error("Invalid CK_V8_EXTRA_LDFLAGS value")
+                sys.exit(1)
+        run_cmd(cmd, cwd=PROJECT_ROOT)
+        shutil.copy2(kernel_lib, stage_dir / "libckernel_engine.so")
+        shutil.copy2(tokenizer_lib, stage_dir / "libckernel_tokenizer.so")
+        _validate_runtime_bundle(stage_dir)
+        _sync_runtime_lib(
+            stage_dir / "libckernel_engine.so",
+            output_dir / "libckernel_engine.so",
+            "libckernel_engine.so",
+        )
+        _sync_runtime_lib(
+            stage_dir / "libckernel_tokenizer.so",
+            output_dir / "libckernel_tokenizer.so",
+            "libckernel_tokenizer.so",
+        )
+        # Publish the generated model last. It is the bundle consumer and may
+        # require symbols that exist only in the newly staged dependencies.
+        _sync_runtime_lib(staged_model, lib_path, "libmodel.so")
     symlink_path = output_dir / "ck-kernel-inference.so"
     try:
         if symlink_path.exists() or symlink_path.is_symlink():
@@ -980,6 +1268,20 @@ def step_compile(model_c_path: Path, output_dir: Path, *, force: bool = False) -
         symlink_path.symlink_to("libmodel.so")
     except Exception:
         pass
+    compile_inputs["linked_libraries"] = {
+        "engine": _file_identity(kernel_lib),
+        "tokenizer": _file_identity(tokenizer_lib),
+    }
+    _write_bundle_stamp(
+        stamp_path,
+        {
+            "inputs": compile_inputs,
+            "outputs": {
+                name: _file_identity(path)
+                for name, path in runtime_outputs.items()
+            },
+        },
+    )
     return lib_path
 
 
@@ -1324,7 +1626,12 @@ def run_pipeline(args: argparse.Namespace) -> int:
         force=args.force_compile,
         profile=getattr(args, "profile", False),
     )
-    lib_path = step_compile(model_c_path, work_dir, force=args.force_compile)
+    lib_path = step_compile(
+        model_c_path,
+        work_dir,
+        force=args.force_compile,
+        profile=getattr(args, "profile", False),
+    )
 
     if getattr(args, "sweep_kernels", False):
         step_sweep_kernels(
@@ -1350,7 +1657,233 @@ def run_pipeline(args: argparse.Namespace) -> int:
     return 0
 
 
+def _whisper_checkpoint_identity(checkpoint_dir: Path) -> dict[str, Any]:
+    files = sorted(
+        path
+        for path in checkpoint_dir.iterdir()
+        if path.is_file()
+        and path.suffix in {".json", ".safetensors", ".txt", ".model"}
+    )
+    return {
+        str(path.relative_to(checkpoint_dir)): _file_identity(path)
+        for path in files
+    }
+
+
+def _whisper_build_inputs(checkpoint_dir: Path, role: str) -> dict[str, Any]:
+    return {
+        "schema": "ck-v8-whisper-runtime-inputs-v1",
+        "role": role,
+        "checkpoint": _whisper_checkpoint_identity(checkpoint_dir),
+        "sources": _tree_identity(
+            [
+                SCRIPTS_DIR / "convert_safetensors_to_bump_v8.py",
+                SCRIPTS_DIR / "build_ir_v8.py",
+                SCRIPTS_DIR / "codegen_v8.py",
+                SCRIPTS_DIR / "codegen_core_v8.py",
+                SCRIPTS_DIR / "codegen_prefill_v8.py",
+                V8_ROOT / "circuits" / f"audio_transformer_{role}.json",
+                V8_ROOT / "model_maps" / "safetensors_ck_map.json",
+                KERNEL_REGISTRY_PATH,
+            ]
+        ),
+    }
+
+
+def _whisper_runtime_outputs(run_dir: Path) -> dict[str, Path]:
+    return {
+        name: run_dir / name
+        for name in (
+            "weights.bump",
+            "weights_manifest.json",
+            "weights_manifest.map",
+            "config.json",
+            "model_v8.c",
+            "libmodel.so",
+            "libckernel_engine.so",
+            "libckernel_tokenizer.so",
+        )
+    }
+
+
+def _build_whisper_role(
+    checkpoint_dir: Path,
+    run_dir: Path,
+    role: str,
+    *,
+    force_convert: bool,
+    force_compile: bool,
+) -> None:
+    if role not in {"encoder", "decoder"}:
+        raise ValueError(f"unsupported Whisper role: {role}")
+    run_dir.mkdir(parents=True, exist_ok=True)
+    step_regenerate_kernel_registry(force=False)
+    inputs = _whisper_build_inputs(checkpoint_dir, role)
+    stamp = run_dir / ".ck-whisper-runtime.json"
+    if (
+        not force_convert
+        and not force_compile
+        and _bundle_is_current(
+            stamp,
+            inputs=inputs,
+            outputs=_whisper_runtime_outputs(run_dir),
+        )
+    ):
+        log(f"  Using provenance-verified Whisper {role}: {run_dir}", C_DIM)
+        return
+
+    weights = run_dir / "weights.bump"
+    config = run_dir / "config.json"
+    manifest = run_dir / "weights_manifest.json"
+    run_cmd(
+        [
+            sys.executable,
+            str(SCRIPTS_DIR / "convert_safetensors_to_bump_v8.py"),
+            "--checkpoint",
+            str(checkpoint_dir),
+            "--output",
+            str(weights),
+            "--config-out",
+            str(config),
+            "--manifest-out",
+            str(manifest),
+            "--arch",
+            f"whisper_{role}",
+        ],
+        cwd=PROJECT_ROOT,
+    )
+    _stage_safetensors_tokenizer_assets(checkpoint_dir, run_dir)
+
+    if role == "encoder":
+        ir = run_dir / "ir1.json"
+        layout = run_dir / "layout.json"
+        lowered = run_dir / "lowered.json"
+        call = run_dir / "call.json"
+        run_cmd(
+            [
+                sys.executable,
+                str(SCRIPTS_DIR / "build_ir_v8.py"),
+                "--manifest",
+                str(manifest),
+                "--mode",
+                "prefill",
+                "--output",
+                str(ir),
+                "--layout-output",
+                str(layout),
+                "--lowered-output",
+                str(lowered),
+                "--call-output",
+                str(call),
+                "--manifest-map-output",
+                str(run_dir / "weights_manifest.map"),
+                "--init-output",
+                str(run_dir / "init.json"),
+            ],
+            cwd=PROJECT_ROOT,
+        )
+        model_c = run_dir / "model_v8.c"
+        run_cmd(
+            [
+                sys.executable,
+                str(SCRIPTS_DIR / "codegen_v8.py"),
+                "--ir",
+                str(call),
+                "--layout",
+                str(layout),
+                "--output",
+                str(model_c),
+                "--strict-contracts",
+            ],
+            cwd=PROJECT_ROOT,
+        )
+    else:
+        ir_paths = step_build_ir(manifest, run_dir, force=True)
+        model_c = step_codegen(run_dir, ir_paths, force=True)
+
+    step_compile(model_c, run_dir, force=force_compile)
+    outputs = _whisper_runtime_outputs(run_dir)
+    _write_bundle_stamp(
+        stamp,
+        {
+            "inputs": inputs,
+            "outputs": {
+                name: _file_identity(path) for name, path in outputs.items()
+            },
+        },
+    )
+
+
+def step_build_whisper_runtimes(
+    model_input: str,
+    *,
+    run_dir: Path | None,
+    force_download: bool,
+    force_convert: bool,
+    force_compile: bool,
+) -> tuple[Path, Path]:
+    input_type, info = detect_input_type(model_input)
+    if input_type == "hf_id":
+        checkpoint_dir = step_download(
+            info["model_id"], CACHE_DIR, force=force_download
+        )
+        default_name = info["model_id"].replace("/", "--")
+    elif input_type == "local_dir":
+        checkpoint_dir = info["path"]
+        default_name = checkpoint_dir.name
+    else:
+        raise RuntimeError(
+            "audio checkpoint must be a Hugging Face model ID or local "
+            "safetensors directory"
+        )
+    if not _is_safetensors_checkpoint_dir(checkpoint_dir):
+        raise RuntimeError(
+            f"Whisper checkpoint has no safetensors weights: {checkpoint_dir}"
+        )
+
+    root = (
+        run_dir.expanduser().resolve()
+        if run_dir is not None
+        else CACHE_DIR / f"{default_name}--audio"
+    )
+    encoder = root / "encoder"
+    decoder = root / "decoder"
+    log_step(2, "Building generated Whisper encoder and decoder")
+    _build_whisper_role(
+        checkpoint_dir,
+        encoder,
+        "encoder",
+        force_convert=force_convert,
+        force_compile=force_compile,
+    )
+    _build_whisper_role(
+        checkpoint_dir,
+        decoder,
+        "decoder",
+        force_convert=force_convert,
+        force_compile=force_compile,
+    )
+    return encoder, decoder
+
+
 def run_audio_pipeline(args: argparse.Namespace) -> int:
+    encoder_run_dir = args.encoder_run_dir
+    decoder_run_dir = args.decoder_run_dir
+    model_input = getattr(args, "model", None)
+    if model_input:
+        encoder_run_dir, decoder_run_dir = step_build_whisper_runtimes(
+            str(model_input),
+            run_dir=getattr(args, "run_dir", None),
+            force_download=bool(getattr(args, "force_download", False)),
+            force_convert=bool(getattr(args, "force_convert", False)),
+            force_compile=bool(getattr(args, "force_compile", False)),
+        )
+    elif encoder_run_dir is None or decoder_run_dir is None:
+        raise RuntimeError(
+            "audio requires either a Whisper checkpoint or both "
+            "--encoder-run-dir and --decoder-run-dir"
+        )
+
     module_path = SCRIPTS_DIR / "run_whisper_v8.py"
     spec = importlib.util.spec_from_file_location("ck_v8_audio_runtime", module_path)
     if spec is None or spec.loader is None:
@@ -1360,9 +1893,9 @@ def run_audio_pipeline(args: argparse.Namespace) -> int:
     argv = [
         "run",
         "--encoder-run-dir",
-        str(args.encoder_run_dir),
+        str(encoder_run_dir),
         "--decoder-run-dir",
-        str(args.decoder_run_dir),
+        str(decoder_run_dir),
         "--wav",
         str(args.wav),
         "--language",
@@ -1372,12 +1905,15 @@ def run_audio_pipeline(args: argparse.Namespace) -> int:
         "--max-tokens",
         str(int(args.max_tokens)),
     ]
+    if args.timestamps:
+        argv.append("--timestamps")
     if args.output is not None:
         argv.extend(["--output", str(args.output)])
     return int(module.main(argv))
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_scratch_environment()
     parser = argparse.ArgumentParser(
         description="C-Kernel-Engine v8 inference runner",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1393,9 +1929,7 @@ Examples:
     --mmproj hf://Qwen/Qwen3-VL-8B-Instruct-GGUF/mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf \\
     --image-path version/v8/test_assets/v8_vision_doc_card_72.png --prompt "Explain this image."
 
-  version/v8/scripts/cks-v8-run audio \\
-    --encoder-run-dir /path/to/whisper-tiny-encoder \\
-    --decoder-run-dir /path/to/whisper-tiny-decoder \\
+  version/v8/scripts/cks-v8-run audio hf://openai/whisper-base \\
     --wav /path/to/audio.wav
 """,
     )
@@ -1458,15 +1992,29 @@ Examples:
     audio_parser = subparsers.add_parser(
         "audio", help="Transcribe or translate WAV audio with generated runtimes"
     )
-    audio_parser.add_argument("--encoder-run-dir", type=Path, required=True)
-    audio_parser.add_argument("--decoder-run-dir", type=Path, required=True)
+    audio_parser.add_argument(
+        "model",
+        nargs="?",
+        help="Optional hf:// repository or local Whisper safetensors checkpoint",
+    )
+    audio_parser.add_argument("--run", dest="run_dir", type=Path)
+    audio_parser.add_argument("--encoder-run-dir", type=Path)
+    audio_parser.add_argument("--decoder-run-dir", type=Path)
     audio_parser.add_argument("--wav", type=Path, required=True)
     audio_parser.add_argument("--language", default="en")
     audio_parser.add_argument(
         "--task", choices=("transcribe", "translate"), default="transcribe"
     )
     audio_parser.add_argument("--max-tokens", type=int, default=128)
+    audio_parser.add_argument(
+        "--timestamps",
+        action="store_true",
+        help="Generate monotonic paired Whisper timestamp tokens",
+    )
     audio_parser.add_argument("--output", type=Path)
+    audio_parser.add_argument("--force-download", action="store_true")
+    audio_parser.add_argument("--force-convert", action="store_true")
+    audio_parser.add_argument("--force-compile", action="store_true")
 
     subparsers.add_parser("list", help="List cached models")
 

@@ -53,7 +53,19 @@
     "logits_contract": {
       "final_norm": "layernorm",
       "lm_head": "weight_tying",
-      "logits_layout": "last"
+      "logits_layout": "last",
+      "generation_policies": {
+        "text_only": {
+          "prefix": "decoder_start -> language -> task -> no_timestamps",
+          "timestamp_tokens": "suppressed"
+        },
+        "timestamps": {
+          "prefix": "decoder_start -> language -> task",
+          "sequence": "paired_monotonic",
+          "initial_window": "generation_config.max_initial_timestamp_index",
+          "selection": "timestamp_logsumexp_over_max_text"
+        }
+      }
     },
     "quant_contract": {
       "kernel_select": "weight_dtype_registry",

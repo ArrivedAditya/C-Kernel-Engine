@@ -41,6 +41,23 @@ def _hash_file(digest: Any, path: Path) -> None:
             digest.update(block)
 
 
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    _hash_file(digest, path)
+    return digest.hexdigest()
+
+
+def _llama_trajectory_temp_root() -> Path:
+    configured = os.environ.get("CK_LLAMA_TMPDIR")
+    if configured:
+        root = Path(configured).expanduser().resolve()
+    else:
+        cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+        root = cache_home.expanduser().resolve() / "ck-engine-v8" / "tmp"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def _llama_helper_paths() -> tuple[Path, Path, list[Path]]:
     llama_cpp = LLAMA_CPP.resolve()
     lib_dir = llama_cpp / "build" / "bin"
@@ -144,10 +161,15 @@ def load_runtime_contract(model_dir: Path) -> dict[str, Any]:
     return contract
 
 
-def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    cmd: list[str],
+    cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
         cwd=str(cwd or ROOT),
+        env=env,
         text=True,
         errors="replace",
         capture_output=True,
@@ -174,7 +196,8 @@ def ensure_llama_helper() -> Path:
             "llama shared libraries missing: " + ", ".join(str(path) for path in missing)
         )
 
-    helper_bin = Path(tempfile.gettempdir()) / f"ckv8_llama_token_replay_{_llama_helper_fingerprint()}"
+    scratch_root = _llama_trajectory_temp_root()
+    helper_bin = scratch_root / f"ckv8_llama_token_replay_{_llama_helper_fingerprint()}"
     if helper_bin.is_file():
         return helper_bin
 
@@ -199,7 +222,9 @@ def ensure_llama_helper() -> Path:
         "-o",
         str(helper_bin),
     ]
-    proc = _run(cmd, cwd=ROOT)
+    compile_env = os.environ.copy()
+    compile_env["TMPDIR"] = str(scratch_root)
+    proc = _run(cmd, cwd=ROOT, env=compile_env)
     if proc.returncode != 0:
         raise RuntimeError(
             "Failed to compile llama_token_replay helper\n"
@@ -344,9 +369,31 @@ def run_llama_greedy_trajectory(
     top_k: int,
     threads: int,
     no_repack: bool = False,
+    dump_step: int | None = None,
+    dump_dir: Path | None = None,
+    dump_names: str = "",
+    dump_flash_inputs: bool = False,
 ) -> dict[str, Any]:
+    capture_step = None if dump_step is None else int(dump_step)
+    if capture_step is not None:
+        if capture_step < 0 or capture_step >= int(max_new_tokens):
+            raise ValueError(
+                f"dump_step={capture_step} is outside trajectory [0, {int(max_new_tokens) - 1}]"
+            )
+        if dump_dir is None:
+            raise ValueError("dump_dir is required when dump_step is set")
+        resolved_dump_dir = dump_dir.expanduser().resolve()
+        if resolved_dump_dir.exists() and any(resolved_dump_dir.iterdir()):
+            raise ValueError(
+                f"llama dump directory must be empty to prevent stale evidence: {resolved_dump_dir}"
+            )
+        resolved_dump_dir.mkdir(parents=True, exist_ok=True)
+
     helper = ensure_llama_helper()
-    with tempfile.TemporaryDirectory(prefix="llama_token_trajectory_") as td:
+    with tempfile.TemporaryDirectory(
+        prefix="llama_token_trajectory_",
+        dir=_llama_trajectory_temp_root(),
+    ) as td:
         logits_path = Path(td) / "llama_logits.f32"
         sequence_path = Path(td) / "llama_logits_sequence.f32"
         cmd = [
@@ -363,6 +410,16 @@ def run_llama_greedy_trajectory(
         ]
         if no_repack:
             cmd.append("--no-repack")
+        if capture_step is not None:
+            cmd.extend([
+                "--dump-greedy-decode-step", str(capture_step),
+                "--dump-dir", str(resolved_dump_dir),
+            ])
+            names = str(dump_names).strip()
+            if names:
+                cmd.extend(["--dump-names", names])
+            if dump_flash_inputs:
+                cmd.append("--dump-flash-inputs")
         if threads > 0:
             cmd.extend(["--threads", str(int(threads))])
         proc = _run(cmd, cwd=ROOT)
@@ -386,10 +443,37 @@ def run_llama_greedy_trajectory(
                 f"llama trajectory token count mismatch: got={len(generated)} "
                 f"expected={max_new_tokens}"
             )
+        capture_paths: list[Path] = []
+        if capture_step is not None:
+            capture_paths = sorted(
+                path
+                for path in resolved_dump_dir.iterdir()
+                if path.is_file() and path.stat().st_size > 0
+            )
+            if not capture_paths:
+                raise RuntimeError(
+                    "requested llama trajectory dump was not emitted; "
+                    "verify the selected tensor names exist in the production graph"
+                )
         return {
             "meta": meta,
             "logits": logits.reshape(int(max_new_tokens), n_vocab),
             "generated_tokens": generated,
+            "capture": {
+                "execution_mode": "persistent_greedy_trajectory",
+                "step": capture_step,
+                "op_filter": str(dump_names).strip(),
+                "flash_inputs": bool(dump_flash_inputs),
+                "attention_mode": str(meta.get("flash_attention_mode") or "unknown"),
+                "artifacts": [
+                    {
+                        "path": str(path),
+                        "sha256": _sha256_path(path),
+                        "size": int(path.stat().st_size),
+                    }
+                    for path in capture_paths
+                ],
+            },
         }
 
 
@@ -627,6 +711,25 @@ def compare_logits(
     }
 
 
+def resolve_llama_decode_mode(
+    requested_llama_mode: str,
+    requested_ck_mode: str,
+    contract_prefill_policy: str,
+) -> str:
+    llama_mode = str(requested_llama_mode or "auto").strip().lower()
+    if llama_mode != "auto":
+        return llama_mode
+
+    ck_mode = str(requested_ck_mode or "auto").strip().lower()
+    if ck_mode == "sequential":
+        return "sequential"
+    if ck_mode in {"batched", "hybrid"}:
+        return "batched"
+
+    contract_mode = str(contract_prefill_policy or "batched").strip().lower()
+    return "sequential" if contract_mode == "sequential_decode" else "batched"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Tokenizer-free first-token logits parity (CK vs llama.cpp)")
     ap.add_argument("--model-dir", required=True, type=Path, help="run dir or .ck_build dir containing libmodel.so")
@@ -635,6 +738,12 @@ def main() -> int:
     ap.add_argument("--ctx-len", type=int, default=256)
     ap.add_argument("--top-k", type=int, default=16)
     ap.add_argument("--threads", type=int, default=0)
+    ap.add_argument(
+        "--ck-prefill-mode",
+        choices=["auto", "batched", "sequential", "hybrid"],
+        default="auto",
+        help="CK replay mode; auto follows the model runtime contract.",
+    )
     ap.add_argument(
         "--llama-decode-mode",
         choices=["auto", "batched", "sequential"],
@@ -656,9 +765,14 @@ def main() -> int:
     gguf_path = discover_gguf(args.gguf, model_dir)
     tokens = parse_tokens_csv(args.tokens)
     runtime_contract = load_runtime_contract(model_dir)
-    llama_decode_mode = str(args.llama_decode_mode)
-    if llama_decode_mode == "auto":
-        llama_decode_mode = "batched"
+    contract_prefill_policy = str(
+        runtime_contract.get("prefill_policy") or "batched"
+    ).strip().lower()
+    llama_decode_mode = resolve_llama_decode_mode(
+        str(args.llama_decode_mode),
+        str(args.ck_prefill_mode),
+        contract_prefill_policy,
+    )
 
     # Run llama helper first. CK runtime initializes OpenMP/threadpool state;
     # forking a subprocess after that can crash on some systems.
@@ -671,7 +785,7 @@ def main() -> int:
         decode_mode=llama_decode_mode,
         no_repack=bool(args.llama_no_repack),
     )
-    ck = load_ck_logits(model_dir, tokens)
+    ck = load_ck_logits(model_dir, tokens, ck_prefill_mode=str(args.ck_prefill_mode))
     cmp = compare_logits(ck["logits"], ll["logits"], int(args.top_k))
 
     overlap_ok = cmp["topk_overlap_ratio"] >= float(args.min_topk_overlap)
@@ -691,12 +805,22 @@ def main() -> int:
             "min_topk_overlap": float(args.min_topk_overlap),
             "max_abs_threshold": float(args.max_abs_threshold),
         },
+        "schedule_pairing": {
+            "matched": (
+                (str(ck.get("prefill_policy")) == "sequential_decode")
+                == (llama_decode_mode == "sequential")
+            ),
+            "ck": str(ck.get("prefill_policy", "batched")),
+            "llama": llama_decode_mode,
+        },
         "ck": {
             "vocab": int(ck["vocab"]),
             "active_tokens": int(ck["active_tokens"]),
             "logits_stride": int(ck["stride"]),
             "init_dir": str(ck.get("init_dir", "")),
             "prefill_policy": str(ck.get("prefill_policy", "batched")),
+            "contract_prefill_policy": str(ck.get("contract_prefill_policy", "batched")),
+            "requested_prefill_mode": str(ck.get("ck_prefill_mode", "auto")),
         },
         "llama": {
             "n_vocab": int(ll["meta"]["n_vocab"]),

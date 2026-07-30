@@ -503,6 +503,17 @@ class AudioEncoderContractTests(unittest.TestCase):
         self.assertIn('{"DEFAULT", "NO AVX"}', source)
         requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
         self.assertIn("pytest", requirements.splitlines())
+        constraints = (
+            ROOT / "requirements-nightly-constraints.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn("torch==2.12.1", constraints.splitlines())
+        workflow = (
+            ROOT / ".github" / "workflows" / "nightly.yml"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(
+            workflow.count("-c requirements-nightly-constraints.txt"),
+            3,
+        )
         parsed = nightly.parse_sub_tests(
             "audio_encoder_self_attention_equal "
             "max_diff=2.98e-08 tol=2.0e-06 [PASS]\n"
@@ -525,7 +536,7 @@ class AudioEncoderContractTests(unittest.TestCase):
         rule = makefile.split("$(LIB_ATTENTION):", 1)[1].split("\n\n", 1)[0]
         self.assertIn("src/kernels/gemm_kernels_bf16.c", rule)
 
-    def test_pytorch_erf_gelu_uses_host_independent_scalar_libm(self):
+    def test_pytorch_erf_gelu_uses_fp64_scalar_libm(self):
         kernel = json.loads(
             (V8 / "kernel_maps" / "gelu_pytorch_erf_f32_inplace.json")
             .read_text(encoding="utf-8")
@@ -538,8 +549,10 @@ class AudioEncoderContractTests(unittest.TestCase):
         function = source.split(
             "void gelu_pytorch_erf_f32_inplace(float *data, size_t n)", 1
         )[1].split("\n}", 1)[0]
-        self.assertIn("ck_gelu_system_erff()", function)
-        self.assertIn("reference_erff(", function)
+        self.assertIn("ck_gelu_system_erf()", function)
+        self.assertIn("reference_erf(", function)
+        self.assertIn("const double scaled", function)
+        self.assertIn("data[i] = (float)", function)
 
 
 if __name__ == "__main__":

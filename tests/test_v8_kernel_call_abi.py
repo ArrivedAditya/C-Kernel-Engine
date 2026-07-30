@@ -15,8 +15,12 @@ SCHEMA = ROOT / "version" / "v8" / "schemas" / "kernel_call_abi.schema.json"
 REGISTRY = MAPS / "KERNEL_REGISTRY.json"
 EXCLUDED = {"KERNEL_REGISTRY.json", "kernel_bindings.json", "kernel_bindings.overlay.json"}
 BUILD_IR = ROOT / "version" / "v8" / "scripts" / "build_ir_v8.py"
-EXPECTED_GOVERNED_MAP_COUNT = 94
-EXPECTED_MAP_OWNED_ABI_COUNT = 97
+EXPECTED_GOVERNED_MAP_COUNT = 96
+EXPECTED_MAP_OWNED_ABI_COUNT = 102
+GLM4_PARITY_PROVIDERS = {
+    "rope_forward_qk_pairwise_llama_cpu",
+    "rope_precompute_cache_llama_cpu",
+}
 QWEN3VL_PARITY_PROVIDERS = {
     "attention_forward_decode_head_major_gqa_flash_f16cache_contract",
     "attention_forward_causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64",
@@ -74,6 +78,7 @@ class V8KernelCallABITests(unittest.TestCase):
         legacy = build_ir_v8.load_kernel_bindings()
         self.assertEqual(len(call_abis), EXPECTED_MAP_OWNED_ABI_COUNT)
         self.assertTrue(QWEN3VL_PARITY_PROVIDERS.issubset(call_abis))
+        self.assertTrue(GLM4_PARITY_PROVIDERS.issubset(call_abis))
         for kernel_id, entry in call_abis.items():
             with self.subTest(kernel=kernel_id):
                 self.assertNotIn(kernel_id, legacy)

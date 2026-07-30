@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 265,
+      "total": 269,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -37,7 +37,7 @@
         "gated_deltanet": 7,
         "geglu": 4,
         "gelu": 6,
-        "gemm": 21,
+        "gemm": 22,
         "gemm_backward": 1,
         "gemma4_per_layer_embed": 1,
         "gemma4_per_layer_prepare": 2,
@@ -86,9 +86,9 @@
         "residual_add": 2,
         "residual_save": 1,
         "rmsnorm": 8,
-        "rope": 16,
+        "rope": 17,
         "rope_backward": 2,
-        "rope_init": 2,
+        "rope_init": 3,
         "rowwise_bias_add": 1,
         "shared_relu2_expert_mlp": 1,
         "shared_swiglu_expert_mlp": 3,
@@ -99,7 +99,7 @@
         "split_q_gate": 1,
         "split_q_gate_backward": 1,
         "split_qkv_packed_head_major": 1,
-        "ssm_conv1d": 2,
+        "ssm_conv1d": 3,
         "ssm_conv1d_backward": 1,
         "swiglu": 5,
         "tokenizer": 1,
@@ -2467,7 +2467,8 @@
           "prefill"
         ],
         "execution.prefill_batching": [
-          "segmented_append"
+          "segmented_append",
+          "batch_append"
         ],
         "tensor.q.dtype": [
           "fp32"
@@ -11068,7 +11069,7 @@
           "name": "q",
           "dtype": "fp32",
           "shape": [
-            "H",
+            "G",
             "D"
           ]
         },
@@ -11076,7 +11077,7 @@
           "name": "k",
           "dtype": "fp32",
           "shape": [
-            "H",
+            "G",
             "D"
           ]
         },
@@ -11135,6 +11136,7 @@
       "scratch": [],
       "dims": [
         "H",
+        "G",
         "D"
       ],
       "params": [
@@ -11145,7 +11147,7 @@
       ],
       "impl": {
         "function": "gated_deltanet_llama_avx2_forward",
-        "c_declaration": "void gated_deltanet_llama_avx2_forward(const float *q, const float *k, const float *v, const float *g, const float *beta, const float *state_in, float *state_out, float *out, int num_heads, int state_dim, float norm_eps);",
+        "c_declaration": "void gated_deltanet_llama_avx2_forward(const float *q, const float *k, const float *v, const float *g, const float *beta, const float *state_in, float *state_out, float *out, int num_heads, int group_count, int state_dim, float norm_eps);",
         "sources": [
           "src/kernels/deltanet_kernels.c"
         ],
@@ -11200,9 +11202,9 @@
         ],
         "parity": [
           {
-            "kind": "llama.cpp_production_graph",
+            "kind": "llama.cpp_fused_cpu_operator",
             "command": "make test-deltanet-llamacpp-production",
-            "tolerance": "0"
+            "tolerance": "2e-8"
           }
         ]
       },
@@ -11254,6 +11256,10 @@
             "source": "dim:ssm_time_step_rank"
           },
           {
+            "name": "group_count",
+            "source": "dim:ssm_group_count"
+          },
+          {
             "name": "state_dim",
             "source": "dim:recurrent_head_dim"
           },
@@ -11286,7 +11292,7 @@
           "dtype": "fp32",
           "shape": [
             "R",
-            "H",
+            "G",
             "D"
           ]
         },
@@ -11295,7 +11301,7 @@
           "dtype": "fp32",
           "shape": [
             "R",
-            "H",
+            "G",
             "D"
           ]
         },
@@ -11359,6 +11365,7 @@
       "dims": [
         "R",
         "H",
+        "G",
         "D"
       ],
       "params": [
@@ -11369,7 +11376,7 @@
       ],
       "impl": {
         "function": "gated_deltanet_llama_avx2_prefill_forward",
-        "c_declaration": "void gated_deltanet_llama_avx2_prefill_forward(const float *q, const float *k, const float *v, const float *g, const float *beta, const float *state_in, float *state_out, float *out, int rows, int num_heads, int state_dim, float norm_eps);",
+        "c_declaration": "void gated_deltanet_llama_avx2_prefill_forward(const float *q, const float *k, const float *v, const float *g, const float *beta, const float *state_in, float *state_out, float *out, int rows, int num_heads, int group_count, int state_dim, float norm_eps);",
         "sources": [
           "src/kernels/deltanet_kernels.c"
         ],
@@ -11411,7 +11418,7 @@
           },
           "arithmetic": {
             "partial_accumulator": "fp32",
-            "merge_order": "none",
+            "merge_order": "ascending_chunk",
             "deterministic": true,
             "thread_count_changes_arithmetic_order": false,
             "split_strategy": "serial"
@@ -11424,9 +11431,9 @@
         ],
         "parity": [
           {
-            "kind": "llama.cpp_production_graph",
+            "kind": "llama.cpp_chunk64_production_graph",
             "command": "make test-deltanet-llamacpp-production",
-            "tolerance": "0"
+            "tolerance": "2e-8"
           }
         ]
       },
@@ -11480,6 +11487,10 @@
           {
             "name": "num_heads",
             "source": "dim:ssm_time_step_rank"
+          },
+          {
+            "name": "group_count",
+            "source": "dim:ssm_group_count"
           },
           {
             "name": "state_dim",
@@ -12811,7 +12822,7 @@
           "unittest/test_audio_encoder.py"
         ]
       },
-      "notes": "FP32 Whisper/PyTorch GELU provider. The scalar libm erff entry point is bound indirectly so -fno-math-errno cannot replace it with host-specific AVX2 or AVX-512 vector libm arithmetic. Does not replace the historical tanh-based gelu_exact_inplace provider.",
+      "notes": "FP32 Whisper/PyTorch GELU provider. The provider widens its ERF argument and final expression to FP64, then narrows once to FP32. This avoids the cross-glibc float-erff drift observed between local and GitHub runners while retaining the existing PyTorch error bounds. The scalar libm erf entry point is bound indirectly so the compiler cannot replace it with host-specific vector math. Does not replace the historical tanh-based gelu_exact_inplace provider.",
       "name": "gelu_pytorch_erf_f32_inplace",
       "_source_file": "gelu_pytorch_erf_f32_inplace.json"
     },
@@ -14436,6 +14447,148 @@
       "_source_file": "gemm_nt_f16_clipped.json"
     },
     {
+      "id": "gemm_nt_f32_llama_production",
+      "op": "gemm",
+      "variant": "llamafile_x86_native_fp32_output",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "A",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "K"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "B",
+          "dtype": "fp32",
+          "shape": [
+            "N",
+            "K"
+          ]
+        },
+        {
+          "name": "bias",
+          "dtype": "fp32",
+          "shape": [
+            "N"
+          ],
+          "optional": true
+        }
+      ],
+      "outputs": [
+        {
+          "name": "C",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "N"
+          ]
+        }
+      ],
+      "dims": [
+        "M",
+        "N",
+        "K"
+      ],
+      "impl": {
+        "function": "gemm_nt_f32_llama_production",
+        "c_declaration": "void gemm_nt_f32_llama_production(const float *A, const float *B, const float *bias, float *C, int M, int N, int K);",
+        "sources": [
+          "src/kernels/gemm_kernels.c"
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "fp32_weight_fp32_input_llamafile_x86_native_fp32_output",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "gemm_nt_f32_llama_production",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "openmp",
+              "work_partition": [
+                "output_tiles"
+              ],
+              "dispatch": [
+                "openmp_parallel_for"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "pairwise_tree",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "A",
+            "source": "activation:a",
+            "cast": "const float*"
+          },
+          {
+            "name": "B",
+            "source": "weight:_first_weight",
+            "cast": "const float*"
+          },
+          {
+            "name": "bias",
+            "source": "weight_f:_bias"
+          },
+          {
+            "name": "C",
+            "source": "output:c",
+            "cast": "float*"
+          },
+          {
+            "name": "M",
+            "source": "runtime:seq_len"
+          },
+          {
+            "name": "N",
+            "source": "dim:_output_dim"
+          },
+          {
+            "name": "K",
+            "source": "dim:_input_dim"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_f32_gemm_llama_production.cpp"
+        ],
+        "parity": [
+          {
+            "oracle": "llama.cpp GGML_OP_MUL_MAT CPU graph",
+            "criteria": "bit exact for M=1,4,65, N=48, K=5120 across 1,16,20,24 threads"
+          }
+        ]
+      },
+      "notes": "Scoped FP32 projection provider matching llama.cpp's one-accumulator llamafile prefill, including its high/low then lane 0+2 and 1+3 horizontal reduction, and four-accumulator ggml_vec_dot_f32 decode paths.",
+      "name": "gemm_nt_f32_llama_production",
+      "_source_file": "gemm_nt_f32_llama_production.json"
+    },
+    {
       "id": "gemm_nt_fp32_exact",
       "op": "gemm",
       "variant": "fp32_nt_exact",
@@ -14713,6 +14866,13 @@
           "size_bytes": "ceil(N / 8) * (K / 256) * sizeof(q4_k_packed_vnni_x8)",
           "lifetime": "model_runtime",
           "desc": "Weight-identity cache for the AVX-VNNI eight-output layout; never rebuilt in the steady-state call"
+        },
+        {
+          "name": "packed_weight_cache_avx512_candidate",
+          "dtype": "u8",
+          "size_bytes": "ceil(N / 16) * (K / 256) * sizeof(q4_k_packed_vnni_x16)",
+          "lifetime": "model_runtime",
+          "desc": "Shape-scoped Qwen3.6 AVX-512 VNNI sixteen-output layout; never allocated on unsupported CPUs or unrelated shapes"
         }
       ],
       "dims": [
@@ -14842,6 +15002,29 @@
                 "prefill_phase",
                 "pairwise_split_min_reduction"
               ]
+            },
+            {
+              "name": "packed_vnni_x16_split_min_16m16n",
+              "function": "gemm_nt_q4_k_packed_vnni_x16_q8_k_split_min_threaded_16m",
+              "layout": "q4_k_packed_vnni_x16",
+              "activation_layout": "canonical_q8_k",
+              "threading": {
+                "default_concurrency": "physical_cores",
+                "tile": {
+                  "M": 16,
+                  "N": 16
+                },
+                "internal_row_register_group": 8,
+                "reduction_order_effect": "none"
+              },
+              "promotion": "experimental_sweep_only",
+              "requires": [
+                "avx512_vnni",
+                "avx512_bw",
+                "packed_weight_layout",
+                "prefill_phase",
+                "pairwise_split_min_reduction"
+              ]
             }
           ],
           "dispatch_owner": "gemm_nt_q4_k_q8_k_parallel_dispatch",
@@ -14885,6 +15068,21 @@
               "-mavxvnni",
               "-mfma"
             ]
+          },
+          {
+            "name": "avx512_vnni",
+            "requires": [
+              "avx512f",
+              "avx512bw",
+              "avx512_vnni",
+              "fma"
+            ],
+            "compile_flags": [
+              "-mavx512f",
+              "-mavx512bw",
+              "-mavx512vnni",
+              "-mfma"
+            ]
           }
         ]
       },
@@ -14912,7 +15110,7 @@
           }
         ]
       },
-      "notes": "General matrix multiplication with Q4_K weights and Q8_K activations. The production dispatcher preserves llama.cpp pairwise split-min arithmetic. AVX-VNNI prefill interleaves Q4 bytes across eight outputs so each vpdpbusd lane advances one output column without a horizontal reduction. The persistent weight cache removes steady-state repacking; forced AVX2 retains the exact 8M provider, and residual rows retain the distinct repacked GEMV contract.",
+      "notes": "General matrix multiplication with Q4_K weights and Q8_K activations. The production dispatcher preserves llama.cpp pairwise split-min arithmetic. AVX-VNNI prefill interleaves Q4 bytes across eight outputs so each vpdpbusd lane advances one output column without a horizontal reduction. The experimental AVX-512 provider widens this to sixteen outputs and schedules sixteen token rows while retaining eight-row register groups. It is available to sweeps and opt-in batched-graph tests but is not selected by default: Qwen3.6's certified chat policy uses sequential decode because the complete hybrid batched graph still has a different numerical trajectory and was slower end to end despite faster Q4 GEMMs. The persistent production weight cache removes steady-state x8 repacking; forced AVX2 retains the exact 8M provider, and residual rows retain the distinct repacked GEMV contract.",
       "call_abi": {
         "version": 1,
         "params": [
@@ -15676,6 +15874,40 @@
           }
         ]
       },
+      "numerical_capabilities": [
+        {
+          "contract_id": "q6_k_weight_q8_k_input_llama_fp32_output",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "gemm_nt_q6_k_q8_k",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "ck_threadpool",
+              "work_partition": [
+                "serial",
+                "independent_rows",
+                "output_tiles"
+              ],
+              "dispatch": [
+                "inline",
+                "ck_threadpool_dispatch_n"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "pairwise_tree",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
       "tests": {
         "unit": [
           "unittest/test_gemm_q6_k.py"
@@ -17992,6 +18224,39 @@
           }
         ]
       },
+      "numerical_capabilities": [
+        {
+          "contract_id": "q6_k_weight_q8_k_input_llama_fp32_output",
+          "status": "validated",
+          "phases": [
+            "decode"
+          ],
+          "function": "gemv_q6_k_q8_k",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "ck_threadpool",
+              "work_partition": [
+                "serial",
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline",
+                "ck_threadpool_dispatch_n"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "pairwise_tree",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
       "tests": {
         "unit": [
           "unittest/test_gemv_q6_k_q8_k.py"
@@ -27370,7 +27635,18 @@
           }
         ]
       },
-      "notes": "Per-head Q/K RMSNorm matching the active llama.cpp CPU production reciprocal-square-root sequence.",
+      "tests": {
+        "unit": [
+          "unittest/test_rmsnorm_llama_production.cpp"
+        ],
+        "parity": [
+          {
+            "oracle": "llama.cpp fused GGML_OP_RMS_NORM + GGML_OP_MUL CPU graph",
+            "criteria": "bit exact for decode and multi-token prefill across 1, 16, 20, and 24 threads"
+          }
+        ]
+      },
+      "notes": "Per-head Q/K RMSNorm reusing the llama.cpp CPU production provider with ordered FP64 accumulation, scalar FP32 sqrt/divide, and fused scale multiplication.",
       "name": "qk_norm_forward_llama_production",
       "_source_file": "qk_norm_forward_llama_production.json"
     },
@@ -29888,7 +30164,7 @@
     {
       "id": "recurrent_silu_forward_ggml",
       "op": "recurrent_silu",
-      "variant": "llama_avx2_fp32",
+      "variant": "llama_x86_isa_fp32",
       "modes": {
         "inference": true,
         "training": false,
@@ -29954,6 +30230,17 @@
         ],
         "variants": [
           {
+            "name": "llama_avx512",
+            "requires": [
+              "avx512f",
+              "avx512dq"
+            ],
+            "compile_flags": [
+              "-mavx512f",
+              "-mavx512dq"
+            ]
+          },
+          {
             "name": "llama_avx2",
             "requires": [
               "avx2",
@@ -30005,7 +30292,7 @@
         "parity": [
           {
             "kind": "llamacpp",
-            "command": ".venv/bin/python unittest/test_recurrent_silu.py",
+            "command": "make test-recurrent-silu-llama-production",
             "tolerance": "0"
           }
         ]
@@ -31560,7 +31847,18 @@
           }
         ]
       },
-      "notes": "FP32 RMSNorm matching llama.cpp CPU production 1.0f / sqrtf(mean + eps) evaluation for every ISA.",
+      "tests": {
+        "unit": [
+          "unittest/test_rmsnorm_llama_production.cpp"
+        ],
+        "parity": [
+          {
+            "oracle": "llama.cpp fused GGML_OP_RMS_NORM + GGML_OP_MUL CPU graph",
+            "criteria": "bit exact at widths 128, 4096, and 5120 across 1, 16, 20, and 24 threads"
+          }
+        ]
+      },
+      "notes": "FP32 RMSNorm matching llama.cpp CPU production with ordered FP32 square, FP64 scalar accumulation, scalar sqrt then scalar divide, and fused left-associative scale multiplication. The explicit sqrt/divide boundary prevents ICX from substituting vrsqrt14ss plus Newton refinement.",
       "name": "rmsnorm_forward_llama_production",
       "_source_file": "rmsnorm_forward_llama_production.json"
     },
@@ -33014,6 +33312,214 @@
       "_source_file": "rope_forward_qk_pairwise.json"
     },
     {
+      "id": "rope_forward_qk_pairwise_llama_cpu",
+      "op": "rope",
+      "variant": "fp32_head_major_llama_cpu",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "desc": "Query tensor rotated in-place"
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ],
+          "desc": "Key tensor rotated in-place"
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "runtime_buffers": [
+        {
+          "name": "cos_cache",
+          "dtype": "fp32",
+          "shape": [
+            "max_T",
+            "rotary_dim",
+            2
+          ]
+        },
+        {
+          "name": "sin_cache",
+          "dtype": "fp32",
+          "shape": [
+            "max_T",
+            "rotary_dim",
+            2
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "q",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "k",
+          "dtype": "fp32",
+          "shape": [
+            "KV",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "H",
+        "KV",
+        "T",
+        "D",
+        "rotary_dim"
+      ],
+      "params": [
+        {
+          "name": "aligned_head_dim",
+          "dtype": "int32"
+        },
+        {
+          "name": "pos_offset",
+          "dtype": "int32"
+        },
+        {
+          "name": "rotary_dim",
+          "dtype": "int32"
+        }
+      ],
+      "parallelization": {
+        "supported": [
+          "head",
+          "token"
+        ],
+        "preferred": {
+          "prefill": "token",
+          "decode": "head"
+        }
+      },
+      "numerical_contract": {
+        "id": "llama_cpu_pairwise_rope_fp32_v1",
+        "accumulator_dtype": "fp32",
+        "rotation_layout": "consecutive_pairs",
+        "frequency_schedule": "recursive_fp32_theta",
+        "arithmetic": {
+          "first": "fmaf(x0, cosine, -x1 * sine)",
+          "second": "fmaf(x0, sine, x1 * cosine)"
+        },
+        "determinism": "bit_exact"
+      },
+      "constraints": {
+        "alignment": {
+          "D": 2
+        },
+        "notes": "Provider identity includes ggml-compatible recursive cache and FMA operand order."
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "scratch:q_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "k",
+            "source": "scratch:k_scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "cos_cache",
+            "source": "runtime:rope_cos"
+          },
+          {
+            "name": "sin_cache",
+            "source": "runtime:rope_sin"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "pos_offset",
+            "source": "runtime:pos"
+          },
+          {
+            "name": "rotary_dim",
+            "source": "dim:rotary_dim"
+          }
+        ]
+      },
+      "impl": {
+        "function": "rope_forward_qk_pairwise_llama_cpu",
+        "c_declaration": "void rope_forward_qk_pairwise_llama_cpu(float *q, float *k, const float *cos_cache, const float *sin_cache, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int rotary_dim);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "x86_fma",
+            "requires": [
+              "fma"
+            ],
+            "compile_flags": [
+              "-mfma"
+            ]
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_rope.py"
+        ],
+        "parity": [
+          {
+            "kind": "llama.cpp",
+            "command": "make test-rope",
+            "tolerance": "0",
+            "notes": "Production GLM decode rows must be byte-exact against the pinned llama.cpp CPU provider."
+          }
+        ]
+      },
+      "notes": "Numerically exact llama.cpp CPU consecutive-pair RoPE provider for GLM production parity.",
+      "name": "rope_forward_qk_pairwise_llama_cpu",
+      "_source_file": "rope_forward_qk_pairwise_llama_cpu.json"
+    },
+    {
       "id": "rope_forward_qk_split",
       "op": "rope",
       "variant": "fp32_head_major",
@@ -33419,6 +33925,45 @@
           }
         ]
       },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "cos_cache",
+            "source": "output:cos_cache",
+            "cast": "float*"
+          },
+          {
+            "name": "sin_cache",
+            "source": "output:sin_cache",
+            "cast": "float*"
+          },
+          {
+            "name": "max_seq_len",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "base",
+            "source": "config:rope_theta"
+          },
+          {
+            "name": "rotary_dim",
+            "source": "dim:rotary_dim"
+          },
+          {
+            "name": "scaling_type",
+            "source": "config:rope_scaling_type"
+          },
+          {
+            "name": "scaling_factor",
+            "source": "config:rope_scaling_factor"
+          }
+        ]
+      },
       "tests": {
         "unit": [
           "unittest/test_rope.py"
@@ -33436,6 +33981,164 @@
       "notes": "Precompute RoPE cos/sin cache for rotary position embeddings. Called ONCE at model init, not per-token. Different models use different base/theta values:\n- Llama 2, Mistral: 10000.0\n- Llama 3: 500000.0\n- Qwen2: 1000000.0\n\nRoPE Scaling:\n- none: Standard RoPE\n- linear: Scale positions by 1/factor (extends context)\n- dynamic: NTK-aware dynamic scaling\n- yarn: YaRN (Yet another RoPE extensioN)\n\nUsage: codegen should call this in do_init() with the model's rope_theta from config, NOT hardcode the value.",
       "name": "rope_precompute_cache",
       "_source_file": "rope_precompute_cache.json"
+    },
+    {
+      "id": "rope_precompute_cache_llama_cpu",
+      "op": "rope_init",
+      "variant": "fp32_llama_cpu_recursive_theta",
+      "mode": "init",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [],
+      "weights": [],
+      "activations": [],
+      "runtime_buffers": [],
+      "outputs": [
+        {
+          "name": "cos_cache",
+          "dtype": "fp32",
+          "shape": [
+            "max_seq_len",
+            "half_rotary_dim"
+          ],
+          "desc": "llama.cpp-compatible FP32 cosine cache"
+        },
+        {
+          "name": "sin_cache",
+          "dtype": "fp32",
+          "shape": [
+            "max_seq_len",
+            "half_rotary_dim"
+          ],
+          "desc": "llama.cpp-compatible FP32 sine cache"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "max_seq_len",
+        "head_dim",
+        "rotary_dim"
+      ],
+      "params": [
+        {
+          "name": "base",
+          "dtype": "fp32"
+        },
+        {
+          "name": "rotary_dim",
+          "dtype": "int32"
+        },
+        {
+          "name": "scaling_type",
+          "dtype": "string"
+        },
+        {
+          "name": "scaling_factor",
+          "dtype": "fp32"
+        }
+      ],
+      "parallelization": {
+        "supported": [
+          "position"
+        ],
+        "preferred": {
+          "init": "position"
+        },
+        "strategies": [
+          {
+            "name": "position",
+            "partition_dim": "max_seq_len",
+            "param_style": "range",
+            "range": {
+              "min_chunk": 64
+            }
+          }
+        ]
+      },
+      "constraints": {
+        "alignment": {
+          "head_dim": 2
+        },
+        "notes": "rotary_dim must be positive and even"
+      },
+      "numerical_contract": {
+        "reference": "llama.cpp ggml CPU RoPE",
+        "frequency_order": "theta_scale=powf(base,-2/rotary_dim) once; theta=position; theta*=theta_scale after each pair",
+        "transcendentals": "platform libm cosf/sinf/powf",
+        "storage": "fp32",
+        "deterministic": true
+      },
+      "impl": {
+        "function": "rope_precompute_cache_llama_cpu",
+        "c_declaration": "void rope_precompute_cache_llama_cpu(float *cos_cache, float *sin_cache, int max_seq_len, int head_dim, float base, int rotary_dim, const char *scaling_type, float scaling_factor);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "ref",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "cos_cache",
+            "source": "output:cos_cache",
+            "cast": "float*"
+          },
+          {
+            "name": "sin_cache",
+            "source": "output:sin_cache",
+            "cast": "float*"
+          },
+          {
+            "name": "max_seq_len",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "base",
+            "source": "config:rope_theta"
+          },
+          {
+            "name": "rotary_dim",
+            "source": "dim:rotary_dim"
+          },
+          {
+            "name": "scaling_type",
+            "source": "config:rope_scaling_type"
+          },
+          {
+            "name": "scaling_factor",
+            "source": "config:rope_scaling_factor"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_glm4_template.py"
+        ],
+        "parity": [
+          {
+            "kind": "llama.cpp",
+            "command": "python -m pytest -q tests/test_v8_glm4_template.py",
+            "tolerance": "byte-exact cache values"
+          }
+        ]
+      },
+      "notes": "Dedicated cache initialization for models whose oracle uses ggml's recursive FP32 theta schedule. This provider coexists with the independent-frequency generic cache.",
+      "name": "rope_precompute_cache_llama_cpu",
+      "_source_file": "rope_precompute_cache_llama_cpu.json"
     },
     {
       "id": "rope_precompute_cache_split",
@@ -34568,6 +35271,173 @@
       "notes": "SSM causal depthwise convolution used by qwen3next/Qwen3.5 recurrent blocks.",
       "name": "ssm_conv1d_forward",
       "_source_file": "ssm_conv1d_forward.json"
+    },
+    {
+      "id": "ssm_conv1d_forward_llama_production",
+      "op": "ssm_conv1d",
+      "variant": "llama_scalar_mul_add_fp32",
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "conv_x",
+          "dtype": "fp32",
+          "shape": [
+            "S",
+            "C",
+            "K-1+T"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "kernel",
+          "dtype": "fp32",
+          "shape": [
+            "C",
+            "K"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "out",
+          "dtype": "fp32",
+          "shape": [
+            "S",
+            "T",
+            "C"
+          ]
+        }
+      ],
+      "dims": [
+        "K",
+        "C",
+        "T",
+        "S"
+      ],
+      "params": [],
+      "parallelization": {
+        "supported": [
+          "channel",
+          "sequence"
+        ],
+        "preferred": {
+          "prefill": "channel",
+          "decode": "channel"
+        },
+        "strategies": [
+          {
+            "name": "channel",
+            "partition_dim": "C",
+            "param_style": "range",
+            "range": {
+              "min_chunk": 1
+            }
+          }
+        ]
+      },
+      "impl": {
+        "function": "ssm_conv1d_forward_llama_production",
+        "c_declaration": "void ssm_conv1d_forward_llama_production(const float *conv_x, const float *kernel, float *out, int kernel_size, int num_channels, int num_tokens, int num_seqs);",
+        "sources": [
+          "src/kernels/ssm_kernels.c"
+        ],
+        "variants": [
+          {
+            "name": "llama_scalar_mul_add",
+            "requires": [],
+            "compile_flags": []
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "ssm_conv1d_llama_scalar_mul_add_fp32_output",
+          "status": "validated",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "ssm_conv1d_forward_llama_production",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "conv_x",
+            "source": "activation:conv_x",
+            "cast": "const float*"
+          },
+          {
+            "name": "kernel",
+            "source": "weight:ssm_conv1d",
+            "cast": "const float*"
+          },
+          {
+            "name": "out",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "kernel_size",
+            "source": "dim:ssm_conv_kernel"
+          },
+          {
+            "name": "num_channels",
+            "source": "dim:ssm_conv_channels"
+          },
+          {
+            "name": "num_tokens",
+            "source": "runtime:seq_len"
+          },
+          {
+            "name": "num_seqs",
+            "source": "dim:num_seqs"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_ssm_conv_llama_production.cpp"
+        ],
+        "parity": [
+          {
+            "kind": "llamacpp",
+            "command": "make test-ssm-conv-llama-production",
+            "tolerance": "0",
+            "notes": "Bit-exact production ggml graph parity at decode, multi-sequence prefill, and Qwen3.6 channel dimensions."
+          }
+        ]
+      },
+      "notes": "Scoped llama.cpp provider; generic FP32 and PyTorch BF16 providers retain their existing arithmetic.",
+      "name": "ssm_conv1d_forward_llama_production",
+      "_source_file": "ssm_conv1d_forward_llama_production.json"
     },
     {
       "id": "ssm_conv1d_forward_pytorch_bf16_storage",

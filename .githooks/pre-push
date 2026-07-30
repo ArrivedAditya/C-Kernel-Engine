@@ -16,6 +16,7 @@ ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 if [ -z "$ROOT_DIR" ]; then
     ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 fi
+HOME_DIR="${HOME:-$ROOT_DIR}"
 
 # Colors
 RED='\033[0;31m'
@@ -36,6 +37,86 @@ if [ -n "$CK_SKIP_PREPUSH" ]; then
 fi
 
 cd "$ROOT_DIR"
+
+PREPUSH_LOCK_PATH="${CK_PREPUSH_LOCK_PATH:-${HOME_DIR}/.cache/ck-engine/model-regression.lock}"
+PREPUSH_MIN_AVAILABLE_GB="${CK_PREPUSH_MIN_AVAILABLE_GB:-16}"
+PREPUSH_MIN_SWAP_FREE_GB="${CK_PREPUSH_MIN_SWAP_FREE_GB:-2}"
+PREPUSH_THREADS="${CK_PREPUSH_THREADS:-8}"
+PREPUSH_BUILD_JOBS="${CK_PREPUSH_BUILD_JOBS:-8}"
+PREPUSH_TIMEOUT_SECONDS="${CK_PREPUSH_TIMEOUT_SECONDS:-1800}"
+
+require_nonnegative_integer() {
+    local name="$1"
+    local value="$2"
+    if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}✗ ${name} must be a non-negative integer; got ${value}${NC}" >&2
+        exit 2
+    fi
+}
+
+require_nonnegative_integer CK_PREPUSH_MIN_AVAILABLE_GB "$PREPUSH_MIN_AVAILABLE_GB"
+require_nonnegative_integer CK_PREPUSH_MIN_SWAP_FREE_GB "$PREPUSH_MIN_SWAP_FREE_GB"
+require_nonnegative_integer CK_PREPUSH_THREADS "$PREPUSH_THREADS"
+require_nonnegative_integer CK_PREPUSH_BUILD_JOBS "$PREPUSH_BUILD_JOBS"
+require_nonnegative_integer CK_PREPUSH_TIMEOUT_SECONDS "$PREPUSH_TIMEOUT_SECONDS"
+if [ "$PREPUSH_THREADS" -eq 0 ] || [ "$PREPUSH_BUILD_JOBS" -eq 0 ] \
+    || [ "$PREPUSH_TIMEOUT_SECONDS" -eq 0 ]; then
+    echo -e "${RED}✗ CK_PREPUSH_THREADS, CK_PREPUSH_BUILD_JOBS, and CK_PREPUSH_TIMEOUT_SECONDS must be positive${NC}" >&2
+    exit 2
+fi
+
+mkdir -p "$(dirname "$PREPUSH_LOCK_PATH")"
+exec 9>"$PREPUSH_LOCK_PATH"
+if ! flock -n 9; then
+    echo -e "${RED}✗ Another CK-Engine commit/push model regression is already running${NC}" >&2
+    echo "  Lock: $PREPUSH_LOCK_PATH" >&2
+    echo "  Wait for that run to finish; do not start overlapping model regressions." >&2
+    exit 2
+fi
+
+check_resource_headroom() {
+    local available_kb
+    local swap_total_kb
+    local swap_free_kb
+    local min_available_kb=$((PREPUSH_MIN_AVAILABLE_GB * 1024 * 1024))
+    local min_swap_free_kb=$((PREPUSH_MIN_SWAP_FREE_GB * 1024 * 1024))
+    available_kb="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+    swap_total_kb="$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)"
+    swap_free_kb="$(awk '/^SwapFree:/ {print $2}' /proc/meminfo)"
+    if [ -n "${CK_PREPUSH_ALLOW_LOW_RESOURCES:-}" ]; then
+        return 0
+    fi
+    if [ -z "$available_kb" ] || [ "$available_kb" -lt "$min_available_kb" ]; then
+        echo -e "${RED}✗ Insufficient memory headroom for pre-push model validation${NC}" >&2
+        echo "  Required: ${PREPUSH_MIN_AVAILABLE_GB} GiB MemAvailable" >&2
+        echo "  Observed: $(( ${available_kb:-0} / 1024 / 1024 )) GiB" >&2
+        echo "  Finish other model jobs or set CK_PREPUSH_ALLOW_LOW_RESOURCES=1 explicitly." >&2
+        exit 2
+    fi
+    if [ "${swap_total_kb:-0}" -gt 0 ] \
+        && { [ -z "$swap_free_kb" ] || [ "$swap_free_kb" -lt "$min_swap_free_kb" ]; }; then
+        echo -e "${RED}✗ Insufficient free swap headroom for pre-push model validation${NC}" >&2
+        echo "  Required: ${PREPUSH_MIN_SWAP_FREE_GB} GiB SwapFree" >&2
+        echo "  Observed: $(( ${swap_free_kb:-0} / 1024 / 1024 )) GiB" >&2
+        echo "  Finish other model jobs or set CK_PREPUSH_ALLOW_LOW_RESOURCES=1 explicitly." >&2
+        exit 2
+    fi
+}
+
+run_prepush_make() {
+    local log_path="$1"
+    shift
+    timeout --signal=TERM --kill-after=30s "$PREPUSH_TIMEOUT_SECONDS" \
+        make "$@" >"$log_path" 2>&1
+}
+
+check_resource_headroom
+export CK_NUM_THREADS="${CK_NUM_THREADS:-$PREPUSH_THREADS}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
+renice 10 -p $$ >/dev/null 2>&1 || true
+ionice -c 2 -n 7 -p $$ >/dev/null 2>&1 || true
+echo -e "${YELLOW}  ↳ resource floor: ${PREPUSH_MIN_AVAILABLE_GB} GiB available RAM, ${PREPUSH_MIN_SWAP_FREE_GB} GiB free swap${NC}"
+echo -e "${YELLOW}  ↳ execution: ${CK_NUM_THREADS} CK threads, OMP=${OMP_NUM_THREADS}, build jobs=${PREPUSH_BUILD_JOBS}, timeout=${PREPUSH_TIMEOUT_SECONDS}s${NC}"
 
 # Ignored Python environments are normally present only in the primary
 # checkout. Clean worktrees must run the same gates, so borrow a validated
@@ -252,7 +333,7 @@ fi
 # Test 1: Compilation
 # =============================================================================
 echo -e "${YELLOW}[1/6]${NC} Building CK-Engine..."
-if make -j$(nproc) > /tmp/ck_build.log 2>&1; then
+if run_prepush_make /tmp/ck_build.log -j"$PREPUSH_BUILD_JOBS"; then
     echo -e "${GREEN}  ✓ Build successful${NC}"
 else
     echo -e "${RED}  ✗ Build failed${NC}"
@@ -356,6 +437,7 @@ E2E_TIMEOUT_SEC="${CK_E2E_TIMEOUT_SEC:-240}"
 mkdir -p "$E2E_CACHE_DIR"
 
 if [ ${#RUNNER[@]} -ne 0 ]; then
+    check_resource_headroom
     e2e_ok=0
     e2e_network_skip=0
     e2e_permission_skip=0
@@ -507,12 +589,13 @@ fi
 # Test 5.5: fast regression (conditional on pushed runtime/regression files)
 # =============================================================================
 if [ "$ck_should_run_v7_regression_fast" = "1" ] || [ "$ck_should_run_v8_regression_fast" = "1" ]; then
+    check_resource_headroom
     echo -e "${YELLOW}[5.5/6]${NC} Running fast regression..."
     rm -rf "${PREPUSH_REGRESSION_ROOT}/runs" "${PREPUSH_REGRESSION_ROOT}/reports"
     mkdir -p "${PREPUSH_REGRESSION_ROOT}/runs" "${PREPUSH_REGRESSION_ROOT}/reports"
     echo -e "${YELLOW}  ↳ disk-backed run root: ${PREPUSH_REGRESSION_ROOT}${NC}"
     if [ "$ck_should_run_v7_regression_fast" = "1" ]; then
-        if make --no-print-directory v7-regression-fast REGRESSION_ARGS="--run-root ${PREPUSH_REGRESSION_ROOT}/runs/v7 --report-root ${PREPUSH_REGRESSION_ROOT}/reports/v7" > /tmp/ck_regression_fast_v7.log 2>&1; then
+        if run_prepush_make /tmp/ck_regression_fast_v7.log --no-print-directory v7-regression-fast REGRESSION_ARGS="--run-root ${PREPUSH_REGRESSION_ROOT}/runs/v7 --report-root ${PREPUSH_REGRESSION_ROOT}/reports/v7"; then
             echo -e "${GREEN}  ✓ v7 fast regression passed${NC}"
         else
             echo -e "${RED}  ✗ v7 fast regression failed${NC}"
@@ -521,7 +604,8 @@ if [ "$ck_should_run_v7_regression_fast" = "1" ] || [ "$ck_should_run_v8_regress
         fi
     fi
     if [ "$ck_should_run_v8_regression_fast" = "1" ]; then
-        if make --no-print-directory v8-regression-fast REGRESSION_ARGS="--run-root ${PREPUSH_REGRESSION_ROOT}/runs/v8 --report-root ${PREPUSH_REGRESSION_ROOT}/reports/v8" > /tmp/ck_regression_fast_v8.log 2>&1; then
+        check_resource_headroom
+        if run_prepush_make /tmp/ck_regression_fast_v8.log --no-print-directory v8-regression-fast REGRESSION_ARGS="--run-root ${PREPUSH_REGRESSION_ROOT}/runs/v8 --report-root ${PREPUSH_REGRESSION_ROOT}/reports/v8"; then
             echo -e "${GREEN}  ✓ v8 fast regression passed${NC}"
         else
             echo -e "${RED}  ✗ v8 fast regression failed${NC}"

@@ -80,6 +80,30 @@ static inline int ck_nearest_int_q8_0(float fval) {
     return (i & 0x007fffff) - 0x00400000;
 }
 
+#if defined(__INTEL_LLVM_COMPILER)
+#if defined(__clang__)
+#define CK_Q80_NOINLINE_OPTNONE __attribute__((noinline, optnone))
+#elif defined(__GNUC__)
+#define CK_Q80_NOINLINE_OPTNONE __attribute__((noinline, optimize("O0")))
+#else
+#define CK_Q80_NOINLINE_OPTNONE
+#endif
+
+static CK_Q80_NOINLINE_OPTNONE float
+ck_q8_0_div_rounded_f32(float numerator, float denominator)
+{
+    /*
+     * Preserve llama.cpp's scalar IEEE-754 division before the FP16 scale
+     * conversion.  ICX can otherwise strength-reduce division by 127 at -O3;
+     * inputs near an FP16 midpoint then select the adjacent Q8_0 scale.
+     */
+    volatile float n = numerator;
+    volatile float d = denominator;
+    volatile float result = n / d;
+    return result;
+}
+#endif
+
 /* ============================================================================
  * Q8_0 Quantization
  *
@@ -124,8 +148,15 @@ void quantize_row_q8_0(const float *x, void *vy, int k)
         max4 = _mm_max_ss(max4, _mm_movehdup_ps(max4));
         const float max_scalar = _mm_cvtss_f32(max4);
 
+#if defined(__INTEL_LLVM_COMPILER)
+        const float d = ck_q8_0_div_rounded_f32(max_scalar, 127.0f);
+        const float id = max_scalar != 0.0f
+            ? ck_q8_0_div_rounded_f32(127.0f, max_scalar)
+            : 0.0f;
+#else
         const float d = max_scalar / 127.0f;
         const float id = max_scalar != 0.0f ? 127.0f / max_scalar : 0.0f;
+#endif
         y[i].d = CK_FP32_TO_FP16(d);
 
         const __m256 mul = _mm256_set1_ps(id);
@@ -1385,6 +1416,79 @@ void gemv_q8_0_q8_0(float *y,
                           &w_blocks[row * blocks_per_row],
                           x_blocks);
     }
+}
+
+/*
+ * Four-output Q8_0 dot provider.
+ *
+ * Each output keeps the same eight-lane accumulator and horizontal reduction
+ * as vec_dot_q8_0_q8_0(), but four independent rows share the activation load
+ * and expose enough independent VNNI chains to hide dot-product latency.
+ */
+void gemv_q8_0_q8_0_x4(float *y,
+                        const void *W,
+                        const void *x_q8,
+                        int M, int K)
+{
+#if defined(__AVX2__) || defined(__AVX512F__)
+    if (ck_q8_0_q8_0_debug_ref() || (K % QK8_0) != 0) {
+        gemv_q8_0_q8_0(y, W, x_q8, M, K);
+        return;
+    }
+
+    const block_q8_0 *w = (const block_q8_0 *)W;
+    const block_q8_0 *x = (const block_q8_0 *)x_q8;
+    const int nb = K / QK8_0;
+    int row = 0;
+    for (; row + 3 < M; row += 4) {
+        __m256 acc0 = _mm256_setzero_ps();
+        __m256 acc1 = _mm256_setzero_ps();
+        __m256 acc2 = _mm256_setzero_ps();
+        __m256 acc3 = _mm256_setzero_ps();
+        const block_q8_0 *w0 = w + (size_t)(row + 0) * (size_t)nb;
+        const block_q8_0 *w1 = w + (size_t)(row + 1) * (size_t)nb;
+        const block_q8_0 *w2 = w + (size_t)(row + 2) * (size_t)nb;
+        const block_q8_0 *w3 = w + (size_t)(row + 3) * (size_t)nb;
+
+        for (int ib = 0; ib < nb; ++ib) {
+            const __m256i qx = _mm256_loadu_si256((const __m256i *)x[ib].qs);
+            const float dx = CK_FP16_TO_FP32(x[ib].d);
+            const __m256i qw0 = _mm256_loadu_si256((const __m256i *)w0[ib].qs);
+            const __m256i qw1 = _mm256_loadu_si256((const __m256i *)w1[ib].qs);
+            const __m256i qw2 = _mm256_loadu_si256((const __m256i *)w2[ib].qs);
+            const __m256i qw3 = _mm256_loadu_si256((const __m256i *)w3[ib].qs);
+            const __m256 p0 = mul_sum_i8_pairs_float_q8_0_avx2(qw0, qx);
+            const __m256 p1 = mul_sum_i8_pairs_float_q8_0_avx2(qw1, qx);
+            const __m256 p2 = mul_sum_i8_pairs_float_q8_0_avx2(qw2, qx);
+            const __m256 p3 = mul_sum_i8_pairs_float_q8_0_avx2(qw3, qx);
+            const __m256 d0 = _mm256_set1_ps(CK_FP16_TO_FP32(w0[ib].d) * dx);
+            const __m256 d1 = _mm256_set1_ps(CK_FP16_TO_FP32(w1[ib].d) * dx);
+            const __m256 d2 = _mm256_set1_ps(CK_FP16_TO_FP32(w2[ib].d) * dx);
+            const __m256 d3 = _mm256_set1_ps(CK_FP16_TO_FP32(w3[ib].d) * dx);
+#if defined(__FMA__)
+            acc0 = _mm256_fmadd_ps(d0, p0, acc0);
+            acc1 = _mm256_fmadd_ps(d1, p1, acc1);
+            acc2 = _mm256_fmadd_ps(d2, p2, acc2);
+            acc3 = _mm256_fmadd_ps(d3, p3, acc3);
+#else
+            acc0 = _mm256_add_ps(_mm256_mul_ps(d0, p0), acc0);
+            acc1 = _mm256_add_ps(_mm256_mul_ps(d1, p1), acc1);
+            acc2 = _mm256_add_ps(_mm256_mul_ps(d2, p2), acc2);
+            acc3 = _mm256_add_ps(_mm256_mul_ps(d3, p3), acc3);
+#endif
+        }
+        y[row + 0] = hsum_float_8_q8_0(acc0);
+        y[row + 1] = hsum_float_8_q8_0(acc1);
+        y[row + 2] = hsum_float_8_q8_0(acc2);
+        y[row + 3] = hsum_float_8_q8_0(acc3);
+    }
+    if (row < M) {
+        gemv_q8_0_q8_0(y + row, w + (size_t)row * (size_t)nb,
+                       x, M - row, K);
+    }
+#else
+    gemv_q8_0_q8_0(y, W, x_q8, M, K);
+#endif
 }
 
 /* ============================================================================

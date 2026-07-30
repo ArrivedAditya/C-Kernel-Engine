@@ -97,6 +97,12 @@ void gemm_fine_grained_parallel(const float *A,
 	                         float *C,
 	                         int M, int N, int K);
 
+	void gemm_nt_f32_llama_production(const float *A,
+	                                  const float *B,
+	                                  const float *bias,
+	                                  float *C,
+	                                  int M, int N, int K);
+
 	/* Training dispatch wrapper: same contract as gemm_blocked_serial.
 	 * Uses CK threadpool for row/column partitioning and falls back to serial. */
 	void gemm_blocked_serial_train_parallel_dispatch(const float *A,
@@ -338,6 +344,7 @@ void gemv_q5_k(float *y, const void *W, const float *x, int M, int K);
 void gemv_q5_k_q8_k(float *y, const void *W, const void *x_q8, int M, int K);
 void gemv_q8_0(float *y, const void *W, const float *x, int M, int K);
 void gemv_q8_0_q8_0_contract(float *y, const void *W, const float *x, int M, int K);
+void gemv_q8_0_q8_0_x4(float *y, const void *W, const void *x_q8, int M, int K);
 
 /* Parallel Q5_0 versions - caller provides ith/nth from OpenMP region */
 void gemv_q5_0_parallel(float *y, const void *W, const float *x,
@@ -459,6 +466,14 @@ void gemm_nt_q6_k_q8_k_tile(const void *A_q8,
                             int M, int N, int K,
                             int m0, int m1,
                             int n0, int n1);
+
+void gemm_nt_q6_k_q8_k_m4_tile(const void *A_q8,
+                                const void *B,
+                                const float *bias,
+                                float *C,
+                                int M, int N, int K,
+                                int m0, int m1,
+                                int n0, int n1);
 
 void gemm_nt_q6_k_q8_k_tiled(const void *A_q8,
                              const void *B,
@@ -1888,6 +1903,13 @@ void ssm_conv1d_forward(const float *conv_x,
                         int num_channels,
                         int num_tokens,
                         int num_seqs);
+void ssm_conv1d_forward_llama_production(const float *conv_x,
+                                         const float *kernel,
+                                         float *out,
+                                         int kernel_size,
+                                         int num_channels,
+                                         int num_tokens,
+                                         int num_seqs);
 void ssm_conv1d_forward_pytorch_bf16_storage(const float *conv_x,
                                              const float *kernel,
                                              float *out,
@@ -2312,6 +2334,7 @@ void gated_deltanet_llama_avx2_forward(const float *q,
                                        float *state_out,
                                        float *out,
                                        int num_heads,
+                                       int group_count,
                                        int state_dim,
                                        float norm_eps);
 
@@ -2325,8 +2348,37 @@ void gated_deltanet_llama_avx2_prefill_forward(const float *q,
                                                float *out,
                                                int rows,
                                                int num_heads,
+                                               int group_count,
                                                int state_dim,
                                                float norm_eps);
+
+void gated_deltanet_llama_chunk64_prefill_forward(const float *q,
+                                                  const float *k,
+                                                  const float *v,
+                                                  const float *g,
+                                                  const float *beta,
+                                                  const float *state_in,
+                                                  float *state_out,
+                                                  float *out,
+                                                  int rows,
+                                                  int num_heads,
+                                                  int group_count,
+                                                  int state_dim,
+                                                  float norm_eps);
+
+void gated_deltanet_llama_chunk64_head_forward(const float *q,
+                                               const float *k,
+                                               const float *v,
+                                               const float *g,
+                                               const float *beta,
+                                               const float *state_in,
+                                               float *state_out,
+                                               float *out,
+                                               int rows,
+                                               int num_heads,
+                                               int group_count,
+                                               int head,
+                                               int state_dim);
 
 void gated_deltanet_pytorch_grouped_bf16_forward(const float *q,
                                                   const float *k,
@@ -3232,6 +3284,15 @@ void rope_precompute_cache(float *cos_cache,
                            const char *scaling_type,
                            float scaling_factor);
 
+void rope_precompute_cache_llama_cpu(float *cos_cache,
+                                     float *sin_cache,
+                                     int max_seq_len,
+                                     int head_dim,
+                                     float base,
+                                     int rotary_dim,
+                                     const char *scaling_type,
+                                     float scaling_factor);
+
 // Apply RoPE forward in-place: x[num_heads, num_tokens, aligned_head_dim].
 void rope_forward(float *x,
                   const float *cos_cache,
@@ -3401,6 +3462,18 @@ void rope_forward_qk_pairwise_with_rotary_dim(float *q,
                                               int aligned_head_dim,
                                               int pos_offset,
                                               int rotary_dim);
+
+void rope_forward_qk_pairwise_llama_cpu(float *q,
+                                        float *k,
+                                        const float *cos_cache,
+                                        const float *sin_cache,
+                                        int num_heads,
+                                        int num_kv_heads,
+                                        int num_tokens,
+                                        int head_dim,
+                                        int aligned_head_dim,
+                                        int pos_offset,
+                                        int rotary_dim);
 
 void mrope_qk_text(float *q,
                    float *k,

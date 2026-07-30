@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -25,6 +26,7 @@ BOUNDARIES = (
     "q_conv_predelta",
     "k_conv_predelta",
     "alpha",
+    "gate",
     "beta",
     "new_state",
     "attn_output",
@@ -347,6 +349,44 @@ def analyze_capture(
     }
 
 
+def _capture_ck_worker(
+    model_dir: Path,
+    prompt: list[int],
+    generated: list[int],
+    ck_prefill_mode: str,
+    environment: dict[str, str],
+) -> None:
+    with _temporary_environment(environment):
+        load_ck_logits_segmented(
+            model_dir,
+            prompt,
+            generated,
+            ck_prefill_mode=ck_prefill_mode,
+        )
+
+
+def _run_isolated_ck_capture(
+    model_dir: Path,
+    prompt: list[int],
+    generated: list[int],
+    ck_prefill_mode: str,
+    environment: dict[str, str],
+) -> None:
+    # A loaded ctypes model and its mapped weights are not reliably unloaded
+    # before the llama.cpp capture starts. Isolating CK keeps real 27B runs
+    # below the pod memory ceiling and makes backend ownership explicit.
+    process = multiprocessing.get_context("fork").Process(
+        target=_capture_ck_worker,
+        args=(model_dir, prompt, generated, ck_prefill_mode, environment),
+    )
+    process.start()
+    process.join()
+    if process.exitcode != 0:
+        raise RuntimeError(
+            f"isolated CK X-ray capture failed with exit code {process.exitcode}"
+        )
+
+
 def capture_and_analyze(
     model_dir: Path,
     gguf: Path,
@@ -356,6 +396,7 @@ def capture_and_analyze(
     ctx_len: int,
     threads: int,
     ck_prefill_mode: str = "sequential",
+    reuse_ck_capture: bool = False,
 ) -> dict[str, Any]:
     source = json.loads(parity_report.read_text(encoding="utf-8"))
     config = json.loads((model_dir / "config.json").read_text(encoding="utf-8"))
@@ -380,12 +421,24 @@ def capture_and_analyze(
         f"{ORACLE_BOUNDARY_NAMES.get(name, name)}-{layer}" for name in BOUNDARIES
     )
 
-    with _temporary_environment({
-        "CK_DEBUG_EXPORT_HIDDEN": str(ck_root),
-        "CK_DEBUG_EXPORT_HIDDEN_LAYER": str(layer),
-        "CK_DEBUG_EXPORT_HIDDEN_NAMES": ",".join(BOUNDARIES),
-    }):
-        load_ck_logits_segmented(model_dir, prompt, generated, ck_prefill_mode=ck_prefill_mode)
+    if reuse_ck_capture:
+        expected = ck_root / f"tok_{0:04d}_layer_{layer:03d}_attn_norm.f32"
+        if not expected.is_file() or expected.stat().st_size <= 0:
+            raise ValueError(
+                f"--reuse-ck-capture requested but checkpoint is missing: {expected}"
+            )
+    else:
+        _run_isolated_ck_capture(
+            model_dir,
+            prompt,
+            generated,
+            ck_prefill_mode,
+            {
+                "CK_DEBUG_EXPORT_HIDDEN": str(ck_root),
+                "CK_DEBUG_EXPORT_HIDDEN_LAYER": str(layer),
+                "CK_DEBUG_EXPORT_HIDDEN_NAMES": ",".join(BOUNDARIES),
+            },
+        )
 
     llama = _run_llama_capture(
         gguf,
@@ -426,11 +479,17 @@ def main() -> int:
     ap.add_argument("--ctx-len", type=int, default=1024)
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument("--ck-prefill-mode", choices=("sequential", "hybrid"), default="sequential")
+    ap.add_argument(
+        "--reuse-ck-capture",
+        action="store_true",
+        help="Reuse an existing CK capture and run only the llama oracle plus analysis.",
+    )
     args = ap.parse_args()
     report = capture_and_analyze(
         args.model_dir.resolve(), args.gguf.resolve(), args.parity_report.resolve(),
         args.capture_root.resolve(), int(args.layer), int(args.ctx_len), int(args.threads),
         str(args.ck_prefill_mode),
+        bool(args.reuse_ck_capture),
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2), encoding="utf-8")

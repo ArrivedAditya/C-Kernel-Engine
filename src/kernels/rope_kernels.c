@@ -423,6 +423,55 @@ void rope_precompute_cache(float *cos_cache,
     }
 }
 
+/*
+ * Match ggml's CPU RoPE cache arithmetic. ggml computes theta_scale once,
+ * starts each position at theta=pos, and advances frequencies by repeated
+ * FP32 multiplication. Computing each frequency independently with powf is
+ * mathematically equivalent but can differ by several ULPs at later pairs.
+ */
+void rope_precompute_cache_llama_cpu(float *cos_cache,
+                                     float *sin_cache,
+                                     int max_seq_len,
+                                     int head_dim,
+                                     float base,
+                                     int rotary_dim,
+                                     const char *scaling_type,
+                                     float scaling_factor)
+{
+    if (!cos_cache || !sin_cache || max_seq_len <= 0 || head_dim <= 0) {
+        return;
+    }
+    if (rotary_dim <= 0 || rotary_dim > head_dim) {
+        rotary_dim = head_dim;
+    }
+    if (base <= 0.0f) {
+        base = 10000.0f;
+    }
+
+    const int linear_scaling =
+        scaling_type != NULL &&
+        strcmp(scaling_type, "linear") == 0 &&
+        scaling_factor > 0.0f &&
+        scaling_factor != 1.0f;
+    const int rotary_half = rotary_dim / 2;
+    const float theta_scale =
+        ck_rope_reference_powf(base, -2.0f / (float)rotary_dim);
+
+    for (int pos = 0; pos < max_seq_len; ++pos) {
+        float theta = (float)pos;
+        if (linear_scaling) {
+            theta /= scaling_factor;
+        }
+        for (int i = 0; i < rotary_half; ++i) {
+            cos_cache[(size_t)pos * (size_t)rotary_half + (size_t)i] =
+                ck_rope_reference_cosf(theta);
+            sin_cache[(size_t)pos * (size_t)rotary_half + (size_t)i] =
+                ck_rope_reference_sinf(theta);
+            theta *= theta_scale;
+        }
+    }
+}
+
 // Apply RoPE to a single head's Q or K tensor in-place.
 // x: [num_tokens, head_dim] for one head
 // cos_cache, sin_cache: [max_seq_len, rotary_dim/2]
@@ -1231,6 +1280,96 @@ void rope_forward_qk_pairwise_with_rotary_dim(float *q,
     }
 }
 
+/*
+ * Preserve ggml's per-row pairwise loop as a separate numerical provider.
+ * Keeping the row loop out of the combined Q/K function prevents whole-loop
+ * vectorization from changing FP32 contraction at decode shapes.
+ */
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((noinline))
+#endif
+static void rope_apply_decode_pairwise_llama_cpu(float *rows,
+                                                  const float *cos_row,
+                                                  const float *sin_row,
+                                                  int num_heads,
+                                                  int aligned_head_dim,
+                                                  int rotary_dim)
+{
+    for (int head = 0; head < num_heads; ++head) {
+        float *row = rows + (size_t)head * (size_t)aligned_head_dim;
+        for (int i = 0; i < rotary_dim; i += 2) {
+            const int pair = i / 2;
+            const float x0 = row[i];
+            const float x1 = row[i + 1];
+            const float cosine = cos_row[pair];
+            const float sine = sin_row[pair];
+            row[i] = fmaf(x0, cosine, -x1 * sine);
+            row[i + 1] = fmaf(x0, sine, x1 * cosine);
+        }
+    }
+}
+
+void rope_forward_qk_pairwise_llama_cpu(float *q,
+                                        float *k,
+                                        const float *cos_cache,
+                                        const float *sin_cache,
+                                        int num_heads,
+                                        int num_kv_heads,
+                                        int num_tokens,
+                                        int head_dim,
+                                        int aligned_head_dim,
+                                        int pos_offset,
+                                        int rotary_dim)
+{
+    if (!q || !k || !cos_cache || !sin_cache || num_tokens <= 0) {
+        return;
+    }
+    if (rotary_dim <= 0 || rotary_dim > head_dim) {
+        rotary_dim = head_dim;
+    }
+    const int cache_half = rotary_dim / 2;
+    const size_t head_stride =
+        (size_t)num_tokens * (size_t)aligned_head_dim;
+    if (num_tokens == 1) {
+        const float *cos_row =
+            cos_cache + (size_t)pos_offset * (size_t)cache_half;
+        const float *sin_row =
+            sin_cache + (size_t)pos_offset * (size_t)cache_half;
+        rope_apply_decode_pairwise_llama_cpu(
+            q, cos_row, sin_row, num_heads, aligned_head_dim, rotary_dim);
+        rope_apply_decode_pairwise_llama_cpu(
+            k, cos_row, sin_row, num_kv_heads, aligned_head_dim, rotary_dim);
+        return;
+    }
+    for (int token = 0; token < num_tokens; ++token) {
+        const int pos = pos_offset + token;
+        const float *cos_row =
+            cos_cache + (size_t)pos * (size_t)cache_half;
+        const float *sin_row =
+            sin_cache + (size_t)pos * (size_t)cache_half;
+        for (int head = 0; head < num_heads; ++head) {
+            rope_apply_decode_pairwise_llama_cpu(
+                q + (size_t)head * head_stride
+                  + (size_t)token * (size_t)aligned_head_dim,
+                cos_row,
+                sin_row,
+                1,
+                aligned_head_dim,
+                rotary_dim);
+        }
+        for (int head = 0; head < num_kv_heads; ++head) {
+            rope_apply_decode_pairwise_llama_cpu(
+                k + (size_t)head * head_stride
+                  + (size_t)token * (size_t)aligned_head_dim,
+                cos_row,
+                sin_row,
+                1,
+                aligned_head_dim,
+                rotary_dim);
+        }
+    }
+}
+
 static float vision_mrope_yarn_corr_dim(int n_dims, int n_ctx_orig, float n_rot, float base) {
     return n_dims * logf((float) n_ctx_orig / (n_rot * 2.0f * (float) M_PI)) / (2.0f * logf(base));
 }
@@ -1299,14 +1438,8 @@ static void text_mrope_yarn(
         mscale *= 1.0f + 0.1f * logf(1.0f / fmaxf(freq_scale, 1e-6f));
     }
 
-    /*
-     * Decoder text M-RoPE is part of the compiler-provenance contract.
-     * Use the linked compiler math provider, exactly as ggml does. A mixed
-     * GCC/ICX run must fail provenance checks instead of substituting glibc
-     * trigonometry into an Intel-libimf production graph.
-     */
-    *cos_theta = cosf(theta) * mscale;
-    *sin_theta = sinf(theta) * mscale;
+    *cos_theta = ck_rope_reference_cosf(theta) * mscale;
+    *sin_theta = ck_rope_reference_sinf(theta) * mscale;
 }
 
 static inline void mrope_rotate_pair(
@@ -1665,7 +1798,8 @@ static void explicit_mrope_apply_head(
     const int sec_w = sections[0] + sections[1];
     const int sec_e = sec_w + sections[2];
     const int sect_dims = sections[0] + sections[1] + sections[2] + sections[3];
-    const float theta_scale = powf(freq_base, -2.0f / (float) rope_dims);
+    const float theta_scale =
+        ck_rope_reference_powf(freq_base, -2.0f / (float) rope_dims);
     float corr_dims[2] = {0.0f, (float) (rope_dims - 1)};
     vision_mrope_yarn_corr_dims(rope_dims, n_ctx_orig, freq_base, beta_fast, beta_slow, corr_dims);
 

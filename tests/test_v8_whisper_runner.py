@@ -8,16 +8,38 @@ from pathlib import Path
 import subprocess
 import sys
 
+import numpy as np
 import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "version" / "v8" / "scripts" / "run_whisper_v8.py"
 UNIFIED_SCRIPT = ROOT / "version" / "v8" / "scripts" / "ck_run_v8.py"
+PYTORCH_PARITY_SCRIPT = (
+    ROOT / "version" / "v8" / "scripts" / "compare_whisper_e2e_pytorch_v8.py"
+)
 
 
 def _module():
     spec = importlib.util.spec_from_file_location("run_whisper_v8", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _unified_module():
+    spec = importlib.util.spec_from_file_location("ck_run_v8", UNIFIED_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _pytorch_parity_module():
+    spec = importlib.util.spec_from_file_location(
+        "compare_whisper_e2e_pytorch_v8", PYTORCH_PARITY_SCRIPT
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -43,6 +65,100 @@ def test_whisper_runner_uses_generated_frontend_and_forced_prefix_is_stable() ->
         50359,
         50363,
     ]
+    assert runner.forced_decoder_prefix(
+        generation, "en", "transcribe", timestamps=True
+    ) == [50258, 50259, 50359]
+
+
+def test_whisper_timestamp_contract_enforces_initial_pair_and_order() -> None:
+    runner = _module()
+    generation = {
+        "no_timestamps_token_id": 10,
+        "eos_token_id": 9,
+        "max_initial_timestamp_index": 2,
+    }
+    logits = np.arange(16, dtype=np.float32)
+
+    initial = runner.apply_timestamp_logits_contract(
+        logits, [], generation
+    )
+    assert np.all(np.isneginf(initial[:11]))
+    assert np.all(np.isfinite(initial[11:14]))
+    assert np.all(np.isneginf(initial[14:]))
+
+    after_open = runner.apply_timestamp_logits_contract(
+        logits, [12], generation
+    )
+    assert np.all(np.isfinite(after_open[:10]))
+    assert np.isneginf(after_open[10])
+    assert np.all(np.isneginf(after_open[11:]))
+
+    after_text = runner.apply_timestamp_logits_contract(
+        logits, [12, 4], generation
+    )
+    assert np.all(np.isneginf(after_text[11:13]))
+    assert np.all(np.isfinite(after_text[13:]))
+
+    after_close = runner.apply_timestamp_logits_contract(
+        logits, [12, 4, 13], generation
+    )
+    assert np.all(np.isneginf(after_close[10:13]))
+    assert np.all(np.isfinite(after_close[13:]))
+
+
+def test_whisper_timestamp_contract_uses_aggregate_probability() -> None:
+    runner = _module()
+    generation = {
+        "no_timestamps_token_id": 4,
+        "eos_token_id": 3,
+        "max_initial_timestamp_index": None,
+    }
+    logits = np.asarray(
+        [2.0, 0.0, 0.0, 0.0, -5.0, 1.5, 1.5, 1.5]
+    )
+    result = runner.apply_timestamp_logits_contract(
+        logits, [5, 1], generation
+    )
+    assert np.all(np.isneginf(result[:5]))
+    assert np.isfinite(result[6])
+
+
+def test_whisper_timestamp_contract_matches_transformers_masks() -> None:
+    torch = pytest.importorskip("torch")
+    generation_module = pytest.importorskip(
+        "transformers.generation.logits_process"
+    )
+    from types import SimpleNamespace
+
+    runner = _module()
+    generation = {
+        "no_timestamps_token_id": 10,
+        "eos_token_id": 9,
+        "max_initial_timestamp_index": 2,
+    }
+    config = SimpleNamespace(
+        **generation,
+        bos_token_id=0,
+        _detect_timestamp_from_logprob=True,
+    )
+    processor = generation_module.WhisperTimeStampLogitsProcessor(
+        config, begin_index=3
+    )
+    prefix = [1, 2, 3]
+    logits = np.asarray(
+        [2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+         0.0, 1.0, -5.0, 1.5, 1.5, 1.5, 1.0, 0.5],
+        dtype=np.float32,
+    )
+    for generated in ([], [12], [12, 4], [12, 4, 13]):
+        actual = runner.apply_timestamp_logits_contract(
+            logits, generated, generation
+        )
+        expected = processor(
+            torch.tensor([prefix + generated]),
+            torch.from_numpy(logits.copy()).reshape(1, -1),
+        )[0].numpy()
+        np.testing.assert_array_equal(actual, expected)
 
 
 def test_unified_v8_cli_owns_the_public_audio_command() -> None:
@@ -59,20 +175,146 @@ def test_unified_v8_cli_owns_the_public_audio_command() -> None:
     assert "--encoder-run-dir" in completed.stdout
     assert "--decoder-run-dir" in completed.stdout
     assert "--wav" in completed.stdout
+    assert "model" in completed.stdout
+    assert "--force-convert" in completed.stdout
+    assert "--timestamps" in completed.stdout
 
 
-def test_whisper_tiny_jfk_exact_transcript_when_artifacts_are_configured(
+def test_whisper_pytorch_target_exposes_timestamp_gate() -> None:
+    source = (ROOT / "Makefile").read_text(encoding="utf-8")
+    target = source.split("test-whisper-pytorch-e2e-auto:", 1)[1]
+    target = target.split("\nnightly-parity:", 1)[0]
+    assert "CK_WHISPER_TIMESTAMPS" in target
+    assert 'timestamp_arg="--timestamps"' in target
+
+
+def test_unified_audio_checkpoint_builds_distinct_generic_roles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    unified = _unified_module()
+    checkpoint = tmp_path / "whisper"
+    checkpoint.mkdir()
+    (checkpoint / "model.safetensors").write_bytes(b"fixture")
+    run_dir = tmp_path / "runtime"
+    calls: list[tuple[Path, Path, str, bool, bool]] = []
+
+    def fake_build_role(
+        checkpoint_dir: Path,
+        role_dir: Path,
+        role: str,
+        *,
+        force_convert: bool,
+        force_compile: bool,
+    ) -> None:
+        calls.append(
+            (
+                checkpoint_dir,
+                role_dir,
+                role,
+                force_convert,
+                force_compile,
+            )
+        )
+
+    monkeypatch.setattr(unified, "_build_whisper_role", fake_build_role)
+    monkeypatch.setattr(
+        unified, "_is_safetensors_checkpoint_dir", lambda path: True
+    )
+    encoder, decoder = unified.step_build_whisper_runtimes(
+        str(checkpoint),
+        run_dir=run_dir,
+        force_download=False,
+        force_convert=True,
+        force_compile=False,
+    )
+    assert encoder == run_dir / "encoder"
+    assert decoder == run_dir / "decoder"
+    assert [row[2] for row in calls] == ["encoder", "decoder"]
+    assert all(row[0] == checkpoint for row in calls)
+    assert all(row[3] is True and row[4] is False for row in calls)
+
+
+def test_whisper_checkpoint_identity_changes_with_source(
     tmp_path: Path,
 ) -> None:
-    encoder = os.environ.get("CK_WHISPER_ENCODER_RUN_DIR")
-    decoder = os.environ.get("CK_WHISPER_DECODER_RUN_DIR")
-    wav = os.environ.get("CK_WHISPER_WAV")
+    unified = _unified_module()
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    config = checkpoint / "config.json"
+    weights = checkpoint / "model.safetensors"
+    config.write_text('{"d_model": 384}\n', encoding="utf-8")
+    weights.write_bytes(b"weights")
+    first = unified._whisper_checkpoint_identity(checkpoint)
+    config.write_text('{"d_model": 512}\n', encoding="utf-8")
+    second = unified._whisper_checkpoint_identity(checkpoint)
+    assert first["model.safetensors"] == second["model.safetensors"]
+    assert first["config.json"] != second["config.json"]
+
+
+def test_whisper_pytorch_parity_reports_first_token_or_length_difference() -> None:
+    parity = _pytorch_parity_module()
+    assert parity.first_token_difference([1, 2, 3], [1, 2, 3]) is None
+    assert parity.first_token_difference([1, 9, 3], [1, 2, 3]) == {
+        "index": 1,
+        "subject": 9,
+        "oracle": 2,
+    }
+    assert parity.first_token_difference([1, 2], [1, 2, 3]) == {
+        "index": 2,
+        "subject": -1,
+        "oracle": 3,
+    }
+
+
+def test_whisper_pytorch_parity_fails_closed_on_stale_runtime(
+    tmp_path: Path,
+) -> None:
+    parity = _pytorch_parity_module()
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "config.json").write_text(
+        '{"model_type":"whisper"}\n', encoding="utf-8"
+    )
+    identity = parity.checkpoint_identity(checkpoint)
+    runtime = tmp_path / "encoder"
+    runtime.mkdir()
+    stamp = runtime / ".ck-whisper-runtime.json"
+    stamp.write_text(
+        json.dumps(
+            {
+                "inputs": {
+                    "role": "encoder",
+                    "checkpoint": identity,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    parity.validate_runtime_checkpoint(runtime, identity, "encoder")
+    changed = dict(identity)
+    changed["config.json"] = dict(changed["config.json"])
+    changed["config.json"]["sha256"] = "0" * 64
+    with pytest.raises(RuntimeError, match="requested checkpoint"):
+        parity.validate_runtime_checkpoint(runtime, changed, "encoder")
+    with pytest.raises(RuntimeError, match="wrong runtime role"):
+        parity.validate_runtime_checkpoint(runtime, identity, "decoder")
+
+
+def _run_exact_transcript(
+    tmp_path: Path,
+    *,
+    encoder_env: str,
+    decoder_env: str,
+    wav_env: str,
+    expected_tokens: list[int],
+    expected_text: str,
+) -> None:
+    encoder = os.environ.get(encoder_env)
+    decoder = os.environ.get(decoder_env)
+    wav = os.environ.get(wav_env)
     if not all((encoder, decoder, wav)):
-        pytest.skip(
-            "set CK_WHISPER_ENCODER_RUN_DIR, CK_WHISPER_DECODER_RUN_DIR, "
-            "and CK_WHISPER_WAV"
-        )
-    report = tmp_path / "whisper.json"
+        pytest.skip(f"set {encoder_env}, {decoder_env}, and {wav_env}")
+    report = tmp_path / f"{encoder_env.lower()}.json"
     subprocess.run(
         [
             sys.executable,
@@ -97,33 +339,44 @@ def test_whisper_tiny_jfk_exact_transcript_when_artifacts_are_configured(
         cwd=ROOT,
     )
     result = json.loads(report.read_text(encoding="utf-8"))
-    assert result["decoder"]["generated_tokens"] == [
-        400,
-        370,
-        452,
-        7177,
-        6280,
-        1029,
-        406,
-        437,
-        428,
-        1941,
-        393,
-        360,
-        337,
-        291,
-        1029,
-        437,
-        291,
-        393,
-        360,
-        337,
-        428,
-        1941,
-        13,
-    ]
+    assert result["decoder"]["generated_tokens"] == expected_tokens
     assert result["decoder"]["stop"] == "eos"
-    assert result["decoder"]["text"] == (
-        " And so my fellow Americans ask not what your country can do for you "
-        "ask what you can do for your country."
+    assert result["decoder"]["text"] == expected_text
+
+
+def test_whisper_tiny_jfk_exact_transcript_when_artifacts_are_configured(
+    tmp_path: Path,
+) -> None:
+    _run_exact_transcript(
+        tmp_path,
+        encoder_env="CK_WHISPER_ENCODER_RUN_DIR",
+        decoder_env="CK_WHISPER_DECODER_RUN_DIR",
+        wav_env="CK_WHISPER_WAV",
+        expected_tokens=[
+            400, 370, 452, 7177, 6280, 1029, 406, 437, 428, 1941, 393, 360,
+            337, 291, 1029, 437, 291, 393, 360, 337, 428, 1941, 13,
+        ],
+        expected_text=(
+            " And so my fellow Americans ask not what your country can do for "
+            "you ask what you can do for your country."
+        ),
+    )
+
+
+def test_whisper_base_jfk_exact_transcript_when_artifacts_are_configured(
+    tmp_path: Path,
+) -> None:
+    _run_exact_transcript(
+        tmp_path,
+        encoder_env="CK_WHISPER_BASE_ENCODER_RUN_DIR",
+        decoder_env="CK_WHISPER_BASE_DECODER_RUN_DIR",
+        wav_env="CK_WHISPER_BASE_WAV",
+        expected_tokens=[
+            400, 370, 452, 7177, 6280, 11, 1029, 406, 437, 428, 1941, 393,
+            360, 337, 291, 11, 1029, 437, 291, 393, 360, 337, 428, 1941, 13,
+        ],
+        expected_text=(
+            " And so my fellow Americans, ask not what your country can do for "
+            "you, ask what you can do for your country."
+        ),
     )

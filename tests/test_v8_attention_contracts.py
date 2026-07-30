@@ -380,8 +380,12 @@ class AttentionContractV8Tests(unittest.TestCase):
             ("qwen2", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash"),
             ("qwen3", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_flash_strided"),
             ("qwen3", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash"),
-            ("qwen35", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_prefill_append_f16cache_single_range"),
+            ("qwen35", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64"),
             ("qwen35", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash_f16cache_contract"),
+            ("qwen35", "decoder.attention_bf16_pytorch", "prefill", "attention_forward_causal_head_major_gqa_prefill_full_bf16cache_pytorch_contract"),
+            ("qwen35", "decoder.attention_bf16_pytorch", "decode", "attention_forward_decode_head_major_gqa_bf16cache_pytorch_contract"),
+            ("glm4", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_prefill_append_f16cache_single_range"),
+            ("glm4", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash_f16cache_contract"),
             ("nemotron_h", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_flash_strided"),
             ("nemotron_h", "decoder.attention", "decode", "attention_forward_decode_head_major_gqa_flash"),
             ("llama", "decoder.attention", "prefill", "attention_forward_causal_head_major_gqa_flash_strided_f16kv"),
@@ -410,6 +414,18 @@ class AttentionContractV8Tests(unittest.TestCase):
                     {"serial", "ck_threadpool", "external_blas"},
                 )
                 self.assertTrue(result["implementation"]["threading"]["work_partition"])
+
+    def test_qwen35_attention_storage_selectors_use_kv_contract_metadata(self) -> None:
+        circuit = resolver.load_json(V8_ROOT / "circuits" / "qwen35.json")
+        contracts = circuit["required_contracts"]
+        self.assertEqual(
+            contracts["decoder.attention"]["selector"],
+            {"config_not_equals": {"decode_kv_cache_dtype": "bf16"}},
+        )
+        self.assertEqual(
+            contracts["decoder.attention_bf16_pytorch"]["selector"],
+            {"config_equals": {"decode_kv_cache_dtype": "bf16"}},
+        )
 
     def test_execution_schema_is_operator_generic(self) -> None:
         resolver.validate_schema(
@@ -526,6 +542,16 @@ class AttentionContractV8Tests(unittest.TestCase):
         self.assertIn(f'N < {predicate["min_n"]} || K < {predicate["min_k"]}', source)
         self.assertIn("M <= 1", source)
         self.assertNotIn("CK_ENABLE_Q6K_Q8K_2D_PREFILL", source)
+
+    def test_q6_short_wide_prefill_uses_measured_m4_provider(self) -> None:
+        source = (V8_ROOT / "src" / "ck_parallel_prefill_v8.c").read_text(encoding="utf-8")
+        self.assertIn(
+            "return M >= 4 && M <= 63 && N >= 4096 && K >= 8192;",
+            source,
+        )
+        self.assertIn("short_wide_q6 ? 8 : 16", source)
+        self.assertIn("short_wide_q6 ? 128 : 256", source)
+        self.assertIn("gemm_nt_q6_k_q8_k_m4_tile", source)
 
     def test_q6_benchmark_defaults_to_gcc_provenance(self) -> None:
         bench_path = REPO_ROOT / "benchmarks" / "bench_q6k_prefill_tile.py"

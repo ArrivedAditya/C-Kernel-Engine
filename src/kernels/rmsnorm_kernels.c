@@ -162,11 +162,21 @@ void rmsnorm_forward_fp64_sum(const float *input,
 
 static inline float rmsnorm_llama_production_rstd(float mean_eps)
 {
-    /* ggml's production RMSNorm evaluates this expression directly for every
-     * CPU ISA.  An AVX-512 rsqrt estimate, even after Newton refinement,
-     * changes Q/K normalization by a few ULPs and can be amplified by RoPE,
-     * attention, and FP16 cache storage during long multimodal decoding. */
-    return 1.0f / sqrtf(mean_eps);
+    /*
+     * ggml's production CPU RMSNorm emits scalar sqrt followed by scalar
+     * division.  With -fno-math-errno ICX otherwise strength-reduces the C
+     * expression to vrsqrt14ss plus one Newton step.  That estimate differs by
+     * one ULP for some rows and the error is amplified by quantized
+     * projections in deep recurrent models.
+     */
+#if defined(CK_TARGET_X86)
+    const __m128 value = _mm_set_ss(mean_eps);
+    const __m128 root = _mm_sqrt_ss(value);
+    return _mm_cvtss_f32(_mm_div_ss(_mm_set_ss(1.0f), root));
+#else
+    const volatile float root = sqrtf(mean_eps);
+    return 1.0f / root;
+#endif
 }
 
 #if defined(__clang__)
@@ -197,8 +207,15 @@ void rmsnorm_forward_llama_production(const float *input,
             rstd_cache[t] = rstd;
         }
         for (int d = 0; d < d_model; ++d) {
-            const float normalized = x[d] * rstd;
-            y[d] = normalized * gamma[d];
+            /*
+             * Keep the RMSNorm + scale expression fused at the source level.
+             * llama.cpp's CPU graph fuses GGML_OP_RMS_NORM followed by
+             * GGML_OP_MUL and evaluates this left-associative expression in
+             * one kernel.  Materializing the normalized value as a named
+             * float introduces a store/load rounding boundary under ICX and
+             * differs by one ULP for otherwise identical inputs.
+             */
+            y[d] = x[d] * rstd * gamma[d];
         }
         for (int d = d_model; d < aligned_embed_dim; ++d) {
             y[d] = 0.0f;

@@ -396,7 +396,8 @@ def check_pytorch_erf_gelu() -> None:
     print(
         f"audio_pytorch_erf_gelu max_diff={max_diff:.8e} tol=5.0e-07 "
         f"[{'PASS' if passed else 'FAIL'}] rmse={rmse:.8e} "
-        f"rmse_tol=1.25e-07",
+        f"rmse_tol=1.25e-07 torch={torch.__version__} "
+        f"cpu={torch.backends.cpu.get_cpu_capability()}",
         flush=True,
     )
     assert max_diff <= 5.0e-7, max_diff

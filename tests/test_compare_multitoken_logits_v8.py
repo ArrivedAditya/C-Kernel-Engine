@@ -56,8 +56,62 @@ class MultitokenParityEOSContractTests(unittest.TestCase):
         self.assertIsNone(report["matched_stop_token"])
         self.assertEqual(report["first_divergence"]["ck_next"], 2)
 
+    def test_replay_configures_ck_threads_before_loading_runtime(self) -> None:
+        logits = np.asarray([0.0, 1.0, 4.0], dtype=np.float32)
+        configured = {
+            "CK_NUM_THREADS": "7",
+            "CK_THREADPOOL_THREADS": "7",
+            "OMP_NUM_THREADS": "7",
+        }
+        with mock.patch.object(runner, "run_llama_logits", return_value={"logits": logits}), \
+             mock.patch.object(runner, "load_ck_logits", return_value={"logits": logits}), \
+             mock.patch.object(
+                 runner, "_configure_ck_threads", return_value=configured
+             ) as configure:
+            report = runner.run_multitoken_parity(
+                model_dir=Path("/tmp/model"),
+                gguf_path=Path("/tmp/model.gguf"),
+                prompt_tokens=[7],
+                max_new_tokens=1,
+                ctx_len=128,
+                top_k=3,
+                threads=7,
+                append_on_divergence="stop",
+                ck_prefill_mode="batched",
+                llama_decode_mode="batched",
+                llama_no_repack=False,
+            )
+        configure.assert_called_once_with(7)
+        self.assertEqual(report["ck_thread_environment"], configured)
+
 
 class PersistentTrajectoryParityTests(unittest.TestCase):
+    def test_llama_helper_rejects_partially_matched_named_capture(self) -> None:
+        source = (
+            ROOT / "version" / "v8" / "scripts" / "llama_token_replay_v8.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn("matched_names.insert(base_name)", source)
+        self.assertIn(
+            "requested dump tensor names were not observed at greedy step",
+            source,
+        )
+        self.assertIn("return 22;", source)
+
+    def test_thread_configuration_is_applied_before_runtime_load(self) -> None:
+        with mock.patch.dict(runner.os.environ, {}, clear=True):
+            configured = runner._configure_ck_threads(12)
+            self.assertEqual(
+                configured,
+                {
+                    "CK_NUM_THREADS": "12",
+                    "CK_THREADPOOL_THREADS": "12",
+                    "OMP_NUM_THREADS": "12",
+                },
+            )
+            self.assertEqual(runner.os.environ["CK_NUM_THREADS"], "12")
+            self.assertEqual(runner.os.environ["CK_THREADPOOL_THREADS"], "12")
+            self.assertEqual(runner.os.environ["OMP_NUM_THREADS"], "12")
+
     def test_exact_trajectory_stops_at_shared_eos(self) -> None:
         rows = np.asarray([
             [0.0, 4.0, 1.0],
@@ -66,7 +120,7 @@ class PersistentTrajectoryParityTests(unittest.TestCase):
         llama = {"logits": rows, "generated_tokens": [1, 2], "meta": {}}
         ck = {"logits": rows, "generated_tokens": [1, 2], "vocab": 3}
         with mock.patch.object(runner, "run_llama_greedy_trajectory", return_value=llama), \
-             mock.patch.object(runner, "load_ck_greedy_trajectory", return_value=ck):
+             mock.patch.object(runner, "load_ck_greedy_trajectory_isolated", return_value=ck):
             report = runner.run_multitoken_trajectory_parity(
                 model_dir=Path("/tmp/model"),
                 gguf_path=Path("/tmp/model.gguf"),
@@ -88,7 +142,7 @@ class PersistentTrajectoryParityTests(unittest.TestCase):
         llama_rows = np.asarray([[0.0, 1.0, 4.0]], dtype=np.float32)
         with mock.patch.object(runner, "run_llama_greedy_trajectory", return_value={
             "logits": llama_rows, "generated_tokens": [2], "meta": {},
-        }), mock.patch.object(runner, "load_ck_greedy_trajectory", return_value={
+        }), mock.patch.object(runner, "load_ck_greedy_trajectory_isolated", return_value={
             "logits": ck_rows, "generated_tokens": [1], "vocab": 3,
         }):
             report = runner.run_multitoken_trajectory_parity(
@@ -100,6 +154,208 @@ class PersistentTrajectoryParityTests(unittest.TestCase):
         self.assertEqual(report["first_divergence"]["step"], 0)
         self.assertEqual(report["first_divergence"]["ck_next"], 1)
         self.assertEqual(report["first_divergence"]["llama_next"], 2)
+        self.assertEqual(report["final_prefix"], [7])
+
+    def test_trajectory_captures_isolated_ck_before_llama(self) -> None:
+        rows = np.asarray([[0.0, 4.0, 1.0]], dtype=np.float32)
+        calls = []
+
+        def ck_capture(**_kwargs):
+            calls.append("ck")
+            return {"logits": rows, "generated_tokens": [1], "vocab": 3}
+
+        def llama_capture(*_args, **_kwargs):
+            calls.append("llama")
+            return {"logits": rows, "generated_tokens": [1], "meta": {}}
+
+        with mock.patch.object(
+            runner, "load_ck_greedy_trajectory_isolated", side_effect=ck_capture
+        ), mock.patch.object(
+            runner, "run_llama_greedy_trajectory", side_effect=llama_capture
+        ):
+            runner.run_multitoken_trajectory_parity(
+                model_dir=Path("/tmp/model"),
+                gguf_path=Path("/tmp/model.gguf"),
+                prompt_tokens=[7],
+                max_new_tokens=1,
+                ctx_len=128,
+                top_k=3,
+                threads=1,
+                llama_no_repack=False,
+            )
+        self.assertEqual(calls, ["ck", "llama"])
+
+    def test_requested_threads_reach_isolated_ck_capture(self) -> None:
+        rows = np.asarray([[0.0, 4.0, 1.0]], dtype=np.float32)
+        captured: dict = {}
+
+        def ck_capture(**kwargs):
+            captured.update(kwargs)
+            return {
+                "logits": rows,
+                "generated_tokens": [1],
+                "vocab": 3,
+                "thread_environment": {
+                    "CK_NUM_THREADS": "7",
+                    "CK_THREADPOOL_THREADS": "7",
+                    "OMP_NUM_THREADS": "7",
+                },
+            }
+
+        with mock.patch.object(
+            runner, "load_ck_greedy_trajectory_isolated", side_effect=ck_capture
+        ), mock.patch.object(
+            runner,
+            "run_llama_greedy_trajectory",
+            return_value={"logits": rows, "generated_tokens": [1], "meta": {}},
+        ):
+            report = runner.run_multitoken_trajectory_parity(
+                model_dir=Path("/tmp/model"),
+                gguf_path=Path("/tmp/model.gguf"),
+                prompt_tokens=[7],
+                max_new_tokens=1,
+                ctx_len=128,
+                top_k=3,
+                threads=7,
+                llama_no_repack=False,
+            )
+
+        self.assertEqual(captured["threads"], 7)
+        self.assertEqual(report["threads"], 7)
+        self.assertEqual(report["ck_thread_environment"]["CK_NUM_THREADS"], "7")
+
+    def test_capture_contract_reaches_isolated_persistent_runtime(self) -> None:
+        rows = np.asarray([[0.0, 4.0, 1.0]], dtype=np.float32)
+        captured: dict = {}
+        runtime = Path("/tmp/libmodel-parity.so")
+        dump_dir = Path("/tmp/glm-step-39")
+
+        def ck_capture(**kwargs):
+            captured.update(kwargs)
+            return {
+                "logits": rows,
+                "generated_tokens": [1],
+                "vocab": 3,
+                "runtime": {"path": str(runtime), "sha256": "a" * 64},
+                "capture": {
+                    "execution_mode": "persistent_greedy_trajectory",
+                    "step": 39,
+                    "layer": 0,
+                    "op_filter": "q_proj,k_proj",
+                    "format": "hidden",
+                    "artifacts": [{
+                        "path": str(dump_dir / "tok_0059_layer_000_q_proj.f32"),
+                        "sha256": "b" * 64,
+                        "size": 4096,
+                    }],
+                },
+            }
+
+        with mock.patch.object(
+            runner, "load_ck_greedy_trajectory_isolated", side_effect=ck_capture
+        ), mock.patch.object(
+            runner,
+            "run_llama_greedy_trajectory",
+            return_value={"logits": rows, "generated_tokens": [1], "meta": {}},
+        ):
+            report = runner.run_multitoken_trajectory_parity(
+                model_dir=Path("/tmp/model"),
+                gguf_path=Path("/tmp/model.gguf"),
+                prompt_tokens=[7],
+                max_new_tokens=64,
+                ctx_len=128,
+                top_k=3,
+                threads=7,
+                llama_no_repack=False,
+                ck_runtime_so=runtime,
+                ck_dump_step=39,
+                ck_dump_dir=dump_dir,
+                ck_dump_layer=0,
+                ck_dump_names="q_proj,k_proj",
+                ck_dump_kv_layer=0,
+            )
+
+        self.assertEqual(captured["runtime_so"], runtime)
+        self.assertEqual(captured["dump_step"], 39)
+        self.assertEqual(captured["dump_dir"], dump_dir)
+        self.assertEqual(captured["dump_layer"], 0)
+        self.assertEqual(captured["dump_names"], "q_proj,k_proj")
+        self.assertEqual(captured["dump_format"], "hidden")
+        self.assertEqual(captured["dump_kv_layer"], 0)
+        self.assertEqual(
+            report["ck_capture"]["execution_mode"],
+            "persistent_greedy_trajectory",
+        )
+        self.assertEqual(report["ck_runtime"]["sha256"], "a" * 64)
+
+    def test_capture_step_requires_dump_directory(self) -> None:
+        with self.assertRaisesRegex(ValueError, "dump_dir is required"):
+            runner.load_ck_greedy_trajectory(
+                model_dir=Path("/tmp/model"),
+                prompt_tokens=[7],
+                max_new_tokens=64,
+                dump_step=39,
+            )
+
+    def test_prefill_capture_is_enabled_before_embedding(self) -> None:
+        source = (
+            ROOT / "version" / "v8" / "scripts" / "compare_multitoken_logits_v8.py"
+        ).read_text(encoding="utf-8")
+        capture_enable = source.index(
+            "if capture_step == 0:\n"
+            "            # Batched prefill executes inside embed_tokens."
+        )
+        embed_call = source.index(
+            "if lib.ck_model_embed_tokens(token_array, len(prompt)) != 0:"
+        )
+        forward_call = source.index("if lib.ck_model_forward(None) != 0:")
+        self.assertLess(capture_enable, embed_call)
+        self.assertLess(embed_call, forward_call)
+
+    def test_llama_capture_contract_reaches_same_trajectory_step(self) -> None:
+        rows = np.asarray([[0.0, 4.0, 1.0]], dtype=np.float32)
+        captured: dict = {}
+
+        def llama_capture(*_args, **kwargs):
+            captured.update(kwargs)
+            return {
+                "logits": rows,
+                "generated_tokens": [1],
+                "meta": {"flash_attention_mode": "auto"},
+                "capture": {
+                    "step": 0,
+                    "attention_mode": "auto",
+                    "artifacts": [{"sha256": "c" * 64}],
+                },
+            }
+
+        with mock.patch.object(
+            runner,
+            "load_ck_greedy_trajectory_isolated",
+            return_value={"logits": rows, "generated_tokens": [1], "vocab": 3},
+        ), mock.patch.object(
+            runner, "run_llama_greedy_trajectory", side_effect=llama_capture
+        ):
+            report = runner.run_multitoken_trajectory_parity(
+                model_dir=Path("/tmp/model"),
+                gguf_path=Path("/tmp/model.gguf"),
+                prompt_tokens=[7],
+                max_new_tokens=1,
+                ctx_len=128,
+                top_k=3,
+                threads=7,
+                llama_no_repack=False,
+                llama_dump_step=0,
+                llama_dump_dir=Path("/tmp/llama-step-0"),
+                llama_dump_names="__fattn__-0",
+                llama_dump_flash_inputs=True,
+            )
+
+        self.assertEqual(captured["dump_step"], 0)
+        self.assertEqual(captured["dump_dir"], Path("/tmp/llama-step-0"))
+        self.assertEqual(captured["dump_names"], "__fattn__-0")
+        self.assertTrue(captured["dump_flash_inputs"])
+        self.assertEqual(report["llama_capture"]["attention_mode"], "auto")
 
 
 if __name__ == "__main__":

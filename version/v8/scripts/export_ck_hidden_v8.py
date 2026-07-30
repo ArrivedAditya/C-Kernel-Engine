@@ -26,6 +26,7 @@ def export_ck_hidden(
     out_dir: Path,
     mode: str = "decode",
     prompt_length: int | None = None,
+    export_logits: bool = True,
 ) -> None:
     model_dir = discover_ck_model_dir(model_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -96,7 +97,7 @@ def export_ck_hidden(
         else:
             raise ValueError(f"unknown mode: {mode}")
 
-        if hasattr(lib, "ck_model_get_vocab_size"):
+        if export_logits and hasattr(lib, "ck_model_get_vocab_size"):
             vocab = int(lib.ck_model_get_vocab_size())
             if vocab > 0:
                 logits, _stride, _active = _extract_logits(lib, vocab, len(tokens))
@@ -122,6 +123,11 @@ def main() -> int:
     ap.add_argument("--out-dir", required=True, type=Path)
     ap.add_argument("--mode", choices=("decode", "prefill", "prefill-decode"), default="decode")
     ap.add_argument("--prompt-length", type=int, help="number of initial tokens to prefill for --mode prefill-decode")
+    ap.add_argument(
+        "--skip-logits",
+        action="store_true",
+        help="Skip the final logits copy when only hidden boundaries are needed.",
+    )
     args = ap.parse_args()
 
     export_ck_hidden(
@@ -130,6 +136,7 @@ def main() -> int:
         out_dir=args.out_dir,
         mode=args.mode,
         prompt_length=args.prompt_length,
+        export_logits=not bool(args.skip_logits),
     )
     files = sorted(args.out_dir.glob("*.f32"))
     print(f"exported={len(files)} out_dir={args.out_dir}")

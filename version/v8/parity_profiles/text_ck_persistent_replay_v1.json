@@ -1,0 +1,139 @@
+{
+  "schema": "cke.parity_profile",
+  "schema_version": 1,
+  "name": "text_ck_persistent_replay_v1",
+  "backend": "ck_persistent_vs_full_replay",
+  "contract_schema_version": 1,
+  "required_match_fields": [
+    "checkpoint_id",
+    "producer",
+    "logical_layout",
+    "resolved_contract_id",
+    "kernel_id",
+    "function"
+  ],
+  "observed_storage": {
+    "default": "fp32",
+    "checkpoints": {}
+  },
+  "dtype_thresholds": {
+    "fp32": {
+      "cosine_min": 1.0,
+      "rmse_max": 0.0,
+      "relative_rmse_max": 0.0,
+      "max_abs_max": 0.0,
+      "finite_required": true
+    }
+  },
+  "checkpoint_order": [
+    "text.layer.{layer}.layer_input",
+    "text.layer.{layer}.block_rmsnorm",
+    "text.layer.{layer}.q_proj_post_bias",
+    "text.layer.{layer}.k_proj_post_bias",
+    "text.layer.{layer}.v_proj_post_bias",
+    "text.layer.{layer}.rope_q",
+    "text.layer.{layer}.rope_k",
+    "text.layer.{layer}.attn_pregate",
+    "text.layer.{layer}.out_proj",
+    "text.layer.{layer}.layer_out"
+  ],
+  "interval_expansions": {},
+  "backend_mappings": {
+    "text.layer.{layer}.layer_input": {
+      "producer": "residual_save",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "layer_input",
+      "operation": "residual_save",
+      "occurrence": 0
+    },
+    "text.layer.{layer}.block_rmsnorm": {
+      "producer": "rmsnorm",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "block_rmsnorm",
+      "operation": "rmsnorm",
+      "occurrence": 0,
+      "depends_on": ["text.layer.{layer}.layer_input"]
+    },
+    "text.layer.{layer}.q_proj_post_bias": {
+      "producer": "q_proj",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "q_proj_post_bias",
+      "operation": "q_proj",
+      "occurrence": 0,
+      "depends_on": ["text.layer.{layer}.block_rmsnorm"]
+    },
+    "text.layer.{layer}.k_proj_post_bias": {
+      "producer": "k_proj",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "k_proj_post_bias",
+      "operation": "k_proj",
+      "occurrence": 0,
+      "depends_on": ["text.layer.{layer}.block_rmsnorm"]
+    },
+    "text.layer.{layer}.v_proj_post_bias": {
+      "producer": "v_proj",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "v_proj_post_bias",
+      "operation": "v_proj",
+      "occurrence": 0,
+      "depends_on": ["text.layer.{layer}.block_rmsnorm"]
+    },
+    "text.layer.{layer}.rope_q": {
+      "producer": "rope_qk",
+      "logical_layout": "q_head_major",
+      "axis_names": ["head", "token", "channel"],
+      "capture_tensor": "rope_q",
+      "operation": "rope_qk",
+      "occurrence": 0,
+      "depends_on": ["text.layer.{layer}.q_proj_post_bias"]
+    },
+    "text.layer.{layer}.rope_k": {
+      "producer": "rope_qk",
+      "logical_layout": "kv_head_major",
+      "axis_names": ["head", "token", "channel"],
+      "capture_tensor": "rope_k",
+      "operation": "rope_qk",
+      "occurrence": 0,
+      "depends_on": ["text.layer.{layer}.k_proj_post_bias"]
+    },
+    "text.layer.{layer}.attn_pregate": {
+      "producer": "attn",
+      "logical_layout": "q_head_major",
+      "axis_names": ["head", "token", "channel"],
+      "capture_tensor": "attn_pregate",
+      "operation": "attn",
+      "occurrence": 0,
+      "depends_on": [
+        "text.layer.{layer}.rope_q",
+        "text.layer.{layer}.rope_k",
+        "text.layer.{layer}.v_proj_post_bias"
+      ]
+    },
+    "text.layer.{layer}.out_proj": {
+      "producer": "out_proj",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "out_proj",
+      "operation": "out_proj",
+      "occurrence": 0,
+      "depends_on": ["text.layer.{layer}.attn_pregate"]
+    },
+    "text.layer.{layer}.layer_out": {
+      "producer": "residual_add",
+      "logical_layout": "token_major",
+      "axis_names": ["token", "channel"],
+      "capture_tensor": "layer_out",
+      "operation": "residual_add",
+      "occurrence": 0,
+      "depends_on": [
+        "text.layer.{layer}.layer_input",
+        "text.layer.{layer}.out_proj"
+      ]
+    }
+  }
+}

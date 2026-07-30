@@ -96,6 +96,13 @@ class XRayVisionInterfaceTests(unittest.TestCase):
             result["first_divergence"]["classification"],
             "DOWNSTREAM_OR_PROPAGATED_DIVERGENCE",
         )
+        failing_comparison = next(
+            row for row in result["comparisons"] if row["status"] == "fail"
+        )
+        self.assertEqual(
+            failing_comparison["classification"],
+            "DOWNSTREAM_OR_PROPAGATED_DIVERGENCE",
+        )
         self.assertEqual(result["first_divergence"]["fix_owner"], "exact_input_control")
 
     def test_capture_mode_controls_strict_parity_flag(self) -> None:

@@ -102,16 +102,56 @@
     "decoder.attention": {
       "op": "attention",
       "template_ops": ["attn"],
+      "selector": {
+        "config_not_equals": {
+          "decode_kv_cache_dtype": "bf16"
+        }
+      },
       "phases": {
         "prefill": {
-          "requires": {"execution.phase": "prefill", "execution.prefill_batching": "batch_append", "tensor.q.dtype": "fp32", "tensor.kv.dtype": "fp16", "tensor.layout": "head_major", "numerics.attention_reduction": "f16_online_single_range"},
+          "requires": {"execution.phase": "prefill", "execution.prefill_batching": "batch_append", "tensor.q.dtype": "fp32", "tensor.kv.dtype": "fp16", "tensor.layout": "head_major", "numerics.attention_reduction": "f16_flash_auto_qtile64"},
           "validation": "validated",
-          "evidence": "v8 Qwen3.5 E2E regression validates dense-attention layers; recurrent layers use a separate state contract."
+          "evidence": "Qwen3.6-27B Q4_K_M production replay is bit-exact against llama.cpp for all 353 rows with the 64x64 tiled prefill schedule; batches shorter than 64 retain the provider's single-range path."
         },
         "decode": {
           "requires": {"execution.phase": "decode", "tensor.q.dtype": "fp32", "tensor.kv.dtype": "fp16", "tensor.layout": "head_major", "numerics.attention_reduction": "f16_online_fp32_merge"},
           "validation": "validated",
           "evidence": "v8 Qwen3.5 E2E regression validates dense-attention decode layers; recurrent layers use a separate state contract."
+        }
+      }
+    },
+    "decoder.attention_bf16_pytorch": {
+      "op": "attention",
+      "template_ops": ["attn"],
+      "selector": {
+        "config_equals": {
+          "decode_kv_cache_dtype": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "requires": {
+            "execution.phase": "prefill",
+            "execution.prefill_batching": "unified_mixed",
+            "execution.attention_schedule": "full_matrix_causal",
+            "tensor.q.dtype": "fp32",
+            "tensor.kv.dtype": "bf16",
+            "tensor.layout": "head_major",
+            "numerics.attention_reduction": "bf16_pytorch_sdpa"
+          },
+          "validation": "observed",
+          "evidence": "Qwen3Next BF16 full-attention prefill preserves BF16 Q/K/V storage and uses the PyTorch SDPA arithmetic contract."
+        },
+        "decode": {
+          "requires": {
+            "execution.phase": "decode",
+            "tensor.q.dtype": "fp32",
+            "tensor.kv.dtype": "bf16",
+            "tensor.layout": "head_major",
+            "numerics.attention_reduction": "bf16_pytorch_sdpa"
+          },
+          "validation": "observed",
+          "evidence": "Qwen3Next DynamicCache preserves BF16 K/V storage during incremental decode."
         }
       }
     }
@@ -174,6 +214,11 @@
     "decoder.qk_norm": {
       "op": "qk_norm",
       "template_ops": ["qk_norm"],
+      "selector": {
+        "config_not_equals": {
+          "decoder_qk_norm_reduction_policy": "pytorch_avx2_cascade_exact"
+        }
+      },
       "phases": {
         "prefill": {
           "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
@@ -184,6 +229,33 @@
           "contract_id": "rmsnorm_llama_cpu_production_fp32_output",
           "validation": "validated",
           "evidence": "The llama-production provider uses the same ascending FP64 reduction and reciprocal-square-root expression as the reference graph."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.qk_norm.output",
+        "producer": "qk_norm",
+        "logical_layout": "head_major",
+        "axis_names": ["head", "token", "channel"]
+      }
+    },
+    "decoder.qk_norm_bf16_pytorch": {
+      "op": "qk_norm",
+      "template_ops": ["qk_norm"],
+      "selector": {
+        "config_equals": {
+          "decoder_qk_norm_reduction_policy": "pytorch_avx2_cascade_exact"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "rmsnorm_pytorch_avx2_cascade_bf16_storage",
+          "validation": "validated",
+          "evidence": "Qwen3Next full-attention Q/K normalization uses PyTorch BF16 per-head RMSNorm storage and AVX2 cascade reduction."
+        },
+        "decode": {
+          "contract_id": "rmsnorm_pytorch_avx2_cascade_bf16_storage",
+          "validation": "validated",
+          "evidence": "Single-token decode retains the same BF16 per-head Q/K normalization contract."
         }
       },
       "checkpoint": {
@@ -205,12 +277,12 @@
         "prefill": {
           "contract_id": "gated_deltanet_llama_avx2_prefill_fp32_state",
           "validation": "validated",
-          "evidence": "Matched-schedule X-ray requires llama.cpp's AVX2 four-accumulator dot tree, post-dot query scaling, FMA state update, and ascending prompt-token transitions."
+          "evidence": "Qwen3.6 stores 16 compact Q/K groups for 48 value heads; llama.cpp tiles groups 0..15 three times before its prompt DeltaNet arithmetic."
         },
         "decode": {
           "contract_id": "gated_deltanet_llama_avx2_decode_fp32_state",
           "validation": "validated",
-          "evidence": "The production provider preserves llama.cpp AVX2 state-update and reduction order; the generic provider's sub-ULP drift crossed a later Q8 projection threshold."
+          "evidence": "The production provider tiles compact Q/K groups over value heads and preserves llama.cpp AVX2 decode state-update and reduction order."
         }
       },
       "checkpoint": {
@@ -350,6 +422,61 @@
         "axis_names": ["token", "channel"]
       }
     },
+    "decoder.recurrent_gate_scalar_projections_llama": {
+      "op": "gemm",
+      "template_ops": [
+        "recurrent_alpha_proj",
+        "recurrent_beta_proj"
+      ],
+      "selector": {
+        "config_equals": {
+          "ssm_time_step_rank": 48
+        },
+        "config_not_equals": {
+          "recurrent_qkv_weight_dtype": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "fp32_weight_fp32_input_llamafile_x86_native_fp32_output",
+          "validation": "validated",
+          "evidence": "Real Qwen3.6-27B Q4_K_M layer-0 X-ray is exact through recurrent Q/K pre-delta and first differs in the raw 48-wide FP32 alpha/beta projections; llama.cpp's llamafile single-vector FMA order is bit-exact."
+        },
+        "decode": {
+          "contract_id": "fp32_weight_fp32_input_llamafile_x86_native_fp32_output",
+          "validation": "validated",
+          "evidence": "The one-token provider follows llama.cpp's ggml_vec_dot four-accumulator reduction rather than the multi-token llamafile path."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_gate_scalar_projection.output",
+        "producer": "recurrent_alpha_proj",
+        "logical_layout": "row_major",
+        "axis_names": ["token", "head"]
+      }
+    },
+    "decoder.recurrent_qkv_projection.q6_k.prefill": {
+      "op": "gemm",
+      "template_ops": ["recurrent_qkv_proj"],
+      "selector": {
+        "config_equals": {
+          "recurrent_qkv_weight_dtype": "q6_k"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "q6_k_weight_q8_k_input_llama_fp32_output",
+          "validation": "validated",
+          "evidence": "Q6_K x Q8_K production GEMM matches the llama.cpp CPU graph contract and the Qwen3.6 Q4_K_M recurrent QKV tensors are uniformly Q6_K."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_qkv_projection.output",
+        "producer": "recurrent_qkv_proj",
+        "logical_layout": "row_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
     "decoder.recurrent_qkv_projection.q5_k.decode": {
       "op": "gemv",
       "template_ops": ["recurrent_qkv_proj"],
@@ -363,6 +490,28 @@
           "contract_id": "q5_k_weight_q8_k_input_avx2_fma_fp32_output",
           "validation": "validated",
           "evidence": "Q5_K adapter is bit-exact against the llama.cpp x86 production graph at M=1,N=6144,K=1024."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_qkv_projection.output",
+        "producer": "recurrent_qkv_proj",
+        "logical_layout": "row_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.recurrent_qkv_projection.q6_k.decode": {
+      "op": "gemv",
+      "template_ops": ["recurrent_qkv_proj"],
+      "selector": {
+        "config_equals": {
+          "recurrent_qkv_weight_dtype": "q6_k"
+        }
+      },
+      "phases": {
+        "decode": {
+          "contract_id": "q6_k_weight_q8_k_input_llama_fp32_output",
+          "validation": "validated",
+          "evidence": "Q6_K x Q8_K production GEMV is bit-exact against the llama.cpp CPU graph and uses independent output partitioning."
         }
       },
       "checkpoint": {
@@ -538,6 +687,33 @@
         "producer": "recurrent_qk_l2_norm",
         "logical_layout": "head_major",
         "axis_names": ["head", "token", "channel"]
+      }
+    },
+    "decoder.recurrent_ssm_conv": {
+      "op": "ssm_conv1d",
+      "template_ops": ["recurrent_ssm_conv"],
+      "selector": {
+        "config_not_equals": {
+          "recurrent_qkv_weight_dtype": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "ssm_conv1d_llama_scalar_mul_add_fp32_output",
+          "validation": "validated",
+          "evidence": "Production ggml graph parity is bit-exact for Qwen3.6 dimensions only with ascending rounded FP32 multiply/add operations; contraction or an optimized generic loop changes multi-token prefill rounding."
+        },
+        "decode": {
+          "contract_id": "ssm_conv1d_llama_scalar_mul_add_fp32_output",
+          "validation": "validated",
+          "evidence": "The scoped provider is bit-exact against the production ggml graph at one-token decode and preserves the same arithmetic contract across phases."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_ssm_conv.output",
+        "producer": "recurrent_ssm_conv",
+        "logical_layout": "row_major",
+        "axis_names": ["token", "channel"]
       }
     },
     "decoder.recurrent_ssm_conv_bf16_pytorch": {

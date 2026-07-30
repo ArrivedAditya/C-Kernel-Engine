@@ -4692,15 +4692,25 @@ def _normalize_rope_layout_value(value: Any) -> str:
     return aliases.get(rope_layout, rope_layout)
 
 
-def _resolve_rope_qk_kernel(config: Dict, template_kernels: Dict[str, Any]) -> str:
+def _resolve_rope_qk_kernel(
+    config: Dict,
+    template_kernels: Dict[str, Any],
+    mode: str = "",
+) -> str:
     rope_layout = _normalize_rope_layout_value(config.get("rope_layout"))
     rope_param_mode = str(config.get("rope_param_mode", "") or "").strip().lower()
-    override = str(template_kernels.get("rope_qk", "") or "").strip()
+    phase_key = f"rope_qk_{mode}" if mode else ""
+    override = str(
+        (template_kernels.get(phase_key) if phase_key else None)
+        or template_kernels.get("rope_qk")
+        or ""
+    ).strip()
 
     if not override:
         raise RuntimeError(
             "HARD KERNEL RESOLUTION FAULT: rope_qk requires an exact circuit kernel mapping "
-            f"for rope_layout={rope_layout!r}, rope_param_mode={rope_param_mode!r}."
+            f"for phase={mode!r}, rope_layout={rope_layout!r}, "
+            f"rope_param_mode={rope_param_mode!r}."
         )
     if rope_layout == "pairwise" and "pairwise" not in override.lower():
         raise RuntimeError(
@@ -5953,7 +5963,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             return [str(resolved_plan["kernel"]["id"])]
         # Template-specified kernel overrides (keeps IR dumb and data-driven)
         if op == "rope_qk":
-            return [_resolve_rope_qk_kernel(config, template_kernels)]
+            return [_resolve_rope_qk_kernel(config, template_kernels, mode)]
         if op == "rope_q":
             override = str(template_kernels.get("rope_q", "") or "").strip()
             if not override:
@@ -12345,6 +12355,8 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
             call_op["resolved_codegen_capability"] = resolved_codegen
         if op.get("semantic_checkpoints") is not None:
             call_op["semantic_checkpoints"] = copy.deepcopy(op["semantic_checkpoints"])
+        if op.get("bias_for") is not None:
+            call_op["bias_for"] = str(op["bias_for"])
         call_ops.append(call_op)
 
     lowered_call = {
@@ -12381,6 +12393,7 @@ def generate_init_ir_lower_3(init_ir: Dict, layout: Dict) -> Dict:
 
     call_ops = []
     all_errors = []
+    kernel_call_abis = load_kernel_call_abis(legacy_bindings={})
 
     for op in ops:
         func = op.get("kernel", "unknown")
@@ -12388,11 +12401,28 @@ def generate_init_ir_lower_3(init_ir: Dict, layout: Dict) -> Dict:
         params = op.get("params", {})
         op_config = op.get("config", {})
         op_errors = []
+        call_abi_entry = kernel_call_abis.get(func)
 
         args = []
 
-        # Handle rope_init specifically
-        if op_type == "rope_init" and func == "rope_precompute_cache":
+        # Standard RoPE cache providers share one map-owned ABI. The circuit
+        # selects the provider; lowering only binds its declared semantic
+        # sources to the model's init buffers and constants.
+        standard_rope_sources = [
+            "output:cos_cache",
+            "output:sin_cache",
+            "dim:max_seq_len",
+            "dim:head_dim",
+            "config:rope_theta",
+            "dim:rotary_dim",
+            "config:rope_scaling_type",
+            "config:rope_scaling_factor",
+        ]
+        call_abi_sources = [
+            param.get("source")
+            for param in ((call_abi_entry or {}).get("call_abi", {}).get("params", []))
+        ]
+        if op_type == "rope_init" and call_abi_sources == standard_rope_sources:
             # rope_precompute_cache(float *cos_cache, float *sin_cache, int max_seq_len,
             #                      int head_dim, float base, int rotary_dim,
             #                      const char *scaling_type, float scaling_factor)

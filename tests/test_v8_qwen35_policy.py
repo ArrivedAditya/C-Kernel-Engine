@@ -11,12 +11,69 @@ sys.path.insert(0, str((REPO_ROOT / "version" / "v8" / "scripts").resolve()))
 from convert_gguf_to_bump_v8 import (  # type: ignore
     GGUFError,
     build_qwen35_execution_plan,
+    qwen35_decoder_layer_count,
+    qwen35_mtp_source_reason,
     resolve_qwen35_recurrent_qkv_weight_dtype,
 )
 from build_ir_v8 import _hydrate_manifest_template  # type: ignore
 
 
 class V8Qwen35PolicyTests(unittest.TestCase):
+    def test_qwen36_gguf_block_count_excludes_mtp_from_runtime_layers(self) -> None:
+        self.assertEqual(qwen35_decoder_layer_count(65, 1), 64)
+        self.assertEqual(qwen35_decoder_layer_count(24, 0), 24)
+
+    def test_qwen36_gguf_rejects_invalid_mtp_layer_count(self) -> None:
+        with self.assertRaisesRegex(GGUFError, "smaller than block_count"):
+            qwen35_decoder_layer_count(1, 1)
+
+    def test_qwen36_gguf_mtp_tensors_are_scoped_after_decoder_layers(self) -> None:
+        for suffix in ("eh_proj", "enorm", "hnorm", "shared_head_norm"):
+            self.assertEqual(
+                qwen35_mtp_source_reason(
+                    f"blk.64.nextn.{suffix}.weight",
+                    decoder_layers=64,
+                    nextn_layers=1,
+                ),
+                "mtp_decoder_block_not_in_main_pass",
+            )
+        for suffix in (
+            "attn_norm.weight",
+            "post_attention_norm.weight",
+            "attn_q.weight",
+            "attn_k.weight",
+            "attn_v.weight",
+            "attn_output.weight",
+            "attn_q_norm.weight",
+            "attn_k_norm.weight",
+            "ffn_gate.weight",
+            "ffn_up.weight",
+            "ffn_down.weight",
+        ):
+            self.assertEqual(
+                qwen35_mtp_source_reason(
+                    f"blk.64.{suffix}",
+                    decoder_layers=64,
+                    nextn_layers=1,
+                ),
+                "mtp_decoder_block_not_in_main_pass",
+            )
+
+    def test_qwen36_gguf_mtp_classifier_rejects_unknown_or_unscoped_tensors(self) -> None:
+        for name in (
+            "blk.63.nextn.eh_proj.weight",
+            "blk.64.nextn.unknown.weight",
+            "blk.65.nextn.eh_proj.weight",
+            "blk.64.attn_q.bias",
+        ):
+            self.assertIsNone(
+                qwen35_mtp_source_reason(
+                    name,
+                    decoder_layers=64,
+                    nextn_layers=1,
+                )
+            )
+
     def test_recurrent_qkv_dtype_uses_normalized_layer_kinds(self) -> None:
         self.assertEqual(
             resolve_qwen35_recurrent_qkv_weight_dtype(
@@ -28,6 +85,19 @@ class V8Qwen35PolicyTests(unittest.TestCase):
                 },
             ),
             "q8_0",
+        )
+
+    def test_recurrent_qkv_dtype_accepts_uniform_q6_k(self) -> None:
+        self.assertEqual(
+            resolve_qwen35_recurrent_qkv_weight_dtype(
+                ["recurrent", "full_attention", "recurrent"],
+                {
+                    "layer.0": {"attn_qkv": "q6_k"},
+                    "layer.1": {"attn_q": "q4_k"},
+                    "layer.2": {"attn_qkv": "q6_k"},
+                },
+            ),
+            "q6_k",
         )
 
     def test_mixed_recurrent_qkv_dtypes_hard_fail(self) -> None:

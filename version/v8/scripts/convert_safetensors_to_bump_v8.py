@@ -1642,6 +1642,7 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         recurrent_q_dim = int(text.get("linear_num_key_heads", 0) or 0) * int(text.get("linear_key_head_dim", 0) or 0)
         recurrent_k_dim = recurrent_q_dim
         recurrent_v_dim = int(text.get("linear_num_value_heads", 0) or 0) * int(text.get("linear_value_head_dim", 0) or 0)
+        recurrent_qkv_weight_dtypes: set[str] = set()
         ssm_time_step_rank = 0
         for name, h in headers.items():
             if name.endswith(".self_attn.q_proj.weight") and len(h.shape) >= 2:
@@ -1649,6 +1650,7 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
                 if q_gate_proj_dim % 2 == 0:
                     attn_out_dim = q_gate_proj_dim // 2
             elif name.endswith(".linear_attn.in_proj_qkv.weight") and len(h.shape) >= 2:
+                recurrent_qkv_weight_dtypes.add(_header_dtype_to_ck(h.dtype)[0])
                 total = int(h.shape[0])
                 if recurrent_q_dim <= 0 or recurrent_k_dim <= 0 or recurrent_v_dim <= 0:
                     recurrent_q_dim = total // 3
@@ -1662,6 +1664,16 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             q_gate_proj_dim = attn_out_dim * 2
         if ssm_time_step_rank <= 0:
             ssm_time_step_rank = int(text.get("linear_num_key_heads") or text.get("linear_num_value_heads") or 0)
+        if len(recurrent_qkv_weight_dtypes) > 1:
+            raise SystemExit(
+                "Qwen3.5 recurrent QKV projection weights must use one storage dtype; "
+                f"found {sorted(recurrent_qkv_weight_dtypes)}"
+            )
+        recurrent_qkv_weight_dtype = (
+            next(iter(recurrent_qkv_weight_dtypes))
+            if recurrent_qkv_weight_dtypes
+            else ""
+        )
 
         layer_types = list(architecture["layer_types"])
         layer_kinds = list(architecture["layer_kinds"])
@@ -1704,6 +1716,18 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "recurrent_head_dim": int(recurrent_v_dim // max(1, ssm_time_step_rank)) if ssm_time_step_rank else int(text.get("linear_key_head_dim") or 0),
             "sampler_defaults": {"repeat_penalty": 1.12, "repeat_last_n": 96, "no_repeat_ngram_size": 4},
         })
+        if recurrent_qkv_weight_dtype:
+            cfg["recurrent_qkv_weight_dtype"] = recurrent_qkv_weight_dtype
+        if recurrent_qkv_weight_dtype == "bf16":
+            cfg.update({
+                "decoder_norm_storage_boundary": "bf16",
+                "decoder_norm_reduction_policy": "pytorch_avx2_cascade_exact",
+                "decoder_qk_norm_reduction_policy": "pytorch_avx2_cascade_exact",
+                "decoder_projection_reduction_policy": "pytorch_onednn_brgemm_exact",
+                "decoder_residual_storage_boundary": "bf16",
+                "decoder_swiglu_storage_boundary": "pytorch_bf16_exact",
+                "decode_kv_cache_dtype": "bf16",
+            })
         cfg.update({
             key: architecture[key]
             for key in (
@@ -1724,7 +1748,16 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         mrope = list(rope_parameters.get("mrope_section") or [])
         if mrope:
             cfg["mrope_sections"] = [int(v) for v in mrope] + ([0] if len(mrope) == 3 else [])
-            cfg["mrope_n_dims"] = int(cfg.get("head_dim") or cfg.get("hidden_size", 0) // max(1, int(cfg.get("num_attention_heads", 1))) or sum(int(v) for v in mrope))
+            # Qwen3.5 may rotate only a fraction of each attention head. Keep
+            # the validated architecture width instead of expanding M-RoPE
+            # back to the full head dimension.
+            cfg["mrope_n_dims"] = int(
+                cfg.get("rotary_dim")
+                or cfg.get("head_dim")
+                or cfg.get("hidden_size", 0)
+                // max(1, int(cfg.get("num_attention_heads", 1)))
+                or 2 * sum(int(v) for v in mrope)
+            )
     cfg = _inject_runtime_config_defaults(cfg, arch)
     if arch == "gemma4" and "layer_kinds" not in cfg:
         raise SystemExit("Gemma4 safetensors conversion currently requires --config-template with explicit layer_kinds/shared KV policy")
