@@ -1,3 +1,5 @@
+"""Citation annotation shapes accepted by the schema scaffold."""
+
 from __future__ import annotations
 
 from typing import Annotated, Literal

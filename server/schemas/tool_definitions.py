@@ -1,10 +1,12 @@
+"""Tool-definition shapes; no tool execution is connected."""
+
 from __future__ import annotations
 
 from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from schemas.filters import Filter, RankingOptions
+from .filters import Filter, RankingOptions
 
 
 class FunctionTool(BaseModel):

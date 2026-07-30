@@ -1,18 +1,20 @@
+"""Request and response models for the experimental schema subset."""
+
 from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from schemas.common import (
+from .common import (
     Includable,
     ResponseError,
     ResponseIncompleteDetails,
     ResponseStatus,
     Usage,
 )
-from schemas.input_items import EasyInputMessage, Message
-from schemas.output_items import (
+from .input_items import EasyInputMessage, Message
+from .output_items import (
     ComputerCall,
     ComputerCallOutput,
     FileSearchCall,
@@ -24,7 +26,7 @@ from schemas.output_items import (
     ToolSearchOutput,
     WebSearchCall,
 )
-from schemas.tool_definitions import ToolDefinition
+from .tool_definitions import ToolDefinition
 
 
 class ContextManagementEntry(BaseModel):
@@ -91,13 +93,13 @@ class Response(BaseModel):
     error: ResponseError | None = None
     incomplete_details: ResponseIncompleteDetails | None = None
     instructions: str | list[Any] | None = None
-    input_items: list[Any] = []
-    output_items: list[Any] = []
+    input_items: list[Any] = Field(default_factory=list)
+    output: list[Any] = Field(default_factory=list)
     model: str
-    tools: list[ToolDefinition] = []
+    tools: list[ToolDefinition] = Field(default_factory=list)
     tool_choice: str | dict[str, Any] | None = None
-    include: list[Includable] = []
-    metadata: dict[str, str] = {}
+    include: list[Includable] = Field(default_factory=list)
+    metadata: dict[str, str] = Field(default_factory=dict)
     temperature: float | None = None
     top_p: float | None = None
     n: int | None = None

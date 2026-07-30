@@ -1,3 +1,5 @@
+"""Conversation request shapes backed only by process-local mock storage."""
+
 from __future__ import annotations
 
 from typing import Any

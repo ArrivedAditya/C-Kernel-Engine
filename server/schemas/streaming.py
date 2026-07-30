@@ -1,11 +1,13 @@
+"""Streaming event shapes; generation remains mocked in this scaffold."""
+
 from __future__ import annotations
 
 from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from schemas.common import ResponseIncompleteDetails
-from schemas.output_items import ResponseOutputItem
+from .common import ResponseIncompleteDetails
+from .output_items import ResponseOutputItem
 
 
 class ResponseCreatedEvent(BaseModel):

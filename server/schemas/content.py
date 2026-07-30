@@ -1,11 +1,13 @@
+"""Input and output content shapes for schema validation only."""
+
 from __future__ import annotations
 
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
-from schemas.annotations import Annotation
-from schemas.common import FileDetail, ImageDetail
+from .annotations import Annotation
+from .common import FileDetail, ImageDetail
 
 
 class PromptCacheBreakpoint(BaseModel):

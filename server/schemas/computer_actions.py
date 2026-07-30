@@ -1,3 +1,5 @@
+"""Computer-action schema shapes; no computer tool is implemented."""
+
 from __future__ import annotations
 
 from typing import Annotated, Literal

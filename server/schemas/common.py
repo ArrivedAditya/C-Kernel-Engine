@@ -1,3 +1,5 @@
+"""Shared enums and metadata shapes for the schema scaffold."""
+
 from __future__ import annotations
 
 from enum import StrEnum

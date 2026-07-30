@@ -1330,6 +1330,10 @@ test-audio-v8-contracts:
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_whisper_runner.py
 	$(MAKE) --no-print-directory test-whisper-pytorch-e2e-auto
 
+.PHONY: test-server-schema
+test-server-schema:
+	$(PYTHON) $(PYTHONFLAGS) -m pytest -q server/tests
+
 test-whisper-e2e-auto:
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_whisper_runner.py \
 		-k exact_transcript

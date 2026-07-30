@@ -1,3 +1,5 @@
+"""Filter schema shapes; the scaffold does not execute searches."""
+
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal

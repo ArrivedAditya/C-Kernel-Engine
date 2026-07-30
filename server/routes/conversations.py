@@ -1,3 +1,9 @@
+"""In-memory conversation routes for schema testing only.
+
+State is process-local, unbounded, and non-durable. These routes are not a
+production conversation store.
+"""
+
 from __future__ import annotations
 
 import time
@@ -5,7 +11,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 
-from schemas.conversation import (
+from ..schemas.conversation import (
     AddConversationItemsRequest,
     Conversation,
     CreateConversationRequest,

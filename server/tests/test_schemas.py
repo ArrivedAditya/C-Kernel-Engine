@@ -1,14 +1,9 @@
+"""Unit tests for the experimental Responses schema subset."""
+
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-# Calculate the parent directory path and add it to sys.path
-parent_dir = str(Path(__file__).resolve().parent.parent)
-sys.path.append(parent_dir)
-
-from schemas.annotations import FileCitation, URLCitation, FilePath
-from schemas.common import (
+from server.schemas.annotations import FileCitation, URLCitation, FilePath
+from server.schemas.common import (
     ErrorCode,
     Includable,
     ItemStatus,
@@ -19,18 +14,18 @@ from schemas.common import (
     Role,
     Usage,
 )
-from schemas.computer_actions import Click, DoubleClick, Drag, Keypress, Move, Scroll, TypeAction, Wait
-from schemas.content import (
+from server.schemas.computer_actions import Click, DoubleClick, Drag, Keypress, Move, Scroll, TypeAction, Wait
+from server.schemas.content import (
     ResponseInputFile,
     ResponseInputImage,
     ResponseInputText,
     ResponseOutputRefusal,
     ResponseOutputText,
 )
-from schemas.conversation import Conversation, CreateConversationRequest
-from schemas.filters import ComparisonFilter, CompoundFilter
-from schemas.input_items import EasyInputMessage, Message
-from schemas.output_items import (
+from server.schemas.conversation import Conversation, CreateConversationRequest
+from server.schemas.filters import ComparisonFilter, CompoundFilter
+from server.schemas.input_items import EasyInputMessage, Message
+from server.schemas.output_items import (
     ComputerCall,
     FileSearchCall,
     FunctionCall,
@@ -39,13 +34,13 @@ from schemas.output_items import (
     ResponseOutputMessage,
     WebSearchCall,
 )
-from schemas.response import CreateResponseRequest, Response
-from schemas.streaming import (
+from server.schemas.response import CreateResponseRequest, Response
+from server.schemas.streaming import (
     ResponseCompletedEvent,
     ResponseCreatedEvent,
     ResponseTextDeltaEvent,
 )
-from schemas.tool_definitions import (
+from server.schemas.tool_definitions import (
     CodeInterpreterTool,
     FileSearchTool,
     FunctionTool,
@@ -199,7 +194,7 @@ def test_computer_call():
 
 
 def test_web_search_call():
-    from schemas.output_items import WebSearchActionSearch
+    from server.schemas.output_items import WebSearchActionSearch
 
     action = WebSearchActionSearch(queries=["test query"])
     wsc = WebSearchCall(
@@ -330,6 +325,8 @@ def test_response_model():
     assert d["id"] == "resp_abc"
     assert d["status"] == "completed"
     assert d["object"] == "response"
+    assert d["output"] == []
+    assert "output_items" not in d
 
     r2 = Response.model_validate(d)
     assert r2.id == resp.id

@@ -1412,10 +1412,6 @@ def step_run_chat(work_dir: Path, args: argparse.Namespace, *, gguf_path: Path |
         cmd.extend(["--speculative-draft-model-dir", str(args.speculative_draft_model_dir)])
     if getattr(args, "speculative_draft_tokens", None) is not None:
         cmd.extend(["--speculative-draft-tokens", str(int(args.speculative_draft_tokens))])
-    if args.port is not None:
-        cmd.extend(["--port", str(float(args.port))])
-
-
     os.execvpe(sys.executable, cmd, env)
 
 
@@ -1988,7 +1984,6 @@ Examples:
         help="Optional vision encoder activation override(s) in op=dtype form, e.g. out_proj=q8",
     )
 
-    run_parser.add_argument("--port", default=int, help="Acesss model I/O locally using OpenAI API")
     audio_parser = subparsers.add_parser(
         "audio", help="Transcribe or translate WAV audio with generated runtimes"
     )

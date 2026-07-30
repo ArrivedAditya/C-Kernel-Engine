@@ -1,11 +1,13 @@
+"""Responses input-item shapes for request validation."""
+
 from __future__ import annotations
 
 from typing import Literal
 
 from pydantic import BaseModel
 
-from schemas.common import ItemStatus, Phase, Role
-from schemas.content import ResponseInputContent
+from .common import ItemStatus, Phase, Role
+from .content import ResponseInputContent
 
 
 class EasyInputMessage(BaseModel):

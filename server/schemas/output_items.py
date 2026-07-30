@@ -1,12 +1,14 @@
+"""Responses output-item shapes emitted as deterministic mock data."""
+
 from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from schemas.common import FileSearchStatus, ItemStatus, Phase, WebSearchStatus
-from schemas.computer_actions import ComputerAction
-from schemas.content import ResponseInputContent, ResponseOutputContent
+from .common import FileSearchStatus, ItemStatus, Phase, WebSearchStatus
+from .computer_actions import ComputerAction
+from .content import ResponseInputContent, ResponseOutputContent
 
 
 class ResponseOutputMessage(BaseModel):

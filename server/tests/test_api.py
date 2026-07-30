@@ -1,14 +1,10 @@
+"""HTTP tests proving the explicitly mocked server surface."""
+
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-import sys
-from pathlib import Path
-
-parent_dir = str(Path(__file__).resolve().parent.parent)
-sys.path.append(parent_dir)
-
-from main import app
+from server.main import app
 
 client = TestClient(app)
 
@@ -16,7 +12,11 @@ client = TestClient(app)
 def test_health():
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok"}
+    assert resp.json() == {
+        "status": "ok",
+        "mode": "schema_scaffold",
+        "inference": False,
+    }
 
 
 def test_create_response_minimal():
@@ -27,6 +27,10 @@ def test_create_response_minimal():
     assert data["model"] == "gpt-4o"
     assert data["id"].startswith("resp_")
     assert data["status"] == "completed"
+    assert data["output"][0]["content"][0]["text"].startswith(
+        "CKE schema scaffold:"
+    )
+    assert "output_items" not in data
 
 
 def test_create_response_with_input():
@@ -69,17 +73,24 @@ def test_cancel_response_not_found():
 
 
 def test_stream_response():
-    create_resp = client.post("/v1/responses", json={"model": "gpt-4o"})
-    resp_id = create_resp.json()["id"]
-
-    stream_resp = client.post(f"/v1/responses/{resp_id}/stream")
+    stream_resp = client.post(
+        "/v1/responses",
+        json={"model": "gpt-4o", "stream": True},
+    )
     assert stream_resp.status_code == 200
     assert "text/event-stream" in stream_resp.headers["content-type"]
 
     text = stream_resp.text
     assert "response.created" in text
     assert "response.in_progress" in text
+    assert "response.output_text.delta" in text
     assert "response.completed" in text
+
+
+def test_nonstandard_stream_endpoint_is_not_exposed():
+    create_resp = client.post("/v1/responses", json={"model": "gpt-4o"})
+    resp_id = create_resp.json()["id"]
+    assert client.post(f"/v1/responses/{resp_id}/stream").status_code == 404
 
 
 def test_create_conversation():
