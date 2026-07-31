@@ -87,6 +87,23 @@ def test_whisper_runner_uses_generated_frontend_and_forced_prefix_is_stable() ->
     ) == [50258, 50259, 50359]
 
 
+def test_whisper_workers_do_not_compete_with_numpy_blas_threads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _module()
+    monkeypatch.setenv("CK_NUM_THREADS", "20")
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "28")
+    monkeypatch.setenv("MKL_NUM_THREADS", "28")
+
+    worker_env = runner._worker_environment()
+
+    assert worker_env["CK_NUM_THREADS"] == "20"
+    assert worker_env["OPENBLAS_NUM_THREADS"] == "1"
+    assert worker_env["MKL_NUM_THREADS"] == "1"
+    assert os.environ["OPENBLAS_NUM_THREADS"] == "28"
+    assert os.environ["MKL_NUM_THREADS"] == "28"
+
+
 def test_whisper_frontend_xray_metrics_are_json_serializable() -> None:
     xray = _frontend_xray_module()
     reference = np.zeros((2, 3), dtype=np.float32)

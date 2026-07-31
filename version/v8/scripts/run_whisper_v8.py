@@ -46,6 +46,14 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _worker_environment() -> dict[str, str]:
+    """Keep NumPy's idle BLAS pool from competing with CKE worker threads."""
+    env = os.environ.copy()
+    env["OPENBLAS_NUM_THREADS"] = "1"
+    env["MKL_NUM_THREADS"] = "1"
+    return env
+
+
 def _require_artifact(run_dir: Path) -> None:
     for name in (
         "libckernel_engine.so",
@@ -511,6 +519,7 @@ def _run_segment(
             str(encoder_report),
         ],
         check=True,
+        env=_worker_environment(),
     )
     subprocess.run(
         [
@@ -531,6 +540,7 @@ def _run_segment(
             str(decoder_report),
         ],
         check=True,
+        env=_worker_environment(),
     )
     return (
         json.loads(encoder_report.read_text(encoding="utf-8")),
