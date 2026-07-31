@@ -21,6 +21,9 @@ void gated_deltanet_llama_avx2_parallel_forward(
 void gated_deltanet_llama_avx2_prefill_forward(
         const float *, const float *, const float *, const float *, const float *,
         const float *, float *, float *, int, int, int, int, float);
+void gated_deltanet_llama_prefill_parallel_dispatch(
+        const float *, const float *, const float *, const float *, const float *,
+        const float *, float *, float *, int, int, int, int, float);
 void gated_deltanet_llama_chunk64_prefill_forward(
         const float *, const float *, const float *, const float *, const float *,
         const float *, float *, float *, int, int, int, int, float);
@@ -294,7 +297,8 @@ static bool llama_chunk_graph(
 }
 
 static bool run_case(int rows, int heads = 16, int groups = 4,
-                     bool parallel_decode = false) {
+                     bool parallel_decode = false,
+                     bool parallel_prefill = false) {
     constexpr int dim = 128;
     const size_t qk_vectors = static_cast<size_t>(rows) * groups * dim;
     const size_t vectors = static_cast<size_t>(rows) * heads * dim;
@@ -335,12 +339,19 @@ static bool run_case(int rows, int heads = 16, int groups = 4,
                     state.data(), ck_state.data(), ck_out.data(),
                     heads, groups, dim, 1e-6f);
         }
+    } else if (parallel_prefill) {
+        gated_deltanet_llama_prefill_parallel_dispatch(
+                q.data(), k.data(), v.data(), g.data(), beta.data(),
+                state.data(), ck_state.data(), ck_out.data(),
+                rows, heads, groups, dim, 1e-6f);
     } else {
         gated_deltanet_llama_avx2_prefill_forward(q.data(), k.data(), v.data(), g.data(), beta.data(),
                 state.data(), ck_state.data(), ck_out.data(), rows, heads, groups, dim, 1e-6f);
     }
     std::printf("rows=%d heads=%d groups=%d dim=%d provider=%s threads=%s\n",
-            rows, heads, groups, dim, parallel_decode ? "parallel" : "serial",
+            rows, heads, groups, dim,
+            parallel_decode ? "parallel_decode" :
+            parallel_prefill ? "parallel_prefill" : "serial",
             std::getenv("CK_NUM_THREADS") ? std::getenv("CK_NUM_THREADS") : "1");
     const bool output_ok =
         close("attention output", ck_out.data(), llama_out.data(), vectors, 2e-8f);
@@ -437,13 +448,15 @@ static bool run_norm_gate_case(int rows) {
 int main() {
     const bool decode = run_case(1);
     const bool qwen36_parallel_decode = run_case(1, 48, 16, true);
+    const bool qwen36_parallel_prefill = run_case(29, 48, 16, false, true);
     const bool prefill = run_case(18);
     const bool prefill_cross_chunk = run_case(65);
     const bool chunk_prefill = run_chunk_case(18);
     const bool chunk_cross_chunk = run_chunk_case(65);
     const bool norm_decode = run_norm_gate_case(1);
     const bool norm_prefill = run_norm_gate_case(18);
-    return decode && qwen36_parallel_decode && prefill && prefill_cross_chunk &&
+    return decode && qwen36_parallel_decode && qwen36_parallel_prefill &&
+        prefill && prefill_cross_chunk &&
         chunk_prefill && chunk_cross_chunk &&
         norm_decode && norm_prefill ? 0 : 1;
 }

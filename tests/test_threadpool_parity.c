@@ -193,6 +193,16 @@ extern void gemm_nt_q6_k_q8_k_parallel_dispatch(const void *A, const void *B,
 extern void gemm_nt_q4_k_q8_k_parallel_dispatch(const void *A, const void *B,
                                                   const float *bias, float *C,
                                                   int M, int N, int K);
+extern void gated_deltanet_llama_avx2_prefill_forward(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int rows, int num_heads, int group_count, int state_dim, float norm_eps);
+extern void gated_deltanet_llama_prefill_parallel_dispatch(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int rows, int num_heads, int group_count, int state_dim, float norm_eps);
 
 static void gemm_nt_q4_k_q8_k_scalar_oracle(
     const void *A, const void *B, const float *bias, float *C,
@@ -250,6 +260,64 @@ static parity_result_t check_parity(const float *ref, const float *test, int n,
         if (diff > abs_tol) r.num_diffs++;
     }
     return r;
+}
+
+static int run_deltanet_prefill_parallel_test(void) {
+    enum { rows = 29, heads = 48, groups = 16, dim = 128 };
+    const size_t qk_count = (size_t)rows * groups * dim;
+    const size_t value_count = (size_t)rows * heads * dim;
+    const size_t gate_count = (size_t)rows * heads;
+    const size_t state_count = (size_t)heads * dim * dim;
+    float *q = malloc(qk_count * sizeof(*q));
+    float *k = malloc(qk_count * sizeof(*k));
+    float *v = malloc(value_count * sizeof(*v));
+    float *g = malloc(gate_count * sizeof(*g));
+    float *beta = malloc(gate_count * sizeof(*beta));
+    float *state = malloc(state_count * sizeof(*state));
+    float *serial_state = malloc(state_count * sizeof(*serial_state));
+    float *parallel_state = malloc(state_count * sizeof(*parallel_state));
+    float *serial_out = malloc(value_count * sizeof(*serial_out));
+    float *parallel_out = malloc(value_count * sizeof(*parallel_out));
+    if (!q || !k || !v || !g || !beta || !state || !serial_state ||
+        !parallel_state || !serial_out || !parallel_out) {
+        free(q); free(k); free(v); free(g); free(beta); free(state);
+        free(serial_state); free(parallel_state); free(serial_out); free(parallel_out);
+        return 1;
+    }
+    fill_random_float(q, (int)qk_count, 0.1f);
+    fill_random_float(k, (int)qk_count, 0.1f);
+    fill_random_float(v, (int)value_count, 0.2f);
+    fill_random_float(beta, (int)gate_count, 0.7f);
+    fill_random_float(state, (int)state_count, 0.04f);
+    for (size_t i = 0; i < gate_count; ++i) {
+        g[i] = -0.03f - fabsf(beta[i]) * 0.1f;
+    }
+
+    const double serial_start = get_time_ms();
+    gated_deltanet_llama_avx2_prefill_forward(
+        q, k, v, g, beta, state, serial_state, serial_out,
+        rows, heads, groups, dim, 1e-6f);
+    const double serial_ms = get_time_ms() - serial_start;
+    unsetenv("CK_ENABLE_DELTANET_CHUNK64_PREFILL");
+    const double parallel_start = get_time_ms();
+    gated_deltanet_llama_prefill_parallel_dispatch(
+        q, k, v, g, beta, state, parallel_state, parallel_out,
+        rows, heads, groups, dim, 1e-6f);
+    const double parallel_ms = get_time_ms() - parallel_start;
+
+    const int output_exact =
+        memcmp(serial_out, parallel_out, value_count * sizeof(*serial_out)) == 0;
+    const int state_exact =
+        memcmp(serial_state, parallel_state, state_count * sizeof(*serial_state)) == 0;
+    printf("  Qwen3.6 29x48x128 exact-head prefill: serial=%.2f ms pool=%.2f ms "
+           "output=%s state=%s\n",
+           serial_ms, parallel_ms,
+           output_exact ? "bit-exact" : "DIFF",
+           state_exact ? "bit-exact" : "DIFF");
+
+    free(q); free(k); free(v); free(g); free(beta); free(state);
+    free(serial_state); free(parallel_state); free(serial_out); free(parallel_out);
+    return output_exact && state_exact ? 0 : 1;
 }
 
 /* ============================================================================
@@ -1095,6 +1163,12 @@ int main(int argc, char **argv) {
         }
     }
 
+    printf("\n");
+    printf("================================================================================\n");
+    printf("  TEST 12: Qwen3.6 exact DeltaNet prefill serial vs one-dispatch head pool\n");
+    printf("================================================================================\n");
+    total_fail += run_deltanet_prefill_parallel_test();
+
     /* =========================================================================
      * Summary
      * ========================================================================= */
@@ -1102,7 +1176,7 @@ int main(int argc, char **argv) {
     printf("  SUMMARY\n");
     printf("================================================================================\n");
     printf("  Thread pool:   %d threads\n", n_threads);
-    printf("  Tests:         GEMV decode (1-7) + GEMM prefill (8-11)\n");
+    printf("  Tests:         GEMV decode (1-7) + GEMM/recurrent prefill (8-12)\n");
     printf("  Failed:        %d\n", total_fail);
     printf("================================================================================\n");
 

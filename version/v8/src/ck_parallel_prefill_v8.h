@@ -49,7 +49,7 @@ void ck_q4k_packed_weight_cache_clear(void);
  */
 int ck_q4k_prepare_vnni_x16_weight(const void *B, int N, int K);
 
-void gated_deltanet_llama_chunk64_prefill_parallel_dispatch(
+void gated_deltanet_llama_prefill_parallel_dispatch(
     const float *q, const float *k, const float *v,
     const float *g, const float *beta,
     const float *state_in, float *state_out, float *out,
@@ -123,7 +123,7 @@ void gemm_nt_q5_k_parallel_dispatch(
 #define gated_deltanet_llama_avx2_prefill_forward( \
         q, k, v, g, beta, state_in, state_out, out, \
         rows, num_heads, group_count, state_dim, norm_eps) \
-    gated_deltanet_llama_chunk64_prefill_parallel_dispatch( \
+    gated_deltanet_llama_prefill_parallel_dispatch( \
         q, k, v, g, beta, state_in, state_out, out, \
         rows, num_heads, group_count, state_dim, norm_eps)
 
