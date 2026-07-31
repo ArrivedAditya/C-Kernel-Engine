@@ -1079,23 +1079,25 @@ int main(int argc, char ** argv) {
         ck_q4k_packed_weight_cache_clear();
     }
     if (!quick && ck_q4k_packed_vnni_x16_available()) {
-        /*
-         * Exercise the exact Qwen3.6 recurrent-gate shape, including its
-         * M=23 three-row residual tail, through production x16 dispatch.
-         * llama.cpp remains the independent oracle for both grouped GEMM rows
-         * and the batched exact-GEMV tail.
-         */
+        /* Exercise every promoted Qwen3.6 x16 shape, including the one-row
+         * residual tail, against the independent llama.cpp oracle. */
         setenv("CK_ENABLE_Q4K_AVX512_X16_EXPERIMENTAL", "1", 1);
         unsetenv("CK_DISABLE_Q4K_X16_BATCHED_TAIL");
-        const case_spec qwen36_recurrent_gate = {
-            "qwen36_recurrent_gate_x16_tail",
-            23, 6144, 5120, true, false, false
+        const case_spec qwen36_x16_shapes[] = {
+            {"qwen36_v_proj_x16_tail",         29, 1024,  5120,  true, false, false},
+            {"qwen36_recurrent_gate_x16_tail", 29, 6144,  5120,  true, false, false},
+            {"qwen36_q_gate_x16_tail",         29, 12288, 5120,  true, false, false},
+            {"qwen36_mlp_gate_up_x16_tail",    29, 34816, 5120,  true, false, false},
+            {"qwen36_recurrent_out_x16_tail",  29, 5120,  6144,  true, false, false},
+            {"qwen36_mlp_down_x16_tail",       29, 5120,  17408, true, false, false},
         };
-        if (!run_case(qwen36_recurrent_gate)) {
-            ++quant_failed;
+        for (const case_spec & spec : qwen36_x16_shapes) {
+            if (!run_case(spec)) {
+                ++quant_failed;
+            }
+            ck_q4k_packed_weight_cache_clear();
         }
         unsetenv("CK_ENABLE_Q4K_AVX512_X16_EXPERIMENTAL");
-        ck_q4k_packed_weight_cache_clear();
     }
     if (!run_real_artifact_case()) {
         ++quant_failed;

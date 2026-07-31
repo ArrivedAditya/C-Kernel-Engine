@@ -147,8 +147,15 @@ class Q4KLlamaPerformanceGateTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("ck_get_q4k_packed_vnni_x16_cached", dispatcher)
         self.assertIn("ck_should_use_qwen36_q4k_avx512_x16", dispatcher)
-        self.assertIn("N == 34816 || N == 6144", dispatcher)
-        self.assertIn("K != 5120", dispatcher)
+        for shape_guard in (
+            "N == 1024",
+            "N == 6144",
+            "N == 12288",
+            "N == 34816",
+            "N == 5120 && (K == 6144 || K == 17408)",
+        ):
+            self.assertIn(shape_guard, dispatcher)
+        self.assertIn("if (K == 5120)", dispatcher)
         self.assertIn("CK_ENABLE_Q4K_AVX512_X16_EXPERIMENTAL", dispatcher)
         self.assertIn("CK_V8_FORCE_BATCHED_PREFILL", dispatcher)
         self.assertIn("CK_DISABLE_Q4K_AVX512_X16_PREFILL", dispatcher)

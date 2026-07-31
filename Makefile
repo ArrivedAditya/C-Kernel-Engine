@@ -3117,6 +3117,7 @@ RMSNORM_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_rmsnorm_llama_production
 RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_recurrent_qk_l2_norm_llama_production
 DELTANET_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_deltanet_llamacpp_production
 DELTANET_PARALLEL_DECODE_OBJ := $(BUILD_DIR)/test_deltanet_parallel_decode.o
+DELTANET_PARALLEL_PREFILL_OBJ := $(BUILD_DIR)/test_deltanet_parallel_prefill.o
 DELTANET_GROUPED_DECODE_BENCH_BIN := $(BUILD_DIR)/bench_deltanet_grouped_decode
 SSM_CONV_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_ssm_conv_llama_production
 RECURRENT_SILU_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_recurrent_silu_llama_production
@@ -3245,12 +3246,17 @@ $(DELTANET_PARALLEL_DECODE_OBJ): $(V8_SRC_DIR)/ck_parallel_decode_v8.c
 	@mkdir -p $(BUILD_DIR)
 	$(CC) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) -c $< -o $@
 
-$(DELTANET_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_deltanet_llamacpp_production.cpp $(DELTANET_PARALLEL_DECODE_OBJ)
+$(DELTANET_PARALLEL_PREFILL_OBJ): $(V8_SRC_DIR)/ck_parallel_prefill_v8.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) -c $< -o $@
+
+$(DELTANET_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_deltanet_llamacpp_production.cpp $(DELTANET_PARALLEL_DECODE_OBJ) $(DELTANET_PARALLEL_PREFILL_OBJ)
 	@mkdir -p $(BUILD_DIR)
 	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
 		-I$(Q4Q6_LLAMA_CPP_DIR)/ggml/include -I$(Q4Q6_LLAMA_CPP_DIR)/ggml/src \
 		unittest/test_deltanet_llamacpp_production.cpp \
 		$(DELTANET_PARALLEL_DECODE_OBJ) \
+		$(DELTANET_PARALLEL_PREFILL_OBJ) \
 		-L$(BUILD_DIR) -lckernel_engine \
 		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
 		-lm -lpthread -ldl \

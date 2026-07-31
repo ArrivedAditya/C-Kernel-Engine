@@ -177,6 +177,12 @@ extern void gated_deltanet_llama_avx2_prefill_forward(
     const float *g, const float *beta,
     const float *state_in, float *state_out, float *out,
     int rows, int num_heads, int group_count, int state_dim, float norm_eps);
+extern void gated_deltanet_llama_avx2_forward_head_range(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int num_heads, int group_count, int state_dim, float norm_eps,
+    int head_begin, int head_end);
 extern void gated_deltanet_llama_chunk64_head_forward(
     const float *q, const float *k, const float *v,
     const float *g, const float *beta,
@@ -238,7 +244,8 @@ typedef struct {
     int num_heads;
     int group_count;
     int state_dim;
-} deltanet_chunk64_args_t;
+    float norm_eps;
+} deltanet_prefill_args_t;
 
 static int ck_min_int(int a, int b) { return a < b ? a : b; }
 static int ck_env_enabled(const char *name);
@@ -254,7 +261,7 @@ static int ck_deltanet_chunk64_available(void)
 
 static void work_deltanet_chunk64_heads(int ith, int nth, void *userdata)
 {
-    deltanet_chunk64_args_t *args = (deltanet_chunk64_args_t *)userdata;
+    deltanet_prefill_args_t *args = (deltanet_prefill_args_t *)userdata;
     for (int head = ith; head < args->num_heads; head += nth) {
         gated_deltanet_llama_chunk64_head_forward(
             args->q, args->k, args->v, args->g, args->beta,
@@ -264,16 +271,47 @@ static void work_deltanet_chunk64_heads(int ith, int nth, void *userdata)
     }
 }
 
-void gated_deltanet_llama_chunk64_prefill_parallel_dispatch(
+/*
+ * Preserve the llama.cpp fused recurrent arithmetic while amortizing one
+ * thread-pool dispatch across the whole prompt.  Every worker owns disjoint
+ * heads and advances those heads through all rows in order, so there are no
+ * cross-worker state dependencies and each per-head reduction tree is
+ * identical to gated_deltanet_llama_avx2_prefill_forward().
+ */
+static void work_deltanet_exact_prefill_heads(int ith, int nth, void *userdata)
+{
+    deltanet_prefill_args_t *args = (deltanet_prefill_args_t *)userdata;
+    const int head_begin = (args->num_heads * ith) / nth;
+    const int head_end = (args->num_heads * (ith + 1)) / nth;
+    const size_t qk_stride =
+        (size_t)args->group_count * (size_t)args->state_dim;
+    const size_t value_stride =
+        (size_t)args->num_heads * (size_t)args->state_dim;
+    const size_t gate_stride = (size_t)args->num_heads;
+
+    for (int row = 0; row < args->rows; ++row) {
+        gated_deltanet_llama_avx2_forward_head_range(
+            args->q + (size_t)row * qk_stride,
+            args->k + (size_t)row * qk_stride,
+            args->v + (size_t)row * value_stride,
+            args->g + (size_t)row * gate_stride,
+            args->beta + (size_t)row * gate_stride,
+            row == 0 ? args->state_in : args->state_out,
+            args->state_out,
+            args->out + (size_t)row * value_stride,
+            args->num_heads, args->group_count, args->state_dim,
+            args->norm_eps, head_begin, head_end);
+    }
+}
+
+void gated_deltanet_llama_prefill_parallel_dispatch(
     const float *q, const float *k, const float *v,
     const float *g, const float *beta,
     const float *state_in, float *state_out, float *out,
     int rows, int num_heads, int group_count, int state_dim, float norm_eps)
 {
     ck_threadpool_t *pool = ck_threadpool_global();
-    if (!ck_env_enabled("CK_ENABLE_DELTANET_CHUNK64_PREFILL") ||
-        !ck_deltanet_chunk64_available() ||
-        !pool || ck_threadpool_n_threads(pool) <= 1 ||
+    if (!pool || ck_threadpool_n_threads(pool) <= 1 ||
         rows <= 1 || num_heads <= 1 || group_count <= 0 ||
         num_heads % group_count != 0 || state_dim <= 0 || state_dim > 256) {
         gated_deltanet_llama_avx2_prefill_forward(
@@ -282,7 +320,7 @@ void gated_deltanet_llama_chunk64_prefill_parallel_dispatch(
         return;
     }
 
-    deltanet_chunk64_args_t args = {
+    deltanet_prefill_args_t args = {
         .q = q,
         .k = k,
         .v = v,
@@ -295,11 +333,18 @@ void gated_deltanet_llama_chunk64_prefill_parallel_dispatch(
         .num_heads = num_heads,
         .group_count = group_count,
         .state_dim = state_dim,
+        .norm_eps = norm_eps,
     };
     int active = ck_threadpool_n_threads(pool);
     if (active > num_heads) active = num_heads;
-    ck_threadpool_dispatch_n(
-        pool, active, work_deltanet_chunk64_heads, &args);
+    if (ck_env_enabled("CK_ENABLE_DELTANET_CHUNK64_PREFILL") &&
+        ck_deltanet_chunk64_available()) {
+        ck_threadpool_dispatch_n(
+            pool, active, work_deltanet_chunk64_heads, &args);
+    } else {
+        ck_threadpool_dispatch_n(
+            pool, active, work_deltanet_exact_prefill_heads, &args);
+    }
 }
 
 static int ck_env_enabled(const char *name)
@@ -933,14 +978,22 @@ static int ck_should_use_qwen36_q4k_avx512_x16(
         return 0;
     }
     if (ck_env_enabled("CK_DISABLE_Q4K_AVX512_X16_PREFILL")) return 0;
-    if (!ck_q4k_packed_vnni_x16_available() || M < 16 || K != 5120) return 0;
+    if (!ck_q4k_packed_vnni_x16_available() || M < 16) return 0;
 
     /*
-     * Initial production scope is the measured Qwen3.6 Q4_K_M hot set.
+     * Measured Qwen3.6 Q4_K_M prefill hot set.  This includes gate/up,
+     * recurrent projections, full-attention gates, and both recurrent/MLP
+     * output projections.  In the real 29-token graph the x16 provider is
+     * 20-69% faster than x8 at these shapes while retaining the same
+     * pairwise split-min arithmetic.
+     *
      * Keep other models on their certified providers until their own sweep
      * rows demonstrate a win for this packing and thread schedule.
      */
-    return N == 34816 || N == 6144;
+    if (K == 5120) {
+        return N == 1024 || N == 6144 || N == 12288 || N == 34816;
+    }
+    return N == 5120 && (K == 6144 || K == 17408);
 }
 
 int ck_q4k_prepare_vnni_x16_weight(const void *B, int N, int K)
