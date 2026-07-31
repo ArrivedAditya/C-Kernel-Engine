@@ -276,7 +276,7 @@
       "template_ops": ["attn"],
       "phases": {
         "prefill": {
-          "contract_id": "attention_query_key_scaled_ordered_fp32",
+          "contract_id": "attention_query_key_scaled_ordered_fp32_packed_k",
           "validation": "validated",
           "evidence": "unittest/test_audio_encoder.py equal-length encoder and unequal-length decoder PyTorch attention oracles"
         }

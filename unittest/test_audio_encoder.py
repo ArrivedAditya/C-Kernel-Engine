@@ -87,6 +87,11 @@ attention_lib.attention_forward_query_key_head_major_f32.argtypes = [
     ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_float,
 ]
 attention_lib.attention_forward_query_key_head_major_f32.restype = ctypes.c_int
+attention_lib.attention_forward_query_key_head_major_f32_packed_k.argtypes = [
+    _FLOAT_P, _FLOAT_P, _FLOAT_P, _FLOAT_P, _FLOAT_P, _FLOAT_P,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_float,
+]
+attention_lib.attention_forward_query_key_head_major_f32_packed_k.restype = ctypes.c_int
 lib.audio_wav_parse_memory.argtypes = [
     _U8_P, ctypes.c_size_t, ctypes.POINTER(CKAudioWavInfo),
 ]
@@ -505,12 +510,20 @@ def _check_cross_attention(name: str, heads: int, query_tokens: int, key_tokens:
     key = rng.normal(0.0, 0.12, (heads, key_tokens, dim)).astype(np.float32)
     value = rng.normal(0.0, 0.12, (heads, key_tokens, dim)).astype(np.float32)
     actual = np.empty_like(query)
-    scratch = np.empty(key_tokens, dtype=np.float32)
+    packed_actual = np.empty_like(query)
+    scratch = np.empty((query_tokens, key_tokens), dtype=np.float32)
+    key_transpose_scratch = np.empty((heads, dim, key_tokens), dtype=np.float32)
     scale = np.float32(1.0 / math.sqrt(dim))
     assert attention_lib.attention_forward_query_key_head_major_f32(
         _fptr(query), _fptr(key), _fptr(value), _fptr(actual), _fptr(scratch),
         heads, query_tokens, key_tokens, dim, float(scale),
     ) == 0
+    assert attention_lib.attention_forward_query_key_head_major_f32_packed_k(
+        _fptr(query), _fptr(key), _fptr(value), _fptr(packed_actual), _fptr(scratch),
+        _fptr(key_transpose_scratch),
+        heads, query_tokens, key_tokens, dim, float(scale),
+    ) == 0
+    assert np.array_equal(packed_actual, actual), name
     tq = torch.from_numpy(query)
     tk = torch.from_numpy(key)
     tv = torch.from_numpy(value)

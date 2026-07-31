@@ -320,7 +320,13 @@ def test_whisper_encoder_safetensors_maps_and_generates_call_ir(tmp_path: Path) 
     assert functions["audio_conv1d_stem_1"] == "audio_conv1d_channel_major_f32"
     assert functions["audio_conv1d_stem_2"] == "audio_conv1d_channel_major_f32"
     assert functions["layout_channel_to_token"] == "audio_transpose_channel_to_token_f32"
-    assert functions["attn"] == "attention_forward_query_key_head_major_f32"
+    assert (
+        functions["attn"]
+        == "attention_forward_query_key_head_major_f32_packed_k"
+    )
+    attn_op = next(op for op in call_ops if op["op"] == "attn")
+    attn_args = {arg["name"]: arg["expr"] for arg in attn_op["args"]}
+    assert attn_args["score_scratch"] != attn_args["key_transpose_scratch"]
     layout_doc = json.loads(
         (out / "layout_encoder.json").read_text(encoding="utf-8")
     )

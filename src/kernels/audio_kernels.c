@@ -4,12 +4,16 @@
  */
 
 #include "ckernel_audio.h"
+#include "ck_threadpool.h"
 
 #include <math.h>
 #include <limits.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(__AVX2__) && defined(__FMA__)
+#include <immintrin.h>
+#endif
 
 #define CK_AUDIO_PI_F 3.14159265358979323846f
 #define CK_AUDIO_PI_D 3.14159265358979323846264338327950288
@@ -611,6 +615,118 @@ int audio_whisper_log_mel_window_wav_pcm16_f32(
     return valid_frames;
 }
 
+typedef struct {
+    const float *input;
+    const float *weight;
+    const float *bias;
+    float *output;
+    int input_channels;
+    int output_channels;
+    int input_frames;
+    int kernel_size;
+    int stride;
+    int padding;
+    int output_frames;
+} ck_audio_conv1d_f32_args_t;
+
+static void ck_audio_conv1d_channel_major_f32_work(
+    int ith,
+    int nth,
+    void *opaque)
+{
+    const ck_audio_conv1d_f32_args_t *args =
+        (const ck_audio_conv1d_f32_args_t *)opaque;
+    for (int out_channel = ith; out_channel < args->output_channels;
+         out_channel += nth) {
+        const float *weight_channel = args->weight +
+            (size_t)out_channel * args->input_channels * args->kernel_size;
+        float *output_channel = args->output +
+            (size_t)out_channel * args->output_frames;
+        int out_frame = 0;
+        const int interior_begin =
+            (args->padding + args->stride - 1) / args->stride;
+        for (; out_frame < interior_begin && out_frame < args->output_frames;
+             ++out_frame) {
+            float sum = args->bias != NULL ? args->bias[out_channel] : 0.0f;
+            for (int in_channel = 0; in_channel < args->input_channels;
+                 ++in_channel) {
+                const float *input_channel = args->input +
+                    (size_t)in_channel * args->input_frames;
+                const float *weight_row = weight_channel +
+                    (size_t)in_channel * args->kernel_size;
+                for (int kernel = 0; kernel < args->kernel_size; ++kernel) {
+                    const int in_frame =
+                        out_frame * args->stride + kernel - args->padding;
+                    if (in_frame >= 0 && in_frame < args->input_frames) {
+                        sum = fmaf(input_channel[in_frame], weight_row[kernel], sum);
+                    }
+                }
+            }
+            output_channel[out_frame] = sum;
+        }
+#if defined(__AVX2__) && defined(__FMA__)
+        for (; out_frame + 7 < args->output_frames &&
+               (out_frame + 7) * args->stride + args->kernel_size - 1 -
+                   args->padding < args->input_frames;
+             out_frame += 8) {
+            __m256 sums = _mm256_set1_ps(
+                args->bias != NULL ? args->bias[out_channel] : 0.0f);
+            for (int in_channel = 0; in_channel < args->input_channels;
+                 ++in_channel) {
+                const float *input_channel = args->input +
+                    (size_t)in_channel * args->input_frames;
+                const float *weight_row = weight_channel +
+                    (size_t)in_channel * args->kernel_size;
+                for (int kernel = 0; kernel < args->kernel_size; ++kernel) {
+                    const int base =
+                        out_frame * args->stride + kernel - args->padding;
+                    __m256 samples;
+                    if (args->stride == 1) {
+                        samples = _mm256_loadu_ps(input_channel + base);
+                    } else if (args->stride == 2) {
+                        const __m256i indices = _mm256_setr_epi32(
+                            base, base + 2, base + 4, base + 6,
+                            base + 8, base + 10, base + 12, base + 14);
+                        samples = _mm256_i32gather_ps(input_channel, indices, 4);
+                    } else {
+                        samples = _mm256_setr_ps(
+                            input_channel[base],
+                            input_channel[base + args->stride],
+                            input_channel[base + 2 * args->stride],
+                            input_channel[base + 3 * args->stride],
+                            input_channel[base + 4 * args->stride],
+                            input_channel[base + 5 * args->stride],
+                            input_channel[base + 6 * args->stride],
+                            input_channel[base + 7 * args->stride]);
+                    }
+                    sums = _mm256_fmadd_ps(
+                        samples, _mm256_set1_ps(weight_row[kernel]), sums);
+                }
+            }
+            _mm256_storeu_ps(output_channel + out_frame, sums);
+        }
+#endif
+        for (; out_frame < args->output_frames; ++out_frame) {
+            float sum = args->bias != NULL ? args->bias[out_channel] : 0.0f;
+            for (int in_channel = 0; in_channel < args->input_channels;
+                 ++in_channel) {
+                const float *input_channel = args->input +
+                    (size_t)in_channel * args->input_frames;
+                const float *weight_row = weight_channel +
+                    (size_t)in_channel * args->kernel_size;
+                for (int kernel = 0; kernel < args->kernel_size; ++kernel) {
+                    const int in_frame =
+                        out_frame * args->stride + kernel - args->padding;
+                    if (in_frame >= 0 && in_frame < args->input_frames) {
+                        sum = fmaf(input_channel[in_frame], weight_row[kernel], sum);
+                    }
+                }
+            }
+            output_channel[out_frame] = sum;
+        }
+    }
+}
+
 int audio_conv1d_channel_major_f32(
     const float *input,
     const float *weight,
@@ -635,24 +751,27 @@ int audio_conv1d_channel_major_f32(
     if (output_frames != expected) {
         return -3;
     }
-    for (int out_channel = 0; out_channel < output_channels; ++out_channel) {
-        const float *weight_channel = weight +
-            (size_t)out_channel * input_channels * kernel_size;
-        float *output_channel = output + (size_t)out_channel * output_frames;
-        for (int out_frame = 0; out_frame < output_frames; ++out_frame) {
-            float sum = bias != NULL ? bias[out_channel] : 0.0f;
-            for (int in_channel = 0; in_channel < input_channels; ++in_channel) {
-                const float *input_channel = input + (size_t)in_channel * input_frames;
-                const float *weight_row = weight_channel + (size_t)in_channel * kernel_size;
-                for (int kernel = 0; kernel < kernel_size; ++kernel) {
-                    const int in_frame = out_frame * stride + kernel - padding;
-                    if (in_frame >= 0 && in_frame < input_frames) {
-                        sum = fmaf(input_channel[in_frame], weight_row[kernel], sum);
-                    }
-                }
-            }
-            output_channel[out_frame] = sum;
-        }
+    ck_audio_conv1d_f32_args_t args = {
+        .input = input,
+        .weight = weight,
+        .bias = bias,
+        .output = output,
+        .input_channels = input_channels,
+        .output_channels = output_channels,
+        .input_frames = input_frames,
+        .kernel_size = kernel_size,
+        .stride = stride,
+        .padding = padding,
+        .output_frames = output_frames,
+    };
+    ck_threadpool_t *pool = ck_threadpool_global();
+    int active = pool ? ck_threadpool_n_threads(pool) : 1;
+    if (active > output_channels) active = output_channels;
+    if (pool != NULL && active > 1) {
+        ck_threadpool_dispatch_n(
+            pool, active, ck_audio_conv1d_channel_major_f32_work, &args);
+    } else {
+        ck_audio_conv1d_channel_major_f32_work(0, 1, &args);
     }
     return 0;
 }
