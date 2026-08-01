@@ -41,6 +41,338 @@ _AUDIO_FRONTEND_OPS = {
 }
 
 
+def _init_has_tokenizer_api(init_call_obj: Dict[str, Any] | None) -> bool:
+    if not isinstance(init_call_obj, dict):
+        return False
+    for op in init_call_obj.get("operations", []):
+        if not isinstance(op, dict):
+            continue
+        c_code = op.get("c_code")
+        if isinstance(c_code, dict) and "ck_model_has_tokenizer" in str(
+            c_code.get("api_functions") or ""
+        ):
+            return True
+    return False
+
+
+def _init_has_chat_contract(init_call_obj: Dict[str, Any] | None) -> bool:
+    if not isinstance(init_call_obj, dict):
+        return False
+    contract = init_call_obj.get("chat_contract")
+    if not isinstance(contract, dict):
+        contract = (init_call_obj.get("config") or {}).get("chat_contract")
+    if not isinstance(contract, dict):
+        for op in init_call_obj.get("operations", []):
+            if not isinstance(op, dict):
+                continue
+            c_code = op.get("c_code")
+            if isinstance(c_code, dict) and "ck_model_format_chat" in str(
+                c_code.get("api_functions") or ""
+            ):
+                return True
+    return bool(
+        isinstance(contract, dict)
+        and contract.get("turn_prefix")
+        and contract.get("assistant_generation_prefix")
+    )
+
+
+def _emit_runtime_capability_api(
+    ir_obj: Dict[str, Any],
+    layout_obj: Dict[str, Any],
+    init_call_obj: Dict[str, Any] | None,
+    generation_config: Dict[str, Any] | None = None,
+    *,
+    has_mixed_prefill: bool = False,
+) -> str:
+    """Emit a versioned descriptor from declared IR/configuration semantics."""
+    config = dict(ir_obj.get("config", {}) or {})
+    layout_config = dict(layout_obj.get("config", {}) or {})
+    for key, value in layout_config.items():
+        config.setdefault(key, value)
+    operations = [op for op in ir_obj.get("operations", []) if isinstance(op, dict)]
+    op_names = {str(op.get("op", "")) for op in operations}
+    buffers = (
+        (layout_obj.get("memory", {}) or {})
+        .get("activations", {})
+        .get("buffers", [])
+        or []
+    )
+    buffer_names = {str(row.get("name", "")) for row in buffers if isinstance(row, dict)}
+    by_name = {
+        str(row.get("name", "")): row for row in buffers if isinstance(row, dict)
+    }
+    bridge = resolve_vision_bridge_contract(layout_obj, by_name)
+
+    scope = str(config.get("artifact_scope") or "").strip().lower()
+    has_encoder_input = _AUDIO_FRONTEND_OPS.issubset(op_names) or "image_input" in buffer_names
+    has_decoder_state = bool(
+        {"logits", "kv_cache"}.intersection(buffer_names)
+        or {"logits", "kv_cache_store"}.intersection(op_names)
+    )
+    encoder_only = scope == "encoder_only" or (
+        not scope and has_encoder_input and not has_decoder_state
+    )
+    decoder_only = scope == "decoder_only" or (
+        not scope and has_decoder_state and not has_encoder_input
+    )
+    if encoder_only:
+        role = "CK_MODEL_ROLE_ENCODER"
+    elif decoder_only:
+        role = "CK_MODEL_ROLE_DECODER"
+    else:
+        role = "CK_MODEL_ROLE_COMBINED"
+
+    capabilities = ["CK_MODEL_CAP_INIT"]
+    if buffers:
+        capabilities.append("CK_MODEL_CAP_NAMED_ACTIVATIONS")
+    if not encoder_only:
+        capabilities.extend(
+            ["CK_MODEL_CAP_AUTOREGRESSIVE_DECODE", "CK_MODEL_CAP_XRAY_KV"]
+        )
+    if _init_has_tokenizer_api(init_call_obj):
+        capabilities.extend(
+            ["CK_MODEL_CAP_TEXT_ENCODE", "CK_MODEL_CAP_TOKEN_DECODE"]
+        )
+    if _init_has_chat_contract(init_call_obj):
+        capabilities.append("CK_MODEL_CAP_CHAT_FORMAT")
+    special_tokens = (
+        init_call_obj.get("special_tokens", {})
+        if isinstance(init_call_obj, dict)
+        else {}
+    )
+    if isinstance(special_tokens, dict):
+        try:
+            eos_token_id = int(special_tokens.get("eos_token_id", -1))
+        except (TypeError, ValueError):
+            eos_token_id = -1
+        if eos_token_id >= 0:
+            capabilities.append("CK_MODEL_CAP_STOP_TOKENS")
+    if has_mixed_prefill and not encoder_only:
+        capabilities.append("CK_MODEL_CAP_MIXED_EMBEDDING_PREFILL")
+    if bool(config.get("uses_cross_attention")):
+        capabilities.append("CK_MODEL_CAP_ENCODER_MEMORY")
+    encoder_output_name = str(
+        bridge.get("named_activation") or bridge.get("fallback_buffer_name") or ""
+    )
+    encoder_output_tokens = int(bridge.get("prefix_tokens", 0) or 0)
+    encoder_output_dim = int(bridge.get("embed_dim", 0) or 0)
+    if encoder_only and encoder_output_name and encoder_output_tokens > 0 and encoder_output_dim > 0:
+        capabilities.append("CK_MODEL_CAP_ENCODER_OUTPUT")
+    if _AUDIO_FRONTEND_OPS.issubset(op_names):
+        capabilities.append("CK_MODEL_CAP_AUDIO_WAV_ENCODER")
+    image_tensor_api = ""
+    image_buf = by_name.get("image_input")
+    image_height = int(config.get("image_height", config.get("image_size", 0)) or 0)
+    image_width = int(config.get("image_width", config.get("image_size", 0)) or 0)
+    image_nbytes = int(
+        (image_buf or {}).get("size_bytes", (image_buf or {}).get("size", 0)) or 0
+    )
+    image_pixels = image_height * image_width
+    image_channels = (
+        image_nbytes // (image_pixels * 4)
+        if image_pixels > 0 and image_nbytes > 0 and image_nbytes % (image_pixels * 4) == 0
+        else 0
+    )
+    if encoder_only and image_buf and image_channels > 0:
+        # This is deliberately not RAW_IMAGE_ENCODER: the generated runtime
+        # currently accepts the circuit's normalized FP32 image tensor.
+        capabilities.append("CK_MODEL_CAP_IMAGE_TENSOR_ENCODER")
+        image_tensor_api = f"""
+CK_EXPORT int ck_model_get_image_tensor_shape(
+    int *channels,
+    int *height,
+    int *width) {{
+    if (!channels || !height || !width) return -1;
+    *channels = {image_channels};
+    *height = {image_height};
+    *width = {image_width};
+    return 0;
+}}
+
+CK_EXPORT int ck_model_run_image_tensor_f32(
+    const float *data,
+    int channels,
+    int height,
+    int width) {{
+    if (!data) return -1;
+    if (channels != {image_channels} || height != {image_height} || width != {image_width}) return -2;
+    const uintptr_t pointer = ck_model_get_named_activation_ptr("image_input");
+    if (!pointer) return -3;
+    memcpy((void *)pointer, data, (size_t){image_nbytes});
+    return ck_model_decode(0, NULL);
+}}
+"""
+    if not encoder_only and isinstance(generation_config, dict) and generation_config.get(
+        "decoder_start_token_id"
+    ) is not None:
+        capabilities.append("CK_MODEL_CAP_GENERATION_POLICY")
+
+    context_length = int(config.get("context_length", config.get("max_seq_len", 0)) or 0)
+    vocab_size = int(config.get("vocab_size", config.get("n_vocab", 0)) or 0)
+    encoder_tokens = int(config.get("encoder_memory_length", 0) or 0)
+    encoder_dim = int(config.get("embed_dim", 0) or 0) if encoder_tokens > 0 else 0
+    primary_tokens = encoder_output_tokens if encoder_only else 0
+    primary_dim = encoder_output_dim if encoder_only else 0
+    caps_expr = " |\n        ".join(dict.fromkeys(capabilities))
+    encoder_output_api = ""
+    if encoder_only and encoder_output_name and primary_tokens > 0 and primary_dim > 0:
+        encoder_output_api = f"""
+CK_EXPORT int ck_model_get_encoder_output(
+    const float **data,
+    int *tokens,
+    int *dim) {{
+    if (!data || !tokens || !dim) return -1;
+    const uintptr_t pointer = ck_model_get_named_activation_ptr({json.dumps(encoder_output_name)});
+    if (!pointer) return -2;
+    *data = (const float *)pointer;
+    *tokens = {primary_tokens};
+    *dim = {primary_dim};
+    return 0;
+}}
+"""
+
+    return f"""
+/* Generated capability declaration. Hosts route by this descriptor and never
+ * infer modality or execution policy from model names. */
+static const CKModelRuntimeDescriptorV8 g_ck_runtime_descriptor_v8 = {{
+    sizeof(CKModelRuntimeDescriptorV8),
+    CK_MODEL_ABI_V8_VERSION,
+    {caps_expr},
+    {role},
+    0,
+    {context_length},
+    {vocab_size},
+    {encoder_tokens},
+    {encoder_dim},
+    {primary_tokens},
+    {primary_dim},
+    {{ 0, 0, 0, 0, 0, 0, 0, 0 }}
+}};
+
+CK_EXPORT uint32_t ck_model_get_abi_version(void) {{
+    return CK_MODEL_ABI_V8_VERSION;
+}}
+
+CK_EXPORT uint64_t ck_model_get_capabilities(void) {{
+    return g_ck_runtime_descriptor_v8.capabilities;
+}}
+
+CK_EXPORT int ck_model_get_runtime_descriptor(
+    CKModelRuntimeDescriptorV8 *descriptor,
+    size_t descriptor_size) {{
+    if (!descriptor || descriptor_size < sizeof(CKModelRuntimeDescriptorV8)) return -1;
+    memcpy(descriptor, &g_ck_runtime_descriptor_v8, sizeof(g_ck_runtime_descriptor_v8));
+    return 0;
+}}
+{encoder_output_api}
+{image_tensor_api}
+"""
+
+
+
+def _emit_generation_policy_api(config: Dict[str, Any] | None) -> str:
+    if not isinstance(config, dict) or config.get("decoder_start_token_id") is None:
+        return ""
+    start = int(config["decoder_start_token_id"])
+    no_timestamps_raw = config.get("no_timestamps_token_id", -1)
+    eos_raw = config.get("eos_token_id", -1)
+    no_timestamps = int(no_timestamps_raw) if no_timestamps_raw is not None else -1
+    eos = int(eos_raw) if eos_raw is not None else -1
+    language_rows = []
+    for marker, token_id in sorted((config.get("lang_to_id") or {}).items()):
+        language = str(marker)
+        if language.startswith("<|") and language.endswith("|>"):
+            language = language[2:-2]
+        language_rows.append((language, int(token_id)))
+    task_rows = [
+        (str(name), int(token_id))
+        for name, token_id in sorted((config.get("task_to_id") or {}).items())
+    ]
+    suppress = [int(value) for value in (config.get("suppress_tokens") or [])]
+    begin_suppress = [
+        int(value) for value in (config.get("begin_suppress_tokens") or [])
+    ]
+
+    def lookup_lines(rows: list[tuple[str, int]], variable: str) -> str:
+        return "\n".join(
+            f"    if (strcmp({variable}, {json.dumps(name)}) == 0) return {token_id};"
+            for name, token_id in rows
+        )
+
+    def int_array(name: str, values: list[int]) -> str:
+        payload = ", ".join(str(value) for value in values) if values else "-1"
+        return f"static const int32_t {name}[] = {{ {payload} }};"
+
+    return f"""
+/* Decoder generation policy generated from generation_config.json. */
+{int_array("g_ck_suppress_tokens", suppress)}
+{int_array("g_ck_begin_suppress_tokens", begin_suppress)}
+
+static int32_t ck_generation_language_token(const char *language) {{
+    if (!language) return -1;
+{lookup_lines(language_rows, "language")}
+    return -1;
+}}
+
+static int32_t ck_generation_task_token(const char *task) {{
+    if (!task) return -1;
+{lookup_lines(task_rows, "task")}
+    return -1;
+}}
+
+CK_EXPORT int ck_model_build_generation_prefix(
+    const char *language,
+    const char *task,
+    uint32_t flags,
+    int32_t *tokens,
+    int capacity) {{
+    const int32_t language_token = ck_generation_language_token(language);
+    const int32_t task_token = ck_generation_task_token(task);
+    if (flags & CK_GENERATION_FLAG_TIMESTAMPS) return -3;
+    const int required = 4;
+    if (language_token < 0 || task_token < 0 || {no_timestamps} < 0) return -2;
+    if (!tokens || capacity < required) return required;
+    tokens[0] = {start};
+    tokens[1] = language_token;
+    tokens[2] = task_token;
+    tokens[3] = {no_timestamps};
+    return required;
+}}
+
+CK_EXPORT int ck_model_apply_generation_policy(
+    float *logits,
+    int vocab_size,
+    const int32_t *generated_tokens,
+    int generated_count,
+    int step,
+    uint32_t flags) {{
+    (void)generated_tokens;
+    (void)generated_count;
+    if (!logits || vocab_size <= 0 || step < 0) return -1;
+    if (flags & CK_GENERATION_FLAG_TIMESTAMPS) return -3;
+    for (int i = 0; i < {len(suppress)}; ++i) {{
+        const int token = g_ck_suppress_tokens[i];
+        if (token >= 0 && token < vocab_size) logits[token] = -INFINITY;
+    }}
+    if (step == 0) {{
+        for (int i = 0; i < {len(begin_suppress)}; ++i) {{
+            const int token = g_ck_begin_suppress_tokens[i];
+            if (token >= 0 && token < vocab_size) logits[token] = -INFINITY;
+        }}
+    }}
+    if (!(flags & CK_GENERATION_FLAG_TIMESTAMPS) && {no_timestamps} >= 0) {{
+        for (int token = {no_timestamps}; token < vocab_size; ++token) {{
+            logits[token] = -INFINITY;
+        }}
+    }}
+    return 0;
+}}
+
+CK_EXPORT int32_t ck_model_get_generation_eos_token(void) {{ return {eos}; }}
+"""
+
+
 def _audio_call_expression(op: Dict[str, Any]) -> str:
     function = str(op.get("function", "") or "").strip()
     args = op.get("args")
@@ -1165,6 +1497,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--prefill", type=Path, default=None, help="Optional lowered prefill IR for decoder runtimes")
     ap.add_argument("--prefill-layout", type=Path, default=None, help="Optional prefill layout JSON for hybrid decode+prefill runtimes")
     ap.add_argument("--init", type=Path, default=None, help="Optional init_call.json")
+    ap.add_argument("--generation-config", type=Path, default=None, help="Optional generation_config.json")
     ap.add_argument("--debug", action="store_true", help="Emit debug dumps")
     ap.add_argument("--profile", action="store_true", help="Emit profiling wrappers")
     ap.add_argument("--parity-dump", action="store_true", help="Emit parity dump helpers")
@@ -1194,6 +1527,15 @@ def main(argv: list[str] | None = None) -> int:
     if init_path.exists():
         with open(init_path, "r", encoding="utf-8") as f:
             init_call_obj = _patch_codegen_config(json.load(f))
+    generation_config_obj = None
+    generation_path = args.generation_config
+    if generation_path is None:
+        candidate = args.ir.parent / "generation_config.json"
+        if candidate.exists():
+            generation_path = candidate
+    if generation_path is not None and generation_path.exists():
+        with open(generation_path, "r", encoding="utf-8") as f:
+            generation_config_obj = json.load(f)
 
     with tempfile.TemporaryDirectory(prefix="codegen_v8_") as td:
         td_path = Path(td)
@@ -1252,6 +1594,26 @@ def main(argv: list[str] | None = None) -> int:
         code = _inject_missing_rope_init(code, layout_obj, init_call_obj)
         code = _inject_strict_vision_encoder_oracle(code, layout_obj)
         code = _inject_activation_lookup_api(code, layout_obj)
+        include_marker = "#include <math.h>"
+        abi_include = '#include "ck_model_abi_v8.h"'
+        if abi_include not in code:
+            if include_marker in code:
+                code = code.replace(include_marker, include_marker + "\n" + abi_include, 1)
+            else:
+                code = abi_include + "\n" + code
+        code += "\n\n" + _emit_runtime_capability_api(
+            ir_obj,
+            layout_obj,
+            init_call_obj,
+            generation_config_obj,
+            has_mixed_prefill=bool(prefill_code) or
+            str(layout_obj.get("mode", "")).lower() == "prefill",
+        )
+        generation_policy_api = ""
+        if str((ir_obj.get("config") or {}).get("artifact_scope") or "").lower() != "encoder_only":
+            generation_policy_api = _emit_generation_policy_api(generation_config_obj)
+        if generation_policy_api:
+            code += "\n\n" + generation_policy_api
 
     args.output.write_text(code, encoding="utf-8")
     if args.granular_report is not None:

@@ -487,6 +487,107 @@ def _collect_chat_marker_strings(chat_contract: Optional[Dict[str, Any]]) -> Lis
     return out
 
 
+def _generate_chat_contract_c_api(chat_contract: Optional[Dict[str, Any]]) -> str:
+    """Emit the native single-turn formatter from declarative circuit metadata."""
+    if not isinstance(chat_contract, dict):
+        return ""
+
+    turn_prefix = str(chat_contract.get("turn_prefix") or "")
+    turn_suffix = str(chat_contract.get("turn_suffix") or "")
+    assistant_prefix = str(chat_contract.get("assistant_generation_prefix") or "")
+    if not turn_prefix or not assistant_prefix:
+        return ""
+
+    role_labels = chat_contract.get("role_labels")
+    if not isinstance(role_labels, dict):
+        role_labels = {}
+    system_label = str(role_labels.get("system") or "system")
+    user_label = str(role_labels.get("user") or "user")
+    system_prefix = turn_prefix.replace("{role}", system_label)
+    user_prefix = turn_prefix.replace("{role}", user_label)
+
+    thinking_default = str(chat_contract.get("thinking_mode_default") or "").strip()
+    assistant_by_mode = chat_contract.get("assistant_generation_prefix_by_thinking_mode")
+    if thinking_default and isinstance(assistant_by_mode, dict):
+        override = assistant_by_mode.get(thinking_default)
+        if isinstance(override, str):
+            assistant_prefix = override
+
+    last_user_prefix = str(chat_contract.get("last_user_prefix") or "")
+    last_user_by_mode = chat_contract.get("last_user_prefix_by_thinking_mode")
+    if thinking_default and isinstance(last_user_by_mode, dict):
+        override = last_user_by_mode.get(thinking_default)
+        if isinstance(override, str):
+            last_user_prefix = override
+
+    system_mode = str(chat_contract.get("system_prompt_mode") or "disabled").strip().lower()
+    if system_mode not in {"disabled", "dedicated_turn", "prepend_first_user"}:
+        raise ValueError(f"unsupported chat_contract.system_prompt_mode: {system_mode}")
+    system_separator = str(chat_contract.get("system_prompt_separator") or "\n\n")
+    default_system = str(chat_contract.get("default_system_prompt") or "")
+    inject_default_system = bool(chat_contract.get("inject_default_system_prompt"))
+    bos_prefix = str(chat_contract.get("force_bos_text_if_tokenizer_add_bos_false") or "")
+
+    def lit(value: str) -> str:
+        return _c_string_literal(value)
+
+    return f"""
+/* Chat formatting is generated from the circuit chat_contract. The host must
+ * not infer prompt syntax from the model name. */
+static int ck_model_chat_append(char *output, int capacity, int position, const char *text) {{
+    const int length = text ? (int)strlen(text) : 0;
+    if (output && capacity > 0 && position < capacity) {{
+        int writable = capacity - position - 1;
+        if (writable < 0) writable = 0;
+        const int copied = length < writable ? length : writable;
+        if (copied > 0) memcpy(output + position, text, (size_t)copied);
+        output[position + copied] = '\\0';
+    }}
+    return position + length;
+}}
+
+CK_EXPORT int ck_model_has_chat_template(void) {{
+    return 1;
+}}
+
+/* Return the required byte count excluding NUL. A NULL/zero-capacity output is
+ * a size query. Return a negative required count when the supplied buffer is
+ * too small. */
+CK_EXPORT int ck_model_format_chat(const char *system_text,
+                                   const char *user_text,
+                                   char *output,
+                                   int output_capacity) {{
+    const char *system_value = system_text ? system_text : "";
+    const char *user_value = user_text ? user_text : "";
+    if (!system_value[0] && {1 if inject_default_system else 0}) {{
+        system_value = {lit(default_system)};
+    }}
+    int position = 0;
+    if (output && output_capacity > 0) output[0] = '\\0';
+    position = ck_model_chat_append(output, output_capacity, position, {lit(bos_prefix)});
+    if (system_value[0] && !strcmp({lit(system_mode)}, "dedicated_turn")) {{
+        position = ck_model_chat_append(output, output_capacity, position, {lit(system_prefix)});
+        position = ck_model_chat_append(output, output_capacity, position, system_value);
+        position = ck_model_chat_append(output, output_capacity, position, {lit(turn_suffix)});
+    }}
+    position = ck_model_chat_append(output, output_capacity, position, {lit(user_prefix)});
+    if (system_value[0] && !strcmp({lit(system_mode)}, "prepend_first_user")) {{
+        position = ck_model_chat_append(output, output_capacity, position, system_value);
+        if (user_value[0]) {{
+            position = ck_model_chat_append(output, output_capacity, position, {lit(system_separator)});
+        }}
+    }}
+    position = ck_model_chat_append(output, output_capacity, position, {lit(last_user_prefix)});
+    position = ck_model_chat_append(output, output_capacity, position, user_value);
+    position = ck_model_chat_append(output, output_capacity, position, {lit(turn_suffix)});
+    position = ck_model_chat_append(output, output_capacity, position, {lit(assistant_prefix)});
+    if (!output || output_capacity <= 0) return position;
+    if (position >= output_capacity) return position > 0 ? -position : -1;
+    return position;
+}}
+"""
+
+
 def _coerce_bool(value: Any) -> Optional[bool]:
     if isinstance(value, bool):
         return value
@@ -1729,6 +1830,8 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
 
     For future tokenizer types, add a new elif branch here.
     """
+    chat_contract_api = _generate_chat_contract_c_api(chat_contract)
+
     if tokenizer_type == "bpe":
         add_bos = None
         add_eos = None
@@ -1945,7 +2048,7 @@ CK_EXPORT int32_t ck_model_lookup_token(const char *text) {
 #endif
     return -1;
 }
-"""
+""" + chat_contract_api
         }
 
     elif tokenizer_type == "sentencepiece":
@@ -2177,7 +2280,7 @@ CK_EXPORT int32_t ck_model_lookup_token(const char *text) {
     }
     return -1;
 }
-"""
+""" + chat_contract_api
         }
 
     # Unknown tokenizer type

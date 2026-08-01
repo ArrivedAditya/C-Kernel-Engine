@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import ctypes
 import hashlib
 import importlib.util
 import io
@@ -65,7 +66,7 @@ def _entry(name: str, dtype: str, shape: list[int], offset: int) -> dict:
     }
 
 
-def _make_qwen3_decoder_manifest() -> dict:
+def _make_qwen3_decoder_manifest(*, include_tokenizer_contract: bool = False) -> dict:
     offset = 8
     entries = []
 
@@ -104,8 +105,10 @@ def _make_qwen3_decoder_manifest() -> dict:
 
     add("vocab_offsets", "i32", [len(vocab_offsets)])
     add("vocab_strings", "u8", [len(vocab_strings)])
+    if include_tokenizer_contract:
+        add("vocab_merges", "i32", [0])
 
-    return {
+    manifest = {
         "config": {
             "model": "qwen3",
             "arch": "qwen3",
@@ -137,6 +140,15 @@ def _make_qwen3_decoder_manifest() -> dict:
         "test_vocab_offsets": vocab_offsets,
         "test_vocab_strings": list(vocab_strings),
     }
+    if include_tokenizer_contract:
+        manifest["special_tokens"] = {
+            "bos_token_id": 1,
+            "eos_token_id": 9,
+            "tokenizer_model": "bpe",
+            "add_bos_token": False,
+            "add_eos_token": False,
+        }
+    return manifest
 
 
 def _write_zero_bump(manifest: dict, bump_path: Path) -> None:
@@ -178,6 +190,7 @@ def _compile_generated_model(c_path: Path, so_path: Path) -> None:
         "version/v8/src/ck_parallel_prefill_v8.c",
         "-Lbuild",
         "-lckernel_engine",
+        "-lckernel_tokenizer",
         f"-Wl,-rpath,{BUILD_DIR}",
         "-o",
         str(so_path),
@@ -189,8 +202,14 @@ def _compile_generated_model(c_path: Path, so_path: Path) -> None:
         raise AssertionError(f"generated model compile failed\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}")
 
 
-def _build_tiny_decoder_runtime(workdir: Path) -> tuple[Path, Path, Path]:
-    manifest = _make_qwen3_decoder_manifest()
+def _build_tiny_decoder_runtime(
+    workdir: Path,
+    *,
+    include_tokenizer_contract: bool = False,
+) -> tuple[Path, Path, Path]:
+    manifest = _make_qwen3_decoder_manifest(
+        include_tokenizer_contract=include_tokenizer_contract
+    )
     manifest_path = workdir / "weights_manifest.json"
     bump_path = workdir / "weights.bump"
     manifest_map = workdir / "weights_manifest.map"
@@ -204,6 +223,8 @@ def _build_tiny_decoder_runtime(workdir: Path) -> tuple[Path, Path, Path]:
     decode_call = workdir / "call_decode.json"
     c_path = workdir / "decoder_v8.c"
     so_path = workdir / "libdecoder_v8.so"
+    init_path = workdir / "init.json"
+    init_call_path = workdir / "init_call.json"
 
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     _write_zero_bump(manifest, bump_path)
@@ -228,23 +249,28 @@ def _build_tiny_decoder_runtime(workdir: Path) -> tuple[Path, Path, Path]:
         ]
         if mode == "decode":
             args.extend(["--manifest-map-output", str(manifest_map)])
+            if include_tokenizer_contract:
+                args.extend(["--init-output", str(init_path)])
         rc = build_ir_v8.main(args)
         if rc != 0:
             raise AssertionError(f"build_ir_v8 failed for mode={mode}")
 
+    codegen_args = [
+        sys.executable,
+        str(V8_CODEGEN_PATH),
+        "--ir",
+        str(decode_call),
+        "--prefill",
+        str(prefill_call),
+        "--layout",
+        str(decode_layout),
+        "--output",
+        str(c_path),
+    ]
+    if include_tokenizer_contract:
+        codegen_args.extend(["--init", str(init_call_path)])
     result = subprocess.run(
-        [
-            sys.executable,
-            str(V8_CODEGEN_PATH),
-            "--ir",
-            str(decode_call),
-            "--prefill",
-            str(prefill_call),
-            "--layout",
-            str(decode_layout),
-            "--output",
-            str(c_path),
-        ],
+        codegen_args,
         cwd=str(ROOT),
         capture_output=True,
         text=True,
@@ -1291,6 +1317,114 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 combined,
             )
             self.assertNotIn("Model does not have built-in tokenizer", combined)
+
+    def test_generated_runtime_exports_circuit_chat_and_stop_contracts(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_native_chat_contract_") as tmpdir:
+            so_path, bump_path, manifest_map = _build_tiny_decoder_runtime(
+                Path(tmpdir), include_tokenizer_contract=True
+            )
+            ctypes.CDLL(str(LIBCK), mode=ctypes.RTLD_GLOBAL)
+            model = ctypes.CDLL(str(so_path))
+
+            model.ck_model_has_chat_template.argtypes = []
+            model.ck_model_has_chat_template.restype = ctypes.c_int
+            model.ck_model_format_chat.argtypes = [
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_int,
+            ]
+            model.ck_model_format_chat.restype = ctypes.c_int
+            self.assertEqual(model.ck_model_has_chat_template(), 1)
+
+            class RuntimeDescriptor(ctypes.Structure):
+                _fields_ = [
+                    ("struct_size", ctypes.c_uint32),
+                    ("abi_version", ctypes.c_uint32),
+                    ("capabilities", ctypes.c_uint64),
+                    ("artifact_role", ctypes.c_uint32),
+                    ("reserved0", ctypes.c_uint32),
+                    ("context_length", ctypes.c_int32),
+                    ("vocab_size", ctypes.c_int32),
+                    ("encoder_memory_tokens", ctypes.c_int32),
+                    ("encoder_memory_dim", ctypes.c_int32),
+                    ("primary_input_tokens", ctypes.c_int32),
+                    ("primary_input_dim", ctypes.c_int32),
+                    ("reserved", ctypes.c_uint64 * 8),
+                ]
+
+            model.ck_model_get_abi_version.argtypes = []
+            model.ck_model_get_abi_version.restype = ctypes.c_uint32
+            model.ck_model_get_capabilities.argtypes = []
+            model.ck_model_get_capabilities.restype = ctypes.c_uint64
+            model.ck_model_get_runtime_descriptor.argtypes = [
+                ctypes.POINTER(RuntimeDescriptor),
+                ctypes.c_size_t,
+            ]
+            model.ck_model_get_runtime_descriptor.restype = ctypes.c_int
+            runtime = RuntimeDescriptor()
+            self.assertEqual(model.ck_model_get_abi_version(), 1)
+            self.assertEqual(
+                model.ck_model_get_runtime_descriptor(
+                    ctypes.byref(runtime), ctypes.sizeof(runtime)
+                ),
+                0,
+            )
+            self.assertEqual(runtime.struct_size, ctypes.sizeof(runtime))
+            self.assertEqual(runtime.abi_version, 1)
+            self.assertEqual(runtime.capabilities, model.ck_model_get_capabilities())
+            self.assertEqual(runtime.artifact_role, 1)  # decoder
+            self.assertNotEqual(runtime.capabilities & (1 << 1), 0)  # decode
+            self.assertNotEqual(runtime.capabilities & (1 << 2), 0)  # text encode
+            self.assertNotEqual(runtime.capabilities & (1 << 4), 0)  # chat
+            self.assertNotEqual(runtime.capabilities & (1 << 5), 0)  # stop tokens
+
+            required = model.ck_model_format_chat(None, b"Hello", None, 0)
+            self.assertGreater(required, 0)
+            output = ctypes.create_string_buffer(required + 1)
+            written = model.ck_model_format_chat(None, b"Hello", output, len(output))
+            self.assertEqual(written, required)
+            self.assertEqual(
+                output.value.decode(),
+                "<|im_start|>user\nHello<|im_end|>\n"
+                "<|im_start|>assistant\n",
+            )
+
+            model.ck_model_get_eos_token_id.argtypes = []
+            model.ck_model_get_eos_token_id.restype = ctypes.c_int32
+            model.ck_model_is_stop_token.argtypes = [ctypes.c_int32]
+            model.ck_model_is_stop_token.restype = ctypes.c_int
+            eos = int(model.ck_model_get_eos_token_id())
+            self.assertGreaterEqual(eos, 0)
+            self.assertEqual(model.ck_model_is_stop_token(eos), 1)
+            self.assertEqual(model.ck_model_is_stop_token(eos + 1), 0)
+
+            result = subprocess.run(
+                [
+                    str(CK_CLI_V8),
+                    "--lib",
+                    str(so_path),
+                    "--weights",
+                    str(bump_path),
+                    "--manifest",
+                    str(manifest_map),
+                    "--prompt-tokens",
+                    "1",
+                    "--max-tokens",
+                    "1",
+                    "--temperature",
+                    "0",
+                    "--no-timing",
+                    "--require-generated-abi",
+                ],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                result.returncode, 0, msg=result.stdout + result.stderr
+            )
+            self.assertIn("<|pad|>", result.stdout)
 
     def test_ck_cli_v8_replays_bridge_report_through_native_multimodal_entrypoint(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_native_bridge_report_cli_") as tmpdir:

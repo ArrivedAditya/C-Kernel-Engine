@@ -1053,12 +1053,16 @@ def step_codegen(output_dir: Path, ir_paths: dict[str, Path], *, force: bool = F
     log_step(4, "Generating C code")
     model_c_path = output_dir / "model_v8.c"
     stamp_path = output_dir / CODEGEN_STAMP_NAME
+    generation_config_path = output_dir / "generation_config.json"
+    codegen_artifacts = dict(ir_paths)
+    if generation_config_path.is_file():
+        codegen_artifacts["generation_config"] = generation_config_path
     codegen_inputs = {
         "schema": "ck-v8-codegen-bundle-v1",
         "profile": bool(profile),
         "artifacts": {
             name: _file_identity(path)
-            for name, path in sorted(ir_paths.items())
+            for name, path in sorted(codegen_artifacts.items())
             if path.is_file()
         },
         "generator_sources": _tree_identity(
@@ -1066,6 +1070,7 @@ def step_codegen(output_dir: Path, ir_paths: dict[str, Path], *, force: bool = F
                 SCRIPTS_DIR / "codegen_v8.py",
                 SCRIPTS_DIR / "codegen_core_v8.py",
                 SCRIPTS_DIR / "codegen_prefill_v8.py",
+                PROJECT_ROOT / "include" / "ck_model_abi_v8.h",
                 KERNEL_REGISTRY_PATH,
             ]
         ),
@@ -1096,6 +1101,8 @@ def step_codegen(output_dir: Path, ir_paths: dict[str, Path], *, force: bool = F
     ]
     if profile:
         cmd.append("--profile")
+    if generation_config_path.is_file():
+        cmd.extend(["--generation-config", str(generation_config_path)])
     run_cmd(cmd, cwd=PROJECT_ROOT)
     _write_bundle_stamp(
         stamp_path,
@@ -1684,6 +1691,7 @@ def _whisper_build_inputs(
                 SCRIPTS_DIR / "codegen_v8.py",
                 SCRIPTS_DIR / "codegen_core_v8.py",
                 SCRIPTS_DIR / "codegen_prefill_v8.py",
+                PROJECT_ROOT / "include" / "ck_model_abi_v8.h",
                 V8_ROOT / "circuits" / f"audio_transformer_{role}.json",
                 V8_ROOT / "model_maps" / "safetensors_ck_map.json",
                 KERNEL_REGISTRY_PATH,

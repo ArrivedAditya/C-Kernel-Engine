@@ -317,7 +317,9 @@ class V8CodegenBridgeTests(unittest.TestCase):
             if op["op"] in {"q_proj", "k_proj", "v_proj", "out_proj", "mlp_gate_up", "mlp_down"}
         ]
         self.assertTrue(decode_projections)
-        self.assertTrue(all(op["kernel"] == "gemm_nt_bf16" for op in decode_projections))
+        # Decode has one activation row. It must retain the generic BF16 GEMV
+        # accuracy path while prefill alone uses the shape-safe BF16 GEMM.
+        self.assertTrue(all(op["kernel"] == "gemv_bf16" for op in decode_projections))
 
     def test_qwen2_decode_uses_contracted_q8_kernels(self) -> None:
         manifest = _make_qwen2_decoder_manifest()
