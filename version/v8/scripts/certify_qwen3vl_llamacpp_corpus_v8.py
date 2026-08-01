@@ -111,6 +111,7 @@ def _run_logged(
     env: dict[str, str],
     log_path: Path,
     dry_run: bool,
+    accepted_returncodes: tuple[int, ...] = (0,),
 ) -> float:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     rendered = shlex.join(command)
@@ -131,7 +132,7 @@ def _run_logged(
             check=False,
         )
     elapsed = time.perf_counter() - started
-    if completed.returncode != 0:
+    if completed.returncode not in accepted_returncodes:
         raise RuntimeError(
             f"command failed rc={completed.returncode}; inspect private log {log_path}"
         )
@@ -264,11 +265,16 @@ def _pre_eos_tokens(report: dict[str, Any], key: str) -> list[int]:
     return tokens
 
 
-def _first_token_divergence(left: list[int], right: list[int]) -> dict[str, Any] | None:
+def _first_token_divergence(
+    left: list[int],
+    right: list[int],
+    *,
+    require_equal_length: bool = True,
+) -> dict[str, Any] | None:
     for index, (left_token, right_token) in enumerate(zip(left, right)):
         if left_token != right_token:
             return {"step": index, "native_token": left_token, "reference_token": right_token}
-    if len(left) != len(right):
+    if require_equal_length and len(left) != len(right):
         index = min(len(left), len(right))
         return {
             "step": index,
@@ -287,9 +293,18 @@ def _compare_native_trace(
     native = [int(value) for value in trace.get("token_ids") or []]
     ck = _pre_eos_tokens(report, "ck_next")
     llama = _pre_eos_tokens(report, "llama_next")
-    ck_divergence = _first_token_divergence(native, ck)
-    llama_divergence = _first_token_divergence(native, llama)
-    passed = ck_divergence is None and llama_divergence is None
+    complete = bool(report.get("pass"))
+    ck_divergence = _first_token_divergence(
+        native,
+        ck,
+        require_equal_length=complete or len(native) < len(ck),
+    )
+    llama_divergence = _first_token_divergence(
+        native,
+        llama,
+        require_equal_length=complete or len(native) < len(llama),
+    )
+    passed = complete and ck_divergence is None and llama_divergence is None
     return {
         "status": "pass" if passed else "fail",
         "pass": passed,
@@ -298,6 +313,8 @@ def _compare_native_trace(
         "llama_tokens": len(llama),
         "native_vs_python_first_divergence": ck_divergence,
         "native_vs_llama_first_divergence": llama_divergence,
+        "native_matches_python_captured_prefix": ck_divergence is None,
+        "three_way_comparison_complete": complete,
     }
 
 
@@ -851,6 +868,7 @@ def main() -> int:
                 env=env,
                 log_path=case_dir / "parity.log",
                 dry_run=False,
+                accepted_returncodes=(0, 3),
             )
             report = json.loads(parity_report.read_text(encoding="utf-8"))
             elapsed["native_cli"] = _run_logged(

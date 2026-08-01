@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -224,6 +225,7 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
 
     def test_native_trace_must_match_python_and_llama_pre_eos_tokens(self) -> None:
         report = {
+            "pass": True,
             "stop_token_ids": [99],
             "steps": [
                 {"ck_next": 7, "llama_next": 7},
@@ -246,6 +248,40 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
             comparison["native_vs_python_first_divergence"],
             {"step": 1, "native_token": 9, "reference_token": 8},
         )
+
+    def test_native_trace_attributes_a_truncated_oracle_divergence(self) -> None:
+        report = {
+            "pass": False,
+            "steps": [
+                {"ck_next": 7, "llama_next": 7},
+                {"ck_next": 606, "llama_next": 627},
+            ],
+        }
+        trace = {
+            "schema": "cke.native_token_trace",
+            "schema_version": 1,
+            "token_ids": [7, 606, 42],
+        }
+        comparison = self.module._compare_native_trace(report, trace)
+        self.assertFalse(comparison["pass"])
+        self.assertTrue(comparison["native_matches_python_captured_prefix"])
+        self.assertFalse(comparison["three_way_comparison_complete"])
+        self.assertIsNone(comparison["native_vs_python_first_divergence"])
+        self.assertEqual(
+            comparison["native_vs_llama_first_divergence"],
+            {"step": 1, "native_token": 606, "reference_token": 627},
+        )
+
+    def test_logged_command_accepts_completed_numerical_failure_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            elapsed = self.module._run_logged(
+                [sys.executable, "-c", "raise SystemExit(3)"],
+                env={},
+                log_path=Path(temporary) / "numerical.log",
+                dry_run=False,
+                accepted_returncodes=(0, 3),
+            )
+            self.assertGreaterEqual(elapsed, 0.0)
 
     def test_redacted_row_excludes_matched_eos_decision_from_context(self) -> None:
         report = {
