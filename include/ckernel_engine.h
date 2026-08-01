@@ -3147,6 +3147,17 @@ int attention_forward_query_key_head_major_f32_packed_k(
     int head_dim,
     float scale);
 
+int attention_forward_query_key_head_major_tiled_f16kv_fp32(
+    const float *query,
+    const float *key,
+    const float *value,
+    float *output,
+    int num_heads,
+    int query_tokens,
+    int key_tokens,
+    int head_dim,
+    float scale);
+
 void deepseek_csa_attention_backward_f32(const float *d_out,
                                          const float *q,
                                          const float *k,

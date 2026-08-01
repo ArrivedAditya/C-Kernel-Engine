@@ -104,6 +104,56 @@ def test_whisper_workers_do_not_compete_with_numpy_blas_threads(
     assert os.environ["MKL_NUM_THREADS"] == "28"
 
 
+def test_whisper_hybrid_topology_selects_smt_capable_cores(
+    tmp_path: Path,
+) -> None:
+    runner = _module()
+    siblings = {
+        0: "0-1\n",
+        1: "0-1\n",
+        2: "2-3\n",
+        3: "2-3\n",
+        4: "4\n",
+        5: "5\n",
+    }
+    for cpu, value in siblings.items():
+        path = tmp_path / f"cpu{cpu}" / "topology"
+        path.mkdir(parents=True)
+        (path / "thread_siblings_list").write_text(value, encoding="ascii")
+    assert runner._hybrid_performance_cpus(
+        set(siblings), sysfs_root=tmp_path
+    ) == [0, 1, 2, 3]
+
+
+def test_whisper_uniform_topology_does_not_restrict_affinity(
+    tmp_path: Path,
+) -> None:
+    runner = _module()
+    for cpu, value in {0: "0-1\n", 1: "0-1\n", 2: "2-3\n", 3: "2-3\n"}.items():
+        path = tmp_path / f"cpu{cpu}" / "topology"
+        path.mkdir(parents=True)
+        (path / "thread_siblings_list").write_text(value, encoding="ascii")
+    assert runner._hybrid_performance_cpus(
+        {0, 1, 2, 3}, sysfs_root=tmp_path
+    ) is None
+
+
+def test_whisper_explicit_thread_count_remains_authoritative(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _module()
+    monkeypatch.setenv("CK_NUM_THREADS", "7")
+    monkeypatch.setattr(
+        runner, "_hybrid_performance_cpus", lambda allowed: [0, 1, 2, 3]
+    )
+    monkeypatch.setattr(runner.os, "sched_getaffinity", lambda pid: {0, 1, 2, 3, 4})
+    env = runner._worker_environment(
+        {"audio_runtime_topology_policy": "performance_core_smt_on_hybrid"}
+    )
+    assert env["CK_AUDIO_WORKER_CPUS"] == "0,1,2,3"
+    assert env["CK_NUM_THREADS"] == "7"
+
+
 def test_whisper_frontend_xray_metrics_are_json_serializable() -> None:
     xray = _frontend_xray_module()
     reference = np.zeros((2, 3), dtype=np.float32)

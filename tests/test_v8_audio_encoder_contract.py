@@ -150,7 +150,7 @@ class AudioEncoderContractTests(unittest.TestCase):
             "audio.encoder.stem.conv2": "audio_conv1d_channel_major_f32",
             "audio.encoder.layout": "audio_transpose_channel_to_token_f32",
             "audio.encoder.position": "position_embeddings_add",
-            "audio.encoder.attention": "attention_forward_query_key_head_major_f32_packed_k",
+            "audio.encoder.attention.fp32": "attention_forward_query_key_head_major_f32_packed_k",
         }
         for requirement, kernel_id in expected.items():
             with self.subTest(requirement=requirement):
@@ -163,6 +163,20 @@ class AudioEncoderContractTests(unittest.TestCase):
                     mode="production",
                 )
                 self.assertEqual(plan["kernel"]["id"], kernel_id)
+
+    def test_fp16_audio_attention_contract_resolves_tiled_provider(self):
+        plan = resolver.resolve_contract(
+            self.circuit,
+            self.contracts,
+            self.kernels,
+            "audio.encoder.attention.fp16_tiled",
+            "prefill",
+            mode="production",
+        )
+        self.assertEqual(
+            plan["kernel"]["id"],
+            "attention_forward_query_key_head_major_tiled_f16kv_fp32",
+        )
 
     def test_whisper_xray_maps_every_generated_operation(self):
         config = _make_audio_encoder_manifest()["config"]
@@ -259,6 +273,14 @@ class AudioEncoderContractTests(unittest.TestCase):
     def test_frontend_and_encoder_do_not_name_concrete_kernels(self):
         self.assertNotIn("kernels", self.frontend)
         self.assertNotIn("kernels", self.circuit)
+
+    def test_audio_runtime_topology_policy_is_circuit_declared(self):
+        policy = self.circuit["contract"]["audio_encoder"][
+            "runtime_topology_policy"
+        ]
+        self.assertEqual(policy["config_key"], "audio_runtime_topology_policy")
+        self.assertEqual(policy["fallback"], "all_allowed_cpus")
+        self.assertIn("performance_core_smt_on_hybrid", policy["supported"])
 
     def test_reusable_frontend_and_encoder_prefix_cannot_drift(self):
         frontend_requirements = self.frontend["required_numerical_contracts"]

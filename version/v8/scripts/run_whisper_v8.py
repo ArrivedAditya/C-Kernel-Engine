@@ -46,12 +46,85 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _worker_environment() -> dict[str, str]:
+def _parse_cpu_list(value: str) -> set[int]:
+    cpus: set[int] = set()
+    for item in value.strip().split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if "-" in item:
+            first_text, last_text = item.split("-", 1)
+            first, last = int(first_text), int(last_text)
+            if first > last:
+                raise ValueError(f"invalid CPU range: {item}")
+            cpus.update(range(first, last + 1))
+        else:
+            cpus.add(int(item))
+    return cpus
+
+
+def _hybrid_performance_cpus(
+    allowed: set[int],
+    *,
+    sysfs_root: Path = Path("/sys/devices/system/cpu"),
+) -> list[int] | None:
+    """Return SMT-capable cores only when SMT and singleton cores coexist."""
+    groups: dict[frozenset[int], set[int]] = {}
+    for cpu in sorted(allowed):
+        siblings_path = sysfs_root / f"cpu{cpu}" / "topology" / "thread_siblings_list"
+        try:
+            siblings = _parse_cpu_list(siblings_path.read_text(encoding="ascii"))
+        except (FileNotFoundError, OSError, UnicodeError, ValueError):
+            return None
+        visible = siblings & allowed
+        if not visible:
+            return None
+        groups.setdefault(frozenset(visible), set()).update(visible)
+
+    widths = {len(group) for group in groups}
+    if 1 not in widths or not any(width > 1 for width in widths):
+        return None
+    selected = sorted(
+        cpu for group in groups.values() if len(group) > 1 for cpu in group
+    )
+    return selected or None
+
+
+def _worker_environment(
+    encoder_config: dict[str, Any] | None = None,
+) -> dict[str, str]:
     """Keep NumPy's idle BLAS pool from competing with CKE worker threads."""
     env = os.environ.copy()
     env["OPENBLAS_NUM_THREADS"] = "1"
     env["MKL_NUM_THREADS"] = "1"
+    policy = str(
+        (encoder_config or {}).get("audio_runtime_topology_policy") or ""
+    )
+    if (
+        policy == "performance_core_smt_on_hybrid"
+        and hasattr(os, "sched_getaffinity")
+    ):
+        selected = _hybrid_performance_cpus(set(os.sched_getaffinity(0)))
+        if selected:
+            env["CK_AUDIO_WORKER_CPUS"] = ",".join(str(cpu) for cpu in selected)
+            if "CK_NUM_THREADS" not in os.environ:
+                env["CK_NUM_THREADS"] = str(len(selected))
     return env
+
+
+def _apply_worker_affinity() -> dict[str, Any]:
+    requested = os.environ.get("CK_AUDIO_WORKER_CPUS", "").strip()
+    if not requested:
+        return {"policy": "inherited", "cpus": None}
+    cpus = _parse_cpu_list(requested)
+    if not cpus or not hasattr(os, "sched_setaffinity"):
+        raise RuntimeError("requested audio CPU affinity is unsupported")
+    os.sched_setaffinity(0, cpus)
+    return {
+        "policy": "performance_core_smt_on_hybrid",
+        "cpus": sorted(os.sched_getaffinity(0)),
+        "threads": int(os.environ.get("CK_NUM_THREADS", len(cpus))),
+    }
 
 
 def _require_artifact(run_dir: Path) -> None:
@@ -78,6 +151,7 @@ def _load_generated_model(run_dir: Path) -> ctypes.CDLL:
 
 
 def _encoder_worker(args: argparse.Namespace) -> int:
+    execution_topology = _apply_worker_affinity()
     run_dir = args.encoder_run_dir.resolve()
     _require_artifact(run_dir)
     model = _load_generated_model(run_dir)
@@ -193,6 +267,7 @@ def _encoder_worker(args: argparse.Namespace) -> int:
                 "encoder_seconds": encoder_seconds,
                 "feature_sha256": hashlib.sha256(features.tobytes()).hexdigest(),
                 "encoder_sha256": hashlib.sha256(output.tobytes()).hexdigest(),
+                "execution_topology": execution_topology,
             },
             indent=2,
         )
@@ -359,6 +434,7 @@ def apply_timestamp_logits_contract(
 
 
 def _decoder_worker(args: argparse.Namespace) -> int:
+    execution_topology = _apply_worker_affinity()
     run_dir = args.decoder_run_dir.resolve()
     _require_artifact(run_dir)
     generation_path = run_dir / "generation_config.json"
@@ -480,6 +556,7 @@ def _decoder_worker(args: argparse.Namespace) -> int:
                 "transcript_text": transcript_text,
                 "prefill_seconds": prefill_seconds,
                 "decode_seconds": decode_seconds,
+                "execution_topology": execution_topology,
             },
             indent=2,
         )
@@ -499,6 +576,7 @@ def _run_segment(
     temp: Path,
     index: int,
     window_start_frame: int,
+    worker_env: dict[str, str],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     encoder_output = temp / f"encoder-{index:04d}.npy"
     encoder_report = temp / f"encoder-{index:04d}.json"
@@ -519,7 +597,7 @@ def _run_segment(
             str(encoder_report),
         ],
         check=True,
-        env=_worker_environment(),
+        env=worker_env,
     )
     subprocess.run(
         [
@@ -540,7 +618,7 @@ def _run_segment(
             str(decoder_report),
         ],
         check=True,
-        env=_worker_environment(),
+        env=worker_env,
     )
     return (
         json.loads(encoder_report.read_text(encoding="utf-8")),
@@ -559,6 +637,7 @@ def _run_parent(args: argparse.Namespace) -> int:
     encoder_config = json.loads(
         (encoder_dir / "config.json").read_text(encoding="utf-8")
     )
+    worker_env = _worker_environment(encoder_config)
     target_sample_rate = int(encoder_config["audio_sample_rate"])
     generation = json.loads(
         (decoder_dir / "generation_config.json").read_text(encoding="utf-8")
@@ -579,6 +658,7 @@ def _run_parent(args: argparse.Namespace) -> int:
                 temp=temp,
                 index=len(segments),
                 window_start_frame=window_start_frame,
+                worker_env=worker_env,
             )
             audio = encoder["audio"]
             source_rate = int(audio["source_sample_rate"])
@@ -739,6 +819,10 @@ def _run_parent(args: argparse.Namespace) -> int:
             ),
             "window_count": len(segments),
             "long_audio_sample_rate": target_sample_rate,
+        },
+        "execution_topology": {
+            "encoder": encoder.get("execution_topology"),
+            "decoder": decoder.get("execution_topology"),
         },
         "segments": segments,
         "encoder": encoder,

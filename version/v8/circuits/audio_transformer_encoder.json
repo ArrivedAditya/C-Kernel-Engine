@@ -34,7 +34,15 @@
       "stem": "two_stage_conv1d",
       "position_encoding": "absolute",
       "attention": "dense_bidirectional",
-      "output": "audio_encoder_embeddings"
+      "output": "audio_encoder_embeddings",
+      "runtime_topology_policy": {
+        "config_key": "audio_runtime_topology_policy",
+        "supported": [
+          "all_allowed_cpus",
+          "performance_core_smt_on_hybrid"
+        ],
+        "fallback": "all_allowed_cpus"
+      }
     },
     "block_contract": {
       "norm_type": "layernorm",
@@ -271,14 +279,41 @@
         "axis_names": ["element"]
       }
     },
-    "audio.encoder.attention": {
+    "audio.encoder.attention.fp32": {
       "op": "attention",
       "template_ops": ["attn"],
+      "selector": {
+        "config_not_equals": {
+          "audio_encoder_attention_reduction_policy": "tiled_f16kv_online_softmax"
+        }
+      },
       "phases": {
         "prefill": {
           "contract_id": "attention_query_key_scaled_ordered_fp32_packed_k",
           "validation": "validated",
           "evidence": "unittest/test_audio_encoder.py equal-length encoder and unequal-length decoder PyTorch attention oracles"
+        }
+      },
+      "checkpoint": {
+        "id": "audio.encoder.layer.{layer}.attention.output",
+        "producer": "attn",
+        "logical_layout": "head_major",
+        "axis_names": ["head", "token", "channel"]
+      }
+    },
+    "audio.encoder.attention.fp16_tiled": {
+      "op": "attention",
+      "template_ops": ["attn"],
+      "selector": {
+        "config_equals": {
+          "audio_encoder_attention_reduction_policy": "tiled_f16kv_online_softmax"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "attention_query_key_tiled_f16kv_fp32_online_softmax",
+          "validation": "validated",
+          "evidence": "Whisper production-shape direct oracle, thread determinism, transcript corpus, and same-host performance gate"
         }
       },
       "checkpoint": {
