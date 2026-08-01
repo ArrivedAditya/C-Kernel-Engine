@@ -182,6 +182,42 @@ class Q4KLlamaPerformanceGateTests(unittest.TestCase):
         self.assertIn("CK_DISABLE_Q4K_X16_BATCHED_TAIL", dispatcher)
         self.assertNotIn("packed_vnni_x16 && N == 34816", dispatcher)
 
+    def test_qwen36_x16_decode_reuses_only_prepared_weight_views(self) -> None:
+        source = (ROOT / "version/v8/src/ck_parallel_prefill_v8.c").read_text(
+            encoding="utf-8"
+        )
+        dispatcher = re.search(
+            r"void gemv_q4_k_q8_k_repacked_parallel_dispatch\(.*?^}",
+            source,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(dispatcher)
+        body = dispatcher.group(0)
+        self.assertNotIn("CK_ENABLE_QWEN36_Q4K_X16_DECODE", source)
+        self.assertIn("qwen36_decode_shape", body)
+        self.assertIn("N == 17408", body)
+        self.assertIn("N == 5120 && (K == 6144 || K == 17408)", body)
+        self.assertNotIn("N == 1024 ||", body)
+        self.assertIn("run_gemv_q4_k_q8_k_repacked_x16_parallel", body)
+        self.assertIn("ck_find_prepared_q4k_packed_vnni_x16", body)
+        self.assertLess(
+            body.index("ck_find_prepared_q4k_packed_vnni_x16"),
+            body.index("ck_get_q4k_packed_meta_x8_cached"),
+        )
+
+        lookup = re.search(
+            r"static void \*ck_find_prepared_q4k_packed_vnni_x16\(.*?^}",
+            source,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(lookup)
+        lookup_body = lookup.group(0)
+        self.assertIn("query_begin < entry_begin", lookup_body)
+        self.assertIn("query_end > entry_end", lookup_body)
+        self.assertIn("row_offset % 16u", lookup_body)
+        self.assertIn("row_offset / 16u", lookup_body)
+        self.assertNotIn("ck_get_q4k_packed_vnni_x16_cached", lookup_body)
+
     def test_production_uses_persistent_weight_pack_not_q8_repack(self) -> None:
         source = (ROOT / "version" / "v8" / "src" / "ck_parallel_prefill_v8.c").read_text(
             encoding="utf-8"

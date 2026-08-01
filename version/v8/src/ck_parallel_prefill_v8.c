@@ -41,6 +41,7 @@
 #include "ck_speed_profiles.h"
 
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 #include <pthread.h>
@@ -685,6 +686,60 @@ static void *ck_get_q4k_packed_vnni_x16_cached(const void *B, int N, int K)
     ck_q4k_packed_vnni_x16_cache_head = entry;
     pthread_mutex_unlock(&ck_q4k_packed_vnni_x16_cache_mu);
     return packed;
+}
+
+/* Return a view into an x16 weight that model initialization already packed.
+ *
+ * Qwen3.6 stores MLP gate/up as one N=34816 tensor, while decode invokes the
+ * two N=17408 halves independently.  The x16 layout groups 16 output rows, so
+ * a row-aligned subrange can reuse the combined allocation without repacking
+ * or changing its arithmetic.  Do not create a cache entry here: the presence
+ * of a prepared entry is the capability signal that scopes this dispatch to a
+ * generated model/provider combination that selected x16 during load.
+ */
+static void *ck_find_prepared_q4k_packed_vnni_x16(
+        const void *B, int N, int K)
+{
+    if (!B || N <= 0 || K <= 0 || (K % QK_K) != 0 || (N % 16) != 0) {
+        return NULL;
+    }
+
+    const size_t raw_row_bytes =
+            (size_t)(K / QK_K) * sizeof(block_q4_K);
+    const size_t query_bytes = (size_t)N * raw_row_bytes;
+    const uintptr_t query_begin = (uintptr_t)B;
+    const uintptr_t query_end = query_begin + query_bytes;
+    if (query_end < query_begin) return NULL;
+
+    pthread_mutex_lock(&ck_q4k_packed_vnni_x16_cache_mu);
+    for (ck_q4k_packed_vnni_x16_cache_entry_t *e =
+                 ck_q4k_packed_vnni_x16_cache_head;
+         e; e = e->next) {
+        if (e->K != K) continue;
+
+        const uintptr_t entry_begin = (uintptr_t)e->src;
+        const size_t entry_bytes = (size_t)e->N * raw_row_bytes;
+        const uintptr_t entry_end = entry_begin + entry_bytes;
+        if (entry_end < entry_begin || query_begin < entry_begin ||
+            query_end > entry_end) {
+            continue;
+        }
+
+        const size_t byte_offset = (size_t)(query_begin - entry_begin);
+        if ((byte_offset % raw_row_bytes) != 0) continue;
+        const size_t row_offset = byte_offset / raw_row_bytes;
+        if ((row_offset % 16u) != 0) continue;
+
+        const size_t packed_group_bytes =
+                (size_t)(K / QK_K) *
+                q4_k_packed_vnni_x16_block_size();
+        void *packed = (unsigned char *)e->packed +
+                (row_offset / 16u) * packed_group_bytes;
+        pthread_mutex_unlock(&ck_q4k_packed_vnni_x16_cache_mu);
+        return packed;
+    }
+    pthread_mutex_unlock(&ck_q4k_packed_vnni_x16_cache_mu);
+    return NULL;
 }
 
 
@@ -1718,6 +1773,27 @@ void gemv_q4_k_q8_k_repacked_parallel_dispatch(
     float *y, const void *W, const void *x_q8, int N, int K)
 {
     if (!y || !W || !x_q8 || N <= 0 || K <= 0 || (K % QK_K) != 0) return;
+
+    /* Qwen3.6 model initialization already prepares this exact x16 VNNI
+     * layout for its wide prefill projections.  Reuse it for decode only when
+     * a prepared view exists; otherwise retain the certified x8 provider.
+     * This makes model/load-time provider selection the capability signal and
+     * requires no user-facing dispatch flag. */
+    const int qwen36_decode_shape =
+            (K == 5120 &&
+             (N == 6144 || N == 12288 || N == 17408)) ||
+            (N == 5120 && (K == 6144 || K == 17408));
+    if (qwen36_decode_shape &&
+        ck_q4k_packed_vnni_x16_available()) {
+        void *packed_x16 =
+                ck_find_prepared_q4k_packed_vnni_x16(W, N, K);
+        if (packed_x16) {
+            run_gemv_q4_k_q8_k_repacked_x16_parallel(
+                    ck_threadpool_global(), x_q8, packed_x16, NULL, y,
+                    1, N, K, 0);
+            return;
+        }
+    }
 
     void *packed_x8 = ck_get_q4k_packed_meta_x8_cached(W, N, K);
     if (!packed_x8) {
