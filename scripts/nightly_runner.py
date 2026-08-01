@@ -518,6 +518,12 @@ MAKE_TARGETS = {
         "target": "test-qwen36-q6k-m4-performance",
         "timeout_sec": 300,
     },
+    "whisper_f16_gemm_performance": {
+        "name": "Whisper AVX2 FP16 GEMM Performance",
+        "category": "bench",
+        "target": "test-whisper-f16-gemm-performance",
+        "timeout_sec": 180,
+    },
     "numerical_replay_fixture_contract": {
         "name": "Numerical Replay Fixture Contract",
         "category": "parity",

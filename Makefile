@@ -2779,6 +2779,17 @@ test-f16-gemm-llama-contract: $(LIB)
 	@CK_BUILD_DIR="$(BUILD_DIR)" LD_LIBRARY_PATH="$(CURDIR)/llama.cpp/build/bin:$${LD_LIBRARY_PATH}" \
 		$(PYTHON) unittest/test_f16_gemm_llama_contract.py
 
+.PHONY: test-whisper-f16-gemm-performance
+test-whisper-f16-gemm-performance: $(LIB)
+	@echo "Running Whisper AVX2 FP16 GEMM exactness + performance gate..."
+	@OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_whisper_f16_gemm.py \
+			--library $(LIB) \
+			--threads $${CK_WHISPER_F16_GEMM_THREADS:-16} \
+			--repeats $${CK_WHISPER_F16_GEMM_REPEATS:-7} \
+			--shape base_projection --shape base_mlp_up --shape base_mlp_down \
+			--min-speedup $${CK_WHISPER_F16_GEMM_MIN_SPEEDUP:-1.05}
+
 # End-to-end llama.cpp compatibility suite
 # This lane is where model-family and stitched graph checks belong.
 llamacpp-e2e:
