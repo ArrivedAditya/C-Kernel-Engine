@@ -483,6 +483,86 @@ static inline void ck_dot_f16_f16_avx4(const uint16_t *w,
         sums[3] += fp16_to_fp32(w3[i]) * xv;
     }
 }
+
+static inline void ck_dot_f16_f16_avx_m4n2(const uint16_t *w0,
+                                            const uint16_t *w1,
+                                            const uint16_t *x0,
+                                            const uint16_t *x1,
+                                            const uint16_t *x2,
+                                            const uint16_t *x3,
+                                            int k,
+                                            float sums[4][2])
+{
+    int i = 0;
+    const int k8 = (k / 8) * 8;
+    __m256 acc00 = _mm256_setzero_ps();
+    __m256 acc01 = _mm256_setzero_ps();
+    __m256 acc10 = _mm256_setzero_ps();
+    __m256 acc11 = _mm256_setzero_ps();
+    __m256 acc20 = _mm256_setzero_ps();
+    __m256 acc21 = _mm256_setzero_ps();
+    __m256 acc30 = _mm256_setzero_ps();
+    __m256 acc31 = _mm256_setzero_ps();
+
+    for (; i < k8; i += 8) {
+        const __m256 wf0 = _mm256_cvtph_ps(
+            _mm_loadu_si128((const __m128i *)(w0 + i)));
+        const __m256 wf1 = _mm256_cvtph_ps(
+            _mm_loadu_si128((const __m128i *)(w1 + i)));
+        const __m256 xf0 = _mm256_cvtph_ps(
+            _mm_loadu_si128((const __m128i *)(x0 + i)));
+        const __m256 xf1 = _mm256_cvtph_ps(
+            _mm_loadu_si128((const __m128i *)(x1 + i)));
+        const __m256 xf2 = _mm256_cvtph_ps(
+            _mm_loadu_si128((const __m128i *)(x2 + i)));
+        const __m256 xf3 = _mm256_cvtph_ps(
+            _mm_loadu_si128((const __m128i *)(x3 + i)));
+#ifdef __FMA__
+        acc00 = _mm256_fmadd_ps(wf0, xf0, acc00);
+        acc01 = _mm256_fmadd_ps(wf1, xf0, acc01);
+        acc10 = _mm256_fmadd_ps(wf0, xf1, acc10);
+        acc11 = _mm256_fmadd_ps(wf1, xf1, acc11);
+        acc20 = _mm256_fmadd_ps(wf0, xf2, acc20);
+        acc21 = _mm256_fmadd_ps(wf1, xf2, acc21);
+        acc30 = _mm256_fmadd_ps(wf0, xf3, acc30);
+        acc31 = _mm256_fmadd_ps(wf1, xf3, acc31);
+#else
+        acc00 = _mm256_add_ps(acc00, _mm256_mul_ps(wf0, xf0));
+        acc01 = _mm256_add_ps(acc01, _mm256_mul_ps(wf1, xf0));
+        acc10 = _mm256_add_ps(acc10, _mm256_mul_ps(wf0, xf1));
+        acc11 = _mm256_add_ps(acc11, _mm256_mul_ps(wf1, xf1));
+        acc20 = _mm256_add_ps(acc20, _mm256_mul_ps(wf0, xf2));
+        acc21 = _mm256_add_ps(acc21, _mm256_mul_ps(wf1, xf2));
+        acc30 = _mm256_add_ps(acc30, _mm256_mul_ps(wf0, xf3));
+        acc31 = _mm256_add_ps(acc31, _mm256_mul_ps(wf1, xf3));
+#endif
+    }
+
+    sums[0][0] = ck_hsum256_ps(acc00);
+    sums[0][1] = ck_hsum256_ps(acc01);
+    sums[1][0] = ck_hsum256_ps(acc10);
+    sums[1][1] = ck_hsum256_ps(acc11);
+    sums[2][0] = ck_hsum256_ps(acc20);
+    sums[2][1] = ck_hsum256_ps(acc21);
+    sums[3][0] = ck_hsum256_ps(acc30);
+    sums[3][1] = ck_hsum256_ps(acc31);
+    for (; i < k; ++i) {
+        const float wv0 = fp16_to_fp32(w0[i]);
+        const float wv1 = fp16_to_fp32(w1[i]);
+        const float xv0 = fp16_to_fp32(x0[i]);
+        const float xv1 = fp16_to_fp32(x1[i]);
+        const float xv2 = fp16_to_fp32(x2[i]);
+        const float xv3 = fp16_to_fp32(x3[i]);
+        sums[0][0] += wv0 * xv0;
+        sums[0][1] += wv1 * xv0;
+        sums[1][0] += wv0 * xv1;
+        sums[1][1] += wv1 * xv1;
+        sums[2][0] += wv0 * xv2;
+        sums[2][1] += wv1 * xv2;
+        sums[3][0] += wv0 * xv3;
+        sums[3][1] += wv1 * xv3;
+    }
+}
 #endif
 
 static inline float ck_dot_f16_f16_local(const uint16_t *w, const uint16_t *x, int k)
@@ -731,6 +811,10 @@ typedef struct {
     int K;
 } ck_gemm_f16_input_fp16_args_t;
 
+#if defined(__F16C__) && defined(__AVX__) && !defined(__AVX512F__)
+static int ck_gemm_f16_m4n2_enabled(void);
+#endif
+
 static void ck_gemm_f16_input_fp16_work(int ith, int nth, void *opaque)
 {
     ck_gemm_f16_input_fp16_args_t *args = (ck_gemm_f16_input_fp16_args_t *) opaque;
@@ -738,7 +822,42 @@ static void ck_gemm_f16_input_fp16_work(int ith, int nth, void *opaque)
     const int N = args->N;
     const int K = args->K;
 
-    for (int n = ith; n < N; n += nth) {
+    const int token_groups = (N + 3) / 4;
+    for (int group = ith; group < token_groups; group += nth) {
+        const int n0 = group * 4;
+        const int token_count = N - n0 < 4 ? N - n0 : 4;
+#if defined(__F16C__) && defined(__AVX__) && !defined(__AVX512F__)
+        if (token_count == 4 && ck_gemm_f16_m4n2_enabled()) {
+            uint16_t x_f16[4][K];
+            for (int t = 0; t < 4; ++t) {
+                ck_f32_to_f16_row_local(
+                    x_f16[t], args->X + (size_t)(n0 + t) * (size_t)K, K);
+            }
+
+            int row = 0;
+            for (; row + 1 < M; row += 2) {
+                float sums[4][2];
+                const uint16_t *w0 = args->W + (size_t)row * (size_t)K;
+                ck_dot_f16_f16_avx_m4n2(
+                    w0, w0 + K,
+                    x_f16[0], x_f16[1], x_f16[2], x_f16[3], K, sums);
+                for (int t = 0; t < 4; ++t) {
+                    float *out = args->Y + (size_t)(n0 + t) * (size_t)M + (size_t)row;
+                    out[0] = sums[t][0];
+                    out[1] = sums[t][1];
+                }
+            }
+            for (; row < M; ++row) {
+                const uint16_t *w = args->W + (size_t)row * (size_t)K;
+                for (int t = 0; t < 4; ++t) {
+                    args->Y[(size_t)(n0 + t) * (size_t)M + (size_t)row] =
+                        ck_dot_f16_f16_local(w, x_f16[t], K);
+                }
+            }
+            continue;
+        }
+#endif
+        for (int n = n0; n < n0 + token_count; ++n) {
         const float *x_row = args->X + (size_t)n * (size_t)K;
         uint16_t x_f16[K];
 
@@ -771,6 +890,7 @@ static void ck_gemm_f16_input_fp16_work(int ith, int nth, void *opaque)
             const float sum = ck_dot_f16_f16_local(w_row, x_f16, K);
             args->Y[(size_t)n * (size_t)M + (size_t)row] = sum;
         }
+        }
     }
 }
 
@@ -781,6 +901,14 @@ static int ck_gemm_f16_threadpool_enabled(int M, int N, int K)
     if (M < 256 || N < 16 || K < 256) return 0;
     return 1;
 }
+
+#if defined(__F16C__) && defined(__AVX__) && !defined(__AVX512F__)
+static int ck_gemm_f16_m4n2_enabled(void)
+{
+    const char *disable = getenv("CK_DISABLE_F16_GEMM_M4N2");
+    return !(disable && disable[0] && strcmp(disable, "0") != 0);
+}
+#endif
 
 static int ck_gemm_f16_pick_active_threads(const ck_threadpool_t *pool, int M, int N, int K)
 {

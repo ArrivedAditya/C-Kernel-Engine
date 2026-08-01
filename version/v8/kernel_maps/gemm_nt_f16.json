@@ -58,7 +58,7 @@
         "isa_dispatch": "compile_time",
         "threading": {
           "runtime": "ck_threadpool",
-          "work_partition": ["independent_rows"],
+          "work_partition": ["independent_rows", "output_tiles"],
           "dispatch": ["ck_threadpool_dispatch_n"],
           "reduction_order_effect": "contract_defined"
         }
@@ -110,5 +110,5 @@
       }
     ]
   },
-  "notes": "Generic FP16-weight GEMM wrapper for dense NT matmul lowering."
+  "notes": "Generic FP16-weight GEMM wrapper for dense NT matmul lowering. AVX2 reuses each pair of FP16 weight rows across groups of four activation rows while preserving the contract-defined dot reduction independently for every output."
 }

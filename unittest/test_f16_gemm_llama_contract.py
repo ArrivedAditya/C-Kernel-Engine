@@ -42,38 +42,52 @@ def _load() -> ctypes.CDLL:
     return ck
 
 
-def _fixture() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    row = np.arange(M, dtype=np.float32)[:, None]
-    col = np.arange(K, dtype=np.float32)[None, :]
+def _fixture(m: int = M, n: int = N, k: int = K) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    row = np.arange(m, dtype=np.float32)[:, None]
+    col = np.arange(k, dtype=np.float32)[None, :]
     activation = (
         np.sin(col * np.float32(0.013) + row * np.float32(0.17)) * np.float32(0.37)
         + np.cos(col * np.float32(0.0031) - row * np.float32(0.11)) * np.float32(0.09)
     ).astype(np.float32)
-    out = np.arange(N, dtype=np.float32)[:, None]
+    out = np.arange(n, dtype=np.float32)[:, None]
     weights = (
         np.sin(col * np.float32(0.007) + out * np.float32(0.019)) * np.float32(0.12)
         + np.cos(col * np.float32(0.0023) - out * np.float32(0.023)) * np.float32(0.04)
     ).astype(np.float16)
-    bias = (np.sin(np.arange(N, dtype=np.float32) * np.float32(0.021)) * np.float32(0.03)).astype(np.float32)
+    bias = (np.sin(np.arange(n, dtype=np.float32) * np.float32(0.021)) * np.float32(0.03)).astype(np.float32)
     return np.ascontiguousarray(activation), np.ascontiguousarray(weights), bias
 
 
 def _run_production(ck: ctypes.CDLL, activation: np.ndarray, weights: np.ndarray,
-                    bias: np.ndarray | None, threads: int = 20) -> np.ndarray:
-    output = np.empty((M, N), dtype=np.float32)
+                    bias: np.ndarray | None, threads: int = 20,
+                    disable_m4n2: bool = False) -> np.ndarray:
+    m, k = activation.shape
+    n = weights.shape[0]
+    output = np.empty((m, n), dtype=np.float32)
     ck.ck_set_strict_parity(0)
     ck.ck_set_num_threads(threads)
     bias_ptr = (
         bias.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
         if bias is not None else None
     )
-    ck.gemm_nt_f16(
-        activation.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-        ctypes.c_void_p(weights.ctypes.data),
-        bias_ptr,
-        output.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-        M, N, K,
-    )
+    previous = os.environ.get("CK_DISABLE_F16_GEMM_M4N2")
+    try:
+        if disable_m4n2:
+            os.environ["CK_DISABLE_F16_GEMM_M4N2"] = "1"
+        else:
+            os.environ.pop("CK_DISABLE_F16_GEMM_M4N2", None)
+        ck.gemm_nt_f16(
+            activation.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            ctypes.c_void_p(weights.ctypes.data),
+            bias_ptr,
+            output.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            m, n, k,
+        )
+    finally:
+        if previous is None:
+            os.environ.pop("CK_DISABLE_F16_GEMM_M4N2", None)
+        else:
+            os.environ["CK_DISABLE_F16_GEMM_M4N2"] = previous
     return output
 
 
@@ -124,6 +138,32 @@ def main() -> int:
         for threads in (1, 16, 20, 24)
     }
 
+    production_shape_equivalence = {}
+    for name, shape in {
+        "whisper_tiny_projection": (1500, 384, 384),
+        "whisper_tiny_mlp_up": (1500, 1536, 384),
+        "whisper_tiny_mlp_down": (1500, 384, 1536),
+        "whisper_base_projection": (1500, 512, 512),
+        "whisper_base_mlp_up": (1500, 2048, 512),
+        "whisper_base_mlp_down": (1500, 512, 2048),
+        "whisper_small_projection": (1500, 768, 768),
+        "whisper_small_mlp_up": (1500, 3072, 768),
+        "whisper_small_mlp_down": (1500, 768, 3072),
+    }.items():
+        shape_activation, shape_weights, _ = _fixture(*shape)
+        baseline = _run_production(
+            ck, shape_activation, shape_weights, None,
+            threads=16, disable_m4n2=True,
+        )
+        optimized = _run_production(
+            ck, shape_activation, shape_weights, None,
+            threads=16, disable_m4n2=False,
+        )
+        production_shape_equivalence[name] = {
+            "shape": {"tokens": shape[0], "outputs": shape[1], "width": shape[2]},
+            **_metrics(optimized, baseline),
+        }
+
     no_bias = _metrics(production_no_bias, oracle_no_bias)
     with_bias = _metrics(production_bias, oracle_bias)
     repeat = _metrics(repeat_bias, production_bias)
@@ -132,6 +172,7 @@ def main() -> int:
         and with_bias["bit_exact"]
         and repeat["bit_exact"]
         and all(row["bit_exact"] for row in thread_matrix.values())
+        and all(row["bit_exact"] for row in production_shape_equivalence.values())
     )
     report = {
         "schema": "cke.f16_gemm_llama_contract",
@@ -156,6 +197,7 @@ def main() -> int:
         "after_bias": with_bias,
         "thread_determinism": repeat,
         "thread_matrix": thread_matrix,
+        "production_shape_equivalence": production_shape_equivalence,
     }
     print(json.dumps(report, indent=2))
     return 0 if passed else 1

@@ -23,7 +23,17 @@ Generated FP16 runtimes transcribed the same fixture coherently with Tiny, Base,
 
 ## Remaining work
 
-- Improve FP16 GEMM packing and activation reuse.
+- Extend the AVX2 4-token by 2-output FP16 GEMM tile to a separately certified AVX-512 implementation.
 - Improve Conv1D channel and frame partitioning.
 - Certify clean, noisy, multilingual, timestamp, and long-audio fixtures.
 - Compare each checkpoint with same-host PyTorch and whisper.cpp runs.
+
+## AVX2 FP16 GEMM follow-up
+
+The AVX2 FP16 provider now computes four token rows and two output rows together. This reuses each loaded weight vector across four activations while retaining the previous eight-lane FMA chain and horizontal reduction independently for every output.
+
+Full production-shape baseline comparisons are byte-exact for Tiny, Base, and Small projections and MLPs. The independent llama.cpp production-graph oracle also remains bit-exact at 1, 16, 20, and 24 threads.
+
+Alternating same-library Whisper runs improved the encoder by about 4 percent for Tiny, 5-6 percent for Base, and 7 percent for Small. Their transcripts remained unchanged. The AVX2 tile is compiled out on AVX-512 so it cannot alter that ISA's 16-lane reduction contract.
+
+The durable Base-shape benchmark measures 1.28-1.70x isolated provider speedups on this host. VTune attributes 97.6 percent of the provider-only CPU time to `ck_gemm_f16_input_fp16_work`; with P-core affinity and no competing BLAS pool, the Base MLP-up median is approximately 8.36 ms. Intel Advisor 2026.0 could not ingest the Python-driven trace on this host and reported `_advi_dynamic_regions_table` followed by no data, so no Advisor roofline claim is made.
