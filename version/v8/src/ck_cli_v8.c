@@ -33,6 +33,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <pthread.h>
 
 #ifdef HAVE_READLINE
 #include <readline/readline.h>
@@ -42,6 +43,7 @@
 #include "tokenizer/true_bpe.h"
 #include "ck_features.h"
 #include "ck_model_abi_v8.h"
+#include "ck_session_v8.h"
 #include "ckernel_audio.h"
 
 #ifdef _OPENMP
@@ -346,6 +348,10 @@ typedef struct {
     ChatTemplateType chat_template;
     int eos_ids[CK_CLI_EOS_MAX];
     int eos_count;
+    ck_session_token_callback_v8 token_callback;
+    void *token_callback_user_data;
+    volatile sig_atomic_t *cancel_requested;
+    CKSessionGenerateResultV8 *session_result;
 } CLIOptions;
 
 typedef struct {
@@ -2279,6 +2285,16 @@ static bool load_prefix_embeddings(
 static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
     if (!api || !opt) return -1;
 
+    int emitted_tokens = 0;
+    int stop_reason = CK_SESSION_STOP_TOKEN_LIMIT;
+    if (opt->session_result) {
+        opt->session_result->prompt_tokens = g_prompt_tokens;
+        opt->session_result->generated_tokens = 0;
+        opt->session_result->stop_reason = CK_SESSION_STOP_NONE;
+        opt->session_result->prefill_time_ms = g_prefill_time_ms;
+        opt->session_result->decode_time_ms = 0.0;
+    }
+
     /* Get vocab size for sampling */
     int vocab_size = api->get_vocab_size ? api->get_vocab_size() : 0;
     int max_tokens = opt->max_tokens > 0 ? opt->max_tokens : CK_CLI_DEFAULT_MAX_TOKENS;
@@ -2341,21 +2357,31 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
 
     struct timespec t0, t1;
     for (int generated = 0; generated < max_tokens && !g_exit_requested && g_generation_active; generated++) {
-        if (next_token < 0) break;
+        if (opt->cancel_requested && *opt->cancel_requested) {
+            stop_reason = CK_SESSION_STOP_CANCELLED;
+            break;
+        }
+        if (next_token < 0) {
+            stop_reason = CK_SESSION_STOP_RUNTIME_ERROR;
+            break;
+        }
 
         /* Convert token ID to string using model's tokenizer */
         char token_str[256];
         const char *word = NULL;
+        size_t word_len = 0;
         if (api->decode_tokens) {
             int32_t single_id = next_token;
             int len = api->decode_tokens(&single_id, 1, token_str, sizeof(token_str) - 1);
             if (len > 0) {
                 token_str[len] = '\0';
                 word = token_str;
+                word_len = (size_t)len;
             }
         }
         if (!word) {
             word = fallback_vocab_id_to_token(api, next_token);
+            if (word) word_len = strlen(word);
         }
 
         if (opt->verbose) {
@@ -2363,11 +2389,25 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
         }
 
         if (is_eos_token(api, opt, next_token)) {
+            stop_reason = CK_SESSION_STOP_EOS;
             if (opt->verbose) {
                 fprintf(stderr, "[DEBUG] EOS detected (token ID), stopping\n");
             }
             break;
         }
+
+        if (opt->token_callback &&
+            opt->token_callback(
+                opt->token_callback_user_data,
+                (int32_t)next_token,
+                word ? word : "",
+                word_len,
+                generated) != 0) {
+            emitted_tokens++;
+            stop_reason = CK_SESSION_STOP_CALLBACK;
+            break;
+        }
+        emitted_tokens++;
 
         if (!opt->quiet_output) {
             if (generated_stop_contract || opt->ignore_eos) {
@@ -2401,6 +2441,7 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
         clock_gettime(CLOCK_MONOTONIC, &t0);
         if (api->decode(next_token, NULL) != 0) {
             fprintf(stderr, "\n[Model] decode failed\n");
+            stop_reason = CK_SESSION_STOP_RUNTIME_ERROR;
             break;
         }
         clock_gettime(CLOCK_MONOTONIC, &t1);
@@ -2464,7 +2505,14 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
         #undef C_RST
     }
     fflush(stdout);
-    return 0;
+    if (opt->session_result) {
+        opt->session_result->prompt_tokens = g_prompt_tokens;
+        opt->session_result->generated_tokens = emitted_tokens;
+        opt->session_result->stop_reason = stop_reason;
+        opt->session_result->prefill_time_ms = g_prefill_time_ms;
+        opt->session_result->decode_time_ms = g_decode_time_ms;
+    }
+    return stop_reason == CK_SESSION_STOP_RUNTIME_ERROR ? -1 : 0;
 }
 
 static int run_token_ids(ModelAPI *api, CLIOptions *opt, int32_t *ids, int n, int user_tokens) {
@@ -2545,9 +2593,9 @@ static int run_token_ids(ModelAPI *api, CLIOptions *opt, int32_t *ids, int n, in
     g_prefill_time_ms = (t1.tv_sec - t0.tv_sec) * 1000.0 +
                         (t1.tv_nsec - t0.tv_nsec) / 1000000.0;
     free(prefix_embeddings);
-    run_generation_loop(api, opt);
+    int generation_status = run_generation_loop(api, opt);
     free(ids);
-    return 0;
+    return generation_status;
 }
 
 static int initialize_model_api(
@@ -5305,6 +5353,265 @@ static bool process_repl_command(const char *line, CLIOptions *opt, ModelAPI *ap
  * Main
  * ============================================================================ */
 
+struct CKSessionV8 {
+    ModelAPI api;
+    pthread_mutex_t generation_lock;
+    volatile sig_atomic_t cancel_requested;
+    int context_length;
+    char last_error[256];
+};
+
+static int session_error(CKSessionV8 *session, int status, const char *message) {
+    if (session) {
+        snprintf(session->last_error, sizeof(session->last_error), "%s",
+                 message ? message : "unknown session error");
+    }
+    return status;
+}
+
+uint32_t ck_session_v8_get_abi_version(void) {
+    return CK_SESSION_ABI_V8_VERSION;
+}
+
+int ck_session_v8_open(
+    const CKSessionConfigV8 *config,
+    CKSessionV8 **session_out) {
+    if (!config || !session_out ||
+        config->struct_size != sizeof(CKSessionConfigV8) ||
+        config->abi_version != CK_SESSION_ABI_V8_VERSION ||
+        !config->model_library_path || !config->weights_path) {
+        return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    }
+    *session_out = NULL;
+
+    CKSessionV8 *session = (CKSessionV8 *)calloc(1, sizeof(*session));
+    if (!session) return CK_SESSION_V8_ERROR_RUNTIME;
+    int failure_status = CK_SESSION_V8_ERROR_INIT;
+    if (pthread_mutex_init(&session->generation_lock, NULL) != 0) {
+        free(session);
+        return CK_SESSION_V8_ERROR_RUNTIME;
+    }
+    if (config->num_threads > 0) {
+        char thread_text[32];
+        snprintf(thread_text, sizeof(thread_text), "%d", config->num_threads);
+        setenv("CK_NUM_THREADS", thread_text, 1);
+    }
+    if (!load_model_api(config->model_library_path, &session->api)) {
+        pthread_mutex_destroy(&session->generation_lock);
+        free(session);
+        return CK_SESSION_V8_ERROR_LOAD;
+    }
+    if (!session->api.has_descriptor) {
+        failure_status = session_error(
+            session, CK_SESSION_V8_ERROR_ABI,
+            "generated model has no versioned runtime descriptor");
+        goto fail;
+    }
+    const uint64_t required = config->required_capabilities |
+        CK_MODEL_CAP_INIT | CK_MODEL_CAP_AUTOREGRESSIVE_DECODE |
+        CK_MODEL_CAP_TEXT_ENCODE | CK_MODEL_CAP_TOKEN_DECODE;
+    if ((session->api.descriptor.capabilities & required) != required) {
+        failure_status = session_error(
+            session, CK_SESSION_V8_ERROR_CAPABILITY,
+            "generated model lacks required session capabilities");
+        goto fail;
+    }
+    if (initialize_model_api(
+            &session->api, config->weights_path, config->manifest_path) != 0) {
+        failure_status = session_error(
+            session, CK_SESSION_V8_ERROR_INIT,
+            "generated model initialization failed");
+        goto fail;
+    }
+    session->context_length = config->context_length > 0
+        ? config->context_length
+        : session->api.descriptor.context_length;
+    if (session->context_length <= 0 && session->api.get_context) {
+        session->context_length = session->api.get_context();
+    }
+    if (session->api.kv_enable && session->context_length > 0 &&
+        session->api.kv_enable(session->context_length) != 0) {
+        failure_status = session_error(
+            session, CK_SESSION_V8_ERROR_INIT,
+            "KV cache initialization failed");
+        goto fail_initialized;
+    }
+    session->last_error[0] = '\0';
+    *session_out = session;
+    return CK_SESSION_V8_OK;
+
+fail_initialized:
+    if (session->api.free_fn) session->api.free_fn();
+fail:
+    if (session->api.handle) dlclose(session->api.handle);
+    pthread_mutex_destroy(&session->generation_lock);
+    free(session);
+    return failure_status;
+}
+
+void ck_session_v8_close(CKSessionV8 *session) {
+    if (!session) return;
+    ck_session_v8_cancel(session);
+    pthread_mutex_lock(&session->generation_lock);
+    if (session->api.free_fn) session->api.free_fn();
+    if (session->api.handle) dlclose(session->api.handle);
+    pthread_mutex_unlock(&session->generation_lock);
+    pthread_mutex_destroy(&session->generation_lock);
+    free(session);
+}
+
+int ck_session_v8_get_model_descriptor(
+    const CKSessionV8 *session,
+    CKModelRuntimeDescriptorV8 *descriptor,
+    size_t descriptor_size) {
+    if (!session || !descriptor || descriptor_size < sizeof(*descriptor)) {
+        return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    }
+    memcpy(descriptor, &session->api.descriptor, sizeof(*descriptor));
+    return CK_SESSION_V8_OK;
+}
+
+int ck_session_v8_encode(
+    CKSessionV8 *session,
+    const char *text,
+    int32_t *output,
+    int32_t capacity) {
+    if (!session || !text || capacity < 0) return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    if (!session->api.encode_text || !session->api.get_token_buffer) {
+        return session_error(session, CK_SESSION_V8_ERROR_CAPABILITY,
+                             "text encoding is unavailable");
+    }
+    int count = session->api.encode_text(text, -1);
+    const int32_t *tokens = session->api.get_token_buffer();
+    if (count < 0 || (count > 0 && !tokens)) {
+        return session_error(session, CK_SESSION_V8_ERROR_RUNTIME,
+                             "native tokenizer failed");
+    }
+    if (!output) return count;
+    if (capacity < count) return CK_SESSION_V8_ERROR_BUFFER_TOO_SMALL;
+    if (count > 0) memcpy(output, tokens, (size_t)count * sizeof(*output));
+    return count;
+}
+
+int ck_session_v8_decode(
+    CKSessionV8 *session,
+    const int32_t *tokens,
+    int32_t token_count,
+    char *output,
+    int32_t capacity) {
+    if (!session || !tokens || token_count < 0 || capacity < 0) {
+        return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    }
+    if (!session->api.decode_tokens) {
+        return session_error(session, CK_SESSION_V8_ERROR_CAPABILITY,
+                             "token decoding is unavailable");
+    }
+    if (output && capacity > 0) {
+        return session->api.decode_tokens(tokens, token_count, output, capacity);
+    }
+    size_t scratch_size = (size_t)(token_count > 0 ? token_count : 1) * 256u + 1u;
+    if (scratch_size > (size_t)INT32_MAX) return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    char *scratch = (char *)malloc(scratch_size);
+    if (!scratch) return CK_SESSION_V8_ERROR_RUNTIME;
+    int written = session->api.decode_tokens(
+        tokens, token_count, scratch, (int)scratch_size);
+    free(scratch);
+    return written;
+}
+
+int ck_session_v8_format_chat(
+    CKSessionV8 *session,
+    const char *system_text,
+    const char *user_text,
+    char *output,
+    int32_t capacity) {
+    if (!session || !user_text || capacity < 0) {
+        return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    }
+    if (!session->api.format_chat) {
+        return session_error(session, CK_SESSION_V8_ERROR_CAPABILITY,
+                             "generated chat formatting is unavailable");
+    }
+    return session->api.format_chat(system_text, user_text, output, capacity);
+}
+
+int ck_session_v8_generate(
+    CKSessionV8 *session,
+    const CKSessionGenerateRequestV8 *request,
+    ck_session_token_callback_v8 callback,
+    void *user_data,
+    CKSessionGenerateResultV8 *result) {
+    if (!session || !request || !request->user_text || !result ||
+        request->struct_size != sizeof(*request) ||
+        request->abi_version != CK_SESSION_ABI_V8_VERSION ||
+        result->struct_size != sizeof(*result) ||
+        result->abi_version != CK_SESSION_ABI_V8_VERSION) {
+        return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    }
+    if (pthread_mutex_trylock(&session->generation_lock) != 0) {
+        return session_error(session, CK_SESSION_V8_ERROR_BUSY,
+                             "session already has an active request");
+    }
+
+    memset((char *)result + 2 * sizeof(uint32_t), 0,
+           sizeof(*result) - 2 * sizeof(uint32_t));
+    session->cancel_requested = 0;
+    session->last_error[0] = '\0';
+    g_exit_requested = 0;
+    if (!(request->flags & CK_SESSION_REQUEST_CONTINUE_STATE) &&
+        session->api.kv_reset) {
+        session->api.kv_reset();
+    }
+
+    CLIOptions opt;
+    memset(&opt, 0, sizeof(opt));
+    opt.max_tokens = request->max_tokens > 0
+        ? request->max_tokens : CK_CLI_DEFAULT_MAX_TOKENS;
+    opt.context_override = session->context_length;
+    opt.temperature = request->temperature;
+    opt.top_p = request->top_p > 0.0f ? request->top_p : 0.9f;
+    opt.system_prompt = request->system_text;
+    opt.no_chat_template = (request->flags & CK_SESSION_REQUEST_RAW_PROMPT) != 0;
+    opt.ignore_eos = (request->flags & CK_SESSION_REQUEST_IGNORE_EOS) != 0;
+    opt.timestamps = (request->flags & CK_SESSION_REQUEST_TIMESTAMPS) != 0;
+    opt.quiet_output = true;
+    opt.stream = false;
+    opt.timing = false;
+    opt.token_callback = callback;
+    opt.token_callback_user_data = user_data;
+    opt.cancel_requested = &session->cancel_requested;
+    opt.session_result = result;
+
+    int status = run_prompt(&session->api, &opt, request->user_text);
+    if (status != 0) {
+        session_error(session, CK_SESSION_V8_ERROR_RUNTIME,
+                      "native generation failed");
+    }
+    pthread_mutex_unlock(&session->generation_lock);
+    return status == 0 ? CK_SESSION_V8_OK : CK_SESSION_V8_ERROR_RUNTIME;
+}
+
+void ck_session_v8_cancel(CKSessionV8 *session) {
+    if (session) session->cancel_requested = 1;
+}
+
+int ck_session_v8_reset(CKSessionV8 *session) {
+    if (!session) return CK_SESSION_V8_ERROR_INVALID_ARGUMENT;
+    if (pthread_mutex_trylock(&session->generation_lock) != 0) {
+        return CK_SESSION_V8_ERROR_BUSY;
+    }
+    if (session->api.kv_reset) session->api.kv_reset();
+    session->cancel_requested = 0;
+    pthread_mutex_unlock(&session->generation_lock);
+    return CK_SESSION_V8_OK;
+}
+
+const char *ck_session_v8_last_error(const CKSessionV8 *session) {
+    return session ? session->last_error : "invalid session";
+}
+
+#ifndef CK_CLI_V8_NO_MAIN
+
 int main(int argc, char **argv) {
     /* C requires setvbuf before any operation on the stream. Keeping this at
      * process entry also makes captured and interactive token output agree. */
@@ -5520,3 +5827,4 @@ int main(int argc, char **argv) {
     printf("\nGoodbye!\n");
     return run_rc == 0 ? 0 : 1;
 }
+#endif

@@ -443,6 +443,12 @@ TEST_SUITES = {
 
 # Make targets to run (non-Python tests)
 MAKE_TARGETS = {
+    "v8_native_session_ffi": {
+        "name": "v8 Native Session/CLI FFI",
+        "category": "inference",
+        "target": "test-native-session-v8",
+        "timeout_sec": 180,
+    },
     "server_schema_scaffold": {
         "name": "Experimental Responses Server Schema",
         "category": "inference",
