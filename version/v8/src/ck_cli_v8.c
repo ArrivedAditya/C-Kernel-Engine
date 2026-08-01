@@ -4,10 +4,11 @@
  * Features:
  *   - Model auto-discovery from cache
  *   - Readline support for history/editing
- *   - Chat template support (Qwen, LLaMA, etc.)
+ *   - Generated chat, tokenizer, stop, and generation-policy contracts
+ *   - Capability-driven text, audio, and multimodal bridge execution
  *   - Temperature/top-p sampling
  *   - Streaming output
- *   - Bootstrapped from the v7 CLI while v8 multimodal hosting is brought up
+ *   - Legacy artifact compatibility without new model-family routing
  *
  * Usage:
  *   ck-cli-v8 --model <name>                    # Auto-discover from cache
@@ -40,6 +41,8 @@
 
 #include "tokenizer/true_bpe.h"
 #include "ck_features.h"
+#include "ck_model_abi_v8.h"
+#include "ckernel_audio.h"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -68,6 +71,15 @@ static void handle_sigint(int sig) {
         g_generation_active = 0;  /* Stop generation but don't exit */
     } else {
         g_exit_requested = 1;
+    }
+}
+
+static const char *artifact_role_name(uint32_t role) {
+    switch (role) {
+        case CK_MODEL_ROLE_DECODER: return "decoder";
+        case CK_MODEL_ROLE_ENCODER: return "encoder";
+        case CK_MODEL_ROLE_COMBINED: return "combined";
+        default: return "unknown";
     }
 }
 
@@ -108,6 +120,19 @@ typedef const int32_t *(*get_token_buffer_t)(void);
 typedef int (*get_vocab_strings_size_t)(void);
 typedef const int32_t *(*get_vocab_offsets_t)(void);
 typedef const uint8_t *(*get_vocab_strings_t)(void);
+typedef int (*format_chat_t)(const char *system_text, const char *user_text, char *output, int output_capacity);
+typedef int (*is_stop_token_t)(int32_t token_id);
+typedef const int32_t *(*get_stop_tokens_t)(void);
+typedef uint32_t (*get_abi_version_t)(void);
+typedef uint64_t (*get_capabilities_t)(void);
+typedef int (*get_runtime_descriptor_t)(CKModelRuntimeDescriptorV8 *, size_t);
+typedef int (*run_audio_wav_t)(const uint8_t *, size_t, CKAudioWavInfo *);
+typedef int (*get_image_tensor_shape_t)(int *, int *, int *);
+typedef int (*run_image_tensor_f32_t)(const float *, int, int, int);
+typedef int (*get_encoder_output_t)(const float **, int *, int *);
+typedef int (*set_encoder_memory_t)(const float *, int, int);
+typedef int (*build_generation_prefix_t)(const char *, const char *, uint32_t, int32_t *, int);
+typedef int (*apply_generation_policy_t)(float *, int, const int32_t *, int, int, uint32_t);
 
 typedef struct {
     void *handle;
@@ -148,7 +173,53 @@ typedef struct {
     get_token_buffer_t get_token_buffer;
     get_vocab_offsets_t get_vocab_offsets;
     get_vocab_strings_t get_vocab_strings;
+    get_int_t has_chat_template;
+    format_chat_t format_chat;
+    get_int_t get_num_stop_tokens;
+    get_stop_tokens_t get_stop_tokens;
+    is_stop_token_t is_stop_token;
+    get_int_t get_eos_token_id;
+    get_int_t get_bos_token_id;
+    get_abi_version_t get_abi_version;
+    get_capabilities_t get_capabilities;
+    get_runtime_descriptor_t get_runtime_descriptor;
+    CKModelRuntimeDescriptorV8 descriptor;
+    bool has_descriptor;
+    run_audio_wav_t run_audio_wav;
+    get_image_tensor_shape_t get_image_tensor_shape;
+    run_image_tensor_f32_t run_image_tensor_f32;
+    get_encoder_output_t get_encoder_output;
+    set_encoder_memory_t set_encoder_memory;
+    build_generation_prefix_t build_generation_prefix;
+    apply_generation_policy_t apply_generation_policy;
 } ModelAPI;
+
+static void print_runtime_capabilities(const ModelAPI *api) {
+    if (!api || !api->has_descriptor) {
+        printf("[Runtime] ABI: legacy compatibility (no generated descriptor)\n");
+        return;
+    }
+    const uint64_t caps = api->descriptor.capabilities;
+    printf("[Runtime] ABI: v%u | Role: %s | Capabilities:",
+           api->descriptor.abi_version,
+           artifact_role_name(api->descriptor.artifact_role));
+#define CK_PRINT_CAP(capability, label) if (caps & (capability)) printf(" %s", label)
+    CK_PRINT_CAP(CK_MODEL_CAP_AUTOREGRESSIVE_DECODE, "decode");
+    CK_PRINT_CAP(CK_MODEL_CAP_TEXT_ENCODE, "text-encode");
+    CK_PRINT_CAP(CK_MODEL_CAP_TOKEN_DECODE, "token-decode");
+    CK_PRINT_CAP(CK_MODEL_CAP_CHAT_FORMAT, "chat-format");
+    CK_PRINT_CAP(CK_MODEL_CAP_STOP_TOKENS, "stop-tokens");
+    CK_PRINT_CAP(CK_MODEL_CAP_MIXED_EMBEDDING_PREFILL, "mixed-prefill");
+    CK_PRINT_CAP(CK_MODEL_CAP_AUDIO_WAV_ENCODER, "audio-wav");
+    CK_PRINT_CAP(CK_MODEL_CAP_IMAGE_TENSOR_ENCODER, "image-tensor-f32");
+    CK_PRINT_CAP(CK_MODEL_CAP_RAW_IMAGE_ENCODER, "raw-image");
+    CK_PRINT_CAP(CK_MODEL_CAP_ENCODER_OUTPUT, "encoder-output");
+    CK_PRINT_CAP(CK_MODEL_CAP_ENCODER_MEMORY, "encoder-memory");
+    CK_PRINT_CAP(CK_MODEL_CAP_NAMED_ACTIVATIONS, "named-activations");
+    CK_PRINT_CAP(CK_MODEL_CAP_GENERATION_POLICY, "generation-policy");
+#undef CK_PRINT_CAP
+    printf("\n");
+}
 
 /* ============================================================================
  * Chat Template Types
@@ -248,6 +319,16 @@ typedef struct {
     const char *manifest_path;
     const char *prefix_f32_path;
     const char *bridge_report_path;
+    const char *audio_path;
+    const char *image_tensor_f32_path;
+    const char *encoder_lib_path;
+    const char *encoder_weights_path;
+    const char *encoder_manifest_path;
+    const char *decoder_prefix_tokens_csv;
+    const char *language;
+    const char *task;
+    bool timestamps;
+    bool require_generated_abi;
     const char *prompt_once;
     const char *prompt_tokens_csv;
     const char *system_prompt;
@@ -1614,6 +1695,53 @@ static bool resolve_symbol(void *handle, const char *name, void **out_ptr, bool 
     return true;
 }
 
+static bool validate_runtime_descriptor(const CKModelRuntimeDescriptorV8 *descriptor) {
+    if (!descriptor) return false;
+    const uint64_t caps = descriptor->capabilities;
+    if (!(caps & CK_MODEL_CAP_INIT) || (caps & ~CK_MODEL_CAP_V8_KNOWN_MASK)) {
+        fprintf(stderr, "Error: runtime descriptor has invalid capability bits\n");
+        return false;
+    }
+    if (descriptor->artifact_role < CK_MODEL_ROLE_DECODER ||
+        descriptor->artifact_role > CK_MODEL_ROLE_COMBINED) {
+        fprintf(stderr, "Error: runtime descriptor has invalid artifact role\n");
+        return false;
+    }
+    if ((descriptor->primary_input_tokens > 0) !=
+        (descriptor->primary_input_dim > 0)) {
+        fprintf(stderr, "Error: runtime descriptor has incomplete primary-output geometry\n");
+        return false;
+    }
+    if ((descriptor->encoder_memory_tokens > 0) !=
+        (descriptor->encoder_memory_dim > 0)) {
+        fprintf(stderr, "Error: runtime descriptor has incomplete encoder-memory geometry\n");
+        return false;
+    }
+    if ((caps & CK_MODEL_CAP_ENCODER_OUTPUT) &&
+        (descriptor->primary_input_tokens <= 0 || descriptor->primary_input_dim <= 0)) {
+        fprintf(stderr, "Error: encoder-output capability lacks declared geometry\n");
+        return false;
+    }
+    if ((caps & CK_MODEL_CAP_ENCODER_MEMORY) &&
+        (descriptor->encoder_memory_tokens <= 0 || descriptor->encoder_memory_dim <= 0)) {
+        fprintf(stderr, "Error: encoder-memory capability lacks declared geometry\n");
+        return false;
+    }
+    if (descriptor->artifact_role == CK_MODEL_ROLE_ENCODER &&
+        (caps & CK_MODEL_CAP_AUTOREGRESSIVE_DECODE)) {
+        fprintf(stderr, "Error: encoder runtime declares autoregressive decode\n");
+        return false;
+    }
+    if (descriptor->artifact_role == CK_MODEL_ROLE_DECODER &&
+        (caps & (CK_MODEL_CAP_AUDIO_WAV_ENCODER |
+                 CK_MODEL_CAP_IMAGE_TENSOR_ENCODER |
+                 CK_MODEL_CAP_RAW_IMAGE_ENCODER))) {
+        fprintf(stderr, "Error: decoder runtime declares encoder input capability\n");
+        return false;
+    }
+    return true;
+}
+
 static bool load_model_api(const char *lib_path, ModelAPI *api) {
     if (!lib_path || !api) return false;
     memset(api, 0, sizeof(*api));
@@ -1623,15 +1751,15 @@ static bool load_model_api(const char *lib_path, ModelAPI *api) {
         return false;
     }
 
-    if (!resolve_symbol(api->handle, "ck_model_init", (void **)&api->init, false)) return false;
+    if (!resolve_symbol(api->handle, "ck_model_init", (void **)&api->init, false)) goto fail;
     resolve_symbol(api->handle, "ck_model_init_with_manifest", (void **)&api->init_with_manifest, false);
     if (!api->init && !api->init_with_manifest) {
         fprintf(stderr, "Error: missing ck_model_init or ck_model_init_with_manifest\n");
-        return false;
+        goto fail;
     }
-    if (!resolve_symbol(api->handle, "ck_model_embed_tokens", (void **)&api->embed, true)) return false;
-    if (!resolve_symbol(api->handle, "ck_model_forward", (void **)&api->forward, true)) return false;
-    if (!resolve_symbol(api->handle, "ck_model_decode", (void **)&api->decode, true)) return false;
+    resolve_symbol(api->handle, "ck_model_embed_tokens", (void **)&api->embed, false);
+    resolve_symbol(api->handle, "ck_model_forward", (void **)&api->forward, false);
+    resolve_symbol(api->handle, "ck_model_decode", (void **)&api->decode, false);
     /* ck_prefill - optional, only present when prefill IR was generated */
     resolve_symbol(api->handle, "ck_prefill", (void **)&api->prefill, false);
     resolve_symbol(api->handle, "ck_model_write_embeddings", (void **)&api->write_embeddings, false);
@@ -1664,12 +1792,101 @@ static bool load_model_api(const char *lib_path, ModelAPI *api) {
     resolve_symbol(api->handle, "ck_model_can_encode_text", (void **)&api->can_encode_text, false);
     resolve_symbol(api->handle, "ck_model_lookup_token", (void **)&api->lookup_token, false);
     resolve_symbol(api->handle, "ck_model_get_token_buffer", (void **)&api->get_token_buffer, false);
+    resolve_symbol(api->handle, "ck_model_has_chat_template", (void **)&api->has_chat_template, false);
+    resolve_symbol(api->handle, "ck_model_format_chat", (void **)&api->format_chat, false);
+    resolve_symbol(api->handle, "ck_model_get_num_stop_tokens", (void **)&api->get_num_stop_tokens, false);
+    resolve_symbol(api->handle, "ck_model_get_stop_tokens", (void **)&api->get_stop_tokens, false);
+    resolve_symbol(api->handle, "ck_model_is_stop_token", (void **)&api->is_stop_token, false);
+    resolve_symbol(api->handle, "ck_model_get_eos_token_id", (void **)&api->get_eos_token_id, false);
+    resolve_symbol(api->handle, "ck_model_get_bos_token_id", (void **)&api->get_bos_token_id, false);
+    resolve_symbol(api->handle, "ck_model_get_abi_version", (void **)&api->get_abi_version, false);
+    resolve_symbol(api->handle, "ck_model_get_capabilities", (void **)&api->get_capabilities, false);
+    resolve_symbol(api->handle, "ck_model_get_runtime_descriptor", (void **)&api->get_runtime_descriptor, false);
+    resolve_symbol(api->handle, "ck_model_run_audio_wav", (void **)&api->run_audio_wav, false);
+    resolve_symbol(api->handle, "ck_model_get_image_tensor_shape", (void **)&api->get_image_tensor_shape, false);
+    resolve_symbol(api->handle, "ck_model_run_image_tensor_f32", (void **)&api->run_image_tensor_f32, false);
+    resolve_symbol(api->handle, "ck_model_get_encoder_output", (void **)&api->get_encoder_output, false);
+    resolve_symbol(api->handle, "ck_model_set_encoder_memory", (void **)&api->set_encoder_memory, false);
+    resolve_symbol(api->handle, "ck_model_build_generation_prefix", (void **)&api->build_generation_prefix, false);
+    resolve_symbol(api->handle, "ck_model_apply_generation_policy", (void **)&api->apply_generation_policy, false);
+
+    if (api->get_abi_version || api->get_capabilities || api->get_runtime_descriptor) {
+        if (!api->get_abi_version || !api->get_capabilities || !api->get_runtime_descriptor) {
+            fprintf(stderr, "Error: generated runtime exposes an incomplete v8 capability ABI\n");
+            dlclose(api->handle);
+            memset(api, 0, sizeof(*api));
+            return false;
+        }
+        const uint32_t version = api->get_abi_version();
+        if (version != CK_MODEL_ABI_V8_VERSION) {
+            fprintf(stderr,
+                    "Error: unsupported generated runtime ABI version %u (host supports %u)\n",
+                    version, CK_MODEL_ABI_V8_VERSION);
+            dlclose(api->handle);
+            memset(api, 0, sizeof(*api));
+            return false;
+        }
+        memset(&api->descriptor, 0, sizeof(api->descriptor));
+        if (api->get_runtime_descriptor(&api->descriptor, sizeof(api->descriptor)) != 0 ||
+            api->descriptor.struct_size != sizeof(CKModelRuntimeDescriptorV8) ||
+            api->descriptor.abi_version != CK_MODEL_ABI_V8_VERSION ||
+            api->descriptor.capabilities != api->get_capabilities() ||
+            !validate_runtime_descriptor(&api->descriptor)) {
+            fprintf(stderr, "Error: generated runtime capability descriptor is inconsistent\n");
+            dlclose(api->handle);
+            memset(api, 0, sizeof(*api));
+            return false;
+        }
+        api->has_descriptor = true;
+    }
+
+    if (api->has_descriptor) {
+        const uint64_t caps = api->descriptor.capabilities;
+#define CK_REQUIRE_CAPABILITY_SYMBOL(capability, symbol, label) \
+        do { \
+            if ((caps & (capability)) && !(symbol)) { \
+                fprintf(stderr, "Error: runtime declares %s but does not export its function\n", label); \
+                dlclose(api->handle); \
+                memset(api, 0, sizeof(*api)); \
+                return false; \
+            } \
+        } while (0)
+        CK_REQUIRE_CAPABILITY_SYMBOL(CK_MODEL_CAP_TEXT_ENCODE, api->encode_text, "text encode");
+        CK_REQUIRE_CAPABILITY_SYMBOL(CK_MODEL_CAP_TOKEN_DECODE, api->decode_tokens, "token decode");
+        CK_REQUIRE_CAPABILITY_SYMBOL(CK_MODEL_CAP_CHAT_FORMAT, api->format_chat, "chat formatting");
+        CK_REQUIRE_CAPABILITY_SYMBOL(CK_MODEL_CAP_STOP_TOKENS, api->is_stop_token, "stop tokens");
+        CK_REQUIRE_CAPABILITY_SYMBOL(CK_MODEL_CAP_AUTOREGRESSIVE_DECODE, api->decode, "autoregressive decode");
+        CK_REQUIRE_CAPABILITY_SYMBOL(CK_MODEL_CAP_MIXED_EMBEDDING_PREFILL, api->forward_mixed, "mixed embedding prefill");
+        CK_REQUIRE_CAPABILITY_SYMBOL(CK_MODEL_CAP_AUDIO_WAV_ENCODER, api->run_audio_wav, "WAV audio encoder");
+        CK_REQUIRE_CAPABILITY_SYMBOL(CK_MODEL_CAP_IMAGE_TENSOR_ENCODER, api->get_image_tensor_shape, "image tensor shape");
+        CK_REQUIRE_CAPABILITY_SYMBOL(CK_MODEL_CAP_IMAGE_TENSOR_ENCODER, api->run_image_tensor_f32, "image tensor encoder");
+        CK_REQUIRE_CAPABILITY_SYMBOL(CK_MODEL_CAP_ENCODER_OUTPUT, api->get_encoder_output, "encoder output");
+        CK_REQUIRE_CAPABILITY_SYMBOL(CK_MODEL_CAP_ENCODER_MEMORY, api->set_encoder_memory, "encoder memory");
+        CK_REQUIRE_CAPABILITY_SYMBOL(CK_MODEL_CAP_GENERATION_POLICY, api->build_generation_prefix, "generation prefix");
+        CK_REQUIRE_CAPABILITY_SYMBOL(CK_MODEL_CAP_GENERATION_POLICY, api->apply_generation_policy, "generation logits policy");
+#undef CK_REQUIRE_CAPABILITY_SYMBOL
+        if ((caps & CK_MODEL_CAP_AUTOREGRESSIVE_DECODE) &&
+            (!api->embed || !api->forward || !api->decode)) {
+            fprintf(stderr,
+                    "Error: decoder runtime lacks required embed/forward/decode entrypoints\n");
+            goto fail;
+        }
+    } else if (!api->embed || !api->forward || !api->decode) {
+        fprintf(stderr,
+                "Error: legacy runtime lacks required embed/forward/decode entrypoints\n");
+        goto fail;
+    }
 
     /* For id_to_token, we need to load the tokenizer's function from the model */
     /* The model uses ck_true_bpe_id_to_token internally, but we need direct access */
     /* For now, we'll handle this via decode_tokens with single token */
 
     return true;
+
+fail:
+    if (api->handle) dlclose(api->handle);
+    memset(api, 0, sizeof(*api));
+    return false;
 }
 
 /* ============================================================================
@@ -1734,8 +1951,11 @@ static char *apply_chat_template(const ChatTemplate *tmpl, const char *system, c
  * EOS Token Handling
  * ============================================================================ */
 
-static bool is_eos_token(const CLIOptions *opt, int token) {
+static bool is_eos_token(const ModelAPI *api, const CLIOptions *opt, int token) {
     if (!opt || opt->ignore_eos) return false;
+    if (api && api->is_stop_token) {
+        return api->is_stop_token((int32_t)token) != 0;
+    }
     for (int i = 0; i < opt->eos_count; i++) {
         if (opt->eos_ids[i] == token) return true;
     }
@@ -2061,6 +2281,13 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
 
     /* Get vocab size for sampling */
     int vocab_size = api->get_vocab_size ? api->get_vocab_size() : 0;
+    int max_tokens = opt->max_tokens > 0 ? opt->max_tokens : CK_CLI_DEFAULT_MAX_TOKENS;
+    int32_t *generated_history = (int32_t *)calloc(
+        (size_t)(max_tokens > 0 ? max_tokens : 1), sizeof(int32_t));
+    int generated_history_count = 0;
+    if (!generated_history) return -1;
+    const uint32_t generation_flags =
+        opt->timestamps ? CK_GENERATION_FLAG_TIMESTAMPS : 0;
 
     /* Helper: sample next token from logits */
     #define SAMPLE_NEXT_TOKEN() do { \
@@ -2075,8 +2302,21 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
                     last_logits = logits + (size_t)(active - 1) * (size_t)stride; \
                 } \
                 float *logits_copy = (float *)malloc(vocab_size * sizeof(float)); \
-                memcpy(logits_copy, last_logits, vocab_size * sizeof(float)); \
-                next_token = sample_top_p(logits_copy, vocab_size, opt->temperature, opt->top_p); \
+                if (logits_copy) { \
+                    memcpy(logits_copy, last_logits, vocab_size * sizeof(float)); \
+                    int policy_status = 0; \
+                    if (api->apply_generation_policy) { \
+                        policy_status = api->apply_generation_policy( \
+                            logits_copy, vocab_size, generated_history, \
+                            generated_history_count, generated_history_count, \
+                            generation_flags); \
+                    } \
+                    next_token = policy_status == 0 \
+                        ? sample_top_p(logits_copy, vocab_size, opt->temperature, opt->top_p) \
+                        : -1; \
+                } else { \
+                    next_token = -1; \
+                } \
                 free(logits_copy); \
             } else { \
                 next_token = -1; \
@@ -2094,12 +2334,12 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
     size_t out_len = 0;
 
     /* Initialize EOS pattern detection for this prompt */
-    eos_pattern_init(opt->chat_template);
+    const bool generated_stop_contract = api->is_stop_token != NULL;
+    eos_pattern_init(generated_stop_contract ? CHAT_TEMPLATE_NONE : opt->chat_template);
 
     g_generation_active = 1;
 
     struct timespec t0, t1;
-    int max_tokens = opt->max_tokens > 0 ? opt->max_tokens : CK_CLI_DEFAULT_MAX_TOKENS;
     for (int generated = 0; generated < max_tokens && !g_exit_requested && g_generation_active; generated++) {
         if (next_token < 0) break;
 
@@ -2122,7 +2362,7 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
             fprintf(stderr, "[DEBUG] Token %d: %d (%s)\n", generated, next_token, word ? word : "NULL");
         }
 
-        if (is_eos_token(opt, next_token)) {
+        if (is_eos_token(api, opt, next_token)) {
             if (opt->verbose) {
                 fprintf(stderr, "[DEBUG] EOS detected (token ID), stopping\n");
             }
@@ -2130,13 +2370,19 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
         }
 
         if (!opt->quiet_output) {
-            /* Process token through EOS pattern detection (buffers potential EOS tokens) */
-            if (!opt->ignore_eos &&
-                eos_pattern_process(word, out_buf, &out_len, output_token, opt->chat_template)) {
-                if (opt->verbose) {
-                    fprintf(stderr, "[DEBUG] EOS detected (text pattern), stopping\n");
+            if (generated_stop_contract || opt->ignore_eos) {
+                /* Token IDs are authoritative, so no textual EOS buffering is
+                 * needed. The token still must reach the output stream. */
+                output_token(out_buf, &out_len, word);
+            } else {
+                /* Legacy artifacts need textual EOS-pattern buffering. */
+                if (eos_pattern_process(
+                        word, out_buf, &out_len, output_token, opt->chat_template)) {
+                    if (opt->verbose) {
+                        fprintf(stderr, "[DEBUG] EOS detected (text pattern), stopping\n");
+                    }
+                    break;
                 }
-                break;
             }
 
             if (opt->stream) {
@@ -2149,6 +2395,8 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
         }
 
         if (generated + 1 >= max_tokens) break;
+
+        generated_history[generated_history_count++] = (int32_t)next_token;
 
         clock_gettime(CLOCK_MONOTONIC, &t0);
         if (api->decode(next_token, NULL) != 0) {
@@ -2165,6 +2413,7 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
     }
 
     #undef SAMPLE_NEXT_TOKEN
+    free(generated_history);
     g_generation_active = 0;
     if (!opt->quiet_output) {
         output_flush(out_buf, &out_len);
@@ -2301,9 +2550,146 @@ static int run_token_ids(ModelAPI *api, CLIOptions *opt, int32_t *ids, int n, in
     return 0;
 }
 
-static int run_bridge_report(ModelAPI *api, CLIOptions *opt, const char *bridge_report_path) {
+static int initialize_model_api(
+    ModelAPI *api,
+    const char *weights_path,
+    const char *manifest_path) {
+    if (!api || !weights_path) return -1;
+    if (api->init_with_manifest) {
+        if (!manifest_path) return -2;
+        return api->init_with_manifest(weights_path, manifest_path);
+    }
+    return api->init ? api->init(weights_path) : -3;
+}
+
+static int run_audio_file(ModelAPI *decoder, CLIOptions *opt) {
+    if (!decoder || !opt || !opt->audio_path) return -1;
+    if (!decoder->has_descriptor ||
+        !(decoder->descriptor.capabilities & CK_MODEL_CAP_ENCODER_MEMORY)) {
+        fprintf(stderr, "Error: decoder does not declare generated encoder-memory capability\n");
+        return -1;
+    }
+
+    ModelAPI encoder;
+    if (!load_model_api(opt->encoder_lib_path, &encoder)) return -1;
+    int result = -1;
+    uint8_t *wav_bytes = NULL;
+    size_t wav_size = 0;
+    int32_t *prefix = NULL;
+    int prefix_count = 0;
+
+    if (!encoder.has_descriptor ||
+        !(encoder.descriptor.capabilities & CK_MODEL_CAP_AUDIO_WAV_ENCODER) ||
+        !(encoder.descriptor.capabilities & CK_MODEL_CAP_ENCODER_OUTPUT)) {
+        fprintf(stderr, "Error: encoder does not declare WAV input and encoder-output capabilities\n");
+        goto cleanup;
+    }
+    if (initialize_model_api(
+            &encoder, opt->encoder_weights_path, opt->encoder_manifest_path) != 0) {
+        fprintf(stderr, "Error: encoder initialization failed\n");
+        goto cleanup;
+    }
+    if (!read_file_blob(opt->audio_path, &wav_bytes, &wav_size)) {
+        fprintf(stderr, "Error: unable to read WAV input: %s\n", opt->audio_path);
+        goto cleanup;
+    }
+
+    CKAudioWavInfo audio_info;
+    memset(&audio_info, 0, sizeof(audio_info));
+    if (encoder.run_audio_wav(wav_bytes, wav_size, &audio_info) != 0) {
+        fprintf(stderr, "Error: generated WAV encoder execution failed\n");
+        goto cleanup;
+    }
+
+    const float *encoder_output = NULL;
+    int encoder_tokens = 0;
+    int encoder_dim = 0;
+    if (encoder.get_encoder_output(
+            &encoder_output, &encoder_tokens, &encoder_dim) != 0 ||
+        !encoder_output || encoder_tokens <= 0 || encoder_dim <= 0) {
+        fprintf(stderr, "Error: generated encoder output is unavailable\n");
+        goto cleanup;
+    }
+    if (encoder.descriptor.primary_input_tokens != encoder_tokens ||
+        encoder.descriptor.primary_input_dim != encoder_dim ||
+        decoder->descriptor.encoder_memory_tokens != encoder_tokens ||
+        decoder->descriptor.encoder_memory_dim != encoder_dim) {
+        fprintf(stderr,
+                "Error: encoder/decoder contract mismatch: encoder=%dx%d decoder=%dx%d\n",
+                encoder_tokens,
+                encoder_dim,
+                decoder->descriptor.encoder_memory_tokens,
+                decoder->descriptor.encoder_memory_dim);
+        goto cleanup;
+    }
+    if (decoder->set_encoder_memory(encoder_output, encoder_tokens, encoder_dim) != 0) {
+        fprintf(stderr, "Error: decoder rejected generated encoder memory\n");
+        goto cleanup;
+    }
+    if (opt->decoder_prefix_tokens_csv) {
+        if (!parse_token_id_list(
+                opt->decoder_prefix_tokens_csv, &prefix, &prefix_count)) {
+            fprintf(stderr, "Error: invalid --decoder-prefix-tokens\n");
+            goto cleanup;
+        }
+    } else {
+        if (!decoder->build_generation_prefix || !decoder->apply_generation_policy) {
+            fprintf(stderr,
+                    "Error: decoder lacks generated generation policy; "
+                    "rebuild it or pass --decoder-prefix-tokens\n");
+            goto cleanup;
+        }
+        int32_t prefix_buffer[16];
+        const uint32_t flags = opt->timestamps ? CK_GENERATION_FLAG_TIMESTAMPS : 0;
+        const int count = decoder->build_generation_prefix(
+            opt->language, opt->task, flags, prefix_buffer, 16);
+        if (count <= 0 || count > 16) {
+            fprintf(stderr,
+                    "Error: generated policy rejected language=%s task=%s timestamps=%d\n",
+                    opt->language, opt->task, opt->timestamps ? 1 : 0);
+            goto cleanup;
+        }
+        prefix = (int32_t *)malloc((size_t)count * sizeof(int32_t));
+        if (!prefix) goto cleanup;
+        memcpy(prefix, prefix_buffer, (size_t)count * sizeof(int32_t));
+        prefix_count = count;
+    }
+
+    if (opt->verbose) {
+        fprintf(stderr,
+                "[Audio] WAV %d Hz, %d channel(s), %d frames -> encoder %dx%d\n",
+                audio_info.sample_rate,
+                audio_info.channels,
+                audio_info.frames,
+                encoder_tokens,
+                encoder_dim);
+    }
+    result = run_token_ids(decoder, opt, prefix, prefix_count, prefix_count);
+    prefix = NULL;
+
+cleanup:
+    free(prefix);
+    free(wav_bytes);
+    if (encoder.free_fn) encoder.free_fn();
+    if (encoder.handle) dlclose(encoder.handle);
+    return result;
+}
+
+static int run_bridge_report_with_prefix(
+    ModelAPI *api,
+    CLIOptions *opt,
+    const char *bridge_report_path,
+    const float *prefix_override,
+    int prefix_override_tokens,
+    int prefix_override_dim) {
     if (!api || !opt || !bridge_report_path) return -1;
     if (g_exit_requested) return -1;
+    if (api->has_descriptor &&
+        !(api->descriptor.capabilities & CK_MODEL_CAP_MIXED_EMBEDDING_PREFILL)) {
+        fprintf(stderr,
+                "Error: runtime does not declare mixed-embedding prefill capability\n");
+        return -1;
+    }
 
     BridgeReportSpec spec;
     int parse_rc = parse_bridge_report_spec(bridge_report_path, &spec);
@@ -2343,22 +2729,38 @@ static int run_bridge_report(ModelAPI *api, CLIOptions *opt, const char *bridge_
 
     if (api->kv_reset) api->kv_reset();
 
-    float *prefix_embeddings = NULL;
-    int prefix_tokens = 0;
-    int prefix_embed_dim = spec.prefix_embed_dim;
+    float *owned_prefix_embeddings = NULL;
+    const float *prefix_embeddings = prefix_override;
+    int prefix_tokens = prefix_override ? prefix_override_tokens : 0;
+    int prefix_embed_dim = prefix_override ? prefix_override_dim : spec.prefix_embed_dim;
+    if (prefix_override && spec.prefix_embed_dim > 0 &&
+        prefix_override_dim != spec.prefix_embed_dim) {
+        fprintf(stderr,
+                "Error: generated vision output dim %d does not match bridge contract %d\n",
+                prefix_override_dim, spec.prefix_embed_dim);
+        free_bridge_report_spec(&spec);
+        return -1;
+    }
     if (prefix_embed_dim <= 0) prefix_embed_dim = infer_embedded_input_dim(api);
     if (prefix_embed_dim <= 0) {
         fprintf(stderr, "Error: unable to infer bridge-report prefix embed_dim\n");
         free_bridge_report_spec(&spec);
         return -1;
     }
-    if (!load_prefix_embeddings_from_file(spec.prefix_dump_path, prefix_embed_dim, &prefix_embeddings, &prefix_tokens)) {
-        free_bridge_report_spec(&spec);
-        return -1;
+    if (!prefix_override) {
+        if (!load_prefix_embeddings_from_file(
+                spec.prefix_dump_path,
+                prefix_embed_dim,
+                &owned_prefix_embeddings,
+                &prefix_tokens)) {
+            free_bridge_report_spec(&spec);
+            return -1;
+        }
+        prefix_embeddings = owned_prefix_embeddings;
     }
     if (prefix_tokens <= 0) {
         fprintf(stderr, "Error: bridge report prefix file produced no prefix rows\n");
-        free(prefix_embeddings);
+        free(owned_prefix_embeddings);
         free_bridge_report_spec(&spec);
         return -1;
     }
@@ -2396,7 +2798,7 @@ static int run_bridge_report(ModelAPI *api, CLIOptions *opt, const char *bridge_
             );
         } else {
             fprintf(stderr, "Error: bridge report requires segmented multimodal replay but model lacks ck_model_forward_segments_grid_ex\n");
-            free(prefix_embeddings);
+            free(owned_prefix_embeddings);
             free_bridge_report_spec(&spec);
             return -1;
         }
@@ -2447,7 +2849,7 @@ static int run_bridge_report(ModelAPI *api, CLIOptions *opt, const char *bridge_
         );
     } else {
         fprintf(stderr, "Error: model does not export a multimodal forward entrypoint\n");
-        free(prefix_embeddings);
+        free(owned_prefix_embeddings);
         free_bridge_report_spec(&spec);
         return -1;
     }
@@ -2455,7 +2857,7 @@ static int run_bridge_report(ModelAPI *api, CLIOptions *opt, const char *bridge_
     clock_gettime(CLOCK_MONOTONIC, &t1);
     g_prefill_time_ms = (t1.tv_sec - t0.tv_sec) * 1000.0 +
                         (t1.tv_nsec - t0.tv_nsec) / 1000000.0;
-    free(prefix_embeddings);
+    free(owned_prefix_embeddings);
     free_bridge_report_spec(&spec);
 
     if (forward_rc != 0) {
@@ -2464,6 +2866,92 @@ static int run_bridge_report(ModelAPI *api, CLIOptions *opt, const char *bridge_
     }
 
     return run_generation_loop(api, opt);
+}
+
+static int run_bridge_report(ModelAPI *api, CLIOptions *opt, const char *bridge_report_path) {
+    return run_bridge_report_with_prefix(api, opt, bridge_report_path, NULL, 0, 0);
+}
+
+static int run_image_tensor_file(ModelAPI *decoder, CLIOptions *opt) {
+    if (!decoder || !opt || !opt->image_tensor_f32_path || !opt->bridge_report_path) return -1;
+
+    ModelAPI encoder;
+    if (!load_model_api(opt->encoder_lib_path, &encoder)) return -1;
+    int result = -1;
+    uint8_t *tensor_bytes = NULL;
+    size_t tensor_size = 0;
+
+    if (!encoder.has_descriptor ||
+        !(encoder.descriptor.capabilities & CK_MODEL_CAP_IMAGE_TENSOR_ENCODER) ||
+        !(encoder.descriptor.capabilities & CK_MODEL_CAP_ENCODER_OUTPUT)) {
+        fprintf(stderr,
+                "Error: encoder does not declare image-tensor and encoder-output capabilities\n");
+        goto cleanup;
+    }
+    if (initialize_model_api(
+            &encoder, opt->encoder_weights_path, opt->encoder_manifest_path) != 0) {
+        fprintf(stderr, "Error: image encoder initialization failed\n");
+        goto cleanup;
+    }
+
+    int channels = 0;
+    int height = 0;
+    int width = 0;
+    if (encoder.get_image_tensor_shape(&channels, &height, &width) != 0 ||
+        channels <= 0 || height <= 0 || width <= 0) {
+        fprintf(stderr, "Error: generated image tensor shape is unavailable\n");
+        goto cleanup;
+    }
+    if (!read_file_blob(opt->image_tensor_f32_path, &tensor_bytes, &tensor_size)) {
+        fprintf(stderr, "Error: unable to read image tensor: %s\n", opt->image_tensor_f32_path);
+        goto cleanup;
+    }
+    const size_t expected_size =
+        (size_t)channels * (size_t)height * (size_t)width * sizeof(float);
+    if (tensor_size != expected_size) {
+        fprintf(stderr,
+                "Error: image tensor size mismatch: got %zu bytes, expected %zu for %dx%dx%d FP32\n",
+                tensor_size, expected_size, channels, height, width);
+        goto cleanup;
+    }
+    if (encoder.run_image_tensor_f32(
+            (const float *)tensor_bytes, channels, height, width) != 0) {
+        fprintf(stderr, "Error: generated image tensor encoder execution failed\n");
+        goto cleanup;
+    }
+
+    const float *encoder_output = NULL;
+    int encoder_tokens = 0;
+    int encoder_dim = 0;
+    if (encoder.get_encoder_output(
+            &encoder_output, &encoder_tokens, &encoder_dim) != 0 ||
+        !encoder_output || encoder_tokens <= 0 || encoder_dim <= 0) {
+        fprintf(stderr, "Error: generated vision encoder output is unavailable\n");
+        goto cleanup;
+    }
+    if (encoder.descriptor.primary_input_tokens != encoder_tokens ||
+        encoder.descriptor.primary_input_dim != encoder_dim) {
+        fprintf(stderr, "Error: generated vision output contradicts its descriptor\n");
+        goto cleanup;
+    }
+    if (opt->verbose) {
+        fprintf(stderr,
+                "[Vision] tensor %dx%dx%d -> encoder %dx%d\n",
+                channels, height, width, encoder_tokens, encoder_dim);
+    }
+    result = run_bridge_report_with_prefix(
+        decoder,
+        opt,
+        opt->bridge_report_path,
+        encoder_output,
+        encoder_tokens,
+        encoder_dim);
+
+cleanup:
+    free(tensor_bytes);
+    if (encoder.free_fn) encoder.free_fn();
+    if (encoder.handle) dlclose(encoder.handle);
+    return result;
 }
 
 static int run_prompt(ModelAPI *api, CLIOptions *opt, const char *input) {
@@ -2484,9 +2972,36 @@ static int run_prompt(ModelAPI *api, CLIOptions *opt, const char *input) {
         if (raw_n > 0) user_tokens = raw_n;
     }
 
-    /* Apply chat template if enabled */
-    const ChatTemplate *tmpl = &g_templates[opt->no_chat_template ? CHAT_TEMPLATE_NONE : opt->chat_template];
-    char *formatted = apply_chat_template(tmpl, opt->system_prompt, input);
+    /* Prefer the formatter generated from the circuit contract. Family-name
+     * templates remain only as compatibility for older cached artifacts. */
+    char *formatted = NULL;
+    const bool generated_chat = !opt->no_chat_template && api->format_chat &&
+        (!api->has_chat_template || api->has_chat_template());
+    if (generated_chat) {
+        int required = api->format_chat(opt->system_prompt, input, NULL, 0);
+        if (required >= 0) {
+            formatted = (char *)malloc((size_t)required + 1);
+            if (formatted) {
+                int written = api->format_chat(
+                    opt->system_prompt, input, formatted, required + 1);
+                if (written < 0) {
+                    free(formatted);
+                    formatted = NULL;
+                }
+            }
+        }
+    } else if (!api->has_descriptor) {
+        const ChatTemplate *tmpl = &g_templates[
+            opt->no_chat_template ? CHAT_TEMPLATE_NONE : opt->chat_template];
+        formatted = apply_chat_template(tmpl, opt->system_prompt, input);
+    } else if (opt->no_chat_template) {
+        formatted = strdup(input);
+    } else {
+        fprintf(stderr,
+                "Error: generated runtime has no circuit-derived chat formatter; "
+                "use --no-chat-template only for an intentionally raw prompt\n");
+        return -1;
+    }
     if (!formatted) {
         fprintf(stderr, "Error: failed to format prompt\n");
         return -1;
@@ -4471,6 +4986,16 @@ static void print_help(const char *prog) {
     fprintf(stderr, "  --manifest PATH         Path to weights_manifest.map for v8 init\n");
     fprintf(stderr, "  --prefix-f32 PATH       Float32 prefix embeddings file for ck_model_forward_mixed\n");
     fprintf(stderr, "  --bridge-report PATH    Replay multimodal bridge_report.json through native C CLI\n");
+    fprintf(stderr, "  --audio PATH            Run a WAV encoder and this decoder through the generated ABI\n");
+    fprintf(stderr, "  --image-tensor-f32 PATH Run a normalized planar FP32 image tensor through the generated ABI\n");
+    fprintf(stderr, "  --encoder-lib PATH      Generated audio/vision encoder shared object\n");
+    fprintf(stderr, "  --encoder-weights PATH  Encoder weights.bump\n");
+    fprintf(stderr, "  --encoder-manifest PATH Encoder weights_manifest.map\n");
+    fprintf(stderr, "  --decoder-prefix-tokens IDS  Generated-policy decoder prefix token IDs\n");
+    fprintf(stderr, "  --language CODE         Audio generation language (default: en)\n");
+    fprintf(stderr, "  --task NAME             Audio generation task (default: transcribe)\n");
+    fprintf(stderr, "  --timestamps            Request timestamp-token generation when supported\n");
+    fprintf(stderr, "  --require-generated-abi Reject legacy artifacts without the versioned capability ABI\n");
     fprintf(stderr, "  --synthetic-prefix-tokens N  Use N zero prefix rows with ck_model_forward_mixed\n");
     fprintf(stderr, "  --prompt, -p TEXT       Run single prompt (non-interactive)\n");
     fprintf(stderr, "  --prompt-tokens IDS     Comma-separated prompt token IDs for tokenizer-free runtimes\n");
@@ -4512,6 +5037,8 @@ static bool parse_args(int argc, char **argv, CLIOptions *opt) {
     opt->top_p = 0.9f;
     opt->stream = true;  /* Stream by default */
     opt->timing = true;  /* Show timing by default */
+    opt->language = "en";
+    opt->task = "transcribe";
     /* Default EOS tokens for Qwen/ChatML */
     opt->eos_ids[0] = 151643;  /* <|im_end|> */
     opt->eos_ids[1] = 151645;  /* <|endoftext|> */
@@ -4539,6 +5066,26 @@ static bool parse_args(int argc, char **argv, CLIOptions *opt) {
             opt->prefix_f32_path = argv[++i];
         } else if (!strcmp(arg, "--bridge-report") && i + 1 < argc) {
             opt->bridge_report_path = argv[++i];
+        } else if (!strcmp(arg, "--audio") && i + 1 < argc) {
+            opt->audio_path = argv[++i];
+        } else if (!strcmp(arg, "--image-tensor-f32") && i + 1 < argc) {
+            opt->image_tensor_f32_path = argv[++i];
+        } else if (!strcmp(arg, "--encoder-lib") && i + 1 < argc) {
+            opt->encoder_lib_path = argv[++i];
+        } else if (!strcmp(arg, "--encoder-weights") && i + 1 < argc) {
+            opt->encoder_weights_path = argv[++i];
+        } else if (!strcmp(arg, "--encoder-manifest") && i + 1 < argc) {
+            opt->encoder_manifest_path = argv[++i];
+        } else if (!strcmp(arg, "--decoder-prefix-tokens") && i + 1 < argc) {
+            opt->decoder_prefix_tokens_csv = argv[++i];
+        } else if (!strcmp(arg, "--language") && i + 1 < argc) {
+            opt->language = argv[++i];
+        } else if (!strcmp(arg, "--task") && i + 1 < argc) {
+            opt->task = argv[++i];
+        } else if (!strcmp(arg, "--timestamps")) {
+            opt->timestamps = true;
+        } else if (!strcmp(arg, "--require-generated-abi")) {
+            opt->require_generated_abi = true;
         } else if (!strcmp(arg, "--synthetic-prefix-tokens") && i + 1 < argc) {
             opt->synthetic_prefix_tokens = atoi(argv[++i]);
         } else if ((!strcmp(arg, "--prompt") || !strcmp(arg, "-p")) && i + 1 < argc) {
@@ -4607,6 +5154,31 @@ static bool parse_args(int argc, char **argv, CLIOptions *opt) {
     }
     if (opt->bridge_report_path && (opt->prompt_once || opt->prompt_tokens_csv)) {
         fprintf(stderr, "Error: use either --bridge-report or --prompt/--prompt-tokens, not both\n");
+        return false;
+    }
+    if (opt->audio_path && (opt->bridge_report_path || opt->prompt_once || opt->prompt_tokens_csv)) {
+        fprintf(stderr, "Error: --audio cannot be combined with bridge or text prompt inputs\n");
+        return false;
+    }
+    if (opt->audio_path &&
+        (!opt->encoder_lib_path || !opt->encoder_weights_path ||
+         !opt->encoder_manifest_path)) {
+        fprintf(stderr,
+                "Error: --audio requires --encoder-lib, --encoder-weights, "
+                "and --encoder-manifest\n");
+        return false;
+    }
+    if (opt->image_tensor_f32_path && !opt->bridge_report_path) {
+        fprintf(stderr,
+                "Error: --image-tensor-f32 requires --bridge-report for segmented prompt and position metadata\n");
+        return false;
+    }
+    if (opt->image_tensor_f32_path &&
+        (!opt->encoder_lib_path || !opt->encoder_weights_path ||
+         !opt->encoder_manifest_path)) {
+        fprintf(stderr,
+                "Error: --image-tensor-f32 requires --encoder-lib, --encoder-weights, "
+                "and --encoder-manifest\n");
         return false;
     }
 
@@ -4734,6 +5306,9 @@ static bool process_repl_command(const char *line, CLIOptions *opt, ModelAPI *ap
  * ============================================================================ */
 
 int main(int argc, char **argv) {
+    /* C requires setvbuf before any operation on the stream. Keeping this at
+     * process entry also makes captured and interactive token output agree. */
+    setvbuf(stdout, NULL, _IOFBF, 1 << 20);
     signal(SIGINT, handle_sigint);
     srand((unsigned int)time(NULL));
 
@@ -4762,22 +5337,16 @@ int main(int argc, char **argv) {
     if (!load_model_api(opt.lib_path, &api)) {
         return 1;
     }
+    if (opt.require_generated_abi && !api.has_descriptor) {
+        fprintf(stderr, "Error: runtime has no generated v8 capability descriptor\n");
+        if (api.handle) dlclose(api.handle);
+        return 1;
+    }
 
     printf("Initializing model...\n");
-    if (api.init_with_manifest) {
-        if (!opt.manifest_path) {
-            fprintf(stderr, "Error: ck_model_init_with_manifest is available but no manifest map was provided or discovered\n");
-            return 1;
-        }
-        if (api.init_with_manifest(opt.weights_path, opt.manifest_path) != 0) {
-            fprintf(stderr, "Error: ck_model_init_with_manifest failed\n");
-            return 1;
-        }
-    } else {
-        if (api.init(opt.weights_path) != 0) {
-            fprintf(stderr, "Error: ck_model_init failed\n");
-            return 1;
-        }
+    if (initialize_model_api(&api, opt.weights_path, opt.manifest_path) != 0) {
+        fprintf(stderr, "Error: generated model initialization failed\n");
+        return 1;
     }
 
     int ctx = opt.context_override;
@@ -4789,7 +5358,8 @@ int main(int argc, char **argv) {
     const bool has_decode_tokenizer = api.has_tokenizer && api.has_tokenizer() && api.decode_tokens;
     const bool has_encode_tokenizer = api.encode_text &&
         ((api.can_encode_text && api.can_encode_text()) || (!api.can_encode_text && has_decode_tokenizer));
-    if (!has_encode_tokenizer && !opt.prompt_tokens_csv && !opt.bridge_report_path) {
+    if (!has_encode_tokenizer && !opt.prompt_tokens_csv && !opt.bridge_report_path &&
+        !opt.audio_path && !opt.image_tensor_f32_path) {
         fprintf(stderr, "[Tokenizer] Model cannot encode raw text with the current tokenizer mode\n");
         fprintf(stderr, "            Use --prompt-tokens, or unset CK_DISABLE_FULL_BPE_TOKENIZER when native BPE encode is supported\n");
         return 1;
@@ -4797,8 +5367,16 @@ int main(int argc, char **argv) {
 
     int vocab_size = api.get_vocab_size ? api.get_vocab_size() : 0;
 
-    /* Lookup EOS tokens using model's tokenizer */
-    if (has_decode_tokenizer && api.lookup_token) {
+    /* Generated stop-token metadata is authoritative. Only old artifacts use
+     * text-token probing as a compatibility fallback. */
+    if (api.get_num_stop_tokens && api.get_stop_tokens) {
+        const int generated_count = api.get_num_stop_tokens();
+        const int32_t *generated_stops = api.get_stop_tokens();
+        if (generated_count > 0 && generated_stops) {
+            opt.eos_count = generated_count < CK_CLI_EOS_MAX ? generated_count : CK_CLI_EOS_MAX;
+            for (int i = 0; i < opt.eos_count; i++) opt.eos_ids[i] = generated_stops[i];
+        }
+    } else if (has_decode_tokenizer && api.lookup_token) {
         static const char *eos_tokens[] = {
             "<|im_end|>", "<|endoftext|>", "<|im_start|>",  /* Qwen/ChatML */
             "<|eot_id|>", "<|end_of_text|>",  /* Llama 3 */
@@ -4820,14 +5398,18 @@ int main(int argc, char **argv) {
         }
     }
 
+    const bool generated_chat = api.format_chat &&
+        (!api.has_chat_template || api.has_chat_template());
     printf("Ready! Vocab: %d, Context: %d, Template: %s\n",
            vocab_size, ctx,
            opt.no_chat_template ? "none" :
+           generated_chat ? "generated" :
            opt.chat_template == CHAT_TEMPLATE_QWEN ? "qwen" :
            opt.chat_template == CHAT_TEMPLATE_LLAMA ? "llama" :
            opt.chat_template == CHAT_TEMPLATE_MISTRAL ? "mistral" :
            opt.chat_template == CHAT_TEMPLATE_GEMMA4 ? "gemma4" :
            opt.chat_template == CHAT_TEMPLATE_GEMMA ? "gemma" : "chatml");
+    print_runtime_capabilities(&api);
 
     /* Print CPU capability info */
     ck_capability_t cap = ck_get_capabilities();
@@ -4850,10 +5432,12 @@ int main(int argc, char **argv) {
 
     printf("Type /help for commands, Ctrl+C to stop generation\n\n");
 
-    setvbuf(stdout, NULL, _IOFBF, 1 << 20);
-
     int run_rc = 0;
-    if (opt.bridge_report_path) {
+    if (opt.audio_path) {
+        run_rc = run_audio_file(&api, &opt);
+    } else if (opt.image_tensor_f32_path) {
+        run_rc = run_image_tensor_file(&api, &opt);
+    } else if (opt.bridge_report_path) {
         run_rc = run_bridge_report(&api, &opt, opt.bridge_report_path);
     } else if (opt.prompt_tokens_csv) {
         int32_t *ids = NULL;

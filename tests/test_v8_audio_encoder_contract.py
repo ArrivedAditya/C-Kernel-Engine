@@ -57,6 +57,7 @@ def _fp32_entry(name: str, shape: list[int]) -> dict:
 def _make_audio_encoder_manifest() -> dict:
     config = {
         "model": "audio_transformer_encoder",
+        "artifact_scope": "encoder_only",
         "num_layers": 1,
         "embed_dim": 8,
         "num_heads": 2,
@@ -402,6 +403,13 @@ class AudioEncoderContractTests(unittest.TestCase):
         )
         for function in expected_frontend_functions.values():
             self.assertIn(function + "(", entrypoint)
+        descriptor = codegen._emit_runtime_capability_api(
+            call_ir, layout, None, None
+        )
+        self.assertIn("CK_MODEL_CAP_AUDIO_WAV_ENCODER", descriptor)
+        self.assertIn("CK_MODEL_CAP_ENCODER_OUTPUT", descriptor)
+        self.assertIn("CK_EXPORT int ck_model_get_encoder_output(", descriptor)
+        self.assertNotIn("CK_MODEL_CAP_AUTOREGRESSIVE_DECODE,", descriptor)
         missing = [
             row
             for row in call_ir["operations"]

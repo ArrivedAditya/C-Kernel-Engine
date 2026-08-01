@@ -4855,15 +4855,15 @@ ck-cli-v7: $(BUILD_DIR)/ck-cli-v7
 	@echo "    ./$(BUILD_DIR)/ck-cli-v7 <model.so> <weights.bump>"
 	@echo ""
 
-# v8 Native CLI (bootstrapped from v7 while multimodal hosting comes online)
-$(BUILD_DIR)/ck-cli-v8: $(CK_CLI_V8) $(LIB_TOKENIZER)
+# v8 Native CLI
+$(BUILD_DIR)/ck-cli-v8: $(CK_CLI_V8) include/ck_model_abi_v8.h include/ckernel_audio.h $(LIB_TOKENIZER)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -o $@ $(CK_CLI_V8) -L$(BUILD_DIR) -lckernel_tokenizer -ldl -lpthread -lm -Wl,-rpath,$(BUILD_DIR)
 
 ck-cli-v8: $(BUILD_DIR)/ck-cli-v8
 	@echo ""
 	@echo "  $(C_CYAN)C-Kernel-Engine v8 CLI$(C_RESET)"
-	@echo "  Features: v7-native CLI bootstrap for upcoming vision/multimodal hosting"
+	@echo "  Features: Generated capability ABI, text, native audio, multimodal bridge"
 	@echo ""
 	@echo "  Usage:"
 	@echo "    ./$(BUILD_DIR)/ck-cli-v8 --model qwen"
