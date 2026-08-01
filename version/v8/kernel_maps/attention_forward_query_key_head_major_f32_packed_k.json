@@ -1,7 +1,7 @@
 {
-  "id": "attention_forward_query_key_head_major_f32",
+  "id": "attention_forward_query_key_head_major_f32_packed_k",
   "op": "attention",
-  "variant": "equal_or_unequal_length_head_major_query_scaled_fp32_reference",
+  "variant": "equal_length_head_major_query_scaled_fp32_packed_k",
   "quant": {"weight": "none", "activation": "fp32", "output": "fp32"},
   "inputs": [
     {"name": "query", "dtype": "fp32", "shape": ["H", "Tq", "D"]},
@@ -10,21 +10,24 @@
   ],
   "weights": [],
   "outputs": [{"name": "output", "dtype": "fp32", "shape": ["H", "Tq", "D"]}],
-  "scratch": [{"name": "score_scratch", "dtype": "fp32", "shape": ["Tq", "Tk"]}],
+  "scratch": [
+    {"name": "score_scratch", "dtype": "fp32", "shape": ["Tq", "Tk"]},
+    {"name": "key_transpose_scratch", "dtype": "fp32", "shape": ["H", "D", "Tk"]}
+  ],
   "dims": ["num_heads", "query_tokens", "key_tokens", "head_dim", "attention_scale"],
   "impl": {
-    "function": "attention_forward_query_key_head_major_f32",
-    "c_declaration": "int attention_forward_query_key_head_major_f32(const float *query, const float *key, const float *value, float *output, float *score_scratch, int num_heads, int query_tokens, int key_tokens, int head_dim, float scale);",
+    "function": "attention_forward_query_key_head_major_f32_packed_k",
+    "c_declaration": "int attention_forward_query_key_head_major_f32_packed_k(const float *query, const float *key, const float *value, float *output, float *score_scratch, float *key_transpose_scratch, int num_heads, int query_tokens, int key_tokens, int head_dim, float scale);",
     "sources": ["src/kernels/attention_kernels.c"]
   },
   "modes": {"inference": true, "training": false, "backward": false},
   "numerical_capabilities": [{
-    "contract_id": "attention_query_key_scaled_ordered_fp32",
+    "contract_id": "attention_query_key_scaled_ordered_fp32_packed_k",
     "status": "validated",
-    "phases": ["prefill", "decode"],
-    "function": "attention_forward_query_key_head_major_f32",
+    "phases": ["prefill"],
+    "function": "attention_forward_query_key_head_major_f32_packed_k",
     "explicit_selector": true,
-    "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "ck_threadpool", "work_partition": ["independent_rows"], "dispatch": ["ck_threadpool_dispatch_n"], "reduction_order_effect": "none"}},
+    "implementation": {"isa_dispatch": "runtime", "threading": {"runtime": "ck_threadpool", "work_partition": ["independent_rows"], "dispatch": ["ck_threadpool_dispatch_n"], "reduction_order_effect": "none"}},
     "arithmetic": {"partial_accumulator": "fp32", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "independent_outputs"}
   }],
   "call_abi": {"version": 1, "params": [
@@ -33,6 +36,7 @@
     {"name": "value", "source": "activation:value", "cast": "const float*"},
     {"name": "output", "source": "output:output", "cast": "float*"},
     {"name": "score_scratch", "source": "scratch:score_scratch", "cast": "float*"},
+    {"name": "key_transpose_scratch", "source": "scratch:key_transpose_scratch", "cast": "float*"},
     {"name": "num_heads", "source": "dim:num_heads"},
     {"name": "query_tokens", "source": "dim:query_tokens"},
     {"name": "key_tokens", "source": "dim:key_tokens"},

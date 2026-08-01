@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 
@@ -320,7 +322,13 @@ def test_whisper_encoder_safetensors_maps_and_generates_call_ir(tmp_path: Path) 
     assert functions["audio_conv1d_stem_1"] == "audio_conv1d_channel_major_f32"
     assert functions["audio_conv1d_stem_2"] == "audio_conv1d_channel_major_f32"
     assert functions["layout_channel_to_token"] == "audio_transpose_channel_to_token_f32"
-    assert functions["attn"] == "attention_forward_query_key_head_major_f32"
+    assert (
+        functions["attn"]
+        == "attention_forward_query_key_head_major_f32_packed_k"
+    )
+    attn_op = next(op for op in call_ops if op["op"] == "attn")
+    attn_args = {arg["name"]: arg["expr"] for arg in attn_op["args"]}
+    assert attn_args["score_scratch"] != attn_args["key_transpose_scratch"]
     layout_doc = json.loads(
         (out / "layout_encoder.json").read_text(encoding="utf-8")
     )
@@ -372,6 +380,110 @@ def test_whisper_encoder_safetensors_maps_and_generates_call_ir(tmp_path: Path) 
         ],
         check=True,
     )
+
+    fp16_out = tmp_path / "out_whisper_encoder_fp16"
+    fp16_out.mkdir()
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--checkpoint",
+            str(checkpoint),
+            "--output",
+            str(fp16_out / "weights.bump"),
+            "--config-out",
+            str(fp16_out / "config.json"),
+            "--manifest-out",
+            str(fp16_out / "weights_manifest.json"),
+            "--arch",
+            "whisper_encoder",
+            "--linear-weight-dtype",
+            "fp16",
+            "--dry-run",
+        ],
+        check=True,
+    )
+    fp16_manifest = json.loads(
+        (fp16_out / "weights_manifest.json").read_text(encoding="utf-8")
+    )
+    fp16_entries = fp16_manifest["entries"]
+    projection_entries = [
+        entry for entry in fp16_entries if entry.get("role") == "linear_weight"
+    ]
+    assert len(projection_entries) == 6
+    assert {entry["dtype"] for entry in projection_entries} == {"fp16"}
+    assert {
+        entry["dtype"]
+        for entry in fp16_entries
+        if entry.get("role") != "linear_weight"
+    } == {"fp32"}
+    fp16_call = fp16_out / "call_encoder.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(build_ir),
+            "--manifest",
+            str(fp16_out / "weights_manifest.json"),
+            "--mode",
+            "prefill",
+            "--output",
+            str(fp16_out / "ir1_encoder.json"),
+            "--layout-output",
+            str(fp16_out / "layout_encoder.json"),
+            "--lowered-output",
+            str(fp16_out / "lowered_encoder.json"),
+            "--call-output",
+            str(fp16_call),
+            "--context-len",
+            "4",
+        ],
+        check=True,
+    )
+    fp16_ops = json.loads(fp16_call.read_text(encoding="utf-8"))["operations"]
+    projection_ops = {
+        "q_proj", "k_proj", "v_proj", "out_proj", "mlp_up", "mlp_down"
+    }
+    assert {
+        op["function"] for op in fp16_ops if op["op"] in projection_ops
+    } == {"gemm_nt_f16"}
+
+    fp16_real_out = tmp_path / "out_whisper_encoder_fp16_real"
+    fp16_real_out.mkdir()
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--checkpoint",
+            str(checkpoint),
+            "--output",
+            str(fp16_real_out / "weights.bump"),
+            "--config-out",
+            str(fp16_real_out / "config.json"),
+            "--manifest-out",
+            str(fp16_real_out / "weights_manifest.json"),
+            "--arch",
+            "whisper_encoder",
+            "--linear-weight-dtype",
+            "fp16",
+        ],
+        check=True,
+    )
+    fp16_real_manifest = json.loads(
+        (fp16_real_out / "weights_manifest.json").read_text(encoding="utf-8")
+    )
+    wq_entry = next(
+        entry for entry in fp16_real_manifest["entries"]
+        if entry["name"] == "layer.0.wq"
+    )
+    assert wq_entry["dtype"] == "fp16"
+    assert wq_entry["role"] == "linear_weight"
+    assert wq_entry["size"] == 2 * math.prod(wq_entry["shape"])
+    with (fp16_real_out / "weights.bump").open("rb") as weights_file:
+        weights_file.seek(wq_entry["file_offset"])
+        payload = weights_file.read(wq_entry["size"])
+    expected = tensors["model.encoder.layers.0.self_attn.q_proj.weight"]
+    actual = np.frombuffer(payload, dtype=np.float16).reshape(expected.shape)
+    np.testing.assert_array_equal(actual, expected.numpy().astype(np.float16))
 
 
 def test_whisper_decoder_safetensors_keeps_self_and_cross_attention_distinct(

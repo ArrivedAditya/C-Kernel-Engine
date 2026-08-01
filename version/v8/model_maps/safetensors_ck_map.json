@@ -41,29 +41,29 @@
         {"target": "pos_emb", "sources": ["model.decoder.embed_positions.weight"], "dtype": "fp32"},
         {"target": "layer.{L}.ln1_gamma", "sources": ["model.decoder.layers.{L}.self_attn_layer_norm.weight"], "dtype": "fp32"},
         {"target": "layer.{L}.ln1_beta", "sources": ["model.decoder.layers.{L}.self_attn_layer_norm.bias"], "dtype": "fp32"},
-        {"target": "layer.{L}.wq", "sources": ["model.decoder.layers.{L}.self_attn.q_proj.weight"], "dtype": "fp32"},
+        {"target": "layer.{L}.wq", "sources": ["model.decoder.layers.{L}.self_attn.q_proj.weight"], "dtype": "fp32", "role": "linear_weight"},
         {"target": "layer.{L}.bq", "sources": ["model.decoder.layers.{L}.self_attn.q_proj.bias"], "dtype": "fp32"},
-        {"target": "layer.{L}.wk", "sources": ["model.decoder.layers.{L}.self_attn.k_proj.weight"], "dtype": "fp32"},
+        {"target": "layer.{L}.wk", "sources": ["model.decoder.layers.{L}.self_attn.k_proj.weight"], "dtype": "fp32", "role": "linear_weight"},
         {"target": "layer.{L}.bk", "fallback_synth": "zeros_fp32", "dtype": "fp32", "shape": ["embed_dim"]},
-        {"target": "layer.{L}.wv", "sources": ["model.decoder.layers.{L}.self_attn.v_proj.weight"], "dtype": "fp32"},
+        {"target": "layer.{L}.wv", "sources": ["model.decoder.layers.{L}.self_attn.v_proj.weight"], "dtype": "fp32", "role": "linear_weight"},
         {"target": "layer.{L}.bv", "sources": ["model.decoder.layers.{L}.self_attn.v_proj.bias"], "dtype": "fp32"},
-        {"target": "layer.{L}.wo", "sources": ["model.decoder.layers.{L}.self_attn.out_proj.weight"], "dtype": "fp32"},
+        {"target": "layer.{L}.wo", "sources": ["model.decoder.layers.{L}.self_attn.out_proj.weight"], "dtype": "fp32", "role": "linear_weight"},
         {"target": "layer.{L}.bo", "sources": ["model.decoder.layers.{L}.self_attn.out_proj.bias"], "dtype": "fp32"},
         {"target": "layer.{L}.cross_ln_gamma", "sources": ["model.decoder.layers.{L}.encoder_attn_layer_norm.weight"], "dtype": "fp32"},
         {"target": "layer.{L}.cross_ln_beta", "sources": ["model.decoder.layers.{L}.encoder_attn_layer_norm.bias"], "dtype": "fp32"},
-        {"target": "layer.{L}.cross_wq", "sources": ["model.decoder.layers.{L}.encoder_attn.q_proj.weight"], "dtype": "fp32"},
+        {"target": "layer.{L}.cross_wq", "sources": ["model.decoder.layers.{L}.encoder_attn.q_proj.weight"], "dtype": "fp32", "role": "linear_weight"},
         {"target": "layer.{L}.cross_bq", "sources": ["model.decoder.layers.{L}.encoder_attn.q_proj.bias"], "dtype": "fp32"},
-        {"target": "layer.{L}.cross_wk", "sources": ["model.decoder.layers.{L}.encoder_attn.k_proj.weight"], "dtype": "fp32"},
+        {"target": "layer.{L}.cross_wk", "sources": ["model.decoder.layers.{L}.encoder_attn.k_proj.weight"], "dtype": "fp32", "role": "linear_weight"},
         {"target": "layer.{L}.cross_bk", "fallback_synth": "zeros_fp32", "dtype": "fp32", "shape": ["embed_dim"]},
-        {"target": "layer.{L}.cross_wv", "sources": ["model.decoder.layers.{L}.encoder_attn.v_proj.weight"], "dtype": "fp32"},
+        {"target": "layer.{L}.cross_wv", "sources": ["model.decoder.layers.{L}.encoder_attn.v_proj.weight"], "dtype": "fp32", "role": "linear_weight"},
         {"target": "layer.{L}.cross_bv", "sources": ["model.decoder.layers.{L}.encoder_attn.v_proj.bias"], "dtype": "fp32"},
-        {"target": "layer.{L}.cross_wo", "sources": ["model.decoder.layers.{L}.encoder_attn.out_proj.weight"], "dtype": "fp32"},
+        {"target": "layer.{L}.cross_wo", "sources": ["model.decoder.layers.{L}.encoder_attn.out_proj.weight"], "dtype": "fp32", "role": "linear_weight"},
         {"target": "layer.{L}.cross_bo", "sources": ["model.decoder.layers.{L}.encoder_attn.out_proj.bias"], "dtype": "fp32"},
         {"target": "layer.{L}.ln2_gamma", "sources": ["model.decoder.layers.{L}.final_layer_norm.weight"], "dtype": "fp32"},
         {"target": "layer.{L}.ln2_beta", "sources": ["model.decoder.layers.{L}.final_layer_norm.bias"], "dtype": "fp32"},
-        {"target": "layer.{L}.w3", "sources": ["model.decoder.layers.{L}.fc1.weight"], "dtype": "fp32"},
+        {"target": "layer.{L}.w3", "sources": ["model.decoder.layers.{L}.fc1.weight"], "dtype": "fp32", "role": "linear_weight"},
         {"target": "layer.{L}.b1", "sources": ["model.decoder.layers.{L}.fc1.bias"], "dtype": "fp32"},
-        {"target": "layer.{L}.w2", "sources": ["model.decoder.layers.{L}.fc2.weight"], "dtype": "fp32"},
+        {"target": "layer.{L}.w2", "sources": ["model.decoder.layers.{L}.fc2.weight"], "dtype": "fp32", "role": "linear_weight"},
         {"target": "layer.{L}.b2", "sources": ["model.decoder.layers.{L}.fc2.bias"], "dtype": "fp32"},
         {"target": "final_ln_weight", "sources": ["model.decoder.layer_norm.weight"], "dtype": "fp32"},
         {"target": "final_ln_bias", "sources": ["model.decoder.layer_norm.bias"], "dtype": "fp32"}
@@ -152,7 +152,8 @@
         {
           "target": "layer.{L}.wq",
           "sources": ["model.encoder.layers.{L}.self_attn.q_proj.weight"],
-          "dtype": "fp32"
+          "dtype": "fp32",
+          "role": "linear_weight"
         },
         {
           "target": "layer.{L}.bq",
@@ -162,7 +163,8 @@
         {
           "target": "layer.{L}.wk",
           "sources": ["model.encoder.layers.{L}.self_attn.k_proj.weight"],
-          "dtype": "fp32"
+          "dtype": "fp32",
+          "role": "linear_weight"
         },
         {
           "target": "layer.{L}.bk",
@@ -173,7 +175,8 @@
         {
           "target": "layer.{L}.wv",
           "sources": ["model.encoder.layers.{L}.self_attn.v_proj.weight"],
-          "dtype": "fp32"
+          "dtype": "fp32",
+          "role": "linear_weight"
         },
         {
           "target": "layer.{L}.bv",
@@ -183,7 +186,8 @@
         {
           "target": "layer.{L}.wo",
           "sources": ["model.encoder.layers.{L}.self_attn.out_proj.weight"],
-          "dtype": "fp32"
+          "dtype": "fp32",
+          "role": "linear_weight"
         },
         {
           "target": "layer.{L}.bo",
@@ -193,7 +197,8 @@
         {
           "target": "layer.{L}.w3",
           "sources": ["model.encoder.layers.{L}.fc1.weight"],
-          "dtype": "fp32"
+          "dtype": "fp32",
+          "role": "linear_weight"
         },
         {
           "target": "layer.{L}.b1",
@@ -203,7 +208,8 @@
         {
           "target": "layer.{L}.w2",
           "sources": ["model.encoder.layers.{L}.fc2.weight"],
-          "dtype": "fp32"
+          "dtype": "fp32",
+          "role": "linear_weight"
         },
         {
           "target": "layer.{L}.b2",

@@ -150,7 +150,7 @@ class AudioEncoderContractTests(unittest.TestCase):
             "audio.encoder.stem.conv2": "audio_conv1d_channel_major_f32",
             "audio.encoder.layout": "audio_transpose_channel_to_token_f32",
             "audio.encoder.position": "position_embeddings_add",
-            "audio.encoder.attention": "attention_forward_query_key_head_major_f32",
+            "audio.encoder.attention": "attention_forward_query_key_head_major_f32_packed_k",
         }
         for requirement, kernel_id in expected.items():
             with self.subTest(requirement=requirement):
@@ -218,6 +218,9 @@ class AudioEncoderContractTests(unittest.TestCase):
             ),
             "attention_query_key_scaled_ordered_fp32": (
                 "attention", "attention_forward_query_key_head_major_f32"
+            ),
+            "attention_query_key_scaled_ordered_fp32_packed_k": (
+                "attention", "attention_forward_query_key_head_major_f32_packed_k"
             ),
         }
         for contract_id, (operator, kernel_id) in cases.items():
@@ -296,7 +299,7 @@ class AudioEncoderContractTests(unittest.TestCase):
         )
         self.assertEqual(
             [row["kernel"] for row in by_op["attn"]],
-            ["attention_forward_query_key_head_major_f32"],
+            ["attention_forward_query_key_head_major_f32_packed_k"],
         )
         self.assertFalse(manifest["config"]["_template_uses_kv_cache"])
         self.assertFalse(manifest["config"]["_template_uses_rope"])
@@ -336,6 +339,18 @@ class AudioEncoderContractTests(unittest.TestCase):
             if row.get("errors")
         ]
         self.assertEqual(errors, [])
+        attention_call = next(
+            row for row in call_ir["operations"]
+            if row.get("function") == "attention_forward_query_key_head_major_f32_packed_k"
+        )
+        scratch_args = {
+            arg["name"]: arg["expr"] for arg in attention_call["args"]
+            if arg["name"] in {"score_scratch", "key_transpose_scratch"}
+        }
+        self.assertEqual(set(scratch_args), {"score_scratch", "key_transpose_scratch"})
+        self.assertNotEqual(
+            scratch_args["score_scratch"], scratch_args["key_transpose_scratch"]
+        )
         frontend_calls = {
             row["op"]: row
             for row in call_ir["operations"]
@@ -469,13 +484,17 @@ class AudioEncoderContractTests(unittest.TestCase):
 
     def test_shared_cross_attention_provider_is_not_audio_named(self):
         kernel = json.loads(
-            (V8 / "kernel_maps" / "attention_forward_query_key_head_major_f32.json")
+            (V8 / "kernel_maps" / "attention_forward_query_key_head_major_f32_packed_k.json")
             .read_text(encoding="utf-8")
         )
         self.assertEqual(kernel["op"], "attention")
         identity = f"{kernel['id']} {kernel['impl']['function']}".lower()
         self.assertNotIn("audio", identity)
         self.assertNotIn("whisper", identity)
+        self.assertEqual(kernel["scratch"][0]["shape"], ["Tq", "Tk"])
+        self.assertEqual(kernel["scratch"][1]["shape"], ["H", "D", "Tk"])
+        threading = kernel["numerical_capabilities"][0]["implementation"]["threading"]
+        self.assertEqual(threading["work_partition"], ["independent_rows"])
 
     def test_unknown_resampling_semantics_are_a_hard_failure(self):
         circuit = copy.deepcopy(self.frontend)
@@ -516,9 +535,21 @@ class AudioEncoderContractTests(unittest.TestCase):
         workflow = (
             ROOT / ".github" / "workflows" / "nightly.yml"
         ).read_text(encoding="utf-8")
-        self.assertEqual(
-            workflow.count("-c requirements-nightly-constraints.txt"),
-            3,
+        dependency_installs = [
+            line.strip()
+            for line in workflow.splitlines()
+            if "pip install" in line and "--upgrade pip" not in line
+        ]
+        self.assertTrue(
+            dependency_installs,
+            "nightly must install its Python dependency sets",
+        )
+        self.assertTrue(
+            all(
+                "-c requirements-nightly-constraints.txt" in line
+                for line in dependency_installs
+            ),
+            "every nightly dependency install must use the pinned constraints file",
         )
         parsed = nightly.parse_sub_tests(
             "audio_encoder_self_attention_equal "

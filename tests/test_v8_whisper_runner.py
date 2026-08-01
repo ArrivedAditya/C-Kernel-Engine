@@ -87,6 +87,23 @@ def test_whisper_runner_uses_generated_frontend_and_forced_prefix_is_stable() ->
     ) == [50258, 50259, 50359]
 
 
+def test_whisper_workers_do_not_compete_with_numpy_blas_threads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = _module()
+    monkeypatch.setenv("CK_NUM_THREADS", "20")
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "28")
+    monkeypatch.setenv("MKL_NUM_THREADS", "28")
+
+    worker_env = runner._worker_environment()
+
+    assert worker_env["CK_NUM_THREADS"] == "20"
+    assert worker_env["OPENBLAS_NUM_THREADS"] == "1"
+    assert worker_env["MKL_NUM_THREADS"] == "1"
+    assert os.environ["OPENBLAS_NUM_THREADS"] == "28"
+    assert os.environ["MKL_NUM_THREADS"] == "28"
+
+
 def test_whisper_frontend_xray_metrics_are_json_serializable() -> None:
     xray = _frontend_xray_module()
     reference = np.zeros((2, 3), dtype=np.float32)
@@ -303,7 +320,7 @@ def test_unified_audio_checkpoint_builds_distinct_generic_roles(
     checkpoint.mkdir()
     (checkpoint / "model.safetensors").write_bytes(b"fixture")
     run_dir = tmp_path / "runtime"
-    calls: list[tuple[Path, Path, str, bool, bool]] = []
+    calls: list[tuple[Path, Path, str, bool, bool, str]] = []
 
     def fake_build_role(
         checkpoint_dir: Path,
@@ -312,6 +329,7 @@ def test_unified_audio_checkpoint_builds_distinct_generic_roles(
         *,
         force_convert: bool,
         force_compile: bool,
+        linear_weight_dtype: str = "preserve",
     ) -> None:
         calls.append(
             (
@@ -320,6 +338,7 @@ def test_unified_audio_checkpoint_builds_distinct_generic_roles(
                 role,
                 force_convert,
                 force_compile,
+                linear_weight_dtype,
             )
         )
 
@@ -333,12 +352,30 @@ def test_unified_audio_checkpoint_builds_distinct_generic_roles(
         force_download=False,
         force_convert=True,
         force_compile=False,
+        encoder_linear_weight_dtype="fp16",
     )
     assert encoder == run_dir / "encoder"
     assert decoder == run_dir / "decoder"
     assert [row[2] for row in calls] == ["encoder", "decoder"]
     assert all(row[0] == checkpoint for row in calls)
     assert all(row[3] is True and row[4] is False for row in calls)
+    assert [row[5] for row in calls] == ["fp16", "preserve"]
+
+
+def test_whisper_build_identity_includes_linear_weight_policy(tmp_path: Path) -> None:
+    unified = _unified_module()
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "config.json").write_text("{}\n", encoding="utf-8")
+    fp32 = unified._whisper_build_inputs(
+        checkpoint, "encoder", linear_weight_dtype="preserve"
+    )
+    fp16 = unified._whisper_build_inputs(
+        checkpoint, "encoder", linear_weight_dtype="fp16"
+    )
+    assert fp32["linear_weight_dtype"] == "preserve"
+    assert fp16["linear_weight_dtype"] == "fp16"
+    assert fp32 != fp16
 
 
 def test_whisper_checkpoint_identity_changes_with_source(

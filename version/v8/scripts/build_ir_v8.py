@@ -3648,6 +3648,39 @@ def _dtype_size_bytes(dtype: str) -> int:
     }.get(str(dtype or "").strip().lower(), 4)
 
 
+def _kernel_scratch_size_bytes(
+    scratch: Dict[str, Any], params: Dict[str, Any], config: Dict[str, Any]
+) -> Optional[int]:
+    """Resolve a kernel-map scratch shape using the operation's concrete dimensions."""
+    shape = scratch.get("shape")
+    if not isinstance(shape, list) or not shape:
+        raw_size = scratch.get("size")
+        return int(raw_size) if isinstance(raw_size, int) else None
+    values = dict(config)
+    values.update(params)
+    symbols = {
+        "H": values.get("num_heads", values.get("num_attention_heads")),
+        "Tq": values.get("query_tokens", values.get("seq_len")),
+        "Tk": values.get("key_tokens", values.get("seq_len")),
+        "D": values.get("head_dim"),
+        "M": values.get("_m", values.get("seq_len")),
+        "N": values.get("_n"),
+        "K": values.get("_k"),
+        "T": values.get("seq_len"),
+    }
+    elements = 1
+    for extent in shape:
+        if isinstance(extent, int):
+            value = extent
+        else:
+            text = str(extent).strip()
+            value = int(text) if text.isdigit() else symbols.get(text)
+        if value is None or int(value) <= 0:
+            return None
+        elements *= int(value)
+    return elements * _dtype_size_bytes(str(scratch.get("dtype", "fp32")))
+
+
 def _resolve_branch_collect_contract(
     branch_def: Dict[str, Any],
     config: Dict[str, Any],
@@ -7828,6 +7861,7 @@ def generate_ir_lower_1(
                 "name": scratch.get("name", f"scratch_{idx}"),
                 "size": scratch.get("size", "dynamic"),
                 "dtype": scratch.get("dtype", "fp32"),
+                "shape": copy.deepcopy(scratch.get("shape", [])),
             })
 
         lowered_ops.append(lowered_op)
@@ -10770,13 +10804,30 @@ def generate_ir_lower_2(
         scratch_list = ir_op.get("scratch", [])
         if scratch_list:
             mlp_buf = activation_buffers.get("mlp_scratch")
+            scratch_cursor = int(mlp_buf["offset"]) if mlp_buf else 0
+            scratch_limit = scratch_cursor + int(mlp_buf.get("size", 0)) if mlp_buf else 0
             for i, scratch in enumerate(scratch_list):
-                scratch_offset = mlp_buf["offset"] if mlp_buf else 0
+                scratch_size = _kernel_scratch_size_bytes(
+                    scratch, ir_op.get("params", {}), config
+                )
+                if scratch_size is None:
+                    scratch_size = int(mlp_buf.get("size", 0)) if mlp_buf else 0
+                    scratch_offset = int(mlp_buf["offset"]) if mlp_buf else 0
+                else:
+                    scratch_offset = (scratch_cursor + 63) & ~63
+                    scratch_cursor = scratch_offset + int(scratch_size)
+                    if mlp_buf and scratch_cursor > scratch_limit:
+                        raise RuntimeError(
+                            "HARD MEMORY PLAN FAULT: kernel scratch exceeds mlp_scratch arena: "
+                            f"required={scratch_cursor - int(mlp_buf['offset'])} "
+                            f"available={int(mlp_buf.get('size', 0))}"
+                        )
                 lowered_op["scratch"].append({
                     "name": scratch.get("name", f"scratch_{i}"),
                     "scratch_offset": scratch_offset,
-                    "size": scratch.get("size", "dynamic"),
+                    "size": scratch_size,
                     "dtype": scratch.get("dtype", "fp32"),
+                    "shape": copy.deepcopy(scratch.get("shape", [])),
                     "ptr_expr": f"activations + {scratch_offset}",
                 })
 

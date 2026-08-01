@@ -1269,8 +1269,8 @@ $(LIB_RELU): $(BUILD_STAMP) src/kernels/relu_kernels.c src/kernels/relu_kernels_
 $(LIB_VISION): $(BUILD_STAMP) src/kernels/vision_kernels.c src/kernels/vision_kernels_bf16.c src/kernels/rope_kernels.c src/kernels/rope_kernels_bf16.c src/ckernel_strict.c src/ck_threadpool.c include/ckernel_engine.h
 	$(CC) $(CFLAGS) -shared -o $@ src/kernels/vision_kernels.c src/kernels/vision_kernels_bf16.c src/kernels/rope_kernels.c src/kernels/rope_kernels_bf16.c src/ckernel_strict.c src/ck_threadpool.c -lm -lpthread
 
-$(LIB_AUDIO): $(BUILD_STAMP) src/kernels/audio_kernels.c include/ckernel_audio.h
-	$(CC) $(CFLAGS) -shared -o $@ src/kernels/audio_kernels.c -lm
+$(LIB_AUDIO): $(BUILD_STAMP) src/kernels/audio_kernels.c src/ckernel_strict.c src/ck_threadpool.c include/ckernel_audio.h
+	$(CC) $(CFLAGS) -shared -o $@ src/kernels/audio_kernels.c src/ckernel_strict.c src/ck_threadpool.c -lm -lpthread
 
 $(LIB_ATTENTION): $(BUILD_STAMP) src/kernels/attention_kernels.c src/kernels/attention_kernels_sliding.c src/kernels/attention_flash_true.c src/kernels/softmax_kernels.c src/kernels/gemm_kernels_bf16.c src/ckernel_strict.c src/ck_threadpool.c include/ckernel_engine.h
 	$(CC) $(CFLAGS) -shared -o $@ src/kernels/attention_kernels.c src/kernels/attention_kernels_sliding.c src/kernels/attention_flash_true.c src/kernels/softmax_kernels.c src/kernels/gemm_kernels_bf16.c src/ckernel_strict.c src/ck_threadpool.c -lm -lpthread

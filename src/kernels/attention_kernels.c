@@ -37,13 +37,125 @@
 #include <stdlib.h>
 #include "ck_speed_profiles.h"
 #include <string.h>
+#if defined(__AVX__) || defined(__AVX2__) || defined(__AVX512F__) || defined(__SSE2__)
+#include <immintrin.h>
+#endif
 
-int attention_forward_query_key_head_major_f32(
+typedef struct {
+    const float *query;
+    const float *key;
+    const float *value;
+    float *output;
+    float *score_scratch;
+    float *key_transpose_scratch;
+    int num_heads;
+    int query_tokens;
+    int key_tokens;
+    int head_dim;
+    float scale;
+} ck_attention_query_key_f32_args_t;
+
+static void ck_attention_query_key_f32_transpose_work(int ith, int nth, void *opaque)
+{
+    ck_attention_query_key_f32_args_t *args =
+        (ck_attention_query_key_f32_args_t *)opaque;
+    const int rows = args->num_heads * args->head_dim;
+    for (int row = ith; row < rows; row += nth) {
+        const int head = row / args->head_dim;
+        const int dim = row % args->head_dim;
+        const float *key_head = args->key +
+            (size_t)head * args->key_tokens * args->head_dim;
+        float *packed = args->key_transpose_scratch +
+            (size_t)row * args->key_tokens;
+        for (int key_token = 0; key_token < args->key_tokens; ++key_token) {
+            packed[key_token] =
+                key_head[(size_t)key_token * args->head_dim + dim];
+        }
+    }
+}
+
+static void ck_attention_query_key_f32_work(int ith, int nth, void *opaque)
+{
+    ck_attention_query_key_f32_args_t *args =
+        (ck_attention_query_key_f32_args_t *)opaque;
+    for (int q_token = ith; q_token < args->query_tokens; q_token += nth) {
+        float *scores = args->score_scratch +
+            (size_t)q_token * args->key_tokens;
+        for (int head = 0; head < args->num_heads; ++head) {
+            const float *q_head = args->query +
+                (size_t)head * args->query_tokens * args->head_dim;
+            const float *k_head = args->key +
+                (size_t)head * args->key_tokens * args->head_dim;
+            const float *v_head = args->value +
+                (size_t)head * args->key_tokens * args->head_dim;
+            float *out_head = args->output +
+                (size_t)head * args->query_tokens * args->head_dim;
+            const float *q_row = q_head + (size_t)q_token * args->head_dim;
+            float maximum = -FLT_MAX;
+            int k_token = 0;
+#if defined(__AVX2__) && defined(__FMA__)
+            for (; args->key_transpose_scratch != NULL &&
+                   k_token + 7 < args->key_tokens; k_token += 8) {
+                __m256 dots = _mm256_setzero_ps();
+                for (int dim = 0; dim < args->head_dim; ++dim) {
+                    const float *packed = args->key_transpose_scratch +
+                        ((size_t)head * args->head_dim + dim) *
+                            args->key_tokens + k_token;
+                    dots = _mm256_fmadd_ps(
+                        _mm256_set1_ps(q_row[dim]),
+                        _mm256_loadu_ps(packed), dots);
+                }
+                float dot_values[8];
+                _mm256_storeu_ps(dot_values, dots);
+                for (int lane = 0; lane < 8; ++lane) {
+                    const float score = dot_values[lane] * args->scale;
+                    scores[k_token + lane] = score;
+                    maximum = fmaxf(maximum, score);
+                }
+            }
+#endif
+            for (; k_token < args->key_tokens; ++k_token) {
+                const float *k_row = k_head +
+                    (size_t)k_token * args->head_dim;
+                float dot = 0.0f;
+                for (int dim = 0; dim < args->head_dim; ++dim) {
+                    dot = fmaf(q_row[dim], k_row[dim], dot);
+                }
+                const float score = dot * args->scale;
+                scores[k_token] = score;
+                maximum = fmaxf(maximum, score);
+            }
+            double denominator = 0.0;
+            for (int k_token = 0; k_token < args->key_tokens; ++k_token) {
+                const float probability = expf(scores[k_token] - maximum);
+                scores[k_token] = probability;
+                denominator += (double)probability;
+            }
+            const float inverse = denominator > 0.0 ? (float)(1.0 / denominator) : 0.0f;
+            float *out_row = out_head +
+                (size_t)q_token * args->head_dim;
+            for (int dim = 0; dim < args->head_dim; ++dim) {
+                out_row[dim] = 0.0f;
+            }
+            for (int k_token = 0; k_token < args->key_tokens; ++k_token) {
+                const float probability = scores[k_token] * inverse;
+                const float *v_row = v_head +
+                    (size_t)k_token * args->head_dim;
+                for (int dim = 0; dim < args->head_dim; ++dim) {
+                    out_row[dim] = fmaf(probability, v_row[dim], out_row[dim]);
+                }
+            }
+        }
+    }
+}
+
+static int ck_attention_forward_query_key_head_major_f32_run(
     const float *query,
     const float *key,
     const float *value,
     float *output,
     float *score_scratch,
+    float *key_transpose_scratch,
     int num_heads,
     int query_tokens,
     int key_tokens,
@@ -58,48 +170,77 @@ int attention_forward_query_key_head_major_f32(
         head_dim <= 0 || !isfinite(scale)) {
         return -2;
     }
-    for (int head = 0; head < num_heads; ++head) {
-        const float *q_head = query + (size_t)head * query_tokens * head_dim;
-        const float *k_head = key + (size_t)head * key_tokens * head_dim;
-        const float *v_head = value + (size_t)head * key_tokens * head_dim;
-        float *out_head = output + (size_t)head * query_tokens * head_dim;
-        for (int q_token = 0; q_token < query_tokens; ++q_token) {
-            const float *q_row = q_head + (size_t)q_token * head_dim;
-            float maximum = -FLT_MAX;
-            for (int k_token = 0; k_token < key_tokens; ++k_token) {
-                const float *k_row = k_head + (size_t)k_token * head_dim;
-                float dot = 0.0f;
-                for (int dim = 0; dim < head_dim; ++dim) {
-                    dot = fmaf(q_row[dim], k_row[dim], dot);
-                }
-                const float score = dot * scale;
-                score_scratch[k_token] = score;
-                maximum = fmaxf(maximum, score);
-            }
-            double denominator = 0.0;
-            for (int k_token = 0; k_token < key_tokens; ++k_token) {
-                const float probability = expf(score_scratch[k_token] - maximum);
-                score_scratch[k_token] = probability;
-                denominator += (double)probability;
-            }
-            const float inverse = denominator > 0.0 ? (float)(1.0 / denominator) : 0.0f;
-            float *out_row = out_head + (size_t)q_token * head_dim;
-            for (int dim = 0; dim < head_dim; ++dim) {
-                float sum = 0.0f;
-                for (int k_token = 0; k_token < key_tokens; ++k_token) {
-                    const float probability = score_scratch[k_token] * inverse;
-                    sum = fmaf(probability, v_head[(size_t)k_token * head_dim + dim], sum);
-                }
-                out_row[dim] = sum;
-            }
+    ck_attention_query_key_f32_args_t args = {
+        .query = query,
+        .key = key,
+        .value = value,
+        .output = output,
+        .score_scratch = score_scratch,
+        .key_transpose_scratch = key_transpose_scratch,
+        .num_heads = num_heads,
+        .query_tokens = query_tokens,
+        .key_tokens = key_tokens,
+        .head_dim = head_dim,
+        .scale = scale,
+    };
+    ck_threadpool_t *pool = ck_threadpool_global();
+    int active = pool ? ck_threadpool_n_threads(pool) : 1;
+    if (key_transpose_scratch != NULL) {
+        int transpose_active = active;
+        const int transpose_rows = num_heads * head_dim;
+        if (transpose_active > transpose_rows) transpose_active = transpose_rows;
+        if (pool && transpose_active > 1) {
+            ck_threadpool_dispatch_n(pool, transpose_active,
+                ck_attention_query_key_f32_transpose_work, &args);
+        } else {
+            ck_attention_query_key_f32_transpose_work(0, 1, &args);
         }
+    }
+    if (active > query_tokens) active = query_tokens;
+    if (pool && active > 1) {
+        ck_threadpool_dispatch_n(
+            pool, active, ck_attention_query_key_f32_work, &args);
+    } else {
+        ck_attention_query_key_f32_work(0, 1, &args);
     }
     return 0;
 }
 
-#if defined(__AVX__) || defined(__AVX2__) || defined(__AVX512F__) || defined(__SSE2__)
-#include <immintrin.h>
-#endif
+int attention_forward_query_key_head_major_f32(
+    const float *query,
+    const float *key,
+    const float *value,
+    float *output,
+    float *score_scratch,
+    int num_heads,
+    int query_tokens,
+    int key_tokens,
+    int head_dim,
+    float scale)
+{
+    return ck_attention_forward_query_key_head_major_f32_run(
+        query, key, value, output, score_scratch, NULL, num_heads,
+        query_tokens, key_tokens, head_dim, scale);
+}
+
+int attention_forward_query_key_head_major_f32_packed_k(
+    const float *query,
+    const float *key,
+    const float *value,
+    float *output,
+    float *score_scratch,
+    float *key_transpose_scratch,
+    int num_heads,
+    int query_tokens,
+    int key_tokens,
+    int head_dim,
+    float scale)
+{
+    if (key_transpose_scratch == NULL) return -1;
+    return ck_attention_forward_query_key_head_major_f32_run(
+        query, key, value, output, score_scratch, key_transpose_scratch,
+        num_heads, query_tokens, key_tokens, head_dim, scale);
+}
 
 /* Convert BF16 tensor to FP32 using caller-provided buffer (no malloc!) */
 static void convert_bf16_tensor_to_buf(const uint16_t *src, float *dst, size_t count)
