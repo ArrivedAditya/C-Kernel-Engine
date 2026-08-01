@@ -6854,6 +6854,7 @@
           "unittest/test_audio_encoder.py"
         ]
       },
+      "notes": "AVX2 stride-2 execution loads contiguous input spans and compacts even lanes before preserving the ascending FP32 FMA sequence. Boundary tiles and non-AVX2 builds retain indexed/scalar access.",
       "name": "audio_conv1d_channel_major_f32",
       "_source_file": "audio_conv1d_channel_major_f32.json"
     },

@@ -39,5 +39,6 @@
     {"name": "padding", "source": "dim:padding"},
     {"name": "output_frames", "source": "dim:output_frames"}
   ]},
-  "tests": {"unit": ["unittest/test_audio_encoder.py"]}
+  "tests": {"unit": ["unittest/test_audio_encoder.py"]},
+  "notes": "AVX2 stride-2 execution loads contiguous input spans and compacts even lanes before preserving the ascending FP32 FMA sequence. Boundary tiles and non-AVX2 builds retain indexed/scalar access."
 }
