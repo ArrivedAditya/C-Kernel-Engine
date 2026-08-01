@@ -3771,6 +3771,11 @@ profile-v8-prefill-perf-stat: ck-cli-v8
 		--decode $${CK_V8_PREFILL_PERF_DECODE:-1} \
 		--threads $${CK_NUM_THREADS:-12}
 
+.PHONY: test-v8-layout-dataflow-audit
+test-v8-layout-dataflow-audit:
+	@echo "Running v8 layout/dataflow audit contracts..."
+	$(PYTHON) $(PYTHONFLAGS) unittest/test_layout_dataflow_audit_v8.py
+
 test-v8-decoder-matrix: ck-cli-v8
 	@echo "Running v8 decoder matrix benchmark (CKE vs llama.cpp)..."
 	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \
