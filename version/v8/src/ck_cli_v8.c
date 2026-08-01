@@ -334,6 +334,7 @@ typedef struct {
     const char *prompt_once;
     const char *prompt_tokens_csv;
     const char *system_prompt;
+    const char *token_trace_json_path;
     int max_tokens;
     int context_override;
     int synthetic_prefix_tokens;
@@ -353,6 +354,75 @@ typedef struct {
     volatile sig_atomic_t *cancel_requested;
     CKSessionGenerateResultV8 *session_result;
 } CLIOptions;
+
+static const char *stop_reason_name(int reason) {
+    switch (reason) {
+        case CK_SESSION_STOP_EOS: return "eos";
+        case CK_SESSION_STOP_TOKEN_LIMIT: return "token_limit";
+        case CK_SESSION_STOP_CANCELLED: return "cancelled";
+        case CK_SESSION_STOP_CALLBACK: return "callback";
+        case CK_SESSION_STOP_RUNTIME_ERROR: return "runtime_error";
+        default: return "none";
+    }
+}
+
+static int write_token_trace_json(
+    const char *path,
+    const int32_t *token_ids,
+    int token_count,
+    int stop_reason
+) {
+    if (!path || !path[0]) return 0;
+
+    const size_t temporary_size = strlen(path) + 48;
+    char *temporary = (char *)malloc(temporary_size);
+    if (!temporary) return -1;
+    if (snprintf(temporary, temporary_size, "%s.tmp.%ld", path, (long)getpid()) >=
+        (int)temporary_size) {
+        free(temporary);
+        return -1;
+    }
+
+    FILE *stream = fopen(temporary, "w");
+    if (!stream) {
+        fprintf(stderr, "Error: cannot create token trace %s: %s\n", temporary, strerror(errno));
+        free(temporary);
+        return -1;
+    }
+    if (fchmod(fileno(stream), S_IRUSR | S_IWUSR) != 0) {
+        fprintf(stderr, "Error: cannot protect token trace %s: %s\n", temporary, strerror(errno));
+        fclose(stream);
+        unlink(temporary);
+        free(temporary);
+        return -1;
+    }
+
+    int failed = 0;
+    failed |= fprintf(stream, "{\n") < 0;
+    failed |= fprintf(stream, "  \"schema\": \"cke.native_token_trace\",\n") < 0;
+    failed |= fprintf(stream, "  \"schema_version\": 1,\n") < 0;
+    failed |= fprintf(stream, "  \"prompt_tokens\": %d,\n", g_prompt_tokens) < 0;
+    failed |= fprintf(stream, "  \"generated_tokens\": %d,\n", token_count) < 0;
+    failed |= fprintf(stream, "  \"stop_reason\": \"%s\",\n", stop_reason_name(stop_reason)) < 0;
+    failed |= fprintf(stream, "  \"prefill_time_ms\": %.9f,\n", g_prefill_time_ms) < 0;
+    failed |= fprintf(stream, "  \"decode_time_ms\": %.9f,\n", g_decode_time_ms) < 0;
+    failed |= fprintf(stream, "  \"token_ids\": [") < 0;
+    for (int i = 0; i < token_count; i++) {
+        failed |= fprintf(stream, "%s%d", i ? ", " : "", token_ids[i]) < 0;
+    }
+    failed |= fprintf(stream, "]\n}\n") < 0;
+    if (fflush(stream) != 0 || fsync(fileno(stream)) != 0) failed = 1;
+    if (fclose(stream) != 0) failed = 1;
+
+    if (failed || rename(temporary, path) != 0) {
+        fprintf(stderr, "Error: failed to publish token trace %s: %s\n", path, strerror(errno));
+        unlink(temporary);
+        free(temporary);
+        return -1;
+    }
+    free(temporary);
+    return 0;
+}
 
 typedef struct {
     char *prefix_dump_path;
@@ -2396,6 +2466,8 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
             break;
         }
 
+        generated_history[emitted_tokens] = (int32_t)next_token;
+
         if (opt->token_callback &&
             opt->token_callback(
                 opt->token_callback_user_data,
@@ -2436,7 +2508,7 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
 
         if (generated + 1 >= max_tokens) break;
 
-        generated_history[generated_history_count++] = (int32_t)next_token;
+        generated_history_count = emitted_tokens;
 
         clock_gettime(CLOCK_MONOTONIC, &t0);
         if (api->decode(next_token, NULL) != 0) {
@@ -2454,7 +2526,6 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
     }
 
     #undef SAMPLE_NEXT_TOKEN
-    free(generated_history);
     g_generation_active = 0;
     if (!opt->quiet_output) {
         output_flush(out_buf, &out_len);
@@ -2512,6 +2583,15 @@ static int run_generation_loop(ModelAPI *api, CLIOptions *opt) {
         opt->session_result->prefill_time_ms = g_prefill_time_ms;
         opt->session_result->decode_time_ms = g_decode_time_ms;
     }
+    if (write_token_trace_json(
+            opt->token_trace_json_path,
+            generated_history,
+            emitted_tokens,
+            stop_reason) != 0) {
+        free(generated_history);
+        return -1;
+    }
+    free(generated_history);
     return stop_reason == CK_SESSION_STOP_RUNTIME_ERROR ? -1 : 0;
 }
 
@@ -5047,6 +5127,7 @@ static void print_help(const char *prog) {
     fprintf(stderr, "  --synthetic-prefix-tokens N  Use N zero prefix rows with ck_model_forward_mixed\n");
     fprintf(stderr, "  --prompt, -p TEXT       Run single prompt (non-interactive)\n");
     fprintf(stderr, "  --prompt-tokens IDS     Comma-separated prompt token IDs for tokenizer-free runtimes\n");
+    fprintf(stderr, "  --token-trace-json PATH Write exact generated token IDs and timings atomically\n");
     fprintf(stderr, "  --system, -S TEXT       System prompt\n");
     fprintf(stderr, "  --max-tokens, -n N      Max tokens to generate (default: %d)\n", CK_CLI_DEFAULT_MAX_TOKENS);
     fprintf(stderr, "  --context, -c N         Override context/KV cache size\n");
@@ -5140,6 +5221,8 @@ static bool parse_args(int argc, char **argv, CLIOptions *opt) {
             opt->prompt_once = argv[++i];
         } else if (!strcmp(arg, "--prompt-tokens") && i + 1 < argc) {
             opt->prompt_tokens_csv = argv[++i];
+        } else if (!strcmp(arg, "--token-trace-json") && i + 1 < argc) {
+            opt->token_trace_json_path = argv[++i];
         } else if ((!strcmp(arg, "--system") || !strcmp(arg, "-S")) && i + 1 < argc) {
             opt->system_prompt = argv[++i];
         } else if ((!strcmp(arg, "--max-tokens") || !strcmp(arg, "-n")) && i + 1 < argc) {

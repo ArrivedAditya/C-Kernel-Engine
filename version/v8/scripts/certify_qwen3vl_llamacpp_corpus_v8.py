@@ -19,6 +19,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[3]
 BRIDGE = ROOT / "version" / "v8" / "scripts" / "run_multimodal_bridge_v8.py"
 PARITY = ROOT / "version" / "v8" / "scripts" / "compare_multimodal_multitoken_logits_v8.py"
+DEFAULT_NATIVE_CLI = ROOT / "build" / "ck-cli-v8"
 PINNED_LLAMA_COMMIT = "f3e182816421c648188b5eab269853bf1531d950"
 DEFAULT_PROMPT = "Extract visible form fields as compact JSON."
 
@@ -216,6 +217,90 @@ def _parity_command(
     ]
 
 
+def _native_cli_command(
+    args: argparse.Namespace,
+    *,
+    bridge_report: Path,
+    runtime_dir: Path,
+    trace_path: Path,
+) -> list[str]:
+    decoder_dir = runtime_dir / "decoder"
+    return [
+        str(args.native_cli),
+        "--lib",
+        str(decoder_dir / "libdecoder_v8.so"),
+        "--weights",
+        str(decoder_dir / "weights.bump"),
+        "--manifest",
+        str(decoder_dir / "weights_manifest.map"),
+        "--bridge-report",
+        str(bridge_report),
+        "--max-tokens",
+        str(args.max_new_tokens),
+        "--context",
+        str(args.context_len),
+        "--temperature",
+        "0",
+        "--top-p",
+        "1",
+        "--quiet-output",
+        "--no-timing",
+        "--require-generated-abi",
+        "--token-trace-json",
+        str(trace_path),
+    ]
+
+
+def _pre_eos_tokens(report: dict[str, Any], key: str) -> list[int]:
+    stop_ids = {int(value) for value in report.get("stop_token_ids") or []}
+    tokens: list[int] = []
+    for row in report.get("steps") or []:
+        if not isinstance(row, dict) or row.get(key) is None:
+            continue
+        token = int(row[key])
+        if token in stop_ids:
+            break
+        tokens.append(token)
+    return tokens
+
+
+def _first_token_divergence(left: list[int], right: list[int]) -> dict[str, Any] | None:
+    for index, (left_token, right_token) in enumerate(zip(left, right)):
+        if left_token != right_token:
+            return {"step": index, "native_token": left_token, "reference_token": right_token}
+    if len(left) != len(right):
+        index = min(len(left), len(right))
+        return {
+            "step": index,
+            "native_token": left[index] if index < len(left) else None,
+            "reference_token": right[index] if index < len(right) else None,
+        }
+    return None
+
+
+def _compare_native_trace(
+    report: dict[str, Any],
+    trace: dict[str, Any],
+) -> dict[str, Any]:
+    if trace.get("schema") != "cke.native_token_trace" or trace.get("schema_version") != 1:
+        raise ValueError("native CLI emitted an unsupported token trace contract")
+    native = [int(value) for value in trace.get("token_ids") or []]
+    ck = _pre_eos_tokens(report, "ck_next")
+    llama = _pre_eos_tokens(report, "llama_next")
+    ck_divergence = _first_token_divergence(native, ck)
+    llama_divergence = _first_token_divergence(native, llama)
+    passed = ck_divergence is None and llama_divergence is None
+    return {
+        "status": "pass" if passed else "fail",
+        "pass": passed,
+        "native_tokens": len(native),
+        "python_ck_tokens": len(ck),
+        "llama_tokens": len(llama),
+        "native_vs_python_first_divergence": ck_divergence,
+        "native_vs_llama_first_divergence": llama_divergence,
+    }
+
+
 def _runtime_hash(report: dict[str, Any], key: str) -> str | None:
     runtime = report.get("ck_runtime")
     if not isinstance(runtime, dict):
@@ -240,6 +325,7 @@ def _public_provenance(config: dict[str, Any]) -> dict[str, Any]:
         "ck_threads",
         "top_k",
         "llama_required_isa",
+        "native_cli_sha256",
     )
     return {key: config[key] for key in keys}
 
@@ -252,6 +338,7 @@ def _redacted_row(
     report: dict[str, Any],
     elapsed: dict[str, float],
     requested_tokens: int,
+    native_comparison: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     divergence = report.get("first_divergence")
     first_divergence = None
@@ -274,6 +361,11 @@ def _redacted_row(
         }
     prefix = report.get("prefix")
     steps = len(report.get("steps") or [])
+    matched_tokens = (
+        int(native_comparison.get("native_tokens", 0))
+        if isinstance(native_comparison, dict)
+        else len(_pre_eos_tokens(report, "ck_next"))
+    )
     prefix_tokens = int(prefix.get("tokens", 0)) if isinstance(prefix, dict) else 0
     prompt_tokens = len(report.get("prompt_tokens_before_image") or []) + len(
         report.get("prompt_tokens_after_image") or []
@@ -281,27 +373,31 @@ def _redacted_row(
     prefill_tokens = prefix_tokens + prompt_tokens
     bridge_sec = float(elapsed.get("bridge", 0.0))
     parity_sec = float(elapsed.get("parity", 0.0))
-    total_sec = bridge_sec + parity_sec
+    native_sec = float(elapsed.get("native_cli", 0.0))
+    total_sec = bridge_sec + parity_sec + native_sec
+    parity_pass = bool(report.get("pass"))
+    native_pass = native_comparison is None or bool(native_comparison.get("pass"))
     return {
         "image_index": int(index),
         "image_sha256": image_sha256,
         "prefix_sha256": prefix_sha256,
         "grid": prefix.get("grid") if isinstance(prefix, dict) else None,
-        "status": "pass" if bool(report.get("pass")) else "fail",
+        "status": "pass" if parity_pass and native_pass else "fail",
         "steps": steps,
-        "matched_tokens": steps,
+        "matched_tokens": matched_tokens,
         "requested_tokens": requested_tokens,
         "prefix_tokens": prefix_tokens,
         "prompt_tokens": prompt_tokens,
         "prefill_tokens": prefill_tokens,
         "context_capacity": int(report.get("ctx_len", 0)),
-        "context_tokens_after_comparison": prefill_tokens + steps,
+        "context_tokens_after_comparison": prefill_tokens + matched_tokens,
         "first_divergence": first_divergence,
         "stop_reason": report.get("stop_reason"),
         "decoder_sha256": _runtime_hash(report, "shared_library"),
         "engine_sha256": _runtime_hash(report, "engine_library"),
         "compiler_provenance": compiler_summary,
         "llama_commit": llama.get("commit") if isinstance(llama, dict) else None,
+        "native_cli": native_comparison,
         "elapsed_sec": {
             **elapsed,
             "total": total_sec,
@@ -343,11 +439,14 @@ def _progress_line(
     elapsed = elapsed if isinstance(elapsed, dict) else {}
     matched = int(row.get("matched_tokens", row.get("steps", 0)))
     target = int(row.get("requested_tokens", matched))
+    native = row.get("native_cli")
+    native = native if isinstance(native, dict) else {}
     suffix = " resumed" if resumed else ""
     return (
         f"[{completed}/{requested}] image {int(row['image_index']):02d}: "
         f"{str(row.get('status', 'unknown')).upper()} "
         f"matched={matched}/{target} "
+        f"native={int(native.get('native_tokens', 0))}/{int(native.get('python_ck_tokens', 0))} "
         f"prefix={int(row.get('prefix_tokens', 0))} "
         f"prompt={int(row.get('prompt_tokens', 0))} "
         f"prefill={int(row.get('prefill_tokens', 0))} "
@@ -355,6 +454,7 @@ def _progress_line(
         f"{int(row.get('context_capacity', 0))} "
         f"bridge={float(elapsed.get('bridge', 0.0)):.2f}s "
         f"parity={float(elapsed.get('parity', 0.0)):.2f}s "
+        f"native={float(elapsed.get('native_cli', 0.0)):.2f}s "
         f"total={_row_total_sec(row):.2f}s "
         f"compare={float(elapsed.get('comparison_per_token') or 0.0):.3f}s/token-pair"
         f"{suffix}"
@@ -428,20 +528,21 @@ def _print_private_case_details(
         f"{int(row.get('context_capacity', 0))}"
     )
     print(
-        f"Comparison  : {matched}/{requested} exact pre-EOS greedy token pairs | "
+        f"Comparison  : {matched}/{requested} exact native/Python/llama pre-EOS tokens | "
         f"stop={row.get('stop_reason') or 'token limit'}"
     )
     print(
         f"Timing      : encoder={encoder_sec:.2f}s mixed-prefill={prefill_sec:.2f}s "
         f"bridge={float(elapsed.get('bridge', 0.0)):.2f}s "
         f"parity-pair={float(elapsed.get('parity', 0.0)):.2f}s "
+        f"native-cli={float(elapsed.get('native_cli', 0.0)):.2f}s "
         f"total={_row_total_sec(row):.2f}s"
     )
 
     shared_text = str(parity.get("generated_shared_text", "") or "")
     print("-" * 88)
     if exact:
-        print("Output (CK == llama.cpp for every compared token):")
+        print("Output (native CLI == Python CKE == llama.cpp for every compared token):")
     else:
         print("Shared output before the first divergence:")
     print(shared_text if shared_text else "<no decoded text>")
@@ -481,7 +582,7 @@ def _summary(
         status = "incomplete"
     return {
         "status": status,
-        "comparison": "exact pre-EOS greedy token parity",
+        "comparison": "exact native CLI, Python CKE, and llama.cpp pre-EOS greedy token parity",
         "requested": len(selected),
         "completed": completed,
         "passed": passed,
@@ -515,6 +616,12 @@ def _resumed_row(case_result: Path, expected_config: dict[str, Any]) -> dict[str
     row = payload.get("redacted_row")
     if not isinstance(row, dict) or row.get("status") != "pass":
         return None
+    native = row.get("native_cli")
+    if not isinstance(native, dict) or not native.get("pass"):
+        return None
+    native_comparison = _load_json_if_present(case_result.parent / "native_comparison.json")
+    if not native_comparison or not native_comparison.get("pass"):
+        return None
     return row
 
 
@@ -537,6 +644,7 @@ def main() -> int:
     parser.add_argument("--top-k", type=int, default=16)
     parser.add_argument("--llama-required-isa", choices=("auto", "avx2", "avx512"), default="avx2")
     parser.add_argument("--compiler", default="gcc")
+    parser.add_argument("--native-cli", type=Path, default=DEFAULT_NATIVE_CLI)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--keep-prefixes", action="store_true")
     parser.add_argument("--continue-on-failure", action="store_true")
@@ -567,9 +675,12 @@ def main() -> int:
     args.mmproj_gguf = args.mmproj_gguf.expanduser().resolve()
     args.llama_root = args.llama_root.expanduser().resolve()
     args.output_dir = args.output_dir.expanduser().resolve()
+    args.native_cli = args.native_cli.expanduser().resolve()
     for required in (args.decoder_gguf, args.mmproj_gguf):
         if not required.is_file():
             raise FileNotFoundError(required)
+    if not args.dry_run and not args.native_cli.is_file():
+        raise FileNotFoundError(f"native CLI is missing: {args.native_cli}")
     if not (args.llama_root / "build" / "bin" / "libllama.so").is_file():
         raise FileNotFoundError(f"llama.cpp build is missing libllama.so: {args.llama_root}")
     llama_commit = _git_commit(args.llama_root)
@@ -593,7 +704,7 @@ def main() -> int:
     args.output_dir.chmod(0o700)
     runtime_dir = args.output_dir / "runtime"
     config = {
-        "version": 1,
+        "version": 2,
         "cke_commit": _git_commit(ROOT),
         "manifest_sha256": _sha256_file(args.manifest),
         "decoder": _file_identity(args.decoder_gguf, hash_content=False),
@@ -610,6 +721,8 @@ def main() -> int:
         "ck_threads": args.ck_threads,
         "top_k": args.top_k,
         "llama_required_isa": args.llama_required_isa,
+        "native_cli": _file_identity(args.native_cli, hash_content=True),
+        "native_cli_sha256": _sha256_file(args.native_cli),
     }
     config_sha256 = _sha256_json(config)
     _json_write(args.output_dir / "run_config.json", config)
@@ -622,6 +735,16 @@ def main() -> int:
             "CK_NUM_THREADS": str(args.ck_threads),
             "OMP_NUM_THREADS": str(args.ck_threads),
         }
+    )
+    env["LD_LIBRARY_PATH"] = os.pathsep.join(
+        filter(
+            None,
+            (
+                str((ROOT / "build").resolve()),
+                str((runtime_dir / "decoder").resolve()),
+                env.get("LD_LIBRARY_PATH", ""),
+            ),
+        )
     )
 
     rows: list[dict[str, Any]] = []
@@ -638,6 +761,7 @@ def main() -> int:
         resumed = None if args.force_rerun else _resumed_row(result_path, case_config)
         if resumed is not None:
             resumed_report = _load_json_if_present(case_dir / "parity.json")
+            resumed_native = _load_json_if_present(case_dir / "native_comparison.json")
             if resumed_report:
                 resumed = _redacted_row(
                     index=index,
@@ -646,6 +770,7 @@ def main() -> int:
                     report=resumed_report,
                     elapsed=dict(resumed.get("elapsed_sec") or {}),
                     requested_tokens=args.max_new_tokens,
+                    native_comparison=resumed_native or None,
                 )
             rows.append(resumed)
             print(
@@ -669,6 +794,8 @@ def main() -> int:
         prefix_path = case_dir / "prefix.f32"
         bridge_report = case_dir / "bridge_report.json"
         parity_report = case_dir / "parity.json"
+        native_trace = case_dir / "native_token_trace.json"
+        native_comparison_path = case_dir / "native_comparison.json"
         elapsed: dict[str, float] = {}
         try:
             elapsed["bridge"] = _run_logged(
@@ -695,6 +822,17 @@ def main() -> int:
                     log_path=case_dir / "parity.log",
                     dry_run=True,
                 )
+                _run_logged(
+                    _native_cli_command(
+                        args,
+                        bridge_report=bridge_report,
+                        runtime_dir=runtime_dir,
+                        trace_path=native_trace,
+                    ),
+                    env=env,
+                    log_path=case_dir / "native_cli.log",
+                    dry_run=True,
+                )
                 continue
             source_report = runtime_dir / "bridge_report.json"
             if not source_report.is_file():
@@ -715,6 +853,20 @@ def main() -> int:
                 dry_run=False,
             )
             report = json.loads(parity_report.read_text(encoding="utf-8"))
+            elapsed["native_cli"] = _run_logged(
+                _native_cli_command(
+                    args,
+                    bridge_report=bridge_report,
+                    runtime_dir=runtime_dir,
+                    trace_path=native_trace,
+                ),
+                env=env,
+                log_path=case_dir / "native_cli.log",
+                dry_run=False,
+            )
+            trace = json.loads(native_trace.read_text(encoding="utf-8"))
+            native_comparison = _compare_native_trace(report, trace)
+            _json_write(native_comparison_path, native_comparison)
             row = _redacted_row(
                 index=index,
                 image_sha256=sample["image_sha256"],
@@ -722,6 +874,7 @@ def main() -> int:
                 report=report,
                 elapsed=elapsed,
                 requested_tokens=args.max_new_tokens,
+                native_comparison=native_comparison,
             )
             rows.append(row)
             _json_write(
@@ -734,6 +887,9 @@ def main() -> int:
                         "parity_report": str(parity_report),
                         "bridge_log": str(case_dir / "bridge.log"),
                         "parity_log": str(case_dir / "parity.log"),
+                        "native_trace": str(native_trace),
+                        "native_comparison": str(native_comparison_path),
+                        "native_cli_log": str(case_dir / "native_cli.log"),
                     },
                 },
             )

@@ -2640,6 +2640,7 @@ test-qwen3vl-private-corpus-parity-auto:
 		test -f "$(QWEN3VL_PRIVATE_CORPUS_DECODER)" || { echo "ERROR: Qwen3-VL decoder GGUF is missing"; exit 2; }; \
 		test -f "$(QWEN3VL_PRIVATE_CORPUS_MMPROJ)" || { echo "ERROR: Qwen3-VL mmproj GGUF is missing"; exit 2; }; \
 		test -f "$(QWEN3VL_PRIVATE_CORPUS_LLAMA_ROOT)/build/bin/libllama.so" || { echo "ERROR: pinned llama.cpp build is missing"; exit 2; }; \
+		$(MAKE) --no-print-directory ck-cli-v8; \
 		$(PYTHON) version/v8/scripts/certify_qwen3vl_llamacpp_corpus_v8.py \
 			--manifest "$(QWEN3VL_PRIVATE_CORPUS_MANIFEST)" \
 			--decoder-gguf "$(QWEN3VL_PRIVATE_CORPUS_DECODER)" \
