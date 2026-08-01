@@ -1335,6 +1335,12 @@ test-audio-v8-contracts:
 test-server-schema:
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q server/tests
 
+.PHONY: test-native-session-v8
+test-native-session-v8: $(BUILD_DIR)/libckernel_engine.so ck-cli-v8 ck-session-v8
+	$(PYTHON) $(PYTHONFLAGS) -m unittest -v \
+		tests.test_v8_native_bridge_host.V8NativeBridgeHostTests.test_ck_session_v8_ffi_formats_tokenizes_and_streams_generation \
+		tests.test_v8_native_bridge_host.V8NativeBridgeHostTests.test_generated_runtime_exports_circuit_chat_and_stop_contracts
+
 test-whisper-e2e-auto:
 	$(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_v8_whisper_runner.py \
 		-k exact_transcript
@@ -4867,9 +4873,14 @@ ck-cli-v7: $(BUILD_DIR)/ck-cli-v7
 	@echo ""
 
 # v8 Native CLI
-$(BUILD_DIR)/ck-cli-v8: $(CK_CLI_V8) include/ck_model_abi_v8.h include/ckernel_audio.h $(LIB_TOKENIZER)
+$(BUILD_DIR)/ck-cli-v8: $(CK_CLI_V8) include/ck_model_abi_v8.h include/ck_session_v8.h include/ckernel_audio.h $(LIB_TOKENIZER)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -o $@ $(CK_CLI_V8) -L$(BUILD_DIR) -lckernel_tokenizer -ldl -lpthread -lm -Wl,-rpath,$(BUILD_DIR)
+
+$(BUILD_DIR)/libck_session_v8.so: $(CK_CLI_V8) include/ck_model_abi_v8.h include/ck_session_v8.h include/ckernel_audio.h $(LIB_TOKENIZER)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -fPIC -shared -DCK_CLI_V8_NO_MAIN=1 -Wl,-soname,libck_session_v8.so \
+		-o $@ $(CK_CLI_V8) -L$(BUILD_DIR) -lckernel_tokenizer -ldl -lpthread -lm -Wl,-rpath,$(BUILD_DIR)
 
 ck-cli-v8: $(BUILD_DIR)/ck-cli-v8
 	@echo ""
@@ -4881,6 +4892,10 @@ ck-cli-v8: $(BUILD_DIR)/ck-cli-v8
 	@echo "    ./$(BUILD_DIR)/ck-cli-v8 --list"
 	@echo "    ./$(BUILD_DIR)/ck-cli-v8 <model.so> <weights.bump>"
 	@echo ""
+
+ck-session-v8: $(BUILD_DIR)/libck_session_v8.so
+	@echo "Built: $(BUILD_DIR)/libck_session_v8.so"
+	@echo "Header: include/ck_session_v8.h"
 
 $(BUILD_DIR)/ck-bpe-train: $(CK_BPE_TRAIN_V7)
 	@mkdir -p $(BUILD_DIR)
@@ -5356,7 +5371,7 @@ report-md:
 .PHONY: visualizer visualizer-full v7-ir-visualizer-e2e v7-ir-visualizer-e2e-nightly v8-visualizer-vision-artifacts
 .PHONY: v7-visualizer-health v7-visualizer-generated-e2e
 .PHONY: v7-dataset-normalize v7-dataset-classify v7-dataset-embeddings v7-dataset-attention v7-dataset-viewer v7-dataset-all
-.PHONY: ck-cli-v7 ck-cli-v8 ck-bpe-train
+.PHONY: ck-cli-v7 ck-cli-v8 ck-session-v8 ck-bpe-train
 
 # ============================================================================
 # v6.6 Test Suite (delegates to version/v6.6/test/Makefile)

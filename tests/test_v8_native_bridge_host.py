@@ -22,6 +22,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 BUILD_DIR = ROOT / "build"
 CK_CLI_V8 = BUILD_DIR / "ck-cli-v8"
+LIBCK_SESSION_V8 = BUILD_DIR / "libck_session_v8.so"
 LIBCK = BUILD_DIR / "libckernel_engine.so"
 V8_BUILD_PATH = ROOT / "version" / "v8" / "scripts" / "build_ir_v8.py"
 V8_CODEGEN_PATH = ROOT / "version" / "v8" / "scripts" / "codegen_v8.py"
@@ -1265,7 +1266,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         result = subprocess.run(
-            ["make", "build/libckernel_engine.so", "ck-cli-v8"],
+            ["make", "build/libckernel_engine.so", "ck-cli-v8", "ck-session-v8"],
             cwd=str(ROOT),
             capture_output=True,
             text=True,
@@ -1279,6 +1280,200 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             raise AssertionError(f"missing built cli: {CK_CLI_V8}")
         if not LIBCK.exists():
             raise AssertionError(f"missing engine library: {LIBCK}")
+        if not LIBCK_SESSION_V8.exists():
+            raise AssertionError(f"missing session library: {LIBCK_SESSION_V8}")
+
+    def test_ck_session_v8_ffi_formats_tokenizes_and_streams_generation(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_native_session_ffi_") as tmpdir:
+            so_path, bump_path, manifest_map = _build_tiny_decoder_runtime(
+                Path(tmpdir), include_tokenizer_contract=True
+            )
+
+            class SessionConfig(ctypes.Structure):
+                _fields_ = [
+                    ("struct_size", ctypes.c_uint32),
+                    ("abi_version", ctypes.c_uint32),
+                    ("model_library_path", ctypes.c_char_p),
+                    ("weights_path", ctypes.c_char_p),
+                    ("manifest_path", ctypes.c_char_p),
+                    ("context_length", ctypes.c_int32),
+                    ("num_threads", ctypes.c_int32),
+                    ("required_capabilities", ctypes.c_uint64),
+                    ("reserved", ctypes.c_uint64 * 8),
+                ]
+
+            class GenerateRequest(ctypes.Structure):
+                _fields_ = [
+                    ("struct_size", ctypes.c_uint32),
+                    ("abi_version", ctypes.c_uint32),
+                    ("system_text", ctypes.c_char_p),
+                    ("user_text", ctypes.c_char_p),
+                    ("max_tokens", ctypes.c_int32),
+                    ("temperature", ctypes.c_float),
+                    ("top_p", ctypes.c_float),
+                    ("flags", ctypes.c_uint32),
+                    ("reserved0", ctypes.c_uint32),
+                    ("reserved", ctypes.c_uint64 * 8),
+                ]
+
+            class GenerateResult(ctypes.Structure):
+                _fields_ = [
+                    ("struct_size", ctypes.c_uint32),
+                    ("abi_version", ctypes.c_uint32),
+                    ("prompt_tokens", ctypes.c_int32),
+                    ("generated_tokens", ctypes.c_int32),
+                    ("stop_reason", ctypes.c_int32),
+                    ("reserved0", ctypes.c_int32),
+                    ("prefill_time_ms", ctypes.c_double),
+                    ("decode_time_ms", ctypes.c_double),
+                    ("reserved", ctypes.c_uint64 * 8),
+                ]
+
+            token_callback_type = ctypes.CFUNCTYPE(
+                ctypes.c_int,
+                ctypes.c_void_p,
+                ctypes.c_int32,
+                ctypes.c_char_p,
+                ctypes.c_size_t,
+                ctypes.c_int32,
+            )
+            session_lib = ctypes.CDLL(str(LIBCK_SESSION_V8))
+            session_lib.ck_session_v8_get_abi_version.restype = ctypes.c_uint32
+            session_lib.ck_session_v8_open.argtypes = [
+                ctypes.POINTER(SessionConfig),
+                ctypes.POINTER(ctypes.c_void_p),
+            ]
+            session_lib.ck_session_v8_open.restype = ctypes.c_int
+            session_lib.ck_session_v8_close.argtypes = [ctypes.c_void_p]
+            session_lib.ck_session_v8_format_chat.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_char_p,
+                ctypes.c_int32,
+            ]
+            session_lib.ck_session_v8_format_chat.restype = ctypes.c_int
+            session_lib.ck_session_v8_encode.argtypes = [
+                ctypes.c_void_p,
+                ctypes.c_char_p,
+                ctypes.POINTER(ctypes.c_int32),
+                ctypes.c_int32,
+            ]
+            session_lib.ck_session_v8_encode.restype = ctypes.c_int
+            session_lib.ck_session_v8_generate.argtypes = [
+                ctypes.c_void_p,
+                ctypes.POINTER(GenerateRequest),
+                token_callback_type,
+                ctypes.c_void_p,
+                ctypes.POINTER(GenerateResult),
+            ]
+            session_lib.ck_session_v8_generate.restype = ctypes.c_int
+            session_lib.ck_session_v8_reset.argtypes = [ctypes.c_void_p]
+            session_lib.ck_session_v8_reset.restype = ctypes.c_int
+
+            self.assertEqual(session_lib.ck_session_v8_get_abi_version(), 1)
+            config = SessionConfig(
+                struct_size=ctypes.sizeof(SessionConfig),
+                abi_version=1,
+                model_library_path=str(so_path).encode(),
+                weights_path=str(bump_path).encode(),
+                manifest_path=str(manifest_map).encode(),
+                context_length=32,
+                num_threads=1,
+                required_capabilities=(1 << 4) | (1 << 5),
+            )
+            session = ctypes.c_void_p()
+            self.assertEqual(
+                session_lib.ck_session_v8_open(ctypes.byref(config), ctypes.byref(session)),
+                0,
+            )
+            self.assertTrue(session.value)
+            try:
+                required = session_lib.ck_session_v8_format_chat(
+                    session, None, b"Hello", None, 0
+                )
+                self.assertGreater(required, 0)
+                formatted = ctypes.create_string_buffer(required + 1)
+                self.assertEqual(
+                    session_lib.ck_session_v8_format_chat(
+                        session, None, b"Hello", formatted, len(formatted)
+                    ),
+                    required,
+                )
+                self.assertEqual(
+                    formatted.value,
+                    b"<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
+                )
+
+                encoded_count = session_lib.ck_session_v8_encode(
+                    session, b"Hello", None, 0
+                )
+                self.assertGreater(encoded_count, 0)
+                encoded = (ctypes.c_int32 * encoded_count)()
+                self.assertEqual(
+                    session_lib.ck_session_v8_encode(
+                        session, b"Hello", encoded, encoded_count
+                    ),
+                    encoded_count,
+                )
+
+                streamed: list[tuple[int, bytes, int]] = []
+
+                @token_callback_type
+                def on_token(_user_data, token_id, text, text_len, sequence_index):
+                    streamed.append(
+                        (token_id, ctypes.string_at(text, text_len), sequence_index)
+                    )
+                    return 0
+
+                request = GenerateRequest(
+                    struct_size=ctypes.sizeof(GenerateRequest),
+                    abi_version=1,
+                    user_text=b"Hello",
+                    max_tokens=1,
+                    temperature=0.0,
+                    top_p=1.0,
+                )
+                generation = GenerateResult(
+                    struct_size=ctypes.sizeof(GenerateResult), abi_version=1
+                )
+                self.assertEqual(
+                    session_lib.ck_session_v8_generate(
+                        session,
+                        ctypes.byref(request),
+                        on_token,
+                        None,
+                        ctypes.byref(generation),
+                    ),
+                    0,
+                )
+                self.assertEqual(generation.generated_tokens, 1)
+                self.assertEqual(generation.stop_reason, 2)  # token limit
+                self.assertGreater(generation.prompt_tokens, 0)
+                self.assertGreaterEqual(generation.prefill_time_ms, 0.0)
+                self.assertEqual(streamed, [(0, b"<|pad|>", 0)])
+
+                # Independent requests reset generated state by default while
+                # retaining the loaded model and tokenizer.
+                streamed.clear()
+                second = GenerateResult(
+                    struct_size=ctypes.sizeof(GenerateResult), abi_version=1
+                )
+                self.assertEqual(
+                    session_lib.ck_session_v8_generate(
+                        session,
+                        ctypes.byref(request),
+                        on_token,
+                        None,
+                        ctypes.byref(second),
+                    ),
+                    0,
+                )
+                self.assertEqual(second.prompt_tokens, generation.prompt_tokens)
+                self.assertEqual(streamed, [(0, b"<|pad|>", 0)])
+                self.assertEqual(session_lib.ck_session_v8_reset(session), 0)
+            finally:
+                session_lib.ck_session_v8_close(session)
 
     def test_ck_cli_v8_runs_forward_mixed_with_prompt_tokens_and_prefix_file(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_native_bridge_cli_") as tmpdir:
