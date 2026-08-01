@@ -3561,6 +3561,37 @@ void attention_forward_full_head_major_gqa_tiled336_f16kv_fp32_strided(
         head_dim, aligned_head_dim, kv_stride_tokens, CK_GGML_FA_TILE_Q_LARGE);
 }
 
+int attention_forward_query_key_head_major_tiled_f16kv_fp32(
+    const float *query,
+    const float *key,
+    const float *value,
+    float *output,
+    int num_heads,
+    int query_tokens,
+    int key_tokens,
+    int head_dim,
+    float scale)
+{
+    if (!query || !key || !value || !output || num_heads <= 0 ||
+        query_tokens <= 0 || key_tokens != query_tokens || head_dim <= 0) {
+        return -1;
+    }
+
+    const float contract_scale = ck_attention_strict_scale_f32(head_dim);
+    if (scale != contract_scale) {
+        return -1;
+    }
+
+    const int query_tile_size = query_tokens >= CK_GGML_FA_TILE_Q_LARGE_MIN_TOKENS
+        ? CK_GGML_FA_TILE_Q_LARGE
+        : CK_GGML_FA_TILE_Q;
+    ck_attention_forward_full_head_major_gqa_tiled_f16kv_fp32_strided(
+        query, key, value, output,
+        num_heads, num_heads, query_tokens,
+        head_dim, head_dim, key_tokens, query_tile_size);
+    return 0;
+}
+
 /**
  * Flash attention forward for GQA (prefill, no score materialization)
  * @test test_flash_attention.py::TestFlashAttention::test_flash_forward

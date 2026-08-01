@@ -5,12 +5,12 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 271,
+      "total": 272,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
         "assistant_layer_scale": 1,
-        "attention": 28,
+        "attention": 29,
         "attention_projection": 1,
         "attention_sliding": 6,
         "attn_gate_sigmoid_mul": 1,
@@ -6228,6 +6228,173 @@
       },
       "name": "attention_forward_query_key_head_major_f32_packed_k",
       "_source_file": "attention_forward_query_key_head_major_f32_packed_k.json"
+    },
+    {
+      "id": "attention_forward_query_key_head_major_tiled_f16kv_fp32",
+      "op": "attention",
+      "variant": "equal_length_head_major_tiled_f16kv_fp32",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "query",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "key",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        },
+        {
+          "name": "value",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ]
+        }
+      ],
+      "scratch": [
+        {
+          "name": "thread_tiles",
+          "dtype": "fp32",
+          "size_bytes": "per_thread(bounded_qkv_score_softmax_tiles)"
+        }
+      ],
+      "dims": [
+        "num_heads",
+        "query_tokens",
+        "key_tokens",
+        "head_dim",
+        "attention_scale"
+      ],
+      "impl": {
+        "function": "attention_forward_query_key_head_major_tiled_f16kv_fp32",
+        "c_declaration": "int attention_forward_query_key_head_major_tiled_f16kv_fp32(const float *query, const float *key, const float *value, float *output, int num_heads, int query_tokens, int key_tokens, int head_dim, float scale);",
+        "sources": [
+          "src/kernels/attention_kernels.c",
+          "src/kernels/softmax_kernels.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "attention_query_key_tiled_f16kv_fp32_online_softmax",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "attention_forward_query_key_head_major_tiled_f16kv_fp32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "ck_threadpool",
+              "work_partition": [
+                "independent_query_blocks"
+              ],
+              "dispatch": [
+                "ck_threadpool_dispatch_n"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "ascending_chunk",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "query",
+            "source": "activation:query",
+            "cast": "const float*"
+          },
+          {
+            "name": "key",
+            "source": "activation:key",
+            "cast": "const float*"
+          },
+          {
+            "name": "value",
+            "source": "activation:value",
+            "cast": "const float*"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "query_tokens",
+            "source": "dim:query_tokens"
+          },
+          {
+            "name": "key_tokens",
+            "source": "dim:key_tokens"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "scale",
+            "source": "dim:attention_scale"
+          }
+        ]
+      },
+      "constraints": {
+        "equal_query_key_length": true,
+        "scale": "exact_fp32_inverse_sqrt_head_dim",
+        "notes": "Bidirectional encoder attention only. K/V are rounded through FP16 as each key tile is loaded; no complete score matrix is materialized."
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_audio_encoder.py",
+          "unittest/test_attention_full.py"
+        ]
+      },
+      "name": "attention_forward_query_key_head_major_tiled_f16kv_fp32",
+      "_source_file": "attention_forward_query_key_head_major_tiled_f16kv_fp32.json"
     },
     {
       "id": "attn_gate_sigmoid_mul_backward_f32",

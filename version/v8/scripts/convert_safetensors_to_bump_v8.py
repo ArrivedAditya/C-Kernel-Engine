@@ -2121,6 +2121,17 @@ def main() -> int:
         arch = _infer_arch(hf)
 
     config = _build_config(model_dir, arch, args.config_template)
+    if arch == "whisper_encoder":
+        config["audio_encoder_attention_reduction_policy"] = (
+            "tiled_f16kv_online_softmax"
+            if args.linear_weight_dtype == "fp16"
+            else "ordered_fp32_packed_k"
+        )
+        config["audio_runtime_topology_policy"] = (
+            "performance_core_smt_on_hybrid"
+            if args.linear_weight_dtype == "fp16"
+            else "all_allowed_cpus"
+        )
     refs = _refs_for_arch(arch, config, headers)
     if str(config.get("artifact_scope") or "") == "encoder_only":
         tokenizer_payloads, tokenizer_contract, special_tokens = [], None, {}

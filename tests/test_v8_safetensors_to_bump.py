@@ -406,6 +406,14 @@ def test_whisper_encoder_safetensors_maps_and_generates_call_ir(tmp_path: Path) 
     fp16_manifest = json.loads(
         (fp16_out / "weights_manifest.json").read_text(encoding="utf-8")
     )
+    assert (
+        fp16_manifest["config"]["audio_encoder_attention_reduction_policy"]
+        == "tiled_f16kv_online_softmax"
+    )
+    assert (
+        fp16_manifest["config"]["audio_runtime_topology_policy"]
+        == "performance_core_smt_on_hybrid"
+    )
     fp16_entries = fp16_manifest["entries"]
     projection_entries = [
         entry for entry in fp16_entries if entry.get("role") == "linear_weight"
@@ -446,6 +454,9 @@ def test_whisper_encoder_safetensors_maps_and_generates_call_ir(tmp_path: Path) 
     assert {
         op["function"] for op in fp16_ops if op["op"] in projection_ops
     } == {"gemm_nt_f16"}
+    assert {
+        op["function"] for op in fp16_ops if op["op"] == "attn"
+    } == {"attention_forward_query_key_head_major_tiled_f16kv_fp32"}
 
     fp16_real_out = tmp_path / "out_whisper_encoder_fp16_real"
     fp16_real_out.mkdir()

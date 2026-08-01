@@ -92,6 +92,11 @@ attention_lib.attention_forward_query_key_head_major_f32_packed_k.argtypes = [
     ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_float,
 ]
 attention_lib.attention_forward_query_key_head_major_f32_packed_k.restype = ctypes.c_int
+attention_lib.attention_forward_query_key_head_major_tiled_f16kv_fp32.argtypes = [
+    _FLOAT_P, _FLOAT_P, _FLOAT_P, _FLOAT_P,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_float,
+]
+attention_lib.attention_forward_query_key_head_major_tiled_f16kv_fp32.restype = ctypes.c_int
 lib.audio_wav_parse_memory.argtypes = [
     _U8_P, ctypes.c_size_t, ctypes.POINTER(CKAudioWavInfo),
 ]
@@ -538,6 +543,37 @@ def _check_cross_attention(name: str, heads: int, query_tokens: int, key_tokens:
     )
 
 
+def check_tiled_f16kv_encoder_attention() -> None:
+    rng = np.random.default_rng(20260801)
+    heads, tokens, dim = 2, 257, 64
+    query = rng.normal(0.0, 0.12, (heads, tokens, dim)).astype(np.float32)
+    key = rng.normal(0.0, 0.12, query.shape).astype(np.float32)
+    value = rng.normal(0.0, 0.12, query.shape).astype(np.float32)
+    actual = np.empty_like(query)
+    scale = np.float32(1.0 / math.sqrt(dim))
+    assert attention_lib.attention_forward_query_key_head_major_tiled_f16kv_fp32(
+        _fptr(query), _fptr(key), _fptr(value), _fptr(actual),
+        heads, tokens, tokens, dim, float(scale),
+    ) == 0
+
+    tq = torch.from_numpy(query)
+    tk = torch.from_numpy(key.astype(np.float16).astype(np.float32))
+    tv = torch.from_numpy(value.astype(np.float16).astype(np.float32))
+    expected = (
+        torch.softmax((tq @ tk.transpose(-1, -2)) * float(scale), dim=-1) @ tv
+    ).numpy()
+    diff = actual - expected
+    max_diff = float(np.max(np.abs(diff)))
+    rmse = float(np.sqrt(np.mean(diff * diff)))
+    assert max_diff <= 2.0e-5, max_diff
+    assert rmse <= 2.0e-6, rmse
+    print(
+        "audio_encoder_tiled_f16kv_attention "
+        f"max_diff={max_diff:.8e} tol=2.0e-05 [PASS] "
+        f"rmse={rmse:.8e} rmse_tol=2.0e-06"
+    )
+
+
 def main() -> None:
     capability = torch.backends.cpu.get_cpu_capability()
     assert capability in {"DEFAULT", "NO AVX"}, capability
@@ -556,7 +592,8 @@ def main() -> None:
     _check_cross_attention("audio_encoder_self_attention_equal", 6, 11, 11, 64)
     _check_cross_attention("audio_cross_attention_unequal_small", 3, 5, 17, 8)
     _check_cross_attention("audio_cross_attention_whisper_decode", 6, 1, 1500, 64)
-    print("ALL TESTS PASSED (16/16)")
+    check_tiled_f16kv_encoder_attention()
+    print("ALL TESTS PASSED (17/17)")
 
 
 if __name__ == "__main__":
