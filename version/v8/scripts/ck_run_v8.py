@@ -1666,10 +1666,16 @@ def _whisper_checkpoint_identity(checkpoint_dir: Path) -> dict[str, Any]:
     }
 
 
-def _whisper_build_inputs(checkpoint_dir: Path, role: str) -> dict[str, Any]:
+def _whisper_build_inputs(
+    checkpoint_dir: Path,
+    role: str,
+    *,
+    linear_weight_dtype: str = "preserve",
+) -> dict[str, Any]:
     return {
         "schema": "ck-v8-whisper-runtime-inputs-v1",
         "role": role,
+        "linear_weight_dtype": linear_weight_dtype,
         "checkpoint": _whisper_checkpoint_identity(checkpoint_dir),
         "sources": _tree_identity(
             [
@@ -1709,12 +1715,17 @@ def _build_whisper_role(
     *,
     force_convert: bool,
     force_compile: bool,
+    linear_weight_dtype: str = "preserve",
 ) -> None:
     if role not in {"encoder", "decoder"}:
         raise ValueError(f"unsupported Whisper role: {role}")
     run_dir.mkdir(parents=True, exist_ok=True)
     step_regenerate_kernel_registry(force=False)
-    inputs = _whisper_build_inputs(checkpoint_dir, role)
+    inputs = _whisper_build_inputs(
+        checkpoint_dir,
+        role,
+        linear_weight_dtype=linear_weight_dtype,
+    )
     stamp = run_dir / ".ck-whisper-runtime.json"
     if (
         not force_convert
@@ -1731,8 +1742,7 @@ def _build_whisper_role(
     weights = run_dir / "weights.bump"
     config = run_dir / "config.json"
     manifest = run_dir / "weights_manifest.json"
-    run_cmd(
-        [
+    convert_cmd = [
             sys.executable,
             str(SCRIPTS_DIR / "convert_safetensors_to_bump_v8.py"),
             "--checkpoint",
@@ -1745,9 +1755,10 @@ def _build_whisper_role(
             str(manifest),
             "--arch",
             f"whisper_{role}",
-        ],
-        cwd=PROJECT_ROOT,
-    )
+        ]
+    if linear_weight_dtype != "preserve":
+        convert_cmd.extend(["--linear-weight-dtype", linear_weight_dtype])
+    run_cmd(convert_cmd, cwd=PROJECT_ROOT)
     _stage_safetensors_tokenizer_assets(checkpoint_dir, run_dir)
 
     if role == "encoder":
@@ -1817,6 +1828,7 @@ def step_build_whisper_runtimes(
     force_download: bool,
     force_convert: bool,
     force_compile: bool,
+    encoder_linear_weight_dtype: str = "preserve",
 ) -> tuple[Path, Path]:
     input_type, info = detect_input_type(model_input)
     if input_type == "hf_id":
@@ -1851,6 +1863,7 @@ def step_build_whisper_runtimes(
         "encoder",
         force_convert=force_convert,
         force_compile=force_compile,
+        linear_weight_dtype=encoder_linear_weight_dtype,
     )
     _build_whisper_role(
         checkpoint_dir,
@@ -1873,6 +1886,9 @@ def run_audio_pipeline(args: argparse.Namespace) -> int:
             force_download=bool(getattr(args, "force_download", False)),
             force_convert=bool(getattr(args, "force_convert", False)),
             force_compile=bool(getattr(args, "force_compile", False)),
+            encoder_linear_weight_dtype=str(
+                getattr(args, "encoder_linear_weight_dtype", "preserve")
+            ),
         )
     elif encoder_run_dir is None or decoder_run_dir is None:
         raise RuntimeError(
@@ -2010,6 +2026,15 @@ Examples:
     audio_parser.add_argument("--force-download", action="store_true")
     audio_parser.add_argument("--force-convert", action="store_true")
     audio_parser.add_argument("--force-compile", action="store_true")
+    audio_parser.add_argument(
+        "--encoder-linear-weight-dtype",
+        choices=("preserve", "fp16", "bf16", "fp32"),
+        default="preserve",
+        help=(
+            "storage dtype for encoder tensors declared as linear_weight; "
+            "other encoder tensors and the decoder remain unchanged"
+        ),
+    )
 
     subparsers.add_parser("list", help="List cached models")
 
