@@ -458,6 +458,38 @@ def _check_conv(name: str, cin: int, cout: int, frames: int, stride: int) -> Non
     )
 
 
+def check_conv_stride2_production_equivalence() -> None:
+    cin, cout, frames, output_frames = 512, 512, 3000, 1500
+    rng = np.random.default_rng(2026080102)
+    source = rng.normal(0.0, 0.15, (cin, frames)).astype(np.float32)
+    weight = rng.normal(0.0, 0.08, (cout, cin, 3)).astype(np.float32)
+    bias = rng.normal(0.0, 0.03, cout).astype(np.float32)
+    baseline = np.empty((cout, output_frames), dtype=np.float32)
+    optimized = np.empty_like(baseline)
+    previous = os.environ.get("CK_DISABLE_AUDIO_CONV_STRIDE2_CONTIGUOUS")
+    try:
+        os.environ["CK_DISABLE_AUDIO_CONV_STRIDE2_CONTIGUOUS"] = "1"
+        assert lib.audio_conv1d_channel_major_f32(
+            _fptr(source), _fptr(weight), _fptr(bias), _fptr(baseline),
+            cin, cout, frames, 3, 2, 1, output_frames,
+        ) == 0
+        os.environ.pop("CK_DISABLE_AUDIO_CONV_STRIDE2_CONTIGUOUS", None)
+        assert lib.audio_conv1d_channel_major_f32(
+            _fptr(source), _fptr(weight), _fptr(bias), _fptr(optimized),
+            cin, cout, frames, 3, 2, 1, output_frames,
+        ) == 0
+    finally:
+        if previous is None:
+            os.environ.pop("CK_DISABLE_AUDIO_CONV_STRIDE2_CONTIGUOUS", None)
+        else:
+            os.environ["CK_DISABLE_AUDIO_CONV_STRIDE2_CONTIGUOUS"] = previous
+    assert np.array_equal(optimized, baseline)
+    print(
+        "audio_conv1d_whisper_stem2_production "
+        f"compared={optimized.size} max_diff=0 tol=0 [PASS]"
+    )
+
+
 def check_transpose() -> None:
     source = np.arange(7 * 13, dtype=np.float32).reshape(7, 13)
     actual = np.empty((13, 7), dtype=np.float32)
@@ -587,13 +619,14 @@ def main() -> None:
     check_global_log_mel_window()
     _check_conv("audio_conv1d_whisper_stem1", 80, 384, 16, 1)
     _check_conv("audio_conv1d_whisper_stem2", 384, 384, 16, 2)
+    check_conv_stride2_production_equivalence()
     check_pytorch_erf_gelu()
     check_transpose()
     _check_cross_attention("audio_encoder_self_attention_equal", 6, 11, 11, 64)
     _check_cross_attention("audio_cross_attention_unequal_small", 3, 5, 17, 8)
     _check_cross_attention("audio_cross_attention_whisper_decode", 6, 1, 1500, 64)
     check_tiled_f16kv_encoder_attention()
-    print("ALL TESTS PASSED (17/17)")
+    print("ALL TESTS PASSED (18/18)")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,11 @@
 The report keeps process wall time separate from backend compute time. Each
 repetition rotates backend order so sustained CPU state does not always favor
 the same implementation.
+
+This Python process is an orchestration and comparison harness, not the target
+for native Advisor roofline collection. Profile generated CKE execution through
+the native audio harness so Python, NumPy, process startup, and report parsing
+cannot be attributed to CKE kernels.
 """
 
 from __future__ import annotations

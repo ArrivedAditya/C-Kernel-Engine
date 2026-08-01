@@ -627,7 +627,23 @@ typedef struct {
     int stride;
     int padding;
     int output_frames;
+    int use_stride2_contiguous;
 } ck_audio_conv1d_f32_args_t;
+
+#if defined(__AVX2__) && defined(__FMA__)
+static inline __m256 ck_audio_load_stride2_8(const float *input)
+{
+    const __m256i select_even = _mm256_setr_epi32(0, 2, 4, 6, 0, 0, 0, 0);
+    const __m256 lo = _mm256_permutevar8x32_ps(
+        _mm256_loadu_ps(input), select_even);
+    const __m256 hi = _mm256_permutevar8x32_ps(
+        _mm256_loadu_ps(input + 8), select_even);
+    return _mm256_insertf128_ps(
+        _mm256_castps128_ps256(_mm256_castps256_ps128(lo)),
+        _mm256_castps256_ps128(hi), 1);
+}
+
+#endif
 
 static void ck_audio_conv1d_channel_major_f32_work(
     int ith,
@@ -683,6 +699,10 @@ static void ck_audio_conv1d_channel_major_f32_work(
                     __m256 samples;
                     if (args->stride == 1) {
                         samples = _mm256_loadu_ps(input_channel + base);
+                    } else if (args->stride == 2 &&
+                               args->use_stride2_contiguous &&
+                               base + 15 < args->input_frames) {
+                        samples = ck_audio_load_stride2_8(input_channel + base);
                     } else if (args->stride == 2) {
                         const __m256i indices = _mm256_setr_epi32(
                             base, base + 2, base + 4, base + 6,
@@ -751,6 +771,8 @@ int audio_conv1d_channel_major_f32(
     if (output_frames != expected) {
         return -3;
     }
+    const char *disable_stride2 =
+        getenv("CK_DISABLE_AUDIO_CONV_STRIDE2_CONTIGUOUS");
     ck_audio_conv1d_f32_args_t args = {
         .input = input,
         .weight = weight,
@@ -763,6 +785,9 @@ int audio_conv1d_channel_major_f32(
         .stride = stride,
         .padding = padding,
         .output_frames = output_frames,
+        .use_stride2_contiguous = !(
+            disable_stride2 && disable_stride2[0] &&
+            strcmp(disable_stride2, "0") != 0),
     };
     ck_threadpool_t *pool = ck_threadpool_global();
     int active = pool ? ck_threadpool_n_threads(pool) : 1;

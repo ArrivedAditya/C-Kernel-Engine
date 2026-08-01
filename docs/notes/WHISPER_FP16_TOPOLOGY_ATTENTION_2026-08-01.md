@@ -37,3 +37,27 @@ Full production-shape baseline comparisons are byte-exact for Tiny, Base, and Sm
 Alternating same-library Whisper runs improved the encoder by about 4 percent for Tiny, 5-6 percent for Base, and 7 percent for Small. Their transcripts remained unchanged. The AVX2 tile is compiled out on AVX-512 so it cannot alter that ISA's 16-lane reduction contract.
 
 The durable Base-shape benchmark measures 1.28-1.70x isolated provider speedups on this host. VTune attributes 97.6 percent of the provider-only CPU time to `ck_gemm_f16_input_fp16_work`; with P-core affinity and no competing BLAS pool, the Base MLP-up median is approximately 8.36 ms. Intel Advisor 2026.0 could not ingest the Python-driven trace on this host and reported `_advi_dynamic_regions_table` followed by no data, so no Advisor roofline claim is made.
+
+## AVX2 stride-2 Conv1D follow-up
+
+Whisper's second encoder stem reads every other input frame. The previous AVX2 implementation issued an indexed gather for each input-channel and kernel-tap tile. The optimized implementation loads two contiguous eight-float vectors and compacts their even lanes before executing the unchanged per-lane FMA sequence.
+
+The full Base stem shape, 512 input channels by 512 output channels by 3000 input frames and 1500 output frames, is byte-identical to the prior gather implementation. A corrected alternating benchmark, with provider selection performed once before dispatch rather than inside the inner loop, improves the median from 47.40 milliseconds to 23.54 milliseconds, approximately 2.0x.
+
+Alternating FP16 E2E encoder runs improve from 0.899/0.907 seconds to 0.883/0.871 seconds, about 2.9 percent on average, and produce the same transcript. The disposable test runtime replaced the original oneDNN-linked engine, making its decoder-prefill timing non-comparable; no whole-run speedup is claimed from this experiment.
+
+## Native profiler boundary
+
+The Python Whisper runner remains useful for artifact preparation, backend rotation, transcript comparison, and machine-readable reports. It must not be the sampled process for an Advisor roofline claim: Python startup, NumPy, subprocess orchestration, and report assembly obscure the generated C runtime and previously prevented Advisor from producing a usable result.
+
+The native profiling path should reuse the loader conventions in `version/v8/src/ck_cli_v8.c`, while exposing an audio-specific executable rather than routing audio through the text-only chat loop. That executable should:
+
+1. Load the generated encoder and decoder `libmodel.so` files once.
+2. Initialize both from their manifests.
+3. Read the WAV bytes in C and call `ck_model_run_audio_wav_window` directly.
+4. Pass the named encoder activation to the generated decoder cross-attention ABI.
+5. Run warmups before measurement and repeat the same phase without reloading weights.
+6. Expose separate encoder, decoder-prefill, decode, and provider-only regions.
+7. Emit the runtime hashes, compiler flags, thread affinity, transcript tokens, and phase timings used by the Python comparison report.
+
+VTune and Advisor should attach to that native executable. Provider roofline work should use an even narrower native C harness that repeatedly invokes one production-shape kernel after setup. This keeps initialization and Python outside the measured region and makes utilization, memory traffic, instruction count, and thread imbalance attributable to the actual CKE provider.
