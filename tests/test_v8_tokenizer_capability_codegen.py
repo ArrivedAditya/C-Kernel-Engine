@@ -198,6 +198,56 @@ class TestV8TokenizerCapabilityCodegen(unittest.TestCase):
         self.assertIn('"<|user|>\\n"', c_code)
         self.assertIn('"[gMASK]<sop>\\n"', c_code)
 
+    def test_generated_formatter_omits_text_bos_when_tokenizer_adds_bos(self) -> None:
+        generated = build_ir_v8._generate_tokenizer_c_code(
+            "bpe",
+            vocab_size=256,
+            num_merges=0,
+            special_tokens={
+                "bos_token_id": 2,
+                "eos_token_id": 1,
+                "add_bos_token": True,
+            },
+            chat_contract={
+                "turn_prefix": "<start_of_turn>{role}\\n",
+                "turn_suffix": "<end_of_turn>\\n",
+                "assistant_generation_prefix": "<start_of_turn>model\\n",
+                "role_labels": {"user": "user", "assistant": "model"},
+                "force_bos_text_if_tokenizer_add_bos_false": "<bos>",
+            },
+        )
+        self.assertIsNotNone(generated)
+        c_code = str(generated["api_functions"])
+        self.assertIn("CK_EXPORT int ck_model_format_chat(", c_code)
+        self.assertNotIn(
+            "ck_model_chat_append(output, output_capacity, position, \"<bos>\")",
+            c_code,
+        )
+
+    def test_generated_formatter_keeps_text_bos_when_tokenizer_does_not_add_bos(self) -> None:
+        generated = build_ir_v8._generate_tokenizer_c_code(
+            "bpe",
+            vocab_size=256,
+            num_merges=0,
+            special_tokens={
+                "bos_token_id": 2,
+                "eos_token_id": 1,
+                "add_bos_token": False,
+            },
+            chat_contract={
+                "turn_prefix": "<start_of_turn>{role}\\n",
+                "turn_suffix": "<end_of_turn>\\n",
+                "assistant_generation_prefix": "<start_of_turn>model\\n",
+                "role_labels": {"user": "user", "assistant": "model"},
+                "force_bos_text_if_tokenizer_add_bos_false": "<bos>",
+            },
+        )
+        self.assertIsNotNone(generated)
+        self.assertIn(
+            "ck_model_chat_append(output, output_capacity, position, \"<bos>\")",
+            str(generated["api_functions"]),
+        )
+
     def test_incomplete_multimodal_marker_contract_does_not_export_formatter(self) -> None:
         generated = build_ir_v8._generate_tokenizer_c_code(
             "sentencepiece",

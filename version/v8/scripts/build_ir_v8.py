@@ -487,7 +487,10 @@ def _collect_chat_marker_strings(chat_contract: Optional[Dict[str, Any]]) -> Lis
     return out
 
 
-def _generate_chat_contract_c_api(chat_contract: Optional[Dict[str, Any]]) -> str:
+def _generate_chat_contract_c_api(
+    chat_contract: Optional[Dict[str, Any]],
+    special_tokens: Optional[Dict[str, Any]] = None,
+) -> str:
     """Emit the native single-turn formatter from declarative circuit metadata."""
     if not isinstance(chat_contract, dict):
         return ""
@@ -527,6 +530,8 @@ def _generate_chat_contract_c_api(chat_contract: Optional[Dict[str, Any]]) -> st
     default_system = str(chat_contract.get("default_system_prompt") or "")
     inject_default_system = bool(chat_contract.get("inject_default_system_prompt"))
     bos_prefix = str(chat_contract.get("force_bos_text_if_tokenizer_add_bos_false") or "")
+    if bool((special_tokens or {}).get("add_bos_token", False)):
+        bos_prefix = ""
 
     def lit(value: str) -> str:
         return _c_string_literal(value)
@@ -1830,7 +1835,7 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
 
     For future tokenizer types, add a new elif branch here.
     """
-    chat_contract_api = _generate_chat_contract_c_api(chat_contract)
+    chat_contract_api = _generate_chat_contract_c_api(chat_contract, special_tokens)
 
     if tokenizer_type == "bpe":
         add_bos = None
