@@ -27,13 +27,14 @@ Categories:
 import argparse
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
 import sys
 import time
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -49,6 +50,178 @@ PASS_STDOUT_CHARS = 5000
 PASS_STDERR_CHARS = 2000
 FAIL_STDOUT_CHARS = 40000
 FAIL_STDERR_CHARS = 12000
+
+LSCPU_ISA_FLAGS = (
+    "avx",
+    "avx2",
+    "fma",
+    "avx_vnni",
+    "avx512f",
+    "avx512_vnni",
+    "avx512_bf16",
+    "amx_tile",
+    "amx_int8",
+    "amx_bf16",
+)
+
+
+def _parse_lscpu_output(output: str) -> dict[str, str]:
+    """Parse lscpu's label/value output while retaining the raw capture."""
+    fields = {}
+    for line in output.splitlines():
+        if ":" not in line:
+            continue
+        label, value = line.split(":", 1)
+        label = label.strip()
+        value = value.strip()
+        if label and value:
+            fields[label] = value
+    return fields
+
+
+def _parse_proc_cpuinfo(output: str) -> dict[str, str]:
+    """Extract one CPU identity from procfs without publishing host serials."""
+    records = [record for record in output.strip().split("\n\n") if record.strip()]
+    first = _parse_lscpu_output(records[0]) if records else {}
+    logical_cpus = sum(
+        1 for line in output.splitlines() if line.lower().startswith("processor") and ":" in line
+    )
+    return {
+        "Architecture": platform.machine(),
+        "Vendor ID": first.get("vendor_id", first.get("CPU implementer", first.get("Hardware", ""))),
+        "Model name": first.get("model name", first.get("Processor", first.get("Hardware", ""))),
+        "CPU family": first.get("cpu family", ""),
+        "Model": first.get("model", ""),
+        "Stepping": first.get("stepping", ""),
+        "CPU(s)": str(logical_cpus) if logical_cpus else "",
+        "Flags": first.get("flags", first.get("Features", "")),
+    }
+
+
+def _parse_meminfo(output: str) -> dict[str, str]:
+    return _parse_lscpu_output(output)
+
+
+def _redact_proc_cpuinfo(output: str) -> str:
+    redacted = []
+    for line in output.splitlines():
+        label = line.split(":", 1)[0].strip().lower() if ":" in line else ""
+        if label in {"serial", "machine", "system serial number"}:
+            redacted.append(f"{line.split(':', 1)[0]}: <redacted>")
+        else:
+            redacted.append(line)
+    return "\n".join(redacted).strip()
+
+
+def _read_text(path: str) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def _capture_command(command: list[str]) -> tuple[str, str]:
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+            env={**os.environ, "LC_ALL": "C"},
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return "", str(exc)
+    if completed.returncode != 0:
+        return "", completed.stderr.strip() or f"{' '.join(command)} exited {completed.returncode}"
+    return completed.stdout.strip(), ""
+
+
+def _read_os_release() -> dict[str, str]:
+    fields = {}
+    try:
+        for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+            if "=" not in line or line.startswith("#"):
+                continue
+            key, value = line.split("=", 1)
+            fields[key] = value.strip().strip('"')
+    except OSError:
+        pass
+    return fields
+
+
+def capture_runner_hardware() -> dict:
+    """Capture the exact CPU and CI image associated with one report."""
+    captured_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    raw_lscpu, lscpu_error = _capture_command(["lscpu"])
+    raw_cpuinfo = _redact_proc_cpuinfo(_read_text("/proc/cpuinfo"))
+    raw_free_h, free_error = _capture_command(["free", "-h"])
+    raw_meminfo = _read_text("/proc/meminfo")
+
+    cpu_source = "lscpu" if raw_lscpu else "/proc/cpuinfo"
+    fields = _parse_lscpu_output(raw_lscpu) if raw_lscpu else _parse_proc_cpuinfo(raw_cpuinfo)
+    if not fields.get("Model name") and not fields.get("Vendor ID"):
+        return {
+            "schema": 1,
+            "captured_at": captured_at,
+            "available": False,
+            "error": lscpu_error or "neither lscpu nor /proc/cpuinfo exposed a CPU identity",
+            "raw_free_h": raw_free_h,
+            "raw_meminfo": raw_meminfo,
+        }
+
+    flags = set(fields.get("Flags", fields.get("Features", "")).split())
+    meminfo = _parse_meminfo(raw_meminfo)
+    os_release = _read_os_release()
+    return {
+        "schema": 1,
+        "captured_at": captured_at,
+        "available": True,
+        "provider": "github-actions" if os.environ.get("GITHUB_ACTIONS") == "true" else "local",
+        "cpu_source": cpu_source,
+        "runner": {
+            "name": os.environ.get("RUNNER_NAME", ""),
+            "os": os.environ.get("RUNNER_OS", platform.system()),
+            "arch": os.environ.get("RUNNER_ARCH", platform.machine()),
+            "image_os": os.environ.get("ImageOS", os_release.get("ID", "")),
+            "image_version": os.environ.get("ImageVersion", os_release.get("VERSION_ID", "")),
+            "kernel": platform.release(),
+            "workflow": os.environ.get("GITHUB_WORKFLOW", ""),
+            "run_id": os.environ.get("GITHUB_RUN_ID", ""),
+            "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
+        },
+        "cpu": {
+            "architecture": fields.get("Architecture", ""),
+            "vendor_id": fields.get("Vendor ID", ""),
+            "model_name": fields.get("Model name", ""),
+            "family": fields.get("CPU family", ""),
+            "model": fields.get("Model", ""),
+            "stepping": fields.get("Stepping", ""),
+            "logical_cpus": fields.get("CPU(s)", ""),
+            "online_cpus": fields.get("On-line CPU(s) list", ""),
+            "sockets": fields.get("Socket(s)", ""),
+            "cores_per_socket": fields.get("Core(s) per socket", ""),
+            "threads_per_core": fields.get("Thread(s) per core", ""),
+            "numa_nodes": fields.get("NUMA node(s)", ""),
+            "max_mhz": fields.get("CPU max MHz", ""),
+            "min_mhz": fields.get("CPU min MHz", ""),
+            "virtualization": fields.get("Virtualization", ""),
+        },
+        "isa": {flag: flag in flags for flag in LSCPU_ISA_FLAGS},
+        "memory": {
+            "total": meminfo.get("MemTotal", ""),
+            "available": meminfo.get("MemAvailable", ""),
+            "free": meminfo.get("MemFree", ""),
+            "swap_total": meminfo.get("SwapTotal", ""),
+            "swap_free": meminfo.get("SwapFree", ""),
+        },
+        "lscpu_fields": fields,
+        "raw_lscpu": raw_lscpu,
+        "raw_cpuinfo": raw_cpuinfo if not raw_lscpu else "",
+        "raw_free_h": raw_free_h,
+        "raw_meminfo": raw_meminfo,
+        "capture_warnings": [warning for warning in (lscpu_error, free_error) if warning],
+    }
 
 
 def _trim_output(text: str, limit: int, keep_head_tail: bool = False) -> str:
@@ -377,6 +550,11 @@ TEST_SUITES = {
     ),
     "audio_transformer_primitives": TestSuite(
         "Audio Transformer Primitives", "kernels", UNITTEST_DIR / "test_audio_encoder.py"
+    ),
+    "nightly_runner_hardware": TestSuite(
+        "Nightly Runner Hardware Capture",
+        "inference",
+        UNITTEST_DIR / "test_nightly_runner_hardware.py",
     ),
     # NOTE: Orchestration test disabled - v6.5 uses generated code with local helpers,
     # not orchestration layer. Use llamacpp-parity-full for quantized kernel validation.
@@ -1409,6 +1587,7 @@ def save_json_report(results: list[TestResult], filepath: Path, start_time: date
     report = {
         "timestamp": start_time.isoformat(),
         "duration_sec": sum(r.duration_sec for r in results),
+        "runner_hardware": capture_runner_hardware(),
         "summary": {
             "total": len(results),
             "passed": sum(1 for r in results if r.status == "pass"),
