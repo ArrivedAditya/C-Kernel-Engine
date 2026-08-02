@@ -233,6 +233,69 @@ def _safetensors_arch_contract(arch: str) -> dict[str, Any]:
     return row if isinstance(row, dict) else {}
 
 
+def _apply_linear_weight_runtime_config(
+    config: dict[str, Any], contract: dict[str, Any], linear_weight_dtype: str
+) -> None:
+    """Apply precision-sensitive runtime policy declared by the model map."""
+    policies = contract.get("runtime_config_by_linear_weight_dtype")
+    if policies is None:
+        return
+    if not isinstance(policies, dict):
+        raise SystemExit(
+            f"{SAFETENSORS_CK_MAP_PATH}: runtime_config_by_linear_weight_dtype "
+            "must be an object"
+        )
+    selected = policies.get(str(linear_weight_dtype))
+    if selected is None:
+        selected = policies.get("default")
+    if not isinstance(selected, dict):
+        raise SystemExit(
+            f"{SAFETENSORS_CK_MAP_PATH}: no runtime configuration for "
+            f"linear weight dtype {linear_weight_dtype!r}"
+        )
+    for key, value in selected.items():
+        if not isinstance(key, str) or not key:
+            raise SystemExit(
+                f"{SAFETENSORS_CK_MAP_PATH}: runtime configuration keys "
+                "must be non-empty strings"
+            )
+        config[key] = value
+
+
+def _contract_ignored_source_tensor(
+    contract: dict[str, Any], name: str
+) -> str | None:
+    """Resolve artifact ownership exclusions from a safetensors model map."""
+    rules = contract.get("ignored_source_tensors") or []
+    if not isinstance(rules, list):
+        raise SystemExit(
+            f"{SAFETENSORS_CK_MAP_PATH}: ignored_source_tensors must be a list"
+        )
+    for rule in rules:
+        if not isinstance(rule, dict):
+            raise SystemExit(
+                f"{SAFETENSORS_CK_MAP_PATH}: ignored source rules must be objects"
+            )
+        reason = rule.get("reason")
+        exact = rule.get("exact")
+        prefix = rule.get("prefix")
+        if not isinstance(reason, str) or not reason:
+            raise SystemExit(
+                f"{SAFETENSORS_CK_MAP_PATH}: ignored source rules require a reason"
+            )
+        selectors = int(exact is not None) + int(prefix is not None)
+        if selectors != 1:
+            raise SystemExit(
+                f"{SAFETENSORS_CK_MAP_PATH}: ignored source rules require "
+                "exactly one of exact or prefix"
+            )
+        if exact is not None and name == str(exact):
+            return reason
+        if prefix is not None and name.startswith(str(prefix)):
+            return reason
+    return None
+
+
 def _shape_symbol_value(name: str, config: dict[str, Any]) -> int:
     key = str(name)
     if key == "embed_dim":
@@ -1867,12 +1930,11 @@ def _ignored_source_tensor(arch: str, name: str) -> str | None:
         return "vision_tower_not_in_decoder_pass"
     if arch == "qwen3_vl_vision" and (name.startswith("model.language_model.") or name.startswith("model.model.") or name == "lm_head.weight"):
         return "language_model_not_in_vision_pass"
-    if arch == "whisper_encoder" and (
-        name.startswith("model.decoder.") or name == "proj_out.weight"
-    ):
-        return "decoder_not_in_encoder_artifact"
-    if arch == "whisper_decoder" and name.startswith("model.encoder."):
-        return "encoder_not_in_decoder_artifact"
+    contract_reason = _contract_ignored_source_tensor(
+        _safetensors_arch_contract(arch), name
+    )
+    if contract_reason is not None:
+        return contract_reason
     if arch == "kimi_vl" and (
         name.startswith("vision_tower.")
         or name.startswith("multi_modal_projector.")
@@ -2121,17 +2183,9 @@ def main() -> int:
         arch = _infer_arch(hf)
 
     config = _build_config(model_dir, arch, args.config_template)
-    if arch == "whisper_encoder":
-        config["audio_encoder_attention_reduction_policy"] = (
-            "tiled_f16kv_online_softmax"
-            if args.linear_weight_dtype == "fp16"
-            else "ordered_fp32_packed_k"
-        )
-        config["audio_runtime_topology_policy"] = (
-            "performance_core_smt_on_hybrid"
-            if args.linear_weight_dtype == "fp16"
-            else "all_allowed_cpus"
-        )
+    _apply_linear_weight_runtime_config(
+        config, _safetensors_arch_contract(arch), args.linear_weight_dtype
+    )
     refs = _refs_for_arch(arch, config, headers)
     if str(config.get("artifact_scope") or "") == "encoder_only":
         tokenizer_payloads, tokenizer_contract, special_tokens = [], None, {}

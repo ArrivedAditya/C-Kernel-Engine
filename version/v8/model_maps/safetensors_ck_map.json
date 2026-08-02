@@ -18,6 +18,12 @@
         "attention_variant": "causal_self_plus_dense_cross",
         "prefill_policy": "encoder_decoder"
       },
+      "ignored_source_tensors": [
+        {
+          "prefix": "model.encoder.",
+          "reason": "encoder_not_in_decoder_artifact"
+        }
+      ],
       "required_tensor_families": [
         "model.decoder.embed_tokens.weight",
         "model.decoder.embed_positions.weight",
@@ -89,6 +95,26 @@
         "attention_variant": "dense_bidirectional",
         "prefill_policy": "audio_encoder_only"
       },
+      "runtime_config_by_linear_weight_dtype": {
+        "default": {
+          "audio_encoder_attention_reduction_policy": "ordered_fp32_packed_k",
+          "audio_runtime_topology_policy": "all_allowed_cpus"
+        },
+        "fp16": {
+          "audio_encoder_attention_reduction_policy": "tiled_f16kv_online_softmax",
+          "audio_runtime_topology_policy": "performance_core_smt_on_hybrid"
+        }
+      },
+      "ignored_source_tensors": [
+        {
+          "prefix": "model.decoder.",
+          "reason": "decoder_not_in_encoder_artifact"
+        },
+        {
+          "exact": "proj_out.weight",
+          "reason": "decoder_not_in_encoder_artifact"
+        }
+      ],
       "required_tensor_families": [
         "model.encoder.conv1.weight",
         "model.encoder.conv2.weight",
