@@ -30,6 +30,21 @@ class V8DSLNightlyRegistrationTests(unittest.TestCase):
         "test-v8-template-circuit-audit": "v8 Template Circuit/Dataflow Audit",
     }
 
+    def test_instella_circuit_codegen_is_a_visible_nightly_row(self) -> None:
+        suite = nightly.TEST_SUITES.get("v8_instella_moe_circuit_contracts")
+        self.assertIsNotNone(suite)
+        self.assertEqual(suite.name, "Instella-MoE Circuit/Codegen Contracts")
+        self.assertEqual(suite.category, "inference")
+        self.assertEqual(
+            suite.test_file,
+            ROOT / "tests" / "test_v8_instella_moe_bringup.py",
+        )
+
+        yarn_fp32 = nightly.TEST_SUITES.get("yarn_rope_explicit_positions")
+        yarn_bf16 = nightly.TEST_SUITES.get("yarn_rope_explicit_positions_bf16")
+        self.assertEqual(yarn_fp32.category, "kernels")
+        self.assertEqual(yarn_bf16.category, "bf16")
+
     def test_full_dsl_gate_dependencies_are_explicit_nightly_rows(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         match = re.search(r"^test-v8-dsl:\s+([^\n]+)$", makefile, re.MULTILINE)
