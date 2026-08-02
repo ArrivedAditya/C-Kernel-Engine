@@ -601,8 +601,15 @@ def _inject_activation_lookup_api(code: str, layout_obj: Dict[str, Any]) -> str:
     if not act_buffers:
         return code
 
-    weights = (layout_obj.get("memory", {}) or {}).get("weights", {}) or {}
-    activation_base = int(weights.get("base_offset", 0) or 0) + int(weights.get("size", 0) or 0)
+    memory = layout_obj.get("memory", {}) or {}
+    weights = memory.get("weights", {}) or {}
+    arena = memory.get("arena", {}) or {}
+    activation_base = int(
+        arena.get(
+            "activations_base",
+            int(weights.get("base_offset", 0) or 0) + int(weights.get("size", 0) or 0),
+        )
+    )
     by_name = {str(buf.get("name", "")): buf for buf in act_buffers}
     bridge = resolve_vision_bridge_contract(layout_obj, by_name)
 

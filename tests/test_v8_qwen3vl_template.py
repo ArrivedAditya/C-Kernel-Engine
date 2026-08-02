@@ -148,6 +148,23 @@ def _make_qwen3vl_manifest() -> dict:
 
 
 class V8Qwen3VLTemplateTests(unittest.TestCase):
+    def test_bridge_uses_aligned_arena_activation_base(self) -> None:
+        layout = {
+            "memory": {
+                "arena": {"activations_base": 1024},
+                "weights": {"base_offset": 4, "size": 1016},
+            }
+        }
+        self.assertEqual(run_multimodal_bridge_v8._activation_runtime_base(layout), 1024)
+        self.assertEqual(
+            run_multimodal_bridge_v8._activation_runtime_offset(layout, {"offset": 64}),
+            1088,
+        )
+
+    def test_bridge_legacy_layout_derives_activation_base_from_weights(self) -> None:
+        layout = {"memory": {"weights": {"base_offset": 4, "size": 1016}}}
+        self.assertEqual(run_multimodal_bridge_v8._activation_runtime_base(layout), 1020)
+
     def test_bf16_decoder_norm_contracts_select_pytorch_providers(self) -> None:
         manifest = {
             "config": {
@@ -885,6 +902,18 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
         self.assertEqual(doc["kernels"]["branch_layernorm"], "layernorm_fp32_exact")
         self.assertNotIn("dtype", branch["collect"])
 
+    def test_deepstack_collect_view_must_name_a_declared_output(self) -> None:
+        manifest = _make_qwen3vl_manifest()
+        branch = manifest["template"]["block_types"]["vision_encoder"]["branches"][0]
+        fc2 = next(item for item in branch["producer"]["ops"] if item["id"] == "fc2")
+        fc2["output_view"]["output"] = "undeclared"
+        with self.assertRaisesRegex(RuntimeError, "not a declared graph output"):
+            build_ir_v8.build_ir1_direct(
+                manifest,
+                ROOT / "tests" / "qwen3_vl_vision_manifest.synthetic.json",
+                mode="prefill",
+            )
+
     def test_bf16_storage_contracts_select_exact_generated_kernels(self) -> None:
         manifest = _make_qwen3vl_manifest()
         manifest["config"].update({
@@ -1127,9 +1156,21 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             "branch.deepstack",
         )
         self.assertEqual(by_op["branch_fc2"][0]["params"]["out_dim_from_config"], "projector_out_dim")
-        self.assertEqual(by_op["branch_fc2"][0]["params"]["branch_collect_target"], "branch.deepstack")
-        self.assertEqual(by_op["branch_fc2"][0]["params"]["branch_collect_rows"], 576)
-        self.assertEqual(by_op["branch_fc2"][0]["params"]["branch_collect_slice_dim"], 4096)
+        self.assertNotIn("branch_collect_offset_bytes", by_op["branch_fc2"][0]["params"])
+        self.assertEqual(
+            by_op["branch_fc2"][0]["output_view"],
+            {
+                "kind": "collect_slice",
+                "output": "y",
+                "offset_bytes": 0,
+                "size_bytes": 576 * 4096 * 4,
+                "index": 0,
+            },
+        )
+        self.assertEqual(
+            by_op["branch_fc2"][0]["graph_slots"],
+            {"inputs": {"x": "branch_mlp"}, "outputs": {"y": "branch_collect"}},
+        )
         self.assertEqual(by_op["branch_concat"][0]["params"]["main_dim_from_config"], "projector_out_dim")
         self.assertEqual(by_op["branch_concat"][0]["params"]["branch_slice_dim_from_config"], "projector_out_dim")
         self.assertEqual(by_op["branch_concat"][0]["params"]["num_branch_slices_from_config"], "num_deepstack_layers")
@@ -1322,6 +1363,57 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
                 registry,
                 mode="prefill",
             )
+
+    def test_deepstack_collect_slice_survives_call_ready_lowering(self) -> None:
+        manifest = _make_qwen3vl_manifest()
+        # Allocate a second slice so a nonzero test offset remains in bounds.
+        manifest["config"]["num_deepstack_layers"] = 2
+        ir1_ops = build_ir_v8.build_ir1_direct(
+            manifest,
+            ROOT / "tests" / "qwen3_vl_vision_manifest.synthetic.json",
+            mode="prefill",
+        )
+        branch_fc2 = next(op for op in ir1_ops if op.get("op") == "branch_fc2")
+        branch_fc2["output_view"]["offset_bytes"] = 128
+
+        registry = build_ir_v8.load_kernel_registry()
+        lowered_ir1 = build_ir_v8.generate_ir_lower_1(
+            ir1_ops,
+            registry,
+            manifest,
+            "prefill",
+        )
+        layout = build_ir_v8.generate_memory_layout(
+            lowered_ir1,
+            manifest,
+            registry,
+            mode="prefill",
+            context_len=manifest["config"]["context_length"],
+        )
+        lowered_ir2 = build_ir_v8.generate_ir_lower_2(
+            lowered_ir1,
+            layout,
+            manifest,
+            registry,
+            mode="prefill",
+        )
+        lowered_fc2 = next(
+            op for op in lowered_ir2["operations"] if op.get("op") == "branch_fc2"
+        )
+        collect_base = next(
+            item["offset"]
+            for item in layout["memory"]["activations"]["buffers"]
+            if item["name"] == "branch_collect"
+        )
+        self.assertEqual(
+            lowered_fc2["outputs"]["C"]["activation_offset"],
+            collect_base + 128,
+        )
+
+        call_ir = build_ir_v8.generate_ir_lower_3(lowered_ir2, "prefill")
+        call_fc2 = next(op for op in call_ir["operations"] if op.get("op") == "branch_fc2")
+        output_arg = next(arg for arg in call_fc2["args"] if arg.get("name") == "C")
+        self.assertIn("+ 128", output_arg["expr"])
 
     def test_reused_layout_cannot_replace_resolved_bridge_numerics(self) -> None:
         manifest = _make_qwen3vl_manifest()

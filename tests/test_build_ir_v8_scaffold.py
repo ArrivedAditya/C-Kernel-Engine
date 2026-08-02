@@ -145,6 +145,40 @@ class BuildIrV8ScaffoldTests(unittest.TestCase):
                 {"activation_bindings": {"routed_free_stream": ""}}
             )
 
+    def test_circuit_owned_activation_buffers_resolve_generic_shape_expressions(self) -> None:
+        specs = build_ir_v8._template_activation_buffer_specs(
+            {
+                "activation_buffers": {
+                    "collected": {
+                        "shape": [
+                            {"config": "rows"},
+                            {"mul": [{"config": "width"}, {"config": "slices"}]},
+                        ]
+                    }
+                }
+            },
+            {"rows": 5, "width": 7, "slices": 3},
+        )
+        self.assertEqual(specs["collected"]["shape"], "[5, 21]")
+        self.assertEqual(specs["collected"]["size"], 5 * 21 * 4)
+        self.assertEqual(specs["collected"]["dtype"], "fp32")
+
+    def test_circuit_owned_activation_buffers_reject_missing_or_zero_extents(self) -> None:
+        template = {"activation_buffers": {"scratch": {"shape": [{"config": "rows"}]}}}
+        with self.assertRaisesRegex(RuntimeError, "missing config key"):
+            build_ir_v8._template_activation_buffer_specs(template, {})
+        with self.assertRaisesRegex(RuntimeError, "non-positive extent"):
+            build_ir_v8._template_activation_buffer_specs(template, {"rows": 0})
+
+    def test_circuit_owned_activation_buffers_reject_unknown_dtype(self) -> None:
+        template = {
+            "activation_buffers": {
+                "scratch": {"shape": [4, 8], "dtype": "mystery_float"}
+            }
+        }
+        with self.assertRaisesRegex(RuntimeError, "unsupported storage type"):
+            build_ir_v8._template_activation_buffer_specs(template, {})
+
 
 if __name__ == "__main__":
     unittest.main()

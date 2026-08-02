@@ -2781,7 +2781,85 @@ def _encoder_decoder_activation_specs(
     ]
 
 
-def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, num_layers_override: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
+def _resolve_activation_extent(expr: Any, config: Dict[str, Any], path: str) -> int:
+    """Resolve a circuit-owned activation dimension without model semantics."""
+    if isinstance(expr, bool):
+        raise RuntimeError(f"HARD CIRCUIT BUFFER FAULT: {path} must be an integer expression")
+    if isinstance(expr, int):
+        value = expr
+    elif isinstance(expr, dict) and set(expr) == {"config"}:
+        key = str(expr.get("config", "") or "").strip()
+        if not key or key not in config:
+            raise RuntimeError(
+                f"HARD CIRCUIT BUFFER FAULT: {path} references missing config key {key!r}"
+            )
+        value = int(config[key])
+    elif isinstance(expr, dict) and set(expr) == {"mul"}:
+        factors = expr.get("mul")
+        if not isinstance(factors, list) or not factors:
+            raise RuntimeError(f"HARD CIRCUIT BUFFER FAULT: {path}.mul must be a non-empty list")
+        value = 1
+        for index, factor in enumerate(factors):
+            value *= _resolve_activation_extent(factor, config, f"{path}.mul[{index}]")
+    else:
+        raise RuntimeError(
+            f"HARD CIRCUIT BUFFER FAULT: {path} must be an integer, config reference, or mul expression"
+        )
+    if value <= 0:
+        raise RuntimeError(f"HARD CIRCUIT BUFFER FAULT: {path} resolved to non-positive extent {value}")
+    return value
+
+
+def _template_activation_buffer_specs(
+    template: Dict[str, Any], config: Dict[str, Any]
+) -> Dict[str, Dict[str, Any]]:
+    """Materialize circuit-declared activation regions as ordinary layout specs."""
+    raw = template.get("activation_buffers") if isinstance(template, dict) else None
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise RuntimeError("HARD CIRCUIT BUFFER FAULT: activation_buffers must be an object")
+    result: Dict[str, Dict[str, Any]] = {}
+    for raw_name, declaration in raw.items():
+        name = str(raw_name or "").strip()
+        if not name or not isinstance(declaration, dict):
+            raise RuntimeError(
+                "HARD CIRCUIT BUFFER FAULT: activation buffer names must be non-empty and declarations must be objects"
+            )
+        shape_expr = declaration.get("shape")
+        if not isinstance(shape_expr, list) or not shape_expr:
+            raise RuntimeError(f"HARD CIRCUIT BUFFER FAULT: activation_buffers.{name}.shape must be non-empty")
+        shape = [
+            _resolve_activation_extent(expr, config, f"activation_buffers.{name}.shape[{index}]")
+            for index, expr in enumerate(shape_expr)
+        ]
+        dtype = str(declaration.get("dtype", "fp32") or "fp32").strip().lower()
+        supported_dtypes = {"fp32", "f32", "bf16", "fp16", "f16", "i32", "int32", "q8_0", "q8_k"}
+        if dtype not in supported_dtypes:
+            raise RuntimeError(
+                f"HARD CIRCUIT BUFFER FAULT: activation_buffers.{name}.dtype "
+                f"uses unsupported storage type {dtype!r}"
+            )
+        elem_bytes = _dtype_size_bytes(dtype)
+        size = elem_bytes
+        for extent in shape:
+            size *= extent
+        result[name] = {
+            "name": name,
+            "size": size,
+            "shape": f"[{', '.join(str(extent) for extent in shape)}]",
+            "dtype": dtype,
+        }
+    return result
+
+
+def build_activation_specs(
+    config: Dict[str, Any],
+    mode: str,
+    context_len: int,
+    num_layers_override: Optional[int] = None,
+    template: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Dict[str, Any]]:
     """Return activation buffer specs keyed by name."""
     embed_dim = int(config.get("embed_dim", 896))
     num_heads = int(config.get("num_heads", 14))
@@ -2961,24 +3039,9 @@ def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, 
     layer_out_size = seq_len * embed_dim * 4
     add("layer_output", layer_out_size, f"[{seq_len}, {embed_dim}]")
 
-    projector_in_dim = int(config.get("projector_in_dim", 0) or 0)
-    projector_hidden_dim = int(config.get("projector_hidden_dim", 0) or 0)
     projector_out_dim = int(config.get("projector_out_dim", 0) or 0)
     projector_total_out_dim = int(config.get("projector_total_out_dim", projector_out_dim) or 0)
-    num_deepstack_layers = int(config.get("num_deepstack_layers", 0) or 0)
     merged_tokens = int(config.get("vision_merged_tokens", 0) or 0)
-    if num_deepstack_layers > 0 and merged_tokens > 0:
-        if projector_in_dim > 0:
-            add("branch_stream", merged_tokens * projector_in_dim * 4, f"[{merged_tokens}, {projector_in_dim}]")
-            add("branch_normed", merged_tokens * projector_in_dim * 4, f"[{merged_tokens}, {projector_in_dim}]")
-        if projector_hidden_dim > 0:
-            add("branch_mlp", merged_tokens * projector_hidden_dim * 4, f"[{merged_tokens}, {projector_hidden_dim}]")
-        if projector_out_dim > 0:
-            add(
-                "branch_collect",
-                merged_tokens * projector_out_dim * num_deepstack_layers * 4,
-                f"[{merged_tokens}, {projector_out_dim * num_deepstack_layers}]",
-            )
     if projector_total_out_dim > 0 and merged_tokens > 0:
         add("vision_output", merged_tokens * projector_total_out_dim * 4, f"[{merged_tokens}, {projector_total_out_dim}]")
 
@@ -3021,6 +3084,13 @@ def build_activation_specs(config: Dict[str, Any], mode: str, context_len: int, 
         logits_seq = _logits_seq_for_layout(logits_layout, mode, seq_len, context_len, config)
         logits_size = logits_seq * vocab_size * 4
         add("logits", logits_size, f"[{logits_seq}, {vocab_size}]")
+
+    for spec in _template_activation_buffer_specs(template or {}, config).values():
+        if spec["name"] in specs:
+            raise RuntimeError(
+                f"HARD CIRCUIT BUFFER FAULT: activation buffer {spec['name']!r} duplicates a built-in region"
+            )
+        add(spec["name"], spec["size"], spec["shape"], spec["dtype"])
 
     return specs
 
@@ -6528,8 +6598,6 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         if not taps:
             return
 
-        merged_tokens = int(config.get("vision_merged_tokens", config.get("vision_num_patches", 0)) or 0)
-        projector_out_dim = int(config.get("projector_out_dim", config.get("projection_dim", config.get("embed_dim", 0))) or 0)
         branch_op_alias = {
             "spatial_merge": "branch_spatial_merge",
             "layernorm": "branch_layernorm",
@@ -6538,14 +6606,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         for tap in taps:
             branch_name = str(tap.get("name", "") or "").strip()
             collect_contract = tap.get("collect_contract") if isinstance(tap.get("collect_contract"), dict) else {}
-            collect_target = str(
-                collect_contract.get("target", f"branch.{branch_name or 'collect'}") or f"branch.{branch_name or 'collect'}"
-            )
             collect_index = int(tap.get("collect_index", 0) or 0)
-            collect_rows = int(collect_contract.get("rows", merged_tokens) or 0)
-            collect_slice_dim = int(collect_contract.get("slice_dim", projector_out_dim) or 0)
-            collect_item_bytes = int(collect_contract.get("bytes_per_elem", 4) or 4)
-            collect_offset = collect_rows * collect_slice_dim * collect_index * collect_item_bytes
             producer_items = tap.get("producer_items", []) if isinstance(tap.get("producer_items"), list) else []
 
             for producer_item in producer_items:
@@ -6574,13 +6635,41 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                 params: Dict[str, Any] = _materialize_template_config_params(
                     producer_item.get("params"), config
                 )
-                if lowered_op == "branch_fc2":
-                    params["branch_collect_target"] = collect_target
-                    params["branch_collect_offset_bytes"] = collect_offset
-                    params.setdefault("branch_collect_rows", collect_rows)
-                    params.setdefault("branch_collect_slice_dim", collect_slice_dim)
-                    params.setdefault("branch_collect_mode", collect_contract.get("mode", "concat"))
-                    params.setdefault("branch_collect_axis", collect_contract.get("axis", "feature"))
+                output_view: Optional[Dict[str, Any]] = None
+                output_view_decl = producer_item.get("output_view")
+                if output_view_decl is not None:
+                    if not isinstance(output_view_decl, dict) or output_view_decl.get("kind") != "collect_slice":
+                        raise RuntimeError(
+                            f"HARD CIRCUIT VIEW FAULT: branch {branch_name!r} output_view must declare kind='collect_slice'"
+                        )
+                    output_name = str(output_view_decl.get("output", "") or "").strip()
+                    if not output_name:
+                        raise RuntimeError(
+                            f"HARD CIRCUIT VIEW FAULT: branch {branch_name!r} collect_slice must name its output"
+                        )
+                    collect_rows = int(collect_contract.get("rows", 0) or 0)
+                    collect_slice_dim = int(collect_contract.get("slice_dim", 0) or 0)
+                    collect_item_bytes = int(collect_contract.get("bytes_per_elem", 4) or 4)
+                    if collect_rows <= 0 or collect_slice_dim <= 0 or collect_item_bytes <= 0:
+                        raise RuntimeError(
+                            f"HARD CIRCUIT VIEW FAULT: branch {branch_name!r} collect_slice has invalid extent"
+                        )
+                    output_view = {
+                        "kind": "collect_slice",
+                        "output": output_name,
+                        "offset_bytes": collect_rows * collect_slice_dim * collect_index * collect_item_bytes,
+                        "size_bytes": collect_rows * collect_slice_dim * collect_item_bytes,
+                        "index": collect_index,
+                    }
+
+                graph_slots = _template_graph_slots(producer_item)
+                if output_view is not None:
+                    declared_outputs = graph_slots.get("outputs", {}) if graph_slots else {}
+                    if output_name not in declared_outputs:
+                        raise RuntimeError(
+                            f"HARD CIRCUIT VIEW FAULT: branch {branch_name!r} collect_slice output "
+                            f"{output_name!r} is not a declared graph output"
+                        )
 
                 for k in kernels:
                     if isinstance(k, tuple):
@@ -6588,7 +6677,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                     else:
                         kernel_id, split_op = k, lowered_op
                     op_info = get_op_info(split_op, "branch", layer_idx)
-                    arranged_kernels.append({
+                    arranged = {
                         "op_id": op_info["op_id"],
                         "kernel": kernel_id,
                         "op": split_op,
@@ -6601,7 +6690,12 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                         "branch_collect_index": collect_index,
                         "template_weight_refs": copy.deepcopy(template_weight_refs),
                         "params": params,
-                    })
+                    }
+                    if graph_slots:
+                        arranged["graph_slots"] = graph_slots
+                    if output_view is not None and output_name == output_view.get("output"):
+                        arranged["output_view"] = copy.deepcopy(output_view)
+                    arranged_kernels.append(arranged)
                     print(
                         f"      [{op_info['op_id']:3d}] {split_op:20s} → {kernel_id}  "
                         f"(branch: {branch_name}, layer: {layer_idx})"
@@ -7880,6 +7974,8 @@ def generate_ir_lower_1(
             "bias_for": ir_op.get("bias_for"),
             "dataflow": ir_op.get("dataflow", {}),  # Preserve dataflow for memory planner
         }
+        if ir_op.get("output_view") is not None:
+            lowered_op["output_view"] = copy.deepcopy(ir_op["output_view"])
         codegen_capability = _validated_kernel_codegen_capability(kernel_id, kernel_map)
         if codegen_capability is not None:
             lowered_op["resolved_codegen_capability"] = codegen_capability
@@ -9331,24 +9427,9 @@ def generate_memory_layout(
     layer_out_size = seq_len * embed_dim * 4
     add_buffer("layer_output", layer_out_size, f"[{seq_len}, {embed_dim}]")
 
-    projector_in_dim = int(config.get("projector_in_dim", 0) or 0)
-    projector_hidden_dim = int(config.get("projector_hidden_dim", 0) or 0)
     projector_out_dim = int(config.get("projector_out_dim", 0) or 0)
     projector_total_out_dim = int(config.get("projector_total_out_dim", projector_out_dim) or 0)
-    num_deepstack_layers = int(config.get("num_deepstack_layers", 0) or 0)
     merged_tokens = int(config.get("vision_merged_tokens", 0) or 0)
-    if num_deepstack_layers > 0 and merged_tokens > 0:
-        if projector_in_dim > 0:
-            add_buffer("branch_stream", merged_tokens * projector_in_dim * 4, f"[{merged_tokens}, {projector_in_dim}]")
-            add_buffer("branch_normed", merged_tokens * projector_in_dim * 4, f"[{merged_tokens}, {projector_in_dim}]")
-        if projector_hidden_dim > 0:
-            add_buffer("branch_mlp", merged_tokens * projector_hidden_dim * 4, f"[{merged_tokens}, {projector_hidden_dim}]")
-        if projector_out_dim > 0:
-            add_buffer(
-                "branch_collect",
-                merged_tokens * projector_out_dim * num_deepstack_layers * 4,
-                f"[{merged_tokens}, {projector_out_dim * num_deepstack_layers}]",
-            )
     if projector_total_out_dim > 0 and merged_tokens > 0:
         add_buffer("vision_output", merged_tokens * projector_total_out_dim * 4, f"[{merged_tokens}, {projector_total_out_dim}]")
 
@@ -9404,6 +9485,16 @@ def generate_memory_layout(
         logits_seq = _logits_seq_for_layout(logits_layout, mode, seq_len, context_len, config)
         logits_size = logits_seq * vocab_size * 4
         add_buffer("logits", logits_size, f"[{logits_seq}, {vocab_size}]")
+
+    declared_buffers = _template_activation_buffer_specs(template, config)
+    allocated_names = {buf["name"] for buf in activation_buffers}
+    for spec in declared_buffers.values():
+        if spec["name"] in allocated_names:
+            raise RuntimeError(
+                f"HARD CIRCUIT BUFFER FAULT: activation buffer {spec['name']!r} duplicates a built-in region"
+            )
+        add_buffer(spec["name"], spec["size"], spec["shape"], spec["dtype"])
+        allocated_names.add(spec["name"])
 
     total_activation_size = current_offset
 
@@ -9535,7 +9626,14 @@ def generate_memory_layout_packed(
     if missing:
         raise RuntimeError(f"Packed layout: missing {len(missing)} weights in manifest: {missing[:5]}")
 
-    act_specs = build_activation_specs(config, mode, context_len, num_layers_override=layer_limit)
+    template_doc = manifest.get("template") if isinstance(manifest.get("template"), dict) else {}
+    act_specs = build_activation_specs(
+        config,
+        mode,
+        context_len,
+        num_layers_override=layer_limit,
+        template=template_doc,
+    )
 
     weight_offset = 0
     act_offset = 0
@@ -9606,7 +9704,6 @@ def generate_memory_layout_packed(
     # allocator does not recognize the operation names that use them.  This is
     # what permits a new multi-stream circuit to lower without an architecture
     # branch in the allocator.
-    template_doc = manifest.get("template") if isinstance(manifest.get("template"), dict) else {}
     for target in _template_activation_bindings(template_doc).values():
         alloc_act(target)
 
@@ -10858,6 +10955,19 @@ def generate_ir_lower_2(
                 dataflow = ir_op.get("dataflow", {})
                 op_outputs = dataflow.get("outputs", {})
                 using_dataflow_outputs = True
+            output_view = ir_op.get("output_view")
+            view_output_name: Optional[str] = None
+            view_applied = False
+            if output_view is not None:
+                if not isinstance(output_view, dict) or output_view.get("kind") != "collect_slice":
+                    raise RuntimeError(
+                        f"HARD CIRCUIT VIEW FAULT: op {ir_op.get('op_id')} has an invalid output_view"
+                    )
+                view_output_name = str(output_view.get("output", "") or "").strip()
+                if not view_output_name:
+                    raise RuntimeError(
+                        f"HARD CIRCUIT VIEW FAULT: op {ir_op.get('op_id')} output_view must name an output"
+                    )
             for output_name, output_info in op_outputs.items():
                 output_type = str(output_info.get("type", ""))
 
@@ -10939,8 +11049,15 @@ def generate_ir_lower_2(
                     activation_offset = scoped_activation_offset(
                         output_buf_name, buf["offset"], ir_op
                     )
-                    if op_type == "branch_fc2" and output_buf_name == "branch_collect":
-                        activation_offset += int(ir_op.get("params", {}).get("branch_collect_offset_bytes", 0) or 0)
+                    if output_view is not None and dataflow_name == view_output_name:
+                        view_offset = int(output_view.get("offset_bytes", -1))
+                        view_size = int(output_view.get("size_bytes", -1))
+                        if view_offset < 0 or view_size <= 0 or view_offset + view_size > int(buf["size"]):
+                            raise RuntimeError(
+                                f"HARD CIRCUIT VIEW FAULT: op {ir_op.get('op_id')} output view exceeds buffer {output_buf_name!r}"
+                            )
+                        activation_offset += view_offset
+                        view_applied = True
                     lowered_op["outputs"][output_name] = {
                         "buffer": output_buf_name,
                         "activation_offset": activation_offset,
@@ -10949,6 +11066,11 @@ def generate_ir_lower_2(
                     }
                     if not last_output_buffer:
                         last_output_buffer = output_buf_name
+            if output_view is not None and not view_applied:
+                raise RuntimeError(
+                    f"HARD CIRCUIT VIEW FAULT: op {ir_op.get('op_id')} view output "
+                    f"{view_output_name!r} did not resolve to a physical output"
+                )
             if lowered_op["outputs"]:
                 last_output_buffer = next(iter(lowered_op["outputs"].values())).get("buffer", last_output_buffer)
 
