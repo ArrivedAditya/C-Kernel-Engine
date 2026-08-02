@@ -42,6 +42,10 @@
       "apply_layer_attention_dims",
       "_require_resolved_decode_attention_kernel"
     ],
+    "version/v8/scripts/convert_safetensors_to_bump_v8.py": [
+      "_apply_linear_weight_runtime_config",
+      "_contract_ignored_source_tensor"
+    ],
     "version/v8/scripts/resolve_numerical_execution_contracts_v8.py": [
       "resolve_contract"
     ]

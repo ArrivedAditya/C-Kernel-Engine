@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import math
 import subprocess
@@ -8,6 +9,84 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+CONVERTER_PATH = ROOT / "version" / "v8" / "scripts" / "convert_safetensors_to_bump_v8.py"
+
+
+def _load_converter():
+    spec = importlib.util.spec_from_file_location(
+        "convert_safetensors_to_bump_v8_contract_test", CONVERTER_PATH
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_audio_runtime_policy_and_artifact_ownership_are_contract_driven() -> None:
+    converter = _load_converter()
+    contract = converter._safetensors_arch_contract("whisper_encoder")
+
+    fp32_config: dict[str, object] = {}
+    converter._apply_linear_weight_runtime_config(
+        fp32_config, contract, "preserve"
+    )
+    assert fp32_config == {
+        "audio_encoder_attention_reduction_policy": "ordered_fp32_packed_k",
+        "audio_runtime_topology_policy": "all_allowed_cpus",
+    }
+
+    fp16_config: dict[str, object] = {}
+    converter._apply_linear_weight_runtime_config(fp16_config, contract, "fp16")
+    assert fp16_config == {
+        "audio_encoder_attention_reduction_policy": "tiled_f16kv_online_softmax",
+        "audio_runtime_topology_policy": "performance_core_smt_on_hybrid",
+    }
+    assert (
+        converter._contract_ignored_source_tensor(
+            contract, "model.decoder.layers.0.fc1.weight"
+        )
+        == "decoder_not_in_encoder_artifact"
+    )
+    assert (
+        converter._contract_ignored_source_tensor(contract, "proj_out.weight")
+        == "decoder_not_in_encoder_artifact"
+    )
+
+
+def test_contract_selection_does_not_depend_on_audio_architecture_name() -> None:
+    converter = _load_converter()
+    original = converter._SAFETENSORS_CK_MAP_CACHE
+    try:
+        converter._SAFETENSORS_CK_MAP_CACHE = {
+            "version": 1,
+            "architectures": {
+                "future_audio_encoder": {
+                    "runtime_config_by_linear_weight_dtype": {
+                        "default": {"provider_policy": "reference"},
+                        "fp16": {"provider_policy": "tiled"},
+                    },
+                    "ignored_source_tensors": [
+                        {"prefix": "other_tower.", "reason": "separate_artifact"}
+                    ],
+                }
+            },
+        }
+        contract = converter._safetensors_arch_contract("future_audio_encoder")
+        config: dict[str, object] = {}
+        converter._apply_linear_weight_runtime_config(config, contract, "fp16")
+        assert config == {"provider_policy": "tiled"}
+        assert (
+            converter._ignored_source_tensor(
+                "future_audio_encoder", "other_tower.layer.weight"
+            )
+            == "separate_artifact"
+        )
+    finally:
+        converter._SAFETENSORS_CK_MAP_CACHE = original
 
 
 def _require_torch_safetensors() -> tuple[object, object]:
