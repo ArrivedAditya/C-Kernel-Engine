@@ -593,7 +593,7 @@
         "instella_moe",
         "InstellaMoEForCausalLM"
       ],
-      "status": "tensor_mapping_farskip_lowering_required",
+      "status": "synthetic_lowering_complete_yarn_binding_and_real_weight_parity_required",
       "config": {
         "model": "instella_moe",
         "arch": "instella_moe",
@@ -634,7 +634,7 @@
         "model.norm.weight",
         "lm_head.weight"
       ],
-      "notes": "Header/index and CK tensor-role mapping contract for AMD Instella-MoE. Layer 0 is dense, so MoE families are required only on MoE layers; the index auditor validates presence and per-layer expert counts. Runtime lowering remains fail-closed until the FarSkip circuit and interleaved-YaRN MLA contract are implemented."
+      "notes": "Header/index and CK tensor-role mapping contract for AMD Instella-MoE. Layer 0 is dense, so MoE families are required only on MoE layers; the index auditor validates presence and per-layer expert counts. The generic circuit lowers gated MLA and FarSkip two-stream lifetimes through generated C. Exact explicit-position YaRN providers exist, but their generated initialization binding and real-weight PyTorch X-ray parity remain release gates."
     },
     "kimi_vl": {
       "template": "kimi_vl",

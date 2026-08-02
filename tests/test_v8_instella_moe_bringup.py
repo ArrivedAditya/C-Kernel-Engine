@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -125,12 +126,131 @@ class InstellaMoEBringupTests(unittest.TestCase):
             )
             config = converter._build_config(root, "instella_moe", None)
         self.assertEqual(config["model"], "instella_moe")
-        self.assertEqual(config["layer_kinds"], ["mla_dense_mlp", "mla_moe"])
+        self.assertEqual(
+            config["layer_kinds"],
+            ["mla_gated_dense_mlp", "mla_gated_farskip_moe_first"],
+        )
         self.assertTrue(config["gated_attention"])
         self.assertTrue(config["farskip"])
         self.assertTrue(config["rope_interleave"])
         self.assertEqual(config["rope_layout"], "partial_interleaved_yarn")
         self.assertEqual(config["moe_shared_intermediate_size"], 8)
+
+    def test_synthetic_model_reaches_call_ready_ir_in_prefill_and_decode(self) -> None:
+        try:
+            import torch
+            from safetensors.torch import save_file
+        except ImportError as exc:  # pragma: no cover - development dependency guard
+            self.skipTest(str(exc))
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            checkpoint = root / "checkpoint"
+            out = root / "runtime"
+            checkpoint.mkdir()
+            out.mkdir()
+            (checkpoint / "config.json").write_text(
+                json.dumps(_tiny_config()), encoding="utf-8"
+            )
+            (checkpoint / "tokenizer.json").write_text(
+                json.dumps({
+                    "version": "1.0",
+                    "model": {
+                        "type": "BPE",
+                        "unk_token": "<unk>",
+                        "vocab": {"<unk>": 0, "<s>": 1, "</s>": 2},
+                        "merges": [],
+                    },
+                    "added_tokens": [],
+                }),
+                encoding="utf-8",
+            )
+            tensors = {}
+            for name, header in _headers().items():
+                dtype = torch.bfloat16 if header.dtype == "BF16" else torch.float32
+                tensors[name] = torch.zeros(tuple(header.shape), dtype=dtype)
+            save_file(tensors, checkpoint / "model.safetensors")
+
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "--checkpoint", str(checkpoint),
+                    "--output", str(out / "weights.bump"),
+                    "--config-out", str(out / "config.json"),
+                    "--manifest-out", str(out / "weights_manifest.json"),
+                    "--arch", "auto",
+                    "--dry-run",
+                ],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            builder = ROOT / "version" / "v8" / "scripts" / "build_ir_v8.py"
+            for mode in ("prefill", "decode"):
+                call_path = out / f"call_{mode}.json"
+                build = subprocess.run(
+                    [
+                        sys.executable,
+                        str(builder),
+                        "--manifest", str(out / "weights_manifest.json"),
+                        "--mode", mode,
+                        "--context-len", "8",
+                        "--layout-mode", "packed",
+                        "--output", str(out / f"ir1_{mode}.json"),
+                        "--layout-output", str(out / f"layout_{mode}.json"),
+                        "--lowered-output", str(out / f"lowered_{mode}.json"),
+                        "--call-output", str(call_path),
+                    ],
+                    cwd=ROOT,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                call_ir = json.loads(call_path.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    build.returncode,
+                    0,
+                    build.stdout + build.stderr + "\n" + json.dumps(call_ir.get("errors"), indent=2),
+                )
+                self.assertFalse(call_ir.get("errors"), call_ir.get("errors"))
+                ops = call_ir.get("operations", call_ir.get("ops", []))
+                farskip = [op for op in ops if op.get("op") == "farskip_routed_shared_combine"]
+                self.assertEqual(len(farskip), 1)
+                self.assertEqual(farskip[0].get("call_abi", {}).get("owner"), "kernel_map")
+
+            generated_c = out / "model_v8.c"
+            codegen = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "version" / "v8" / "scripts" / "codegen_v8.py"),
+                    "--ir", str(out / "call_decode.json"),
+                    "--layout", str(out / "layout_decode.json"),
+                    "--prefill", str(out / "call_prefill.json"),
+                    "--prefill-layout", str(out / "layout_prefill.json"),
+                    "--output", str(generated_c),
+                    "--strict-contracts",
+                ],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(codegen.returncode, 0, codegen.stdout + codegen.stderr)
+            source = generated_c.read_text(encoding="utf-8")
+            self.assertIn("farskip_swiglu_shared_combine_bf16", source)
+            syntax = subprocess.run(
+                [
+                    "cc", "-std=c11", "-fopenmp", "-fsyntax-only",
+                    "-Iinclude", "-Iversion/v8/src", str(generated_c),
+                ],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(syntax.returncode, 0, syntax.stdout + syntax.stderr)
 
 
 if __name__ == "__main__":

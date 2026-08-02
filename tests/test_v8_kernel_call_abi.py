@@ -45,11 +45,30 @@ sys.modules[SPEC.name] = build_ir_v8
 SPEC.loader.exec_module(build_ir_v8)
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
 def load_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(
+        path.read_text(encoding="utf-8"),
+        object_pairs_hook=_reject_duplicate_keys,
+    )
 
 
 class V8KernelCallABITests(unittest.TestCase):
+    def test_kernel_maps_reject_duplicate_json_keys(self) -> None:
+        for path in sorted(MAPS.glob("*.json")):
+            if path.name in EXCLUDED:
+                continue
+            with self.subTest(path=path.name):
+                load_json(path)
+
     def test_all_contract_governed_maps_own_valid_call_abi(self) -> None:
         validator = Draft202012Validator(load_json(SCHEMA))
         governed = 0

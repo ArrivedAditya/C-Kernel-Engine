@@ -722,12 +722,21 @@ def _instella_moe_refs(config: dict[str, Any], headers: dict[str, HeaderTensor])
     num_layers = int(text.get("num_hidden_layers") or 0)
     first_dense = int(text.get("first_k_dense_replace") or 0)
     moe_freq = max(1, int(text.get("moe_layer_freq") or 1))
-    adapted["layer_kinds"] = [
-        "mla_dense_mlp"
-        if layer < first_dense or (layer - first_dense) % moe_freq != 0
-        else "mla_moe"
-        for layer in range(num_layers)
-    ]
+    declared_kinds = list(config.get("layer_kinds") or [])
+    if declared_kinds:
+        # The runtime circuit uses richer topology names (first FarSkip versus
+        # continuation), while tensor mapping only needs dense versus MoE.
+        adapted["layer_kinds"] = [
+            "mla_dense_mlp" if "dense_mlp" in str(kind) else "mla_moe"
+            for kind in declared_kinds
+        ]
+    else:
+        adapted["layer_kinds"] = [
+            "mla_dense_mlp"
+            if layer < first_dense or (layer - first_dense) % moe_freq != 0
+            else "mla_moe"
+            for layer in range(num_layers)
+        ]
     return _kimi_vl_text_refs(
         adapted,
         headers,
@@ -1409,6 +1418,27 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
                 layer_kinds.append("mla_dense_mlp")
             else:
                 layer_kinds.append("mla_moe")
+        if arch == "instella_moe":
+            farskip_start = int(text.get("farskip_start_idx") or 0)
+            farskip_end = min(
+                int(text.get("farskip_end_idx") or num_layers - 1),
+                num_layers - 1,
+            )
+            first_farskip = True
+            for layer, kind in enumerate(layer_kinds):
+                if kind != "mla_moe" or not bool(text.get("farskip", False)):
+                    continue
+                if farskip_start <= layer <= farskip_end:
+                    layer_kinds[layer] = (
+                        "mla_gated_farskip_moe_first"
+                        if first_farskip
+                        else "mla_gated_farskip_moe"
+                    )
+                    first_farskip = False
+            layer_kinds = [
+                "mla_gated_dense_mlp" if kind == "mla_dense_mlp" else kind
+                for kind in layer_kinds
+            ]
         qk_nope = int(text.get("qk_nope_head_dim") or 0)
         qk_rope = int(text.get("qk_rope_head_dim") or 0)
         v_head = int(text.get("v_head_dim") or 0)
@@ -1419,8 +1449,8 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "layer_kinds": layer_kinds,
             "hybrid_block_pattern": layer_kinds[:],
             "layer_attention_policy": ["mla" for _ in layer_kinds],
-            "layer_moe_policy": ["routed_swiglu" if k == "mla_moe" else "none" for k in layer_kinds],
-            "layer_mlp_policy": ["swiglu" if k == "mla_dense_mlp" else "none" for k in layer_kinds],
+            "layer_moe_policy": ["routed_swiglu" if "moe" in k else "none" for k in layer_kinds],
+            "layer_mlp_policy": ["swiglu" if "dense_mlp" in k else "none" for k in layer_kinds],
             "layer_kv_policy": ["compressed_mla_kv" for _ in layer_kinds],
             "intermediate_dim": int(text.get("intermediate_size") or cfg.get("intermediate_size") or 0),
             "moe_intermediate_size": int(text.get("moe_intermediate_size") or 0),

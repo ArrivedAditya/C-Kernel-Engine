@@ -10949,66 +10949,6 @@
           "src/kernels/axpy_kernels.c"
         ]
       },
-      "call_abi": {
-        "version": 1,
-        "params": [
-          {
-            "name": "hidden",
-            "source": "activation:hidden",
-            "cast": "const float*"
-          },
-          {
-            "name": "routed",
-            "source": "activation:routed",
-            "cast": "const float*"
-          },
-          {
-            "name": "post_attn_residual",
-            "source": "activation:post_attn_residual",
-            "cast": "const float*"
-          },
-          {
-            "name": "shared_gate",
-            "source": "weight:shared_gate",
-            "cast": "const uint16_t*"
-          },
-          {
-            "name": "shared_up",
-            "source": "weight:shared_up",
-            "cast": "const uint16_t*"
-          },
-          {
-            "name": "shared_down",
-            "source": "weight:shared_down",
-            "cast": "const uint16_t*"
-          },
-          {
-            "name": "main_output",
-            "source": "output:main_output",
-            "cast": "float*"
-          },
-          {
-            "name": "routed_free_output",
-            "source": "output:routed_free_output",
-            "cast": "float*"
-          },
-          {
-            "name": "rows",
-            "source": "dim:R",
-            "cast": "int"
-          },
-          {
-            "name": "hidden_dim",
-            "source": "dim:H",
-            "cast": "int"
-          },
-          {
-            "name": "intermediate_dim",
-            "source": "dim:I",
-            "cast": "int"
-          }
-        ]
-      },
       "numerical_capabilities": [
         {
           "contract_id": "instella_farskip_bf16_shared_swiglu_fp32_two_stream",
@@ -11041,6 +10981,63 @@
           }
         }
       ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "hidden",
+            "source": "activation:hidden",
+            "cast": "const float*"
+          },
+          {
+            "name": "routed",
+            "source": "activation:routed",
+            "cast": "const float*"
+          },
+          {
+            "name": "post_attn_residual",
+            "source": "activation:post_attn_residual",
+            "cast": "const float*"
+          },
+          {
+            "name": "shared_gate",
+            "source": "weight:moe_shared_gate",
+            "cast": "const uint16_t*"
+          },
+          {
+            "name": "shared_up",
+            "source": "weight:moe_shared_up",
+            "cast": "const uint16_t*"
+          },
+          {
+            "name": "shared_down",
+            "source": "weight:moe_shared_down",
+            "cast": "const uint16_t*"
+          },
+          {
+            "name": "main_output",
+            "source": "output:main_output",
+            "cast": "float*"
+          },
+          {
+            "name": "routed_free_output",
+            "source": "output:routed_free_output",
+            "cast": "float*"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:seq_len"
+          },
+          {
+            "name": "hidden_dim",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "intermediate_dim",
+            "source": "dim:moe_shared_expert_intermediate_size"
+          }
+        ]
+      },
       "notes": "Instella FarSkip reference provider. Computes the BF16 shared SwiGLU once, then preserves PyTorch's routed+shared and residual+MLP FP32 addition boundaries while emitting routed-inclusive and routed-free streams.",
       "name": "farskip_swiglu_shared_combine_bf16",
       "_source_file": "farskip_swiglu_shared_combine_bf16.json"
