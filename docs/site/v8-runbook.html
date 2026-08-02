@@ -1356,6 +1356,10 @@ V8_NEMOTRON9_MIN_MEM_GB=24 make test-v8-nemotron9-highmem</pre>
     <li><strong>AVX-512 VNNI x16 Q4_K prefill projections.</strong> The existing <code>Q4_K x Q8_K</code> AVX-512 VNNI x16 provider is used for the measured Qwen3.6 prefill projection shapes, and the packed weights are prepared during model loading instead of being charged to the first prompt.</li>
 </ol>
 
+<div class="img-container svg-viewer" data-title="Qwen3.6 exact batched prefill: what PR #277 changed">
+    <img src="assets/qwen36-exact-batched-prefill.svg" alt="Before and after diagram of the Qwen3.6 optimized prefill lane: serial head execution with per-token dispatch and first-prompt weight packing at 6682.61 ms and 4.34 tok/s, versus value heads partitioned across the threadpool once per prompt with AVX-512 VNNI x16 weights packed at load at 2588.18 ms and 11.20 tok/s, with a bar chart of the three measured configurations">
+</div>
+
 <div class="card card-accent">
     <h3 style="margin-top: 0;">Test The Optimized Lane</h3>
     <div class="cmd-block">
