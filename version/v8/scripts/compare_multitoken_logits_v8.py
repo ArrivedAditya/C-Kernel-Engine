@@ -17,6 +17,7 @@ import json
 import multiprocessing
 import os
 from pathlib import Path
+import re
 import traceback
 from typing import Any
 
@@ -68,6 +69,7 @@ def load_ck_greedy_trajectory(
     dump_names: str = "",
     dump_format: str = "hidden",
     dump_kv_layer: int | None = None,
+    forced_tokens: list[int] | None = None,
 ) -> dict[str, Any]:
     capture_step = None if dump_step is None else int(dump_step)
     if capture_step is not None:
@@ -225,16 +227,25 @@ def load_ck_greedy_trajectory(
         rows: list[np.ndarray] = []
         generated: list[int] = []
         stops = {int(token) for token in (stop_token_ids or set())}
+        teacher = [int(token) for token in (forced_tokens or [])]
+        if teacher and len(teacher) < max(0, int(max_new_tokens) - 1):
+            raise ValueError(
+                "forced_tokens must provide every decoded token before the final prediction"
+            )
         for step in range(int(max_new_tokens)):
             logits = read_logits()
             token = int(np.argmax(logits))
             rows.append(logits)
             generated.append(token)
-            if token in stops or step + 1 >= int(max_new_tokens):
+            forced_stop = bool(
+                teacher and step < len(teacher) and teacher[step] in stops
+            )
+            if ((not teacher and token in stops) or forced_stop or step + 1 >= int(max_new_tokens)):
                 break
+            decode_token = teacher[step] if teacher else token
             if capture_step == step + 1:
                 set_capture_enabled(True)
-            if lib.ck_model_decode(ctypes.c_int32(token), None) != 0:
+            if lib.ck_model_decode(ctypes.c_int32(decode_token), None) != 0:
                 raise RuntimeError(f"ck_model_decode failed at greedy step {step}")
             if capture_step == step + 1:
                 set_capture_enabled(False)
@@ -261,6 +272,7 @@ def load_ck_greedy_trajectory(
         return {
             "logits": np.stack(rows),
             "generated_tokens": generated,
+            "forced_tokens": teacher,
             "vocab": vocab,
             "init_dir": str(init_dir),
             "runtime": {
@@ -303,6 +315,7 @@ def _load_ck_greedy_trajectory_worker(
     dump_names: str,
     dump_format: str,
     dump_kv_layer: int | None,
+    forced_tokens: list[int] | None,
 ) -> None:
     try:
         thread_environment = _configure_ck_threads(threads)
@@ -318,6 +331,7 @@ def _load_ck_greedy_trajectory_worker(
             dump_names=dump_names,
             dump_format=dump_format,
             dump_kv_layer=dump_kv_layer,
+            forced_tokens=forced_tokens,
         )
         result["thread_environment"] = thread_environment
         connection.send(("ok", result))
@@ -341,6 +355,7 @@ def load_ck_greedy_trajectory_isolated(
     dump_names: str = "",
     dump_format: str = "hidden",
     dump_kv_layer: int | None = None,
+    forced_tokens: list[int] | None = None,
 ) -> dict[str, Any]:
     """Capture CK logits in a short-lived process so model mappings are released."""
     context = multiprocessing.get_context("fork")
@@ -361,6 +376,7 @@ def load_ck_greedy_trajectory_isolated(
             dump_names,
             dump_format,
             dump_kv_layer,
+            forced_tokens,
         ),
     )
     process.start()
@@ -382,6 +398,220 @@ def load_ck_greedy_trajectory_isolated(
     if status != "ok":
         raise RuntimeError(f"isolated CK trajectory failed:\n{payload}")
     return payload
+
+
+def _compare_ck_trajectory_identity(
+    reference: dict[str, Any],
+    candidate: dict[str, Any],
+    top_k: int,
+) -> dict[str, Any]:
+    """Compare two CKE runs on an identical forced causal history."""
+    a = np.asarray(reference.get("logits"), dtype=np.float32)
+    b = np.asarray(candidate.get("logits"), dtype=np.float32)
+    result: dict[str, Any] = {
+        "contract": "bit_exact_full_logits_same_forced_prefix",
+        "reference_shape": list(a.shape),
+        "candidate_shape": list(b.shape),
+        "exact": False,
+        "first_different_step": None,
+    }
+    if a.shape != b.shape:
+        result["status"] = "shape_mismatch"
+        return result
+    a_bits = np.ascontiguousarray(a).view(np.uint32)
+    b_bits = np.ascontiguousarray(b).view(np.uint32)
+    if np.array_equal(a_bits, b_bits):
+        result.update({"status": "pass", "exact": True})
+        return result
+
+    result["status"] = "fail"
+    differing = np.flatnonzero(np.any(a_bits != b_bits, axis=1))
+    step = int(differing[0]) if differing.size else 0
+    comparison = compare_logits(a[step], b[step], int(top_k))
+    result.update({
+        "first_different_step": step,
+        "cosine": float(comparison["cosine"]),
+        "rmse": float(comparison["rmse"]),
+        "mean_abs_diff": float(comparison["mean_abs_diff"]),
+        "max_abs_diff": float(comparison["max_abs_diff"]),
+        "top1_reference": int(comparison["top1_ck"]),
+        "top1_candidate": int(comparison["top1_llama"]),
+        "top1_match": bool(comparison["top1_ck"] == comparison["top1_llama"]),
+    })
+    return result
+
+
+def _capture_boundary_names(dump_names: str) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for raw in str(dump_names).split(","):
+        name = raw.strip()
+        if not name or name in seen:
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+            raise ValueError(f"unsafe CK capture boundary name: {name!r}")
+        seen.add(name)
+        names.append(name)
+    return names
+
+
+def _require_empty_capture_dir(path: Path) -> Path:
+    resolved = path.resolve()
+    if resolved.exists() and any(resolved.iterdir()):
+        raise ValueError(
+            f"CK dump directory must be empty to prevent stale evidence: {resolved}"
+        )
+    resolved.mkdir(parents=True, exist_ok=True)
+    return resolved
+
+
+def run_ck_capture_with_neutrality(
+    *,
+    model_dir: Path,
+    prompt_tokens: list[int],
+    max_new_tokens: int,
+    top_k: int,
+    threads: int,
+    runtime_so: Path | None,
+    dump_step: int,
+    dump_dir: Path,
+    dump_layer: int | None,
+    dump_names: str,
+    dump_format: str,
+    dump_kv_layer: int | None,
+    stop_token_ids: set[int],
+    forced_tokens: list[int] | None = None,
+) -> dict[str, Any]:
+    """Capture CKE checkpoints only after proving observer neutrality.
+
+    Two uncaptured runs first establish that the runtime is repeatable on the
+    same causal history. The aggregate capture is then compared bit-for-bit to
+    that control. A non-neutral multi-boundary capture falls back to one replay
+    per boundary; rejected artifacts remain explicitly labelled in the report.
+    """
+    root = _require_empty_capture_dir(dump_dir)
+    boundaries = _capture_boundary_names(dump_names)
+
+    control_a = load_ck_greedy_trajectory_isolated(
+        model_dir=model_dir,
+        prompt_tokens=prompt_tokens,
+        max_new_tokens=max_new_tokens,
+        stop_token_ids=stop_token_ids,
+        threads=threads,
+        runtime_so=runtime_so,
+        forced_tokens=forced_tokens,
+    )
+    replay_tokens = (
+        [int(token) for token in forced_tokens]
+        if forced_tokens
+        else [int(token) for token in control_a["generated_tokens"]]
+    )
+    replay_steps = min(int(max_new_tokens), len(replay_tokens))
+    control_b = load_ck_greedy_trajectory_isolated(
+        model_dir=model_dir,
+        prompt_tokens=prompt_tokens,
+        max_new_tokens=replay_steps,
+        stop_token_ids=stop_token_ids,
+        threads=threads,
+        runtime_so=runtime_so,
+        forced_tokens=replay_tokens,
+    )
+    repeatability = _compare_ck_trajectory_identity(control_a, control_b, top_k)
+    neutrality: dict[str, Any] = {
+        "schema": "cke.xray.capture-neutrality.v1",
+        "acceptance_contract": "bit_exact_full_logits_same_forced_prefix",
+        "baseline_repeatability": repeatability,
+        "aggregate_capture": None,
+        "fallback": {"attempted": False, "boundaries": []},
+        "accepted_mode": None,
+        "status": "rejected",
+    }
+    if not repeatability["exact"]:
+        neutrality["reason"] = "uncaptured_runtime_is_not_repeatable"
+        control_b["capture"] = {"neutrality": neutrality, "artifacts": []}
+        return control_b
+
+    aggregate = load_ck_greedy_trajectory_isolated(
+        model_dir=model_dir,
+        prompt_tokens=prompt_tokens,
+        max_new_tokens=replay_steps,
+        stop_token_ids=stop_token_ids,
+        threads=threads,
+        runtime_so=runtime_so,
+        dump_step=dump_step,
+        dump_dir=root,
+        dump_layer=dump_layer,
+        dump_names=dump_names,
+        dump_format=dump_format,
+        dump_kv_layer=dump_kv_layer,
+        forced_tokens=replay_tokens,
+    )
+    aggregate_comparison = _compare_ck_trajectory_identity(control_b, aggregate, top_k)
+    neutrality["aggregate_capture"] = aggregate_comparison
+    aggregate_artifacts = list((aggregate.get("capture") or {}).get("artifacts") or [])
+    if aggregate_comparison["exact"]:
+        neutrality.update({"status": "accepted", "accepted_mode": "aggregate"})
+        aggregate["capture"]["neutrality"] = neutrality
+        return aggregate
+
+    if len(boundaries) <= 1 or dump_kv_layer is not None or dump_format != "hidden":
+        neutrality["reason"] = "single_capture_is_not_observationally_neutral"
+        control_b["capture"] = {
+            "neutrality": neutrality,
+            "rejected_artifacts": aggregate_artifacts,
+            "artifacts": [],
+        }
+        return control_b
+
+    neutrality["fallback"]["attempted"] = True
+    accepted_artifacts: list[dict[str, Any]] = []
+    all_neutral = True
+    isolated_root = root / "isolated"
+    isolated_root.mkdir(parents=True, exist_ok=True)
+    for index, boundary in enumerate(boundaries):
+        boundary_dir = isolated_root / f"{index:03d}_{boundary}"
+        isolated = load_ck_greedy_trajectory_isolated(
+            model_dir=model_dir,
+            prompt_tokens=prompt_tokens,
+            max_new_tokens=replay_steps,
+            stop_token_ids=stop_token_ids,
+            threads=threads,
+            runtime_so=runtime_so,
+            dump_step=dump_step,
+            dump_dir=boundary_dir,
+            dump_layer=dump_layer,
+            dump_names=boundary,
+            dump_format="hidden",
+            forced_tokens=replay_tokens,
+        )
+        comparison = _compare_ck_trajectory_identity(control_b, isolated, top_k)
+        artifacts = list((isolated.get("capture") or {}).get("artifacts") or [])
+        accepted = bool(comparison["exact"])
+        all_neutral = all_neutral and accepted
+        if accepted:
+            accepted_artifacts.extend(artifacts)
+        neutrality["fallback"]["boundaries"].append({
+            "name": boundary,
+            "status": "accepted" if accepted else "rejected",
+            "comparison": comparison,
+            "artifacts": artifacts,
+        })
+
+    if all_neutral:
+        neutrality.update({"status": "accepted", "accepted_mode": "isolated_boundaries"})
+    else:
+        neutrality["reason"] = "one_or_more_isolated_boundaries_are_not_neutral"
+    control_b["capture"] = {
+        "execution_mode": "persistent_greedy_trajectory",
+        "step": int(dump_step),
+        "layer": dump_layer,
+        "op_filter": dump_names,
+        "format": dump_format,
+        "neutrality": neutrality,
+        "rejected_artifacts": aggregate_artifacts,
+        "artifacts": accepted_artifacts if all_neutral else [],
+    }
+    return control_b
 
 
 def run_multitoken_trajectory_parity(
@@ -407,25 +637,41 @@ def run_multitoken_trajectory_parity(
     llama_dump_names: str = "",
     llama_dump_flash_inputs: bool = False,
     llama_profile_layers_out: Path | None = None,
+    append_on_divergence: str = "stop",
 ) -> dict[str, Any]:
     stops = {int(token) for token in (stop_token_ids or set())}
-    # CK must run first: a completed llama.cpp process can leave enough GGUF
-    # page cache charged to a tight cgroup to OOM the 27B CK runtime. Isolating
-    # CK also guarantees its mmap and thread-pool lifetime ends before llama.
-    ck = load_ck_greedy_trajectory_isolated(
-        model_dir=model_dir,
-        prompt_tokens=prompt_tokens,
-        max_new_tokens=max_new_tokens,
-        stop_token_ids=stops,
-        threads=threads,
-        runtime_so=ck_runtime_so,
-        dump_step=ck_dump_step,
-        dump_dir=ck_dump_dir,
-        dump_layer=ck_dump_layer,
-        dump_names=ck_dump_names,
-        dump_format=ck_dump_format,
-        dump_kv_layer=ck_dump_kv_layer,
-    )
+    if append_on_divergence not in {"stop", "llama"}:
+        raise ValueError("persistent trajectory supports stop or llama teacher forcing")
+    ck: dict[str, Any] | None = None
+    if append_on_divergence == "stop":
+        # Keep the lower-memory certification order: release CKE's mappings
+        # before llama.cpp brings the GGUF into its page cache.
+        if ck_dump_step is not None:
+            assert ck_dump_dir is not None
+            ck = run_ck_capture_with_neutrality(
+                model_dir=model_dir,
+                prompt_tokens=prompt_tokens,
+                max_new_tokens=max_new_tokens,
+                top_k=top_k,
+                threads=threads,
+                runtime_so=ck_runtime_so,
+                dump_step=ck_dump_step,
+                dump_dir=ck_dump_dir,
+                dump_layer=ck_dump_layer,
+                dump_names=ck_dump_names,
+                dump_format=ck_dump_format,
+                dump_kv_layer=ck_dump_kv_layer,
+                stop_token_ids=stops,
+            )
+        else:
+            ck = load_ck_greedy_trajectory_isolated(
+                model_dir=model_dir,
+                prompt_tokens=prompt_tokens,
+                max_new_tokens=max_new_tokens,
+                stop_token_ids=stops,
+                threads=threads,
+                runtime_so=ck_runtime_so,
+            )
     llama = run_llama_greedy_trajectory(
         gguf_path,
         prompt_tokens,
@@ -440,6 +686,40 @@ def run_multitoken_trajectory_parity(
         dump_flash_inputs=llama_dump_flash_inputs,
         profile_layers_out=llama_profile_layers_out,
     )
+    # Teacher forcing needs the oracle sequence before CKE starts. Both model
+    # mappings are still isolated in separate processes; only the small token
+    # sequence crosses the boundary.
+    if append_on_divergence == "llama":
+        teacher = [int(token) for token in llama["generated_tokens"]]
+        if ck_dump_step is not None:
+            assert ck_dump_dir is not None
+            ck = run_ck_capture_with_neutrality(
+                model_dir=model_dir,
+                prompt_tokens=prompt_tokens,
+                max_new_tokens=max_new_tokens,
+                top_k=top_k,
+                threads=threads,
+                runtime_so=ck_runtime_so,
+                dump_step=ck_dump_step,
+                dump_dir=ck_dump_dir,
+                dump_layer=ck_dump_layer,
+                dump_names=ck_dump_names,
+                dump_format=ck_dump_format,
+                dump_kv_layer=ck_dump_kv_layer,
+                stop_token_ids=stops,
+                forced_tokens=teacher,
+            )
+        else:
+            ck = load_ck_greedy_trajectory_isolated(
+                model_dir=model_dir,
+                prompt_tokens=prompt_tokens,
+                max_new_tokens=max_new_tokens,
+                stop_token_ids=stops,
+                threads=threads,
+                runtime_so=ck_runtime_so,
+                forced_tokens=teacher,
+            )
+    assert ck is not None
     steps: list[dict[str, Any]] = []
     first_divergence: dict[str, Any] | None = None
     matched_stop_token: int | None = None
@@ -468,16 +748,22 @@ def run_multitoken_trajectory_parity(
         }
         steps.append(row)
         if ck_next != llama_next:
-            first_divergence = row
-            break
+            if first_divergence is None:
+                first_divergence = row
+            if append_on_divergence == "stop":
+                break
         if ck_next in stops:
             matched_stop_token = ck_next
             break
 
-    generated_prefix = [int(token) for token in ck["generated_tokens"][: len(steps)]]
+    generated_prefix = (
+        [int(token) for token in llama["generated_tokens"][: len(steps)]]
+        if append_on_divergence == "llama"
+        else [int(token) for token in ck["generated_tokens"][: len(steps)]]
+    )
     # A shared token belongs to the causal prefix. A stop token or divergent
     # prediction was compared but was not decoded by both runtimes.
-    if (matched_stop_token is not None or first_divergence is not None) and generated_prefix:
+    if (matched_stop_token is not None or (first_divergence is not None and append_on_divergence == "stop")) and generated_prefix:
         generated_prefix.pop()
     return {
         "status": "pass" if first_divergence is None else "fail",
@@ -495,6 +781,7 @@ def run_multitoken_trajectory_parity(
         "ck_capture": dict(ck.get("capture", {})),
         "llama_capture": dict(llama.get("capture", {})),
         "execution_mode": "persistent_greedy_trajectory",
+        "trajectory_policy": "llama_teacher_forced" if append_on_divergence == "llama" else "shared_until_divergence",
         "ck_prefill_mode": "hybrid",
         "llama_decode_mode": "hybrid",
         "llama_no_repack": bool(llama_no_repack),
@@ -763,8 +1050,10 @@ def main() -> int:
         llama_decode_mode = "hybrid" if prefill_policy == "sequential_decode" else "batched"
     stop_tokens = set(parse_tokens_csv(args.stop_tokens)) if str(args.stop_tokens).strip() else set()
     if args.execution_mode == "trajectory":
-        if args.append_on_divergence != "stop":
-            raise ValueError("trajectory execution requires --append-on-divergence stop")
+        if args.append_on_divergence not in {"stop", "llama"}:
+            raise ValueError(
+                "trajectory execution supports stopping at divergence or llama teacher forcing"
+            )
         if args.ck_prefill_mode not in {"auto", "hybrid"} or llama_decode_mode != "hybrid":
             raise ValueError("trajectory execution requires hybrid CK and llama schedules")
         if args.ck_dump_step is not None and args.ck_dump_dir is None:
@@ -793,6 +1082,7 @@ def main() -> int:
             llama_dump_names=args.llama_dump_names,
             llama_dump_flash_inputs=bool(args.llama_dump_flash_inputs),
             llama_profile_layers_out=args.llama_profile_layers_out,
+            append_on_divergence=str(args.append_on_divergence),
         )
     else:
         report = run_multitoken_parity(
@@ -813,6 +1103,7 @@ def main() -> int:
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    neutrality = ((report.get("ck_capture") or {}).get("neutrality") or None)
     if args.summary:
         first = report.get("first_divergence")
         if first:
@@ -837,8 +1128,22 @@ def main() -> int:
                 f"steps={len(report.get('steps', []))} "
                 f"final_prefix_len={len(report.get('final_prefix', []))}"
             )
+        if neutrality is not None:
+            repeatability = neutrality.get("baseline_repeatability") or {}
+            aggregate = neutrality.get("aggregate_capture") or {}
+            print(
+                f"xray_status={neutrality.get('status')} "
+                f"accepted_mode={neutrality.get('accepted_mode')} "
+                f"reason={neutrality.get('reason')} "
+                f"baseline_exact={repeatability.get('exact')} "
+                f"baseline_first_different_step={repeatability.get('first_different_step')} "
+                f"capture_exact={aggregate.get('exact')} "
+                f"capture_first_different_step={aggregate.get('first_different_step')}"
+            )
     else:
         print(json.dumps(report))
+    if neutrality is not None and neutrality.get("status") != "accepted":
+        return 4
     return 0 if report.get("pass") else 3
 
 
