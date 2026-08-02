@@ -227,6 +227,24 @@ def extract_llama_text(output: str) -> str:
     return clean.strip()
 
 
+def classify_text_result(
+    result: dict[str, Any],
+    timing: dict[str, Any] | None,
+    generated_text: str,
+    *,
+    require_decode_count: bool,
+) -> tuple[str, str]:
+    if int(result.get("returncode", -1)) != 0:
+        return "fail", "runtime_error"
+    if not timing:
+        return "fail", "missing_timing"
+    if require_decode_count and int(timing.get("decode_tokens", 0) or 0) <= 0:
+        return "fail", "no_decoded_tokens"
+    if not str(generated_text or "").strip():
+        return "fail", "empty_generated_text"
+    return "pass", ""
+
+
 def runtime_provenance(spec: dict[str, Any]) -> dict[str, str]:
     cache = Path(spec["cache"])
     files = {
@@ -296,14 +314,18 @@ def run_text_cke(args: argparse.Namespace, report_path: Path, report: dict[str, 
                     ]
                     result = run(cmd, scheduler_env(args.threads), args.timeout)
                     timing = parse_ck_timing(result["output"])
+                    generated_text = extract_ck_text(result["output"])
+                    status, failure_reason = classify_text_result(
+                        result, timing, generated_text, require_decode_count=True
+                    )
                     append(report_path, report, {
                         "case_key": case_key, "lane": "text", "backend": "cke",
                         "model_key": model_key, "model": spec["name"],
                         "prompt_key": prompt_key, "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
                         "schedule": schedule, "repetition": rep,
-                        "status": "pass" if result["returncode"] == 0 and timing else "fail",
+                        "status": status, "failure_reason": failure_reason,
                         "wall_seconds": result["wall_seconds"], "timing": timing,
-                        "generated_text": extract_ck_text(result["output"]),
+                        "generated_text": generated_text,
                         "output_tail": result["output"][-4000:], "provenance": provenance,
                     })
 
@@ -331,13 +353,17 @@ def run_text_llama(args: argparse.Namespace, report_path: Path, report: dict[str
             ]
             result = run(cmd, env, args.timeout)
             timing = parse_llama_timing(result["output"])
+            generated_text = extract_llama_text(result["output"])
+            status, failure_reason = classify_text_result(
+                result, timing, generated_text, require_decode_count=False
+            )
             append(report_path, report, {
                 "case_key": case_key, "lane": "text", "backend": "llama.cpp",
                 "model_key": model_key, "model": spec["name"],
                 "prompt_key": prompt_key, "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
-                "schedule": "llama", "status": "pass" if result["returncode"] == 0 and timing else "fail",
+                "schedule": "llama", "status": status, "failure_reason": failure_reason,
                 "wall_seconds": result["wall_seconds"], "timing": timing,
-                "generated_text": extract_llama_text(result["output"]),
+                "generated_text": generated_text,
                 "output_tail": result["output"][-4000:],
                 "provenance": {"commit": commit, "gguf_sha256": gguf_hash},
             })

@@ -427,15 +427,23 @@ static int test_dynamic_parallel_for(void)
     const int begin = 11;
     const int end = begin + PARALLEL_FOR_N;
     const int grains[] = {1, 7, 64, PARALLEL_FOR_N + 10};
-    for (size_t g = 0; g < sizeof(grains) / sizeof(grains[0]); g++) {
-        for (int i = 0; i < PARALLEL_FOR_N; i++) {
-            atomic_store(&g_parallel_for_hits[i], 0);
-        }
-        ck_threadpool_parallel_for_n(
-            pool, 4, begin, end, grains[g], parallel_for_range, (void *)&begin);
-        for (int i = 0; i < PARALLEL_FOR_N; i++) {
-            TEST_ASSERT(atomic_load(&g_parallel_for_hits[i]) == 1,
-                        "dynamic range item executed exactly once");
+    const int active_widths[] = {2, 3, 4};
+    for (int repeat = 0; repeat < 100; repeat++) {
+        for (size_t width = 0;
+             width < sizeof(active_widths) / sizeof(active_widths[0]);
+             width++) {
+            for (size_t g = 0; g < sizeof(grains) / sizeof(grains[0]); g++) {
+                for (int i = 0; i < PARALLEL_FOR_N; i++) {
+                    atomic_store(&g_parallel_for_hits[i], 0);
+                }
+                ck_threadpool_parallel_for_n(
+                    pool, active_widths[width], begin, end, grains[g],
+                    parallel_for_range, (void *)&begin);
+                for (int i = 0; i < PARALLEL_FOR_N; i++) {
+                    TEST_ASSERT(atomic_load(&g_parallel_for_hits[i]) == 1,
+                                "dynamic range item executed exactly once");
+                }
+            }
         }
     }
 
