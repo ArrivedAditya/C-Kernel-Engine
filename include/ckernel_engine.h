@@ -2971,6 +2971,17 @@ void moe_swiglu_shared_forward_bf16(const float *hidden,
                                     int rows,
                                     int hidden_dim,
                                     int intermediate_dim);
+void farskip_swiglu_shared_combine_bf16(const float *hidden,
+                                        const float *routed,
+                                        const float *post_attn_residual,
+                                        const uint16_t *shared_gate,
+                                        const uint16_t *shared_up,
+                                        const uint16_t *shared_down,
+                                        float *main_output,
+                                        float *routed_free_output,
+                                        int rows,
+                                        int hidden_dim,
+                                        int intermediate_dim);
 
 void group_limited_topk_router_sigmoid_f32(const float *logits,
                                            const float *correction_bias,

@@ -13,6 +13,84 @@ SCRIPT = REPO / "version/v8/scripts/inspect_model_contract_v8.py"
 AUDIT_SCRIPT = REPO / "version/v8/scripts/audit_safetensors_index_v8.py"
 
 
+def _instella_config() -> dict:
+    return {
+        "architectures": ["InstellaMoEForCausalLM"],
+        "model_type": "deepseek_v3",
+        "farskip": True,
+        "gated_attention": True,
+        "hidden_size": 2048,
+        "intermediate_size": 10944,
+        "moe_intermediate_size": 1408,
+        "num_hidden_layers": 27,
+        "num_attention_heads": 16,
+        "num_key_value_heads": 16,
+        "first_k_dense_replace": 1,
+        "moe_layer_freq": 1,
+        "n_routed_experts": 64,
+        "n_shared_experts": 2,
+        "num_experts_per_tok": 6,
+        "n_group": 1,
+        "topk_group": 1,
+        "norm_topk_prob": True,
+        "scoring_func": "sigmoid",
+        "topk_method": "noaux_tc",
+        "routed_scaling_factor": 2.5,
+        "kv_lora_rank": 512,
+        "qk_nope_head_dim": 96,
+        "qk_rope_head_dim": 32,
+        "v_head_dim": 128,
+        "rope_interleave": True,
+        "rope_scaling": {"type": "yarn", "factor": 40},
+    }
+
+
+def _instella_index() -> dict:
+    shard_names = [f"model-{index:05d}-of-00006.safetensors" for index in range(1, 7)]
+    names = ["model.embed_tokens.weight", "model.norm.weight", "lm_head.weight"]
+    for layer in range(27):
+        prefix = f"model.layers.{layer}"
+        names.extend([
+            f"{prefix}.input_layernorm.weight",
+            f"{prefix}.post_attention_layernorm.weight",
+            f"{prefix}.self_attn.q_proj.weight",
+            f"{prefix}.self_attn.kv_a_proj_with_mqa.weight",
+            f"{prefix}.self_attn.kv_a_layernorm.weight",
+            f"{prefix}.self_attn.kv_b_proj.weight",
+            f"{prefix}.self_attn.gate_proj.weight",
+            f"{prefix}.self_attn.o_proj.weight",
+        ])
+        if layer == 0:
+            names.extend([
+                f"{prefix}.mlp.gate_proj.weight",
+                f"{prefix}.mlp.up_proj.weight",
+                f"{prefix}.mlp.down_proj.weight",
+            ])
+            continue
+        names.extend([
+            f"{prefix}.mlp.gate.weight",
+            f"{prefix}.mlp.gate.e_score_correction_bias",
+            f"{prefix}.mlp.shared_experts.gate_proj.weight",
+            f"{prefix}.mlp.shared_experts.up_proj.weight",
+            f"{prefix}.mlp.shared_experts.down_proj.weight",
+        ])
+        for expert in range(64):
+            expert_prefix = f"{prefix}.mlp.experts.{expert}"
+            names.extend([
+                f"{expert_prefix}.gate_proj.weight",
+                f"{expert_prefix}.up_proj.weight",
+                f"{expert_prefix}.down_proj.weight",
+            ])
+    assert len(names) == 5344
+    return {
+        "metadata": {"total_size": 31725581824},
+        "weight_map": {
+            name: shard_names[index % len(shard_names)]
+            for index, name in enumerate(names)
+        },
+    }
+
+
 class ModelContractInspectorTests(unittest.TestCase):
     def test_nemotron_h_reports_supported_config_after_mamba2_reference_kernels(self) -> None:
         cfg = {
@@ -196,6 +274,73 @@ class ModelContractInspectorTests(unittest.TestCase):
         self.assertNotIn("kv_lora_decompress_contract", report["missing_ops"])
         self.assertNotIn("kimi_vl_template_contract", report["missing_ops"])
         self.assertNotIn("v8_template_contract", report["missing_ops"])
+
+    def test_instella_is_not_misclassified_as_stock_deepseek_v3(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "config.json"
+            path.write_text(json.dumps(_instella_config()), encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, str(SCRIPT), str(path)],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["arch"], "instella_moe")
+        self.assertEqual(report["model_type"], "deepseek_v3")
+        self.assertEqual(
+            report["layer_kind_counts"],
+            {"mla_gated_dense_mlp": 1, "mla_gated_farskip_moe": 26},
+        )
+        self.assertIn("attention_gate_sigmoid_mul", report["required_ops"])
+        self.assertIn("farskip_two_stream_residual", report["missing_ops"])
+        self.assertNotIn("farskip_routed_shared_combine", report["missing_ops"])
+        self.assertIn("mla_interleaved_yarn_contract", report["missing_ops"])
+        self.assertNotIn("safetensors_to_bump_mapping", report["missing_ops"])
+        self.assertNotIn("v8_template_contract", report["missing_ops"])
+
+    def test_real_instella_index_shape_contract_is_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "model.safetensors.index.json"
+            path.write_text(json.dumps(_instella_index()), encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, str(AUDIT_SCRIPT), str(path), "--arch", "instella_moe"],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["status"], "pass")
+        self.assertEqual(report["tensor_count"], 5344)
+        self.assertEqual(report["shard_count"], 6)
+        self.assertEqual(report["layer_count"], 27)
+        self.assertEqual(report["required_tensor_patterns"]["missing"], [])
+        self.assertEqual(report["declared_index_contract"]["failures"], [])
+        self.assertEqual(report["layers"]["0"]["expert_count"], 0)
+        self.assertEqual(report["layers"]["26"]["expert_count"], 64)
+
+    def test_instella_index_contract_rejects_missing_expert(self) -> None:
+        index = _instella_index()
+        del index["weight_map"]["model.layers.26.mlp.experts.63.down_proj.weight"]
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "model.safetensors.index.json"
+            path.write_text(json.dumps(index), encoding="utf-8")
+            proc = subprocess.run(
+                [sys.executable, str(AUDIT_SCRIPT), str(path), "--arch", "instella_moe"],
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["status"], "fail")
+        failures = report["declared_index_contract"]["failures"]
+        self.assertTrue(any("tensor_count" in row for row in failures))
 
     def test_safetensors_index_audit_classifies_kimi_mla_moe_families(self) -> None:
         index = {

@@ -169,6 +169,56 @@ def _validate_required_patterns(weight_names: list[str], contract: dict[str, Any
         "patterns": rows,
     }
 
+
+def _validate_declared_index_contract(
+    *,
+    tensor_count: int,
+    shard_count: int,
+    layers: dict[int, Counter[str]],
+    expert_ids: dict[int, set[int]],
+    contract: dict[str, Any],
+) -> dict[str, Any] | None:
+    declared = contract.get("index_contract")
+    if not isinstance(declared, dict):
+        return None
+    failures: list[str] = []
+
+    def require_equal(key: str, actual: int) -> None:
+        if key not in declared:
+            return
+        expected = int(declared[key])
+        if actual != expected:
+            failures.append(f"{key}: expected {expected}, observed {actual}")
+
+    require_equal("tensor_count", tensor_count)
+    require_equal("shard_count", shard_count)
+    require_equal("layer_count", len(layers))
+
+    dense_prefix = int(declared.get("dense_prefix_layers") or 0)
+    experts_per_layer = int(declared.get("moe_experts_per_layer") or 0)
+    if experts_per_layer > 0:
+        for layer in sorted(layers):
+            observed = expert_ids.get(layer, set())
+            if layer < dense_prefix:
+                if observed:
+                    failures.append(
+                        f"layer {layer}: dense prefix unexpectedly has {len(observed)} experts"
+                    )
+                continue
+            expected_ids = set(range(experts_per_layer))
+            if observed != expected_ids:
+                missing = sorted(expected_ids - observed)
+                extra = sorted(observed - expected_ids)
+                failures.append(
+                    f"layer {layer}: expected expert ids 0..{experts_per_layer - 1}; "
+                    f"missing={missing} extra={extra}"
+                )
+    return {
+        "status": "pass" if not failures else "fail",
+        "declared": declared,
+        "failures": failures,
+    }
+
 def audit_index(path: Path, arch: str | None = None, model_map_path: Path = DEFAULT_SAFETENSORS_CK_MAP) -> dict[str, Any]:
     data = _load_index(path)
     wm = data["weight_map"]
@@ -197,6 +247,13 @@ def audit_index(path: Path, arch: str | None = None, model_map_path: Path = DEFA
     model_map = _load_model_map(model_map_path)
     contract = _arch_contract(model_map, arch)
     required = _validate_required_patterns(weight_names, contract) if contract else None
+    declared_index = _validate_declared_index_contract(
+        tensor_count=len(wm),
+        shard_count=len(shards),
+        layers=layers,
+        expert_ids=expert_ids,
+        contract=contract,
+    ) if contract else None
     report = {
         "metadata": data.get("metadata", {}),
         "tensor_count": len(wm),
@@ -212,6 +269,10 @@ def audit_index(path: Path, arch: str | None = None, model_map_path: Path = DEFA
         if required is not None:
             report["required_tensor_patterns"] = required
             report["status"] = required["status"]
+            if declared_index is not None:
+                report["declared_index_contract"] = declared_index
+                if declared_index["status"] == "fail":
+                    report["status"] = "fail"
         elif contract:
             report["status"] = "pass"
         else:

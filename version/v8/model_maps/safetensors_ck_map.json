@@ -586,6 +586,56 @@
         }
       ]
     },
+    "instella_moe": {
+      "template": "instella_moe",
+      "family": "instella",
+      "aliases": [
+        "instella_moe",
+        "InstellaMoEForCausalLM"
+      ],
+      "status": "tensor_mapping_farskip_lowering_required",
+      "config": {
+        "model": "instella_moe",
+        "arch": "instella_moe",
+        "model_type": "instella_moe",
+        "attention_variant": "gated_mla",
+        "moe_formula": "sigmoid_router_topk6_routed_plus_two_shared_swiglu",
+        "residual_connectivity": "farskip_two_stream",
+        "prefill_policy": "batched"
+      },
+      "index_contract": {
+        "tensor_count": 5344,
+        "shard_count": 6,
+        "layer_count": 27,
+        "dense_prefix_layers": 1,
+        "moe_experts_per_layer": 64
+      },
+      "required_tensor_families": [
+        "model.embed_tokens.weight",
+        "model.layers.{L}.input_layernorm.weight",
+        "model.layers.{L}.post_attention_layernorm.weight",
+        "model.layers.{L}.self_attn.q_proj.weight",
+        "model.layers.{L}.self_attn.kv_a_proj_with_mqa.weight",
+        "model.layers.{L}.self_attn.kv_a_layernorm.weight",
+        "model.layers.{L}.self_attn.kv_b_proj.weight",
+        "model.layers.{L}.self_attn.gate_proj.weight",
+        "model.layers.{L}.self_attn.o_proj.weight",
+        "model.layers.0.mlp.gate_proj.weight",
+        "model.layers.0.mlp.up_proj.weight",
+        "model.layers.0.mlp.down_proj.weight",
+        "model.layers.{L}.mlp.gate.weight",
+        "model.layers.{L}.mlp.gate.e_score_correction_bias",
+        "model.layers.{L}.mlp.experts.{E}.gate_proj.weight",
+        "model.layers.{L}.mlp.experts.{E}.up_proj.weight",
+        "model.layers.{L}.mlp.experts.{E}.down_proj.weight",
+        "model.layers.{L}.mlp.shared_experts.gate_proj.weight",
+        "model.layers.{L}.mlp.shared_experts.up_proj.weight",
+        "model.layers.{L}.mlp.shared_experts.down_proj.weight",
+        "model.norm.weight",
+        "lm_head.weight"
+      ],
+      "notes": "Header/index and CK tensor-role mapping contract for AMD Instella-MoE. Layer 0 is dense, so MoE families are required only on MoE layers; the index auditor validates presence and per-layer expert counts. Runtime lowering remains fail-closed until the FarSkip circuit and interleaved-YaRN MLA contract are implemented."
+    },
     "kimi_vl": {
       "template": "kimi_vl",
       "family": "kimi",

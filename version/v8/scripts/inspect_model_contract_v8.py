@@ -21,7 +21,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[2]
 
 SUPPORTED_DENSE_ARCHES = {"llama", "qwen2", "qwen3", "gemma3"}
-SUPPORTED_HYBRID_ARCHES = {"qwen35", "gemma4", "nemotron_h", "kimi_vl"}
+SUPPORTED_HYBRID_ARCHES = {
+    "qwen35", "gemma4", "nemotron_h", "kimi_vl", "instella_moe",
+}
 
 
 def _load_json_file(path: Path) -> dict[str, Any]:
@@ -53,6 +55,11 @@ def _infer_arch(config: dict[str, Any]) -> str:
     text = _text_config(config)
     model_type = str(text.get("model_type") or config.get("model_type") or "").lower()
     architectures = " ".join(str(x).lower() for x in config.get("architectures", []))
+    # Instella deliberately publishes model_type=deepseek_v3 because it reuses
+    # Transformers' DeepSeek-V3 blocks.  Its architecture class is authoritative:
+    # gated MLA and FarSkip two-stream residuals are not stock DeepSeek-V3.
+    if "instellamoe" in architectures or "instella_moe" in architectures:
+        return "instella_moe"
     if "qwen3_5" in model_type or "qwen3.5" in model_type or "qwen35" in model_type:
         return "qwen35"
     if "nemotron_h" in model_type or "nemotronh" in architectures:
@@ -129,6 +136,22 @@ def _kimi_vl_layers(config: dict[str, Any]) -> list[str]:
     return kinds
 
 
+def _instella_moe_layers(config: dict[str, Any]) -> list[str]:
+    text = _text_config(config)
+    n = int(text.get("num_hidden_layers") or 0)
+    first_dense = int(text.get("first_k_dense_replace") or 0)
+    moe_freq = max(1, int(text.get("moe_layer_freq") or 1))
+    kinds: list[str] = []
+    for layer in range(n):
+        if layer < first_dense or (layer - first_dense) % moe_freq != 0:
+            kinds.append("mla_gated_dense_mlp")
+        elif bool(text.get("farskip", False)):
+            kinds.append("mla_gated_farskip_moe")
+        else:
+            kinds.append("mla_gated_moe")
+    return kinds
+
+
 def _layer_kinds(arch: str, config: dict[str, Any]) -> list[str]:
     text = _text_config(config)
     if arch == "nemotron_h":
@@ -139,6 +162,8 @@ def _layer_kinds(arch: str, config: dict[str, Any]) -> list[str]:
         return _gemma4_layers(config)
     if arch == "kimi_vl":
         return _kimi_vl_layers(config)
+    if arch == "instella_moe":
+        return _instella_moe_layers(config)
     return _generic_dense_layers(config)
 
 
@@ -146,7 +171,7 @@ def _required_ops(arch: str, config: dict[str, Any], layer_kinds: list[str]) -> 
     ops = {"embedding", "rmsnorm", "matmul", "residual_add", "logits"}
     if any(kind in {"attention", "full_attention", "sliding_attention", "attention_or_sliding_attention"} for kind in layer_kinds):
         ops.update({"attention", "rope"})
-    if any(kind in {"mla_dense_mlp", "mla_moe"} for kind in layer_kinds):
+    if any(kind.startswith("mla_") for kind in layer_kinds):
         ops.update({
             "mla_attention",
             "rope",
@@ -177,13 +202,17 @@ def _required_ops(arch: str, config: dict[str, Any], layer_kinds: list[str]) -> 
             "moe_relu2_expert_mlp",
             "shared_expert_mlp",
         })
-    if any(kind == "mla_moe" for kind in layer_kinds):
+    if any(kind in {"mla_moe", "mla_gated_moe", "mla_gated_farskip_moe"} for kind in layer_kinds):
         ops.update({
             "group_limited_topk_router",
             "sigmoid_router_scores",
             "moe_swiglu_expert_mlp",
             "shared_swiglu_expert_mlp",
         })
+    if any(kind.startswith("mla_gated_") for kind in layer_kinds):
+        ops.update({"attention_gate_projection", "attention_gate_sigmoid_mul"})
+    if any(kind == "mla_gated_farskip_moe" for kind in layer_kinds):
+        ops.update({"farskip_two_stream_residual", "farskip_routed_shared_combine"})
     act = str(_text_config(config).get("mlp_hidden_act") or _text_config(config).get("hidden_act") or "").lower()
     if act == "relu2":
         ops.add("relu2_mlp")
@@ -217,6 +246,12 @@ def _missing_ops(arch: str, required_ops: list[str]) -> list[str]:
             "mla_attention_contract",
             "tiktoken_tokenizer_contract",
             "moonvit_bridge_contract",
+        ])
+    if arch == "instella_moe":
+        missing.extend([
+            "instella_moe_template_contract",
+            "farskip_two_stream_residual",
+            "mla_interleaved_yarn_contract",
         ])
     if arch not in SUPPORTED_DENSE_ARCHES | SUPPORTED_HYBRID_ARCHES:
         missing.append("v8_template_contract")
@@ -265,6 +300,10 @@ def _registry_requirements_for_op(op: str) -> list[list[str]]:
         "shared_relu2_expert_mlp": [["shared_relu2_expert_mlp"]],
         "moe_swiglu_expert_mlp": [["moe_swiglu_expert_mlp"]],
         "shared_swiglu_expert_mlp": [["shared_swiglu_expert_mlp"]],
+        "attention_gate_projection": [["gemv"], ["gemm"]],
+        "attention_gate_sigmoid_mul": [["attn_gate_sigmoid_mul"]],
+        "farskip_two_stream_residual": [["farskip_two_stream_residual"]],
+        "farskip_routed_shared_combine": [["farskip_routed_shared_combine"]],
         "relu2_mlp": [["relu2"]],
         "swiglu_or_geglu": [["swiglu"], ["geglu"], ["gelu"]],
         "gemma4_per_layer_embed": [["gemma4_per_layer_embed"]],
@@ -314,6 +353,12 @@ def _template_body_ops_for_kind(kind: str, arch: str) -> list[str]:
         return ["attn_norm", "q_proj", "kv_a_proj", "kv_a_layernorm", "kv_lora_decompress", "partial_rope_concat", "mla_attention", "out_proj", "residual_add", "ffn_norm", "mlp_gate_up", "silu_mul", "mlp_down", "residual_add"]
     if kind == "mla_moe":
         return ["attn_norm", "q_proj", "kv_a_proj", "kv_a_layernorm", "kv_lora_decompress", "partial_rope_concat", "mla_attention", "out_proj", "residual_add", "ffn_norm", "moe_router", "group_limited_topk_router", "moe_swiglu_expert_mlp", "shared_swiglu_expert_mlp", "residual_add"]
+    if kind == "mla_gated_dense_mlp":
+        return ["attn_norm", "q_proj", "kv_a_proj", "kv_a_layernorm", "kv_lora_decompress", "partial_rope_concat_interleaved_yarn", "mla_attention", "attention_gate_projection", "attention_gate_sigmoid_mul", "out_proj", "residual_add", "ffn_norm", "mlp_gate_up", "silu_mul", "mlp_down", "residual_add"]
+    if kind == "mla_gated_moe":
+        return ["attn_norm", "q_proj", "kv_a_proj", "kv_a_layernorm", "kv_lora_decompress", "partial_rope_concat_interleaved_yarn", "mla_attention", "attention_gate_projection", "attention_gate_sigmoid_mul", "out_proj", "residual_add", "ffn_norm", "moe_router", "group_limited_topk_router", "moe_swiglu_expert_mlp", "shared_swiglu_expert_mlp", "residual_add"]
+    if kind == "mla_gated_farskip_moe":
+        return ["farskip_select_attention_stream", "attn_norm", "q_proj", "kv_a_proj", "kv_a_layernorm", "kv_lora_decompress", "partial_rope_concat_interleaved_yarn", "mla_attention", "attention_gate_projection", "attention_gate_sigmoid_mul", "out_proj", "farskip_attention_residual", "farskip_select_mlp_stream", "ffn_norm", "moe_router", "group_limited_topk_router", "moe_swiglu_expert_mlp", "farskip_routed_shared_combine"]
     if arch == "gemma4" and kind in {"sliding_attention_shared_kv", "full_attention_shared_kv"}:
         attn = "attn_sliding_shared_kv" if kind.startswith("sliding") else "attn_shared_kv"
         return ["attn_norm", "q_proj", "q_norm", "rope_q", attn, "out_proj", "post_attention_norm", "residual_add", "ffn_norm", "mlp_gate_up", "gelu", "mlp_down", "post_ffn_norm", "residual_add", "gemma4_per_layer_embed"]
@@ -330,6 +375,7 @@ def _template_candidate_name(arch: str) -> str | None:
         "gemma4": "gemma4.json",
         "nemotron_h": "nemotron_h.json",
         "kimi_vl": "kimi_vl.json",
+        "instella_moe": "instella_moe.json",
     }
     name = candidates.get(arch)
     if name and (REPO_ROOT / "version" / "v8" / "circuits" / name).exists():
@@ -480,6 +526,15 @@ def _notes(arch: str, config: dict[str, Any], layer_kinds: list[str], missing_op
                 f"Vision path is MoonViT: layers={vision.get('num_hidden_layers')} hidden={vision.get('hidden_size')} "
                 f"patch={vision.get('patch_size')} merge={vision.get('merge_kernel_size')}; defer until text MLA+MoE parity is stamped."
             )
+    if arch == "instella_moe":
+        notes.append("Instella-MoE reuses DeepSeek-V3 MLA primitives but changes the graph with a learned sigmoid attention gate and FarSkip two-stream residual connectivity; it must not resolve to a stock DeepSeek or Kimi circuit.")
+        notes.append(
+            f"MoE policy: first_k_dense_replace={text.get('first_k_dense_replace')} "
+            f"moe_layer_freq={text.get('moe_layer_freq')} routed_experts={text.get('n_routed_experts')} "
+            f"top_k={text.get('num_experts_per_tok')} shared_experts={text.get('n_shared_experts')} "
+            f"router={text.get('scoring_func')}/{text.get('topk_method')} scale={text.get('routed_scaling_factor')}."
+        )
+        notes.append("Existing MLA, sigmoid top-k routing, routed/shared SwiGLU, and attention-gate elementwise kernels are reusable. Missing work is the exact interleaved-YaRN position contract, gate projection wiring, and FarSkip main/routed-free stream lifetime and combine semantics.")
     if not missing_ops:
         notes.append("Config-level contract has no known missing op, but weight-name audit and hidden parity are still required.")
     return notes

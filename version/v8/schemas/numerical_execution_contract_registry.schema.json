@@ -72,7 +72,8 @@
             "position_embeddings",
             "residual_add",
             "gelu",
-            "swiglu"
+            "swiglu",
+            "farskip_shared_swiglu"
           ]
         },
         "status": {

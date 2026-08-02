@@ -2171,6 +2171,40 @@
       "description": "Segmented BF16 prefill provider: aligned M/N/K uses the AMX tile32 contract; short or unaligned text segments use the native paired-dot contract. Both paths round input and output at the same BF16 storage boundaries.",
       "operator_family": "gemm"
     },
+    "instella_farskip_bf16_shared_swiglu_fp32_two_stream": {
+      "operator_family": "farskip_shared_swiglu",
+      "status": "observed",
+      "storage": {
+        "input": "fp32",
+        "weight": "bf16",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "bf16",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "ascending_hidden_gate_and_up_dot_products_then_scalar_silu_multiply_then_ascending_intermediate_down_dot_product_then_routed_plus_shared_then_residual_plus_mlp_and_residual_plus_shared"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "reduction_update", "output_store"]
+      },
+      "reduction": {
+        "kind": "composite",
+        "order": "stage_ordered",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Observed Instella FarSkip shared-expert reference order. BF16 weights feed FP32 ascending reductions; the shared result is reused for routed-inclusive and routed-free residual streams with the reference parenthesization. Full-model PyTorch certification is still required before promotion to validated."
+    },
     "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output": {
       "status": "validated",
       "storage": {

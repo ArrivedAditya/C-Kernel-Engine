@@ -348,6 +348,8 @@ void moe_relu2_expert_forward_f32(const float *hidden,
     for (size_t p = 0; p < out_count; ++p) output[p] = 0.0f;
 
     float pre[intermediate_dim];
+    float gate[intermediate_dim];
+    float up[intermediate_dim];
     float act[intermediate_dim];
 
     for (int r = 0; r < rows; ++r) {
@@ -631,8 +633,6 @@ void moe_swiglu_shared_forward_f32(const float *hidden,
                 gv += shared_gate[(size_t)i * (size_t)hidden_dim + (size_t)h] * x[h];
                 uv += shared_up[(size_t)i * (size_t)hidden_dim + (size_t)h] * x[h];
             }
-            gate[i] = gv;
-            up[i] = uv;
             act[i] = ck_moe_silu_f32(gv) * uv;
         }
         for (int h = 0; h < hidden_dim; ++h) {
@@ -685,6 +685,67 @@ void moe_swiglu_shared_forward_bf16(const float *hidden,
                 v += bf16_to_float(shared_down[(size_t)h * (size_t)intermediate_dim + (size_t)i]) * act[i];
             }
             y[h] = v;
+        }
+    }
+}
+
+/*
+ * FarSkip shared-expert combine used by Instella-MoE.
+ *
+ * PyTorch constructs these values as:
+ *   mlp_output        = routed + shared
+ *   residual_no_route = post_attn_residual + shared
+ *   main_output       = post_attn_residual + mlp_output
+ *
+ * Keep the shared down projection in its own ascending FP32 reduction and
+ * preserve those two explicit addition boundaries.  Folding routed into the
+ * down-projection accumulator changes the rounding contract.
+ */
+void farskip_swiglu_shared_combine_bf16(const float *hidden,
+                                        const float *routed,
+                                        const float *post_attn_residual,
+                                        const uint16_t *shared_gate,
+                                        const uint16_t *shared_up,
+                                        const uint16_t *shared_down,
+                                        float *main_output,
+                                        float *routed_free_output,
+                                        int rows,
+                                        int hidden_dim,
+                                        int intermediate_dim)
+{
+    if (!hidden || !routed || !post_attn_residual || !shared_gate || !shared_up ||
+        !shared_down || !main_output || !routed_free_output || rows <= 0 ||
+        hidden_dim <= 0 || intermediate_dim <= 0) {
+        return;
+    }
+
+    float act[intermediate_dim];
+
+    for (int r = 0; r < rows; ++r) {
+        const float *x = hidden + (size_t)r * (size_t)hidden_dim;
+        const float *route = routed + (size_t)r * (size_t)hidden_dim;
+        const float *residual = post_attn_residual + (size_t)r * (size_t)hidden_dim;
+        float *main = main_output + (size_t)r * (size_t)hidden_dim;
+        float *routed_free = routed_free_output + (size_t)r * (size_t)hidden_dim;
+
+        for (int i = 0; i < intermediate_dim; ++i) {
+            float gv = 0.0f;
+            float uv = 0.0f;
+            for (int h = 0; h < hidden_dim; ++h) {
+                gv += bf16_to_float(shared_gate[(size_t)i * (size_t)hidden_dim + (size_t)h]) * x[h];
+                uv += bf16_to_float(shared_up[(size_t)i * (size_t)hidden_dim + (size_t)h]) * x[h];
+            }
+            act[i] = ck_moe_silu_f32(gv) * uv;
+        }
+
+        for (int h = 0; h < hidden_dim; ++h) {
+            float shared = 0.0f;
+            for (int i = 0; i < intermediate_dim; ++i) {
+                shared += bf16_to_float(shared_down[(size_t)h * (size_t)intermediate_dim + (size_t)i]) * act[i];
+            }
+            const float mlp_output = route[h] + shared;
+            routed_free[h] = residual[h] + shared;
+            main[h] = residual[h] + mlp_output;
         }
     }
 }
