@@ -3127,6 +3127,7 @@ test-gemv-omp-verbose: $(GEMV_OMP_BIN)
 
 THREADPOOL_BIN := $(BUILD_DIR)/test_threadpool_parity
 Q4K_DISPATCH_MATRIX_BIN := $(BUILD_DIR)/bench_q4k_dispatch_matrix
+Q4Q6_PIPELINE_BENCH_BIN := $(BUILD_DIR)/bench_q4q6_pipeline
 Q4K_EXACT_PREFILL_BIN := $(BUILD_DIR)/bench_q4k_exact_prefill
 Q4K_Q8K_LLAMA_PACKED_BIN := $(BUILD_DIR)/test_q4k_q8k_llama_packed
 Q6K_Q8K_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q6k_q8k_llama_production
@@ -3531,6 +3532,21 @@ bench-q4k-dispatch-matrix: $(Q4K_DISPATCH_MATRIX_BIN)
 bench-q4k-dispatch-matrix-quick: $(Q4K_DISPATCH_MATRIX_BIN)
 	@echo "Running Q4_K dispatch matrix benchmark (quick)..."
 	LD_LIBRARY_PATH=$(BUILD_DIR):llama.cpp:$$LD_LIBRARY_PATH $(Q4K_DISPATCH_MATRIX_BIN) --quick
+
+$(Q4Q6_PIPELINE_BENCH_BIN): $(LIB_PARITY) benchmarks/bench_q4q6_pipeline.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) -O3 -std=c11 $(AVX_FLAGS) -Iinclude \
+		benchmarks/bench_q4q6_pipeline.c \
+		-L$(BUILD_DIR) -lck_parity -lm -lpthread -ldl \
+		-Wl,-rpath,$(BUILD_DIR) -o $@
+
+.PHONY: bench-q4q6-pipeline bench-q4q6-pipeline-quick
+bench-q4q6-pipeline: $(Q4Q6_PIPELINE_BENCH_BIN)
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(Q4Q6_PIPELINE_BENCH_BIN)
+
+bench-q4q6-pipeline-quick: $(Q4Q6_PIPELINE_BENCH_BIN)
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(Q4Q6_PIPELINE_BENCH_BIN) \
+		--leaf-iters 1000 --jobs 512 --pool-iters 1
 
 $(Q4K_EXACT_PREFILL_BIN): $(LIB) benchmarks/bench_q4k_exact_prefill.c
 	@mkdir -p $(BUILD_DIR)

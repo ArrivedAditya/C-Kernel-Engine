@@ -2362,6 +2362,18 @@ def _resolved_symbol_library(lib: ctypes.CDLL, symbol: str) -> Path:
     return Path(os.fsdecode(info.dli_fname)).resolve()
 
 
+def _configure_gemm_schedule(lib: ctypes.CDLL, schedule: str) -> None:
+    try:
+        setter = lib.ck_set_gemm_schedule
+    except AttributeError as exc:
+        raise RuntimeError("generated runtime lacks the typed GEMM scheduling ABI") from exc
+    setter.argtypes = [ctypes.c_int]
+    setter.restype = ctypes.c_int
+    schedule_id = {"auto": 0, "static": 1, "dynamic": 2}[schedule]
+    if setter(schedule_id) != 0:
+        raise RuntimeError(f"generated runtime rejected GEMM schedule {schedule}")
+
+
 def _load_decoder_lib(model_so: Path, *, engine_so: Path | None = None) -> ctypes.CDLL:
     requested_engine = (engine_so if engine_so is not None else BUILD_DIR / "libckernel_engine.so").resolve()
     adjacent_engine = model_so.resolve().parent / "libckernel_engine.so"
@@ -2468,6 +2480,7 @@ def _run_encoder(
     image_path: Path | None = None,
     profile_csv_path: Path | None = None,
     planar_override: Sequence[float] | None = None,
+    gemm_schedule: str = "auto",
 ) -> dict[str, Any]:
     encoder_t0 = time.perf_counter()
     old_profile_csv_env = os.environ.get("CK_PROFILE_CSV")
@@ -2483,6 +2496,7 @@ def _run_encoder(
         lib = _load_encoder_lib(Path(runtime["so_path"]), engine_so=Path(runtime_engine))
     else:
         lib = _load_encoder_lib(Path(runtime["so_path"]))
+    _configure_gemm_schedule(lib, gemm_schedule)
     lib_load_ms = (time.perf_counter() - lib_load_t0) * 1000.0
     _log_progress("encoder: init start")
     init_t0 = time.perf_counter()
@@ -2693,6 +2707,7 @@ def _run_decoder(
     bridge_runtime: str = "prefill",
     bridge_generation_mode: str = "mixed-replay",
     strict_parity: bool = False,
+    gemm_schedule: str = "auto",
     tokenizer: GGUFTokenizer | Any | None = None,
     stop_token_ids: list[int] | None = None,
     max_tokens: int = 0,
@@ -2726,6 +2741,7 @@ def _run_decoder(
         lib = _load_decoder_lib(model_so, engine_so=Path(runtime_engine))
     else:
         lib = _load_decoder_lib(model_so)
+    _configure_gemm_schedule(lib, gemm_schedule)
     _log_progress("decoder: init start")
     rc = lib.ck_model_init_with_manifest(
         str(runtime["weights_bump"]).encode(),
@@ -3249,6 +3265,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--strict-parity", action="store_true", help="Enable strict/reference parity paths in bridge decoder kernels")
     ap.add_argument("--profile-decoder", action="store_true", help="Compile decoder with CK_PROFILE and include mixed-prefill per-op timings")
     ap.add_argument("--profile-encoder", action="store_true", help="Compile encoder with CK_PROFILE and include encoder per-op timings")
+    ap.add_argument(
+        "--gemm-schedule",
+        choices=["auto", "static", "dynamic"],
+        default="auto",
+        help="Independent GEMM tile scheduling policy (default: auto/dynamic)",
+    )
     ap.add_argument("--bridge-runtime", choices=["prefill", "decode-staged"], default=None, help="Override template multimodal bridge runtime; decode-staged enables incremental generation after mixed prefill")
     ap.add_argument(
         "--bridge-generation-mode",
@@ -3360,6 +3382,7 @@ def main(argv: list[str] | None = None) -> int:
             args.image_mode,
             image_path=args.image_path.resolve() if args.image_path is not None else None,
             profile_csv_path=encoder_profile_csv_path,
+            gemm_schedule=args.gemm_schedule,
         )
         timings["encoder_execute_ms"] = (time.perf_counter() - encoder_exec_t0) * 1000.0
         _log_progress(
@@ -3473,6 +3496,7 @@ def main(argv: list[str] | None = None) -> int:
         bridge_runtime=resolved_bridge_runtime,
         bridge_generation_mode=resolved_bridge_generation_mode,
         strict_parity=bool(args.strict_parity),
+        gemm_schedule=args.gemm_schedule,
         tokenizer=tokenizer,
         stop_token_ids=list(stop_policy["stop_ids"]),
         max_tokens=max(0, int(args.max_tokens)),

@@ -107,6 +107,7 @@ def _run_one(
     bridge_generation_mode: str,
     vision_activation_prefs: list[str],
     profile_decoder: bool,
+    gemm_schedule: str,
     timeout: int,
 ) -> dict[str, Any]:
     env = os.environ.copy()
@@ -136,6 +137,8 @@ def _run_one(
         str(max_tokens),
         "--temperature",
         "0.0",
+        "--gemm-schedule",
+        gemm_schedule,
     ]
     if image_max_tokens is not None:
         cmd.extend(["--image-max-tokens", str(image_max_tokens)])
@@ -263,6 +266,7 @@ def main() -> int:
     )
     parser.add_argument("--force-compile", action="store_true")
     parser.add_argument("--force-convert", action="store_true")
+    parser.add_argument("--gemm-schedule", choices=["auto", "static", "dynamic"], default="auto")
     parser.add_argument("--json-out", type=Path, default=ROOT / "build" / "v8_qwen3vl_ocr_bench.json")
     args = parser.parse_args()
 
@@ -291,6 +295,7 @@ def main() -> int:
                 bridge_generation_mode=args.bridge_generation_mode,
                 vision_activation_prefs=list(args.vision_activation_pref or []),
                 profile_decoder=bool(args.profile_decoder),
+                gemm_schedule=str(args.gemm_schedule),
                 timeout=int(args.timeout),
             )
         )
@@ -311,6 +316,7 @@ def main() -> int:
             "bridge_generation_mode": args.bridge_generation_mode,
             "vision_activation_pref": list(args.vision_activation_pref or []),
             "profile_decoder": bool(args.profile_decoder),
+            "gemm_schedule": str(args.gemm_schedule),
         },
         "results": rows,
     }

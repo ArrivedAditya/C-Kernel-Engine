@@ -35,6 +35,28 @@
 #define CK_SPIN_PAUSE() ((void)0)
 #endif
 
+static atomic_int g_gemm_schedule = CK_GEMM_SCHEDULE_AUTO;
+
+int ck_set_gemm_schedule(int policy)
+{
+    if (policy < CK_GEMM_SCHEDULE_AUTO || policy > CK_GEMM_SCHEDULE_DYNAMIC) {
+        return -1;
+    }
+    atomic_store_explicit(&g_gemm_schedule, policy, memory_order_release);
+    return 0;
+}
+
+int ck_get_gemm_schedule(void)
+{
+    return atomic_load_explicit(&g_gemm_schedule, memory_order_acquire);
+}
+
+int ck_gemm_dynamic_schedule_enabled(void)
+{
+    const int policy = ck_get_gemm_schedule();
+    return policy == CK_GEMM_SCHEDULE_AUTO || policy == CK_GEMM_SCHEDULE_DYNAMIC;
+}
+
 /* ============================================================================
  * Internal Structures (cache-line aligned)
  * ============================================================================ */
@@ -384,6 +406,55 @@ void ck_threadpool_dispatch(ck_threadpool_t *pool, ck_work_fn_t fn, void *args)
 {
     if (!pool) return;
     ck_threadpool_dispatch_n(pool, pool->default_threads, fn, args);
+}
+
+typedef struct {
+    _Alignas(CK_CACHE_LINE) atomic_int next;
+    int end;
+    int grain_size;
+    ck_range_fn_t fn;
+    void *args;
+} ck_parallel_for_work_t;
+
+static void ck_parallel_for_worker(int ith, int nth, void *opaque)
+{
+    (void)ith;
+    (void)nth;
+    ck_parallel_for_work_t *work = (ck_parallel_for_work_t *)opaque;
+    for (;;) {
+        const int begin = atomic_fetch_add_explicit(
+            &work->next, work->grain_size, memory_order_relaxed);
+        if (begin >= work->end) break;
+        int end = begin + work->grain_size;
+        if (end > work->end) end = work->end;
+        work->fn(begin, end, work->args);
+    }
+}
+
+void ck_threadpool_parallel_for_n(ck_threadpool_t *pool,
+                                  int active_threads,
+                                  int begin,
+                                  int end,
+                                  int grain_size,
+                                  ck_range_fn_t fn,
+                                  void *args)
+{
+    if (!fn || begin >= end) return;
+    if (grain_size <= 0) grain_size = 1;
+    if (!pool || active_threads <= 1) {
+        fn(begin, end, args);
+        return;
+    }
+
+    ck_parallel_for_work_t work = {
+        .end = end,
+        .grain_size = grain_size,
+        .fn = fn,
+        .args = args,
+    };
+    atomic_init(&work.next, begin);
+    ck_threadpool_dispatch_n(
+        pool, active_threads, ck_parallel_for_worker, &work);
 }
 
 void ck_threadpool_barrier(ck_threadpool_t *pool)

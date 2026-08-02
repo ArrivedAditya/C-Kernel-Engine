@@ -1419,6 +1419,7 @@ def step_run_chat(work_dir: Path, args: argparse.Namespace, *, gguf_path: Path |
         cmd.extend(["--speculative-draft-model-dir", str(args.speculative_draft_model_dir)])
     if getattr(args, "speculative_draft_tokens", None) is not None:
         cmd.extend(["--speculative-draft-tokens", str(int(args.speculative_draft_tokens))])
+    cmd.extend(["--gemm-schedule", str(getattr(args, "gemm_schedule", "auto"))])
     os.execvpe(sys.executable, cmd, env)
 
 
@@ -1507,6 +1508,8 @@ def run_pipeline(args: argparse.Namespace) -> int:
             args.image_mode,
             "--report-top-k",
             str(int(args.vision_top_k)),
+            "--gemm-schedule",
+            str(getattr(args, "gemm_schedule", "auto")),
         ]
         if args.max_tokens is not None:
             cmd.extend(["--max-tokens", str(int(args.max_tokens))])
@@ -1985,6 +1988,12 @@ Examples:
     run_parser.add_argument("--generate-visualizer", action="store_true")
     run_parser.add_argument("--generate-only", action="store_true")
     run_parser.add_argument("--profile", action="store_true", help="Emit CK_PROFILE timing wrappers into the generated runtime")
+    run_parser.add_argument(
+        "--gemm-schedule",
+        choices=("auto", "static", "dynamic"),
+        default="auto",
+        help="GEMM tile scheduling policy; auto dynamically balances independent tiles (default)",
+    )
     run_parser.add_argument("--sweep-kernels", action="store_true", help="Sweep kernel dispatch choices and write kernel_tuning.json")
     run_parser.add_argument("--sweep-kernels-full", action="store_true", help="Use the full kernel sweep instead of the quick deployment sweep")
 

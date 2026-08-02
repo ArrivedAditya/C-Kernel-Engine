@@ -135,6 +135,7 @@ typedef int (*get_encoder_output_t)(const float **, int *, int *);
 typedef int (*set_encoder_memory_t)(const float *, int, int);
 typedef int (*build_generation_prefix_t)(const char *, const char *, uint32_t, int32_t *, int);
 typedef int (*apply_generation_policy_t)(float *, int, const int32_t *, int, int, uint32_t);
+typedef int (*set_gemm_schedule_t)(int);
 
 typedef struct {
     void *handle;
@@ -194,6 +195,7 @@ typedef struct {
     set_encoder_memory_t set_encoder_memory;
     build_generation_prefix_t build_generation_prefix;
     apply_generation_policy_t apply_generation_policy;
+    set_gemm_schedule_t set_gemm_schedule;
 } ModelAPI;
 
 static void print_runtime_capabilities(const ModelAPI *api) {
@@ -335,6 +337,7 @@ typedef struct {
     const char *prompt_tokens_csv;
     const char *system_prompt;
     const char *token_trace_json_path;
+    const char *gemm_schedule;
     int max_tokens;
     int context_override;
     int synthetic_prefix_tokens;
@@ -1885,6 +1888,7 @@ static bool load_model_api(const char *lib_path, ModelAPI *api) {
     resolve_symbol(api->handle, "ck_model_set_encoder_memory", (void **)&api->set_encoder_memory, false);
     resolve_symbol(api->handle, "ck_model_build_generation_prefix", (void **)&api->build_generation_prefix, false);
     resolve_symbol(api->handle, "ck_model_apply_generation_policy", (void **)&api->apply_generation_policy, false);
+    resolve_symbol(api->handle, "ck_set_gemm_schedule", (void **)&api->set_gemm_schedule, false);
 
     if (api->get_abi_version || api->get_capabilities || api->get_runtime_descriptor) {
         if (!api->get_abi_version || !api->get_capabilities || !api->get_runtime_descriptor) {
@@ -5136,6 +5140,7 @@ static void print_help(const char *prog) {
     fprintf(stderr, "  --stream, -s            Stream tokens as generated\n");
     fprintf(stderr, "  --quiet-output          Suppress generated text output (profiling/noise-free)\n");
     fprintf(stderr, "  --timing, -t            Show timing breakdown\n");
+    fprintf(stderr, "  --gemm-schedule MODE    GEMM tile scheduling: auto, static, or dynamic (default: auto)\n");
     fprintf(stderr, "  --no-chat-template      Disable chat template formatting\n");
     fprintf(stderr, "  --eos IDS               Comma-separated EOS token IDs\n");
     fprintf(stderr, "  --ignore-eos            Do not stop on EOS tokens\n");
@@ -5168,6 +5173,7 @@ static bool parse_args(int argc, char **argv, CLIOptions *opt) {
     opt->timing = true;  /* Show timing by default */
     opt->language = "en";
     opt->task = "transcribe";
+    opt->gemm_schedule = "auto";
     /* Default EOS tokens for Qwen/ChatML */
     opt->eos_ids[0] = 151643;  /* <|im_end|> */
     opt->eos_ids[1] = 151645;  /* <|endoftext|> */
@@ -5243,6 +5249,14 @@ static bool parse_args(int argc, char **argv, CLIOptions *opt) {
             opt->timing = true;
         } else if (!strcmp(arg, "--no-timing")) {
             opt->timing = false;
+        } else if (!strcmp(arg, "--gemm-schedule") && i + 1 < argc) {
+            opt->gemm_schedule = argv[++i];
+            if (strcmp(opt->gemm_schedule, "auto") &&
+                strcmp(opt->gemm_schedule, "static") &&
+                strcmp(opt->gemm_schedule, "dynamic")) {
+                fprintf(stderr, "Error: --gemm-schedule must be auto, static, or dynamic\n");
+                return false;
+            }
         } else if (!strcmp(arg, "--no-chat-template")) {
             opt->no_chat_template = true;
         } else if (!strcmp(arg, "--eos") && i + 1 < argc) {
@@ -5719,12 +5733,18 @@ int main(int argc, char **argv) {
     if (!parse_args(argc, argv, &opt)) {
         return 1;
     }
-
     print_banner();
     printf("Loading: %s\n", opt.lib_path);
 
     ModelAPI api;
     if (!load_model_api(opt.lib_path, &api)) {
+        return 1;
+    }
+    const int gemm_schedule = !strcmp(opt.gemm_schedule, "static") ? 1 :
+                              !strcmp(opt.gemm_schedule, "dynamic") ? 2 : 0;
+    if (!api.set_gemm_schedule || api.set_gemm_schedule(gemm_schedule) != 0) {
+        fprintf(stderr, "Error: runtime does not support --gemm-schedule=%s\n", opt.gemm_schedule);
+        if (api.handle) dlclose(api.handle);
         return 1;
     }
     if (opt.require_generated_abi && !api.has_descriptor) {
