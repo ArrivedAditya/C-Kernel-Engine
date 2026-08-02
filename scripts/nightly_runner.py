@@ -411,6 +411,12 @@ TEST_SUITES = {
         "bf16",
         UNITTEST_DIR / "test_bump_alloc_mixed.py",
     ),
+    "v8_instella_moe_circuit_contracts": TestSuite(
+        "Instella-MoE Circuit/Codegen Contracts",
+        "inference",
+        ROOT / "tests" / "test_v8_instella_moe_bringup.py",
+        timeout_sec=300,
+    ),
     "pytorch_onednn_oracle_contract_bf16": TestSuite(
         "PyTorch/oneDNN Oracle Contract BF16",
         "bf16",
