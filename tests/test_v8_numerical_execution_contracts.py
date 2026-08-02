@@ -77,6 +77,31 @@ def mrope_circuit(contract_id: str):
     }
 
 
+def yarn_rope_circuit(contract_id: str):
+    return {
+        "name": "yarn_rope_contract_test",
+        "required_numerical_contracts": {
+            "yarn_rope": {
+                "op": "yarn_rope_init",
+                "template_ops": ["yarn_rope_init"],
+                "phases": {
+                    "init": {
+                        "contract_id": contract_id,
+                        "validation": "validated",
+                        "evidence": "unittest/test_instella_yarn_rope.py",
+                    }
+                },
+                "checkpoint": {
+                    "id": "decoder.init.yarn_rope_cache",
+                    "producer": "yarn_rope_init",
+                    "logical_layout": "token_major",
+                    "axis_names": ["token", "rotary_pair"],
+                },
+            }
+        },
+    }
+
+
 class NumericalExecutionContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -95,6 +120,34 @@ class NumericalExecutionContractTests(unittest.TestCase):
             plan["contract"]["semantics"]["threading"]["thread_count_changes_arithmetic_order"]
         )
         self.assertEqual(plan["checkpoint"]["axis_names"], ["token", "channel"])
+
+    def test_yarn_init_contracts_resolve_exact_storage_providers(self):
+        expected = {
+            "yarn_rope_cache_explicit_positions_fp32": (
+                "yarn_rope_cache_explicit_positions_f32",
+                "fp32",
+            ),
+            "yarn_rope_cache_explicit_positions_bf16_storage": (
+                "yarn_rope_cache_explicit_positions_bf16",
+                "bf16",
+            ),
+        }
+        for contract_id, (function, output_storage) in expected.items():
+            with self.subTest(contract_id=contract_id):
+                plan = resolver.resolve_contract(
+                    yarn_rope_circuit(contract_id),
+                    self.contracts,
+                    self.kernels,
+                    "yarn_rope",
+                    "init",
+                    mode="production",
+                )
+                self.assertEqual(plan["kernel"]["id"], function)
+                self.assertEqual(plan["kernel"]["function"], function)
+                self.assertEqual(
+                    plan["contract"]["semantics"]["storage"]["output"],
+                    output_storage,
+                )
 
     def test_pytorch_onednn_brgemm_contract_resolves_exact_provider(self):
         doc = circuit(validation="validated")

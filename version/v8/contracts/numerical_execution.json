@@ -871,6 +871,64 @@
       "position_transform": null,
       "description": "Qwen3.6 BF16 Gated DeltaNet provider: repeat each grouped Q/K head across its value-head group without reading beyond the compact Q/K buffers, retain FP32 recurrent state, and store the attention output to BF16."
     },
+    "yarn_rope_cache_explicit_positions_fp32": {
+      "operator_family": "yarn_rope_init",
+      "status": "validated",
+      "storage": {"input": "int32", "weight": "none", "output": "fp32"},
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "correction_bounds_then_pair_ascending_frequency_mix_then_explicit_position_angle_then_cos_sin_then_attention_scale"
+      },
+      "rounding": {"mode": "rne", "points": ["weighted_product", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": {
+        "position_source": "explicit_i32_positions",
+        "pairing": "pairwise_interleaved",
+        "rotary_width": "configured_rotary_dim",
+        "head_width": "configured_rotary_dim",
+        "position_rank": 1,
+        "axis_order": ["position"],
+        "section_interpretation": "not_applicable",
+        "frequency_compute": "fp32",
+        "intermediate_compute": "fp32",
+        "rounding_points": ["frequency", "angle", "cosine", "sine", "output_store"],
+        "threading": "serial"
+      },
+      "description": "Parameterized explicit-position YaRN cache using configured correction bounds, interpolation factor, and mscale ratio with FP32 cache storage."
+    },
+    "yarn_rope_cache_explicit_positions_bf16_storage": {
+      "operator_family": "yarn_rope_init",
+      "status": "validated",
+      "storage": {"input": "int32", "weight": "none", "output": "bf16"},
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "correction_bounds_then_pair_ascending_frequency_mix_then_explicit_position_angle_then_cos_sin_then_attention_scale_then_bf16_store"
+      },
+      "rounding": {"mode": "rne", "points": ["weighted_product", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": {
+        "position_source": "explicit_i32_positions",
+        "pairing": "pairwise_interleaved",
+        "rotary_width": "configured_rotary_dim",
+        "head_width": "configured_rotary_dim",
+        "position_rank": 1,
+        "axis_order": ["position"],
+        "section_interpretation": "not_applicable",
+        "frequency_compute": "fp32",
+        "intermediate_compute": "fp32",
+        "rounding_points": ["cosine_store", "sine_store"],
+        "threading": "serial"
+      },
+      "description": "Parameterized explicit-position YaRN cache with FP32 arithmetic and RNE BF16 cache storage at the PyTorch consumption boundary."
+    },
     "text_mrope_fp32_input_fp32_compute_fp32_output": {
       "operator_family": "text_mrope",
       "status": "validated",
