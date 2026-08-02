@@ -384,7 +384,7 @@ V8_NEMOTRON9_MIN_MEM_GB=24 make test-v8-nemotron9-highmem</pre>
         <button class="copy-btn" type="button">Copy</button>
 <pre>CK_V8_COMPILER=icx \
 CK_BUMP_FORCE_MIXED=1 \
-CK_NUM_THREADS=24 \
+CK_NUM_THREADS=14 \
 CK_V8_FORCE_BATCHED_PREFILL=1 \
 CK_DEBUG_Q4K_PREFILL_DISPATCH=1 \
 .venv/bin/python \
@@ -397,7 +397,7 @@ version/v8/scripts/ck_run_v8.py run \
 --max-tokens 64 \
 --context-len 1034</pre>
     </div>
-    <p class="mini-note">First test with 64 output tokens. After confirming correct execution, increase <code>--max-tokens</code> to 512.</p>
+    <p class="mini-note">First test with 64 output tokens. Raising <code>--max-tokens</code> exercises longer <em>decode</em>, not longer prefill &mdash; to probe prefill behavior and long-prefix parity, lengthen the input prefix (and <code>--context-len</code>) instead. Set <code>CK_NUM_THREADS</code> to match your host's CPU allocation; the measured host ran inside a 14-CPU cgroup.</p>
 </div>
 
 <div class="card card-blue">
