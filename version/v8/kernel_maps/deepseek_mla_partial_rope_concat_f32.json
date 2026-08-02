@@ -117,5 +117,5 @@
       }
     ]
   },
-  "notes": "Scalar reference for MLA partial RoPE assembly: copy q/k no-PE slices, apply Kimi/DeepSeek pair layout RoPE to q_pe and shared k_pe, then concatenate."
+  "notes": "Reusable scalar reference for interleaved DeepSeek-V3-style MLA partial RoPE assembly: copy q/k no-PE slices, rotate raw adjacent q_pe/shared-k_pe pairs into split-half output order, then concatenate. The function name records its origin; the generic partial_rope_concat op is reused by Kimi and Instella when their numerical contract matches."
 }

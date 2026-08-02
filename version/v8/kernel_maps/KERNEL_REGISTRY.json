@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 272,
+      "total": 275,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -28,6 +28,7 @@
         "bias_add": 1,
         "embedding": 7,
         "embedding_backward": 1,
+        "farskip_routed_shared_combine": 1,
         "feature_concat": 1,
         "feature_slice_copy": 1,
         "final_logit_softcap": 1,
@@ -105,7 +106,8 @@
         "swiglu": 5,
         "tokenizer": 1,
         "v_norm": 1,
-        "vision_patchify": 1
+        "vision_patchify": 1,
+        "yarn_rope_init": 2
       }
     }
   },
@@ -9866,7 +9868,7 @@
           }
         ]
       },
-      "notes": "Scalar reference for MLA partial RoPE assembly: copy q/k no-PE slices, apply Kimi/DeepSeek pair layout RoPE to q_pe and shared k_pe, then concatenate.",
+      "notes": "Reusable scalar reference for interleaved DeepSeek-V3-style MLA partial RoPE assembly: copy q/k no-PE slices, rotate raw adjacent q_pe/shared-k_pe pairs into split-half output order, then concatenate. The function name records its origin; the generic partial_rope_concat op is reused by Kimi and Instella when their numerical contract matches.",
       "name": "deepseek_mla_partial_rope_concat_f32",
       "_source_file": "deepseek_mla_partial_rope_concat_f32.json"
     },
@@ -9981,7 +9983,7 @@
           }
         ]
       },
-      "notes": "Scalar reference for MLA partial RoPE assembly from packed q_proj [q_nope|q_pe] and packed kv_a_proj [compressed_kv|k_pe]. This preserves the Kimi/DeepSeek circuit without inventing compact q_pe/k_pe activation buffers.",
+      "notes": "Reusable scalar reference for interleaved DeepSeek-V3-style MLA partial RoPE assembly from packed q_proj [q_nope|q_pe] and packed kv_a_proj [compressed_kv|k_pe]. The generic partial_rope_concat op is shared by Kimi and Instella when their layout and arithmetic contracts match.",
       "name": "deepseek_mla_partial_rope_concat_packed_f32",
       "_source_file": "deepseek_mla_partial_rope_concat_packed_f32.json"
     },
@@ -10850,6 +10852,198 @@
       "notes": "Token embedding lookup with Q8_0 quantized weights. Simple table lookup operation.",
       "name": "embedding_forward_q8_0",
       "_source_file": "embedding_forward_q8_0.json"
+    },
+    {
+      "id": "farskip_swiglu_shared_combine_bf16",
+      "op": "farskip_routed_shared_combine",
+      "variant": "bf16_shared_weight_fp32_two_stream",
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "quant": {
+        "weight": "bf16",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "hidden",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        },
+        {
+          "name": "routed",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        },
+        {
+          "name": "post_attn_residual",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        }
+      ],
+      "weights": [
+        {
+          "name": "shared_gate",
+          "dtype": "bf16",
+          "shape": [
+            "I",
+            "H"
+          ]
+        },
+        {
+          "name": "shared_up",
+          "dtype": "bf16",
+          "shape": [
+            "I",
+            "H"
+          ]
+        },
+        {
+          "name": "shared_down",
+          "dtype": "bf16",
+          "shape": [
+            "H",
+            "I"
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "main_output",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        },
+        {
+          "name": "routed_free_output",
+          "dtype": "fp32",
+          "shape": [
+            "R",
+            "H"
+          ]
+        }
+      ],
+      "dims": [
+        "R",
+        "H",
+        "I"
+      ],
+      "impl": {
+        "function": "farskip_swiglu_shared_combine_bf16",
+        "c_declaration": "void farskip_swiglu_shared_combine_bf16(const float *hidden, const float *routed, const float *post_attn_residual, const uint16_t *shared_gate, const uint16_t *shared_up, const uint16_t *shared_down, float *main_output, float *routed_free_output, int rows, int hidden_dim, int intermediate_dim);",
+        "sources": [
+          "src/kernels/axpy_kernels.c"
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "hidden",
+            "source": "activation:hidden",
+            "cast": "const float*"
+          },
+          {
+            "name": "routed",
+            "source": "activation:routed",
+            "cast": "const float*"
+          },
+          {
+            "name": "post_attn_residual",
+            "source": "activation:post_attn_residual",
+            "cast": "const float*"
+          },
+          {
+            "name": "shared_gate",
+            "source": "weight:shared_gate",
+            "cast": "const uint16_t*"
+          },
+          {
+            "name": "shared_up",
+            "source": "weight:shared_up",
+            "cast": "const uint16_t*"
+          },
+          {
+            "name": "shared_down",
+            "source": "weight:shared_down",
+            "cast": "const uint16_t*"
+          },
+          {
+            "name": "main_output",
+            "source": "output:main_output",
+            "cast": "float*"
+          },
+          {
+            "name": "routed_free_output",
+            "source": "output:routed_free_output",
+            "cast": "float*"
+          },
+          {
+            "name": "rows",
+            "source": "dim:R",
+            "cast": "int"
+          },
+          {
+            "name": "hidden_dim",
+            "source": "dim:H",
+            "cast": "int"
+          },
+          {
+            "name": "intermediate_dim",
+            "source": "dim:I",
+            "cast": "int"
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "instella_farskip_bf16_shared_swiglu_fp32_two_stream",
+          "status": "observed",
+          "phases": [
+            "prefill",
+            "decode"
+          ],
+          "function": "farskip_swiglu_shared_combine_bf16",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "notes": "Instella FarSkip reference provider. Computes the BF16 shared SwiGLU once, then preserves PyTorch's routed+shared and residual+MLP FP32 addition boundaries while emitting routed-inclusive and routed-free streams.",
+      "name": "farskip_swiglu_shared_combine_bf16",
+      "_source_file": "farskip_swiglu_shared_combine_bf16.json"
     },
     {
       "id": "feature_concat",
@@ -37014,6 +37208,356 @@
       "notes": "Build merged vision position IDs for 2D M-RoPE style encoders.",
       "name": "vision_position_ids_2d_merge",
       "_source_file": "vision_position_ids_2d_merge.json"
+    },
+    {
+      "id": "yarn_rope_cache_explicit_positions_bf16",
+      "op": "yarn_rope_init",
+      "variant": "yarn_explicit_positions_bf16_storage",
+      "mode": "init",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "bf16"
+      },
+      "inputs": [
+        {
+          "name": "positions",
+          "dtype": "i32",
+          "shape": [
+            "T"
+          ]
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "cos_cache",
+          "dtype": "bf16",
+          "shape": [
+            "T",
+            "Dr/2"
+          ]
+        },
+        {
+          "name": "sin_cache",
+          "dtype": "bf16",
+          "shape": [
+            "T",
+            "Dr/2"
+          ]
+        }
+      ],
+      "dims": [
+        "T",
+        "Dr"
+      ],
+      "params": [
+        {
+          "name": "freq_base",
+          "dtype": "fp32"
+        },
+        {
+          "name": "factor",
+          "dtype": "fp32"
+        },
+        {
+          "name": "original_context",
+          "dtype": "i32"
+        },
+        {
+          "name": "beta_fast",
+          "dtype": "fp32"
+        },
+        {
+          "name": "beta_slow",
+          "dtype": "fp32"
+        },
+        {
+          "name": "mscale",
+          "dtype": "fp32"
+        },
+        {
+          "name": "mscale_all_dim",
+          "dtype": "fp32"
+        }
+      ],
+      "impl": {
+        "function": "yarn_rope_cache_explicit_positions_bf16",
+        "c_declaration": "void yarn_rope_cache_explicit_positions_bf16(uint16_t *cos_cache, uint16_t *sin_cache, const int32_t *positions, int num_tokens, int rotary_dim, float freq_base, float factor, int original_context, float beta_fast, float beta_slow, float mscale, float mscale_all_dim);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "yarn_rope_cache_explicit_positions_bf16_storage",
+          "status": "validated",
+          "phases": [
+            "init"
+          ],
+          "function": "yarn_rope_cache_explicit_positions_bf16",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "cos_cache",
+            "source": "output:cos_cache",
+            "cast": "uint16_t*"
+          },
+          {
+            "name": "sin_cache",
+            "source": "output:sin_cache",
+            "cast": "uint16_t*"
+          },
+          {
+            "name": "positions",
+            "source": "activation:positions",
+            "cast": "const int32_t*"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:T"
+          },
+          {
+            "name": "rotary_dim",
+            "source": "dim:Dr"
+          },
+          {
+            "name": "freq_base",
+            "source": "param:freq_base"
+          },
+          {
+            "name": "factor",
+            "source": "param:factor"
+          },
+          {
+            "name": "original_context",
+            "source": "param:original_context"
+          },
+          {
+            "name": "beta_fast",
+            "source": "param:beta_fast"
+          },
+          {
+            "name": "beta_slow",
+            "source": "param:beta_slow"
+          },
+          {
+            "name": "mscale",
+            "source": "param:mscale"
+          },
+          {
+            "name": "mscale_all_dim",
+            "source": "param:mscale_all_dim"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_instella_yarn_rope.py"
+        ]
+      },
+      "notes": "Reusable RNE BF16 YaRN cache storage provider. The Instella fixture verifies the PyTorch BF16 boundary, while the ABI remains model-agnostic.",
+      "name": "yarn_rope_cache_explicit_positions_bf16",
+      "_source_file": "yarn_rope_cache_explicit_positions_bf16.json"
+    },
+    {
+      "id": "yarn_rope_cache_explicit_positions_f32",
+      "op": "yarn_rope_init",
+      "variant": "yarn_explicit_positions_fp32",
+      "mode": "init",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "positions",
+          "dtype": "i32",
+          "shape": [
+            "T"
+          ]
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "cos_cache",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "Dr/2"
+          ]
+        },
+        {
+          "name": "sin_cache",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "Dr/2"
+          ]
+        }
+      ],
+      "dims": [
+        "T",
+        "Dr"
+      ],
+      "params": [
+        {
+          "name": "freq_base",
+          "dtype": "fp32"
+        },
+        {
+          "name": "factor",
+          "dtype": "fp32"
+        },
+        {
+          "name": "original_context",
+          "dtype": "i32"
+        },
+        {
+          "name": "beta_fast",
+          "dtype": "fp32"
+        },
+        {
+          "name": "beta_slow",
+          "dtype": "fp32"
+        },
+        {
+          "name": "mscale",
+          "dtype": "fp32"
+        },
+        {
+          "name": "mscale_all_dim",
+          "dtype": "fp32"
+        }
+      ],
+      "impl": {
+        "function": "yarn_rope_cache_explicit_positions_f32",
+        "c_declaration": "void yarn_rope_cache_explicit_positions_f32(float *cos_cache, float *sin_cache, const int32_t *positions, int num_tokens, int rotary_dim, float freq_base, float factor, int original_context, float beta_fast, float beta_slow, float mscale, float mscale_all_dim);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "yarn_rope_cache_explicit_positions_fp32",
+          "status": "validated",
+          "phases": [
+            "init"
+          ],
+          "function": "yarn_rope_cache_explicit_positions_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "cos_cache",
+            "source": "output:cos_cache",
+            "cast": "float*"
+          },
+          {
+            "name": "sin_cache",
+            "source": "output:sin_cache",
+            "cast": "float*"
+          },
+          {
+            "name": "positions",
+            "source": "activation:positions",
+            "cast": "const int32_t*"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:T"
+          },
+          {
+            "name": "rotary_dim",
+            "source": "dim:Dr"
+          },
+          {
+            "name": "freq_base",
+            "source": "param:freq_base"
+          },
+          {
+            "name": "factor",
+            "source": "param:factor"
+          },
+          {
+            "name": "original_context",
+            "source": "param:original_context"
+          },
+          {
+            "name": "beta_fast",
+            "source": "param:beta_fast"
+          },
+          {
+            "name": "beta_slow",
+            "source": "param:beta_slow"
+          },
+          {
+            "name": "mscale",
+            "source": "param:mscale"
+          },
+          {
+            "name": "mscale_all_dim",
+            "source": "param:mscale_all_dim"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_instella_yarn_rope.py"
+        ]
+      },
+      "notes": "Reusable DeepSeek-V3-compatible YaRN cache reference with explicit positions. Instella-MoE production parameters provide the first certification fixture; no model identity is required by the ABI.",
+      "name": "yarn_rope_cache_explicit_positions_f32",
+      "_source_file": "yarn_rope_cache_explicit_positions_f32.json"
     }
   ]
 }

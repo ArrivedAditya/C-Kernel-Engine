@@ -615,7 +615,14 @@ def _parse_nemotron_h_pattern(pattern: str, num_layers: int) -> list[str]:
 
 
 
-def _kimi_vl_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor]) -> list[TensorRef]:
+def _kimi_vl_text_refs(
+    config: dict[str, Any],
+    headers: dict[str, HeaderTensor],
+    *,
+    source_root: str = "language_model.model",
+    architecture_label: str = "Kimi-VL",
+    include_attention_gate: bool = False,
+) -> list[TensorRef]:
     text = config.get("text_config") if isinstance(config.get("text_config"), dict) else config
     num_layers = int(text.get("num_hidden_layers") or config.get("num_layers") or 0)
     hidden = int(text.get("hidden_size") or config.get("hidden_size") or 0)
@@ -629,16 +636,16 @@ def _kimi_vl_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor])
         moe_freq = int(text.get("moe_layer_freq") or 1)
         layer_kinds = ["mla_dense_mlp" if layer < first_dense or (moe_freq > 0 and layer % moe_freq != 0) else "mla_moe" for layer in range(num_layers)]
     if num_layers <= 0 or hidden <= 0 or intermediate <= 0:
-        raise SystemExit("Kimi-VL config missing num_hidden_layers/hidden_size/intermediate_size")
+        raise SystemExit(f"{architecture_label} config missing num_hidden_layers/hidden_size/intermediate_size")
     if len(layer_kinds) != num_layers:
-        raise SystemExit(f"Kimi-VL layer_kinds length {len(layer_kinds)} != num_layers {num_layers}")
+        raise SystemExit(f"{architecture_label} layer_kinds length {len(layer_kinds)} != num_layers {num_layers}")
 
     refs: list[TensorRef] = [
-        TensorRef("token_emb", (_require_existing(headers, ("language_model.model.embed_tokens.weight", "model.embed_tokens.weight"), "token_emb"),)),
+        TensorRef("token_emb", (_require_existing(headers, (f"{source_root}.embed_tokens.weight", "model.embed_tokens.weight"), "token_emb"),)),
     ]
 
     for layer, kind in enumerate(layer_kinds):
-        pfx = f"language_model.model.layers.{layer}"
+        pfx = f"{source_root}.layers.{layer}"
         refs.extend([
             TensorRef(f"layer.{layer}.block_norm", (_require_existing(headers, (f"{pfx}.input_layernorm.weight",), f"layer {layer} input norm"),), dtype="fp32"),
             TensorRef(f"layer.{layer}.post_attention_norm", (_require_existing(headers, (f"{pfx}.post_attention_layernorm.weight",), f"layer {layer} post attention norm"),), dtype="fp32"),
@@ -648,6 +655,11 @@ def _kimi_vl_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor])
             TensorRef(f"layer.{layer}.mla_kv_b_proj", (_require_existing(headers, (f"{pfx}.self_attn.kv_b_proj.weight",), f"layer {layer} MLA kv_b_proj"),), dtype="fp32"),
             TensorRef(f"layer.{layer}.mla_out_proj", (_require_existing(headers, (f"{pfx}.self_attn.o_proj.weight",), f"layer {layer} MLA o_proj"),)),
         ])
+        if include_attention_gate:
+            refs.append(TensorRef(
+                f"layer.{layer}.mla_gate_proj",
+                (_require_existing(headers, (f"{pfx}.self_attn.gate_proj.weight",), f"layer {layer} MLA gate_proj"),),
+            ))
         mlp = f"{pfx}.mlp"
         if kind == "mla_dense_mlp":
             refs.extend([
@@ -657,7 +669,7 @@ def _kimi_vl_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor])
             ])
         elif kind == "mla_moe":
             if n_experts <= 0:
-                raise SystemExit("Kimi-VL MoE layer requires n_routed_experts")
+                raise SystemExit(f"{architecture_label} MoE layer requires n_routed_experts")
             refs.append(TensorRef(f"layer.{layer}.moe_router", (_require_existing(headers, (f"{mlp}.gate.weight",), f"layer {layer} moe router"),), dtype="fp32"))
             correction = _maybe_tensor_ref(headers, f"layer.{layer}.moe_router_bias", (f"{mlp}.gate.e_score_correction_bias",), dtype="fp32")
             if correction is not None:
@@ -694,14 +706,35 @@ def _kimi_vl_text_refs(config: dict[str, Any], headers: dict[str, HeaderTensor])
                 TensorRef(f"layer.{layer}.moe_shared_down", (_require_existing(headers, (f"{sp}.down_proj.weight",), f"layer {layer} shared down_proj"),)),
             ])
         else:
-            raise SystemExit(f"Unsupported Kimi-VL layer kind at {layer}: {kind}")
+            raise SystemExit(f"Unsupported {architecture_label} layer kind at {layer}: {kind}")
 
-    refs.append(TensorRef("final_ln_weight", (_require_existing(headers, ("language_model.model.norm.weight", "model.norm.weight"), "final norm"),), dtype="fp32"))
+    refs.append(TensorRef("final_ln_weight", (_require_existing(headers, (f"{source_root}.norm.weight", "model.norm.weight"), "final norm"),), dtype="fp32"))
     refs.append(TensorRef("final_ln_bias", (), dtype="fp32", synth="zeros_fp32", shape=(hidden,)))
     lm_head = _first_existing(headers, ("language_model.lm_head.weight", "lm_head.weight", "model.lm_head.weight"))
     if lm_head is not None:
         refs.append(TensorRef("output.weight", (lm_head,)))
     return refs
+
+
+def _instella_moe_refs(config: dict[str, Any], headers: dict[str, HeaderTensor]) -> list[TensorRef]:
+    text = config.get("text_config") if isinstance(config.get("text_config"), dict) else config
+    adapted = dict(config)
+    num_layers = int(text.get("num_hidden_layers") or 0)
+    first_dense = int(text.get("first_k_dense_replace") or 0)
+    moe_freq = max(1, int(text.get("moe_layer_freq") or 1))
+    adapted["layer_kinds"] = [
+        "mla_dense_mlp"
+        if layer < first_dense or (layer - first_dense) % moe_freq != 0
+        else "mla_moe"
+        for layer in range(num_layers)
+    ]
+    return _kimi_vl_text_refs(
+        adapted,
+        headers,
+        source_root="model",
+        architecture_label="Instella-MoE",
+        include_attention_gate=True,
+    )
 
 
 def _nemotron_dt_limit(config: dict[str, Any]) -> tuple[float, float]:
@@ -1015,6 +1048,8 @@ def _refs_for_arch(arch: str, config: dict[str, Any], headers: dict[str, HeaderT
         return _nemotron_h_text_refs(config, headers)
     if arch == "kimi_vl":
         return _kimi_vl_text_refs(config, headers)
+    if arch == "instella_moe":
+        return _instella_moe_refs(config, headers)
     if arch in {"llama", "qwen2", "qwen3", "qwen3vl", "gemma3"}:
         return _llama_family_text_refs(config, headers)
     raise SystemExit(f"Unsupported safetensors arch for v8 importer: {arch}")
@@ -1364,7 +1399,7 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "prefill_policy": "batched",
         })
 
-    if arch == "kimi_vl":
+    if arch in {"kimi_vl", "instella_moe"}:
         first_dense = int(text.get("first_k_dense_replace") or 0)
         moe_freq = int(text.get("moe_layer_freq") or 1)
         num_layers = int(cfg.get("num_layers") or 0)
@@ -1378,9 +1413,9 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
         qk_rope = int(text.get("qk_rope_head_dim") or 0)
         v_head = int(text.get("v_head_dim") or 0)
         cfg.update({
-            "model": "kimi_vl",
-            "arch": "kimi_vl",
-            "model_type": "kimi_vl",
+            "model": arch,
+            "arch": arch,
+            "model_type": arch,
             "layer_kinds": layer_kinds,
             "hybrid_block_pattern": layer_kinds[:],
             "layer_attention_policy": ["mla" for _ in layer_kinds],
@@ -1411,11 +1446,24 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "mla_q_head_dim": qk_nope + qk_rope,
             "mla_k_head_dim": qk_nope + qk_rope,
             "mla_v_head_dim": v_head,
-            "rope_layout": "partial_pairwise_concat",
+            "rope_layout": (
+                "partial_interleaved_yarn"
+                if arch == "instella_moe" and bool(text.get("rope_interleave", False))
+                else "partial_pairwise_concat"
+            ),
             "rope_theta": float(text.get("rope_theta") or 10000.0),
             "rope_freq_base": float(text.get("rope_theta") or 10000.0),
             "has_attention_biases": False,
-            "has_qk_norm": False,
+            "has_qk_norm": bool(text.get("qk_layernorm", False)) if arch == "instella_moe" else False,
+            "gated_attention": bool(text.get("gated_attention", False)),
+            "farskip": bool(text.get("farskip", False)),
+            "farskip_start_idx": int(text.get("farskip_start_idx") or 0),
+            "farskip_end_idx": int(text.get("farskip_end_idx") or num_layers - 1),
+            "attn_only_farskip": bool(text.get("attn_only_farskip", False)),
+            "mlp_only_farskip": bool(text.get("mlp_only_farskip", False)),
+            "rope_interleave": bool(text.get("rope_interleave", False)),
+            "rope_scaling": text.get("rope_scaling"),
+            "moe_shared_intermediate_size": int(text.get("moe_intermediate_size") or 0) * int(text.get("n_shared_experts") or 0),
             "prefill_policy": "batched",
         })
 
@@ -2157,7 +2205,7 @@ def main() -> int:
     ap.add_argument("--ram-dir", type=Path, default=Path("/dev/shm"), help="tmpfs directory for --ram-output; default: /dev/shm")
     ap.add_argument("--config-out", required=True, type=Path)
     ap.add_argument("--manifest-out", required=True, type=Path)
-    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma4_assistant", "gemma3", "llama", "qwen2", "qwen3", "qwen3vl", "qwen3_vl_vision", "qwen35", "nemotron_h", "glm4", "kimi_vl", "whisper_encoder", "whisper_decoder"])
+    ap.add_argument("--arch", default="auto", choices=["auto", "gemma4", "gemma4_assistant", "gemma3", "llama", "qwen2", "qwen3", "qwen3vl", "qwen3_vl_vision", "qwen35", "nemotron_h", "glm4", "kimi_vl", "instella_moe", "whisper_encoder", "whisper_decoder"])
     ap.add_argument("--config-template", type=Path, help="existing v8 config/manifest to reuse explicit runtime policy")
     ap.add_argument("--dtype", default="preserve", choices=["preserve", "bf16", "fp32"])
     ap.add_argument(

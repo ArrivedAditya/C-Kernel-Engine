@@ -423,6 +423,116 @@ void rope_precompute_cache(float *cos_cache,
     }
 }
 
+static float yarn_correction_dim(float rotations,
+                                          int rotary_dim,
+                                          float freq_base,
+                                          int original_context)
+{
+    return ((float)rotary_dim *
+            logf((float)original_context / (rotations * 2.0f * (float)M_PI))) /
+           (2.0f * logf(freq_base));
+}
+
+static float yarn_mscale(float factor, float scale)
+{
+    return factor <= 1.0f ? 1.0f : 0.1f * scale * logf(factor) + 1.0f;
+}
+
+static void yarn_rope_cache_explicit_positions_impl(float *cos_f32,
+                                          float *sin_f32,
+                                          uint16_t *cos_bf16,
+                                          uint16_t *sin_bf16,
+                                          const int32_t *positions,
+                                          int num_tokens,
+                                          int rotary_dim,
+                                          float freq_base,
+                                          float factor,
+                                          int original_context,
+                                          float beta_fast,
+                                          float beta_slow,
+                                          float mscale,
+                                          float mscale_all_dim)
+{
+    if ((!cos_f32 && !cos_bf16) || (!sin_f32 && !sin_bf16) || !positions ||
+        num_tokens <= 0 || rotary_dim <= 0 || (rotary_dim & 1) != 0 ||
+        freq_base <= 0.0f || factor <= 0.0f || original_context <= 0 ||
+        beta_fast <= 0.0f || beta_slow <= 0.0f) {
+        return;
+    }
+
+    const int pairs = rotary_dim / 2;
+    float low = floorf(yarn_correction_dim(
+        beta_fast, rotary_dim, freq_base, original_context));
+    float high = ceilf(yarn_correction_dim(
+        beta_slow, rotary_dim, freq_base, original_context));
+    low = fmaxf(low, 0.0f);
+    high = fminf(high, (float)(rotary_dim - 1));
+    if (low == high) high += 0.001f;
+
+    const float attention_factor =
+        yarn_mscale(factor, mscale) /
+        yarn_mscale(factor, mscale_all_dim);
+
+    for (int token = 0; token < num_tokens; ++token) {
+        const float position = (float)positions[token];
+        for (int pair = 0; pair < pairs; ++pair) {
+            const float exponent = (2.0f * (float)pair) / (float)rotary_dim;
+            const float pos_freq = ck_rope_reference_powf(freq_base, exponent);
+            const float inv_extrap = 1.0f / pos_freq;
+            const float inv_interp = 1.0f / (factor * pos_freq);
+            float ramp = ((float)pair - low) / (high - low);
+            ramp = fminf(1.0f, fmaxf(0.0f, ramp));
+            const float inv_freq = inv_interp * ramp + inv_extrap * (1.0f - ramp);
+            const float angle = position * inv_freq;
+            const float cosine = ck_rope_reference_cosf(angle) * attention_factor;
+            const float sine = ck_rope_reference_sinf(angle) * attention_factor;
+            const size_t index = (size_t)token * (size_t)pairs + (size_t)pair;
+            if (cos_f32) cos_f32[index] = cosine;
+            if (sin_f32) sin_f32[index] = sine;
+            if (cos_bf16) cos_bf16[index] = float_to_bf16(cosine);
+            if (sin_bf16) sin_bf16[index] = float_to_bf16(sine);
+        }
+    }
+}
+
+void yarn_rope_cache_explicit_positions_f32(float *cos_cache,
+                                  float *sin_cache,
+                                  const int32_t *positions,
+                                  int num_tokens,
+                                  int rotary_dim,
+                                  float freq_base,
+                                  float factor,
+                                  int original_context,
+                                  float beta_fast,
+                                  float beta_slow,
+                                  float mscale,
+                                  float mscale_all_dim)
+{
+    yarn_rope_cache_explicit_positions_impl(
+        cos_cache, sin_cache, NULL, NULL, positions, num_tokens, rotary_dim,
+        freq_base, factor, original_context, beta_fast, beta_slow, mscale,
+        mscale_all_dim);
+}
+
+void yarn_rope_cache_explicit_positions_bf16(uint16_t *cos_cache,
+                                   uint16_t *sin_cache,
+                                   const int32_t *positions,
+                                   int num_tokens,
+                                   int rotary_dim,
+                                   float freq_base,
+                                   float factor,
+                                   int original_context,
+                                   float beta_fast,
+                                   float beta_slow,
+                                   float mscale,
+                                   float mscale_all_dim)
+{
+    yarn_rope_cache_explicit_positions_impl(
+        NULL, NULL, cos_cache, sin_cache, positions, num_tokens, rotary_dim,
+        freq_base, factor, original_context, beta_fast, beta_slow, mscale,
+        mscale_all_dim);
+}
+
 /*
  * Match ggml's CPU RoPE cache arithmetic. ggml computes theta_scale once,
  * starts each position at theta=pos, and advances frequencies by repeated

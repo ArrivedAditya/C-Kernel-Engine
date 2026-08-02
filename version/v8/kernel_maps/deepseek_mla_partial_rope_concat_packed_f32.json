@@ -109,5 +109,5 @@
       }
     ]
   },
-  "notes": "Scalar reference for MLA partial RoPE assembly from packed q_proj [q_nope|q_pe] and packed kv_a_proj [compressed_kv|k_pe]. This preserves the Kimi/DeepSeek circuit without inventing compact q_pe/k_pe activation buffers."
+  "notes": "Reusable scalar reference for interleaved DeepSeek-V3-style MLA partial RoPE assembly from packed q_proj [q_nope|q_pe] and packed kv_a_proj [compressed_kv|k_pe]. The generic partial_rope_concat op is shared by Kimi and Instella when their layout and arithmetic contracts match."
 }

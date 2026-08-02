@@ -2971,6 +2971,17 @@ void moe_swiglu_shared_forward_bf16(const float *hidden,
                                     int rows,
                                     int hidden_dim,
                                     int intermediate_dim);
+void farskip_swiglu_shared_combine_bf16(const float *hidden,
+                                        const float *routed,
+                                        const float *post_attn_residual,
+                                        const uint16_t *shared_gate,
+                                        const uint16_t *shared_up,
+                                        const uint16_t *shared_down,
+                                        float *main_output,
+                                        float *routed_free_output,
+                                        int rows,
+                                        int hidden_dim,
+                                        int intermediate_dim);
 
 void group_limited_topk_router_sigmoid_f32(const float *logits,
                                            const float *correction_bias,
@@ -3308,6 +3319,33 @@ void rope_precompute_cache(float *cos_cache,
                            int rotary_dim,
                            const char *scaling_type,
                            float scaling_factor);
+
+/* Parameterized YaRN cache with explicit positions. The BF16 variant stores
+ * the exact RNE BF16 cos/sin values consumed by PyTorch BF16 RoPE. */
+void yarn_rope_cache_explicit_positions_f32(float *cos_cache,
+                                  float *sin_cache,
+                                  const int32_t *positions,
+                                  int num_tokens,
+                                  int rotary_dim,
+                                  float freq_base,
+                                  float factor,
+                                  int original_context,
+                                  float beta_fast,
+                                  float beta_slow,
+                                  float mscale,
+                                  float mscale_all_dim);
+void yarn_rope_cache_explicit_positions_bf16(uint16_t *cos_cache,
+                                   uint16_t *sin_cache,
+                                   const int32_t *positions,
+                                   int num_tokens,
+                                   int rotary_dim,
+                                   float freq_base,
+                                   float factor,
+                                   int original_context,
+                                   float beta_fast,
+                                   float beta_slow,
+                                   float mscale,
+                                   float mscale_all_dim);
 
 void rope_precompute_cache_llama_cpu(float *cos_cache,
                                      float *sin_cache,

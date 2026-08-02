@@ -39,6 +39,11 @@ LIB.moe_swiglu_expert_forward_bf16.argtypes = [fptr, iptr, fptr, u16ptr, u16ptr,
 LIB.moe_swiglu_expert_forward_bf16.restype = None
 LIB.moe_swiglu_shared_forward_bf16.argtypes = [fptr, fptr, u16ptr, u16ptr, u16ptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 LIB.moe_swiglu_shared_forward_bf16.restype = None
+LIB.farskip_swiglu_shared_combine_bf16.argtypes = [
+    fptr, fptr, fptr, u16ptr, u16ptr, u16ptr, fptr, fptr,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int,
+]
+LIB.farskip_swiglu_shared_combine_bf16.restype = None
 LIB.moe_swiglu_shared_backward_f32.argtypes = [fptr, fptr, fptr, fptr, fptr, fptr, fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 LIB.moe_swiglu_shared_backward_f32.restype = None
 
@@ -86,6 +91,53 @@ def torch_shared(hidden, routed, gate, up, down):
 
 
 class TestMoESwiGLUExpert(unittest.TestCase):
+    def test_farskip_bf16_combine_matches_pytorch_two_stream_order(self) -> None:
+        rows, hidden_dim, intermediate_dim = 3, 8, 7
+        rng = np.random.default_rng(113)
+        hidden_np = np.ascontiguousarray(
+            (0.2 * rng.standard_normal((rows, hidden_dim))).astype(np.float32)
+        )
+        routed_np = np.ascontiguousarray(
+            (0.1 * rng.standard_normal((rows, hidden_dim))).astype(np.float32)
+        )
+        residual_np = np.ascontiguousarray(
+            (0.3 * rng.standard_normal((rows, hidden_dim))).astype(np.float32)
+        )
+        gate_np = np.ascontiguousarray(
+            (0.13 * rng.standard_normal((intermediate_dim, hidden_dim))).astype(np.float32)
+        )
+        up_np = np.ascontiguousarray(
+            (0.11 * rng.standard_normal((intermediate_dim, hidden_dim))).astype(np.float32)
+        )
+        down_np = np.ascontiguousarray(
+            (0.09 * rng.standard_normal((hidden_dim, intermediate_dim))).astype(np.float32)
+        )
+        gate_bits = _bf16_bits(gate_np)
+        up_bits = _bf16_bits(up_np)
+        down_bits = _bf16_bits(down_np)
+        main = np.empty_like(hidden_np)
+        routed_free = np.empty_like(hidden_np)
+
+        LIB.farskip_swiglu_shared_combine_bf16(
+            _fptr(hidden_np), _fptr(routed_np), _fptr(residual_np),
+            _u16ptr(gate_bits), _u16ptr(up_bits), _u16ptr(down_bits),
+            _fptr(main), _fptr(routed_free), rows, hidden_dim, intermediate_dim,
+        )
+
+        hidden = torch.tensor(hidden_np, dtype=torch.float32)
+        gate = torch.tensor(_bf16_float(gate_np), dtype=torch.float32)
+        up = torch.tensor(_bf16_float(up_np), dtype=torch.float32)
+        down = torch.tensor(_bf16_float(down_np), dtype=torch.float32)
+        shared = (
+            torch.nn.functional.silu(hidden @ gate.T) * (hidden @ up.T)
+        ) @ down.T
+        mlp_output = torch.tensor(routed_np) + shared
+        routed_free_ref = torch.tensor(residual_np) + shared
+        main_ref = torch.tensor(residual_np) + mlp_output
+
+        np.testing.assert_allclose(routed_free, routed_free_ref.numpy(), atol=2e-6, rtol=0.0)
+        np.testing.assert_allclose(main, main_ref.numpy(), atol=2e-6, rtol=0.0)
+
     def test_bf16_weight_forward_matches_pytorch_bf16_values(self) -> None:
         rows, hidden_dim, intermediate_dim, n_experts, top_k = 3, 8, 6, 5, 2
         rng = np.random.default_rng(109)

@@ -871,6 +871,64 @@
       "position_transform": null,
       "description": "Qwen3.6 BF16 Gated DeltaNet provider: repeat each grouped Q/K head across its value-head group without reading beyond the compact Q/K buffers, retain FP32 recurrent state, and store the attention output to BF16."
     },
+    "yarn_rope_cache_explicit_positions_fp32": {
+      "operator_family": "yarn_rope_init",
+      "status": "validated",
+      "storage": {"input": "int32", "weight": "none", "output": "fp32"},
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "correction_bounds_then_pair_ascending_frequency_mix_then_explicit_position_angle_then_cos_sin_then_attention_scale"
+      },
+      "rounding": {"mode": "rne", "points": ["weighted_product", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": {
+        "position_source": "explicit_i32_positions",
+        "pairing": "pairwise_interleaved",
+        "rotary_width": "configured_rotary_dim",
+        "head_width": "configured_rotary_dim",
+        "position_rank": 1,
+        "axis_order": ["position"],
+        "section_interpretation": "not_applicable",
+        "frequency_compute": "fp32",
+        "intermediate_compute": "fp32",
+        "rounding_points": ["frequency", "angle", "cosine", "sine", "output_store"],
+        "threading": "serial"
+      },
+      "description": "Parameterized explicit-position YaRN cache using configured correction bounds, interpolation factor, and mscale ratio with FP32 cache storage."
+    },
+    "yarn_rope_cache_explicit_positions_bf16_storage": {
+      "operator_family": "yarn_rope_init",
+      "status": "validated",
+      "storage": {"input": "int32", "weight": "none", "output": "bf16"},
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "correction_bounds_then_pair_ascending_frequency_mix_then_explicit_position_angle_then_cos_sin_then_attention_scale_then_bf16_store"
+      },
+      "rounding": {"mode": "rne", "points": ["weighted_product", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": {
+        "position_source": "explicit_i32_positions",
+        "pairing": "pairwise_interleaved",
+        "rotary_width": "configured_rotary_dim",
+        "head_width": "configured_rotary_dim",
+        "position_rank": 1,
+        "axis_order": ["position"],
+        "section_interpretation": "not_applicable",
+        "frequency_compute": "fp32",
+        "intermediate_compute": "fp32",
+        "rounding_points": ["cosine_store", "sine_store"],
+        "threading": "serial"
+      },
+      "description": "Parameterized explicit-position YaRN cache with FP32 arithmetic and RNE BF16 cache storage at the PyTorch consumption boundary."
+    },
     "text_mrope_fp32_input_fp32_compute_fp32_output": {
       "operator_family": "text_mrope",
       "status": "validated",
@@ -2170,6 +2228,40 @@
       "position_transform": null,
       "description": "Segmented BF16 prefill provider: aligned M/N/K uses the AMX tile32 contract; short or unaligned text segments use the native paired-dot contract. Both paths round input and output at the same BF16 storage boundaries.",
       "operator_family": "gemm"
+    },
+    "instella_farskip_bf16_shared_swiglu_fp32_two_stream": {
+      "operator_family": "farskip_shared_swiglu",
+      "status": "observed",
+      "storage": {
+        "input": "fp32",
+        "weight": "bf16",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "bf16",
+        "accumulator": "fp32",
+        "contraction": "disabled",
+        "evaluation_order": "ascending_hidden_gate_and_up_dot_products_then_scalar_silu_multiply_then_ascending_intermediate_down_dot_product_then_routed_plus_shared_then_residual_plus_mlp_and_residual_plus_shared"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "reduction_update", "output_store"]
+      },
+      "reduction": {
+        "kind": "composite",
+        "order": "stage_ordered",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Observed Instella FarSkip shared-expert reference order. BF16 weights feed FP32 ascending reductions; the shared result is reused for routed-inclusive and routed-free residual streams with the reference parenthesization. Full-model PyTorch certification is still required before promotion to validated."
     },
     "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output": {
       "status": "validated",

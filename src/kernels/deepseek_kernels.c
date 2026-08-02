@@ -259,6 +259,9 @@ void deepseek_mla_kv_decompress_bf16(const float *compressed_kv,
     }
 }
 
+/* Model-agnostic implementation of the DeepSeek-V3 interleaved MLA rotary
+ * layout.  Kimi and Instella reuse this exact tensor transform; the ds_ prefix
+ * records its origin, not a model-selection restriction. */
 static void ds_mla_apply_kimi_rope(const float *src,
                                    float *dst,
                                    const float *cos_row,
