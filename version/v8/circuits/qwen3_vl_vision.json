@@ -7,6 +7,43 @@
     "activation": "gelu",
     "normalization": "layernorm"
   },
+  "activation_buffers": {
+    "branch_stream": {
+      "shape": [
+        {"config": "vision_merged_tokens"},
+        {"config": "projector_in_dim"}
+      ]
+    },
+    "branch_normed": {
+      "shape": [
+        {"config": "vision_merged_tokens"},
+        {"config": "projector_in_dim"}
+      ]
+    },
+    "branch_mlp": {
+      "shape": [
+        {"config": "vision_merged_tokens"},
+        {"config": "projector_hidden_dim"}
+      ]
+    },
+    "branch_collect": {
+      "shape": [
+        {"config": "vision_merged_tokens"},
+        {
+          "mul": [
+            {"config": "projector_out_dim"},
+            {"config": "num_deepstack_layers"}
+          ]
+        }
+      ]
+    }
+  },
+  "activation_bindings": {
+    "branch_stream": "branch_stream",
+    "branch_normed": "branch_normed",
+    "branch_mlp": "branch_mlp",
+    "branch_collect": "branch_collect"
+  },
   "contract": {
     "runtime_defaults": {
       "prefer_q8_0_contract": true,
@@ -1327,6 +1364,10 @@
               {
                 "id": "merge",
                 "op": "branch_spatial_merge",
+                "graph_slots": {
+                  "inputs": {"input": "main_stream"},
+                  "outputs": {"output": "branch_stream"}
+                },
                 "params": {
                   "merge_size_from_config": "spatial_merge_size",
                   "rows_from_config": "vision_merged_tokens",
@@ -1336,6 +1377,10 @@
               {
                 "id": "norm",
                 "op": "branch_layernorm",
+                "graph_slots": {
+                  "inputs": {"input": "branch_stream"},
+                  "outputs": {"output": "branch_normed"}
+                },
                 "params": {
                   "rows_from_config": "vision_merged_tokens",
                   "out_dim_from_config": "projector_in_dim"
@@ -1348,6 +1393,10 @@
               {
                 "id": "fc1",
                 "op": "branch_fc1",
+                "graph_slots": {
+                  "inputs": {"x": "branch_normed"},
+                  "outputs": {"y": "branch_mlp"}
+                },
                 "params": {
                   "rows_from_config": "vision_merged_tokens",
                   "out_dim_from_config": "projector_hidden_dim"
@@ -1359,11 +1408,23 @@
               },
               {
                 "id": "gelu",
-                "op": "branch_gelu"
+                "op": "branch_gelu",
+                "graph_slots": {
+                  "inputs": {"x": "branch_mlp"},
+                  "outputs": {"out": "branch_mlp"}
+                }
               },
               {
                 "id": "fc2",
                 "op": "branch_fc2",
+                "graph_slots": {
+                  "inputs": {"x": "branch_mlp"},
+                  "outputs": {"y": "branch_collect"}
+                },
+                "output_view": {
+                  "kind": "collect_slice",
+                  "output": "y"
+                },
                 "params": {
                   "rows_from_config": "vision_merged_tokens",
                   "out_dim_from_config": "projector_out_dim"

@@ -221,6 +221,23 @@ def _make_qwen3vl_decoder_manifest() -> dict:
 
 
 class V8CodegenBridgeTests(unittest.TestCase):
+    def test_named_activation_api_uses_aligned_arena_base(self) -> None:
+        layout = {
+            "memory": {
+                "arena": {"activations_base": 1024},
+                "weights": {"base_offset": 4, "size": 1016},
+                "activations": {
+                    "buffers": [
+                        {"name": "vision_output", "offset": 64, "size": 256}
+                    ]
+                },
+            },
+            "config": {},
+        }
+        generated = codegen_v8._inject_activation_lookup_api("", layout)
+        self.assertIn("*offset_out = (size_t)1088", generated)
+        self.assertNotIn("*offset_out = (size_t)1084", generated)
+
     def test_multimodal_codegen_consumes_exact_resolved_text_mrope_provider(self) -> None:
         operation = {
             "op": "rope_qk",

@@ -1867,7 +1867,11 @@ def _load_activation_offsets(layout_path: Path) -> dict[str, dict[str, Any]]:
 
 
 def _activation_runtime_base(layout: dict[str, Any]) -> int:
-    weights = layout.get("memory", {}).get("weights", {})
+    memory = layout.get("memory", {})
+    arena = memory.get("arena", {})
+    if "activations_base" in arena:
+        return int(arena["activations_base"])
+    weights = memory.get("weights", {})
     return int(weights.get("base_offset", 0)) + int(weights.get("size", 0))
 
 
