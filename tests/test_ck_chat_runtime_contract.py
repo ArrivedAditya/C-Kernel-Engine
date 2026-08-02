@@ -589,6 +589,8 @@ class TestCKChatRuntimeContract(unittest.TestCase):
                             fn.return_value = None
                         elif name == "ck_model_get_active_tokens":
                             fn.return_value = 1
+                        elif name == "ck_set_gemm_schedule":
+                            fn.return_value = 0
                         self._fns[name] = fn
                     return self._fns[name]
 
