@@ -204,6 +204,7 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
         self.assertIn("--llama-decode-mode batched", rendered)
         self.assertIn("--append-on-divergence stop", rendered)
         self.assertIn("--max-new-tokens 128", rendered)
+        self.assertIn("--gemm-schedule auto", rendered)
 
     def test_native_cli_command_requires_generated_abi_and_exact_trace(self) -> None:
         args = SimpleNamespace(
@@ -222,6 +223,7 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
         self.assertIn("--bridge-report case/bridge_report.json", rendered)
         self.assertIn("--require-generated-abi", command)
         self.assertIn("--token-trace-json case/native_token_trace.json", rendered)
+        self.assertIn("--gemm-schedule auto", rendered)
 
     def test_native_trace_must_match_python_and_llama_pre_eos_tokens(self) -> None:
         report = {

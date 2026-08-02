@@ -2524,54 +2524,72 @@ static void gemm_q4_packed_meta_x8_split_min_8m_thread_fn(
     }
 }
 
+static inline void gemm_q4_packed_vnni_x8_q8k_4m_job(
+        gemm_q4_packed_vnni_x8_thread_work_t *a,
+        int job,
+        int row_tiles)
+{
+    const int group = job / row_tiles;
+    const int row_tile = job - group * row_tiles;
+    const int m0 = row_tile * 4;
+    const int rows = (m0 + 4 <= a->M) ? 4 : (a->M - m0);
+    const int n0 = group * 8;
+    const int active = (n0 + 8 <= a->N) ? 8 : (a->N - n0);
+    if (rows <= 0 || active <= 0 || group >= a->groups) {
+        return;
+    }
+
+    float acc[4][8] = {{0}};
+    float acc_min[4][8] = {{0}};
+    for (int block = 0; block < a->blocks_per_row; ++block) {
+        const block_q4_K_packed_vnni_x8 *weights =
+                a->W + (size_t)group * (size_t)a->blocks_per_row +
+                       (size_t)block;
+        const block_q8_K *x[4] = {NULL};
+        for (int row = 0; row < rows; ++row) {
+            x[row] = a->A + (size_t)(m0 + row) *
+                              (size_t)a->blocks_per_row + (size_t)block;
+        }
+        accum_q4_k_packed_vnni_x8_q8_k_4m_superblock(
+                acc, acc_min, weights, x, rows);
+    }
+
+    for (int row = 0; row < rows; ++row) {
+        float values[8];
+        _mm256_storeu_ps(values, _mm256_sub_ps(
+                _mm256_loadu_ps(acc[row]),
+                _mm256_loadu_ps(acc_min[row])));
+        float *output = a->C + (size_t)(m0 + row) * (size_t)a->N;
+        for (int lane = 0; lane < active; ++lane) {
+            output[n0 + lane] = values[lane] +
+                    (a->bias ? a->bias[n0 + lane] : 0.0f);
+        }
+    }
+}
+
 static void gemm_q4_packed_vnni_x8_q8k_4m_thread_fn(
         int ith, int nth, void *args)
 {
     gemm_q4_packed_vnni_x8_thread_work_t *a =
             (gemm_q4_packed_vnni_x8_thread_work_t *)args;
-    if (!a || ith < 0 || nth <= 0 || ith >= nth) {
-        return;
-    }
+    if (!a || ith < 0 || nth <= 0 || ith >= nth) return;
 
     const int row_tiles = (a->M + 3) / 4;
     const int total = row_tiles * a->groups;
     for (int job = ith; job < total; job += nth) {
-        const int group = job / row_tiles;
-        const int row_tile = job - group * row_tiles;
-        const int m0 = row_tile * 4;
-        const int rows = (m0 + 4 <= a->M) ? 4 : (a->M - m0);
-        const int n0 = group * 8;
-        const int active = (n0 + 8 <= a->N) ? 8 : (a->N - n0);
-        if (rows <= 0 || active <= 0 || group >= a->groups) {
-            continue;
-        }
+        gemm_q4_packed_vnni_x8_q8k_4m_job(a, job, row_tiles);
+    }
+}
 
-        float acc[4][8] = {{0}};
-        float acc_min[4][8] = {{0}};
-        for (int block = 0; block < a->blocks_per_row; ++block) {
-            const block_q4_K_packed_vnni_x8 *weights =
-                    a->W + (size_t)group * (size_t)a->blocks_per_row +
-                           (size_t)block;
-            const block_q8_K *x[4] = {NULL};
-            for (int row = 0; row < rows; ++row) {
-                x[row] = a->A + (size_t)(m0 + row) *
-                                  (size_t)a->blocks_per_row + (size_t)block;
-            }
-            accum_q4_k_packed_vnni_x8_q8_k_4m_superblock(
-                    acc, acc_min, weights, x, rows);
-        }
-
-        for (int row = 0; row < rows; ++row) {
-            float values[8];
-            _mm256_storeu_ps(values, _mm256_sub_ps(
-                    _mm256_loadu_ps(acc[row]),
-                    _mm256_loadu_ps(acc_min[row])));
-            float *output = a->C + (size_t)(m0 + row) * (size_t)a->N;
-            for (int lane = 0; lane < active; ++lane) {
-                output[n0 + lane] = values[lane] +
-                        (a->bias ? a->bias[n0 + lane] : 0.0f);
-            }
-        }
+static void gemm_q4_packed_vnni_x8_q8k_4m_range_fn(
+        int begin, int end, void *args)
+{
+    gemm_q4_packed_vnni_x8_thread_work_t *a =
+            (gemm_q4_packed_vnni_x8_thread_work_t *)args;
+    if (!a || begin < 0 || begin >= end) return;
+    const int row_tiles = (a->M + 3) / 4;
+    for (int job = begin; job < end; ++job) {
+        gemm_q4_packed_vnni_x8_q8k_4m_job(a, job, row_tiles);
     }
 }
 
@@ -2874,9 +2892,16 @@ void gemm_nt_q4_k_packed_vnni_x8_q8_k_split_min_threaded_4m(
         gemm_q4_packed_vnni_x8_q8k_4m_thread_fn(0, 1, &work);
         return;
     }
-    ck_threadpool_dispatch_n(
-            pool, active_threads,
-            gemm_q4_packed_vnni_x8_q8k_4m_thread_fn, &work);
+    if (ck_gemm_dynamic_schedule_enabled()) {
+        const int grain = 4;
+        ck_threadpool_parallel_for_n(
+            pool, active_threads, 0, jobs, grain,
+            gemm_q4_packed_vnni_x8_q8k_4m_range_fn, &work);
+    } else {
+        ck_threadpool_dispatch_n(
+                pool, active_threads,
+                gemm_q4_packed_vnni_x8_q8k_4m_thread_fn, &work);
+    }
 }
 
 void gemm_nt_q4_k_packed_vnni_x16_q8_k_split_min_threaded_16m(

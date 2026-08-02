@@ -593,7 +593,8 @@ class CKModel:
         return errors
 
     def load(self, gguf_path: str = None, force_python_tokenizer: bool = False,
-             chat_template: str = "auto", allow_raw_prompt: bool = False) -> bool:
+             chat_template: str = "auto", allow_raw_prompt: bool = False,
+             gemm_schedule: str = "auto") -> bool:
         """Load model library and tokenizer.
 
         Tokenizer priority (unless force_python_tokenizer=True):
@@ -623,6 +624,17 @@ class CKModel:
                 print(f"Error: {msg}")
             return False
         self.lib = ctypes.CDLL(str(lib_path))
+
+        try:
+            self.lib.ck_set_gemm_schedule.argtypes = [ctypes.c_int]
+            self.lib.ck_set_gemm_schedule.restype = ctypes.c_int
+            schedule_id = {"auto": 0, "static": 1, "dynamic": 2}[gemm_schedule]
+            if self.lib.ck_set_gemm_schedule(schedule_id) != 0:
+                print(f"Error: runtime rejected GEMM schedule {gemm_schedule}")
+                return False
+        except (AttributeError, KeyError):
+            print("Error: runtime does not expose the typed GEMM scheduling ABI")
+            return False
 
         # Setup function signatures
         self.lib.ck_model_init.argtypes = [ctypes.c_char_p]
@@ -2687,6 +2699,8 @@ def main():
                        help="Path to a compiled draft model directory for greedy speculative decoding")
     parser.add_argument("--speculative-draft-tokens", type=int, default=4,
                        help="Number of draft tokens to propose per speculative batch (default: 4)")
+    parser.add_argument("--gemm-schedule", choices=["auto", "static", "dynamic"], default="auto",
+                       help="Independent GEMM tile scheduling policy (default: auto/dynamic)")
 
     args = parser.parse_args()
 
@@ -2722,7 +2736,8 @@ def main():
     chat_template = "none" if args.no_chat_template else args.chat_template
     if not model.load(gguf_path=args.gguf, force_python_tokenizer=args.python_tokenizer,
                       chat_template=chat_template,
-                      allow_raw_prompt=args.allow_raw_prompt):
+                      allow_raw_prompt=args.allow_raw_prompt,
+                      gemm_schedule=args.gemm_schedule):
         sys.exit(1)
     model.thinking_mode = str(args.thinking_mode or "auto")
 
@@ -2737,7 +2752,8 @@ def main():
         draft_model = CKModel(args.speculative_draft_model_dir)
         if not draft_model.load(gguf_path=args.gguf, force_python_tokenizer=args.python_tokenizer,
                                 chat_template=chat_template,
-                                allow_raw_prompt=args.allow_raw_prompt):
+                                allow_raw_prompt=args.allow_raw_prompt,
+                                gemm_schedule=args.gemm_schedule):
             model.free()
             sys.exit(1)
         draft_model.thinking_mode = model.thinking_mode

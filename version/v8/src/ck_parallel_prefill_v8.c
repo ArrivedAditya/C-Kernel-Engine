@@ -159,6 +159,8 @@ extern void gemm_nt_q6_k_q8_k(const void *A, const void *B, const float *bias,
 extern void gemm_nt_q8_0_q8_0_contract(const float *A, const void *B,
                                         const float *bias, float *C,
                                         int M, int N, int K);
+extern void gemv_q8_0_q8_0_contract(float *y, const void *W,
+                                     const float *x, int M, int K);
 extern int ck_strict_parity_enabled(void);
 extern void swiglu_forward_exact(const float *input, float *output, int tokens, int dim);
 extern void gemm_nt_q6_k_q8_k_tile(const void *A, const void *B, const float *bias,
@@ -1119,6 +1121,21 @@ static void work_gemm_nt_q8_0_q8_0(int ith, int nth, void *args)
     );
 }
 
+static inline void work_gemm_nt_q8_0_q8_0_contract_rows(
+        const gemm_args_t *a, int begin, int end)
+{
+    for (int m = begin; m < end; ++m) {
+        float *output = a->C + (size_t)m * (size_t)a->N;
+        gemv_q8_0_q8_0_contract(
+            output, a->B,
+            (const float *)a->A + (size_t)m * (size_t)a->K,
+            a->N, a->K);
+        if (a->bias) {
+            for (int n = 0; n < a->N; ++n) output[n] += a->bias[n];
+        }
+    }
+}
+
 static void work_gemm_nt_q8_0_q8_0_contract(int ith, int nth, void *args)
 {
     const gemm_args_t *a = (const gemm_args_t *)args;
@@ -1127,13 +1144,15 @@ static void work_gemm_nt_q8_0_q8_0_contract(int ith, int nth, void *args)
     const int r1 = ck_min_int(r0 + dr, a->M);
     if (r0 >= a->M) return;
 
-    gemm_nt_q8_0_q8_0_contract(
-        (const float *)a->A + (size_t)r0 * (size_t)a->K,
-        a->B,
-        a->bias,
-        a->C + (size_t)r0 * (size_t)a->N,
-        r1 - r0, a->N, a->K
-    );
+    work_gemm_nt_q8_0_q8_0_contract_rows(a, r0, r1);
+}
+
+static void work_gemm_nt_q8_0_q8_0_contract_range(
+        int begin, int end, void *args)
+{
+    const gemm_args_t *a = (const gemm_args_t *)args;
+    if (!a || begin < 0 || begin >= end || end > a->M) return;
+    work_gemm_nt_q8_0_q8_0_contract_rows(a, begin, end);
 }
 
 static void work_gemm_nt_q4_k_q8_k(int ith, int nth, void *args)
@@ -1320,6 +1339,24 @@ static void work_gemm_nt_q6_k_q8_k(int ith, int nth, void *args)
     }
 }
 
+static inline void work_gemm_nt_q6_k_q8_k_2d_job(
+        const gemm_args_t *a, int job, int mt, int tile_m, int tile_n)
+{
+    const int jm = job % mt;
+    const int jn = job / mt;
+    const int m0 = jm * tile_m;
+    const int m1 = ck_min_int(m0 + tile_m, a->M);
+    const int n0 = jn * tile_n;
+    const int n1 = ck_min_int(n0 + tile_n, a->N);
+    if (a->use_q6_m4) {
+        gemm_nt_q6_k_q8_k_m4_tile(a->A, a->B, a->bias, a->C,
+                                  a->M, a->N, a->K, m0, m1, n0, n1);
+    } else {
+        gemm_nt_q6_k_q8_k_tile(a->A, a->B, a->bias, a->C,
+                               a->M, a->N, a->K, m0, m1, n0, n1);
+    }
+}
+
 static void work_gemm_nt_q6_k_q8_k_2d(int ith, int nth, void *args)
 {
     const gemm_args_t *a = (const gemm_args_t *)args;
@@ -1328,23 +1365,21 @@ static void work_gemm_nt_q6_k_q8_k_2d(int ith, int nth, void *args)
     const int tile_m = a->tile_m > 0 ? a->tile_m : 16;
     const int tile_n = a->tile_n > 0 ? a->tile_n : 256;
     const int mt = ck_ceil_div_int(a->M, tile_m);
-    const int nt = ck_ceil_div_int(a->N, tile_n);
-    const int total = mt * nt;
-
+    const int total = mt * ck_ceil_div_int(a->N, tile_n);
     for (int job = ith; job < total; job += nth) {
-        const int jm = job % mt;
-        const int jn = job / mt;
-        const int m0 = jm * tile_m;
-        const int m1 = ck_min_int(m0 + tile_m, a->M);
-        const int n0 = jn * tile_n;
-        const int n1 = ck_min_int(n0 + tile_n, a->N);
-        if (a->use_q6_m4) {
-            gemm_nt_q6_k_q8_k_m4_tile(a->A, a->B, a->bias, a->C,
-                                      a->M, a->N, a->K, m0, m1, n0, n1);
-        } else {
-            gemm_nt_q6_k_q8_k_tile(a->A, a->B, a->bias, a->C,
-                                   a->M, a->N, a->K, m0, m1, n0, n1);
-        }
+        work_gemm_nt_q6_k_q8_k_2d_job(a, job, mt, tile_m, tile_n);
+    }
+}
+
+static void work_gemm_nt_q6_k_q8_k_2d_range(int begin, int end, void *args)
+{
+    const gemm_args_t *a = (const gemm_args_t *)args;
+    if (!a || begin < 0 || begin >= end) return;
+    const int tile_m = a->tile_m > 0 ? a->tile_m : 16;
+    const int tile_n = a->tile_n > 0 ? a->tile_n : 256;
+    const int mt = ck_ceil_div_int(a->M, tile_m);
+    for (int job = begin; job < end; ++job) {
+        work_gemm_nt_q6_k_q8_k_2d_job(a, job, mt, tile_m, tile_n);
     }
 }
 
@@ -1474,8 +1509,15 @@ void gemm_nt_q8_0_q8_0_contract_parallel_dispatch(
     };
     int active = ck_select_gemm_active_threads(pool, M, N, K);
     if (active > M) active = M;
-    ck_threadpool_dispatch_n(
-        pool, active, work_gemm_nt_q8_0_q8_0_contract, &args);
+    if (ck_gemm_dynamic_schedule_enabled()) {
+        const int grain = 4;
+        ck_threadpool_parallel_for_n(
+            pool, active, 0, M, grain,
+            work_gemm_nt_q8_0_q8_0_contract_range, &args);
+    } else {
+        ck_threadpool_dispatch_n(
+            pool, active, work_gemm_nt_q8_0_q8_0_contract, &args);
+    }
 }
 
 
@@ -1840,7 +1882,17 @@ void gemm_nt_q6_k_q8_k_parallel_dispatch(
         active = ck_min_int(active, q6_cap);
     }
     if (ck_should_use_q6k_q8k_2d_prefill(pool, M, N, K, args.tile_m, args.tile_n)) {
-        ck_threadpool_dispatch_n(pool, active, work_gemm_nt_q6_k_q8_k_2d, &args);
+        if (ck_gemm_dynamic_schedule_enabled()) {
+            const int mt = ck_ceil_div_int(M, args.tile_m);
+            const int nt = ck_ceil_div_int(N, args.tile_n);
+            const int grain = 1;
+            ck_threadpool_parallel_for_n(
+                pool, active, 0, mt * nt, grain,
+                work_gemm_nt_q6_k_q8_k_2d_range, &args);
+        } else {
+            ck_threadpool_dispatch_n(
+                pool, active, work_gemm_nt_q6_k_q8_k_2d, &args);
+        }
     } else {
         ck_threadpool_dispatch_n(pool, active, work_gemm_nt_q6_k_q8_k, &args);
     }

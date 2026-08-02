@@ -1015,7 +1015,8 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
     try:
         _restore_process_env({key: None for key in env_keys})
         lib, logits_buf, _vocab_size = _init_ck_state(
-            inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None)
+            inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None),
+            getattr(args, "gemm_schedule", "auto"),
         )
         try:
             last_i = len(generated_prefix) - 1
@@ -1046,7 +1047,8 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
         if layer >= 0:
             _set_process_env("CK_DEBUG_EXPORT_HIDDEN_LAYER", str(layer))
         lib2, _logits2, _vocab2 = _init_ck_state(
-            replay_inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None)
+            replay_inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None),
+            getattr(args, "gemm_schedule", "auto"),
         )
         replay_kv_export = export_kv(lib2, full_dir)
         if hasattr(lib2, "ck_model_free"):
@@ -1222,7 +1224,8 @@ def _capture_full_replay_step(report: dict[str, Any], args: argparse.Namespace) 
     llama_logits = llama_seq["logits"][step_index]
 
     lib, logits_buf, vocab_size = _init_ck_state(
-        replay_inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None)
+        replay_inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None),
+        getattr(args, "gemm_schedule", "auto"),
     )
     try:
         replay_logits = _ck_logits_from_buffer(logits_buf, vocab_size)
@@ -1286,10 +1289,12 @@ def _init_ck_state(
     inputs: dict[str, Any],
     strict_parity: bool,
     engine_so: Path | None = None,
+    gemm_schedule: str = "auto",
 ) -> tuple[Any, Any, int]:
     runtime = inputs["runtime"]
     model_so = Path(runtime["so_path"])
     lib = first_token.bridge_runner_v8._load_decoder_lib(model_so, engine_so=engine_so)
+    first_token.bridge_runner_v8._configure_gemm_schedule(lib, gemm_schedule)
     rc = lib.ck_model_init_with_manifest(
         str(runtime["weights_bump"]).encode(),
         str(runtime["manifest_map"]).encode(),
@@ -1377,7 +1382,8 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
     tokenizer: GGUFTokenizer = inputs["tokenizer"]
     llama_seq = _run_llama_greedy_sequence(inputs, args)
     lib, logits_buf, vocab_size = _init_ck_state(
-        inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None)
+        inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None),
+        getattr(args, "gemm_schedule", "auto"),
     )
     generated: list[int] = []
     llama_generated = [int(t) for t in list((llama_seq.get("meta") or {}).get("greedy_generated", []))]
@@ -1469,6 +1475,7 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
         "llama_decode_mode": str(args.llama_decode_mode),
         "execution_modes": {
             "ck_strict_parity": bool(args.ck_strict_parity),
+            "gemm_schedule": str(getattr(args, "gemm_schedule", "auto")),
             "llama_decode_mode": str(args.llama_decode_mode),
             "llama_tensor_repack": not bool(args.llama_no_repack),
             "diagnostic_tensor_dump": bool(
@@ -1628,6 +1635,12 @@ def main() -> int:
         type=int,
         default=None,
         help="CK runtime threads; defaults to --threads when omitted",
+    )
+    ap.add_argument(
+        "--gemm-schedule",
+        choices=["auto", "static", "dynamic"],
+        default="auto",
+        help="CK independent GEMM tile scheduling policy (default: auto/dynamic)",
     )
     ap.add_argument("--llama-decode-mode", choices=["auto", "batched", "sequential"], default="auto")
     ap.add_argument(

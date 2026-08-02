@@ -217,6 +217,16 @@ void gemv_q4_k_q8_k_ref(float *y,
     }
 }
 
+static int ck_q4k_q8k_force_ref(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        const char *env = getenv("CK_DEBUG_Q4K_Q8_REF");
+        cached = (env && env[0] && env[0] != '0') ? 1 : 0;
+    }
+    return cached;
+}
+
 /* ============================================================================
  * PARALLEL VERSIONS (for parallel orchestration)
  *
@@ -265,8 +275,7 @@ void gemv_q4_k_q8_k(float *y,
                     const void *x_q8,
                     int M, int K)
 {
-    const char *ref_env = getenv("CK_DEBUG_Q4K_Q8_REF");
-    if (ref_env && atoi(ref_env) != 0) {
+    if (ck_q4k_q8k_force_ref()) {
         gemv_q4_k_q8_k_ref(y, W, x_q8, M, K);
         return;
     }

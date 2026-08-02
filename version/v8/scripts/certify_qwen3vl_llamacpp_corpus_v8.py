@@ -176,6 +176,8 @@ def _bridge_command(
         "--temperature",
         "0",
         "--no-stream-output",
+        "--gemm-schedule",
+        getattr(args, "gemm_schedule", "auto"),
     ]
 
 
@@ -207,6 +209,8 @@ def _parity_command(
         str(args.threads),
         "--ck-threads",
         str(args.ck_threads),
+        "--gemm-schedule",
+        getattr(args, "gemm_schedule", "auto"),
         "--llama-required-isa",
         args.llama_required_isa,
         "--llama-decode-mode",
@@ -249,6 +253,8 @@ def _native_cli_command(
         "--require-generated-abi",
         "--token-trace-json",
         str(trace_path),
+        "--gemm-schedule",
+        getattr(args, "gemm_schedule", "auto"),
     ]
 
 
@@ -658,6 +664,12 @@ def main() -> int:
     parser.add_argument("--image-max-tokens", type=int, default=1024)
     parser.add_argument("--threads", type=int, default=20)
     parser.add_argument("--ck-threads", type=int, default=20)
+    parser.add_argument(
+        "--gemm-schedule",
+        choices=("auto", "static", "dynamic"),
+        default="auto",
+        help="CK independent GEMM tile scheduling policy (default: auto/dynamic)",
+    )
     parser.add_argument("--top-k", type=int, default=16)
     parser.add_argument("--llama-required-isa", choices=("auto", "avx2", "avx512"), default="avx2")
     parser.add_argument("--compiler", default="gcc")
@@ -736,6 +748,7 @@ def main() -> int:
         "max_new_tokens": args.max_new_tokens,
         "threads": args.threads,
         "ck_threads": args.ck_threads,
+        "gemm_schedule": args.gemm_schedule,
         "top_k": args.top_k,
         "llama_required_isa": args.llama_required_isa,
         "native_cli": _file_identity(args.native_cli, hash_content=True),

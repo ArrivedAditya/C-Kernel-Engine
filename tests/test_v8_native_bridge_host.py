@@ -843,6 +843,8 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                     "--chat-template",
                     "llama",
                     "--generate-visualizer",
+                    "--gemm-schedule",
+                    "static",
                 ]
             )
 
@@ -850,6 +852,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         args = run_pipeline.call_args.args[0]
         self.assertEqual(args.chat_template, "llama")
         self.assertTrue(args.generate_visualizer)
+        self.assertEqual(args.gemm_schedule, "static")
 
     def test_ck_run_v8_parser_accepts_canonical_v7_surface_examples(self) -> None:
         commands = [
@@ -2028,6 +2031,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         class FakeLib:
             def __init__(self, path: Path) -> None:
                 self.path = path
+                self.ck_set_gemm_schedule = mock.Mock(return_value=0)
 
             def ck_model_init_with_manifest(self, weights: bytes, manifest: bytes) -> int:
                 return 0
@@ -2084,6 +2088,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         class FakeLib:
             def __init__(self) -> None:
                 self.decode_calls = 0
+                self.ck_set_gemm_schedule = mock.Mock(return_value=0)
 
             def ck_model_init_with_manifest(self, weights: bytes, manifest: bytes) -> int:
                 return 0
@@ -2144,6 +2149,9 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 return text.replace("<|im_end|>", "") if skip_special else text
 
         class FakeLib:
+            def __init__(self) -> None:
+                self.ck_set_gemm_schedule = mock.Mock(return_value=0)
+
             def ck_model_init_with_manifest(self, weights: bytes, manifest: bytes) -> int:
                 return 0
 
@@ -2203,6 +2211,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         class FakeLib:
             def __init__(self) -> None:
                 self.decode_calls = 0
+                self.ck_set_gemm_schedule = mock.Mock(return_value=0)
 
             def ck_model_init_with_manifest(self, weights: bytes, manifest: bytes) -> int:
                 return 0
@@ -2270,6 +2279,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         class FakeLib:
             def __init__(self) -> None:
                 self.decode_calls = 0
+                self.ck_set_gemm_schedule = mock.Mock(return_value=0)
 
             def ck_model_init_with_manifest(self, weights: bytes, manifest: bytes) -> int:
                 return 0
@@ -2332,6 +2342,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         class FakeLib:
             def __init__(self) -> None:
                 self.decode_calls = 0
+                self.ck_set_gemm_schedule = mock.Mock(return_value=0)
 
             def ck_model_init_with_manifest(self, weights: bytes, manifest: bytes) -> int:
                 return 0

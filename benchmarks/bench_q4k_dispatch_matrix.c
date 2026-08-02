@@ -33,6 +33,9 @@ extern void gemm_nt_q4_k_q8_k(const void *A, const void *B, const float *bias,
 extern void gemm_nt_q4_k_q8_k_parallel_dispatch(const void *A, const void *B,
                                                 const float *bias, float *C,
                                                 int M, int N, int K);
+extern void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+        const void *A, const void *B, const float *bias, float *C,
+        int M, int N, int K);
 extern size_t q4_k_packed_meta_block_size(void);
 extern size_t q4_k_packed_meta_x8_block_size(void);
 extern size_t q4_k_packed_meta_x16_block_size(void);
@@ -193,6 +196,13 @@ static void call_ck_threadpool(void *p) {
     gemm_nt_q4_k_q8_k_parallel_dispatch(c->A_q8, c->W_q4, c->bias, c->C, c->M, c->N, c->K);
 }
 
+static void call_ck_production_pairwise(void *p) {
+    bench_ctx_t *ctx = (bench_ctx_t *)p;
+    gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+            ctx->A_q8, ctx->W_q4, ctx->bias, ctx->C,
+            ctx->M, ctx->N, ctx->K);
+}
+
 static void call_ck_packed_msplit(void *p) {
     bench_ctx_t *c = (bench_ctx_t *)p;
     gemm_nt_q4_k_packed_meta_q8_k_threaded(c->A_q8, c->W_packed, c->bias, c->C, c->M, c->N, c->K, c->threads);
@@ -267,16 +277,29 @@ static int parse_env_int(const char *name, int fallback) {
 
 int main(int argc, char **argv) {
     int quick = 0;
+    int production_only = 0;
     int iters = 20;
     int warmup = 3;
+    int schedule = CK_GEMM_SCHEDULE_AUTO;
     shape_t custom_shape = {NULL, 0, 0, 0, NULL};
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--quick") == 0) {
             quick = 1;
             iters = 8;
             warmup = 2;
+        } else if (strcmp(argv[i], "--production-only") == 0) {
+            production_only = 1;
         } else if (strcmp(argv[i], "--iters") == 0 && i + 1 < argc) {
             iters = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--schedule") == 0 && i + 1 < argc) {
+            const char *value = argv[++i];
+            if (strcmp(value, "auto") == 0) schedule = CK_GEMM_SCHEDULE_AUTO;
+            else if (strcmp(value, "static") == 0) schedule = CK_GEMM_SCHEDULE_STATIC;
+            else if (strcmp(value, "dynamic") == 0) schedule = CK_GEMM_SCHEDULE_DYNAMIC;
+            else {
+                fprintf(stderr, "--schedule must be auto, static, or dynamic\n");
+                return 2;
+            }
         } else if (strcmp(argv[i], "--shape") == 0 && i + 3 < argc) {
             custom_shape.name = "custom";
             custom_shape.M = atoi(argv[++i]);
@@ -285,6 +308,8 @@ int main(int argc, char **argv) {
             custom_shape.comment = "custom";
         }
     }
+
+    if (ck_set_gemm_schedule(schedule) != 0) return 2;
 
     ck_threadpool_t *pool = ck_threadpool_global();
     const int pool_threads = pool ? ck_threadpool_n_threads(pool) : 1;
@@ -385,6 +410,19 @@ int main(int argc, char **argv) {
 
         gemm_nt_q4_k_q8_k(A_q8, W, bias, C_ref, M, N, K);
 
+        if (production_only) {
+            ctx.C = C;
+            memset(C, 0, out_elems * sizeof(float));
+            const double t_production = bench_ms(
+                    call_ck_production_pairwise, &ctx, warmup, iters);
+            const float d_production = max_abs_diff(C_ref, C, out_elems);
+            printf("production shape=%s M=%d N=%d K=%d threads=%d ms=%.3f max_diff=%.9g schedule=%s\n",
+                   shapes[s].name, M, N, K, threads, t_production,
+                   d_production,
+                   ck_gemm_dynamic_schedule_enabled() ? "dynamic" : "static");
+            goto cleanup;
+        }
+
         ctx.C = C;
         const double t_serial = bench_ms(call_ck_serial, &ctx, warmup, iters);
         const float d_serial = max_abs_diff(C_ref, C, out_elems);
@@ -453,6 +491,7 @@ int main(int argc, char **argv) {
                d_packed_x16mt,
                d_llama);
 
+cleanup:
         free(A);
         free(A_q8);
         free(W);

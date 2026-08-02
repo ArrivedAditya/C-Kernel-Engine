@@ -75,6 +75,33 @@ typedef void (*ck_work_fn_t)(int ith, int nth, void *args);
  */
 typedef struct ck_threadpool ck_threadpool_t;
 
+/** Process the half-open interval [begin, end). */
+typedef void (*ck_range_fn_t)(int begin, int end, void *args);
+
+/** Scheduling policy for independent GEMM output tiles. */
+typedef enum {
+    CK_GEMM_SCHEDULE_AUTO = 0,
+    CK_GEMM_SCHEDULE_STATIC = 1,
+    CK_GEMM_SCHEDULE_DYNAMIC = 2,
+} ck_gemm_schedule_t;
+
+/**
+ * Set the process-wide GEMM tile scheduling policy.
+ *
+ * AUTO is the production default and currently selects dynamic work claiming
+ * for providers whose jobs write independent output tiles. Providers with
+ * ordered/shared reductions do not consult this policy.
+ *
+ * @return 0 on success, -1 for an invalid policy.
+ */
+int ck_set_gemm_schedule(int policy);
+
+/** Return the configured process-wide GEMM scheduling policy. */
+int ck_get_gemm_schedule(void);
+
+/** Return non-zero when independent GEMM tiles should use dynamic claiming. */
+int ck_gemm_dynamic_schedule_enabled(void);
+
 /* ============================================================================
  * Lifecycle
  * ============================================================================ */
@@ -144,6 +171,22 @@ void ck_threadpool_dispatch_n(ck_threadpool_t *pool,
                               int active_threads,
                               ck_work_fn_t fn,
                               void *args);
+
+/**
+ * Dynamically distribute independent ranges through the persistent pool.
+ *
+ * Workers claim `grain_size` consecutive indices until [begin, end) is empty.
+ * This changes ownership only; callers remain responsible for ensuring that
+ * ranges write disjoint outputs and preserve each output's reduction order.
+ * Do not use this helper for unordered shared reductions.
+ */
+void ck_threadpool_parallel_for_n(ck_threadpool_t *pool,
+                                  int active_threads,
+                                  int begin,
+                                  int end,
+                                  int grain_size,
+                                  ck_range_fn_t fn,
+                                  void *args);
 
 /**
  * Barrier synchronization within a dispatched work function.

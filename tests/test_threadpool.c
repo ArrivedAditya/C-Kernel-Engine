@@ -12,6 +12,7 @@
  *   7. Dispatch latency benchmark
  *   8. Barrier latency benchmark
  *   9. Parallel sum correctness (simulated GEMV row split)
+ *  10. Dynamic parallel-for covers every independent item exactly once
  *
  * Usage:
  *   ./build/test_threadpool           # Run all tests
@@ -401,6 +402,84 @@ static int test_subset_dispatch(void)
 }
 
 /* ============================================================================
+ * Test 9: Dynamic Parallel-For
+ * ============================================================================ */
+
+#define PARALLEL_FOR_N 257
+static atomic_int g_parallel_for_hits[PARALLEL_FOR_N];
+
+static void parallel_for_range(int begin, int end, void *args)
+{
+    const int base = *(const int *)args;
+    for (int i = begin; i < end; i++) {
+        atomic_fetch_add_explicit(
+            &g_parallel_for_hits[i - base], 1, memory_order_relaxed);
+    }
+}
+
+static int test_dynamic_parallel_for(void)
+{
+    printf("  [9] Dynamic parallel-for...\n");
+
+    ck_threadpool_t *pool = ck_threadpool_create(4);
+    TEST_ASSERT(pool != NULL, "create dynamic parallel-for pool");
+
+    const int begin = 11;
+    const int end = begin + PARALLEL_FOR_N;
+    const int grains[] = {1, 7, 64, PARALLEL_FOR_N + 10};
+    for (size_t g = 0; g < sizeof(grains) / sizeof(grains[0]); g++) {
+        for (int i = 0; i < PARALLEL_FOR_N; i++) {
+            atomic_store(&g_parallel_for_hits[i], 0);
+        }
+        ck_threadpool_parallel_for_n(
+            pool, 4, begin, end, grains[g], parallel_for_range, (void *)&begin);
+        for (int i = 0; i < PARALLEL_FOR_N; i++) {
+            TEST_ASSERT(atomic_load(&g_parallel_for_hits[i]) == 1,
+                        "dynamic range item executed exactly once");
+        }
+    }
+
+    for (int i = 0; i < PARALLEL_FOR_N; i++) {
+        atomic_store(&g_parallel_for_hits[i], 0);
+    }
+    ck_threadpool_parallel_for_n(
+        NULL, 1, begin, end, 7, parallel_for_range, (void *)&begin);
+    for (int i = 0; i < PARALLEL_FOR_N; i++) {
+        TEST_ASSERT(atomic_load(&g_parallel_for_hits[i]) == 1,
+                    "single-thread range item executed exactly once");
+    }
+
+    ck_threadpool_destroy(pool);
+    return 1;
+}
+
+static int test_gemm_schedule_policy(void)
+{
+    printf("  [10] GEMM schedule policy...\n");
+    TEST_ASSERT(ck_set_gemm_schedule(CK_GEMM_SCHEDULE_AUTO) == 0,
+                "set automatic GEMM schedule");
+    TEST_ASSERT(ck_get_gemm_schedule() == CK_GEMM_SCHEDULE_AUTO,
+                "automatic GEMM schedule is observable");
+    TEST_ASSERT(ck_gemm_dynamic_schedule_enabled(),
+                "automatic policy dynamically balances independent tiles");
+    TEST_ASSERT(ck_set_gemm_schedule(CK_GEMM_SCHEDULE_STATIC) == 0,
+                "set static GEMM schedule");
+    TEST_ASSERT(!ck_gemm_dynamic_schedule_enabled(),
+                "static policy disables dynamic tile claiming");
+    TEST_ASSERT(ck_set_gemm_schedule(CK_GEMM_SCHEDULE_DYNAMIC) == 0,
+                "set dynamic GEMM schedule");
+    TEST_ASSERT(ck_gemm_dynamic_schedule_enabled(),
+                "dynamic policy enables dynamic tile claiming");
+    TEST_ASSERT(ck_set_gemm_schedule(99) == -1,
+                "invalid GEMM schedule is rejected");
+    TEST_ASSERT(ck_get_gemm_schedule() == CK_GEMM_SCHEDULE_DYNAMIC,
+                "invalid setting preserves current GEMM schedule");
+    TEST_ASSERT(ck_set_gemm_schedule(CK_GEMM_SCHEDULE_AUTO) == 0,
+                "restore automatic GEMM schedule");
+    return 1;
+}
+
+/* ============================================================================
  * Benchmark: Dispatch Latency
  * ============================================================================ */
 
@@ -517,6 +596,8 @@ int main(int argc, char **argv)
         ok &= test_pause_resume();
         ok &= test_parallel_sum();
         ok &= test_subset_dispatch();
+        ok &= test_dynamic_parallel_for();
+        ok &= test_gemm_schedule_policy();
 
         printf("\n  Results: %d/%d passed\n", g_tests_passed, g_tests_run);
 
