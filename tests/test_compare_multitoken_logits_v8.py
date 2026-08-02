@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -86,6 +87,126 @@ class MultitokenParityEOSContractTests(unittest.TestCase):
 
 
 class PersistentTrajectoryParityTests(unittest.TestCase):
+    def test_capture_identity_compares_float32_bits_not_only_values(self) -> None:
+        positive_zero = np.asarray([[0.0, 1.0]], dtype=np.float32)
+        negative_zero = positive_zero.copy()
+        negative_zero[0, 0] = np.float32(-0.0)
+
+        result = runner._compare_ck_trajectory_identity(
+            {"logits": positive_zero},
+            {"logits": negative_zero},
+            top_k=2,
+        )
+
+        self.assertFalse(result["exact"])
+        self.assertEqual(result["first_different_step"], 0)
+
+    def test_capture_identity_accepts_identical_nan_payload_bits(self) -> None:
+        bits = np.asarray([[0x7FC01234, 0x3F800000]], dtype=np.uint32)
+        first = bits.view(np.float32)
+        second = bits.copy().view(np.float32)
+
+        result = runner._compare_ck_trajectory_identity(
+            {"logits": first},
+            {"logits": second},
+            top_k=2,
+        )
+
+        self.assertTrue(result["exact"])
+
+    def test_capture_neutrality_accepts_bit_exact_aggregate_capture(self) -> None:
+        rows = np.asarray([[0.0, 4.0, 1.0], [0.0, 1.0, 4.0]], dtype=np.float32)
+        calls = []
+
+        def run(**kwargs):
+            calls.append(kwargs)
+            result = {"logits": rows, "generated_tokens": [1, 2], "vocab": 3}
+            if kwargs.get("dump_step") is not None:
+                result["capture"] = {"artifacts": [{"path": "/tmp/aggregate.f32"}]}
+            return result
+
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(
+            runner, "load_ck_greedy_trajectory_isolated", side_effect=run
+        ):
+            result = runner.run_ck_capture_with_neutrality(
+                model_dir=Path("/tmp/model"), prompt_tokens=[7], max_new_tokens=2,
+                top_k=3, threads=1, runtime_so=None, dump_step=1,
+                dump_dir=Path(td) / "capture", dump_layer=63,
+                dump_names="attn_out,layer_out", dump_format="hidden",
+                dump_kv_layer=None, stop_token_ids=set(),
+            )
+
+        neutrality = result["capture"]["neutrality"]
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(neutrality["status"], "accepted")
+        self.assertEqual(neutrality["accepted_mode"], "aggregate")
+        self.assertTrue(neutrality["baseline_repeatability"]["exact"])
+        self.assertTrue(neutrality["aggregate_capture"]["exact"])
+
+    def test_capture_neutrality_rejects_nondeterministic_control(self) -> None:
+        first = np.asarray([[0.0, 4.0, 1.0]], dtype=np.float32)
+        second = np.asarray([[0.0, 3.0, 1.0]], dtype=np.float32)
+        results = [
+            {"logits": first, "generated_tokens": [1], "vocab": 3},
+            {"logits": second, "generated_tokens": [1], "vocab": 3},
+        ]
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(
+            runner, "load_ck_greedy_trajectory_isolated", side_effect=results
+        ) as run:
+            result = runner.run_ck_capture_with_neutrality(
+                model_dir=Path("/tmp/model"), prompt_tokens=[7], max_new_tokens=1,
+                top_k=3, threads=1, runtime_so=None, dump_step=0,
+                dump_dir=Path(td) / "capture", dump_layer=63,
+                dump_names="layer_out", dump_format="hidden",
+                dump_kv_layer=None, stop_token_ids=set(),
+            )
+
+        neutrality = result["capture"]["neutrality"]
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(neutrality["status"], "rejected")
+        self.assertEqual(neutrality["reason"], "uncaptured_runtime_is_not_repeatable")
+        self.assertEqual(result["capture"]["artifacts"], [])
+
+    def test_non_neutral_aggregate_falls_back_to_isolated_boundaries(self) -> None:
+        exact = np.asarray([[0.0, 4.0, 1.0], [0.0, 1.0, 4.0]], dtype=np.float32)
+        perturbed = exact.copy()
+        perturbed[1, 1] += np.float32(0.25)
+        calls = []
+
+        def run(**kwargs):
+            calls.append(kwargs)
+            names = str(kwargs.get("dump_names") or "")
+            logits = perturbed if names == "attn_out,layer_out" else exact
+            result = {"logits": logits, "generated_tokens": [1, 2], "vocab": 3}
+            if kwargs.get("dump_step") is not None:
+                result["capture"] = {
+                    "artifacts": [{"path": f"/tmp/{names}.f32"}],
+                }
+            return result
+
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(
+            runner, "load_ck_greedy_trajectory_isolated", side_effect=run
+        ):
+            result = runner.run_ck_capture_with_neutrality(
+                model_dir=Path("/tmp/model"), prompt_tokens=[7], max_new_tokens=2,
+                top_k=3, threads=1, runtime_so=None, dump_step=1,
+                dump_dir=Path(td) / "capture", dump_layer=63,
+                dump_names="attn_out,layer_out", dump_format="hidden",
+                dump_kv_layer=None, stop_token_ids=set(),
+            )
+
+        neutrality = result["capture"]["neutrality"]
+        self.assertEqual(len(calls), 5)
+        self.assertEqual(neutrality["status"], "accepted")
+        self.assertEqual(neutrality["accepted_mode"], "isolated_boundaries")
+        self.assertFalse(neutrality["aggregate_capture"]["exact"])
+        self.assertEqual(
+            [row["status"] for row in neutrality["fallback"]["boundaries"]],
+            ["accepted", "accepted"],
+        )
+        self.assertEqual(len(result["capture"]["artifacts"]), 2)
+        self.assertEqual(len(result["capture"]["rejected_artifacts"]), 1)
+
     def test_llama_layer_profiler_is_a_persistent_public_callback_hook(self) -> None:
         source = (
             ROOT / "version" / "v8" / "scripts" / "llama_token_replay_v8.cpp"
@@ -197,6 +318,40 @@ class PersistentTrajectoryParityTests(unittest.TestCase):
         self.assertEqual(report["first_divergence"]["ck_next"], 1)
         self.assertEqual(report["first_divergence"]["llama_next"], 2)
         self.assertEqual(report["final_prefix"], [7])
+
+    def test_trajectory_can_continue_on_llama_teacher_forced_prefix(self) -> None:
+        llama_rows = np.asarray([
+            [0.0, 4.0, 1.0],
+            [0.0, 1.0, 4.0],
+            [0.0, 1.0, 4.0],
+        ], dtype=np.float32)
+        ck_rows = np.asarray([
+            [0.0, 4.0, 1.0],
+            [4.0, 1.0, 0.0],
+            [0.0, 1.0, 4.0],
+        ], dtype=np.float32)
+        captured = {}
+
+        def ck_teacher(**kwargs):
+            captured.update(kwargs)
+            return {"logits": ck_rows, "generated_tokens": [1, 0, 2], "vocab": 3}
+
+        with mock.patch.object(runner, "run_llama_greedy_trajectory", return_value={
+            "logits": llama_rows, "generated_tokens": [1, 2, 2], "meta": {},
+        }), mock.patch.object(
+            runner, "load_ck_greedy_trajectory_isolated", side_effect=ck_teacher
+        ):
+            report = runner.run_multitoken_trajectory_parity(
+                model_dir=Path("/tmp/model"), gguf_path=Path("/tmp/model.gguf"),
+                prompt_tokens=[7], max_new_tokens=3, ctx_len=128, top_k=3,
+                threads=1, llama_no_repack=False,
+                append_on_divergence="llama",
+            )
+
+        self.assertEqual(captured["forced_tokens"], [1, 2, 2])
+        self.assertEqual(len(report["steps"]), 3)
+        self.assertEqual(report["first_divergence"]["step"], 1)
+        self.assertEqual(report["trajectory_policy"], "llama_teacher_forced")
 
     def test_trajectory_captures_isolated_ck_before_llama(self) -> None:
         rows = np.asarray([[0.0, 4.0, 1.0]], dtype=np.float32)
