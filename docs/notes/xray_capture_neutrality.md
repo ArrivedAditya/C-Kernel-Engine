@@ -13,10 +13,11 @@ The persistent trajectory harness applies the following sequence automatically w
 1. **Control A — uncaptured execution.** Establish the reference predictions and full logits.
 2. **Control B — uncaptured forced replay.** Replay Control A's tokens, or the declared external teacher tokens, so every causal prefix is identical. Compare all logits bit-for-bit.
 3. **Repeatability gate.** If Controls A and B differ, reject X-ray attribution with `uncaptured_runtime_is_not_repeatable`. Capture is not attempted because observer interference cannot be distinguished from production nondeterminism.
-4. **Aggregate capture.** Replay the identical tokens with all requested checkpoints enabled.
-5. **Neutrality gate.** Compare every captured-run logit bit-for-bit with Control B. Accept the aggregate artifacts only when they are identical.
-6. **Isolated-boundary fallback.** If a multi-boundary hidden capture is non-neutral, run one replay per boundary. Each replay is independently compared with Control B. Artifacts are accepted only if every isolated replay is neutral.
-7. **Fail closed.** Rejected aggregate artifacts remain labelled as rejected, but are never returned in the accepted `artifacts` list. A rejected capture causes a distinct nonzero CLI result even if CKE and the external oracle otherwise agree.
+4. **Optional one-thread SIMD diagnostic.** With `--diagnose-single-thread`, when a multi-thread control is not repeatable, replay the same forced causal history twice with one worker. SIMD remains enabled. The report records both one-thread repeatability and the parallel-versus-one-thread difference. This creates a reproducible local reference when possible; it does not claim that the one-thread result is mathematically more accurate. The diagnostic is opt-in because two extra single-thread trajectories can be expensive for large models.
+5. **Aggregate capture.** Replay the identical tokens with all requested checkpoints enabled.
+6. **Neutrality gate.** Compare every captured-run logit bit-for-bit with Control B. Accept the aggregate artifacts only when they are identical.
+7. **Isolated-boundary fallback.** If a multi-boundary hidden capture is non-neutral, run one replay per boundary. Each replay is independently compared with Control B. Artifacts are accepted only if every isolated replay is neutral.
+8. **Fail closed.** Rejected aggregate artifacts remain labelled as rejected, but are never returned in the accepted `artifacts` list. A rejected capture causes a distinct nonzero CLI result even if CKE and the external oracle otherwise agree.
 
 The fallback is intentionally unavailable for KV capture and binary parity capture because those formats can represent coupled state that cannot be reconstructed by blindly splitting a comma-separated operation list.
 
@@ -31,6 +32,7 @@ Using a numerical tolerance for observer neutrality could hide precisely the sma
 The capture report uses `cke.xray.capture-neutrality.v1` and records:
 
 - the full-logit repeatability result for two uncaptured controls;
+- an optional one-thread SIMD diagnostic when a multi-thread control is not repeatable;
 - the aggregate captured-versus-control comparison;
 - the first differing generated step and logit metrics;
 - whether isolated fallback ran;
@@ -43,3 +45,5 @@ The capture report uses `cke.xray.capture-neutrality.v1` and records:
 The real Qwen3.6-27B Q4_K_M qualification rejected capture before instrumentation. Two uncaptured 24-thread runs on the same forced trajectory first differed at generated step 76. Their top-1 token still matched, but the full logits were not bit-identical (cosine 0.999641, RMSE 0.069543, maximum absolute difference 0.326646).
 
 This corrects the earlier provisional interpretation that exporting many layer-63 boundaries necessarily perturbed CKE. The current evidence establishes production-path run-to-run numerical nondeterminism. It does not yet identify its source. The next investigation should hold the token history fixed and vary only thread count and provider/scheduling selection to isolate whether the source is a parallel reduction, recurrent-state update, scratch-buffer race, or another provider contract.
+
+For the same 77-position forced Qwen3.6 trajectory, two one-thread CKE runs were bit-exact across all logits. One thread means one worker; it does **not** disable AVX2, AVX-512, VNNI, FMA, or other SIMD selected by the compiled runtime. That result makes one-thread SIMD a useful internal reference for isolating the parallel defect. llama.cpp remains the independent external oracle, and agreement with it must be reported separately from CKE repeatability.

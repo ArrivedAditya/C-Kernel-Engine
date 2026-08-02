@@ -167,6 +167,61 @@ class PersistentTrajectoryParityTests(unittest.TestCase):
         self.assertEqual(neutrality["reason"], "uncaptured_runtime_is_not_repeatable")
         self.assertEqual(result["capture"]["artifacts"], [])
 
+    def test_parallel_nondeterminism_skips_expensive_reference_by_default(self) -> None:
+        parallel_a = np.asarray([[0.0, 4.0, 1.0]], dtype=np.float32)
+        parallel_b = np.asarray([[0.0, 3.0, 1.0]], dtype=np.float32)
+        results = [
+            {"logits": parallel_a, "generated_tokens": [1], "vocab": 3},
+            {"logits": parallel_b, "generated_tokens": [1], "vocab": 3},
+        ]
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(
+            runner, "load_ck_greedy_trajectory_isolated", side_effect=results
+        ) as run:
+            result = runner.run_ck_capture_with_neutrality(
+                model_dir=Path("/tmp/model"), prompt_tokens=[7], max_new_tokens=1,
+                top_k=3, threads=24, runtime_so=None, dump_step=0,
+                dump_dir=Path(td) / "capture", dump_layer=63,
+                dump_names="layer_out", dump_format="hidden",
+                dump_kv_layer=None, stop_token_ids=set(),
+            )
+
+        diagnostic = result["capture"]["neutrality"]["single_thread_simd_reference"]
+        self.assertEqual(run.call_count, 2)
+        self.assertFalse(diagnostic["attempted"])
+        self.assertEqual(diagnostic["reason"], "not_requested")
+        self.assertEqual(result["capture"]["artifacts"], [])
+
+    def test_parallel_nondeterminism_runs_one_thread_simd_reference(self) -> None:
+        parallel_a = np.asarray([[0.0, 4.0, 1.0]], dtype=np.float32)
+        parallel_b = np.asarray([[0.0, 3.0, 1.0]], dtype=np.float32)
+        single = np.asarray([[0.0, 3.5, 1.0]], dtype=np.float32)
+        results = [
+            {"logits": parallel_a, "generated_tokens": [1], "vocab": 3},
+            {"logits": parallel_b, "generated_tokens": [1], "vocab": 3},
+            {"logits": single, "generated_tokens": [1], "vocab": 3},
+            {"logits": single.copy(), "generated_tokens": [1], "vocab": 3},
+        ]
+        with tempfile.TemporaryDirectory() as td, mock.patch.object(
+            runner, "load_ck_greedy_trajectory_isolated", side_effect=results
+        ) as run:
+            result = runner.run_ck_capture_with_neutrality(
+                model_dir=Path("/tmp/model"), prompt_tokens=[7], max_new_tokens=1,
+                top_k=3, threads=24, runtime_so=None, dump_step=0,
+                dump_dir=Path(td) / "capture", dump_layer=63,
+                dump_names="layer_out", dump_format="hidden",
+                dump_kv_layer=None, stop_token_ids=set(),
+                diagnose_single_thread=True,
+            )
+
+        diagnostic = result["capture"]["neutrality"]["single_thread_simd_reference"]
+        self.assertEqual(run.call_count, 4)
+        self.assertTrue(diagnostic["attempted"])
+        self.assertEqual(diagnostic["threads"], 1)
+        self.assertEqual(diagnostic["simd"], "enabled_by_runtime_build")
+        self.assertTrue(diagnostic["repeatability"]["exact"])
+        self.assertFalse(diagnostic["parallel_vs_reference"]["exact"])
+        self.assertEqual(result["capture"]["artifacts"], [])
+
     def test_non_neutral_aggregate_falls_back_to_isolated_boundaries(self) -> None:
         exact = np.asarray([[0.0, 4.0, 1.0], [0.0, 1.0, 4.0]], dtype=np.float32)
         perturbed = exact.copy()

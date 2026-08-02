@@ -481,6 +481,7 @@ def run_ck_capture_with_neutrality(
     dump_kv_layer: int | None,
     stop_token_ids: set[int],
     forced_tokens: list[int] | None = None,
+    diagnose_single_thread: bool = False,
 ) -> dict[str, Any]:
     """Capture CKE checkpoints only after proving observer neutrality.
 
@@ -521,12 +522,61 @@ def run_ck_capture_with_neutrality(
         "schema": "cke.xray.capture-neutrality.v1",
         "acceptance_contract": "bit_exact_full_logits_same_forced_prefix",
         "baseline_repeatability": repeatability,
+        "single_thread_simd_reference": {
+            "attempted": False,
+            "reason": "parallel_baseline_is_repeatable",
+        },
         "aggregate_capture": None,
         "fallback": {"attempted": False, "boundaries": []},
         "accepted_mode": None,
         "status": "rejected",
     }
     if not repeatability["exact"]:
+        if int(threads) > 1 and diagnose_single_thread:
+            single_a = load_ck_greedy_trajectory_isolated(
+                model_dir=model_dir,
+                prompt_tokens=prompt_tokens,
+                max_new_tokens=replay_steps,
+                stop_token_ids=stop_token_ids,
+                threads=1,
+                runtime_so=runtime_so,
+                forced_tokens=replay_tokens,
+            )
+            single_b = load_ck_greedy_trajectory_isolated(
+                model_dir=model_dir,
+                prompt_tokens=prompt_tokens,
+                max_new_tokens=replay_steps,
+                stop_token_ids=stop_token_ids,
+                threads=1,
+                runtime_so=runtime_so,
+                forced_tokens=replay_tokens,
+            )
+            neutrality["single_thread_simd_reference"] = {
+                "attempted": True,
+                "threads": 1,
+                "simd": "enabled_by_runtime_build",
+                "causal_history": "same_forced_prefix",
+                "repeatability": _compare_ck_trajectory_identity(
+                    single_a, single_b, top_k
+                ),
+                "parallel_vs_reference": _compare_ck_trajectory_identity(
+                    single_a, control_b, top_k
+                ),
+            }
+        elif int(threads) <= 1:
+            neutrality["single_thread_simd_reference"] = {
+                "attempted": False,
+                "reason": "baseline_already_uses_one_thread",
+                "threads": 1,
+                "simd": "enabled_by_runtime_build",
+            }
+        else:
+            neutrality["single_thread_simd_reference"] = {
+                "attempted": False,
+                "reason": "not_requested",
+                "threads": 1,
+                "simd": "enabled_by_runtime_build",
+            }
         neutrality["reason"] = "uncaptured_runtime_is_not_repeatable"
         control_b["capture"] = {"neutrality": neutrality, "artifacts": []}
         return control_b
@@ -638,6 +688,7 @@ def run_multitoken_trajectory_parity(
     llama_dump_flash_inputs: bool = False,
     llama_profile_layers_out: Path | None = None,
     append_on_divergence: str = "stop",
+    diagnose_single_thread: bool = False,
 ) -> dict[str, Any]:
     stops = {int(token) for token in (stop_token_ids or set())}
     if append_on_divergence not in {"stop", "llama"}:
@@ -662,6 +713,7 @@ def run_multitoken_trajectory_parity(
                 dump_format=ck_dump_format,
                 dump_kv_layer=ck_dump_kv_layer,
                 stop_token_ids=stops,
+                diagnose_single_thread=diagnose_single_thread,
             )
         else:
             ck = load_ck_greedy_trajectory_isolated(
@@ -708,6 +760,7 @@ def run_multitoken_trajectory_parity(
                 dump_kv_layer=ck_dump_kv_layer,
                 stop_token_ids=stops,
                 forced_tokens=teacher,
+                diagnose_single_thread=diagnose_single_thread,
             )
         else:
             ck = load_ck_greedy_trajectory_isolated(
@@ -1038,6 +1091,14 @@ def main() -> int:
             "a new CSV using the public cb_eval oracle hook."
         ),
     )
+    ap.add_argument(
+        "--diagnose-single-thread",
+        action="store_true",
+        help=(
+            "When multi-thread controls are non-repeatable, run two additional "
+            "one-thread SIMD trajectories and compare them with the parallel control."
+        ),
+    )
     args = ap.parse_args()
 
     model_dir = discover_ck_model_dir(args.model_dir)
@@ -1083,6 +1144,7 @@ def main() -> int:
             llama_dump_flash_inputs=bool(args.llama_dump_flash_inputs),
             llama_profile_layers_out=args.llama_profile_layers_out,
             append_on_divergence=str(args.append_on_divergence),
+            diagnose_single_thread=bool(args.diagnose_single_thread),
         )
     else:
         report = run_multitoken_parity(
