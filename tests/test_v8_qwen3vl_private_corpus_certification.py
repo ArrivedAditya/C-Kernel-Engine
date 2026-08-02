@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -52,7 +53,14 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
             "pass": True,
             "max_new_tokens": 128,
             "ctx_len": 4096,
-            "steps": [{"generated_prefix": [1], "ck_next_text": "private"}],
+            "steps": [
+                {
+                    "generated_prefix": [1],
+                    "ck_next": 7,
+                    "llama_next": 7,
+                    "ck_next_text": "private",
+                }
+            ],
             "stop_reason": None,
             "first_divergence": None,
             "prefix": {"grid": [36, 28], "tokens": 1008},
@@ -102,14 +110,45 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
                 json.dumps(
                     {
                         "case_config": config,
-                        "redacted_row": {"image_index": 1, "status": "pass"},
+                        "redacted_row": {
+                            "image_index": 1,
+                            "status": "pass",
+                            "native_cli": {"pass": True},
+                        },
                     }
                 ),
+                encoding="utf-8",
+            )
+            (Path(temporary) / "native_comparison.json").write_text(
+                json.dumps({"pass": True}),
                 encoding="utf-8",
             )
             self.assertIsNotNone(self.module._resumed_row(result, config))
             changed = dict(config, image_sha256="changed")
             self.assertIsNone(self.module._resumed_row(result, changed))
+
+    def test_resume_rejects_missing_native_comparison_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            result = Path(temporary) / "case_result.json"
+            config = {
+                "global_config_sha256": "config",
+                "image_index": 1,
+                "image_sha256": "image",
+            }
+            result.write_text(
+                json.dumps(
+                    {
+                        "case_config": config,
+                        "redacted_row": {
+                            "image_index": 1,
+                            "status": "pass",
+                            "native_cli": {"pass": True},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertIsNone(self.module._resumed_row(result, config))
 
     def test_summary_fails_for_any_divergence(self) -> None:
         selected = [{"index": 1}, {"index": 2}]
@@ -165,6 +204,117 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
         self.assertIn("--llama-decode-mode batched", rendered)
         self.assertIn("--append-on-divergence stop", rendered)
         self.assertIn("--max-new-tokens 128", rendered)
+
+    def test_native_cli_command_requires_generated_abi_and_exact_trace(self) -> None:
+        args = SimpleNamespace(
+            native_cli=Path("build/ck-cli-v8"),
+            max_new_tokens=128,
+            context_len=4096,
+        )
+        command = self.module._native_cli_command(
+            args,
+            bridge_report=Path("case/bridge_report.json"),
+            runtime_dir=Path("runtime"),
+            trace_path=Path("case/native_token_trace.json"),
+        )
+        rendered = " ".join(map(str, command))
+        self.assertIn("runtime/decoder/libdecoder_v8.so", rendered)
+        self.assertIn("--bridge-report case/bridge_report.json", rendered)
+        self.assertIn("--require-generated-abi", command)
+        self.assertIn("--token-trace-json case/native_token_trace.json", rendered)
+
+    def test_native_trace_must_match_python_and_llama_pre_eos_tokens(self) -> None:
+        report = {
+            "pass": True,
+            "stop_token_ids": [99],
+            "steps": [
+                {"ck_next": 7, "llama_next": 7},
+                {"ck_next": 8, "llama_next": 8},
+                {"ck_next": 99, "llama_next": 99},
+            ],
+        }
+        trace = {
+            "schema": "cke.native_token_trace",
+            "schema_version": 1,
+            "token_ids": [7, 8],
+        }
+        comparison = self.module._compare_native_trace(report, trace)
+        self.assertTrue(comparison["pass"])
+        self.assertEqual(comparison["native_tokens"], 2)
+        trace["token_ids"] = [7, 9]
+        comparison = self.module._compare_native_trace(report, trace)
+        self.assertFalse(comparison["pass"])
+        self.assertEqual(
+            comparison["native_vs_python_first_divergence"],
+            {"step": 1, "native_token": 9, "reference_token": 8},
+        )
+
+    def test_native_trace_attributes_a_truncated_oracle_divergence(self) -> None:
+        report = {
+            "pass": False,
+            "steps": [
+                {"ck_next": 7, "llama_next": 7},
+                {"ck_next": 606, "llama_next": 627},
+            ],
+        }
+        trace = {
+            "schema": "cke.native_token_trace",
+            "schema_version": 1,
+            "token_ids": [7, 606, 42],
+        }
+        comparison = self.module._compare_native_trace(report, trace)
+        self.assertFalse(comparison["pass"])
+        self.assertTrue(comparison["native_matches_python_captured_prefix"])
+        self.assertFalse(comparison["three_way_comparison_complete"])
+        self.assertIsNone(comparison["native_vs_python_first_divergence"])
+        self.assertEqual(
+            comparison["native_vs_llama_first_divergence"],
+            {"step": 1, "native_token": 606, "reference_token": 627},
+        )
+
+    def test_logged_command_accepts_completed_numerical_failure_exit(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            elapsed = self.module._run_logged(
+                [sys.executable, "-c", "raise SystemExit(3)"],
+                env={},
+                log_path=Path(temporary) / "numerical.log",
+                dry_run=False,
+                accepted_returncodes=(0, 3),
+            )
+            self.assertGreaterEqual(elapsed, 0.0)
+
+    def test_redacted_row_excludes_matched_eos_decision_from_context(self) -> None:
+        report = {
+            "pass": True,
+            "ctx_len": 4096,
+            "stop_token_ids": [99],
+            "steps": [
+                {"ck_next": 7, "llama_next": 7},
+                {"ck_next": 8, "llama_next": 8},
+                {"ck_next": 99, "llama_next": 99},
+            ],
+            "prefix": {"tokens": 10},
+            "prompt_tokens_before_image": [1],
+            "prompt_tokens_after_image": [2],
+        }
+        native = {
+            "pass": True,
+            "native_tokens": 2,
+            "python_ck_tokens": 2,
+            "llama_tokens": 2,
+        }
+        row = self.module._redacted_row(
+            index=1,
+            image_sha256="image",
+            prefix_sha256="prefix",
+            report=report,
+            elapsed={"parity": 3.0},
+            requested_tokens=128,
+            native_comparison=native,
+        )
+        self.assertEqual(row["steps"], 3)
+        self.assertEqual(row["matched_tokens"], 2)
+        self.assertEqual(row["context_tokens_after_comparison"], 14)
 
     def test_progress_line_distinguishes_tokens_context_and_time(self) -> None:
         row = {
@@ -290,8 +440,8 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
             self.assertIn("EXACT MATCH", rendered)
             self.assertIn("/private/form.jpg", rendered)
             self.assertIn("source 2200x1700 -> processed 1152x896", rendered)
-            self.assertIn("128/128 exact pre-EOS greedy token pairs", rendered)
-            self.assertIn('Output (CK == llama.cpp', rendered)
+            self.assertIn("128/128 exact native/Python/llama pre-EOS tokens", rendered)
+            self.assertIn('Output (native CLI == Python CKE == llama.cpp', rendered)
             self.assertIn('{"title":"Monthly Report"}', rendered)
             self.assertNotIn("/private/form.jpg", json.dumps(row))
 
@@ -314,6 +464,7 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
             "ck_threads": 20,
             "top_k": 16,
             "llama_required_isa": "avx2",
+            "native_cli_sha256": "native-cli",
         }
 
 

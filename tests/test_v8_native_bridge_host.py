@@ -1644,6 +1644,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            token_trace_path = tmp / "native_token_trace.json"
 
             result = subprocess.run(
                 [
@@ -1660,6 +1661,8 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                     "1",
                     "--quiet-output",
                     "--no-timing",
+                    "--token-trace-json",
+                    str(token_trace_path),
                     "--verbose",
                 ],
                 cwd=str(ROOT),
@@ -1673,6 +1676,17 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 r"\[DEBUG\] Running ck_model_forward_mixed(?:_ex)? with prefix_tokens=3 embed_dim=16 prompt_tokens=4",
             )
             self.assertNotIn("Model does not have built-in tokenizer", combined)
+            trace = json.loads(token_trace_path.read_text(encoding="utf-8"))
+            self.assertEqual(trace["schema"], "cke.native_token_trace")
+            self.assertEqual(trace["schema_version"], 1)
+            self.assertEqual(trace["prompt_tokens"], 4)
+            self.assertEqual(trace["generated_tokens"], 1)
+            self.assertEqual(trace["stop_reason"], "token_limit")
+            self.assertEqual(trace["token_ids"], [0])
+            self.assertGreaterEqual(trace["prefill_time_ms"], 0.0)
+            self.assertEqual(trace["decode_time_ms"], 0.0)
+            self.assertEqual(token_trace_path.stat().st_mode & 0o777, 0o600)
+            self.assertFalse(list(tmp.glob("native_token_trace.json.tmp.*")))
 
     def test_ck_cli_v8_bridge_report_decodes_output_from_vocab_tables_without_tokenizer(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_native_bridge_report_vocab_cli_") as tmpdir:

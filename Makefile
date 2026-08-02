@@ -2640,6 +2640,7 @@ test-qwen3vl-private-corpus-parity-auto:
 		test -f "$(QWEN3VL_PRIVATE_CORPUS_DECODER)" || { echo "ERROR: Qwen3-VL decoder GGUF is missing"; exit 2; }; \
 		test -f "$(QWEN3VL_PRIVATE_CORPUS_MMPROJ)" || { echo "ERROR: Qwen3-VL mmproj GGUF is missing"; exit 2; }; \
 		test -f "$(QWEN3VL_PRIVATE_CORPUS_LLAMA_ROOT)/build/bin/libllama.so" || { echo "ERROR: pinned llama.cpp build is missing"; exit 2; }; \
+		$(MAKE) --no-print-directory ck-cli-v8; \
 		$(PYTHON) version/v8/scripts/certify_qwen3vl_llamacpp_corpus_v8.py \
 			--manifest "$(QWEN3VL_PRIVATE_CORPUS_MANIFEST)" \
 			--decoder-gguf "$(QWEN3VL_PRIVATE_CORPUS_DECODER)" \
@@ -3769,6 +3770,11 @@ profile-v8-prefill-perf-stat: ck-cli-v8
 		--prompt $${CK_V8_PREFILL_PERF_PROMPT:-128} \
 		--decode $${CK_V8_PREFILL_PERF_DECODE:-1} \
 		--threads $${CK_NUM_THREADS:-12}
+
+.PHONY: test-v8-layout-dataflow-audit
+test-v8-layout-dataflow-audit:
+	@echo "Running v8 layout/dataflow audit contracts..."
+	$(PYTHON) $(PYTHONFLAGS) unittest/test_layout_dataflow_audit_v8.py
 
 test-v8-decoder-matrix: ck-cli-v8
 	@echo "Running v8 decoder matrix benchmark (CKE vs llama.cpp)..."
