@@ -1559,7 +1559,7 @@
         <div class="mp-row"><span class="mp-dot no"></span><span class="mp-text dim">Sequential prefill remains the default while long-context parity is unresolved</span></div>
       </div>
       <div class="source-note">
-        Prefill coverage (PR #277): the measured Qwen3.6-27B Q4_K_M projection shapes dispatch to the AVX-512 VNNI x16 provider with packed weights prepared at load time, reaching <code>11.20 tok/s</code> prompt rate (about 2.6x the previous CKE batched baseline) on an ICX AVX-512/VNNI host. 1K-context logit parity is not certified yet, so the lane stays behind <code>CK_V8_FORCE_BATCHED_PREFILL=1</code>. Operator steps: <a href="v8-runbook.html#qwen36-optimized-prefill">v8 runbook</a>.
+        Prefill coverage (PR #277): the measured Qwen3.6-27B Q4_K_M projection shapes dispatch to the AVX-512 VNNI x16 provider with packed weights prepared at load time, reaching <code>11.20 tok/s</code> prompt rate (about 2.6x the previous CKE batched baseline) on an ICX AVX-512/VNNI host. 1K-context logit parity is not certified yet, so the lane stays behind <code>CK_V8_FORCE_BATCHED_PREFILL=1</code>. Operator steps: <a href="v8-runbook.html#qwen36-optimized-prefill">v8 runbook</a>; performance context and remaining targets: <a href="prefill-performance-roadmap.html">prefill performance roadmap</a>.
       </div>
       <div class="model-tags">
         <span class="tag learned">exact_head_parallel_deltanet</span>
@@ -2574,7 +2574,7 @@ python3 version/v7/scripts/test_kv_cache_batch_copy_call_ir_v7.py \
             </div>
             <div style="text-align: right;">
                 <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
-                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-08-01</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-08-02</p>
             </div>
         </div>
     </footer>
