@@ -232,6 +232,32 @@ Extended schema for multi-modal models with explicit execution sequences.
   in `block_types` and list them explicitly in `sequence`
 - Both sequence arrays are critical: JSON objects have no guaranteed order
 
+### Circuit-owned graph ports and activation bindings
+
+Operation objects may declare semantic edges with `graph_slots`:
+
+```json
+{"op":"two_stream_combine","graph_slots":{
+  "inputs":{"main":"main_stream","aux":"aux_stream"},
+  "outputs":{"next_main":"main_stream","next_aux":"aux_stream"}
+}}
+```
+
+When a logical slot must persist independently, the circuit binds it to an
+existing layout region at top level:
+
+```json
+"activation_bindings": {
+  "main_stream": "embedded_input",
+  "aux_stream": "layer_output"
+}
+```
+
+These declarations are generic. The compiler records ports and validates that
+the target buffers exist; it must not infer model-family connectivity. Kernel
+maps own function ABIs and providers own transformations. Existing circuits
+without `activation_bindings` retain the legacy planner defaults.
+
 ### Version 3 (Current Direction - Branch-Aware Graphs)
 
 Version 3 keeps the v2 block/phase structure but allows op objects with stable

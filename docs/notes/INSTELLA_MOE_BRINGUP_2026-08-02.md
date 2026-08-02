@@ -1,8 +1,8 @@
 # Instella-MoE V8 bring-up (2026-08-02)
 
-This note records the first fail-closed CKE bring-up for AMD's
-`amd/Instella-MoE-16B-A3B-Think`. It is a tensor-contract and graph-semantics
-patch, not an end-to-end support claim.
+This note records the fail-closed CKE bring-up for AMD's
+`amd/Instella-MoE-16B-A3B-Think`. Tensor mapping and synthetic generated-C
+lowering are complete; this is not yet a real-weight parity claim.
 
 ## Upstream evidence
 
@@ -52,28 +52,43 @@ wrong model.
 - Synthetic converter, topology-failure, contract-inspector, numerical-contract,
   and PyTorch boundary tests.
 
-## Deliberate fail-closed boundary
+## Synthetic circuit status
 
-Full conversion/execution remains blocked until all three items below exist:
+The following pieces now exist:
 
-- `instella_moe.json`: an executable V8 circuit, not a renamed Kimi circuit.
-- Persistent two-stream FarSkip dataflow and lifetime planning.
-- A certified partial-interleaved YaRN MLA positional contract/provider.
+- `instella_moe.json`, an executable circuit with separate dense, first-FarSkip,
+  and continuing-FarSkip layer kinds.
+- Circuit-owned `graph_slots` and `activation_bindings`; the compiler has no
+  Instella architecture branch.
+- Generic explicit-position YaRN FP32/BF16 cache providers. Generated
+  initialization does not yet bind their position input and full YaRN
+  parameters, so this boundary remains fail-closed.
+- A BF16 FarSkip composite provider with a kernel-map-owned call ABI.
+- A tiny two-layer model test that converts safetensors, lowers prefill and
+  decode to error-free call IR, generates strict-contract C, and passes a C11
+  syntax compile.
 
-The contract inspector therefore returns `bringup_required` and names those
-missing capabilities. This prevents a superficially successful conversion from
-producing numerically invalid text.
+The contract inspector reports `bringup_required` for the missing generated
+interleaved-YaRN binding. Synthetic C compilation proves graph and ABI
+structure, not numerical readiness. Release support additionally requires
+real-weight PyTorch X-ray parity.
 
 ## Next certification sequence
 
-1. Add tiny deterministic PyTorch fixtures for gated MLA, interleaved YaRN, and
-   two consecutive FarSkip layers.
-2. Implement the two-stream slots in the DSL/planner and the exact Instella
-   circuit.
-3. Lower both prefill and decode and compare every new boundary with the
-   fixtures.
-4. Download/convert the six real shards only after the synthetic circuit is
-   complete.
-5. Run first-token and teacher-forced X-ray attribution against the AMD/Hugging
+1. Bind explicit positions and all YaRN parameters through the circuit and
+   kernel map to `yarn_rope_init`, then assert that provider in call-ready IR.
+2. Add a deterministic PyTorch boundary fixture for the complete gated-MLA
+   layer (the YaRN and FarSkip component fixtures already exist).
+3. Download/convert the six real shards with cgroup/storage headroom checks.
+4. Run first-token and teacher-forced X-ray attribution against the AMD/Hugging
    Face implementation, followed by coherent generation and performance work.
 
+## Remaining DSL debt
+
+Instella itself is mechanically stitched: the circuit owns ports and persistent
+stream bindings, kernel maps own call ABIs, and providers own math. DeepStack
+still uses the older branch subgraph declaration plus centralized allocation and
+slice-offset compatibility code. The new activation-binding mechanism is the
+route for migrating those buffer names, but that migration is intentionally a
+separate regression-sensitive patch; this Instella work does not claim it is
+already complete.

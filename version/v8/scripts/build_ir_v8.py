@@ -3116,6 +3116,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "assistant_post_projection": "matmul",
     "assistant_layer_scale": "assistant_layer_scale",
     "q_gate_proj": "matmul",
+    "attention_gate_projection": "matmul",
     "k_proj": "matmul",
     "v_proj": "matmul",
     "cross_k_proj": "matmul",
@@ -3150,6 +3151,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "shared_relu2_expert_mlp": "shared_relu2_expert_mlp",
     "moe_swiglu_expert_mlp": "moe_swiglu_expert_mlp",
     "shared_swiglu_expert_mlp": "shared_swiglu_expert_mlp",
+    "farskip_routed_shared_combine": "farskip_routed_shared_combine",
     "kv_a_proj": "matmul",
     "kv_a_layernorm": "rmsnorm",
     "kv_lora_decompress": "kv_lora_decompress",
@@ -4163,6 +4165,14 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
         if q_gate_proj <= 0:
             q_gate_proj = 2 * (heads * head_dim)
         return q_gate_proj, embed
+    if op_name == "attention_gate_projection":
+        # Separate learned gate for gated attention (unlike q_gate_proj, which
+        # denotes a packed Q+gate tensor).  Its width follows the attention
+        # value/output width and remains a reusable projection semantic.
+        gate_width = int(config.get("attn_gate_dim", 0) or 0)
+        if gate_width <= 0:
+            gate_width = heads * int(config.get("v_head_dim", head_dim) or head_dim)
+        return gate_width, embed
     if op_name in ("k_proj", "v_proj", "cross_k_proj", "cross_v_proj"):
         return kv_heads * head_dim, embed
     recurrent_q = int(config.get("q_dim", 0) or 0)
@@ -5932,6 +5942,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "assistant_pre_projection": ["assistant_pre_projection"],
         "assistant_post_projection": ["assistant_post_projection"],
         "q_gate_proj": ["wq"],
+        "attention_gate_projection": ["mla_gate_proj"],
         "k_proj": ["wk"],
         "v_proj": ["wv"],
         "cross_k_proj": ["cross_wk"],
@@ -5955,6 +5966,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     "shared_relu2_expert_mlp": ["moe_shared_up", "moe_shared_down"],
     "moe_swiglu_expert_mlp": ["moe_expert_gate", "moe_expert_up", "moe_expert_down"],
     "shared_swiglu_expert_mlp": ["moe_shared_gate", "moe_shared_up", "moe_shared_down"],
+    "farskip_routed_shared_combine": ["moe_shared_gate", "moe_shared_up", "moe_shared_down"],
     "kv_a_proj": ["mla_kv_a_proj"],
     "kv_a_layernorm": ["mla_kv_a_norm"],
     "kv_lora_decompress": ["mla_kv_b_proj"],
@@ -6068,6 +6080,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "qkv_proj",
         "q_proj",
         "q_gate_proj",
+        "attention_gate_projection",
         "k_proj",
         "v_proj",
         "out_proj",
@@ -6269,6 +6282,16 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                 if gate_dtype == "bf16" and up_dtype == "bf16" and down_dtype == "bf16":
                     return ["moe_swiglu_shared_forward_bf16"]
                 return ["moe_swiglu_shared_forward_f32"]
+            if op == "farskip_routed_shared_combine":
+                gate_dtype = str(layer_quant.get("moe_shared_gate", "")).lower()
+                up_dtype = str(layer_quant.get("moe_shared_up", "")).lower()
+                down_dtype = str(layer_quant.get("moe_shared_down", "")).lower()
+                if gate_dtype == "bf16" and up_dtype == "bf16" and down_dtype == "bf16":
+                    return ["farskip_swiglu_shared_combine_bf16"]
+                raise RuntimeError(
+                    "FarSkip reference provider currently requires BF16 shared-expert weights; "
+                    f"got gate={gate_dtype}, up={up_dtype}, down={down_dtype}"
+                )
 
             if op == "gemma4_per_layer_prepare":
                 token_dtype = layer_quant.get("per_layer_token_emb", header_quant.get("per_layer_token_emb", ""))
@@ -8523,6 +8546,7 @@ WEIGHT_PATTERNS = {
     "mla_kv_a_proj": ["layer.{L}.mla_kv_a_proj"],
     "mla_kv_a_norm": ["layer.{L}.mla_kv_a_norm"],
     "mla_kv_b_proj": ["layer.{L}.mla_kv_b_proj"],
+    "mla_gate_proj": ["layer.{L}.mla_gate_proj"],
     "moe_router": ["layer.{L}.moe_router"],
     "moe_router_bias": ["layer.{L}.moe_router_bias"],
     "moe_expert_gate": ["layer.{L}.moe_expert_gate", "layer.{L}.moe_expert.{E}.gate"],
@@ -8679,6 +8703,7 @@ TEMPLATE_OP_WEIGHTS = {
     "q_proj": ["wq", "bq", "wq_input_min", "wq_input_max", "wq_output_min", "wq_output_max"],  # Q projection only (when split)
     "cross_q_proj": ["cross_wq", "cross_bq"],
     "q_gate_proj": ["wq", "bq"],  # Joint Q + gate projection
+    "attention_gate_projection": ["mla_gate_proj"],
     "k_proj": ["wk", "bk", "wk_input_min", "wk_input_max", "wk_output_min", "wk_output_max"],  # K projection only (when split)
     "v_proj": ["wv", "bv", "wv_input_min", "wv_input_max", "wv_output_min", "wv_output_max"],  # V projection only (when split)
     "cross_k_proj": ["cross_wk", "cross_bk"],
@@ -8713,6 +8738,7 @@ TEMPLATE_OP_WEIGHTS = {
     "shared_relu2_expert_mlp": ["moe_shared_up", "moe_shared_down"],
     "moe_swiglu_expert_mlp": ["moe_expert_gate", "moe_expert_up", "moe_expert_down"],
     "shared_swiglu_expert_mlp": ["moe_shared_gate", "moe_shared_up", "moe_shared_down"],
+    "farskip_routed_shared_combine": ["moe_shared_gate", "moe_shared_up", "moe_shared_down"],
     "kv_a_proj": ["mla_kv_a_proj"],
     "kv_a_layernorm": ["mla_kv_a_norm"],
     "kv_lora_decompress": ["mla_kv_b_proj"],
@@ -9576,6 +9602,14 @@ def generate_memory_layout_packed(
     weights_end = _align_up(weight_offset, 64)
     act_offset = weights_end
 
+    # Circuit-declared graph lifetimes are authoritative even when the packed
+    # allocator does not recognize the operation names that use them.  This is
+    # what permits a new multi-stream circuit to lower without an architecture
+    # branch in the allocator.
+    template_doc = manifest.get("template") if isinstance(manifest.get("template"), dict) else {}
+    for target in _template_activation_bindings(template_doc).values():
+        alloc_act(target)
+
     # Simulate op order (using same buffer naming logic as IR Lower 2)
     current_input_buffer = "token_ids"
     current_output_buffer = "embedded_input"
@@ -9679,6 +9713,7 @@ def generate_memory_layout_packed(
 
     total_weight_bytes = weights_end
     total_activation_bytes = act_offset - weights_end
+    total_size = _align_up(act_offset, 64)
 
     layout_config = dict(config)
     if context_len is not None:
@@ -9813,6 +9848,16 @@ def generate_ir_lower_2(
     for buf in memory.get("activations", {}).get("buffers", []):
         activation_buffers[buf["name"]] = buf
 
+    activation_bindings = _template_activation_bindings(template_doc)
+    missing_binding_targets = sorted(
+        {target for target in activation_bindings.values() if target not in activation_buffers}
+    )
+    if missing_binding_targets:
+        raise RuntimeError(
+            "HARD CIRCUIT BINDING FAULT: activation_bindings reference layout buffers "
+            f"that were not allocated: {missing_binding_targets}"
+        )
+
     # KV cache slice helper (prefill path may write directly into KV cache)
     layout_config = layout.get("config", {}) if isinstance(layout, dict) else {}
     if layout_config:
@@ -9857,7 +9902,7 @@ def generate_ir_lower_2(
     # This replaces the old ping-pong logic with explicit dataflow-based assignment
     # ═══════════════════════════════════════════════════════════════════════════════
     print("  Running memory planner...")
-    buffer_assignments = plan_memory(ir_lower_1_ops)
+    buffer_assignments = plan_memory(ir_lower_1_ops, slot_bindings=activation_bindings)
     print(f"  ✓ Memory planner assigned buffers for {len(buffer_assignments)} ops")
 
     # Helper to get buffer info from memory planner
@@ -11860,6 +11905,31 @@ def load_kernel_call_abis(
             "call_abi": copy.deepcopy(call_abi),
             "source_file": path.name,
         }
+    return result
+
+
+def _template_activation_bindings(template: Dict[str, Any]) -> Dict[str, str]:
+    """Return circuit-owned logical-slot to layout-buffer bindings.
+
+    This is deliberately a generic graph ABI.  It contains no model, operation,
+    or layer semantics: the circuit names a logical edge and the reusable memory
+    planner binds that edge to an existing activation region.
+    """
+    raw = template.get("activation_bindings") if isinstance(template, dict) else None
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise RuntimeError("HARD CIRCUIT BINDING FAULT: activation_bindings must be an object")
+    result: Dict[str, str] = {}
+    for slot, buffer_name in raw.items():
+        slot_name = str(slot or "").strip()
+        target_name = str(buffer_name or "").strip()
+        if not slot_name or not target_name:
+            raise RuntimeError(
+                "HARD CIRCUIT BINDING FAULT: activation_bindings keys and values "
+                "must be non-empty strings"
+            )
+        result[slot_name] = target_name
     return result
 
 

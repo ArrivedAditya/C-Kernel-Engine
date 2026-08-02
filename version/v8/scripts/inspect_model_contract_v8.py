@@ -212,7 +212,9 @@ def _required_ops(arch: str, config: dict[str, Any], layer_kinds: list[str]) -> 
     if any(kind.startswith("mla_gated_") for kind in layer_kinds):
         ops.update({"attention_gate_projection", "attention_gate_sigmoid_mul"})
     if any(kind == "mla_gated_farskip_moe" for kind in layer_kinds):
-        ops.update({"farskip_two_stream_residual", "farskip_routed_shared_combine"})
+        # The composite provider emits both residual streams.  Their persistent
+        # connectivity is a circuit edge/lifetime contract, not a second math op.
+        ops.add("farskip_routed_shared_combine")
     act = str(_text_config(config).get("mlp_hidden_act") or _text_config(config).get("hidden_act") or "").lower()
     if act == "relu2":
         ops.add("relu2_mlp")
@@ -248,11 +250,11 @@ def _missing_ops(arch: str, required_ops: list[str]) -> list[str]:
             "moonvit_bridge_contract",
         ])
     if arch == "instella_moe":
-        missing.extend([
-            "instella_moe_template_contract",
-            "farskip_two_stream_residual",
-            "mla_interleaved_yarn_contract",
-        ])
+        # The circuit and exact YaRN leaf providers exist, but generated
+        # initialization does not yet bind positions and YaRN parameters to
+        # yarn_rope_init. Keep model support fail-closed until that call is
+        # present in call-ready IR.
+        missing.append("mla_interleaved_yarn_contract")
     if arch not in SUPPORTED_DENSE_ARCHES | SUPPORTED_HYBRID_ARCHES:
         missing.append("v8_template_contract")
         missing.append("safetensors_to_bump_mapping")
@@ -534,7 +536,7 @@ def _notes(arch: str, config: dict[str, Any], layer_kinds: list[str], missing_op
             f"top_k={text.get('num_experts_per_tok')} shared_experts={text.get('n_shared_experts')} "
             f"router={text.get('scoring_func')}/{text.get('topk_method')} scale={text.get('routed_scaling_factor')}."
         )
-        notes.append("Existing MLA, sigmoid top-k routing, routed/shared SwiGLU, and attention-gate elementwise kernels are reusable. Missing work is the exact interleaved-YaRN position contract, gate projection wiring, and FarSkip main/routed-free stream lifetime and combine semantics.")
+        notes.append("The executable circuit now owns gated-MLA wiring and FarSkip main/routed-free lifetimes, and the BF16 FarSkip provider covers the new residual boundary. Exact YaRN leaf providers exist, but generated initialization does not yet bind the explicit positions and scaling parameters; support remains fail-closed on that contract and real-weight PyTorch X-ray parity.")
     if not missing_ops:
         notes.append("Config-level contract has no known missing op, but weight-name audit and hidden parity are still required.")
     return notes

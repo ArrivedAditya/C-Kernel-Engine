@@ -271,6 +271,7 @@ class BufferState:
     # Track which buffer currently holds data for each logical purpose
     main_stream_buffer: str = "A_EMBEDDED_INPUT"  # Alternates
     main_stream_q8_buffer: str = "A_LAYER_INPUT"  # Alternates opposite
+    slot_bindings: Dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self):
         # Initialize buffer state
@@ -289,6 +290,12 @@ class BufferState:
 
     def get_buffer_for_slot(self, slot: str) -> str:
         """Get the current physical buffer for a logical slot."""
+        # New circuits own semantic-to-physical activation bindings.  Values may
+        # be either legacy planner names (A_RESIDUAL) or concrete layout buffer
+        # names (layer_output).  Keeping this table outside the planner makes the
+        # planner architecture-agnostic while retaining old circuits unchanged.
+        if slot in self.slot_bindings:
+            return self.slot_bindings[slot]
         if slot == "main_stream":
             return self.main_stream_buffer
         elif slot == "main_stream_q8":
@@ -310,8 +317,9 @@ class MemoryPlanner:
     This replaces the ping-pong logic with explicit dataflow-based assignment.
     """
 
-    def __init__(self):
-        self.state = BufferState()
+    def __init__(self, slot_bindings: Optional[Dict[str, str]] = None):
+        self.slot_bindings = dict(slot_bindings or {})
+        self.state = BufferState(slot_bindings=self.slot_bindings)
         self.assignments: Dict[int, Dict[str, Any]] = {}  # op_id -> assignments
 
     def plan(self, ir1_ops: List[Dict]) -> Dict[int, Dict[str, Any]]:
@@ -330,7 +338,7 @@ class MemoryPlanner:
                 }
             }
         """
-        self.state = BufferState()
+        self.state = BufferState(slot_bindings=self.slot_bindings)
         self.assignments = {}
 
         current_layer = -1
@@ -635,7 +643,10 @@ class MemoryPlanner:
             pass
 
 
-def plan_memory(ir1_ops: List[Dict]) -> Dict[int, Dict[str, Any]]:
+def plan_memory(
+    ir1_ops: List[Dict],
+    slot_bindings: Optional[Dict[str, str]] = None,
+) -> Dict[int, Dict[str, Any]]:
     """
     Plan memory buffer assignments for all ops.
 
@@ -647,7 +658,7 @@ def plan_memory(ir1_ops: List[Dict]) -> Dict[int, Dict[str, Any]]:
     Returns:
         Dict mapping op_id to buffer assignments
     """
-    planner = MemoryPlanner()
+    planner = MemoryPlanner(slot_bindings=slot_bindings)
     return planner.plan(ir1_ops)
 
 

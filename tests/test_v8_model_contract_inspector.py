@@ -295,7 +295,8 @@ class ModelContractInspectorTests(unittest.TestCase):
             {"mla_gated_dense_mlp": 1, "mla_gated_farskip_moe": 26},
         )
         self.assertIn("attention_gate_sigmoid_mul", report["required_ops"])
-        self.assertIn("farskip_two_stream_residual", report["missing_ops"])
+        self.assertEqual(report["status"], "bringup_required")
+        self.assertNotIn("farskip_two_stream_residual", report["required_ops"])
         self.assertNotIn("farskip_routed_shared_combine", report["missing_ops"])
         self.assertIn("mla_interleaved_yarn_contract", report["missing_ops"])
         self.assertNotIn("safetensors_to_bump_mapping", report["missing_ops"])

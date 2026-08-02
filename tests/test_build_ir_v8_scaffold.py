@@ -114,6 +114,37 @@ class BuildIrV8ScaffoldTests(unittest.TestCase):
         self.assertEqual(build_ir_v8.V8_ROOT.name, "v8")
         self.assertTrue((build_ir_v8.V8_ROOT / "kernel_maps" / "KERNEL_REGISTRY.json").exists())
 
+    def test_circuit_owned_activation_bindings_keep_two_streams_distinct(self) -> None:
+        graph = {
+            "inputs": {
+                "hidden": {"slot": "main_stream", "dtype": "fp32"},
+                "aux": {"slot": "routed_free_stream", "dtype": "fp32"},
+            },
+            "outputs": {
+                "next_main": {"slot": "main_stream", "dtype": "fp32"},
+                "next_aux": {"slot": "routed_free_stream", "dtype": "fp32"},
+            },
+        }
+        assignments = build_ir_v8.plan_memory(
+            [{"idx": 0, "op": "future_architecture_composite", "layer": 1, "dataflow": graph}],
+            slot_bindings={"routed_free_stream": "layer_output"},
+        )[0]
+        self.assertEqual(assignments["inputs"]["hidden"]["buffer"], "A_EMBEDDED_INPUT")
+        self.assertEqual(assignments["inputs"]["aux"]["buffer"], "layer_output")
+        self.assertEqual(assignments["outputs"]["next_aux"]["buffer"], "layer_output")
+
+    def test_activation_binding_contract_rejects_empty_names(self) -> None:
+        self.assertEqual(
+            build_ir_v8._template_activation_bindings(
+                {"activation_bindings": {"routed_free_stream": "layer_output"}}
+            ),
+            {"routed_free_stream": "layer_output"},
+        )
+        with self.assertRaisesRegex(RuntimeError, "activation_bindings"):
+            build_ir_v8._template_activation_bindings(
+                {"activation_bindings": {"routed_free_stream": ""}}
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
