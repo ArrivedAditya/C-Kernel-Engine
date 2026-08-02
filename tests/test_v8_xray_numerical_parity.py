@@ -33,6 +33,18 @@ def digest(path: Path) -> str:
 
 
 class XRayNumericalParityTests(unittest.TestCase):
+    def test_nightly_xray_gate_runs_capture_neutrality_contracts(self) -> None:
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        target = makefile.split("test-bf16-xray:", 1)[1].split(
+            "\nxray-vision-parity:", 1
+        )[0]
+
+        self.assertIn(
+            "version/v8/scripts/compare_multitoken_logits_v8.py",
+            target,
+        )
+        self.assertIn("tests/test_compare_multitoken_logits_v8.py", target)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="xray_v8_")
         self.root = Path(self.temp.name)

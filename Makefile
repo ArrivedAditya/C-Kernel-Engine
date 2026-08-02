@@ -3922,6 +3922,7 @@ test-bf16-xray:
 		version/v8/scripts/xray_qwen3vl_bf16_v8.py \
 		version/v8/scripts/xray_qwen3vl_bf16_decoder_v8.py \
 		version/v8/scripts/xray_qwen3vl_llamacpp_v8.py \
+		version/v8/scripts/compare_multitoken_logits_v8.py \
 		version/v8/scripts/normalize_xray_ranking_report_v8.py
 	@$(PYTHON) -c 'import json; from jsonschema import Draft202012Validator; Draft202012Validator.check_schema(json.load(open("version/v8/schemas/xray_attention_sensitivity.schema.json", encoding="utf-8")))'
 	@$(PYTHON) tests/test_v8_numerical_execution_contracts.py
@@ -3935,6 +3936,7 @@ test-bf16-xray:
 	@$(PYTHON) tests/test_v8_xray_vision_interface.py
 	@$(PYTHON) tests/test_v8_xray_qwen3vl_bf16_decoder.py
 	@$(PYTHON) tests/test_v8_normalize_xray_ranking_report.py
+	@$(PYTHON) tests/test_compare_multitoken_logits_v8.py
 	@$(PYTHON) version/v8/test_assets/generate_xray_form_fixture_v8.py \
 		--output build/xray/public_form_1152x896.ppm
 
