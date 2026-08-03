@@ -158,6 +158,9 @@ class NumericalExecutionContractTests(unittest.TestCase):
                     )
                     self.assertEqual(plan["operation_interface"], interface_id)
                     self.assertEqual(plan["kernel"]["id"], kernel_id)
+                    self.assertEqual(
+                        plan["kernel"]["interface_call_abi"], "validated"
+                    )
                     scripts = ROOT / "version" / "v8" / "scripts"
                     sys.path.insert(0, str(scripts))
                     try:
@@ -172,6 +175,7 @@ class NumericalExecutionContractTests(unittest.TestCase):
                         sys.path.pop(0)
                     metadata = build_ir._graph_ir_contract_metadata(plan)
                     self.assertEqual(metadata["operation_interface"], interface_id)
+                    self.assertEqual(metadata["interface_call_abi"], "validated")
                     interface = self.kernels["operation_interfaces"][interface_id]
                     port_identities = [
                         (port["role"], port["name"])
@@ -402,6 +406,114 @@ class NumericalExecutionContractTests(unittest.TestCase):
         with self.assertRaisesRegex(resolver.ContractError, "incompatible alias"):
             resolver._load_operation_interface(doc, path)
 
+    def test_hardened_interface_rejects_missing_abi_port(self):
+        path = (
+            ROOT
+            / "version"
+            / "v8"
+            / "kernel_maps"
+            / "rmsnorm_forward_llama_production.json"
+        )
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        del doc["call_abi"]["params"][0]["ports"]
+        with self.assertRaisesRegex(
+            resolver.ContractError, "does not represent every logical port"
+        ):
+            resolver._load_operation_interface(doc, path)
+
+    def test_hardened_interface_rejects_unknown_abi_port(self):
+        path = (
+            ROOT
+            / "version"
+            / "v8"
+            / "kernel_maps"
+            / "rmsnorm_forward_llama_production.json"
+        )
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc["call_abi"]["params"][0]["ports"] = ["input:missing"]
+        with self.assertRaisesRegex(resolver.ContractError, "unknown logical ports"):
+            resolver._load_operation_interface(doc, path)
+
+    def test_hardened_interface_rejects_duplicate_abi_port_owner(self):
+        path = (
+            ROOT
+            / "version"
+            / "v8"
+            / "kernel_maps"
+            / "rmsnorm_forward_llama_production.json"
+        )
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc["call_abi"]["params"][1]["ports"].append("input:input")
+        with self.assertRaisesRegex(
+            resolver.ContractError, "binds logical ports more than once"
+        ):
+            resolver._load_operation_interface(doc, path)
+
+    def test_hardened_interface_rejects_split_inplace_alias(self):
+        path = (
+            ROOT
+            / "version"
+            / "v8"
+            / "kernel_maps"
+            / "qk_norm_forward_llama_production.json"
+        )
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc["call_abi"]["params"][0]["ports"] = ["input:q"]
+        doc["call_abi"]["params"].append({
+            "name": "q_output",
+            "source": "scratch:q_scratch",
+            "ports": ["output:q"],
+        })
+        with self.assertRaisesRegex(
+            resolver.ContractError, "splits an in-place alias"
+        ):
+            resolver._load_operation_interface(doc, path)
+
+    def test_hardened_interface_rejects_null_required_port(self):
+        path = (
+            ROOT
+            / "version"
+            / "v8"
+            / "kernel_maps"
+            / "rmsnorm_forward_llama_production.json"
+        )
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc["call_abi"]["params"][2]["source"] = "null"
+        with self.assertRaisesRegex(resolver.ContractError, "nulls a required logical port"):
+            resolver._load_operation_interface(doc, path)
+
+    def test_hardened_interface_accepts_explicit_null_optional_port(self):
+        path = (
+            ROOT
+            / "version"
+            / "v8"
+            / "kernel_maps"
+            / "rmsnorm_forward_llama_production.json"
+        )
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        interface = resolver._load_operation_interface(doc, path)
+        self.assertEqual(interface["id"], "rmsnorm.fp32.v1")
+
+    def test_resolver_rejects_unvalidated_interface_abi_metadata(self):
+        doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        kernels = copy.deepcopy(self.kernels)
+        del kernels["kernels"]["rmsnorm_forward_llama_production"][
+            "interface_call_abi"
+        ]
+        with self.assertRaisesRegex(
+            resolver.ContractError, "no validated interface-to-ABI boundary"
+        ):
+            resolver.resolve_contract(
+                doc,
+                self.contracts,
+                kernels,
+                "decoder.rmsnorm",
+                "decode",
+                mode="production",
+            )
+
     def test_kernel_interface_migration_debt_does_not_regress(self):
         scripts = ROOT / "version" / "v8" / "scripts"
         spec = importlib.util.spec_from_file_location(
@@ -417,6 +529,9 @@ class NumericalExecutionContractTests(unittest.TestCase):
         self.assertEqual(report["counts"]["kernel_maps"], 275)
         self.assertEqual(report["counts"]["resolver_governed_maps"], 84)
         self.assertEqual(report["counts"]["interface_hardened_maps"], 11)
+        self.assertEqual(
+            report["counts"]["interface_abi_crossvalidated_maps"], 11
+        )
         self.assertEqual(report["selection"]["legacy_selection_if_statements"], 73)
         self.assertEqual(report["selection"]["operation_specific_if_statements"], 35)
 

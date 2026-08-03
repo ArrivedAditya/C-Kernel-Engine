@@ -53,10 +53,10 @@
   "call_abi": {
     "version": 1,
     "params": [
-      { "name": "q", "source": "scratch:q_scratch", "cast": "float*" },
-      { "name": "k", "source": "scratch:k_scratch", "cast": "float*" },
-      { "name": "q_gamma", "source": "weight_f:q_norm", "cast": "const float*" },
-      { "name": "k_gamma", "source": "weight_f:k_norm", "cast": "const float*" },
+      { "name": "q", "source": "scratch:q_scratch", "cast": "float*", "ports": ["input:q", "output:q"] },
+      { "name": "k", "source": "scratch:k_scratch", "cast": "float*", "ports": ["input:k", "output:k"] },
+      { "name": "q_gamma", "source": "weight_f:q_norm", "cast": "const float*", "ports": ["weight:q_gamma"] },
+      { "name": "k_gamma", "source": "weight_f:k_norm", "cast": "const float*", "ports": ["weight:k_gamma"] },
       { "name": "num_heads", "source": "dim:num_heads" },
       { "name": "num_kv_heads", "source": "dim:num_kv_heads" },
       { "name": "num_tokens", "source": "dim:seq_len" },

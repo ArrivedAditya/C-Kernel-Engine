@@ -208,6 +208,9 @@ class V8KernelCallABITests(unittest.TestCase):
             {"name": "x", "source": "null:guessed"},
             {"name": "x", "source": "null", "cast": ""},
             {"name": "x", "source": "null", "alt": ["x", "x"]},
+            {"name": "x", "source": "null", "ports": []},
+            {"name": "x", "source": "null", "ports": ["input"]},
+            {"name": "x", "source": "null", "ports": ["input:x", "input:x"]},
         ]
         for index, param in enumerate(bad_params):
             with self.subTest(param=param), tempfile.TemporaryDirectory(

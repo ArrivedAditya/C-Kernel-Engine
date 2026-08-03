@@ -313,6 +313,9 @@ def _graph_ir_contract_metadata(plan: Dict[str, Any]) -> Dict[str, Any]:
         metadata["semantics"] = copy.deepcopy(contract["semantics"])
     if plan.get("operation_interface"):
         metadata["operation_interface"] = str(plan["operation_interface"])
+        metadata["interface_call_abi"] = str(
+            plan["kernel"].get("interface_call_abi", "")
+        )
     if isinstance(plan.get("checkpoint"), dict):
         metadata["checkpoint"] = copy.deepcopy(plan["checkpoint"])
     return metadata
@@ -11939,7 +11942,7 @@ def _validate_kernel_call_abi(kernel_id: str, function: str, call_abi: Dict, sou
             raise RuntimeError(
                 f"HARD CALL ABI FAULT: {kernel_id!r} call_abi.params[{index}] is not an object."
             )
-        unknown = sorted(set(param) - {"name", "source", "cast", "alt"})
+        unknown = sorted(set(param) - {"name", "source", "cast", "alt", "ports"})
         if unknown:
             raise RuntimeError(
                 f"HARD CALL ABI FAULT: {kernel_id!r} call parameter {index} has unknown "
@@ -11987,6 +11990,24 @@ def _validate_kernel_call_abi(kernel_id: str, function: str, call_abi: Dict, sou
                 raise RuntimeError(
                     f"HARD CALL ABI FAULT: {kernel_id!r}.{name} alt must contain unique, "
                     "non-empty source names."
+                )
+        if "ports" in param:
+            ports = param["ports"]
+            if (
+                not isinstance(ports, list)
+                or not ports
+                or any(
+                    not isinstance(port, str)
+                    or port.count(":") != 1
+                    or port.split(":", 1)[0] not in {"input", "weight", "output"}
+                    or not port.split(":", 1)[1]
+                    for port in ports
+                )
+                or len(set(ports)) != len(ports)
+            ):
+                raise RuntimeError(
+                    f"HARD CALL ABI FAULT: {kernel_id!r}.{name} ports must contain unique "
+                    "input:name, weight:name, or output:name identities."
                 )
     if not function:
         raise RuntimeError(

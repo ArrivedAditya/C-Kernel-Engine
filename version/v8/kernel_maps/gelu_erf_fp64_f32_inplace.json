@@ -68,7 +68,7 @@
   "call_abi": {
     "version": 1,
     "params": [
-      {"cast": "float*", "name": "data", "source": "output:out"},
+      {"cast": "float*", "name": "data", "source": "output:out", "ports": ["input:x", "output:out"]},
       {"name": "n", "source": "dim:gelu_elems"}
     ]
   },

@@ -75,7 +75,8 @@
       {
         "cast": "float*",
         "name": "data",
-        "source": "output:out"
+        "source": "output:out",
+        "ports": ["input:x", "output:out"]
       },
       {
         "name": "n",
