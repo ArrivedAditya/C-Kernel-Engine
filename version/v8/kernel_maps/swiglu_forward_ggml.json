@@ -1,6 +1,7 @@
 {
   "id": "swiglu_forward_ggml",
   "op": "swiglu",
+  "operation_interface": "swiglu.fp32.v1",
   "variant": "ggml_fp32",
   "quant": {
     "weight": "none",
@@ -12,6 +13,10 @@
       "name": "gate_up",
       "dtype": "fp32",
       "shape": ["T", "2 * I"],
+      "layout": "token_major_contiguous",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required",
       "desc": "Contiguous gate then up projection values."
     }
   ],
@@ -22,6 +27,10 @@
       "name": "out",
       "dtype": "fp32",
       "shape": ["T", "I"],
+      "layout": "token_major_contiguous",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required",
       "desc": "GGML-compatible SiLU(gate) times up output."
     }
   ],
@@ -81,8 +90,8 @@
   "call_abi": {
     "version": 1,
     "params": [
-      {"name": "input", "source": "activation:gate", "cast": "float*"},
-      {"name": "output", "source": "output:out", "cast": "float*"},
+      {"name": "input", "source": "activation:gate", "cast": "float*", "ports": ["input:gate_up"]},
+      {"name": "output", "source": "output:out", "cast": "float*", "ports": ["output:out"]},
       {"name": "tokens", "source": "dim:seq_len"},
       {"name": "dim", "source": "dim:intermediate_size"}
     ]

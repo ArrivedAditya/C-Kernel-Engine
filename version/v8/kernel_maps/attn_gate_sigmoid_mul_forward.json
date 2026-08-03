@@ -1,6 +1,7 @@
 {
   "id": "attn_gate_sigmoid_mul_forward",
   "op": "attn_gate_sigmoid_mul",
+  "operation_interface": "attn_gate_sigmoid_mul.fp32.v1",
   "variant": "fp32",
   "quant": {
     "weight": "none",
@@ -8,13 +9,13 @@
     "output": "fp32"
   },
   "inputs": [
-    {"name": "x", "dtype": "fp32", "shape": ["R", "D"], "desc": "Attention output rows"},
-    {"name": "gate", "dtype": "fp32", "shape": ["R", "D"], "desc": "Gate rows to sigmoid"}
+    {"name": "x", "dtype": "fp32", "shape": ["R", "D"], "layout": "token_major_contiguous", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "Attention output rows"},
+    {"name": "gate", "dtype": "fp32", "shape": ["R", "D"], "layout": "token_major_contiguous", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "Gate rows to sigmoid"}
   ],
   "weights": [],
   "activations": [],
   "outputs": [
-    {"name": "out", "dtype": "fp32", "shape": ["R", "D"], "desc": "Attention output scaled by sigmoid(gate)"}
+    {"name": "out", "dtype": "fp32", "shape": ["R", "D"], "layout": "token_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Attention output scaled by sigmoid(gate)"}
   ],
   "scratch": [],
   "dims": ["R", "D"],
@@ -71,9 +72,9 @@
   "call_abi": {
     "version": 1,
     "params": [
-      {"name": "x", "source": "activation:x", "cast": "const float*"},
-      {"name": "gate", "source": "activation:gate", "cast": "const float*"},
-      {"name": "out", "source": "output:out", "cast": "float*"},
+      {"name": "x", "source": "activation:x", "cast": "const float*", "ports": ["input:x"]},
+      {"name": "gate", "source": "activation:gate", "cast": "const float*", "ports": ["input:gate"]},
+      {"name": "out", "source": "output:out", "cast": "float*", "ports": ["output:out"]},
       {"name": "rows", "source": "runtime:seq_len"},
       {"name": "num_heads", "source": "dim:num_heads"},
       {"name": "state_dim", "source": "dim:head_dim"}

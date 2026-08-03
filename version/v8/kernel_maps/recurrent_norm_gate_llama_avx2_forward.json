@@ -1,15 +1,16 @@
 {
   "id": "recurrent_norm_gate_llama_avx2_forward",
   "op": "recurrent_norm_gate",
+  "operation_interface": "recurrent_norm_gate.fp32.v1",
   "variant": "llama_avx2_fp32",
   "modes": {"inference": true, "training": false, "backward": false},
   "quant": {"weight": "fp32", "activation": "fp32", "output": "fp32"},
   "inputs": [
-    {"name": "x", "dtype": "fp32", "shape": ["R", "H", "D"]},
-    {"name": "gate", "dtype": "fp32", "shape": ["R", "H", "D"]}
+    {"name": "x", "dtype": "fp32", "shape": ["R", "H", "D"], "layout": "contiguous", "access": "read", "storage_class": "activation", "consumption": "required"},
+    {"name": "gate", "dtype": "fp32", "shape": ["R", "H", "D"], "layout": "contiguous", "access": "read", "storage_class": "activation", "consumption": "required"}
   ],
-  "weights": [{"name": "weight", "dtype": "fp32", "shape": ["D"]}],
-  "outputs": [{"name": "out", "dtype": "fp32", "shape": ["R", "H", "D"]}],
+  "weights": [{"name": "weight", "dtype": "fp32", "shape": ["D"], "layout": "feature_contiguous", "access": "read", "storage_class": "weight", "consumption": "required"}],
+  "outputs": [{"name": "out", "dtype": "fp32", "shape": ["R", "H", "D"], "layout": "contiguous", "access": "write", "storage_class": "activation", "consumption": "required"}],
   "scratch": [],
   "dims": ["R", "H", "D"],
   "params": [{"name": "eps", "dtype": "float32"}],
@@ -30,10 +31,10 @@
   }],
   "tests": {"unit": ["unittest/test_recurrent_norm_gate.py"], "parity": [{"kind": "llama.cpp_production_graph", "command": "make test-deltanet-llamacpp-production", "tolerance": "0"}]},
   "call_abi": {"version": 1, "params": [
-    {"name": "x", "source": "activation:x", "cast": "const float*"},
-    {"name": "gate", "source": "activation:gate", "cast": "const float*"},
-    {"name": "weight", "source": "weight:ssm_norm", "cast": "const float*"},
-    {"name": "out", "source": "output:out", "cast": "float*"},
+    {"name": "x", "source": "activation:x", "cast": "const float*", "ports": ["input:x"]},
+    {"name": "gate", "source": "activation:gate", "cast": "const float*", "ports": ["input:gate"]},
+    {"name": "weight", "source": "weight:ssm_norm", "cast": "const float*", "ports": ["weight:weight"]},
+    {"name": "out", "source": "output:out", "cast": "float*", "ports": ["output:out"]},
     {"name": "rows", "source": "runtime:seq_len"},
     {"name": "num_heads", "source": "dim:recurrent_num_heads"},
     {"name": "head_dim", "source": "dim:recurrent_head_dim"},

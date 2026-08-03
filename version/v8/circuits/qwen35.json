@@ -325,6 +325,7 @@
     },
     "decoder.recurrent_norm_gate": {
       "op": "recurrent_norm_gate",
+      "operation_interface": "recurrent_norm_gate.fp32.v1",
       "template_ops": ["recurrent_norm_gate"],
       "selector": {
         "config_not_equals": {
@@ -352,6 +353,7 @@
     },
     "decoder.recurrent_norm_gate_bf16_pytorch": {
       "op": "recurrent_norm_gate",
+      "operation_interface": "recurrent_norm_gate.fp32_bf16_values.v1",
       "template_ops": ["recurrent_norm_gate"],
       "selector": {
         "config_equals": {
@@ -641,6 +643,7 @@
     },
     "decoder.recurrent_qk_l2_norm": {
       "op": "recurrent_qk_l2_norm",
+      "operation_interface": "recurrent_qk_l2_norm.fp32_inplace.v1",
       "template_ops": ["recurrent_qk_l2_norm"],
       "selector": {
         "config_not_equals": {
@@ -668,6 +671,7 @@
     },
     "decoder.recurrent_qk_l2_norm_bf16_pytorch": {
       "op": "recurrent_qk_l2_norm",
+      "operation_interface": "recurrent_qk_l2_norm.fp32_bf16_values_inplace.v1",
       "template_ops": ["recurrent_qk_l2_norm"],
       "selector": {
         "config_equals": {
@@ -695,6 +699,7 @@
     },
     "decoder.recurrent_ssm_conv": {
       "op": "ssm_conv1d",
+      "operation_interface": "ssm_conv1d.fp32.v1",
       "template_ops": ["recurrent_ssm_conv"],
       "selector": {
         "config_not_equals": {
@@ -722,6 +727,7 @@
     },
     "decoder.recurrent_ssm_conv_bf16_pytorch": {
       "op": "ssm_conv1d",
+      "operation_interface": "ssm_conv1d.fp32_bf16_values.v1",
       "template_ops": ["recurrent_ssm_conv"],
       "selector": {
         "config_equals": {
@@ -749,6 +755,7 @@
     },
     "decoder.recurrent_silu": {
       "op": "recurrent_silu",
+      "operation_interface": "recurrent_silu.fp32.v1",
       "template_ops": ["recurrent_silu"],
       "selector": {
         "config_not_equals": {
@@ -776,6 +783,7 @@
     },
     "decoder.recurrent_silu_bf16_pytorch": {
       "op": "recurrent_silu",
+      "operation_interface": "recurrent_silu.fp32_bf16_values.v1",
       "template_ops": ["recurrent_silu"],
       "selector": {
         "config_equals": {
@@ -803,6 +811,7 @@
     },
     "decoder.attention_gate": {
       "op": "attn_gate_sigmoid_mul",
+      "operation_interface": "attn_gate_sigmoid_mul.fp32.v1",
       "template_ops": ["attn_gate_sigmoid_mul"],
       "phases": {
         "prefill": {
@@ -825,6 +834,7 @@
     },
     "decoder.swiglu": {
       "op": "swiglu",
+      "operation_interface": "swiglu.fp32.v1",
       "template_ops": ["silu_mul"],
       "selector": {
         "config_not_equals": {
@@ -852,6 +862,7 @@
     },
     "decoder.swiglu_bf16_pytorch": {
       "op": "swiglu",
+      "operation_interface": "swiglu.fp32_bf16_values.v1",
       "template_ops": ["silu_mul"],
       "selector": {
         "config_equals": {
