@@ -440,6 +440,7 @@
       }
     },
     "decoder.rmsnorm": {
+      "operation_interface": "rmsnorm.fp32.v1",
       "op": "rmsnorm",
       "template_ops": ["rmsnorm"],
       "selector": {
@@ -465,6 +466,7 @@
       }
     },
     "decoder.rmsnorm.bf16": {
+      "operation_interface": "rmsnorm.fp32_bf16_values.v1",
       "op": "rmsnorm",
       "template_ops": ["rmsnorm"],
       "selector": {
@@ -490,6 +492,7 @@
       }
     },
     "decoder.qk_norm": {
+      "operation_interface": "qk_norm.fp32_inplace.v1",
       "op": "qk_norm",
       "template_ops": ["qk_norm"],
       "selector": {
@@ -515,6 +518,7 @@
       }
     },
     "decoder.qk_norm.bf16": {
+      "operation_interface": "qk_norm.fp32_bf16_values_inplace.v1",
       "op": "qk_norm",
       "template_ops": ["qk_norm"],
       "selector": {

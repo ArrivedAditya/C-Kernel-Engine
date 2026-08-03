@@ -20,6 +20,10 @@
           "checkpoint"
         ],
         "properties": {
+          "operation_interface": {
+            "type": "string",
+            "minLength": 1
+          },
           "op": {
             "type": "string",
             "minLength": 1

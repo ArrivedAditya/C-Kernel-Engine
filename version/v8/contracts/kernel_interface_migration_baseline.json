@@ -1,0 +1,10 @@
+{
+  "schema": "cke.v8.kernel_interface_migration_baseline",
+  "schema_version": 1,
+  "minimum_interface_hardened_maps": 11,
+  "maximum_contract_pending_maps": 73,
+  "maximum_legacy_maps": 191,
+  "maximum_legacy_selection_conditionals": 73,
+  "maximum_operation_specific_conditionals": 35,
+  "minimum_map_owned_call_abi": 108
+}

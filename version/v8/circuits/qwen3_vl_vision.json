@@ -691,6 +691,7 @@
       }
     },
     "vision.layer.mlp_activation.fp32": {
+      "operation_interface": "gelu.fp32_inplace.v1",
       "op": "gelu",
       "template_ops": [
         "gelu"
@@ -718,6 +719,7 @@
       }
     },
     "vision.layer.mlp_activation": {
+      "operation_interface": "gelu.fp32_bf16_values_inplace.v1",
       "op": "gelu",
       "template_ops": [
         "gelu"
@@ -745,6 +747,7 @@
       }
     },
     "vision.projector.activation.pytorch_sleef_exact": {
+      "operation_interface": "gelu.fp32_bf16_values_inplace.v1",
       "op": "gelu",
       "template_ops": [
         "projector_gelu",

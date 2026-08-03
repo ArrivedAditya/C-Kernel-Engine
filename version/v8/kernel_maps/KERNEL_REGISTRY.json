@@ -13261,6 +13261,7 @@
     {
       "id": "gelu_erf_fp64_f32_inplace",
       "op": "gelu",
+      "operation_interface": "gelu.fp32_inplace.v1",
       "variant": "pytorch_erf_inplace_fp32",
       "quant": {
         "weight": "none",
@@ -13274,6 +13275,10 @@
           "shape": [
             "N"
           ],
+          "layout": "contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required",
           "desc": "Input/output buffer (in-place)"
         }
       ],
@@ -13285,6 +13290,11 @@
           "shape": [
             "N"
           ],
+          "layout": "contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required",
+          "alias_of": "input:x",
           "desc": "PyTorch approximate=none GELU output"
         }
       ],
@@ -13454,6 +13464,7 @@
     {
       "id": "gelu_ggml_inplace",
       "op": "gelu",
+      "operation_interface": "gelu.fp32_inplace.v1",
       "variant": "ggml_inplace_fp32",
       "quant": {
         "weight": "none",
@@ -13467,6 +13478,10 @@
           "shape": [
             "N"
           ],
+          "layout": "contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required",
           "desc": "Input/output buffer (in-place)"
         }
       ],
@@ -13478,6 +13493,11 @@
           "shape": [
             "N"
           ],
+          "layout": "contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required",
+          "alias_of": "input:x",
           "desc": "GGML-compatible GELU output (same buffer as input)"
         }
       ],
@@ -13553,6 +13573,7 @@
     {
       "id": "gelu_pytorch_erf_sleef_bf16_storage",
       "op": "gelu",
+      "operation_interface": "gelu.fp32_bf16_values_inplace.v1",
       "variant": "pytorch_erf_sleef_bf16_storage",
       "quant": {
         "weight": "none",
@@ -13566,6 +13587,10 @@
           "shape": [
             "N"
           ],
+          "layout": "contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required",
           "desc": "BF16-valued FP32 input/output buffer"
         }
       ],
@@ -13577,6 +13602,11 @@
           "shape": [
             "N"
           ],
+          "layout": "contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required",
+          "alias_of": "input:x",
           "desc": "BF16-rounded output in the input buffer"
         }
       ],
@@ -13647,6 +13677,7 @@
     {
       "id": "gelu_pytorch_tanh_bf16_storage",
       "op": "gelu",
+      "operation_interface": "gelu.fp32_bf16_values_inplace.v1",
       "variant": "pytorch_tanh_bf16_storage",
       "quant": {
         "weight": "none",
@@ -13660,6 +13691,10 @@
           "shape": [
             "N"
           ],
+          "layout": "contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required",
           "desc": "Input/output buffer (in-place)"
         }
       ],
@@ -13671,6 +13706,11 @@
           "shape": [
             "N"
           ],
+          "layout": "contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required",
+          "alias_of": "input:x",
           "desc": "GGML-compatible GELU output (same buffer as input)"
         }
       ],
@@ -28047,6 +28087,7 @@
     {
       "id": "qk_norm_forward_fp64_sum",
       "op": "qk_norm",
+      "operation_interface": "qk_norm.fp32_inplace.v1",
       "variant": "fp32_square_fp64_sum_fp32_output",
       "quant": {
         "weight": "fp32",
@@ -28061,7 +28102,11 @@
             "H",
             "T",
             "D"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required"
         },
         {
           "name": "k",
@@ -28070,7 +28115,11 @@
             "KV",
             "T",
             "D"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required"
         }
       ],
       "weights": [
@@ -28079,14 +28128,22 @@
           "dtype": "fp32",
           "shape": [
             "D"
-          ]
+          ],
+          "layout": "feature_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         },
         {
           "name": "k_gamma",
           "dtype": "fp32",
           "shape": [
             "D"
-          ]
+          ],
+          "layout": "feature_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         }
       ],
       "outputs": [
@@ -28097,7 +28154,12 @@
             "H",
             "T",
             "D"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "alias_of": "input:q"
         },
         {
           "name": "k",
@@ -28106,7 +28168,12 @@
             "KV",
             "T",
             "D"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "alias_of": "input:k"
         }
       ],
       "dims": [
@@ -28213,6 +28280,7 @@
     {
       "id": "qk_norm_forward_llama_production",
       "op": "qk_norm",
+      "operation_interface": "qk_norm.fp32_inplace.v1",
       "variant": "llama_cpu_production_fp32_output",
       "quant": {
         "weight": "fp32",
@@ -28227,7 +28295,11 @@
             "H",
             "T",
             "D"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required"
         },
         {
           "name": "k",
@@ -28236,7 +28308,11 @@
             "KV",
             "T",
             "D"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required"
         }
       ],
       "weights": [
@@ -28245,14 +28321,22 @@
           "dtype": "fp32",
           "shape": [
             "D"
-          ]
+          ],
+          "layout": "feature_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         },
         {
           "name": "k_gamma",
           "dtype": "fp32",
           "shape": [
             "D"
-          ]
+          ],
+          "layout": "feature_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         }
       ],
       "outputs": [
@@ -28263,7 +28347,12 @@
             "H",
             "T",
             "D"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "alias_of": "input:q"
         },
         {
           "name": "k",
@@ -28272,7 +28361,12 @@
             "KV",
             "T",
             "D"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "alias_of": "input:k"
         }
       ],
       "dims": [
@@ -28390,6 +28484,7 @@
     {
       "id": "qk_norm_forward_pytorch_bf16_storage",
       "op": "qk_norm",
+      "operation_interface": "qk_norm.fp32_bf16_values_inplace.v1",
       "variant": "pytorch_avx2_cascade_bf16_storage",
       "quant": {
         "weight": "fp32",
@@ -28404,7 +28499,11 @@
             "H",
             "T",
             "D"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required"
         },
         {
           "name": "k",
@@ -28413,7 +28512,11 @@
             "KV",
             "T",
             "D"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required"
         }
       ],
       "weights": [
@@ -28422,14 +28525,22 @@
           "dtype": "fp32",
           "shape": [
             "D"
-          ]
+          ],
+          "layout": "feature_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         },
         {
           "name": "k_gamma",
           "dtype": "fp32",
           "shape": [
             "D"
-          ]
+          ],
+          "layout": "feature_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         }
       ],
       "outputs": [
@@ -28440,7 +28551,12 @@
             "H",
             "T",
             "D"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "alias_of": "input:q"
         },
         {
           "name": "k",
@@ -28449,7 +28565,12 @@
             "KV",
             "T",
             "D"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "alias_of": "input:k"
         }
       ],
       "dims": [
@@ -32237,6 +32358,7 @@
     {
       "id": "rmsnorm_forward_fp64_sum",
       "op": "rmsnorm",
+      "operation_interface": "rmsnorm.fp32.v1",
       "variant": "fp32_square_fp64_sum_fp32_output",
       "quant": {
         "weight": "fp32",
@@ -32250,7 +32372,11 @@
           "shape": [
             "T",
             "E"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "weights": [
@@ -32259,7 +32385,11 @@
           "dtype": "fp32",
           "shape": [
             "E"
-          ]
+          ],
+          "layout": "feature_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         }
       ],
       "outputs": [
@@ -32269,14 +32399,22 @@
           "shape": [
             "T",
             "E"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         },
         {
           "name": "rstd",
           "dtype": "fp32",
           "shape": [
             "T"
-          ]
+          ],
+          "layout": "token_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "optional"
         }
       ],
       "dims": [
@@ -32448,6 +32586,7 @@
     {
       "id": "rmsnorm_forward_llama_production",
       "op": "rmsnorm",
+      "operation_interface": "rmsnorm.fp32.v1",
       "variant": "llama_cpu_production_fp32_output",
       "quant": {
         "weight": "fp32",
@@ -32461,7 +32600,11 @@
           "shape": [
             "T",
             "E"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "weights": [
@@ -32470,7 +32613,11 @@
           "dtype": "fp32",
           "shape": [
             "E"
-          ]
+          ],
+          "layout": "feature_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         }
       ],
       "outputs": [
@@ -32480,14 +32627,22 @@
           "shape": [
             "T",
             "E"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         },
         {
           "name": "rstd",
           "dtype": "fp32",
           "shape": [
             "T"
-          ]
+          ],
+          "layout": "token_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "optional"
         }
       ],
       "dims": [
@@ -32602,6 +32757,7 @@
     {
       "id": "rmsnorm_forward_pytorch_bf16_storage",
       "op": "rmsnorm",
+      "operation_interface": "rmsnorm.fp32_bf16_values.v1",
       "variant": "pytorch_avx2_cascade_bf16_storage",
       "quant": {
         "weight": "fp32",
@@ -32615,7 +32771,11 @@
           "shape": [
             "T",
             "E"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "weights": [
@@ -32624,7 +32784,11 @@
           "dtype": "fp32",
           "shape": [
             "E"
-          ]
+          ],
+          "layout": "feature_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         }
       ],
       "outputs": [
@@ -32634,14 +32798,22 @@
           "shape": [
             "T",
             "E"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         },
         {
           "name": "rstd",
           "dtype": "fp32",
           "shape": [
             "T"
-          ]
+          ],
+          "layout": "token_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "optional"
         }
       ],
       "dims": [
@@ -32766,6 +32938,7 @@
     {
       "id": "rmsnorm_forward_qwen3next_pytorch_bf16_storage",
       "op": "rmsnorm",
+      "operation_interface": "rmsnorm.fp32_bf16_values.v1",
       "variant": "qwen3next_pytorch_avx2_bf16_storage",
       "quant": {
         "weight": "fp32",
@@ -32779,7 +32952,11 @@
           "shape": [
             "T",
             "E"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "weights": [
@@ -32788,7 +32965,11 @@
           "dtype": "fp32",
           "shape": [
             "E"
-          ]
+          ],
+          "layout": "feature_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         }
       ],
       "outputs": [
@@ -32798,14 +32979,22 @@
           "shape": [
             "T",
             "E"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         },
         {
           "name": "rstd",
           "dtype": "fp32",
           "shape": [
             "T"
-          ]
+          ],
+          "layout": "token_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "optional"
         }
       ],
       "dims": [
