@@ -32448,6 +32448,7 @@
     {
       "id": "rmsnorm_forward_llama_production",
       "op": "rmsnorm",
+      "operation_interface": "rmsnorm.fp32.v1",
       "variant": "llama_cpu_production_fp32_output",
       "quant": {
         "weight": "fp32",
@@ -32461,7 +32462,11 @@
           "shape": [
             "T",
             "E"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "weights": [
@@ -32470,7 +32475,11 @@
           "dtype": "fp32",
           "shape": [
             "E"
-          ]
+          ],
+          "layout": "feature_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         }
       ],
       "outputs": [
@@ -32480,14 +32489,22 @@
           "shape": [
             "T",
             "E"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         },
         {
           "name": "rstd",
           "dtype": "fp32",
           "shape": [
             "T"
-          ]
+          ],
+          "layout": "token_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "optional"
         }
       ],
       "dims": [
@@ -32766,6 +32783,7 @@
     {
       "id": "rmsnorm_forward_qwen3next_pytorch_bf16_storage",
       "op": "rmsnorm",
+      "operation_interface": "rmsnorm.fp32_bf16_values.v1",
       "variant": "qwen3next_pytorch_avx2_bf16_storage",
       "quant": {
         "weight": "fp32",
@@ -32779,7 +32797,11 @@
           "shape": [
             "T",
             "E"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "weights": [
@@ -32788,7 +32810,11 @@
           "dtype": "fp32",
           "shape": [
             "E"
-          ]
+          ],
+          "layout": "feature_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         }
       ],
       "outputs": [
@@ -32798,14 +32824,22 @@
           "shape": [
             "T",
             "E"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         },
         {
           "name": "rstd",
           "dtype": "fp32",
           "shape": [
             "T"
-          ]
+          ],
+          "layout": "token_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "optional"
         }
       ],
       "dims": [

@@ -311,6 +311,8 @@ def _graph_ir_contract_metadata(plan: Dict[str, Any]) -> Dict[str, Any]:
     }
     if isinstance(contract.get("semantics"), dict):
         metadata["semantics"] = copy.deepcopy(contract["semantics"])
+    if plan.get("operation_interface"):
+        metadata["operation_interface"] = str(plan["operation_interface"])
     if isinstance(plan.get("checkpoint"), dict):
         metadata["checkpoint"] = copy.deepcopy(plan["checkpoint"])
     return metadata

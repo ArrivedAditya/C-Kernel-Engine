@@ -158,6 +158,7 @@
   },
   "required_numerical_contracts": {
     "decoder.rmsnorm": {
+      "operation_interface": "rmsnorm.fp32.v1",
       "op": "rmsnorm",
       "template_ops": ["attn_norm", "post_attention_norm", "final_rmsnorm"],
       "selector": {
@@ -185,6 +186,7 @@
       }
     },
     "decoder.rmsnorm_bf16_pytorch": {
+      "operation_interface": "rmsnorm.fp32_bf16_values.v1",
       "op": "rmsnorm",
       "template_ops": ["attn_norm", "post_attention_norm", "final_rmsnorm"],
       "selector": {

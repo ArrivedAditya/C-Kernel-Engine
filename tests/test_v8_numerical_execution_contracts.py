@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -120,6 +122,136 @@ class NumericalExecutionContractTests(unittest.TestCase):
             plan["contract"]["semantics"]["threading"]["thread_count_changes_arithmetic_order"]
         )
         self.assertEqual(plan["checkpoint"]["axis_names"], ["token", "channel"])
+
+    def test_qwen35_rmsnorm_resolves_from_hardened_kernel_interfaces(self):
+        doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        expected = {
+            "decoder.rmsnorm": (
+                "rmsnorm.fp32.v1",
+                "rmsnorm_forward_llama_production",
+            ),
+            "decoder.rmsnorm_bf16_pytorch": (
+                "rmsnorm.fp32_bf16_values.v1",
+                "rmsnorm_forward_qwen3next_pytorch_bf16_storage",
+            ),
+        }
+        for operation, (interface_id, kernel_id) in expected.items():
+            for phase in ("prefill", "decode"):
+                with self.subTest(operation=operation, phase=phase):
+                    plan = resolver.resolve_contract(
+                        doc,
+                        self.contracts,
+                        self.kernels,
+                        operation,
+                        phase,
+                        mode="production",
+                    )
+                    self.assertEqual(plan["operation_interface"], interface_id)
+                    self.assertEqual(plan["kernel"]["id"], kernel_id)
+                    scripts = ROOT / "version" / "v8" / "scripts"
+                    sys.path.insert(0, str(scripts))
+                    try:
+                        spec = importlib.util.spec_from_file_location(
+                            "build_ir_v8_rmsnorm_interface_test",
+                            scripts / "build_ir_v8.py",
+                        )
+                        assert spec is not None and spec.loader is not None
+                        build_ir = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(build_ir)
+                    finally:
+                        sys.path.pop(0)
+                    metadata = build_ir._graph_ir_contract_metadata(plan)
+                    self.assertEqual(metadata["operation_interface"], interface_id)
+                    interface = self.kernels["operation_interfaces"][interface_id]
+                    self.assertEqual(
+                        [(port["role"], port["name"]) for port in interface["ports"]],
+                        [
+                            ("input", "input"),
+                            ("weight", "gamma"),
+                            ("output", "output"),
+                            ("output", "rstd"),
+                        ],
+                    )
+
+    def test_required_operation_interface_rejects_discrepant_provider(self):
+        doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        kernels = copy.deepcopy(self.kernels)
+        kernels["kernels"]["rmsnorm_forward_llama_production"][
+            "operation_interface"
+        ] = "rmsnorm.incompatible.v1"
+        with self.assertRaisesRegex(resolver.ContractError, "resolved to 0 kernels"):
+            resolver.resolve_contract(
+                doc,
+                self.contracts,
+                kernels,
+                "decoder.rmsnorm",
+                "decode",
+                mode="production",
+            )
+
+    def test_undeclared_operation_interface_preserves_legacy_contract_lookup(self):
+        doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen35.json"
+        )
+        del doc["required_numerical_contracts"]["decoder.rmsnorm"][
+            "operation_interface"
+        ]
+        plan = resolver.resolve_contract(
+            doc,
+            self.contracts,
+            self.kernels,
+            "decoder.rmsnorm",
+            "decode",
+            mode="production",
+        )
+        self.assertNotIn("operation_interface", plan)
+        self.assertEqual(
+            plan["kernel"]["id"], "rmsnorm_forward_llama_production"
+        )
+
+    def test_hardened_kernel_interface_requires_complete_port_metadata(self):
+        path = (
+            ROOT
+            / "version"
+            / "v8"
+            / "kernel_maps"
+            / "rmsnorm_forward_llama_production.json"
+        )
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        del doc["inputs"][0]["layout"]
+        with self.assertRaisesRegex(resolver.ContractError, r"missing=\['layout'\]"):
+            resolver._load_operation_interface(doc, path)
+
+    def test_providers_cannot_disagree_on_one_operation_interface(self):
+        path = (
+            ROOT
+            / "version"
+            / "v8"
+            / "kernel_maps"
+            / "rmsnorm_forward_llama_production.json"
+        )
+        first = json.loads(path.read_text(encoding="utf-8"))
+        second = copy.deepcopy(first)
+        second["outputs"][0]["layout"] = "head_major_contiguous"
+        with tempfile.TemporaryDirectory(
+            prefix=".tmp-v8-interface-", dir=ROOT
+        ) as temp_dir:
+            root = Path(temp_dir)
+            (root / "first.json").write_text(
+                json.dumps(first), encoding="utf-8"
+            )
+            (root / "second.json").write_text(
+                json.dumps(second), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                resolver.ContractError,
+                "kernel maps disagree on operation interface",
+            ):
+                resolver.load_kernel_capabilities(root, contracts=self.contracts)
 
     def test_yarn_init_contracts_resolve_exact_storage_providers(self):
         expected = {

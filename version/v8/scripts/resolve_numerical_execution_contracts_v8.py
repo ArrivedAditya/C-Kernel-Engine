@@ -151,6 +151,71 @@ def _validate_capability_against_contract(
         )
 
 
+def _load_operation_interface(doc: Dict[str, Any], path: Path) -> Optional[Dict[str, Any]]:
+    """Build one canonical logical interface from a hardened kernel map."""
+    interface_id = str(doc.get("operation_interface", "") or "").strip()
+    if not interface_id:
+        return None
+
+    ports = []
+    groups = (
+        ("input", "inputs", "read"),
+        ("weight", "weights", "read"),
+        ("output", "outputs", "write"),
+    )
+    for role, field, expected_access in groups:
+        values = doc.get(field)
+        if not isinstance(values, list):
+            raise hard_fault(
+                f"kernel interface {interface_id!r} has no {field}",
+                f"source={path}",
+                "declare every logical port in the kernel map before enabling map-first resolution.",
+            )
+        for value in values:
+            if not isinstance(value, dict):
+                raise hard_fault(
+                    f"kernel interface {interface_id!r} has a malformed {role} port",
+                    f"source={path}, port={value!r}",
+                    "declare the port as an object with complete physical semantics.",
+                )
+            required = (
+                "name", "dtype", "shape", "layout", "access",
+                "storage_class", "consumption",
+            )
+            missing = [key for key in required if value.get(key) in (None, "")]
+            if missing:
+                raise hard_fault(
+                    f"kernel interface {interface_id!r} has an incomplete {role} port",
+                    f"source={path}, port={value.get('name')!r}, missing={missing}",
+                    "declare dtype, shape, layout, access, storage class, and consumption in the kernel map.",
+                )
+            if value["access"] != expected_access:
+                raise hard_fault(
+                    f"kernel interface {interface_id!r} has invalid {role} access",
+                    f"source={path}, port={value['name']!r}, access={value['access']!r}",
+                    f"declare {expected_access!r} access or use a separate state/in-place interface.",
+                )
+            ports.append({
+                "role": role,
+                "name": str(value["name"]),
+                "dtype": str(value["dtype"]),
+                "shape": copy.deepcopy(value["shape"]),
+                "layout": str(value["layout"]),
+                "access": str(value["access"]),
+                "storage_class": str(value["storage_class"]),
+                "consumption": str(value["consumption"]),
+            })
+
+    identities = [(port["role"], port["name"]) for port in ports]
+    if len(identities) != len(set(identities)):
+        raise hard_fault(
+            f"kernel interface {interface_id!r} has duplicate ports",
+            f"source={path}, ports={identities}",
+            "give every logical port one unique role/name identity.",
+        )
+    return {"id": interface_id, "op": str(doc.get("op", "")), "ports": ports}
+
+
 def load_kernel_capabilities(
     root: Path = DEFAULT_KERNELS,
     contracts: Optional[Dict[str, Any]] = None,
@@ -158,8 +223,20 @@ def load_kernel_capabilities(
     registry = contracts or load_json(DEFAULT_CONTRACTS)
     validate_contract_registry(registry)
     kernels: Dict[str, Any] = {}
+    interfaces: Dict[str, Dict[str, Any]] = {}
     for path in sorted(root.glob("*.json")):
         doc = load_json(path)
+        interface = _load_operation_interface(doc, path)
+        if interface is not None:
+            previous = interfaces.get(interface["id"])
+            if previous is not None and previous != interface:
+                raise hard_fault(
+                    f"kernel maps disagree on operation interface {interface['id']!r}",
+                    f"source={path}, expected={previous}, advertised={interface}",
+                    "make every provider for an interface expose the same canonical logical ports.",
+                )
+            interfaces[interface["id"]] = interface
+
         capabilities = doc.get("numerical_capabilities")
         if not isinstance(capabilities, list) or not capabilities:
             continue
@@ -204,11 +281,14 @@ def load_kernel_capabilities(
             "source": str(path.resolve().relative_to(REPO_ROOT.resolve())),
             "source_hash": sha256_file(path),
         }
+        if interface is not None:
+            kernels[kernel_id]["operation_interface"] = interface["id"]
     return {
         "schema": "cke.numerical_kernel_capabilities",
         "schema_version": 1,
         "engine_contract_version": "8",
         "kernels": kernels,
+        "operation_interfaces": interfaces,
     }
 
 
@@ -244,6 +324,7 @@ def resolve_contract(
             "declare the active phase explicitly.",
         )
     contract_id = request["contract_id"]
+    required_interface = str(operation_doc.get("operation_interface", "") or "").strip()
     if contract_id.lower() in AMBIGUOUS_IDS:
         raise hard_fault(
             f"ambiguous requested contract {contract_id!r}",
@@ -260,6 +341,8 @@ def resolve_contract(
     matches = []
     for kernel in kernels.get("kernels", {}).values():
         if kernel.get("op") != operation_doc["op"]:
+            continue
+        if required_interface and kernel.get("operation_interface") != required_interface:
             continue
         for capability in kernel.get("capabilities", []):
             if capability["contract_id"] == contract_id and phase in capability["phases"]:
@@ -308,5 +391,7 @@ def resolve_contract(
         "checkpoint": copy.deepcopy(operation_doc["checkpoint"]),
         "source_hashes": source_hashes,
     }
+    if required_interface:
+        result["operation_interface"] = required_interface
     validate_schema(result, RESOLVED_SCHEMA, "resolved numerical execution contract")
     return result
