@@ -514,6 +514,40 @@ class NumericalExecutionContractTests(unittest.TestCase):
                 mode="production",
             )
 
+    def test_recurrent_elementwise_maps_own_validated_interfaces_and_abis(self):
+        expected = {
+            "attn_gate_sigmoid_mul_forward": "attn_gate_sigmoid_mul.fp32.v1",
+            "recurrent_norm_gate_llama_avx2_forward": "recurrent_norm_gate.fp32.v1",
+            "recurrent_norm_gate_pytorch_bf16_storage": "recurrent_norm_gate.fp32_bf16_values.v1",
+            "recurrent_qk_l2_norm_forward": "recurrent_qk_l2_norm.fp32_inplace.v1",
+            "recurrent_qk_l2_norm_pytorch_bf16_storage": "recurrent_qk_l2_norm.fp32_bf16_values_inplace.v1",
+            "recurrent_silu_forward_ggml": "recurrent_silu.fp32.v1",
+            "recurrent_silu_forward_pytorch_bf16_storage": "recurrent_silu.fp32_bf16_values.v1",
+            "ssm_conv1d_forward_llama_production": "ssm_conv1d.fp32.v1",
+            "ssm_conv1d_forward_pytorch_bf16_storage": "ssm_conv1d.fp32_bf16_values.v1",
+            "swiglu_forward_ggml": "swiglu.fp32.v1",
+            "swiglu_forward_pytorch_bf16_storage": "swiglu.fp32_bf16_values.v1",
+        }
+        for kernel_id, interface_id in expected.items():
+            with self.subTest(kernel_id=kernel_id):
+                kernel = self.kernels["kernels"][kernel_id]
+                self.assertEqual(kernel["operation_interface"], interface_id)
+                self.assertEqual(kernel["interface_call_abi"], "validated")
+
+        inplace = resolver.load_json(
+            ROOT
+            / "version"
+            / "v8"
+            / "kernel_maps"
+            / "recurrent_qk_l2_norm_forward.json"
+        )
+        params = {
+            param["name"]: param
+            for param in inplace["call_abi"]["params"]
+        }
+        self.assertEqual(params["q"]["ports"], ["input:q", "output:q"])
+        self.assertEqual(params["k"]["ports"], ["input:k", "output:k"])
+
     def test_kernel_interface_migration_debt_does_not_regress(self):
         scripts = ROOT / "version" / "v8" / "scripts"
         spec = importlib.util.spec_from_file_location(
@@ -528,10 +562,11 @@ class NumericalExecutionContractTests(unittest.TestCase):
         audit.validate_ratchet(report, baseline)
         self.assertEqual(report["counts"]["kernel_maps"], 275)
         self.assertEqual(report["counts"]["resolver_governed_maps"], 84)
-        self.assertEqual(report["counts"]["interface_hardened_maps"], 11)
+        self.assertEqual(report["counts"]["interface_hardened_maps"], 22)
         self.assertEqual(
-            report["counts"]["interface_abi_crossvalidated_maps"], 11
+            report["counts"]["interface_abi_crossvalidated_maps"], 22
         )
+        self.assertEqual(report["counts"]["contract_pending_maps"], 62)
         self.assertEqual(report["selection"]["legacy_selection_if_statements"], 73)
         self.assertEqual(report["selection"]["operation_specific_if_statements"], 35)
 

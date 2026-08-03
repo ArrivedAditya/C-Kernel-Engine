@@ -1,13 +1,14 @@
 {
   "id": "recurrent_silu_forward_ggml",
   "op": "recurrent_silu",
+  "operation_interface": "recurrent_silu.fp32.v1",
   "variant": "llama_x86_isa_fp32",
   "modes": {"inference": true, "training": false, "backward": false},
   "quant": {"weight": "none", "activation": "fp32", "output": "fp32"},
-  "inputs": [{"name": "x", "dtype": "fp32", "shape": ["R", "D"]}],
+  "inputs": [{"name": "x", "dtype": "fp32", "shape": ["R", "D"], "layout": "token_major_contiguous", "access": "read", "storage_class": "activation", "consumption": "required"}],
   "weights": [],
   "activations": [],
-  "outputs": [{"name": "out", "dtype": "fp32", "shape": ["R", "D"]}],
+  "outputs": [{"name": "out", "dtype": "fp32", "shape": ["R", "D"], "layout": "token_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required"}],
   "scratch": [],
   "dims": ["R", "D"],
   "params": [],
@@ -57,8 +58,8 @@
   "call_abi": {
     "version": 1,
     "params": [
-      {"name": "x", "source": "activation:x", "cast": "const float*"},
-      {"name": "out", "source": "output:out", "cast": "float*"},
+      {"name": "x", "source": "activation:x", "cast": "const float*", "ports": ["input:x"]},
+      {"name": "out", "source": "output:out", "cast": "float*", "ports": ["output:out"]},
       {"name": "rows", "source": "runtime:seq_len"},
       {"name": "dim", "source": "dim:ssm_conv_channels"}
     ]

@@ -575,6 +575,7 @@
     },
     "decoder.swiglu": {
       "op": "swiglu",
+      "operation_interface": "swiglu.fp32.v1",
       "template_ops": ["silu_mul"],
       "selector": {
         "config_not_equals": {"decoder_swiglu_storage_boundary": "pytorch_bf16_exact"}
@@ -600,6 +601,7 @@
     },
     "decoder.swiglu.bf16": {
       "op": "swiglu",
+      "operation_interface": "swiglu.fp32_bf16_values.v1",
       "template_ops": ["silu_mul"],
       "selector": {
         "config_equals": {"decoder_swiglu_storage_boundary": "pytorch_bf16_exact"}

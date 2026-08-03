@@ -6521,6 +6521,7 @@
     {
       "id": "attn_gate_sigmoid_mul_forward",
       "op": "attn_gate_sigmoid_mul",
+      "operation_interface": "attn_gate_sigmoid_mul.fp32.v1",
       "variant": "fp32",
       "quant": {
         "weight": "none",
@@ -6535,6 +6536,10 @@
             "R",
             "D"
           ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required",
           "desc": "Attention output rows"
         },
         {
@@ -6544,6 +6549,10 @@
             "R",
             "D"
           ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required",
           "desc": "Gate rows to sigmoid"
         }
       ],
@@ -6557,6 +6566,10 @@
             "R",
             "D"
           ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required",
           "desc": "Attention output scaled by sigmoid(gate)"
         }
       ],
@@ -6641,17 +6654,26 @@
           {
             "name": "x",
             "source": "activation:x",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:x"
+            ]
           },
           {
             "name": "gate",
             "source": "activation:gate",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:gate"
+            ]
           },
           {
             "name": "out",
             "source": "output:out",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
           },
           {
             "name": "rows",
@@ -30017,6 +30039,7 @@
     {
       "id": "recurrent_norm_gate_llama_avx2_forward",
       "op": "recurrent_norm_gate",
+      "operation_interface": "recurrent_norm_gate.fp32.v1",
       "variant": "llama_avx2_fp32",
       "modes": {
         "inference": true,
@@ -30036,7 +30059,11 @@
             "R",
             "H",
             "D"
-          ]
+          ],
+          "layout": "contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         },
         {
           "name": "gate",
@@ -30045,7 +30072,11 @@
             "R",
             "H",
             "D"
-          ]
+          ],
+          "layout": "contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "weights": [
@@ -30054,7 +30085,11 @@
           "dtype": "fp32",
           "shape": [
             "D"
-          ]
+          ],
+          "layout": "feature_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         }
       ],
       "outputs": [
@@ -30065,7 +30100,11 @@
             "R",
             "H",
             "D"
-          ]
+          ],
+          "layout": "contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "scratch": [],
@@ -30152,22 +30191,34 @@
           {
             "name": "x",
             "source": "activation:x",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:x"
+            ]
           },
           {
             "name": "gate",
             "source": "activation:gate",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:gate"
+            ]
           },
           {
             "name": "weight",
             "source": "weight:ssm_norm",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "weight:weight"
+            ]
           },
           {
             "name": "out",
             "source": "output:out",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
           },
           {
             "name": "rows",
@@ -30193,6 +30244,7 @@
     {
       "id": "recurrent_norm_gate_pytorch_bf16_storage",
       "op": "recurrent_norm_gate",
+      "operation_interface": "recurrent_norm_gate.fp32_bf16_values.v1",
       "variant": "pytorch_bf16_storage",
       "modes": {
         "inference": true,
@@ -30212,7 +30264,11 @@
             "R",
             "H",
             "D"
-          ]
+          ],
+          "layout": "contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         },
         {
           "name": "gate",
@@ -30221,7 +30277,11 @@
             "R",
             "H",
             "D"
-          ]
+          ],
+          "layout": "contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "weights": [
@@ -30230,7 +30290,11 @@
           "dtype": "fp32",
           "shape": [
             "D"
-          ]
+          ],
+          "layout": "feature_contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         }
       ],
       "outputs": [
@@ -30241,7 +30305,11 @@
             "R",
             "H",
             "D"
-          ]
+          ],
+          "layout": "contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "scratch": [],
@@ -30317,22 +30385,34 @@
           {
             "name": "x",
             "source": "activation:x",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:x"
+            ]
           },
           {
             "name": "gate",
             "source": "activation:gate",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:gate"
+            ]
           },
           {
             "name": "weight",
             "source": "weight:ssm_norm",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "weight:weight"
+            ]
           },
           {
             "name": "out",
             "source": "output:out",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
           },
           {
             "name": "rows",
@@ -30514,6 +30594,7 @@
     {
       "id": "recurrent_qk_l2_norm_forward",
       "op": "recurrent_qk_l2_norm",
+      "operation_interface": "recurrent_qk_l2_norm.fp32_inplace.v1",
       "variant": "fp32",
       "modes": {
         "inference": true,
@@ -30530,18 +30611,26 @@
           "name": "q",
           "dtype": "fp32",
           "shape": [
-            "rows",
-            "q_dim"
+            "R",
+            "Q"
           ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required",
           "desc": "Recurrent Q rows, normalized in-place"
         },
         {
           "name": "k",
           "dtype": "fp32",
           "shape": [
-            "rows",
-            "k_dim"
+            "R",
+            "K"
           ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required",
           "desc": "Recurrent K rows, normalized in-place"
         }
       ],
@@ -30552,18 +30641,28 @@
           "name": "q",
           "dtype": "fp32",
           "shape": [
-            "rows",
-            "q_dim"
+            "R",
+            "Q"
           ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "alias_of": "input:q",
           "desc": "Normalized recurrent Q rows"
         },
         {
           "name": "k",
           "dtype": "fp32",
           "shape": [
-            "rows",
-            "k_dim"
+            "R",
+            "K"
           ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "alias_of": "input:k",
           "desc": "Normalized recurrent K rows"
         }
       ],
@@ -30669,12 +30768,20 @@
           {
             "name": "q",
             "source": "activation:q",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "input:q",
+              "output:q"
+            ]
           },
           {
             "name": "k",
             "source": "activation:k",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "input:k",
+              "output:k"
+            ]
           },
           {
             "name": "rows",
@@ -30721,6 +30828,7 @@
     {
       "id": "recurrent_qk_l2_norm_pytorch_bf16_storage",
       "op": "recurrent_qk_l2_norm",
+      "operation_interface": "recurrent_qk_l2_norm.fp32_bf16_values_inplace.v1",
       "variant": "pytorch_bf16_vector_tail",
       "modes": {
         "inference": true,
@@ -30739,7 +30847,11 @@
           "shape": [
             "R",
             "Q"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required"
         },
         {
           "name": "k",
@@ -30747,7 +30859,11 @@
           "shape": [
             "R",
             "K"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "scratch",
+          "consumption": "required"
         }
       ],
       "weights": [],
@@ -30759,7 +30875,12 @@
           "shape": [
             "R",
             "Q"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "alias_of": "input:q"
         },
         {
           "name": "k",
@@ -30767,7 +30888,12 @@
           "shape": [
             "R",
             "K"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "alias_of": "input:k"
         }
       ],
       "scratch": [],
@@ -30841,12 +30967,20 @@
           {
             "name": "q",
             "source": "activation:q",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "input:q",
+              "output:q"
+            ]
           },
           {
             "name": "k",
             "source": "activation:k",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "input:k",
+              "output:k"
+            ]
           },
           {
             "name": "rows",
@@ -31080,6 +31214,7 @@
     {
       "id": "recurrent_silu_forward_ggml",
       "op": "recurrent_silu",
+      "operation_interface": "recurrent_silu.fp32.v1",
       "variant": "llama_x86_isa_fp32",
       "modes": {
         "inference": true,
@@ -31098,7 +31233,11 @@
           "shape": [
             "R",
             "D"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "weights": [],
@@ -31110,7 +31249,11 @@
           "shape": [
             "R",
             "D"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "scratch": [],
@@ -31219,12 +31362,18 @@
           {
             "name": "x",
             "source": "activation:x",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:x"
+            ]
           },
           {
             "name": "out",
             "source": "output:out",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
           },
           {
             "name": "rows",
@@ -31242,6 +31391,7 @@
     {
       "id": "recurrent_silu_forward_pytorch_bf16_storage",
       "op": "recurrent_silu",
+      "operation_interface": "recurrent_silu.fp32_bf16_values.v1",
       "variant": "pytorch_sleef_bf16_input_bf16_output",
       "modes": {
         "inference": true,
@@ -31260,7 +31410,11 @@
           "shape": [
             "R",
             "D"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "weights": [],
@@ -31272,7 +31426,11 @@
           "shape": [
             "R",
             "D"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "scratch": [],
@@ -31362,12 +31520,18 @@
           {
             "name": "x",
             "source": "activation:x",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:x"
+            ]
           },
           {
             "name": "out",
             "source": "output:out",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
           },
           {
             "name": "rows",
@@ -36307,6 +36471,7 @@
     {
       "id": "ssm_conv1d_forward_llama_production",
       "op": "ssm_conv1d",
+      "operation_interface": "ssm_conv1d.fp32.v1",
       "variant": "llama_scalar_mul_add_fp32",
       "quant": {
         "weight": "fp32",
@@ -36321,7 +36486,11 @@
             "S",
             "C",
             "K-1+T"
-          ]
+          ],
+          "layout": "contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "weights": [
@@ -36331,7 +36500,11 @@
           "shape": [
             "C",
             "K"
-          ]
+          ],
+          "layout": "contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         }
       ],
       "outputs": [
@@ -36342,7 +36515,11 @@
             "S",
             "T",
             "C"
-          ]
+          ],
+          "layout": "contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "dims": [
@@ -36424,17 +36601,26 @@
           {
             "name": "conv_x",
             "source": "activation:conv_x",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:conv_x"
+            ]
           },
           {
             "name": "kernel",
             "source": "weight:ssm_conv1d",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "weight:kernel"
+            ]
           },
           {
             "name": "out",
             "source": "output:out",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
           },
           {
             "name": "kernel_size",
@@ -36474,6 +36660,7 @@
     {
       "id": "ssm_conv1d_forward_pytorch_bf16_storage",
       "op": "ssm_conv1d",
+      "operation_interface": "ssm_conv1d.fp32_bf16_values.v1",
       "variant": "pytorch_fp32_compute_bf16_output",
       "quant": {
         "weight": "fp32_bf16_values",
@@ -36488,7 +36675,11 @@
             "S",
             "C",
             "K-1+T"
-          ]
+          ],
+          "layout": "contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "weights": [
@@ -36498,7 +36689,11 @@
           "shape": [
             "C",
             "K"
-          ]
+          ],
+          "layout": "contiguous",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
         }
       ],
       "outputs": [
@@ -36509,7 +36704,11 @@
             "S",
             "T",
             "C"
-          ]
+          ],
+          "layout": "contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "dims": [
@@ -36591,17 +36790,26 @@
           {
             "name": "conv_x",
             "source": "activation:conv_x",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:conv_x"
+            ]
           },
           {
             "name": "kernel",
             "source": "weight:ssm_conv1d",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "weight:kernel"
+            ]
           },
           {
             "name": "out",
             "source": "output:out",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
           },
           {
             "name": "kernel_size",
@@ -36978,6 +37186,7 @@
     {
       "id": "swiglu_forward_ggml",
       "op": "swiglu",
+      "operation_interface": "swiglu.fp32.v1",
       "variant": "ggml_fp32",
       "quant": {
         "weight": "none",
@@ -36992,6 +37201,10 @@
             "T",
             "2 * I"
           ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required",
           "desc": "Contiguous gate then up projection values."
         }
       ],
@@ -37005,6 +37218,10 @@
             "T",
             "I"
           ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required",
           "desc": "GGML-compatible SiLU(gate) times up output."
         }
       ],
@@ -37104,12 +37321,18 @@
           {
             "name": "input",
             "source": "activation:gate",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "input:gate_up"
+            ]
           },
           {
             "name": "output",
             "source": "output:out",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
           },
           {
             "name": "tokens",
@@ -37137,6 +37360,7 @@
     {
       "id": "swiglu_forward_pytorch_bf16_storage",
       "op": "swiglu",
+      "operation_interface": "swiglu.fp32_bf16_values.v1",
       "variant": "pytorch_sleef_bf16_intermediate_storage",
       "quant": {
         "weight": "none",
@@ -37151,6 +37375,10 @@
             "T",
             "2 * I"
           ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required",
           "desc": "BF16-valued gate then up projections carried in an FP32 buffer."
         }
       ],
@@ -37164,6 +37392,10 @@
             "T",
             "I"
           ],
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required",
           "desc": "PyTorch BF16 SiLU result times BF16 up projection, rounded to BF16 and carried as FP32."
         }
       ],
@@ -37256,12 +37488,18 @@
           {
             "name": "input",
             "source": "activation:gate",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:gate_up"
+            ]
           },
           {
             "name": "output",
             "source": "output:out",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
           },
           {
             "name": "tokens",

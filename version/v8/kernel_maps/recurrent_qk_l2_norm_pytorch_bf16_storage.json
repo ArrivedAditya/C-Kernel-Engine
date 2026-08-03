@@ -1,18 +1,19 @@
 {
   "id": "recurrent_qk_l2_norm_pytorch_bf16_storage",
   "op": "recurrent_qk_l2_norm",
+  "operation_interface": "recurrent_qk_l2_norm.fp32_bf16_values_inplace.v1",
   "variant": "pytorch_bf16_vector_tail",
   "modes": {"inference": true, "training": false, "backward": false},
   "quant": {"weight": "none", "activation": "fp32_bf16_values", "output": "fp32_bf16_values"},
   "inputs": [
-    {"name": "q", "dtype": "fp32", "shape": ["R", "Q"]},
-    {"name": "k", "dtype": "fp32", "shape": ["R", "K"]}
+    {"name": "q", "dtype": "fp32", "shape": ["R", "Q"], "layout": "token_major_contiguous", "access": "read", "storage_class": "scratch", "consumption": "required"},
+    {"name": "k", "dtype": "fp32", "shape": ["R", "K"], "layout": "token_major_contiguous", "access": "read", "storage_class": "scratch", "consumption": "required"}
   ],
   "weights": [],
   "activations": [],
   "outputs": [
-    {"name": "q", "dtype": "fp32", "shape": ["R", "Q"]},
-    {"name": "k", "dtype": "fp32", "shape": ["R", "K"]}
+    {"name": "q", "dtype": "fp32", "shape": ["R", "Q"], "layout": "token_major_contiguous", "access": "write", "storage_class": "scratch", "consumption": "required", "alias_of": "input:q"},
+    {"name": "k", "dtype": "fp32", "shape": ["R", "K"], "layout": "token_major_contiguous", "access": "write", "storage_class": "scratch", "consumption": "required", "alias_of": "input:k"}
   ],
   "scratch": [],
   "dims": ["R", "Q", "K", "H", "D"],
@@ -47,8 +48,8 @@
     }
   }],
   "call_abi": {"version": 1, "params": [
-    {"name": "q", "source": "activation:q", "cast": "float*"},
-    {"name": "k", "source": "activation:k", "cast": "float*"},
+    {"name": "q", "source": "activation:q", "cast": "float*", "ports": ["input:q", "output:q"]},
+    {"name": "k", "source": "activation:k", "cast": "float*", "ports": ["input:k", "output:k"]},
     {"name": "rows", "source": "runtime:seq_len"},
     {"name": "q_dim", "source": "dim:q_dim"},
     {"name": "k_dim", "source": "dim:k_dim"},

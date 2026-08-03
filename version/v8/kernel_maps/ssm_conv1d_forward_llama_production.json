@@ -1,6 +1,7 @@
 {
   "id": "ssm_conv1d_forward_llama_production",
   "op": "ssm_conv1d",
+  "operation_interface": "ssm_conv1d.fp32.v1",
   "variant": "llama_scalar_mul_add_fp32",
   "quant": {
     "weight": "fp32",
@@ -8,13 +9,13 @@
     "output": "fp32"
   },
   "inputs": [
-    {"name": "conv_x", "dtype": "fp32", "shape": ["S", "C", "K-1+T"]}
+    {"name": "conv_x", "dtype": "fp32", "shape": ["S", "C", "K-1+T"], "layout": "contiguous", "access": "read", "storage_class": "activation", "consumption": "required"}
   ],
   "weights": [
-    {"name": "kernel", "dtype": "fp32", "shape": ["C", "K"]}
+    {"name": "kernel", "dtype": "fp32", "shape": ["C", "K"], "layout": "contiguous", "access": "read", "storage_class": "weight", "consumption": "required"}
   ],
   "outputs": [
-    {"name": "out", "dtype": "fp32", "shape": ["S", "T", "C"]}
+    {"name": "out", "dtype": "fp32", "shape": ["S", "T", "C"], "layout": "contiguous", "access": "write", "storage_class": "activation", "consumption": "required"}
   ],
   "dims": ["K", "C", "T", "S"],
   "params": [],
@@ -61,9 +62,9 @@
   "call_abi": {
     "version": 1,
     "params": [
-      {"name": "conv_x", "source": "activation:conv_x", "cast": "const float*"},
-      {"name": "kernel", "source": "weight:ssm_conv1d", "cast": "const float*"},
-      {"name": "out", "source": "output:out", "cast": "float*"},
+      {"name": "conv_x", "source": "activation:conv_x", "cast": "const float*", "ports": ["input:conv_x"]},
+      {"name": "kernel", "source": "weight:ssm_conv1d", "cast": "const float*", "ports": ["weight:kernel"]},
+      {"name": "out", "source": "output:out", "cast": "float*", "ports": ["output:out"]},
       {"name": "kernel_size", "source": "dim:ssm_conv_kernel"},
       {"name": "num_channels", "source": "dim:ssm_conv_channels"},
       {"name": "num_tokens", "source": "runtime:seq_len"},

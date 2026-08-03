@@ -1,6 +1,7 @@
 {
   "id": "recurrent_silu_forward_pytorch_bf16_storage",
   "op": "recurrent_silu",
+  "operation_interface": "recurrent_silu.fp32_bf16_values.v1",
   "variant": "pytorch_sleef_bf16_input_bf16_output",
   "modes": {"inference": true, "training": false, "backward": false},
   "quant": {
@@ -8,10 +9,10 @@
     "activation": "fp32_bf16_values",
     "output": "fp32_bf16_values"
   },
-  "inputs": [{"name": "x", "dtype": "fp32", "shape": ["R", "D"]}],
+  "inputs": [{"name": "x", "dtype": "fp32", "shape": ["R", "D"], "layout": "token_major_contiguous", "access": "read", "storage_class": "activation", "consumption": "required"}],
   "weights": [],
   "activations": [],
-  "outputs": [{"name": "out", "dtype": "fp32", "shape": ["R", "D"]}],
+  "outputs": [{"name": "out", "dtype": "fp32", "shape": ["R", "D"], "layout": "token_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required"}],
   "scratch": [],
   "dims": ["R", "D"],
   "params": [],
@@ -62,8 +63,8 @@
   "call_abi": {
     "version": 1,
     "params": [
-      {"name": "x", "source": "activation:x", "cast": "const float*"},
-      {"name": "out", "source": "output:out", "cast": "float*"},
+      {"name": "x", "source": "activation:x", "cast": "const float*", "ports": ["input:x"]},
+      {"name": "out", "source": "output:out", "cast": "float*", "ports": ["output:out"]},
       {"name": "rows", "source": "runtime:seq_len"},
       {"name": "dim", "source": "dim:ssm_conv_channels"}
     ]
