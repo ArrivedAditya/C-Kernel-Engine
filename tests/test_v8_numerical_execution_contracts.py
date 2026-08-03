@@ -123,7 +123,7 @@ class NumericalExecutionContractTests(unittest.TestCase):
         )
         self.assertEqual(plan["checkpoint"]["axis_names"], ["token", "channel"])
 
-    def test_qwen35_rmsnorm_resolves_from_hardened_kernel_interfaces(self):
+    def test_qwen35_norms_resolve_from_hardened_kernel_interfaces(self):
         doc = resolver.load_json(
             ROOT / "version" / "v8" / "circuits" / "qwen35.json"
         )
@@ -135,6 +135,14 @@ class NumericalExecutionContractTests(unittest.TestCase):
             "decoder.rmsnorm_bf16_pytorch": (
                 "rmsnorm.fp32_bf16_values.v1",
                 "rmsnorm_forward_qwen3next_pytorch_bf16_storage",
+            ),
+            "decoder.qk_norm": (
+                "qk_norm.fp32_inplace.v1",
+                "qk_norm_forward_llama_production",
+            ),
+            "decoder.qk_norm_bf16_pytorch": (
+                "qk_norm.fp32_bf16_values_inplace.v1",
+                "qk_norm_forward_pytorch_bf16_storage",
             ),
         }
         for operation, (interface_id, kernel_id) in expected.items():
@@ -165,15 +173,40 @@ class NumericalExecutionContractTests(unittest.TestCase):
                     metadata = build_ir._graph_ir_contract_metadata(plan)
                     self.assertEqual(metadata["operation_interface"], interface_id)
                     interface = self.kernels["operation_interfaces"][interface_id]
-                    self.assertEqual(
-                        [(port["role"], port["name"]) for port in interface["ports"]],
-                        [
-                            ("input", "input"),
-                            ("weight", "gamma"),
-                            ("output", "output"),
-                            ("output", "rstd"),
-                        ],
-                    )
+                    port_identities = [
+                        (port["role"], port["name"])
+                        for port in interface["ports"]
+                    ]
+                    if operation.startswith("decoder.qk_norm"):
+                        self.assertEqual(
+                            port_identities,
+                            [
+                                ("input", "q"),
+                                ("input", "k"),
+                                ("weight", "q_gamma"),
+                                ("weight", "k_gamma"),
+                                ("output", "q"),
+                                ("output", "k"),
+                            ],
+                        )
+                        self.assertEqual(
+                            [
+                                port.get("alias_of")
+                                for port in interface["ports"]
+                                if port["role"] == "output"
+                            ],
+                            ["input:q", "input:k"],
+                        )
+                    else:
+                        self.assertEqual(
+                            port_identities,
+                            [
+                                ("input", "input"),
+                                ("weight", "gamma"),
+                                ("output", "output"),
+                                ("output", "rstd"),
+                            ],
+                        )
 
     def test_required_operation_interface_rejects_discrepant_provider(self):
         doc = resolver.load_json(
@@ -192,6 +225,96 @@ class NumericalExecutionContractTests(unittest.TestCase):
                 "decode",
                 mode="production",
             )
+
+    def test_qwen3vl_norms_resolve_from_shared_hardened_interfaces(self):
+        doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen3vl.json"
+        )
+        expected = {
+            "decoder.rmsnorm": (
+                "rmsnorm.fp32.v1",
+                "rmsnorm_forward_llama_production",
+            ),
+            "decoder.rmsnorm.bf16": (
+                "rmsnorm.fp32_bf16_values.v1",
+                "rmsnorm_forward_pytorch_bf16_storage",
+            ),
+            "decoder.qk_norm": (
+                "qk_norm.fp32_inplace.v1",
+                "qk_norm_forward_llama_production",
+            ),
+            "decoder.qk_norm.bf16": (
+                "qk_norm.fp32_bf16_values_inplace.v1",
+                "qk_norm_forward_pytorch_bf16_storage",
+            ),
+        }
+        for operation, (interface_id, kernel_id) in expected.items():
+            for phase in ("prefill", "decode"):
+                with self.subTest(operation=operation, phase=phase):
+                    plan = resolver.resolve_contract(
+                        doc,
+                        self.contracts,
+                        self.kernels,
+                        operation,
+                        phase,
+                        mode="production",
+                    )
+                    self.assertEqual(plan["operation_interface"], interface_id)
+                    self.assertEqual(plan["kernel"]["id"], kernel_id)
+
+    def test_audio_and_vision_gelu_resolve_from_hardened_interfaces(self):
+        cases = (
+            (
+                "audio_transformer_encoder.json",
+                "audio.encoder.activation",
+                "prefill",
+                "gelu.fp32_inplace.v1",
+                "gelu_erf_fp64_f32_inplace",
+            ),
+            (
+                "audio_transformer_decoder.json",
+                "audio.decoder.activation",
+                "decode",
+                "gelu.fp32_inplace.v1",
+                "gelu_erf_fp64_f32_inplace",
+            ),
+            (
+                "qwen3_vl_vision.json",
+                "vision.layer.mlp_activation.fp32",
+                "prefill",
+                "gelu.fp32_inplace.v1",
+                "gelu_ggml_inplace",
+            ),
+            (
+                "qwen3_vl_vision.json",
+                "vision.layer.mlp_activation",
+                "prefill",
+                "gelu.fp32_bf16_values_inplace.v1",
+                "gelu_pytorch_tanh_bf16_storage",
+            ),
+            (
+                "qwen3_vl_vision.json",
+                "vision.projector.activation.pytorch_sleef_exact",
+                "prefill",
+                "gelu.fp32_bf16_values_inplace.v1",
+                "gelu_pytorch_erf_sleef_bf16_storage",
+            ),
+        )
+        for circuit_name, operation, phase, interface_id, kernel_id in cases:
+            with self.subTest(circuit=circuit_name, operation=operation):
+                doc = resolver.load_json(
+                    ROOT / "version" / "v8" / "circuits" / circuit_name
+                )
+                plan = resolver.resolve_contract(
+                    doc,
+                    self.contracts,
+                    self.kernels,
+                    operation,
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(plan["operation_interface"], interface_id)
+                self.assertEqual(plan["kernel"]["id"], kernel_id)
 
     def test_undeclared_operation_interface_preserves_legacy_contract_lookup(self):
         doc = resolver.load_json(
@@ -252,6 +375,50 @@ class NumericalExecutionContractTests(unittest.TestCase):
                 "kernel maps disagree on operation interface",
             ):
                 resolver.load_kernel_capabilities(root, contracts=self.contracts)
+
+    def test_hardened_kernel_interface_rejects_unknown_alias_target(self):
+        path = (
+            ROOT
+            / "version"
+            / "v8"
+            / "kernel_maps"
+            / "qk_norm_forward_llama_production.json"
+        )
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc["outputs"][0]["alias_of"] = "input:missing"
+        with self.assertRaisesRegex(resolver.ContractError, "aliases an unknown port"):
+            resolver._load_operation_interface(doc, path)
+
+    def test_hardened_kernel_interface_rejects_incompatible_alias(self):
+        path = (
+            ROOT
+            / "version"
+            / "v8"
+            / "kernel_maps"
+            / "qk_norm_forward_llama_production.json"
+        )
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc["outputs"][0]["layout"] = "token_major_contiguous"
+        with self.assertRaisesRegex(resolver.ContractError, "incompatible alias"):
+            resolver._load_operation_interface(doc, path)
+
+    def test_kernel_interface_migration_debt_does_not_regress(self):
+        scripts = ROOT / "version" / "v8" / "scripts"
+        spec = importlib.util.spec_from_file_location(
+            "audit_kernel_map_interfaces_v8",
+            scripts / "audit_kernel_map_interfaces_v8.py",
+        )
+        assert spec is not None and spec.loader is not None
+        audit = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(audit)
+        report = audit.build_report()
+        baseline = audit._load(audit.BASELINE)
+        audit.validate_ratchet(report, baseline)
+        self.assertEqual(report["counts"]["kernel_maps"], 275)
+        self.assertEqual(report["counts"]["resolver_governed_maps"], 84)
+        self.assertEqual(report["counts"]["interface_hardened_maps"], 11)
+        self.assertEqual(report["selection"]["legacy_selection_if_statements"], 73)
+        self.assertEqual(report["selection"]["operation_specific_if_statements"], 35)
 
     def test_yarn_init_contracts_resolve_exact_storage_providers(self):
         expected = {

@@ -138,6 +138,7 @@
       }
     },
     "audio.decoder.activation": {
+      "operation_interface": "gelu.fp32_inplace.v1",
       "op": "gelu",
       "template_ops": ["gelu"],
       "phases": {

@@ -1,19 +1,20 @@
 {
   "id": "qk_norm_forward_fp64_sum",
   "op": "qk_norm",
+  "operation_interface": "qk_norm.fp32_inplace.v1",
   "variant": "fp32_square_fp64_sum_fp32_output",
   "quant": {"weight": "fp32", "activation": "fp32", "output": "fp32"},
   "inputs": [
-    {"name": "q", "dtype": "fp32", "shape": ["H", "T", "D"]},
-    {"name": "k", "dtype": "fp32", "shape": ["KV", "T", "D"]}
+    {"name": "q", "dtype": "fp32", "shape": ["H", "T", "D"], "layout": "head_major_contiguous", "access": "read", "storage_class": "scratch", "consumption": "required"},
+    {"name": "k", "dtype": "fp32", "shape": ["KV", "T", "D"], "layout": "head_major_contiguous", "access": "read", "storage_class": "scratch", "consumption": "required"}
   ],
   "weights": [
-    {"name": "q_gamma", "dtype": "fp32", "shape": ["D"]},
-    {"name": "k_gamma", "dtype": "fp32", "shape": ["D"]}
+    {"name": "q_gamma", "dtype": "fp32", "shape": ["D"], "layout": "feature_contiguous", "access": "read", "storage_class": "weight", "consumption": "required"},
+    {"name": "k_gamma", "dtype": "fp32", "shape": ["D"], "layout": "feature_contiguous", "access": "read", "storage_class": "weight", "consumption": "required"}
   ],
   "outputs": [
-    {"name": "q", "dtype": "fp32", "shape": ["H", "T", "D"]},
-    {"name": "k", "dtype": "fp32", "shape": ["KV", "T", "D"]}
+    {"name": "q", "dtype": "fp32", "shape": ["H", "T", "D"], "layout": "head_major_contiguous", "access": "write", "storage_class": "scratch", "consumption": "required", "alias_of": "input:q"},
+    {"name": "k", "dtype": "fp32", "shape": ["KV", "T", "D"], "layout": "head_major_contiguous", "access": "write", "storage_class": "scratch", "consumption": "required", "alias_of": "input:k"}
   ],
   "dims": ["H", "KV", "T", "D"],
   "params": [{"name": "eps", "dtype": "float32"}],

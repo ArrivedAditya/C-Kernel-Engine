@@ -214,6 +214,7 @@
       }
     },
     "decoder.qk_norm": {
+      "operation_interface": "qk_norm.fp32_inplace.v1",
       "op": "qk_norm",
       "template_ops": ["qk_norm"],
       "selector": {
@@ -241,6 +242,7 @@
       }
     },
     "decoder.qk_norm_bf16_pytorch": {
+      "operation_interface": "qk_norm.fp32_bf16_values_inplace.v1",
       "op": "qk_norm",
       "template_ops": ["qk_norm"],
       "selector": {

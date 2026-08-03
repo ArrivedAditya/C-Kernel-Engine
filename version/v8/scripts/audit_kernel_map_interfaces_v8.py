@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Report and ratchet v8 kernel-map interface migration debt."""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import json
+from pathlib import Path
+from typing import Any, Dict
+
+
+V8_ROOT = Path(__file__).resolve().parents[1]
+KERNEL_MAPS = V8_ROOT / "kernel_maps"
+BUILD_IR = V8_ROOT / "scripts" / "build_ir_v8.py"
+BASELINE = V8_ROOT / "contracts" / "kernel_interface_migration_baseline.json"
+NON_MAP_FILES = {
+    "KERNEL_REGISTRY.json",
+    "KERNEL_SOURCES.json",
+    "kernel_bindings.json",
+    "kernel_bindings.overlay.json",
+}
+LEGACY_CONTRACT_KEYS = {
+    "contract_schema_version",
+    "numerical_contract",
+    "reference",
+}
+
+
+def _load(path: Path) -> Dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise RuntimeError(f"expected JSON object: {path}")
+    return value
+
+
+def _map_op_conditionals(path: Path) -> Dict[str, int]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "map_op_to_kernel"
+    )
+    conditionals = sum(isinstance(node, ast.If) for node in ast.walk(function))
+    inline = sum(isinstance(node, ast.IfExp) for node in ast.walk(function))
+    operation_specific = sum(
+        isinstance(node, ast.If)
+        and any(
+            isinstance(name, ast.Name) and name.id == "op"
+            for name in ast.walk(node.test)
+        )
+        for node in ast.walk(function)
+    )
+    # The resolved-plan presence and phase guard are the map-first entry path.
+    contract_path = 2
+    return {
+        "total_if_statements": conditionals,
+        "contract_path_if_statements": contract_path,
+        "legacy_selection_if_statements": conditionals - contract_path,
+        "operation_specific_if_statements": operation_specific,
+        "inline_conditional_expressions": inline,
+    }
+
+
+def build_report() -> Dict[str, Any]:
+    maps = []
+    for path in sorted(KERNEL_MAPS.glob("*.json")):
+        if path.name in NON_MAP_FILES:
+            continue
+        maps.append((path, _load(path)))
+
+    governed = [item for item in maps if item[1].get("numerical_capabilities")]
+    hardened = [item for item in governed if item[1].get("operation_interface")]
+    pending = [item for item in governed if not item[1].get("operation_interface")]
+    legacy = [item for item in maps if not item[1].get("numerical_capabilities")]
+    legacy_contract_shaped = [
+        item
+        for item in legacy
+        if any(key in item[1] for key in LEGACY_CONTRACT_KEYS)
+    ]
+    map_owned_abi = [item for item in maps if item[1].get("call_abi")]
+
+    return {
+        "schema": "cke.v8.kernel_interface_migration_report",
+        "schema_version": 1,
+        "counts": {
+            "kernel_maps": len(maps),
+            "resolver_governed_maps": len(governed),
+            "interface_hardened_maps": len(hardened),
+            "contract_pending_maps": len(pending),
+            "legacy_maps": len(legacy),
+            "legacy_contract_shaped_maps": len(legacy_contract_shaped),
+            "map_owned_call_abi": len(map_owned_abi),
+            "legacy_call_abi": len(maps) - len(map_owned_abi),
+        },
+        "selection": _map_op_conditionals(BUILD_IR),
+        "interface_hardened_ids": [item[1]["id"] for item in hardened],
+        "contract_pending_ids": [item[1]["id"] for item in pending],
+        "legacy_contract_shaped_ids": [item[1]["id"] for item in legacy_contract_shaped],
+    }
+
+
+def validate_ratchet(report: Dict[str, Any], baseline: Dict[str, Any]) -> None:
+    counts = report["counts"]
+    selection = report["selection"]
+    checks = (
+        (
+            counts["interface_hardened_maps"]
+            >= baseline["minimum_interface_hardened_maps"],
+            "interface-hardened map count regressed",
+        ),
+        (
+            counts["contract_pending_maps"]
+            <= baseline["maximum_contract_pending_maps"],
+            "contract-pending map debt increased",
+        ),
+        (
+            counts["legacy_maps"] <= baseline["maximum_legacy_maps"],
+            "legacy map debt increased",
+        ),
+        (
+            selection["legacy_selection_if_statements"]
+            <= baseline["maximum_legacy_selection_conditionals"],
+            "map_op_to_kernel legacy conditional count increased",
+        ),
+        (
+            selection["operation_specific_if_statements"]
+            <= baseline["maximum_operation_specific_conditionals"],
+            "map_op_to_kernel operation-specific conditional count increased",
+        ),
+        (
+            counts["map_owned_call_abi"]
+            >= baseline["minimum_map_owned_call_abi"],
+            "map-owned call ABI count regressed",
+        ),
+    )
+    failures = [message for passed, message in checks if not passed]
+    if failures:
+        raise RuntimeError("; ".join(failures))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--json", action="store_true", help="emit the complete JSON report")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="fail when migration debt regresses from the checked-in baseline",
+    )
+    args = parser.parse_args()
+
+    report = build_report()
+    if args.check:
+        validate_ratchet(report, _load(BASELINE))
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        counts = report["counts"]
+        selection = report["selection"]
+        print(
+            "kernel interfaces: "
+            f"hardened={counts['interface_hardened_maps']} "
+            f"contract_pending={counts['contract_pending_maps']} "
+            f"legacy={counts['legacy_maps']} "
+            f"map_abi={counts['map_owned_call_abi']} "
+            f"legacy_if={selection['legacy_selection_if_statements']} "
+            f"op_if={selection['operation_specific_if_statements']}"
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

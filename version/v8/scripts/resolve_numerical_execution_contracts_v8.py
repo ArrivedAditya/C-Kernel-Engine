@@ -204,6 +204,11 @@ def _load_operation_interface(doc: Dict[str, Any], path: Path) -> Optional[Dict[
                 "access": str(value["access"]),
                 "storage_class": str(value["storage_class"]),
                 "consumption": str(value["consumption"]),
+                **(
+                    {"alias_of": str(value["alias_of"])}
+                    if value.get("alias_of") not in (None, "")
+                    else {}
+                ),
             })
 
     identities = [(port["role"], port["name"]) for port in ports]
@@ -213,6 +218,37 @@ def _load_operation_interface(doc: Dict[str, Any], path: Path) -> Optional[Dict[
             f"source={path}, ports={identities}",
             "give every logical port one unique role/name identity.",
         )
+    identity_set = {f"{role}:{name}" for role, name in identities}
+    for port in ports:
+        alias_of = port.get("alias_of")
+        if alias_of is None:
+            continue
+        if port["role"] != "output":
+            raise hard_fault(
+                f"kernel interface {interface_id!r} aliases a non-output port",
+                f"source={path}, port={port['name']!r}, alias_of={alias_of!r}",
+                "declare aliases on output ports and point them at one input or state port.",
+            )
+        if alias_of not in identity_set:
+            raise hard_fault(
+                f"kernel interface {interface_id!r} aliases an unknown port",
+                f"source={path}, port={port['name']!r}, alias_of={alias_of!r}",
+                "use a role:name target that exists in the same canonical interface.",
+            )
+        target_role, target_name = alias_of.split(":", 1)
+        target = next(
+            candidate
+            for candidate in ports
+            if candidate["role"] == target_role and candidate["name"] == target_name
+        )
+        for field in ("dtype", "shape", "layout", "storage_class"):
+            if port[field] != target[field]:
+                raise hard_fault(
+                    f"kernel interface {interface_id!r} has an incompatible alias",
+                    f"source={path}, output={port['name']!r}, target={alias_of!r}, "
+                    f"field={field!r}, output_value={port[field]!r}, target_value={target[field]!r}",
+                    "make aliased ports physically identical or declare an independent output.",
+                )
     return {"id": interface_id, "op": str(doc.get("op", "")), "ports": ports}
 
 

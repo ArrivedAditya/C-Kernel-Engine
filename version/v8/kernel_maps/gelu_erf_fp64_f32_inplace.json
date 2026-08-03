@@ -1,6 +1,7 @@
 {
   "id": "gelu_erf_fp64_f32_inplace",
   "op": "gelu",
+  "operation_interface": "gelu.fp32_inplace.v1",
   "variant": "pytorch_erf_inplace_fp32",
   "quant": {
     "weight": "none",
@@ -12,6 +13,10 @@
       "name": "x",
       "dtype": "fp32",
       "shape": ["N"],
+      "layout": "contiguous",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required",
       "desc": "Input/output buffer (in-place)"
     }
   ],
@@ -21,6 +26,11 @@
       "name": "out",
       "dtype": "fp32",
       "shape": ["N"],
+      "layout": "contiguous",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required",
+      "alias_of": "input:x",
       "desc": "PyTorch approximate=none GELU output"
     }
   ],

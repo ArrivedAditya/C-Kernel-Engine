@@ -1,6 +1,7 @@
 {
   "id": "gelu_pytorch_erf_sleef_bf16_storage",
   "op": "gelu",
+  "operation_interface": "gelu.fp32_bf16_values_inplace.v1",
   "variant": "pytorch_erf_sleef_bf16_storage",
   "quant": {
     "weight": "none",
@@ -12,6 +13,10 @@
       "name": "x",
       "dtype": "fp32",
       "shape": ["N"],
+      "layout": "contiguous",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required",
       "desc": "BF16-valued FP32 input/output buffer"
     }
   ],
@@ -21,6 +26,11 @@
       "name": "out",
       "dtype": "fp32",
       "shape": ["N"],
+      "layout": "contiguous",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required",
+      "alias_of": "input:x",
       "desc": "BF16-rounded output in the input buffer"
     }
   ],

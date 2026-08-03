@@ -1,13 +1,14 @@
 {
   "id": "rmsnorm_forward_pytorch_bf16_storage",
   "op": "rmsnorm",
+  "operation_interface": "rmsnorm.fp32_bf16_values.v1",
   "variant": "pytorch_avx2_cascade_bf16_storage",
   "quant": {"weight": "fp32", "activation": "fp32", "output": "fp32"},
-  "inputs": [{"name": "input", "dtype": "fp32", "shape": ["T", "E"]}],
-  "weights": [{"name": "gamma", "dtype": "fp32", "shape": ["E"]}],
+  "inputs": [{"name": "input", "dtype": "fp32", "shape": ["T", "E"], "layout": "token_major_contiguous", "access": "read", "storage_class": "activation", "consumption": "required"}],
+  "weights": [{"name": "gamma", "dtype": "fp32", "shape": ["E"], "layout": "feature_contiguous", "access": "read", "storage_class": "weight", "consumption": "required"}],
   "outputs": [
-    {"name": "output", "dtype": "fp32", "shape": ["T", "E"]},
-    {"name": "rstd", "dtype": "fp32", "shape": ["T"]}
+    {"name": "output", "dtype": "fp32", "shape": ["T", "E"], "layout": "token_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required"},
+    {"name": "rstd", "dtype": "fp32", "shape": ["T"], "layout": "token_contiguous", "access": "write", "storage_class": "scratch", "consumption": "optional"}
   ],
   "dims": ["T", "E"],
   "params": [{"name": "eps", "dtype": "float32"}],

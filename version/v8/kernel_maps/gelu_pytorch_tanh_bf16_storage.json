@@ -1,6 +1,7 @@
 {
   "id": "gelu_pytorch_tanh_bf16_storage",
   "op": "gelu",
+  "operation_interface": "gelu.fp32_bf16_values_inplace.v1",
   "variant": "pytorch_tanh_bf16_storage",
   "quant": {
     "weight": "none",
@@ -14,6 +15,10 @@
       "shape": [
         "N"
       ],
+      "layout": "contiguous",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required",
       "desc": "Input/output buffer (in-place)"
     }
   ],
@@ -25,6 +30,11 @@
       "shape": [
         "N"
       ],
+      "layout": "contiguous",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required",
+      "alias_of": "input:x",
       "desc": "GGML-compatible GELU output (same buffer as input)"
     }
   ],
