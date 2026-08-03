@@ -62,6 +62,26 @@ def _map_op_conditionals(path: Path) -> Dict[str, int]:
     }
 
 
+def _has_complete_interface_abi(doc: Dict[str, Any]) -> bool:
+    expected = {
+        f"{role}:{port.get('name')}"
+        for role, field in (
+            ("input", "inputs"),
+            ("weight", "weights"),
+            ("output", "outputs"),
+        )
+        for port in doc.get(field, [])
+        if isinstance(port, dict) and port.get("name")
+    }
+    declared = [
+        port_id
+        for param in (doc.get("call_abi") or {}).get("params", [])
+        if isinstance(param, dict)
+        for port_id in param.get("ports", [])
+    ]
+    return bool(expected) and len(declared) == len(set(declared)) and set(declared) == expected
+
+
 def build_report() -> Dict[str, Any]:
     maps = []
     for path in sorted(KERNEL_MAPS.glob("*.json")):
@@ -71,6 +91,7 @@ def build_report() -> Dict[str, Any]:
 
     governed = [item for item in maps if item[1].get("numerical_capabilities")]
     hardened = [item for item in governed if item[1].get("operation_interface")]
+    crossvalidated = [item for item in hardened if _has_complete_interface_abi(item[1])]
     pending = [item for item in governed if not item[1].get("operation_interface")]
     legacy = [item for item in maps if not item[1].get("numerical_capabilities")]
     legacy_contract_shaped = [
@@ -87,6 +108,7 @@ def build_report() -> Dict[str, Any]:
             "kernel_maps": len(maps),
             "resolver_governed_maps": len(governed),
             "interface_hardened_maps": len(hardened),
+            "interface_abi_crossvalidated_maps": len(crossvalidated),
             "contract_pending_maps": len(pending),
             "legacy_maps": len(legacy),
             "legacy_contract_shaped_maps": len(legacy_contract_shaped),
@@ -95,6 +117,9 @@ def build_report() -> Dict[str, Any]:
         },
         "selection": _map_op_conditionals(BUILD_IR),
         "interface_hardened_ids": [item[1]["id"] for item in hardened],
+        "interface_abi_crossvalidated_ids": [
+            item[1]["id"] for item in crossvalidated
+        ],
         "contract_pending_ids": [item[1]["id"] for item in pending],
         "legacy_contract_shaped_ids": [item[1]["id"] for item in legacy_contract_shaped],
     }
@@ -108,6 +133,11 @@ def validate_ratchet(report: Dict[str, Any], baseline: Dict[str, Any]) -> None:
             counts["interface_hardened_maps"]
             >= baseline["minimum_interface_hardened_maps"],
             "interface-hardened map count regressed",
+        ),
+        (
+            counts["interface_abi_crossvalidated_maps"]
+            >= baseline["minimum_interface_abi_crossvalidated_maps"],
+            "interface-to-ABI cross-validation count regressed",
         ),
         (
             counts["contract_pending_maps"]
@@ -160,6 +190,7 @@ def main() -> int:
         print(
             "kernel interfaces: "
             f"hardened={counts['interface_hardened_maps']} "
+            f"interface_abi={counts['interface_abi_crossvalidated_maps']} "
             f"contract_pending={counts['contract_pending_maps']} "
             f"legacy={counts['legacy_maps']} "
             f"map_abi={counts['map_owned_call_abi']} "

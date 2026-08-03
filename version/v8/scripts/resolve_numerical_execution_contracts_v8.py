@@ -249,7 +249,120 @@ def _load_operation_interface(doc: Dict[str, Any], path: Path) -> Optional[Dict[
                     f"field={field!r}, output_value={port[field]!r}, target_value={target[field]!r}",
                     "make aliased ports physically identical or declare an independent output.",
                 )
-    return {"id": interface_id, "op": str(doc.get("op", "")), "ports": ports}
+    interface = {"id": interface_id, "op": str(doc.get("op", "")), "ports": ports}
+    _validate_operation_interface_call_abi(doc, interface, path)
+    return interface
+
+
+def _validate_operation_interface_call_abi(
+    doc: Dict[str, Any],
+    interface: Dict[str, Any],
+    path: Path,
+) -> None:
+    """Prove that one hardened logical interface reaches the C call boundary."""
+    kernel_id = str(doc.get("id", "") or path.stem)
+    call_abi = doc.get("call_abi")
+    if not isinstance(call_abi, dict) or not isinstance(call_abi.get("params"), list):
+        raise hard_fault(
+            f"kernel {kernel_id!r} has an interface without a map-owned call ABI",
+            f"source={path}, interface={interface['id']!r}",
+            "declare the exact C argument binding in the same kernel map.",
+        )
+
+    logical_ports = {
+        f"{port['role']}:{port['name']}": port
+        for port in interface["ports"]
+    }
+    bindings: Dict[str, int] = {}
+    param_ports: Dict[int, set[str]] = {}
+    params = call_abi["params"]
+    for index, param in enumerate(params):
+        if not isinstance(param, dict):
+            continue
+        declared = param.get("ports")
+        if declared is None:
+            continue
+        if (
+            not isinstance(declared, list)
+            or not declared
+            or any(not isinstance(port_id, str) or not port_id for port_id in declared)
+            or len(set(declared)) != len(declared)
+        ):
+            raise hard_fault(
+                f"kernel {kernel_id!r} has malformed ABI port bindings",
+                f"source={path}, parameter={param.get('name')!r}, ports={declared!r}",
+                "bind the argument to one or more unique role:name logical ports.",
+            )
+        current = set(declared)
+        unknown = sorted(current - set(logical_ports))
+        if unknown:
+            raise hard_fault(
+                f"kernel {kernel_id!r} ABI references unknown logical ports",
+                f"source={path}, parameter={param.get('name')!r}, unknown={unknown}",
+                "use only ports declared by the operation interface.",
+            )
+        duplicates = sorted(port_id for port_id in current if port_id in bindings)
+        if duplicates:
+            raise hard_fault(
+                f"kernel {kernel_id!r} ABI binds logical ports more than once",
+                f"source={path}, parameter={param.get('name')!r}, duplicates={duplicates}",
+                "give each logical port exactly one C argument owner.",
+            )
+        param_ports[index] = current
+        for port_id in current:
+            bindings[port_id] = index
+
+    missing = sorted(set(logical_ports) - set(bindings))
+    if missing:
+        raise hard_fault(
+            f"kernel {kernel_id!r} ABI does not represent every logical port",
+            f"source={path}, interface={interface['id']!r}, missing={missing}",
+            "add explicit call_abi.params[].ports bindings; do not infer them from argument names.",
+        )
+
+    for port_id, port in logical_ports.items():
+        alias_of = port.get("alias_of")
+        if alias_of is None:
+            continue
+        if bindings[port_id] != bindings[alias_of]:
+            raise hard_fault(
+                f"kernel {kernel_id!r} ABI splits an in-place alias across arguments",
+                f"source={path}, output={port_id!r}, alias_of={alias_of!r}",
+                "bind the aliased input and output to the same C pointer argument.",
+            )
+
+    for index, bound_ports in param_ports.items():
+        if len(bound_ports) <= 1:
+            continue
+        valid_alias_group = all(
+            port_id.startswith("output:")
+            and logical_ports[port_id].get("alias_of") in bound_ports
+            for port_id in bound_ports
+            if port_id.startswith("output:")
+        ) and all(
+            port_id.startswith("output:")
+            or any(
+                logical_ports[output_id].get("alias_of") == port_id
+                for output_id in bound_ports
+                if output_id.startswith("output:")
+            )
+            for port_id in bound_ports
+        )
+        if not valid_alias_group:
+            raise hard_fault(
+                f"kernel {kernel_id!r} ABI combines unrelated logical ports",
+                f"source={path}, parameter={params[index].get('name')!r}, ports={sorted(bound_ports)}",
+                "only an input and its explicitly aliased output may share one C argument.",
+            )
+
+    for port_id, index in bindings.items():
+        source = str(params[index].get("source", "") or "")
+        if source == "null" and logical_ports[port_id]["consumption"] != "optional":
+            raise hard_fault(
+                f"kernel {kernel_id!r} ABI nulls a required logical port",
+                f"source={path}, parameter={params[index].get('name')!r}, port={port_id!r}",
+                "provide storage for required ports or mark a genuinely optional output explicitly.",
+            )
 
 
 def load_kernel_capabilities(
@@ -319,6 +432,7 @@ def load_kernel_capabilities(
         }
         if interface is not None:
             kernels[kernel_id]["operation_interface"] = interface["id"]
+            kernels[kernel_id]["interface_call_abi"] = "validated"
     return {
         "schema": "cke.numerical_kernel_capabilities",
         "schema_version": 1,
@@ -390,6 +504,12 @@ def resolve_contract(
             "bind exactly one explicit kernel implementation; remove ambiguity or add the missing provider.",
         )
     kernel, capability = matches[0]
+    if required_interface and kernel.get("interface_call_abi") != "validated":
+        raise hard_fault(
+            f"kernel {kernel['id']!r} has no validated interface-to-ABI boundary",
+            f"operation={operation}.{phase}, interface={required_interface!r}",
+            "load a map whose logical ports are completely bound to its map-owned call ABI.",
+        )
     if mode == "production" and any(
         state != "validated"
         for state in (request["validation"], contract["status"], capability["status"])
@@ -422,6 +542,11 @@ def resolve_contract(
             "function": kernel["function"],
             "status": capability["status"],
             "explicit_selector": True,
+            **(
+                {"interface_call_abi": kernel["interface_call_abi"]}
+                if required_interface
+                else {}
+            ),
         },
         "implementation": copy.deepcopy(capability["implementation"]),
         "checkpoint": copy.deepcopy(operation_doc["checkpoint"]),

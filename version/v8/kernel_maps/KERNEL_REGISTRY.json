@@ -13346,7 +13346,11 @@
           {
             "cast": "float*",
             "name": "data",
-            "source": "output:out"
+            "source": "output:out",
+            "ports": [
+              "input:x",
+              "output:out"
+            ]
           },
           {
             "name": "n",
@@ -13558,7 +13562,11 @@
           {
             "cast": "float*",
             "name": "data",
-            "source": "output:out"
+            "source": "output:out",
+            "ports": [
+              "input:x",
+              "output:out"
+            ]
           },
           {
             "name": "n",
@@ -13663,7 +13671,11 @@
           {
             "cast": "float*",
             "name": "data",
-            "source": "output:out"
+            "source": "output:out",
+            "ports": [
+              "input:x",
+              "output:out"
+            ]
           },
           {
             "name": "n",
@@ -13767,7 +13779,11 @@
           {
             "cast": "float*",
             "name": "data",
-            "source": "output:out"
+            "source": "output:out",
+            "ports": [
+              "input:x",
+              "output:out"
+            ]
           },
           {
             "name": "n",
@@ -28234,22 +28250,36 @@
           {
             "name": "q",
             "source": "scratch:q_scratch",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "input:q",
+              "output:q"
+            ]
           },
           {
             "name": "k",
             "source": "scratch:k_scratch",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "input:k",
+              "output:k"
+            ]
           },
           {
             "name": "q_gamma",
             "source": "weight_f:q_norm",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "weight:q_gamma"
+            ]
           },
           {
             "name": "k_gamma",
             "source": "weight_f:k_norm",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "weight:k_gamma"
+            ]
           },
           {
             "name": "num_heads",
@@ -28427,22 +28457,36 @@
           {
             "name": "q",
             "source": "scratch:q_scratch",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "input:q",
+              "output:q"
+            ]
           },
           {
             "name": "k",
             "source": "scratch:k_scratch",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "input:k",
+              "output:k"
+            ]
           },
           {
             "name": "q_gamma",
             "source": "weight_f:q_norm",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "weight:q_gamma"
+            ]
           },
           {
             "name": "k_gamma",
             "source": "weight_f:k_norm",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "weight:k_gamma"
+            ]
           },
           {
             "name": "num_heads",
@@ -28642,22 +28686,36 @@
           {
             "name": "q",
             "source": "scratch:q_scratch",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "input:q",
+              "output:q"
+            ]
           },
           {
             "name": "k",
             "source": "scratch:k_scratch",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "input:k",
+              "output:k"
+            ]
           },
           {
             "name": "q_gamma",
             "source": "weight_f:q_norm",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "weight:q_gamma"
+            ]
           },
           {
             "name": "k_gamma",
             "source": "weight_f:k_norm",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "weight:k_gamma"
+            ]
           },
           {
             "name": "num_heads",
@@ -32472,7 +32530,10 @@
           {
             "name": "input",
             "source": "activation:input",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
           },
           {
             "name": "gamma",
@@ -32482,16 +32543,25 @@
               "ln2_gamma",
               "final_ln_weight"
             ],
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "weight:gamma"
+            ]
           },
           {
             "name": "output",
             "source": "output:output",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
           },
           {
             "name": "rstd_cache",
-            "source": "null"
+            "source": "null",
+            "ports": [
+              "output:rstd"
+            ]
           },
           {
             "name": "tokens",
@@ -32700,7 +32770,10 @@
           {
             "name": "input",
             "source": "activation:input",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
           },
           {
             "name": "gamma",
@@ -32710,16 +32783,25 @@
               "ln2_gamma",
               "final_ln_weight"
             ],
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "weight:gamma"
+            ]
           },
           {
             "name": "output",
             "source": "output:output",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
           },
           {
             "name": "rstd_cache",
-            "source": "null"
+            "source": "null",
+            "ports": [
+              "output:rstd"
+            ]
           },
           {
             "name": "tokens",
@@ -32882,7 +32964,10 @@
           {
             "name": "input",
             "source": "activation:input",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
           },
           {
             "name": "gamma",
@@ -32892,16 +32977,25 @@
               "ln2_gamma",
               "final_ln_weight"
             ],
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "weight:gamma"
+            ]
           },
           {
             "name": "output",
             "source": "output:output",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
           },
           {
             "name": "rstd_cache",
-            "source": "null"
+            "source": "null",
+            "ports": [
+              "output:rstd"
+            ]
           },
           {
             "name": "tokens",
@@ -33063,7 +33157,10 @@
           {
             "name": "input",
             "source": "activation:input",
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
           },
           {
             "name": "gamma",
@@ -33073,16 +33170,25 @@
               "ln2_gamma",
               "final_ln_weight"
             ],
-            "cast": "const float*"
+            "cast": "const float*",
+            "ports": [
+              "weight:gamma"
+            ]
           },
           {
             "name": "output",
             "source": "output:output",
-            "cast": "float*"
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
           },
           {
             "name": "rstd_cache",
-            "source": "null"
+            "source": "null",
+            "ports": [
+              "output:rstd"
+            ]
           },
           {
             "name": "tokens",

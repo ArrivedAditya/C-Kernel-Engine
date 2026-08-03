@@ -24,6 +24,16 @@
             "pattern": "^(null|(activation|config|const|dim|dtype|dtype_weight|output|param|resolved|runtime|scratch|weight|weight_f):.+)$"
           },
           "cast": {"type": "string", "minLength": 1},
+          "ports": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^(input|weight|output):[^:]+$"
+            },
+            "description": "Logical operation ports represented by this C argument. Aliased in-place input/output ports share one argument."
+          },
           "alt": {
             "type": "array",
             "minItems": 1,

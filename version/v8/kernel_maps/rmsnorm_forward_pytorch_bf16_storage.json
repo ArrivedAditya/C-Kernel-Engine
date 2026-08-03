@@ -48,10 +48,10 @@
   "call_abi": {
     "version": 1,
     "params": [
-      {"name": "input", "source": "activation:input", "cast": "const float*"},
-      {"name": "gamma", "source": "weight:gamma", "alt": ["ln1_gamma", "ln2_gamma", "final_ln_weight"], "cast": "const float*"},
-      {"name": "output", "source": "output:output", "cast": "float*"},
-      {"name": "rstd_cache", "source": "null"},
+      {"name": "input", "source": "activation:input", "cast": "const float*", "ports": ["input:input"]},
+      {"name": "gamma", "source": "weight:gamma", "alt": ["ln1_gamma", "ln2_gamma", "final_ln_weight"], "cast": "const float*", "ports": ["weight:gamma"]},
+      {"name": "output", "source": "output:output", "cast": "float*", "ports": ["output:output"]},
+      {"name": "rstd_cache", "source": "null", "ports": ["output:rstd"]},
       {"name": "tokens", "source": "dim:seq_len"},
       {"name": "d_model", "source": "dim:embed_dim"},
       {"name": "aligned_embed_dim", "source": "dim:embed_dim"},
