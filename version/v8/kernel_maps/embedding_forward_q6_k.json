@@ -1,6 +1,8 @@
 {
   "id": "embedding_forward_q6_k",
   "op": "embedding",
+  "operation_interface": "embedding.q6_k_weight_fp32_output.v1",
+  "selection": {"status": "production", "priority": 100, "equivalence_group": "embedding.q6_k_weight_fp32_output.v1", "phases": ["prefill", "decode"]},
   "variant": "q6_k",
   "quant": {
     "weight": "q6_k",
@@ -8,14 +10,14 @@
     "output": "fp32"
   },
   "inputs": [
-    {"name": "tokens", "dtype": "int32", "shape": ["T"], "desc": "Input token IDs [tokens]"}
+    {"name": "tokens", "dtype": "int32", "shape": ["T"], "layout": "token_contiguous", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "Input token IDs [tokens]"}
   ],
   "weights": [
-    {"name": "weight", "dtype": "q6_k", "shape": ["V", "E"], "desc": "Embedding weights [vocab_size, embed_dim] (Q6_K quantized)"}
+    {"name": "weight", "dtype": "q6_k", "shape": ["V", "E"], "layout": "row_major_quantized", "access": "read", "storage_class": "weight", "consumption": "required", "desc": "Embedding weights [vocab_size, embed_dim] (Q6_K quantized)"}
   ],
   "activations": [],
   "outputs": [
-    {"name": "output", "dtype": "fp32", "shape": ["T", "E"], "desc": "Embeddings [tokens, embed_dim]"}
+    {"name": "output", "dtype": "fp32", "shape": ["T", "E"], "layout": "token_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Embeddings [tokens, embed_dim]"}
   ],
   "scratch": [],
   "dims": ["T", "E", "V"],
@@ -45,6 +47,14 @@
       {"name": "default", "requires": [], "compile_flags": []}
     ]
   },
+  "call_abi": {"version": 1, "params": [
+    {"name": "token_ids", "source": "activation:tokens", "cast": "int32_t*", "ports": ["input:tokens"]},
+    {"name": "token_count", "source": "dim:seq_len"}, {"name": "vocab_size", "source": "dim:vocab_size"},
+    {"name": "token_embeddings", "source": "weight:token_emb", "ports": ["weight:weight"]}, {"name": "pos_embeddings", "source": "null"},
+    {"name": "output", "source": "output:output", "cast": "float*", "ports": ["output:output"]},
+    {"name": "embed_dim", "source": "dim:embed_dim"}, {"name": "aligned_embed_dim", "source": "dim:embed_dim"},
+    {"name": "context_window", "source": "dim:seq_len"}, {"name": "add_pos", "source": "const:0"}
+  ]},
   "tests": {
     "unit": ["unittest/test_embedding.py"],
     "bench": ["scripts/bench_embedding.py"]

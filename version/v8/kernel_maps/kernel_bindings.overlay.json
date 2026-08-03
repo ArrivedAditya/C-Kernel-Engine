@@ -550,54 +550,6 @@
         }
       ]
     },
-    "embedding_forward_bf16_fp32": {
-      "note": "BF16 token embedding lookup with FP32 output for v8 inference streams.",
-      "params": [
-        {
-          "cast": "int32_t*",
-          "name": "token_ids",
-          "source": "activation:tokens"
-        },
-        {
-          "name": "token_count",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "vocab_size",
-          "source": "dim:vocab_size"
-        },
-        {
-          "cast": "const uint16_t*",
-          "name": "token_embeddings",
-          "source": "weight:token_emb"
-        },
-        {
-          "name": "pos_embeddings",
-          "source": "null"
-        },
-        {
-          "cast": "float*",
-          "name": "output",
-          "source": "output:output"
-        },
-        {
-          "name": "embed_dim",
-          "source": "dim:embed_dim"
-        },
-        {
-          "name": "aligned_embed_dim",
-          "source": "dim:embed_dim"
-        },
-        {
-          "name": "context_window",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "add_pos",
-          "source": "const:0"
-        }
-      ]
-    },
     "feature_concat": {
       "note": "Concatenate a main output with fixed-width collected branch slices.",
       "params": [
@@ -1663,52 +1615,6 @@
         {
           "name": "freq_base",
           "source": "dim:rope_freq_base"
-        }
-      ]
-    },
-    "embedding_forward_q5_0": {
-      "params": [
-        {
-          "name": "token_ids",
-          "source": "activation:tokens",
-          "cast": "int32_t*"
-        },
-        {
-          "name": "token_count",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "vocab_size",
-          "source": "dim:vocab_size"
-        },
-        {
-          "name": "token_embeddings",
-          "source": "weight:token_emb"
-        },
-        {
-          "name": "pos_embeddings",
-          "source": "null"
-        },
-        {
-          "name": "output",
-          "source": "output:output",
-          "cast": "float*"
-        },
-        {
-          "name": "embed_dim",
-          "source": "dim:embed_dim"
-        },
-        {
-          "name": "aligned_embed_dim",
-          "source": "dim:embed_dim"
-        },
-        {
-          "name": "context_window",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "add_pos",
-          "source": "const:0"
         }
       ]
     },

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cke.v8.kernel_provider_selection.schema.json",
+  "title": "CKE v8 kernel provider selection metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "priority", "equivalence_group", "phases"],
+  "properties": {
+    "status": {
+      "enum": ["production", "candidate", "diagnostic", "deprecated"]
+    },
+    "priority": {"type": "integer"},
+    "equivalence_group": {"type": "string", "minLength": 1},
+    "phases": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["init", "prefill", "decode", "training", "backward"]
+      }
+    }
+  }
+}

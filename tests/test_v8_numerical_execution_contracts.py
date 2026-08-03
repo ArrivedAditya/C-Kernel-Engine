@@ -567,6 +567,9 @@ class NumericalExecutionContractTests(unittest.TestCase):
             report["counts"]["interface_abi_crossvalidated_maps"], 22
         )
         self.assertEqual(report["counts"]["contract_pending_maps"], 62)
+        self.assertEqual(report["counts"]["map_owned_call_abi"], 114)
+        self.assertEqual(report["counts"]["legacy_interface_ready_maps"], 6)
+        self.assertEqual(report["counts"]["selection_managed_maps"], 6)
         self.assertEqual(report["selection"]["legacy_selection_if_statements"], 73)
         self.assertEqual(report["selection"]["operation_specific_if_statements"], 35)
 
