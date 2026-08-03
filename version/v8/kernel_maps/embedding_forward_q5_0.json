@@ -1,6 +1,8 @@
 {
   "id": "embedding_forward_q5_0",
   "op": "embedding",
+  "operation_interface": "embedding.q5_0_weight_fp32_output.v1",
+  "selection": {"status": "production", "priority": 100, "equivalence_group": "embedding.q5_0_weight_fp32_output.v1", "phases": ["prefill", "decode"]},
   "variant": "q5_0",
   "quant": {
     "weight": "q5_0",
@@ -14,6 +16,10 @@
       "shape": [
         "T"
       ],
+      "layout": "token_contiguous",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required",
       "desc": "Input token IDs [tokens]"
     }
   ],
@@ -25,6 +31,10 @@
         "V",
         "E"
       ],
+      "layout": "row_major_quantized",
+      "access": "read",
+      "storage_class": "weight",
+      "consumption": "required",
       "desc": "Embedding weights [vocab_size, embed_dim] (Q5_0 quantized)"
     }
   ],
@@ -37,6 +47,10 @@
         "T",
         "E"
       ],
+      "layout": "token_major_contiguous",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required",
       "desc": "Embeddings [tokens, embed_dim]"
     }
   ],
@@ -87,6 +101,14 @@
       }
     ]
   },
+  "call_abi": {"version": 1, "params": [
+    {"name": "token_ids", "source": "activation:tokens", "cast": "int32_t*", "ports": ["input:tokens"]},
+    {"name": "token_count", "source": "dim:seq_len"}, {"name": "vocab_size", "source": "dim:vocab_size"},
+    {"name": "token_embeddings", "source": "weight:token_emb", "ports": ["weight:weight"]}, {"name": "pos_embeddings", "source": "null"},
+    {"name": "output", "source": "output:output", "cast": "float*", "ports": ["output:output"]},
+    {"name": "embed_dim", "source": "dim:embed_dim"}, {"name": "aligned_embed_dim", "source": "dim:embed_dim"},
+    {"name": "context_window", "source": "dim:seq_len"}, {"name": "add_pos", "source": "const:0"}
+  ]},
   "tests": {
     "unit": [
       "unittest/test_embedding.py"

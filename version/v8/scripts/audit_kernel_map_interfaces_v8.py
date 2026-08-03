@@ -82,6 +82,29 @@ def _has_complete_interface_abi(doc: Dict[str, Any]) -> bool:
     return bool(expected) and len(declared) == len(set(declared)) and set(declared) == expected
 
 
+def _validate_selection(doc: Dict[str, Any], path: Path) -> bool:
+    selection = doc.get("selection")
+    if selection is None:
+        return False
+    if not isinstance(selection, dict):
+        raise RuntimeError(f"provider selection must be an object: {path}")
+    status = selection.get("status")
+    if status not in {"production", "candidate", "diagnostic", "deprecated"}:
+        raise RuntimeError(f"invalid provider selection status in {path}: {status!r}")
+    priority = selection.get("priority")
+    if isinstance(priority, bool) or not isinstance(priority, int):
+        raise RuntimeError(f"provider selection priority must be an integer: {path}")
+    if not str(selection.get("equivalence_group", "") or "").strip():
+        raise RuntimeError(f"provider selection requires equivalence_group: {path}")
+    phases = selection.get("phases")
+    if not isinstance(phases, list) or not phases or any(
+        phase not in {"init", "prefill", "decode", "training", "backward"}
+        for phase in phases
+    ):
+        raise RuntimeError(f"provider selection has invalid phases: {path}")
+    return True
+
+
 def build_report() -> Dict[str, Any]:
     maps = []
     for path in sorted(KERNEL_MAPS.glob("*.json")):
@@ -94,6 +117,14 @@ def build_report() -> Dict[str, Any]:
     crossvalidated = [item for item in hardened if _has_complete_interface_abi(item[1])]
     pending = [item for item in governed if not item[1].get("operation_interface")]
     legacy = [item for item in maps if not item[1].get("numerical_capabilities")]
+    interface_ready = [item for item in maps if item[1].get("operation_interface")]
+    interface_abi_ready = [item for item in interface_ready if _has_complete_interface_abi(item[1])]
+    legacy_interface_ready = [item for item in legacy if item[1].get("operation_interface")]
+    selection_managed = [item for item in maps if _validate_selection(item[1], item[0])]
+    production_selected = [
+        item for item in selection_managed
+        if item[1]["selection"]["status"] == "production"
+    ]
     legacy_contract_shaped = [
         item
         for item in legacy
@@ -114,6 +145,11 @@ def build_report() -> Dict[str, Any]:
             "legacy_contract_shaped_maps": len(legacy_contract_shaped),
             "map_owned_call_abi": len(map_owned_abi),
             "legacy_call_abi": len(maps) - len(map_owned_abi),
+            "all_interface_ready_maps": len(interface_ready),
+            "all_interface_abi_ready_maps": len(interface_abi_ready),
+            "legacy_interface_ready_maps": len(legacy_interface_ready),
+            "selection_managed_maps": len(selection_managed),
+            "production_selected_maps": len(production_selected),
         },
         "selection": _map_op_conditionals(BUILD_IR),
         "interface_hardened_ids": [item[1]["id"] for item in hardened],
@@ -122,6 +158,8 @@ def build_report() -> Dict[str, Any]:
         ],
         "contract_pending_ids": [item[1]["id"] for item in pending],
         "legacy_contract_shaped_ids": [item[1]["id"] for item in legacy_contract_shaped],
+        "legacy_interface_ready_ids": [item[1]["id"] for item in legacy_interface_ready],
+        "selection_managed_ids": [item[1]["id"] for item in selection_managed],
     }
 
 
@@ -163,6 +201,16 @@ def validate_ratchet(report: Dict[str, Any], baseline: Dict[str, Any]) -> None:
             >= baseline["minimum_map_owned_call_abi"],
             "map-owned call ABI count regressed",
         ),
+        (
+            counts["legacy_interface_ready_maps"]
+            >= baseline.get("minimum_legacy_interface_ready_maps", 0),
+            "legacy interface-ready map count regressed",
+        ),
+        (
+            counts["selection_managed_maps"]
+            >= baseline.get("minimum_selection_managed_maps", 0),
+            "selection-managed map count regressed",
+        ),
     )
     failures = [message for passed, message in checks if not passed]
     if failures:
@@ -194,6 +242,8 @@ def main() -> int:
             f"contract_pending={counts['contract_pending_maps']} "
             f"legacy={counts['legacy_maps']} "
             f"map_abi={counts['map_owned_call_abi']} "
+            f"legacy_interface={counts['legacy_interface_ready_maps']} "
+            f"selection_managed={counts['selection_managed_maps']} "
             f"legacy_if={selection['legacy_selection_if_statements']} "
             f"op_if={selection['operation_specific_if_statements']}"
         )

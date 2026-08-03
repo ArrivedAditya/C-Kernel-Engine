@@ -5249,6 +5249,112 @@ def validate_kernel_availability(registry: Dict, kernel_ops: List[str]) -> Dict[
     return availability
 
 
+_PROVIDER_LIFECYCLE_RANK = {
+    "production": 0,
+    "legacy": 1,
+    "candidate": 2,
+    "diagnostic": 3,
+    "deprecated": 4,
+}
+
+
+def _provider_selection_metadata(kernel: Dict) -> Dict[str, Any]:
+    selection = kernel.get("selection")
+    if selection is None:
+        return {
+            "status": "legacy",
+            "priority": 0,
+            "equivalence_group": "",
+            "explicit": False,
+        }
+    if not isinstance(selection, dict):
+        raise RuntimeError(
+            f"HARD KERNEL SELECTION FAULT: {kernel.get('id')} selection must be an object."
+        )
+    status = str(selection.get("status", "") or "").strip().lower()
+    if status not in _PROVIDER_LIFECYCLE_RANK or status == "legacy":
+        raise RuntimeError(
+            f"HARD KERNEL SELECTION FAULT: {kernel.get('id')} has invalid explicit status {status!r}."
+        )
+    priority = selection.get("priority")
+    if isinstance(priority, bool) or not isinstance(priority, int):
+        raise RuntimeError(
+            f"HARD KERNEL SELECTION FAULT: {kernel.get('id')} priority must be an integer."
+        )
+    equivalence_group = str(selection.get("equivalence_group", "") or "").strip()
+    if not equivalence_group:
+        raise RuntimeError(
+            f"HARD KERNEL SELECTION FAULT: {kernel.get('id')} requires an equivalence_group."
+        )
+    return {
+        "status": status,
+        "priority": priority,
+        "equivalence_group": equivalence_group,
+        "phases": list(selection.get("phases", [])),
+        "explicit": True,
+    }
+
+
+def _rank_provider_matches(
+    matches: List[Dict],
+    *,
+    inference_mode: bool,
+    prefer_q8_activation: bool,
+) -> List[Dict]:
+    def direction_priority(kernel: Dict) -> int:
+        variant = str(kernel.get("variant", "") or "").lower()
+        kernel_id = str(kernel.get("id", "") or "").lower()
+        modes = kernel.get("modes", {})
+        if inference_mode:
+            if isinstance(modes, dict) and modes:
+                if modes.get("inference") is True and modes.get("backward") is False:
+                    return 0
+                if modes.get("backward") is True or modes.get("inference") is False:
+                    return 2
+            if "backward" in variant or "backward" in kernel_id:
+                return 2
+        return 0
+
+    def activation_priority(kernel: Dict) -> int:
+        activation = kernel.get("quant", {}).get("activation", "fp32")
+        if prefer_q8_activation:
+            return {"q8_0": 0, "q8_k": 1, "fp32": 2, "bf16": 3}.get(activation, 4)
+        return {"fp32": 0, "bf16": 1}.get(activation, 2)
+
+    ranked = []
+    for kernel in matches:
+        selection = _provider_selection_metadata(kernel)
+        ranked.append(
+            (
+                direction_priority(kernel),
+                activation_priority(kernel),
+                _PROVIDER_LIFECYCLE_RANK[selection["status"]],
+                -selection["priority"],
+                kernel,
+                selection,
+            )
+        )
+    ranked.sort(key=lambda item: item[:4])
+    if not ranked:
+        return []
+
+    best = ranked[0]
+    tied = [item for item in ranked if item[:4] == best[:4]]
+    explicit_tied = [item for item in tied if item[5]["explicit"]]
+    groups = {item[5]["equivalence_group"] for item in explicit_tied}
+    if len(explicit_tied) > 1:
+        detail = (
+            "equal-priority production providers are ambiguous"
+            if len(groups) == 1
+            else "priority cannot choose between different equivalence groups"
+        )
+        raise RuntimeError(
+            f"HARD KERNEL SELECTION FAULT: {detail}: "
+            + ", ".join(str(item[4].get("id")) for item in explicit_tied)
+        )
+    return [item[4] for item in ranked]
+
+
 def find_kernel(
     registry: Dict,
     op: str,
@@ -5296,6 +5402,13 @@ def find_kernel(
     for candidate in candidates:
         k_quant = candidate.get("quant", {})
         modes = candidate.get("modes", {})
+        selection = _provider_selection_metadata(candidate)
+
+        if selection["explicit"]:
+            if mode not in selection["phases"]:
+                continue
+            if selection["status"] != "production":
+                continue
 
         # Match weight quantization
         if "weight" in quant:
@@ -5362,50 +5475,14 @@ def find_kernel(
 
         return None
 
-    # Sort by forward/backward direction first, then activation preference.
-    # Keep this generic: inference/decode should never silently bind a backward
-    # variant just because it shares the same logical op family.
-    def direction_priority(k):
-        variant = str(k.get("variant", "") or "").lower()
-        kernel_id = str(k.get("id", "") or "").lower()
-        modes = k.get("modes", {})
-        if inference_mode:
-            if isinstance(modes, dict) and modes:
-                if modes.get("inference") is True and modes.get("backward") is False:
-                    return 0
-                if modes.get("backward") is True or modes.get("inference") is False:
-                    return 2
-            if "backward" in variant or "backward" in kernel_id:
-                return 2
-            return 0
-        return 0
-
-    # When prefer_q8_activation=True (v7 baseline parity): prefer Q8_0 activation kernels
-    # When prefer_q8_activation=False: prefer FP32 activation kernels
-    def activation_priority(k):
-        act = k.get("quant", {}).get("activation", "fp32")
-        if prefer_q8_activation:
-            # v7 baseline parity mode: prefer Q8_0 activation (quantized input)
-            # Then prefer fp32 over bf16 (bf16 is slower and rarely needed)
-            if act == "q8_0":
-                return 0  # Prefer Q8_0 activation
-            if act == "q8_k":
-                return 1  # Q8_K is second choice
-            if act == "fp32":
-                return 2  # FP32 preferred
-            if act == "bf16":
-                return 3  # BF16 last choice
-            return 4  # Unknown activation types
-        else:
-            # FP32 mode: prefer FP32 activation, then BF16
-            # Explicit ordering to prevent BF16 being chosen over FP32
-            if act == "fp32":
-                return 0  # Prefer FP32
-            if act == "bf16":
-                return 1  # BF16 second choice
-            return 2  # Quantized last
-
-    matches.sort(key=lambda k: (direction_priority(k), activation_priority(k)))
+    # Sort by forward/backward direction and activation semantics before the
+    # explicit provider lifecycle/priority. Priority can choose only among
+    # otherwise compatible implementations; it cannot override dtype policy.
+    matches = _rank_provider_matches(
+        matches,
+        inference_mode=inference_mode,
+        prefer_q8_activation=prefer_q8_activation,
+    )
 
     # When prefer_parallel=True in decode mode, look for _parallel_omp variant
     # among the top-priority activation matches. These have the same signature
