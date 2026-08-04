@@ -1,13 +1,13 @@
 {
   "schema": "cke.v8.kernel_interface_migration_baseline",
   "schema_version": 1,
-  "minimum_interface_hardened_maps": 22,
-  "minimum_interface_abi_crossvalidated_maps": 22,
-  "maximum_contract_pending_maps": 62,
+  "minimum_interface_hardened_maps": 30,
+  "minimum_interface_abi_crossvalidated_maps": 30,
+  "maximum_contract_pending_maps": 54,
   "maximum_legacy_maps": 191,
   "maximum_legacy_selection_conditionals": 73,
   "maximum_operation_specific_conditionals": 35,
-  "minimum_map_owned_call_abi": 114,
-  "minimum_legacy_interface_ready_maps": 6,
-  "minimum_selection_managed_maps": 6
+  "minimum_map_owned_call_abi": 127,
+  "minimum_legacy_interface_ready_maps": 25,
+  "minimum_selection_managed_maps": 33
 }

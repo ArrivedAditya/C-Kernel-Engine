@@ -1,6 +1,8 @@
 {
   "id": "ck_residual_add_token_major",
   "op": "residual_add",
+  "operation_interface": "residual_add.token_major.fp32.v1",
+  "selection": {"status": "production", "priority": 100, "equivalence_group": "residual_add.token_major.fp32.v1", "phases": ["prefill", "decode"]},
   "variant": "fp32",
   "quant": {
     "weight": "none",
@@ -8,13 +10,13 @@
     "output": "fp32"
   },
   "inputs": [
-    {"name": "a", "dtype": "fp32", "shape": ["T", "AE"], "desc": "Residual input A [tokens, aligned_embed_dim]"},
-    {"name": "b", "dtype": "fp32", "shape": ["T", "AE"], "desc": "Residual input B [tokens, aligned_embed_dim]"}
+    {"name": "a", "dtype": "fp32", "shape": ["T", "AE"], "layout": "token_major_contiguous", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "Residual input A [tokens, aligned_embed_dim]"},
+    {"name": "b", "dtype": "fp32", "shape": ["T", "AE"], "layout": "token_major_contiguous", "access": "read", "storage_class": "scratch", "consumption": "required", "desc": "Residual input B [tokens, aligned_embed_dim] (saved residual scratch)"}
   ],
   "weights": [],
   "activations": [],
   "outputs": [
-    {"name": "out", "dtype": "fp32", "shape": ["T", "AE"], "desc": "Output [tokens, aligned_embed_dim]"}
+    {"name": "out", "dtype": "fp32", "shape": ["T", "AE"], "layout": "token_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Output [tokens, aligned_embed_dim]"}
   ],
   "scratch": [],
   "dims": ["T", "E", "AE"],
@@ -44,6 +46,13 @@
       {"name": "avx2", "requires": ["avx2", "fma"], "compile_flags": ["-mavx2", "-mfma"]}
     ]
   },
+  "call_abi": {"version": 1, "params": [
+    {"name": "a", "source": "activation:input", "cast": "float*", "ports": ["input:a"]},
+    {"name": "b", "source": "scratch:residual", "cast": "float*", "ports": ["input:b"]},
+    {"name": "out", "source": "output:out", "cast": "float*", "ports": ["output:out"]},
+    {"name": "tokens", "source": "dim:seq_len"},
+    {"name": "aligned_embed_dim", "source": "dim:embed_dim"}
+  ]},
   "tests": {
     "unit": ["unittest/test_residual_add.py"],
     "bench": ["scripts/bench_residual_add.py"],

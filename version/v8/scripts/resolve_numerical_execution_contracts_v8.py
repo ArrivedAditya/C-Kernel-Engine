@@ -189,7 +189,18 @@ def _load_operation_interface(doc: Dict[str, Any], path: Path) -> Optional[Dict[
                     f"source={path}, port={value.get('name')!r}, missing={missing}",
                     "declare dtype, shape, layout, access, storage class, and consumption in the kernel map.",
                 )
-            if value["access"] != expected_access:
+            # Append-style state ports (e.g., KV cache slices) are read_write
+            # state outputs, not pure write outputs; all other ports keep the
+            # strict per-role access contract.
+            if (
+                role == "output"
+                and value["storage_class"] == "state"
+                and value["access"] == "read_write"
+            ):
+                expected = "read_write"
+            else:
+                expected = expected_access
+            if value["access"] != expected:
                 raise hard_fault(
                     f"kernel interface {interface_id!r} has invalid {role} access",
                     f"source={path}, port={value['name']!r}, access={value['access']!r}",

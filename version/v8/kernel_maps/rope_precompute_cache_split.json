@@ -1,6 +1,8 @@
 {
   "id": "rope_precompute_cache_split",
   "op": "rope_init",
+  "operation_interface": "rope_init.cache.split.fp32.v1",
+  "selection": {"status": "production", "priority": 100, "equivalence_group": "rope_init.cache.split.fp32.v1", "phases": ["init"]},
   "variant": "fp32",
   "mode": "init",
   "quant": {
@@ -13,8 +15,8 @@
   "activations": [],
   "runtime_buffers": [],
   "outputs": [
-    {"name": "cos_cache", "dtype": "fp32", "shape": ["max_seq_len", "half_head_dim"], "desc": "RoPE cos cache [max_seq_len, head_dim/2]"},
-    {"name": "sin_cache", "dtype": "fp32", "shape": ["max_seq_len", "half_head_dim"], "desc": "RoPE sin cache [max_seq_len, head_dim/2]"}
+    {"name": "cos_cache", "dtype": "fp32", "shape": ["max_seq_len", "half_head_dim"], "layout": "row_major", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "RoPE cos cache [max_seq_len, head_dim/2]"},
+    {"name": "sin_cache", "dtype": "fp32", "shape": ["max_seq_len", "half_head_dim"], "layout": "row_major", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "RoPE sin cache [max_seq_len, head_dim/2]"}
   ],
   "scratch": [],
   "dims": ["max_seq_len", "head_dim"],
@@ -44,6 +46,16 @@
     "sources": ["src/kernels/rope_kernels.c"],
     "variants": [
       {"name": "ref", "requires": [], "compile_flags": []}
+    ]
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"name": "cos_cache", "source": "output:rope_cos", "cast": "float*", "ports": ["output:cos_cache"]},
+      {"name": "sin_cache", "source": "output:rope_sin", "cast": "float*", "ports": ["output:sin_cache"]},
+      {"name": "max_seq_len", "source": "dim:max_seq_len"},
+      {"name": "head_dim", "source": "dim:head_dim"},
+      {"name": "base", "source": "config:rope_theta"}
     ]
   },
   "tests": {

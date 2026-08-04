@@ -1,17 +1,23 @@
 {
   "id": "kv_cache_store_bf16",
   "op": "kv_cache_store",
+  "operation_interface": "kv_cache_store.bf16.head_major.v1",
+  "selection": {"status": "production", "priority": 100, "equivalence_group": "kv_cache_store.bf16.head_major.v1", "phases": ["decode"]},
   "variant": "bf16_cache",
   "quant": {"activation": "fp32", "output": "bf16"},
   "inputs": [
-    {"name": "k", "dtype": "fp32", "shape": ["num_kv_heads", "head_dim"]},
-    {"name": "v", "dtype": "fp32", "shape": ["num_kv_heads", "head_dim"]}
+    {"name": "k", "dtype": "fp32", "shape": ["KV", "D"], "layout": "head_major_contiguous", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "K tensor after RoPE [num_kv_heads, head_dim]"},
+    {"name": "v", "dtype": "fp32", "shape": ["KV", "D"], "layout": "head_major_contiguous", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "V tensor [num_kv_heads, head_dim]"}
   ],
+  "weights": [],
   "outputs": [
-    {"name": "kv_cache_k", "dtype": "bf16", "shape": ["num_layers", "num_kv_heads", "max_seq_len", "head_dim"]},
-    {"name": "kv_cache_v", "dtype": "bf16", "shape": ["num_layers", "num_kv_heads", "max_seq_len", "head_dim"]}
+    {"name": "kv_cache_k", "dtype": "bf16", "shape": ["KV", "S_max", "D"], "layout": "head_major_contiguous", "access": "read_write", "storage_class": "state", "consumption": "required", "desc": "Packed BF16 K cache slice at current pos. Physical capacity S_max rows; valid-token count is tracked separately by the caller (append index); append writes exactly the rows at the append index and never reads beyond valid rows."},
+    {"name": "kv_cache_v", "dtype": "bf16", "shape": ["KV", "S_max", "D"], "layout": "head_major_contiguous", "access": "read_write", "storage_class": "state", "consumption": "required", "desc": "Packed BF16 V cache slice at current pos. Physical capacity S_max rows; valid-token count is tracked separately by the caller (append index); append writes exactly the rows at the append index and never reads beyond valid rows."}
   ],
-  "dims": ["num_kv_heads", "head_dim", "num_layers", "max_seq_len"],
+  "dims": ["num_kv_heads", "head_dim", "num_layers", "max_seq_len", "KV", "S_max", "D"],
+  "constraints": {
+    "notes": "Scheduling may round the extent to physical capacity S_max; kernels must never read or write KV rows beyond the valid-token count declared by the append index."
+  },
   "impl": {
     "function": "kv_cache_store_bf16",
     "c_declaration": "void kv_cache_store_bf16(uint16_t *kv_cache_k, uint16_t *kv_cache_v, const float *k, const float *v, int layer, int pos, int num_kv_heads, int head_dim, int max_seq_len);",
@@ -20,10 +26,10 @@
   "call_abi": {
     "version": 1,
     "params": [
-      {"name": "kv_cache_k", "source": "runtime:kv_cache_k_layer_u16", "cast": "uint16_t*"},
-      {"name": "kv_cache_v", "source": "runtime:kv_cache_v_layer_u16", "cast": "uint16_t*"},
-      {"name": "k", "source": "activation:k", "cast": "const float*"},
-      {"name": "v", "source": "activation:v", "cast": "const float*"},
+      {"name": "kv_cache_k", "source": "runtime:kv_cache_k_layer_u16", "cast": "uint16_t*", "ports": ["output:kv_cache_k"]},
+      {"name": "kv_cache_v", "source": "runtime:kv_cache_v_layer_u16", "cast": "uint16_t*", "ports": ["output:kv_cache_v"]},
+      {"name": "k", "source": "activation:k", "cast": "const float*", "ports": ["input:k"]},
+      {"name": "v", "source": "activation:v", "cast": "const float*", "ports": ["input:v"]},
       {"name": "layer", "source": "const:0"},
       {"name": "pos", "source": "runtime:pos"},
       {"name": "num_kv_heads", "source": "dim:num_kv_heads"},

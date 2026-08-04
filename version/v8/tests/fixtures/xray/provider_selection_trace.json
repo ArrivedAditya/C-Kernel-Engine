@@ -1,0 +1,38 @@
+[
+  {
+    "decision": "rejected",
+    "equivalence_group": "residual_add.fp32.v1",
+    "priority": 900,
+    "provider": "candidate_900",
+    "reason": "status_not_production:candidate",
+    "stage": "provider_selection",
+    "status": "candidate"
+  },
+  {
+    "decision": "rejected",
+    "equivalence_group": "residual_add.fp32.v1",
+    "priority": 800,
+    "provider": "wrong_phase_800",
+    "reason": "phase_mismatch",
+    "stage": "provider_selection",
+    "status": "production"
+  },
+  {
+    "decision": "rejected",
+    "equivalence_group": "residual_add.fp32.v1",
+    "priority": 700,
+    "provider": "wrong_dtype_700",
+    "reason": "weight_dtype_mismatch",
+    "stage": "dtype_compatibility",
+    "status": "production"
+  },
+  {
+    "decision": "selected",
+    "equivalence_group": "residual_add.fp32.v1",
+    "priority": 100,
+    "provider": "compatible_100",
+    "rank": 0,
+    "stage": "priority_ranking",
+    "status": "production"
+  }
+]

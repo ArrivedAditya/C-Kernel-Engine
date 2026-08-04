@@ -1,6 +1,16 @@
 {
   "id": "residual_add_backward_f32",
   "op": "add_backward",
+  "operation_interface": "residual_add_backward.fp32.v1",
+  "selection": {
+    "status": "production",
+    "priority": 100,
+    "equivalence_group": "residual_add_backward.fp32.v1",
+    "phases": [
+      "training",
+      "backward"
+    ]
+  },
   "variant": "fp32_split",
   "modes": {
     "inference": false,
@@ -20,9 +30,14 @@
         "T",
         "E"
       ],
+      "layout": "token_major_contiguous",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required",
       "desc": "Gradient of residual output"
     }
   ],
+  "weights": [],
   "outputs": [
     {
       "name": "d_a",
@@ -31,6 +46,10 @@
         "T",
         "E"
       ],
+      "layout": "token_major_contiguous",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required",
       "desc": "Gradient to first residual input"
     },
     {
@@ -40,6 +59,10 @@
         "T",
         "E"
       ],
+      "layout": "token_major_contiguous",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required",
       "desc": "Gradient to second residual input"
     }
   ],
@@ -80,6 +103,43 @@
         "name": "default",
         "requires": [],
         "compile_flags": []
+      }
+    ]
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "d_out",
+        "source": "activation:d_out",
+        "cast": "const float*",
+        "ports": [
+          "input:d_out"
+        ]
+      },
+      {
+        "name": "d_a",
+        "source": "output:d_a",
+        "cast": "float*",
+        "ports": [
+          "output:d_a"
+        ]
+      },
+      {
+        "name": "d_b",
+        "source": "output:d_b",
+        "cast": "float*",
+        "ports": [
+          "output:d_b"
+        ]
+      },
+      {
+        "name": "tokens",
+        "source": "dim:seq_len"
+      },
+      {
+        "name": "aligned_embed_dim",
+        "source": "dim:embed_dim"
       }
     ]
   },

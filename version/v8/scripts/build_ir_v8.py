@@ -245,6 +245,25 @@ def _graph_ir_execution_metadata(capability: Dict[str, Any]) -> Dict[str, Any]:
     for key in ("numerical_contract", "reference", "production"):
         if capability.get(key) is not None:
             metadata[key] = copy.deepcopy(capability[key])
+    selection = capability.get("selection")
+    if (
+        isinstance(selection, dict)
+        and str(selection.get("status", "") or "").strip()
+        and not isinstance(selection.get("priority"), bool)
+        and isinstance(selection.get("priority"), int)
+        and str(selection.get("equivalence_group", "") or "").strip()
+        and isinstance(selection.get("phases"), list)
+    ):
+        metadata["provider_selection"] = {
+            "status": str(selection["status"]),
+            "priority": selection["priority"],
+            "equivalence_group": str(selection["equivalence_group"]),
+            "phases": list(selection["phases"]),
+        }
+    else:
+        # Disclosed null: legacy providers carry no selection block and the
+        # resolver must never infer or fabricate one.
+        metadata["provider_selection"] = None
     return metadata
 
 
@@ -5300,6 +5319,7 @@ def _rank_provider_matches(
     *,
     inference_mode: bool,
     prefer_q8_activation: bool,
+    prefer_parallel: bool = False,
 ) -> List[Dict]:
     def direction_priority(kernel: Dict) -> int:
         variant = str(kernel.get("variant", "") or "").lower()
@@ -5321,6 +5341,11 @@ def _rank_provider_matches(
             return {"q8_0": 0, "q8_k": 1, "fp32": 2, "bf16": 3}.get(activation, 4)
         return {"fp32": 0, "bf16": 1}.get(activation, 2)
 
+    def parallel_priority(kernel: Dict) -> int:
+        if not prefer_parallel:
+            return 0
+        return 0 if kernel.get("parallel", False) else 1
+
     ranked = []
     for kernel in matches:
         selection = _provider_selection_metadata(kernel)
@@ -5328,20 +5353,21 @@ def _rank_provider_matches(
             (
                 direction_priority(kernel),
                 activation_priority(kernel),
+                parallel_priority(kernel),
                 _PROVIDER_LIFECYCLE_RANK[selection["status"]],
                 -selection["priority"],
                 kernel,
                 selection,
             )
         )
-    ranked.sort(key=lambda item: item[:4])
+    ranked.sort(key=lambda item: item[:5])
     if not ranked:
         return []
 
     best = ranked[0]
-    tied = [item for item in ranked if item[:4] == best[:4]]
-    explicit_tied = [item for item in tied if item[5]["explicit"]]
-    groups = {item[5]["equivalence_group"] for item in explicit_tied}
+    tied = [item for item in ranked if item[:5] == best[:5]]
+    explicit_tied = [item for item in tied if item[6]["explicit"]]
+    groups = {item[6]["equivalence_group"] for item in explicit_tied}
     if len(explicit_tied) > 1:
         detail = (
             "equal-priority production providers are ambiguous"
@@ -5350,9 +5376,9 @@ def _rank_provider_matches(
         )
         raise RuntimeError(
             f"HARD KERNEL SELECTION FAULT: {detail}: "
-            + ", ".join(str(item[4].get("id")) for item in explicit_tied)
+            + ", ".join(str(item[5].get("id")) for item in explicit_tied)
         )
-    return [item[4] for item in ranked]
+    return [item[5] for item in ranked]
 
 
 def find_kernel(
@@ -5361,7 +5387,8 @@ def find_kernel(
     quant: Dict[str, str],
     mode: str = "decode",
     prefer_q8_activation: bool = True,  # v7 baseline parity: use Q8_0 activation kernels
-    prefer_parallel: bool = False  # Use OpenMP-parallel kernels for decode throughput
+    prefer_parallel: bool = False,  # Use OpenMP-parallel kernels for decode throughput
+    selection_trace: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[str]:
     """
     Find kernel ID from registry.
@@ -5376,6 +5403,9 @@ def find_kernel(
         prefer_parallel: If True, prefer _parallel_omp kernel variants for decode mode.
                          These have the same signature as serial kernels but use OpenMP
                          internally — no wrapper code or IR changes needed.
+        selection_trace: Optional observability sink. When a list is passed, one dict
+                         per resolver decision (rejected/ranked/selected) is appended.
+                         When None (default), resolution behavior is unchanged.
 
     Returns:
         Kernel ID (C function name) or None if not found
@@ -5399,6 +5429,20 @@ def find_kernel(
     # kernels must not be selected in these paths.
     inference_mode = mode in ("decode", "prefill", "inference")
 
+    def trace_rejected(candidate: Dict, selection: Dict[str, Any], stage: str, reason: str) -> None:
+        if selection_trace is not None:
+            selection_trace.append(
+                {
+                    "provider": str(candidate.get("id", "")),
+                    "decision": "rejected",
+                    "stage": stage,
+                    "reason": reason,
+                    "status": selection["status"],
+                    "priority": selection["priority"],
+                    "equivalence_group": selection["equivalence_group"],
+                }
+            )
+
     for candidate in candidates:
         k_quant = candidate.get("quant", {})
         modes = candidate.get("modes", {})
@@ -5406,8 +5450,15 @@ def find_kernel(
 
         if selection["explicit"]:
             if mode not in selection["phases"]:
+                trace_rejected(candidate, selection, "provider_selection", "phase_mismatch")
                 continue
             if selection["status"] != "production":
+                trace_rejected(
+                    candidate,
+                    selection,
+                    "provider_selection",
+                    f"status_not_production:{selection['status']}",
+                )
                 continue
 
         # Match weight quantization
@@ -5419,16 +5470,20 @@ def find_kernel(
             # This prevents meta-kernels like "dense_embedding_lookup" from being selected
             # when we need an actual implementation like "embedding_forward_q8_0"
             if quant["weight"] not in allowed_quants:
+                trace_rejected(candidate, selection, "dtype_compatibility", "weight_dtype_mismatch")
                 continue
 
         # Match explicit inference/training/backward mode contract.
         # If modes is absent, treat kernel as inference-eligible.
         if isinstance(modes, dict) and modes:
             if inference_mode and modes.get("inference") is False:
+                trace_rejected(candidate, selection, "mode_compatibility", "inference_disabled")
                 continue
             if (not inference_mode) and mode == "backward" and modes.get("backward") is False:
+                trace_rejected(candidate, selection, "mode_compatibility", "backward_disabled")
                 continue
             if (not inference_mode) and mode == "training" and modes.get("training") is False:
+                trace_rejected(candidate, selection, "mode_compatibility", "training_disabled")
                 continue
 
         # Match legacy single "mode" field (if kernel specifies it)
@@ -5437,12 +5492,15 @@ def find_kernel(
 
         # If kernel specifies a mode, it must match
         if kernel_mode and kernel_mode != mode:
+            trace_rejected(candidate, selection, "legacy_mode_hint", "mode_field_mismatch")
             continue
 
         # Also check variant name for mode hints
         if mode == "decode" and "prefill" in variant:
+            trace_rejected(candidate, selection, "legacy_mode_hint", "variant_prefill_in_decode")
             continue
         if mode == "prefill" and "decode" in variant:
+            trace_rejected(candidate, selection, "legacy_mode_hint", "variant_decode_in_prefill")
             continue
 
         # Collect match
@@ -5460,18 +5518,21 @@ def find_kernel(
                 mode=mode,
                 prefer_q8_activation=prefer_q8_activation,
                 prefer_parallel=prefer_parallel,
+                selection_trace=selection_trace,
             )
 
         # Fallback: Q4_0 → Q4_K (similar K-quant format)
         # Q4_0 GEMV kernels don't exist in the library, but Q4_K does
         if "weight" in quant and quant["weight"] == "q4_0":
             return find_kernel(registry, op=op, quant={**quant, "weight": "q4_k"}, mode=mode,
-                             prefer_q8_activation=prefer_q8_activation, prefer_parallel=prefer_parallel)
+                             prefer_q8_activation=prefer_q8_activation, prefer_parallel=prefer_parallel,
+                             selection_trace=selection_trace)
 
         # Fallback: sliding attention → regular attention (if sliding kernel not available)
         if op == "attention_sliding":
             return find_kernel(registry, op="attention", quant=quant, mode=mode,
-                             prefer_q8_activation=prefer_q8_activation, prefer_parallel=prefer_parallel)
+                             prefer_q8_activation=prefer_q8_activation, prefer_parallel=prefer_parallel,
+                             selection_trace=selection_trace)
 
         return None
 
@@ -5482,17 +5543,23 @@ def find_kernel(
         matches,
         inference_mode=inference_mode,
         prefer_q8_activation=prefer_q8_activation,
+        prefer_parallel=prefer_parallel and mode == "decode",
     )
 
-    # When prefer_parallel=True in decode mode, look for _parallel_omp variant
-    # among the top-priority activation matches. These have the same signature
-    # as serial kernels — the IR just swaps the function name, no wrapper needed.
-    if prefer_parallel and mode == "decode":
-        top_act = matches[0].get("quant", {}).get("activation", "fp32")
-        same_act = [m for m in matches if m.get("quant", {}).get("activation", "fp32") == top_act]
-        for m in same_act:
-            if m.get("parallel", False):
-                return m["id"]
+    if selection_trace is not None:
+        for rank, kernel in enumerate(matches):
+            selection = _provider_selection_metadata(kernel)
+            selection_trace.append(
+                {
+                    "provider": str(kernel.get("id", "")),
+                    "decision": "selected" if rank == 0 else "ranked",
+                    "rank": rank,
+                    "stage": "priority_ranking",
+                    "status": selection["status"],
+                    "priority": selection["priority"],
+                    "equivalence_group": selection["equivalence_group"],
+                }
+            )
 
     return matches[0]["id"]
 

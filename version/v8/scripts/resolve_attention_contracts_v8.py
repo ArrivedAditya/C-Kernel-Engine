@@ -130,6 +130,10 @@ def load_kernel_execution_capabilities(root: Path = DEFAULT_KERNELS) -> Dict[str
             "contract_schema_version": doc.get("contract_schema_version"),
             "implementation": doc.get("implementation"),
         }
+        # Provider lifecycle metadata flows through so GraphIR resolved_execution
+        # can disclose it; absent for legacy (unmigrated) providers.
+        if doc.get("selection") is not None:
+            capability["selection"] = doc.get("selection")
         validate_schema(capability, KERNEL_EXECUTION_SCHEMA, f"kernel execution capability {kernel_id}")
         if capability["op"] in {"gemm", "gemv"}:
             linear_capability = {

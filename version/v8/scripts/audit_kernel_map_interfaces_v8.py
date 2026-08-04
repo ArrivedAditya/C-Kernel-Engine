@@ -105,12 +105,76 @@ def _validate_selection(doc: Dict[str, Any], path: Path) -> bool:
     return True
 
 
+_WRITABLE_ACCESS = {"write", "read_write"}
+
+
+def _named_ports(doc: Dict[str, Any], field: str) -> list:
+    return [
+        port
+        for port in doc.get(field, [])
+        if isinstance(port, dict) and port.get("name")
+    ]
+
+
+def _validate_port_aliases(doc: Dict[str, Any], path: Any = None) -> None:
+    """Hard-fail unsafe aliasing on maps that declare operation_interface.
+
+    Only interface-declaring maps are checked; unmigrated maps are not faulted.
+    An output port's alias_of must reference an existing input port, and two
+    writable ports may share a name only when a declared alias_of links them.
+    """
+    where = path if path is not None else doc.get("id", "<unknown>")
+    inputs = _named_ports(doc, "inputs")
+    outputs = _named_ports(doc, "outputs")
+    input_names = {port["name"] for port in inputs}
+
+    for port in outputs:
+        alias = port.get("alias_of")
+        if alias is None:
+            continue
+        valid = (
+            isinstance(alias, str)
+            and alias.startswith("input:")
+            and alias.split(":", 1)[1] in input_names
+        )
+        if not valid:
+            raise RuntimeError(
+                f"invalid port alias in {where}: output port {port['name']!r} "
+                f"alias_of {alias!r} does not reference a declared input port"
+            )
+
+    # A name shared between an input and a writable output is a writable
+    # overlap unless the output declares the in-place alias.
+    for port in outputs:
+        if port["name"] in input_names and port.get("access") in _WRITABLE_ACCESS:
+            if port.get("alias_of") != f"input:{port['name']}":
+                raise RuntimeError(
+                    f"unsafe writable overlap in {where}: output port {port['name']!r} "
+                    "shares a name with an input port without a declared alias_of"
+                )
+
+    # Two writable outputs with the same name must be explicitly linked.
+    seen = set()
+    for port in outputs:
+        if port.get("access") not in _WRITABLE_ACCESS:
+            continue
+        if port["name"] in seen and port.get("alias_of") is None:
+            raise RuntimeError(
+                f"unsafe writable overlap in {where}: duplicate writable output "
+                f"port {port['name']!r} without a declared alias_of"
+            )
+        seen.add(port["name"])
+
+
 def build_report() -> Dict[str, Any]:
     maps = []
     for path in sorted(KERNEL_MAPS.glob("*.json")):
         if path.name in NON_MAP_FILES:
             continue
-        maps.append((path, _load(path)))
+        doc = _load(path)
+        if doc.get("operation_interface"):
+            _validate_port_aliases(doc, path)
+        maps.append((path, doc))
 
     governed = [item for item in maps if item[1].get("numerical_capabilities")]
     hardened = [item for item in governed if item[1].get("operation_interface")]

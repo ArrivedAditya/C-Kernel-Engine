@@ -1,6 +1,8 @@
 {
   "id": "memcpy",
   "op": "residual_save",
+  "operation_interface": "residual_save.memcpy_copy.v1",
+  "selection": {"status": "production", "priority": 100, "equivalence_group": "residual_save.memcpy_copy.v1", "phases": ["prefill", "decode"]},
   "variant": "fp32_copy",
   "quant": {
     "weight": null,
@@ -8,10 +10,11 @@
     "output": "fp32"
   },
   "inputs": [
-    {"name": "src", "dtype": "fp32", "shape": ["N"], "desc": "Source buffer [N] (FP32)"}
+    {"name": "src", "dtype": "fp32", "shape": ["N"], "layout": "contiguous", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "Source buffer [N] (FP32)"}
   ],
+  "weights": [],
   "outputs": [
-    {"name": "dst", "dtype": "fp32", "shape": ["N"], "desc": "Destination buffer [N] (FP32)"}
+    {"name": "dst", "dtype": "fp32", "shape": ["N"], "layout": "contiguous", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Destination buffer [N] (FP32)"}
   ],
   "scratch": [],
   "dims": ["N"],
@@ -24,7 +27,7 @@
     "strategies": []
   },
   "constraints": {
-    "notes": "Simple memory copy for residual saving."
+    "notes": "Byte copy implementing logical residual_save; performs no arithmetic. src and dst must not overlap (undefined for overlapping writable views)."
   },
   "impl": {
     "function": "memcpy",
@@ -33,6 +36,11 @@
       {"name": "default", "requires": [], "compile_flags": []}
     ]
   },
+  "call_abi": {"version": 1, "params": [
+    {"name": "dst", "source": "output:dst", "cast": "void*", "ports": ["output:dst"]},
+    {"name": "src", "source": "activation:src", "cast": "const void*", "ports": ["input:src"]},
+    {"name": "size", "source": "dim:_memcpy_bytes"}
+  ]},
   "tests": {},
-  "notes": "Memory copy for saving residual before RMSNorm for skip connections."
+  "notes": "Memory copy for saving residual before RMSNorm for skip connections. Pure byte copy; no arithmetic."
 }
