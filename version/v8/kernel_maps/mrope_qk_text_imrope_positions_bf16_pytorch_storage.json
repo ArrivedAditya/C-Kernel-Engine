@@ -2,7 +2,7 @@
   "id": "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
   "op": "rope",
   "operation_interface": "mrope.text_imrope_positions.bf16_pytorch_storage.v1",
-  "selection": {"status": "production", "priority": 100, "equivalence_group": "mrope.text_imrope_positions.bf16_pytorch_storage.v1", "phases": ["prefill", "decode"]},
+  "selection": {"status": "production", "priority": 100, "equivalence_group": "mrope.text_imrope_positions.bf16_pytorch_storage.v1", "phases": ["prefill"]},
   "variant": "fp32_head_major_text_imrope_positions_pytorch_bf16_storage",
   "quant": {"weight": "none", "activation": "fp32", "output": "bf16"},
   "inputs": [

@@ -5319,6 +5319,7 @@ def _rank_provider_matches(
     *,
     inference_mode: bool,
     prefer_q8_activation: bool,
+    prefer_parallel: bool = False,
 ) -> List[Dict]:
     def direction_priority(kernel: Dict) -> int:
         variant = str(kernel.get("variant", "") or "").lower()
@@ -5340,6 +5341,11 @@ def _rank_provider_matches(
             return {"q8_0": 0, "q8_k": 1, "fp32": 2, "bf16": 3}.get(activation, 4)
         return {"fp32": 0, "bf16": 1}.get(activation, 2)
 
+    def parallel_priority(kernel: Dict) -> int:
+        if not prefer_parallel:
+            return 0
+        return 0 if kernel.get("parallel", False) else 1
+
     ranked = []
     for kernel in matches:
         selection = _provider_selection_metadata(kernel)
@@ -5347,20 +5353,21 @@ def _rank_provider_matches(
             (
                 direction_priority(kernel),
                 activation_priority(kernel),
+                parallel_priority(kernel),
                 _PROVIDER_LIFECYCLE_RANK[selection["status"]],
                 -selection["priority"],
                 kernel,
                 selection,
             )
         )
-    ranked.sort(key=lambda item: item[:4])
+    ranked.sort(key=lambda item: item[:5])
     if not ranked:
         return []
 
     best = ranked[0]
-    tied = [item for item in ranked if item[:4] == best[:4]]
-    explicit_tied = [item for item in tied if item[5]["explicit"]]
-    groups = {item[5]["equivalence_group"] for item in explicit_tied}
+    tied = [item for item in ranked if item[:5] == best[:5]]
+    explicit_tied = [item for item in tied if item[6]["explicit"]]
+    groups = {item[6]["equivalence_group"] for item in explicit_tied}
     if len(explicit_tied) > 1:
         detail = (
             "equal-priority production providers are ambiguous"
@@ -5369,9 +5376,9 @@ def _rank_provider_matches(
         )
         raise RuntimeError(
             f"HARD KERNEL SELECTION FAULT: {detail}: "
-            + ", ".join(str(item[4].get("id")) for item in explicit_tied)
+            + ", ".join(str(item[5].get("id")) for item in explicit_tied)
         )
-    return [item[4] for item in ranked]
+    return [item[5] for item in ranked]
 
 
 def find_kernel(
@@ -5536,6 +5543,7 @@ def find_kernel(
         matches,
         inference_mode=inference_mode,
         prefer_q8_activation=prefer_q8_activation,
+        prefer_parallel=prefer_parallel and mode == "decode",
     )
 
     if selection_trace is not None:
@@ -5552,16 +5560,6 @@ def find_kernel(
                     "equivalence_group": selection["equivalence_group"],
                 }
             )
-
-    # When prefer_parallel=True in decode mode, look for _parallel_omp variant
-    # among the top-priority activation matches. These have the same signature
-    # as serial kernels — the IR just swaps the function name, no wrapper needed.
-    if prefer_parallel and mode == "decode":
-        top_act = matches[0].get("quant", {}).get("activation", "fp32")
-        same_act = [m for m in matches if m.get("quant", {}).get("activation", "fp32") == top_act]
-        for m in same_act:
-            if m.get("parallel", False):
-                return m["id"]
 
     return matches[0]["id"]
 

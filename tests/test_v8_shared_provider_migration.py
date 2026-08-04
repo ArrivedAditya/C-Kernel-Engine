@@ -227,6 +227,18 @@ class ProviderPhaseTests(unittest.TestCase):
             with self.subTest(provider=provider_id):
                 self.assertEqual(self.phases(provider_id), ["decode"])
 
+    def test_selection_does_not_claim_uncertified_numerical_phases(self):
+        for provider_id in MIGRATED_PROVIDERS:
+            doc = load_map(provider_id)
+            capabilities = doc.get("numerical_capabilities") or []
+            if not capabilities:
+                continue
+            certified = set().union(
+                *(set(capability.get("phases", [])) for capability in capabilities)
+            )
+            with self.subTest(provider=provider_id):
+                self.assertTrue(set(doc["selection"]["phases"]) <= certified)
+
 
 class LegacyBindingAbsenceTests(unittest.TestCase):
     @staticmethod
@@ -374,6 +386,30 @@ class FailClosedResolverTraceTests(unittest.TestCase):
                 ],
                 [],
             )
+
+    def test_parallel_policy_precedes_priority_and_trace_matches_return(self):
+        serial = synthetic_provider("serial_high", priority=200)
+        serial["op"] = "gemv"
+        serial["selection"]["phases"] = ["decode"]
+        parallel = synthetic_provider("parallel_low", priority=100)
+        parallel["op"] = "gemv"
+        parallel["parallel"] = True
+        parallel["selection"]["phases"] = ["decode"]
+        trace = []
+        selected = build_ir.find_kernel(
+            {"kernels": [serial, parallel]},
+            op="gemv",
+            quant={"weight": "fp32"},
+            mode="decode",
+            prefer_q8_activation=False,
+            prefer_parallel=True,
+            selection_trace=trace,
+        )
+        self.assertEqual(selected, "parallel_low")
+        self.assertEqual(
+            [entry["provider"] for entry in trace if entry["decision"] == "selected"],
+            [selected],
+        )
 
 
 class ProviderSelectionTraceFixtureTests(unittest.TestCase):

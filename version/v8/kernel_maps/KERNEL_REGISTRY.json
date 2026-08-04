@@ -25332,8 +25332,7 @@
         "priority": 100,
         "equivalence_group": "mrope.imrope_positions.fp32.v1",
         "phases": [
-          "prefill",
-          "decode"
+          "prefill"
         ]
       },
       "variant": "fp32_head_major_text_imrope_explicit_positions",
@@ -26552,8 +26551,7 @@
         "priority": 100,
         "equivalence_group": "mrope.text_imrope_positions.bf16_pytorch_storage.v1",
         "phases": [
-          "prefill",
-          "decode"
+          "prefill"
         ]
       },
       "variant": "fp32_head_major_text_imrope_positions_pytorch_bf16_storage",
