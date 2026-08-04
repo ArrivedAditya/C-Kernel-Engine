@@ -2052,6 +2052,7 @@ showtests:
 	@echo "  make nightly-quick    Quick subset (~5 min)"
 	@echo "  make nightly-json     Run all + JSON report"
 	@echo "  make nightly-kernels  Only kernel tests"
+	@echo "  make test-kernel-maps v8 kernel-map gate (audit, selection, ABI, migration, registry freshness)"
 	@echo "  make nightly-bf16     Only BF16 tests"
 	@echo "  make nightly-quant    Only quantization tests"
 	@echo "  make nightly-inference Only v8 inference/runtime contract tests"
@@ -6189,8 +6190,34 @@ v8-validate-contracts:
 		version/v8/tools/open_ir_hub_v8.py \
 		version/v8/tools/open_ir_visualizer_v8.py
 
-v8-kernel-map-contracts:
+v8-kernel-map-contracts: test-kernel-maps
 	@$(PYTHON) -m unittest tests.test_build_ir_v8_scaffold
+
+.PHONY: test-kernel-maps v8-kernel-registry-freshness
+
+# Aggregate kernel-map gate: interface audit ratchet, provider-selection,
+# call-ABI, shared-provider migration tests, and registry freshness. Emits the
+# audit report consumed by the nightly kernel-map burn-down summary.
+V8_KERNEL_INTERFACE_AUDIT_REPORT := version/v8/.cache/reports/kernel_interface_audit_latest.json
+
+test-kernel-maps:
+	@echo "Running v8 kernel-map gate (audit, selection, ABI, migration, registry freshness)..."
+	@mkdir -p version/v8/.cache/reports
+	@$(PYTHON) version/v8/scripts/audit_kernel_map_interfaces_v8.py --json > $(V8_KERNEL_INTERFACE_AUDIT_REPORT)
+	@$(PYTHON) version/v8/scripts/audit_kernel_map_interfaces_v8.py --check
+	@$(PYTHON) $(PYTHONFLAGS) -m pytest -q \
+		tests/test_v8_provider_selection.py \
+		tests/test_v8_kernel_call_abi.py \
+		tests/test_v8_shared_provider_migration.py \
+		tests/test_v8_numerical_execution_contracts.py
+	@$(MAKE) --no-print-directory v8-kernel-registry-freshness
+
+v8-kernel-registry-freshness:
+	@$(PYTHON) -c "import sys; sys.path.insert(0, 'version/v8/scripts'); import ck_run_v8; ck_run_v8.step_regenerate_kernel_registry(force=True)"
+	@git diff --exit-code -- version/v8/kernel_maps/KERNEL_REGISTRY.json || { \
+		echo "FAIL: KERNEL_REGISTRY.json is stale; regenerate via ck_run_v8.step_regenerate_kernel_registry"; \
+		exit 1; \
+	}
 
 v8-kernel-map-gate:
 	@$(MAKE) --no-print-directory v8-kernel-map-contracts

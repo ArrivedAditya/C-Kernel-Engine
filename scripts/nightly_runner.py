@@ -1073,6 +1073,7 @@ MAKE_TARGET_FAILURE_ARTIFACTS = {
     "v7-visualizer-generated-e2e": ROOT / "version" / "v7" / ".cache" / "reports" / "visualizer_generated_e2e_latest.json",
     "v7-stabilization-nightly": ROOT / "version" / "v7" / ".cache" / "reports" / "training_stabilization_scorecard_latest.json",
     "test-architecture-contracts": ROOT / "version" / "v8" / ".cache" / "reports" / "architecture_contracts_latest.json",
+    "v8-kernel-map-contracts": ROOT / "version" / "v8" / ".cache" / "reports" / "kernel_interface_audit_latest.json",
     "v8-visualizer-vision-artifacts": ROOT / "version" / "v8" / ".cache" / "reports" / "vision_visualizer_latest.json",
     "vision-encoder-full": ROOT / "build" / "vision_encoder_accuracy" / "summary.json",
 }
@@ -1126,6 +1127,22 @@ def _summarize_make_failure_artifact(target: str, *, start_ts: float) -> str:
         if warnings:
             parts.append("warning_sample=" + " | ".join(str(item) for item in warnings[:2]))
         return f"{prefix}; {'; '.join(parts)}"
+
+    if target == "v8-kernel-map-contracts":
+        counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
+        selection = payload.get("selection") if isinstance(payload.get("selection"), dict) else {}
+        # Migration burn-down: hardened/ABI/selection-managed maps rise, contract
+        # debt and legacy resolver conditionals fall. The ratchet enforces
+        # monotonicity; this line makes the movement visible in nightly output.
+        return (
+            f"{prefix}; hardened={counts.get('interface_hardened_maps')} "
+            f"interface_abi={counts.get('interface_abi_crossvalidated_maps')} "
+            f"contract_pending={counts.get('contract_pending_maps')} "
+            f"selection_managed={counts.get('selection_managed_maps')} "
+            f"map_abi={counts.get('map_owned_call_abi')} "
+            f"legacy_if={selection.get('legacy_selection_if_statements')} "
+            f"op_if={selection.get('operation_specific_if_statements')}"
+        )
 
     if target == "regression-training-full":
         summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
