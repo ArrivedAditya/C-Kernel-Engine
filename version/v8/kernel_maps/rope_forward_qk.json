@@ -1,6 +1,8 @@
 {
   "id": "rope_forward_qk",
   "op": "rope",
+  "operation_interface": "rope.half_split_rotary_dim.fp32.v1",
+  "selection": {"status": "production", "priority": 100, "equivalence_group": "rope.half_split_rotary_dim.fp32.v1", "phases": ["prefill", "decode"]},
   "variant": "fp32_head_major",
   "quant": {
     "weight": "none",
@@ -8,18 +10,17 @@
     "output": "fp32"
   },
   "inputs": [
-    {"name": "q", "dtype": "fp32", "shape": ["H", "T", "D"], "desc": "Query tensor [heads, tokens, head_dim] to be rotated in-place"},
-    {"name": "k", "dtype": "fp32", "shape": ["KV", "T", "D"], "desc": "Key tensor [kv_heads, tokens, head_dim] to be rotated in-place"}
+    {"name": "q", "dtype": "fp32", "shape": ["H", "T", "D"], "layout": "head_major_contiguous", "access": "read", "storage_class": "scratch", "consumption": "required", "desc": "Query tensor [heads, tokens, head_dim] to be rotated in-place"},
+    {"name": "k", "dtype": "fp32", "shape": ["KV", "T", "D"], "layout": "head_major_contiguous", "access": "read", "storage_class": "scratch", "consumption": "required", "desc": "Key tensor [kv_heads, tokens, head_dim] to be rotated in-place"},
+    {"name": "cos_cache", "dtype": "fp32", "shape": ["max_T", "rotary_dim", 2], "layout": "row_major", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "RoPE cos cache [max_seq, rotary_dim/2]; read-only precomputed cos/sin cache"},
+    {"name": "sin_cache", "dtype": "fp32", "shape": ["max_T", "rotary_dim", 2], "layout": "row_major", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "RoPE sin cache [max_seq, rotary_dim/2]; read-only precomputed cos/sin cache"}
   ],
   "weights": [],
   "activations": [],
-  "runtime_buffers": [
-    {"name": "cos_cache", "dtype": "fp32", "shape": ["max_T", "rotary_dim", 2], "desc": "RoPE cos cache [max_seq, rotary_dim/2]"},
-    {"name": "sin_cache", "dtype": "fp32", "shape": ["max_T", "rotary_dim", 2], "desc": "RoPE sin cache [max_seq, rotary_dim/2]"}
-  ],
+  "runtime_buffers": [],
   "outputs": [
-    {"name": "q", "dtype": "fp32", "shape": ["H", "T", "D"], "desc": "Query tensor after RoPE application (in-place)"},
-    {"name": "k", "dtype": "fp32", "shape": ["KV", "T", "D"], "desc": "Key tensor after RoPE application (in-place)"}
+    {"name": "q", "dtype": "fp32", "shape": ["H", "T", "D"], "layout": "head_major_contiguous", "access": "write", "storage_class": "scratch", "consumption": "required", "alias_of": "input:q", "desc": "Query tensor after RoPE application (in-place)"},
+    {"name": "k", "dtype": "fp32", "shape": ["KV", "T", "D"], "layout": "head_major_contiguous", "access": "write", "storage_class": "scratch", "consumption": "required", "alias_of": "input:k", "desc": "Key tensor after RoPE application (in-place)"}
   ],
   "scratch": [],
   "dims": ["H", "KV", "T", "D", "rotary_dim"],
@@ -60,6 +61,19 @@
       {"name": "ref", "requires": [], "compile_flags": []}
     ]
   },
+  "call_abi": {"version": 1, "params": [
+    {"name": "q", "source": "scratch:q_scratch", "cast": "float*", "ports": ["input:q", "output:q"]},
+    {"name": "k", "source": "scratch:k_scratch", "cast": "float*", "ports": ["input:k", "output:k"]},
+    {"name": "cos_cache", "source": "runtime:rope_cos", "ports": ["input:cos_cache"]},
+    {"name": "sin_cache", "source": "runtime:rope_sin", "ports": ["input:sin_cache"]},
+    {"name": "num_heads", "source": "dim:num_heads"},
+    {"name": "num_kv_heads", "source": "dim:num_kv_heads"},
+    {"name": "num_tokens", "source": "dim:seq_len"},
+    {"name": "head_dim", "source": "dim:head_dim"},
+    {"name": "aligned_head_dim", "source": "dim:head_dim"},
+    {"name": "pos_offset", "source": "runtime:pos"},
+    {"name": "rotary_dim", "source": "dim:rotary_dim"}
+  ]},
   "tests": {
     "unit": ["unittest/test_rope.py"],
     "bench": ["scripts/bench_rope.py"],

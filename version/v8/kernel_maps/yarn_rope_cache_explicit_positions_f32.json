@@ -1,14 +1,16 @@
 {
   "id": "yarn_rope_cache_explicit_positions_f32",
   "op": "yarn_rope_init",
+  "operation_interface": "yarn_rope_init.explicit_positions.fp32.v1",
+  "selection": {"status": "production", "priority": 100, "equivalence_group": "yarn_rope_init.explicit_positions.fp32.v1", "phases": ["init"]},
   "variant": "yarn_explicit_positions_fp32",
   "mode": "init",
   "quant": {"weight": "none", "activation": "fp32", "output": "fp32"},
-  "inputs": [{"name": "positions", "dtype": "i32", "shape": ["T"]}],
+  "inputs": [{"name": "positions", "dtype": "i32", "shape": ["T"], "layout": "token_contiguous", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "Explicit token positions [num_tokens] (int32)"}],
   "weights": [],
   "outputs": [
-    {"name": "cos_cache", "dtype": "fp32", "shape": ["T", "Dr/2"]},
-    {"name": "sin_cache", "dtype": "fp32", "shape": ["T", "Dr/2"]}
+    {"name": "cos_cache", "dtype": "fp32", "shape": ["T", "Dr/2"], "layout": "row_major", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Precomputed YaRN cos cache [num_tokens, rotary_dim/2]"},
+    {"name": "sin_cache", "dtype": "fp32", "shape": ["T", "Dr/2"], "layout": "row_major", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Precomputed YaRN sin cache [num_tokens, rotary_dim/2]"}
   ],
   "dims": ["T", "Dr"],
   "params": [
@@ -53,9 +55,9 @@
   "call_abi": {
     "version": 1,
     "params": [
-      {"name": "cos_cache", "source": "output:cos_cache", "cast": "float*"},
-      {"name": "sin_cache", "source": "output:sin_cache", "cast": "float*"},
-      {"name": "positions", "source": "activation:positions", "cast": "const int32_t*"},
+      {"name": "cos_cache", "source": "output:cos_cache", "cast": "float*", "ports": ["output:cos_cache"]},
+      {"name": "sin_cache", "source": "output:sin_cache", "cast": "float*", "ports": ["output:sin_cache"]},
+      {"name": "positions", "source": "activation:positions", "cast": "const int32_t*", "ports": ["input:positions"]},
       {"name": "num_tokens", "source": "dim:T"},
       {"name": "rotary_dim", "source": "dim:Dr"},
       {"name": "freq_base", "source": "param:freq_base"},

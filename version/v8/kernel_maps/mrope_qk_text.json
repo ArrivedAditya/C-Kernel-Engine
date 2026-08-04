@@ -1,6 +1,8 @@
 {
   "id": "mrope_qk_text",
   "op": "rope",
+  "operation_interface": "mrope.text.fp32.v1",
+  "selection": {"status": "production", "priority": 100, "equivalence_group": "mrope.text.fp32.v1", "phases": ["prefill", "decode"]},
   "variant": "fp32_head_major_text_mrope",
   "quant": {
     "weight": "none",
@@ -12,12 +14,20 @@
       "name": "q",
       "dtype": "fp32",
       "shape": ["H", "T", "D"],
+      "layout": "head_major_contiguous",
+      "access": "read",
+      "storage_class": "scratch",
+      "consumption": "required",
       "desc": "Query tensor [heads, tokens, head_dim] rotated in-place"
     },
     {
       "name": "k",
       "dtype": "fp32",
       "shape": ["KV", "T", "D"],
+      "layout": "head_major_contiguous",
+      "access": "read",
+      "storage_class": "scratch",
+      "consumption": "required",
       "desc": "Key tensor [kv_heads, tokens, head_dim] rotated in-place"
     }
   ],
@@ -28,12 +38,22 @@
       "name": "q",
       "dtype": "fp32",
       "shape": ["H", "T", "D"],
+      "layout": "head_major_contiguous",
+      "access": "write",
+      "storage_class": "scratch",
+      "consumption": "required",
+      "alias_of": "input:q",
       "desc": "Query tensor after text M-RoPE"
     },
     {
       "name": "k",
       "dtype": "fp32",
       "shape": ["KV", "T", "D"],
+      "layout": "head_major_contiguous",
+      "access": "write",
+      "storage_class": "scratch",
+      "consumption": "required",
+      "alias_of": "input:k",
       "desc": "Key tensor after text M-RoPE"
     }
   ],
@@ -145,8 +165,8 @@
   "call_abi": {
     "version": 1,
     "params": [
-      {"cast": "float*", "name": "q", "source": "output:q"},
-      {"cast": "float*", "name": "k", "source": "output:k"},
+      {"cast": "float*", "name": "q", "source": "output:q", "ports": ["input:q", "output:q"]},
+      {"cast": "float*", "name": "k", "source": "output:k", "ports": ["input:k", "output:k"]},
       {"name": "num_heads", "source": "dim:num_heads"},
       {"name": "num_kv_heads", "source": "dim:num_kv_heads"},
       {"name": "num_tokens", "source": "dim:seq_len"},

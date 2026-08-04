@@ -1,6 +1,16 @@
 {
   "id": "ck_residual_add_token_major_bf16_storage",
   "op": "residual_add",
+  "operation_interface": "residual_add.token_major.bf16_storage.v1",
+  "selection": {
+    "status": "production",
+    "priority": 100,
+    "equivalence_group": "residual_add.token_major.bf16_storage.v1",
+    "phases": [
+      "prefill",
+      "decode"
+    ]
+  },
   "variant": "fp32_buffer_bf16_storage",
   "quant": {
     "weight": "none",
@@ -15,6 +25,10 @@
         "T",
         "AE"
       ],
+      "layout": "token_major_contiguous",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required",
       "desc": "Residual input A [tokens, aligned_embed_dim]"
     },
     {
@@ -24,7 +38,11 @@
         "T",
         "AE"
       ],
-      "desc": "Residual input B [tokens, aligned_embed_dim]"
+      "layout": "token_major_contiguous",
+      "access": "read",
+      "storage_class": "scratch",
+      "consumption": "required",
+      "desc": "Residual input B [tokens, aligned_embed_dim] (saved residual scratch)"
     }
   ],
   "weights": [],
@@ -37,6 +55,10 @@
         "T",
         "AE"
       ],
+      "layout": "token_major_contiguous",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required",
       "desc": "Output [tokens, aligned_embed_dim]"
     }
   ],
@@ -138,17 +160,26 @@
       {
         "name": "a",
         "source": "activation:input",
-        "cast": "float*"
+        "cast": "float*",
+        "ports": [
+          "input:a"
+        ]
       },
       {
         "name": "b",
         "source": "scratch:residual",
-        "cast": "float*"
+        "cast": "float*",
+        "ports": [
+          "input:b"
+        ]
       },
       {
         "name": "out",
         "source": "output:out",
-        "cast": "float*"
+        "cast": "float*",
+        "ports": [
+          "output:out"
+        ]
       },
       {
         "name": "tokens",

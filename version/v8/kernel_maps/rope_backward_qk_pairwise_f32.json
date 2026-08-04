@@ -1,6 +1,8 @@
 {
   "id": "rope_backward_qk_pairwise_f32",
   "op": "rope_backward",
+  "operation_interface": "rope_backward.pairwise.fp32.v1",
+  "selection": {"status": "production", "priority": 100, "equivalence_group": "rope_backward.pairwise.fp32.v1", "phases": ["training", "backward"]},
   "variant": "fp32_qk_pairwise",
   "modes": {
     "inference": false,
@@ -13,101 +15,26 @@
     "output": "fp32"
   },
   "inputs": [
-    {
-      "name": "d_q_out",
-      "dtype": "fp32",
-      "shape": [
-        "H",
-        "T",
-        "D"
-      ],
-      "desc": "Gradient on pairwise-rotated Q"
-    },
-    {
-      "name": "d_k_out",
-      "dtype": "fp32",
-      "shape": [
-        "KV",
-        "T",
-        "D"
-      ],
-      "desc": "Gradient on pairwise-rotated K"
-    },
-    {
-      "name": "cos_cache",
-      "dtype": "fp32",
-      "shape": [
-        "max_T",
-        "D/2"
-      ],
-      "desc": "RoPE cosine cache"
-    },
-    {
-      "name": "sin_cache",
-      "dtype": "fp32",
-      "shape": [
-        "max_T",
-        "D/2"
-      ],
-      "desc": "RoPE sine cache"
-    }
+    {"name": "d_q_out", "dtype": "fp32", "shape": ["H", "T", "D"], "layout": "head_major_contiguous", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "Gradient on pairwise-rotated Q"},
+    {"name": "d_k_out", "dtype": "fp32", "shape": ["KV", "T", "D"], "layout": "head_major_contiguous", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "Gradient on pairwise-rotated K"},
+    {"name": "cos_cache", "dtype": "fp32", "shape": ["max_T", "D/2"], "layout": "row_major", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "RoPE cosine cache; read-only precomputed cos/sin cache"},
+    {"name": "sin_cache", "dtype": "fp32", "shape": ["max_T", "D/2"], "layout": "row_major", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "RoPE sine cache; read-only precomputed cos/sin cache"}
   ],
+  "weights": [],
   "outputs": [
-    {
-      "name": "d_q",
-      "dtype": "fp32",
-      "shape": [
-        "H",
-        "T",
-        "D"
-      ],
-      "desc": "Gradient on pre-RoPE Q"
-    },
-    {
-      "name": "d_k",
-      "dtype": "fp32",
-      "shape": [
-        "KV",
-        "T",
-        "D"
-      ],
-      "desc": "Gradient on pre-RoPE K"
-    }
+    {"name": "d_q", "dtype": "fp32", "shape": ["H", "T", "D"], "layout": "head_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Gradient on pre-RoPE Q"},
+    {"name": "d_k", "dtype": "fp32", "shape": ["KV", "T", "D"], "layout": "head_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Gradient on pre-RoPE K"}
   ],
   "scratch": [],
-  "dims": [
-    "H",
-    "KV",
-    "T",
-    "D",
-    "rotary_dim"
-  ],
+  "dims": ["H", "KV", "T", "D", "rotary_dim"],
   "params": [
-    {
-      "name": "aligned_head_dim",
-      "dtype": "int32",
-      "desc": "Aligned head dimension"
-    },
-    {
-      "name": "pos_offset",
-      "dtype": "int32",
-      "desc": "Position offset"
-    },
-    {
-      "name": "rotary_dim",
-      "dtype": "int32",
-      "desc": "RoPE rotary dimensions (only inverse-rotate first rotary_dim channels)"
-    }
+    {"name": "aligned_head_dim", "dtype": "int32", "desc": "Aligned head dimension"},
+    {"name": "pos_offset", "dtype": "int32", "desc": "Position offset"},
+    {"name": "rotary_dim", "dtype": "int32", "desc": "RoPE rotary dimensions (only inverse-rotate first rotary_dim channels)"}
   ],
   "parallelization": {
-    "supported": [
-      "head",
-      "token"
-    ],
-    "preferred": {
-      "prefill": "head",
-      "decode": "head"
-    },
+    "supported": ["head", "token"],
+    "preferred": {"prefill": "head", "decode": "head"},
     "strategies": [
       {
         "name": "head",
@@ -123,17 +50,26 @@
   "impl": {
     "function": "rope_backward_qk_pairwise_with_rotary_dim",
     "c_declaration": "void rope_backward_qk_pairwise_with_rotary_dim(const float *d_q_out, const float *d_k_out, float *d_q, float *d_k, const float *cos_cache, const float *sin_cache, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int pos_offset, int rotary_dim);",
-    "sources": [
-      "src/kernels/rope_kernels.c"
-    ],
+    "sources": ["src/kernels/rope_kernels.c"],
     "variants": [
-      {
-        "name": "default",
-        "requires": [],
-        "compile_flags": []
-      }
+      {"name": "default", "requires": [], "compile_flags": []}
     ]
   },
+  "call_abi": {"version": 1, "params": [
+    {"name": "d_q_out", "source": "activation:d_q_out", "cast": "const float*", "ports": ["input:d_q_out"]},
+    {"name": "d_k_out", "source": "activation:d_k_out", "cast": "const float*", "ports": ["input:d_k_out"]},
+    {"name": "d_q", "source": "output:d_q", "cast": "float*", "ports": ["output:d_q"]},
+    {"name": "d_k", "source": "output:d_k", "cast": "float*", "ports": ["output:d_k"]},
+    {"name": "cos_cache", "source": "runtime:rope_cos", "cast": "const float*", "ports": ["input:cos_cache"]},
+    {"name": "sin_cache", "source": "runtime:rope_sin", "cast": "const float*", "ports": ["input:sin_cache"]},
+    {"name": "num_heads", "source": "dim:num_heads"},
+    {"name": "num_kv_heads", "source": "dim:num_kv_heads"},
+    {"name": "num_tokens", "source": "dim:seq_len"},
+    {"name": "head_dim", "source": "dim:head_dim"},
+    {"name": "aligned_head_dim", "source": "dim:aligned_head_dim"},
+    {"name": "pos_offset", "source": "runtime:pos"},
+    {"name": "rotary_dim", "source": "dim:rotary_dim"}
+  ]},
   "tests": {
     "parity": [
       {

@@ -981,51 +981,6 @@
         }
       ]
     },
-    "kv_cache_store_f16": {
-      "note": "Store K,V into the packed FP16 decode KV cache.",
-      "params": [
-        {
-          "cast": "uint16_t*",
-          "name": "kv_cache_k",
-          "source": "runtime:kv_cache_k_layer_f16"
-        },
-        {
-          "cast": "uint16_t*",
-          "name": "kv_cache_v",
-          "source": "runtime:kv_cache_v_layer_f16"
-        },
-        {
-          "cast": "const float*",
-          "name": "k",
-          "source": "scratch:k_scratch"
-        },
-        {
-          "cast": "const float*",
-          "name": "v",
-          "source": "scratch:v_scratch"
-        },
-        {
-          "name": "layer",
-          "source": "runtime:layer"
-        },
-        {
-          "name": "pos",
-          "source": "runtime:pos"
-        },
-        {
-          "name": "num_kv_heads",
-          "source": "dim:num_kv_heads"
-        },
-        {
-          "name": "head_dim",
-          "source": "dim:head_dim"
-        },
-        {
-          "name": "max_seq_len",
-          "source": "dim:max_seq_len"
-        }
-      ]
-    },
     "layernorm_forward": {
       "note": "Generic LayerNorm binding with explicit gamma and beta.",
       "params": [
@@ -1535,62 +1490,6 @@
         {
           "name": "num_heads",
           "source": "dim:num_heads"
-        },
-        {
-          "name": "num_tokens",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "head_dim",
-          "source": "dim:head_dim"
-        },
-        {
-          "name": "aligned_head_dim",
-          "source": "dim:head_dim"
-        },
-        {
-          "name": "pos_offset",
-          "source": "runtime:pos"
-        },
-        {
-          "name": "rotary_dim",
-          "source": "dim:rotary_dim"
-        },
-        {
-          "name": "freq_base",
-          "source": "dim:rope_freq_base"
-        }
-      ]
-    },
-    "rope_forward_qk_split_direct_f32": {
-      "note": "Generic split-half direct RoPE with per-layer theta/rotary_dim and optional frequency factors.",
-      "params": [
-        {
-          "cast": "float*",
-          "name": "q",
-          "source": "scratch:q_scratch"
-        },
-        {
-          "cast": "float*",
-          "name": "k",
-          "source": "scratch:k_scratch"
-        },
-        {
-          "cast": "const float*",
-          "name": "freq_factors",
-          "source": "weight_f:rope_freqs"
-        },
-        {
-          "name": "use_freq_factors",
-          "source": "dim:use_rope_freq_factors"
-        },
-        {
-          "name": "num_heads",
-          "source": "dim:num_heads"
-        },
-        {
-          "name": "num_kv_heads",
-          "source": "dim:num_kv_heads"
         },
         {
           "name": "num_tokens",

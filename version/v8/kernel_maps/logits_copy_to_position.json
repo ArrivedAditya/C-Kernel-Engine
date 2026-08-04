@@ -1,18 +1,21 @@
 {
   "id": "logits_copy_to_position",
   "op": "logits_store_indexed",
+  "operation_interface": "logits_store_indexed.fp32.v1",
+  "selection": {"status": "production", "priority": 100, "equivalence_group": "logits_store_indexed.fp32.v1", "phases": ["decode"]},
   "variant": "fp32",
   "quant": {
     "activation": "fp32",
     "output": "fp32"
   },
   "inputs": [
-    {"name": "src", "dtype": "fp32", "shape": ["vocab_size"], "desc": "Source logits buffer (single token) [vocab_size]"}
+    {"name": "src", "dtype": "fp32", "shape": ["vocab_size"], "layout": "contiguous", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "Source logits buffer (single token) [vocab_size]"}
   ],
+  "weights": [],
   "outputs": [
-    {"name": "dst", "dtype": "fp32", "shape": ["max_seq_len", "vocab_size"], "desc": "Destination logits buffer (position-indexed) [max_seq_len, vocab_size]"}
+    {"name": "dst", "dtype": "fp32", "shape": ["max_seq_len", "vocab_size"], "layout": "token_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Destination logits buffer (position-indexed) [max_seq_len, vocab_size]"}
   ],
-  "dims": ["vocab_size", "position"],
+  "dims": ["vocab_size", "position", "max_seq_len"],
   "params": [
     {"name": "position", "type": "int", "desc": "Token position index to copy logits to"},
     {"name": "vocab_size", "type": "int", "desc": "Vocabulary size (number of floats to copy)"}
@@ -22,5 +25,11 @@
     "c_declaration": "void logits_copy_to_position(const float *src, float *dst, int position, int vocab_size);",
     "sources": ["src/kernels/kv_cache_kernels.c"]
   },
+  "call_abi": {"version": 1, "params": [
+    {"name": "src", "source": "activation:src", "cast": "const float*", "ports": ["input:src"]},
+    {"name": "dst", "source": "output:dst", "cast": "float*", "ports": ["output:dst"]},
+    {"name": "position", "source": "runtime:pos"},
+    {"name": "vocab_size", "source": "dim:vocab_size"}
+  ]},
   "notes": "Copy logits from scratch buffer to position-indexed location in logits buffer. Used in decode mode to place single-token logits at the correct sequence position. This allows codegen to be 'dumb' - just emit kernel calls, no runtime if-statements."
 }

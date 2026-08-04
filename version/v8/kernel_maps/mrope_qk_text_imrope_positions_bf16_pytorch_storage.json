@@ -1,18 +1,20 @@
 {
   "id": "mrope_qk_text_imrope_positions_bf16_pytorch_storage",
   "op": "rope",
+  "operation_interface": "mrope.text_imrope_positions.bf16_pytorch_storage.v1",
+  "selection": {"status": "production", "priority": 100, "equivalence_group": "mrope.text_imrope_positions.bf16_pytorch_storage.v1", "phases": ["prefill", "decode"]},
   "variant": "fp32_head_major_text_imrope_positions_pytorch_bf16_storage",
   "quant": {"weight": "none", "activation": "fp32", "output": "bf16"},
   "inputs": [
-    {"name": "q", "dtype": "fp32", "shape": ["H", "T", "D"]},
-    {"name": "k", "dtype": "fp32", "shape": ["KV", "T", "D"]},
-    {"name": "positions", "dtype": "i32", "shape": [4, "T"]}
+    {"name": "q", "dtype": "fp32", "shape": ["H", "T", "D"], "layout": "head_major_contiguous", "access": "read", "storage_class": "scratch", "consumption": "required", "desc": "Query tensor [heads, tokens, head_dim] rotated in-place (fp32 buffer, BF16 storage semantics)"},
+    {"name": "k", "dtype": "fp32", "shape": ["KV", "T", "D"], "layout": "head_major_contiguous", "access": "read", "storage_class": "scratch", "consumption": "required", "desc": "Key tensor [kv_heads, tokens, head_dim] rotated in-place (fp32 buffer, BF16 storage semantics)"},
+    {"name": "positions", "dtype": "i32", "shape": [4, "T"], "layout": "row_major", "access": "read", "storage_class": "activation", "consumption": "required", "desc": "Explicit 4-section M-RoPE positions [4, num_tokens] (int32, section-major)"}
   ],
   "weights": [],
   "activations": [],
   "outputs": [
-    {"name": "q", "dtype": "bf16", "shape": ["H", "T", "D"]},
-    {"name": "k", "dtype": "bf16", "shape": ["KV", "T", "D"]}
+    {"name": "q", "dtype": "fp32", "shape": ["H", "T", "D"], "layout": "head_major_contiguous", "access": "write", "storage_class": "scratch", "consumption": "required", "alias_of": "input:q", "desc": "Query tensor after explicit-position interleaved M-RoPE, BF16 RNE storage values in the same fp32 buffer"},
+    {"name": "k", "dtype": "fp32", "shape": ["KV", "T", "D"], "layout": "head_major_contiguous", "access": "write", "storage_class": "scratch", "consumption": "required", "alias_of": "input:k", "desc": "Key tensor after explicit-position interleaved M-RoPE, BF16 RNE storage values in the same fp32 buffer"}
   ],
   "scratch": [],
   "dims": ["H", "KV", "T", "D", "n_dims"],
@@ -64,9 +66,9 @@
   "call_abi": {
     "version": 1,
     "params": [
-      {"cast": "float*", "name": "q", "source": "output:q"},
-      {"cast": "float*", "name": "k", "source": "output:k"},
-      {"cast": "const int32_t*", "name": "positions", "source": "activation:positions"},
+      {"cast": "float*", "name": "q", "source": "output:q", "ports": ["input:q", "output:q"]},
+      {"cast": "float*", "name": "k", "source": "output:k", "ports": ["input:k", "output:k"]},
+      {"cast": "const int32_t*", "name": "positions", "source": "activation:positions", "ports": ["input:positions"]},
       {"name": "num_heads", "source": "dim:num_heads"},
       {"name": "num_kv_heads", "source": "dim:num_kv_heads"},
       {"name": "num_tokens", "source": "dim:seq_len"},
