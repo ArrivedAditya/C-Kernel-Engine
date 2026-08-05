@@ -322,6 +322,9 @@ def test_step_download_gguf_rejects_non_gguf_payload(tmp_path: Path, monkeypatch
 
     monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hf_module(hf_hub_download=_error_page))
     monkeypatch.setattr(ck_run_v8, "_cache_roots", lambda: [cache_dir])
+    # The error-page case is transient and retried; disable outer retries so
+    # this test stays fast (retry behavior is covered separately below).
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRIES", "0")
 
     try:
         ck_run_v8.step_download_gguf("test/fake-repo-GGUF", "fake-model.gguf", cache_dir)
@@ -362,6 +365,9 @@ def test_ensure_tokenizer_files_drops_invalid_json_payload(tmp_path: Path, monke
 
     monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hf_module(hf_hub_download=_error_page))
     monkeypatch.setattr(ck_run_v8, "_cache_roots", lambda: [tmp_path / "empty-cache"])
+    # The error-page case is transient and retried; disable outer retries so
+    # this test stays fast (retry behavior is covered separately below).
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRIES", "0")
 
     ck_run_v8.ensure_tokenizer_files("test/fake-repo-GGUF", work_dir)
 
@@ -385,3 +391,215 @@ def test_ensure_tokenizer_files_keeps_valid_json_payload(tmp_path: Path, monkeyp
     assert json.loads((work_dir / "tokenizer.json").read_text(encoding="utf-8")) == {
         "model": {"type": "BPE"}
     }
+
+
+# --- Rate-limit-aware outer retries -------------------------------------------
+
+
+class _FakeResponse:
+    def __init__(self, status_code: int, headers: dict | None = None) -> None:
+        self.status_code = status_code
+        self.headers = headers or {}
+
+
+class _FakeHttpError(RuntimeError):
+    def __init__(self, status_code: int, headers: dict | None = None) -> None:
+        super().__init__(
+            f"HTTP Error {status_code} thrown while requesting HEAD https://huggingface.co/x"
+        )
+        self.response = _FakeResponse(status_code, headers)
+
+
+def _record_sleeps(monkeypatch) -> list:
+    sleeps: list[float] = []
+    monkeypatch.setattr(ck_run_v8.time, "sleep", lambda seconds: sleeps.append(seconds))
+    return sleeps
+
+
+def test_step_download_gguf_retries_429_honoring_retry_after(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cache_dir = tmp_path / "cache"
+    payload = b"GGUF" + b"\x02" * 64
+    calls = {"count": 0}
+
+    def _flaky_download(**kwargs):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise _FakeHttpError(429, headers={"Retry-After": "120"})
+        target = Path(kwargs["local_dir"]) / kwargs["filename"]
+        target.write_bytes(payload)
+        return str(target)
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hf_module(hf_hub_download=_flaky_download))
+    monkeypatch.setattr(ck_run_v8, "_direct_hf_download_gguf", lambda *args: False)
+    monkeypatch.setattr(ck_run_v8, "_cache_roots", lambda: [cache_dir])
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRIES", "3")
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRY_BASE_SEC", "15")
+    sleeps = _record_sleeps(monkeypatch)
+
+    result = ck_run_v8.step_download_gguf("test/fake-repo-GGUF", "fake-model.gguf", cache_dir)
+
+    assert calls["count"] == 3
+    assert result.read_bytes() == payload
+    # Retry-After (120s) exceeds the computed backoff (15/30 + jitter <= 35s),
+    # so the server hint wins on both waits.
+    assert sleeps == [120.0, 120.0]
+
+
+def test_step_download_gguf_404_fails_immediately_without_retry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cache_dir = tmp_path / "cache"
+    calls = {"count": 0}
+
+    def _missing(**kwargs):
+        calls["count"] += 1
+        raise _FakeHttpError(404)
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hf_module(hf_hub_download=_missing))
+    monkeypatch.setattr(ck_run_v8, "_direct_hf_download_gguf", lambda *args: False)
+    monkeypatch.setattr(ck_run_v8, "_cache_roots", lambda: [cache_dir])
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRIES", "3")
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRY_BASE_SEC", "0")
+    sleeps = _record_sleeps(monkeypatch)
+
+    try:
+        ck_run_v8.step_download_gguf("test/fake-repo-GGUF", "absent.gguf", cache_dir)
+    except ck_run_v8.V8DownloadError as exc:
+        assert ck_run_v8.DOWNLOAD_ERROR_MARKER in str(exc)
+        assert "404" in str(exc)
+    else:
+        raise AssertionError("404 download did not fail")
+    assert calls["count"] == 1
+    assert sleeps == []
+
+
+def test_step_download_gguf_exhausted_retries_raise_marked_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cache_dir = tmp_path / "cache"
+    calls = {"count": 0}
+
+    def _always_limited(**kwargs):
+        calls["count"] += 1
+        raise _FakeHttpError(429)
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hf_module(hf_hub_download=_always_limited))
+    monkeypatch.setattr(ck_run_v8, "_direct_hf_download_gguf", lambda *args: False)
+    monkeypatch.setattr(ck_run_v8, "_cache_roots", lambda: [cache_dir])
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRIES", "2")
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRY_BASE_SEC", "0.01")
+    sleeps = _record_sleeps(monkeypatch)
+
+    try:
+        ck_run_v8.step_download_gguf("test/fake-repo-GGUF", "fake-model.gguf", cache_dir)
+    except ck_run_v8.V8DownloadError as exc:
+        message = str(exc)
+        assert ck_run_v8.DOWNLOAD_ERROR_MARKER in message
+        assert "429" in message
+        assert "3/3" in message
+    else:
+        raise AssertionError("exhausted 429 retries did not raise V8DownloadError")
+    assert calls["count"] == 3
+    assert len(sleeps) == 2
+
+
+def test_download_retry_backoff_bounds_with_jitter(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRIES", "3")
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRY_BASE_SEC", "15")
+    sleeps = _record_sleeps(monkeypatch)
+
+    def _always_limited():
+        raise _FakeHttpError(503)
+
+    try:
+        ck_run_v8._run_with_download_retries("test/fake-repo-GGUF", "fake-model.gguf", _always_limited)
+    except ck_run_v8.V8DownloadError:
+        pass
+    else:
+        raise AssertionError("persistent 503 did not raise V8DownloadError")
+
+    assert len(sleeps) == 3
+    for index, sleep_s in enumerate(sleeps):
+        base = 15.0 * (2 ** index)
+        assert base <= sleep_s <= base + 5.0
+
+
+def test_download_retry_after_overrides_computed_backoff(monkeypatch) -> None:
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRIES", "1")
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRY_BASE_SEC", "15")
+    sleeps = _record_sleeps(monkeypatch)
+    attempts = {"count": 0}
+
+    def _limited_once():
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise _FakeHttpError(429, headers={"Retry-After": "90"})
+        return "ok"
+
+    assert ck_run_v8._run_with_download_retries("test/repo", "file.gguf", _limited_once) == "ok"
+    assert sleeps == [90.0]
+
+
+def test_retry_after_ignores_unparseable_values() -> None:
+    error = _FakeHttpError(429, headers={"Retry-After": "soon"})
+    assert ck_run_v8._retry_after_seconds(error) is None
+    assert ck_run_v8._retry_after_seconds(_FakeHttpError(429, headers={"Retry-After": "45"})) == 45.0
+    assert ck_run_v8._retry_after_seconds(_FakeHttpError(429)) is None
+
+
+def test_step_download_gguf_retries_error_page_then_succeeds(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cache_dir = tmp_path / "cache"
+    payload = b"GGUF" + b"\x03" * 64
+    calls = {"count": 0}
+
+    def _error_page_then_valid(**kwargs):
+        calls["count"] += 1
+        target = Path(kwargs["local_dir"]) / kwargs["filename"]
+        target.write_bytes(HTML_ERROR_PAGE if calls["count"] == 1 else payload)
+        return str(target)
+
+    monkeypatch.setitem(
+        sys.modules, "huggingface_hub", _fake_hf_module(hf_hub_download=_error_page_then_valid)
+    )
+    monkeypatch.setattr(ck_run_v8, "_cache_roots", lambda: [cache_dir])
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRIES", "3")
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRY_BASE_SEC", "0.01")
+    sleeps = _record_sleeps(monkeypatch)
+
+    result = ck_run_v8.step_download_gguf("test/fake-repo-GGUF", "fake-model.gguf", cache_dir)
+
+    assert calls["count"] == 2
+    assert result.read_bytes() == payload
+    assert len(sleeps) == 1
+
+
+def test_ensure_tokenizer_files_retries_429_then_keeps_valid_json(
+    tmp_path: Path, monkeypatch
+) -> None:
+    work_dir = tmp_path / "work"
+    calls = {"count": 0}
+
+    def _flaky_tokenizer(**kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise _FakeHttpError(429)
+        target = Path(kwargs["local_dir"]) / "tokenizer.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('{"model": {"type": "BPE"}}', encoding="utf-8")
+        return str(target)
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hf_module(hf_hub_download=_flaky_tokenizer))
+    monkeypatch.setattr(ck_run_v8, "_cache_roots", lambda: [tmp_path / "empty-cache"])
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRIES", "3")
+    monkeypatch.setenv("CK_V8_DOWNLOAD_RETRY_BASE_SEC", "0.01")
+    sleeps = _record_sleeps(monkeypatch)
+
+    ck_run_v8.ensure_tokenizer_files("test/fake-repo-GGUF", work_dir)
+
+    assert calls["count"] == 2
+    assert len(sleeps) == 1
+    assert (work_dir / "tokenizer.json").exists()
