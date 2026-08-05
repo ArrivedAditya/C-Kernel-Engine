@@ -201,6 +201,41 @@ def _hf_hub_cache_dir(cache_dir: Path) -> Path:
     return cache_dir / ".hf-hub"
 
 
+# Marker shared with run_regression_v8.py: when a model/tokenizer download
+# fails due to HuggingFace rate limiting (HTTP 429) or an HTML error page, the
+# regression runner classifies the failure as environment_unavailable rather
+# than build_failure. Keep this string in sync with ENVIRONMENT_FAILURE_MARKER
+# in version/v8/scripts/run_regression_v8.py.
+DOWNLOAD_ERROR_MARKER = "CK_V8_DOWNLOAD_FAILED"
+
+
+class V8DownloadError(RuntimeError):
+    """Download failed after retries or yielded an error page, not a code bug."""
+
+
+def _download_failure(repo_id: str, filename: str, detail: str) -> V8DownloadError:
+    return V8DownloadError(
+        f"{DOWNLOAD_ERROR_MARKER}: download failed for {repo_id}/{filename}: {detail} "
+        "(HuggingFace rate limit (HTTP 429) or error page received)"
+    )
+
+
+def _validate_gguf_magic(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            return handle.read(4) == b"GGUF"
+    except OSError:
+        return False
+
+
+def _validate_json_file(path: Path) -> bool:
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+        return True
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False
+
+
 def _is_arm_machine(machine: str) -> bool:
     return machine in {"aarch64", "arm64", "armv7l", "armv8l"}
 
@@ -349,24 +384,33 @@ def _direct_hf_download_gguf(repo_id: str, filename: str, dst: Path) -> bool:
     tmp_dst = dst.with_suffix(dst.suffix + ".part")
     token = os.environ.get("HF_TOKEN", "").strip()
 
+    def _promote() -> bool:
+        # Never promote an HTML error page (e.g. an HTTP 429 body) to the
+        # final artifact path: validate the GGUF magic before the rename.
+        if tmp_dst.exists() and _validate_gguf_magic(tmp_dst):
+            tmp_dst.replace(dst)
+            return True
+        tmp_dst.unlink(missing_ok=True)
+        return False
+
     wget = shutil.which("wget")
     if wget:
         cmd = [wget, "-c", url, "-O", str(tmp_dst)]
         if token:
             cmd[1:1] = ["--header", f"Authorization: Bearer {token}"]
         proc = subprocess.run(cmd, check=False)
-        if proc.returncode == 0 and tmp_dst.exists():
-            tmp_dst.replace(dst)
+        if proc.returncode == 0 and _promote():
             return True
 
     curl = shutil.which("curl")
     if curl:
-        cmd = [curl, "-L", "--continue-at", "-", url, "-o", str(tmp_dst)]
+        # --fail: without it curl exits 0 on HTTP 4xx/5xx and saves the error
+        # page body, which then poisons the GGUF cache path.
+        cmd = [curl, "-fL", "--continue-at", "-", url, "-o", str(tmp_dst)]
         if token:
             cmd[1:1] = ["-H", f"Authorization: Bearer {token}"]
         proc = subprocess.run(cmd, check=False)
-        if proc.returncode == 0 and tmp_dst.exists():
-            tmp_dst.replace(dst)
+        if proc.returncode == 0 and _promote():
             return True
 
     return False
@@ -677,12 +721,15 @@ def step_download(model_id: str, cache_dir: Path, force: bool = False) -> Path:
         from huggingface_hub import snapshot_download
     except ImportError as exc:
         raise RuntimeError("huggingface_hub not installed") from exc
-    snapshot_download(
-        repo_id=model_id,
-        local_dir=str(model_dir),
-        cache_dir=str(_hf_hub_cache_dir(cache_dir)),
-        ignore_patterns=["*.bin", "*.msgpack", "*.h5", "*.ot"],
-    )
+    try:
+        snapshot_download(
+            repo_id=model_id,
+            local_dir=str(model_dir),
+            cache_dir=str(_hf_hub_cache_dir(cache_dir)),
+            ignore_patterns=["*.bin", "*.msgpack", "*.h5", "*.ot"],
+        )
+    except Exception as exc:
+        raise _download_failure(model_id, "(snapshot)", f"HTTP error after retries: {exc}") from exc
     return model_dir
 
 
@@ -746,10 +793,18 @@ def step_download_gguf(repo_id: str, filename: str, cache_dir: Path, force: bool
         downloaded = Path(
             hf_hub_download(**download_kwargs)
         )
-    except Exception:
+    except Exception as exc:
         if _direct_hf_download_gguf(repo_id, filename, gguf_path):
             return gguf_path
-        raise
+        raise _download_failure(repo_id, filename, f"HTTP error after retries: {exc}") from exc
+    if not _validate_gguf_magic(downloaded):
+        # The hub returned a non-GGUF payload (e.g. a rate-limit error page).
+        # Drop it instead of leaving it at the final artifact path.
+        try:
+            downloaded.unlink()
+        except OSError:
+            pass
+        raise _download_failure(repo_id, filename, "server returned a non-GGUF payload")
     if downloaded.resolve() != gguf_path.resolve():
         shutil.move(str(downloaded), str(gguf_path))
     return gguf_path
@@ -804,7 +859,11 @@ def ensure_tokenizer_files(model_id: str, work_dir: Path) -> None:
                 cache_dir=str(_hf_hub_cache_dir(CACHE_DIR)),
             )
             if tokenizer_path.exists():
-                return
+                if _validate_json_file(tokenizer_path):
+                    return
+                # A rate-limit/error-page payload must not linger at the
+                # tokenizer path; drop it and try the next candidate.
+                tokenizer_path.unlink(missing_ok=True)
         except Exception:
             continue
 

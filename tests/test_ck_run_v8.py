@@ -229,3 +229,159 @@ def test_validate_runtime_bundle_requires_all_three_libraries(
         assert "libckernel_tokenizer.so" in str(exc)
     else:
         raise AssertionError("incomplete runtime bundle was accepted")
+
+
+# --- Download integrity (nightly HF rate-limit resilience) -------------------
+
+HTML_ERROR_PAGE = b"<!DOCTYPE html>\n<html><body>429 Too Many Requests</body></html>"
+
+
+def _fake_hf_module(**overrides):
+    import types
+
+    def _unavailable(**kwargs):
+        raise RuntimeError("huggingface_hub stubbed as unavailable")
+
+    module = types.ModuleType("huggingface_hub")
+    module.hf_hub_download = overrides.get("hf_hub_download", _unavailable)
+    module.snapshot_download = overrides.get("snapshot_download", _unavailable)
+    return module
+
+
+def _write_output_arg(cmd, payload: bytes):
+    out_path = Path(cmd[cmd.index("-O") + 1] if "-O" in cmd else cmd[cmd.index("-o") + 1])
+    out_path.write_bytes(payload)
+    return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+
+def test_direct_hf_download_rejects_html_error_page(tmp_path: Path, monkeypatch) -> None:
+    dst = tmp_path / "model.gguf"
+    monkeypatch.setattr(
+        ck_run_v8.shutil,
+        "which",
+        lambda name: None if name == "wget" else f"/usr/bin/{name}",
+    )
+    monkeypatch.setattr(
+        ck_run_v8.subprocess,
+        "run",
+        lambda cmd, **kwargs: _write_output_arg(cmd, HTML_ERROR_PAGE),
+    )
+
+    assert not ck_run_v8._direct_hf_download_gguf("test/fake-repo-GGUF", "model.gguf", dst)
+    assert not dst.exists()
+    assert not dst.with_suffix(".gguf.part").exists()
+
+
+def test_direct_hf_download_promotes_valid_gguf(tmp_path: Path, monkeypatch) -> None:
+    dst = tmp_path / "model.gguf"
+    payload = b"GGUF" + b"\x00" * 32
+    monkeypatch.setattr(
+        ck_run_v8.shutil,
+        "which",
+        lambda name: None if name == "wget" else f"/usr/bin/{name}",
+    )
+    monkeypatch.setattr(
+        ck_run_v8.subprocess,
+        "run",
+        lambda cmd, **kwargs: _write_output_arg(cmd, payload),
+    )
+
+    assert ck_run_v8._direct_hf_download_gguf("test/fake-repo-GGUF", "model.gguf", dst)
+    assert dst.read_bytes() == payload
+
+
+def test_step_download_gguf_raises_distinct_error_after_429_retries(
+    tmp_path: Path, monkeypatch
+) -> None:
+    def _rate_limited(**kwargs):
+        raise RuntimeError("HTTP Error 429 thrown while requesting HEAD https://huggingface.co/x")
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hf_module(hf_hub_download=_rate_limited))
+    monkeypatch.setattr(ck_run_v8, "_direct_hf_download_gguf", lambda *args: False)
+    monkeypatch.setattr(ck_run_v8, "_cache_roots", lambda: [tmp_path / "cache"])
+
+    try:
+        ck_run_v8.step_download_gguf("test/fake-repo-GGUF", "fake-model.gguf", tmp_path / "cache")
+    except ck_run_v8.V8DownloadError as exc:
+        message = str(exc)
+        assert ck_run_v8.DOWNLOAD_ERROR_MARKER in message
+        assert "429" in message
+        assert "rate limit" in message
+    else:
+        raise AssertionError("429-exhausted download did not raise V8DownloadError")
+    assert not (tmp_path / "cache" / "test--fake-repo-GGUF" / "fake-model.gguf").exists()
+
+
+def test_step_download_gguf_rejects_non_gguf_payload(tmp_path: Path, monkeypatch) -> None:
+    cache_dir = tmp_path / "cache"
+
+    def _error_page(**kwargs):
+        target = Path(kwargs["local_dir"]) / kwargs["filename"]
+        target.write_bytes(HTML_ERROR_PAGE)
+        return str(target)
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hf_module(hf_hub_download=_error_page))
+    monkeypatch.setattr(ck_run_v8, "_cache_roots", lambda: [cache_dir])
+
+    try:
+        ck_run_v8.step_download_gguf("test/fake-repo-GGUF", "fake-model.gguf", cache_dir)
+    except ck_run_v8.V8DownloadError as exc:
+        assert ck_run_v8.DOWNLOAD_ERROR_MARKER in str(exc)
+    else:
+        raise AssertionError("HTML error page payload was accepted as a GGUF")
+    assert not (cache_dir / "test--fake-repo-GGUF" / "fake-model.gguf").exists()
+
+
+def test_step_download_gguf_moves_valid_payload_into_place(tmp_path: Path, monkeypatch) -> None:
+    cache_dir = tmp_path / "cache"
+    payload = b"GGUF" + b"\x01" * 64
+
+    def _valid_download(**kwargs):
+        staging = Path(kwargs["local_dir"]) / ".staging" / kwargs["filename"]
+        staging.parent.mkdir(parents=True, exist_ok=True)
+        staging.write_bytes(payload)
+        return str(staging)
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hf_module(hf_hub_download=_valid_download))
+    monkeypatch.setattr(ck_run_v8, "_cache_roots", lambda: [cache_dir])
+
+    result = ck_run_v8.step_download_gguf("test/fake-repo-GGUF", "fake-model.gguf", cache_dir)
+
+    assert result == cache_dir / "test--fake-repo-GGUF" / "fake-model.gguf"
+    assert result.read_bytes() == payload
+
+
+def test_ensure_tokenizer_files_drops_invalid_json_payload(tmp_path: Path, monkeypatch) -> None:
+    work_dir = tmp_path / "work"
+
+    def _error_page(**kwargs):
+        target = Path(kwargs["local_dir"]) / "tokenizer.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(HTML_ERROR_PAGE)
+        return str(target)
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hf_module(hf_hub_download=_error_page))
+    monkeypatch.setattr(ck_run_v8, "_cache_roots", lambda: [tmp_path / "empty-cache"])
+
+    ck_run_v8.ensure_tokenizer_files("test/fake-repo-GGUF", work_dir)
+
+    assert not (work_dir / "tokenizer.json").exists()
+
+
+def test_ensure_tokenizer_files_keeps_valid_json_payload(tmp_path: Path, monkeypatch) -> None:
+    work_dir = tmp_path / "work"
+
+    def _valid_json(**kwargs):
+        target = Path(kwargs["local_dir"]) / "tokenizer.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('{"model": {"type": "BPE"}}', encoding="utf-8")
+        return str(target)
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hf_module(hf_hub_download=_valid_json))
+    monkeypatch.setattr(ck_run_v8, "_cache_roots", lambda: [tmp_path / "empty-cache"])
+
+    ck_run_v8.ensure_tokenizer_files("test/fake-repo-GGUF", work_dir)
+
+    assert json.loads((work_dir / "tokenizer.json").read_text(encoding="utf-8")) == {
+        "model": {"type": "BPE"}
+    }

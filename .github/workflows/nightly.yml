@@ -263,12 +263,36 @@ jobs:
           print(f"fast regression should_run={run} ({reason})")
           PY
 
+      - name: Cache v8 regression model artifacts
+        # GGUFs are immutable and the manifest pins exact filenames, so a
+        # manifest-hash key is correct. Restoring a warm cache avoids the
+        # HuggingFace anonymous rate limit (HTTP 429) that otherwise fails
+        # every family with a download error.
+        if: steps.regression_scope.outputs.should_run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cache/ck-engine-v8/models
+          key: v8-regression-models-${{ hashFiles('version/v8/regression/families.json') }}
+          restore-keys: |
+            v8-regression-models-
+
+      - name: Cache HuggingFace tokenizer oracle downloads
+        # The tokenizer parity gates (make test-tokenizer-special) pull the HF
+        # oracle tokenizer through HF_HOME; cache it to avoid anonymous 429s.
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.cache/huggingface
+          key: nightly-hf-tokenizers-${{ hashFiles('unittest/test_true_bpe_special_tokens.py') }}
+          restore-keys: |
+            nightly-hf-tokenizers-
+
       - name: Run Fast Regression
         id: run_fast_regression
         if: steps.regression_scope.outputs.should_run == 'true'
         continue-on-error: true
         env:
-          CK_CACHE_DIR: ${{ runner.temp }}/ck-engine-v8/models
+          CK_CACHE_DIR: ${{ github.workspace }}/.cache/ck-engine-v8/models
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           set -o pipefail
           echo "=== Running Fast Regression ==="
@@ -280,6 +304,7 @@ jobs:
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         env:
           HF_HOME: ${{ runner.temp }}/huggingface
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           avail_kb=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)
           free_kb=$(df -Pk "${RUNNER_TEMP}" | awk 'NR==2 {print $4}')
@@ -303,6 +328,12 @@ jobs:
           fi
 
       - name: Run Nightly Test Suite
+        env:
+          # huggingface_hub/transformers pick up HF_TOKEN automatically; the
+          # env var is simply empty when the secret is not configured (forks,
+          # local runs), which must not break the workflow.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_HOME: ${{ github.workspace }}/.cache/huggingface
         run: |
           echo "=== Running Full Nightly Test Suite ==="
           echo "Includes: 30+ kernel tests, BF16, quantization, training tests"
@@ -435,6 +466,16 @@ jobs:
               "note": f"make regression-fast did not run for this workflow event ({os.environ.get('REGRESSION_REASON', 'not requested')}).",
           }
 
+          def _regression_row_status(fam):
+              failure_class = str(fam.get("failure_class", "pass"))
+              if failure_class == "pass":
+                  return "PASS"
+              if failure_class == "environment_unavailable":
+                  # Download/rate-limit failure: environment issue, not a code
+                  # regression. Show SKIP with the cause in failure_detail.
+                  return "SKIP"
+              return "FAIL"
+
           if summary_files:
               latest_summary = max(summary_files, key=lambda p: p.stat().st_mtime)
               summary = json.loads(latest_summary.read_text(encoding="utf-8"))
@@ -446,7 +487,7 @@ jobs:
                   family_rows.append({
                       "family_id": fam.get("family_id"),
                       "label": fam.get("label"),
-                      "status": "PASS" if str(fam.get("failure_class", "pass")) == "pass" else "FAIL",
+                      "status": _regression_row_status(fam),
                       "build_status": fam.get("build_status"),
                       "smoke_status": fam.get("smoke_status"),
                       "coherence_status": fam.get("coherence_status"),
@@ -643,6 +684,8 @@ jobs:
 
       - name: Run v6.6 E2E Tests
         if: github.event_name == 'workflow_dispatch' && inputs.run_v66_archive
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           echo "=== Running v6.6 E2E Tests ==="
           echo "Tests the v6.6 pipeline: download -> convert -> IR -> codegen -> compile -> test"
@@ -658,6 +701,8 @@ jobs:
 
       - name: Run v6.6 Strict Parity Matrix (runtime-required)
         if: github.event_name == 'workflow_dispatch' && inputs.run_v66_archive
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           echo "=== Running v6.6 Strict Parity Matrix ==="
           echo "Enforces runtime-required parity checks (no SKIP pass-through)."

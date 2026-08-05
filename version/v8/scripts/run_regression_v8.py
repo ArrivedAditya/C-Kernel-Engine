@@ -44,6 +44,15 @@ SKIP = "SKIP"
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _MISSING = object()
 
+# Marker emitted by ck_run_v8.py (DOWNLOAD_ERROR_MARKER) when a model or
+# tokenizer download fails due to HuggingFace rate limiting (HTTP 429) or an
+# HTML error page. These are environment/infrastructure failures, not code
+# regressions, so they classify as environment_unavailable, not build_failure.
+# Keep this string in sync with DOWNLOAD_ERROR_MARKER in
+# version/v8/scripts/ck_run_v8.py.
+ENVIRONMENT_FAILURE_MARKER = "CK_V8_DOWNLOAD_FAILED"
+ENVIRONMENT_FAILURE_CLASS = "environment_unavailable"
+
 
 @dataclass(frozen=True)
 class PromptSpec:
@@ -602,6 +611,17 @@ def audit_runtime_contract(
     return result
 
 
+def _is_environment_failure(prompt_rows: list[dict[str, Any]]) -> bool:
+    """True when a failed prompt run shows the v8 download-failure marker."""
+    for row in prompt_rows:
+        if row.get("status") == PASS:
+            continue
+        output = f"{row.get('stdout') or ''}\n{row.get('stderr') or ''}"
+        if ENVIRONMENT_FAILURE_MARKER in output:
+            return True
+    return False
+
+
 def classify_family_result(
     *,
     build_status: str,
@@ -610,7 +630,14 @@ def classify_family_result(
     coherence_gate: bool,
     contract_result: dict[str, Any],
     failure_reason: str,
+    environment_failure: bool = False,
 ) -> tuple[str, str]:
+    if environment_failure and (build_status != PASS or smoke_status != PASS):
+        return (
+            ENVIRONMENT_FAILURE_CLASS,
+            "model/tokenizer download failed: HuggingFace rate limit (HTTP 429) "
+            "or error page received; environment issue, not a code regression",
+        )
     if build_status != PASS:
         return "build_failure", failure_reason or "build/runtime command failed"
     if smoke_status != PASS:
@@ -749,6 +776,7 @@ def run_family(
         coherence_gate=family.coherence_gate,
         contract_result=contract_result,
         failure_reason=failure_reason,
+        environment_failure=_is_environment_failure(prompt_rows),
     )
     overall = PASS if failure_class == "pass" else FAIL
 
