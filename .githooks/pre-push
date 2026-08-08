@@ -153,6 +153,9 @@ cleanup_prepush_environment() {
     if [ "$PREPUSH_ENV_LINK_CREATED" = "1" ]; then
         rm -f "$ROOT_DIR/.venv"
     fi
+    if [ -n "${CHANGE_METADATA_LOG:-}" ]; then
+        rm -f "$CHANGE_METADATA_LOG"
+    fi
 }
 trap cleanup_prepush_environment EXIT
 
@@ -168,8 +171,12 @@ ZERO_SHA="0000000000000000000000000000000000000000"
 PUSH_TARGETS=()
 PUSH_REMOTE_SHAS=()
 PUSH_CHANGED_FILES=()
+PUSH_RECORDS_SEEN=0
+PUSH_DELETIONS_SEEN=0
 while read -r local_ref local_sha remote_ref remote_sha; do
+    PUSH_RECORDS_SEEN=$((PUSH_RECORDS_SEEN + 1))
     if [ -z "${local_sha:-}" ] || [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+        PUSH_DELETIONS_SEEN=$((PUSH_DELETIONS_SEEN + 1))
         continue
     fi
     if [ -n "${CK_PUSH_SHA_SEEN[$local_sha]:-}" ]; then
@@ -180,6 +187,12 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     PUSH_REMOTE_SHAS+=("${remote_sha:-$ZERO_SHA}")
 done
 if [ ${#PUSH_TARGETS[@]} -eq 0 ]; then
+    if [ "$PUSH_RECORDS_SEEN" -gt 0 ] && [ "$PUSH_RECORDS_SEEN" -eq "$PUSH_DELETIONS_SEEN" ]; then
+        echo -e "${GREEN}  ✓ Deletion-only push; no new commits require validation${NC}"
+        exit 0
+    fi
+    # Direct/manual hook invocation has no ref records; retain the historical
+    # behavior of validating the checked-out tip.
     PUSH_TARGETS=("HEAD")
     PUSH_REMOTE_SHAS=("$ZERO_SHA")
 fi
@@ -295,7 +308,7 @@ fi
 # =============================================================================
 echo -e "${YELLOW}[0.6/6]${NC} Validating commit change metadata..."
 metadata_ok=1
-: > /tmp/ck_change_metadata.log
+CHANGE_METADATA_LOG="$(mktemp "${TMPDIR:-/tmp}/ck_change_metadata.XXXXXX")"
 for idx in "${!PUSH_TARGETS[@]}"; do
     push_target="${PUSH_TARGETS[$idx]}"
     remote_sha="${PUSH_REMOTE_SHAS[$idx]:-$ZERO_SHA}"
@@ -307,17 +320,17 @@ for idx in "${!PUSH_TARGETS[@]}"; do
         range_base=$(git merge-base origin/HEAD "$push_target" 2>/dev/null || true)
     fi
     if [ -n "$range_base" ] && [ "$range_base" != "$push_target" ]; then
-        python3 scripts/validate_change_metadata.py commits --base "$range_base" --head "$push_target" >> /tmp/ck_change_metadata.log 2>&1 || metadata_ok=0
+        python3 scripts/validate_change_metadata.py commits --base "$range_base" --head "$push_target" >> "$CHANGE_METADATA_LOG" 2>&1 || metadata_ok=0
     else
         # No usable range (e.g. offline clone): validate the tip commit only.
-        python3 scripts/validate_change_metadata.py commit --message "$(git show -s --format=%B "$push_target")" >> /tmp/ck_change_metadata.log 2>&1 || metadata_ok=0
+        python3 scripts/validate_change_metadata.py commit --message "$(git show -s --format=%B "$push_target")" >> "$CHANGE_METADATA_LOG" 2>&1 || metadata_ok=0
     fi
 done
 if [ "$metadata_ok" = "1" ]; then
     echo -e "${GREEN}  ✓ Commit change metadata passed${NC}"
 else
     echo -e "${RED}  ✗ Commit change metadata failed (Why/What/Validation/Evidence/Docs/Nightly/Content)${NC}"
-    tail -20 /tmp/ck_change_metadata.log
+    tail -20 "$CHANGE_METADATA_LOG"
     failed=1
 fi
 

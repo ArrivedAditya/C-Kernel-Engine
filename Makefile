@@ -6234,7 +6234,7 @@ validate-pr-metadata:
 # Validate commit metadata for this branch's range (same rules as the CI gate).
 validate-change-metadata:
 	@git fetch -q origin main 2>/dev/null || true
-	@$(PYTHON) scripts/validate_change_metadata.py commits --base "$$(git merge-base origin/HEAD HEAD 2>/dev/null || git merge-base HEAD~1 HEAD)" --head HEAD
+	@$(PYTHON) scripts/validate_change_metadata.py commits --base "$$(git merge-base refs/remotes/origin/main HEAD 2>/dev/null || git merge-base HEAD~1 HEAD)" --head HEAD
 
 v8-parity-1tok:
 	@$(MAKE) --no-print-directory v7-parity-1tok
