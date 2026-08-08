@@ -2053,6 +2053,7 @@ showtests:
 	@echo "  make nightly-json     Run all + JSON report"
 	@echo "  make nightly-kernels  Only kernel tests"
 	@echo "  make test-kernel-maps v8 kernel-map gate (audit, selection, ABI, migration, registry freshness)"
+	@echo "  make validate-pr-metadata BODY=f  Check a PR body against the Change Metadata gate locally"
 	@echo "  make nightly-bf16     Only BF16 tests"
 	@echo "  make nightly-quant    Only quantization tests"
 	@echo "  make nightly-inference Only v8 inference/runtime contract tests"
@@ -6221,6 +6222,19 @@ v8-kernel-registry-freshness:
 
 v8-kernel-map-gate:
 	@$(MAKE) --no-print-directory v8-kernel-map-contracts
+
+.PHONY: validate-pr-metadata validate-change-metadata
+
+# Validate a PR body against the Change Metadata CI gate before opening/editing a PR.
+# Usage: make validate-pr-metadata BODY=path/to/pr-body.md
+validate-pr-metadata:
+	@test -n "$(BODY)" || { echo "Usage: make validate-pr-metadata BODY=path/to/pr-body.md"; exit 2; }
+	@$(PYTHON) scripts/validate_change_metadata.py pr --body-file "$(BODY)"
+
+# Validate commit metadata for this branch's range (same rules as the CI gate).
+validate-change-metadata:
+	@git fetch -q origin main 2>/dev/null || true
+	@$(PYTHON) scripts/validate_change_metadata.py commits --base "$$(git merge-base refs/remotes/origin/main HEAD 2>/dev/null || git merge-base HEAD~1 HEAD)" --head HEAD
 
 v8-parity-1tok:
 	@$(MAKE) --no-print-directory v7-parity-1tok

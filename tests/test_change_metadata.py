@@ -1,4 +1,8 @@
+import os
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 from scripts.validate_change_metadata import validate_commit, validate_pr
 
@@ -63,6 +67,60 @@ class ChangeMetadataTests(unittest.TestCase):
         body = "## Why\n<!-- fill this in -->\n## What changed\n<!-- fill this in -->"
         errors = validate_pr(body)
         self.assertIn("missing or empty PR section: Why", errors)
+
+
+class PullRequestTemplateTests(unittest.TestCase):
+    def test_checked_in_pr_template_covers_all_required_sections(self):
+        # Ratchet: if PR_SECTIONS changes, the template must change with it.
+        import re
+        from pathlib import Path
+
+        from scripts.validate_change_metadata import PR_SECTIONS
+
+        template = (
+            Path(__file__).resolve().parents[1] / ".github" / "pull_request_template.md"
+        ).read_text(encoding="utf-8")
+        headings = {
+            match.group(1).strip().lower()
+            for match in re.finditer(r"(?m)^##\s+(.+?)\s*$", template)
+        }
+        missing = [name for name in PR_SECTIONS if name.lower() not in headings]
+        self.assertEqual(missing, [])
+
+
+class PrePushMetadataHookTests(unittest.TestCase):
+    def test_deletion_only_push_does_not_validate_checked_out_head(self):
+        root = Path(__file__).resolve().parents[1]
+        zero = "0" * 40
+        with tempfile.TemporaryDirectory(prefix="ck_prepush_delete_") as tmp:
+            env = dict(os.environ)
+            env.update(
+                {
+                    "CK_PREPUSH_ALLOW_LOW_RESOURCES": "1",
+                    "CK_PREPUSH_LOCK_PATH": str(Path(tmp) / "prepush.lock"),
+                }
+            )
+            completed = subprocess.run(
+                [str(root / ".githooks" / "pre-push"), "origin", "unused"],
+                cwd=root,
+                env=env,
+                input=f"(delete) {zero} refs/heads/obsolete {'1' * 40}\n",
+                text=True,
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("Deletion-only push", completed.stdout)
+        self.assertNotIn("Validating commit change metadata", completed.stdout)
+
+    def test_metadata_log_is_unique_and_cleaned_up(self):
+        hook = (Path(__file__).resolve().parents[1] / ".githooks" / "pre-push").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('CHANGE_METADATA_LOG="$(mktemp ', hook)
+        self.assertNotIn("/tmp/ck_change_metadata.log", hook)
+        self.assertIn('rm -f "$CHANGE_METADATA_LOG"', hook)
 
 
 if __name__ == "__main__":
