@@ -1,3 +1,10 @@
+<!--
+PR metadata is validated by scripts/validate_change_metadata.py (Change Metadata workflow).
+Keep every section below; empty or placeholder sections fail the gate.
+Validate locally before opening or editing the PR:
+  make validate-pr-metadata BODY=path/to/pr-body.md
+-->
+
 ## Why
 
 <!-- What problem or evidence gap required this change? -->

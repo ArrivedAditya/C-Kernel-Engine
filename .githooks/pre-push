@@ -290,6 +290,37 @@ else
     failed=1
 fi
 
+# =============================================================================
+# Test 0.6: Change metadata (same rules as the Change Metadata CI gate)
+# =============================================================================
+echo -e "${YELLOW}[0.6/6]${NC} Validating commit change metadata..."
+metadata_ok=1
+: > /tmp/ck_change_metadata.log
+for idx in "${!PUSH_TARGETS[@]}"; do
+    push_target="${PUSH_TARGETS[$idx]}"
+    remote_sha="${PUSH_REMOTE_SHAS[$idx]:-$ZERO_SHA}"
+    range_base=""
+    if [ "$remote_sha" != "$ZERO_SHA" ]; then
+        range_base="$remote_sha"
+    else
+        # New branch: validate commits not yet on the remote default branch.
+        range_base=$(git merge-base origin/HEAD "$push_target" 2>/dev/null || true)
+    fi
+    if [ -n "$range_base" ] && [ "$range_base" != "$push_target" ]; then
+        python3 scripts/validate_change_metadata.py commits --base "$range_base" --head "$push_target" >> /tmp/ck_change_metadata.log 2>&1 || metadata_ok=0
+    else
+        # No usable range (e.g. offline clone): validate the tip commit only.
+        python3 scripts/validate_change_metadata.py commit --message "$(git show -s --format=%B "$push_target")" >> /tmp/ck_change_metadata.log 2>&1 || metadata_ok=0
+    fi
+done
+if [ "$metadata_ok" = "1" ]; then
+    echo -e "${GREEN}  ✓ Commit change metadata passed${NC}"
+else
+    echo -e "${RED}  ✗ Commit change metadata failed (Why/What/Validation/Evidence/Docs/Nightly/Content)${NC}"
+    tail -20 /tmp/ck_change_metadata.log
+    failed=1
+fi
+
 # Toolchain policy:
 # - Use the parity-certified GCC path by default, even when oneAPI is installed.
 # - Exercise ICX only when CK_PREPUSH_USE_INTEL=1 is explicitly requested.

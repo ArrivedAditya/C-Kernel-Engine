@@ -67,3 +67,22 @@ class ChangeMetadataTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PullRequestTemplateTests(unittest.TestCase):
+    def test_checked_in_pr_template_covers_all_required_sections(self):
+        # Ratchet: if PR_SECTIONS changes, the template must change with it.
+        import re
+        from pathlib import Path
+
+        from scripts.validate_change_metadata import PR_SECTIONS
+
+        template = (
+            Path(__file__).resolve().parents[1] / ".github" / "pull_request_template.md"
+        ).read_text(encoding="utf-8")
+        headings = {
+            match.group(1).strip().lower()
+            for match in re.finditer(r"(?m)^##\s+(.+?)\s*$", template)
+        }
+        missing = [name for name in PR_SECTIONS if name.lower() not in headings]
+        self.assertEqual(missing, [])
