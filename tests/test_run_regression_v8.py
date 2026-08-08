@@ -394,6 +394,17 @@ class RegressionHarnessV8Tests(unittest.TestCase):
         self.assertIn("429", detail)
         self.assertIn("rate limit", detail)
 
+    def test_aggregate_status_distinguishes_infrastructure_from_regressions(self) -> None:
+        cases = [
+            ([{"status": regression.PASS}], regression.PASS),
+            ([{"status": regression.PASS}, {"status": regression.SKIP}], regression.SKIP),
+            ([{"status": regression.SKIP}, {"status": regression.SKIP}], regression.SKIP),
+            ([{"status": regression.SKIP}, {"status": regression.FAIL}], regression.FAIL),
+        ]
+        for rows, expected in cases:
+            with self.subTest(rows=rows):
+                self.assertEqual(regression.aggregate_family_status(rows), expected)
+
     def _run_family_with_prompt_row(self, row: dict) -> dict:
         family = regression.FamilySpec(
             family_id="qwen3",
@@ -449,7 +460,7 @@ class RegressionHarnessV8Tests(unittest.TestCase):
         self.assertEqual(result["failure_class"], "environment_unavailable")
         self.assertIn("rate limit", result["failure_detail"])
         self.assertEqual(result["build_status"], regression.FAIL)
-        self.assertEqual(result["status"], regression.FAIL)
+        self.assertEqual(result["status"], regression.SKIP)
 
     def test_run_family_corrupt_local_gguf_stays_build_failure(self) -> None:
         row = {

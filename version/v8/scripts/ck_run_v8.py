@@ -902,6 +902,10 @@ def step_download_gguf(repo_id: str, filename: str, cache_dir: Path, force: bool
         for root in _cache_roots():
             candidate = root / repo_dir / filename_only
             if candidate.exists():
+                if not _validate_gguf_magic(candidate):
+                    log(f"  Discarding invalid cached GGUF at {candidate}", C_DIM)
+                    candidate.unlink(missing_ok=True)
+                    continue
                 if root == cache_dir:
                     log(f"  Using cached GGUF at {candidate}", C_DIM)
                 else:
@@ -990,17 +994,23 @@ def _find_cached_tokenizer_json(repo_id: str) -> Path | None:
     for root in _cache_roots():
         candidate = root / repo_dir / "tokenizer.json"
         if candidate.exists():
-            return candidate
+            if _validate_json_file(candidate):
+                return candidate
+            candidate.unlink(missing_ok=True)
         nested = root / repo_dir / ".ck_build" / "tokenizer.json"
         if nested.exists():
-            return nested
+            if _validate_json_file(nested):
+                return nested
+            nested.unlink(missing_ok=True)
     return None
 
 
 def ensure_tokenizer_files(model_id: str, work_dir: Path) -> None:
     tokenizer_path = work_dir / "tokenizer.json"
     if tokenizer_path.exists():
-        return
+        if _validate_json_file(tokenizer_path):
+            return
+        tokenizer_path.unlink(missing_ok=True)
     candidates = []
     base_id = _strip_gguf_suffix(model_id)
     if base_id != model_id:
@@ -1017,6 +1027,7 @@ def ensure_tokenizer_files(model_id: str, work_dir: Path) -> None:
         from huggingface_hub import hf_hub_download
     except ImportError:
         return
+    transient_error: V8DownloadError | None = None
     for repo_id in candidates:
         try:
             def _fetch() -> None:
@@ -1037,8 +1048,18 @@ def ensure_tokenizer_files(model_id: str, work_dir: Path) -> None:
             _run_with_download_retries(repo_id, "tokenizer.json", _fetch)
             if tokenizer_path.exists():
                 return
+        except V8DownloadError as exc:
+            cause = exc.__cause__ if isinstance(exc.__cause__, BaseException) else exc
+            retryable, _ = _classify_download_error(cause)
+            if retryable:
+                transient_error = exc
+            # A tokenizer may legitimately live only in the base repository,
+            # so permanent errors (notably 404) remain optional here.
+            continue
         except Exception:
             continue
+    if transient_error is not None:
+        raise transient_error
 
 
 def _find_local_gguf(model_dir: Path) -> Optional[Path]:

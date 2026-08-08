@@ -649,6 +649,16 @@ def classify_family_result(
     return "pass", ""
 
 
+def aggregate_family_status(family_results: list[dict[str, Any]]) -> str:
+    """Fail on real regressions; report incomplete infrastructure as SKIP."""
+    statuses = {str(row.get("status") or FAIL) for row in family_results}
+    if FAIL in statuses:
+        return FAIL
+    if SKIP in statuses:
+        return SKIP
+    return PASS
+
+
 def _display_rows(rows: list[tuple[str, ...]]) -> str:
     widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
     return "\n".join("  ".join(cell.ljust(widths[i]) for i, cell in enumerate(row)) for row in rows)
@@ -778,7 +788,13 @@ def run_family(
         failure_reason=failure_reason,
         environment_failure=_is_environment_failure(prompt_rows),
     )
-    overall = PASS if failure_class == "pass" else FAIL
+    overall = (
+        PASS
+        if failure_class == "pass"
+        else SKIP
+        if failure_class == ENVIRONMENT_FAILURE_CLASS
+        else FAIL
+    )
 
     family_result = {
         "family_id": family.family_id,
@@ -842,7 +858,7 @@ def main() -> int:
         for family in families
     ]
 
-    status = PASS if all(row.get("status") == PASS for row in family_results) else FAIL
+    status = aggregate_family_status(family_results)
     summary = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "mode": args.mode,
@@ -866,8 +882,10 @@ def main() -> int:
     print("")
     print(f"overall   : {status}")
     print(f"summary   : {report_dir / 'summary.json'}")
+    if status == SKIP:
+        print("SKIP: v8 regression incomplete because model/tokenizer downloads were unavailable")
 
-    return 0 if status == PASS else 1
+    return 0 if status in {PASS, SKIP} else 1
 
 
 if __name__ == "__main__":

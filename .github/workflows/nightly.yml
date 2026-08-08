@@ -303,7 +303,7 @@ jobs:
       - name: Prepare scheduled Qwen3-VL encoder parity
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         env:
-          HF_HOME: ${{ runner.temp }}/huggingface
+          HF_HOME: ${{ github.workspace }}/.cache/huggingface
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           avail_kb=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)
@@ -496,8 +496,9 @@ jobs:
                       "failure_reason": fam.get("failure_reason"),
                       "failure_detail": fam.get("failure_detail"),
                   })
+              summary_status = str(summary.get("status", "")).upper()
               regression_payload = {
-                  "status": "pass" if str(summary.get("status", "")).upper() == "PASS" else "fail",
+                  "status": "pass" if summary_status == "PASS" else "skip" if summary_status == "SKIP" else "fail",
                   "mode": summary.get("mode", "fast"),
                   "generated_at": summary.get("generated_at"),
                   "report_dir": summary.get("report_dir"),

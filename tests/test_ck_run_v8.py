@@ -9,6 +9,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "version" / "v8" / "scripts" / "ck_run_v8.py"
@@ -354,6 +356,26 @@ def test_step_download_gguf_moves_valid_payload_into_place(tmp_path: Path, monke
     assert result.read_bytes() == payload
 
 
+def test_step_download_gguf_discards_invalid_cached_payload(tmp_path: Path, monkeypatch) -> None:
+    cache_dir = tmp_path / "cache"
+    cached = cache_dir / "test--fake-repo-GGUF" / "fake-model.gguf"
+    cached.parent.mkdir(parents=True)
+    cached.write_bytes(HTML_ERROR_PAGE)
+    payload = b"GGUF" + b"\x02" * 64
+
+    def _valid_download(**kwargs):
+        target = Path(kwargs["local_dir"]) / kwargs["filename"]
+        target.write_bytes(payload)
+        return str(target)
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hf_module(hf_hub_download=_valid_download))
+    monkeypatch.setattr(ck_run_v8, "_cache_roots", lambda: [cache_dir])
+
+    result = ck_run_v8.step_download_gguf("test/fake-repo-GGUF", "fake-model.gguf", cache_dir)
+
+    assert result.read_bytes() == payload
+
+
 def test_ensure_tokenizer_files_drops_invalid_json_payload(tmp_path: Path, monkeypatch) -> None:
     work_dir = tmp_path / "work"
 
@@ -369,9 +391,32 @@ def test_ensure_tokenizer_files_drops_invalid_json_payload(tmp_path: Path, monke
     # this test stays fast (retry behavior is covered separately below).
     monkeypatch.setenv("CK_V8_DOWNLOAD_RETRIES", "0")
 
-    ck_run_v8.ensure_tokenizer_files("test/fake-repo-GGUF", work_dir)
+    with pytest.raises(ck_run_v8.V8DownloadError, match=ck_run_v8.DOWNLOAD_ERROR_MARKER):
+        ck_run_v8.ensure_tokenizer_files("test/fake-repo-GGUF", work_dir)
 
     assert not (work_dir / "tokenizer.json").exists()
+
+
+def test_ensure_tokenizer_files_discards_invalid_cached_json(tmp_path: Path, monkeypatch) -> None:
+    work_dir = tmp_path / "work"
+    cache_dir = tmp_path / "cache"
+    cached = cache_dir / "test--fake-repo-GGUF" / "tokenizer.json"
+    cached.parent.mkdir(parents=True)
+    cached.write_bytes(HTML_ERROR_PAGE)
+
+    def _valid_json(**kwargs):
+        target = Path(kwargs["local_dir"]) / "tokenizer.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('{"model": {"type": "BPE"}}', encoding="utf-8")
+        return str(target)
+
+    monkeypatch.setitem(sys.modules, "huggingface_hub", _fake_hf_module(hf_hub_download=_valid_json))
+    monkeypatch.setattr(ck_run_v8, "_cache_roots", lambda: [cache_dir])
+
+    ck_run_v8.ensure_tokenizer_files("test/fake-repo-GGUF", work_dir)
+
+    assert not cached.exists()
+    assert ck_run_v8._validate_json_file(work_dir / "tokenizer.json")
 
 
 def test_ensure_tokenizer_files_keeps_valid_json_payload(tmp_path: Path, monkeypatch) -> None:

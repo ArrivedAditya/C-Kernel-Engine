@@ -3324,7 +3324,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             legacy_dir = v7_cache / "Qwen--Qwen3.5-0.8B-GGUF"
             legacy_dir.mkdir(parents=True, exist_ok=True)
             legacy_gguf = legacy_dir / "Qwen3.5-0.8B-Q4_K_M.gguf"
-            legacy_gguf.write_bytes(b"gguf")
+            legacy_gguf.write_bytes(b"GGUF")
 
             with mock.patch.object(ck_run_v8, "CACHE_DIR", v8_cache), \
                  mock.patch.object(ck_run_v8, "LEGACY_CACHE_DIR", v7_cache):
