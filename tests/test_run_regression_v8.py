@@ -355,6 +355,131 @@ class RegressionHarnessV8Tests(unittest.TestCase):
         self.assertEqual(failure_class, "pass")
         self.assertEqual(detail, "")
 
+    def test_environment_marker_detection(self) -> None:
+        rows = [
+            {
+                "status": regression.FAIL,
+                "stdout": "",
+                "stderr": (
+                    "Error: V8DownloadError: CK_V8_DOWNLOAD_FAILED: download failed for "
+                    "Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf: HTTP error after retries: "
+                    "HTTP Error 429 (HuggingFace rate limit (HTTP 429) or error page received)"
+                ),
+            }
+        ]
+        self.assertTrue(regression._is_environment_failure(rows))
+
+        corrupt_cache_rows = [
+            {
+                "status": regression.FAIL,
+                "stdout": "",
+                "stderr": "GGUFError: /tmp/model.gguf: invalid magic b'<!DO' (expected b'GGUF')",
+            }
+        ]
+        self.assertFalse(regression._is_environment_failure(corrupt_cache_rows))
+        self.assertFalse(regression._is_environment_failure([{"status": regression.PASS}]))
+
+    def test_environment_failure_classification_names_rate_limit(self) -> None:
+        failure_class, detail = regression.classify_family_result(
+            build_status=regression.FAIL,
+            smoke_status=regression.FAIL,
+            coherence_status=regression.PASS,
+            coherence_gate=False,
+            contract_result={"status": regression.SKIP},
+            failure_reason="smoke_failed:hello:rc=1",
+            environment_failure=True,
+        )
+        self.assertEqual(failure_class, regression.ENVIRONMENT_FAILURE_CLASS)
+        self.assertEqual(failure_class, "environment_unavailable")
+        self.assertIn("429", detail)
+        self.assertIn("rate limit", detail)
+
+    def test_aggregate_status_distinguishes_infrastructure_from_regressions(self) -> None:
+        cases = [
+            ([{"status": regression.PASS}], regression.PASS),
+            ([{"status": regression.PASS}, {"status": regression.SKIP}], regression.SKIP),
+            ([{"status": regression.SKIP}, {"status": regression.SKIP}], regression.SKIP),
+            ([{"status": regression.SKIP}, {"status": regression.FAIL}], regression.FAIL),
+        ]
+        for rows, expected in cases:
+            with self.subTest(rows=rows):
+                self.assertEqual(regression.aggregate_family_status(rows), expected)
+
+    def _run_family_with_prompt_row(self, row: dict) -> dict:
+        family = regression.FamilySpec(
+            family_id="qwen3",
+            label="Qwen3",
+            model="hf://Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf",
+            context_len=1024,
+            runtime_args=[],
+            smoke_prompts=["hello"],
+            response_contract={},
+            coherence_gate=False,
+            runtime_expect={},
+        )
+        prompts = {
+            "hello": regression.PromptSpec(
+                prompt_id="hello",
+                label="Hello",
+                prompt="Hello",
+                max_tokens=32,
+                heuristics={},
+            )
+        }
+        with tempfile.TemporaryDirectory(prefix="ck_reg_v8_env_") as tmp:
+            with mock.patch.object(regression, "run_prompt", return_value=row):
+                return regression.run_family(
+                    family,
+                    prompts,
+                    mode="fast",
+                    run_root=Path(tmp) / "runs",
+                    report_dir=Path(tmp) / "reports",
+                    force_rebuild=False,
+                    cache_dir=Path(tmp) / "cache",
+                )
+
+    def test_run_family_classifies_rate_limit_download_as_environment(self) -> None:
+        row = {
+            "status": regression.FAIL,
+            "command": [],
+            "model_arg": "hf://Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf",
+            "returncode": 1,
+            "stdout": "",
+            "stderr": (
+                "Error: V8DownloadError: CK_V8_DOWNLOAD_FAILED: download failed for "
+                "Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf: HTTP error after retries: "
+                "HTTP Error 429 (HuggingFace rate limit (HTTP 429) or error page received)"
+            ),
+            "assistant_raw": "",
+            "assistant": "",
+            "coherence": {"status": regression.SKIP, "metrics": {}, "reasons": []},
+            "bridge_report_path": None,
+            "bridge_report": None,
+        }
+        result = self._run_family_with_prompt_row(row)
+        self.assertEqual(result["failure_class"], "environment_unavailable")
+        self.assertIn("rate limit", result["failure_detail"])
+        self.assertEqual(result["build_status"], regression.FAIL)
+        self.assertEqual(result["status"], regression.SKIP)
+
+    def test_run_family_corrupt_local_gguf_stays_build_failure(self) -> None:
+        row = {
+            "status": regression.FAIL,
+            "command": [],
+            "model_arg": "/tmp/corrupt-model.gguf",
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "GGUFError: /tmp/corrupt-model.gguf: invalid magic b'<!DO' (expected b'GGUF')",
+            "assistant_raw": "",
+            "assistant": "",
+            "coherence": {"status": regression.SKIP, "metrics": {}, "reasons": []},
+            "bridge_report_path": None,
+            "bridge_report": None,
+        }
+        result = self._run_family_with_prompt_row(row)
+        self.assertEqual(result["failure_class"], "build_failure")
+        self.assertEqual(result["status"], regression.FAIL)
+
 
 if __name__ == "__main__":
     unittest.main()

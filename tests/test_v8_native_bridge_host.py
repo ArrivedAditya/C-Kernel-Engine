@@ -3324,7 +3324,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             legacy_dir = v7_cache / "Qwen--Qwen3.5-0.8B-GGUF"
             legacy_dir.mkdir(parents=True, exist_ok=True)
             legacy_gguf = legacy_dir / "Qwen3.5-0.8B-Q4_K_M.gguf"
-            legacy_gguf.write_bytes(b"gguf")
+            legacy_gguf.write_bytes(b"GGUF")
 
             with mock.patch.object(ck_run_v8, "CACHE_DIR", v8_cache), \
                  mock.patch.object(ck_run_v8, "LEGACY_CACHE_DIR", v7_cache):
@@ -3375,7 +3375,9 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 local_dir = Path(kwargs["local_dir"])
                 local_dir.mkdir(parents=True, exist_ok=True)
                 target = local_dir / Path(kwargs["filename"]).name
-                target.write_bytes(b"gguf")
+                # Must carry the real GGUF magic: step_download_gguf validates
+                # the payload before publishing it to the cache path.
+                target.write_bytes(b"GGUF" + b"\x00" * 16)
                 return str(target)
 
             fake_module = types.SimpleNamespace(hf_hub_download=fake_hf_hub_download)

@@ -24,14 +24,17 @@ import importlib.util
 import inspect
 import json
 import os
+import random
 import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
 import urllib.parse
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
@@ -201,6 +204,199 @@ def _hf_hub_cache_dir(cache_dir: Path) -> Path:
     return cache_dir / ".hf-hub"
 
 
+# Marker shared with run_regression_v8.py: when a model/tokenizer download
+# fails due to HuggingFace rate limiting (HTTP 429) or an HTML error page, the
+# regression runner classifies the failure as environment_unavailable rather
+# than build_failure. Keep this string in sync with ENVIRONMENT_FAILURE_MARKER
+# in version/v8/scripts/run_regression_v8.py.
+DOWNLOAD_ERROR_MARKER = "CK_V8_DOWNLOAD_FAILED"
+
+
+class V8DownloadError(RuntimeError):
+    """Download failed after retries or yielded an error page, not a code bug."""
+
+
+def _download_failure(repo_id: str, filename: str, detail: str) -> V8DownloadError:
+    return V8DownloadError(
+        f"{DOWNLOAD_ERROR_MARKER}: download failed for {repo_id}/{filename}: {detail} "
+        "(HuggingFace rate limit (HTTP 429) or error page received)"
+    )
+
+
+def _validate_gguf_magic(path: Path) -> bool:
+    try:
+        with path.open("rb") as handle:
+            return handle.read(4) == b"GGUF"
+    except OSError:
+        return False
+
+
+def _validate_json_file(path: Path) -> bool:
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+        return True
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False
+
+
+class _DownloadErrorPage(Exception):
+    """Transient: the server returned an HTML/error page instead of the artifact."""
+
+
+def _download_retry_config() -> tuple[int, float]:
+    """(outer retries, backoff base seconds); overridable for CI tuning."""
+    try:
+        retries = int(os.environ.get("CK_V8_DOWNLOAD_RETRIES", "") or 3)
+    except ValueError:
+        retries = 3
+    try:
+        base = float(os.environ.get("CK_V8_DOWNLOAD_RETRY_BASE_SEC", "") or 15.0)
+    except ValueError:
+        base = 15.0
+    return max(0, retries), max(0.0, base)
+
+
+def _walk_error_chain(exc: BaseException):
+    seen: set[int] = set()
+    stack = [exc]
+    while stack:
+        cur = stack.pop()
+        if id(cur) in seen:
+            continue
+        seen.add(id(cur))
+        yield cur
+        for attr in ("__cause__", "__context__"):
+            chained = getattr(cur, attr, None)
+            if isinstance(chained, BaseException):
+                stack.append(chained)
+
+
+def _http_status_from_error(exc: BaseException) -> int | None:
+    """HTTP status from requests/httpx/urllib-style exceptions, if any."""
+    for cur in _walk_error_chain(exc):
+        response = getattr(cur, "response", None)
+        for source in (response, cur):
+            if source is None:
+                continue
+            for attr in ("status_code", "status", "code"):
+                value = getattr(source, attr, None)
+                if isinstance(value, int):
+                    return value
+    return None
+
+
+def _retry_after_seconds(exc: BaseException) -> float | None:
+    """Server Retry-After (integer seconds) from the exception, if present."""
+    for cur in _walk_error_chain(exc):
+        response = getattr(cur, "response", None)
+        headers = None
+        for source in (response, cur):
+            if source is not None:
+                headers = getattr(source, "headers", None)
+                if headers is not None:
+                    break
+        if headers is None:
+            continue
+        try:
+            value = headers.get("Retry-After") or headers.get("retry-after")
+        except AttributeError:
+            value = None
+        if value is None:
+            continue
+        try:
+            return float(int(str(value).strip()))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+# Transient network exception names from requests/urllib3/httpx/httpcore and
+# huggingface_hub. LocalEntryNotFoundError is how huggingface_hub reports
+# "hub unreachable and nothing cached" — a connection failure, not a 404.
+_TRANSIENT_NETWORK_ERROR_NAMES = {
+    "ConnectionError",
+    "ConnectTimeout",
+    "ReadTimeout",
+    "Timeout",
+    "ChunkedEncodingError",
+    "ProtocolError",
+    "ConnectError",
+    "ReadError",
+    "WriteError",
+    "TimeoutException",
+    "NetworkError",
+    "RemoteProtocolError",
+    "LocalEntryNotFoundError",
+}
+_TRANSIENT_NETWORK_MODULES = ("requests", "urllib3", "httpx", "httpcore", "huggingface_hub")
+
+
+def _is_transient_network_error(exc: BaseException) -> bool:
+    for cur in _walk_error_chain(exc):
+        if isinstance(cur, (TimeoutError, ConnectionError)):
+            return True
+        if isinstance(cur, urllib.error.URLError) and not isinstance(cur, urllib.error.HTTPError):
+            return True
+        name = type(cur).__name__
+        module = type(cur).__module__ or ""
+        if name in _TRANSIENT_NETWORK_ERROR_NAMES and module.startswith(_TRANSIENT_NETWORK_MODULES):
+            return True
+    return False
+
+
+def _classify_download_error(exc: BaseException) -> tuple[bool, str]:
+    """(retryable, short reason) for a failed download attempt.
+
+    Only transient server-side causes retry: HTTP 429/5xx, connection
+    errors/timeouts, and error-page payloads. HTTP 404 (file genuinely
+    absent) and other permanent errors fail immediately.
+    """
+    for cur in _walk_error_chain(exc):
+        if isinstance(cur, _DownloadErrorPage):
+            return True, "error page received"
+    status = _http_status_from_error(exc)
+    if status == 404:
+        return False, "HTTP 404 (not found)"
+    if status is not None:
+        if status == 429 or 500 <= status < 600:
+            return True, f"HTTP {status}"
+        return False, f"HTTP {status}"
+    if _is_transient_network_error(exc):
+        return True, f"connection error ({type(exc).__name__})"
+    return False, type(exc).__name__
+
+
+def _run_with_download_retries(repo_id: str, filename: str, fetch: Callable[[], Any]) -> Any:
+    """Run fetch() with rate-limit-aware outer retries around network work.
+
+    Retries transient failures with exponential backoff (base doubling, plus
+    0-5s jitter), honoring the server Retry-After header when larger. Any
+    terminal failure raises the CK_V8_DOWNLOAD_FAILED-marked V8DownloadError
+    so the regression runner classifies it as environment_unavailable.
+    """
+    retries, base = _download_retry_config()
+    attempts = retries + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return fetch()
+        except Exception as exc:
+            retryable, reason = _classify_download_error(exc)
+            if not retryable or attempt >= attempts:
+                raise _download_failure(
+                    repo_id, filename, f"{reason} after attempt {attempt}/{attempts}: {exc}"
+                ) from exc
+            backoff = base * (2 ** (attempt - 1)) + random.uniform(0.0, 5.0)
+            retry_after = _retry_after_seconds(exc)
+            sleep_s = max(backoff, retry_after) if retry_after is not None else backoff
+            log(
+                f"  {repo_id}/{filename}: download attempt {attempt}/{attempts} "
+                f"failed ({reason}); sleeping {sleep_s:.1f}s before retry",
+                C_DIM,
+            )
+            time.sleep(sleep_s)
+    raise AssertionError("unreachable: download retry loop exited without result")
+
+
 def _is_arm_machine(machine: str) -> bool:
     return machine in {"aarch64", "arm64", "armv7l", "armv8l"}
 
@@ -349,24 +545,33 @@ def _direct_hf_download_gguf(repo_id: str, filename: str, dst: Path) -> bool:
     tmp_dst = dst.with_suffix(dst.suffix + ".part")
     token = os.environ.get("HF_TOKEN", "").strip()
 
+    def _promote() -> bool:
+        # Never promote an HTML error page (e.g. an HTTP 429 body) to the
+        # final artifact path: validate the GGUF magic before the rename.
+        if tmp_dst.exists() and _validate_gguf_magic(tmp_dst):
+            tmp_dst.replace(dst)
+            return True
+        tmp_dst.unlink(missing_ok=True)
+        return False
+
     wget = shutil.which("wget")
     if wget:
         cmd = [wget, "-c", url, "-O", str(tmp_dst)]
         if token:
             cmd[1:1] = ["--header", f"Authorization: Bearer {token}"]
         proc = subprocess.run(cmd, check=False)
-        if proc.returncode == 0 and tmp_dst.exists():
-            tmp_dst.replace(dst)
+        if proc.returncode == 0 and _promote():
             return True
 
     curl = shutil.which("curl")
     if curl:
-        cmd = [curl, "-L", "--continue-at", "-", url, "-o", str(tmp_dst)]
+        # --fail: without it curl exits 0 on HTTP 4xx/5xx and saves the error
+        # page body, which then poisons the GGUF cache path.
+        cmd = [curl, "-fL", "--continue-at", "-", url, "-o", str(tmp_dst)]
         if token:
             cmd[1:1] = ["-H", f"Authorization: Bearer {token}"]
         proc = subprocess.run(cmd, check=False)
-        if proc.returncode == 0 and tmp_dst.exists():
-            tmp_dst.replace(dst)
+        if proc.returncode == 0 and _promote():
             return True
 
     return False
@@ -677,12 +882,15 @@ def step_download(model_id: str, cache_dir: Path, force: bool = False) -> Path:
         from huggingface_hub import snapshot_download
     except ImportError as exc:
         raise RuntimeError("huggingface_hub not installed") from exc
-    snapshot_download(
-        repo_id=model_id,
-        local_dir=str(model_dir),
-        cache_dir=str(_hf_hub_cache_dir(cache_dir)),
-        ignore_patterns=["*.bin", "*.msgpack", "*.h5", "*.ot"],
-    )
+    def _fetch() -> None:
+        snapshot_download(
+            repo_id=model_id,
+            local_dir=str(model_dir),
+            cache_dir=str(_hf_hub_cache_dir(cache_dir)),
+            ignore_patterns=["*.bin", "*.msgpack", "*.h5", "*.ot"],
+        )
+
+    _run_with_download_retries(model_id, "(snapshot)", _fetch)
     return model_dir
 
 
@@ -694,6 +902,10 @@ def step_download_gguf(repo_id: str, filename: str, cache_dir: Path, force: bool
         for root in _cache_roots():
             candidate = root / repo_dir / filename_only
             if candidate.exists():
+                if not _validate_gguf_magic(candidate):
+                    log(f"  Discarding invalid cached GGUF at {candidate}", C_DIM)
+                    candidate.unlink(missing_ok=True)
+                    continue
                 if root == cache_dir:
                     log(f"  Using cached GGUF at {candidate}", C_DIM)
                 else:
@@ -742,17 +954,31 @@ def step_download_gguf(repo_id: str, filename: str, cache_dir: Path, force: bool
             token = os.environ.get("HF_TOKEN")
             if token:
                 download_kwargs["token"] = token
-    try:
-        downloaded = Path(
-            hf_hub_download(**download_kwargs)
-        )
-    except Exception:
-        if _direct_hf_download_gguf(repo_id, filename, gguf_path):
-            return gguf_path
-        raise
-    if downloaded.resolve() != gguf_path.resolve():
-        shutil.move(str(downloaded), str(gguf_path))
-    return gguf_path
+    def _fetch() -> Path:
+        try:
+            downloaded = Path(
+                hf_hub_download(**download_kwargs)
+            )
+        except Exception:
+            if _direct_hf_download_gguf(repo_id, filename, gguf_path):
+                return gguf_path
+            raise
+        if not _validate_gguf_magic(downloaded):
+            # The hub returned a non-GGUF payload (e.g. a rate-limit error
+            # page). Drop it instead of leaving it at the final artifact
+            # path, and treat it as transient so the outer retry can pause.
+            try:
+                downloaded.unlink()
+            except OSError:
+                pass
+            raise _DownloadErrorPage(
+                f"server returned a non-GGUF payload for {repo_id}/{filename}"
+            )
+        if downloaded.resolve() != gguf_path.resolve():
+            shutil.move(str(downloaded), str(gguf_path))
+        return gguf_path
+
+    return _run_with_download_retries(repo_id, filename, _fetch)
 
 
 def _strip_gguf_suffix(model_id: str) -> str:
@@ -768,17 +994,23 @@ def _find_cached_tokenizer_json(repo_id: str) -> Path | None:
     for root in _cache_roots():
         candidate = root / repo_dir / "tokenizer.json"
         if candidate.exists():
-            return candidate
+            if _validate_json_file(candidate):
+                return candidate
+            candidate.unlink(missing_ok=True)
         nested = root / repo_dir / ".ck_build" / "tokenizer.json"
         if nested.exists():
-            return nested
+            if _validate_json_file(nested):
+                return nested
+            nested.unlink(missing_ok=True)
     return None
 
 
 def ensure_tokenizer_files(model_id: str, work_dir: Path) -> None:
     tokenizer_path = work_dir / "tokenizer.json"
     if tokenizer_path.exists():
-        return
+        if _validate_json_file(tokenizer_path):
+            return
+        tokenizer_path.unlink(missing_ok=True)
     candidates = []
     base_id = _strip_gguf_suffix(model_id)
     if base_id != model_id:
@@ -795,18 +1027,39 @@ def ensure_tokenizer_files(model_id: str, work_dir: Path) -> None:
         from huggingface_hub import hf_hub_download
     except ImportError:
         return
+    transient_error: V8DownloadError | None = None
     for repo_id in candidates:
         try:
-            hf_hub_download(
-                repo_id=repo_id,
-                filename="tokenizer.json",
-                local_dir=str(work_dir),
-                cache_dir=str(_hf_hub_cache_dir(CACHE_DIR)),
-            )
+            def _fetch() -> None:
+                hf_hub_download(
+                    repo_id=repo_id,
+                    filename="tokenizer.json",
+                    local_dir=str(work_dir),
+                    cache_dir=str(_hf_hub_cache_dir(CACHE_DIR)),
+                )
+                if tokenizer_path.exists() and not _validate_json_file(tokenizer_path):
+                    # A rate-limit/error-page payload must not linger at the
+                    # tokenizer path; drop it and treat the fetch as transient.
+                    tokenizer_path.unlink(missing_ok=True)
+                    raise _DownloadErrorPage(
+                        f"server returned a non-JSON payload for {repo_id}/tokenizer.json"
+                    )
+
+            _run_with_download_retries(repo_id, "tokenizer.json", _fetch)
             if tokenizer_path.exists():
                 return
+        except V8DownloadError as exc:
+            cause = exc.__cause__ if isinstance(exc.__cause__, BaseException) else exc
+            retryable, _ = _classify_download_error(cause)
+            if retryable:
+                transient_error = exc
+            # A tokenizer may legitimately live only in the base repository,
+            # so permanent errors (notably 404) remain optional here.
+            continue
         except Exception:
             continue
+    if transient_error is not None:
+        raise transient_error
 
 
 def _find_local_gguf(model_dir: Path) -> Optional[Path]:
