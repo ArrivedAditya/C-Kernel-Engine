@@ -83,6 +83,8 @@ def load_kernel_capabilities(root: Path = DEFAULT_KERNELS) -> Dict[str, Any]:
     kernels: Dict[str, Any] = {}
     for path in sorted(root.glob("*.json")):
         doc = load_json(path)
+        if doc.get("physical_alias_of"):
+            continue
         if "supported_reductions" not in doc and "provides" not in doc:
             continue
         kernel_id = str(doc.get("id", "")).strip()
@@ -109,6 +111,8 @@ def load_kernel_execution_capabilities(root: Path = DEFAULT_KERNELS) -> Dict[str
     validate_quantized_linear_contract_registry(linear_contracts)
     for path in sorted(root.glob("*.json")):
         doc = load_json(path)
+        if doc.get("physical_alias_of"):
+            continue
         if "contract_schema_version" not in doc:
             continue
         kernel_id = str(doc.get("id", "")).strip()

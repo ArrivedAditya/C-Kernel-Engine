@@ -96,6 +96,18 @@ def _kernel_map_by_id(registry: Dict[str, Any], kernel_id: str) -> Dict[str, Any
     return matches[0]
 
 
+def _single_kernel_port_name(
+    registry: Dict[str, Any], kernel_id: str, field: str
+) -> Optional[str]:
+    """Return a provider's sole named port without inferring operation semantics."""
+    kernel = _kernel_map_by_id(registry, kernel_id)
+    ports = kernel.get(field)
+    if not isinstance(ports, list) or len(ports) != 1:
+        return None
+    name = ports[0].get("name") if isinstance(ports[0], dict) else None
+    return str(name).strip() if name else None
+
+
 def _resolve_layout_edge(
     registry: Dict[str, Any],
     *,
@@ -103,24 +115,99 @@ def _resolve_layout_edge(
     producer_port: str,
     consumer_kernel: str,
     consumer_port: str,
-) -> Tuple[bool, Optional[str]]:
-    """Return (map_managed, converter_id); converter is None for a direct edge."""
+) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
+    """Resolve a physical producer route without changing numerical ownership."""
     producer = _kernel_map_by_id(registry, producer_kernel)
     consumer = _kernel_map_by_id(registry, consumer_kernel)
-    if not producer.get("physical_contract_version") or not consumer.get("physical_contract_version"):
-        return False, None
+    if not consumer.get("physical_contract_version"):
+        return False, None, None
+    producer_selection = producer.get("selection")
+    producer_group = (
+        str(producer_selection.get("equivalence_group", ""))
+        if isinstance(producer_selection, dict)
+        else ""
+    )
+    producers = []
+    for candidate in registry.get("kernels", []):
+        if not isinstance(candidate, dict) or not candidate.get("physical_contract_version"):
+            continue
+        selection = candidate.get("selection")
+        if not isinstance(selection, dict):
+            continue
+        if selection.get("status") != "production" or "prefill" not in selection.get("phases", []):
+            continue
+        if candidate.get("id") == producer_kernel:
+            producers.append(candidate)
+            continue
+        if (
+            producer_group
+            and candidate.get("physical_alias_of") == producer_kernel
+            and selection.get("equivalence_group") == producer_group
+            and candidate.get("op") == producer.get("op")
+        ):
+            producers.append(candidate)
+    if not producers:
+        return False, None, None
     converters = [
         kernel for kernel in registry.get("kernels", [])
         if isinstance(kernel, dict) and isinstance(kernel.get("layout_conversion"), dict)
     ]
     route = rank_layout_routes(
-        [producer],
+        producers,
         producer_port=producer_port,
         consumers=[consumer],
         consumer_port=consumer_port,
         converters=converters,
     )[0]
-    return True, route.converter_id
+    selected = _kernel_map_by_id(registry, route.producer.provider_id)
+    if selected.get("id") != producer.get("id"):
+        def _execution_abi(provider: Dict[str, Any]) -> List[Dict[str, Any]]:
+            return [
+                {key: value for key, value in param.items() if key != "ports"}
+                for param in (provider.get("call_abi") or {}).get("params", [])
+                if isinstance(param, dict)
+            ]
+
+        numerical_abi = _execution_abi(producer)
+        physical_abi = _execution_abi(selected)
+        if numerical_abi != physical_abi:
+            raise RuntimeError(
+                f"HARD PHYSICAL CONTRACT FAULT: provider {selected.get('id')!r} "
+                f"does not preserve the call ABI of numerical provider {producer_kernel!r}."
+            )
+    impl = selected.get("impl") if isinstance(selected.get("impl"), dict) else {}
+    physical_execution = {
+        "provider_id": route.producer.provider_id,
+        "numerical_kernel_id": producer_kernel,
+        "function": str(impl.get("function", "") or ""),
+        "output_layout": route.producer.layout,
+        "consumer_layout": route.consumer.layout,
+        "converter_id": route.converter_id,
+        "selection_priority": route.producer.priority,
+    }
+    physical_variants = selected.get("physical_variants")
+    if physical_variants is not None and not isinstance(physical_variants, dict):
+        raise RuntimeError(
+            f"HARD PHYSICAL CONTRACT FAULT: provider {selected.get('id')!r} "
+            "physical_variants must be an object."
+        )
+    if isinstance(physical_variants, dict):
+        unknown_variants = set(physical_variants) - {"mixed_visual_chunk_function"}
+        if unknown_variants:
+            raise RuntimeError(
+                f"HARD PHYSICAL CONTRACT FAULT: provider {selected.get('id')!r} "
+                f"declares unknown physical variants {sorted(unknown_variants)}."
+            )
+        mixed_function = str(
+            physical_variants.get("mixed_visual_chunk_function", "") or ""
+        )
+        if mixed_function:
+            physical_execution["mixed_visual_chunk_function"] = mixed_function
+    if not physical_execution["function"]:
+        raise RuntimeError(
+            f"physical provider {route.producer.provider_id!r} has no impl.function"
+        )
+    return True, route.converter_id, physical_execution
 
 
 def _load_numerical_contract_resolver():
@@ -8637,13 +8724,19 @@ def generate_ir_lower_1(
     ) -> Optional[str]:
         if not consumer_kernel:
             return legacy_converter
-        managed, converter = _resolve_layout_edge(
+        producer_kernel = str(producer.get("kernel", ""))
+        declared_producer_port = _single_kernel_port_name(
+            registry, producer_kernel, "outputs"
+        )
+        managed, converter, physical_execution = _resolve_layout_edge(
             registry,
-            producer_kernel=str(producer.get("kernel", "")),
-            producer_port=producer_port,
+            producer_kernel=producer_kernel,
+            producer_port=declared_producer_port or producer_port,
             consumer_kernel=consumer_kernel,
             consumer_port=consumer_port,
         )
+        if managed and physical_execution is not None:
+            producer["_resolved_physical_execution"] = physical_execution
         return converter if managed else legacy_converter
 
     force_decode_attn_regular = str(os.environ.get("CK_V7_DECODE_ATTN_REGULAR", "")).strip().lower() in ("1", "true", "yes", "on")
@@ -9018,7 +9111,7 @@ def generate_ir_lower_1(
                 layer = op["layer"]
                 output_converter = _prefill_converter(
                     op,
-                    producer_port="output",
+                    producer_port="out",
                     consumer_kernel=prefill_out_kernel_by_layer.get(int(layer), ""),
                     consumer_port="A",
                     legacy_converter="layout_convert_head_to_token_f32",
@@ -10679,6 +10772,16 @@ def generate_ir_lower_2(
                 raise RuntimeError(
                     f"HARD CONTRACT FAULT: memory lowering received kernel {ir_op['kernel']!r}, "
                     f"but execution metadata names {lowered_op['resolved_execution'].get('kernel_id')!r}."
+                )
+        if ir_op.get("_resolved_physical_execution") is not None:
+            lowered_op["_resolved_physical_execution"] = copy.deepcopy(
+                ir_op["_resolved_physical_execution"]
+            )
+            if lowered_op["_resolved_physical_execution"].get("numerical_kernel_id") != ir_op["kernel"]:
+                raise RuntimeError(
+                    f"HARD PHYSICAL CONTRACT FAULT: memory lowering received numerical kernel "
+                    f"{ir_op['kernel']!r}, but physical execution metadata names "
+                    f"{lowered_op['_resolved_physical_execution'].get('numerical_kernel_id')!r}."
                 )
         if ir_op.get("resolved_codegen_capability") is not None:
             lowered_op["resolved_codegen_capability"] = copy.deepcopy(
@@ -13311,6 +13414,15 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     f"execution metadata {resolved_execution.get('kernel_id')!r}."
                 )
             call_op["resolved_execution"] = resolved_execution
+        physical_execution = copy.deepcopy(op.get("_resolved_physical_execution"))
+        if physical_execution is not None:
+            if physical_execution.get("numerical_kernel_id") != op.get("kernel"):
+                raise RuntimeError(
+                    f"HARD PHYSICAL CONTRACT FAULT: call-ready IR kernel {op.get('kernel')!r} "
+                    f"differs from physical provider numerical owner "
+                    f"{physical_execution.get('numerical_kernel_id')!r}."
+                )
+            call_op["resolved_physical_execution"] = physical_execution
         resolved_codegen = copy.deepcopy(op.get("resolved_codegen_capability")) if op.get("resolved_codegen_capability") else None
         if resolved_codegen is not None:
             if resolved_codegen.get("kernel_id") != op.get("kernel"):

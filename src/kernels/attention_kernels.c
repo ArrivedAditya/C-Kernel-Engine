@@ -261,6 +261,18 @@ static inline size_t qkv_index(int h,
          + (size_t)d;
 }
 
+static inline size_t attention_output_index(int h, int token,
+                                            int num_heads, int num_tokens,
+                                            int aligned_head_dim,
+                                            int token_major)
+{
+    if (token_major) {
+        return ((size_t)token * (size_t)num_heads + (size_t)h) *
+               (size_t)aligned_head_dim;
+    }
+    return qkv_index(h, token, 0, num_tokens, aligned_head_dim);
+}
+
 // Match llama.cpp flash-attention input handling where F32 K/V are rounded through F16.
 static inline float ck_round_fp16_scalar(float x) {
     return CK_FP16_TO_FP32(CK_FP32_TO_FP16(x));
@@ -3617,6 +3629,7 @@ typedef struct {
     int aligned_head_dim;
     int kv_stride_tokens;
     int causal;
+    int output_token_major;
     float scale;
 } ck_attention_parallel_args_t;
 
@@ -3952,7 +3965,9 @@ static void ck_attention_full_grid_work(int ith, int nth, void *opaque)
         const float *k_head = args->k + (size_t) kv_head * kv_head_stride;
         const float *v_head = args->v + (size_t) kv_head * kv_head_stride;
         const float *q_vec = args->q + qkv_index(h, i, 0, T, args->aligned_head_dim);
-        float *out_vec = args->output + qkv_index(h, i, 0, T, args->aligned_head_dim);
+        float *out_vec = args->output + attention_output_index(
+            h, i, args->num_heads, T, args->aligned_head_dim,
+            args->output_token_major);
         const int kv_tokens = args->causal ? (i + 1) : T;
         ck_attention_flash_query_auto(q_vec, k_head, v_head,
                                       kv_tokens,
@@ -4004,6 +4019,7 @@ static int attention_forward_head_major_gqa_unfused_f16_strict(
     int aligned_head_dim,
     int kv_stride_tokens,
     int causal,
+    int output_token_major,
     float scale,
     int debug_layer_id)
 {
@@ -4039,7 +4055,8 @@ static int attention_forward_head_major_gqa_unfused_f16_strict(
 
         for (int i = 0; i < T; ++i) {
             const float *q_vec = q + qkv_index(h, i, 0, T, aligned_head_dim);
-            float *out_vec = output + qkv_index(h, i, 0, T, aligned_head_dim);
+            float *out_vec = output + attention_output_index(
+                h, i, num_heads, T, aligned_head_dim, output_token_major);
             const int kv_tokens = causal ? i + 1 : T;
             for (int d = 0; d < aligned_head_dim; ++d) {
                 q_half[d] = CK_FP32_TO_FP16(q_vec[d]);
@@ -4090,6 +4107,7 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
                                                         int kv_stride_tokens,
                                                         int causal,
                                                         int round_full_kv_fp16,
+                                                        int output_token_major,
                                                         float scale)
 {
     if (!q || !k || !v || !output) {
@@ -4116,12 +4134,12 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
                     q, k, v, output,
                     num_heads, num_kv_heads, num_tokens,
                     head_dim, aligned_head_dim, kv_stride_tokens,
-                    causal, strict_scale, debug_layer_id)) {
+                    causal, output_token_major, strict_scale, debug_layer_id)) {
                 return;
             }
         }
 #if CK_ENABLE_LLAMA_CPP_PARITY
-        if (!causal &&
+        if (!causal && !output_token_major &&
             ck_attention_full_ggml_graph_oracle_multihead(q,
                                                           k,
                                                           v,
@@ -4243,7 +4261,7 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
 
     const int total_queries = num_heads * T;
 #if defined(__AVX512F__)
-    if (!causal && head_dim == 72 && aligned_head_dim >= 72 && ck_attention_qblock8_enabled()) {
+    if (!causal && !output_token_major && head_dim == 72 && aligned_head_dim >= 72 && ck_attention_qblock8_enabled()) {
         ck_threadpool_t *pool = ck_threadpool_global();
         const int q_blocks = (T + 7) / 8;
         const int total_blocks = num_heads * q_blocks;
@@ -4267,7 +4285,7 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
         }
     }
 
-    if (!causal && head_dim == 72 && aligned_head_dim >= 72 && ck_attention_qblock4_enabled()) {
+    if (!causal && !output_token_major && head_dim == 72 && aligned_head_dim >= 72 && ck_attention_qblock4_enabled()) {
         ck_threadpool_t *pool = ck_threadpool_global();
         const int q_blocks = (T + 3) / 4;
         const int total_blocks = num_heads * q_blocks;
@@ -4307,6 +4325,7 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
                 .aligned_head_dim = aligned_head_dim,
                 .kv_stride_tokens = kv_stride_tokens,
                 .causal = causal,
+                .output_token_major = output_token_major,
                 .scale = scale,
             };
             ck_threadpool_dispatch_n(pool, active, ck_attention_full_grid_work, &args);
@@ -4322,7 +4341,8 @@ static void attention_forward_head_major_gqa_flash_impl(const float *q,
 
         for (int i = 0; i < T; ++i) {
             const float *q_vec = q + qkv_index(h, i, 0, T, aligned_head_dim);
-            float *out_vec = output + qkv_index(h, i, 0, T, aligned_head_dim);
+            float *out_vec = output + attention_output_index(
+                h, i, num_heads, T, aligned_head_dim, output_token_major);
             const int kv_tokens = causal ? (i + 1) : T;
             FLASH_QUERY_IMPL(q_vec, k_head, v_head,
                              kv_tokens,
@@ -4353,6 +4373,7 @@ void attention_forward_causal_head_major_gqa_flash(const float *q,
                                                 /*kv_stride_tokens=*/num_tokens,
                                                 /*causal=*/1,
                                                 /*round_full_kv_fp16=*/0,
+                                                /*output_token_major=*/0,
                                                 1.0f / sqrtf((float)head_dim));
 }
 
@@ -4373,6 +4394,7 @@ void attention_forward_full_head_major_gqa_flash(const float *q,
                                                 /*kv_stride_tokens=*/num_tokens,
                                                 /*causal=*/0,
                                                 /*round_full_kv_fp16=*/1,
+                                                /*output_token_major=*/0,
                                                 1.0f / sqrtf((float)head_dim));
 }
 
@@ -4404,6 +4426,30 @@ void attention_forward_causal_head_major_gqa_flash_strided(const float *q,
                                                 kv_stride_tokens,
                                                 /*causal=*/1,
                                                 /*round_full_kv_fp16=*/0,
+                                                /*output_token_major=*/0,
+                                                1.0f / sqrtf((float)head_dim));
+}
+
+void attention_forward_causal_head_major_gqa_flash_strided_token_output(
+    const float *q,
+    const float *k,
+    const float *v,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int kv_stride_tokens)
+{
+    attention_forward_head_major_gqa_flash_impl(q, k, v, output,
+                                                num_heads, num_kv_heads,
+                                                num_tokens, head_dim,
+                                                aligned_head_dim,
+                                                kv_stride_tokens,
+                                                /*causal=*/1,
+                                                /*round_full_kv_fp16=*/0,
+                                                /*output_token_major=*/1,
                                                 1.0f / sqrtf((float)head_dim));
 }
 
@@ -4425,6 +4471,7 @@ void attention_forward_full_head_major_gqa_flash_strided(const float *q,
                                                 kv_stride_tokens,
                                                 /*causal=*/0,
                                                 /*round_full_kv_fp16=*/1,
+                                                /*output_token_major=*/0,
                                                 1.0f / sqrtf((float)head_dim));
 }
 
@@ -4855,6 +4902,7 @@ void attention_forward_full_head_major_gqa_flash_strided_bf16_storage(
         aligned_head_dim, kv_stride_tokens,
         /*causal=*/0,
         /*round_full_kv_fp16=*/0,
+        /*output_token_major=*/0,
         1.0f / sqrtf((float)head_dim)
     );
     const size_t count = (size_t)num_heads * (size_t)num_tokens
@@ -4933,6 +4981,7 @@ void attention_forward_causal_head_major_gqa_flash_strided_gemma4(const float *q
                                                 kv_stride_tokens,
                                                 /*causal=*/1,
                                                 /*round_full_kv_fp16=*/0,
+                                                /*output_token_major=*/0,
                                                 1.0f);
 }
 
@@ -4969,22 +5018,25 @@ void attention_forward_full_head_major_gqa_flash_strided_gemma4(const float *q,
                                                 kv_stride_tokens,
                                                 /*causal=*/0,
                                                 /*round_full_kv_fp16=*/1,
+                                                /*output_token_major=*/0,
                                                 1.0f);
 }
 
 
-void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4(const float *q,
-                                                                              const float *k,
-                                                                              const float *v,
-                                                                              float *output,
-                                                                              int num_heads,
-                                                                              int num_kv_heads,
-                                                                              int num_tokens,
-                                                                              int head_dim,
-                                                                              int aligned_head_dim,
-                                                                              int kv_stride_tokens,
-                                                                              int visual_start,
-                                                                              int visual_tokens)
+static void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4_impl(
+    const float *q,
+    const float *k,
+    const float *v,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int kv_stride_tokens,
+    int visual_start,
+    int visual_tokens,
+    int output_token_major)
 {
     if (!q || !k || !v || !output) {
         return;
@@ -4996,11 +5048,10 @@ void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4(co
         return;
     }
     if (visual_start < 0 || visual_tokens <= 0 || visual_start >= num_tokens) {
-        attention_forward_causal_head_major_gqa_flash_strided_gemma4(q, k, v, output,
-                                                                     num_heads, num_kv_heads,
-                                                                     num_tokens, head_dim,
-                                                                     aligned_head_dim,
-                                                                     kv_stride_tokens);
+        attention_forward_head_major_gqa_flash_impl(
+            q, k, v, output, num_heads, num_kv_heads, num_tokens, head_dim,
+            aligned_head_dim, kv_stride_tokens, /*causal=*/1,
+            /*round_full_kv_fp16=*/0, output_token_major, 1.0f);
         return;
     }
 
@@ -5009,11 +5060,10 @@ void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4(co
         visual_end = num_tokens;
     }
     if (visual_end <= visual_start) {
-        attention_forward_causal_head_major_gqa_flash_strided_gemma4(q, k, v, output,
-                                                                     num_heads, num_kv_heads,
-                                                                     num_tokens, head_dim,
-                                                                     aligned_head_dim,
-                                                                     kv_stride_tokens);
+        attention_forward_head_major_gqa_flash_impl(
+            q, k, v, output, num_heads, num_kv_heads, num_tokens, head_dim,
+            aligned_head_dim, kv_stride_tokens, /*causal=*/1,
+            /*round_full_kv_fp16=*/0, output_token_major, 1.0f);
         return;
     }
 
@@ -5032,7 +5082,8 @@ void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4(co
 
             for (int i = 0; i < T; ++i) {
                 const float *q_vec = q + qkv_index(h, i, 0, T, aligned_head_dim);
-                float *out_vec = output + qkv_index(h, i, 0, T, aligned_head_dim);
+                float *out_vec = output + attention_output_index(
+                    h, i, num_heads, T, aligned_head_dim, output_token_major);
                 const int in_visual = (i >= visual_start && i < visual_end);
                 const int kv_tokens = in_visual ? visual_end : (i + 1);
                 attention_flash_query_causal_exact(q_vec, k_head, v_head,
@@ -5066,7 +5117,8 @@ void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4(co
 
         for (int i = 0; i < T; ++i) {
             const float *q_vec = q + qkv_index(h, i, 0, T, aligned_head_dim);
-            float *out_vec = output + qkv_index(h, i, 0, T, aligned_head_dim);
+            float *out_vec = output + attention_output_index(
+                h, i, num_heads, T, aligned_head_dim, output_token_major);
             const int in_visual = (i >= visual_start && i < visual_end);
             const int kv_tokens = in_visual ? visual_end : (i + 1);
             FLASH_QUERY_IMPL(q_vec, k_head, v_head,
@@ -5077,6 +5129,30 @@ void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4(co
     }
 
 #undef FLASH_QUERY_IMPL
+}
+
+void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens, int head_dim,
+    int aligned_head_dim, int kv_stride_tokens, int visual_start,
+    int visual_tokens)
+{
+    attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4_impl(
+        q, k, v, output, num_heads, num_kv_heads, num_tokens, head_dim,
+        aligned_head_dim, kv_stride_tokens, visual_start, visual_tokens,
+        /*output_token_major=*/0);
+}
+
+void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4_token_output(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens, int head_dim,
+    int aligned_head_dim, int kv_stride_tokens, int visual_start,
+    int visual_tokens)
+{
+    attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4_impl(
+        q, k, v, output, num_heads, num_kv_heads, num_tokens, head_dim,
+        aligned_head_dim, kv_stride_tokens, visual_start, visual_tokens,
+        /*output_token_major=*/1);
 }
 
 void attention_forward_causal_head_major_gqa_flash_strided_f16kv(const float *q,
