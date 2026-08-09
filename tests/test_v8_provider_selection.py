@@ -143,7 +143,7 @@ class ProviderSelectionTests(unittest.TestCase):
             selected.append(document["id"])
             errors = sorted(validator.iter_errors(document["selection"]), key=str)
             self.assertEqual(errors, [], path.name)
-        self.assertEqual(len(selected), 33)
+        self.assertEqual(len(selected), 35)
 
     def test_embedding_production_priorities_preserve_dtype_dispatch(self):
         registry = json.loads(

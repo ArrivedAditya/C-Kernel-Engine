@@ -1055,6 +1055,8 @@ def _hydrate_manifest_template(manifest: Dict[str, Any]) -> Dict[str, Any]:
     bridge_contract = hydrated_contract.get("multimodal_bridge")
     if isinstance(bridge_contract, dict):
         resolved_bridge = copy.deepcopy(bridge_contract)
+        if resolved_bridge.get("providers") is not None:
+            resolved_bridge = resolve_stitch_contract_providers(resolved_bridge)
         schedules = resolved_bridge.pop("prefill_schedules", None)
         prefill_attention = (
             attention_phases.get("prefill")
@@ -5019,6 +5021,60 @@ def build_block_manifests(manifest: Dict[str, Any]) -> List[Dict[str, Any]]:
     return blocks
 
 
+def resolve_stitch_contract_providers(contract: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolve circuit-declared stitch providers without model-family logic."""
+    resolved = copy.deepcopy(contract)
+    providers = resolved.get("providers")
+    if not isinstance(providers, dict) or not providers:
+        raise RuntimeError("HARD CIRCUIT STITCH FAULT: stitch contract requires providers")
+    registry = load_kernel_registry()
+    kernels = {
+        str(kernel.get("id")): kernel
+        for kernel in registry.get("kernels", [])
+        if isinstance(kernel, dict) and str(kernel.get("id", "") or "").strip()
+    }
+    for provider_name, reference in providers.items():
+        if not isinstance(reference, dict):
+            raise RuntimeError(
+                f"HARD CIRCUIT STITCH FAULT: provider {provider_name!r} must be an object"
+            )
+        kernel_id = str(reference.get("kernel_id", "") or "").strip()
+        operation = str(reference.get("op", "") or "").strip()
+        interface = str(reference.get("operation_interface", "") or "").strip()
+        if not kernel_id or not operation or not interface:
+            raise RuntimeError(
+                f"HARD CIRCUIT STITCH FAULT: provider {provider_name!r} must declare "
+                "kernel_id, op, and operation_interface"
+            )
+        kernel = kernels.get(kernel_id)
+        if not isinstance(kernel, dict):
+            raise RuntimeError(
+                f"HARD CIRCUIT STITCH FAULT: provider {provider_name!r} references "
+                f"missing kernel {kernel_id!r}"
+            )
+        if str(kernel.get("op", "") or "") != operation:
+            raise RuntimeError(
+                f"HARD CIRCUIT STITCH FAULT: provider {provider_name!r} operation mismatch: "
+                f"circuit={operation!r} map={kernel.get('op')!r}"
+            )
+        if str(kernel.get("operation_interface", "") or "") != interface:
+            raise RuntimeError(
+                f"HARD CIRCUIT STITCH FAULT: provider {provider_name!r} interface mismatch: "
+                f"circuit={interface!r} map={kernel.get('operation_interface')!r}"
+            )
+        implementation = kernel.get("impl") if isinstance(kernel.get("impl"), dict) else {}
+        function = str(implementation.get("function", "") or "").strip()
+        declaration = str(implementation.get("c_declaration", "") or "").strip()
+        if not function or not declaration:
+            raise RuntimeError(
+                f"HARD CIRCUIT STITCH FAULT: provider {provider_name!r} has no callable implementation"
+            )
+        reference["resolved_function"] = function
+        reference["resolved_declaration"] = declaration
+        reference["resolved_sources"] = list(implementation.get("sources") or [])
+    return resolved
+
+
 def build_stitch_plan(manifest: Dict[str, Any]) -> Dict[str, Any]:
     manifest = _hydrate_manifest_template(copy.deepcopy(manifest))
     template = manifest.get("template", {})
@@ -5032,7 +5088,11 @@ def build_stitch_plan(manifest: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(template_stitch, list) and template_stitch:
         for edge in template_stitch:
             if isinstance(edge, dict):
-                edges.append(copy.deepcopy(edge))
+                resolved_edge = copy.deepcopy(edge)
+                contract = resolved_edge.get("required_contract")
+                if isinstance(contract, dict) and contract.get("providers") is not None:
+                    resolved_edge["required_contract"] = resolve_stitch_contract_providers(contract)
+                edges.append(resolved_edge)
     else:
         if isinstance(template.get("resolved_components"), dict) and len(sequence) > 1:
             raise RuntimeError(

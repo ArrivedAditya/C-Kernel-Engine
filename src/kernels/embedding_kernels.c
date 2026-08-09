@@ -335,3 +335,39 @@ void embedding_backward(const int32_t *token_ids,
         }
     }
 }
+
+/* Insert externally produced FP32 rows into a token-major decoder activation.
+ * The ABI is model-agnostic: callers provide both row strides, the number of
+ * values copied per row, the destination offset, and its row capacity. */
+int ck_multimodal_prefix_insert_f32(const float *source_rows,
+                                    int32_t *token_ids,
+                                    float *decoder_rows,
+                                    int row_count,
+                                    int source_row_stride,
+                                    int decoder_row_stride,
+                                    int copy_dim,
+                                    int start_row,
+                                    int decoder_capacity)
+{
+    if (!source_rows || !token_ids || !decoder_rows || row_count <= 0) {
+        return -1;
+    }
+    if (source_row_stride < copy_dim || decoder_row_stride < copy_dim || copy_dim <= 0) {
+        return -2;
+    }
+    if (start_row < 0 || start_row >= decoder_capacity) {
+        return -3;
+    }
+    if (row_count > decoder_capacity - start_row) {
+        row_count = decoder_capacity - start_row;
+    }
+
+    for (int row = 0; row < row_count; ++row) {
+        const float *src = source_rows + (size_t)row * (size_t)source_row_stride;
+        float *dst = decoder_rows
+                   + (size_t)(start_row + row) * (size_t)decoder_row_stride;
+        memcpy(dst, src, (size_t)copy_dim * sizeof(float));
+        token_ids[start_row + row] = 0;
+    }
+    return row_count;
+}

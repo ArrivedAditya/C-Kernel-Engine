@@ -4033,6 +4033,24 @@ void gemma4_vision_projector_prep_forward(const float *input,
                                            float scale,
                                            float eps);
 
+int ck_multimodal_prefix_insert_f32(const float *source_rows,
+                                    int32_t *token_ids,
+                                    float *decoder_rows,
+                                    int row_count,
+                                    int source_row_stride,
+                                    int decoder_row_stride,
+                                    int copy_dim,
+                                    int start_row,
+                                    int decoder_capacity);
+int ck_multimodal_mrope_positions_2d(int32_t *positions,
+                                    int total_tokens,
+                                    int prefix_start,
+                                    int position_base,
+                                    int prefix_tokens,
+                                    int grid_x,
+                                    int grid_y,
+                                    int text_pos);
+
 
 	void im2patch_bf16(const uint16_t *image,
 	                   uint16_t *patches,

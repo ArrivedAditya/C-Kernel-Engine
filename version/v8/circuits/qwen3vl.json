@@ -97,6 +97,18 @@
       "position_policy": "mrope_2d",
       "cache_policy": "persistent_decoder_kv",
       "runtime_policy": "decode_staged",
+      "providers": {
+        "prefix_insert": {
+          "op": "multimodal_prefix_insert",
+          "kernel_id": "multimodal_prefix_insert_f32",
+          "operation_interface": "multimodal_prefix_insert.token_major.fp32.v1"
+        },
+        "position_builder": {
+          "op": "multimodal_position_builder",
+          "kernel_id": "multimodal_mrope_positions_2d",
+          "operation_interface": "multimodal_positions.mrope_2d.i32.v1"
+        }
+      },
       "prefill_schedules": {
         "segmented_append": {
           "segments": ["text_before", "visual", "text_after"],

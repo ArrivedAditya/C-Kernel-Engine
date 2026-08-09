@@ -151,7 +151,7 @@ def _composition_bridge_contract(circuit: dict[str, Any]) -> dict[str, Any]:
         raise RuntimeError(
             f"composition {circuit.get('name')!r} bridge stitch has no required_contract"
         )
-    return copy.deepcopy(contract)
+    return build_ir_v8.resolve_stitch_contract_providers(contract)
 
 
 def _validate_composition_runtime(
@@ -2272,12 +2272,20 @@ def _prepare_decoder_runtime(
     parity_dump: bool = False,
     context_override: int | None = None,
     profile: bool = False,
+    runtime_config_overrides: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     manifest, manifest_path, bump_path, config_path = _run_converter(
         gguf_path,
         output_dir,
         context_override=context_override,
     )
+    if runtime_config_overrides:
+        runtime_config = manifest.get("config")
+        if not isinstance(runtime_config, dict):
+            raise RuntimeError("decoder manifest has no runtime config for explicit composition")
+        for key, value in runtime_config_overrides.items():
+            runtime_config[str(key)] = copy.deepcopy(value)
+        _json_write(manifest_path, manifest)
     prefill_ir1 = output_dir / "ir1_prefill.json"
     prefill_layout = output_dir / "layout_prefill.json"
     prefill_lowered = output_dir / "lowered_prefill.json"
@@ -3615,6 +3623,11 @@ def main(argv: list[str] | None = None) -> int:
         decoder_dir,
         context_override=decoder_context_len,
         profile=bool(args.profile_decoder),
+        runtime_config_overrides=(
+            {"multimodal_bridge_contract": bridge_contract}
+            if composition_circuit is not None
+            else None
+        ),
     )
     decoder_prepare_elapsed = time.perf_counter() - decoder_prep_t0
     timings["decoder_prepare_ms"] = decoder_prepare_elapsed * 1000.0

@@ -51,6 +51,12 @@
         "position_policy": "mrope_2d",
         "decode_policy": "causal_mixed_prefix",
         "prefix_policy": "mixed_visual_text_prefill",
+        "prefill_batching": "unified_mixed",
+        "prefill_schedule": {
+          "segments": ["text_before", "visual", "text_after"],
+          "cache_transition": "single_pass",
+          "position_transition": "explicit_full_sequence"
+        },
         "cache_policy": "persistent_decoder_kv",
         "generation_policy": "incremental_decode_after_prefill",
         "runtime_policy": "decode_staged",
@@ -58,6 +64,23 @@
         "image_begin_marker": "<|vision_start|>",
         "image_end_marker": "<|vision_end|>",
         "deepstack_injections": 0,
+        "providers": {
+          "prefix_insert": {
+            "op": "multimodal_prefix_insert",
+            "kernel_id": "multimodal_prefix_insert_f32",
+            "operation_interface": "multimodal_prefix_insert.token_major.fp32.v1"
+          },
+          "position_builder": {
+            "op": "multimodal_position_builder",
+            "kernel_id": "multimodal_mrope_positions_2d",
+            "operation_interface": "multimodal_positions.mrope_2d.i32.v1"
+          },
+          "position_transform": {
+            "op": "rope",
+            "kernel_id": "mrope_qk_imrope_positions",
+            "operation_interface": "mrope.imrope_positions.fp32.v1"
+          }
+        },
         "dimension_equality": [
           {
             "left": "vision_encoder.projector_out_dim",

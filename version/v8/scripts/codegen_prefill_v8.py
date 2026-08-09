@@ -1796,13 +1796,16 @@ def _has_unified_mixed_prefill_contract(config: Dict) -> bool:
 def _emit_multimodal_prefill_bridge_helpers(config: Dict, text_mrope_function: str) -> str:
     embed_dim = int(config.get("embed_dim", 0) or 0)
     num_deepstack_layers = int(config.get("num_deepstack_layers", 0) or 0)
-    if embed_dim <= 0 or num_deepstack_layers <= 0:
+    if embed_dim <= 0:
         return ""
     bridge = config.get("multimodal_bridge_contract")
     schedule = bridge.get("prefill_schedule") if isinstance(bridge, dict) else None
     position_transform = (
         schedule.get("position_transform") if isinstance(schedule, dict) else None
     )
+    providers = bridge.get("providers") if isinstance(bridge, dict) else None
+    if not isinstance(position_transform, dict) and isinstance(providers, dict):
+        position_transform = providers.get("position_transform")
     positions_mrope_function = str(
         (position_transform or {}).get("resolved_function", "") or ""
     ).strip()
@@ -1812,10 +1815,20 @@ def _emit_multimodal_prefill_bridge_helpers(config: Dict, text_mrope_function: s
     deepstack_add_function = str(
         (deepstack_injection or {}).get("resolved_function", "") or ""
     ).strip()
+    position_builder = providers.get("position_builder") if isinstance(providers, dict) else None
+    position_builder_function = str(
+        (position_builder or {}).get("resolved_function", "") or ""
+    ).strip()
     if _has_unified_mixed_prefill_contract(config) and not positions_mrope_function:
         raise RuntimeError(
             "unified mixed-prefill requires a resolved positions-aware M-RoPE provider"
         )
+    if _has_unified_mixed_prefill_contract(config) and not position_builder_function:
+        raise RuntimeError(
+            "unified mixed-prefill requires a resolved M-RoPE position-builder provider"
+        )
+    if not position_builder_function:
+        position_builder_function = "ck_multimodal_mrope_positions_2d"
     if (
         _has_unified_mixed_prefill_contract(config)
         and num_deepstack_layers > 0
@@ -1913,35 +1926,19 @@ static int ck_multimodal_prefill_bridge_prepare(const float *rows,
         return -6;
     }}
 
-    const int prefix_end = prefix_start + prefix_tokens;
-    const int resolved_text_pos = text_pos > 0 ? text_pos : (prefix_start + (grid_x > grid_y ? grid_x : grid_y));
-
-    for (int tok = 0; tok < total_tokens; ++tok) {{
-        int32_t pos0 = 0;
-        int32_t pos1 = 0;
-        int32_t pos2 = 0;
-        if (tok < prefix_start) {{
-            const int32_t pos = tok;
-            pos0 = pos;
-            pos1 = pos;
-            pos2 = pos;
-        }} else if (tok < prefix_end) {{
-            const int local_tok = tok - prefix_start;
-            const int x = local_tok % grid_x;
-            const int y = local_tok / grid_x;
-            pos0 = position_base;
-            pos1 = position_base + y;
-            pos2 = position_base + x;
-        }} else {{
-            const int32_t pos = resolved_text_pos + (tok - prefix_end);
-            pos0 = pos;
-            pos1 = pos;
-            pos2 = pos;
-        }}
-        g_multimodal_prefill_positions[tok] = pos0;
-        g_multimodal_prefill_positions[tok + total_tokens] = pos1;
-        g_multimodal_prefill_positions[tok + 2 * total_tokens] = pos2;
-        g_multimodal_prefill_positions[tok + 3 * total_tokens] = 0;
+    const int resolved_text_pos = {position_builder_function}(
+        g_multimodal_prefill_positions,
+        total_tokens,
+        prefix_start,
+        position_base,
+        prefix_tokens,
+        grid_x,
+        grid_y,
+        text_pos
+    );
+    if (resolved_text_pos < 0) {{
+        ck_multimodal_prefill_bridge_clear();
+        return resolved_text_pos;
     }}
 
     g_multimodal_prefill_rows = rows;
@@ -2620,6 +2617,16 @@ def emit_multimodal_bridge_api(ops: List[Dict], config: Dict | None = None) -> s
         raise RuntimeError(
             "multimodal bridge must resolve exactly one supported prefill schedule"
         )
+    bridge = config.get("multimodal_bridge_contract")
+    providers = bridge.get("providers") if isinstance(bridge, dict) else None
+    prefix_insert = providers.get("prefix_insert") if isinstance(providers, dict) else None
+    prefix_insert_function = str(
+        (prefix_insert or {}).get("resolved_function", "") or ""
+    ).strip()
+    if has_multimodal_bridge and not prefix_insert_function:
+        raise RuntimeError("multimodal bridge requires a resolved prefix-insert provider")
+    if not prefix_insert_function:
+        prefix_insert_function = "ck_multimodal_prefix_insert_f32"
 
     token_ids_expr = _find_arg_expr(args_list, arg_name="token_ids") or "(int32_t*)(model->bump + A_TOKEN_IDS)"
     token_embeddings_expr = _find_arg_expr(args_list, arg_name="token_embeddings")
@@ -2639,7 +2646,7 @@ def emit_multimodal_bridge_api(ops: List[Dict], config: Dict | None = None) -> s
     bridge_prepare_block_visual_segment = ""
     if has_multimodal_bridge:
         bridge_prepare_block_mixed = """
-        if (prefix_embed_dim > aligned_embed_dim) {
+        if (prefix_tokens > 0) {
             if (prefix_grid_x > 0 && prefix_grid_y > 0) {
                 int prep_rc = ck_multimodal_prefill_bridge_prepare(
                     prefix_embeddings,
@@ -2673,7 +2680,7 @@ def emit_multimodal_bridge_api(ops: List[Dict], config: Dict | None = None) -> s
         }
 """
         bridge_prepare_block_segments = """
-        if (prefix_embed_dim > aligned_embed_dim) {
+        if (prefix_tokens > 0) {
             if (prefix_grid_x > 0 && prefix_grid_y > 0) {
                 int prep_rc = ck_multimodal_prefill_bridge_prepare(
                     prefix_embeddings,
@@ -2707,7 +2714,7 @@ def emit_multimodal_bridge_api(ops: List[Dict], config: Dict | None = None) -> s
         }
 """
         bridge_prepare_block_visual_segment = """
-        if (prefix_embed_dim > aligned_embed_dim) {
+        if (prefix_tokens > 0) {
             if (prefix_grid_x > 0 && prefix_grid_y > 0) {
                 int prep_rc = ck_multimodal_prefill_bridge_prepare(
                     prefix_embeddings,
@@ -2819,20 +2826,20 @@ static int ck_write_embeddings_at_ex(CKModel *model, const float *embeddings, in
     if (row_dim <= 0) row_dim = ({aligned_embed_dim_expr});
     if (row_dim < ({embed_dim_expr})) return -3;
     if (start_pos < 0 || start_pos >= ({context_window_expr})) return -2;
-    if (count > ({context_window_expr}) - start_pos) {{
-        count = ({context_window_expr}) - start_pos;
-    }}
-
     int32_t *token_base = {token_ids_expr};
     float *out_base = {output_expr};
     const int aligned_embed_dim = ({aligned_embed_dim_expr});
-    for (int i = 0; i < count; ++i) {{
-        const float *src = embeddings + (size_t)i * (size_t)row_dim;
-        float *dst = out_base + (size_t)(start_pos + i) * (size_t)aligned_embed_dim;
-        memcpy(dst, src, (size_t)aligned_embed_dim * sizeof(float));
-        token_base[start_pos + i] = 0;
-    }}
-    return count;
+    return {prefix_insert_function}(
+        embeddings,
+        token_base,
+        out_base,
+        count,
+        row_dim,
+        aligned_embed_dim,
+        aligned_embed_dim,
+        start_pos,
+        ({context_window_expr})
+    );
 }}
 
 static int ck_embed_tokens_at(CKModel *model, const int32_t *tokens, int count, int start_pos) {{

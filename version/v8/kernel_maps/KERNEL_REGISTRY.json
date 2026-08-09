@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 275,
+      "total": 277,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -63,6 +63,8 @@
         "mla_kv_cache_store": 1,
         "moe_relu2_expert_mlp": 4,
         "moe_swiglu_expert_mlp": 3,
+        "multimodal_position_builder": 1,
+        "multimodal_prefix_insert": 1,
         "optimizer": 4,
         "partial_rope_concat": 2,
         "patch_projection": 1,
@@ -28052,6 +28054,350 @@
       },
       "name": "mrope_qk_vision_fp16_storage",
       "_source_file": "mrope_qk_vision_fp16_storage.json"
+    },
+    {
+      "id": "multimodal_mrope_positions_2d",
+      "op": "multimodal_position_builder",
+      "operation_interface": "multimodal_positions.mrope_2d.i32.v1",
+      "selection": {
+        "status": "production",
+        "priority": 100,
+        "equivalence_group": "multimodal_positions.mrope_2d.i32.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "variant": "section_major_mrope_2d",
+      "quant": {
+        "weight": "none",
+        "activation": "i32",
+        "output": "i32"
+      },
+      "inputs": [],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "positions",
+          "dtype": "i32",
+          "shape": [
+            4,
+            "T"
+          ],
+          "layout": "section_major",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "T",
+        "P",
+        "GX",
+        "GY"
+      ],
+      "params": [
+        {
+          "name": "prefix_start",
+          "dtype": "i32"
+        },
+        {
+          "name": "position_base",
+          "dtype": "i32"
+        },
+        {
+          "name": "text_pos",
+          "dtype": "i32"
+        }
+      ],
+      "impl": {
+        "function": "ck_multimodal_mrope_positions_2d",
+        "c_declaration": "int ck_multimodal_mrope_positions_2d(int32_t *positions, int total_tokens, int prefix_start, int position_base, int prefix_tokens, int grid_x, int grid_y, int text_pos);",
+        "sources": [
+          "src/kernels/rope_kernels.c"
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "multimodal_mrope_positions_2d_int32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "ck_multimodal_mrope_positions_2d",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "positions",
+            "source": "output:positions",
+            "cast": "int32_t*",
+            "ports": [
+              "output:positions"
+            ]
+          },
+          {
+            "name": "total_tokens",
+            "source": "dim:T"
+          },
+          {
+            "name": "prefix_start",
+            "source": "param:prefix_start"
+          },
+          {
+            "name": "position_base",
+            "source": "param:position_base"
+          },
+          {
+            "name": "prefix_tokens",
+            "source": "dim:P"
+          },
+          {
+            "name": "grid_x",
+            "source": "dim:GX"
+          },
+          {
+            "name": "grid_y",
+            "source": "dim:GY"
+          },
+          {
+            "name": "text_pos",
+            "source": "param:text_pos"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_multimodal_bridge_kernels.py"
+        ]
+      },
+      "notes": "Model-agnostic constructor for section-major text-before/image-grid/text-after M-RoPE positions.",
+      "name": "multimodal_mrope_positions_2d",
+      "_source_file": "multimodal_mrope_positions_2d.json"
+    },
+    {
+      "id": "multimodal_prefix_insert_f32",
+      "op": "multimodal_prefix_insert",
+      "operation_interface": "multimodal_prefix_insert.token_major.fp32.v1",
+      "selection": {
+        "status": "production",
+        "priority": 100,
+        "equivalence_group": "multimodal_prefix_insert.token_major.fp32.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "variant": "token_major_fp32_strided_rows",
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "source_rows",
+          "dtype": "fp32",
+          "shape": [
+            "P",
+            "SR"
+          ],
+          "layout": "token_major_strided",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "token_ids",
+          "dtype": "i32",
+          "shape": [
+            "C"
+          ],
+          "layout": "token_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "decoder_rows",
+          "dtype": "fp32",
+          "shape": [
+            "C",
+            "DR"
+          ],
+          "layout": "token_major_strided",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "activations": [],
+      "outputs": [
+        {
+          "name": "token_ids",
+          "dtype": "i32",
+          "shape": [
+            "C"
+          ],
+          "layout": "token_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required",
+          "alias_of": "input:token_ids"
+        },
+        {
+          "name": "decoder_rows",
+          "dtype": "fp32",
+          "shape": [
+            "C",
+            "DR"
+          ],
+          "layout": "token_major_strided",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required",
+          "alias_of": "input:decoder_rows"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "P",
+        "SR",
+        "DR",
+        "D",
+        "C"
+      ],
+      "params": [
+        {
+          "name": "start_row",
+          "dtype": "i32"
+        }
+      ],
+      "impl": {
+        "function": "ck_multimodal_prefix_insert_f32",
+        "c_declaration": "int ck_multimodal_prefix_insert_f32(const float *source_rows, int32_t *token_ids, float *decoder_rows, int row_count, int source_row_stride, int decoder_row_stride, int copy_dim, int start_row, int decoder_capacity);",
+        "sources": [
+          "src/kernels/embedding_kernels.c"
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "multimodal_prefix_insert_exact_fp32",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "ck_multimodal_prefix_insert_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "source_rows",
+            "source": "activation:source_rows",
+            "cast": "const float*",
+            "ports": [
+              "input:source_rows"
+            ]
+          },
+          {
+            "name": "token_ids",
+            "source": "output:token_ids",
+            "cast": "int32_t*",
+            "ports": [
+              "input:token_ids",
+              "output:token_ids"
+            ]
+          },
+          {
+            "name": "decoder_rows",
+            "source": "output:decoder_rows",
+            "cast": "float*",
+            "ports": [
+              "input:decoder_rows",
+              "output:decoder_rows"
+            ]
+          },
+          {
+            "name": "row_count",
+            "source": "dim:P"
+          },
+          {
+            "name": "source_row_stride",
+            "source": "dim:SR"
+          },
+          {
+            "name": "decoder_row_stride",
+            "source": "dim:DR"
+          },
+          {
+            "name": "copy_dim",
+            "source": "dim:D"
+          },
+          {
+            "name": "start_row",
+            "source": "param:start_row"
+          },
+          {
+            "name": "decoder_capacity",
+            "source": "dim:C"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "unittest/test_multimodal_bridge_kernels.py"
+        ]
+      },
+      "notes": "Model-agnostic row-strided FP32 visual-prefix insertion. It performs no arithmetic reduction and preserves source values exactly.",
+      "name": "multimodal_prefix_insert_f32",
+      "_source_file": "multimodal_prefix_insert_f32.json"
     },
     {
       "id": "nemotron_group_limited_topk_router_f32",
