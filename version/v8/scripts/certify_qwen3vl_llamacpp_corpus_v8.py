@@ -158,7 +158,7 @@ def _bridge_command(
         "--prompt",
         args.prompt,
         "--chat-template",
-        "qwen3vl",
+        str(getattr(args, "chat_template", "qwen3vl")),
         "--thinking-mode",
         "suppressed",
         "--image-path",
@@ -216,7 +216,7 @@ def _parity_command(
         "--llama-decode-mode",
         "batched",
         "--append-on-divergence",
-        "stop",
+        str(getattr(args, "append_on_divergence", "stop")),
         "--json-out",
         str(report_path),
     ]
@@ -344,6 +344,8 @@ def _public_provenance(config: dict[str, Any]) -> dict[str, Any]:
         "context_len",
         "image_max_tokens",
         "max_new_tokens",
+        "append_on_divergence",
+        "chat_template",
         "threads",
         "ck_threads",
         "top_k",
@@ -660,6 +662,23 @@ def main() -> int:
     parser.add_argument("--start-index", type=int, default=1)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--max-new-tokens", type=int, default=128)
+    parser.add_argument(
+        "--chat-template",
+        default="qwen3vl",
+        help=(
+            "decoder chat contract passed to the multimodal bridge; use auto for "
+            "cross-model corpus runs (default preserves the certified Qwen3-VL lane)"
+        ),
+    )
+    parser.add_argument(
+        "--append-on-divergence",
+        choices=("stop", "llama", "ck"),
+        default="stop",
+        help=(
+            "trajectory after the first top-1 mismatch: stop for exact certification, "
+            "or continue with llama/CK tokens for long teacher-forced diagnostics"
+        ),
+    )
     parser.add_argument("--context-len", type=int, default=4096)
     parser.add_argument("--image-max-tokens", type=int, default=1024)
     parser.add_argument("--threads", type=int, default=20)
@@ -746,6 +765,8 @@ def main() -> int:
         "context_len": args.context_len,
         "image_max_tokens": args.image_max_tokens,
         "max_new_tokens": args.max_new_tokens,
+        "append_on_divergence": args.append_on_divergence,
+        "chat_template": args.chat_template,
         "threads": args.threads,
         "ck_threads": args.ck_threads,
         "gemm_schedule": args.gemm_schedule,

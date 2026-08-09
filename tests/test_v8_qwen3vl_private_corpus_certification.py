@@ -190,6 +190,7 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
                 "threads": 20,
                 "ck_threads": 20,
                 "llama_required_isa": "avx2",
+                "append_on_divergence": "llama",
             },
         )()
         command = self.module._parity_command(
@@ -202,9 +203,29 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
         rendered = " ".join(map(str, command))
         self.assertIn("--reuse-bridge-decoder-runtime-exact", rendered)
         self.assertIn("--llama-decode-mode batched", rendered)
-        self.assertIn("--append-on-divergence stop", rendered)
+        self.assertIn("--append-on-divergence llama", rendered)
         self.assertIn("--max-new-tokens 128", rendered)
         self.assertIn("--gemm-schedule auto", rendered)
+
+    def test_bridge_command_uses_requested_chat_template(self) -> None:
+        args = SimpleNamespace(
+            decoder_gguf=Path("decoder.gguf"),
+            mmproj_gguf=Path("mmproj.gguf"),
+            prompt="Extract text.",
+            chat_template="auto",
+            image_max_tokens=1024,
+            context_len=2048,
+            top_k=16,
+            gemm_schedule="auto",
+        )
+        command = self.module._bridge_command(
+            args,
+            image=Path("image.png"),
+            runtime_dir=Path("runtime"),
+            prefix_path=Path("prefix.f32"),
+        )
+        rendered = " ".join(map(str, command))
+        self.assertIn("--chat-template auto", rendered)
 
     def test_native_cli_command_requires_generated_abi_and_exact_trace(self) -> None:
         args = SimpleNamespace(
@@ -462,6 +483,8 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
             "context_len": 4096,
             "image_max_tokens": 1024,
             "max_new_tokens": 128,
+            "append_on_divergence": "stop",
+            "chat_template": "qwen3vl",
             "threads": 20,
             "ck_threads": 20,
             "top_k": 16,

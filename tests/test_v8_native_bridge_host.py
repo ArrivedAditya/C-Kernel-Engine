@@ -1082,7 +1082,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
         self.assertIn("<|vision_start|>", contract["template_markers"])
         self.assertIn("<|vision_end|>", contract["template_markers"])
 
-    def test_resolve_decoder_chat_contract_auto_prefers_gguf_template_over_arch_builtin(self) -> None:
+    def test_resolve_decoder_chat_contract_auto_composes_compatible_arch_policy(self) -> None:
         gguf_template = (
             "{%- for message in messages %}"
             "{{- '<|im_start|>' + message.role + '\\n' }}"
@@ -1107,20 +1107,66 @@ class V8NativeBridgeHostTests(unittest.TestCase):
 
         self.assertIsNotNone(contract)
         self.assertEqual(contract["name"], "chatml_auto")
+        self.assertEqual(contract["semantic_contract_name"], "qwen3vl")
         formatted = bridge_runner_v8._format_multimodal_prompt_segments(
             "Explain this image.",
             contract,
             include_image=True,
             thinking_mode="suppressed",
         )
-        self.assertEqual(formatted["before_text"], "<|im_start|>user\n<|vision_start|>")
+        self.assertEqual(
+            formatted["before_text"],
+            "<|im_start|>user\n/no_think\n<|vision_start|>",
+        )
         self.assertEqual(
             formatted["after_text"],
-            "<|vision_end|>Explain this image.<|im_end|>\n<|im_start|>assistant\n",
+            "<|vision_end|>Explain this image.<|im_end|>\n"
+            "<|im_start|>assistant\n<think>\n\n</think>\n\n",
         )
         self.assertEqual(
             formatted["formatted_prompt"],
-            "<|im_start|>user\n<|vision_start|><image_embeds><|vision_end|>Explain this image.<|im_end|>\n<|im_start|>assistant\n",
+            "<|im_start|>user\n/no_think\n<|vision_start|><image_embeds><|vision_end|>"
+            "Explain this image.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+        )
+
+    def test_auto_chat_contract_does_not_compose_incompatible_arch_policy(self) -> None:
+        gguf_contract = bridge_runner_v8._fallback_chat_contract_from_template_text(
+            "<|im_start|><|im_end|><|vision_start|><|vision_end|>"
+        )
+        architecture_contract = dict(gguf_contract)
+        architecture_contract["name"] = "incompatible"
+        architecture_contract["turn_prefix"] = "<different>{role}"
+        architecture_contract["thinking_mode_default"] = "visible"
+
+        composed = bridge_runner_v8._compose_compatible_auto_chat_contracts(
+            gguf_contract,
+            architecture_contract,
+        )
+
+        self.assertNotIn("semantic_contract_name", composed)
+        self.assertEqual(composed["thinking_mode_default"], "")
+
+    def test_qwen35_auto_contract_combines_gguf_image_markers_and_thinking_policy(self) -> None:
+        gguf_template = "<|im_start|><|im_end|><|vision_start|><|vision_end|>"
+        with mock.patch.object(
+            bridge_runner_v8,
+            "_read_gguf_metadata",
+            return_value={
+                "general.architecture": "qwen35",
+                "tokenizer.chat_template": gguf_template,
+            },
+        ):
+            contract = bridge_runner_v8._resolve_decoder_chat_contract(
+                Path("/tmp/fake-qwen36.gguf"),
+                chat_template_mode="auto",
+            )
+
+        self.assertEqual(contract["semantic_contract_name"], "qwen35")
+        self.assertEqual(contract["image_begin_marker"], "<|vision_start|>")
+        self.assertEqual(contract["image_end_marker"], "<|vision_end|>")
+        self.assertEqual(
+            contract["last_user_prefix_by_thinking_mode"]["suppressed"],
+            "/no_think\n",
         )
 
     def test_resolve_stop_token_policy_uses_eos_and_chat_contract_markers(self) -> None:
