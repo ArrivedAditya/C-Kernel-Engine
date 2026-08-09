@@ -1,6 +1,13 @@
 {
   "id": "gemm_nt_q4_k_q8_k",
   "op": "gemm",
+  "selection": {
+    "status": "production",
+    "priority": 200,
+    "equivalence_group": "q4_k_x_q8_k_repacked_matmul_fp32",
+    "phases": ["prefill"]
+  },
+  "physical_contract_version": 1,
   "variant": "q4_k_w_q8_k_a",
   "contract_schema_version": 1,
   "numerical_contract": "q4_k_x_q8_k_repacked_matmul_fp32",
@@ -49,12 +56,12 @@
     "output": "fp32"
   },
   "inputs": [
-    {"name": "A", "dtype": "q8_k", "shape": ["M", "K"], "desc": "Activation matrix [rows, cols] (Q8_K quantized)"},
-    {"name": "B", "dtype": "q4_k", "shape": ["N", "K"], "desc": "Weight matrix [cols, cols] (Q4_K quantized)"},
-    {"name": "bias", "dtype": "fp32", "shape": ["N"], "optional": true, "desc": "Bias [N] (optional)"}
+    {"name": "A", "dtype": "q8_k", "shape": ["M", "K"], "layout": "token_major_contiguous", "placement": "local", "desc": "Activation matrix [rows, cols] (Q8_K quantized)"},
+    {"name": "B", "dtype": "q4_k", "shape": ["N", "K"], "layout": "opaque_packed", "placement": "local", "desc": "Weight matrix [cols, cols] (Q4_K quantized)"},
+    {"name": "bias", "dtype": "fp32", "shape": ["N"], "layout": "token_major_contiguous", "placement": "local", "optional": true, "desc": "Bias [N] (optional)"}
   ],
   "outputs": [
-    {"name": "C", "dtype": "fp32", "shape": ["M", "N"], "desc": "Result [M, N]"}
+    {"name": "C", "dtype": "fp32", "shape": ["M", "N"], "layout": "token_major_contiguous", "placement": "local", "desc": "Result [M, N]"}
   ],
   "scratch": [
     {

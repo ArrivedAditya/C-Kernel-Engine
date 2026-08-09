@@ -448,9 +448,6 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         is_k = op.get("_is_k", True)
         scratch_name = "A_K_SCRATCH" if is_k else "A_V_SCRATCH"
         max_tokens = config.get("context_len", config.get("context_length", 1024))
-        omp_pragma = get_parallel_pragma(op)
-        if omp_pragma:
-            omp_pragma = f"\n        {omp_pragma}"
         return f"""    /* Op {seq_idx}: transpose_{("k" if is_k else "v")}_to_head_major layer={layer} */
     /* Transpose from [T, Hkv*D] (token-major GEMM output) to [Hkv, T, D] (head-major for attention) */
     {{
@@ -459,14 +456,7 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         float *buf = (float*)(model->bump + {scratch_name});
         /* Reuse activation scratch to avoid huge per-op static BSS allocations. */
         float *_temp_buf = (float*)(model->bump + A_LAYER_OUTPUT);
-        /* Copy with transpose: src[t, h*D+d] -> dst[h, t, d] */{omp_pragma}
-        for (int t = 0; t < num_tokens; t++) {{
-            for (int h = 0; h < Hkv; h++) {{
-                memcpy(_temp_buf + h * num_tokens * D + t * D,
-                       buf + t * Hkv * D + h * D,
-                       D * sizeof(float));
-            }}
-        }}
+        ck_layout_token_to_head_f32(buf, _temp_buf, num_tokens, Hkv, D);
         /* Copy back */
         memcpy(buf, _temp_buf, (size_t)Hkv * num_tokens * D * sizeof(float));
         ck_debug_export_hidden(
@@ -486,9 +476,6 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             head_dim = op.get("_head_dim", config.get("head_dim", 64))
             scratch_name = "A_Q_SCRATCH"
             max_tokens = config.get("context_len", config.get("context_length", 1024))
-            omp_pragma = get_parallel_pragma(op)
-            if omp_pragma:
-                omp_pragma = f"\n        {omp_pragma}"
             return f"""    /* Op {seq_idx}: transpose_q_to_head_major layer={layer} */
     /* Transpose from [T, H*D] (token-major GEMM output) to [H, T, D] (head-major for attention) */
     {{
@@ -497,14 +484,7 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         float *buf = (float*)(model->bump + {scratch_name});
         /* Reuse activation scratch to avoid huge per-op static BSS allocations. */
         float *_temp_buf = (float*)(model->bump + A_LAYER_OUTPUT);
-        /* Copy with transpose: src[t, h*D+d] -> dst[h, t, d] */{omp_pragma}
-        for (int t = 0; t < num_tokens; t++) {{
-            for (int h = 0; h < H; h++) {{
-                memcpy(_temp_buf + h * num_tokens * D + t * D,
-                       buf + t * H * D + h * D,
-                       D * sizeof(float));
-            }}
-        }}
+        ck_layout_token_to_head_f32(buf, _temp_buf, num_tokens, H, D);
         /* Copy back */
         memcpy(buf, _temp_buf, (size_t)H * num_tokens * D * sizeof(float));
     }}"""
@@ -515,10 +495,6 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         num_heads = op.get("_num_heads", config.get("num_heads", 14))
         head_dim = op.get("_head_dim", config.get("head_dim", 64))
         max_tokens = config.get("context_len", config.get("context_length", 1024))
-        # Parallelize over heads (outer loop)
-        omp_pragma = get_parallel_pragma(op)
-        if omp_pragma:
-            omp_pragma = f"\n        {omp_pragma}"
         dump_block = ""
         if dump:
             dump_block = f"""
@@ -533,14 +509,7 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         float *buf = (float*)(model->bump + A_ATTN_SCRATCH);
         /* Reuse activation scratch to avoid huge per-op static BSS allocations. */
         float *_temp_buf = (float*)(model->bump + A_LAYER_OUTPUT);
-        /* Copy with transpose: src[h, t, d] -> dst[t, h*D+d] */{omp_pragma}
-        for (int h = 0; h < H; h++) {{
-            for (int t = 0; t < num_tokens; t++) {{
-                memcpy(_temp_buf + t * H * D + h * D,
-                       buf + h * num_tokens * D + t * D,
-                       D * sizeof(float));
-            }}
-        }}
+        ck_layout_head_to_token_f32(buf, _temp_buf, H, num_tokens, D);
         /* Copy back */
         memcpy(buf, _temp_buf, (size_t)num_tokens * H * D * sizeof(float));
     }}{dump_block}"""

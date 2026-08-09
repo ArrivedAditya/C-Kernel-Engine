@@ -429,6 +429,7 @@ SRCS    := src/backend_native.c \
             src/kernels/fused/mega_fused_outproj_mlp_prefill.c \
             src/kernels/fused/gemv_fused_quant_bias.c \
             src/kernels/gemm_head_major_output.c \
+            src/kernels/layout_kernels.c \
             src/kernels/gemm_microkernel.c \
 	           src/kernels/layernorm_kernels.c \
 	           src/kernels/layernorm_kernels_bf16.c \
@@ -4770,6 +4771,7 @@ TEST_HARNESS_SRCS := src/backend_native.c \
 	src/kernels/fused/mega_fused_outproj_mlp_prefill.c \
 	src/kernels/fused/gemv_fused_quant_bias.c \
 	src/kernels/gemm_head_major_output.c \
+	src/kernels/layout_kernels.c \
 	src/kernels/gemm_microkernel.c \
 	src/kernels/hybrid_attention_kernels.c \
 	src/kernels/layernorm_kernels.c \
