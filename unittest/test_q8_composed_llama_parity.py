@@ -61,6 +61,11 @@ def _bind(ck: ctypes.CDLL, base: ctypes.CDLL, cpu: ctypes.CDLL) -> None:
         ctypes.c_int, f32p, ctypes.c_void_p, ctypes.c_void_p,
     ]
     ck.vec_dot_q8_0_q8_0.restype = None
+    ck.gemm_nt_q8_0_q8_0.argtypes = [
+        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, f32p,
+        ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    ]
+    ck.gemm_nt_q8_0_q8_0.restype = None
     cpu.ggml_vec_dot_q8_0_q8_0.argtypes = [
         ctypes.c_int, f32p, ctypes.c_size_t,
         ctypes.c_void_p, ctypes.c_size_t,
@@ -137,10 +142,10 @@ def _weight_rows(base: ctypes.CDLL, outputs: int) -> np.ndarray:
 
 
 def _project(ck: ctypes.CDLL, cpu: ctypes.CDLL, activations: np.ndarray,
-             weights: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+             weights: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     outputs = weights.shape[0]
-    ck_out = np.empty((activations.shape[0], outputs), dtype=np.float32)
-    llama_out = np.empty_like(ck_out)
+    ck_leaf_out = np.empty((activations.shape[0], outputs), dtype=np.float32)
+    llama_out = np.empty_like(ck_leaf_out)
     for m in range(activations.shape[0]):
         a_ptr = ctypes.c_void_p(activations[m].ctypes.data)
         for n in range(outputs):
@@ -151,9 +156,15 @@ def _project(ck: ctypes.CDLL, cpu: ctypes.CDLL, activations: np.ndarray,
             cpu.ggml_vec_dot_q8_0_q8_0(
                 K, ctypes.byref(llama_value), 0, w_ptr, 0, a_ptr, 0, 1,
             )
-            ck_out[m, n] = ck_value.value
+            ck_leaf_out[m, n] = ck_value.value
             llama_out[m, n] = llama_value.value
-    return ck_out, llama_out
+    ck_gemm_out = np.empty_like(ck_leaf_out)
+    ck.gemm_nt_q8_0_q8_0(
+        ctypes.c_void_p(activations.ctypes.data),
+        ctypes.c_void_p(weights.ctypes.data), None, _ptr_f32(ck_gemm_out),
+        activations.shape[0], outputs, K,
+    )
+    return ck_leaf_out, ck_gemm_out, llama_out
 
 
 def main() -> int:
@@ -175,21 +186,29 @@ def main() -> int:
     projection_passed = True
     for projection_name, outputs in PROJECTIONS:
         weights = _weight_rows(base, outputs)
-        ck_proj, llama_proj = _project(ck, cpu, llama_q8, weights)
+        ck_leaf_proj, ck_proj, llama_proj = _project(ck, cpu, llama_q8, weights)
         bias = (
             np.sin(np.arange(outputs, dtype=np.float32) * np.float32(0.021))
             * np.float32(0.03)
         )
-        ck_biased = ck_proj + bias
+        ck_biased = np.empty_like(ck_proj)
+        ck.gemm_nt_q8_0_q8_0(
+            ctypes.c_void_p(llama_q8.ctypes.data),
+            ctypes.c_void_p(weights.ctypes.data),
+            ctypes.c_void_p(bias.ctypes.data), _ptr_f32(ck_biased),
+            llama_q8.shape[0], outputs, K,
+        )
         llama_biased = llama_proj + bias
+        leaf_exact = bool(np.array_equal(ck_proj, ck_leaf_proj))
         before_exact = bool(np.array_equal(ck_proj, llama_proj))
         after_exact = bool(np.array_equal(ck_biased, llama_biased))
-        projection_passed = projection_passed and before_exact and after_exact
+        projection_passed = projection_passed and leaf_exact and before_exact and after_exact
         projection_reports.append({
             "name": projection_name,
             "shape": {"rows": ROWS, "outputs": outputs, "width": K},
             "bit_exact_before_bias": before_exact,
             "bit_exact_after_bias": after_exact,
+            "gemm_matches_certified_leaf": leaf_exact,
             "different_values_before_bias": int(np.count_nonzero(ck_proj != llama_proj)),
             "different_values_after_bias": int(np.count_nonzero(ck_biased != llama_biased)),
             "max_abs_before_bias": float(

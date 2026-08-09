@@ -1121,6 +1121,20 @@ static void work_gemm_nt_q8_0_q8_0(int ith, int nth, void *args)
     );
 }
 
+static void work_gemm_nt_q8_0_q8_0_range(int begin, int end, void *args)
+{
+    const gemm_args_t *a = (const gemm_args_t *)args;
+    if (!a || begin < 0 || begin >= end || end > a->M) return;
+
+    gemm_nt_q8_0_q8_0(
+        (const char *)a->A + (size_t)begin * a->A_row_bytes,
+        a->B,
+        a->bias,
+        a->C + (size_t)begin * a->N,
+        end - begin, a->N, a->K
+    );
+}
+
 static inline void work_gemm_nt_q8_0_q8_0_contract_rows(
         const gemm_args_t *a, int begin, int end)
 {
@@ -1486,7 +1500,15 @@ void gemm_nt_q8_0_q8_0_parallel_dispatch(
         .M = M, .N = N, .K = K,
         .A_row_bytes = A_row_bytes
     };
-    ck_threadpool_dispatch_n(pool, ck_select_gemm_active_threads(pool, M, N, K), work_gemm_nt_q8_0_q8_0, &args);
+    const int active = ck_select_gemm_active_threads(pool, M, N, K);
+    if (ck_gemm_dynamic_schedule_enabled()) {
+        ck_threadpool_parallel_for_n(
+            pool, active, 0, M, 1,
+            work_gemm_nt_q8_0_q8_0_range, &args);
+    } else {
+        ck_threadpool_dispatch_n(
+            pool, active, work_gemm_nt_q8_0_q8_0, &args);
+    }
 }
 
 void gemm_nt_q8_0_q8_0_contract_parallel_dispatch(

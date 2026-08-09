@@ -64,6 +64,10 @@
 #define AMX_TILE_N 16
 #define AMX_TILE_K 64
 
+/* Certified Q8_0 dot provider from gemm_kernels_q8_0.c. */
+void gemv_q8_0_q8_0_x4(float *y, const void *W, const void *x_q8,
+                       int M, int K);
+
 #if defined(__AVX512VNNI__) && defined(__AVX512VL__)
 static inline int32_t hsum256_epi32_q8_batch(__m256i v)
 {
@@ -158,59 +162,10 @@ void gemm_nt_q8_0_q8_0_avx2(
 {
     const int nb = K / QK8_0;
     const block_q8_0 *a_blocks = (const block_q8_0 *)A;
-    const block_q8_0 *b_blocks = (const block_q8_0 *)B;
 
     for (int m = 0; m < M; m++) {
         const block_q8_0 *a_row = a_blocks + (size_t)m * nb;
-
-        for (int n = 0; n < N; n++) {
-            const block_q8_0 *b_row = b_blocks + (size_t)n * nb;
-            float sum = 0.0f;
-
-            for (int ib = 0; ib < nb; ib++) {
-                const float d_a = CK_FP16_TO_FP32(a_row[ib].d);
-                const float d_b = CK_FP16_TO_FP32(b_row[ib].d);
-                const float d = d_a * d_b;
-
-                /* Load 32 int8 values from A and B */
-                __m256i va = _mm256_loadu_si256((const __m256i *)a_row[ib].qs);
-                __m256i vb = _mm256_loadu_si256((const __m256i *)b_row[ib].qs);
-
-                /* Split into 16-bit for multiplication without overflow
-                 * Process low 16 bytes and high 16 bytes separately */
-                __m128i va_lo = _mm256_castsi256_si128(va);
-                __m128i va_hi = _mm256_extracti128_si256(va, 1);
-                __m128i vb_lo = _mm256_castsi256_si128(vb);
-                __m128i vb_hi = _mm256_extracti128_si256(vb, 1);
-
-                /* Extend to 16-bit and multiply */
-                __m256i va_lo_16 = _mm256_cvtepi8_epi16(va_lo);
-                __m256i vb_lo_16 = _mm256_cvtepi8_epi16(vb_lo);
-                __m256i va_hi_16 = _mm256_cvtepi8_epi16(va_hi);
-                __m256i vb_hi_16 = _mm256_cvtepi8_epi16(vb_hi);
-
-                __m256i prod_lo = _mm256_mullo_epi16(va_lo_16, vb_lo_16);
-                __m256i prod_hi = _mm256_mullo_epi16(va_hi_16, vb_hi_16);
-
-                /* Horizontal sum: extend to 32-bit and add */
-                __m256i sum_lo = _mm256_madd_epi16(prod_lo, _mm256_set1_epi16(1));
-                __m256i sum_hi = _mm256_madd_epi16(prod_hi, _mm256_set1_epi16(1));
-                __m256i sum_32 = _mm256_add_epi32(sum_lo, sum_hi);
-
-                /* Reduce 8 x int32 to single int32 */
-                __m128i sum_128 = _mm_add_epi32(
-                    _mm256_castsi256_si128(sum_32),
-                    _mm256_extracti128_si256(sum_32, 1)
-                );
-                sum_128 = _mm_add_epi32(sum_128, _mm_srli_si128(sum_128, 8));
-                sum_128 = _mm_add_epi32(sum_128, _mm_srli_si128(sum_128, 4));
-                int32_t sumi = _mm_cvtsi128_si32(sum_128);
-
-                sum += d * (float)sumi;
-            }
-
-            C[(size_t)m * N + n] = sum;
-        }
+        gemv_q8_0_q8_0_x4(C + (size_t)m * (size_t)N, B, a_row, N, K);
     }
 }
 #endif /* __AVX2__ */

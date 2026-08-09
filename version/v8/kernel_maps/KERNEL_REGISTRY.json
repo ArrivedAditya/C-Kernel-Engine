@@ -17425,6 +17425,69 @@
       "id": "gemm_nt_q8_0_q8_0",
       "op": "gemm",
       "variant": "q8_0_w_q8_0_a",
+      "contract_schema_version": 1,
+      "numerical_contract": "q8_0_weight_q8_0_input_llama_fp32_output",
+      "reference": {
+        "function": "vec_dot_q8_0_q8_0_ref",
+        "kind": "scalar_contract_oracle",
+        "adapter": "per_activation_row_then_bias",
+        "validation": {
+          "status": "validated",
+          "tests": [
+            "unittest/test_q8_composed_llama_parity.py",
+            "unittest/test_q8_0_q8_0_x4.py",
+            "tests/test_threadpool_parity.c"
+          ],
+          "external_oracles": [
+            {
+              "backend": "llama.cpp_ggml_vec_dot_q8_0_q8_0",
+              "status": "validated",
+              "evidence": "unittest/test_q8_composed_llama_parity.py"
+            }
+          ]
+        }
+      },
+      "production": {
+        "function": "gemm_nt_q8_0_q8_0",
+        "threaded_function": "gemm_nt_q8_0_q8_0_parallel_dispatch",
+        "reference_comparison": {
+          "requirement": "bit_exact",
+          "absolute_tolerance": 0.0,
+          "relative_tolerance": 0.0,
+          "tests": [
+            "unittest/test_q8_composed_llama_parity.py"
+          ]
+        }
+      },
+      "implementation": {
+        "isa_dispatch": "compile_time",
+        "weight_storage": {
+          "format": "q8_0",
+          "block_elements": 32,
+          "block_bytes": 34
+        },
+        "activation_storage": {
+          "format": "q8_0",
+          "block_elements": 32
+        },
+        "diagnostic_providers": {
+          "fp32_activation": "gemm_nt_q8_0",
+          "row_quantized": "gemv_q8_0_q8_0"
+        },
+        "threading": {
+          "runtime": "ck_threadpool",
+          "work_partition": [
+            "serial",
+            "independent_rows"
+          ],
+          "dispatch": [
+            "inline",
+            "ck_threadpool_dispatch_n",
+            "ck_threadpool_parallel_for_n"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
       "quant": {
         "weight": "q8_0",
         "activation": "q8_0",
@@ -17470,14 +17533,7 @@
           "desc": "Result [M, N]"
         }
       ],
-      "scratch": [
-        {
-          "name": "temp",
-          "dtype": "fp32",
-          "size_bytes": "M * N * 4",
-          "desc": "Temporary accumulation buffer"
-        }
-      ],
+      "scratch": [],
       "dims": [
         "M",
         "N",
@@ -17522,10 +17578,26 @@
         },
         "notes": "Q8_0 requires K dimension multiple of 32 for dequantization. B is transposed (nt = A * B^T)."
       },
+      "phase_selection": {
+        "decode": {
+          "op_family": "gemv",
+          "default_kernel": "gemv_q8_0_q8_0",
+          "notes": "Single-token decode retains the certified GEMV path."
+        },
+        "prefill": {
+          "op_family": "gemm",
+          "default_kernel": "gemm_nt_q8_0_q8_0",
+          "dispatch_owner": "gemm_nt_q8_0_q8_0_parallel_dispatch",
+          "scheduling": "dynamic_independent_rows",
+          "selection_policy": "The public prefill dispatcher uses the certified four-output dot provider and dynamically distributes independent output rows. Static scheduling remains a diagnostic override."
+        }
+      },
       "impl": {
         "function": "gemm_nt_q8_0_q8_0",
         "sources": [
-          "src/kernels/gemm_kernels_q8_0.c"
+          "src/kernels/gemm_batch_int8.c",
+          "src/kernels/gemm_kernels_q8_0.c",
+          "version/v8/src/ck_parallel_prefill_v8.c"
         ],
         "variants": [
           {
@@ -17538,32 +17610,82 @@
               "-mavx2",
               "-mfma"
             ]
+          },
+          {
+            "name": "avx_vnni",
+            "requires": [
+              "avx2",
+              "avx_vnni",
+              "fma"
+            ],
+            "compile_flags": [
+              "-mavx2",
+              "-mavxvnni",
+              "-mfma"
+            ]
           }
         ]
       },
       "tests": {
         "unit": [
-          "unittest/test_gemm.py"
+          "unittest/test_gemm_batch_int8.py",
+          "unittest/test_q8_0_q8_0_x4.py"
         ],
         "bench": [
-          "scripts/bench_gemm.py"
+          "tests/test_gemm_avx_bench.c",
+          "tests/test_threadpool_parity.c"
         ],
         "parity": [
           {
             "kind": "numpy",
-            "command": "python unittest/test_gemm.py --compare-numpy",
+            "command": "python unittest/test_gemm_batch_int8.py",
             "tolerance": "1e-4",
             "notes": "Compare against numpy matmul"
           },
           {
             "kind": "llamacpp",
-            "command": "make llamacpp-parity-gemm",
-            "tolerance": "1e-4",
-            "notes": "Compare against llama.cpp ggml_gemm"
+            "command": "python unittest/test_q8_composed_llama_parity.py",
+            "tolerance": "0.0",
+            "notes": "Bit-exact comparison against llama.cpp ggml_vec_dot_q8_0_q8_0 at production vision widths"
           }
         ]
       },
-      "notes": "General matrix multiplication with Q8_0 weights and Q8_0 activations. Used for Wv projection in prefill.",
+      "notes": "General matrix multiplication with Q8_0 weights and Q8_0 activations. AVX2 prefill reuses each activation load across four output rows and uses AVX-VNNI when available. Dynamic scheduling changes only ownership of independent M rows and therefore does not alter reduction order.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "A",
+            "source": "activation:a",
+            "cast": "const void*"
+          },
+          {
+            "name": "B",
+            "source": "weight:_first_weight"
+          },
+          {
+            "name": "bias",
+            "source": "weight_f:_bias"
+          },
+          {
+            "name": "C",
+            "source": "output:c",
+            "cast": "float*"
+          },
+          {
+            "name": "M",
+            "source": "dim:_m"
+          },
+          {
+            "name": "N",
+            "source": "dim:_output_dim"
+          },
+          {
+            "name": "K",
+            "source": "dim:_input_dim"
+          }
+        ]
+      },
       "name": "gemm_nt_q8_0_q8_0",
       "_source_file": "gemm_nt_q8_0_q8_0.json"
     },

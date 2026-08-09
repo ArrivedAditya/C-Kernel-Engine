@@ -38,6 +38,15 @@
       "output": {"accumulator": "fp32", "horizontal_reduction": "llama_x86_lane_order", "bias": "after_complete_dot", "storage": "fp32"},
       "parallel_reduction": {"kind": "independent_outputs", "reduction_order_effect": "none"},
       "description": "Q6_K weights times Q8_K activations with llama-compatible int32 zero-point correction, x86 lane reduction, and independent output partitioning."
+    },
+    "q8_0_weight_q8_0_input_llama_fp32_output": {
+      "status": "validated",
+      "weight": {"format": "q8_0", "block_size": 32, "layout": "ggml_q8_0"},
+      "activation": {"format": "q8_0", "block_size": 32, "layout": "ggml_q8_0", "quantization": "quantize_row_q8_0_ref"},
+      "dot": {"integer_accumulator": "int32", "block_scale_application": "q8_0_weight_scale_times_q8_0_activation_scale_after_integer_block_sum", "block_order": "ascending_k", "fp32_accumulator_lanes": 8},
+      "output": {"accumulator": "fp32", "horizontal_reduction": "llama_x86_lane_order", "bias": "after_complete_dot", "storage": "fp32"},
+      "parallel_reduction": {"kind": "independent_outputs", "reduction_order_effect": "none"},
+      "description": "Q8_0 weights times Q8_0 activations using the llama.cpp-compatible eight-lane FP32 accumulation tree. Four-output execution shares activation loads without changing any output's reduction order."
     }
   }
 }

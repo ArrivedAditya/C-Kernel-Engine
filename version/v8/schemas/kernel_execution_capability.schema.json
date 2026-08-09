@@ -147,7 +147,7 @@
               "type": "array",
               "minItems": 1,
               "uniqueItems": true,
-              "items": {"enum": ["inline", "ck_threadpool_dispatch_n", "openmp_parallel_for", "internal_threaded"]}
+              "items": {"enum": ["inline", "ck_threadpool_dispatch_n", "ck_threadpool_parallel_for_n", "openmp_parallel_for", "internal_threaded"]}
             },
             "reduction_order_effect": {"enum": ["none", "contract_defined", "implementation_defined"]}
           }
