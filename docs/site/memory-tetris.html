@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Architecture  | C-Kernel-Engine</title>
-    <meta name="description" content="C-Kernel-Engine documentation for a CPU-native AI runtime, kernels, code generation, training, and inference on Linux systems.">
+    <title>Memory Tetris: DRAM as a Tensor Cache over NVMe | C-Kernel-Engine</title>
+    <meta name="description" content="Research design for using a fixed DRAM arena as an explicit, lifetime-managed tensor cache over NVMe: arena-slot reuse, compute and I/O overlap, candidate Linux I/O paths, MoE expert residency, fail-closed safety contracts, X-Ray evidence, and hardware certification gates. Not implemented in the production runtime.">
     <meta name="robots" content="index,follow">
-    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/architecture.html">
-    <meta property="og:title" content="Architecture  | C-Kernel-Engine">
-    <meta property="og:description" content="C-Kernel-Engine documentation for a CPU-native AI runtime, kernels, code generation, training, and inference on Linux systems.">
+    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/memory-tetris.html">
+    <meta property="og:title" content="Memory Tetris: DRAM as a Tensor Cache over NVMe | C-Kernel-Engine">
+    <meta property="og:description" content="Research design for using a fixed DRAM arena as an explicit, lifetime-managed tensor cache over NVMe: arena-slot reuse, compute and I/O overlap, candidate Linux I/O paths, MoE expert residency, fail-closed safety contracts, X-Ray evidence, and hardware certification gates. Not implemented in the production runtime.">
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/architecture.html">
+    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/memory-tetris.html">
     <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
     <style>
         :root {
@@ -979,468 +979,402 @@
     </header>
     <main>
 
-<h1>System Architecture</h1>
+<h1>Memory Tetris: DRAM as a Tensor Cache over NVMe</h1>
 
-<p>C-Kernel-Engine uses a three-stage pipeline to transform model configurations into optimized C runtimes.</p>
+<p class="lead">
+    CKE can potentially exploit known tensor lifetimes to manage a fixed DRAM working window over a much
+    larger model stored on NVMe. This is explicit storage-tier scheduling, not an SSD pretending to be RAM.
+</p>
 
-<div class="card card-accent">
-    <p style="margin: 0;"><strong>New:</strong> See the <a href="ir-pipeline.html">IR Pipeline v6.6</a> page for end-to-end visuals of templates, IR1/IR2, lowering, memory layout, and dumb codegen.</p>
-</div>
-
-<div class="card card-accent">
-    <p style="margin: 0;"><strong>Performance Methodology:</strong> See <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a> for the VTune, Advisor, roofline, CK profile, parity, and E2E workflow used to push generated kernels toward CPU-node limits.</p>
-</div>
-
-<div class="card card-accent">
-    <p style="margin: 0;"><strong>v8 Compiler Hardening:</strong> See <a href="v8-numerical-contracts.html">v8 Numerical Contracts</a> for circuits, kernel-map capabilities, explicit attention reductions, deterministic resolution, generated-artifact equivalence, and parity promotion gates.</p>
-</div>
-
-<h2>Active v8 Compiler Architecture</h2>
-
-<p>The active v8 inference compiler consumes three authoritative inputs: model weights, an architecture circuit, and executable kernel maps. The circuit owns graph structure and required semantics. Kernel maps own ABI and implementation capability. The DSL resolves and stitches; generated C does not guess.</p>
-
-<p>This boundary is executable policy, not only documentation. The v8 and v7 DSL audits reject new model-family dispatch in generic compiler/codegen functions, including dispatch hidden behind local aliases. Exact kernel operations do not fall back to broader families, malformed per-layer dimensions fail, and circuit weight policies are schema validated. New-model support must therefore extend a circuit, a kernel map, or a tested kernel instead of accumulating another compiler conditional.</p>
-
-<div class="img-container svg-viewer" data-title="v8 Numerical Contract Architecture">
-    <img src="assets/v8-numerical-contracts.svg" alt="v8 weights, circuits, kernel maps, numerical contract resolution, IR lowering and generated C">
-</div>
-
-<div class="grid grid-2">
-    <div class="card"><h3 style="margin-top:0;">Compiler Input</h3><pre>weights + circuits + kernel maps
-             ↓
-deterministic DSL lowering
-             ↓
-generated C</pre><p>Model definitions live in <code>version/v8/circuits/</code>. The historical embedded BUMP key remains <code>template</code> for serialized compatibility.</p></div>
-    <div class="card"><h3 style="margin-top:0;">Semantic Selection</h3><p>Precision-sensitive operations declare <code>required_contracts</code>. Real kernel maps advertise <code>provides</code> and <code>supported_reductions</code>. Missing and ambiguous providers are compile-time errors.</p></div>
-    <div class="card"><h3 style="margin-top:0;">Authoritative Resolution</h3><p>The resolver selects the compatible kernel and contract before GraphIR construction. GraphIR records that decision; LoweredIR, call-ready IR, and generated C must preserve it without fallback or reselection.</p></div>
-    <div class="card"><h3 style="margin-top:0;">Promotion Gate</h3><p>Leaf tests are necessary but insufficient. Public routing, threaded thresholds, stitched layer boundaries, full replay, persistent decode, and E2E behavior must agree before production validation.</p></div>
-</div>
-
-<h3>Why reduction is architecture</h3>
-<p>Attention is not fully specified by <code>softmax(QKᵀ)V</code>. Q/K rounding, score accumulation, online-softmax state, V accumulation, split thresholds, partial storage, and merge order can change logits. v8 records these as complete contracts instead of inferring them from strict-mode flags, cache dtypes, sequence lengths, or thread counts.</p>
-
-<h3>Why threading is a kernel capability</h3>
-<p>Threading metadata applies across attention, GEMM, GEMV, and other parallel operators. Kernel maps declare the runtime, work partition, dispatch mechanism, and whether parallel order changes a reduction. The performance planner may choose among semantically compatible implementations, but it cannot silently change accumulation order to gain speed.</p>
-
-<div class="card">
-    <h3 style="margin-top: 0;">The "Website" Metaphor</h3>
-    <p>The engine treats LLMs like a website generator treats pages. This allows us to unroll the "Block" section efficiently in C without complex control flow.</p>
-    <table>
-        <tr>
-            <th>Section</th>
-            <th>Website</th>
-            <th>LLM</th>
-        </tr>
-        <tr>
-            <td><strong>Header</strong></td>
-            <td>&lt;head&gt;, Nav, CSS</td>
-            <td>Embeddings, Positional Encoding</td>
-        </tr>
-        <tr>
-            <td><strong>Block</strong></td>
-            <td>Blog Posts, Articles</td>
-            <td>Transformer Layers (repeated)</td>
-        </tr>
-        <tr>
-            <td><strong>Footer</strong></td>
-            <td>Copyright, Scripts</td>
-            <td>Final Norm, Language Head</td>
-        </tr>
-    </table>
-</div>
-
-<div class="img-container">
-    <img src="assets/architecture-overview.svg" alt="Architecture Overview">
-</div>
-
-<h2>Operator Spectrum Map</h2>
-
-<p>This view connects the data path (pretrain to RLHF/GRPO) with the compute path (math to inference/backprop) so operators can reason about the full stack in one place.</p>
-
-<div class="card" style="overflow-x: auto; border: 1px solid var(--grey); border-radius: 12px; padding: 0.95rem; background: radial-gradient(circle at 12% 0%, rgba(255, 180, 0, 0.16), transparent 40%), radial-gradient(circle at 90% 15%, rgba(7, 173, 248, 0.12), transparent 42%), var(--dark-card);">
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.55rem;">
-        <span style="font-size:0.8rem; color:var(--grey-light);">Click the map to open in the dark in-site SVG viewer.</span>
-        <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
-            <a href="assets/operator-spectrum-map.svg" download style="font-size:0.8rem;">Download SVG</a>
-        </div>
-    </div>
-    <div class="img-container svg-viewer" data-title="Operator Spectrum Map" style="margin:0;">
-        <img src="assets/operator-spectrum-map.svg" alt="Operator Spectrum Map" style="display:block; width:100%; min-width:900px; height:auto; border-radius:10px; border:1px solid rgba(148,163,184,0.35);">
-    </div>
-</div>
-<div class="grid grid-2">
-    <div class="card">
-        <h3 style="margin-top: 0;">Data Runbook Links</h3>
-        <ul>
-            <li><a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook</a> (Stage A and Stage B corpus generation)</li>
-            <li><a href="v7-runbook.html">v7 Train + Inference Runbook</a> (parity gates and train execution)</li>
-        </ul>
-    </div>
-    <div class="card">
-        <h3 style="margin-top: 0;">Computation Runbook Links</h3>
-        <ul>
-            <li><a href="ir-pipeline.html">IR Pipeline</a> (IR1/IR2/lowering and memory mapping)</li>
-            <li><a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a> (VTune, Advisor, roofline, CK profile, and parity gates)</li>
-            <li><a href="v7-profiling.html">v7 Profiling</a> (perf, flamegraph, cache, VTune/Advisor)</li>
-            <li><a href="v7-backprop-ir.html">v7 Backprop IR</a> (gradient path and training runtime checks)</li>
-            <li><a href="v8-whisper-tiny.html">Whisper Tiny End-to-End</a> (generated audio encoder/decoder circuits from PCM16 WAV)</li>
-        </ul>
-    </div>
-</div>
-
-<h2>Stage 1: Model Configuration</h2>
-
-<div class="card card-accent">
-    <p>The engine accepts HuggingFace-style <code>config.json</code> files as input:</p>
-    <pre>{
-  "hidden_size": 768,
-  "num_attention_heads": 12,
-  "num_key_value_heads": 4,
-  "num_hidden_layers": 6,
-  "intermediate_size": 2048,
-  "rms_norm_eps": 1e-5,
-  "rope_theta": 10000.0
-}</pre>
-    <p>This defines all the dimensions needed to generate layer structures.</p>
-</div>
-
-<h2>Stage 2: Intermediate Representation</h2>
-
-<p>The IR Builder creates a structured representation of each layer:</p>
-
-<div class="grid grid-2">
-    <div class="card">
-        <h3 style="margin-top: 0;">CKLayerIR Structure</h3>
-        <pre>typedef struct {
-    int layer_index;
-    int embed_dim;
-    int num_heads;
-    int num_kv_heads;
-    int head_dim;
-    int intermediate_dim;
-    int context_window;
-    float eps;
-    float rope_theta;
-} CKLayerIR;</pre>
-    </div>
-    <div class="card">
-        <h3 style="margin-top: 0;">Key Decisions</h3>
-        <ul>
-            <li><strong>Aligned dimensions</strong>: Head dim padded to cache-friendly sizes</li>
-            <li><strong>GQA ratio</strong>: Computed from num_heads / num_kv_heads</li>
-            <li><strong>Buffer sizing</strong>: Calculated for all intermediate activations</li>
-        </ul>
-    </div>
-</div>
-
-<h2>Stage 3: Code Generation</h2>
-
-<p>The codegen emits complete C functions for forward and backward passes:</p>
-
-<div class="card">
-    <h3 style="margin-top: 0;">Generated Forward Pass</h3>
-    <pre>void forward_layer_0(
-    const float *input,
-    const ModelWeights *weights,
-    LayerActivations *acts,
-    const float *cos_cache,
-    const float *sin_cache,
-    int num_tokens
-) {
-    // 1. Pre-attention RMSNorm
-    rmsnorm_forward(input, weights->ln1_gamma, acts->ln1_out, ...);
-
-    // 2. QKV projection
-    ck_qkv_project_head_major(acts->ln1_out, weights->wq, ...);
-
-    // 3. Apply RoPE
-    rope_forward_qk(acts->q, acts->k, cos_cache, sin_cache, ...);
-
-    // 4. Attention
-    attention_forward_causal_head_major_gqa(acts->q, acts->k, acts->v, ...);
-
-    // 5. Output projection + residual
-    // 6. Post-attention RMSNorm
-    // 7. MLP (SwiGLU)
-    // 8. Final residual
-}</pre>
-</div>
-
-<div class="card card-accent">
-    <h3 style="margin-top: 0;">Generated Backward Pass</h3>
-    <pre>void backward_layer_0(
-    const float *d_output,
-    const ModelWeights *weights,
-    const LayerActivations *acts,
-    WeightGradients *grads,
-    float *d_input
-) {
-    // Reverse order of forward pass
-    // Each kernel uses saved activations from forward
-
-    // 1. Backward through final residual
-    // 2. Backward through MLP (SwiGLU)
-    // 3. Backward through RMSNorm 2
-    // 4. Backward through attention output projection
-    // 5. Backward through attention
-    attention_backward_causal_head_major_gqa(d_attn_out, acts->q, ...);
-
-    // 6. Backward through RoPE (inverse rotation)
-    rope_backward_qk(d_q, d_k, ...);
-
-    // 7. Backward through QKV projection
-    // 8. Backward through RMSNorm 1
-}</pre>
-</div>
-
-<h2>Memory Layout</h2>
-
-<div class="alert alert-info">
+<div class="alert alert-warning">
     <div class="alert-icon">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
     </div>
-    <div>
-        <strong>Head-Major Layout</strong><br>
-        Q/K/V use <code>[num_heads, num_tokens, head_dim]</code> layout for cache-efficient attention computation.
+    <div style="min-width: 0;">
+        <strong>Status: research design</strong><br>
+        Memory Tetris is <strong>not implemented in the production runtime</strong>. Hardware measurements
+        and numerical certification are pending. This HTML page is the canonical public design and visual
+        reference. Any lower-level Markdown implementation note must link back here and may not supersede
+        this page. Nothing here is a supported feature, a measured speedup, or a committed
+        model-compatibility claim.
     </div>
 </div>
+
+<div class="grid grid-2">
+    <div class="card card-green">
+        <h3 style="margin-top: 0;">What it is</h3>
+        <ul>
+            <li>A <strong>lifetime-aware reuse policy</strong> for a fixed DRAM arena: when a tensor reaches its declared last use, its slot may become the final destination for a future tensor loaded asynchronously from NVMe (and, later, from another node).</li>
+            <li><strong>Explicit storage-tier scheduling</strong>: CKE owns slot lifetime, prefetch timing, transfer completion and consumption ordering.</li>
+            <li>A planner that may manage a predictable DRAM working window more effectively than demand paging, because tensor lifetimes are known in advance.</li>
+        </ul>
+    </div>
+    <div class="card">
+        <h3 style="margin-top: 0;">What it is not</h3>
+        <ul>
+            <li><strong>Not SSD-backed virtual memory.</strong> This design does not claim that an SSD has DRAM latency or bandwidth, and it is not swap or page-cache demand paging with a new name.</li>
+            <li><strong>Not a promise that PCIe bandwidth equals application throughput.</strong> Nominal device numbers do not fix an incorrect schedule, insufficient look-ahead, small random reads or excessive copies.</li>
+            <li><strong>Not implemented.</strong> No production code path does this today; hardware gates decide whether the idea earns promotion.</li>
+        </ul>
+    </div>
+</div>
+
+<h2>The Mental Model</h2>
+
+<p>
+    Three roles, kept deliberately separate:
+</p>
+
+<pre><code>DRAM = explicitly managed tensor working set
+NVMe = capacity-oriented backing tier
+CKE  = planner that schedules ownership, transfer and consumption</code></pre>
+
+<p>
+    DRAM holds the fast working set &mdash; the tensors the current and next few computation steps touch.
+    NVMe holds the capacity-oriented backing tier &mdash; the rest of the converted model, larger than the
+    DRAM window. CKE sits between them and owns four things explicitly: <strong>slot lifetime</strong> (when
+    an arena region is proven dead), <strong>prefetch</strong> (when a transfer starts), <strong>transfer
+    completion</strong> (the event consumers wait on) and <strong>consumption</strong> (which kernel may run,
+    and only after residency is verified). Dead arena regions are reused in place; live tensors are never
+    shifted to make room.
+</p>
+
+<h2>Arena-Slot Reuse</h2>
+
+<p>
+    Assume four layer-weight groups fit in the streaming arena. When <code>L1</code> completes and its slot
+    is proven dead, an asynchronous read may place <code>L5</code> directly into that slot &mdash; at
+    <code>L1</code>'s old final address. <code>L2</code>, <code>L3</code>, <code>L4</code>, scratch and
+    persistent state keep their addresses across the whole sequence. The planner changes slot ownership and
+    waits for the transfer-completion event before allowing the <code>L5</code> consumer to run.
+</p>
+
+<div class="img-container svg-viewer" data-title="Arena ownership across T0, T1 and T2: L5 lands in L1's freed slot while every other live tensor keeps its address">
+    <img src="assets/memory-tetris-arena-timeline.svg" alt="Arena-slot reuse timeline: at T0 the DRAM arena holds layers L1 through L4 plus scratch and persistent state; at T1 the L1 slot is free after L1's last use; at T2 layer L5 has been loaded from the NVMe backing tier directly into L1's old final address while L2, L3, L4, scratch and persistent state never move" style="width: 100%; max-width: 960px; margin: 0 auto; display: block;">
+</div>
+
+<h2>Overlapping Compute and I/O</h2>
+
+<p>
+    Storage traffic is hidden only when the next tensor arrives before its first use. With double buffering,
+    the desired timeline has the CPU computing <code>L17</code>, <code>L18</code>, <code>L19</code> while the
+    I/O path loads <code>L18</code>, <code>L19</code>, <code>L20</code> one layer ahead. Four outcomes matter
+    and must be distinguishable in telemetry: transfer hidden behind compute; exposed storage stall; transfer
+    completed before first use; consumer blocked because completion was late.
+</p>
+
+<div class="img-container svg-viewer" data-title="CPU execution and asynchronous I/O timeline: hidden transfer versus exposed storage stall">
+    <img src="assets/memory-tetris-overlap.svg" alt="Two timelines. Scenario A: the CPU computes L17, L18 and L19 while I/O loads L18, L19 and L20 one layer ahead; each load completes before first use so the transfer is hidden with zero exposed stall. Scenario B: the load of L32 completes after its first use, so the CPU stalls between computing L31 and L32 while the consumer is blocked waiting for the completion event" style="width: 100%; max-width: 960px; margin: 0 auto; display: block;">
+</div>
+
+<h3>Bandwidth arithmetic without overstating it</h3>
+
+<p>
+    For a 500 MB tensor, an idealized transfer takes about <strong>71 ms at 7 GB/s</strong> and about
+    <strong>36 ms at 14 GB/s</strong>. These are division-based examples &mdash; bytes divided by nominal
+    bandwidth &mdash; not measured end-to-end latency and not a performance guarantee.
+</p>
 
 <table>
     <tr>
-        <th>Buffer</th>
-        <th>Layout</th>
-        <th>Size</th>
+        <th>Example</th>
+        <th>Arithmetic</th>
+        <th>Idealized time</th>
+        <th>Nature</th>
     </tr>
     <tr>
-        <td><code>input</code></td>
-        <td>[B, T, D]</td>
-        <td>batch * tokens * embed_dim</td>
+        <td>500 MB tensor at 7 GB/s</td>
+        <td>500 MB &divide; 7 GB/s</td>
+        <td>&asymp; 71 ms</td>
+        <td>division-based illustration</td>
     </tr>
     <tr>
-        <td><code>Q</code></td>
-        <td>[H, T, d_k]</td>
-        <td>num_heads * tokens * head_dim</td>
-    </tr>
-    <tr>
-        <td><code>K, V</code></td>
-        <td>[H_kv, T, d_k]</td>
-        <td>num_kv_heads * tokens * head_dim</td>
-    </tr>
-    <tr>
-        <td><code>scores</code></td>
-        <td>[H, T, T]</td>
-        <td>num_heads * tokens * context_window</td>
-    </tr>
-    <tr>
-        <td><code>mlp_hidden</code></td>
-        <td>[T, 2*I]</td>
-        <td>tokens * 2 * intermediate_dim</td>
+        <td>500 MB tensor at 14 GB/s</td>
+        <td>500 MB &divide; 14 GB/s</td>
+        <td>&asymp; 36 ms</td>
+        <td>division-based illustration</td>
     </tr>
 </table>
 
 <p>
-    The same fixed-offset discipline is the precondition for <a href="memory-tetris.html">Memory Tetris</a>,
-    a research-stage design (not implemented) that would reuse dead arena slots as final destinations for
-    tensors prefetched from NVMe.
+    Real throughput is shaped by latency, queue depth, filesystem behavior, thermal state, page-cache state,
+    alignment and intermediate copies. A nominal 14 GB/s-class device cannot fix an incorrect schedule,
+    insufficient look-ahead, small random reads or excessive copies &mdash; which is why Gen5 hardware is only
+    worth evaluating after Gen4 proves the implementation can actually overlap I/O.
 </p>
 
-<h2>Kernel Composition</h2>
+<h2>Actual Linux I/O Paths</h2>
 
-<p>Kernels are composed following transformer layer structure:</p>
+<p>
+    An ordinary buffered <code>read()</code> does <strong>not</strong> guarantee direct PCIe DMA into the
+    final userspace arena; the kernel page cache and an additional copy may be involved. Four candidate
+    mechanisms must be measured independently, and no path earns provider promotion before benchmarking:
+</p>
 
-<div class="img-container">
-    <img src="assets/forward-backward-flow.svg" alt="Forward and Backward Data Flow">
+<div class="img-container svg-viewer" data-title="NVMe-to-arena candidate paths: buffered asynchronous read, mmap plus controlled readahead, aligned O_DIRECT, and registered io_uring buffers">
+    <img src="assets/memory-tetris-storage-paths.svg" alt="Four candidate Linux I/O paths from model weights on NVMe to the CKE DRAM arena: buffered asynchronous read stages through the kernel page cache with an extra copy into the arena; mmap plus controlled readahead populates page-cache pages ahead of use then copies or faults on first use; aligned O_DIRECT bypasses the page cache and lands in the final arena slot subject to an alignment contract; registered io_uring buffers complete asynchronously into a registered slot where kernel and filesystem support exist. A warning bar states that queue depth, filesystem, cache state, alignment and copy overhead decide which path earns promotion" style="width: 100%; max-width: 960px; margin: 0 auto; display: block;">
 </div>
 
-<h2>Build System</h2>
+<ol>
+    <li><strong>Buffered asynchronous reads</strong> &mdash; simple and portable, but the kernel page cache plus a copy into the arena costs CPU and effective bandwidth.</li>
+    <li><strong><code>mmap()</code> plus controlled readahead</strong> &mdash; page residency is steered ahead of use, but behavior depends on cache state and a copy or fault still happens at first use.</li>
+    <li><strong>Aligned <code>O_DIRECT</code> reads</strong> &mdash; bypass the page cache and can land in final arena slots, subject to a strict alignment contract.</li>
+    <li><strong>Registered <code>io_uring</code> buffers</strong> &mdash; asynchronous completion events into fixed buffers, where the kernel and filesystem support them.</li>
+</ol>
 
-<div class="grid grid-2">
-    <div class="card">
-        <h3 style="margin-top: 0;">Full Library</h3>
-        <pre>make</pre>
-        <p>Builds <code>libckernel_engine.so</code> with all kernels linked together.</p>
-    </div>
-    <div class="card">
-        <h3 style="margin-top: 0;">Per-Kernel Libraries</h3>
-        <pre>make libckernel_attention.so
-make libckernel_rope.so
-make libckernel_rmsnorm.so</pre>
-        <p>Builds individual kernel libraries for testing.</p>
-    </div>
+<p>
+    The fastest mechanism is not assumed in advance. The planner interface should describe a transfer source
+    and a completion event without hard-coding one Linux I/O mechanism into model circuits, so the winning
+    path can be selected by measurement rather than by guesswork.
+</p>
+
+<h2>Dense and MoE Residency Policies</h2>
+
+<h3>Dense: a predictable sliding window</h3>
+
+<p>
+    Dense models provide a predictable layer sliding window with deterministic look-ahead: prefetch future
+    layer weights in circuit order and retain only the number of layers allowed by the DRAM budget. This is
+    the initial implementation target precisely because the schedule is known before execution starts.
+</p>
+
+<h3>MoE: a cache policy plus look-ahead</h3>
+
+<p>
+    MoE models keep common weights and hot experts resident in DRAM while cold experts, future layers and
+    inactive immutable weights stay on NVMe. Routing decisions determine immediate expert demand, and a
+    selected expert that is not resident is a <strong>hard dependency</strong>: compute must wait for verified
+    residency. Historical hit rate can guide residency, but <strong>no expert may be silently
+    substituted</strong> &mdash; a cache never changes the arithmetic contract.
+</p>
+
+<div class="img-container svg-viewer" data-title="Hot and cold MoE expert residency with router-driven demand: hits run immediately, misses are hard dependencies fetched to staging and verified">
+    <img src="assets/memory-tetris-moe-cache.svg" alt="MoE expert residency diagram: a per-token router sends demand to a DRAM working set holding common weights, hot resident experts E3 and E7, KV state and a staging slot, while cold experts E1, E2, E4, E5, E6 and E8 remain on the NVMe backing tier. A hit on E3 runs immediately. A selection of cold expert E5 is a hard dependency: it is fetched to the staging slot, verified, and only then run. A callout states that no expert is silently substituted and checksum plus provenance are checked first" style="width: 100%; max-width: 960px; margin: 0 auto; display: block;">
 </div>
 
-<h2>Codegen Pipeline</h2>
+<h2>Safety Contracts: Fail Closed</h2>
 
-<div class="card card-accent">
-    <h3 style="margin-top: 0;">Generate Runtime from Config</h3>
-    <pre># Build the IR demo tool
-make build/ck_ir_demo
+<p>
+    Every tier-managed tensor carries machine-readable metadata: tensor id, source artifact and offset, arena
+    slot and final address offset, size and alignment, first and last use, mutability and dirty state, storage
+    tier and residency state, prefetch deadline and completion event, reuse distance, and checksum or artifact
+    provenance. The planner must <strong>fail closed</strong> &mdash; refuse the schedule &mdash; when any of
+    these hold:
+</p>
 
-# Generate C runtime
-./build/ck_ir_demo config.json --emit build/model.c
-
-# Or use the make target
-make ck-emit CONFIG=config.json OUT=build/model.c</pre>
-</div>
-
-<p>The generated file contains:</p>
 <ul>
-    <li>Buffer allocation functions</li>
-    <li>Forward pass for all layers</li>
-    <li>Backward pass for all layers</li>
-    <li>Parameter gradient accumulation</li>
+    <li>the previous slot owner is still <strong>live</strong>;</li>
+    <li>a read or writable <strong>alias</strong> remains active;</li>
+    <li>the slot is <strong>pinned</strong> by a kernel or an in-flight transfer;</li>
+    <li>a <strong>writeback is pending</strong> for mutable state;</li>
+    <li>the new <strong>transfer is incomplete</strong> at the consumer dependency;</li>
+    <li>the source extent, destination extent or alignment is invalid;</li>
+    <li>model <strong>provenance or checksum</strong> does not match the converted-model manifest;</li>
+    <li>numerical execution would select a different arithmetic contract merely because the tensor came from another tier.</li>
 </ul>
 
-<h2>Project Structure</h2>
-
-<p>The codebase is organized for easy navigation:</p>
-
-<div class="folder-structure">
-    <div class="folder-header">
-        <span class="folder-title">Focused Source Tree</span>
-        <span class="folder-scope">src/kernels · version/v6.6 · version/v7</span>
-        <span class="folder-updated">Updated: 2026-07-26 13:04</span>
-    </div>
-    <pre class="tree-output">
-src/kernels
-`-- fused
-version/v6.6
-|-- docs
-|-- include
-|-- kernel_maps
-|-- patches
-|-- scripts
-|   `-- parity
-|-- src
-|   |-- generated
-|   |-- kernel_config
-|   |-- scripts
-|   `-- test_generated
-|-- templates
-|-- test
-|-- testing
-|-- tests
-|-- tools
-`-- unittest
-version/v7
-|-- artifacts
-|   `-- svg_dsl
-|       |-- gen1_archive_2026-04-05
-|       `-- spec_archive_2026-04-08
-|-- contracts
-|-- data
-|   |-- eval_contracts
-|   |-- generated
-|   |   |-- toy_svg_semantic_shapes_tokenizer
-|   |   `-- toy_svg_structured_atoms_tokenizer
-|   |-- probe_contracts
-|   |-- spec03
-|   |   |-- contracts
-|   |   |-- holdout
-|   |   |-- manifests
-|   |   |-- midtrain
-|   |   |-- normalized
-|   |   |-- pretrain
-|   |   |-- raw_assets
-|   |   |-- sft
-|   |   `-- tokenizer
-|   `-- spec04
-|       |-- contracts
-|       |-- holdout
-|       |-- manifests
-|       |-- midtrain
-|       |-- normalized
-|       |-- pretrain
-|       |-- raw_assets
-|       |-- sft
-|       `-- tokenizer
-|-- docs
-|-- examples
-|-- experiments
-|   `-- svg_dsl
-|       |-- catalog
-|       |-- core
-|       |-- programs
-|       `-- renderers
-|-- include
-|-- kernel_maps
-|-- regression
-|-- reports
-|   |-- spec12_gold_mappings -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec12_gold_mappings
-|   |-- spec13b_gold_mappings -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec13b_gold_mappings
-|   |-- spec14a_gold_mappings -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec14a_gold_mappings
-|   |-- spec14b_gold_mappings -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec14b_gold_mappings
-|   |-- spec15a_gold_mappings -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec15a_gold_mappings
-|   |-- spec15b_gold_mappings -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec15b_gold_mappings
-|   |-- spec_broader_1_family_packs -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec_broader_1_family_packs
-|   `-- spec_broader_1_gold_mappings -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec_broader_1_gold_mappings
-|-- runs
-|   |-- logs
-|   `-- overnight_monitor
-|       `-- spec10
-|-- scripts
-|   |-- dataset
-|   `-- parity
-|-- src
-|-- templates
-|-- test
-|-- tests
-|   |-- contracts
-|   `-- fixtures
-`-- tools
-    `-- src
-
-87 directories
-</pre>
+<div class="card card-accent">
+    <h3 style="margin-top: 0;">Immutable weights first</h3>
+    <p style="margin-bottom: 0;">
+        The first implementation target is <strong>converted, immutable weights</strong>, because they never
+        need writeback. KV caches, recurrent state, gradients and optimizer state are explicitly out of scope
+        for the first stages: they require later, explicit writeback, persistence and coherence contracts
+        before they may be tier-managed.
+    </p>
 </div>
 
-<style>
-.folder-structure {
-    background: #1a1a1a;
-    border: 1px solid #333;
-    border-radius: 8px;
-    overflow: hidden;
-    margin: 1.5rem 0;
-}
-.folder-header {
-    background: #252525;
-    padding: 12px 16px;
-    display: flex;
-    justify-content: flex-start;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-    border-bottom: 1px solid #333;
-}
-.folder-title {
-    color: #ffb400;
-    font-weight: 600;
-    font-size: 14px;
-}
-.folder-scope {
-    color: #89d3ff;
-    font-size: 11px;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-}
-.folder-updated {
-    color: #666;
-    font-size: 11px;
-    margin-left: auto;
-}
-.tree-output {
-    margin: 0;
-    padding: 16px;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 13px;
-    line-height: 1.5;
-    color: #b0b0b0;
-    overflow-x: auto;
-    white-space: pre;
-}
-.tree-output .directory {
-    color: #6ab0f3;
-}
-</style>
+<h2>X-Ray Evidence</h2>
+
+<p>
+    The feature is not successful merely because a larger model runs. The proposed X-Ray integration records,
+    per tensor and per layer, the full transfer lifecycle &mdash; request, first byte, completion and first
+    use &mdash; so that hidden transfer, exposed wait and bandwidth are measured facts rather than hope.
+</p>
+
+<div class="img-container svg-viewer" data-title="Proposed X-Ray evidence flow: request, first byte, completion and first use, with prefetch lead time when on time and exposed wait when late">
+    <img src="assets/memory-tetris-xray.svg" alt="Proposed X-Ray evidence flow with two timelines. On time: request, first byte, completion and first use markers, with spans for time to first byte, transfer duration giving achieved read bandwidth, and prefetch lead time hidden behind compute. Late: first use arrives before completion and the gap is exposed wait where the consumer is blocked. A panel lists the proposed per-tensor record fields: requested and completed bytes, source tier, destination slot, timestamps, prefetch lead, exposed wait, achieved bandwidth, residency duration, hit, miss and eviction reason, temporary-copy bytes, and checksum and provenance status" style="width: 100%; max-width: 960px; margin: 0 auto; display: block;">
+</div>
+
+<h3>Proposed per-tensor report fields</h3>
+
+<ul>
+    <li>requested bytes and completed bytes;</li>
+    <li>source tier and destination slot;</li>
+    <li>request, first-byte, completion and first-use timestamps;</li>
+    <li>prefetch lead time;</li>
+    <li>exposed wait at first use;</li>
+    <li>achieved read bandwidth;</li>
+    <li>slot reuse and residency duration;</li>
+    <li>cache hit, miss and eviction reason;</li>
+    <li>temporary-copy bytes;</li>
+    <li>checksum / provenance result.</li>
+</ul>
+
+<h3>Proposed aggregate report</h3>
+
+<ul>
+    <li>model bytes resident in DRAM;</li>
+    <li>model bytes served by NVMe per token or prompt;</li>
+    <li>I/O time hidden behind compute;</li>
+    <li>exposed storage stall time;</li>
+    <li>useful bandwidth versus device baseline;</li>
+    <li>hot-expert hit rate for MoE;</li>
+    <li>page-cache and direct-I/O mode;</li>
+    <li>token parity against the fully resident baseline.</li>
+</ul>
+
+<p>
+    Numerical certification compares the tiered runtime against the same generated runtime and provider
+    schedule with fully resident weights. Token parity alone is insufficient: selected layer and checkpoint
+    outputs and artifact hashes must also match under their existing numerical contracts.
+</p>
+
+<h2>Hardware Results: Not Yet Certified</h2>
+
+<p>
+    The table below is the planned evidence matrix. Every result cell is <strong>not yet certified</strong>:
+    no reproducible Gen4 experiment has been run and recorded to CKE's evidence standard. A provisional Gen4
+    NVMe measurement exists in the lab but is deliberately withheld from this page until the command, artifact
+    size and cache state are recorded &mdash; an unrecorded number is not a CKE benchmark.
+</p>
+
+<table>
+    <tr>
+        <th>Experiment</th>
+        <th>Configuration</th>
+        <th>Result</th>
+        <th>Status</th>
+    </tr>
+    <tr>
+        <td>Device qualification</td>
+        <td>Gen4 NVMe sequential read, multiple block sizes and queue depths, direct and buffered</td>
+        <td>&mdash;</td>
+        <td><span class="badge badge-grey">Not yet certified</span></td>
+    </tr>
+    <tr>
+        <td>Cache-state behavior</td>
+        <td>cold-cache and warm-cache measured separately</td>
+        <td>&mdash;</td>
+        <td><span class="badge badge-grey">Not yet certified</span></td>
+    </tr>
+    <tr>
+        <td>Sustained reads</td>
+        <td>beyond the SSD SLC cache, with thermal and latency distributions recorded</td>
+        <td>&mdash;</td>
+        <td><span class="badge badge-grey">Not yet certified</span></td>
+    </tr>
+    <tr>
+        <td>Synchronous baseline</td>
+        <td>fully resident versus one-slot synchronous streaming</td>
+        <td>&mdash;</td>
+        <td><span class="badge badge-grey">Not yet certified</span></td>
+    </tr>
+    <tr>
+        <td>Buffering depth</td>
+        <td>one-slot versus double- and triple-buffered asynchronous streaming</td>
+        <td>&mdash;</td>
+        <td><span class="badge badge-grey">Not yet certified</span></td>
+    </tr>
+    <tr>
+        <td>Tensor-size sweep</td>
+        <td>64 MB through 1 GB layer sizes</td>
+        <td>&mdash;</td>
+        <td><span class="badge badge-grey">Not yet certified</span></td>
+    </tr>
+    <tr>
+        <td>Overlap windows</td>
+        <td>compute windows shorter than, equal to and longer than transfer time</td>
+        <td>&mdash;</td>
+        <td><span class="badge badge-grey">Not yet certified</span></td>
+    </tr>
+    <tr>
+        <td>Numerical parity</td>
+        <td>fully resident versus tiered, identical outputs</td>
+        <td>&mdash;</td>
+        <td><span class="badge badge-grey">Not yet certified</span></td>
+    </tr>
+    <tr>
+        <td>Failure injection</td>
+        <td>forced short read, stale artifact, checksum failure, slot overlap</td>
+        <td>&mdash;</td>
+        <td><span class="badge badge-grey">Not yet certified</span></td>
+    </tr>
+    <tr>
+        <td>Thread-count checks</td>
+        <td>identical output with 1, 8 and production thread counts</td>
+        <td>&mdash;</td>
+        <td><span class="badge badge-grey">Not yet certified</span></td>
+    </tr>
+    <tr>
+        <td>MoE certification</td>
+        <td>dense model first, then a public MoE model with controlled routing</td>
+        <td>&mdash;</td>
+        <td><span class="badge badge-grey">Not yet certified</span></td>
+    </tr>
+</table>
+
+<p>
+    Every run must record the exact CPU, memory, filesystem, mount options, SSD firmware, temperature and
+    free-space state. Gen5-class hardware is evaluated only after Gen4 establishes that the implementation
+    can overlap I/O at all.
+</p>
+
+<h2>Distributed Extensibility</h2>
+
+<p>
+    The transfer abstraction is designed so that a source can eventually be local DRAM, local NVMe,
+    recomputation, or <strong>another CKE node</strong>. The planner can then compare resident reuse, local
+    NVMe transfer, recomputation and network transfer without encoding distributed behavior into individual
+    kernels. <strong>Distributed tensor loading is not implemented</strong> &mdash; this is an interface
+    requirement for later stages, not a current capability.
+</p>
+
+<h2>Implementation Stages and Promotion Criteria</h2>
+
+<h3>Planned stages</h3>
+
+<ol>
+    <li>Add immutable tensor source extents and storage-tier metadata to the model manifest and validated IR.</li>
+    <li>Add a fixed, aligned streaming-slot allocator alongside persistent and scratch arena classes.</li>
+    <li>Implement synchronous final-slot reads as the correctness baseline.</li>
+    <li>Add asynchronous prefetch and explicit completion dependencies.</li>
+    <li>Certify deterministic dense-layer sliding windows with one and two slots.</li>
+    <li>Add double/triple buffering and tune look-ahead from measured kernel time.</li>
+    <li>Add X-Ray transfer and stall reporting.</li>
+    <li>Add MoE expert residency with deterministic cache-policy fixtures.</li>
+    <li>Add mutable-state tiers only after explicit writeback and recovery design.</li>
+    <li>Generalize the transfer source to remote-node tensors for distributed execution.</li>
+</ol>
+
+<h3>Promotion criteria</h3>
+
+<ul>
+    <li>No undeclared staging copy.</li>
+    <li>No read from an incomplete or stale slot.</li>
+    <li>The fully resident numerical contract remains unchanged.</li>
+    <li>X-Ray accounts for all tiered bytes and exposed wait.</li>
+    <li>Asynchronous mode beats the synchronous baseline reproducibly.</li>
+    <li>The selected model exceeds available DRAM or demonstrates a measured residency benefit &mdash; otherwise storage streaming adds complexity without value.</li>
+</ul>
+
+<div class="card card-accent">
+    <h3 style="margin-top: 0;">The defensible claim</h3>
+    <p style="margin-bottom: 0;">
+        CKE's explicit tensor lifetimes may let it manage a predictable DRAM working window more effectively
+        than demand paging. The hardware gates &mdash; not the diagrams &mdash; determine how much I/O can
+        actually be hidden.
+    </p>
+</div>
+
+<h2>Related Pages</h2>
+
+<ul>
+    <li><a href="deterministic-memory.html">Deterministic Memory</a> &mdash; compile-time known offsets that make slot lifetimes auditable</li>
+    <li><a href="memory-safety.html">Memory Safety</a> &mdash; bump allocator, canaries and arena discipline</li>
+    <li><a href="memory-reality.html">Memory Reality</a> &mdash; honest memory-capacity accounting for large models</li>
+    <li><a href="scaling.html">Scaling Philosophy</a> &mdash; the CPU-only, Linux-first hardware bet behind this research</li>
+    <li><a href="research.html">Research Tracker</a> &mdash; other proposed techniques and their status</li>
+</ul>
     </main>
 
     <!-- SVG Viewer Overlay (shared across all pages) -->
@@ -1671,7 +1605,7 @@ version/v7
             </div>
             <div style="text-align: right;">
                 <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
-                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-07-26</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-08-09</p>
             </div>
         </div>
     </footer>
