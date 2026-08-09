@@ -535,6 +535,12 @@ void ck_gemm_nt_head_major_q8_0(const float *attn_out,
                                   int num_heads,
                                   int head_dim);
 
+/* Exact physical-layout providers. Logical values and reduction order are unchanged. */
+void ck_layout_token_to_head_f32(const float *src, float *dst,
+                                 int tokens, int heads, int head_dim);
+void ck_layout_head_to_token_f32(const float *src, float *dst,
+                                 int heads, int tokens, int head_dim);
+
 // GEMM_TN: C[M,N] = A[K,M].T @ B[K,N] + bias[N]
 // A is stored row-major as [K,M], B is stored row-major as [K,N]
 // Used for backward d_W = d_output.T @ input

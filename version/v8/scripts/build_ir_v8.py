@@ -80,6 +80,47 @@ from validate_circuit_interfaces_v8 import (
     CircuitInterfaceError,
     validate_graph_slots,
 )
+from resolve_layout_chain_v8 import rank_layout_routes
+
+
+def _kernel_map_by_id(registry: Dict[str, Any], kernel_id: str) -> Dict[str, Any]:
+    matches = [
+        kernel for kernel in registry.get("kernels", [])
+        if isinstance(kernel, dict) and kernel.get("id") == kernel_id
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"HARD PHYSICAL CONTRACT FAULT: expected one kernel map for {kernel_id!r}, "
+            f"found {len(matches)}."
+        )
+    return matches[0]
+
+
+def _resolve_layout_edge(
+    registry: Dict[str, Any],
+    *,
+    producer_kernel: str,
+    producer_port: str,
+    consumer_kernel: str,
+    consumer_port: str,
+) -> Tuple[bool, Optional[str]]:
+    """Return (map_managed, converter_id); converter is None for a direct edge."""
+    producer = _kernel_map_by_id(registry, producer_kernel)
+    consumer = _kernel_map_by_id(registry, consumer_kernel)
+    if not producer.get("physical_contract_version") or not consumer.get("physical_contract_version"):
+        return False, None
+    converters = [
+        kernel for kernel in registry.get("kernels", [])
+        if isinstance(kernel, dict) and isinstance(kernel.get("layout_conversion"), dict)
+    ]
+    route = rank_layout_routes(
+        [producer],
+        producer_port=producer_port,
+        consumers=[consumer],
+        consumer_port=consumer_port,
+        converters=converters,
+    )[0]
+    return True, route.converter_id
 
 
 def _load_numerical_contract_resolver():
@@ -8575,6 +8616,35 @@ def generate_ir_lower_1(
     final_ops = []
     kv_store_count = 0
     decode_attention_count = 0
+    prefill_attention_kernel_by_layer = {
+        int(candidate.get("layer", 0)): str(candidate.get("kernel", ""))
+        for candidate in lowered_ops
+        if candidate.get("op") in {"attn", "attn_sliding", "attn_shared_kv", "attn_sliding_shared_kv"}
+    }
+    prefill_out_kernel_by_layer = {
+        int(candidate.get("layer", 0)): str(candidate.get("kernel", ""))
+        for candidate in lowered_ops
+        if candidate.get("op") in {"out_proj", "cross_out_proj"}
+    }
+
+    def _prefill_converter(
+        producer: Dict[str, Any],
+        *,
+        producer_port: str,
+        consumer_kernel: str,
+        consumer_port: str,
+        legacy_converter: str,
+    ) -> Optional[str]:
+        if not consumer_kernel:
+            return legacy_converter
+        managed, converter = _resolve_layout_edge(
+            registry,
+            producer_kernel=str(producer.get("kernel", "")),
+            producer_port=producer_port,
+            consumer_kernel=consumer_kernel,
+            consumer_port=consumer_port,
+        )
+        return converter if managed else legacy_converter
 
     force_decode_attn_regular = str(os.environ.get("CK_V7_DECODE_ATTN_REGULAR", "")).strip().lower() in ("1", "true", "yes", "on")
     decode_kv_cache_dtype = str(config.get("decode_kv_cache_dtype", "fp32") or "fp32").strip().lower()
@@ -8810,9 +8880,18 @@ def generate_ir_lower_1(
                 layer = op["layer"]
                 if int(layer) in mla_prefill_layers:
                     continue
+                converter = _prefill_converter(
+                    op,
+                    producer_port="C",
+                    consumer_kernel=prefill_attention_kernel_by_layer.get(int(layer), ""),
+                    consumer_port="k_cache",
+                    legacy_converter="layout_convert_token_to_head_f32",
+                )
+                if converter is None:
+                    continue
                 transpose_q_op = {
                     "idx": len(final_ops),
-                    "kernel": "transpose_qkv_to_head_major",
+                    "kernel": converter,
                     "op": "transpose_qkv_to_head_major",
                     "layer": layer,
                     "section": op["section"],
@@ -8828,9 +8907,18 @@ def generate_ir_lower_1(
 
             if op["op"] == "k_proj":
                 layer = op["layer"]
+                converter = _prefill_converter(
+                    op,
+                    producer_port="C",
+                    consumer_kernel=prefill_attention_kernel_by_layer.get(int(layer), ""),
+                    consumer_port="v_cache",
+                    legacy_converter="layout_convert_token_to_head_f32",
+                )
+                if converter is None:
+                    continue
                 transpose_k_op = {
                     "idx": len(final_ops),
-                    "kernel": "transpose_kv_to_head_major",
+                    "kernel": converter,
                     "op": "transpose_kv_to_head_major",
                     "layer": layer,
                     "section": op["section"],
@@ -8846,9 +8934,18 @@ def generate_ir_lower_1(
 
             if op["op"] == "v_proj":
                 layer = op["layer"]
+                converter = _prefill_converter(
+                    op,
+                    producer_port="C",
+                    consumer_kernel=prefill_attention_kernel_by_layer.get(int(layer), ""),
+                    consumer_port="q",
+                    legacy_converter="layout_convert_token_to_head_f32",
+                )
+                if converter is None:
+                    continue
                 transpose_v_op = {
                     "idx": len(final_ops),
-                    "kernel": "transpose_kv_to_head_major",
+                    "kernel": converter,
                     "op": "transpose_kv_to_head_major",
                     "layer": layer,
                     "section": op["section"],
@@ -8919,6 +9016,13 @@ def generate_ir_lower_1(
             # also exists.
             if op["op"] in ("attn", "attn_sliding", "attn_shared_kv", "attn_sliding_shared_kv"):
                 layer = op["layer"]
+                output_converter = _prefill_converter(
+                    op,
+                    producer_port="output",
+                    consumer_kernel=prefill_out_kernel_by_layer.get(int(layer), ""),
+                    consumer_port="A",
+                    legacy_converter="layout_convert_head_to_token_f32",
+                )
                 required_contract = op.get("required_contract") if isinstance(op.get("required_contract"), dict) else {}
                 prefill_batching = str(required_contract.get("execution.prefill_batching", "") or "")
                 append_before_attention = prefill_batching in {
@@ -8972,20 +9076,21 @@ def generate_ir_lower_1(
                     # cache. Commit the current token block before invoking them.
                     final_ops.insert(len(final_ops) - 1, kv_batch_copy_op)
                     kv_store_count += 1
-                transpose_attn_out_op = {
-                    "idx": len(final_ops),
-                    "kernel": "transpose_attn_out_to_token_major",
-                    "op": "transpose_attn_out_to_token_major",
-                    "layer": layer,
-                    "section": op["section"],
-                    "function": "transpose_inplace",
-                    "weights": {},
-                    "inputs": {"buf": {"type": "scratch", "source": "attn_scratch"}},
-                    "outputs": {"buf": {"type": "scratch", "buffer": "attn_scratch"}},
-                    "scratch": [],
-                    "_auto_inserted": True,
-                }
-                final_ops.append(transpose_attn_out_op)
+                if output_converter is not None:
+                    transpose_attn_out_op = {
+                        "idx": len(final_ops),
+                        "kernel": output_converter,
+                        "op": "transpose_attn_out_to_token_major",
+                        "layer": layer,
+                        "section": op["section"],
+                        "function": "transpose_inplace",
+                        "weights": {},
+                        "inputs": {"buf": {"type": "scratch", "source": "attn_scratch"}},
+                        "outputs": {"buf": {"type": "scratch", "buffer": "attn_scratch"}},
+                        "scratch": [],
+                        "_auto_inserted": True,
+                    }
+                    final_ops.append(transpose_attn_out_op)
                 if uses_kv_cache and not append_before_attention:
                     # TODO(contract): validate this op against runtime_invariants contract:
                     # _kv_copy_bytes must exist and match
@@ -12551,6 +12656,11 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
     """
     legacy_bindings = load_kernel_bindings()
     kernel_call_abis = load_kernel_call_abis(legacy_bindings=legacy_bindings)
+    physical_maps = {
+        str(kernel.get("id", "")): kernel
+        for kernel in load_kernel_registry().get("kernels", [])
+        if isinstance(kernel, dict) and kernel.get("id")
+    }
     ops = lowered_ir.get("operations", lowered_ir.get("ops", []))
     config = lowered_ir.get("config", {})
     dtype_map = {
@@ -12716,6 +12826,7 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
         ):
             transpose_op = {
                 "idx": op.get("idx", -1),
+                "kernel": kernel_id,
                 "function": func,
                 "op": op_name,
                 "layer": op.get("layer", -1),
@@ -12723,6 +12834,12 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                 "args": [],
                 "errors": [],
                 "warnings": [],
+                "resolved_physical_execution": {
+                    "provider_id": kernel_id,
+                    "layout_conversion": copy.deepcopy(
+                        physical_maps.get(kernel_id, {}).get("layout_conversion", {})
+                    ),
+                },
             }
             if "_cross_kv_kind" in op:
                 transpose_op["_cross_kv_kind"] = op["_cross_kv_kind"]

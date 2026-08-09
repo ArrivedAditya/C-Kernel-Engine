@@ -176,11 +176,13 @@ def build_report() -> Dict[str, Any]:
             _validate_port_aliases(doc, path)
         maps.append((path, doc))
 
-    governed = [item for item in maps if item[1].get("numerical_capabilities")]
+    physical = [item for item in maps if item[1].get("layout_conversion")]
+    numerical_maps = [item for item in maps if not item[1].get("layout_conversion")]
+    governed = [item for item in numerical_maps if item[1].get("numerical_capabilities")]
     hardened = [item for item in governed if item[1].get("operation_interface")]
     crossvalidated = [item for item in hardened if _has_complete_interface_abi(item[1])]
     pending = [item for item in governed if not item[1].get("operation_interface")]
-    legacy = [item for item in maps if not item[1].get("numerical_capabilities")]
+    legacy = [item for item in numerical_maps if not item[1].get("numerical_capabilities")]
     interface_ready = [item for item in maps if item[1].get("operation_interface")]
     interface_abi_ready = [item for item in interface_ready if _has_complete_interface_abi(item[1])]
     legacy_interface_ready = [item for item in legacy if item[1].get("operation_interface")]
@@ -201,6 +203,7 @@ def build_report() -> Dict[str, Any]:
         "schema_version": 1,
         "counts": {
             "kernel_maps": len(maps),
+            "physical_layout_maps": len(physical),
             "resolver_governed_maps": len(governed),
             "interface_hardened_maps": len(hardened),
             "interface_abi_crossvalidated_maps": len(crossvalidated),

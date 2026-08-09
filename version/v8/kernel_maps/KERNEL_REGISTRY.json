@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 277,
+      "total": 279,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -50,6 +50,7 @@
         "kv_cache_store_batch_f16": 1,
         "kv_lora_decompress": 2,
         "layernorm": 4,
+        "layout_convert": 2,
         "layout_transform": 1,
         "logits_store_indexed": 1,
         "mamba_conv1d_state_update": 1,
@@ -2464,6 +2465,15 @@
     {
       "id": "attention_forward_causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64",
       "op": "attention",
+      "selection": {
+        "status": "production",
+        "priority": 200,
+        "equivalence_group": "attention.f16_flash_auto_qtile64.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "physical_contract_version": 1,
       "variant": "causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64",
       "mode": "prefill",
       "contract_schema_version": 1,
@@ -2518,7 +2528,9 @@
             "num_heads",
             "q_tokens",
             "head_dim"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "placement": "local"
         },
         {
           "name": "k_cache",
@@ -2527,7 +2539,9 @@
             "num_kv_heads",
             "cache_capacity",
             "head_dim"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "placement": "local"
         },
         {
           "name": "v_cache",
@@ -2536,7 +2550,9 @@
             "num_kv_heads",
             "cache_capacity",
             "head_dim"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "placement": "local"
         }
       ],
       "outputs": [
@@ -2547,7 +2563,9 @@
             "num_heads",
             "q_tokens",
             "head_dim"
-          ]
+          ],
+          "layout": "head_major_contiguous",
+          "placement": "local"
         }
       ],
       "dims": [
@@ -16108,6 +16126,15 @@
     {
       "id": "gemm_nt_q4_k_q8_k",
       "op": "gemm",
+      "selection": {
+        "status": "production",
+        "priority": 200,
+        "equivalence_group": "q4_k_x_q8_k_repacked_matmul_fp32",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "physical_contract_version": 1,
       "variant": "q4_k_w_q8_k_a",
       "contract_schema_version": 1,
       "numerical_contract": "q4_k_x_q8_k_repacked_matmul_fp32",
@@ -16197,6 +16224,8 @@
             "M",
             "K"
           ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
           "desc": "Activation matrix [rows, cols] (Q8_K quantized)"
         },
         {
@@ -16206,6 +16235,8 @@
             "N",
             "K"
           ],
+          "layout": "opaque_packed",
+          "placement": "local",
           "desc": "Weight matrix [cols, cols] (Q4_K quantized)"
         },
         {
@@ -16214,6 +16245,8 @@
           "shape": [
             "N"
           ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
           "optional": true,
           "desc": "Bias [N] (optional)"
         }
@@ -16226,6 +16259,8 @@
             "M",
             "N"
           ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
           "desc": "Result [M, N]"
         }
       ],
@@ -17031,6 +17066,15 @@
     {
       "id": "gemm_nt_q6_k_q8_k",
       "op": "gemm",
+      "selection": {
+        "status": "production",
+        "priority": 200,
+        "equivalence_group": "q6_k_x_q8_k_fp32_block_order",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "physical_contract_version": 1,
       "variant": "q6_k_w_q8_k_a",
       "contract_schema_version": 1,
       "numerical_contract": "q6_k_x_q8_k_fp32_block_order",
@@ -17153,6 +17197,8 @@
             "M",
             "K"
           ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
           "desc": "Activation matrix [rows, cols] (Q8_K quantized)"
         },
         {
@@ -17162,6 +17208,8 @@
             "N",
             "K"
           ],
+          "layout": "opaque_packed",
+          "placement": "local",
           "desc": "Weight matrix [cols, cols] (Q6_K quantized)"
         },
         {
@@ -17170,6 +17218,8 @@
           "shape": [
             "N"
           ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
           "optional": true,
           "desc": "Bias [N] (optional)"
         }
@@ -17182,6 +17232,8 @@
             "M",
             "N"
           ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
           "desc": "Result [M, N]"
         }
       ],
@@ -22107,6 +22159,146 @@
       "notes": "GGML-compatible contracted LayerNorm used for parity-sensitive FP32 graphs. AVX-512 hosts retain the declared ordered AVX reduction instead of selecting a wider reduction implicitly.",
       "name": "layernorm_fp32_exact",
       "_source_file": "layernorm_fp32_exact.json"
+    },
+    {
+      "id": "layout_convert_head_to_token_f32",
+      "op": "layout_convert",
+      "selection": {
+        "status": "production",
+        "priority": 100,
+        "equivalence_group": "layout_convert.fp32.head_to_token.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "physical_contract_version": 1,
+      "layout_conversion": {
+        "from_layout": "head_major_contiguous",
+        "to_layout": "token_major_contiguous",
+        "cost_rank": 10,
+        "value_semantics": "bit_exact_copy"
+      },
+      "inputs": [
+        {
+          "name": "src",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "dst",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "D"
+          ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "required"
+        }
+      ],
+      "dims": [
+        "T",
+        "H",
+        "D"
+      ],
+      "impl": {
+        "function": "ck_layout_head_to_token_f32",
+        "c_declaration": "void ck_layout_head_to_token_f32(const float *src, float *dst, int heads, int tokens, int head_dim);",
+        "sources": [
+          "src/kernels/layout_kernels.c"
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_layout_provider_selection.py"
+        ]
+      },
+      "name": "layout_convert_head_to_token_f32",
+      "_source_file": "layout_convert_head_to_token_f32.json"
+    },
+    {
+      "id": "layout_convert_token_to_head_f32",
+      "op": "layout_convert",
+      "selection": {
+        "status": "production",
+        "priority": 100,
+        "equivalence_group": "layout_convert.fp32.token_to_head.v1",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "physical_contract_version": 1,
+      "layout_conversion": {
+        "from_layout": "token_major_contiguous",
+        "to_layout": "head_major_contiguous",
+        "cost_rank": 10,
+        "value_semantics": "bit_exact_copy"
+      },
+      "inputs": [
+        {
+          "name": "src",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "H",
+            "D"
+          ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "dst",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T",
+            "D"
+          ],
+          "layout": "head_major_contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "scratch",
+          "consumption": "required"
+        }
+      ],
+      "dims": [
+        "T",
+        "H",
+        "D"
+      ],
+      "impl": {
+        "function": "ck_layout_token_to_head_f32",
+        "c_declaration": "void ck_layout_token_to_head_f32(const float *src, float *dst, int tokens, int heads, int head_dim);",
+        "sources": [
+          "src/kernels/layout_kernels.c"
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_layout_provider_selection.py"
+        ]
+      },
+      "name": "layout_convert_token_to_head_f32",
+      "_source_file": "layout_convert_token_to_head_f32.json"
     },
     {
       "id": "logits_copy_to_position",

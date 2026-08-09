@@ -1,0 +1,30 @@
+{
+  "id": "layout_convert_token_to_head_f32",
+  "op": "layout_convert",
+  "selection": {
+    "status": "production",
+    "priority": 100,
+    "equivalence_group": "layout_convert.fp32.token_to_head.v1",
+    "phases": ["prefill"]
+  },
+  "physical_contract_version": 1,
+  "layout_conversion": {
+    "from_layout": "token_major_contiguous",
+    "to_layout": "head_major_contiguous",
+    "cost_rank": 10,
+    "value_semantics": "bit_exact_copy"
+  },
+  "inputs": [
+    {"name": "src", "dtype": "fp32", "shape": ["T", "H", "D"], "layout": "token_major_contiguous", "placement": "local", "access": "read", "storage_class": "activation", "consumption": "required"}
+  ],
+  "outputs": [
+    {"name": "dst", "dtype": "fp32", "shape": ["H", "T", "D"], "layout": "head_major_contiguous", "placement": "local", "access": "write", "storage_class": "scratch", "consumption": "required"}
+  ],
+  "dims": ["T", "H", "D"],
+  "impl": {
+    "function": "ck_layout_token_to_head_f32",
+    "c_declaration": "void ck_layout_token_to_head_f32(const float *src, float *dst, int tokens, int heads, int head_dim);",
+    "sources": ["src/kernels/layout_kernels.c"]
+  },
+  "tests": {"unit": ["tests/test_v8_layout_provider_selection.py"]}
+}

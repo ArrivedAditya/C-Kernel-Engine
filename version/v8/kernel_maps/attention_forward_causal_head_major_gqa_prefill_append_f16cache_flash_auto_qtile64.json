@@ -1,6 +1,13 @@
 {
   "id": "attention_forward_causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64",
   "op": "attention",
+  "selection": {
+    "status": "production",
+    "priority": 200,
+    "equivalence_group": "attention.f16_flash_auto_qtile64.v1",
+    "phases": ["prefill"]
+  },
+  "physical_contract_version": 1,
   "variant": "causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64",
   "mode": "prefill",
   "contract_schema_version": 1,
@@ -31,12 +38,12 @@
     }
   },
   "inputs": [
-    {"name": "q", "dtype": "fp32", "shape": ["num_heads", "q_tokens", "head_dim"]},
-    {"name": "k_cache", "dtype": "fp16", "shape": ["num_kv_heads", "cache_capacity", "head_dim"]},
-    {"name": "v_cache", "dtype": "fp16", "shape": ["num_kv_heads", "cache_capacity", "head_dim"]}
+    {"name": "q", "dtype": "fp32", "shape": ["num_heads", "q_tokens", "head_dim"], "layout": "head_major_contiguous", "placement": "local"},
+    {"name": "k_cache", "dtype": "fp16", "shape": ["num_kv_heads", "cache_capacity", "head_dim"], "layout": "head_major_contiguous", "placement": "local"},
+    {"name": "v_cache", "dtype": "fp16", "shape": ["num_kv_heads", "cache_capacity", "head_dim"], "layout": "head_major_contiguous", "placement": "local"}
   ],
   "outputs": [
-    {"name": "output", "dtype": "fp32", "shape": ["num_heads", "q_tokens", "head_dim"]}
+    {"name": "output", "dtype": "fp32", "shape": ["num_heads", "q_tokens", "head_dim"], "layout": "head_major_contiguous", "placement": "local"}
   ],
   "dims": ["num_heads", "num_kv_heads", "q_tokens", "past_tokens", "cache_capacity", "head_dim", "aligned_head_dim"],
   "params": [
