@@ -146,7 +146,7 @@ def _bridge_command(
     runtime_dir: Path,
     prefix_path: Path,
 ) -> list[str]:
-    return [
+    command = [
         sys.executable,
         str(BRIDGE),
         "--decoder-gguf",
@@ -179,6 +179,10 @@ def _bridge_command(
         "--gemm-schedule",
         getattr(args, "gemm_schedule", "auto"),
     ]
+    composition_circuit = str(getattr(args, "composition_circuit", "") or "").strip()
+    if composition_circuit:
+        command.extend(["--composition-circuit", composition_circuit])
+    return command
 
 
 def _parity_command(
@@ -671,6 +675,14 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--composition-circuit",
+        help=(
+            "explicit multimodal composition circuit passed to the bridge; "
+            "Qwen3.6-VL certification should use qwen36vl so architecture and "
+            "stitch policy cannot fall back to runtime inference"
+        ),
+    )
+    parser.add_argument(
         "--append-on-divergence",
         choices=("stop", "llama", "ck"),
         default="stop",
@@ -767,6 +779,7 @@ def main() -> int:
         "max_new_tokens": args.max_new_tokens,
         "append_on_divergence": args.append_on_divergence,
         "chat_template": args.chat_template,
+        "composition_circuit": args.composition_circuit,
         "threads": args.threads,
         "ck_threads": args.ck_threads,
         "gemm_schedule": args.gemm_schedule,

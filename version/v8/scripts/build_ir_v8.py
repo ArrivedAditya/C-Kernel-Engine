@@ -58,6 +58,7 @@ import copy
 import fnmatch
 import importlib.util
 import json
+import re
 import os
 import subprocess
 import sys
@@ -675,16 +676,139 @@ def _resolve_logits_weight_source(
     return "token_emb"
 
 
-def _load_builtin_template_doc(template_name: Optional[str]) -> Optional[Dict[str, Any]]:
+def _load_builtin_template_doc(
+    template_name: Optional[str],
+    *,
+    _component_stack: Tuple[str, ...] = (),
+) -> Optional[Dict[str, Any]]:
     name = str(template_name or "").strip().lower()
     if not name:
         return None
+    if not re.fullmatch(r"[a-z0-9_]+", name):
+        raise RuntimeError(f"HARD CIRCUIT COMPONENT FAULT: invalid circuit name {name!r}")
+    if name in _component_stack:
+        chain = " -> ".join((*_component_stack, name))
+        raise RuntimeError(f"HARD CIRCUIT COMPONENT FAULT: cyclic circuit reference: {chain}")
     path = V8_ROOT / "circuits" / f"{name}.json"
     if not path.exists():
         return None
     with open(path, "r", encoding="utf-8") as f:
         doc = json.load(f)
     _raise_on_forbidden_template_metadata(doc, source=str(path))
+    components = doc.get("components")
+    if components is not None:
+        if not isinstance(components, dict) or not components:
+            raise RuntimeError(
+                f"HARD CIRCUIT COMPONENT FAULT: {path} components must be a non-empty object"
+            )
+        sequence = _template_sequence(doc)
+        if set(sequence) != set(str(key) for key in components):
+            raise RuntimeError(
+                f"HARD CIRCUIT COMPONENT FAULT: {path} sequence must name every component exactly; "
+                f"sequence={sequence!r} components={sorted(str(key) for key in components)!r}"
+            )
+        resolved_blocks: Dict[str, Any] = {}
+        resolved_components: Dict[str, Any] = {}
+        for component_name in sequence:
+            ref = components.get(component_name)
+            if not isinstance(ref, dict):
+                raise RuntimeError(
+                    f"HARD CIRCUIT COMPONENT FAULT: {path} component {component_name!r} must be an object"
+                )
+            circuit_name = str(ref.get("circuit", "") or "").strip().lower()
+            block_name = str(ref.get("block", "") or "").strip()
+            runtime_role = str(ref.get("runtime_role", "") or "").strip().lower()
+            if not circuit_name or not block_name or not runtime_role:
+                raise RuntimeError(
+                    f"HARD CIRCUIT COMPONENT FAULT: {path} component {component_name!r} "
+                    "must explicitly name runtime_role, circuit, and block"
+                )
+            for port_kind in ("imports", "exports"):
+                ports = ref.get(port_kind, {})
+                if not isinstance(ports, dict):
+                    raise RuntimeError(
+                        f"HARD CIRCUIT COMPONENT FAULT: {path} component {component_name!r} "
+                        f"{port_kind} must be an object"
+                    )
+                for public_name, internal_name in ports.items():
+                    if not str(public_name).strip() or not isinstance(internal_name, str) or not internal_name.strip():
+                        raise RuntimeError(
+                            f"HARD CIRCUIT COMPONENT FAULT: {path} component {component_name!r} "
+                            f"has invalid {port_kind} binding {public_name!r}: {internal_name!r}"
+                        )
+            component_doc = _load_builtin_template_doc(
+                circuit_name,
+                _component_stack=(*_component_stack, name),
+            )
+            if component_doc is None:
+                raise RuntimeError(
+                    f"HARD CIRCUIT COMPONENT FAULT: {path} references missing circuit {circuit_name!r}"
+                )
+            block_def = _template_block_def(component_doc, block_name)
+            if not block_def:
+                raise RuntimeError(
+                    f"HARD CIRCUIT COMPONENT FAULT: {path} component {component_name!r} references "
+                    f"missing block {circuit_name}.{block_name}"
+                )
+            resolved_blocks[component_name] = copy.deepcopy(block_def)
+            resolved_components[component_name] = {
+                **copy.deepcopy(ref),
+                "runtime_role": runtime_role,
+                "circuit": circuit_name,
+                "block": block_name,
+                "circuit_version": int(component_doc.get("version", 0) or 0),
+            }
+        declared_blocks = doc.get("block_types")
+        if declared_blocks not in (None, {}):
+            raise RuntimeError(
+                f"HARD CIRCUIT COMPONENT FAULT: {path} may not duplicate block_types when components are declared"
+            )
+        doc["block_types"] = resolved_blocks
+        doc["resolved_components"] = resolved_components
+        if len(sequence) > 1 and not isinstance(doc.get("stitch"), list):
+            raise RuntimeError(
+                f"HARD CIRCUIT STITCH FAULT: {path} multi-component circuit requires explicit stitch edges"
+            )
+        stitch = doc.get("stitch")
+        if len(sequence) > 1 and (not isinstance(stitch, list) or not stitch):
+            raise RuntimeError(
+                f"HARD CIRCUIT STITCH FAULT: {path} multi-component circuit requires at least one stitch edge"
+            )
+        seen_edges: set[str] = set()
+        for index, edge in enumerate(stitch or []):
+            if not isinstance(edge, dict):
+                raise RuntimeError(f"HARD CIRCUIT STITCH FAULT: {path} stitch[{index}] must be an object")
+            edge_id = str(edge.get("id", "") or "").strip()
+            source = str(edge.get("from", "") or "").strip()
+            target = str(edge.get("to", "") or "").strip()
+            operation = str(edge.get("op", "") or "").strip()
+            from_output = str(edge.get("from_output", "") or "").strip()
+            to_input = str(edge.get("to_input", "") or "").strip()
+            if not all((edge_id, source, target, operation, from_output, to_input)):
+                raise RuntimeError(
+                    f"HARD CIRCUIT STITCH FAULT: {path} stitch[{index}] must explicitly declare "
+                    "id, from, to, op, from_output, and to_input"
+                )
+            if edge_id in seen_edges:
+                raise RuntimeError(f"HARD CIRCUIT STITCH FAULT: {path} duplicates stitch id {edge_id!r}")
+            seen_edges.add(edge_id)
+            if source not in components or target not in components:
+                raise RuntimeError(
+                    f"HARD CIRCUIT STITCH FAULT: {path} stitch {edge_id!r} references unknown "
+                    f"components {source!r}->{target!r}"
+                )
+            source_exports = components[source].get("exports", {})
+            target_imports = components[target].get("imports", {})
+            if from_output not in source_exports:
+                raise RuntimeError(
+                    f"HARD CIRCUIT STITCH FAULT: {path} stitch {edge_id!r} references undeclared "
+                    f"export {source}.{from_output}"
+                )
+            if to_input not in target_imports:
+                raise RuntimeError(
+                    f"HARD CIRCUIT STITCH FAULT: {path} stitch {edge_id!r} references undeclared "
+                    f"import {target}.{to_input}"
+                )
     return doc
 
 
@@ -4800,6 +4924,65 @@ def _block_config_overrides(template: Dict[str, Any], block_name: str) -> Dict[s
     return overrides
 
 
+def _component_template_for_block(template: Dict[str, Any], block_name: str) -> Optional[Dict[str, Any]]:
+    components = template.get("resolved_components")
+    if not isinstance(components, dict):
+        return None
+    ref = components.get(block_name)
+    if not isinstance(ref, dict):
+        raise RuntimeError(
+            f"HARD CIRCUIT COMPONENT FAULT: sequence block {block_name!r} has no resolved component"
+        )
+    circuit_name = str(ref.get("circuit", "") or "").strip().lower()
+    source_block = str(ref.get("block", "") or "").strip()
+    component = _load_builtin_template_doc(circuit_name)
+    if component is None or not _template_block_def(component, source_block):
+        raise RuntimeError(
+            f"HARD CIRCUIT COMPONENT FAULT: resolved component {block_name!r} is unavailable: "
+            f"{circuit_name}.{source_block}"
+        )
+    return _single_block_template(component, source_block)
+
+
+def _component_config_for_block(
+    template: Dict[str, Any], config: Dict[str, Any], block_name: str
+) -> Dict[str, Any]:
+    components = template.get("resolved_components")
+    ref = components.get(block_name) if isinstance(components, dict) else None
+    if not isinstance(ref, dict):
+        return _normalize_manifest_config(config)
+    path = str(ref.get("config_path", "") or "").strip()
+    selected: Any = config
+    if path:
+        for part in path.split("."):
+            if not isinstance(selected, dict) or part not in selected:
+                raise RuntimeError(
+                    f"HARD CIRCUIT COMPONENT FAULT: component {block_name!r} references missing "
+                    f"config_path {path!r}"
+                )
+            selected = selected[part]
+        if not isinstance(selected, dict):
+            raise RuntimeError(
+                f"HARD CIRCUIT COMPONENT FAULT: component {block_name!r} config_path {path!r} "
+                "must resolve to an object"
+            )
+    merged = _normalize_manifest_config(selected)
+    requirements = ref.get("config_requires")
+    if requirements is not None:
+        if not isinstance(requirements, dict):
+            raise RuntimeError(
+                f"HARD CIRCUIT COMPONENT FAULT: component {block_name!r} config_requires must be an object"
+            )
+        for key, expected in requirements.items():
+            actual = merged.get(str(key))
+            if actual != expected:
+                raise RuntimeError(
+                    f"HARD CIRCUIT COMPONENT FAULT: component {block_name!r} requires config "
+                    f"{key}={expected!r}, got {actual!r}"
+                )
+    return merged
+
+
 def build_block_manifest(manifest: Dict[str, Any], block_name: str) -> Dict[str, Any]:
     manifest = _hydrate_manifest_template(copy.deepcopy(manifest))
     template = manifest.get("template", {})
@@ -4807,9 +4990,14 @@ def build_block_manifest(manifest: Dict[str, Any], block_name: str) -> Dict[str,
         raise RuntimeError("Manifest template is missing or invalid")
 
     block_manifest = copy.deepcopy(manifest)
-    block_manifest["template"] = _single_block_template(template, block_name)
+    component_template = _component_template_for_block(template, block_name)
+    block_manifest["template"] = component_template or _single_block_template(template, block_name)
 
-    merged_config = _normalize_manifest_config(block_manifest.get("config", {}))
+    merged_config = _component_config_for_block(
+        template,
+        block_manifest.get("config", {}),
+        block_name,
+    )
     merged_config.update(_block_config_overrides(template, block_name))
     block_manifest["config"] = _normalize_manifest_config(merged_config)
     block_manifest["block_name"] = block_name
@@ -4846,6 +5034,11 @@ def build_stitch_plan(manifest: Dict[str, Any]) -> Dict[str, Any]:
             if isinstance(edge, dict):
                 edges.append(copy.deepcopy(edge))
     else:
+        if isinstance(template.get("resolved_components"), dict) and len(sequence) > 1:
+            raise RuntimeError(
+                "HARD CIRCUIT STITCH FAULT: composed circuits require explicit stitch edges; "
+                "implicit sequential stitching is forbidden"
+            )
         for src, dst in zip(sequence, sequence[1:]):
             edges.append(
                 {
@@ -4872,6 +5065,7 @@ def build_stitch_plan(manifest: Dict[str, Any]) -> Dict[str, Any]:
         "version": 1,
         "template_name": str(template.get("name", "") or ""),
         "sequence": sequence,
+        "components": copy.deepcopy(template.get("resolved_components", {})),
         "blocks": blocks,
         "edges": edges,
     }

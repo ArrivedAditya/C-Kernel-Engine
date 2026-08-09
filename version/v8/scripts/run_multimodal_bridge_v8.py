@@ -93,6 +93,130 @@ def _vision_bridge_contract(layout_cfg: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _load_explicit_composition_circuit(name: str | None) -> dict[str, Any] | None:
+    circuit_name = str(name or "").strip().lower()
+    if not circuit_name:
+        return None
+    circuit = build_ir_v8._load_builtin_template_doc(circuit_name)
+    if not isinstance(circuit, dict):
+        raise RuntimeError(f"explicit composition circuit is unavailable: {circuit_name!r}")
+    components = circuit.get("resolved_components")
+    stitch = circuit.get("stitch")
+    if not isinstance(components, dict) or len(components) < 2:
+        raise RuntimeError(
+            f"explicit composition circuit {circuit_name!r} must resolve at least two components"
+        )
+    if not isinstance(stitch, list) or len(stitch) != 1:
+        raise RuntimeError(
+            f"explicit composition circuit {circuit_name!r} must declare exactly one bridge stitch"
+        )
+    return circuit
+
+
+def _composition_exported_contract(
+    circuit: dict[str, Any], export_name: str
+) -> dict[str, Any]:
+    components = circuit.get("resolved_components")
+    matches: list[tuple[str, dict[str, Any], str]] = []
+    for component_name, candidate in dict(components or {}).items():
+        if not isinstance(candidate, dict):
+            continue
+        exports = candidate.get("exports")
+        path = exports.get(export_name) if isinstance(exports, dict) else None
+        if isinstance(path, str) and path.strip():
+            matches.append((str(component_name), candidate, path.strip()))
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"composition {circuit.get('name')!r} must export {export_name!r} exactly once; "
+            f"found {len(matches)}"
+        )
+    component_name, ref, export_path = matches[0]
+    component = build_ir_v8._load_builtin_template_doc(str(ref.get("circuit") or ""))
+    selected: Any = component
+    for part in export_path.split("."):
+        selected = selected.get(part) if isinstance(selected, dict) else None
+    if not isinstance(selected, dict):
+        raise RuntimeError(
+            f"composition component {component_name!r} export {export_name!r} "
+            f"does not resolve to an object at {export_path!r}"
+        )
+    return copy.deepcopy(selected)
+
+
+def _composition_bridge_contract(circuit: dict[str, Any]) -> dict[str, Any]:
+    stitch = circuit.get("stitch")
+    edge = stitch[0] if isinstance(stitch, list) and len(stitch) == 1 else None
+    contract = edge.get("required_contract") if isinstance(edge, dict) else None
+    if not isinstance(contract, dict):
+        raise RuntimeError(
+            f"composition {circuit.get('name')!r} bridge stitch has no required_contract"
+        )
+    return copy.deepcopy(contract)
+
+
+def _validate_composition_runtime(
+    circuit: dict[str, Any],
+    *,
+    encoder_config: dict[str, Any],
+    decoder_config: dict[str, Any],
+) -> dict[str, Any]:
+    role_configs = {"encoder": encoder_config, "decoder": decoder_config}
+    components = circuit.get("resolved_components")
+    runtime_configs: dict[str, dict[str, Any]] = {}
+    seen_roles: set[str] = set()
+    for component_name, ref in dict(components or {}).items():
+        if not isinstance(ref, dict):
+            raise RuntimeError(
+                f"composition {circuit.get('name')!r} has invalid component {component_name!r}"
+            )
+        role = str(ref.get("runtime_role") or "").strip().lower()
+        if role not in role_configs or role in seen_roles:
+            raise RuntimeError(
+                f"composition {circuit.get('name')!r} component {component_name!r} has "
+                f"invalid or duplicate runtime_role {role!r}"
+            )
+        seen_roles.add(role)
+        runtime_config = role_configs[role]
+        runtime_configs[str(component_name)] = runtime_config
+        for key, expected in dict(ref.get("config_requires") or {}).items():
+            actual = runtime_config.get(str(key))
+            if actual != expected:
+                raise RuntimeError(
+                    f"composition {circuit.get('name')!r} requires {component_name}.{key}="
+                    f"{expected!r}, got {actual!r}"
+                )
+    if seen_roles != set(role_configs):
+        raise RuntimeError(
+            f"composition {circuit.get('name')!r} must explicitly bind encoder and decoder roles; "
+            f"found {sorted(seen_roles)!r}"
+        )
+
+    bridge = _composition_bridge_contract(circuit)
+    for equality in list(bridge.get("dimension_equality") or []):
+        if not isinstance(equality, dict):
+            raise RuntimeError("composition dimension_equality entries must be objects")
+        resolved: list[tuple[str, int]] = []
+        for side in ("left", "right"):
+            path = str(equality.get(side, "") or "")
+            component_name, separator, key = path.partition(".")
+            cfg = runtime_configs.get(component_name)
+            if not separator or not key or not isinstance(cfg, dict) or key not in cfg:
+                raise RuntimeError(f"composition dimension reference is unavailable: {path!r}")
+            resolved.append((path, int(cfg[key])))
+        if resolved[0][1] != resolved[1][1]:
+            raise RuntimeError(
+                f"composition dimension mismatch: {resolved[0][0]}={resolved[0][1]} "
+                f"!= {resolved[1][0]}={resolved[1][1]}"
+            )
+    return {
+        "name": str(circuit.get("name") or ""),
+        "version": int(circuit.get("version", 0) or 0),
+        "components": copy.deepcopy(circuit.get("resolved_components", {})),
+        "stitch": copy.deepcopy(circuit.get("stitch", [])),
+        "status": "validated",
+    }
+
+
 def _vision_prefix_position_policy(layout_cfg: dict[str, Any]) -> str:
     """Return how visual prefix rows advance decoder text positions."""
     bridge = _vision_bridge_contract(layout_cfg)
@@ -3294,6 +3418,14 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Explicit v8 multimodal bridge runner")
     ap.add_argument("--decoder-gguf", type=Path, required=True, help="Decoder GGUF to lower/codegen")
     ap.add_argument("--encoder-gguf", type=Path, default=None, help="Optional vision encoder/mmproj GGUF")
+    ap.add_argument(
+        "--composition-circuit",
+        default=None,
+        help=(
+            "Explicit multi-component circuit (for example qwen36vl). When set, chat, bridge, "
+            "component, and stitch policy come only from that circuit and are validated fail-closed."
+        ),
+    )
     ap.add_argument("--workdir", type=Path, required=True, help="Artifact/output directory")
     ap.add_argument("--prompt", type=str, default="Describe the image.", help="Prompt text for decoder tokenization")
     ap.add_argument("--chat-template", choices=_CHAT_TEMPLATE_CHOICES, default="auto")
@@ -3355,8 +3487,29 @@ def main(argv: list[str] | None = None) -> int:
 
     tokenizer = GGUFTokenizer.from_gguf(str(args.decoder_gguf.resolve()))
     chat_template_mode = "none" if args.no_chat_template else args.chat_template
-    chat_contract = _resolve_decoder_chat_contract(args.decoder_gguf.resolve(), chat_template_mode=chat_template_mode)
-    bridge_contract = _resolve_decoder_bridge_contract(args.decoder_gguf.resolve(), chat_template_mode=chat_template_mode)
+    composition_circuit = _load_explicit_composition_circuit(args.composition_circuit)
+    if composition_circuit is not None:
+        if args.encoder_gguf is None:
+            raise RuntimeError("explicit multimodal composition requires --encoder-gguf")
+        chat_contract = _composition_exported_contract(composition_circuit, "chat_contract")
+        bridge_contract = _composition_bridge_contract(composition_circuit)
+        chat_contract["image_begin_marker"] = str(bridge_contract["image_begin_marker"])
+        chat_contract["image_end_marker"] = str(bridge_contract["image_end_marker"])
+        markers = list(chat_contract.get("template_markers") or [])
+        for marker in (chat_contract["image_begin_marker"], chat_contract["image_end_marker"]):
+            if marker not in markers:
+                markers.append(marker)
+        chat_contract["template_markers"] = markers
+        chat_template_mode = str(composition_circuit.get("name") or args.composition_circuit)
+    else:
+        chat_contract = _resolve_decoder_chat_contract(
+            args.decoder_gguf.resolve(),
+            chat_template_mode=chat_template_mode,
+        )
+        bridge_contract = _resolve_decoder_bridge_contract(
+            args.decoder_gguf.resolve(),
+            chat_template_mode=chat_template_mode,
+        )
     resolved_bridge_runtime = str(args.bridge_runtime or _bridge_runtime_from_policy(bridge_contract, fallback="prefill"))
     resolved_bridge_generation_mode = str(
         args.bridge_generation_mode
@@ -3402,6 +3555,7 @@ def main(argv: list[str] | None = None) -> int:
     prefix_position_policy = str(bridge_contract.get("position_policy") or "linear").strip().lower() or "linear"
     prefix_decode_policy = str(bridge_contract.get("decode_policy") or "causal_mixed_prefix").strip().lower() or "causal_mixed_prefix"
     encoder_report: dict[str, Any] | None = None
+    encoder_runtime: dict[str, Any] | None = None
     dim_mismatch: dict[str, int] | None = None
     timing_t0 = time.perf_counter()
     timings: dict[str, float | int] = {
@@ -3465,6 +3619,18 @@ def main(argv: list[str] | None = None) -> int:
     decoder_prepare_elapsed = time.perf_counter() - decoder_prep_t0
     timings["decoder_prepare_ms"] = decoder_prepare_elapsed * 1000.0
     _log_progress(f"decoder runtime prepare done elapsed={decoder_prepare_elapsed:.2f}s")
+
+    composition_evidence: dict[str, Any] | None = None
+    if composition_circuit is not None:
+        if encoder_runtime is None:
+            raise RuntimeError("explicit multimodal composition did not produce an encoder runtime")
+        encoder_layout = _load_layout(Path(encoder_runtime["layout_path"]))
+        decoder_layout = _load_layout(Path(decoder_runtime["decode_layout_path"]))
+        composition_evidence = _validate_composition_runtime(
+            composition_circuit,
+            encoder_config=dict(encoder_layout.get("config", {}) or {}),
+            decoder_config=dict(decoder_layout.get("config", {}) or {}),
+        )
 
     prefix_embed_dim = int(decoder_runtime["embed_dim"])
     if encoder_report is not None:
@@ -3610,6 +3776,7 @@ def main(argv: list[str] | None = None) -> int:
         "bridge_runtime": resolved_bridge_runtime,
         "bridge_generation_mode": resolved_bridge_generation_mode,
         "bridge_contract": dict(bridge_contract),
+        "composition_circuit": composition_evidence,
         "bridge_runtime_policy": resolved_bridge_runtime,
         "decoder_profile": decoder_report.get("decoder_profile") or {},
         "prefix_dump_path": dumped_prefix_path,

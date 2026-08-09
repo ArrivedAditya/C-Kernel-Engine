@@ -1,0 +1,70 @@
+{
+  "version": 5,
+  "name": "qwen36vl",
+  "family": "multimodal_composition",
+  "sequence": [
+    "vision_encoder",
+    "decoder"
+  ],
+  "components": {
+    "vision_encoder": {
+      "runtime_role": "encoder",
+      "circuit": "qwen3_vl_vision",
+      "block": "vision_encoder",
+      "config_path": "component_configs.vision_encoder",
+      "config_requires": {
+        "num_deepstack_layers": 0,
+        "deepstack_layer_indices": []
+      },
+      "exports": {
+        "vision_embeddings": "vision_output"
+      }
+    },
+    "decoder": {
+      "runtime_role": "decoder",
+      "circuit": "qwen35",
+      "block": "decoder",
+      "config_path": "component_configs.decoder",
+      "imports": {
+        "visual_prefix": "embedded_input"
+      },
+      "exports": {
+        "chat_contract": "contract.chat_contract",
+        "tokenizer_contract": "contract.tokenizer_contract"
+      }
+    }
+  },
+  "stitch": [
+    {
+      "id": "vision_embeddings_to_decoder_prefix",
+      "from": "vision_encoder",
+      "to": "decoder",
+      "kind": "multimodal_prefix",
+      "op": "multimodal_prefix_stitch",
+      "from_output": "vision_embeddings",
+      "to_input": "visual_prefix",
+      "required_contract": {
+        "id": "token_major_fp32_visual_prefix_text_interleave_mrope2d",
+        "vision_layout": "token_major",
+        "vision_storage": "fp32",
+        "decoder_input_layout": "token_major",
+        "position_policy": "mrope_2d",
+        "decode_policy": "causal_mixed_prefix",
+        "prefix_policy": "mixed_visual_text_prefill",
+        "cache_policy": "persistent_decoder_kv",
+        "generation_policy": "incremental_decode_after_prefill",
+        "runtime_policy": "decode_staged",
+        "grid_policy": "merged_hw",
+        "image_begin_marker": "<|vision_start|>",
+        "image_end_marker": "<|vision_end|>",
+        "deepstack_injections": 0,
+        "dimension_equality": [
+          {
+            "left": "vision_encoder.projector_out_dim",
+            "right": "decoder.embed_dim"
+          }
+        ]
+      }
+    }
+  ]
+}
