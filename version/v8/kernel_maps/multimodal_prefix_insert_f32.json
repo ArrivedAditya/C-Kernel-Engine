@@ -1,0 +1,59 @@
+{
+  "id": "multimodal_prefix_insert_f32",
+  "op": "multimodal_prefix_insert",
+  "operation_interface": "multimodal_prefix_insert.token_major.fp32.v1",
+  "selection": {
+    "status": "production",
+    "priority": 100,
+    "equivalence_group": "multimodal_prefix_insert.token_major.fp32.v1",
+    "phases": ["prefill"]
+  },
+  "variant": "token_major_fp32_strided_rows",
+  "quant": {"weight": "none", "activation": "fp32", "output": "fp32"},
+  "inputs": [
+    {"name": "source_rows", "dtype": "fp32", "shape": ["P", "SR"], "layout": "token_major_strided", "access": "read", "storage_class": "activation", "consumption": "required"},
+    {"name": "token_ids", "dtype": "i32", "shape": ["C"], "layout": "token_contiguous", "access": "read", "storage_class": "activation", "consumption": "required"},
+    {"name": "decoder_rows", "dtype": "fp32", "shape": ["C", "DR"], "layout": "token_major_strided", "access": "read", "storage_class": "activation", "consumption": "required"}
+  ],
+  "weights": [],
+  "activations": [],
+  "outputs": [
+    {"name": "token_ids", "dtype": "i32", "shape": ["C"], "layout": "token_contiguous", "access": "write", "storage_class": "activation", "consumption": "required", "alias_of": "input:token_ids"},
+    {"name": "decoder_rows", "dtype": "fp32", "shape": ["C", "DR"], "layout": "token_major_strided", "access": "write", "storage_class": "activation", "consumption": "required", "alias_of": "input:decoder_rows"}
+  ],
+  "scratch": [],
+  "dims": ["P", "SR", "DR", "D", "C"],
+  "params": [
+    {"name": "start_row", "dtype": "i32"}
+  ],
+  "impl": {
+    "function": "ck_multimodal_prefix_insert_f32",
+    "c_declaration": "int ck_multimodal_prefix_insert_f32(const float *source_rows, int32_t *token_ids, float *decoder_rows, int row_count, int source_row_stride, int decoder_row_stride, int copy_dim, int start_row, int decoder_capacity);",
+    "sources": ["src/kernels/embedding_kernels.c"]
+  },
+  "numerical_capabilities": [{
+    "contract_id": "multimodal_prefix_insert_exact_fp32",
+    "status": "validated",
+    "phases": ["prefill"],
+    "function": "ck_multimodal_prefix_insert_f32",
+    "explicit_selector": true,
+    "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "none"}},
+    "arithmetic": {"partial_accumulator": "none", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "independent_outputs"}
+  }],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"name": "source_rows", "source": "activation:source_rows", "cast": "const float*", "ports": ["input:source_rows"]},
+      {"name": "token_ids", "source": "output:token_ids", "cast": "int32_t*", "ports": ["input:token_ids", "output:token_ids"]},
+      {"name": "decoder_rows", "source": "output:decoder_rows", "cast": "float*", "ports": ["input:decoder_rows", "output:decoder_rows"]},
+      {"name": "row_count", "source": "dim:P"},
+      {"name": "source_row_stride", "source": "dim:SR"},
+      {"name": "decoder_row_stride", "source": "dim:DR"},
+      {"name": "copy_dim", "source": "dim:D"},
+      {"name": "start_row", "source": "param:start_row"},
+      {"name": "decoder_capacity", "source": "dim:C"}
+    ]
+  },
+  "tests": {"unit": ["unittest/test_multimodal_bridge_kernels.py"]},
+  "notes": "Model-agnostic row-strided FP32 visual-prefix insertion. It performs no arithmetic reduction and preserves source values exactly."
+}

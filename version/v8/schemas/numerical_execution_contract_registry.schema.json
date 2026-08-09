@@ -69,6 +69,8 @@
             "audio_wav_decode",
             "audio_conv1d",
             "layout_transform",
+            "multimodal_position_builder",
+            "multimodal_prefix_insert",
             "position_embeddings",
             "residual_add",
             "gelu",
@@ -125,7 +127,8 @@
                 "fp16",
                 "bf16",
                 "q8_0",
-                "q8_k"
+                "q8_k",
+                "int32"
               ]
             }
           }
@@ -148,7 +151,8 @@
                 "bf16",
                 "bf16_rne",
                 "int8",
-                "int16"
+                "int16",
+                "int32"
               ]
             },
             "weight": {

@@ -3,6 +3,28 @@
   "schema_version": 1,
   "engine_contract_version": "8",
   "contracts": {
+    "multimodal_prefix_insert_exact_fp32": {
+      "operator_family": "multimodal_prefix_insert",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "ascending_row_exact_memcpy_then_placeholder_token_zero"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Copies each declared FP32 prefix row exactly into its decoder row and writes zero placeholder token IDs without arithmetic conversion."
+    },
+    "multimodal_mrope_positions_2d_int32": {
+      "operator_family": "multimodal_position_builder",
+      "status": "validated",
+      "storage": {"input": "int32", "weight": "none", "output": "int32"},
+      "compute": {"input": "int32", "weight": "none", "accumulator": "int32", "contraction": "disabled", "evaluation_order": "ascending_token_text_before_then_2d_visual_grid_then_text_after"},
+      "rounding": {"mode": "none", "points": ["input_load", "output_store"]},
+      "reduction": {"kind": "none", "order": "none", "partial_accumulator": "none", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Builds four section-major integer M-RoPE position planes for a mixed text-before, rectangular visual-grid, and text-after sequence."
+    },
     "audio_wav_pcm16_parse_channel_mean_fp32": {
       "operator_family": "audio_wav_decode",
       "status": "validated",

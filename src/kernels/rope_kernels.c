@@ -2767,3 +2767,56 @@ void rope_backward_qk_pairwise_with_rotary_dim(const float *d_q_out,
         );
     }
 }
+
+/* Build section-major 2-D multimodal RoPE positions for one mixed sequence.
+ * Returns the resolved first text position after the visual prefix, or a
+ * negative validation error. */
+int ck_multimodal_mrope_positions_2d(int32_t *positions,
+                                    int total_tokens,
+                                    int prefix_start,
+                                    int position_base,
+                                    int prefix_tokens,
+                                    int grid_x,
+                                    int grid_y,
+                                    int text_pos)
+{
+    if (!positions || total_tokens <= 0 || prefix_tokens <= 0) {
+        return -1;
+    }
+    if (grid_x <= 0 || grid_y <= 0 || grid_x * grid_y != prefix_tokens) {
+        return -2;
+    }
+    if (prefix_start < 0 || prefix_start > total_tokens) {
+        return -3;
+    }
+    if (prefix_tokens > total_tokens - prefix_start) {
+        return -4;
+    }
+
+    const int prefix_end = prefix_start + prefix_tokens;
+    const int grid_extent = grid_x > grid_y ? grid_x : grid_y;
+    const int resolved_text_pos = text_pos > 0
+        ? text_pos
+        : prefix_start + grid_extent;
+
+    for (int token = 0; token < total_tokens; ++token) {
+        int32_t pos0;
+        int32_t pos1;
+        int32_t pos2;
+        if (token < prefix_start) {
+            pos0 = pos1 = pos2 = (int32_t)token;
+        } else if (token < prefix_end) {
+            const int local_token = token - prefix_start;
+            pos0 = (int32_t)position_base;
+            pos1 = (int32_t)(position_base + local_token / grid_x);
+            pos2 = (int32_t)(position_base + local_token % grid_x);
+        } else {
+            pos0 = pos1 = pos2 = (int32_t)(resolved_text_pos + token - prefix_end);
+        }
+        positions[token] = pos0;
+        positions[token + total_tokens] = pos1;
+        positions[token + 2 * total_tokens] = pos2;
+        positions[token + 3 * total_tokens] = 0;
+    }
+    return resolved_text_pos;
+}
