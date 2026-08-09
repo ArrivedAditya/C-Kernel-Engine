@@ -176,6 +176,12 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
     If profile=True, emit CK_PROFILE_BEGIN/END timing wrappers.
     """
     func = op.get("function", "unknown")
+    physical_execution = op.get("resolved_physical_execution")
+    emitted_func = (
+        str(physical_execution.get("function", "") or "")
+        if isinstance(physical_execution, dict)
+        else ""
+    ) or func
     op_type = op.get("op", "unknown")
     layer = op.get("layer", -1)
     section = op.get("section", "")
@@ -912,7 +918,11 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
             "attention_forward_causal_head_major_gqa_flash_strided_sliding_gemma4",
         }
     ):
-        mixed_func = "attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4"
+        mixed_func = (
+            str(physical_execution.get("mixed_visual_chunk_function", "") or "")
+            if isinstance(physical_execution, dict)
+            else ""
+        ) or "attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4"
         mixed_args = args[:10]
         lines.append("    if (bridge_noncausal_visual_chunk && bridge_visual_start >= 0 && bridge_visual_tokens > 0) {")
         lines.append(f"        {mixed_func}(")
@@ -923,9 +933,9 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         lines.append("        );")
         lines.append("    } else {")
         if len(args) <= 3:
-            lines.append(f"        {func}({', '.join(args)});")
+            lines.append(f"        {emitted_func}({', '.join(args)});")
         else:
-            lines.append(f"        {func}(")
+            lines.append(f"        {emitted_func}(")
             for i, arg in enumerate(args):
                 comma = "," if i < len(args) - 1 else ""
                 lines.append(f"            {arg}{comma}")
@@ -934,16 +944,16 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
     else:
         if len(args) <= 3:
             # Short call on one line
-            lines.append(f"    {func}({', '.join(args)});")
+            lines.append(f"    {emitted_func}({', '.join(args)});")
         else:
             # Multi-line for readability
-            lines.append(f"    {func}(")
+            lines.append(f"    {emitted_func}(")
             for i, arg in enumerate(args):
                 comma = "," if i < len(args) - 1 else ""
                 lines.append(f"        {arg}{comma}")
             lines.append("    );")
     if profile:
-        lines.append(f'    CK_PROFILE_END("prefill", "{func}", "{op_type}", {layer});')
+        lines.append(f'    CK_PROFILE_END("prefill", "{emitted_func}", "{op_type}", {layer});')
 
     def _hidden_arg(*names: str) -> Optional[str]:
         for nm in names:

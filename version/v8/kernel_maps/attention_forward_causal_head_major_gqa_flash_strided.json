@@ -1,6 +1,12 @@
 {
   "id": "attention_forward_causal_head_major_gqa_flash_strided",
   "op": "attention",
+  "selection": {
+    "status": "production",
+    "priority": 200,
+    "equivalence_group": "attention.fp32_online_causal_strided.v1",
+    "phases": ["prefill"]
+  },
   "variant": "causal_flash_fp32",
   "mode": "prefill",
   "contract_schema_version": 1,

@@ -176,8 +176,14 @@ def build_report() -> Dict[str, Any]:
             _validate_port_aliases(doc, path)
         maps.append((path, doc))
 
-    physical = [item for item in maps if item[1].get("layout_conversion")]
-    numerical_maps = [item for item in maps if not item[1].get("layout_conversion")]
+    physical = [
+        item for item in maps
+        if item[1].get("layout_conversion") or item[1].get("physical_alias_of")
+    ]
+    numerical_maps = [
+        item for item in maps
+        if not item[1].get("layout_conversion") and not item[1].get("physical_alias_of")
+    ]
     governed = [item for item in numerical_maps if item[1].get("numerical_capabilities")]
     hardened = [item for item in governed if item[1].get("operation_interface")]
     crossvalidated = [item for item in hardened if _has_complete_interface_abi(item[1])]

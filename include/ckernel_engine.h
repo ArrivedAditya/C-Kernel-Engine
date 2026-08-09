@@ -1516,6 +1516,18 @@ void attention_forward_causal_head_major_gqa_flash_strided(const float *q,
                                                            int aligned_head_dim,
                                                            int kv_stride_tokens);
 
+void attention_forward_causal_head_major_gqa_flash_strided_token_output(
+    const float *q,
+    const float *k,
+    const float *v,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int kv_stride_tokens);
+
 void attention_forward_full_head_major_gqa_flash_strided(const float *q,
                                                          const float *k,
                                                          const float *v,
@@ -1614,6 +1626,11 @@ void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4(co
                                                                               int kv_stride_tokens,
                                                                               int visual_start,
                                                                               int visual_tokens);
+void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4_token_output(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens, int head_dim,
+    int aligned_head_dim, int kv_stride_tokens, int visual_start,
+    int visual_tokens);
 
 // Regular exact full / bidirectional attention for encoder-style prefill.
 // This matches the non-flash CPU reference path more closely than the online

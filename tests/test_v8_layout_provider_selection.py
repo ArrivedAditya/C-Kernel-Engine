@@ -1,5 +1,6 @@
 import importlib.util
 import ctypes
+import copy
 import json
 import subprocess
 import sys
@@ -25,6 +26,12 @@ BUILD_IR_SPEC = importlib.util.spec_from_file_location("build_ir_v8_layout_test"
 assert BUILD_IR_SPEC is not None and BUILD_IR_SPEC.loader is not None
 build_ir = importlib.util.module_from_spec(BUILD_IR_SPEC)
 BUILD_IR_SPEC.loader.exec_module(build_ir)
+
+CODEGEN_SCRIPT = ROOT / "version" / "v8" / "scripts" / "codegen_prefill_v8.py"
+CODEGEN_SPEC = importlib.util.spec_from_file_location("codegen_prefill_v8_layout_test", CODEGEN_SCRIPT)
+assert CODEGEN_SPEC is not None and CODEGEN_SPEC.loader is not None
+codegen = importlib.util.module_from_spec(CODEGEN_SPEC)
+CODEGEN_SPEC.loader.exec_module(codegen)
 
 
 def provider(provider_id, role, layout, priority, placement="local"):
@@ -116,6 +123,136 @@ class LayoutProviderSelectionTests(unittest.TestCase):
             operation["resolved_physical_execution"]["layout_conversion"]["to_layout"],
             "head_major_contiguous",
         )
+
+    def test_attention_output_selects_direct_token_major_provider(self):
+        registry = json.loads(
+            (ROOT / "version" / "v8" / "kernel_maps" / "KERNEL_REGISTRY.json").read_text()
+        )
+        managed, converter, execution = build_ir._resolve_layout_edge(
+            registry,
+            producer_kernel="attention_forward_causal_head_major_gqa_flash_strided",
+            producer_port="out",
+            consumer_kernel="gemm_nt_q8_0_q8_0",
+            consumer_port="A",
+        )
+        self.assertTrue(managed)
+        self.assertIsNone(converter)
+        self.assertEqual(
+            execution["provider_id"],
+            "attention_forward_causal_head_major_gqa_flash_strided_token_output",
+        )
+        self.assertEqual(execution["output_layout"], "token_major_contiguous")
+        self.assertEqual(
+            execution["mixed_visual_chunk_function"],
+            "attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4_token_output",
+        )
+
+    def test_direct_layout_provider_explicitly_aliases_numerical_owner(self):
+        provider_map = json.loads(
+            (ROOT / "version" / "v8" / "kernel_maps" /
+             "attention_forward_causal_head_major_gqa_flash_strided_token_output.json").read_text()
+        )
+        self.assertEqual(
+            provider_map["physical_alias_of"],
+            "attention_forward_causal_head_major_gqa_flash_strided",
+        )
+        self.assertNotIn("numerical_capabilities", provider_map)
+
+    def test_physical_provider_with_different_abi_fails_closed(self):
+        registry = json.loads(
+            (ROOT / "version" / "v8" / "kernel_maps" / "KERNEL_REGISTRY.json").read_text()
+        )
+        mutated = copy.deepcopy(registry)
+        provider = next(
+            item for item in mutated["kernels"]
+            if item.get("id") == "attention_forward_causal_head_major_gqa_flash_strided_token_output"
+        )
+        provider["call_abi"]["params"][-1]["source"] = "dim:wrong_stride"
+        with self.assertRaisesRegex(RuntimeError, "does not preserve the call ABI"):
+            build_ir._resolve_layout_edge(
+                mutated,
+                producer_kernel="attention_forward_causal_head_major_gqa_flash_strided",
+                producer_port="out",
+                consumer_kernel="gemm_nt_q8_0_q8_0",
+                consumer_port="A",
+            )
+
+    def test_physical_provider_requires_explicit_numerical_alias(self):
+        registry = json.loads(
+            (ROOT / "version" / "v8" / "kernel_maps" / "KERNEL_REGISTRY.json").read_text()
+        )
+        mutated = copy.deepcopy(registry)
+        provider = next(
+            item for item in mutated["kernels"]
+            if item.get("id") == "attention_forward_causal_head_major_gqa_flash_strided_token_output"
+        )
+        provider.pop("physical_alias_of")
+        managed, converter, execution = build_ir._resolve_layout_edge(
+            mutated,
+            producer_kernel="attention_forward_causal_head_major_gqa_flash_strided",
+            producer_port="out",
+            consumer_kernel="gemm_nt_q8_0_q8_0",
+            consumer_port="A",
+        )
+        self.assertFalse(managed)
+        self.assertIsNone(converter)
+        self.assertIsNone(execution)
+
+    def test_sole_output_name_is_read_from_provider_metadata(self):
+        registry = json.loads(
+            (ROOT / "version" / "v8" / "kernel_maps" / "KERNEL_REGISTRY.json").read_text()
+        )
+        kernel_id = "attention_forward_causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64"
+        self.assertEqual(
+            build_ir._single_kernel_port_name(registry, kernel_id, "outputs"),
+            "output",
+        )
+
+    def test_unknown_physical_variant_fails_closed(self):
+        registry = json.loads(
+            (ROOT / "version" / "v8" / "kernel_maps" / "KERNEL_REGISTRY.json").read_text()
+        )
+        mutated = copy.deepcopy(registry)
+        provider = next(
+            item for item in mutated["kernels"]
+            if item.get("id") == "attention_forward_causal_head_major_gqa_flash_strided_token_output"
+        )
+        provider["physical_variants"]["unvalidated_function"] = "unsafe_symbol"
+        with self.assertRaisesRegex(RuntimeError, "unknown physical variants"):
+            build_ir._resolve_layout_edge(
+                mutated,
+                producer_kernel="attention_forward_causal_head_major_gqa_flash_strided",
+                producer_port="out",
+                consumer_kernel="gemm_nt_q8_0_q8_0",
+                consumer_port="A",
+            )
+
+    def test_codegen_calls_resolved_physical_function(self):
+        args = [
+            {"name": name, "expr": expr}
+            for name, expr in (
+                ("q", "q"), ("k", "k"), ("v", "v"), ("output", "out"),
+                ("num_heads", "4"), ("num_kv_heads", "2"),
+                ("num_tokens", "num_tokens"), ("head_dim", "64"),
+                ("aligned_head_dim", "64"), ("kv_stride_tokens", "max_seq_len"),
+            )
+        ]
+        code = codegen.emit_prefill_op({
+            "function": "attention_forward_causal_head_major_gqa_flash_strided",
+            "op": "attn",
+            "layer": 0,
+            "args": args,
+            "resolved_physical_execution": {
+                "function": "attention_forward_causal_head_major_gqa_flash_strided_token_output",
+                "mixed_visual_chunk_function": "attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4_token_output",
+            },
+        }, 1, {})
+        self.assertIn("attention_forward_causal_head_major_gqa_flash_strided_token_output(", code)
+        self.assertIn(
+            "attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4_token_output(",
+            code,
+        )
+        self.assertNotIn("\n    attention_forward_causal_head_major_gqa_flash_strided(", code)
 
     def test_direct_compatible_chain_beats_higher_priority_converted_chain(self):
         routes = resolver.rank_layout_routes(
