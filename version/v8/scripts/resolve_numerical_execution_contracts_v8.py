@@ -220,6 +220,11 @@ def _load_operation_interface(doc: Dict[str, Any], path: Path) -> Optional[Dict[
                     if value.get("alias_of") not in (None, "")
                     else {}
                 ),
+                **(
+                    {"may_alias": copy.deepcopy(value["may_alias"])}
+                    if value.get("may_alias") not in (None, "")
+                    else {}
+                ),
             })
 
     identities = [(port["role"], port["name"]) for port in ports]
@@ -232,6 +237,42 @@ def _load_operation_interface(doc: Dict[str, Any], path: Path) -> Optional[Dict[
     identity_set = {f"{role}:{name}" for role, name in identities}
     for port in ports:
         alias_of = port.get("alias_of")
+        may_alias = port.get("may_alias")
+        if alias_of is not None and may_alias is not None:
+            raise hard_fault(
+                f"kernel interface {interface_id!r} mixes required and optional aliasing",
+                f"source={path}, port={port['name']!r}",
+                "use alias_of for mandatory in-place storage or may_alias for optional in-place storage.",
+            )
+        if may_alias is not None:
+            if (
+                port["role"] != "output"
+                or not isinstance(may_alias, list)
+                or not may_alias
+                or len(set(may_alias)) != len(may_alias)
+                or any(target not in identity_set for target in may_alias)
+                or any(not str(target).startswith("input:") for target in may_alias)
+            ):
+                raise hard_fault(
+                    f"kernel interface {interface_id!r} has invalid optional aliases",
+                    f"source={path}, port={port['name']!r}, may_alias={may_alias!r}",
+                    "list one or more unique input:name ports with physically compatible storage.",
+                )
+            for target_id in may_alias:
+                target_role, target_name = target_id.split(":", 1)
+                target = next(
+                    candidate
+                    for candidate in ports
+                    if candidate["role"] == target_role and candidate["name"] == target_name
+                )
+                for field in ("dtype", "shape", "layout", "storage_class"):
+                    if port[field] != target[field]:
+                        raise hard_fault(
+                            f"kernel interface {interface_id!r} has an incompatible optional alias",
+                            f"source={path}, output={port['name']!r}, target={target_id!r}, "
+                            f"field={field!r}, output_value={port[field]!r}, target_value={target[field]!r}",
+                            "make optionally aliased ports physically identical or remove may_alias.",
+                        )
         if alias_of is None:
             continue
         if port["role"] != "output":

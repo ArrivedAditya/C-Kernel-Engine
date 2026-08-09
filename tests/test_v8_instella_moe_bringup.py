@@ -215,6 +215,19 @@ class InstellaMoEBringupTests(unittest.TestCase):
                     build.stdout + build.stderr + "\n" + json.dumps(call_ir.get("errors"), indent=2),
                 )
                 self.assertFalse(call_ir.get("errors"), call_ir.get("errors"))
+                graph_ir = json.loads(
+                    (out / f"ir1_{mode}.json").read_text(encoding="utf-8")
+                )
+                joined = [
+                    op
+                    for op in graph_ir.get("operations", graph_ir.get("ops", []))
+                    if op.get("interface_validation", {}).get("status") == "validated"
+                ]
+                self.assertTrue(joined)
+                self.assertTrue(
+                    any(op.get("op") == "attn_gate_sigmoid_mul" for op in joined)
+                )
+                self.assertTrue(any(op.get("op") == "residual_add" for op in joined))
                 ops = call_ir.get("operations", call_ir.get("ops", []))
                 farskip = [op for op in ops if op.get("op") == "farskip_routed_shared_combine"]
                 self.assertEqual(len(farskip), 1)

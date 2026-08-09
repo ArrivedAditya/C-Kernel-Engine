@@ -75,6 +75,10 @@ RESET = '\033[0m'
 
 # Import memory planner
 from memory_planner_v8 import plan_memory, MemoryPlanner
+from validate_circuit_interfaces_v8 import (
+    CircuitInterfaceError,
+    validate_graph_slots,
+)
 
 
 def _load_numerical_contract_resolver():
@@ -5904,6 +5908,15 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     )
     numerical_contract_by_template_op = _index_numerical_contract_plans(numerical_contract_plans)
     kernel_execution_capabilities = _load_kernel_execution_capabilities()
+    interface_resolver = _load_execution_contract_resolver()
+    operation_interfaces = interface_resolver.load_kernel_capabilities()[
+        "operation_interfaces"
+    ]
+    registry_by_id = {
+        str(kernel.get("id")): kernel
+        for kernel in registry.get("kernels", [])
+        if isinstance(kernel, dict) and kernel.get("id")
+    }
     for plan in numerical_contract_plans:
         print(
             "  [contract/numerics] "
@@ -7234,6 +7247,61 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             continue
         arranged["required_contract"] = copy.deepcopy(plan["requirements"])
         arranged["resolved_contract"] = _graph_ir_contract_metadata(plan)
+
+    # Join explicit circuit edges to the selected provider's canonical logical
+    # interface before dataflow or memory planning can reinterpret them. Maps
+    # without operation_interface remain visible migration debt; once a map is
+    # hardened, every explicit graph_slots declaration becomes fail-closed.
+    for arranged in arranged_kernels:
+        kernel_id = str(arranged.get("kernel", "") or "")
+        provider = registry_by_id.get(kernel_id, {})
+        interface_id = str(provider.get("operation_interface", "") or "").strip()
+        if not interface_id:
+            continue
+        interface = operation_interfaces.get(interface_id)
+        if interface is None:
+            raise RuntimeError(
+                "HARD CIRCUIT INTERFACE FAULT: selected provider interface is absent "
+                f"from the canonical catalog: provider={kernel_id!r}, "
+                f"interface={interface_id!r}."
+            )
+        resolved = arranged.get("resolved_contract")
+        resolved_interface = (
+            str(resolved.get("operation_interface", "") or "").strip()
+            if isinstance(resolved, dict)
+            else ""
+        )
+        if resolved_interface and resolved_interface != interface_id:
+            raise RuntimeError(
+                "HARD CIRCUIT INTERFACE FAULT: numerical resolution and selected "
+                f"provider disagree: op={arranged.get('op')!r}, "
+                f"resolved={resolved_interface!r}, provider={interface_id!r}."
+            )
+        selection = provider.get("selection")
+        if isinstance(selection, dict):
+            phases = selection.get("phases")
+            if isinstance(phases, list) and mode not in phases:
+                raise RuntimeError(
+                    "HARD CIRCUIT INTERFACE FAULT: selected provider is not certified "
+                    f"for this phase: provider={kernel_id!r}, phase={mode!r}, "
+                    f"certified={phases!r}."
+                )
+        context = (
+            f"circuit={template.get('name', '<embedded>')} "
+            f"section={arranged.get('section')} layer={arranged.get('layer')} "
+            f"op={arranged.get('op')} instance={arranged.get('instance', 0)}"
+        )
+        try:
+            arranged["interface_validation"] = validate_graph_slots(
+                graph_slots=arranged.get("graph_slots"),
+                interface=interface,
+                provider_id=kernel_id,
+                operation=str(arranged.get("op", "")),
+                phase=mode,
+                context=context,
+            )
+        except CircuitInterfaceError as exc:
+            raise RuntimeError(str(exc)) from exc
 
     _attach_semantic_checkpoints(template, arranged_kernels, registry, config)
 
