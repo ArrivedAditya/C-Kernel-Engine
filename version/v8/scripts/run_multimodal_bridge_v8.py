@@ -1112,6 +1112,50 @@ def _fallback_chat_contract_from_template_text(chat_template: str | None) -> dic
     return None
 
 
+def _compose_compatible_auto_chat_contracts(
+    gguf_contract: dict[str, Any],
+    architecture_contract: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Preserve GGUF framing while restoring compatible semantic policy.
+
+    The compact fallback parser intentionally extracts only structural markers
+    from a GGUF Jinja template.  Architecture contracts additionally describe
+    runtime policy such as visible/suppressed thinking.  Those policies are
+    safe to compose only when both contracts describe the same chat framing.
+    """
+    if not isinstance(architecture_contract, dict):
+        return dict(gguf_contract)
+
+    framing_keys = (
+        "turn_prefix",
+        "turn_suffix",
+        "assistant_generation_prefix",
+        "role_labels",
+    )
+    if any(gguf_contract.get(key) != architecture_contract.get(key) for key in framing_keys):
+        return dict(gguf_contract)
+
+    composed = dict(gguf_contract)
+    semantic_keys = (
+        "last_user_prefix",
+        "last_user_prefix_suppression_markers",
+        "thinking_mode_default",
+        "assistant_generation_prefix_by_thinking_mode",
+        "last_user_prefix_by_thinking_mode",
+    )
+    for key in semantic_keys:
+        if key in architecture_contract:
+            composed[key] = architecture_contract[key]
+
+    markers = list(composed.get("template_markers") or [])
+    for marker in list(architecture_contract.get("template_markers") or []):
+        if marker not in markers:
+            markers.append(marker)
+    composed["template_markers"] = markers
+    composed["semantic_contract_name"] = str(architecture_contract.get("name") or "")
+    return composed
+
+
 def _resolve_decoder_chat_contract(
     decoder_gguf: Path,
     *,
@@ -1131,13 +1175,16 @@ def _resolve_decoder_chat_contract(
         {"general.architecture", "tokenizer.chat_template"},
     )
     gguf_template_contract = _fallback_chat_contract_from_template_text(meta.get("tokenizer.chat_template"))
-    if resolved_mode == "auto" and gguf_template_contract is not None:
-        return gguf_template_contract
     arch = str(meta.get("general.architecture") or "").strip().lower()
+    architecture_contract = _load_builtin_chat_contract(arch) if arch else None
+    if resolved_mode == "auto" and gguf_template_contract is not None:
+        return _compose_compatible_auto_chat_contracts(
+            gguf_template_contract,
+            architecture_contract,
+        )
     if arch:
-        contract = _load_builtin_chat_contract(arch)
-        if contract is not None:
-            return contract
+        if architecture_contract is not None:
+            return architecture_contract
 
     return gguf_template_contract
 
