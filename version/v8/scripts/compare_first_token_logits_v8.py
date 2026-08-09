@@ -374,6 +374,8 @@ def run_llama_greedy_trajectory(
     dump_names: str = "",
     dump_flash_inputs: bool = False,
     profile_layers_out: Path | None = None,
+    logits_sequence_out: Path | None = None,
+    load_logits: bool = True,
 ) -> dict[str, Any]:
     capture_step = None if dump_step is None else int(dump_step)
     if capture_step is not None:
@@ -396,7 +398,18 @@ def run_llama_greedy_trajectory(
         dir=_llama_trajectory_temp_root(),
     ) as td:
         logits_path = Path(td) / "llama_logits.f32"
-        sequence_path = Path(td) / "llama_logits_sequence.f32"
+        sequence_path = (
+            logits_sequence_out.expanduser().resolve()
+            if logits_sequence_out is not None
+            else Path(td) / "llama_logits_sequence.f32"
+        )
+        if logits_sequence_out is not None:
+            if sequence_path.exists():
+                raise ValueError(
+                    "llama trajectory logits output must not already exist; "
+                    f"refusing stale evidence: {sequence_path}"
+                )
+            sequence_path.parent.mkdir(parents=True, exist_ok=True)
         cmd = [
             str(helper),
             "--model", str(gguf_path),
@@ -445,11 +458,18 @@ def run_llama_greedy_trajectory(
             )
         meta = json.loads(proc.stdout.strip())
         n_vocab = int(meta.get("n_vocab", 0))
-        logits = np.fromfile(sequence_path, dtype=np.float32)
         expected = int(max_new_tokens) * n_vocab
-        if n_vocab <= 0 or logits.size != expected:
+        actual_bytes = sequence_path.stat().st_size if sequence_path.is_file() else -1
+        expected_bytes = expected * np.dtype(np.float32).itemsize
+        if n_vocab <= 0 or actual_bytes != expected_bytes:
             raise RuntimeError(
-                f"llama trajectory size mismatch: got={logits.size} expected={expected}"
+                "llama trajectory size mismatch: "
+                f"got_bytes={actual_bytes} expected_bytes={expected_bytes}"
+            )
+        logits = None
+        if load_logits:
+            logits = np.fromfile(sequence_path, dtype=np.float32).reshape(
+                int(max_new_tokens), n_vocab
             )
         generated = [int(token) for token in meta.get("greedy_generated", [])]
         if len(generated) != int(max_new_tokens):
@@ -488,7 +508,14 @@ def run_llama_greedy_trajectory(
             }
         return {
             "meta": meta,
-            "logits": logits.reshape(int(max_new_tokens), n_vocab),
+            "logits": logits,
+            "logits_sequence": {
+                "path": str(sequence_path) if logits_sequence_out is not None else None,
+                "dtype": "float32",
+                "shape": [int(max_new_tokens), n_vocab],
+                "size": int(actual_bytes),
+                "storage": "file_backed" if logits_sequence_out is not None else "memory",
+            },
             "generated_tokens": generated,
             "capture": {
                 "execution_mode": "persistent_greedy_trajectory",

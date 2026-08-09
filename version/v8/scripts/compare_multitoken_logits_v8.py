@@ -18,12 +18,14 @@ import multiprocessing
 import os
 from pathlib import Path
 import re
+import tempfile
 import traceback
 from typing import Any
 
 import numpy as np
 
 from compare_first_token_logits_v8 import (  # type: ignore
+    _llama_trajectory_temp_root,
     compare_logits,
     discover_ck_model_dir,
     discover_gguf,
@@ -35,6 +37,50 @@ from compare_first_token_logits_v8 import (  # type: ignore
     run_llama_logits,
     run_llama_logits_segmented,
 )
+
+
+_AUTO_STREAM_LOGITS_BYTES = 256 * 1024 * 1024
+
+
+def _trajectory_logits_bytes(model_dir: Path, max_new_tokens: int) -> int | None:
+    """Estimate one full trajectory tensor without loading the model runtime."""
+    for name in ("config.json", "weights_manifest.json", "layout_decode.json"):
+        candidate = model_dir / name
+        if not candidate.is_file():
+            continue
+        try:
+            payload = json.loads(candidate.read_text(encoding="utf-8"))
+            vocab = int(payload.get("vocab_size", 0))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if vocab > 0:
+            return int(max_new_tokens) * vocab * np.dtype(np.float32).itemsize
+    return None
+
+
+def _select_trajectory_storage(
+    requested: str,
+    *,
+    capture_requested: bool,
+    estimated_logits_bytes: int | None,
+) -> str:
+    mode = str(requested)
+    if mode not in {"auto", "memory", "stream"}:
+        raise ValueError(f"unsupported trajectory storage mode: {mode}")
+    if mode == "auto":
+        return (
+            "stream"
+            if not capture_requested
+            and estimated_logits_bytes is not None
+            and estimated_logits_bytes > _AUTO_STREAM_LOGITS_BYTES
+            else "memory"
+        )
+    if mode == "stream" and capture_requested:
+        raise ValueError(
+            "streaming trajectory storage does not support boundary capture; "
+            "use auto/memory for capture or run a separate bounded trajectory certification"
+        )
+    return mode
 
 
 def _configure_ck_threads(threads: int) -> dict[str, str]:
@@ -70,6 +116,10 @@ def load_ck_greedy_trajectory(
     dump_format: str = "hidden",
     dump_kv_layer: int | None = None,
     forced_tokens: list[int] | None = None,
+    reference_logits_path: Path | None = None,
+    reference_steps: int | None = None,
+    comparison_top_k: int = 20,
+    stop_on_top1_divergence: bool = False,
 ) -> dict[str, Any]:
     capture_step = None if dump_step is None else int(dump_step)
     if capture_step is not None:
@@ -224,7 +274,24 @@ def load_ck_greedy_trajectory(
                 return flat[start : start + vocab].astype(np.float32, copy=True)
             return np.ctypeslib.as_array(pointer, shape=(vocab,)).astype(np.float32, copy=True)
 
+        reference_handle: Any | None = None
+        if reference_logits_path is not None:
+            resolved_reference = reference_logits_path.expanduser().resolve()
+            steps_expected = int(reference_steps or max_new_tokens)
+            expected_bytes = steps_expected * vocab * np.dtype(np.float32).itemsize
+            if not resolved_reference.is_file():
+                raise FileNotFoundError(
+                    f"reference logits stream does not exist: {resolved_reference}"
+                )
+            if resolved_reference.stat().st_size != expected_bytes:
+                raise RuntimeError(
+                    "reference logits stream size mismatch: "
+                    f"got={resolved_reference.stat().st_size} expected={expected_bytes}"
+                )
+            reference_handle = resolved_reference.open("rb")
+
         rows: list[np.ndarray] = []
+        stream_steps: list[dict[str, Any]] = []
         generated: list[int] = []
         stops = {int(token) for token in (stop_token_ids or set())}
         teacher = [int(token) for token in (forced_tokens or [])]
@@ -235,12 +302,55 @@ def load_ck_greedy_trajectory(
         for step in range(int(max_new_tokens)):
             logits = read_logits()
             token = int(np.argmax(logits))
-            rows.append(logits)
+            if reference_handle is None:
+                rows.append(logits)
+            else:
+                oracle = np.fromfile(reference_handle, dtype=np.float32, count=vocab)
+                if oracle.size != vocab:
+                    raise RuntimeError(
+                        "reference logits stream ended early: "
+                        f"step={step} got={oracle.size} expected={vocab}"
+                    )
+                comparison = compare_logits(logits, oracle, int(comparison_top_k))
+                oracle_token = int(comparison["top1_llama"])
+                exact = bool(
+                    np.array_equal(logits.view(np.uint32), oracle.view(np.uint32))
+                )
+                stream_steps.append({
+                    "step": int(step),
+                    "prefix_len": len(prompt) + int(step),
+                    "ck_next": token,
+                    "llama_next": oracle_token,
+                    "top1_match": token == oracle_token,
+                    "bit_exact": exact,
+                    "cosine": float(comparison["cosine"]),
+                    "rmse": float(comparison["rmse"]),
+                    "mean_abs_diff": float(comparison["mean_abs_diff"]),
+                    "max_abs_diff": float(comparison["max_abs_diff"]),
+                    "ck_top1_margin": float(comparison["ck_top1_margin"]),
+                    "llama_top1_margin": float(comparison["llama_top1_margin"]),
+                    "topk_overlap_count": int(comparison["topk_overlap_count"]),
+                    "topk_overlap_ratio": float(comparison["topk_overlap_ratio"]),
+                    "ck_topk_ids": list(comparison["ck_topk_ids"]),
+                    "llama_topk_ids": list(comparison["llama_topk_ids"]),
+                    "topk_logits": list(comparison["topk_logits"]),
+                })
             generated.append(token)
             forced_stop = bool(
                 teacher and step < len(teacher) and teacher[step] in stops
             )
-            if ((not teacher and token in stops) or forced_stop or step + 1 >= int(max_new_tokens)):
+            stream_diverged = bool(
+                reference_handle is not None
+                and stop_on_top1_divergence
+                and stream_steps
+                and not stream_steps[-1]["top1_match"]
+            )
+            if (
+                (not teacher and token in stops)
+                or forced_stop
+                or stream_diverged
+                or step + 1 >= int(max_new_tokens)
+            ):
                 break
             decode_token = teacher[step] if teacher else token
             if capture_step == step + 1:
@@ -270,7 +380,13 @@ def load_ck_greedy_trajectory(
                     "verify the generated runtime exports the requested checkpoints"
                 )
         return {
-            "logits": np.stack(rows),
+            "logits": np.stack(rows) if rows else None,
+            "stream_steps": stream_steps,
+            "logits_storage": (
+                "bounded_stream_comparison"
+                if reference_handle is not None
+                else "retained_memory"
+            ),
             "generated_tokens": generated,
             "forced_tokens": teacher,
             "vocab": vocab,
@@ -297,6 +413,8 @@ def load_ck_greedy_trajectory(
             },
         }
     finally:
+        if "reference_handle" in locals() and reference_handle is not None:
+            reference_handle.close()
         if has_free:
             lib.ck_model_free()
 
@@ -316,6 +434,10 @@ def _load_ck_greedy_trajectory_worker(
     dump_format: str,
     dump_kv_layer: int | None,
     forced_tokens: list[int] | None,
+    reference_logits_path: Path | None,
+    reference_steps: int | None,
+    comparison_top_k: int,
+    stop_on_top1_divergence: bool,
 ) -> None:
     try:
         thread_environment = _configure_ck_threads(threads)
@@ -332,6 +454,10 @@ def _load_ck_greedy_trajectory_worker(
             dump_format=dump_format,
             dump_kv_layer=dump_kv_layer,
             forced_tokens=forced_tokens,
+            reference_logits_path=reference_logits_path,
+            reference_steps=reference_steps,
+            comparison_top_k=comparison_top_k,
+            stop_on_top1_divergence=stop_on_top1_divergence,
         )
         result["thread_environment"] = thread_environment
         connection.send(("ok", result))
@@ -356,6 +482,10 @@ def load_ck_greedy_trajectory_isolated(
     dump_format: str = "hidden",
     dump_kv_layer: int | None = None,
     forced_tokens: list[int] | None = None,
+    reference_logits_path: Path | None = None,
+    reference_steps: int | None = None,
+    comparison_top_k: int = 20,
+    stop_on_top1_divergence: bool = False,
 ) -> dict[str, Any]:
     """Capture CK logits in a short-lived process so model mappings are released."""
     context = multiprocessing.get_context("fork")
@@ -377,6 +507,10 @@ def load_ck_greedy_trajectory_isolated(
             dump_format,
             dump_kv_layer,
             forced_tokens,
+            reference_logits_path,
+            reference_steps,
+            int(comparison_top_k),
+            bool(stop_on_top1_divergence),
         ),
     )
     process.start()
@@ -846,6 +980,119 @@ def run_multitoken_trajectory_parity(
     }
 
 
+def run_multitoken_trajectory_parity_streaming(
+    *,
+    model_dir: Path,
+    gguf_path: Path,
+    prompt_tokens: list[int],
+    max_new_tokens: int,
+    ctx_len: int,
+    top_k: int,
+    threads: int,
+    llama_no_repack: bool,
+    stop_token_ids: set[int] | None = None,
+    ck_runtime_so: Path | None = None,
+    llama_profile_layers_out: Path | None = None,
+    append_on_divergence: str = "stop",
+) -> dict[str, Any]:
+    """Compare a persistent trajectory with bounded resident logits memory.
+
+    llama.cpp writes the oracle rows once to a temporary file. CKE reads that
+    file sequentially and compares one vocabulary row at a time inside its
+    isolated model process. Only compact per-step metrics cross the process
+    boundary; neither runtime retains the complete logits tensor in RAM.
+    """
+    if append_on_divergence not in {"stop", "llama"}:
+        raise ValueError("streaming trajectory supports stop or llama teacher forcing")
+    stops = {int(token) for token in (stop_token_ids or set())}
+    with tempfile.TemporaryDirectory(
+        prefix="cke_xray_stream_",
+        dir=_llama_trajectory_temp_root(),
+    ) as td:
+        sequence_path = Path(td) / "llama_logits_sequence.f32"
+        llama = run_llama_greedy_trajectory(
+            gguf_path,
+            prompt_tokens,
+            max_new_tokens,
+            ctx_len,
+            top_k,
+            threads,
+            llama_no_repack,
+            profile_layers_out=llama_profile_layers_out,
+            logits_sequence_out=sequence_path,
+            load_logits=False,
+        )
+        teacher = [int(token) for token in llama["generated_tokens"]]
+        ck = load_ck_greedy_trajectory_isolated(
+            model_dir=model_dir,
+            prompt_tokens=prompt_tokens,
+            max_new_tokens=max_new_tokens,
+            stop_token_ids=stops,
+            threads=threads,
+            runtime_so=ck_runtime_so,
+            forced_tokens=teacher,
+            reference_logits_path=sequence_path,
+            reference_steps=max_new_tokens,
+            comparison_top_k=top_k,
+            stop_on_top1_divergence=append_on_divergence == "stop",
+        )
+
+    steps = list(ck.get("stream_steps") or [])
+    first_divergence = next(
+        (row for row in steps if not bool(row["top1_match"])),
+        None,
+    )
+    matched_stop_token = next(
+        (
+            int(row["ck_next"])
+            for row in steps
+            if bool(row["top1_match"]) and int(row["ck_next"]) in stops
+        ),
+        None,
+    )
+    generated_prefix = teacher[: len(steps)]
+    if (matched_stop_token is not None or first_divergence is not None) and generated_prefix:
+        generated_prefix.pop()
+    exact_steps = sum(bool(row.get("bit_exact")) for row in steps)
+    return {
+        "status": "pass" if first_divergence is None else "fail",
+        "pass": first_divergence is None,
+        "model_dir": str(model_dir),
+        "gguf_path": str(gguf_path),
+        "initial_tokens": [int(token) for token in prompt_tokens],
+        "final_prefix": [int(token) for token in prompt_tokens] + generated_prefix,
+        "max_new_tokens": int(max_new_tokens),
+        "ctx_len": int(ctx_len),
+        "top_k": int(top_k),
+        "threads": int(threads),
+        "ck_thread_environment": dict(ck.get("thread_environment", {})),
+        "ck_runtime": dict(ck.get("runtime", {})),
+        "ck_capture": dict(ck.get("capture", {})),
+        "llama_capture": dict(llama.get("capture", {})),
+        "execution_mode": "persistent_greedy_trajectory_streaming",
+        "trajectory_policy": (
+            "llama_teacher_forced" if append_on_divergence == "llama"
+            else "shared_until_divergence"
+        ),
+        "logits_storage": {
+            "mode": "bounded_stream_comparison",
+            "oracle": "temporary_file_backed",
+            "cke": "single_row",
+            "temporary_artifact_retained": False,
+            "exact_steps": int(exact_steps),
+            "compared_steps": len(steps),
+        },
+        "ck_prefill_mode": "hybrid",
+        "llama_decode_mode": "hybrid",
+        "llama_no_repack": bool(llama_no_repack),
+        "stop_token_ids": sorted(stops),
+        "matched_stop_token": matched_stop_token,
+        "first_divergence": first_divergence,
+        "steps": steps,
+        "llama_layer_profile": llama.get("layer_profile"),
+    }
+
+
 def run_multitoken_parity(
     *,
     model_dir: Path,
@@ -1017,6 +1264,16 @@ def main() -> int:
         help="trajectory keeps each runtime loaded and is intended for long deterministic certification.",
     )
     ap.add_argument(
+        "--trajectory-storage",
+        choices=["auto", "memory", "stream"],
+        default="auto",
+        help=(
+            "Logits storage for persistent trajectories. auto uses bounded streaming "
+            "when one full trajectory tensor exceeds 256 MiB; memory preserves the "
+            "legacy in-memory path. Boundary capture currently uses memory mode."
+        ),
+    )
+    ap.add_argument(
         "--ck-runtime-so",
         type=Path,
         default=None,
@@ -1121,31 +1378,57 @@ def main() -> int:
             raise ValueError("--ck-dump-step requires --ck-dump-dir")
         if args.llama_dump_step is not None and args.llama_dump_dir is None:
             raise ValueError("--llama-dump-step requires --llama-dump-dir")
-        report = run_multitoken_trajectory_parity(
-            model_dir=model_dir,
-            gguf_path=gguf_path,
-            prompt_tokens=prompt_tokens,
-            max_new_tokens=int(args.max_new_tokens),
-            ctx_len=int(args.ctx_len),
-            top_k=int(args.top_k),
-            threads=int(args.threads),
-            llama_no_repack=bool(args.llama_no_repack),
-            stop_token_ids=stop_tokens,
-            ck_runtime_so=args.ck_runtime_so,
-            ck_dump_step=args.ck_dump_step,
-            ck_dump_dir=args.ck_dump_dir,
-            ck_dump_layer=args.ck_dump_layer,
-            ck_dump_names=args.ck_dump_names,
-            ck_dump_format=args.ck_dump_format,
-            ck_dump_kv_layer=args.ck_dump_kv_layer,
-            llama_dump_step=args.llama_dump_step,
-            llama_dump_dir=args.llama_dump_dir,
-            llama_dump_names=args.llama_dump_names,
-            llama_dump_flash_inputs=bool(args.llama_dump_flash_inputs),
-            llama_profile_layers_out=args.llama_profile_layers_out,
-            append_on_divergence=str(args.append_on_divergence),
-            diagnose_single_thread=bool(args.diagnose_single_thread),
+        capture_requested = bool(
+            args.ck_dump_step is not None or args.llama_dump_step is not None
         )
+        estimated_logits_bytes = _trajectory_logits_bytes(
+            model_dir, int(args.max_new_tokens)
+        )
+        storage_mode = _select_trajectory_storage(
+            str(args.trajectory_storage),
+            capture_requested=capture_requested,
+            estimated_logits_bytes=estimated_logits_bytes,
+        )
+        trajectory_runner = (
+            run_multitoken_trajectory_parity_streaming
+            if storage_mode == "stream"
+            else run_multitoken_trajectory_parity
+        )
+        trajectory_kwargs: dict[str, Any] = {
+            "model_dir": model_dir,
+            "gguf_path": gguf_path,
+            "prompt_tokens": prompt_tokens,
+            "max_new_tokens": int(args.max_new_tokens),
+            "ctx_len": int(args.ctx_len),
+            "top_k": int(args.top_k),
+            "threads": int(args.threads),
+            "llama_no_repack": bool(args.llama_no_repack),
+            "stop_token_ids": stop_tokens,
+            "ck_runtime_so": args.ck_runtime_so,
+            "llama_profile_layers_out": args.llama_profile_layers_out,
+            "append_on_divergence": str(args.append_on_divergence),
+        }
+        if storage_mode == "memory":
+            trajectory_kwargs.update({
+                "ck_dump_step": args.ck_dump_step,
+                "ck_dump_dir": args.ck_dump_dir,
+                "ck_dump_layer": args.ck_dump_layer,
+                "ck_dump_names": args.ck_dump_names,
+                "ck_dump_format": args.ck_dump_format,
+                "ck_dump_kv_layer": args.ck_dump_kv_layer,
+                "llama_dump_step": args.llama_dump_step,
+                "llama_dump_dir": args.llama_dump_dir,
+                "llama_dump_names": args.llama_dump_names,
+                "llama_dump_flash_inputs": bool(args.llama_dump_flash_inputs),
+                "diagnose_single_thread": bool(args.diagnose_single_thread),
+            })
+        report = trajectory_runner(**trajectory_kwargs)
+        report["trajectory_storage_selection"] = {
+            "requested": str(args.trajectory_storage),
+            "selected": storage_mode,
+            "estimated_single_tensor_bytes": estimated_logits_bytes,
+            "auto_threshold_bytes": _AUTO_STREAM_LOGITS_BYTES,
+        }
     else:
         report = run_multitoken_parity(
             model_dir=model_dir,

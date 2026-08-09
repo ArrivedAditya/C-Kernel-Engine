@@ -87,6 +87,122 @@ class MultitokenParityEOSContractTests(unittest.TestCase):
 
 
 class PersistentTrajectoryParityTests(unittest.TestCase):
+    def test_llama_trajectory_rejects_stale_file_backed_logits(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            output = Path(td) / "llama_logits_sequence.f32"
+            output.write_bytes(b"stale")
+            function_globals = runner.run_llama_greedy_trajectory.__globals__
+            with mock.patch.dict(
+                function_globals,
+                {"ensure_llama_helper": lambda: Path("/bin/true")},
+            ):
+                with self.assertRaisesRegex(ValueError, "refusing stale evidence"):
+                    runner.run_llama_greedy_trajectory(
+                        Path("/tmp/model.gguf"),
+                        [7],
+                        2,
+                        128,
+                        3,
+                        1,
+                        logits_sequence_out=output,
+                        load_logits=False,
+                    )
+
+    def test_trajectory_size_estimate_reads_runtime_vocab(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            model_dir = Path(td)
+            (model_dir / "config.json").write_text(
+                '{"vocab_size": 248320}', encoding="utf-8"
+            )
+            estimated = runner._trajectory_logits_bytes(model_dir, 1200)
+
+        self.assertEqual(estimated, 1200 * 248320 * 4)
+        self.assertGreater(estimated, runner._AUTO_STREAM_LOGITS_BYTES)
+        self.assertEqual(
+            runner._select_trajectory_storage(
+                "auto",
+                capture_requested=False,
+                estimated_logits_bytes=estimated,
+            ),
+            "stream",
+        )
+
+    def test_auto_storage_preserves_memory_mode_for_boundary_capture(self) -> None:
+        self.assertEqual(
+            runner._select_trajectory_storage(
+                "auto",
+                capture_requested=True,
+                estimated_logits_bytes=1024 * 1024 * 1024,
+            ),
+            "memory",
+        )
+        with self.assertRaisesRegex(ValueError, "does not support boundary capture"):
+            runner._select_trajectory_storage(
+                "stream",
+                capture_requested=True,
+                estimated_logits_bytes=1024 * 1024 * 1024,
+            )
+
+    def test_streaming_trajectory_returns_compact_metrics_and_removes_oracle(self) -> None:
+        seen: dict = {}
+
+        def llama_run(*_args, **kwargs):
+            path = kwargs["logits_sequence_out"]
+            path.write_bytes(b"oracle")
+            seen["path"] = path
+            seen["load_logits"] = kwargs["load_logits"]
+            return {
+                "logits": None,
+                "generated_tokens": [1, 2],
+                "capture": {},
+                "layer_profile": None,
+            }
+
+        def ck_run(**kwargs):
+            self.assertTrue(kwargs["reference_logits_path"].is_file())
+            self.assertEqual(kwargs["forced_tokens"], [1, 2])
+            self.assertTrue(kwargs["stop_on_top1_divergence"])
+            return {
+                "logits": None,
+                "generated_tokens": [1, 2],
+                "stream_steps": [
+                    {
+                        "step": 0, "prefix_len": 1, "ck_next": 1,
+                        "llama_next": 1, "top1_match": True, "bit_exact": True,
+                    },
+                    {
+                        "step": 1, "prefix_len": 2, "ck_next": 2,
+                        "llama_next": 2, "top1_match": True, "bit_exact": True,
+                    },
+                ],
+                "thread_environment": {"CK_NUM_THREADS": "7"},
+            }
+
+        with mock.patch.object(
+            runner, "run_llama_greedy_trajectory", side_effect=llama_run
+        ), mock.patch.object(
+            runner, "load_ck_greedy_trajectory_isolated", side_effect=ck_run
+        ):
+            report = runner.run_multitoken_trajectory_parity_streaming(
+                model_dir=Path("/tmp/model"),
+                gguf_path=Path("/tmp/model.gguf"),
+                prompt_tokens=[7],
+                max_new_tokens=2,
+                ctx_len=128,
+                top_k=3,
+                threads=7,
+                llama_no_repack=False,
+                stop_token_ids={2},
+            )
+
+        self.assertTrue(report["pass"])
+        self.assertEqual(report["execution_mode"], "persistent_greedy_trajectory_streaming")
+        self.assertEqual(report["logits_storage"]["exact_steps"], 2)
+        self.assertEqual(report["logits_storage"]["compared_steps"], 2)
+        self.assertFalse(report["logits_storage"]["temporary_artifact_retained"])
+        self.assertFalse(seen["load_logits"])
+        self.assertFalse(seen["path"].exists())
+
     def test_capture_identity_compares_float32_bits_not_only_values(self) -> None:
         positive_zero = np.asarray([[0.0, 1.0]], dtype=np.float32)
         negative_zero = positive_zero.copy()
