@@ -124,13 +124,13 @@
             {"op":"attention_gate_projection","graph_slots":{"inputs":{"x":"normalized_stream"},"outputs":{"y":"attn_gate"}}},
             {"op":"attn_gate_sigmoid_mul","graph_slots":{"inputs":{"x":"attn_scratch","gate":"attn_gate"},"outputs":{"out":"attn_scratch"}}},
             {"op":"out_proj","graph_slots":{"inputs":{"x":"attn_scratch"},"outputs":{"y":"post_attention_stream"}}},
-            {"op":"residual_add","graph_slots":{"inputs":{"a":"post_attention_stream","b":"attention_residual"},"outputs":{"y":"main_stream"}}},
+            {"op":"residual_add","graph_slots":{"inputs":{"a":"post_attention_stream","b":"attention_residual"},"outputs":{"out":"main_stream"}}},
             {"op":"residual_save","graph_slots":{"inputs":{"src":"main_stream"},"outputs":{"dst":"attention_residual"}}},
             {"op":"block_rmsnorm","graph_slots":{"inputs":{"input":"main_stream"},"outputs":{"output":"normalized_stream"}}},
             {"op":"mlp_gate_up","graph_slots":{"inputs":{"x":"normalized_stream"},"outputs":{"y":"mlp_scratch"}}},
             {"op":"silu_mul","graph_slots":{"inputs":{"gate":"mlp_scratch"},"outputs":{"out":"mlp_scratch"}}},
             {"op":"mlp_down","graph_slots":{"inputs":{"x":"mlp_scratch"},"outputs":{"y":"post_attention_stream"}}},
-            {"op":"residual_add","graph_slots":{"inputs":{"a":"post_attention_stream","b":"attention_residual"},"outputs":{"y":"main_stream"}}}
+            {"op":"residual_add","graph_slots":{"inputs":{"a":"post_attention_stream","b":"attention_residual"},"outputs":{"out":"main_stream"}}}
           ],
           "mla_gated_farskip_moe_first": [
             {"op":"residual_save","graph_slots":{"inputs":{"src":"main_stream"},"outputs":{"dst":"attention_residual"}}},
@@ -144,7 +144,7 @@
             {"op":"attention_gate_projection","graph_slots":{"inputs":{"x":"normalized_stream"},"outputs":{"y":"attn_gate"}}},
             {"op":"attn_gate_sigmoid_mul","graph_slots":{"inputs":{"x":"attn_scratch","gate":"attn_gate"},"outputs":{"out":"attn_scratch"}}},
             {"op":"out_proj","graph_slots":{"inputs":{"x":"attn_scratch"},"outputs":{"y":"post_attention_stream"}}},
-            {"op":"residual_add","graph_slots":{"inputs":{"a":"post_attention_stream","b":"attention_residual"},"outputs":{"y":"post_attention_stream"}}},
+            {"op":"residual_add","graph_slots":{"inputs":{"a":"post_attention_stream","b":"attention_residual"},"outputs":{"out":"post_attention_stream"}}},
             {"op":"block_rmsnorm","graph_slots":{"inputs":{"input":"attention_residual"},"outputs":{"output":"normalized_stream"}}},
             {"op":"moe_router","graph_slots":{"inputs":{"x":"normalized_stream"},"outputs":{"y":"router_scores"}}},
             {"op":"group_limited_topk_router","graph_slots":{"inputs":{"scores":"router_scores"},"outputs":{"indices":"q_scratch","weights":"k_scratch"}}},
@@ -163,7 +163,7 @@
             {"op":"attention_gate_projection","graph_slots":{"inputs":{"x":"normalized_stream"},"outputs":{"y":"attn_gate"}}},
             {"op":"attn_gate_sigmoid_mul","graph_slots":{"inputs":{"x":"attn_scratch","gate":"attn_gate"},"outputs":{"out":"attn_scratch"}}},
             {"op":"out_proj","graph_slots":{"inputs":{"x":"attn_scratch"},"outputs":{"y":"post_attention_stream"}}},
-            {"op":"residual_add","graph_slots":{"inputs":{"a":"post_attention_stream","b":"attention_residual"},"outputs":{"y":"post_attention_stream"}}},
+            {"op":"residual_add","graph_slots":{"inputs":{"a":"post_attention_stream","b":"attention_residual"},"outputs":{"out":"post_attention_stream"}}},
             {"op":"block_rmsnorm","graph_slots":{"inputs":{"input":"attention_residual"},"outputs":{"output":"normalized_stream"}}},
             {"op":"moe_router","graph_slots":{"inputs":{"x":"normalized_stream"},"outputs":{"y":"router_scores"}}},
             {"op":"group_limited_topk_router","graph_slots":{"inputs":{"scores":"router_scores"},"outputs":{"indices":"q_scratch","weights":"k_scratch"}}},

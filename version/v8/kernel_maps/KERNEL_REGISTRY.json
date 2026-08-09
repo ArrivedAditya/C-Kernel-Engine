@@ -6570,7 +6570,10 @@
           "access": "write",
           "storage_class": "activation",
           "consumption": "required",
-          "desc": "Attention output scaled by sigmoid(gate)"
+          "may_alias": [
+            "input:x"
+          ],
+          "desc": "Attention output scaled by sigmoid(gate); may overwrite x elementwise"
         }
       ],
       "scratch": [],
@@ -9015,7 +9018,10 @@
           "access": "write",
           "storage_class": "activation",
           "consumption": "required",
-          "desc": "Output [tokens, aligned_embed_dim]"
+          "may_alias": [
+            "input:a"
+          ],
+          "desc": "Output [tokens, aligned_embed_dim]; may overwrite input a elementwise"
         }
       ],
       "scratch": [],

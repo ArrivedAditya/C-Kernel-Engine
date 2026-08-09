@@ -15,7 +15,7 @@
   "weights": [],
   "activations": [],
   "outputs": [
-    {"name": "out", "dtype": "fp32", "shape": ["R", "D"], "layout": "token_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Attention output scaled by sigmoid(gate)"}
+    {"name": "out", "dtype": "fp32", "shape": ["R", "D"], "layout": "token_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required", "may_alias": ["input:x"], "desc": "Attention output scaled by sigmoid(gate); may overwrite x elementwise"}
   ],
   "scratch": [],
   "dims": ["R", "D"],

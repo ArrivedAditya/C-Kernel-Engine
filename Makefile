@@ -6207,6 +6207,7 @@ test-kernel-maps:
 	@$(PYTHON) version/v8/scripts/audit_kernel_map_interfaces_v8.py --json > $(V8_KERNEL_INTERFACE_AUDIT_REPORT)
 	@$(PYTHON) version/v8/scripts/audit_kernel_map_interfaces_v8.py --check
 	@$(PYTHON) $(PYTHONFLAGS) -m pytest -q \
+		tests/test_v8_circuit_interface_validation.py \
 		tests/test_v8_provider_selection.py \
 		tests/test_v8_kernel_call_abi.py \
 		tests/test_v8_shared_provider_migration.py \

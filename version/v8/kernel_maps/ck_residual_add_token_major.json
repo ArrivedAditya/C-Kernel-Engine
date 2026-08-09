@@ -16,7 +16,7 @@
   "weights": [],
   "activations": [],
   "outputs": [
-    {"name": "out", "dtype": "fp32", "shape": ["T", "AE"], "layout": "token_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Output [tokens, aligned_embed_dim]"}
+    {"name": "out", "dtype": "fp32", "shape": ["T", "AE"], "layout": "token_major_contiguous", "access": "write", "storage_class": "activation", "consumption": "required", "may_alias": ["input:a"], "desc": "Output [tokens, aligned_embed_dim]; may overwrite input a elementwise"}
   ],
   "scratch": [],
   "dims": ["T", "E", "AE"],
