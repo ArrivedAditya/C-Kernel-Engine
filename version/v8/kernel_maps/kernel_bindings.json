@@ -2397,42 +2397,6 @@
       "requires_quantized_activation": "q8_0",
       "notes": "Q8_0 activation version - requires quantize_row_q8_0 before call"
     },
-    "gemm_nt_q8_0_q8_0": {
-      "params": [
-        {
-          "name": "A",
-          "source": "activation:a",
-          "cast": "const void*"
-        },
-        {
-          "name": "B",
-          "source": "weight:_first_weight"
-        },
-        {
-          "name": "bias",
-          "source": "weight_f:_bias"
-        },
-        {
-          "name": "C",
-          "source": "output:c",
-          "cast": "float*"
-        },
-        {
-          "name": "M",
-          "source": "dim:_m"
-        },
-        {
-          "name": "N",
-          "source": "dim:_output_dim"
-        },
-        {
-          "name": "K",
-          "source": "dim:_input_dim"
-        }
-      ],
-      "requires_quantized_activation": "q8_0",
-      "notes": "Q8_0 activation version for weight Q8_0"
-    },
     "gemv_q8_0": {
       "params": [
         {
