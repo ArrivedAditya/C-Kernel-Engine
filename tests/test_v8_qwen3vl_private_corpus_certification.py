@@ -227,6 +227,27 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
         rendered = " ".join(map(str, command))
         self.assertIn("--chat-template auto", rendered)
 
+    def test_bridge_command_forwards_explicit_composition_circuit(self) -> None:
+        args = SimpleNamespace(
+            decoder_gguf=Path("decoder.gguf"),
+            mmproj_gguf=Path("mmproj.gguf"),
+            prompt="Extract text.",
+            chat_template="auto",
+            composition_circuit="qwen36vl",
+            image_max_tokens=1024,
+            context_len=2048,
+            top_k=16,
+            gemm_schedule="auto",
+        )
+        command = self.module._bridge_command(
+            args,
+            image=Path("image.png"),
+            runtime_dir=Path("runtime"),
+            prefix_path=Path("prefix.f32"),
+        )
+        rendered = " ".join(map(str, command))
+        self.assertIn("--composition-circuit qwen36vl", rendered)
+
     def test_native_cli_command_requires_generated_abi_and_exact_trace(self) -> None:
         args = SimpleNamespace(
             native_cli=Path("build/ck-cli-v8"),
