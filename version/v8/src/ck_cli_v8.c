@@ -43,6 +43,7 @@
 #include "tokenizer/true_bpe.h"
 #include "ck_features.h"
 #include "ck_model_abi_v8.h"
+#include "ck_sampler_v8.h"
 #include "ck_session_v8.h"
 #include "ckernel_audio.h"
 
@@ -1545,75 +1546,10 @@ static bool scan_and_select_model(char *lib_out, char *weights_out, size_t out_s
  * ============================================================================ */
 
 static int sample_top_p(float *logits, int vocab_size, float temperature, float top_p) {
-    if (temperature <= 0.0f || top_p <= 0.0f) {
-        /* Argmax */
-        int best = 0;
-        float best_val = logits[0];
-        for (int i = 1; i < vocab_size; i++) {
-            if (logits[i] > best_val) {
-                best_val = logits[i];
-                best = i;
-            }
-        }
-        return best;
-    }
-
-    /* Apply temperature */
-    float max_logit = logits[0];
-    for (int i = 1; i < vocab_size; i++) {
-        if (logits[i] > max_logit) max_logit = logits[i];
-    }
-
-    float sum = 0.0f;
-    for (int i = 0; i < vocab_size; i++) {
-        logits[i] = expf((logits[i] - max_logit) / temperature);
-        sum += logits[i];
-    }
-
-    /* Normalize to probabilities */
-    for (int i = 0; i < vocab_size; i++) {
-        logits[i] /= sum;
-    }
-
-    /* Sort indices by probability (simple selection for top-p) */
-    /* For efficiency, we'll do nucleus sampling with cumulative sum */
-    float cumsum = 0.0f;
-    /* Find nucleus tokens and sample */
-    int *indices = (int *)malloc(vocab_size * sizeof(int));
-    float *probs = (float *)malloc(vocab_size * sizeof(float));
-    for (int i = 0; i < vocab_size; i++) {
-        indices[i] = i;
-        probs[i] = logits[i];
-    }
-
-    /* Simple sort (for small vocab, bubble sort is fine; for large, use qsort) */
-    for (int i = 0; i < vocab_size - 1; i++) {
-        for (int j = i + 1; j < vocab_size; j++) {
-            if (probs[j] > probs[i]) {
-                float tmp_p = probs[i]; probs[i] = probs[j]; probs[j] = tmp_p;
-                int tmp_i = indices[i]; indices[i] = indices[j]; indices[j] = tmp_i;
-            }
-        }
-        cumsum += probs[i];
-        if (cumsum >= top_p) break;
-    }
-
-    /* Sample from nucleus */
-    float r = (float)rand() / (float)RAND_MAX * cumsum;
-    float acc = 0.0f;
-    int result = indices[0];
-    for (int i = 0; cumsum > 0 && i < vocab_size; i++) {
-        acc += probs[i];
-        if (acc >= r) {
-            result = indices[i];
-            break;
-        }
-        if (acc >= cumsum) break;
-    }
-
-    free(indices);
-    free(probs);
-    return result;
+    const float random_value = (float)(
+        (double)rand() / ((double)RAND_MAX + 1.0));
+    return ck_sample_top_p_v8(
+        logits, vocab_size, temperature, top_p, random_value);
 }
 
 /* ============================================================================

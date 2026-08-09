@@ -1337,6 +1337,7 @@ test-server-schema:
 
 .PHONY: test-native-session-v8
 test-native-session-v8: $(BUILD_DIR)/libckernel_engine.so ck-cli-v8 ck-session-v8
+	$(PYTHON) $(PYTHONFLAGS) -m unittest -v tests.test_v8_native_sampler
 	$(PYTHON) $(PYTHONFLAGS) -m unittest -v \
 		tests.test_v8_native_bridge_host.V8NativeBridgeHostTests.test_ck_session_v8_ffi_formats_tokenizes_and_streams_generation \
 		tests.test_v8_native_bridge_host.V8NativeBridgeHostTests.test_generated_runtime_exports_circuit_chat_and_stop_contracts
@@ -4809,6 +4810,7 @@ CK_CLI_V65 := src/v6.5/ck_cli_v6.5.c
 CK_CLI_V66 := version/v6.6/src/ck_cli_v6.6.c
 CK_CLI_V7 := version/v7/src/ck_cli_v7.c
 CK_CLI_V8 := version/v8/src/ck_cli_v8.c
+CK_SAMPLER_V8 := version/v8/src/ck_sampler_v8.c
 CK_BPE_TRAIN_V7 := version/v7/src/ck_bpe_train.c
 
 # Main orchestrator (ck run, ck list, etc.)
@@ -4899,14 +4901,14 @@ ck-cli-v7: $(BUILD_DIR)/ck-cli-v7
 	@echo ""
 
 # v8 Native CLI
-$(BUILD_DIR)/ck-cli-v8: $(CK_CLI_V8) include/ck_model_abi_v8.h include/ck_session_v8.h include/ckernel_audio.h $(LIB_TOKENIZER)
+$(BUILD_DIR)/ck-cli-v8: $(CK_CLI_V8) $(CK_SAMPLER_V8) include/ck_model_abi_v8.h include/ck_sampler_v8.h include/ck_session_v8.h include/ckernel_audio.h $(LIB_TOKENIZER)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -o $@ $(CK_CLI_V8) -L$(BUILD_DIR) -lckernel_tokenizer -ldl -lpthread -lm -Wl,-rpath,$(BUILD_DIR)
+	$(CC) $(CFLAGS) -o $@ $(CK_CLI_V8) $(CK_SAMPLER_V8) -L$(BUILD_DIR) -lckernel_tokenizer -ldl -lpthread -lm -Wl,-rpath,$(BUILD_DIR)
 
-$(BUILD_DIR)/libck_session_v8.so: $(CK_CLI_V8) include/ck_model_abi_v8.h include/ck_session_v8.h include/ckernel_audio.h $(LIB_TOKENIZER)
+$(BUILD_DIR)/libck_session_v8.so: $(CK_CLI_V8) $(CK_SAMPLER_V8) include/ck_model_abi_v8.h include/ck_sampler_v8.h include/ck_session_v8.h include/ckernel_audio.h $(LIB_TOKENIZER)
 	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -fPIC -shared -DCK_CLI_V8_NO_MAIN=1 -Wl,-soname,libck_session_v8.so \
-		-o $@ $(CK_CLI_V8) -L$(BUILD_DIR) -lckernel_tokenizer -ldl -lpthread -lm -Wl,-rpath,$(BUILD_DIR)
+		-o $@ $(CK_CLI_V8) $(CK_SAMPLER_V8) -L$(BUILD_DIR) -lckernel_tokenizer -ldl -lpthread -lm -Wl,-rpath,$(BUILD_DIR)
 
 ck-cli-v8: $(BUILD_DIR)/ck-cli-v8
 	@echo ""
