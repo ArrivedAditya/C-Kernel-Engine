@@ -64,11 +64,16 @@ extern const char* gemm_batch_int8_impl_name(void);
 static void fill_random_q8_0(block_q8_0 *blocks, size_t count, unsigned int seed) {
     srand(seed);
     for (size_t i = 0; i < count; i++) {
-        float scale = ((float)(rand() % 200) - 100) / 1000.0f;
-        blocks[i].d = CK_FP32_TO_FP16(scale);
+        float source[QK8_0];
         for (int j = 0; j < QK8_0; j++) {
-            blocks[i].qs[j] = (int8_t)(rand() % 256 - 128);
+            source[j] = ((float)(rand() % 20001) - 10000.0f) / 4096.0f;
         }
+
+        /* Build a production-valid Q8_0 block. The quantizer uses amax/127,
+         * so payload values are in [-127, 127]. Generating arbitrary int8
+         * bytes admitted -128, which is outside that contract and cannot be
+         * represented by the AVX2 signed-absolute-value dot formulation. */
+        quantize_row_q8_0(source, &blocks[i], QK8_0);
     }
 }
 
