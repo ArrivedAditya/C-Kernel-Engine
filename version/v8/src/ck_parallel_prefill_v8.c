@@ -49,6 +49,18 @@
 /* Serial GEMM kernels (defined in src/kernels/) */
 extern void gemm_nt_q5_0_q8_0(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
+extern void gemm_nt_q5_0_q8_0_m2n4(const void *A, const void *B,
+                                    const float *bias, float *C,
+                                    int M, int N, int K);
+extern void gemm_nt_q5_0_q8_0_m2n4_tile(const void *A, const void *B,
+                                         const float *bias, float *C,
+                                         int M, int N, int K, int ldc);
+extern void gemm_nt_q5_0_q8_0_m4n2(const void *A, const void *B,
+                                    const float *bias, float *C,
+                                    int M, int N, int K);
+extern void gemm_nt_q5_0_q8_0_m4n2_tile(const void *A, const void *B,
+                                         const float *bias, float *C,
+                                         int M, int N, int K, int ldc);
 extern void gemm_nt_q8_0_q8_0(const void *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q8_0_q8_0_m2n4(const void *A, const void *B,
@@ -1160,6 +1172,38 @@ static void work_gemm_nt_q5_0_q8_0(int ith, int nth, void *args)
     );
 }
 
+static void work_gemm_nt_q5_0_q8_0_m4n2_range(int begin, int end, void *args)
+{
+    const gemm_args_t *a = (const gemm_args_t *)args;
+    if (!a || begin < 0 || begin >= end || end > a->M) return;
+
+    gemm_nt_q5_0_q8_0_m4n2(
+        (const char *)a->A + (size_t)begin * a->A_row_bytes,
+        a->B, a->bias, a->C + (size_t)begin * a->N,
+        end - begin, a->N, a->K);
+}
+
+static void work_gemm_nt_q5_0_q8_0_m4n2_output_tiles(
+        int begin, int end, void *args)
+{
+    const gemm_args_t *a = (const gemm_args_t *)args;
+    if (!a || begin < 0 || begin >= end || a->tile_n <= 0) return;
+
+    const size_t weight_row_bytes =
+        (size_t)(a->K / QK5_0) * sizeof(block_q5_0);
+    for (int job = begin; job < end; ++job) {
+        const int n0 = job * a->tile_n;
+        if (n0 >= a->N) break;
+        const int n1 = ck_min_int(n0 + a->tile_n, a->N);
+        gemm_nt_q5_0_q8_0_m4n2_tile(
+            a->A,
+            (const char *)a->B + (size_t)n0 * weight_row_bytes,
+            a->bias ? a->bias + n0 : NULL,
+            a->C + n0,
+            a->M, n1 - n0, a->K, a->N);
+    }
+}
+
 static void work_gemm_nt_q8_0_q8_0(int ith, int nth, void *args)
 {
     const gemm_args_t *a = (const gemm_args_t *)args;
@@ -1585,9 +1629,26 @@ void gemm_nt_q5_0_q8_0_parallel_dispatch(
     gemm_args_t args = {
         .A = A, .B = B, .bias = bias, .C = C,
         .M = M, .N = N, .K = K,
-        .A_row_bytes = A_row_bytes
+        .A_row_bytes = A_row_bytes,
+        .tile_n = 32,
     };
-    ck_threadpool_dispatch_n(pool, ck_select_gemm_active_threads(pool, M, N, K), work_gemm_nt_q5_0_q8_0, &args);
+    const int active = ck_select_gemm_active_threads(pool, M, N, K);
+#if defined(__AVX2__)
+    if (ck_gemm_dynamic_schedule_enabled()) {
+        if (M < 256) {
+            const int jobs = ck_ceil_div_int(N, args.tile_n);
+            ck_threadpool_parallel_for_n(
+                pool, active, 0, jobs, 1,
+                work_gemm_nt_q5_0_q8_0_m4n2_output_tiles, &args);
+        } else {
+            ck_threadpool_parallel_for_n(
+                pool, active, 0, M, 4,
+                work_gemm_nt_q5_0_q8_0_m4n2_range, &args);
+        }
+        return;
+    }
+#endif
+    ck_threadpool_dispatch_n(pool, active, work_gemm_nt_q5_0_q8_0, &args);
 }
 
 void gemm_nt_q8_0_q8_0_parallel_dispatch(

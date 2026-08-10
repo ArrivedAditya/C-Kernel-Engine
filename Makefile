@@ -3859,6 +3859,7 @@ test-numerical-contracts: $(LIB)
 	@$(PYTHON) unittest/test_rmsnorm_strided.py
 	@$(PYTHON) unittest/test_nemotron_router.py
 	@$(PYTHON) unittest/test_moe_swiglu_expert.py
+	@$(PYTHON) -m pytest -q unittest/test_q5_0_q8_0_prefill_tiles.py
 	@if [ -n "$${CK_LLAMA_CPP_ROOT:-}" ] && [ -d "$${CK_LLAMA_CPP_ROOT}/build/bin" ]; then \
 		$(MAKE) --no-print-directory test-rmsnorm-llama-production \
 			Q4Q6_LLAMA_CPP_DIR="$${CK_LLAMA_CPP_ROOT}" \
@@ -4184,6 +4185,10 @@ $(HEAD_MAJOR_Q5_LLAMA_BENCH_BIN): $(LIB) tests/test_head_major_q5_llama_bench.cp
 	@mkdir -p $(BUILD_DIR)
 	$(BENCH_CXX) -O3 -march=native \
 		-Iinclude -I$(LLAMA_CPP_DIR)/ggml/include -I$(LLAMA_CPP_DIR)/ggml/src \
+		-I$(LLAMA_CPP_DIR)/ggml/src/ggml-cpu \
+		-I$(LLAMA_CPP_DIR)/llama.cpp/ggml/include \
+		-I$(LLAMA_CPP_DIR)/llama.cpp/ggml/src \
+		-I$(LLAMA_CPP_DIR)/llama.cpp/ggml/src/ggml-cpu \
 		tests/test_head_major_q5_llama_bench.cpp \
 		-L$(BUILD_DIR) -lckernel_engine \
 		-L$(LLAMA_CPP_DIR)/build/bin -lggml-cpu -lggml-base -lggml \
