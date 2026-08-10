@@ -742,8 +742,10 @@ jobs:
           retention-days: 7
 
       - name: Prepare nightly results for deployment
+        id: nightlyprep
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
+          DEPLOY_READY=false
           if [ -f docs/site/site/nightly-results/latest.json ]; then
             # Create dated report
             DATE=$(date +%Y-%m-%d)
@@ -777,12 +779,25 @@ jobs:
             ls -la docs/site/site/nightly-results/
             echo ""
             echo "Index contains $(jq '.reports | length' docs/site/site/nightly-results/index.json) reports"
+
+            # Stage ONLY the nightly results for deployment. Publishing the
+            # whole docs/site tree from this hours-old checkout races with
+            # docs.yml deploys of newer merges and reverts freshly merged
+            # documentation pages (keep_files then preserves the stale copy).
+            # Scoped publishing keeps concurrent nightlies harmless: they can
+            # only add or update files under site/nightly-results/.
+            rm -rf build/nightly-pages
+            mkdir -p build/nightly-pages/site
+            cp -r docs/site/site/nightly-results build/nightly-pages/site/
+            echo "Staged $(find build/nightly-pages -type f | wc -l) files for deploy"
+            DEPLOY_READY=true
           fi
+          echo "deploy_ready=${DEPLOY_READY}" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to GitHub Pages
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.nightlyprep.outputs.deploy_ready == 'true'
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs/site
+          publish_dir: ./build/nightly-pages
           keep_files: true
