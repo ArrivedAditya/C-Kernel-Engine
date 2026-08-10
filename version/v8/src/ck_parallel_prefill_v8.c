@@ -191,6 +191,11 @@ extern void gated_deltanet_llama_chunk64_head_forward(
     const float *g, const float *beta,
     const float *state_in, float *state_out, float *out,
     int rows, int num_heads, int group_count, int head, int state_dim);
+extern void gated_deltanet_llama_chunk64_prefill_forward(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int rows, int num_heads, int group_count, int state_dim, float norm_eps);
 
 /* ============================================================================
  * Lifecycle
@@ -305,6 +310,43 @@ static void work_deltanet_exact_prefill_heads(int ith, int nth, void *userdata)
             args->num_heads, args->group_count, args->state_dim,
             args->norm_eps, head_begin, head_end);
     }
+}
+
+void gated_deltanet_llama_chunk64_prefill_parallel_dispatch(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int rows, int num_heads, int group_count, int state_dim, float norm_eps)
+{
+    ck_threadpool_t *pool = ck_threadpool_global();
+    if (!pool || ck_threadpool_n_threads(pool) <= 1 ||
+        rows <= 1 || num_heads <= 1 || group_count <= 0 ||
+        num_heads % group_count != 0 || state_dim <= 0 || state_dim > 256 ||
+        !ck_deltanet_chunk64_available()) {
+        gated_deltanet_llama_chunk64_prefill_forward(
+            q, k, v, g, beta, state_in, state_out, out,
+            rows, num_heads, group_count, state_dim, norm_eps);
+        return;
+    }
+
+    deltanet_prefill_args_t args = {
+        .q = q,
+        .k = k,
+        .v = v,
+        .g = g,
+        .beta = beta,
+        .state_in = state_in,
+        .state_out = state_out,
+        .out = out,
+        .rows = rows,
+        .num_heads = num_heads,
+        .group_count = group_count,
+        .state_dim = state_dim,
+        .norm_eps = norm_eps,
+    };
+    int active = ck_threadpool_n_threads(pool);
+    if (active > num_heads) active = num_heads;
+    ck_threadpool_dispatch_n(pool, active, work_deltanet_chunk64_heads, &args);
 }
 
 void gated_deltanet_llama_prefill_parallel_dispatch(
@@ -493,6 +535,14 @@ void ck_q4k_packed_weight_cache_clear(void)
 void ck_parallel_prefill_shutdown(void)
 {
     /* Pool ownership remains with decode; prefill owns packed-weight caches. */
+    ck_q4k_packed_weight_cache_clear();
+}
+
+void ck_parallel_prefill_release_transient_caches(void)
+{
+    /* Packed pointers are looked up per provider call and are never retained
+     * in model state. A combined runtime can therefore release prefill's
+     * representations before decode establishes its own provider cache. */
     ck_q4k_packed_weight_cache_clear();
 }
 

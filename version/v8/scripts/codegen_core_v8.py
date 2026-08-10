@@ -3495,6 +3495,7 @@ CK_EXPORT int ck_model_embed_tokens(const int32_t *tokens, int count) {{
     /* Use batched prefill for multiple tokens unless the model requires decode replay. */
     if ({prefill_count_guard}{prefill_guard}) {{
         ck_prefill(g_model, tokens, count);{profile_dump_after_prefill}
+        ck_parallel_prefill_release_transient_caches();
         ck_trace_pos("embed_prefill_end", tokens[count - 1], count, before_pos, g_model->pos);
         return 0;
     }}

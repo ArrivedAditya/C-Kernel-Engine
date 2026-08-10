@@ -308,8 +308,11 @@ def _run_llama_greedy_sequence(inputs: dict[str, Any], args: argparse.Namespace)
             cmd.extend([
                 "--dump-dir", str(Path(dump_dir).resolve()),
                 "--dump-names", dump_names,
-                # Logits row N is produced by decoding the token selected at N-1.
-                "--dump-greedy-decode-step", str(persistent_dump_step - 1),
+                # The helper labels the initial prompt/prefix evaluation as
+                # trajectory step 0.  Its decode call for the token selected
+                # from logits row N-1 is therefore labelled step N, exactly
+                # matching the report's logits-step index.
+                "--dump-greedy-decode-step", str(persistent_dump_step),
             ])
             if bool(getattr(args, "llama_persistent_dump_flash_inputs", False)):
                 cmd.append("--dump-flash-inputs")

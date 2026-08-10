@@ -356,6 +356,14 @@ class TestV8PrefillCodegen(unittest.TestCase):
             "multimodal_bridge_contract": {
                 "prefix_policy": "mixed_visual_text_prefill",
                 "prefill_batching": "unified_mixed",
+                "providers": {
+                    "prefix_insert": {
+                        "resolved_function": "ck_multimodal_prefix_insert_f32",
+                    },
+                    "position_builder": {
+                        "resolved_function": "ck_multimodal_mrope_positions_2d",
+                    },
+                },
                 "prefill_schedule": {
                     "segments": ["text_before", "visual", "text_after"],
                     "cache_transition": "single_pass",
@@ -418,6 +426,11 @@ class TestV8PrefillCodegen(unittest.TestCase):
             "multimodal_bridge_contract": {
                 "prefix_policy": "mixed_visual_text_prefill",
                 "prefill_batching": "segmented_append",
+                "providers": {
+                    "prefix_insert": {
+                        "resolved_function": "ck_multimodal_prefix_insert_f32",
+                    },
+                },
                 "prefill_schedule": {
                     "segments": ["text_before", "visual", "text_after"],
                     "cache_transition": "append_preserve",
