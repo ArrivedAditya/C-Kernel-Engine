@@ -67,6 +67,10 @@
 /* Certified Q8_0 dot provider from gemm_kernels_q8_0.c. */
 void gemv_q8_0_q8_0_x4(float *y, const void *W, const void *x_q8,
                        int M, int K);
+void gemm_q8_0_q8_0_m2n4(float *C, const void *W, const void *A_q8,
+                         int M, int N, int K);
+void gemm_q8_0_q8_0_m2n4_strided(float *C, int ldc, const void *W,
+                                 const void *A_q8, int M, int N, int K);
 
 #if defined(__AVX512VNNI__) && defined(__AVX512VL__)
 static inline int32_t hsum256_epi32_q8_batch(__m256i v)
@@ -570,6 +574,40 @@ void gemm_nt_q8_0_q8_0(
         for (int m = 0; m < M; m++) {
             for (int n = 0; n < N; n++) {
                 C[(size_t)m * N + n] += bias[n];
+            }
+        }
+    }
+}
+
+void gemm_nt_q8_0_q8_0_m2n4(
+    const void *A,
+    const void *B,
+    const float *bias,
+    float *C,
+    int M, int N, int K)
+{
+    gemm_q8_0_q8_0_m2n4(C, B, A, M, N, K);
+    if (bias != NULL) {
+        for (int m = 0; m < M; ++m) {
+            for (int n = 0; n < N; ++n) {
+                C[(size_t)m * (size_t)N + n] += bias[n];
+            }
+        }
+    }
+}
+
+void gemm_nt_q8_0_q8_0_m2n4_tile(
+    const void *A,
+    const void *B,
+    const float *bias,
+    float *C,
+    int M, int N, int K, int ldc)
+{
+    gemm_q8_0_q8_0_m2n4_strided(C, ldc, B, A, M, N, K);
+    if (bias != NULL) {
+        for (int m = 0; m < M; ++m) {
+            for (int n = 0; n < N; ++n) {
+                C[(size_t)m * (size_t)ldc + n] += bias[n];
             }
         }
     }

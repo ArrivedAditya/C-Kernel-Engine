@@ -487,6 +487,17 @@ void gemm_nt_q8_0_q8_0(const void *A_q8,
                        float *C,
                        int M, int N, int K);
 
+void gemm_nt_q8_0_q8_0_m2n4(const void *A_q8,
+                            const void *B,
+                            const float *bias,
+                            float *C,
+                            int M, int N, int K);
+void gemm_nt_q8_0_q8_0_m2n4_tile(const void *A_q8,
+                                 const void *B,
+                                 const float *bias,
+                                 float *C,
+                                 int M, int N, int K, int ldc);
+
 // GEMM_NN: C[M,N] = A[M,K] @ B[K,N] + bias[N]
 // B is stored row-major as [K,N] (no transpose on B)
 // Used for backward d_input = d_output @ W
