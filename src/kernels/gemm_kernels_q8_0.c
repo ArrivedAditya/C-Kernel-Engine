@@ -1491,6 +1491,133 @@ void gemv_q8_0_q8_0_x4(float *y,
 #endif
 }
 
+/*
+ * Two-token by four-output Q8_0 provider.
+ *
+ * Each output retains the certified eight-lane accumulator, K traversal, FMA
+ * order, and horizontal reduction used by gemv_q8_0_q8_0_x4(). Processing two
+ * independent token rows together reuses every weight load without coupling
+ * their reductions.
+ */
+void gemm_q8_0_q8_0_m2n4_strided(float *C,
+                                  int ldc,
+                                  const void *W,
+                                  const void *A_q8,
+                                  int M, int N, int K)
+{
+#if defined(__AVX2__) || defined(__AVX512F__)
+    if (ck_q8_0_q8_0_debug_ref() || (K % QK8_0) != 0) {
+        const int nb = K / QK8_0;
+        const block_q8_0 *a = (const block_q8_0 *)A_q8;
+        for (int m = 0; m < M; ++m) {
+            gemv_q8_0_q8_0(C + (size_t)m * (size_t)ldc, W,
+                           a + (size_t)m * (size_t)nb, N, K);
+        }
+        return;
+    }
+
+    const block_q8_0 *w = (const block_q8_0 *)W;
+    const block_q8_0 *a = (const block_q8_0 *)A_q8;
+    const int nb = K / QK8_0;
+    int m = 0;
+    for (; m + 1 < M; m += 2) {
+        const block_q8_0 *a0 = a + (size_t)(m + 0) * (size_t)nb;
+        const block_q8_0 *a1 = a + (size_t)(m + 1) * (size_t)nb;
+        int n = 0;
+        for (; n + 3 < N; n += 4) {
+            const block_q8_0 *w0 = w + (size_t)(n + 0) * (size_t)nb;
+            const block_q8_0 *w1 = w + (size_t)(n + 1) * (size_t)nb;
+            const block_q8_0 *w2 = w + (size_t)(n + 2) * (size_t)nb;
+            const block_q8_0 *w3 = w + (size_t)(n + 3) * (size_t)nb;
+            __m256 acc00 = _mm256_setzero_ps();
+            __m256 acc01 = _mm256_setzero_ps();
+            __m256 acc02 = _mm256_setzero_ps();
+            __m256 acc03 = _mm256_setzero_ps();
+            __m256 acc10 = _mm256_setzero_ps();
+            __m256 acc11 = _mm256_setzero_ps();
+            __m256 acc12 = _mm256_setzero_ps();
+            __m256 acc13 = _mm256_setzero_ps();
+
+            for (int ib = 0; ib < nb; ++ib) {
+                const __m256i qa0 = _mm256_loadu_si256((const __m256i *)a0[ib].qs);
+                const __m256i qa1 = _mm256_loadu_si256((const __m256i *)a1[ib].qs);
+                const __m256i qw0 = _mm256_loadu_si256((const __m256i *)w0[ib].qs);
+                const __m256i qw1 = _mm256_loadu_si256((const __m256i *)w1[ib].qs);
+                const __m256i qw2 = _mm256_loadu_si256((const __m256i *)w2[ib].qs);
+                const __m256i qw3 = _mm256_loadu_si256((const __m256i *)w3[ib].qs);
+                const float da0 = CK_FP16_TO_FP32(a0[ib].d);
+                const float da1 = CK_FP16_TO_FP32(a1[ib].d);
+                const float dw0 = CK_FP16_TO_FP32(w0[ib].d);
+                const float dw1 = CK_FP16_TO_FP32(w1[ib].d);
+                const float dw2 = CK_FP16_TO_FP32(w2[ib].d);
+                const float dw3 = CK_FP16_TO_FP32(w3[ib].d);
+                const __m256 p00 = mul_sum_i8_pairs_float_q8_0_avx2(qw0, qa0);
+                const __m256 p01 = mul_sum_i8_pairs_float_q8_0_avx2(qw1, qa0);
+                const __m256 p02 = mul_sum_i8_pairs_float_q8_0_avx2(qw2, qa0);
+                const __m256 p03 = mul_sum_i8_pairs_float_q8_0_avx2(qw3, qa0);
+                const __m256 p10 = mul_sum_i8_pairs_float_q8_0_avx2(qw0, qa1);
+                const __m256 p11 = mul_sum_i8_pairs_float_q8_0_avx2(qw1, qa1);
+                const __m256 p12 = mul_sum_i8_pairs_float_q8_0_avx2(qw2, qa1);
+                const __m256 p13 = mul_sum_i8_pairs_float_q8_0_avx2(qw3, qa1);
+#if defined(__FMA__)
+                acc00 = _mm256_fmadd_ps(_mm256_set1_ps(dw0 * da0), p00, acc00);
+                acc01 = _mm256_fmadd_ps(_mm256_set1_ps(dw1 * da0), p01, acc01);
+                acc02 = _mm256_fmadd_ps(_mm256_set1_ps(dw2 * da0), p02, acc02);
+                acc03 = _mm256_fmadd_ps(_mm256_set1_ps(dw3 * da0), p03, acc03);
+                acc10 = _mm256_fmadd_ps(_mm256_set1_ps(dw0 * da1), p10, acc10);
+                acc11 = _mm256_fmadd_ps(_mm256_set1_ps(dw1 * da1), p11, acc11);
+                acc12 = _mm256_fmadd_ps(_mm256_set1_ps(dw2 * da1), p12, acc12);
+                acc13 = _mm256_fmadd_ps(_mm256_set1_ps(dw3 * da1), p13, acc13);
+#else
+                acc00 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw0 * da0), p00), acc00);
+                acc01 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw1 * da0), p01), acc01);
+                acc02 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw2 * da0), p02), acc02);
+                acc03 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw3 * da0), p03), acc03);
+                acc10 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw0 * da1), p10), acc10);
+                acc11 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw1 * da1), p11), acc11);
+                acc12 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw2 * da1), p12), acc12);
+                acc13 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw3 * da1), p13), acc13);
+#endif
+            }
+
+            C[(size_t)(m + 0) * (size_t)ldc + (n + 0)] = hsum_float_8_q8_0(acc00);
+            C[(size_t)(m + 0) * (size_t)ldc + (n + 1)] = hsum_float_8_q8_0(acc01);
+            C[(size_t)(m + 0) * (size_t)ldc + (n + 2)] = hsum_float_8_q8_0(acc02);
+            C[(size_t)(m + 0) * (size_t)ldc + (n + 3)] = hsum_float_8_q8_0(acc03);
+            C[(size_t)(m + 1) * (size_t)ldc + (n + 0)] = hsum_float_8_q8_0(acc10);
+            C[(size_t)(m + 1) * (size_t)ldc + (n + 1)] = hsum_float_8_q8_0(acc11);
+            C[(size_t)(m + 1) * (size_t)ldc + (n + 2)] = hsum_float_8_q8_0(acc12);
+            C[(size_t)(m + 1) * (size_t)ldc + (n + 3)] = hsum_float_8_q8_0(acc13);
+        }
+        if (n < N) {
+            gemv_q8_0_q8_0(C + (size_t)(m + 0) * (size_t)ldc + n,
+                           w + (size_t)n * (size_t)nb, a0, N - n, K);
+            gemv_q8_0_q8_0(C + (size_t)(m + 1) * (size_t)ldc + n,
+                           w + (size_t)n * (size_t)nb, a1, N - n, K);
+        }
+    }
+    if (m < M) {
+        gemv_q8_0_q8_0_x4(C + (size_t)m * (size_t)ldc, W,
+                          a + (size_t)m * (size_t)nb, N, K);
+    }
+#else
+    const int nb = K / QK8_0;
+    const block_q8_0 *a = (const block_q8_0 *)A_q8;
+    for (int m = 0; m < M; ++m) {
+        gemv_q8_0_q8_0(C + (size_t)m * (size_t)ldc, W,
+                       a + (size_t)m * (size_t)nb, N, K);
+    }
+#endif
+}
+
+void gemm_q8_0_q8_0_m2n4(float *C,
+                          const void *W,
+                          const void *A_q8,
+                          int M, int N, int K)
+{
+    gemm_q8_0_q8_0_m2n4_strided(C, N, W, A_q8, M, N, K);
+}
+
 /* ============================================================================
  * PARALLEL VERSIONS (for thread pool orchestration)
  *

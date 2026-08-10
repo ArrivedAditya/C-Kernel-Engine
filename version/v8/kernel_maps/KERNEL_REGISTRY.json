@@ -17797,7 +17797,8 @@
           "runtime": "ck_threadpool",
           "work_partition": [
             "serial",
-            "independent_rows"
+            "independent_rows",
+            "output_tiles"
           ],
           "dispatch": [
             "inline",
@@ -17915,8 +17916,8 @@
           "op_family": "gemm",
           "default_kernel": "gemm_nt_q8_0_q8_0",
           "dispatch_owner": "gemm_nt_q8_0_q8_0_parallel_dispatch",
-          "scheduling": "dynamic_independent_rows",
-          "selection_policy": "The public prefill dispatcher uses the certified four-output dot provider and dynamically distributes independent output rows. Static scheduling remains a diagnostic override."
+          "scheduling": "dynamic_output_tiles",
+          "selection_policy": "For 2 <= M < 256 on AVX2, dynamic prefill partitions independent 32-column output tiles and uses gemm_nt_q8_0_q8_0_m2n4 within each tile. From M >= 256 it dynamically distributes independent token-row pairs. Static scheduling uses the row-pair provider from M >= 64 and retains the established row provider below that threshold. Tails and unsupported ISAs retain gemm_nt_q8_0_q8_0."
         }
       },
       "impl": {
@@ -17927,6 +17928,20 @@
           "version/v8/src/ck_parallel_prefill_v8.c"
         ],
         "variants": [
+          {
+            "name": "avx2_m2n4",
+            "function": "gemm_nt_q8_0_q8_0_m2n4",
+            "priority": 240,
+            "requires": [
+              "avx2",
+              "fma"
+            ],
+            "shape_constraints": {
+              "M_min": 2,
+              "K_multiple": 32
+            },
+            "numerical_contract": "q8_0_weight_q8_0_input_llama_fp32_output"
+          },
           {
             "name": "avx2",
             "requires": [
@@ -17977,7 +17992,7 @@
           }
         ]
       },
-      "notes": "General matrix multiplication with Q8_0 weights and Q8_0 activations. AVX2 prefill reuses each activation load across four output rows and uses AVX-VNNI when available. Dynamic scheduling changes only ownership of independent M rows and therefore does not alter reduction order.",
+      "notes": "General matrix multiplication with Q8_0 weights and Q8_0 activations. AVX2 dynamic prefill assigns cache-line-disjoint output-column tiles for short and medium prompts, keeping each weight tile cache-resident while processing token pairs. Long prompts use dynamic token-row pairs because output tiling regresses once activation and attention pressure dominate. Each output preserves the certified reduction order.",
       "call_abi": {
         "version": 1,
         "params": [
