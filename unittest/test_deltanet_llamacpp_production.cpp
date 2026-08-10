@@ -27,6 +27,9 @@ void gated_deltanet_llama_prefill_parallel_dispatch(
 void gated_deltanet_llama_chunk64_prefill_forward(
         const float *, const float *, const float *, const float *, const float *,
         const float *, float *, float *, int, int, int, int, float);
+void gated_deltanet_llama_chunk64_prefill_parallel_dispatch(
+        const float *, const float *, const float *, const float *, const float *,
+        const float *, float *, float *, int, int, int, int, float);
 void recurrent_norm_gate_llama_avx2_forward(
         const float *, const float *, const float *, float *, int, int, int, float);
 }
@@ -390,7 +393,7 @@ static bool run_chunk_case(int rows) {
         std::printf("llama.cpp chunk graph execution failed\n");
         return false;
     }
-    gated_deltanet_llama_chunk64_prefill_forward(
+    gated_deltanet_llama_chunk64_prefill_parallel_dispatch(
         q.data(), k.data(), v.data(), g.data(), beta.data(),
         state.data(), ck_state.data(), ck_out.data(),
         rows, heads, groups, dim, 1e-6f);

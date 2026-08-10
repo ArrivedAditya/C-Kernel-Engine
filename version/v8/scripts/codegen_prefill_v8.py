@@ -2872,6 +2872,9 @@ CK_EXPORT int ck_model_forward_from_embeddings(int total_tokens, float *output) 
     g_model->rope_pos = 0;
     g_model->bridge_has_explicit_positions = 0;
     ck_prefill_from_embedded(g_model, total_tokens);
+#ifdef CK_HAS_PREFILL
+    ck_parallel_prefill_release_transient_caches();
+#endif
     if (output) memcpy(output, g_model->logits, VOCAB_SIZE * sizeof(float));
     return 0;
 }}
@@ -2907,6 +2910,9 @@ CK_EXPORT int ck_model_forward_segments_grid_ex(const int32_t *tokens_before,
     g_model->bridge_has_explicit_positions = 0;
 
 {segments_execute_block}
+#ifdef CK_HAS_PREFILL
+    ck_parallel_prefill_release_transient_caches();
+#endif
     if (output) memcpy(output, g_model->logits, VOCAB_SIZE * sizeof(float));
     return 0;
 }}
@@ -2949,6 +2955,9 @@ CK_EXPORT int ck_model_forward_mixed_grid_ex(const float *prefix_embeddings,
     }}
 
     ck_prefill_from_embedded(g_model, prefix_tokens + token_count);
+#ifdef CK_HAS_PREFILL
+    ck_parallel_prefill_release_transient_caches();
+#endif
     if (output) memcpy(output, g_model->logits, VOCAB_SIZE * sizeof(float));
     return 0;
 }}

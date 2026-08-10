@@ -281,7 +281,7 @@
         "prefill": {
           "contract_id": "gated_deltanet_llama_avx2_prefill_fp32_state",
           "validation": "validated",
-          "evidence": "Qwen3.6 stores 16 compact Q/K groups for 48 value heads; llama.cpp tiles groups 0..15 three times before its prompt DeltaNet arithmetic."
+          "evidence": "Qwen3.6 stores 16 compact Q/K groups for 48 value heads; this provider matches llama.cpp's 64-token chunked prompt DeltaNet arithmetic."
         },
         "decode": {
           "contract_id": "gated_deltanet_llama_avx2_decode_fp32_state",

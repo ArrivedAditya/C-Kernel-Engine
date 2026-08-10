@@ -37,6 +37,9 @@ extern "C" {
 void ck_parallel_prefill_init(void);
 void ck_parallel_prefill_shutdown(void);
 
+/** Release provider caches owned by a completed prefill phase before decode. */
+void ck_parallel_prefill_release_transient_caches(void);
+
 /** Release lazily repacked Q4_K weights at model/test teardown. */
 void ck_q4k_packed_weight_cache_clear(void);
 
@@ -50,6 +53,18 @@ void ck_q4k_packed_weight_cache_clear(void);
 int ck_q4k_prepare_vnni_x16_weight(const void *B, int N, int K);
 
 void gated_deltanet_llama_prefill_parallel_dispatch(
+    const float *q, const float *k, const float *v,
+    const float *g, const float *beta,
+    const float *state_in, float *state_out, float *out,
+    int rows, int num_heads, int group_count, int state_dim, float norm_eps);
+
+/**
+ * Execute llama.cpp's 64-token DeltaNet prefill order while assigning
+ * independent recurrent heads to the shared thread pool. Unlike the legacy
+ * experimental dispatcher, selecting this provider is sufficient; it does
+ * not depend on an environment switch.
+ */
+void gated_deltanet_llama_chunk64_prefill_parallel_dispatch(
     const float *q, const float *k, const float *v,
     const float *g, const float *beta,
     const float *state_in, float *state_out, float *out,

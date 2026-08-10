@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Run a private Qwen3-VL image corpus through exact CK/llama.cpp parity."""
+"""Run a private multimodal image corpus through exact CK/llama.cpp parity.
+
+The historical Qwen3-VL GGUF/mmproj path remains the default. A prebuilt
+encoder runtime can instead supply BF16/safetensors vision prefixes while the
+same redacted, resume-safe decoder oracle contract is retained.
+"""
 
 from __future__ import annotations
 
@@ -151,8 +156,6 @@ def _bridge_command(
         str(BRIDGE),
         "--decoder-gguf",
         str(args.decoder_gguf),
-        "--encoder-gguf",
-        str(args.mmproj_gguf),
         "--workdir",
         str(runtime_dir),
         "--prompt",
@@ -179,6 +182,11 @@ def _bridge_command(
         "--gemm-schedule",
         getattr(args, "gemm_schedule", "auto"),
     ]
+    encoder_runtime = getattr(args, "encoder_runtime", None)
+    if encoder_runtime is not None:
+        command.extend(["--encoder-runtime", str(encoder_runtime)])
+    else:
+        command.extend(["--encoder-gguf", str(args.mmproj_gguf)])
     composition_circuit = str(getattr(args, "composition_circuit", "") or "").strip()
     if composition_circuit:
         command.extend(["--composition-circuit", composition_circuit])
@@ -193,7 +201,7 @@ def _parity_command(
     workdir: Path,
     report_path: Path,
 ) -> list[str]:
-    return [
+    command = [
         sys.executable,
         str(PARITY),
         "--bridge-report",
@@ -224,6 +232,10 @@ def _parity_command(
         "--json-out",
         str(report_path),
     ]
+    encoder_runtime = getattr(args, "encoder_runtime", None)
+    if encoder_runtime is not None:
+        command.extend(["--ck-engine-so", str(Path(encoder_runtime) / "libckernel_engine.so")])
+    return command
 
 
 def _native_cli_command(
@@ -510,6 +522,7 @@ def _print_private_case_details(
     row: dict[str, Any],
     case_dir: Path,
     prompt: str,
+    model_label: str = "Qwen3-VL",
 ) -> None:
     bridge = _load_json_if_present(case_dir / "bridge_report.json")
     parity = _load_json_if_present(case_dir / "parity.json")
@@ -542,7 +555,7 @@ def _print_private_case_details(
 
     print()
     print("=" * 88)
-    print(f"QWEN3-VL PRIVATE PARITY | IMAGE {int(sample['index']):02d} | {label}")
+    print(f"{model_label.upper()} PRIVATE PARITY | IMAGE {int(sample['index']):02d} | {label}")
     print("-" * 88)
     print(f"Image       : {sample['image']}")
     print(f"Image SHA256: {sample['image_sha256']}")
@@ -658,10 +671,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--decoder-gguf", type=Path, required=True)
-    parser.add_argument("--mmproj-gguf", type=Path, required=True)
+    encoder_source = parser.add_mutually_exclusive_group(required=True)
+    encoder_source.add_argument("--mmproj-gguf", type=Path)
+    encoder_source.add_argument(
+        "--encoder-runtime",
+        type=Path,
+        help="Provenance-complete prebuilt encoder runtime; uses its fixed image geometry",
+    )
     parser.add_argument("--llama-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--runtime-workdir",
+        type=Path,
+        help="Reuse a shared bridge workdir containing decoder/ instead of storing it under --output-dir",
+    )
     parser.add_argument("--prompt", default=DEFAULT_PROMPT)
+    parser.add_argument("--model-label", default="Qwen3-VL")
     parser.add_argument("--expected-llama-commit", default=PINNED_LLAMA_COMMIT)
     parser.add_argument("--start-index", type=int, default=1)
     parser.add_argument("--limit", type=int)
@@ -732,13 +757,21 @@ def main() -> int:
     os.umask(0o077)
     args.manifest = args.manifest.expanduser().resolve()
     args.decoder_gguf = args.decoder_gguf.expanduser().resolve()
-    args.mmproj_gguf = args.mmproj_gguf.expanduser().resolve()
+    args.mmproj_gguf = args.mmproj_gguf.expanduser().resolve() if args.mmproj_gguf is not None else None
+    args.encoder_runtime = args.encoder_runtime.expanduser().resolve() if args.encoder_runtime is not None else None
     args.llama_root = args.llama_root.expanduser().resolve()
     args.output_dir = args.output_dir.expanduser().resolve()
+    args.runtime_workdir = args.runtime_workdir.expanduser().resolve() if args.runtime_workdir is not None else None
     args.native_cli = args.native_cli.expanduser().resolve()
-    for required in (args.decoder_gguf, args.mmproj_gguf):
+    for required in (args.decoder_gguf,):
         if not required.is_file():
             raise FileNotFoundError(required)
+    if args.mmproj_gguf is not None and not args.mmproj_gguf.is_file():
+        raise FileNotFoundError(args.mmproj_gguf)
+    if args.encoder_runtime is not None and not args.encoder_runtime.is_dir():
+        raise FileNotFoundError(args.encoder_runtime)
+    if args.runtime_workdir is not None and not (args.runtime_workdir / "decoder").is_dir():
+        raise FileNotFoundError(f"shared bridge workdir has no decoder runtime: {args.runtime_workdir}")
     if not args.dry_run and not args.native_cli.is_file():
         raise FileNotFoundError(f"native CLI is missing: {args.native_cli}")
     if not (args.llama_root / "build" / "bin" / "libllama.so").is_file():
@@ -762,18 +795,25 @@ def main() -> int:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     args.output_dir.chmod(0o700)
-    runtime_dir = args.output_dir / "runtime"
+    runtime_dir = args.runtime_workdir or (args.output_dir / "runtime")
     config = {
         "version": 2,
         "cke_commit": _git_commit(ROOT),
         "manifest_sha256": _sha256_file(args.manifest),
         "decoder": _file_identity(args.decoder_gguf, hash_content=False),
-        "mmproj": _file_identity(args.mmproj_gguf, hash_content=False),
+        "encoder_source": (
+            {"kind": "prebuilt_runtime", "path": str(args.encoder_runtime)}
+            if args.encoder_runtime is not None
+            else {"kind": "mmproj_gguf", **_file_identity(args.mmproj_gguf, hash_content=False)}
+        ),
         "llama_root": str(args.llama_root),
         "llama_commit": llama_commit,
         "expected_llama_commit": args.expected_llama_commit,
         "compiler": args.compiler,
         "prompt_sha256": hashlib.sha256(args.prompt.encode("utf-8")).hexdigest(),
+        "chat_template": str(args.chat_template),
+        "model_label": str(args.model_label),
+        "runtime_workdir": str(runtime_dir),
         "context_len": args.context_len,
         "image_max_tokens": args.image_max_tokens,
         "max_new_tokens": args.max_new_tokens,
@@ -851,6 +891,7 @@ def main() -> int:
                     row=resumed,
                     case_dir=case_dir,
                     prompt=args.prompt,
+                    model_label=args.model_label,
                 )
             _json_write(args.output_dir / "summary.json", _summary(selected=selected, rows=rows, config=config))
             continue
@@ -967,6 +1008,7 @@ def main() -> int:
                     row=row,
                     case_dir=case_dir,
                     prompt=args.prompt,
+                    model_label=args.model_label,
                 )
             if row["status"] != "pass" and not args.continue_on_failure:
                 break

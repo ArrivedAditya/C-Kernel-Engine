@@ -27,7 +27,7 @@ def load_module():
 
 
 class MultitokenEOSContractTests(unittest.TestCase):
-    def test_llama_persistent_dump_targets_decode_call_before_logits_step(self) -> None:
+    def test_llama_persistent_dump_uses_trajectory_logits_step_index(self) -> None:
         observed = {}
 
         def run_helper(command, **kwargs):
@@ -74,7 +74,7 @@ class MultitokenEOSContractTests(unittest.TestCase):
 
         command = observed["command"]
         index = command.index("--dump-greedy-decode-step")
-        self.assertEqual(command[index + 1], "4")
+        self.assertEqual(command[index + 1], "5")
         self.assertEqual(command[command.index("--dump-names") + 1], "l_out-0")
         self.assertIn("--dump-flash-inputs", command)
         self.assertEqual(result["oracle_evidence"]["commit"], "a" * 40)

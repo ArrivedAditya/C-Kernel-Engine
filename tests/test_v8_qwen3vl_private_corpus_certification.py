@@ -207,12 +207,50 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
         self.assertIn("--max-new-tokens 128", rendered)
         self.assertIn("--gemm-schedule auto", rendered)
 
+        parser_values.encoder_runtime = Path("encoder-runtime")
+        command = self.module._parity_command(
+            parser_values,
+            bridge_report=Path("bridge.json"),
+            prefix_path=Path("prefix.f32"),
+            workdir=Path("work"),
+            report_path=Path("report.json"),
+        )
+        self.assertIn(
+            "--ck-engine-so encoder-runtime/libckernel_engine.so",
+            " ".join(map(str, command)),
+        )
+
+    def test_bridge_command_accepts_prebuilt_encoder_runtime(self) -> None:
+        args = SimpleNamespace(
+            decoder_gguf=Path("decoder.gguf"),
+            mmproj_gguf=None,
+            encoder_runtime=Path("encoder-runtime"),
+            prompt="Extract visible form fields as compact JSON.",
+            chat_template="auto",
+            image_max_tokens=1024,
+            context_len=4096,
+            top_k=16,
+            gemm_schedule="auto",
+        )
+        command = self.module._bridge_command(
+            args,
+            image=Path("image.jpg"),
+            runtime_dir=Path("runtime"),
+            prefix_path=Path("prefix.f32"),
+        )
+        rendered = " ".join(map(str, command))
+        self.assertIn("--encoder-runtime encoder-runtime", rendered)
+        self.assertNotIn("--encoder-gguf", command)
+        self.assertIn("--chat-template auto", rendered)
+
     def test_bridge_command_uses_requested_chat_template(self) -> None:
         args = SimpleNamespace(
             decoder_gguf=Path("decoder.gguf"),
             mmproj_gguf=Path("mmproj.gguf"),
+            encoder_runtime=None,
             prompt="Extract text.",
             chat_template="auto",
+            composition_circuit="",
             image_max_tokens=1024,
             context_len=2048,
             top_k=16,
@@ -231,6 +269,7 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
         args = SimpleNamespace(
             decoder_gguf=Path("decoder.gguf"),
             mmproj_gguf=Path("mmproj.gguf"),
+            encoder_runtime=None,
             prompt="Extract text.",
             chat_template="auto",
             composition_circuit="qwen36vl",

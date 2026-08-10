@@ -202,6 +202,10 @@ class Qwen36VLExplicitCircuitTests(unittest.TestCase):
         api = codegen_prefill_v8.emit_multimodal_bridge_api([embedding_op], config)
         self.assertIn("return ck_multimodal_prefix_insert_f32(", api)
         self.assertIn("if (prefix_tokens > 0)", api)
+        self.assertEqual(
+            api.count("ck_parallel_prefill_release_transient_caches();"),
+            3,
+        )
         self.assertNotIn("for (int i = 0; i < count; ++i)", api)
 
     def test_explicit_stitch_cannot_fall_back_to_codegen_helpers(self) -> None:

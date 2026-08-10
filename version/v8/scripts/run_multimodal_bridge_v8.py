@@ -113,6 +113,18 @@ def _load_explicit_composition_circuit(name: str | None) -> dict[str, Any] | Non
     return circuit
 
 
+def _validate_composition_encoder_source(
+    circuit: dict[str, Any] | None,
+    *,
+    encoder_gguf: Path | None,
+    encoder_runtime: Path | None,
+) -> None:
+    if circuit is not None and encoder_gguf is None and encoder_runtime is None:
+        raise RuntimeError(
+            "explicit multimodal composition requires --encoder-gguf or --encoder-runtime"
+        )
+
+
 def _composition_exported_contract(
     circuit: dict[str, Any], export_name: str
 ) -> dict[str, Any]:
@@ -2266,6 +2278,49 @@ def _prepare_encoder_runtime(
     }
 
 
+def _load_prebuilt_encoder_runtime(runtime_dir: Path) -> dict[str, Any]:
+    """Load a provenance-complete encoder runtime without regenerating it.
+
+    This is useful for private corpus gates and BF16 safetensors encoders where
+    conversion is intentionally performed once, outside the per-image loop.
+    The runtime remains geometry-specific; callers must use the dimensions in
+    its layout rather than silently applying smart-resize overrides.
+    """
+    runtime_dir = runtime_dir.resolve()
+    if not runtime_dir.is_dir():
+        raise FileNotFoundError(f"prebuilt encoder runtime is missing: {runtime_dir}")
+    libraries = sorted(
+        path for path in runtime_dir.glob("lib*encoder*.so")
+        if path.name != "libckernel_engine.so"
+    )
+    if len(libraries) != 1:
+        raise RuntimeError(
+            "prebuilt encoder runtime must contain exactly one encoder library: "
+            f"dir={runtime_dir} candidates={[path.name for path in libraries]}"
+        )
+    required = {
+        "weights_bump": runtime_dir / "weights.bump",
+        "manifest_map": runtime_dir / "weights_manifest.map",
+        "layout_path": runtime_dir / "layout.json",
+        "engine_so": runtime_dir / "libckernel_engine.so",
+    }
+    missing = [str(path) for path in required.values() if not path.is_file()]
+    if missing:
+        raise RuntimeError(f"prebuilt encoder runtime is incomplete: missing={missing}")
+    layout = _load_layout(required["layout_path"])
+    config = dict(layout.get("config", {}) or {})
+    return {
+        "gguf": None,
+        "runtime_dir": runtime_dir,
+        "weights_bump": required["weights_bump"],
+        "manifest_map": required["manifest_map"],
+        "layout_path": required["layout_path"],
+        "so_path": libraries[0],
+        "engine_so": required["engine_so"],
+        "embed_dim": int(config.get("embed_dim", 0) or 0),
+    }
+
+
 def _prepare_decoder_runtime(
     gguf_path: Path,
     output_dir: Path,
@@ -3425,7 +3480,14 @@ def _derive_decoder_context_len(
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Explicit v8 multimodal bridge runner")
     ap.add_argument("--decoder-gguf", type=Path, required=True, help="Decoder GGUF to lower/codegen")
-    ap.add_argument("--encoder-gguf", type=Path, default=None, help="Optional vision encoder/mmproj GGUF")
+    encoder_source = ap.add_mutually_exclusive_group()
+    encoder_source.add_argument("--encoder-gguf", type=Path, default=None, help="Optional vision encoder/mmproj GGUF")
+    encoder_source.add_argument(
+        "--encoder-runtime",
+        type=Path,
+        default=None,
+        help="Optional provenance-complete prebuilt vision encoder runtime directory",
+    )
     ap.add_argument(
         "--composition-circuit",
         default=None,
@@ -3488,17 +3550,25 @@ def main(argv: list[str] | None = None) -> int:
     encoder_dir = workdir / "encoder"
     decoder_dir = workdir / "decoder"
     vision_activation_overrides = _parse_activation_preference_overrides(args.vision_activation_pref)
+    if args.encoder_runtime is not None and vision_activation_overrides:
+        ap.error("--vision-activation-pref cannot modify a prebuilt --encoder-runtime")
+    if args.encoder_runtime is not None and args.profile_encoder:
+        ap.error("--profile-encoder requires --encoder-gguf so a profile runtime can be compiled")
 
     _log_progress(f"start workdir={workdir}")
-    _ensure_engine_lib(openmp=args.encoder_gguf is not None)
-    _log_progress(f"engine ready openmp={'on' if args.encoder_gguf is not None else 'off'}")
+    has_encoder = bool(args.encoder_gguf is not None or args.encoder_runtime is not None)
+    _ensure_engine_lib(openmp=has_encoder)
+    _log_progress(f"engine ready openmp={'on' if has_encoder else 'off'}")
 
     tokenizer = GGUFTokenizer.from_gguf(str(args.decoder_gguf.resolve()))
     chat_template_mode = "none" if args.no_chat_template else args.chat_template
     composition_circuit = _load_explicit_composition_circuit(args.composition_circuit)
+    _validate_composition_encoder_source(
+        composition_circuit,
+        encoder_gguf=args.encoder_gguf,
+        encoder_runtime=args.encoder_runtime,
+    )
     if composition_circuit is not None:
-        if args.encoder_gguf is None:
-            raise RuntimeError("explicit multimodal composition requires --encoder-gguf")
         chat_contract = _composition_exported_contract(composition_circuit, "chat_contract")
         bridge_contract = _composition_bridge_contract(composition_circuit)
         chat_contract["image_begin_marker"] = str(bridge_contract["image_begin_marker"])
@@ -3523,7 +3593,7 @@ def main(argv: list[str] | None = None) -> int:
         args.bridge_generation_mode
         or _bridge_generation_mode_from_policy(bridge_contract, fallback="mixed-replay")
     )
-    include_image_chunks = bool(args.encoder_gguf is not None or int(args.synthetic_prefix_tokens) > 0)
+    include_image_chunks = bool(has_encoder or int(args.synthetic_prefix_tokens) > 0)
     prompt_segments = _format_multimodal_prompt_segments(
         args.prompt,
         chat_contract,
@@ -3572,7 +3642,15 @@ def main(argv: list[str] | None = None) -> int:
         "text_prompt_tokens": int(total_text_prompt_tokens),
     }
 
-    if args.encoder_gguf is not None:
+    encoder_runtime: dict[str, Any] | None = None
+    if args.encoder_runtime is not None:
+        _log_progress(f"encoder runtime load start dir={args.encoder_runtime.resolve()}")
+        encoder_prep_t0 = time.perf_counter()
+        encoder_runtime = _load_prebuilt_encoder_runtime(args.encoder_runtime)
+        encoder_prepare_elapsed = time.perf_counter() - encoder_prep_t0
+        timings["encoder_prepare_ms"] = encoder_prepare_elapsed * 1000.0
+        _log_progress(f"encoder runtime load done elapsed={encoder_prepare_elapsed:.2f}s")
+    elif args.encoder_gguf is not None:
         _log_progress(f"encoder runtime prepare start gguf={args.encoder_gguf.resolve()}")
         encoder_prep_t0 = time.perf_counter()
         encoder_runtime = _prepare_encoder_runtime(
@@ -3587,6 +3665,8 @@ def main(argv: list[str] | None = None) -> int:
         encoder_prepare_elapsed = time.perf_counter() - encoder_prep_t0
         timings["encoder_prepare_ms"] = encoder_prepare_elapsed * 1000.0
         _log_progress(f"encoder runtime prepare done elapsed={encoder_prepare_elapsed:.2f}s")
+
+    if encoder_runtime is not None:
         _log_progress("encoder execution start")
         encoder_exec_t0 = time.perf_counter()
         encoder_profile_csv_path = (encoder_dir / "encoder_profile_current.csv") if bool(args.profile_encoder) else None
@@ -3632,6 +3712,17 @@ def main(argv: list[str] | None = None) -> int:
     decoder_prepare_elapsed = time.perf_counter() - decoder_prep_t0
     timings["decoder_prepare_ms"] = decoder_prepare_elapsed * 1000.0
     _log_progress(f"decoder runtime prepare done elapsed={decoder_prepare_elapsed:.2f}s")
+    if args.encoder_runtime is not None and encoder_runtime is not None:
+        # A BF16 prebuilt encoder can require a superset engine (oneDNN/MKL and
+        # exact storage-boundary providers).  Both generated objects share the
+        # canonical engine SONAME, so select that superset engine explicitly
+        # for the decoder as well.  The adjacent copy keeps standalone native
+        # replay byte-identical to the in-process bridge.
+        canonical_engine = Path(encoder_runtime["engine_so"]).resolve()
+        _sync_runtime_engine(canonical_engine, Path(decoder_runtime["so_path"]))
+        _sync_runtime_engine(canonical_engine, Path(decoder_runtime["prefill_so_path"]))
+        decoder_runtime["engine_so"] = str(canonical_engine)
+        _log_progress(f"decoder runtime selected prebuilt encoder engine={canonical_engine}")
 
     composition_evidence: dict[str, Any] | None = None
     if composition_circuit is not None:
@@ -3800,10 +3891,25 @@ def main(argv: list[str] | None = None) -> int:
             "so_path": str(decoder_runtime["so_path"]),
             "c_path": str(decoder_runtime["c_path"]),
         },
-        "encoder_runtime": {
-            "gguf": str(args.encoder_gguf.resolve()),
-            "workdir": str(encoder_dir),
-        } if args.encoder_gguf is not None else None,
+        "encoder_runtime": (
+            {
+                "source": "prebuilt",
+                "gguf": None,
+                "workdir": str(args.encoder_runtime.resolve()),
+                "so_path": str(encoder_runtime["so_path"]),
+            }
+            if args.encoder_runtime is not None and encoder_runtime is not None
+            else (
+                {
+                    "source": "gguf",
+                    "gguf": str(args.encoder_gguf.resolve()),
+                    "workdir": str(encoder_dir),
+                    "so_path": str(encoder_runtime["so_path"]),
+                }
+                if args.encoder_gguf is not None and encoder_runtime is not None
+                else None
+            )
+        ),
         "encoder_report": {
             "embed_dim": int(encoder_report["embed_dim"]),
             "prefix_tokens": int(encoder_report["prefix_tokens"]),
