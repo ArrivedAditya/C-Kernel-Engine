@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Architecture  | C-Kernel-Engine</title>
-    <meta name="description" content="C-Kernel-Engine documentation for a CPU-native AI runtime, kernels, code generation, training, and inference on Linux systems.">
+    <title>Kernel Maps and Provider Selection | C-Kernel-Engine</title>
+    <meta name="description" content="How C-Kernel-Engine v8 selects which physical C kernel executes each logical op: 284 machine-checked kernel maps, a fail-closed resolver, the residual_save to memcpy case study, and the ratcheted migration scoreboard.">
     <meta name="robots" content="index,follow">
-    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/architecture.html">
-    <meta property="og:title" content="Architecture  | C-Kernel-Engine">
-    <meta property="og:description" content="C-Kernel-Engine documentation for a CPU-native AI runtime, kernels, code generation, training, and inference on Linux systems.">
+    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/kernel-maps.html">
+    <meta property="og:title" content="Kernel Maps and Provider Selection | C-Kernel-Engine">
+    <meta property="og:description" content="How C-Kernel-Engine v8 selects which physical C kernel executes each logical op: 284 machine-checked kernel maps, a fail-closed resolver, the residual_save to memcpy case study, and the ratcheted migration scoreboard.">
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/architecture.html">
+    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/kernel-maps.html">
     <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
     <style>
         :root {
@@ -979,468 +979,235 @@
     </header>
     <main>
 
-<h1>System Architecture</h1>
+<style>
+.km-note{border:1px solid rgba(7,173,248,.45);border-radius:8px;padding:1rem;background:rgba(7,173,248,.06)}
+.km-good{border-color:rgba(48,196,141,.55);background:rgba(48,196,141,.06)}
+.km-bad{border-color:rgba(251,113,133,.55);background:rgba(251,113,133,.06)}
+.km-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem;margin:1rem 0}
+.km-card{border:1px solid var(--grey);border-left:4px solid var(--orange);border-radius:8px;padding:1rem;background:rgba(255,255,255,.02)}
+.km-card h3{margin-top:0}
+.km-flow{overflow-x:auto}
+.km-flow img{display:block;width:100%;min-width:880px;height:auto}
+.km-table{width:100%;border-collapse:collapse;margin:1rem 0 2rem}
+.km-table th,.km-table td{padding:.65rem .78rem;border:1px solid var(--grey);text-align:left;vertical-align:top}
+.km-table th{color:var(--orange);background:rgba(255,180,0,.07)}
+.km-table td:first-child{font-family:'JetBrains Mono',monospace;white-space:nowrap}
+.km-dot{display:inline-block;width:.62rem;height:.62rem;border-radius:50%;margin-right:.45rem;vertical-align:middle}
+.km-dot.floor{background:var(--green)}
+.km-dot.ceiling{background:#fb7185}
+.km-tag{font-family:'JetBrains Mono',monospace;font-size:.72rem;background:rgba(188,140,255,.12);border:1px solid rgba(188,140,255,.35);color:var(--text-secondary);border-radius:999px;padding:.18rem .55rem;display:inline-block;margin:.15rem .25rem .15rem 0}
+p code,li code,td code{overflow-wrap:anywhere}
+@media (max-width:700px){.km-table{display:block;max-width:100%;overflow-x:auto}.km-table td:first-child{white-space:normal}}
+</style>
 
-<p>C-Kernel-Engine uses a three-stage pipeline to transform model configurations into optimized C runtimes.</p>
+<h1>Kernel Maps and Provider Selection</h1>
 
-<div class="card card-accent">
-    <p style="margin: 0;"><strong>New:</strong> See the <a href="ir-pipeline.html">IR Pipeline v6.6</a> page for end-to-end visuals of templates, IR1/IR2, lowering, memory layout, and dumb codegen.</p>
-</div>
+<p class="lead">
+    How CKE v8 decides <em>which physical C kernel</em> executes each logical operation — and why that decision
+    lives in 284 machine-checked JSON maps instead of in Python conditionals.
+</p>
 
-<div class="card card-accent">
-    <p style="margin: 0;"><strong>Performance Methodology:</strong> See <a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a> for the VTune, Advisor, roofline, CK profile, parity, and E2E workflow used to push generated kernels toward CPU-node limits.</p>
-</div>
-
-<div class="card card-accent">
-    <p style="margin: 0;"><strong>v8 Compiler Hardening:</strong> See <a href="v8-numerical-contracts.html">v8 Numerical Contracts</a> for circuits, kernel-map capabilities, explicit attention reductions, deterministic resolution, generated-artifact equivalence, and parity promotion gates. See <a href="kernel-maps.html">Kernel Maps and Provider Selection</a> for how the resolver picks a physical provider per op and how the legacy migration is tracked.</p>
-</div>
-
-<h2>Active v8 Compiler Architecture</h2>
-
-<p>The active v8 inference compiler consumes three authoritative inputs: model weights, an architecture circuit, and executable kernel maps. The circuit owns graph structure and required semantics. Kernel maps own ABI and implementation capability. The DSL resolves and stitches; generated C does not guess.</p>
-
-<p>This boundary is executable policy, not only documentation. The v8 and v7 DSL audits reject new model-family dispatch in generic compiler/codegen functions, including dispatch hidden behind local aliases. Exact kernel operations do not fall back to broader families, malformed per-layer dimensions fail, and circuit weight policies are schema validated. New-model support must therefore extend a circuit, a kernel map, or a tested kernel instead of accumulating another compiler conditional.</p>
-
-<div class="img-container svg-viewer" data-title="v8 Numerical Contract Architecture">
-    <img src="assets/v8-numerical-contracts.svg" alt="v8 weights, circuits, kernel maps, numerical contract resolution, IR lowering and generated C">
-</div>
-
-<div class="grid grid-2">
-    <div class="card"><h3 style="margin-top:0;">Compiler Input</h3><pre>weights + circuits + kernel maps
-             ↓
-deterministic DSL lowering
-             ↓
-generated C</pre><p>Model definitions live in <code>version/v8/circuits/</code>. The historical embedded BUMP key remains <code>template</code> for serialized compatibility.</p></div>
-    <div class="card"><h3 style="margin-top:0;">Semantic Selection</h3><p>Precision-sensitive operations declare <code>required_contracts</code>. Real kernel maps advertise <code>provides</code> and <code>supported_reductions</code>. Missing and ambiguous providers are compile-time errors.</p></div>
-    <div class="card"><h3 style="margin-top:0;">Authoritative Resolution</h3><p>The resolver selects the compatible kernel and contract before GraphIR construction. GraphIR records that decision; LoweredIR, call-ready IR, and generated C must preserve it without fallback or reselection.</p></div>
-    <div class="card"><h3 style="margin-top:0;">Promotion Gate</h3><p>Leaf tests are necessary but insufficient. Public routing, threaded thresholds, stitched layer boundaries, full replay, persistent decode, and E2E behavior must agree before production validation.</p></div>
-</div>
-
-<h3>Why reduction is architecture</h3>
-<p>Attention is not fully specified by <code>softmax(QKᵀ)V</code>. Q/K rounding, score accumulation, online-softmax state, V accumulation, split thresholds, partial storage, and merge order can change logits. v8 records these as complete contracts instead of inferring them from strict-mode flags, cache dtypes, sequence lengths, or thread counts.</p>
-
-<h3>Why threading is a kernel capability</h3>
-<p>Threading metadata applies across attention, GEMM, GEMV, and other parallel operators. Kernel maps declare the runtime, work partition, dispatch mechanism, and whether parallel order changes a reduction. The performance planner may choose among semantically compatible implementations, but it cannot silently change accumulation order to gain speed.</p>
-
-<div class="card">
-    <h3 style="margin-top: 0;">The "Website" Metaphor</h3>
-    <p>The engine treats LLMs like a website generator treats pages. This allows us to unroll the "Block" section efficiently in C without complex control flow.</p>
-    <table>
-        <tr>
-            <th>Section</th>
-            <th>Website</th>
-            <th>LLM</th>
-        </tr>
-        <tr>
-            <td><strong>Header</strong></td>
-            <td>&lt;head&gt;, Nav, CSS</td>
-            <td>Embeddings, Positional Encoding</td>
-        </tr>
-        <tr>
-            <td><strong>Block</strong></td>
-            <td>Blog Posts, Articles</td>
-            <td>Transformer Layers (repeated)</td>
-        </tr>
-        <tr>
-            <td><strong>Footer</strong></td>
-            <td>Copyright, Scripts</td>
-            <td>Final Norm, Language Head</td>
-        </tr>
-    </table>
-</div>
-
-<div class="img-container">
-    <img src="assets/architecture-overview.svg" alt="Architecture Overview">
-</div>
-
-<h2>Operator Spectrum Map</h2>
-
-<p>This view connects the data path (pretrain to RLHF/GRPO) with the compute path (math to inference/backprop) so operators can reason about the full stack in one place.</p>
-
-<div class="card" style="overflow-x: auto; border: 1px solid var(--grey); border-radius: 12px; padding: 0.95rem; background: radial-gradient(circle at 12% 0%, rgba(255, 180, 0, 0.16), transparent 40%), radial-gradient(circle at 90% 15%, rgba(7, 173, 248, 0.12), transparent 42%), var(--dark-card);">
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:0.55rem;">
-        <span style="font-size:0.8rem; color:var(--grey-light);">Click the map to open in the dark in-site SVG viewer.</span>
-        <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
-            <a href="assets/operator-spectrum-map.svg" download style="font-size:0.8rem;">Download SVG</a>
-        </div>
-    </div>
-    <div class="img-container svg-viewer" data-title="Operator Spectrum Map" style="margin:0;">
-        <img src="assets/operator-spectrum-map.svg" alt="Operator Spectrum Map" style="display:block; width:100%; min-width:900px; height:auto; border-radius:10px; border:1px solid rgba(148,163,184,0.35);">
-    </div>
-</div>
-<div class="grid grid-2">
-    <div class="card">
-        <h3 style="margin-top: 0;">Data Runbook Links</h3>
-        <ul>
-            <li><a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook</a> (Stage A and Stage B corpus generation)</li>
-            <li><a href="v7-runbook.html">v7 Train + Inference Runbook</a> (parity gates and train execution)</li>
-        </ul>
-    </div>
-    <div class="card">
-        <h3 style="margin-top: 0;">Computation Runbook Links</h3>
-        <ul>
-            <li><a href="ir-pipeline.html">IR Pipeline</a> (IR1/IR2/lowering and memory mapping)</li>
-            <li><a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a> (VTune, Advisor, roofline, CK profile, and parity gates)</li>
-            <li><a href="v7-profiling.html">v7 Profiling</a> (perf, flamegraph, cache, VTune/Advisor)</li>
-            <li><a href="v7-backprop-ir.html">v7 Backprop IR</a> (gradient path and training runtime checks)</li>
-            <li><a href="v8-whisper-tiny.html">Whisper Tiny End-to-End</a> (generated audio encoder/decoder circuits from PCM16 WAV)</li>
-        </ul>
-    </div>
-</div>
-
-<h2>Stage 1: Model Configuration</h2>
-
-<div class="card card-accent">
-    <p>The engine accepts HuggingFace-style <code>config.json</code> files as input:</p>
-    <pre>{
-  "hidden_size": 768,
-  "num_attention_heads": 12,
-  "num_key_value_heads": 4,
-  "num_hidden_layers": 6,
-  "intermediate_size": 2048,
-  "rms_norm_eps": 1e-5,
-  "rope_theta": 10000.0
-}</pre>
-    <p>This defines all the dimensions needed to generate layer structures.</p>
-</div>
-
-<h2>Stage 2: Intermediate Representation</h2>
-
-<p>The IR Builder creates a structured representation of each layer:</p>
-
-<div class="grid grid-2">
-    <div class="card">
-        <h3 style="margin-top: 0;">CKLayerIR Structure</h3>
-        <pre>typedef struct {
-    int layer_index;
-    int embed_dim;
-    int num_heads;
-    int num_kv_heads;
-    int head_dim;
-    int intermediate_dim;
-    int context_window;
-    float eps;
-    float rope_theta;
-} CKLayerIR;</pre>
-    </div>
-    <div class="card">
-        <h3 style="margin-top: 0;">Key Decisions</h3>
-        <ul>
-            <li><strong>Aligned dimensions</strong>: Head dim padded to cache-friendly sizes</li>
-            <li><strong>GQA ratio</strong>: Computed from num_heads / num_kv_heads</li>
-            <li><strong>Buffer sizing</strong>: Calculated for all intermediate activations</li>
-        </ul>
-    </div>
-</div>
-
-<h2>Stage 3: Code Generation</h2>
-
-<p>The codegen emits complete C functions for forward and backward passes:</p>
-
-<div class="card">
-    <h3 style="margin-top: 0;">Generated Forward Pass</h3>
-    <pre>void forward_layer_0(
-    const float *input,
-    const ModelWeights *weights,
-    LayerActivations *acts,
-    const float *cos_cache,
-    const float *sin_cache,
-    int num_tokens
-) {
-    // 1. Pre-attention RMSNorm
-    rmsnorm_forward(input, weights->ln1_gamma, acts->ln1_out, ...);
-
-    // 2. QKV projection
-    ck_qkv_project_head_major(acts->ln1_out, weights->wq, ...);
-
-    // 3. Apply RoPE
-    rope_forward_qk(acts->q, acts->k, cos_cache, sin_cache, ...);
-
-    // 4. Attention
-    attention_forward_causal_head_major_gqa(acts->q, acts->k, acts->v, ...);
-
-    // 5. Output projection + residual
-    // 6. Post-attention RMSNorm
-    // 7. MLP (SwiGLU)
-    // 8. Final residual
-}</pre>
-</div>
-
-<div class="card card-accent">
-    <h3 style="margin-top: 0;">Generated Backward Pass</h3>
-    <pre>void backward_layer_0(
-    const float *d_output,
-    const ModelWeights *weights,
-    const LayerActivations *acts,
-    WeightGradients *grads,
-    float *d_input
-) {
-    // Reverse order of forward pass
-    // Each kernel uses saved activations from forward
-
-    // 1. Backward through final residual
-    // 2. Backward through MLP (SwiGLU)
-    // 3. Backward through RMSNorm 2
-    // 4. Backward through attention output projection
-    // 5. Backward through attention
-    attention_backward_causal_head_major_gqa(d_attn_out, acts->q, ...);
-
-    // 6. Backward through RoPE (inverse rotation)
-    rope_backward_qk(d_q, d_k, ...);
-
-    // 7. Backward through QKV projection
-    // 8. Backward through RMSNorm 1
-}</pre>
-</div>
-
-<h2>Memory Layout</h2>
-
-<div class="alert alert-info">
+<div class="alert alert-warning">
     <div class="alert-icon">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
     </div>
-    <div>
-        <strong>Head-Major Layout</strong><br>
-        Q/K/V use <code>[num_heads, num_tokens, head_dim]</code> layout for cache-efficient attention computation.
+    <div style="min-width: 0;">
+        <strong>Two different "kernel map" systems exist in this repository.</strong><br>
+        The top-level <code>kernel_maps/README.md</code> documents the <strong>older v7-era</strong> map format
+        (decoder layer plans and buffer layouts consumed by <code>gen_kernel_specs.py</code>). This page is about
+        the <strong>v8</strong> provider-selection system in <code>version/v8/kernel_maps/*.json</code> — a
+        different format with a different job. Do not confuse the two.
     </div>
 </div>
 
-<table>
-    <tr>
-        <th>Buffer</th>
-        <th>Layout</th>
-        <th>Size</th>
-    </tr>
-    <tr>
-        <td><code>input</code></td>
-        <td>[B, T, D]</td>
-        <td>batch * tokens * embed_dim</td>
-    </tr>
-    <tr>
-        <td><code>Q</code></td>
-        <td>[H, T, d_k]</td>
-        <td>num_heads * tokens * head_dim</td>
-    </tr>
-    <tr>
-        <td><code>K, V</code></td>
-        <td>[H_kv, T, d_k]</td>
-        <td>num_kv_heads * tokens * head_dim</td>
-    </tr>
-    <tr>
-        <td><code>scores</code></td>
-        <td>[H, T, T]</td>
-        <td>num_heads * tokens * context_window</td>
-    </tr>
-    <tr>
-        <td><code>mlp_hidden</code></td>
-        <td>[T, 2*I]</td>
-        <td>tokens * 2 * intermediate_dim</td>
-    </tr>
+<h2>The Three-Level Separation — and Why</h2>
+
+<p>
+    One CKE runtime serves many model families &times; quantization formats &times; ISA variants &times;
+    execution phases, all on CPUs. That product space is why v8 separates <strong>what math is required</strong>
+    from <strong>which provider runs</strong> from <strong>how the op is physically executed</strong>:
+</p>
+
+<div class="img-container svg-viewer km-flow" data-title="The three-level stack: circuit, DSL resolver, kernel map, C kernel, with what each level owns">
+  <img src="assets/kernel-maps-layers.svg" alt="Four-level stack. Level 1, the circuit in version/v8/circuits, owns what math is required: op instances, named port edges and required numerical contracts, and must not name physical provider IDs. Level 2, the DSL resolver in build_ir_v8.py, owns which provider runs: mechanical matching on contract, phase, dtype, shape, layout, ISA and alias safety, with no model-name checks. Level 3, the 284 kernel maps in version/v8/kernel_maps, own how the op is executed: numerical-contract identity, port dtype, layout, stride, storage, persistent-state and alias semantics, call ABI, lifecycle and priority. Level 4, the C kernel, owns nothing but the math.">
+</div>
+
+<div class="km-grid">
+  <div class="km-card">
+    <h3>Circuits declare the logical</h3>
+    <p><code>version/v8/circuits/*.json</code> (e.g. <code>qwen3vl.json</code>, <code>qwen35.json</code>) declare op instances, named port edges, and <code>required_numerical_contracts</code>. For hardened ops a circuit must <strong>not</strong> name a physical provider ID — it states requirements, not implementations.</p>
+  </div>
+  <div class="km-card">
+    <h3>Kernel maps own the physical</h3>
+    <p><code>version/v8/kernel_maps/*.json</code> — 284 maps — own the operation interface, numerical-contract identity, port dtype/layout/stride/storage, prefill/decode phase support, persistent-state and alias semantics, the C call ABI, lifecycle status, and priority.</p>
+  </div>
+  <div class="km-card">
+    <h3>The DSL resolves mechanically</h3>
+    <p><code>version/v8/scripts/build_ir_v8.py</code> filters by contract, then by phase/dtype/shape/layout/ISA/alias compatibility, ranks by lifecycle then priority, and <strong>fails closed</strong> on ambiguity. No model-name checks are allowed in the resolver.</p>
+  </div>
+</div>
+
+<h2>Anatomy of a Kernel Map</h2>
+
+<p>
+    <code>version/v8/kernel_maps/memcpy.json</code> is the canonical annotated example — the production map behind
+    the <code>residual_save</code> op. Every field group has one job:
+</p>
+
+<div class="img-container svg-viewer km-flow" data-title="Annotated field-group breakdown of memcpy.json">
+  <img src="assets/kernel-maps-anatomy.svg" alt="Six field groups of the memcpy kernel map. Identity: id memcpy, op residual_save, operation interface residual_save.memcpy_copy.v1, variant fp32_copy — the stable names circuit contracts bind to. Selection metadata: status production, priority 100, equivalence group, phases prefill and decode — schema-required, drives ranking, priority ranks only within one equivalence group. Ports: input src fp32 N read, output dst fp32 N write, no weights or scratch, with layout, access, storage class and consumption per port; alias and overlap rules live in constraints notes. Quant: weight null, activation fp32, output fp32 — the dtypes compatibility filters match. Map-owned call ABI: dims N, param _memcpy_bytes of type size_t, call ABI version 1 with dst, src and size — the exact C call arguments owned by the map. Implementation and constraints: function memcpy, default variant, byte copy with no arithmetic and no overlapping writable views.">
+</div>
+
+<h3>Selection metadata is schema-enforced</h3>
+
+<p>
+    The <code>selection</code> block is required by
+    <code>version/v8/schemas/kernel_provider_selection.schema.json</code> and carries exactly four fields:
+</p>
+
+<table class="km-table">
+  <tr><th>Field</th><th>Type</th><th>Rule</th></tr>
+  <tr><td>status</td><td><code>production | candidate | diagnostic | deprecated</code></td><td>Lifecycle rank. Only <code>production</code> providers auto-select; candidate, diagnostic, and deprecated never do.</td></tr>
+  <tr><td>priority</td><td>integer</td><td>Ranks providers <strong>within one equivalence group only</strong>. It cannot compare across groups.</td></tr>
+  <tr><td>equivalence_group</td><td>non-empty string</td><td>Mandatory. A provider that omits it is a <code>HARD KERNEL SELECTION FAULT</code>.</td></tr>
+  <tr><td>phases</td><td>non-empty unique list of <code>init | prefill | decode | training | backward</code></td><td>Declares which execution phases the provider supports.</td></tr>
 </table>
 
 <p>
-    The same fixed-offset discipline is the precondition for <a href="memory-tetris.html">Memory Tetris</a>,
-    a research-stage design (not implemented) that would reuse dead arena slots as final destinations for
-    tensors prefetched from NVMe.
+    The hard rules: an equal-priority tie between explicit production providers is a fault, not a coin flip.
+    And the map — not the code generator — owns the call ABI: <code>dims</code>, typed <code>params</code>
+    (here <code>_memcpy_bytes</code> of type <code>size_t</code>), and a versioned <code>call_abi</code> block
+    naming the exact argument list (<code>dst</code>, <code>src</code>, <code>size</code>) with each argument's
+    source port. The alias and arithmetic contract is part of the map too: <code>constraints.notes</code>
+    states this is a byte copy, performs no arithmetic, and is undefined for overlapping writable views.
 </p>
 
-<h2>Kernel Composition</h2>
+<h2>The Resolution Algorithm</h2>
 
-<p>Kernels are composed following transformer layer structure:</p>
+<p>
+    Provider selection lives in <code>_provider_selection_metadata</code> and <code>_rank_provider_matches</code>
+    (<code>build_ir_v8.py:5666-5770</code>). The pipeline:
+</p>
 
-<div class="img-container">
-    <img src="assets/forward-backward-flow.svg" alt="Forward and Backward Data Flow">
+<div class="img-container svg-viewer km-flow" data-title="Resolver flow: compatibility filters before priority ranking, fail closed on tie or empty result, X-Ray evidence">
+  <img src="assets/kernel-maps-resolver-flow.svg" alt="Resolver flow. 284 candidate kernel maps enter compatibility filters — required numerical contracts, phase, dtype, shape, layout, ISA and alias safety — where any mismatch is rejected with a recorded reason and a missing equivalence group is a hard selection fault. Survivors rank by direction, activation preference, lifecycle with production first, then priority within one group only; candidate, diagnostic and deprecated never auto-select. Three outcomes: exactly one provider left is selected before GraphIR and preserved through generated C; no compatible provider fails closed as a compile-time error; an equal-priority production tie is a hard fault — ambiguous within a group, and priority cannot choose across groups. X-Ray records the selected provider plus every rejection reason, proving compatibility rejection precedes priority ranking.">
 </div>
 
-<h2>Build System</h2>
+<ol>
+  <li><strong>Validate selection metadata.</strong> Every provider must declare an <code>equivalence_group</code>; a missing or malformed <code>selection</code> block is a <code>HARD KERNEL SELECTION FAULT</code>. Providers with no <code>selection</code> block at all are treated as legacy.</li>
+  <li><strong>Filter by compatibility.</strong> Contract identity, phase, dtype, shape, layout, ISA, and alias safety — any mismatch rejects the provider with a recorded reason.</li>
+  <li><strong>Rank the survivors.</strong> The ranking tuple is direction (inference vs backward) &rarr; activation preference &rarr; lifecycle rank (<code>production</code> first) &rarr; priority (higher wins, within the group).</li>
+  <li><strong>Fail closed on ambiguity.</strong> A tie among explicit production providers raises <code>"equal-priority production providers are ambiguous"</code> when they share a group, or <code>"priority cannot choose between different equivalence groups"</code> when they do not. Zero compatible providers is also a compile-time failure — the build never silently substitutes different numerics.</li>
+</ol>
 
-<div class="grid grid-2">
-    <div class="card">
-        <h3 style="margin-top: 0;">Full Library</h3>
-        <pre>make</pre>
-        <p>Builds <code>libckernel_engine.so</code> with all kernels linked together.</p>
-    </div>
-    <div class="card">
-        <h3 style="margin-top: 0;">Per-Kernel Libraries</h3>
-        <pre>make libckernel_attention.so
-make libckernel_rope.so
-make libckernel_rmsnorm.so</pre>
-        <p>Builds individual kernel libraries for testing.</p>
-    </div>
+<p>
+    <strong>Evidence, not assertion.</strong> The X-Ray fixture
+    <code>version/v8/tests/fixtures/xray/provider_selection_trace.json</code> records a real selection trace:
+    a <code>candidate</code> provider with priority 900 is rejected for <code>status_not_production</code>,
+    a priority-800 production provider for <code>phase_mismatch</code>, and a priority-700 production provider
+    for <code>weight_dtype_mismatch</code> — all before the compatible priority-100 production provider is
+    selected at rank 0. Higher priority loses to incompatibility every time, because compatibility filtering
+    happens <em>before</em> priority ranking.
+</p>
+
+<h2>Case Study: residual_save &rarr; memcpy</h2>
+
+<p>
+    This is the headline example of DSL logic that <em>legitimately remains</em> — and of what hardened selection
+    replaced. The two concerns are different, and the code now keeps them in different places:
+</p>
+
+<div class="img-container svg-viewer km-flow" data-title="residual_save case study: DSL scheduling lane versus hardened kernel-map selection lane, plus remaining debt">
+  <img src="assets/kernel-maps-residual-save.svg" alt="Two lanes. DSL scheduling lane: the predicate should_insert_residual_save fires when the current op is a pre-norm, the next op starts a branch, and the previous op is not already residual_save; the op is auto-inserted before the pre-norm and stamped kernel memcpy; at lowering the byte size _memcpy_bytes equals embed_dim times seq_len times 4. Kernel-map lane: memcpy.json is selection-managed with operation interface residual_save.memcpy_copy.v1, production status, priority 100, prefill and decode phases, src read and dst write fp32 ports, constraints of byte copy with no arithmetic and no overlapping writable views, and a versioned call ABI of dst, src, size — copy semantics, not mislabeled residual arithmetic. Remaining debt box: template-override branches for rope_qk, rope_q, mrope_qk, position_embeddings, kv_cache_store_shared_q and assistant_layer_scale inside map_op_to_kernel, plus _make_decode_kv_store_op fabricating decode KV store ops; each migration moves selection into the maps and deletes the conditional.">
 </div>
 
-<h2>Codegen Pipeline</h2>
-
-<div class="card card-accent">
-    <h3 style="margin-top: 0;">Generate Runtime from Config</h3>
-    <pre># Build the IR demo tool
-make build/ck_ir_demo
-
-# Generate C runtime
-./build/ck_ir_demo config.json --emit build/model.c
-
-# Or use the make target
-make ck-emit CONFIG=config.json OUT=build/model.c</pre>
-</div>
-
-<p>The generated file contains:</p>
 <ul>
-    <li>Buffer allocation functions</li>
-    <li>Forward pass for all layers</li>
-    <li>Backward pass for all layers</li>
-    <li>Parameter gradient accumulation</li>
+  <li><strong>Insertion is scheduling, and stays in the DSL.</strong> <code>should_insert_residual_save</code> (<code>build_ir_v8.py:3743</code>) fires when the current op is a pre-norm, the next op starts a branch (attention or MLP), and the previous op is not already a residual save. The op is auto-inserted and stamped <code>"kernel": "memcpy"</code> at <code>build_ir_v8.py:7328</code>; the <code>_memcpy_bytes</code> buffer size (<code>embed_dim &times; seq_len &times; 4</code>) is computed during lowering at <code>build_ir_v8.py:8610</code>. Deciding <em>that</em> a residual must be saved is graph scheduling — it belongs here.</li>
+  <li><strong>Selection is hardened.</strong> The <code>memcpy</code> map is selection-managed with declared copy semantics — a byte copy, not residual arithmetic mislabeled under a copy's name. It wins or loses through the same mechanical resolver as every other hardened provider.</li>
+  <li><strong>The debt is named, not hidden.</strong> <code>map_op_to_kernel</code> (<code>build_ir_v8.py:6712</code>) still carries template-override branches: <code>rope_qk</code> via <code>_resolve_rope_qk_kernel</code>, <code>rope_q</code>, <code>mrope_qk</code>, <code>position_embeddings</code> via <code>_resolve_position_embeddings_kernel</code>, <code>kv_cache_store_shared_q</code>, and the <code>assistant_layer_scale</code> override. Separately, <code>_make_decode_kv_store_op</code> (<code>build_ir_v8.py:8782</code>) fabricates decode KV store ops. This is migration debt being actively burned down — tracked by the ratchet below.</li>
 </ul>
 
-<h2>Project Structure</h2>
+<h2>Where the Weights Side Fits</h2>
 
-<p>The codebase is organized for easy navigation:</p>
+<p>
+    Provider selection decides which kernel runs; the weights pipeline decides which bytes it reads. Converted
+    BUMP weights carry a metadata sidecar describing tensor names, dtypes, and layouts (see
+    <a href="gguf-bump.html">GGUF to Bump</a> and
+    <a href="https://github.com/C-Kernel-Engine/C-Kernel-Engine/blob/main/docs/adr/0006-weight-mapping-via-template.md">ADR 0006</a>).
+    Circuits and templates reference weight tensors, and the map's <code>quant</code> block and
+    <code>weights</code> ports must match what the sidecar describes — a map that expects Q4_K weights will not
+    pass compatibility filtering against an FP32 tensor. The conversion format itself is documented on the BUMP
+    page; it is not re-explained here.
+</p>
 
-<div class="folder-structure">
-    <div class="folder-header">
-        <span class="folder-title">Focused Source Tree</span>
-        <span class="folder-scope">src/kernels · version/v6.6 · version/v7</span>
-        <span class="folder-updated">Updated: 2026-07-26 13:04</span>
-    </div>
-    <pre class="tree-output">
-src/kernels
-`-- fused
-version/v6.6
-|-- docs
-|-- include
-|-- kernel_maps
-|-- patches
-|-- scripts
-|   `-- parity
-|-- src
-|   |-- generated
-|   |-- kernel_config
-|   |-- scripts
-|   `-- test_generated
-|-- templates
-|-- test
-|-- testing
-|-- tests
-|-- tools
-`-- unittest
-version/v7
-|-- artifacts
-|   `-- svg_dsl
-|       |-- gen1_archive_2026-04-05
-|       `-- spec_archive_2026-04-08
-|-- contracts
-|-- data
-|   |-- eval_contracts
-|   |-- generated
-|   |   |-- toy_svg_semantic_shapes_tokenizer
-|   |   `-- toy_svg_structured_atoms_tokenizer
-|   |-- probe_contracts
-|   |-- spec03
-|   |   |-- contracts
-|   |   |-- holdout
-|   |   |-- manifests
-|   |   |-- midtrain
-|   |   |-- normalized
-|   |   |-- pretrain
-|   |   |-- raw_assets
-|   |   |-- sft
-|   |   `-- tokenizer
-|   `-- spec04
-|       |-- contracts
-|       |-- holdout
-|       |-- manifests
-|       |-- midtrain
-|       |-- normalized
-|       |-- pretrain
-|       |-- raw_assets
-|       |-- sft
-|       `-- tokenizer
-|-- docs
-|-- examples
-|-- experiments
-|   `-- svg_dsl
-|       |-- catalog
-|       |-- core
-|       |-- programs
-|       `-- renderers
-|-- include
-|-- kernel_maps
-|-- regression
-|-- reports
-|   |-- spec12_gold_mappings -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec12_gold_mappings
-|   |-- spec13b_gold_mappings -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec13b_gold_mappings
-|   |-- spec14a_gold_mappings -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec14a_gold_mappings
-|   |-- spec14b_gold_mappings -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec14b_gold_mappings
-|   |-- spec15a_gold_mappings -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec15a_gold_mappings
-|   |-- spec15b_gold_mappings -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec15b_gold_mappings
-|   |-- spec_broader_1_family_packs -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec_broader_1_family_packs
-|   `-- spec_broader_1_gold_mappings -&gt; ../artifacts/svg_dsl/spec_archive_2026-04-08/spec_broader_1_gold_mappings
-|-- runs
-|   |-- logs
-|   `-- overnight_monitor
-|       `-- spec10
-|-- scripts
-|   |-- dataset
-|   `-- parity
-|-- src
-|-- templates
-|-- test
-|-- tests
-|   |-- contracts
-|   `-- fixtures
-`-- tools
-    `-- src
+<h2>Evolution Timeline</h2>
 
-87 directories
-</pre>
+<p>An honest, PR-dated history. The direction is monotonic: physics moves into the maps, heuristics leave the DSL.</p>
+
+<div class="img-container svg-viewer km-flow" data-title="Timeline from legacy bindings to the agnostic-DSL end state">
+  <img src="assets/kernel-maps-evolution.svg" alt="Timeline with five milestones. Legacy era: kernel_bindings.json plus function-name ABI fallback, where naming conventions were the contract. PR 302: hardened provider selection with lifecycle status, priority and equivalence groups, and the operation-interface format. PR 305: shared RoPE, residual-copy and KV-cache providers migrated to maps. PRs 318 and 320: layout provider selection and direct-layout attention providers. Future, dashed: rebind circuits to hardened metadata and delete legacy branches, then attention and quantized GEMM migrations, ending in an agnostic DSL. A scoreboard strip shows the ratcheted burn-down: 32 hardened maps, 32 interface and ABI cross-validated, 131 map-owned call ABI, 43 selection-managed, 25 legacy-interface-ready, with ceilings of 54 contract-pending, 191 legacy, 73 legacy selection conditionals and 35 operation-specific conditionals. The baseline is monotonic: the audit fails if a floor drops or a ceiling rises.">
 </div>
 
-<style>
-.folder-structure {
-    background: #1a1a1a;
-    border: 1px solid #333;
-    border-radius: 8px;
-    overflow: hidden;
-    margin: 1.5rem 0;
-}
-.folder-header {
-    background: #252525;
-    padding: 12px 16px;
-    display: flex;
-    justify-content: flex-start;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-    border-bottom: 1px solid #333;
-}
-.folder-title {
-    color: #ffb400;
-    font-weight: 600;
-    font-size: 14px;
-}
-.folder-scope {
-    color: #89d3ff;
-    font-size: 11px;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-}
-.folder-updated {
-    color: #666;
-    font-size: 11px;
-    margin-left: auto;
-}
-.tree-output {
-    margin: 0;
-    padding: 16px;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 13px;
-    line-height: 1.5;
-    color: #b0b0b0;
-    overflow-x: auto;
-    white-space: pre;
-}
-.tree-output .directory {
-    color: #6ab0f3;
-}
-</style>
+<ul>
+  <li><strong>Legacy:</strong> <code>kernel_bindings.json</code> and a function-name ABI fallback — the name was the contract.</li>
+  <li><strong>PR #302:</strong> hardened provider selection (lifecycle, priority, equivalence groups) and the operation-interface format introduced.</li>
+  <li><strong>PR #305:</strong> shared RoPE, residual-copy, and KV-cache providers migrated to selection-managed maps.</li>
+  <li><strong>PR #318 / #320:</strong> layout provider selection and direct-layout attention providers — physical layout joins the map-owned contract.</li>
+  <li><strong>Future:</strong> resolver cleanup (rebind circuits to hardened metadata, delete the legacy branches), then attention and quantized GEMM migrations. The end state is an agnostic DSL: circuits state contracts, maps own everything physical, the resolver contains no model knowledge at all.</li>
+</ul>
+
+<h2>Migration Scoreboard</h2>
+
+<p>
+    <code>version/v8/contracts/kernel_interface_migration_baseline.json</code> is a <strong>monotonic ratchet</strong>
+    checked by <code>version/v8/scripts/audit_kernel_map_interfaces_v8.py</code>: floors may only rise, ceilings
+    may only fall. The audit currently reports the baseline values exactly — this is the starting line the
+    burn-down is measured from:
+</p>
+
+<table class="km-table">
+  <tr><th>Metric</th><th>Bound</th><th>Direction</th></tr>
+  <tr><td>hardened maps</td><td>&ge; 32</td><td><span class="km-dot floor"></span>floor — only rises</td></tr>
+  <tr><td>interface + ABI cross-validated</td><td>&ge; 32</td><td><span class="km-dot floor"></span>floor — only rises</td></tr>
+  <tr><td>map-owned call ABI</td><td>&ge; 131</td><td><span class="km-dot floor"></span>floor — only rises</td></tr>
+  <tr><td>selection-managed maps</td><td>&ge; 43</td><td><span class="km-dot floor"></span>floor — only rises</td></tr>
+  <tr><td>legacy-interface-ready maps</td><td>&ge; 25</td><td><span class="km-dot floor"></span>floor — only rises</td></tr>
+  <tr><td>contract-pending maps</td><td>&le; 54</td><td><span class="km-dot ceiling"></span>ceiling — only falls</td></tr>
+  <tr><td>legacy maps</td><td>&le; 191</td><td><span class="km-dot ceiling"></span>ceiling — only falls</td></tr>
+  <tr><td>legacy selection conditionals</td><td>&le; 73</td><td><span class="km-dot ceiling"></span>ceiling — only falls</td></tr>
+  <tr><td>operation-specific conditionals</td><td>&le; 35</td><td><span class="km-dot ceiling"></span>ceiling — only falls</td></tr>
+</table>
+
+<h2>Is This Over-Engineered?</h2>
+
+<p>
+    Fair question — the project owner has asked it directly. 284 JSON maps, a schema for four fields, a ratchet
+    file, and an audit script can look like architecture for its own sake. The honest answer has three parts.
+</p>
+
+<div class="km-grid">
+  <div class="km-card">
+    <h3>Why the layering exists</h3>
+    <p>One runtime serves many model families &times; quant formats &times; ISA variants &times; execution phases on CPUs. When provider choice is a Python conditional, the failure mode is not a crash — it is <strong>silently wrong numerics</strong> that pass leaf tests and corrupt a stitched model. Fail-closed selection converts that class of bug into a compile-time error with a recorded reason.</p>
+  </div>
+  <div class="km-card">
+    <h3>The costs are real</h3>
+    <p>284 maps to maintain. 73 legacy selection conditionals still in the resolver. A migration still in flight, with named debt (RoPE, position embeddings, decode KV store) that has not yet moved into maps. Nobody should pretend this is finished or free.</p>
+  </div>
+  <div class="km-card">
+    <h3>Why it is not ceremony</h3>
+    <p>The burn-down metrics are <strong>ratcheted and shrinking</strong> — the audit fails if they regress. The resolver has no model-name conditionals. Every layer is schema-validated and test-enforced: <code>tests/test_v8_provider_selection.py</code>, <code>tests/test_v8_shared_provider_migration.py</code>, <code>tests/test_v8_kernel_call_abi.py</code>, and the interface audit script.</p>
+  </div>
+</div>
+
+<div class="km-note km-bad">
+  <strong>The kill criterion is explicit:</strong> if the scoreboard metrics stopped moving — floors frozen,
+  ceilings never shrinking — then the layering would be ceremony and should be torn out. As long as the
+  ratchet keeps tightening and conditionals keep leaving the DSL, the structure is paying for itself in
+  eliminated ambiguity.
+</div>
+
+<p>Related: <a href="v8-numerical-contracts.html">v8 Numerical Contracts</a>, <a href="architecture.html">System Architecture</a>, <a href="codegen.html">Code Generation</a>, <a href="gguf-bump.html">GGUF to Bump</a>, and <a href="architecture-links.html">Architecture Links</a>.</p>
     </main>
 
     <!-- SVG Viewer Overlay (shared across all pages) -->
@@ -1671,7 +1438,7 @@ version/v7
             </div>
             <div style="text-align: right;">
                 <p style="color: #606060; font-size: 0.75rem; margin: 0;">Static docs · C-first execution</p>
-                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-07-26</p>
+                <p style="color: #606060; font-size: 0.75rem; margin: 0.5rem 0 0 0;">2026-08-10</p>
             </div>
         </div>
     </footer>
