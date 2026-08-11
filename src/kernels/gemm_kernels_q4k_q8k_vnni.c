@@ -251,6 +251,9 @@ typedef struct {
     uint8_t reserved[7];
 } block_q4_K_packed_vnni_x8;
 
+_Static_assert(sizeof(block_q4_K_packed_vnni_x8) == 1192,
+               "Q4_K VNNI x8 layout must match kernel-map prepared_bytes");
+
 typedef struct {
     ck_half d[16];
     ck_half dmin[16];

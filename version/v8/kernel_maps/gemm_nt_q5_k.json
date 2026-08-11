@@ -36,7 +36,27 @@
   "impl": {
     "function": "gemm_nt_q5_k_parallel_dispatch",
     "c_declaration": "void gemm_nt_q5_k_parallel_dispatch(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);",
-    "sources": ["src/kernels/gemm_kernels_q5_k.c", "version/v8/src/ck_parallel_prefill_v8.c"]
+    "sources": ["src/kernels/gemm_kernels_q5_k.c", "version/v8/src/ck_parallel_prefill_v8.c"],
+    "variants": [
+      {
+        "name": "avx2_prepared_m4",
+        "function": "gemm_nt_q5_k_prepared_m4",
+        "priority": 260,
+        "requires": ["avx2", "fma"],
+        "shape_constraints": {"M_min": 2, "M_max": 256, "K_multiple": 256},
+        "requires_prepared_format": "q5_k_expanded_integer_metadata_v1",
+        "work_partition": "independent_rows"
+      },
+      {
+        "name": "avx2_prepared_row",
+        "function": "gemm_nt_q5_k_prepared",
+        "priority": 250,
+        "requires": ["avx2", "fma"],
+        "shape_constraints": {"M_min": 257, "K_multiple": 256},
+        "requires_prepared_format": "q5_k_expanded_integer_metadata_v1",
+        "work_partition": "independent_rows"
+      }
+    ]
   },
   "reference": {
     "function": "gemv_q5_k_ref",
@@ -81,6 +101,15 @@
       "dispatch_owner": "gemm_nt_q5_k_parallel_dispatch",
       "selection_policy": "The kernel map selects Q5_K from weight dtype and phase. The production dispatcher partitions independent activation rows without changing per-output arithmetic."
     }
+  },
+  "weight_preparation": {
+    "function": "ck_q5_k_prepare_expanded_weight",
+    "arguments": {"B": "B", "N": "N", "K": "K"},
+    "prepared_format": "q5_k_expanded_integer_metadata_v1",
+    "prepared_bytes": "N * (K / 256) * 276",
+    "max_total_bytes": 268435456,
+    "fallback": "gemm_nt_q5_k_parallel_dispatch",
+    "notes": "Expand Q5_K integer codes and sub-block metadata once at model load while preserving FP16 scales, Q8_K activation quantization, and the certified AVX2 reduction tree. Preparation is enabled only when all resolved Q5_K prefill weights fit under the 256 MiB aggregate budget."
   },
   "numerical_capabilities": [
     {

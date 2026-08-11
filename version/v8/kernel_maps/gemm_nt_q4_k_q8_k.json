@@ -198,6 +198,15 @@
       "selection_policy": "The DSL emits the exact public function. Only the declared production dispatcher may choose an internal parity-validated ISA, packing, or tiling variant; dimensions are function inputs, not compiler guesses."
     }
   },
+  "weight_preparation": {
+    "function": "ck_q4k_prepare_vnni_x8_weight",
+    "arguments": {"B": "B", "N": "N", "K": "K"},
+    "prepared_format": "q4_k_packed_vnni_x8",
+    "prepared_bytes": "(N / 8) * (K / 256) * 1192",
+    "max_total_bytes": 2147483648,
+    "fallback": "gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch",
+    "notes": "Prepare the AVX-VNNI x8 layout at model load so first-request prefill does not include weight repacking. The representation is selected only on supported CPUs and only when all resolved Q4_K prefill weights fit within the 2 GiB aggregate budget; larger models retain lazy packing and existing fallbacks."
+  },
   "constraints": {
     "alignment": {"K": 256},
     "notes": "Q4_K requires K dimension multiple of 256 for dequantization. Most aggressive quantization for W2 (down) projection."
