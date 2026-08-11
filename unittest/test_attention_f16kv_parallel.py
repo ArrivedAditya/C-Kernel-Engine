@@ -62,6 +62,26 @@ class CausalF16KVParallelTest(unittest.TestCase):
                         actual.view(np.uint32), expected.view(np.uint32)
                     )
 
+    def test_nanbeige_512_token_shape_is_byte_exact(self) -> None:
+        rng = np.random.default_rng(20260812)
+        heads, kv_heads, tokens, dim = 20, 4, 512, 128
+        stride = tokens + 8
+        q = rng.standard_normal((heads, tokens, dim), dtype=np.float32)
+        k = rng.standard_normal((kv_heads, stride, dim), dtype=np.float32)
+        v = rng.standard_normal((kv_heads, stride, dim), dtype=np.float32)
+        expected = np.empty_like(q)
+        actual = np.empty_like(q)
+        args = (
+            numpy_to_ptr(q), numpy_to_ptr(k), numpy_to_ptr(v),
+            ctypes.c_int(heads), ctypes.c_int(kv_heads),
+            ctypes.c_int(tokens), ctypes.c_int(dim),
+            ctypes.c_int(dim), ctypes.c_int(stride),
+        )
+        serial(args[0], args[1], args[2], numpy_to_ptr(expected), *args[3:])
+        lib.ck_set_num_threads(ctypes.c_int(20))
+        parallel(args[0], args[1], args[2], numpy_to_ptr(actual), *args[3:])
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+
 
 if __name__ == "__main__":
     unittest.main()

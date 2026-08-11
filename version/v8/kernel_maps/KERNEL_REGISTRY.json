@@ -1411,16 +1411,18 @@
       ],
       "scratch": [
         {
-          "name": "qkv_scratch",
+          "name": "rounded_kv",
           "dtype": "fp32",
-          "size_bytes": "H * T * D * 4",
-          "desc": "QKV tiles for flash attention"
+          "size_bytes": "2 * KV * S * D * 4",
+          "lifetime": "kernel_call",
+          "desc": "K/V values rounded through FP16 once and retained as FP32 for reuse by all causal queries"
         },
         {
-          "name": "attn_scratch",
+          "name": "rounded_query",
           "dtype": "fp32",
-          "size_bytes": "H * T * T * 4",
-          "desc": "Attention scores [heads, T, T]"
+          "size_bytes": "D * 4",
+          "lifetime": "worker_query",
+          "desc": "One FP16-rounded query row per active worker"
         }
       ],
       "dims": [
@@ -1469,7 +1471,7 @@
           "D": 64,
           "T": 32
         },
-        "notes": "Flash attention variant that rounds K/V through FP16 to match llama.cpp flash-attn input handling."
+        "notes": "Flash attention variant that rounds Q/K/V through FP16 to match llama.cpp flash-attn input handling. Production reuses one rounded K/V materialization across all queries without changing online-softmax or FP16 accumulator order."
       },
       "impl": {
         "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
@@ -1521,7 +1523,7 @@
           }
         ]
       },
-      "notes": "Causal multi-head attention with GQA support. Uses FP16-rounded K/V inputs to emulate llama.cpp flash-attn numerics for Llama-family models.",
+      "notes": "Causal multi-head attention with GQA support. Uses FP16-rounded Q/K/V inputs to emulate llama.cpp flash-attn numerics for Llama-family models; the production provider prepares shared K/V once per call.",
       "call_abi": {
         "version": 1,
         "params": [
@@ -40349,9 +40351,17 @@
         ],
         "variants": [
           {
-            "name": "llama_scalar_mul_add",
+            "name": "llama_scalar_mul_add_parallel_channels",
             "requires": [],
-            "compile_flags": []
+            "compile_flags": [],
+            "priority": 240
+          },
+          {
+            "name": "llama_scalar_mul_add_serial",
+            "function": "ssm_conv1d_forward_llama_production_serial",
+            "requires": [],
+            "compile_flags": [],
+            "priority": 100
           }
         ]
       },
@@ -40368,12 +40378,13 @@
           "implementation": {
             "isa_dispatch": "compile_time",
             "threading": {
-              "runtime": "serial",
+              "runtime": "ck_threadpool",
               "work_partition": [
                 "independent_rows"
               ],
               "dispatch": [
-                "inline"
+                "inline",
+                "ck_threadpool_parallel_for_n"
               ],
               "reduction_order_effect": "none"
             }
@@ -40387,6 +40398,28 @@
           }
         }
       ],
+      "production": {
+        "function": "ssm_conv1d_forward_llama_production",
+        "threaded_function": "ssm_conv1d_forward_llama_production",
+        "reference_comparison": {
+          "requirement": "byte_exact",
+          "absolute_tolerance": 0.0,
+          "relative_tolerance": 0.0,
+          "tests": [
+            "unittest/test_ssm_conv_llama_production.cpp"
+          ]
+        }
+      },
+      "reference": {
+        "function": "ssm_conv1d_forward_llama_production_serial",
+        "kind": "serial_same_arithmetic",
+        "validation": {
+          "status": "validated",
+          "tests": [
+            "unittest/test_ssm_conv_llama_production.cpp"
+          ]
+        }
+      },
       "call_abi": {
         "version": 1,
         "params": [
@@ -40445,7 +40478,7 @@
           }
         ]
       },
-      "notes": "Scoped llama.cpp provider; generic FP32 and PyTorch BF16 providers retain their existing arithmetic.",
+      "notes": "Scoped llama.cpp provider. Prefill partitions independent channels through the shared thread pool while preserving the scalar multiply/add chain for each output; generic FP32 and PyTorch BF16 providers retain their existing arithmetic.",
       "name": "ssm_conv1d_forward_llama_production",
       "_source_file": "ssm_conv1d_forward_llama_production.json"
     },

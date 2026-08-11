@@ -26,6 +26,7 @@
 
 #include "bf16_utils.h"
 #include "ckernel_engine.h"
+#include "ck_threadpool.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -140,6 +141,68 @@ void ssm_conv1d_forward(const float *conv_x,
  * Preserve the rounded product before each addition: contraction or
  * vectorization changes FP32 rounding boundaries.
  */
+typedef struct {
+    const float *conv_x;
+    const float *kernel;
+    float *out;
+    int kernel_size;
+    int num_channels;
+    int num_tokens;
+    int num_seqs;
+} ck_ssm_conv1d_llama_args_t;
+
+static void ck_ssm_conv1d_llama_channel_range(int begin, int end, void *opaque)
+{
+    const ck_ssm_conv1d_llama_args_t *args =
+        (const ck_ssm_conv1d_llama_args_t *)opaque;
+    const int kernel_size = args->kernel_size;
+    const int num_channels = args->num_channels;
+    const int num_tokens = args->num_tokens;
+    const size_t seq_width = (size_t)kernel_size - 1u + (size_t)num_tokens;
+    const size_t conv_seq_stride = (size_t)num_channels * seq_width;
+    const size_t out_seq_stride = (size_t)num_tokens * (size_t)num_channels;
+
+    for (int seq = 0; seq < args->num_seqs; ++seq) {
+        const float *conv_seq = args->conv_x + (size_t)seq * conv_seq_stride;
+        float *out_seq = args->out + (size_t)seq * out_seq_stride;
+
+        for (int ch = begin; ch < end; ++ch) {
+            const float *kernel_row =
+                args->kernel + (size_t)ch * (size_t)kernel_size;
+            const float *conv_channel = conv_seq + (size_t)ch * seq_width;
+            for (int tok = 0; tok < num_tokens; ++tok) {
+                const float *conv_row =
+                    conv_channel + (size_t)tok;
+                float sum = 0.0f;
+                for (int k = 0; k < kernel_size; ++k) {
+                    volatile float product = conv_row[k] * kernel_row[k];
+                    volatile float next = sum + product;
+                    sum = next;
+                }
+                out_seq[(size_t)tok * (size_t)num_channels + (size_t)ch] = sum;
+            }
+        }
+    }
+}
+
+void ssm_conv1d_forward_llama_production_serial(const float *conv_x,
+                                                const float *kernel,
+                                                float *out,
+                                                int kernel_size,
+                                                int num_channels,
+                                                int num_tokens,
+                                                int num_seqs)
+{
+    if (!conv_x || !kernel || !out || kernel_size <= 0 || num_channels <= 0 ||
+        num_tokens < 0 || num_seqs <= 0) {
+        return;
+    }
+    ck_ssm_conv1d_llama_args_t args = {
+        conv_x, kernel, out, kernel_size, num_channels, num_tokens, num_seqs,
+    };
+    ck_ssm_conv1d_llama_channel_range(0, num_channels, &args);
+}
+
 void ssm_conv1d_forward_llama_production(const float *conv_x,
                                          const float *kernel,
                                          float *out,
@@ -148,38 +211,22 @@ void ssm_conv1d_forward_llama_production(const float *conv_x,
                                          int num_tokens,
                                          int num_seqs)
 {
-    if (!conv_x || !kernel || !out) {
+    if (!conv_x || !kernel || !out || kernel_size <= 0 || num_channels <= 0 ||
+        num_tokens < 0 || num_seqs <= 0) {
         return;
     }
-    if (kernel_size <= 0 || num_channels <= 0 || num_tokens < 0 || num_seqs <= 0) {
-        return;
-    }
-
-    const size_t seq_width = (size_t)kernel_size - 1u + (size_t)num_tokens;
-    const size_t conv_seq_stride = (size_t)num_channels * seq_width;
-    const size_t out_seq_stride = (size_t)num_tokens * (size_t)num_channels;
-
-    for (int seq = 0; seq < num_seqs; ++seq) {
-        const float *conv_seq = conv_x + (size_t)seq * conv_seq_stride;
-        float *out_seq = out + (size_t)seq * out_seq_stride;
-
-        for (int tok = 0; tok < num_tokens; ++tok) {
-            float *out_tok = out_seq + (size_t)tok * (size_t)num_channels;
-
-            for (int ch = 0; ch < num_channels; ++ch) {
-                const float *conv_row =
-                    conv_seq + (size_t)ch * seq_width + (size_t)tok;
-                const float *kernel_row =
-                    kernel + (size_t)ch * (size_t)kernel_size;
-                float sum = 0.0f;
-                for (int k = 0; k < kernel_size; ++k) {
-                    volatile float product = conv_row[k] * kernel_row[k];
-                    volatile float next = sum + product;
-                    sum = next;
-                }
-                out_tok[ch] = sum;
-            }
-        }
+    ck_ssm_conv1d_llama_args_t args = {
+        conv_x, kernel, out, kernel_size, num_channels, num_tokens, num_seqs,
+    };
+    ck_threadpool_t *pool = ck_threadpool_global();
+    const int workers = pool ? ck_threadpool_n_threads(pool) : 1;
+    const int active = workers < num_channels ? workers : num_channels;
+    if (active > 1 && num_tokens > 1) {
+        ck_threadpool_parallel_for_n(
+            pool, active, 0, num_channels, 32,
+            ck_ssm_conv1d_llama_channel_range, &args);
+    } else {
+        ck_ssm_conv1d_llama_channel_range(0, num_channels, &args);
     }
 }
 
