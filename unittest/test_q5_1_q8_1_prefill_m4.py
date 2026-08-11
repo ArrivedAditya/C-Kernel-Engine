@@ -54,6 +54,9 @@ class Q51PrefillM4Test(unittest.TestCase):
         cls.candidate = cls.lib.gemm_nt_q5_1_q8_1_m4
         cls.candidate.argtypes = signature
         cls.candidate.restype = None
+        cls.candidate_m8 = cls.lib.gemm_nt_q5_1_q8_1_m8
+        cls.candidate_m8.argtypes = signature
+        cls.candidate_m8.restype = None
 
     def check_shape(self, rows: int, outputs: int, cols: int) -> None:
         rng = np.random.default_rng(1000 + rows * 100 + outputs)
@@ -84,8 +87,17 @@ class Q51PrefillM4Test(unittest.TestCase):
         )
         np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
 
+        self.candidate_m8(
+            *args,
+            actual.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
+            rows,
+            outputs,
+            cols,
+        )
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+
     def test_exact_shapes_and_tails(self) -> None:
-        for rows in (1, 3, 4, 5, 8):
+        for rows in (1, 3, 4, 5, 8, 9, 16):
             for outputs in (1, 7, 16):
                 with self.subTest(rows=rows, outputs=outputs, cols=640):
                     self.check_shape(rows, outputs, 640)

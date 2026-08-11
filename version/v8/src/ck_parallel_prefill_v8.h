@@ -107,6 +107,9 @@ void gemm_nt_q5_1_q8_1_parallel_dispatch(
     const float *A, const void *B, const float *bias, float *C,
     int M, int N, int K);
 
+void geglu_forward_exact_parallel_dispatch(
+    const float *input, float *output, int tokens, int dim);
+
 void gemm_nt_q5_k_parallel_dispatch(
     const float *A, const void *B, const float *bias, float *C,
     int M, int N, int K);

@@ -1488,29 +1488,6 @@
         }
       ]
     },
-    "geglu_forward_exact": {
-      "note": "Exact GeGLU: out = GELU_tanh(a) * b where x = [a, b] along last dim",
-      "params": [
-        {
-          "name": "x",
-          "source": "activation:input",
-          "cast": "const float*"
-        },
-        {
-          "name": "out",
-          "source": "output:output",
-          "cast": "float*"
-        },
-        {
-          "name": "tokens",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "dim",
-          "source": "dim:intermediate_size"
-        }
-      ]
-    },
     "geglu_forward_bf16": {
       "note": "BF16 GeGLU: converts to FP32, computes, converts back",
       "params": [

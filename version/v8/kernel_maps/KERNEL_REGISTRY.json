@@ -14310,16 +14310,58 @@
       ],
       "params": [],
       "impl": {
-        "function": "geglu_forward_exact",
-        "c_declaration": "void geglu_forward_exact(const float *x, float *out, int tokens, int dim);",
+        "function": "geglu_forward_exact_parallel_dispatch",
+        "c_declaration": "void geglu_forward_exact_parallel_dispatch(const float *x, float *out, int tokens, int dim);",
         "sources": [
-          "src/kernels/geglu_kernels.c"
+          "src/kernels/geglu_kernels.c",
+          "version/v8/src/ck_parallel_prefill_v8.c"
         ],
         "variants": [
           {
-            "name": "ref",
+            "name": "parallel_token_rows",
+            "function": "geglu_forward_exact_parallel_dispatch",
+            "priority": 200,
+            "requires": [],
+            "shape_constraints": {
+              "tokens_min": 2
+            },
+            "work_partition": "independent_rows"
+          },
+          {
+            "name": "serial_reference",
+            "function": "geglu_forward_exact",
+            "priority": 100,
             "requires": [],
             "compile_flags": []
+          }
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "x",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:x"
+            ]
+          },
+          {
+            "name": "out",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:out"
+            ]
+          },
+          {
+            "name": "tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "dim",
+            "source": "dim:intermediate_size"
           }
         ]
       },
@@ -14329,7 +14371,7 @@
         ],
         "parity": []
       },
-      "notes": "Exact GeGLU forward for training/parity: out = GELU_tanh(gate) * up using scalar tanhf semantics.",
+      "notes": "Exact GeGLU forward: out = GELU_tanh(gate) * up using scalar tanhf semantics. Production prefill schedules independent token rows through the persistent thread pool; each element retains the serial reference arithmetic.",
       "name": "geglu_forward_exact",
       "_source_file": "geglu_forward_exact.json"
     },
@@ -17485,9 +17527,9 @@
         {
           "name": "activation_q8_1",
           "dtype": "q8_1",
-          "size_bytes": "min(M, 4) * (K / 32) * sizeof(block_q8_1)",
+          "size_bytes": "min(M, 8) * (K / 32) * sizeof(block_q8_1)",
           "lifetime": "kernel_call",
-          "desc": "Four independently quantized activation rows retained on the worker stack."
+          "desc": "Up to eight independently quantized activation rows retained on the worker stack."
         }
       ],
       "dims": [
@@ -17525,7 +17567,8 @@
           ],
           "dispatch": [
             "inline",
-            "ck_threadpool_dispatch_n"
+            "ck_threadpool_dispatch_n",
+            "ck_threadpool_parallel_for_n"
           ],
           "reduction_order_effect": "none"
         }
@@ -17566,7 +17609,7 @@
         "prefill": {
           "default_kernel": "gemm_nt_q5_1",
           "dispatch_owner": "gemm_nt_q5_1_q8_1_parallel_dispatch",
-          "selection_policy": "AVX2 uses the exact four-row provider for each independent worker row range. Other ISAs and row tails retain the established provider."
+          "selection_policy": "AVX2 dynamically schedules exact four-row groups below 64 tokens and eight-row groups at 64 tokens or more. This preserves short-shape parallelism while increasing sustained weight reuse without changing any output reduction. Static diagnostics retain the established four-row partition; other ISAs and final row tails retain the established provider."
         }
       },
       "impl": {
@@ -17577,6 +17620,19 @@
           "version/v8/src/ck_parallel_prefill_v8.c"
         ],
         "variants": [
+          {
+            "name": "avx2_m8",
+            "function": "gemm_nt_q5_1_q8_1_m8",
+            "priority": 260,
+            "requires": [
+              "avx2"
+            ],
+            "shape_constraints": {
+              "M_min": 64,
+              "K_multiple": 32
+            },
+            "work_partition": "independent_rows"
+          },
           {
             "name": "avx2_m4",
             "function": "gemm_nt_q5_1_q8_1_m4",
@@ -17619,7 +17675,8 @@
               ],
               "dispatch": [
                 "inline",
-                "ck_threadpool_dispatch_n"
+                "ck_threadpool_dispatch_n",
+                "ck_threadpool_parallel_for_n"
               ],
               "reduction_order_effect": "none"
             }
@@ -17697,7 +17754,7 @@
           }
         ]
       },
-      "notes": "Gemma-sensitive Q5_1 prefill. The AVX2 candidate unpacks each weight block once for four activation rows while retaining the established Q8_1 bytes and per-output reduction order.",
+      "notes": "Gemma-sensitive Q5_1 prefill. AVX2 candidates unpack each weight block once for up to eight activation rows while retaining the established Q8_1 bytes and per-output reduction order.",
       "name": "gemm_nt_q5_1",
       "_source_file": "gemm_nt_q5_1.json"
     },

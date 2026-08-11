@@ -91,6 +91,7 @@ def _compile_profile_runtime(
 def _profile_run(run_dir: Path, *, prompt: int, decode: int, threads: int, csv_path: Path, json_path: Path, timeout: int) -> dict[str, Any]:
     lib = run_dir / "libmodel.so"
     weights = run_dir / "weights.bump"
+    manifest = run_dir / "weights_manifest.map"
     env = os.environ.copy()
     env["CK_NUM_THREADS"] = str(threads)
     env["OMP_NUM_THREADS"] = env.get("OMP_NUM_THREADS", "1")
@@ -103,20 +104,26 @@ def _profile_run(run_dir: Path, *, prompt: int, decode: int, threads: int, csv_p
     prompt_tokens = ",".join(["100"] * prompt)
     cmd = [
         str(CK_CLI),
+        "--lib",
         str(lib),
+        "--weights",
         str(weights),
+        "--manifest",
+        str(manifest),
         "--prompt-tokens",
         prompt_tokens,
         "--max-tokens",
         str(decode),
         "--ignore-eos",
         "--quiet-output",
+        "--no-chat-template",
+        "--no-stream",
         "--timing",
     ]
     rc, out = _run(cmd, env=env, timeout=timeout)
     clean = ANSI_RE.sub("", out)
     row: dict[str, Any] = {
-        "command": cmd[:3] + ["--prompt-tokens", f"<{prompt} ids>", *cmd[5:]],
+        "command": [f"<{prompt} ids>" if value == prompt_tokens else value for value in cmd],
         "returncode": rc,
         "stdout_tail": "\n".join(clean.splitlines()[-80:]),
     }

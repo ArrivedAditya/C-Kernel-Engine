@@ -15,16 +15,42 @@
   "dims": ["tokens", "dim"],
   "params": [],
   "impl": {
-    "function": "geglu_forward_exact",
-    "c_declaration": "void geglu_forward_exact(const float *x, float *out, int tokens, int dim);",
-    "sources": ["src/kernels/geglu_kernels.c"],
+    "function": "geglu_forward_exact_parallel_dispatch",
+    "c_declaration": "void geglu_forward_exact_parallel_dispatch(const float *x, float *out, int tokens, int dim);",
+    "sources": [
+      "src/kernels/geglu_kernels.c",
+      "version/v8/src/ck_parallel_prefill_v8.c"
+    ],
     "variants": [
-      {"name": "ref", "requires": [], "compile_flags": []}
+      {
+        "name": "parallel_token_rows",
+        "function": "geglu_forward_exact_parallel_dispatch",
+        "priority": 200,
+        "requires": [],
+        "shape_constraints": {"tokens_min": 2},
+        "work_partition": "independent_rows"
+      },
+      {
+        "name": "serial_reference",
+        "function": "geglu_forward_exact",
+        "priority": 100,
+        "requires": [],
+        "compile_flags": []
+      }
+    ]
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {"name": "x", "source": "activation:input", "cast": "const float*", "ports": ["input:x"]},
+      {"name": "out", "source": "output:output", "cast": "float*", "ports": ["output:out"]},
+      {"name": "tokens", "source": "dim:seq_len"},
+      {"name": "dim", "source": "dim:intermediate_size"}
     ]
   },
   "tests": {
     "unit": ["unittest/test_geglu.py"],
     "parity": []
   },
-  "notes": "Exact GeGLU forward for training/parity: out = GELU_tanh(gate) * up using scalar tanhf semantics."
+  "notes": "Exact GeGLU forward: out = GELU_tanh(gate) * up using scalar tanhf semantics. Production prefill schedules independent token rows through the persistent thread pool; each element retains the serial reference arithmetic."
 }
