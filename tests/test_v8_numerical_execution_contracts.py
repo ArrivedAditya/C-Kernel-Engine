@@ -562,15 +562,15 @@ class NumericalExecutionContractTests(unittest.TestCase):
         audit.validate_ratchet(report, baseline)
         self.assertEqual(report["counts"]["kernel_maps"], 281)
         self.assertEqual(report["counts"]["physical_layout_maps"], 4)
-        self.assertEqual(report["counts"]["resolver_governed_maps"], 86)
-        self.assertEqual(report["counts"]["interface_hardened_maps"], 32)
+        self.assertEqual(report["counts"]["resolver_governed_maps"], 87)
+        self.assertEqual(report["counts"]["interface_hardened_maps"], 34)
         self.assertEqual(
-            report["counts"]["interface_abi_crossvalidated_maps"], 32
+            report["counts"]["interface_abi_crossvalidated_maps"], 34
         )
-        self.assertEqual(report["counts"]["contract_pending_maps"], 54)
-        self.assertEqual(report["counts"]["map_owned_call_abi"], 132)
+        self.assertEqual(report["counts"]["contract_pending_maps"], 53)
+        self.assertEqual(report["counts"]["map_owned_call_abi"], 133)
         self.assertEqual(report["counts"]["legacy_interface_ready_maps"], 25)
-        self.assertEqual(report["counts"]["selection_managed_maps"], 46)
+        self.assertEqual(report["counts"]["selection_managed_maps"], 48)
         self.assertEqual(report["selection"]["legacy_selection_if_statements"], 73)
         self.assertEqual(report["selection"]["operation_specific_if_statements"], 35)
 
@@ -1294,10 +1294,18 @@ class NumericalExecutionContractTests(unittest.TestCase):
             ROOT / "version" / "v8" / "circuits" / "qwen35.json"
         )
         expected = {
-            "prefill": ("decoder.recurrent_qkv_projection.q5_k.prefill", "gemm_nt_q5_k"),
-            "decode": ("decoder.recurrent_qkv_projection.q5_k.decode", "gemv_q5_k"),
+            "prefill": (
+                "decoder.recurrent_qkv_projection.q5_k.prefill",
+                "gemm_nt_q5_k",
+                "gemm_nt_q5_k_parallel_dispatch",
+            ),
+            "decode": (
+                "decoder.recurrent_qkv_projection.q5_k.decode",
+                "gemv_q5_k",
+                "gemv_q5_k",
+            ),
         }
-        for phase, (operation, kernel_id) in expected.items():
+        for phase, (operation, kernel_id, function) in expected.items():
             with self.subTest(phase=phase):
                 plan = resolver.resolve_contract(
                     circuit_doc,
@@ -1312,7 +1320,7 @@ class NumericalExecutionContractTests(unittest.TestCase):
                     "q5_k_weight_q8_k_input_avx2_fma_fp32_output",
                 )
                 self.assertEqual(plan["kernel"]["id"], kernel_id)
-                self.assertEqual(plan["kernel"]["function"], kernel_id)
+                self.assertEqual(plan["kernel"]["function"], function)
                 semantics = plan["contract"]["semantics"]
                 self.assertEqual(semantics["compute"]["weight"], "int5")
                 self.assertEqual(semantics["reduction"]["merge_order"], "pairwise_tree")

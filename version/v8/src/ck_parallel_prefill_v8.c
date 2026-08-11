@@ -191,6 +191,8 @@ extern void gemm_nt_q6_k_q8_k_tiled(const void *A, const void *B, const float *b
                                       float *C, int M, int N, int K);
 extern void gemm_nt_q5_1_q8_1(const float *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
+extern void gemm_nt_q5_1_q8_1_m4(const float *A, const void *B, const float *bias,
+                                   float *C, int M, int N, int K);
 extern void gemm_nt_q5_k(const float *A, const void *B, const float *bias,
                           float *C, int M, int N, int K);
 extern void gated_deltanet_llama_avx2_prefill_forward(
@@ -1683,7 +1685,7 @@ static void work_gemm_nt_q5_1_q8_1(int ith, int nth, void *args)
     int r1 = (r0 + dr < a->M) ? (r0 + dr) : a->M;
     if (r0 >= a->M) return;
 
-    gemm_nt_q5_1_q8_1(
+    gemm_nt_q5_1_q8_1_m4(
         (const float *)((const char *)a->A + (size_t)r0 * a->A_row_bytes),
         a->B,
         a->bias,
@@ -2223,7 +2225,7 @@ void gemm_nt_q5_1_q8_1_parallel_dispatch(
 {
     ck_threadpool_t *pool = ck_threadpool_global();
     if (!pool || ck_threadpool_n_threads(pool) <= 1 || M <= 1 || ck_should_run_gemm_serial(pool, M, N, K)) {
-        gemm_nt_q5_1_q8_1(A, B, bias, C, M, N, K);
+        gemm_nt_q5_1_q8_1_m4(A, B, bias, C, M, N, K);
         return;
     }
 

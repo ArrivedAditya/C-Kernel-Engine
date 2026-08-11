@@ -143,8 +143,37 @@ class ProviderSelectionTests(unittest.TestCase):
             selected.append(document["id"])
             errors = sorted(validator.iter_errors(document["selection"]), key=str)
             self.assertEqual(errors, [], path.name)
-        self.assertEqual(len(selected), 46)
+        self.assertEqual(len(selected), 48)
 
+    def test_gemma_q5_prefill_providers_are_production_selected(self):
+        maps = ROOT / "version" / "v8" / "kernel_maps"
+        expected = {
+            "gemm_nt_q5_1": (
+                "q5_1_weight_q8_1_internal_fp32_output",
+                "gemm_nt_q5_1_q8_1_parallel_dispatch",
+            ),
+            "gemm_nt_q5_k": (
+                "q5_k_weight_q8_k_input_avx2_fma_fp32_output",
+                "gemm_nt_q5_k_parallel_dispatch",
+            ),
+        }
+        registry = {
+            kernel["id"]: kernel
+            for kernel in json.loads(
+                (maps / "KERNEL_REGISTRY.json").read_text()
+            )["kernels"]
+        }
+        for kernel_id, (group, function) in expected.items():
+            with self.subTest(kernel_id=kernel_id):
+                document = json.loads((maps / f"{kernel_id}.json").read_text())
+                self.assertEqual(document["selection"]["status"], "production")
+                self.assertEqual(document["selection"]["equivalence_group"], group)
+                self.assertIn("prefill", document["selection"]["phases"])
+                self.assertIn("call_abi", document)
+                self.assertEqual(document["impl"]["function"], function)
+                self.assertEqual(document["production"]["function"], function)
+                self.assertEqual(registry[kernel_id]["impl"]["function"], function)
+                self.assertEqual(registry[kernel_id]["production"]["function"], function)
     def test_embedding_production_priorities_preserve_dtype_dispatch(self):
         registry = json.loads(
             (ROOT / "version" / "v8" / "kernel_maps" / "KERNEL_REGISTRY.json").read_text()
