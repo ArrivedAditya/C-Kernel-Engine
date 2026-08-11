@@ -1986,6 +1986,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 workdir.resolve() / "decoder",
                 context_override=61,
                 profile=False,
+                runtime_config_overrides=None,
             )
 
             report = json.loads((workdir / "bridge_report.json").read_text(encoding="utf-8"))
@@ -2070,6 +2071,36 @@ class V8NativeBridgeHostTests(unittest.TestCase):
             self.assertIsNone(report["prefix_grid_x"])
             self.assertIsNone(report["prefix_grid_y"])
             self.assertEqual(report["decoder_context_len"], 32)
+
+    def test_bridge_memory_snapshot_supports_cgroup_v1(self) -> None:
+        def fake_read(path: Path) -> int | None:
+            values = {
+                "/sys/fs/cgroup/memory/memory.usage_in_bytes": 1234,
+                "/sys/fs/cgroup/memory/memory.limit_in_bytes": 5678,
+            }
+            return values.get(str(path))
+
+        with mock.patch.object(bridge_runner_v8, "_read_int_file", side_effect=fake_read):
+            snapshot = bridge_runner_v8._memory_snapshot()
+
+        self.assertEqual(snapshot["source"], "cgroup_v1")
+        self.assertEqual(snapshot["cgroup_current_bytes"], 1234)
+        self.assertEqual(snapshot["cgroup_limit_bytes"], 5678)
+
+    def test_bridge_weight_storage_evidence_resolves_symlink(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_bridge_weights_") as tmpdir:
+            root = Path(tmpdir)
+            target = root / "persistent.bump"
+            target.write_bytes(b"weights")
+            link = root / "weights.bump"
+            link.symlink_to(target)
+            with mock.patch.object(bridge_runner_v8, "_path_filesystem_type", return_value="tmpfs"):
+                evidence = bridge_runner_v8._weight_storage_evidence(link)
+
+        self.assertEqual(evidence["resolved_path"], str(target.resolve()))
+        self.assertEqual(evidence["size_bytes"], 7)
+        self.assertEqual(evidence["filesystem_type"], "tmpfs")
+        self.assertTrue(evidence["memory_backed"])
 
     def test_run_decoder_uses_decode_runtime_for_mixed_prefix_continuation(self) -> None:
         used_paths: list[Path] = []
