@@ -2188,6 +2188,61 @@ static void attention_flash_query_causal_exact_f16kv(const float *q_vec,
     }
 }
 
+// K/V are already rounded through FP16 once for the complete attention call.
+// Keep the online softmax and FP16 accumulator order identical to the oracle.
+static void attention_flash_query_causal_exact_prerounded_f16kv(
+    const float *q_vec, const float *k_head, const float *v_head,
+    int kv_tokens, int head_dim, int aligned_head_dim, float scale,
+    float *out_vec)
+{
+    if (kv_tokens <= 0) {
+        memset(out_vec, 0, (size_t)aligned_head_dim * sizeof(float));
+        return;
+    }
+
+    float *q_rounded = (float *)alloca((size_t)head_dim * sizeof(float));
+    ck_round_fp16_buffer(q_vec, q_rounded, (size_t)head_dim);
+    memset(out_vec, 0, (size_t)aligned_head_dim * sizeof(float));
+
+    float sum = 0.0f;
+    float max_score = -INFINITY;
+    for (int j = 0; j < kv_tokens; ++j) {
+        const float *k_vec = k_head + (size_t)j * (size_t)aligned_head_dim;
+        const float *v_vec = v_head + (size_t)j * (size_t)aligned_head_dim;
+        float dot = 0.0f;
+        for (int d = 0; d < head_dim; ++d) {
+            dot += q_rounded[d] * k_vec[d];
+        }
+        const float score = dot * scale;
+        const float prev_max = max_score;
+        float max_scale = 1.0f;
+        float value_scale = 1.0f;
+        if (score > max_score) {
+            max_score = score;
+            max_scale = isfinite(prev_max) ? expf(prev_max - max_score) : 0.0f;
+            for (int d = 0; d < head_dim; ++d) {
+                out_vec[d] = ck_round_fp16_scalar(out_vec[d] * max_scale);
+            }
+        } else {
+            value_scale = expf(score - max_score);
+        }
+        for (int d = 0; d < head_dim; ++d) {
+            const float updated = out_vec[d] + value_scale * v_vec[d];
+            out_vec[d] = ck_round_fp16_scalar(updated);
+        }
+        sum = sum * max_scale + value_scale;
+    }
+
+    if (sum > 0.0f) {
+        const float inv_sum = 1.0f / sum;
+        for (int d = 0; d < head_dim; ++d) {
+            out_vec[d] *= inv_sum;
+        }
+    } else {
+        memset(out_vec, 0, (size_t)head_dim * sizeof(float));
+    }
+}
+
 static CK_NOINLINE CK_OPTNONE void attention_query_full_exact_regular(const float *q_vec,
                                                                       const float *k_head,
                                                                       const float *v_cols,
@@ -5220,6 +5275,7 @@ typedef struct {
     int head_dim;
     int aligned_head_dim;
     int kv_stride_tokens;
+    int inputs_prerounded;
 } ck_attention_causal_f16kv_args_t;
 
 static void ck_attention_causal_f16kv_work(int ith, int nth, void *opaque)
@@ -5242,11 +5298,15 @@ static void ck_attention_causal_f16kv_work(int ith, int nth, void *opaque)
                 qkv_index(h, i, 0, T, args->aligned_head_dim);
             float *out_vec = args->output +
                 qkv_index(h, i, 0, T, args->aligned_head_dim);
-            attention_flash_query_causal_exact_f16kv(q_vec, k_head, v_head,
-                                                     /*kv_tokens=*/i + 1,
-                                                     args->head_dim,
-                                                     args->aligned_head_dim,
-                                                     scale, out_vec);
+            if (args->inputs_prerounded) {
+                attention_flash_query_causal_exact_prerounded_f16kv(
+                    q_vec, k_head, v_head, /*kv_tokens=*/i + 1,
+                    args->head_dim, args->aligned_head_dim, scale, out_vec);
+            } else {
+                attention_flash_query_causal_exact_f16kv(
+                    q_vec, k_head, v_head, /*kv_tokens=*/i + 1,
+                    args->head_dim, args->aligned_head_dim, scale, out_vec);
+            }
         }
     }
 }
@@ -5262,7 +5322,7 @@ void attention_forward_causal_head_major_gqa_flash_strided_f16kv_serial(
     }
     ck_attention_causal_f16kv_args_t args = {
         q, k, v, output, num_heads, num_kv_heads, num_tokens,
-        head_dim, aligned_head_dim, kv_stride_tokens,
+        head_dim, aligned_head_dim, kv_stride_tokens, 0,
     };
     ck_attention_causal_f16kv_work(0, 1, &args);
 }
@@ -5276,9 +5336,30 @@ void attention_forward_causal_head_major_gqa_flash_strided_f16kv(
         num_tokens <= 0 || kv_stride_tokens < num_tokens) {
         return;
     }
+    size_t elements = 0;
+    if ((size_t)num_kv_heads <= SIZE_MAX / (size_t)kv_stride_tokens) {
+        const size_t rows = (size_t)num_kv_heads * (size_t)kv_stride_tokens;
+        if (rows <= SIZE_MAX / (size_t)aligned_head_dim) {
+            elements = rows * (size_t)aligned_head_dim;
+        }
+    }
+    float *rounded_kv = elements > 0 && elements <= SIZE_MAX / (2 * sizeof(float))
+        ? (float *)malloc(2 * elements * sizeof(float))
+        : NULL;
+    const float *compute_k = k;
+    const float *compute_v = v;
+    int inputs_prerounded = 0;
+    if (rounded_kv) {
+        ck_round_fp16_buffer(k, rounded_kv, elements);
+        ck_round_fp16_buffer(v, rounded_kv + elements, elements);
+        compute_k = rounded_kv;
+        compute_v = rounded_kv + elements;
+        inputs_prerounded = 1;
+    }
     ck_attention_causal_f16kv_args_t args = {
-        q, k, v, output, num_heads, num_kv_heads, num_tokens,
-        head_dim, aligned_head_dim, kv_stride_tokens,
+        q, compute_k, compute_v, output,
+        num_heads, num_kv_heads, num_tokens,
+        head_dim, aligned_head_dim, kv_stride_tokens, inputs_prerounded,
     };
     ck_threadpool_t *pool = ck_threadpool_global();
     const int workers = pool ? ck_threadpool_n_threads(pool) : 1;
@@ -5288,6 +5369,7 @@ void attention_forward_causal_head_major_gqa_flash_strided_f16kv(
     } else {
         ck_attention_causal_f16kv_work(0, 1, &args);
     }
+    free(rounded_kv);
 }
 
 void attention_forward_full_head_major_gqa_exact_strided(const float *q,
