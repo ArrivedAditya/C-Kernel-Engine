@@ -1,5 +1,6 @@
 import ctypes
 import math
+import os
 import subprocess
 import tempfile
 import unittest
@@ -72,6 +73,44 @@ class DirectLayoutAttentionTests(unittest.TestCase):
                 dst = (token * heads + head) * dim
                 expected[dst:dst + dim] = head_output[src:src + dim]
         self.assertEqual(expected.tobytes(), token_output.tobytes())
+
+    def test_qwen2_short_prefill_threading_is_bit_exact_with_serial(self):
+        heads, kv_heads, tokens, dim = 14, 2, 128, 64
+        count = heads * tokens * dim
+        kv_count = kv_heads * tokens * dim
+        q = array("f", (math.sin(index * 0.0013) for index in range(count)))
+        k = array("f", (math.cos(index * 0.0017) for index in range(kv_count)))
+        v = array("f", (math.sin(index * 0.0019 + 0.3) for index in range(kv_count)))
+        serial = array("f", [0.0]) * count
+        threaded = array("f", [0.0]) * count
+
+        def pointer(values):
+            return (ctypes.c_float * len(values)).from_buffer(values)
+
+        args = (pointer(q), pointer(k), pointer(v))
+        old_disable = os.environ.get("CK_DISABLE_ATTENTION_THREADPOOL")
+        old_threads = os.environ.get("CK_NUM_THREADS")
+        try:
+            os.environ["CK_DISABLE_ATTENTION_THREADPOOL"] = "1"
+            self._lib.attention_forward_causal_head_major_gqa_flash_strided(
+                *args, pointer(serial), heads, kv_heads, tokens, dim, dim, tokens
+            )
+            os.environ.pop("CK_DISABLE_ATTENTION_THREADPOOL", None)
+            os.environ["CK_NUM_THREADS"] = "4"
+            self._lib.attention_forward_causal_head_major_gqa_flash_strided(
+                *args, pointer(threaded), heads, kv_heads, tokens, dim, dim, tokens
+            )
+        finally:
+            if old_disable is None:
+                os.environ.pop("CK_DISABLE_ATTENTION_THREADPOOL", None)
+            else:
+                os.environ["CK_DISABLE_ATTENTION_THREADPOOL"] = old_disable
+            if old_threads is None:
+                os.environ.pop("CK_NUM_THREADS", None)
+            else:
+                os.environ["CK_NUM_THREADS"] = old_threads
+
+        self.assertEqual(serial.tobytes(), threaded.tobytes())
 
     def test_mixed_visual_attention_preserves_direct_output_layout(self):
         heads, kv_heads, tokens, dim = 4, 2, 9, 64

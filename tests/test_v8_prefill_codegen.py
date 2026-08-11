@@ -590,6 +590,33 @@ class TestV8PrefillCodegen(unittest.TestCase):
         self.assertIn('ck_debug_export_hidden(model, 0, "z"', emitted)
         self.assertIn("(num_tokens) * (2048)", emitted)
 
+    def test_map_owned_weight_preparation_is_deduplicated_and_budgeted(self) -> None:
+        preparation = {
+            "function": "ck_q5_0_prepare_q8_0_weight",
+            "arguments": {"B": "B", "N": "N", "K": "K"},
+            "prepared_bytes": "N * (K / 32) * 34",
+            "max_total_bytes": 1024,
+        }
+        args = [
+            {"name": "A", "expr": "input_q8"},
+            {"name": "B", "expr": "model->weight_q5"},
+            {"name": "bias", "expr": "NULL"},
+            {"name": "C", "expr": "output"},
+            {"name": "M", "expr": "num_tokens"},
+            {"name": "N", "expr": "64"},
+            {"name": "K", "expr": "128"},
+        ]
+        op = {"function": "gemm_nt_q5_0_q8_0", "args": args,
+              "call_abi": {"weight_preparation": preparation}}
+
+        emitted = codegen_prefill_v8.emit_prefill_weight_prepare_function([op, op])
+
+        self.assertEqual(emitted.count("ck_q5_0_prepare_q8_0_weight("), 1)
+        self.assertIn("SIZE_MAX - mapped_prepared_bytes_0", emitted)
+        self.assertIn("mapped_prepared_bytes_0 = SIZE_MAX", emitted)
+        self.assertIn("mapped_prepared_bytes_0 <= (size_t)1024", emitted)
+        self.assertIn("model->weight_q5, 64, 128", emitted)
+
 
 if __name__ == "__main__":
     unittest.main()

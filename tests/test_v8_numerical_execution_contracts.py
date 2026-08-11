@@ -1266,6 +1266,29 @@ class NumericalExecutionContractTests(unittest.TestCase):
                     plan["kernel"]["function"], "swiglu_forward_ggml"
                 )
 
+    def test_qwen2_circuit_resolves_exact_swiglu(self):
+        circuit_doc = resolver.load_json(
+            ROOT / "version" / "v8" / "circuits" / "qwen2.json"
+        )
+        for phase in ("prefill", "decode"):
+            with self.subTest(phase=phase):
+                plan = resolver.resolve_contract(
+                    circuit_doc,
+                    self.contracts,
+                    self.kernels,
+                    "decoder.swiglu",
+                    phase,
+                    mode="production",
+                )
+                self.assertEqual(
+                    plan["contract"]["id"],
+                    "swiglu_fp32_ggml_vector_exp_fp32_output",
+                )
+                self.assertEqual(plan["kernel"]["id"], "swiglu_forward_ggml")
+                self.assertEqual(
+                    plan["kernel"]["function"], "swiglu_forward_ggml"
+                )
+
     def test_qwen35_circuit_resolves_exact_q5_recurrent_qkv_projection(self):
         circuit_doc = resolver.load_json(
             ROOT / "version" / "v8" / "circuits" / "qwen35.json"

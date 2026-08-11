@@ -43,6 +43,7 @@ NOT this file.
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -2999,7 +3000,29 @@ def emit_prefill_weight_prepare_function(ops: List[Dict]) -> str:
     """
     weights: list[tuple[str, str, str]] = []
     seen: set[tuple[str, str, str]] = set()
+    mapped_groups: dict[tuple[str, int], list[tuple[list[str], str]]] = {}
+    mapped_seen: set[tuple[str, tuple[str, ...]]] = set()
     for op in ops:
+        preparation = (op.get("call_abi") or {}).get("weight_preparation")
+        if isinstance(preparation, dict):
+            function = str(preparation.get("function", "") or "").strip()
+            argument_map = preparation.get("arguments") or {}
+            resolved_args: dict[str, str] = {}
+            for symbol, arg_name in argument_map.items():
+                expr = _find_arg_expr(op.get("args", []) or [], arg_name=str(arg_name))
+                if expr:
+                    resolved_args[str(symbol)] = expr
+            ordered_symbols = list(argument_map.keys())
+            if function and len(resolved_args) == len(ordered_symbols):
+                call_args = [resolved_args[str(symbol)] for symbol in ordered_symbols]
+                mapped_key = (function, tuple(call_args))
+                if mapped_key not in mapped_seen:
+                    mapped_seen.add(mapped_key)
+                    bytes_expr = str(preparation.get("prepared_bytes", "0") or "0")
+                    for symbol, expr in resolved_args.items():
+                        bytes_expr = re.sub(rf"\b{re.escape(symbol)}\b", f"({expr})", bytes_expr)
+                    max_bytes = int(preparation.get("max_total_bytes", 0) or 0)
+                    mapped_groups.setdefault((function, max_bytes), []).append((call_args, bytes_expr))
         if "q4_k_q8_k" not in str(op.get("function", "")):
             continue
         args = op.get("args", []) or []
@@ -3018,6 +3041,31 @@ def emit_prefill_weight_prepare_function(ops: List[Dict]) -> str:
         "    if (!model) return;",
         "    int prepared = 0;",
     ]
+    for group_idx, ((function, max_bytes), entries) in enumerate(mapped_groups.items()):
+        lines.append(f"    size_t mapped_prepared_bytes_{group_idx} = 0;")
+        for entry_idx, (_, bytes_expr) in enumerate(entries):
+            lines.append(
+                f"    const size_t mapped_prepared_item_{group_idx}_{entry_idx} = "
+                f"(size_t)({bytes_expr});"
+            )
+            lines.append(
+                f"    if (SIZE_MAX - mapped_prepared_bytes_{group_idx} < "
+                f"mapped_prepared_item_{group_idx}_{entry_idx}) "
+                f"mapped_prepared_bytes_{group_idx} = SIZE_MAX;"
+            )
+            lines.append(
+                f"    else mapped_prepared_bytes_{group_idx} += "
+                f"mapped_prepared_item_{group_idx}_{entry_idx};"
+            )
+        condition = "1" if max_bytes <= 0 else f"mapped_prepared_bytes_{group_idx} <= (size_t){max_bytes}"
+        lines.append(f"    if ({condition}) {{")
+        for call_args, _ in entries:
+            lines.append(f"        prepared += {function}({', '.join(call_args)});")
+        lines.append("    } else {")
+        lines.append(
+            f'        fprintf(stderr, "[CK parallel prefill] Skipped {function}: %zu prepared bytes exceed budget {max_bytes}\\n", mapped_prepared_bytes_{group_idx});'
+        )
+        lines.append("    }")
     for b_expr, n_expr, k_expr in weights:
         lines.append(
             "    prepared += ck_q4k_prepare_vnni_x16_weight("
@@ -3026,7 +3074,7 @@ def emit_prefill_weight_prepare_function(ops: List[Dict]) -> str:
     lines.extend(
         [
             "    if (prepared > 0) {",
-            '        fprintf(stderr, "[CK parallel prefill] Prepared %d AVX-512 VNNI x16 Q4_K weights at load time\\n", prepared);',
+            '        fprintf(stderr, "[CK parallel prefill] Prepared %d model-owned prefill weights at load time\\n", prepared);',
             "    }",
             "}",
         ]

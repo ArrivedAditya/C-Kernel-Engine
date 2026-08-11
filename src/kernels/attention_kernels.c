@@ -3982,7 +3982,13 @@ static int ck_attention_parallel_enabled(int total_queries, int num_tokens, int 
 {
     const char *disable = getenv("CK_DISABLE_ATTENTION_THREADPOOL");
     if (disable && disable[0] && strcmp(disable, "0") != 0) return 0;
-    if (total_queries < 2048 || num_tokens < 128 || head_dim <= 0) return 0;
+    /*
+     * A 128-token GQA prefill can fall below the old 2048-query threshold
+     * even though its causal dot products contain ample independent work.
+     * Keep smaller prompts serial, but allow the shared pool once at least
+     * eight 128-query worker grains are available.
+     */
+    if (total_queries < 1024 || num_tokens < 128 || head_dim <= 0) return 0;
     return 1;
 }
 

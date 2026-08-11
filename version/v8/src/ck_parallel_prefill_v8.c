@@ -500,6 +500,108 @@ typedef struct ck_q4k_packed_meta_x16_cache_entry {
 static pthread_mutex_t ck_q4k_packed_meta_x16_cache_mu = PTHREAD_MUTEX_INITIALIZER;
 static ck_q4k_packed_meta_x16_cache_entry_t *ck_q4k_packed_meta_x16_cache_head = NULL;
 
+typedef struct ck_q5_0_q8_0_cache_entry {
+    const void *src;
+    int N;
+    int K;
+    block_q8_0 *prepared;
+    struct ck_q5_0_q8_0_cache_entry *next;
+} ck_q5_0_q8_0_cache_entry_t;
+
+static pthread_mutex_t ck_q5_0_q8_0_cache_mu = PTHREAD_MUTEX_INITIALIZER;
+static ck_q5_0_q8_0_cache_entry_t *ck_q5_0_q8_0_cache_head = NULL;
+
+static void ck_q5_0_expand_exact_q8_0(
+        const block_q5_0 *src, block_q8_0 *dst, size_t blocks)
+{
+    for (size_t block = 0; block < blocks; ++block) {
+        uint32_t high_bits;
+        memcpy(&high_bits, src[block].qh, sizeof(high_bits));
+        dst[block].d = src[block].d;
+        for (int lane = 0; lane < QK5_0 / 2; ++lane) {
+            const uint8_t packed = src[block].qs[lane];
+            dst[block].qs[lane] = (int8_t)(
+                ((packed & 0x0f) | (((high_bits >> lane) & 1u) << 4)) - 16);
+            dst[block].qs[lane + QK5_0 / 2] = (int8_t)(
+                ((packed >> 4) | (((high_bits >> (lane + 16)) & 1u) << 4)) - 16);
+        }
+    }
+}
+
+static block_q8_0 *ck_find_prepared_q5_0_q8_0(
+        const void *B, int N, int K)
+{
+    block_q8_0 *prepared = NULL;
+    pthread_mutex_lock(&ck_q5_0_q8_0_cache_mu);
+    for (ck_q5_0_q8_0_cache_entry_t *entry = ck_q5_0_q8_0_cache_head;
+         entry; entry = entry->next) {
+        if (entry->src == B && entry->N == N && entry->K == K) {
+            prepared = entry->prepared;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&ck_q5_0_q8_0_cache_mu);
+    return prepared;
+}
+
+int ck_q5_0_prepare_q8_0_weight(const void *B, int N, int K)
+{
+#if !defined(__AVX2__)
+    (void)B;
+    (void)N;
+    (void)K;
+    return 0;
+#else
+    if (!B || N <= 0 || K <= 0 || (K % QK5_0) != 0) return 0;
+    if (ck_find_prepared_q5_0_q8_0(B, N, K)) return 1;
+
+    const size_t blocks_per_row = (size_t)K / QK5_0;
+    if ((size_t)N > SIZE_MAX / blocks_per_row) return 0;
+    const size_t blocks = (size_t)N * blocks_per_row;
+    if (blocks > SIZE_MAX / sizeof(block_q8_0)) return 0;
+    block_q8_0 *prepared = (block_q8_0 *)malloc(blocks * sizeof(*prepared));
+    ck_q5_0_q8_0_cache_entry_t *entry =
+        (ck_q5_0_q8_0_cache_entry_t *)malloc(sizeof(*entry));
+    if (!prepared || !entry) {
+        free(prepared);
+        free(entry);
+        return 0;
+    }
+    ck_q5_0_expand_exact_q8_0((const block_q5_0 *)B, prepared, blocks);
+    entry->src = B;
+    entry->N = N;
+    entry->K = K;
+    entry->prepared = prepared;
+
+    pthread_mutex_lock(&ck_q5_0_q8_0_cache_mu);
+    for (ck_q5_0_q8_0_cache_entry_t *existing = ck_q5_0_q8_0_cache_head;
+         existing; existing = existing->next) {
+        if (existing->src == B && existing->N == N && existing->K == K) {
+            pthread_mutex_unlock(&ck_q5_0_q8_0_cache_mu);
+            free(prepared);
+            free(entry);
+            return 1;
+        }
+    }
+    entry->next = ck_q5_0_q8_0_cache_head;
+    ck_q5_0_q8_0_cache_head = entry;
+    pthread_mutex_unlock(&ck_q5_0_q8_0_cache_mu);
+    return 1;
+#endif
+}
+
+static void ck_q5_0_q8_0_cache_clear(void)
+{
+    pthread_mutex_lock(&ck_q5_0_q8_0_cache_mu);
+    while (ck_q5_0_q8_0_cache_head) {
+        ck_q5_0_q8_0_cache_entry_t *entry = ck_q5_0_q8_0_cache_head;
+        ck_q5_0_q8_0_cache_head = entry->next;
+        free(entry->prepared);
+        free(entry);
+    }
+    pthread_mutex_unlock(&ck_q5_0_q8_0_cache_mu);
+}
+
 void ck_q4k_packed_weight_cache_clear(void)
 {
     pthread_mutex_lock(&ck_q4k_packed_meta_cache_mu);
@@ -554,6 +656,7 @@ void ck_parallel_prefill_shutdown(void)
 {
     /* Pool ownership remains with decode; prefill owns packed-weight caches. */
     ck_q4k_packed_weight_cache_clear();
+    ck_q5_0_q8_0_cache_clear();
 }
 
 void ck_parallel_prefill_release_transient_caches(void)
@@ -1617,6 +1720,11 @@ void gemm_nt_q5_0_q8_0_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
     int M, int N, int K)
 {
+    const block_q8_0 *prepared = ck_find_prepared_q5_0_q8_0(B, N, K);
+    if (prepared) {
+        gemm_nt_q8_0_q8_0_parallel_dispatch(A, prepared, bias, C, M, N, K);
+        return;
+    }
     ck_threadpool_t *pool = ck_threadpool_global();
     if (!pool || ck_threadpool_n_threads(pool) <= 1 || M <= 1 || ck_should_run_gemm_serial(pool, M, N, K)) {
         gemm_nt_q5_0_q8_0(A, B, bias, C, M, N, K);

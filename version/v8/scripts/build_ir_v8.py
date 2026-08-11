@@ -12727,6 +12727,77 @@ def load_kernel_call_abis(
     return result
 
 
+def _validate_kernel_weight_preparation(kernel_id: str, preparation: Any) -> Dict:
+    if not isinstance(preparation, dict):
+        raise RuntimeError(
+            f"HARD WEIGHT PREPARATION FAULT: {kernel_id} metadata must be an object."
+        )
+    function = str(preparation.get("function", "") or "").strip()
+    arguments = preparation.get("arguments")
+    bytes_expr = str(preparation.get("prepared_bytes", "") or "").strip()
+    max_bytes = preparation.get("max_total_bytes")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", function):
+        raise RuntimeError(
+            f"HARD WEIGHT PREPARATION FAULT: {kernel_id} has invalid function {function!r}."
+        )
+    if not isinstance(arguments, dict) or not arguments:
+        raise RuntimeError(
+            f"HARD WEIGHT PREPARATION FAULT: {kernel_id} requires named arguments."
+        )
+    symbols = set()
+    for symbol, port in arguments.items():
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", str(symbol)):
+            raise RuntimeError(
+                f"HARD WEIGHT PREPARATION FAULT: {kernel_id} has invalid symbol {symbol!r}."
+            )
+        if not isinstance(port, str) or not port.strip():
+            raise RuntimeError(
+                f"HARD WEIGHT PREPARATION FAULT: {kernel_id} has invalid argument port {port!r}."
+            )
+        symbols.add(str(symbol))
+    if not bytes_expr or not re.fullmatch(r"[A-Za-z0-9_+*/() \t-]+", bytes_expr):
+        raise RuntimeError(
+            f"HARD WEIGHT PREPARATION FAULT: {kernel_id} has unsafe prepared_bytes expression."
+        )
+    expression_symbols = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", bytes_expr))
+    if not expression_symbols.issubset(symbols):
+        unknown = sorted(expression_symbols - symbols)
+        raise RuntimeError(
+            f"HARD WEIGHT PREPARATION FAULT: {kernel_id} prepared_bytes uses unknown symbols {unknown}."
+        )
+    if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) or max_bytes < 0:
+        raise RuntimeError(
+            f"HARD WEIGHT PREPARATION FAULT: {kernel_id} has invalid max_total_bytes."
+        )
+    return copy.deepcopy(preparation)
+
+
+def load_kernel_weight_preparations(
+    kernel_maps_dir: Optional[Path] = None,
+) -> Dict[str, Dict]:
+    """Load model-load weight preparation owned by kernel maps."""
+    maps_dir = kernel_maps_dir or (V8_ROOT / "kernel_maps")
+    result: Dict[str, Dict] = {}
+    excluded = {"KERNEL_REGISTRY.json", "kernel_bindings.json", "kernel_bindings.overlay.json"}
+    for path in sorted(maps_dir.glob("*.json")):
+        if path.name in excluded:
+            continue
+        with path.open("r", encoding="utf-8") as handle:
+            doc = json.load(handle)
+        preparation = doc.get("weight_preparation")
+        if preparation is None:
+            continue
+        kernel_id = str(doc.get("id", "") or "").strip()
+        if not kernel_id or kernel_id in result:
+            raise RuntimeError(
+                f"HARD WEIGHT PREPARATION FAULT: invalid or duplicate owner {kernel_id!r}."
+            )
+        result[kernel_id] = _validate_kernel_weight_preparation(
+            kernel_id, preparation
+        )
+    return result
+
+
 def _template_activation_bindings(template: Dict[str, Any]) -> Dict[str, str]:
     """Return circuit-owned logical-slot to layout-buffer bindings.
 
@@ -12759,6 +12830,7 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
     """
     legacy_bindings = load_kernel_bindings()
     kernel_call_abis = load_kernel_call_abis(legacy_bindings=legacy_bindings)
+    kernel_weight_preparations = load_kernel_weight_preparations()
     physical_maps = {
         str(kernel.get("id", "")): kernel
         for kernel in load_kernel_registry().get("kernels", [])
@@ -13402,6 +13474,9 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                 ),
             },
         }
+        weight_preparation = kernel_weight_preparations.get(kernel_id)
+        if weight_preparation is not None:
+            call_op["call_abi"]["weight_preparation"] = weight_preparation
         if op.get("required_contract") is not None:
             call_op["required_contract"] = copy.deepcopy(op["required_contract"])
         if resolved_contract is not None:

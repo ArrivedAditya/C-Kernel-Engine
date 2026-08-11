@@ -51,6 +51,7 @@ void ck_q4k_packed_weight_cache_clear(void);
  * measured prompt without changing the on-disk weight format.
  */
 int ck_q4k_prepare_vnni_x16_weight(const void *B, int N, int K);
+int ck_q5_0_prepare_q8_0_weight(const void *B, int N, int K);
 
 void gated_deltanet_llama_prefill_parallel_dispatch(
     const float *q, const float *k, const float *v,
