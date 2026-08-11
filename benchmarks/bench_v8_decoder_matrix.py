@@ -9,9 +9,11 @@ uses ck-cli-v8 with repeated prompt token ids.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import statistics
 import subprocess
 import sys
 from pathlib import Path
@@ -85,6 +87,24 @@ def _run(cmd: list[str], *, env: dict[str, str], timeout: int) -> tuple[int, str
     return proc.returncode, proc.stdout
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _file_provenance(path: Path) -> dict[str, Any]:
+    resolved = path.resolve()
+    return {
+        "path": str(path),
+        "resolved_path": str(resolved),
+        "size_bytes": resolved.stat().st_size,
+        "sha256": _sha256(resolved),
+    }
+
+
 def _run_llama(gguf: Path, *, prompt: int, decode: int, threads: int, repeats: int, timeout: int) -> dict[str, Any]:
     env = os.environ.copy()
     env["LD_LIBRARY_PATH"] = f"{LLAMA_LIB}:{env.get('LD_LIBRARY_PATH', '')}"
@@ -128,9 +148,20 @@ def _run_llama(gguf: Path, *, prompt: int, decode: int, threads: int, repeats: i
     return row
 
 
-def _run_cke(run_dir: Path, *, prompt: int, decode: int, threads: int, context: int, timeout: int) -> dict[str, Any]:
+def _run_cke(
+    run_dir: Path,
+    *,
+    prompt: int,
+    decode: int,
+    threads: int,
+    context: int,
+    repeats: int,
+    gemm_schedule: str,
+    timeout: int,
+) -> dict[str, Any]:
     lib = run_dir / "libmodel.so"
     weights = run_dir / "weights.bump"
+    manifest = run_dir / "weights_manifest.map"
     env = os.environ.copy()
     env["CK_NUM_THREADS"] = str(threads)
     env["OMP_NUM_THREADS"] = "1"
@@ -138,8 +169,12 @@ def _run_cke(run_dir: Path, *, prompt: int, decode: int, threads: int, context: 
     prompt_tokens = ",".join(["100"] * prompt)
     cmd = [
         str(CK_CLI),
+        "--lib",
         str(lib),
+        "--weights",
         str(weights),
+        "--manifest",
+        str(manifest),
         "--prompt-tokens",
         prompt_tokens,
         "--max-tokens",
@@ -151,23 +186,46 @@ def _run_cke(run_dir: Path, *, prompt: int, decode: int, threads: int, context: 
         "--ignore-eos",
         "--quiet-output",
         "--timing",
+        "--gemm-schedule",
+        gemm_schedule,
     ]
-    rc, out = _run(cmd, env=env, timeout=timeout)
-    clean = ANSI_RE.sub("", out)
-    row: dict[str, Any] = {"command": cmd[:3] + ["--prompt-tokens", f"<{prompt} ids>", *cmd[5:]], "returncode": rc, "stdout_tail": "\n".join(clean.splitlines()[-40:])}
-    match = CK_RE.search(clean)
-    if rc != 0 or not match:
-        row["status"] = "fail"
-        return row
+    redacted_cmd = [f"<{prompt} ids>" if value == prompt_tokens else value for value in cmd]
+    measurements: list[dict[str, Any]] = []
+    row: dict[str, Any] = {"command": redacted_cmd, "runs": measurements}
+    for repetition in range(repeats):
+        rc, out = _run(cmd, env=env, timeout=timeout)
+        clean = ANSI_RE.sub("", out)
+        match = CK_RE.search(clean)
+        measurement: dict[str, Any] = {
+            "repetition": repetition,
+            "returncode": rc,
+            "stdout_tail": "\n".join(clean.splitlines()[-40:]),
+        }
+        if rc != 0 or not match:
+            measurement["status"] = "fail"
+            measurements.append(measurement)
+            row.update({"status": "fail", "returncode": rc})
+            return row
+        measurement.update(
+            {
+                "status": "pass",
+                "prompt_tokens": int(match.group(1)),
+                "prompt_ms": float(match.group(2)),
+                "prompt_tok_s": float(match.group(3)),
+                "decode_tokens": int(match.group(4)),
+                "decode_ms": float(match.group(5)),
+                "decode_tok_s": float(match.group(6)),
+            }
+        )
+        measurements.append(measurement)
+    for field in ("prompt_ms", "prompt_tok_s", "decode_ms", "decode_tok_s"):
+        row[field] = statistics.median(float(item[field]) for item in measurements)
     row.update(
         {
             "status": "pass",
-            "prompt_tokens": int(match.group(1)),
-            "prompt_ms": float(match.group(2)),
-            "prompt_tok_s": float(match.group(3)),
-            "decode_tokens": int(match.group(4)),
-            "decode_ms": float(match.group(5)),
-            "decode_tok_s": float(match.group(6)),
+            "returncode": 0,
+            "prompt_tokens": measurements[0]["prompt_tokens"],
+            "decode_tokens": measurements[0]["decode_tokens"],
         }
     )
     return row
@@ -193,6 +251,12 @@ def main() -> int:
     parser.add_argument("--context", type=int, default=0, help="CK context for fixed-token runs; 0 means prompt + decode + 8")
     parser.add_argument("--threads", type=int, default=12)
     parser.add_argument("--repeats", type=int, default=1)
+    parser.add_argument(
+        "--gemm-schedule",
+        choices=["auto", "static", "dynamic"],
+        default="auto",
+        help="CKE GEMM tile schedule; llama.cpp is unaffected.",
+    )
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument(
         "--strict",
@@ -211,7 +275,16 @@ def main() -> int:
         if not gguf.is_absolute():
             gguf = CACHE / gguf
         row: dict[str, Any] = {"id": model_id, "label": spec["label"], "quant": spec["quant"], "run_dir": str(run_dir), "gguf": str(gguf)}
-        missing = [str(p) for p in [CK_CLI, LLAMA_BIN, run_dir / "libmodel.so", run_dir / "weights.bump", gguf] if not p.exists()]
+        required = [
+            CK_CLI,
+            LLAMA_BIN,
+            run_dir / "libmodel.so",
+            run_dir / "libckernel_engine.so",
+            run_dir / "weights.bump",
+            run_dir / "weights_manifest.map",
+            gguf,
+        ]
+        missing = [str(p) for p in required if not p.exists()]
         if missing:
             row.update({"status": "skip", "missing": missing})
             results.append(row)
@@ -219,7 +292,26 @@ def main() -> int:
         print(f"== {spec['label']} {spec['quant']} ==", flush=True)
         row["llama"] = _run_llama(gguf, prompt=args.prompt, decode=args.decode, threads=args.threads, repeats=args.repeats, timeout=args.timeout)
         ck_context = args.context if args.context > 0 else args.prompt + args.decode + 8
-        row["cke"] = _run_cke(run_dir, prompt=args.prompt, decode=args.decode, threads=args.threads, context=ck_context, timeout=args.timeout)
+        row["cke"] = _run_cke(
+            run_dir,
+            prompt=args.prompt,
+            decode=args.decode,
+            threads=args.threads,
+            context=ck_context,
+            repeats=args.repeats,
+            gemm_schedule=args.gemm_schedule,
+            timeout=args.timeout,
+        )
+        # Hash after timing so provenance I/O cannot warm either engine's weights.
+        row["provenance"] = {
+            "cke_cli": _file_provenance(CK_CLI),
+            "cke_model": _file_provenance(run_dir / "libmodel.so"),
+            "cke_engine": _file_provenance(run_dir / "libckernel_engine.so"),
+            "weights": _file_provenance(run_dir / "weights.bump"),
+            "manifest": _file_provenance(run_dir / "weights_manifest.map"),
+            "llama_bench": _file_provenance(LLAMA_BIN),
+            "gguf": _file_provenance(gguf),
+        }
         row["status"] = (
             "pass"
             if row["llama"].get("status") == "pass" and row["cke"].get("status") == "pass"

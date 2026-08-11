@@ -181,6 +181,7 @@ extern void gemv_q8_0_q8_0_contract(float *y, const void *W,
                                      const float *x, int M, int K);
 extern int ck_strict_parity_enabled(void);
 extern void swiglu_forward_exact(const float *input, float *output, int tokens, int dim);
+extern void geglu_forward_exact(const float *input, float *output, int tokens, int dim);
 extern void gemm_nt_q6_k_q8_k_tile(const void *A, const void *B, const float *bias,
                                     float *C, int M, int N, int K,
                                     int m0, int m1, int n0, int n1);
@@ -192,6 +193,8 @@ extern void gemm_nt_q6_k_q8_k_tiled(const void *A, const void *B, const float *b
 extern void gemm_nt_q5_1_q8_1(const float *A, const void *B, const float *bias,
                                 float *C, int M, int N, int K);
 extern void gemm_nt_q5_1_q8_1_m4(const float *A, const void *B, const float *bias,
+                                   float *C, int M, int N, int K);
+extern void gemm_nt_q5_1_q8_1_m8(const float *A, const void *B, const float *bias,
                                    float *C, int M, int N, int K);
 extern void gemm_nt_q5_k(const float *A, const void *B, const float *bias,
                           float *C, int M, int N, int K);
@@ -274,6 +277,13 @@ typedef struct {
     int state_dim;
     float norm_eps;
 } deltanet_prefill_args_t;
+
+typedef struct {
+    const float *input;
+    float *output;
+    int tokens;
+    int dim;
+} geglu_args_t;
 
 static int ck_min_int(int a, int b) { return a < b ? a : b; }
 static int ck_env_enabled(const char *name);
@@ -1694,6 +1704,54 @@ static void work_gemm_nt_q5_1_q8_1(int ith, int nth, void *args)
     );
 }
 
+static void work_gemm_nt_q5_1_q8_1_reuse_range(int begin, int end, void *args)
+{
+    const gemm_args_t *a = (const gemm_args_t *)args;
+    if (!a || begin < 0 || begin >= end) return;
+    const int group_rows = a->tile_m == 8 ? 8 : 4;
+
+    for (int job = begin; job < end; ++job) {
+        const int r0 = job * group_rows;
+        if (r0 >= a->M) break;
+        const int rows = ck_min_int(group_rows, a->M - r0);
+        const float *input = (const float *)((const char *)a->A +
+                                              (size_t)r0 * a->A_row_bytes);
+        float *output = a->C + (size_t)r0 * a->N;
+        if (group_rows == 8) {
+            gemm_nt_q5_1_q8_1_m8(
+                input, a->B, a->bias, output, rows, a->N, a->K);
+        } else {
+            gemm_nt_q5_1_q8_1_m4(
+                input, a->B, a->bias, output, rows, a->N, a->K);
+        }
+    }
+}
+
+static void work_geglu_exact_rows(int ith, int nth, void *args)
+{
+    const geglu_args_t *a = (const geglu_args_t *)args;
+    const int rows = ck_ceil_div_int(a->tokens, nth);
+    const int begin = rows * ith;
+    const int end = ck_min_int(begin + rows, a->tokens);
+    if (begin >= end) return;
+
+    geglu_forward_exact(
+        a->input + (size_t)begin * (size_t)(2 * a->dim),
+        a->output + (size_t)begin * (size_t)a->dim,
+        end - begin, a->dim);
+}
+
+static void work_geglu_exact_range(int begin, int end, void *args)
+{
+    const geglu_args_t *a = (const geglu_args_t *)args;
+    if (!a || begin < 0 || begin >= end || end > a->tokens) return;
+
+    geglu_forward_exact(
+        a->input + (size_t)begin * (size_t)(2 * a->dim),
+        a->output + (size_t)begin * (size_t)a->dim,
+        end - begin, a->dim);
+}
+
 static void work_gemm_nt_q5_k(int ith, int nth, void *args)
 {
     const gemm_args_t *a = (const gemm_args_t *)args;
@@ -2235,9 +2293,46 @@ void gemm_nt_q5_1_q8_1_parallel_dispatch(
     gemm_args_t args = {
         .A = A, .B = B, .bias = bias, .C = C,
         .M = M, .N = N, .K = K,
-        .A_row_bytes = A_row_bytes
+        .A_row_bytes = A_row_bytes,
+        .tile_m = M >= 64 ? 8 : 4
     };
-    ck_threadpool_dispatch_n(pool, ck_select_gemm_active_threads(pool, M, N, K), work_gemm_nt_q5_1_q8_1, &args);
+    int active = ck_select_gemm_active_threads(pool, M, N, K);
+    if (ck_gemm_dynamic_schedule_enabled()) {
+        const int jobs = ck_ceil_div_int(M, args.tile_m);
+        active = ck_min_int(active, jobs);
+        ck_threadpool_parallel_for_n(
+            pool, active, 0, jobs, 1,
+            work_gemm_nt_q5_1_q8_1_reuse_range, &args);
+    } else {
+        ck_threadpool_dispatch_n(
+            pool, active, work_gemm_nt_q5_1_q8_1, &args);
+    }
+}
+
+void geglu_forward_exact_parallel_dispatch(
+    const float *input, float *output, int tokens, int dim)
+{
+    ck_threadpool_t *pool = ck_threadpool_global();
+    if (!pool || ck_threadpool_n_threads(pool) <= 1 || tokens <= 1) {
+        geglu_forward_exact(input, output, tokens, dim);
+        return;
+    }
+
+    geglu_args_t args = {
+        .input = input,
+        .output = output,
+        .tokens = tokens,
+        .dim = dim,
+    };
+    const int active = ck_min_int(ck_threadpool_n_threads(pool), tokens);
+    if (ck_gemm_dynamic_schedule_enabled()) {
+        ck_threadpool_parallel_for_n(
+            pool, active, 0, tokens, 1,
+            work_geglu_exact_range, &args);
+    } else {
+        ck_threadpool_dispatch_n(
+            pool, active, work_geglu_exact_rows, &args);
+    }
 }
 
 void gemm_nt_q5_k_parallel_dispatch(

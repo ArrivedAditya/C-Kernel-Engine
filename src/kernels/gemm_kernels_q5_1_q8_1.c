@@ -155,6 +155,38 @@ static inline void dot_q5_1_q8_1_block_m4_avx2(
     }
 }
 
+static inline void dot_q5_1_q8_1_block_m8_avx2(
+        const block_q5_1 *w,
+        const block_q8_1 *const rows[8],
+        float out[8]) {
+    uint32_t qh;
+    memcpy(&qh, w->qh, sizeof(qh));
+
+    const __m128i qpacked = _mm_loadu_si128((const __m128i *)(const void *)w->qs);
+    const __m128i low_mask = _mm_set1_epi8(0x0f);
+    const __m128i qlo = _mm_or_si128(_mm_and_si128(qpacked, low_mask),
+                                     ck_q51_high_bits_16_avx2(qh));
+    const __m128i qhi = _mm_or_si128(_mm_and_si128(_mm_srli_epi16(qpacked, 4), low_mask),
+                                     ck_q51_high_bits_16_avx2(qh >> 16));
+    const __m256i q5 = _mm256_inserti128_si256(_mm256_castsi128_si256(qlo), qhi, 1);
+    const float wd = CK_FP16_TO_FP32(w->d);
+    const float wm = CK_FP16_TO_FP32(w->m);
+
+    for (int row = 0; row < 8; ++row) {
+        const __m256i q8 = _mm256_loadu_si256(
+            (const __m256i *)(const void *)rows[row]->qs);
+#if defined(__AVXVNNI__)
+        const __m256i sumi = _mm256_dpbusd_epi32(_mm256_setzero_si256(), q5, q8);
+#else
+        const __m256i prod16 = _mm256_maddubs_epi16(q5, q8);
+        const __m256i sumi = _mm256_madd_epi16(prod16, _mm256_set1_epi16(1));
+#endif
+        const float xd = CK_FP16_TO_FP32(rows[row]->d);
+        const float xs = CK_FP16_TO_FP32(rows[row]->s);
+        out[row] = (wd * xd) * (float)ck_q51_hsum256_epi32(sumi) + wm * xs;
+    }
+}
+
 #endif
 
 /* One 32-element block dot: Q5_1(weights) x Q8_1(activations). */
@@ -388,5 +420,67 @@ void gemm_nt_q5_1_q8_1_m4(const float *A,
     }
 #else
     gemm_nt_q5_1_q8_1(A, B, bias, C, M, N, K);
+#endif
+}
+
+void gemm_nt_q5_1_q8_1_m8(const float *A,
+                          const void *B,
+                          const float *bias,
+                          float *C,
+                          int M,
+                          int N,
+                          int K)
+{
+#if defined(__AVX2__)
+    if (!A || !B || !C || M <= 0 || N <= 0 || K <= 0 || (K % QK5_1) != 0) {
+        return;
+    }
+
+    const int blocks_per_row = K / QK5_1;
+    if (blocks_per_row > CK_Q51_STACK_Q8_BLOCKS) {
+        gemm_nt_q5_1_q8_1_m4(A, B, bias, C, M, N, K);
+        return;
+    }
+
+    const block_q5_1 *weights = (const block_q5_1 *)B;
+    int m = 0;
+    for (; m + 7 < M; m += 8) {
+        block_q8_1 activation_q8[8][CK_Q51_STACK_Q8_BLOCKS];
+        for (int row = 0; row < 8; ++row) {
+            quantize_row_q8_1_scalar(
+                &A[(size_t)(m + row) * (size_t)K], activation_q8[row], K);
+        }
+
+        for (int n = 0; n < N; ++n) {
+            const block_q5_1 *weight_row =
+                &weights[(size_t)n * (size_t)blocks_per_row];
+            float sums[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+            for (int block = 0; block < blocks_per_row; ++block) {
+                const block_q8_1 *rows[8] = {
+                    &activation_q8[0][block], &activation_q8[1][block],
+                    &activation_q8[2][block], &activation_q8[3][block],
+                    &activation_q8[4][block], &activation_q8[5][block],
+                    &activation_q8[6][block], &activation_q8[7][block],
+                };
+                float partial[8];
+                dot_q5_1_q8_1_block_m8_avx2(&weight_row[block], rows, partial);
+                for (int row = 0; row < 8; ++row) {
+                    sums[row] += partial[row];
+                }
+            }
+            const float add = bias ? bias[n] : 0.0f;
+            for (int row = 0; row < 8; ++row) {
+                C[(size_t)(m + row) * (size_t)N + n] = sums[row] + add;
+            }
+        }
+    }
+
+    if (m < M) {
+        gemm_nt_q5_1_q8_1_m4(
+            A + (size_t)m * (size_t)K, B, bias,
+            C + (size_t)m * (size_t)N, M - m, N, K);
+    }
+#else
+    gemm_nt_q5_1_q8_1_m4(A, B, bias, C, M, N, K);
 #endif
 }
