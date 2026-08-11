@@ -5,6 +5,7 @@ import argparse
 import copy
 import csv
 import ctypes
+import gc
 import hashlib
 import heapq
 import importlib.util
@@ -323,6 +324,110 @@ def _run(cmd: list[str]) -> None:
 
 def _log_progress(message: str) -> None:
     print(f"[v8-bridge] {message}", file=sys.stderr, flush=True)
+
+
+def _read_int_file(path: Path) -> int | None:
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not value or value == "max":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _memory_snapshot() -> dict[str, int | str | None]:
+    """Return compact process/cgroup memory evidence for staged-runtime audits."""
+    current = _read_int_file(Path("/sys/fs/cgroup/memory.current"))
+    limit = _read_int_file(Path("/sys/fs/cgroup/memory.max"))
+    source = "cgroup_v2"
+    if current is None:
+        current = _read_int_file(Path("/sys/fs/cgroup/memory/memory.usage_in_bytes"))
+        limit = _read_int_file(Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"))
+        source = "cgroup_v1"
+    rss_bytes: int | None = None
+    try:
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith("VmRSS:"):
+                rss_bytes = int(line.split()[1]) * 1024
+                break
+    except (OSError, ValueError, IndexError):
+        pass
+    return {
+        "source": source if current is not None else "process_only",
+        "cgroup_current_bytes": current,
+        "cgroup_limit_bytes": limit,
+        "process_rss_bytes": rss_bytes,
+    }
+
+
+def _path_filesystem_type(path: Path) -> str:
+    """Resolve the filesystem type owning path using Linux mount metadata."""
+    resolved = path.resolve(strict=False)
+    best_mount = Path("/")
+    best_type = "unknown"
+    try:
+        lines = Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return best_type
+    for line in lines:
+        fields = line.split()
+        try:
+            separator = fields.index("-")
+            mount_point = Path(fields[4].replace("\\040", " ").replace("\\011", "\t"))
+            fs_type = fields[separator + 1]
+            resolved.relative_to(mount_point)
+        except (ValueError, IndexError):
+            continue
+        if len(mount_point.parts) >= len(best_mount.parts):
+            best_mount = mount_point
+            best_type = fs_type
+    return best_type
+
+
+def _weight_storage_evidence(path: Path) -> dict[str, int | str | bool]:
+    resolved = path.resolve(strict=False)
+    fs_type = _path_filesystem_type(resolved)
+    try:
+        size = int(resolved.stat().st_size)
+    except OSError:
+        size = 0
+    return {
+        "path": str(path),
+        "resolved_path": str(resolved),
+        "size_bytes": size,
+        "filesystem_type": fs_type,
+        "memory_backed": fs_type in {"tmpfs", "ramfs"},
+    }
+
+
+def _runtime_weight_storage_evidence(runtime: dict[str, Any]) -> dict[str, int | str | bool]:
+    weights_bump = runtime.get("weights_bump")
+    if not weights_bump:
+        return {
+            "path": "",
+            "resolved_path": "",
+            "size_bytes": 0,
+            "filesystem_type": "unknown",
+            "memory_backed": False,
+        }
+    return _weight_storage_evidence(Path(str(weights_bump)))
+
+
+def _release_python_heap() -> None:
+    """Release dead image-preprocessing containers before the decoder starts."""
+    gc.collect()
+    try:
+        libc = ctypes.CDLL(None)
+        malloc_trim = libc.malloc_trim
+        malloc_trim.argtypes = [ctypes.c_size_t]
+        malloc_trim.restype = ctypes.c_int
+        malloc_trim(0)
+    except (AttributeError, OSError):
+        pass
 
 
 def _json_write(path: Path, payload: dict[str, Any]) -> None:
@@ -2721,6 +2826,14 @@ def _run_encoder(
     gemm_schedule: str = "auto",
 ) -> dict[str, Any]:
     encoder_t0 = time.perf_counter()
+    memory_evidence = {"before_load": _memory_snapshot()}
+    weight_storage = _runtime_weight_storage_evidence(runtime)
+    if bool(weight_storage["memory_backed"]) and int(weight_storage["size_bytes"]) >= 1 << 30:
+        _log_progress(
+            "encoder warning: large weights are memory-backed and count against the cgroup "
+            f"size_bytes={weight_storage['size_bytes']} path={weight_storage['resolved_path']}"
+        )
+    report: dict[str, Any] | None = None
     old_profile_csv_env = os.environ.get("CK_PROFILE_CSV")
     old_profile_json_env = os.environ.get("CK_PROFILE_JSON")
     if profile_csv_path is not None:
@@ -2745,6 +2858,7 @@ def _run_encoder(
     if rc != 0:
         raise RuntimeError(f"encoder init failed with rc={rc}")
     init_ms = (time.perf_counter() - init_t0) * 1000.0
+    memory_evidence["after_init"] = _memory_snapshot()
     try:
         _log_progress("encoder: init done")
         layout = _load_layout(runtime["layout_path"])
@@ -2786,10 +2900,13 @@ def _run_encoder(
                 image_mean=image_mean,
                 image_std=image_std,
             )
-            interleaved = image_report["interleaved"]
-            planar = image_report["planar"]
+            # The native encoder consumes planar input only.  Retaining the
+            # interleaved list used to keep millions of boxed Python floats
+            # alive throughout decoder prefill and generation.
+            planar = image_report.pop("planar")
+            image_report.pop("interleaved", None)
         else:
-            interleaved, planar = _build_test_image(image_height, image_width, image_mode)
+            _, planar = _build_test_image(image_height, image_width, image_mode)
             image_report = {
                 "image_source": "synthetic",
                 "image_mode": image_mode,
@@ -2850,7 +2967,14 @@ def _run_encoder(
         output_arr = (ctypes.c_float * output_len).from_address(output_ptr)
         embeddings = array("f", output_arr)
         output_copy_ms = (time.perf_counter() - output_copy_t0) * 1000.0
-        return {
+        memory_evidence["after_output_copy"] = _memory_snapshot()
+        # The copied prefix is the encoder's only cross-stage payload.  Drop
+        # the large preprocessing/native views before ck_model_free() records
+        # release evidence and before decoder preparation can begin.
+        planar = None
+        image_arr = None
+        output_arr = None
+        report = {
             "embed_dim": embed_dim,
             "prefix_tokens": prefix_tokens,
             "embeddings": embeddings,
@@ -2868,8 +2992,9 @@ def _run_encoder(
             "preprocess": str(image_report["preprocess"]),
             "image_height": image_height,
             "image_width": image_width,
-            "interleaved_image": interleaved,
             "profile_csv_path": None if profile_csv_path is None else str(profile_csv_path),
+            "memory": memory_evidence,
+            "weight_storage": weight_storage,
             "timings": {
                 "lib_load_ms": lib_load_ms,
                 "init_ms": init_ms,
@@ -2880,8 +3005,14 @@ def _run_encoder(
                 "total_ms": (time.perf_counter() - encoder_t0) * 1000.0,
             },
         }
+        return report
     finally:
+        release_t0 = time.perf_counter()
         lib.ck_model_free()
+        _release_python_heap()
+        memory_evidence["after_free"] = _memory_snapshot()
+        if report is not None:
+            report["timings"]["release_ms"] = (time.perf_counter() - release_t0) * 1000.0
         if profile_csv_path is not None:
             if old_profile_csv_env is None:
                 os.environ.pop("CK_PROFILE_CSV", None)
@@ -2981,6 +3112,14 @@ def _run_decoder(
         lib = _load_decoder_lib(model_so)
     _configure_gemm_schedule(lib, gemm_schedule)
     _log_progress("decoder: init start")
+    memory_evidence = {"before_init": _memory_snapshot()}
+    weight_storage = _runtime_weight_storage_evidence(runtime)
+    if bool(weight_storage["memory_backed"]) and int(weight_storage["size_bytes"]) >= 1 << 30:
+        _log_progress(
+            "decoder warning: large weights are memory-backed and count against the cgroup "
+            f"size_bytes={weight_storage['size_bytes']} path={weight_storage['resolved_path']}"
+        )
+    report: dict[str, Any] | None = None
     rc = lib.ck_model_init_with_manifest(
         str(runtime["weights_bump"]).encode(),
         str(runtime["manifest_map"]).encode(),
@@ -2988,6 +3127,7 @@ def _run_decoder(
     if rc != 0:
         raise RuntimeError(f"decoder init failed with rc={rc}")
     try:
+        memory_evidence["after_init"] = _memory_snapshot()
         _log_progress("decoder: init done")
         if hasattr(lib, "ck_set_strict_parity"):
             lib.ck_set_strict_parity(1 if strict_parity else 0)
@@ -3021,7 +3161,10 @@ def _run_decoder(
                     f"prefix float count mismatch: got={len(prefix_embeddings)} expected={expected} "
                     f"(tokens={prefix_tokens} row_dim={resolved_prefix_dim})"
                 )
-            prefix_ptr = (ctypes.c_float * len(prefix_embeddings))(*prefix_embeddings)
+            # Keep one owned array for the bridge and expose it to ctypes as a
+            # zero-copy view.  The previous constructor duplicated the full
+            # visual prefix immediately before the decoder's peak allocation.
+            prefix_ptr = (ctypes.c_float * len(prefix_embeddings)).from_buffer(prefix_embeddings)
         else:
             prefix_ptr = None
         before_token_arr = (ctypes.c_int32 * len(before_token_ids))(*before_token_ids) if before_token_ids else None
@@ -3098,6 +3241,7 @@ def _run_decoder(
                 else:
                     os.environ["CK_PROFILE_JSON"] = old_profile_json_env
         forward_elapsed = time.perf_counter() - forward_t0
+        memory_evidence["after_forward_mixed"] = _memory_snapshot()
         _log_progress(f"decoder: forward_mixed done elapsed={forward_elapsed:.2f}s")
         logits_arr = array("f", logits)
         stop_ids = {int(token_id) for token_id in list(stop_token_ids or [])}
@@ -3228,7 +3372,7 @@ def _run_decoder(
         if tokenizer is not None and generated_token_ids:
             generated_text = str(tokenizer.decode(generated_token_ids, skip_special=True))
             generated_text_raw = str(tokenizer.decode(generated_token_ids, skip_special=False))
-        return {
+        report = {
             "vocab_size": vocab_size,
             "logits": logits_arr,
             "runtime_mode": "decode",
@@ -3240,6 +3384,8 @@ def _run_decoder(
             "generation_stop_reason": generation_stop_reason,
             "streamed_output": bool(stream_output and tokenizer is not None and max_tokens > 0),
             "decoder_profile": profile_summary or {},
+            "memory": memory_evidence,
+            "weight_storage": weight_storage,
             "timings": {
                 "decoder_forward_mixed_ms": float(forward_elapsed * 1000.0),
                 "decoder_generation_ms": float(generation_elapsed * 1000.0),
@@ -3252,6 +3398,7 @@ def _run_decoder(
                 "decoder_bridge_generation_mode": generation_mode,
             },
         }
+        return report
     finally:
         if 'old_bridge_noncausal_env' in locals():
             if old_bridge_noncausal_env is None:
@@ -3269,6 +3416,8 @@ def _run_decoder(
         if hasattr(lib, "ck_set_strict_parity"):
             lib.ck_set_strict_parity(0)
         lib.ck_model_free()
+        _release_python_heap()
+        memory_evidence["after_free"] = _memory_snapshot()
 
 
 def _topk(values: array, k: int) -> list[tuple[int, float]]:
@@ -3883,6 +4032,14 @@ def main(argv: list[str] | None = None) -> int:
         "composition_circuit": composition_evidence,
         "bridge_runtime_policy": resolved_bridge_runtime,
         "decoder_profile": decoder_report.get("decoder_profile") or {},
+        "memory": {
+            "encoder": dict(encoder_report.get("memory", {}) or {}) if encoder_report is not None else {},
+            "decoder": dict(decoder_report.get("memory", {}) or {}),
+        },
+        "weight_storage": {
+            "encoder": dict(encoder_report.get("weight_storage", {}) or {}) if encoder_report is not None else {},
+            "decoder": dict(decoder_report.get("weight_storage", {}) or {}),
+        },
         "prefix_dump_path": dumped_prefix_path,
         "total_prefill_tokens": len(prompt_prefix_token_ids) + prefix_tokens + len(token_ids),
         "decoder_runtime": {
@@ -3939,6 +4096,8 @@ def main(argv: list[str] | None = None) -> int:
             "prefix_decode_policy": str(encoder_report.get("prefix_decode_policy", "") or ""),
             "activation_preference_overrides": dict(vision_activation_overrides),
             "timings": dict(encoder_report.get("timings", {}) or {}),
+            "memory": dict(encoder_report.get("memory", {}) or {}),
+            "weight_storage": dict(encoder_report.get("weight_storage", {}) or {}),
             "profile": _summarize_profile_csv(Path(str(encoder_report.get("profile_csv_path"))))
             if encoder_report.get("profile_csv_path") else {},
         } if encoder_report is not None else None,
