@@ -415,6 +415,44 @@ class AttentionContractV8Tests(unittest.TestCase):
                 )
                 self.assertTrue(result["implementation"]["threading"]["work_partition"])
 
+    def test_f16kv_prefill_provider_owns_head_parallel_selection(self) -> None:
+        kernel = resolver.load_json(
+            V8_ROOT
+            / "kernel_maps"
+            / "attention_forward_causal_head_major_gqa_flash_strided_f16kv.json"
+        )
+        self.assertEqual(kernel["operation_interface"],
+                         "attention.causal_gqa.fp32_f16_rounding.v1")
+        self.assertEqual(kernel["selection"]["status"], "production")
+        self.assertEqual(kernel["selection"]["phases"], ["prefill"])
+        self.assertEqual(kernel["implementation"]["threading"]["runtime"],
+                         "ck_threadpool")
+        self.assertEqual(
+            kernel["implementation"]["threading"]["work_partition"],
+            ["independent_heads"],
+        )
+        self.assertEqual(
+            kernel["production"]["function"],
+            "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
+        )
+        self.assertEqual(
+            kernel["reference"]["function"],
+            "attention_forward_causal_head_major_gqa_flash_strided_f16kv_serial",
+        )
+        self.assertEqual(
+            [port["name"] for port in kernel["inputs"]],
+            ["q", "k_cache", "v_cache"],
+        )
+        ports = {port["name"]: port for port in kernel["inputs"]}
+        self.assertEqual(ports["k_cache"]["layout"], "head_major_contiguous")
+        self.assertEqual(ports["v_cache"]["layout"], "head_major_contiguous")
+        abi = {param["name"]: param for param in kernel["call_abi"]["params"]}
+        self.assertEqual(abi["kv_stride_tokens"]["source"], "dim:seq_len")
+        self.assertEqual(
+            kernel["supported_reductions"]["f16_online_single_range"]["status"],
+            "observed",
+        )
+
     def test_qwen35_attention_storage_selectors_use_kv_contract_metadata(self) -> None:
         circuit = resolver.load_json(V8_ROOT / "circuits" / "qwen35.json")
         contracts = circuit["required_contracts"]
