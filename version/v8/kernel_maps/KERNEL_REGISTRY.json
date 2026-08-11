@@ -16999,6 +16999,19 @@
           "selection_policy": "AVX2 dynamic prefill uses gemm_nt_q5_0_q8_0_m4n2 with independent 32-column output tiles below 256 rows and independent four-row ranges from 256 rows. Each output retains the established accumulator and reduction order. Unsupported ISAs and diagnostic static scheduling retain gemm_nt_q5_0_q8_0."
         }
       },
+      "weight_preparation": {
+        "function": "ck_q5_0_prepare_q8_0_weight",
+        "arguments": {
+          "B": "B",
+          "N": "N",
+          "K": "K"
+        },
+        "prepared_format": "q8_0_exact",
+        "prepared_bytes": "N * (K / 32) * 34",
+        "max_total_bytes": 536870912,
+        "fallback": "gemm_nt_q5_0_q8_0",
+        "notes": "Expand Q5_0 blocks once at model load into an exact signed-int8 view with the original FP16 scale. The prepared provider is selected only when every model-owned Q5_0 prefill weight fits under the declared 512 MiB budget."
+      },
       "constraints": {
         "alignment": {
           "K": 32

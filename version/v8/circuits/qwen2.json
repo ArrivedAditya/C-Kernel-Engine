@@ -97,6 +97,31 @@
       }
     }
   },
+  "required_numerical_contracts": {
+    "decoder.swiglu": {
+      "op": "swiglu",
+      "operation_interface": "swiglu.fp32.v1",
+      "template_ops": ["silu_mul"],
+      "phases": {
+        "prefill": {
+          "contract_id": "swiglu_fp32_ggml_vector_exp_fp32_output",
+          "validation": "validated",
+          "evidence": "Qwen2 GGUF inference uses llama.cpp's vector exponential and direct-division SwiGLU arithmetic."
+        },
+        "decode": {
+          "contract_id": "swiglu_fp32_ggml_vector_exp_fp32_output",
+          "validation": "validated",
+          "evidence": "The same contract preserves the llama.cpp arithmetic boundary during incremental decode."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.swiglu.output",
+        "producer": "silu_mul",
+        "logical_layout": "token_major",
+        "axis_names": ["token", "channel"]
+      }
+    }
+  },
   "sequence": ["decoder"],
   "block_types": {
     "decoder": {

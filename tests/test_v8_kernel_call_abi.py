@@ -113,6 +113,40 @@ class V8KernelCallABITests(unittest.TestCase):
                 self.assertIn(kernel_id, registry)
                 self.assertEqual(registry[kernel_id].get("call_abi"), entry["call_abi"])
 
+    def test_q5_prefill_weight_preparation_is_map_owned_and_registered(self) -> None:
+        preparations = build_ir_v8.load_kernel_weight_preparations()
+        self.assertEqual(set(preparations), {"gemm_nt_q5_0_q8_0"})
+        preparation = preparations["gemm_nt_q5_0_q8_0"]
+        self.assertEqual(preparation["function"], "ck_q5_0_prepare_q8_0_weight")
+        self.assertEqual(preparation["arguments"], {"B": "B", "N": "N", "K": "K"})
+        self.assertEqual(preparation["prepared_format"], "q8_0_exact")
+        registry = {
+            kernel["id"]: kernel
+            for kernel in load_json(REGISTRY)["kernels"]
+        }
+        self.assertEqual(
+            registry["gemm_nt_q5_0_q8_0"]["weight_preparation"],
+            preparation,
+        )
+
+    def test_weight_preparation_rejects_unknown_size_symbols(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="cke_weight_preparation_") as td:
+            root = Path(td)
+            (root / "synthetic.json").write_text(
+                json.dumps({
+                    "id": "synthetic",
+                    "weight_preparation": {
+                        "function": "prepare_synthetic",
+                        "arguments": {"B": "B", "N": "N"},
+                        "prepared_bytes": "N * UNKNOWN",
+                        "max_total_bytes": 1024,
+                    },
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "unknown symbols"):
+                build_ir_v8.load_kernel_weight_preparations(root)
+
     def test_duplicate_map_and_legacy_ownership_is_a_hard_failure(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cke_call_abi_duplicate_") as td:
             root = Path(td)
