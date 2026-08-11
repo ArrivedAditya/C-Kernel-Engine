@@ -13,6 +13,9 @@ extern "C" {
 void ssm_conv1d_forward_llama_production(
         const float * conv_x, const float * kernel, float * out,
         int kernel_size, int num_channels, int num_tokens, int num_seqs);
+void ssm_conv1d_forward_llama_production_serial(
+        const float * conv_x, const float * kernel, float * out,
+        int kernel_size, int num_channels, int num_tokens, int num_seqs);
 }
 
 namespace {
@@ -90,6 +93,7 @@ static bool run_case(const case_spec & spec) {
     std::vector<float> input(input_count);
     std::vector<float> kernel(kernel_count);
     std::vector<float> ck(output_count, 0.0f);
+    std::vector<float> serial(output_count, 0.0f);
     std::vector<float> llama(output_count, 0.0f);
 
     for (int sequence = 0; sequence < spec.sequences; ++sequence) {
@@ -112,6 +116,16 @@ static bool run_case(const case_spec & spec) {
     ssm_conv1d_forward_llama_production(
             input.data(), kernel.data(), ck.data(),
             spec.kernel_size, spec.channels, spec.tokens, spec.sequences);
+    ssm_conv1d_forward_llama_production_serial(
+            input.data(), kernel.data(), serial.data(),
+            spec.kernel_size, spec.channels, spec.tokens, spec.sequences);
+    if (std::memcmp(
+                ck.data(), serial.data(), output_count * sizeof(float)) != 0) {
+        std::fprintf(
+                stderr, "%s: parallel output differs from serial reference\n",
+                spec.name);
+        return false;
+    }
     if (!llama_ssm_conv(input, kernel, llama, spec)) {
         std::fprintf(stderr, "%s: llama.cpp graph execution failed\n", spec.name);
         return false;

@@ -40349,9 +40349,17 @@
         ],
         "variants": [
           {
-            "name": "llama_scalar_mul_add",
+            "name": "llama_scalar_mul_add_parallel_channels",
             "requires": [],
-            "compile_flags": []
+            "compile_flags": [],
+            "priority": 240
+          },
+          {
+            "name": "llama_scalar_mul_add_serial",
+            "function": "ssm_conv1d_forward_llama_production_serial",
+            "requires": [],
+            "compile_flags": [],
+            "priority": 100
           }
         ]
       },
@@ -40368,12 +40376,13 @@
           "implementation": {
             "isa_dispatch": "compile_time",
             "threading": {
-              "runtime": "serial",
+              "runtime": "ck_threadpool",
               "work_partition": [
                 "independent_rows"
               ],
               "dispatch": [
-                "inline"
+                "inline",
+                "ck_threadpool_parallel_for_n"
               ],
               "reduction_order_effect": "none"
             }
@@ -40387,6 +40396,28 @@
           }
         }
       ],
+      "production": {
+        "function": "ssm_conv1d_forward_llama_production",
+        "threaded_function": "ssm_conv1d_forward_llama_production",
+        "reference_comparison": {
+          "requirement": "byte_exact",
+          "absolute_tolerance": 0.0,
+          "relative_tolerance": 0.0,
+          "tests": [
+            "unittest/test_ssm_conv_llama_production.cpp"
+          ]
+        }
+      },
+      "reference": {
+        "function": "ssm_conv1d_forward_llama_production_serial",
+        "kind": "serial_same_arithmetic",
+        "validation": {
+          "status": "validated",
+          "tests": [
+            "unittest/test_ssm_conv_llama_production.cpp"
+          ]
+        }
+      },
       "call_abi": {
         "version": 1,
         "params": [
@@ -40445,7 +40476,7 @@
           }
         ]
       },
-      "notes": "Scoped llama.cpp provider; generic FP32 and PyTorch BF16 providers retain their existing arithmetic.",
+      "notes": "Scoped llama.cpp provider. Prefill partitions independent channels through the shared thread pool while preserving the scalar multiply/add chain for each output; generic FP32 and PyTorch BF16 providers retain their existing arithmetic.",
       "name": "ssm_conv1d_forward_llama_production",
       "_source_file": "ssm_conv1d_forward_llama_production.json"
     },

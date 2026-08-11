@@ -1949,6 +1949,13 @@ void ssm_conv1d_forward_llama_production(const float *conv_x,
                                          int num_channels,
                                          int num_tokens,
                                          int num_seqs);
+void ssm_conv1d_forward_llama_production_serial(const float *conv_x,
+                                                const float *kernel,
+                                                float *out,
+                                                int kernel_size,
+                                                int num_channels,
+                                                int num_tokens,
+                                                int num_seqs);
 void ssm_conv1d_forward_pytorch_bf16_storage(const float *conv_x,
                                              const float *kernel,
                                              float *out,
