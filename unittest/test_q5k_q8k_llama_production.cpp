@@ -17,6 +17,10 @@ extern "C" {
 void quantize_row_q8_k(const float *, void *, int);
 void gemv_q5_k(float *, const void *, const float *, int, int);
 void gemm_nt_q5_k(const float *, const void *, const float *, float *, int, int, int);
+size_t ck_q5_k_prepared_block_size(void);
+void ck_q5_k_prepare_weight(const void *, void *, int, int);
+void gemm_nt_q5_k_prepared(const float *, const void *, const float *, float *, int, int, int);
+void gemm_nt_q5_k_prepared_m4(const float *, const void *, const float *, float *, int, int, int);
 void ggml_vec_dot_q5_K_q8_K(
         int, float *, size_t, const void *, size_t, const void *, size_t, int);
 }
@@ -175,6 +179,8 @@ static bool run_case(const case_spec & spec) {
     std::vector<float> canonical(leaf.size());
     std::vector<float> production(leaf.size());
     std::vector<float> ck(leaf.size());
+    std::vector<float> prepared_output(leaf.size());
+    std::vector<float> prepared_m4_output(leaf.size());
     for (int row = 0; row < spec.m; ++row) {
         for (int col = 0; col < spec.n; ++col) {
             ggml_vec_dot_q5_K_q8_K(spec.k, &leaf[static_cast<size_t>(row) * spec.n + col], 0,
@@ -188,6 +194,17 @@ static bool run_case(const case_spec & spec) {
         gemm_nt_q5_k(activations.data(), weights.data(), nullptr,
                 ck.data(), spec.m, spec.n, spec.k);
     }
+    const size_t prepared_blocks = static_cast<size_t>(spec.n) * spec.k / QK_K;
+    std::vector<unsigned char> prepared_weights(
+            prepared_blocks * ck_q5_k_prepared_block_size());
+    ck_q5_k_prepare_weight(
+            weights.data(), prepared_weights.data(), spec.n, spec.k);
+    gemm_nt_q5_k_prepared(
+            activations.data(), prepared_weights.data(), nullptr,
+            prepared_output.data(), spec.m, spec.n, spec.k);
+    gemm_nt_q5_k_prepared_m4(
+            activations.data(), prepared_weights.data(), nullptr,
+            prepared_m4_output.data(), spec.m, spec.n, spec.k);
     if (!llama_graph(weights, activations, canonical, spec.m, spec.n, spec.k, false)) return false;
     const bool llama_q5_repack_selected = ggml_cpu_has_neon();
     if (llama_q5_repack_selected) {
@@ -201,6 +218,8 @@ static bool run_case(const case_spec & spec) {
         pass &= compare_f32("llama canonical vs repack graph", canonical.data(), production.data(), leaf.size());
     }
     pass &= compare_f32("CK adapter vs llama production", ck.data(), production.data(), leaf.size());
+    pass &= compare_f32("CK prepared vs established", prepared_output.data(), ck.data(), leaf.size());
+    pass &= compare_f32("CK prepared M4 vs established", prepared_m4_output.data(), ck.data(), leaf.size());
     return pass;
 }
 

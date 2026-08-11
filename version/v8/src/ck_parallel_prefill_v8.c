@@ -198,6 +198,14 @@ extern void gemm_nt_q5_1_q8_1_m8(const float *A, const void *B, const float *bia
                                    float *C, int M, int N, int K);
 extern void gemm_nt_q5_k(const float *A, const void *B, const float *bias,
                           float *C, int M, int N, int K);
+extern size_t ck_q5_k_prepared_block_size(void);
+extern void ck_q5_k_prepare_weight(const void *src, void *dst, int N, int K);
+extern void gemm_nt_q5_k_prepared(const float *A, const void *B_prepared,
+                                  const float *bias, float *C,
+                                  int M, int N, int K);
+extern void gemm_nt_q5_k_prepared_m4(const float *A, const void *B_prepared,
+                                     const float *bias, float *C,
+                                     int M, int N, int K);
 extern void gated_deltanet_llama_avx2_prefill_forward(
     const float *q, const float *k, const float *v,
     const float *g, const float *beta,
@@ -544,6 +552,17 @@ typedef struct ck_q5_0_q8_0_cache_entry {
 static pthread_mutex_t ck_q5_0_q8_0_cache_mu = PTHREAD_MUTEX_INITIALIZER;
 static ck_q5_0_q8_0_cache_entry_t *ck_q5_0_q8_0_cache_head = NULL;
 
+typedef struct ck_q5_k_prepared_cache_entry {
+    const void *src;
+    int N;
+    int K;
+    void *prepared;
+    struct ck_q5_k_prepared_cache_entry *next;
+} ck_q5_k_prepared_cache_entry_t;
+
+static pthread_mutex_t ck_q5_k_prepared_cache_mu = PTHREAD_MUTEX_INITIALIZER;
+static ck_q5_k_prepared_cache_entry_t *ck_q5_k_prepared_cache_head = NULL;
+
 static void ck_q5_0_expand_exact_q8_0(
         const block_q5_0 *src, block_q8_0 *dst, size_t blocks)
 {
@@ -635,6 +654,78 @@ static void ck_q5_0_q8_0_cache_clear(void)
     pthread_mutex_unlock(&ck_q5_0_q8_0_cache_mu);
 }
 
+static void *ck_find_prepared_q5_k(const void *B, int N, int K)
+{
+    void *prepared = NULL;
+    pthread_mutex_lock(&ck_q5_k_prepared_cache_mu);
+    for (ck_q5_k_prepared_cache_entry_t *entry = ck_q5_k_prepared_cache_head;
+         entry; entry = entry->next) {
+        if (entry->src == B && entry->N == N && entry->K == K) {
+            prepared = entry->prepared;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&ck_q5_k_prepared_cache_mu);
+    return prepared;
+}
+
+int ck_q5_k_prepare_expanded_weight(const void *B, int N, int K)
+{
+#if !defined(__AVX2__)
+    (void)B; (void)N; (void)K;
+    return 0;
+#else
+    if (!B || N <= 0 || K <= 0 || (K % 256) != 0) return 0;
+    if (ck_find_prepared_q5_k(B, N, K)) return 1;
+    const size_t block_size = ck_q5_k_prepared_block_size();
+    const size_t blocks_per_row = (size_t)K / 256u;
+    if ((size_t)N > SIZE_MAX / blocks_per_row) return 0;
+    const size_t blocks = (size_t)N * blocks_per_row;
+    if (block_size == 0 || blocks > SIZE_MAX / block_size) return 0;
+
+    void *prepared = malloc(blocks * block_size);
+    ck_q5_k_prepared_cache_entry_t *entry =
+        (ck_q5_k_prepared_cache_entry_t *)malloc(sizeof(*entry));
+    if (!prepared || !entry) {
+        free(prepared);
+        free(entry);
+        return 0;
+    }
+    ck_q5_k_prepare_weight(B, prepared, N, K);
+    entry->src = B;
+    entry->N = N;
+    entry->K = K;
+    entry->prepared = prepared;
+
+    pthread_mutex_lock(&ck_q5_k_prepared_cache_mu);
+    for (ck_q5_k_prepared_cache_entry_t *existing = ck_q5_k_prepared_cache_head;
+         existing; existing = existing->next) {
+        if (existing->src == B && existing->N == N && existing->K == K) {
+            pthread_mutex_unlock(&ck_q5_k_prepared_cache_mu);
+            free(prepared);
+            free(entry);
+            return 1;
+        }
+    }
+    entry->next = ck_q5_k_prepared_cache_head;
+    ck_q5_k_prepared_cache_head = entry;
+    pthread_mutex_unlock(&ck_q5_k_prepared_cache_mu);
+    return 1;
+#endif
+}
+
+static void ck_q5_k_prepared_cache_clear(void)
+{
+    pthread_mutex_lock(&ck_q5_k_prepared_cache_mu);
+    while (ck_q5_k_prepared_cache_head) {
+        ck_q5_k_prepared_cache_entry_t *entry = ck_q5_k_prepared_cache_head;
+        ck_q5_k_prepared_cache_head = entry->next;
+        free(entry->prepared);
+        free(entry);
+    }
+    pthread_mutex_unlock(&ck_q5_k_prepared_cache_mu);
+}
+
 void ck_q4k_packed_weight_cache_clear(void)
 {
     pthread_mutex_lock(&ck_q4k_packed_meta_cache_mu);
@@ -690,6 +781,7 @@ void ck_parallel_prefill_shutdown(void)
     /* Pool ownership remains with decode; prefill owns packed-weight caches. */
     ck_q4k_packed_weight_cache_clear();
     ck_q5_0_q8_0_cache_clear();
+    ck_q5_k_prepared_cache_clear();
 }
 
 void ck_parallel_prefill_release_transient_caches(void)
@@ -853,6 +945,12 @@ static void *ck_get_q4k_packed_vnni_x8_cached(const void *B, int N, int K)
     ck_q4k_packed_vnni_x8_cache_head = entry;
     pthread_mutex_unlock(&ck_q4k_packed_vnni_x8_cache_mu);
     return packed;
+}
+
+int ck_q4k_prepare_vnni_x8_weight(const void *B, int N, int K)
+{
+    if (!ck_q4k_packed_vnni_x8_available()) return 0;
+    return ck_get_q4k_packed_vnni_x8_cached(B, N, K) != NULL;
 }
 
 static void *ck_get_q4k_packed_vnni_x16_cached(const void *B, int N, int K)
@@ -1790,6 +1888,32 @@ static void work_gemm_nt_q5_k(int ith, int nth, void *args)
     );
 }
 
+static void work_gemm_nt_q5_k_prepared(int ith, int nth, void *args)
+{
+    const gemm_args_t *a = (const gemm_args_t *)args;
+    const int dr = (a->M + nth - 1) / nth;
+    const int r0 = dr * ith;
+    const int r1 = ck_min_int(r0 + dr, a->M);
+    if (r0 >= r1) return;
+    gemm_nt_q5_k_prepared(
+        (const float *)((const char *)a->A + (size_t)r0 * a->A_row_bytes),
+        a->B, a->bias, a->C + (size_t)r0 * a->N,
+        r1 - r0, a->N, a->K);
+}
+
+static void work_gemm_nt_q5_k_prepared_m4(int ith, int nth, void *args)
+{
+    const gemm_args_t *a = (const gemm_args_t *)args;
+    const int dr = (a->M + nth - 1) / nth;
+    const int r0 = dr * ith;
+    const int r1 = ck_min_int(r0 + dr, a->M);
+    if (r0 >= r1) return;
+    gemm_nt_q5_k_prepared_m4(
+        (const float *)((const char *)a->A + (size_t)r0 * a->A_row_bytes),
+        a->B, a->bias, a->C + (size_t)r0 * a->N,
+        r1 - r0, a->N, a->K);
+}
+
 /* ============================================================================
  * Parallel Dispatch Wrappers
  *
@@ -2360,9 +2484,14 @@ void gemm_nt_q5_k_parallel_dispatch(
     const float *A, const void *B, const float *bias, float *C,
     int M, int N, int K)
 {
+    void *prepared = ck_find_prepared_q5_k(B, N, K);
     ck_threadpool_t *pool = ck_threadpool_global();
     if (!pool || ck_threadpool_n_threads(pool) <= 1 || M <= 1 || ck_should_run_gemm_serial(pool, M, N, K)) {
-        gemm_nt_q5_k(A, B, bias, C, M, N, K);
+        if (prepared) {
+            if (M <= 256) gemm_nt_q5_k_prepared_m4(A, prepared, bias, C, M, N, K);
+            else gemm_nt_q5_k_prepared(A, prepared, bias, C, M, N, K);
+        }
+        else gemm_nt_q5_k(A, B, bias, C, M, N, K);
         return;
     }
 
@@ -2370,9 +2499,14 @@ void gemm_nt_q5_k_parallel_dispatch(
     size_t A_row_bytes = (size_t)K * sizeof(float);
 
     gemm_args_t args = {
-        .A = A, .B = B, .bias = bias, .C = C,
+        .A = A, .B = prepared ? prepared : B, .bias = bias, .C = C,
         .M = M, .N = N, .K = K,
         .A_row_bytes = A_row_bytes
     };
-    ck_threadpool_dispatch_n(pool, ck_select_gemm_active_threads(pool, M, N, K), work_gemm_nt_q5_k, &args);
+    ck_threadpool_dispatch_n(
+        pool, ck_select_gemm_active_threads(pool, M, N, K),
+        prepared ? (M <= 256 ? work_gemm_nt_q5_k_prepared_m4
+                             : work_gemm_nt_q5_k_prepared)
+                 : work_gemm_nt_q5_k,
+        &args);
 }

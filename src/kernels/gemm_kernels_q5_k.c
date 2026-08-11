@@ -75,6 +75,21 @@ typedef struct {
     uint8_t qs[QK_K / 2];
 } block_q5_K;
 
+/* Load-time representation used by the optional prepared prefill provider.
+ * It expands only integer metadata: FP16 super-block scales are retained
+ * verbatim, while sub-block scales/mins and 5-bit codes become byte-addressable.
+ * The dot-product and FP32 reduction order remain unchanged. */
+typedef struct {
+    ck_half d;
+    ck_half dmin;
+    uint8_t scales[8];
+    uint8_t mins[8];
+    uint8_t qs[QK_K];
+} block_q5_K_prepared;
+
+_Static_assert(sizeof(block_q5_K_prepared) == 276,
+               "Q5_K prepared-size contract changed");
+
 /* Unpack 8 per-subblock scales and mins from packed Q5_K scale bytes.
  * This mirrors the packing contract used by llama.cpp. */
 static inline void unpack_q5_k_scales(const uint8_t *scales,
@@ -106,6 +121,29 @@ static inline uint8_t q5_k_quant_value(const block_q5_K *block, int subblock, in
     const uint8_t low = (subblock & 1) ? (uint8_t)(ql[i] >> 4) : (uint8_t)(ql[i] & 0x0F);
     const uint8_t high = (block->qh[i] & (uint8_t)(1u << subblock)) ? 16u : 0u;
     return (uint8_t)(low | high);
+}
+
+size_t ck_q5_k_prepared_block_size(void)
+{
+    return sizeof(block_q5_K_prepared);
+}
+
+void ck_q5_k_prepare_weight(const void *src, void *dst, int N, int K)
+{
+    if (!src || !dst || N <= 0 || K <= 0 || (K % QK_K) != 0) return;
+    const block_q5_K *input = (const block_q5_K *)src;
+    block_q5_K_prepared *output = (block_q5_K_prepared *)dst;
+    const size_t blocks = (size_t)N * (size_t)(K / QK_K);
+    for (size_t b = 0; b < blocks; ++b) {
+        output[b].d = input[b].d;
+        output[b].dmin = input[b].dmin;
+        unpack_q5_k_scales(input[b].scales, output[b].scales, output[b].mins);
+        for (int sb = 0; sb < 8; ++sb) {
+            for (int i = 0; i < 32; ++i) {
+                output[b].qs[sb * 32 + i] = q5_k_quant_value(&input[b], sb, i);
+            }
+        }
+    }
 }
 
 /* quantize_row_q8_k() is implemented in gemm_kernels_q4k_q8k.c */
@@ -221,6 +259,106 @@ static float dot_q5_k_q8_k_row_avx2(const block_q5_K *w, const block_q8_K *x, in
     }
 
     return ck_q5k_hsum256_ps(acc) + summs;
+}
+
+static float dot_q5_k_prepared_q8_k_row_avx2(
+        const block_q5_K_prepared *w, const block_q8_K *x, int nb)
+{
+    const __m128i mzero = _mm_setzero_si128();
+    __m256 acc = _mm256_setzero_ps();
+    float summs = 0.0f;
+
+    for (int b = 0; b < nb; ++b) {
+        const block_q5_K_prepared *wb = &w[b];
+        const block_q8_K *xb = &x[b];
+        const float d = CK_FP16_TO_FP32(wb->d) * xb->d;
+        const float dmin = -CK_FP16_TO_FP32(wb->dmin) * xb->d;
+
+        const __m128i mins8 = _mm_loadl_epi64((const __m128i *)(const void *)wb->mins);
+        const __m256i mins16 = _mm256_cvtepu8_epi16(mins8);
+        const __m256i q8sums = _mm256_loadu_si256((const __m256i *)(const void *)xb->bsums);
+        const __m128i q8s = _mm_hadd_epi16(
+                _mm256_extracti128_si256(q8sums, 0),
+                _mm256_extracti128_si256(q8sums, 1));
+        const __m128i prod = _mm_madd_epi16(
+                _mm256_castsi256_si128(mins16), q8s);
+        const __m128i hsum = _mm_hadd_epi32(_mm_hadd_epi32(prod, mzero), mzero);
+        summs += dmin * (float)_mm_extract_epi32(hsum, 0);
+
+        __m256i sumi = _mm256_setzero_si256();
+        for (int sb = 0; sb < 8; ++sb) {
+            const __m256i q5 = _mm256_loadu_si256(
+                    (const __m256i *)(const void *)(wb->qs + sb * 32));
+            const __m256i q8 = _mm256_loadu_si256(
+                    (const __m256i *)(const void *)(xb->qs + sb * 32));
+            __m256i p16 = _mm256_maddubs_epi16(q5, q8);
+            const __m256i scale = _mm256_set1_epi16((int16_t)wb->scales[sb]);
+            p16 = _mm256_madd_epi16(scale, p16);
+            sumi = _mm256_add_epi32(sumi, p16);
+        }
+        acc = _mm256_fmadd_ps(
+                _mm256_set1_ps(d), _mm256_cvtepi32_ps(sumi), acc);
+    }
+    return ck_q5k_hsum256_ps(acc) + summs;
+}
+
+static void dot_q5_k_prepared_q8_k_m4_avx2(
+        const block_q5_K_prepared *w,
+        const block_q8_K *const x[4],
+        int rows, int nb, float out[4])
+{
+    const __m128i mzero = _mm_setzero_si128();
+    __m256 acc[4] = {
+        _mm256_setzero_ps(), _mm256_setzero_ps(),
+        _mm256_setzero_ps(), _mm256_setzero_ps(),
+    };
+    float summs[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    for (int b = 0; b < nb; ++b) {
+        const block_q5_K_prepared *wb = &w[b];
+        const __m128i mins8 = _mm_loadl_epi64((const __m128i *)(const void *)wb->mins);
+        const __m256i mins16 = _mm256_cvtepu8_epi16(mins8);
+        __m256i sumi[4] = {
+            _mm256_setzero_si256(), _mm256_setzero_si256(),
+            _mm256_setzero_si256(), _mm256_setzero_si256(),
+        };
+
+        for (int r = 0; r < rows; ++r) {
+            const block_q8_K *xb = &x[r][b];
+            const __m256i q8sums = _mm256_loadu_si256(
+                    (const __m256i *)(const void *)xb->bsums);
+            const __m128i q8s = _mm_hadd_epi16(
+                    _mm256_extracti128_si256(q8sums, 0),
+                    _mm256_extracti128_si256(q8sums, 1));
+            const __m128i prod = _mm_madd_epi16(
+                    _mm256_castsi256_si128(mins16), q8s);
+            const __m128i hsum = _mm_hadd_epi32(
+                    _mm_hadd_epi32(prod, mzero), mzero);
+            const float dmin = -CK_FP16_TO_FP32(wb->dmin) * xb->d;
+            summs[r] += dmin * (float)_mm_extract_epi32(hsum, 0);
+        }
+
+        for (int sb = 0; sb < 8; ++sb) {
+            const __m256i q5 = _mm256_loadu_si256(
+                    (const __m256i *)(const void *)(wb->qs + sb * 32));
+            const __m256i scale = _mm256_set1_epi16((int16_t)wb->scales[sb]);
+            for (int r = 0; r < rows; ++r) {
+                const __m256i q8 = _mm256_loadu_si256(
+                        (const __m256i *)(const void *)(x[r][b].qs + sb * 32));
+                __m256i p16 = _mm256_maddubs_epi16(q5, q8);
+                p16 = _mm256_madd_epi16(scale, p16);
+                sumi[r] = _mm256_add_epi32(sumi[r], p16);
+            }
+        }
+        for (int r = 0; r < rows; ++r) {
+            const float d = CK_FP16_TO_FP32(wb->d) * x[r][b].d;
+            acc[r] = _mm256_fmadd_ps(
+                    _mm256_set1_ps(d), _mm256_cvtepi32_ps(sumi[r]), acc[r]);
+        }
+    }
+    for (int r = 0; r < rows; ++r) {
+        out[r] = ck_q5k_hsum256_ps(acc[r]) + summs[r];
+    }
 }
 #endif
 
@@ -453,6 +591,70 @@ void gemm_nt_q5_k_q8_k_ref(const void *A_q8,
             C[m * N + n] = sum + (bias ? bias[n] : 0.0f);
         }
     }
+}
+
+void gemm_nt_q5_k_prepared(const float *A,
+                           const void *B_prepared,
+                           const float *bias,
+                           float *C,
+                           int M, int N, int K)
+{
+#if !defined(__AVX2__)
+    (void)A; (void)B_prepared; (void)bias; (void)C;
+    (void)M; (void)N; (void)K;
+#else
+    if (!A || !B_prepared || !C || M <= 0 || N <= 0 || K <= 0 ||
+            (K % QK_K) != 0) return;
+    const int blocks_per_row = K / QK_K;
+    if (blocks_per_row > CK_Q5K_STACK_Q8_BLOCKS) return;
+    const block_q5_K_prepared *W = (const block_q5_K_prepared *)B_prepared;
+    for (int m = 0; m < M; ++m) {
+        block_q8_K a_q8[blocks_per_row];
+        quantize_row_q8_k(A + (size_t)m * K, a_q8, K);
+        for (int n = 0; n < N; ++n) {
+            const float sum = dot_q5_k_prepared_q8_k_row_avx2(
+                    W + (size_t)n * blocks_per_row, a_q8, blocks_per_row);
+            C[(size_t)m * N + n] = sum + (bias ? bias[n] : 0.0f);
+        }
+    }
+#endif
+}
+
+void gemm_nt_q5_k_prepared_m4(const float *A,
+                              const void *B_prepared,
+                              const float *bias,
+                              float *C,
+                              int M, int N, int K)
+{
+#if !defined(__AVX2__)
+    (void)A; (void)B_prepared; (void)bias; (void)C;
+    (void)M; (void)N; (void)K;
+#else
+    if (!A || !B_prepared || !C || M <= 0 || N <= 0 || K <= 0 ||
+            (K % QK_K) != 0) return;
+    const int blocks_per_row = K / QK_K;
+    if (blocks_per_row > CK_Q5K_STACK_Q8_BLOCKS) return;
+    const block_q5_K_prepared *W = (const block_q5_K_prepared *)B_prepared;
+    for (int m = 0; m < M; m += 4) {
+        const int rows = M - m < 4 ? M - m : 4;
+        block_q8_K a_q8[4][blocks_per_row];
+        const block_q8_K *row_ptrs[4] = {
+            a_q8[0], a_q8[1], a_q8[2], a_q8[3],
+        };
+        for (int r = 0; r < rows; ++r) {
+            quantize_row_q8_k(A + (size_t)(m + r) * K, a_q8[r], K);
+        }
+        for (int n = 0; n < N; ++n) {
+            float sums[4];
+            dot_q5_k_prepared_q8_k_m4_avx2(
+                    W + (size_t)n * blocks_per_row,
+                    row_ptrs, rows, blocks_per_row, sums);
+            for (int r = 0; r < rows; ++r) {
+                C[(size_t)(m + r) * N + n] = sums[r] + (bias ? bias[n] : 0.0f);
+            }
+        }
+    }
+#endif
 }
 
 /* ============================================================================
