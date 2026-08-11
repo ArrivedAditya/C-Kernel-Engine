@@ -309,6 +309,20 @@ static void work_deltanet_chunk64_heads(int ith, int nth, void *userdata)
     }
 }
 
+static void work_deltanet_chunk64_head_range(int begin, int end, void *userdata)
+{
+    deltanet_prefill_args_t *args = (deltanet_prefill_args_t *)userdata;
+    if (!args || begin < 0 || begin >= end || end > args->num_heads) return;
+
+    for (int head = begin; head < end; ++head) {
+        gated_deltanet_llama_chunk64_head_forward(
+            args->q, args->k, args->v, args->g, args->beta,
+            args->state_in, args->state_out, args->out,
+            args->rows, args->num_heads, args->group_count,
+            head, args->state_dim);
+    }
+}
+
 /*
  * Preserve the llama.cpp fused recurrent arithmetic while amortizing one
  * thread-pool dispatch across the whole prompt.  Every worker owns disjoint
@@ -375,8 +389,15 @@ void gated_deltanet_llama_chunk64_prefill_parallel_dispatch(
         .norm_eps = norm_eps,
     };
     int active = ck_threadpool_n_threads(pool);
-    if (active > num_heads) active = num_heads;
-    ck_threadpool_dispatch_n(pool, active, work_deltanet_chunk64_heads, &args);
+    if (rows <= 128) {
+        const int paired_head_workers = (num_heads + 1) / 2;
+        if (active > paired_head_workers) active = paired_head_workers;
+    } else if (active > num_heads) {
+        active = num_heads;
+    }
+    ck_threadpool_parallel_for_n(
+        pool, active, 0, num_heads, 1,
+        work_deltanet_chunk64_head_range, &args);
 }
 
 void gated_deltanet_llama_prefill_parallel_dispatch(

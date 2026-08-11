@@ -13270,7 +13270,9 @@
         ],
         "variants": [
           {
-            "name": "avx2",
+            "name": "avx2_short_medium_dynamic_heads",
+            "function": "gated_deltanet_llama_chunk64_prefill_parallel_dispatch",
+            "priority": 220,
             "requires": [
               "avx2",
               "fma"
@@ -13278,7 +13280,30 @@
             "compile_flags": [
               "-mavx2",
               "-mfma"
-            ]
+            ],
+            "shape_constraints": {
+              "R_max": 128
+            },
+            "work_partition": "independent_heads",
+            "default_concurrency": "ceil(H/2)"
+          },
+          {
+            "name": "avx2_long_dynamic_heads",
+            "function": "gated_deltanet_llama_chunk64_prefill_parallel_dispatch",
+            "priority": 210,
+            "requires": [
+              "avx2",
+              "fma"
+            ],
+            "compile_flags": [
+              "-mavx2",
+              "-mfma"
+            ],
+            "shape_constraints": {
+              "R_min": 129
+            },
+            "work_partition": "independent_heads",
+            "default_concurrency": "min(pool_threads,H)"
           }
         ]
       },
@@ -13300,7 +13325,7 @@
                 "independent_heads"
               ],
               "dispatch": [
-                "ck_threadpool_dispatch_n"
+                "ck_threadpool_parallel_for_n"
               ],
               "reduction_order_effect": "none"
             }

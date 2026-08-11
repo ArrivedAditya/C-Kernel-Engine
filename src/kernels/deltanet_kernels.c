@@ -178,6 +178,15 @@ static inline float ck_deltanet_llama_scale(int state_dim)
 #endif
 }
 
+static inline __m256 ck_deltanet_fmadd8(__m256 a, __m256 b, __m256 acc)
+{
+#if defined(__FMA__)
+    return _mm256_fmadd_ps(a, b, acc);
+#else
+    return _mm256_add_ps(_mm256_mul_ps(a, b), acc);
+#endif
+}
+
 /*
  * llama.cpp evaluates multi-token scalar-gate DeltaNet in 64-token chunks.
  * This is algebraically equivalent to the recurrent update above, but its
@@ -310,7 +319,30 @@ static void gated_deltanet_llama_chunk64_head(
          * V_new, matching llama's v_t_new node.
          */
         for (int i = 0; i < C; ++i) {
-            for (int d = 0; d < state_dim; ++d) {
+            int d = 0;
+            for (; d + 7 < state_dim; d += 8) {
+                __m256 value_sum = _mm256_setzero_ps();
+                __m256 key_sum = _mm256_setzero_ps();
+                for (int j = 0; j < C; ++j) {
+                    const __m256 coefficient = _mm256_set1_ps(
+                        transform[(size_t)i * C + (size_t)j]);
+                    value_sum = ck_deltanet_fmadd8(
+                        coefficient,
+                        _mm256_loadu_ps(value_beta +
+                            (size_t)j * (size_t)state_dim + (size_t)d),
+                        value_sum);
+                    key_sum = ck_deltanet_fmadd8(
+                        coefficient,
+                        _mm256_loadu_ps(k_cumdecay +
+                            (size_t)j * (size_t)state_dim + (size_t)d),
+                        key_sum);
+                }
+                _mm256_storeu_ps(v_new +
+                    (size_t)i * (size_t)state_dim + (size_t)d, value_sum);
+                _mm256_storeu_ps(matrix_work +
+                    (size_t)i * (size_t)state_dim + (size_t)d, key_sum);
+            }
+            for (; d < state_dim; ++d) {
                 float value_sum = 0.0f;
                 float key_sum = 0.0f;
                 for (int j = 0; j < C; ++j) {
@@ -325,7 +357,22 @@ static void gated_deltanet_llama_chunk64_head(
             }
         }
         for (int i = 0; i < C; ++i) {
-            for (int d = 0; d < state_dim; ++d) {
+            int d = 0;
+            for (; d + 7 < state_dim; d += 8) {
+                __m256 v_prime = _mm256_setzero_ps();
+                for (int r = 0; r < state_dim; ++r) {
+                    v_prime = ck_deltanet_fmadd8(
+                        _mm256_set1_ps(matrix_work[
+                            (size_t)i * (size_t)state_dim + (size_t)r]),
+                        _mm256_loadu_ps(state +
+                            (size_t)r * (size_t)state_dim + (size_t)d),
+                        v_prime);
+                }
+                float *dst = v_new +
+                    (size_t)i * (size_t)state_dim + (size_t)d;
+                _mm256_storeu_ps(dst, _mm256_sub_ps(_mm256_loadu_ps(dst), v_prime));
+            }
+            for (; d < state_dim; ++d) {
                 float v_prime = 0.0f;
                 for (int r = 0; r < state_dim; ++r) {
                     v_prime +=
@@ -346,7 +393,29 @@ static void gated_deltanet_llama_chunk64_head(
                     k_chunk + (size_t)j * (size_t)state_dim,
                     state_dim) * decay[(size_t)i * C + (size_t)j];
             }
-            for (int d = 0; d < state_dim; ++d) {
+            int d = 0;
+            for (; d + 7 < state_dim; d += 8) {
+                __m256 result = _mm256_setzero_ps();
+                for (int r = 0; r < state_dim; ++r) {
+                    const float q_gate =
+                        q_chunk[(size_t)i * (size_t)state_dim + (size_t)r] *
+                        gate_exp[i];
+                    result = ck_deltanet_fmadd8(
+                        _mm256_set1_ps(q_gate),
+                        _mm256_loadu_ps(state +
+                            (size_t)r * (size_t)state_dim + (size_t)d),
+                        result);
+                }
+                for (int j = 0; j <= i; ++j) {
+                    result = ck_deltanet_fmadd8(
+                        _mm256_set1_ps(work_row[j]),
+                        _mm256_loadu_ps(v_new +
+                            (size_t)j * (size_t)state_dim + (size_t)d),
+                        result);
+                }
+                _mm256_storeu_ps(out_token + d, result);
+            }
+            for (; d < state_dim; ++d) {
                 float result = 0.0f;
                 for (int r = 0; r < state_dim; ++r) {
                     result +=
@@ -367,7 +436,25 @@ static void gated_deltanet_llama_chunk64_head(
             gate_exp[i] = expf(gcum[C - 1] - gcum[i]);
         }
         for (int r = 0; r < state_dim; ++r) {
-            for (int d = 0; d < state_dim; ++d) {
+            int d = 0;
+            for (; d + 7 < state_dim; d += 8) {
+                float *state_row = state +
+                    (size_t)r * (size_t)state_dim + (size_t)d;
+                __m256 updated = _mm256_mul_ps(
+                    _mm256_loadu_ps(state_row), _mm256_set1_ps(last_decay));
+                for (int i = 0; i < C; ++i) {
+                    const float key_gate =
+                        k_chunk[(size_t)i * (size_t)state_dim + (size_t)r] *
+                        gate_exp[i];
+                    updated = ck_deltanet_fmadd8(
+                        _mm256_set1_ps(key_gate),
+                        _mm256_loadu_ps(v_new +
+                            (size_t)i * (size_t)state_dim + (size_t)d),
+                        updated);
+                }
+                _mm256_storeu_ps(state_row, updated);
+            }
+            for (; d < state_dim; ++d) {
                 float updated =
                     state[(size_t)r * (size_t)state_dim + (size_t)d] * last_decay;
                 for (int i = 0; i < C; ++i) {
