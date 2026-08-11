@@ -850,6 +850,27 @@ class NumericalExecutionContractTests(unittest.TestCase):
                 self.assertEqual(kernel["inputs"][0]["shape"][-2:], ["G", "D"])
                 self.assertEqual(kernel["inputs"][1]["shape"][-2:], ["G", "D"])
 
+    def test_qwen35_recurrent_core_declares_shape_aware_dynamic_head_scheduling(self):
+        kernel_map = resolver.load_json(
+            ROOT
+            / "version"
+            / "v8"
+            / "kernel_maps"
+            / "gated_deltanet_llama_avx2_prefill_forward.json"
+        )
+        variants = {row["name"]: row for row in kernel_map["impl"]["variants"]}
+        short = variants["avx2_short_medium_dynamic_heads"]
+        long = variants["avx2_long_dynamic_heads"]
+
+        self.assertEqual(short["shape_constraints"], {"R_max": 128})
+        self.assertEqual(short["default_concurrency"], "ceil(H/2)")
+        self.assertEqual(long["shape_constraints"], {"R_min": 129})
+        self.assertEqual(long["default_concurrency"], "min(pool_threads,H)")
+        threading = kernel_map["numerical_capabilities"][0]["implementation"]["threading"]
+        self.assertIn("independent_heads", threading["work_partition"])
+        self.assertEqual(threading["dispatch"], ["ck_threadpool_parallel_for_n"])
+        self.assertEqual(threading["reduction_order_effect"], "none")
+
     def test_qwen35_full_attention_qk_norm_resolves_llama_provider(self):
         circuit_doc = resolver.load_json(
             ROOT / "version" / "v8" / "circuits" / "qwen35.json"
