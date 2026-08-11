@@ -5209,44 +5209,84 @@ void attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4_to
         /*output_token_major=*/1);
 }
 
-void attention_forward_causal_head_major_gqa_flash_strided_f16kv(const float *q,
-                                                                 const float *k,
-                                                                 const float *v,
-                                                                 float *output,
-                                                                 int num_heads,
-                                                                 int num_kv_heads,
-                                                                 int num_tokens,
-                                                                 int head_dim,
-                                                                 int aligned_head_dim,
-                                                                 int kv_stride_tokens)
+typedef struct {
+    const float *q;
+    const float *k;
+    const float *v;
+    float *output;
+    int num_heads;
+    int num_kv_heads;
+    int num_tokens;
+    int head_dim;
+    int aligned_head_dim;
+    int kv_stride_tokens;
+} ck_attention_causal_f16kv_args_t;
+
+static void ck_attention_causal_f16kv_work(int ith, int nth, void *opaque)
 {
-    if (!q || !k || !v || !output) {
-        return;
-    }
-    if (num_heads <= 0 || num_kv_heads <= 0 || num_tokens <= 0) {
-        return;
-    }
-    if (kv_stride_tokens < num_tokens) {
-        return;
-    }
+    const ck_attention_causal_f16kv_args_t *args =
+        (const ck_attention_causal_f16kv_args_t *)opaque;
+    const float scale = 1.0f / sqrtf((float)args->head_dim);
+    const int T = args->num_tokens;
+    const size_t kv_head_stride =
+        (size_t)args->kv_stride_tokens * (size_t)args->aligned_head_dim;
 
-    const float scale = 1.0f / sqrtf((float)head_dim);
-    const int T = num_tokens;
-    const size_t kv_head_stride = (size_t)kv_stride_tokens * (size_t)aligned_head_dim;
-
-    for (int h = 0; h < num_heads; ++h) {
-        int kv_head = (int)((long long)h * (long long)num_kv_heads / (long long)num_heads);
-        const float *k_head = k + (size_t)kv_head * kv_head_stride;
-        const float *v_head = v + (size_t)kv_head * kv_head_stride;
+    for (int h = ith; h < args->num_heads; h += nth) {
+        const int kv_head = (int)((long long)h * (long long)args->num_kv_heads /
+                                  (long long)args->num_heads);
+        const float *k_head = args->k + (size_t)kv_head * kv_head_stride;
+        const float *v_head = args->v + (size_t)kv_head * kv_head_stride;
 
         for (int i = 0; i < T; ++i) {
-            const float *q_vec = q + qkv_index(h, i, 0, T, aligned_head_dim);
-            float *out_vec = output + qkv_index(h, i, 0, T, aligned_head_dim);
+            const float *q_vec = args->q +
+                qkv_index(h, i, 0, T, args->aligned_head_dim);
+            float *out_vec = args->output +
+                qkv_index(h, i, 0, T, args->aligned_head_dim);
             attention_flash_query_causal_exact_f16kv(q_vec, k_head, v_head,
                                                      /*kv_tokens=*/i + 1,
-                                                     head_dim, aligned_head_dim,
+                                                     args->head_dim,
+                                                     args->aligned_head_dim,
                                                      scale, out_vec);
         }
+    }
+}
+
+void attention_forward_causal_head_major_gqa_flash_strided_f16kv_serial(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens, int head_dim,
+    int aligned_head_dim, int kv_stride_tokens)
+{
+    if (!q || !k || !v || !output || num_heads <= 0 || num_kv_heads <= 0 ||
+        num_tokens <= 0 || kv_stride_tokens < num_tokens) {
+        return;
+    }
+    ck_attention_causal_f16kv_args_t args = {
+        q, k, v, output, num_heads, num_kv_heads, num_tokens,
+        head_dim, aligned_head_dim, kv_stride_tokens,
+    };
+    ck_attention_causal_f16kv_work(0, 1, &args);
+}
+
+void attention_forward_causal_head_major_gqa_flash_strided_f16kv(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens, int head_dim,
+    int aligned_head_dim, int kv_stride_tokens)
+{
+    if (!q || !k || !v || !output || num_heads <= 0 || num_kv_heads <= 0 ||
+        num_tokens <= 0 || kv_stride_tokens < num_tokens) {
+        return;
+    }
+    ck_attention_causal_f16kv_args_t args = {
+        q, k, v, output, num_heads, num_kv_heads, num_tokens,
+        head_dim, aligned_head_dim, kv_stride_tokens,
+    };
+    ck_threadpool_t *pool = ck_threadpool_global();
+    const int workers = pool ? ck_threadpool_n_threads(pool) : 1;
+    const int active = workers < num_heads ? workers : num_heads;
+    if (active > 1) {
+        ck_threadpool_dispatch_n(pool, active, ck_attention_causal_f16kv_work, &args);
+    } else {
+        ck_attention_causal_f16kv_work(0, 1, &args);
     }
 }
 
