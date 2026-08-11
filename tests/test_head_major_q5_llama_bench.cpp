@@ -6,7 +6,7 @@
  *
  * Compares:
  *   1. CK direct head-major FP32 path: ck_gemm_nt_head_major_q5_0
- *   2. CK flattened Q5_0 x Q8_0 path: flatten + quantize + gemm_nt_q5_0_q8_0
+ *   2. CK flattened Q5_0 x Q8_0 path: flatten + quantize + exact m4n2 GEMM
  *   3. llama.cpp exact reference path: flatten + quantize + ggml_vec_dot_q5_0_q8_0
  *
  * The strict parity gate is between (2) and (3), since they implement the
@@ -51,6 +51,13 @@ void gemm_nt_q5_0_q8_0(const void *A_q8,
                        int M,
                        int N,
                        int K);
+void gemm_nt_q5_0_q8_0_m4n2(const void *A_q8,
+                             const void *B_q5,
+                             const float *bias,
+                             float *C,
+                             int M,
+                             int N,
+                             int K);
 }
 
 static double now_ms(void) {
@@ -203,13 +210,13 @@ static int run_case(const bench_config_t *cfg, int warmup, int iters, float tol)
     auto run_ck_q8 = [&]() {
         flatten_head_major(attn_out.data(), flat.data(), tokens, num_heads, head_dim);
         quantize_flat_q8_0(flat.data(), flat_q8.data(), tokens, embed_dim);
-        gemm_nt_q5_0_q8_0(flat_q8.data(),
-                          weights.data(),
-                          bias.data(),
-                          out_ck_q8.data(),
-                          tokens,
-                          embed_dim,
-                          embed_dim);
+        gemm_nt_q5_0_q8_0_m4n2(flat_q8.data(),
+                               weights.data(),
+                               bias.data(),
+                               out_ck_q8.data(),
+                               tokens,
+                               embed_dim,
+                               embed_dim);
     };
 
     auto run_llama = [&]() {

@@ -1,6 +1,12 @@
 {
   "id": "gemm_nt_q5_0_q8_0",
   "op": "gemm",
+  "selection": {
+    "status": "production",
+    "priority": 200,
+    "equivalence_group": "q5_0_weight_q8_0_input_fp32_output",
+    "phases": ["prefill"]
+  },
   "variant": "q5_0_w_q8_0_a",
   "quant": {
     "weight": "q5_0",
@@ -40,20 +46,42 @@
       }
     ]
   },
+  "phase_selection": {
+    "decode": {
+      "op_family": "gemv",
+      "default_kernel": "gemv_q5_0_q8_0",
+      "notes": "Single-token decode retains the established GEMV path."
+    },
+    "prefill": {
+      "op_family": "gemm",
+      "default_kernel": "gemm_nt_q5_0_q8_0",
+      "dispatch_owner": "gemm_nt_q5_0_q8_0_parallel_dispatch",
+      "scheduling": "dynamic_output_tiles",
+      "selection_policy": "AVX2 dynamic prefill uses gemm_nt_q5_0_q8_0_m4n2 with independent 32-column output tiles below 256 rows and independent four-row ranges from 256 rows. Each output retains the established accumulator and reduction order. Unsupported ISAs and diagnostic static scheduling retain gemm_nt_q5_0_q8_0."
+    }
+  },
   "constraints": {
     "alignment": {"K": 32},
-    "notes": "Q5_0 requires K dimension multiple of 256 for dequantization. B is transposed (nt = A * B^T)."
+    "notes": "Q5_0 requires K to be a multiple of its 32-value block width. B is transposed (nt = A * B^T)."
   },
   "impl": {
     "function": "gemm_nt_q5_0_q8_0",
-    "sources": ["src/kernels/gemm_kernels_q5_0.c"],
+    "sources": ["src/kernels/gemm_kernels_q5_0.c", "version/v8/src/ck_parallel_prefill_v8.c"],
     "variants": [
+      {
+        "name": "avx2_m4n2",
+        "function": "gemm_nt_q5_0_q8_0_m4n2",
+        "priority": 240,
+        "requires": ["avx2", "fma"],
+        "shape_constraints": {"M_min": 4, "K_multiple": 32},
+        "work_partition": "output_tiles"
+      },
       {"name": "avx2", "requires": ["avx2", "fma"], "compile_flags": ["-mavx2", "-mfma"]}
     ]
   },
   "tests": {
-    "unit": ["unittest/test_gemm.py"],
-    "bench": ["scripts/bench_gemm.py"],
+    "unit": ["unittest/test_gemm.py", "unittest/test_q5_0_q8_0_prefill_tiles.py"],
+    "bench": ["scripts/bench_gemm.py", "tests/test_head_major_q5_llama_bench.cpp"],
     "parity": [
       {
         "kind": "numpy",
@@ -69,5 +97,5 @@
       }
     ]
   },
-  "notes": "General matrix multiplication with Q5_0 weights and Q8_0 activations. Used for QKV projection and output projection in prefill."
+  "notes": "General matrix multiplication with Q5_0 weights and Q8_0 activations. AVX2 prefill reconstructs each Q5 block once for four token rows and dynamically distributes cache-line-disjoint output tiles. The provider preserves an independent certified reduction for every output."
 }

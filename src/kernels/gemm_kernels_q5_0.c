@@ -1754,3 +1754,274 @@ void gemm_nt_q5_0_q8_0(
         }
     }
 }
+
+/*
+ * Two-token by four-output Q5_0 provider.
+ *
+ * Q5 unpacking is independent of the activation row. Keep the certified
+ * eight-lane accumulator and horizontal reduction for every output while
+ * applying each unpacked weight block to two token rows. This removes one
+ * complete Q5 reconstruction per token pair without coupling reductions.
+ */
+void gemm_nt_q5_0_q8_0_m2n4_tile(
+    const void *A_q8,
+    const void *B_q5,
+    const float *bias,
+    float *C,
+    int M,
+    int N,
+    int K,
+    int ldc)
+{
+#if defined(__AVX2__)
+    if (!A_q8 || !B_q5 || !C || M <= 0 || N <= 0 || K <= 0 ||
+        (K % QK5_0) != 0 || ldc < N) {
+        return;
+    }
+
+    const block_q8_0 *a = (const block_q8_0 *)A_q8;
+    const block_q5_0 *w = (const block_q5_0 *)B_q5;
+    const int nb = K / QK5_0;
+    int m = 0;
+
+    for (; m + 1 < M; m += 2) {
+        const block_q8_0 *a0 = a + (size_t)(m + 0) * (size_t)nb;
+        const block_q8_0 *a1 = a + (size_t)(m + 1) * (size_t)nb;
+        int n = 0;
+
+        for (; n + 3 < N; n += 4) {
+            const block_q5_0 *w0 = w + (size_t)(n + 0) * (size_t)nb;
+            const block_q5_0 *w1 = w + (size_t)(n + 1) * (size_t)nb;
+            const block_q5_0 *w2 = w + (size_t)(n + 2) * (size_t)nb;
+            const block_q5_0 *w3 = w + (size_t)(n + 3) * (size_t)nb;
+            __m256 acc00 = _mm256_setzero_ps();
+            __m256 acc01 = _mm256_setzero_ps();
+            __m256 acc02 = _mm256_setzero_ps();
+            __m256 acc03 = _mm256_setzero_ps();
+            __m256 acc10 = _mm256_setzero_ps();
+            __m256 acc11 = _mm256_setzero_ps();
+            __m256 acc12 = _mm256_setzero_ps();
+            __m256 acc13 = _mm256_setzero_ps();
+
+            for (int ib = 0; ib < nb; ++ib) {
+                __m256i qw0 = bytes_from_nibbles_32_avx(w0[ib].qs);
+                __m256i qw1 = bytes_from_nibbles_32_avx(w1[ib].qs);
+                __m256i qw2 = bytes_from_nibbles_32_avx(w2[ib].qs);
+                __m256i qw3 = bytes_from_nibbles_32_avx(w3[ib].qs);
+                const __m256i sign = _mm256_set1_epi8((char)0xF0);
+                qw0 = _mm256_or_si256(qw0, _mm256_andnot_si256(bytes_from_bits_32_avx(w0[ib].qh), sign));
+                qw1 = _mm256_or_si256(qw1, _mm256_andnot_si256(bytes_from_bits_32_avx(w1[ib].qh), sign));
+                qw2 = _mm256_or_si256(qw2, _mm256_andnot_si256(bytes_from_bits_32_avx(w2[ib].qh), sign));
+                qw3 = _mm256_or_si256(qw3, _mm256_andnot_si256(bytes_from_bits_32_avx(w3[ib].qh), sign));
+
+                const __m256i qa0 = _mm256_loadu_si256((const __m256i *)a0[ib].qs);
+                const __m256i qa1 = _mm256_loadu_si256((const __m256i *)a1[ib].qs);
+                const float da0 = CK_FP16_TO_FP32(a0[ib].d);
+                const float da1 = CK_FP16_TO_FP32(a1[ib].d);
+                const float dw0 = CK_FP16_TO_FP32(w0[ib].d);
+                const float dw1 = CK_FP16_TO_FP32(w1[ib].d);
+                const float dw2 = CK_FP16_TO_FP32(w2[ib].d);
+                const float dw3 = CK_FP16_TO_FP32(w3[ib].d);
+                const __m256 p00 = mul_sum_i8_pairs_float_avx(qw0, qa0);
+                const __m256 p01 = mul_sum_i8_pairs_float_avx(qw1, qa0);
+                const __m256 p02 = mul_sum_i8_pairs_float_avx(qw2, qa0);
+                const __m256 p03 = mul_sum_i8_pairs_float_avx(qw3, qa0);
+                const __m256 p10 = mul_sum_i8_pairs_float_avx(qw0, qa1);
+                const __m256 p11 = mul_sum_i8_pairs_float_avx(qw1, qa1);
+                const __m256 p12 = mul_sum_i8_pairs_float_avx(qw2, qa1);
+                const __m256 p13 = mul_sum_i8_pairs_float_avx(qw3, qa1);
+#if defined(__FMA__)
+                acc00 = _mm256_fmadd_ps(_mm256_set1_ps(dw0 * da0), p00, acc00);
+                acc01 = _mm256_fmadd_ps(_mm256_set1_ps(dw1 * da0), p01, acc01);
+                acc02 = _mm256_fmadd_ps(_mm256_set1_ps(dw2 * da0), p02, acc02);
+                acc03 = _mm256_fmadd_ps(_mm256_set1_ps(dw3 * da0), p03, acc03);
+                acc10 = _mm256_fmadd_ps(_mm256_set1_ps(dw0 * da1), p10, acc10);
+                acc11 = _mm256_fmadd_ps(_mm256_set1_ps(dw1 * da1), p11, acc11);
+                acc12 = _mm256_fmadd_ps(_mm256_set1_ps(dw2 * da1), p12, acc12);
+                acc13 = _mm256_fmadd_ps(_mm256_set1_ps(dw3 * da1), p13, acc13);
+#else
+                acc00 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw0 * da0), p00), acc00);
+                acc01 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw1 * da0), p01), acc01);
+                acc02 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw2 * da0), p02), acc02);
+                acc03 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw3 * da0), p03), acc03);
+                acc10 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw0 * da1), p10), acc10);
+                acc11 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw1 * da1), p11), acc11);
+                acc12 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw2 * da1), p12), acc12);
+                acc13 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw3 * da1), p13), acc13);
+#endif
+            }
+
+            C[(size_t)(m + 0) * (size_t)ldc + n + 0] = hsum_float_8_avx(acc00) + (bias ? bias[n + 0] : 0.0f);
+            C[(size_t)(m + 0) * (size_t)ldc + n + 1] = hsum_float_8_avx(acc01) + (bias ? bias[n + 1] : 0.0f);
+            C[(size_t)(m + 0) * (size_t)ldc + n + 2] = hsum_float_8_avx(acc02) + (bias ? bias[n + 2] : 0.0f);
+            C[(size_t)(m + 0) * (size_t)ldc + n + 3] = hsum_float_8_avx(acc03) + (bias ? bias[n + 3] : 0.0f);
+            C[(size_t)(m + 1) * (size_t)ldc + n + 0] = hsum_float_8_avx(acc10) + (bias ? bias[n + 0] : 0.0f);
+            C[(size_t)(m + 1) * (size_t)ldc + n + 1] = hsum_float_8_avx(acc11) + (bias ? bias[n + 1] : 0.0f);
+            C[(size_t)(m + 1) * (size_t)ldc + n + 2] = hsum_float_8_avx(acc12) + (bias ? bias[n + 2] : 0.0f);
+            C[(size_t)(m + 1) * (size_t)ldc + n + 3] = hsum_float_8_avx(acc13) + (bias ? bias[n + 3] : 0.0f);
+        }
+
+        for (; n < N; ++n) {
+            const block_q5_0 *wn = w + (size_t)n * (size_t)nb;
+            vec_dot_q5_0_q8_0(K, &C[(size_t)(m + 0) * (size_t)ldc + n], wn, a0);
+            vec_dot_q5_0_q8_0(K, &C[(size_t)(m + 1) * (size_t)ldc + n], wn, a1);
+            if (bias) {
+                C[(size_t)(m + 0) * (size_t)ldc + n] += bias[n];
+                C[(size_t)(m + 1) * (size_t)ldc + n] += bias[n];
+            }
+        }
+    }
+
+    if (m < M) {
+        gemm_nt_q5_0_q8_0(
+            a + (size_t)m * (size_t)nb, w, bias,
+            C + (size_t)m * (size_t)ldc, 1, N, K);
+    }
+#else
+    if (ldc == N) {
+        gemm_nt_q5_0_q8_0(A_q8, B_q5, bias, C, M, N, K);
+    } else {
+        const int nb = K / QK5_0;
+        const block_q8_0 *a = (const block_q8_0 *)A_q8;
+        for (int m = 0; m < M; ++m) {
+            gemm_nt_q5_0_q8_0(a + (size_t)m * (size_t)nb, B_q5, bias,
+                              C + (size_t)m * (size_t)ldc, 1, N, K);
+        }
+    }
+#endif
+}
+
+void gemm_nt_q5_0_q8_0_m2n4(
+    const void *A_q8,
+    const void *B_q5,
+    const float *bias,
+    float *C,
+    int M,
+    int N,
+    int K)
+{
+    gemm_nt_q5_0_q8_0_m2n4_tile(A_q8, B_q5, bias, C, M, N, K, N);
+}
+
+/* Four-token by two-output companion to m2n4. It keeps the same eight
+ * independent accumulators but amortizes Q5 reconstruction over four rows. */
+void gemm_nt_q5_0_q8_0_m4n2_tile(
+    const void *A_q8,
+    const void *B_q5,
+    const float *bias,
+    float *C,
+    int M,
+    int N,
+    int K,
+    int ldc)
+{
+#if defined(__AVX2__)
+    if (!A_q8 || !B_q5 || !C || M <= 0 || N <= 0 || K <= 0 ||
+        (K % QK5_0) != 0 || ldc < N) {
+        return;
+    }
+
+    const block_q8_0 *a = (const block_q8_0 *)A_q8;
+    const block_q5_0 *w = (const block_q5_0 *)B_q5;
+    const int nb = K / QK5_0;
+    int m = 0;
+
+    for (; m + 3 < M; m += 4) {
+        const block_q8_0 *a0 = a + (size_t)(m + 0) * (size_t)nb;
+        const block_q8_0 *a1 = a + (size_t)(m + 1) * (size_t)nb;
+        const block_q8_0 *a2 = a + (size_t)(m + 2) * (size_t)nb;
+        const block_q8_0 *a3 = a + (size_t)(m + 3) * (size_t)nb;
+        int n = 0;
+
+        for (; n + 1 < N; n += 2) {
+            const block_q5_0 *w0 = w + (size_t)(n + 0) * (size_t)nb;
+            const block_q5_0 *w1 = w + (size_t)(n + 1) * (size_t)nb;
+            __m256 acc00 = _mm256_setzero_ps();
+            __m256 acc01 = _mm256_setzero_ps();
+            __m256 acc10 = _mm256_setzero_ps();
+            __m256 acc11 = _mm256_setzero_ps();
+            __m256 acc20 = _mm256_setzero_ps();
+            __m256 acc21 = _mm256_setzero_ps();
+            __m256 acc30 = _mm256_setzero_ps();
+            __m256 acc31 = _mm256_setzero_ps();
+
+            for (int ib = 0; ib < nb; ++ib) {
+                __m256i qw0 = bytes_from_nibbles_32_avx(w0[ib].qs);
+                __m256i qw1 = bytes_from_nibbles_32_avx(w1[ib].qs);
+                const __m256i sign = _mm256_set1_epi8((char)0xF0);
+                qw0 = _mm256_or_si256(qw0, _mm256_andnot_si256(bytes_from_bits_32_avx(w0[ib].qh), sign));
+                qw1 = _mm256_or_si256(qw1, _mm256_andnot_si256(bytes_from_bits_32_avx(w1[ib].qh), sign));
+
+                const __m256i qa0 = _mm256_loadu_si256((const __m256i *)a0[ib].qs);
+                const __m256i qa1 = _mm256_loadu_si256((const __m256i *)a1[ib].qs);
+                const __m256i qa2 = _mm256_loadu_si256((const __m256i *)a2[ib].qs);
+                const __m256i qa3 = _mm256_loadu_si256((const __m256i *)a3[ib].qs);
+                const float dw0 = CK_FP16_TO_FP32(w0[ib].d);
+                const float dw1 = CK_FP16_TO_FP32(w1[ib].d);
+                const float da0 = CK_FP16_TO_FP32(a0[ib].d);
+                const float da1 = CK_FP16_TO_FP32(a1[ib].d);
+                const float da2 = CK_FP16_TO_FP32(a2[ib].d);
+                const float da3 = CK_FP16_TO_FP32(a3[ib].d);
+#if defined(__FMA__)
+                acc00 = _mm256_fmadd_ps(_mm256_set1_ps(dw0 * da0), mul_sum_i8_pairs_float_avx(qw0, qa0), acc00);
+                acc01 = _mm256_fmadd_ps(_mm256_set1_ps(dw1 * da0), mul_sum_i8_pairs_float_avx(qw1, qa0), acc01);
+                acc10 = _mm256_fmadd_ps(_mm256_set1_ps(dw0 * da1), mul_sum_i8_pairs_float_avx(qw0, qa1), acc10);
+                acc11 = _mm256_fmadd_ps(_mm256_set1_ps(dw1 * da1), mul_sum_i8_pairs_float_avx(qw1, qa1), acc11);
+                acc20 = _mm256_fmadd_ps(_mm256_set1_ps(dw0 * da2), mul_sum_i8_pairs_float_avx(qw0, qa2), acc20);
+                acc21 = _mm256_fmadd_ps(_mm256_set1_ps(dw1 * da2), mul_sum_i8_pairs_float_avx(qw1, qa2), acc21);
+                acc30 = _mm256_fmadd_ps(_mm256_set1_ps(dw0 * da3), mul_sum_i8_pairs_float_avx(qw0, qa3), acc30);
+                acc31 = _mm256_fmadd_ps(_mm256_set1_ps(dw1 * da3), mul_sum_i8_pairs_float_avx(qw1, qa3), acc31);
+#else
+                acc00 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw0 * da0), mul_sum_i8_pairs_float_avx(qw0, qa0)), acc00);
+                acc01 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw1 * da0), mul_sum_i8_pairs_float_avx(qw1, qa0)), acc01);
+                acc10 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw0 * da1), mul_sum_i8_pairs_float_avx(qw0, qa1)), acc10);
+                acc11 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw1 * da1), mul_sum_i8_pairs_float_avx(qw1, qa1)), acc11);
+                acc20 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw0 * da2), mul_sum_i8_pairs_float_avx(qw0, qa2)), acc20);
+                acc21 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw1 * da2), mul_sum_i8_pairs_float_avx(qw1, qa2)), acc21);
+                acc30 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw0 * da3), mul_sum_i8_pairs_float_avx(qw0, qa3)), acc30);
+                acc31 = _mm256_add_ps(_mm256_mul_ps(_mm256_set1_ps(dw1 * da3), mul_sum_i8_pairs_float_avx(qw1, qa3)), acc31);
+#endif
+            }
+
+            C[(size_t)(m + 0) * (size_t)ldc + n + 0] = hsum_float_8_avx(acc00) + (bias ? bias[n + 0] : 0.0f);
+            C[(size_t)(m + 0) * (size_t)ldc + n + 1] = hsum_float_8_avx(acc01) + (bias ? bias[n + 1] : 0.0f);
+            C[(size_t)(m + 1) * (size_t)ldc + n + 0] = hsum_float_8_avx(acc10) + (bias ? bias[n + 0] : 0.0f);
+            C[(size_t)(m + 1) * (size_t)ldc + n + 1] = hsum_float_8_avx(acc11) + (bias ? bias[n + 1] : 0.0f);
+            C[(size_t)(m + 2) * (size_t)ldc + n + 0] = hsum_float_8_avx(acc20) + (bias ? bias[n + 0] : 0.0f);
+            C[(size_t)(m + 2) * (size_t)ldc + n + 1] = hsum_float_8_avx(acc21) + (bias ? bias[n + 1] : 0.0f);
+            C[(size_t)(m + 3) * (size_t)ldc + n + 0] = hsum_float_8_avx(acc30) + (bias ? bias[n + 0] : 0.0f);
+            C[(size_t)(m + 3) * (size_t)ldc + n + 1] = hsum_float_8_avx(acc31) + (bias ? bias[n + 1] : 0.0f);
+        }
+
+        if (n < N) {
+            const block_q5_0 *wn = w + (size_t)n * (size_t)nb;
+            const block_q8_0 *rows[4] = {a0, a1, a2, a3};
+            for (int r = 0; r < 4; ++r) {
+                float *out = &C[(size_t)(m + r) * (size_t)ldc + n];
+                vec_dot_q5_0_q8_0(K, out, wn, rows[r]);
+                if (bias) *out += bias[n];
+            }
+        }
+    }
+
+    if (m < M) {
+        gemm_nt_q5_0_q8_0_m2n4_tile(
+            a + (size_t)m * (size_t)nb, w, bias,
+            C + (size_t)m * (size_t)ldc, M - m, N, K, ldc);
+    }
+#else
+    gemm_nt_q5_0_q8_0_m2n4_tile(A_q8, B_q5, bias, C, M, N, K, ldc);
+#endif
+}
+
+void gemm_nt_q5_0_q8_0_m4n2(
+    const void *A_q8,
+    const void *B_q5,
+    const float *bias,
+    float *C,
+    int M,
+    int N,
+    int K)
+{
+    gemm_nt_q5_0_q8_0_m4n2_tile(A_q8, B_q5, bias, C, M, N, K, N);
+}
