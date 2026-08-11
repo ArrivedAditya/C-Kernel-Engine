@@ -979,6 +979,33 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             ],
         )
 
+        registry = build_ir_v8.load_kernel_registry()
+        lowered_ir1 = build_ir_v8.generate_ir_lower_1(
+            ops, registry, manifest, "prefill"
+        )
+        layout = build_ir_v8.generate_memory_layout(
+            lowered_ir1,
+            manifest,
+            registry,
+            mode="prefill",
+            context_len=manifest["config"]["context_length"],
+        )
+        lowered_ir2 = build_ir_v8.generate_ir_lower_2(
+            lowered_ir1, layout, manifest, registry, mode="prefill"
+        )
+        self.assertNotIn(
+            "transpose_attn_out_to_token_major",
+            [op.get("op") for op in lowered_ir2["operations"]],
+        )
+        call_ir = build_ir_v8.generate_ir_lower_3(lowered_ir2, mode="prefill")
+        attention_call = next(
+            op for op in call_ir["operations"] if op.get("op") == "attn"
+        )
+        self.assertEqual(
+            attention_call["resolved_physical_execution"]["function"],
+            "attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage_token_output",
+        )
+
     def test_default_attention_contract_retains_legacy_owner(self) -> None:
         manifest = _make_qwen3vl_manifest()
         manifest["config"].pop("vision_attention_storage_boundary", None)
@@ -1091,6 +1118,24 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
             ["branch_spatial_merge", "branch_layernorm", "branch_fc1", "branch_gelu", "branch_fc2"],
         )
         self.assertEqual(branch["stitches"][0]["op"], "branch_concat")
+
+    def test_zero_deepstack_disables_branch_and_dependent_stitch(self) -> None:
+        manifest = _make_qwen3vl_manifest()
+        manifest["config"]["deepstack_layer_indices"] = []
+        manifest["config"]["num_deepstack_layers"] = 0
+        plan = build_ir_v8.build_template_branch_plan(manifest)
+        self.assertEqual(plan["blocks"][0]["branches"], [])
+        block = manifest["template"]["block_types"]["vision_encoder"]
+        footer = build_ir_v8._normalize_block_footer_items(block, manifest["config"])
+        self.assertNotIn("branch_concat", [item["op"] for item in footer])
+        self.assertEqual(
+            build_ir_v8._resolve_activation_extent(
+                {"max": [1, {"mul": [4096, {"config": "num_deepstack_layers"}]}]},
+                manifest["config"],
+                "test.branch_collect",
+            ),
+            1,
+        )
 
     def test_qwen3vl_prefill_lowering_emits_vision_merger_ops(self) -> None:
         manifest = _make_qwen3vl_manifest()

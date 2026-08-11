@@ -1,15 +1,16 @@
 {
   "id": "gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
   "op": "gemm",
+  "physical_contract_version": 1,
   "variant": "bf16_w_fp32_pytorch_onednn_brgemm_bf16_out",
   "quant": {"weight": "bf16", "activation": "fp32", "output": "bf16"},
   "inputs": [
-    {"name": "A", "dtype": "fp32", "shape": ["M", "K"], "desc": "BF16-valued activation in FP32 storage"},
-    {"name": "B", "dtype": "bf16", "shape": ["N", "K"], "desc": "PyTorch Linear weight layout"},
-    {"name": "bias", "dtype": "fp32", "shape": ["N"], "optional": true, "desc": "BF16-valued bias in FP32 storage"}
+    {"name": "A", "dtype": "fp32", "shape": ["M", "K"], "layout": "token_major_contiguous", "placement": "local", "desc": "BF16-valued activation in FP32 storage"},
+    {"name": "B", "dtype": "bf16", "shape": ["N", "K"], "layout": "opaque_packed", "placement": "local", "desc": "PyTorch Linear weight layout"},
+    {"name": "bias", "dtype": "fp32", "shape": ["N"], "layout": "token_major_contiguous", "placement": "local", "optional": true, "desc": "BF16-valued bias in FP32 storage"}
   ],
   "outputs": [
-    {"name": "C", "dtype": "fp32", "shape": ["M", "N"], "desc": "BF16 RNE values represented in FP32 storage"}
+    {"name": "C", "dtype": "fp32", "shape": ["M", "N"], "layout": "token_major_contiguous", "placement": "local", "desc": "BF16 RNE values represented in FP32 storage"}
   ],
   "scratch": [],
   "dims": ["M", "N", "K"],

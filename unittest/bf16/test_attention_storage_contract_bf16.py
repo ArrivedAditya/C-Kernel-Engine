@@ -22,6 +22,9 @@ KERNEL = LIB.attention_forward_full_head_major_gqa_sdpa_bf16_storage
 PYTORCH_FLASH_KERNEL = (
     LIB.attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage
 )
+PYTORCH_FLASH_TOKEN_OUTPUT_KERNEL = (
+    LIB.attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage_token_output
+)
 FLOAT_P = ctypes.POINTER(ctypes.c_float)
 KERNEL.argtypes = [
     FLOAT_P, FLOAT_P, FLOAT_P, FLOAT_P,
@@ -31,12 +34,17 @@ KERNEL.argtypes = [
 KERNEL.restype = None
 PYTORCH_FLASH_KERNEL.argtypes = KERNEL.argtypes
 PYTORCH_FLASH_KERNEL.restype = None
+PYTORCH_FLASH_TOKEN_OUTPUT_KERNEL.argtypes = KERNEL.argtypes
+PYTORCH_FLASH_TOKEN_OUTPUT_KERNEL.restype = None
 SCALE = LIB.ck_attention_pytorch_sdpa_scale_f32
 SCALE.argtypes = [ctypes.c_int]
 SCALE.restype = ctypes.c_float
 SET_THREADS = LIB.ck_set_num_threads
 SET_THREADS.argtypes = [ctypes.c_int]
 SET_THREADS.restype = None
+AMX_AVAILABLE = LIB.ck_gemm_bf16_amx_available
+AMX_AVAILABLE.argtypes = []
+AMX_AVAILABLE.restype = ctypes.c_int
 
 
 def bf16_values(values: np.ndarray) -> np.ndarray:
@@ -64,6 +72,38 @@ def run_exact_provider_hard_fault_probe() -> None:
         values.ctypes.data_as(FLOAT_P), values.ctypes.data_as(FLOAT_P),
         1, 1, 7, 8, 8, 7,
     )
+
+
+def assert_token_output_matches_head_output() -> None:
+    if not AMX_AVAILABLE():
+        print("BF16 direct token-output parity: SKIP (AMX-BF16 unavailable)")
+        return
+    heads, tokens, dim = 2, 16, 72
+    rng = np.random.default_rng(20260811)
+    q = bf16_values(rng.standard_normal((heads, tokens, dim), dtype=np.float32))
+    k = bf16_values(rng.standard_normal((heads, tokens, dim), dtype=np.float32))
+    v = bf16_values(rng.standard_normal((heads, tokens, dim), dtype=np.float32))
+    head_output = np.empty_like(q)
+    token_output = np.empty((tokens, heads, dim), dtype=np.float32)
+    args = (
+        q.ctypes.data_as(FLOAT_P), k.ctypes.data_as(FLOAT_P),
+        v.ctypes.data_as(FLOAT_P),
+    )
+    PYTORCH_FLASH_KERNEL(
+        *args, head_output.ctypes.data_as(FLOAT_P),
+        heads, heads, tokens, dim, dim, tokens,
+    )
+    PYTORCH_FLASH_TOKEN_OUTPUT_KERNEL(
+        *args, token_output.ctypes.data_as(FLOAT_P),
+        heads, heads, tokens, dim, dim, tokens,
+    )
+    expected = np.transpose(head_output, (1, 0, 2)).copy()
+    if expected.tobytes() != token_output.tobytes():
+        different = int(np.count_nonzero(expected != token_output))
+        raise AssertionError(
+            f"BF16 direct token-output provider changed {different}/{expected.size} values"
+        )
+    print(f"BF16 direct token-output parity: {expected.size}/{expected.size} exact")
 
 
 def run_case_detailed(
@@ -137,6 +177,7 @@ def run_case(
 
 def main() -> int:
     assert_exact_provider_hard_faults_instead_of_falling_back()
+    assert_token_output_matches_head_output()
     scale_bits = struct.unpack("<I", struct.pack("<f", SCALE(72)))[0]
     if scale_bits != 0x3DF15BEF:
         raise AssertionError(

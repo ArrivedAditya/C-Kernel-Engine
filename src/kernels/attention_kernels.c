@@ -4612,7 +4612,7 @@ static int ck_attention_full_bf16_sdpa_amx_range(
     const float *q, const float *k, const float *v, float *output,
     int num_heads, int num_kv_heads, int num_tokens,
     int head_dim, int aligned_head_dim, int kv_stride_tokens,
-    int head_begin, int head_step)
+    int head_begin, int head_step, int output_token_major)
 {
 #if defined(__AVX512F__)
     /*
@@ -4628,16 +4628,16 @@ static int ck_attention_full_bf16_sdpa_amx_range(
         (num_tokens % 16) != 0 || (kv_stride_tokens < num_tokens) ||
         num_heads % num_kv_heads != 0) return 0;
     uint16_t *q_block = malloc((size_t)Q_BLOCK * K_PAD * sizeof(uint16_t));
-    uint16_t *k_block = malloc((size_t)KV_BLOCK * K_PAD * sizeof(uint16_t));
+    uint16_t *k_packed = malloc((size_t)num_tokens * K_PAD * sizeof(uint16_t));
     uint16_t *probabilities = malloc((size_t)Q_BLOCK * KV_BLOCK * sizeof(uint16_t));
-    uint16_t *v_block = malloc((size_t)D_PAD * KV_BLOCK * sizeof(uint16_t));
+    uint16_t *v_packed = malloc((size_t)num_tokens * D_PAD * sizeof(uint16_t));
     float *scores = malloc((size_t)Q_BLOCK * KV_BLOCK * sizeof(float));
     float *destination = malloc((size_t)Q_BLOCK * D_PAD * sizeof(float));
     float *row_max = malloc((size_t)Q_BLOCK * sizeof(float));
     float *row_sum = malloc((size_t)Q_BLOCK * sizeof(float));
-    if (!q_block || !k_block || !probabilities || !v_block || !scores ||
+    if (!q_block || !k_packed || !probabilities || !v_packed || !scores ||
         !destination || !row_max || !row_sum) {
-        free(q_block); free(k_block); free(probabilities); free(v_block);
+        free(q_block); free(k_packed); free(probabilities); free(v_packed);
         free(scores); free(destination); free(row_max); free(row_sum);
         return 0;
     }
@@ -4649,7 +4649,26 @@ static int ck_attention_full_bf16_sdpa_amx_range(
         const float *qh = q + (size_t)h * q_stride;
         const float *kh = k + (size_t)kv_head * kv_stride;
         const float *vh = v + (size_t)kv_head * kv_stride;
-        float *oh = output + (size_t)h * q_stride;
+        /*
+         * K and V are invariant across all query blocks for this head. Pack
+         * each 512-key tile once, retaining the exact block-local layouts
+         * consumed by the two certified BRGEMMs below.
+         */
+        for (int n = 0; n < num_tokens; n += KV_BLOCK) {
+            const int key_count = num_tokens - n < KV_BLOCK ? num_tokens - n : KV_BLOCK;
+            uint16_t *k_block = k_packed + (size_t)n * K_PAD;
+            uint16_t *v_block = v_packed + (size_t)n * D_PAD;
+            memset(k_block, 0, (size_t)key_count * K_PAD * sizeof(uint16_t));
+            memset(v_block, 0, (size_t)D_PAD * key_count * sizeof(uint16_t));
+            for (int key = 0; key < key_count; ++key) {
+                for (int d = 0; d < head_dim; ++d) {
+                    k_block[(size_t)key * K_PAD + d] =
+                        float_to_bf16(kh[(size_t)(n + key) * aligned_head_dim + d]);
+                    v_block[(size_t)d * key_count + key] =
+                        float_to_bf16(vh[(size_t)(n + key) * aligned_head_dim + d]);
+                }
+            }
+        }
         for (int m = 0; m < num_tokens; m += Q_BLOCK) {
             const int query_count = num_tokens - m < Q_BLOCK ? num_tokens - m : Q_BLOCK;
             memset(q_block, 0, (size_t)query_count * K_PAD * sizeof(uint16_t));
@@ -4664,16 +4683,8 @@ static int ck_attention_full_bf16_sdpa_amx_range(
             }
             for (int n = 0; n < num_tokens; n += KV_BLOCK) {
                 const int key_count = num_tokens - n < KV_BLOCK ? num_tokens - n : KV_BLOCK;
-                memset(k_block, 0, (size_t)key_count * K_PAD * sizeof(uint16_t));
-                memset(v_block, 0, (size_t)D_PAD * key_count * sizeof(uint16_t));
-                for (int key = 0; key < key_count; ++key) {
-                    for (int d = 0; d < head_dim; ++d) {
-                        k_block[(size_t)key * K_PAD + d] =
-                            float_to_bf16(kh[(size_t)(n + key) * aligned_head_dim + d]);
-                        v_block[(size_t)d * key_count + key] =
-                            float_to_bf16(vh[(size_t)(n + key) * aligned_head_dim + d]);
-                    }
-                }
+                const uint16_t *k_block = k_packed + (size_t)n * K_PAD;
+                const uint16_t *v_block = v_packed + (size_t)n * D_PAD;
                 if (!ck_gemm_bf16_fp32out_amx_raw(
                         q_block, k_block, scores,
                         query_count, key_count, K_PAD, 0)) goto fail;
@@ -4705,24 +4716,31 @@ static int ck_attention_full_bf16_sdpa_amx_range(
             }
             for (int row = 0; row < query_count; ++row) {
                 const float reciprocal = row_sum[row] == 0.0f ? 1.0f : 1.0f / row_sum[row];
+                float *out_row = output + (
+                    output_token_major
+                        ? ((size_t)(m + row) * (size_t)num_heads + (size_t)h)
+                            * (size_t)aligned_head_dim
+                        : ((size_t)h * (size_t)num_tokens + (size_t)(m + row))
+                            * (size_t)aligned_head_dim);
                 for (int d = 0; d < head_dim; ++d) {
-                    oh[(size_t)(m + row) * aligned_head_dim + d] = bf16_to_float(
+                    out_row[d] = bf16_to_float(
                         float_to_bf16(destination[(size_t)row * D_PAD + d] * reciprocal));
                 }
             }
         }
     }
-    free(q_block); free(k_block); free(probabilities); free(v_block);
+    free(q_block); free(k_packed); free(probabilities); free(v_packed);
     free(scores); free(destination); free(row_max); free(row_sum);
     return 1;
 fail:
-    free(q_block); free(k_block); free(probabilities); free(v_block);
+    free(q_block); free(k_packed); free(probabilities); free(v_packed);
     free(scores); free(destination); free(row_max); free(row_sum);
     return 0;
 #else
     (void)q; (void)k; (void)v; (void)output; (void)num_heads;
     (void)num_kv_heads; (void)num_tokens; (void)head_dim;
     (void)aligned_head_dim; (void)kv_stride_tokens; (void)head_begin; (void)head_step;
+    (void)output_token_major;
     return 0;
 #endif
 }
@@ -4816,6 +4834,7 @@ typedef struct {
     int head_dim;
     int aligned_head_dim;
     int kv_stride_tokens;
+    int output_token_major;
     int failed;
 } ck_attention_bf16_sdpa_args_t;
 
@@ -4838,7 +4857,7 @@ static void ck_attention_bf16_pytorch_flash_work(int ith, int nth, void *opaque)
             args->q, args->k, args->v, args->output,
             args->num_heads, args->num_kv_heads, args->num_tokens,
             args->head_dim, args->aligned_head_dim, args->kv_stride_tokens,
-            ith, nth)) {
+            ith, nth, args->output_token_major)) {
         __atomic_store_n(&args->failed, 1, __ATOMIC_RELAXED);
     }
 }
@@ -4846,13 +4865,15 @@ static void ck_attention_bf16_pytorch_flash_work(int ith, int nth, void *opaque)
 static int ck_attention_full_bf16_pytorch_flash(
     const float *q, const float *k, const float *v, float *output,
     int num_heads, int num_kv_heads, int num_tokens,
-    int head_dim, int aligned_head_dim, int kv_stride_tokens)
+    int head_dim, int aligned_head_dim, int kv_stride_tokens,
+    int output_token_major)
 {
     ck_attention_bf16_sdpa_args_t args = {
         .q=q, .k=k, .v=v, .output=output,
         .num_heads=num_heads, .num_kv_heads=num_kv_heads,
         .num_tokens=num_tokens, .head_dim=head_dim,
         .aligned_head_dim=aligned_head_dim, .kv_stride_tokens=kv_stride_tokens,
+        .output_token_major=output_token_major,
         .failed=0
     };
     ck_threadpool_t *pool = ck_threadpool_global();
@@ -4877,6 +4898,7 @@ static int ck_attention_full_bf16_sdpa_tiled(
         .num_heads=num_heads, .num_kv_heads=num_kv_heads,
         .num_tokens=num_tokens, .head_dim=head_dim,
         .aligned_head_dim=aligned_head_dim, .kv_stride_tokens=kv_stride_tokens,
+        .output_token_major=0,
         .failed=0
     };
     ck_threadpool_t *pool = ck_threadpool_global();
@@ -4957,13 +4979,39 @@ void attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage(
 {
     if (ck_attention_full_bf16_pytorch_flash(
             q, k, v, output, num_heads, num_kv_heads, num_tokens,
-            head_dim, aligned_head_dim, kv_stride_tokens)) {
+            head_dim, aligned_head_dim, kv_stride_tokens,
+            /*output_token_major=*/0)) {
         return;
     }
     fprintf(stderr,
             "HARD KERNEL CONTRACT FAULT: PyTorch CPU-flash BF16 attention "
             "requires AMX-BF16, AVX-512, D=72/A=72 and a token multiple of 16; "
             "no numerically different fallback is permitted\n");
+    abort();
+}
+
+void attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage_token_output(
+    const float *q,
+    const float *k,
+    const float *v,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int kv_stride_tokens)
+{
+    if (ck_attention_full_bf16_pytorch_flash(
+            q, k, v, output, num_heads, num_kv_heads, num_tokens,
+            head_dim, aligned_head_dim, kv_stride_tokens,
+            /*output_token_major=*/1)) {
+        return;
+    }
+    fprintf(stderr,
+            "HARD KERNEL CONTRACT FAULT: PyTorch CPU-flash BF16 token-output "
+            "attention requires AMX-BF16, AVX-512, D=72/A=72 and a token "
+            "multiple of 16; no numerically different fallback is permitted\n");
     abort();
 }
 

@@ -33,6 +33,14 @@ assert CODEGEN_SPEC is not None and CODEGEN_SPEC.loader is not None
 codegen = importlib.util.module_from_spec(CODEGEN_SPEC)
 CODEGEN_SPEC.loader.exec_module(codegen)
 
+CODEGEN_CORE_SCRIPT = ROOT / "version" / "v8" / "scripts" / "codegen_core_v8.py"
+CODEGEN_CORE_SPEC = importlib.util.spec_from_file_location(
+    "codegen_core_v8_layout_test", CODEGEN_CORE_SCRIPT
+)
+assert CODEGEN_CORE_SPEC is not None and CODEGEN_CORE_SPEC.loader is not None
+codegen_core = importlib.util.module_from_spec(CODEGEN_CORE_SPEC)
+CODEGEN_CORE_SPEC.loader.exec_module(codegen_core)
+
 
 def provider(provider_id, role, layout, priority, placement="local"):
     field = "outputs" if role == "producer" else "inputs"
@@ -147,6 +155,25 @@ class LayoutProviderSelectionTests(unittest.TestCase):
             "attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4_token_output",
         )
 
+    def test_bf16_vision_attention_selects_direct_token_major_provider(self):
+        registry = json.loads(
+            (ROOT / "version" / "v8" / "kernel_maps" / "KERNEL_REGISTRY.json").read_text()
+        )
+        managed, converter, execution = build_ir._resolve_layout_edge(
+            registry,
+            producer_kernel="attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage",
+            producer_port="out",
+            consumer_kernel="gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage",
+            consumer_port="A",
+        )
+        self.assertTrue(managed)
+        self.assertIsNone(converter)
+        self.assertEqual(
+            execution["provider_id"],
+            "attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage_token_output",
+        )
+        self.assertEqual(execution["output_layout"], "token_major_contiguous")
+
     def test_direct_layout_provider_explicitly_aliases_numerical_owner(self):
         provider_map = json.loads(
             (ROOT / "version" / "v8" / "kernel_maps" /
@@ -253,6 +280,19 @@ class LayoutProviderSelectionTests(unittest.TestCase):
             code,
         )
         self.assertNotIn("\n    attention_forward_causal_head_major_gqa_flash_strided(", code)
+
+    def test_decode_codegen_calls_resolved_physical_function(self):
+        code = codegen_core.emit_op({
+            "idx": 8,
+            "function": "attention_reference",
+            "op": "attn",
+            "layer": 0,
+            "section": "body",
+            "args": [{"name": "input", "expr": "input"}],
+            "resolved_physical_execution": {"function": "attention_direct_layout"},
+        })
+        self.assertIn("attention_direct_layout(", code)
+        self.assertNotIn("\n    attention_reference(", code)
 
     def test_direct_compatible_chain_beats_higher_priority_converted_chain(self):
         routes = resolver.rank_layout_routes(

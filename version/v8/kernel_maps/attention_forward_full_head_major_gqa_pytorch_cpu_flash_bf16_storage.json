@@ -1,6 +1,13 @@
 {
   "id": "attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage",
   "op": "attention",
+  "selection": {
+    "status": "production",
+    "priority": 200,
+    "equivalence_group": "attention.bf16_pytorch_cpu_flash_amx_exact.v1",
+    "phases": ["prefill"]
+  },
+  "physical_contract_version": 1,
   "variant": "full_sdpa_pytorch_cpu_flash_amx_bf16_exact",
   "mode": "prefill",
   "implementation": {
@@ -30,6 +37,8 @@
         "T",
         "D"
       ],
+      "layout": "head_major_contiguous",
+      "placement": "local",
       "desc": "Query tensor [heads, tokens, head_dim]"
     }
   ],
@@ -44,6 +53,8 @@
         "S",
         "D"
       ],
+      "layout": "head_major_strided",
+      "placement": "local",
       "desc": "Key tensor [kv_heads, seq_len, head_dim], strided layout"
     },
     {
@@ -54,6 +65,8 @@
         "S",
         "D"
       ],
+      "layout": "head_major_strided",
+      "placement": "local",
       "desc": "Value tensor [kv_heads, seq_len, head_dim], strided layout"
     }
   ],
@@ -66,6 +79,8 @@
         "T",
         "D"
       ],
+      "layout": "head_major_contiguous",
+      "placement": "local",
       "desc": "Attention output [heads, tokens, head_dim]"
     }
   ],
