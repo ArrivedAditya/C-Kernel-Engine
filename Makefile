@@ -3136,6 +3136,7 @@ Q4K_EXACT_PREFILL_BIN := $(BUILD_DIR)/bench_q4k_exact_prefill
 Q4K_Q8K_LLAMA_PACKED_BIN := $(BUILD_DIR)/test_q4k_q8k_llama_packed
 Q6K_Q8K_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q6k_q8k_llama_production
 Q5K_Q8K_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q5k_q8k_llama_production
+Q51_Q81_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_q51_q81_llama_production
 RMSNORM_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_rmsnorm_llama_production
 RECURRENT_QK_L2_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_recurrent_qk_l2_norm_llama_production
 DELTANET_LLAMA_PRODUCTION_BIN := $(BUILD_DIR)/test_deltanet_llamacpp_production
@@ -3264,6 +3265,32 @@ test-q5k-q8k-llama-production-quick: $(Q5K_Q8K_LLAMA_PRODUCTION_BIN)
 	@CK_NUM_THREADS=$${CK_NUM_THREADS:-1} OMP_NUM_THREADS=1 \
 		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
 		$(Q5K_Q8K_LLAMA_PRODUCTION_BIN) --quick
+
+$(Q51_Q81_LLAMA_PRODUCTION_BIN): $(LIB) unittest/test_q51_q81_llama_production.cpp $(DELTANET_PARALLEL_PREFILL_OBJ)
+	@mkdir -p $(BUILD_DIR)
+	$(CXX) -O3 $(AVX_FLAGS) -Iinclude -I$(V8_SRC_DIR) \
+		-I$(Q4Q6_LLAMA_CPP_DIR)/ggml/include -I$(Q4Q6_LLAMA_CPP_DIR)/ggml/src \
+		unittest/test_q51_q81_llama_production.cpp \
+		$(DELTANET_PARALLEL_PREFILL_OBJ) \
+		-L$(BUILD_DIR) -lckernel_engine \
+		-L$(Q4Q6_LLAMA_CPP_BIN_DIR) -lggml-cpu -lggml-base -lggml \
+		-lm -lpthread -ldl \
+		-Wl,-rpath,$(BUILD_DIR) -Wl,-rpath,$(Q4Q6_LLAMA_CPP_BIN_DIR) \
+		-o $(Q51_Q81_LLAMA_PRODUCTION_BIN)
+
+.PHONY: test-q51-q81-llama-production test-q51-q81-llama-production-quick
+test-q51-q81-llama-production: $(Q51_Q81_LLAMA_PRODUCTION_BIN)
+	@set -e; for threads in $${CK_Q51_ORACLE_THREADS:-1 16 20 24}; do \
+		echo "Q5_1 x Q8_1 llama.cpp production oracle: threads=$$threads"; \
+		CK_NUM_THREADS=$$threads OMP_NUM_THREADS=1 \
+			LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+			$(Q51_Q81_LLAMA_PRODUCTION_BIN); \
+	done
+
+test-q51-q81-llama-production-quick: $(Q51_Q81_LLAMA_PRODUCTION_BIN)
+	@CK_NUM_THREADS=$${CK_NUM_THREADS:-1} OMP_NUM_THREADS=1 \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+		$(Q51_Q81_LLAMA_PRODUCTION_BIN)
 
 $(DELTANET_PARALLEL_DECODE_OBJ): $(V8_SRC_DIR)/ck_parallel_decode_v8.c
 	@mkdir -p $(BUILD_DIR)
@@ -3870,8 +3897,11 @@ test-numerical-contracts: $(LIB)
 		$(MAKE) --no-print-directory test-q5k-q8k-llama-production-quick \
 			Q4Q6_LLAMA_CPP_DIR="$${CK_LLAMA_CPP_ROOT}" \
 			Q4Q6_LLAMA_CPP_BIN_DIR="$${CK_LLAMA_CPP_ROOT}/build/bin"; \
+		$(MAKE) --no-print-directory test-q51-q81-llama-production-quick \
+			Q4Q6_LLAMA_CPP_DIR="$${CK_LLAMA_CPP_ROOT}" \
+			Q4Q6_LLAMA_CPP_BIN_DIR="$${CK_LLAMA_CPP_ROOT}/build/bin"; \
 	else \
-		echo "RMSNorm llama.cpp production oracle [SKIP: CK_LLAMA_CPP_ROOT/build/bin unavailable]"; \
+		echo "llama.cpp production oracles [SKIP: CK_LLAMA_CPP_ROOT/build/bin unavailable]"; \
 	fi
 	@PYTHONPATH=unittest CK_NUMERICAL_CAPABILITY_REPORT=version/v8/.cache/reports/mrope_capabilities_latest.json $(PYTHON) -c "import test_vision; test_vision.test_mrope_qk_vision_storage_matrix()"
 	@$(PYTHON) tests/test_v8_xray_numerical_parity.py
