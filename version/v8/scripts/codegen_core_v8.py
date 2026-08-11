@@ -757,7 +757,13 @@ def emit_op(
     If debug=True, emit printf statements to dump output buffer values.
     If profile=True, emit CK_PROFILE_BEGIN/END timing wrappers.
     """
-    function = op.get("function", op.get("kernel", "unknown"))
+    numerical_function = op.get("function", op.get("kernel", "unknown"))
+    physical_execution = op.get("resolved_physical_execution")
+    function = (
+        str(physical_execution.get("function", "") or "")
+        if isinstance(physical_execution, dict)
+        else ""
+    ) or numerical_function
     idx = op.get("idx", 0)
     layer = op.get("layer", -1)
     section = op.get("section", "")

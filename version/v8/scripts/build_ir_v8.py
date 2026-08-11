@@ -543,10 +543,34 @@ def _attach_semantic_checkpoints(
         for item in registry.get("kernels", [])
         if isinstance(item, dict)
     }
+    inactive_template_ops: set[Tuple[str, str]] = set()
+    sequence = template.get("sequence") if isinstance(template.get("sequence"), list) else []
+    block_types = template.get("block_types") if isinstance(template.get("block_types"), dict) else {}
+    for block_name in sequence:
+        block_def = block_types.get(block_name)
+        if not isinstance(block_def, dict):
+            continue
+        declared_footer = {
+            str(item.get("id", "") or "").strip()
+            for item in _normalize_template_op_items(
+                block_def.get("footer", []), include_inactive=True, config=config
+            )
+        }
+        active_footer = {
+            str(item.get("id", "") or "").strip()
+            for item in _normalize_block_footer_items(block_def, config or {})
+        }
+        inactive_template_ops.update(
+            ("footer", op_id) for op_id in declared_footer - active_footer if op_id
+        )
     active_exports = {
         name: declaration
         for name, declaration in contract["exports"].items()
         if _template_item_is_active(declaration, config)
+        and (
+            str(declaration.get("section", "")),
+            str(declaration.get("template_op_id", "")),
+        ) not in inactive_template_ops
     }
     matched: Dict[str, int] = {name: 0 for name in active_exports}
     seen_ids: set[str] = set()
@@ -3063,7 +3087,13 @@ def _encoder_decoder_activation_specs(
     ]
 
 
-def _resolve_activation_extent(expr: Any, config: Dict[str, Any], path: str) -> int:
+def _resolve_activation_extent(
+    expr: Any,
+    config: Dict[str, Any],
+    path: str,
+    *,
+    allow_zero: bool = False,
+) -> int:
     """Resolve a circuit-owned activation dimension without model semantics."""
     if isinstance(expr, bool):
         raise RuntimeError(f"HARD CIRCUIT BUFFER FAULT: {path} must be an integer expression")
@@ -3082,13 +3112,26 @@ def _resolve_activation_extent(expr: Any, config: Dict[str, Any], path: str) -> 
             raise RuntimeError(f"HARD CIRCUIT BUFFER FAULT: {path}.mul must be a non-empty list")
         value = 1
         for index, factor in enumerate(factors):
-            value *= _resolve_activation_extent(factor, config, f"{path}.mul[{index}]")
+            value *= _resolve_activation_extent(
+                factor, config, f"{path}.mul[{index}]", allow_zero=True
+            )
+    elif isinstance(expr, dict) and set(expr) == {"max"}:
+        terms = expr.get("max")
+        if not isinstance(terms, list) or not terms:
+            raise RuntimeError(f"HARD CIRCUIT BUFFER FAULT: {path}.max must be a non-empty list")
+        value = max(
+            _resolve_activation_extent(
+                term, config, f"{path}.max[{index}]", allow_zero=True
+            )
+            for index, term in enumerate(terms)
+        )
     else:
         raise RuntimeError(
             f"HARD CIRCUIT BUFFER FAULT: {path} must be an integer, config reference, or mul expression"
         )
-    if value <= 0:
-        raise RuntimeError(f"HARD CIRCUIT BUFFER FAULT: {path} resolved to non-positive extent {value}")
+    if value < 0 or (value == 0 and not allow_zero):
+        qualifier = "negative" if value < 0 else "non-positive"
+        raise RuntimeError(f"HARD CIRCUIT BUFFER FAULT: {path} resolved to {qualifier} extent {value}")
     return value
 
 
@@ -3897,7 +3940,12 @@ def _collect_body_ops_for_validation(
     ]
 
 
-def _normalize_block_branches(block_def: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _normalize_block_branches(
+    block_def: Dict[str, Any],
+    config: Optional[Dict[str, Any]] = None,
+    *,
+    include_inactive: bool = False,
+) -> List[Dict[str, Any]]:
     raw = block_def.get("branches")
     if not isinstance(raw, list):
         return []
@@ -3908,7 +3956,45 @@ def _normalize_block_branches(block_def: Dict[str, Any]) -> List[Dict[str, Any]]
         name = str(item.get("name", "") or "").strip()
         if not name:
             continue
+        if not include_inactive and not _template_item_is_active(item, config):
+            continue
         out.append(copy.deepcopy(item))
+    return out
+
+
+def _normalize_block_footer_items(
+    block_def: Dict[str, Any],
+    config: Dict[str, Any],
+    *,
+    include_inactive: bool = False,
+) -> List[Dict[str, Any]]:
+    """Return footer operations whose declared branch inputs are available.
+
+    Branch activation is circuit data, just like ordinary operation activation.
+    A stitch that consumes ``branch.<name>`` is inactive when that named branch
+    is inactive; lowering must not invent a substitute producer.
+    """
+    items = _normalize_template_op_items(
+        block_def.get("footer", []),
+        include_inactive=include_inactive,
+        config=config,
+    )
+    if include_inactive:
+        return items
+
+    active_branches = {
+        str(branch.get("name", "") or "").strip()
+        for branch in _normalize_block_branches(block_def, config)
+    }
+    out: List[Dict[str, Any]] = []
+    for item in items:
+        inputs = item.get("inputs")
+        required_branches = {
+            value.split(".", 2)[1]
+            for value in inputs if isinstance(value, str) and value.startswith("branch.")
+        } if isinstance(inputs, list) else set()
+        if required_branches.issubset(active_branches):
+            out.append(item)
     return out
 
 
@@ -4192,7 +4278,7 @@ def _build_block_branch_plan(block_def: Dict[str, Any], config: Dict[str, Any]) 
         "footer": footer_ids,
     }
     footer_stitches: List[Dict[str, Any]] = []
-    for item in _normalize_template_op_items(block_def.get("footer", []), include_inactive=True):
+    for item in _normalize_block_footer_items(block_def, config):
         op_name = str(item.get("op", "") or "").strip()
         inputs = item.get("inputs")
         has_branch_input = isinstance(inputs, list) and any(
@@ -4203,7 +4289,7 @@ def _build_block_branch_plan(block_def: Dict[str, Any], config: Dict[str, Any]) 
             footer_stitches.append(copy.deepcopy(item))
 
     plan: List[Dict[str, Any]] = []
-    for branch in _normalize_block_branches(block_def):
+    for branch in _normalize_block_branches(block_def, config):
         producer = branch.get("producer") if isinstance(branch.get("producer"), dict) else {}
         collect = branch.get("collect") if isinstance(branch.get("collect"), dict) else {}
         tap = copy.deepcopy(branch.get("tap", {})) if isinstance(branch.get("tap"), dict) else {}
@@ -4262,7 +4348,9 @@ def _collect_template_ops(template: Dict[str, Any], config: Optional[Dict[str, A
         collected.extend(_collect_body_ops_for_validation(block.get("body", {}), cfg))
         for branch in _build_block_branch_plan(block, cfg):
             collected.extend(branch.get("producer_ops", []))
-        collected.extend(_extract_template_ops(block.get("footer", [])))
+        collected.extend(
+            item["op"] for item in _normalize_block_footer_items(block, cfg)
+        )
     return _dedupe_preserve_order(collected)
 
 
@@ -6334,7 +6422,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
 
     header_items = _normalize_template_op_items(block.get("header", []), config=config)
     body_items = _collect_body_items_for_validation(block.get("body", {}), config)
-    footer_items = _normalize_template_op_items(block.get("footer", []), config=config)
+    footer_items = _normalize_block_footer_items(block, config)
     header_ops = [item["op"] for item in header_items]
     body_ops = [item["op"] for item in body_items]
     footer_ops = [item["op"] for item in footer_items]
@@ -7260,8 +7348,11 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
                 continue
 
             # Get active ops list. Section items may carry ids/metadata even when
-            # the lowerer only needs the op names today.
-            if isinstance(section_def, dict):
+            # the lowerer only needs the op names today. Footer stitches also
+            # require every circuit-declared branch producer to be active.
+            if section_name == "footer":
+                ops = _normalize_block_footer_items(block_def, config)
+            elif isinstance(section_def, dict):
                 ops = _normalize_template_op_items(
                     section_def.get("ops", []), config=config
                 )
@@ -7960,7 +8051,10 @@ def _check_ir1_completeness(manifest: Dict, ir1_ops: List[Dict]) -> None:
     # Extract ops from header, body, and footer
     header_ops = _extract_template_ops(block.get("header", []), config=manifest.get("config", {}))
     body_ops = _collect_body_ops_for_validation(block.get("body", {}), manifest.get("config", {}))
-    footer_ops = _extract_template_ops(block.get("footer", []), config=manifest.get("config", {}))
+    footer_ops = [
+        item["op"]
+        for item in _normalize_block_footer_items(block, manifest.get("config", {}))
+    ]
 
     branch_ops: List[str] = []
     for branch in _build_block_branch_plan(block, manifest.get("config", {})):
@@ -9654,7 +9748,7 @@ def generate_memory_layout(
     header_ops = _extract_template_ops(block.get("header", []), config=config)
     body_def = block.get("body", {})
     body_ops = _collect_body_ops_for_validation(body_def, config)
-    footer_ops = _extract_template_ops(block.get("footer", []), config=config)
+    footer_ops = [item["op"] for item in _normalize_block_footer_items(block, config)]
     branch_plan = _build_block_branch_plan(block, config)
 
     print(f"\n📋 Template structure:")

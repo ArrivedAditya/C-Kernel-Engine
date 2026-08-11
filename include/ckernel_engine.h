@@ -270,6 +270,10 @@ void attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage(
     const float *q, const float *k, const float *v, float *output,
     int num_heads, int num_kv_heads, int num_tokens,
     int head_dim, int aligned_head_dim, int kv_stride_tokens);
+void attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage_token_output(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens,
+    int head_dim, int aligned_head_dim, int kv_stride_tokens);
 int ck_gemm_bf16_fp32out_amx_raw(const uint16_t *A,
                                  const uint16_t *B,
                                  float *C,

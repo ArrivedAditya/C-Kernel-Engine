@@ -1358,6 +1358,10 @@
         {
           "name": "deepstack",
           "kind": "fixed_branch",
+          "when": {
+            "config_key": "deepstack_layer_indices",
+            "not_equals": []
+          },
           "tap": {
             "from": "body.mlp_residual.out",
             "layers_from_config": "deepstack_layer_indices"
@@ -1477,6 +1481,10 @@
         {
           "id": "deepstack_concat",
           "op": "branch_concat",
+          "when": {
+            "config_key": "deepstack_layer_indices",
+            "not_equals": []
+          },
           "inputs": [
             "footer.projector_fc2.out",
             "branch.deepstack"

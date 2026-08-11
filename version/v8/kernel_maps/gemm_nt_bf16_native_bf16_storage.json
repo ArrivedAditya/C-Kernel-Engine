@@ -1,6 +1,7 @@
 {
   "id": "gemm_nt_bf16_native_bf16_storage",
   "op": "gemm",
+  "physical_contract_version": 1,
   "variant": "bf16_w_fp32_bf16_values_a_bf16_values_out",
   "quant": {
     "weight": "bf16",
@@ -15,6 +16,8 @@
         "M",
         "K"
       ],
+      "layout": "token_major_contiguous",
+      "placement": "local",
       "desc": "Activation matrix [rows, cols] (FP32, rounded to BF16 inside kernel)"
     },
     {
@@ -24,6 +27,8 @@
         "N",
         "K"
       ],
+      "layout": "opaque_packed",
+      "placement": "local",
       "desc": "Weight matrix [output rows, input cols] BF16"
     },
     {
@@ -32,6 +37,8 @@
       "shape": [
         "N"
       ],
+      "layout": "token_major_contiguous",
+      "placement": "local",
       "optional": true,
       "desc": "Bias [N] (optional)"
     }
@@ -44,6 +51,8 @@
         "M",
         "N"
       ],
+      "layout": "token_major_contiguous",
+      "placement": "local",
       "desc": "Result [M,N], BF16 RNE values represented in FP32 storage"
     }
   ],
