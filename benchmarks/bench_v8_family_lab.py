@@ -27,6 +27,7 @@ CK_RUN = ROOT / "version" / "v8" / "scripts" / "ck_run_v8.py"
 DEFAULT_MODELS = ROOT / "benchmarks" / "fixtures" / "v8_lab_models.json"
 DEFAULT_PROMPTS = ROOT / "benchmarks" / "fixtures" / "v8_lab_prompts.json"
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+MAX_SEQ_LEN_RE = re.compile(r"^#define\s+MAX_SEQ_LEN\s+(\d+)\s*$", re.M)
 
 
 def atomic_json(path: Path, value: Any) -> None:
@@ -91,6 +92,14 @@ def selected_model_rows(manifest: Path, keys: list[str]) -> list[dict[str, Any]]
     return [by_key[key] for key in keys]
 
 
+def generated_context_capacity(run_dir: Path) -> int | None:
+    source = run_dir / "model_v8.c"
+    if not source.is_file():
+        return None
+    match = MAX_SEQ_LEN_RE.search(source.read_text(encoding="utf-8", errors="replace"))
+    return int(match.group(1)) if match else None
+
+
 def prepare_runtimes(
     models: list[dict[str, Any]],
     *,
@@ -118,16 +127,30 @@ def prepare_runtimes(
             "--chat-template",
             "auto",
         ]
+        runtime_capacity = generated_context_capacity(run_dir)
+        capacity_rebuild = runtime_capacity is not None and runtime_capacity < context
         if force:
             command.extend(["--force-convert", "--force-compile"])
+        elif capacity_rebuild:
+            command.append("--force-compile")
         result = run(command, timeout=timeout)
         result["model_key"] = model["key"]
         result["run_dir"] = str(run_dir)
+        result["previous_context_capacity"] = runtime_capacity
+        result["capacity_rebuild"] = capacity_rebuild
         results.append(result)
         if result["returncode"] != 0:
             raise RuntimeError(
                 f"runtime preparation failed for {model['key']}: {result['output_tail']}"
             )
+        updated_capacity = generated_context_capacity(run_dir)
+        if updated_capacity is not None:
+            result["context_capacity"] = updated_capacity
+            if updated_capacity < context:
+                raise RuntimeError(
+                    f"runtime preparation left {model['key']} at context capacity "
+                    f"{updated_capacity}, below required {context}"
+                )
     return results
 
 

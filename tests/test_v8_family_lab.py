@@ -144,3 +144,22 @@ def test_operation_profiles_are_collected_from_artifacts(tmp_path: Path) -> None
     }])
     assert rows[0]["coverage_pct"] == 75.0
     assert rows[0]["top_operations"][0]["op"] == "gemm"
+
+
+def test_compare_rejects_runtime_below_requested_context(monkeypatch) -> None:
+    model = COMPARE.ModelSpec("small", "Small", "Q8", Path("/m.gguf"), "small")
+    monkeypatch.setattr(COMPARE, "ck_runtime_context_window", lambda _: 512)
+    try:
+        COMPARE.validate_runtime_capacity([model], 2048)
+    except ValueError as exc:
+        assert "capacity is 512" in str(exc)
+        assert "requires 2048" in str(exc)
+    else:
+        raise AssertionError("undersized runtime was accepted")
+
+
+def test_generated_context_capacity_reads_compiled_limit(tmp_path: Path) -> None:
+    (tmp_path / "model_v8.c").write_text(
+        "#define MAX_SEQ_LEN 2120\n", encoding="utf-8"
+    )
+    assert LAB.generated_context_capacity(tmp_path) == 2120
