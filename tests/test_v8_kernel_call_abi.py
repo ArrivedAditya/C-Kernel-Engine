@@ -150,6 +150,7 @@ class V8KernelCallABITests(unittest.TestCase):
         self.assertEqual(nsplit["shape_constraints"]["M_max"], 256)
         self.assertEqual(nsplit["work_partition"], "independent_output_columns")
         self.assertEqual(nsplit["activation_preparation"], "q8_k_once_per_call")
+        self.assertEqual(nsplit["tile_n"], 64)
         q4_k = preparations["gemm_nt_q4_k_q8_k"]
         self.assertEqual(q4_k["function"], "ck_q4k_prepare_vnni_x8_weight")
         self.assertEqual(q4_k["prepared_format"], "q4_k_packed_vnni_x8")

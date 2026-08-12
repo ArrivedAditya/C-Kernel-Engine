@@ -2028,7 +2028,7 @@ static void work_gemm_nt_q5_k_prepared_nrange(
 {
     const gemm_args_t *a = (const gemm_args_t *)args;
     if (!a || begin < 0 || begin >= end) return;
-    const int tile_n = a->tile_n > 0 ? a->tile_n : 128;
+    const int tile_n = a->tile_n > 0 ? a->tile_n : 64;
     for (int job = begin; job < end; ++job) {
         const int n0 = job * tile_n;
         const int n1 = ck_min_int(n0 + tile_n, a->N);
@@ -2646,7 +2646,7 @@ void gemm_nt_q5_k_parallel_dispatch(
             gemm_args_t nsplit_args = {
                 .A = A_q8, .B = prepared, .bias = bias, .C = C,
                 .M = M, .N = N, .K = K,
-                .tile_n = 128,
+                .tile_n = 64,
             };
             const int jobs = ck_ceil_div_int(N, nsplit_args.tile_n);
             const int active = ck_min_int(
