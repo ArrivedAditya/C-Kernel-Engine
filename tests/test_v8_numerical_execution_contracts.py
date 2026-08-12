@@ -1148,6 +1148,12 @@ class NumericalExecutionContractTests(unittest.TestCase):
                 )
                 self.assertEqual(plan["kernel"]["id"], kernel_id)
                 self.assertEqual(plan["kernel"]["function"], kernel_id)
+                self.assertEqual(
+                    plan["contract"]["semantics"]["compute"]["evaluation_order"],
+                    "ascending_token_grouped_qk_repeat_interleave_group_equals_"
+                    "head_div_heads_per_group_then_avx2_state_update_then_bf16_"
+                    "output_store",
+                )
 
     def test_qwen35_circuit_resolves_pytorch_bf16_recurrent_qk_l2(self):
         circuit_doc = resolver.load_json(

@@ -503,9 +503,14 @@ static void gated_deltanet_llama_avx2_grouped_forward_impl(
     float q_scaled[CK_DELTANET_MAX_STACK_DIM];
 
     for (int h = head_begin; h < head_end; ++h) {
-        /* ggml_repeat_4d tiles the compact Q/K head axis.  For H=48,G=16
-         * the value heads bind Q/K groups 0..15, 0..15, 0..15. */
-        const int group = h % group_count;
+        /* llama.cpp ggml_repeat_4d tiles compact Q/K heads (0..G-1 repeated),
+         * while the PyTorch Qwen3-Next reference uses repeat_interleave so
+         * each compact head owns H/G adjacent value heads.  These layouts
+         * are distinct numerical contracts even though their buffer shapes
+         * are identical. */
+        const int group = pytorch_bf16_boundaries
+            ? h / (num_heads / group_count)
+            : h % group_count;
         const float *q_head = q + (size_t) group * vector_stride;
         const float *k_head = k + (size_t) group * vector_stride;
         const float *v_head = v + (size_t) h * vector_stride;
