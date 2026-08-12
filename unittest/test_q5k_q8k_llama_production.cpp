@@ -21,6 +21,9 @@ size_t ck_q5_k_prepared_block_size(void);
 void ck_q5_k_prepare_weight(const void *, void *, int, int);
 void gemm_nt_q5_k_prepared(const float *, const void *, const float *, float *, int, int, int);
 void gemm_nt_q5_k_prepared_m4(const float *, const void *, const float *, float *, int, int, int);
+void gemm_nt_q5_k_prepared_q8_m4_nrange(
+        const void *, const void *, const float *, float *,
+        int, int, int, int, int);
 void ggml_vec_dot_q5_K_q8_K(
         int, float *, size_t, const void *, size_t, const void *, size_t, int);
 }
@@ -181,6 +184,7 @@ static bool run_case(const case_spec & spec) {
     std::vector<float> ck(leaf.size());
     std::vector<float> prepared_output(leaf.size());
     std::vector<float> prepared_m4_output(leaf.size());
+    std::vector<float> prepared_nsplit_output(leaf.size());
     for (int row = 0; row < spec.m; ++row) {
         for (int col = 0; col < spec.n; ++col) {
             ggml_vec_dot_q5_K_q8_K(spec.k, &leaf[static_cast<size_t>(row) * spec.n + col], 0,
@@ -205,6 +209,15 @@ static bool run_case(const case_spec & spec) {
     gemm_nt_q5_k_prepared_m4(
             activations.data(), prepared_weights.data(), nullptr,
             prepared_m4_output.data(), spec.m, spec.n, spec.k);
+    const int n_mid = spec.n / 2;
+    if (n_mid > 0) {
+        gemm_nt_q5_k_prepared_q8_m4_nrange(
+            ck_q8.data(), prepared_weights.data(), nullptr,
+            prepared_nsplit_output.data(), spec.m, spec.n, spec.k, 0, n_mid);
+    }
+    gemm_nt_q5_k_prepared_q8_m4_nrange(
+        ck_q8.data(), prepared_weights.data(), nullptr,
+        prepared_nsplit_output.data(), spec.m, spec.n, spec.k, n_mid, spec.n);
     if (!llama_graph(weights, activations, canonical, spec.m, spec.n, spec.k, false)) return false;
     const bool llama_q5_repack_selected = ggml_cpu_has_neon();
     if (llama_q5_repack_selected) {
@@ -220,6 +233,7 @@ static bool run_case(const case_spec & spec) {
     pass &= compare_f32("CK adapter vs llama production", ck.data(), production.data(), leaf.size());
     pass &= compare_f32("CK prepared vs established", prepared_output.data(), ck.data(), leaf.size());
     pass &= compare_f32("CK prepared M4 vs established", prepared_m4_output.data(), ck.data(), leaf.size());
+    pass &= compare_f32("CK prepared N-split vs established", prepared_nsplit_output.data(), ck.data(), leaf.size());
     return pass;
 }
 

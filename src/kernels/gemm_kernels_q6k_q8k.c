@@ -45,6 +45,47 @@
 #include <arm_neon.h>
 #endif
 
+typedef struct {
+    ggml_half d;
+    int8_t scales[16];
+    uint8_t qs[QK_K];
+} block_q6_K_prepared;
+
+_Static_assert(sizeof(block_q6_K_prepared) == 274,
+               "Q6_K prepared-size contract changed");
+
+size_t ck_q6_k_prepared_block_size(void)
+{
+    return sizeof(block_q6_K_prepared);
+}
+
+void ck_q6_k_prepare_weight(const void *src, void *dst, int N, int K)
+{
+    if (!src || !dst || N <= 0 || K <= 0 || (K % QK_K) != 0) return;
+    const block_q6_K *input = (const block_q6_K *)src;
+    block_q6_K_prepared *output = (block_q6_K_prepared *)dst;
+    const size_t blocks = (size_t)N * (size_t)(K / QK_K);
+
+    for (size_t b = 0; b < blocks; ++b) {
+        output[b].d = input[b].d;
+        memcpy(output[b].scales, input[b].scales, sizeof(output[b].scales));
+        for (int n = 0; n < QK_K; n += 128) {
+            const uint8_t *ql = input[b].ql + n / 2;
+            const uint8_t *qh = input[b].qh + n / 4;
+            for (int l = 0; l < 32; ++l) {
+                output[b].qs[n + l + 0] =
+                    (uint8_t)((ql[l] & 0x0f) | (((qh[l] >> 0) & 3) << 4));
+                output[b].qs[n + l + 32] =
+                    (uint8_t)((ql[l + 32] & 0x0f) | (((qh[l] >> 2) & 3) << 4));
+                output[b].qs[n + l + 64] =
+                    (uint8_t)((ql[l] >> 4) | (((qh[l] >> 4) & 3) << 4));
+                output[b].qs[n + l + 96] =
+                    (uint8_t)((ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4));
+            }
+        }
+    }
+}
+
 /* Forward declarations for SIMD implementations */
 void gemv_q6_k_q8_k_avx512(float *y, const void *W, const void *x_q8, int M, int K);
 void gemv_q6_k_q8_k_avx512_vbmi(float *y, const void *W, const void *x_q8, int M, int K);
@@ -837,6 +878,51 @@ static void dot_q6_k_q8_k_avx2_m4(const block_q6_K *w,
     }
 }
 
+static float dot_q6_k_prepared_q8_k_avx2(
+        const block_q6_K_prepared *w, const block_q8_K *x, int K)
+{
+    const int nb = K / QK_K;
+    __m256 acc = _mm256_setzero_ps();
+
+    for (int i = 0; i < nb; ++i) {
+        const __m128i scales =
+            _mm_loadu_si128((const __m128i *)(const void *)w[i].scales);
+        const __m256i scales_16 = _mm256_cvtepi8_epi16(scales);
+        const __m256i q8sums =
+            _mm256_loadu_si256((const __m256i *)(const void *)x[i].bsums);
+        const __m256i q8sclsub = _mm256_slli_epi32(
+            _mm256_madd_epi16(q8sums, scales_16), 5);
+        __m256i sumi = _mm256_setzero_si256();
+
+        for (int j = 0; j < 2; ++j) {
+            __m256i p16[4];
+            for (int lane = 0; lane < 4; ++lane) {
+                const int group = j * 4 + lane;
+                const __m256i q6 = _mm256_loadu_si256(
+                    (const __m256i *)(const void *)(w[i].qs + group * 32));
+                const __m256i q8 = _mm256_loadu_si256(
+                    (const __m256i *)(const void *)(x[i].qs + group * 32));
+                p16[lane] = _mm256_maddubs_epi16(q6, q8);
+                const __m128i scale = _mm_shuffle_epi8(
+                    scales, get_scale_shuffle_avx2(group));
+                p16[lane] = _mm256_madd_epi16(
+                    _mm256_cvtepi8_epi16(scale), p16[lane]);
+            }
+            sumi = _mm256_add_epi32(
+                sumi, _mm256_add_epi32(p16[0], p16[1]));
+            sumi = _mm256_add_epi32(
+                sumi, _mm256_add_epi32(p16[2], p16[3]));
+        }
+
+        sumi = _mm256_sub_epi32(sumi, q8sclsub);
+        const float d = GGML_FP16_TO_FP32(w[i].d) * x[i].d;
+        acc = _mm256_fmadd_ps(
+            _mm256_broadcast_ss(&d), _mm256_cvtepi32_ps(sumi), acc);
+    }
+
+    return ck_q6k_hsum_float_8(acc);
+}
+
 void gemv_q6_k_q8_k_avx2(float *y,
                           const void *W,
                           const void *x_q8,
@@ -1388,6 +1474,54 @@ void gemm_nt_q6_k_q8_k(const void *A_q8,
             c_row[n] = ck_dot_q6_k_q8_k_fast_or_ref(w_row, a_row, K) + b;
         }
     }
+}
+
+void gemm_nt_q6_k_q8_k_prepared_tile(const void *A_q8,
+                                      const void *B_prepared,
+                                      const float *bias,
+                                      float *C,
+                                      int M, int N, int K,
+                                      int m0, int m1,
+                                      int n0, int n1)
+{
+#if !defined(__AVX2__)
+    (void)A_q8; (void)B_prepared; (void)bias; (void)C;
+    (void)M; (void)N; (void)K; (void)m0; (void)m1; (void)n0; (void)n1;
+#else
+    if (!A_q8 || !B_prepared || !C || M <= 0 || N <= 0 || K <= 0 ||
+        (K % QK_K) != 0) return;
+    if (m0 < 0) m0 = 0;
+    if (n0 < 0) n0 = 0;
+    if (m1 > M) m1 = M;
+    if (n1 > N) n1 = N;
+    if (m0 >= m1 || n0 >= n1) return;
+
+    const block_q8_K *A = (const block_q8_K *)A_q8;
+    const block_q6_K_prepared *W =
+        (const block_q6_K_prepared *)B_prepared;
+    const int blocks_per_row = K / QK_K;
+    for (int n = n0; n < n1; ++n) {
+        const block_q6_K_prepared *w_row =
+            W + (size_t)n * (size_t)blocks_per_row;
+        const float b = bias ? bias[n] : 0.0f;
+        for (int m = m0; m < m1; ++m) {
+            const block_q8_K *a_row =
+                A + (size_t)m * (size_t)blocks_per_row;
+            C[(size_t)m * (size_t)N + (size_t)n] =
+                dot_q6_k_prepared_q8_k_avx2(w_row, a_row, K) + b;
+        }
+    }
+#endif
+}
+
+void gemm_nt_q6_k_q8_k_prepared(const void *A_q8,
+                                 const void *B_prepared,
+                                 const float *bias,
+                                 float *C,
+                                 int M, int N, int K)
+{
+    gemm_nt_q6_k_q8_k_prepared_tile(
+        A_q8, B_prepared, bias, C, M, N, K, 0, M, 0, N);
 }
 
 static inline float ck_dot_q6_k_q8_k_fast_or_ref(const block_q6_K *w,

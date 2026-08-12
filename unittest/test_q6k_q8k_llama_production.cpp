@@ -21,6 +21,10 @@ void gemv_q6_k_q8_k(float *, const void *, const void *, int, int);
 void gemv_q6_k_q8_k_parallel_dispatch(float *, const void *, const void *, int, int);
 void gemm_nt_q6_k_q8_k_parallel_dispatch(
         const void *, const void *, const float *, float *, int, int, int);
+size_t ck_q6_k_prepared_block_size(void);
+void ck_q6_k_prepare_weight(const void *, void *, int, int);
+void gemm_nt_q6_k_q8_k_prepared(
+        const void *, const void *, const float *, float *, int, int, int);
 const char *ck_q6_k_q8_k_provider_name(void);
 void ck_threadpool_global_destroy(void);
 void ggml_vec_dot_q6_K_q8_K(
@@ -150,7 +154,7 @@ static bool llama_graph(const std::vector<unsigned char> &weights,
     return ok;
 }
 
-static bool run_case(const case_spec &spec) {
+static bool run_case(const case_spec &spec, bool prepared_only = false) {
     std::printf("\n%s M=%d N=%d K=%d ck_provider=%s threads=%s\n",
             spec.name, spec.m, spec.n, spec.k, ck_q6_k_q8_k_provider_name(),
             std::getenv("CK_NUM_THREADS") ? std::getenv("CK_NUM_THREADS") : "1");
@@ -179,6 +183,7 @@ static bool run_case(const case_spec &spec) {
 
     bool pass = compare_bytes("Q8_K activation quantizer", ck_q8.data(), llama_q8.data(), ck_q8.size());
     std::vector<float> ck(static_cast<size_t>(spec.m) * spec.n);
+    std::vector<float> prepared(ck.size());
     std::vector<float> m4(ck.size()), leaf(ck.size()), canonical(ck.size()), repack(ck.size());
     for (int r = 0; r < spec.m; ++r) for (int c = 0; c < spec.n; ++c) {
         ggml_vec_dot_q6_K_q8_K(spec.k, &leaf[static_cast<size_t>(r) * spec.n + c], 0,
@@ -197,6 +202,20 @@ static bool run_case(const case_spec &spec) {
         unsetenv("CK_ENABLE_Q6K_Q8K_M4_PREFILL");
         unsetenv("CK_FORCE_Q6K_Q8K_2D_PREFILL");
     }
+    const size_t prepared_blocks =
+        static_cast<size_t>(spec.n) * spec.k / QK_K;
+    std::vector<unsigned char> prepared_weights(
+        prepared_blocks * ck_q6_k_prepared_block_size());
+    ck_q6_k_prepare_weight(
+        weights.data(), prepared_weights.data(), spec.n, spec.k);
+    gemm_nt_q6_k_q8_k_prepared(
+        ck_q8.data(), prepared_weights.data(), nullptr,
+        prepared.data(), spec.m, spec.n, spec.k);
+    if (prepared_only) {
+        return compare_f32(
+                "CK prepared vs established",
+                prepared.data(), ck.data(), prepared.size());
+    }
     if (!llama_graph(weights, activations, canonical, spec.m, spec.n, spec.k, false)) return false;
     const bool llama_q6_repack_selected = ggml_cpu_has_neon();
     if (llama_q6_repack_selected) {
@@ -212,6 +231,9 @@ static bool run_case(const case_spec &spec) {
     }
     pass &= compare_f32(spec.m == 1 ? "CK decode vs llama production" :
             "CK prefill vs llama production", ck.data(), repack.data(), ck.size());
+    pass &= compare_f32(
+            "CK prepared vs established",
+            prepared.data(), ck.data(), prepared.size());
     if (spec.m > 1) {
         pass &= compare_f32(
             "CK M4 prefill vs llama production", m4.data(), repack.data(), ck.size());
@@ -278,7 +300,10 @@ int main(int argc, char **argv) {
             ggml_cpu_has_avx512(), ggml_cpu_has_avx512_vnni(),
             ck_q6_k_q8_k_provider_name());
     if (!std::getenv("CK_NUM_THREADS")) setenv("CK_NUM_THREADS", "1", 1);
-    const bool quick = argc > 1 && std::strcmp(argv[1], "--quick") == 0;
+    const bool prepared_only =
+        argc > 1 && std::strcmp(argv[1], "--prepared-only") == 0;
+    const bool quick = prepared_only ||
+        (argc > 1 && std::strcmp(argv[1], "--quick") == 0);
     const case_spec quick_cases[] = {
         {"decode_leaf_shape", 1, 64, 256},
         {"decode_practical", 1, 1024, 4096},
@@ -296,11 +321,14 @@ int main(int argc, char **argv) {
     const size_t count = quick ? sizeof(quick_cases) / sizeof(quick_cases[0])
                                : sizeof(full_cases) / sizeof(full_cases[0]);
     int failed = 0;
-    if (!run_q8_rounding_boundary_case()) ++failed;
-    for (size_t i = 0; i < count; ++i) if (!run_case(cases[i])) ++failed;
-    if (!run_xray_artifact_case()) ++failed;
+    if (!prepared_only && !run_q8_rounding_boundary_case()) ++failed;
+    for (size_t i = 0; i < count; ++i) {
+        if (!run_case(cases[i], prepared_only)) ++failed;
+    }
+    if (!prepared_only && !run_xray_artifact_case()) ++failed;
     ck_threadpool_global_destroy();
-    std::printf("\nQ6_K x Q8_K llama.cpp production parity: %s (%zu cases, %d failed)\n",
+    std::printf("\nQ6_K x Q8_K %s: %s (%zu cases, %d failed)\n",
+            prepared_only ? "prepared/established exactness" : "llama.cpp production parity",
             failed ? "FAIL" : "PASS", count, failed);
     return failed ? 1 : 0;
 }

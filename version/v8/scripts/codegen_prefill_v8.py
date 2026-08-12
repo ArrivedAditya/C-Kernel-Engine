@@ -3080,27 +3080,35 @@ def emit_prefill_weight_prepare_function(ops: List[Dict]) -> str:
     ]
     for group_idx, ((function, max_bytes), entries) in enumerate(mapped_groups.items()):
         lines.append(f"    size_t mapped_prepared_bytes_{group_idx} = 0;")
-        for entry_idx, (_, bytes_expr) in enumerate(entries):
+        lines.append(f"    int mapped_prepared_skipped_{group_idx} = 0;")
+        for entry_idx, (call_args, bytes_expr) in enumerate(entries):
             lines.append(
                 f"    const size_t mapped_prepared_item_{group_idx}_{entry_idx} = "
                 f"(size_t)({bytes_expr});"
             )
+            if max_bytes <= 0:
+                condition = (
+                    f"SIZE_MAX - mapped_prepared_bytes_{group_idx} >= "
+                    f"mapped_prepared_item_{group_idx}_{entry_idx}"
+                )
+            else:
+                condition = (
+                    f"mapped_prepared_item_{group_idx}_{entry_idx} <= (size_t){max_bytes} && "
+                    f"mapped_prepared_bytes_{group_idx} <= (size_t){max_bytes} - "
+                    f"mapped_prepared_item_{group_idx}_{entry_idx}"
+                )
+            lines.append(f"    if ({condition}) {{")
+            lines.append(f"        prepared += {function}({', '.join(call_args)});")
             lines.append(
-                f"    if (SIZE_MAX - mapped_prepared_bytes_{group_idx} < "
-                f"mapped_prepared_item_{group_idx}_{entry_idx}) "
-                f"mapped_prepared_bytes_{group_idx} = SIZE_MAX;"
-            )
-            lines.append(
-                f"    else mapped_prepared_bytes_{group_idx} += "
+                f"        mapped_prepared_bytes_{group_idx} += "
                 f"mapped_prepared_item_{group_idx}_{entry_idx};"
             )
-        condition = "1" if max_bytes <= 0 else f"mapped_prepared_bytes_{group_idx} <= (size_t){max_bytes}"
-        lines.append(f"    if ({condition}) {{")
-        for call_args, _ in entries:
-            lines.append(f"        prepared += {function}({', '.join(call_args)});")
-        lines.append("    } else {")
+            lines.append("    } else {")
+            lines.append(f"        mapped_prepared_skipped_{group_idx} += 1;")
+            lines.append("    }")
+        lines.append(f"    if (mapped_prepared_skipped_{group_idx} > 0) {{")
         lines.append(
-            f'        fprintf(stderr, "[CK parallel prefill] Skipped {function}: %zu prepared bytes exceed budget {max_bytes}\\n", mapped_prepared_bytes_{group_idx});'
+            f'        fprintf(stderr, "[CK parallel prefill] {function}: prepared %zu bytes within budget {max_bytes}; skipped %d weight(s)\\n", mapped_prepared_bytes_{group_idx}, mapped_prepared_skipped_{group_idx});'
         )
         lines.append("    }")
     for b_expr, n_expr, k_expr in weights:

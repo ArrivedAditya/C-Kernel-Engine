@@ -4418,6 +4418,7 @@ def main() -> None:
                 # dynamic num_tokens for those calls, and CK-vs-decode plus
                 # llama.cpp replay parity cover this contract.
                 "prefill_policy": "batched",
+                "recurrent_state_physical_layout": "head_value_key_contiguous",
                 "sampler_defaults": {
                     "repeat_penalty": 1.12,
                     "repeat_last_n": 96,

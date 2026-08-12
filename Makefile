@@ -3493,7 +3493,7 @@ test-q4k-q8k-llama-performance: $(Q4K_Q8K_LLAMA_PACKED_BIN)
 		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
 		$(Q4K_Q8K_LLAMA_PACKED_BIN) --perf
 
-.PHONY: test-q6k-q8k-llama-production test-q6k-q8k-llama-production-quick
+.PHONY: test-q6k-q8k-llama-production test-q6k-q8k-llama-production-quick test-q6k-q8k-prepared-exact
 test-q6k-q8k-llama-production: $(Q6K_Q8K_LLAMA_PRODUCTION_BIN)
 	@echo "Running Q6_K x Q8_K native production parity against llama.cpp..."
 	@set -e; for threads in $${CK_Q6K_ORACLE_THREADS:-1 16 20 24}; do \
@@ -3508,6 +3508,12 @@ test-q6k-q8k-llama-production-quick: $(Q6K_Q8K_LLAMA_PRODUCTION_BIN)
 	CK_NUM_THREADS=$${CK_NUM_THREADS:-4} OMP_NUM_THREADS=1 \
 		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
 		$(Q6K_Q8K_LLAMA_PRODUCTION_BIN) --quick
+
+test-q6k-q8k-prepared-exact: $(Q6K_Q8K_LLAMA_PRODUCTION_BIN)
+	@echo "Running Q6_K prepared-provider exactness against the established CKE path..."
+	CK_NUM_THREADS=$${CK_NUM_THREADS:-4} OMP_NUM_THREADS=1 \
+		LD_LIBRARY_PATH=$(BUILD_DIR):$(Q4Q6_LLAMA_CPP_BIN_DIR):$$LD_LIBRARY_PATH \
+		$(Q6K_Q8K_LLAMA_PRODUCTION_BIN) --prepared-only
 
 .PHONY: test-q4q6-llama-production-native test-q4q6-llama-production-native-avx512 test-q4q6-llama-production-forced-avx2
 test-q4q6-llama-production-native: $(Q4K_Q8K_LLAMA_PACKED_BIN) $(Q6K_Q8K_LLAMA_PRODUCTION_BIN)
@@ -3745,6 +3751,15 @@ test-qwen36-q6k-m4-performance: $(LIB)
 			--warmup $${CK_QWEN36_Q6_WARMUP:-1} \
 			--iters $${CK_QWEN36_Q6_ITERS:-3} \
 			--min-m4-speedup $${CK_QWEN36_Q6_RECURRENT_MIN_SPEEDUP:-1.10}
+
+.PHONY: test-q6k-prepared-performance
+test-q6k-prepared-performance: $(LIB)
+	@echo "Running prepared Q6_K performance gate at the Nanbeige MLP-down shape..."
+	@CK_NUM_THREADS=$${CK_NUM_THREADS:-20} OMP_NUM_THREADS=1 \
+		$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_q6k_prefill_tile.py \
+			--mode compare-prepared --m 128 --n 2560 --k 10496 \
+			--threads $${CK_NUM_THREADS:-20} --warmup 1 --iters 4 \
+			--min-prepared-speedup $${CK_Q6K_PREPARED_MIN_SPEEDUP:-1.15}
 
 test-q6k-prefill-dispatch-sweep: $(LIB)
 	@echo "Running Q6_K x Q8_K prefill dispatch sweep..."

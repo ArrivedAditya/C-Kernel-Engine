@@ -1848,6 +1848,11 @@ def _build_config(model_dir: Path, arch: str, config_template: Path | None) -> d
             "layer_recurrent_policy": execution_plan["layer_recurrent_policy"],
             "layer_kv_policy": execution_plan["layer_kv_policy"],
             "prefill_policy": "batched",
+            "recurrent_state_physical_layout": (
+                "head_key_value_contiguous"
+                if recurrent_qkv_weight_dtype == "bf16"
+                else "head_value_key_contiguous"
+            ),
             "full_attention_interval": int(architecture["full_attention_interval"]),
             "ssm_conv_kernel": int(text.get("linear_conv_kernel_dim") or 4),
             "ssm_state_size": int(text.get("linear_key_head_dim") or max(1, recurrent_q_dim)),

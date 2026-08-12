@@ -241,7 +241,18 @@ def _load_ck_hidden_exports(
 def _normalize_ck_recurrent_state_layout(
     dumps: list[Any], runtime_config: dict[str, Any]
 ) -> list[Any]:
-    """Map CKE's [head,key,value] state ABI to llama's [head,value,key]."""
+    """Map the selected CKE state provider layout to llama's physical axes."""
+    physical_layout = str(
+        runtime_config.get(
+            "recurrent_state_physical_layout", "head_key_value_contiguous"
+        )
+    )
+    if physical_layout == "head_value_key_contiguous":
+        return dumps
+    if physical_layout != "head_key_value_contiguous":
+        raise ValueError(
+            f"unsupported recurrent_state_physical_layout: {physical_layout!r}"
+        )
     heads = int(runtime_config.get("recurrent_num_heads", 0) or 0)
     dim = int(
         runtime_config.get("recurrent_head_dim", 0)

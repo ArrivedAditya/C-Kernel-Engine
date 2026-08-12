@@ -343,7 +343,16 @@ static bool run_case(int rows, int heads = 16, int groups = 4,
     for (size_t i = 0; i < states; ++i) state[i] = fixture(i, 0.04f, 1.07f);
 
     std::vector<float> ck_out(vectors), llama_out(vectors);
-    std::vector<float> ck_state(states), llama_state(states);
+    std::vector<float> ck_state(states), ck_state_logical(states), llama_state(states);
+    std::vector<float> state_transposed(states);
+    for (int h = 0; h < heads; ++h) {
+        for (int key = 0; key < dim; ++key) {
+            for (int value = 0; value < dim; ++value) {
+                state_transposed[(static_cast<size_t>(h) * dim + value) * dim + key] =
+                    state[(static_cast<size_t>(h) * dim + key) * dim + value];
+            }
+        }
+    }
     const bool oracle_ok =
         llama_fused_graph(q, k, v, g, beta, state, llama_out, llama_state,
                 rows, heads, groups, dim);
@@ -355,22 +364,30 @@ static bool run_case(int rows, int heads = 16, int groups = 4,
         if (parallel_decode) {
             gated_deltanet_llama_avx2_parallel_forward(
                     q.data(), k.data(), v.data(), g.data(), beta.data(),
-                    state.data(), ck_state.data(), ck_out.data(),
+                    state_transposed.data(), ck_state.data(), ck_out.data(),
                     heads, groups, dim, 1e-6f);
         } else {
             gated_deltanet_llama_avx2_forward(
                     q.data(), k.data(), v.data(), g.data(), beta.data(),
-                    state.data(), ck_state.data(), ck_out.data(),
+                    state_transposed.data(), ck_state.data(), ck_out.data(),
                     heads, groups, dim, 1e-6f);
         }
     } else if (parallel_prefill) {
         gated_deltanet_llama_prefill_parallel_dispatch(
                 q.data(), k.data(), v.data(), g.data(), beta.data(),
-                state.data(), ck_state.data(), ck_out.data(),
+                state_transposed.data(), ck_state.data(), ck_out.data(),
                 rows, heads, groups, dim, 1e-6f);
     } else {
         gated_deltanet_llama_avx2_prefill_forward(q.data(), k.data(), v.data(), g.data(), beta.data(),
-                state.data(), ck_state.data(), ck_out.data(), rows, heads, groups, dim, 1e-6f);
+                state_transposed.data(), ck_state.data(), ck_out.data(), rows, heads, groups, dim, 1e-6f);
+    }
+    for (int h = 0; h < heads; ++h) {
+        for (int key = 0; key < dim; ++key) {
+            for (int value = 0; value < dim; ++value) {
+                ck_state_logical[(static_cast<size_t>(h) * dim + key) * dim + value] =
+                    ck_state[(static_cast<size_t>(h) * dim + value) * dim + key];
+            }
+        }
     }
     std::printf("rows=%d heads=%d groups=%d dim=%d provider=%s threads=%s\n",
             rows, heads, groups, dim,
@@ -380,7 +397,7 @@ static bool run_case(int rows, int heads = 16, int groups = 4,
     const bool output_ok =
         close("attention output", ck_out.data(), llama_out.data(), vectors, 2e-8f);
     const bool state_ok =
-        close("recurrent state", ck_state.data(), llama_state.data(), states, 2e-8f);
+        close("recurrent state", ck_state_logical.data(), llama_state.data(), states, 2e-8f);
     return output_ok && state_ok;
 }
 

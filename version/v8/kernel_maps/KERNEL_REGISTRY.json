@@ -12998,7 +12998,12 @@
             "H",
             "D",
             "D"
-          ]
+          ],
+          "layout": "head_value_key_contiguous",
+          "access": "read",
+          "storage_class": "state",
+          "consumption": "required",
+          "desc": "Persistent recurrent state [head,value,key], with each logical key column contiguous"
         }
       ],
       "weights": [],
@@ -13010,7 +13015,12 @@
             "H",
             "D",
             "D"
-          ]
+          ],
+          "layout": "head_value_key_contiguous",
+          "access": "write",
+          "storage_class": "state",
+          "consumption": "required",
+          "desc": "Updated persistent recurrent state [head,value,key], with each logical key column contiguous"
         },
         {
           "name": "out",
@@ -13226,7 +13236,12 @@
             "H",
             "D",
             "D"
-          ]
+          ],
+          "layout": "head_value_key_contiguous",
+          "access": "read",
+          "storage_class": "state",
+          "consumption": "required",
+          "desc": "Persistent recurrent state [head,value,key], with each logical key column contiguous"
         }
       ],
       "weights": [],
@@ -13238,7 +13253,12 @@
             "H",
             "D",
             "D"
-          ]
+          ],
+          "layout": "head_value_key_contiguous",
+          "access": "write",
+          "storage_class": "state",
+          "consumption": "required",
+          "desc": "Updated persistent recurrent state [head,value,key], with each logical key column contiguous"
         },
         {
           "name": "out",
@@ -17902,6 +17922,24 @@
         ],
         "variants": [
           {
+            "name": "avx2_prepared_nsplit_m4",
+            "function": "gemm_nt_q5_k_parallel_dispatch",
+            "priority": 270,
+            "requires": [
+              "avx2",
+              "fma"
+            ],
+            "shape_constraints": {
+              "M_min": 64,
+              "M_max": 256,
+              "K_multiple": 256
+            },
+            "requires_prepared_format": "q5_k_expanded_integer_metadata_v1",
+            "activation_preparation": "q8_k_once_per_call",
+            "work_partition": "independent_output_columns",
+            "tile_n": 128
+          },
+          {
             "name": "avx2_prepared_m4",
             "function": "gemm_nt_q5_k_prepared_m4",
             "priority": 260,
@@ -18406,11 +18444,28 @@
       "impl": {
         "function": "gemm_nt_q6_k_q8_k",
         "sources": [
-          "src/kernels/gemm_kernels_q6k.c"
+          "src/kernels/gemm_kernels_q6k_q8k.c",
+          "version/v8/src/ck_parallel_prefill_v8.c"
         ],
         "variants": [
           {
+            "name": "avx2_prepared_integer_metadata",
+            "function": "gemm_nt_q6_k_q8_k_prepared",
+            "priority": 260,
+            "requires": [
+              "avx2",
+              "fma"
+            ],
+            "compile_flags": [
+              "-mavx2",
+              "-mfma"
+            ],
+            "requires_prepared_format": "q6_k_expanded_integer_metadata_v1",
+            "work_partition": "output_tiles"
+          },
+          {
             "name": "avx2",
+            "priority": 200,
             "requires": [
               "avx2",
               "fma"
@@ -18421,6 +18476,19 @@
             ]
           }
         ]
+      },
+      "weight_preparation": {
+        "function": "ck_q6_k_prepare_expanded_weight",
+        "arguments": {
+          "B": "B",
+          "N": "N",
+          "K": "K"
+        },
+        "prepared_format": "q6_k_expanded_integer_metadata_v1",
+        "prepared_bytes": "N * (K / 256) * 274",
+        "max_total_bytes": 1073741824,
+        "fallback": "gemm_nt_q6_k_q8_k_parallel_dispatch",
+        "notes": "Expand Q6_K integer codes once at model load while retaining FP16 super-block scales and the established Q8_K/FP32 reduction tree. Resolved AVX2 prefill weights are prepared deterministically until the 1 GiB aggregate budget is exhausted; remaining weights retain the established compact fallback."
       },
       "numerical_capabilities": [
         {
