@@ -12,6 +12,7 @@ This runner keeps two lanes separate:
 from __future__ import annotations
 
 import argparse
+import ctypes
 import datetime as dt
 import json
 import os
@@ -211,6 +212,32 @@ def ck_runtime_args(model: ModelSpec) -> list[str]:
             args.extend(["--manifest", str(manifest)])
         return args
     return ["--model", model.ck_model]
+
+
+def ck_runtime_context_window(model: ModelSpec) -> int | None:
+    run_dir = model.ck_run_dir or (CK_MODEL_CACHE / model.ck_model)
+    library = run_dir / "libmodel.so"
+    if not library.is_file():
+        return None
+    runtime = ctypes.CDLL(str(library))
+    try:
+        getter = runtime.ck_model_get_context_window
+    except AttributeError:
+        return None
+    getter.argtypes = []
+    getter.restype = ctypes.c_int
+    context = int(getter())
+    return context if context > 0 else None
+
+
+def validate_runtime_capacity(models: list[ModelSpec], required_context: int) -> None:
+    for model in models:
+        capacity = ck_runtime_context_window(model)
+        if capacity is not None and capacity < required_context:
+            raise ValueError(
+                f"{model.key} runtime capacity is {capacity}, but this run requires "
+                f"{required_context}; regenerate the runtime before benchmarking"
+            )
 
 
 def parse_llama_bench(rows: list[dict[str, Any]]) -> dict[str, float]:
@@ -582,6 +609,13 @@ def main() -> int:
     args.ck_cli = args.ck_cli.expanduser().resolve()
     args.llama_root = args.llama_root.expanduser().resolve()
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    required_context = args.context
+    if args.lane in {"perf", "both"}:
+        required_context = max(
+            required_context,
+            args.prompt_tokens + args.decode_tokens + 8,
+        )
+    validate_runtime_capacity(models, required_context)
 
     report: dict[str, Any] = {
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
