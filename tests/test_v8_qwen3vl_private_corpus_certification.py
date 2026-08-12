@@ -170,6 +170,57 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
         self.assertNotIn('"decoder"', encoded)
         self.assertNotIn('"mmproj"', encoded)
 
+    def test_redacted_match_count_uses_common_parity_prefix(self) -> None:
+        report = {
+            "pass": False,
+            "ctx_len": 1400,
+            "steps": [
+                {"ck_next": 7, "llama_next": 7},
+                {"ck_next": 8, "llama_next": 9},
+                {"ck_next": 10, "llama_next": 10},
+            ],
+            "first_divergence": {"step": 1},
+            "prefix": {"tokens": 1008},
+            "prompt_tokens_before_image": [],
+            "prompt_tokens_after_image": [],
+        }
+        row = self.module._redacted_row(
+            index=1,
+            image_sha256="image",
+            prefix_sha256="prefix",
+            report=report,
+            elapsed={},
+            requested_tokens=128,
+            native_comparison={"pass": False, "native_tokens": 128},
+        )
+        self.assertEqual(row["steps"], 3)
+        self.assertEqual(row["matched_tokens"], 1)
+
+    def test_localization_summary_discloses_native_cli_was_skipped(self) -> None:
+        config = dict(self._config(), skip_native_cli=True)
+        summary = self.module._summary(
+            selected=[{"index": 1}],
+            rows=[{"image_index": 1, "status": "pass"}],
+            config=config,
+        )
+        self.assertEqual(summary["certification_scope"], "localization")
+        self.assertIn("native CLI not run", summary["comparison"])
+
+    def test_progress_line_discloses_skipped_native_cli(self) -> None:
+        line = self.module._progress_line(
+            {
+                "image_index": 1,
+                "status": "fail",
+                "matched_tokens": 8,
+                "requested_tokens": 128,
+                "native_cli": None,
+            },
+            completed=1,
+            requested=5,
+        )
+        self.assertIn("matched=8/128", line)
+        self.assertIn("native=skipped", line)
+
     def test_summary_treats_execution_errors_as_failures(self) -> None:
         summary = self.module._summary(
             selected=[{"index": 1}],
@@ -178,6 +229,21 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
         )
         self.assertEqual(summary["status"], "fail")
         self.assertEqual(summary["failed"], 1)
+
+    def test_resume_can_skip_redundant_native_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            result = Path(temporary) / "case_result.json"
+            expected = {"global_config_sha256": "cfg", "image_index": 1, "image_sha256": "hash"}
+            result.write_text(
+                json.dumps({"case_config": expected, "redacted_row": {"status": "pass", "native_cli": None}}),
+                encoding="utf-8",
+            )
+            self.assertIsNotNone(
+                self.module._resumed_row(result, expected, require_native=False)
+            )
+            self.assertIsNone(
+                self.module._resumed_row(result, expected, require_native=True)
+            )
 
     def test_production_commands_use_batched_exact_runtime_parity(self) -> None:
         parser_values = type(
@@ -501,6 +567,11 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
                 "context_tokens_after_comparison": 1163,
                 "context_capacity": 4096,
                 "stop_reason": None,
+                "native_cli": {
+                    "pass": True,
+                    "native_tokens": 128,
+                    "python_ck_tokens": 128,
+                },
                 "elapsed_sec": {
                     "bridge": 110.0,
                     "parity": 90.0,
