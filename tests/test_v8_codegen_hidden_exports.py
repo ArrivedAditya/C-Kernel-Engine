@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CODEGEN_PATH = ROOT / "version" / "v8" / "scripts" / "codegen_core_v8.py"
+PREFILL_CODEGEN_PATH = ROOT / "version" / "v8" / "scripts" / "codegen_prefill_v8.py"
 sys.path.insert(0, str(CODEGEN_PATH.parent))
 
 
@@ -25,11 +26,105 @@ def _load_codegen():
 codegen = _load_codegen()
 
 
+def _load_prefill_codegen():
+    spec = importlib.util.spec_from_file_location(
+        "codegen_prefill_hidden_export_tests", PREFILL_CODEGEN_PATH
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"unable to load {PREFILL_CODEGEN_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+prefill_codegen = _load_prefill_codegen()
+
+
 def _arg(name: str, expr: str) -> dict[str, str]:
     return {"name": name, "expr": expr}
 
 
 class HiddenExportExtentTests(unittest.TestCase):
+    def test_fused_q4_gateup_swiglu_exports_materialized_output(self) -> None:
+        gate = {
+            "op": "mlp_gate_up",
+            "function": "gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch",
+            "layer": 0,
+            "resolved_execution": {
+                "numerical_contract": "q4_k_x_q8_k_repacked_matmul_fp32",
+                "implementation": {
+                    "weight_storage": {
+                        "format": "q4_k",
+                        "block_elements": 256,
+                        "block_bytes": 144,
+                    },
+                    "activation_storage": {"format": "q8_k", "block_elements": 256},
+                    "diagnostic_providers": {
+                        "fp32_activation": "gemm_nt_q4_k",
+                        "row_quantized": "gemv_q4_k_q8_k",
+                    },
+                },
+                "reference": {
+                    "function": "gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch"
+                },
+                "production": {
+                    "function": "gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch"
+                },
+            },
+            "args": [
+                _arg("A", "A"),
+                _arg("B", "B"),
+                _arg("bias", "NULL"),
+                _arg("C", "OUT"),
+                _arg("M", "num_tokens"),
+                _arg("N", "34816"),
+                _arg("K", "5120"),
+            ],
+        }
+        swiglu = {
+            "op": "silu_mul",
+            "function": "swiglu_forward_ggml",
+            "layer": 0,
+            "args": [_arg("output", "OUT")],
+        }
+
+        emitted = prefill_codegen._emit_prefill_q4_gateup_swiglu_x16(
+            gate,
+            swiglu,
+            23,
+            "fused_23",
+            debug_flag_name="debug_gate",
+            debug_input_name="debug_input",
+        )
+
+        self.assertIn(
+            'if (fused_23) ck_debug_export_hidden(model, 0, "mlp_swiglu", '
+            "(const float*)OUT, (num_tokens) * (((34816) / 2)))",
+            emitted,
+        )
+
+    def test_parity_dump_captures_only_distinct_layer_input_edge(self) -> None:
+        op = {
+            "op": "residual_save",
+            "function": "memcpy",
+            "layer": 0,
+            "args": [
+                _arg("dst", "RESIDUAL"),
+                _arg("src", "LAYER_INPUT"),
+                _arg("size", "20480"),
+            ],
+        }
+        layer_entry = codegen.emit_op(op, dump=True, op_instance_idx=0)
+        after_attention = codegen.emit_op(op, dump=True, op_instance_idx=1)
+
+        self.assertIn(
+            'ck_dump_tensor((const float*)(LAYER_INPUT), 0, "layer_input", '
+            "((size_t)(20480)) / sizeof(float))",
+            layer_entry,
+        )
+        self.assertNotIn("ck_dump_tensor", after_attention)
+
     def test_mlp_projection_exports_cover_all_rows_and_channels(self) -> None:
         up = codegen.emit_op(
             {

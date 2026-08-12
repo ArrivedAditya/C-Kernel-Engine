@@ -40,6 +40,11 @@ def _ck_logits_from_buffer(buf: Any, vocab_size: int) -> np.ndarray:
     return np.ctypeslib.as_array(buf, shape=(int(vocab_size),)).astype(np.float32, copy=True)
 
 
+def _logits_sha256(logits: np.ndarray) -> str:
+    values = np.ascontiguousarray(np.asarray(logits, dtype=np.float32))
+    return hashlib.sha256(values.view(np.uint8)).hexdigest()
+
+
 def _decode_topk(logits: np.ndarray, tokenizer: GGUFTokenizer, top_k: int) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     n = int(logits.size)
@@ -113,8 +118,27 @@ def _hidden_named_files(root: Path, name: str | None) -> list[Path]:
     files = sorted(root.glob("*.f32"))
     if name is None:
         return files
-    suffix = f"_{name}.f32"
-    return [path for path in files if path.name.endswith(suffix)]
+    # Export names may be suffixes of one another (for example attn_norm and
+    # post_attn_norm). Parse the complete field after the layer identifier;
+    # suffix matching can silently select a different boundary.
+    selected: list[Path] = []
+    for path in files:
+        match = re.match(r"^tok_\d+_layer_\d+_(.+)\.f32$", path.name)
+        if match and match.group(1) == name:
+            selected.append(path)
+    return selected
+
+
+_CK_HIDDEN_EXPORT_NAMES = {
+    "qkv": "linear_attn_qkv_mixed",
+    "q_predelta": "q_conv_predelta",
+    "k_predelta": "k_conv_predelta",
+}
+
+
+def _resolve_ck_hidden_export_names(names: list[str]) -> list[str]:
+    """Translate semantic X-ray names to exact generated-C exporter names."""
+    return [_CK_HIDDEN_EXPORT_NAMES.get(str(name), str(name)) for name in names]
 
 
 def _single_hidden_file(root: Path, name: str | None = None) -> Path:
@@ -187,6 +211,105 @@ def _hidden_compare(a_path: Path, b_path: Path) -> dict[str, Any]:
     }
 
 
+def _load_ck_hidden_exports(
+    root: Path, names: list[str], layer: int
+) -> list[Any]:
+    """Load production-runtime hidden exports into the common parity format."""
+    dumps: list[Any] = []
+    for name in names:
+        files = (
+            {layer: _single_hidden_file(root, name)}
+            if layer >= 0
+            else _hidden_files_by_layer(root, name)
+        )
+        for layer_id, path in sorted(files.items()):
+            token_id = _hidden_token_position(path)
+            dumps.append(
+                first_token.parity_test_v7.ParityDump(
+                    int(layer_id),
+                    str(name),
+                    np.fromfile(path, dtype=np.float32),
+                    int(token_id or 0),
+                    "fp32",
+                    source_token_id=int(token_id or 0),
+                    source_name=path.name,
+                )
+            )
+    return dumps
+
+
+def _normalize_ck_recurrent_state_layout(
+    dumps: list[Any], runtime_config: dict[str, Any]
+) -> list[Any]:
+    """Map CKE's [head,key,value] state ABI to llama's [head,value,key]."""
+    heads = int(runtime_config.get("recurrent_num_heads", 0) or 0)
+    dim = int(
+        runtime_config.get("recurrent_head_dim", 0)
+        or runtime_config.get("ssm_state_size", 0)
+        or 0
+    )
+    if heads <= 0 or dim <= 0:
+        return dumps
+    expected = heads * dim * dim
+    for dump in dumps:
+        if str(dump.op_name) != "new_state":
+            continue
+        values = np.asarray(dump.data, dtype=np.float32)
+        if values.size != expected:
+            continue
+        dump.data = np.ascontiguousarray(
+            values.reshape(heads, dim, dim).transpose(0, 2, 1)
+        )
+    return dumps
+
+
+def _coalesce_segmented_prefill_oracle_dumps(dumps: list[Any]) -> list[Any]:
+    """Reconstruct the logical mixed-prefill boundary from llama segments.
+
+    llama.cpp evaluates text-before, visual rows, and text-after as three
+    batches. CKE's production mixed-prefill provider exposes the same logical
+    sequence as one tensor. Row-valued boundaries therefore concatenate in
+    execution order. Persistent recurrent state is a snapshot, so only the
+    final segment's state is comparable.
+    """
+    grouped: dict[tuple[int, str], list[Any]] = {}
+    order: list[tuple[int, str]] = []
+    for dump in dumps:
+        key = (int(dump.layer_id), str(dump.op_name))
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(dump)
+
+    result: list[Any] = []
+    for key in order:
+        rows = grouped[key]
+        if len(rows) == 1:
+            result.append(rows[0])
+            continue
+        last = rows[-1]
+        if key[1] == "new_state":
+            result.append(last)
+            continue
+        result.append(
+            first_token.parity_test_v7.ParityDump(
+                key[0],
+                key[1],
+                np.concatenate([
+                    np.asarray(row.data, dtype=np.float32).reshape(-1)
+                    for row in rows
+                ]),
+                int(getattr(last, "token_id", 0)),
+                str(last.dtype),
+                source_token_id=int(getattr(last, "source_token_id", last.token_id)),
+                source_name="segmented_prefill:" + ",".join(
+                    str(getattr(row, "source_name", "")) for row in rows
+                ),
+            )
+        )
+    return result
+
+
 def _hidden_full_replay_name(name: str) -> str:
     # Full replay runs through prefill, which exports last-row tensors with
     # the *_last suffix for token-major intermediates.
@@ -200,11 +323,21 @@ _HIDDEN_EXPORT_CALL_RE = re.compile(
 )
 
 
-def _hidden_export_catalog(runtime: dict[str, Any]) -> dict[str, list[int]]:
+def _hidden_export_catalog(
+    runtime: dict[str, Any], *, execution_phase: str = "decode"
+) -> dict[str, list[int]]:
     """Inventory the exact hidden exporters compiled into a decoder runtime."""
-    c_path_value = runtime.get("c_path")
+    uses_standalone_prefill = bool(
+        execution_phase == "prefill" and runtime.get("prefill_so_path")
+    )
+    c_path_value = (
+        runtime.get("prefill_c_path")
+        if uses_standalone_prefill
+        else runtime.get("c_path")
+    )
     if c_path_value is None:
-        c_path_value = Path(runtime["workdir"]) / "decoder_v8.c"
+        filename = "decoder_v8_prefill.c" if uses_standalone_prefill else "decoder_v8.c"
+        c_path_value = Path(runtime["workdir"]) / filename
     c_path = Path(c_path_value).resolve()
     if not c_path.is_file():
         raise FileNotFoundError(
@@ -221,21 +354,26 @@ def _hidden_export_catalog(runtime: dict[str, Any]) -> dict[str, list[int]]:
 
 
 def _validate_hidden_capture_request(
-    runtime: dict[str, Any], names: list[str], layer: int
+    runtime: dict[str, Any],
+    names: list[str],
+    layer: int,
+    *,
+    require_replay: bool = True,
+    execution_phase: str = "decode",
 ) -> dict[str, list[int]]:
-    catalog = _hidden_export_catalog(runtime)
+    catalog = _hidden_export_catalog(runtime, execution_phase=execution_phase)
     issues: list[str] = []
     for name in names:
         replay_name = _hidden_full_replay_name(name)
         if name not in catalog:
             issues.append(f"decode exporter {name!r} does not exist")
             continue
-        if replay_name not in catalog:
+        if require_replay and replay_name not in catalog:
             issues.append(f"full-replay exporter {replay_name!r} does not exist")
             continue
         if layer >= 0 and layer not in catalog[name]:
             issues.append(f"decode exporter {name!r} is unavailable at layer {layer}")
-        if layer >= 0 and layer not in catalog[replay_name]:
+        if require_replay and layer >= 0 and layer not in catalog[replay_name]:
             issues.append(f"full-replay exporter {replay_name!r} is unavailable at layer {layer}")
     if issues:
         base_names = sorted(name for name in catalog if not name.endswith("_last"))
@@ -295,10 +433,8 @@ def _run_llama_greedy_sequence(inputs: dict[str, Any], args: argparse.Namespace)
         persistent_dump_step = getattr(args, "llama_persistent_dump_step", None)
         if persistent_dump_step is not None:
             persistent_dump_step = int(persistent_dump_step)
-            if persistent_dump_step <= 0:
-                raise ValueError(
-                    "--llama-persistent-dump-step must be >= 1; step 0 is produced by prefill"
-                )
+            if persistent_dump_step < 0:
+                raise ValueError("--llama-persistent-dump-step must be >= 0")
             dump_dir = getattr(args, "llama_persistent_dump_dir", None)
             if dump_dir is None:
                 dump_dir = args.workdir / f"llama_persistent_step_{persistent_dump_step:04d}"
@@ -369,6 +505,7 @@ def _load_exact_decoder_runtime(
     return {
         "gguf": gguf_path,
         "workdir": decoder_dir,
+        "manifest": layout,
         "so_path": so_path,
         "c_path": decoder_dir / "decoder_v8.c",
         "weights_bump": weights_bump,
@@ -837,10 +974,37 @@ def _capture_step_dump(report: dict[str, Any], args: argparse.Namespace) -> dict
         )
     finally:
         _restore_prefix_decode_policy_env(old_env)
+    captured_logits = np.asarray(ck.get("logits"), dtype=np.float32)
+    captured_hash = _logits_sha256(captured_logits)
+    baseline_hash = str(row.get("ck_logits_sha256") or "")
+    neutrality = {
+        "schema": "cke.xray.multimodal-capture-neutrality.v1",
+        "acceptance_contract": "bit_exact_full_logits_same_forced_prefix",
+        "baseline_sha256": baseline_hash or None,
+        "captured_sha256": captured_hash,
+        "exact": bool(baseline_hash and baseline_hash == captured_hash),
+        "status": "accepted" if baseline_hash and baseline_hash == captured_hash else "rejected",
+        "reason": (
+            None
+            if baseline_hash and baseline_hash == captured_hash
+            else "baseline_report_has_no_full_logits_hash"
+            if not baseline_hash
+            else "instrumented_capture_changed_full_logits"
+        ),
+    }
+    dump_report["observational_neutrality"] = neutrality
+    if neutrality["status"] != "accepted":
+        dump_report["status"] = "rejected"
     if str(dump_report.get("status", "")).lower() in {"error", "skipped"}:
         raise RuntimeError(
             "granular capture did not produce a comparable CK/llama tensor set; "
             f"status={dump_report.get('status')} reason={dump_report.get('reason', '')}"
+        )
+    if str(dump_report.get("status", "")).lower() == "rejected":
+        raise RuntimeError(
+            "granular capture failed observational-neutrality contract: "
+            f"reason={neutrality['reason']} baseline={baseline_hash or '<missing>'} "
+            f"captured={captured_hash}"
         )
     return {
         "step": int(step_index),
@@ -848,7 +1012,7 @@ def _capture_step_dump(report: dict[str, Any], args: argparse.Namespace) -> dict
         "dump_dir": str(dump_dir),
         "replay_tokens_after_count": int(len(replay_tokens_after)),
         "generated_prefix": generated_prefix,
-        "ck_top1": int((ck.get("comparison") or {}).get("top1_ck", ck.get("ck_top1", -1))),
+        "ck_top1": int(np.argmax(captured_logits)),
         "instrumented_runtime": {
             "c_path": str(dump_source.resolve()),
             "so_path": str(Path(inputs["runtime"]["so_path"]).resolve()),
@@ -932,15 +1096,28 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
         raise ValueError(f"--hidden-state-step {step_index} is outside captured steps [0, {max(0, len(steps) - 1)}]")
     row = dict(steps[step_index])
     generated_prefix = [int(t) for t in list(row.get("generated_prefix") or [])]
-    if not generated_prefix:
-        raise ValueError("hidden persistent decode capture needs a generated prefix; step 0 has no decode call to capture")
 
     inputs = _prepare_inputs(args)
     layer = int(args.hidden_state_layer)
-    names = [item.strip() for item in str(args.hidden_state_names).split(",") if item.strip()]
-    if not names:
+    requested_names = [item.strip() for item in str(args.hidden_state_names).split(",") if item.strip()]
+    if not requested_names:
         raise ValueError("--hidden-state-names did not contain any names")
-    catalog = _validate_hidden_capture_request(inputs["runtime"], names, layer)
+    names = _resolve_ck_hidden_export_names(requested_names)
+    # Step zero is already the production mixed-prefill execution. Replaying
+    # the same prompt under *_last exporters adds no independent control and
+    # can change the arithmetic schedule. Full replay remains an optional
+    # decode-only diagnostic; full-logit hashing guards both modes.
+    run_full_replay = (
+        step_index > 0
+        and not bool(getattr(args, "hidden_state_skip_full_replay", False))
+    )
+    catalog = _validate_hidden_capture_request(
+        inputs["runtime"],
+        names,
+        layer,
+        require_replay=run_full_replay,
+        execution_phase="prefill" if step_index == 0 else "decode",
+    )
     root = (args.hidden_state_dir or (args.workdir / f"hidden_state_step_{step_index:04d}")).resolve()
     root.mkdir(parents=True, exist_ok=True)
 
@@ -1015,13 +1192,21 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
 
     persistent_kv_export: dict[str, Any] | None = None
     replay_kv_export: dict[str, Any] | None = None
+    persistent_logits_hash: str | None = None
     try:
         _restore_process_env({key: None for key in env_keys})
+        if not generated_prefix:
+            _set_process_env("CK_DEBUG_EXPORT_HIDDEN", str(persistent_dir))
+            _set_process_env("CK_DEBUG_EXPORT_HIDDEN_NAMES", ",".join(names))
+            if layer >= 0:
+                _set_process_env("CK_DEBUG_EXPORT_HIDDEN_LAYER", str(layer))
         lib, logits_buf, _vocab_size = _init_ck_state(
             inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None),
             getattr(args, "gemm_schedule", "auto"),
         )
         try:
+            if not generated_prefix:
+                _restore_process_env({key: None for key in env_keys})
             last_i = len(generated_prefix) - 1
             for i, token in enumerate(generated_prefix):
                 if i == last_i:
@@ -1034,6 +1219,10 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
                     raise RuntimeError(f"ck_model_decode failed rc={rc} while capturing persistent hidden state")
                 if i == last_i:
                     _restore_process_env({key: None for key in env_keys})
+            if row.get("ck_logits_sha256"):
+                persistent_logits_hash = _logits_sha256(
+                    _ck_logits_from_buffer(logits_buf, _vocab_size)
+                )
             persistent_kv_export = export_kv(lib, persistent_dir)
         finally:
             if hasattr(lib, "ck_model_free"):
@@ -1042,24 +1231,25 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
                 except Exception:
                     pass
 
-        replay_inputs = dict(inputs)
-        replay_inputs["tokens_after"] = [int(t) for t in inputs["tokens_after"]] + generated_prefix
-        replay_names = [_hidden_full_replay_name(name) for name in names]
-        _set_process_env("CK_DEBUG_EXPORT_HIDDEN", str(full_dir))
-        _set_process_env("CK_DEBUG_EXPORT_HIDDEN_NAMES", ",".join(replay_names))
-        if layer >= 0:
-            _set_process_env("CK_DEBUG_EXPORT_HIDDEN_LAYER", str(layer))
-        lib2, _logits2, _vocab2 = _init_ck_state(
-            replay_inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None),
-            getattr(args, "gemm_schedule", "auto"),
-        )
-        replay_kv_export = export_kv(lib2, full_dir)
-        if hasattr(lib2, "ck_model_free"):
-            try:
-                lib2.ck_model_free()
-            except Exception:
-                pass
-        _restore_process_env({key: None for key in env_keys})
+        if run_full_replay:
+            replay_inputs = dict(inputs)
+            replay_inputs["tokens_after"] = [int(t) for t in inputs["tokens_after"]] + generated_prefix
+            replay_names = [_hidden_full_replay_name(name) for name in names]
+            _set_process_env("CK_DEBUG_EXPORT_HIDDEN", str(full_dir))
+            _set_process_env("CK_DEBUG_EXPORT_HIDDEN_NAMES", ",".join(replay_names))
+            if layer >= 0:
+                _set_process_env("CK_DEBUG_EXPORT_HIDDEN_LAYER", str(layer))
+            lib2, _logits2, _vocab2 = _init_ck_state(
+                replay_inputs, bool(args.ck_strict_parity), getattr(args, "ck_engine_so", None),
+                getattr(args, "gemm_schedule", "auto"),
+            )
+            replay_kv_export = export_kv(lib2, full_dir)
+            if hasattr(lib2, "ck_model_free"):
+                try:
+                    lib2.ck_model_free()
+                except Exception:
+                    pass
+            _restore_process_env({key: None for key in env_keys})
 
     except Exception as exc:
         capture_error = exc
@@ -1142,49 +1332,118 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
                 "persistent": persistent_kv_export,
                 "full_replay": replay_kv_export,
             }
-        for name in names:
-            replay_name = _hidden_full_replay_name(name)
-            try:
-                if layer < 0:
-                    per_layer = _hidden_compare_many(persistent_dir, full_dir, name, replay_name)
-                    ok_rows = [r for r in per_layer if r.get("status") == "ok"]
-                    max_diff = max(float(r.get("max_abs_diff", 0.0)) for r in ok_rows) if ok_rows else 0.0
-                    first_layer_issue = next(
-                        (
-                            r
-                            for r in per_layer
-                            if r.get("status") != "ok"
-                            or float(r.get("max_abs_diff", 0.0)) > float(args.hidden_state_atol)
-                        ),
-                        None,
-                    )
+        if run_full_replay:
+            for name in names:
+                replay_name = _hidden_full_replay_name(name)
+                try:
+                    if layer < 0:
+                        per_layer = _hidden_compare_many(persistent_dir, full_dir, name, replay_name)
+                        ok_rows = [r for r in per_layer if r.get("status") == "ok"]
+                        max_diff = max(float(r.get("max_abs_diff", 0.0)) for r in ok_rows) if ok_rows else 0.0
+                        first_layer_issue = next(
+                            (
+                                r
+                                for r in per_layer
+                                if r.get("status") != "ok"
+                                or float(r.get("max_abs_diff", 0.0)) > float(args.hidden_state_atol)
+                            ),
+                            None,
+                        )
+                        results.append({
+                            "name": name,
+                            "full_replay_name": replay_name,
+                            "status": "ok" if first_layer_issue is None else "fail",
+                            "max_abs_diff": float(max_diff),
+                            "first_layer_issue": first_layer_issue,
+                            "layers": per_layer,
+                        })
+                    else:
+                        persistent_file = _single_hidden_file(persistent_dir, name)
+                        full_file = _single_hidden_file(full_dir, replay_name)
+                        results.append({
+                            "name": name,
+                            "full_replay_name": replay_name,
+                            **_hidden_compare(persistent_file, full_file),
+                        })
+                except Exception as exc:
                     results.append({
                         "name": name,
                         "full_replay_name": replay_name,
-                        "status": "ok" if first_layer_issue is None else "fail",
-                        "max_abs_diff": float(max_diff),
-                        "first_layer_issue": first_layer_issue,
-                        "layers": per_layer,
+                        "status": "error",
+                        "error": str(exc),
+                        "persistent_dir": str(persistent_dir),
+                        "full_replay_dir": str(full_dir),
                     })
-                else:
-                    persistent_file = _single_hidden_file(persistent_dir, name)
-                    full_file = _single_hidden_file(full_dir, replay_name)
-                    results.append({
-                        "name": name,
-                        "full_replay_name": replay_name,
-                        **_hidden_compare(persistent_file, full_file),
-                    })
-            except Exception as exc:
-                results.append({
-                    "name": name,
-                    "full_replay_name": replay_name,
-                    "status": "error",
-                    "error": str(exc),
-                    "persistent_dir": str(persistent_dir),
-                    "full_replay_dir": str(full_dir),
-                })
 
     first_issue = next((r for r in results if r.get("status") != "ok" or float(r.get("max_abs_diff", 0.0)) > float(args.hidden_state_atol)), None)
+    baseline_logits_hash = str(row.get("ck_logits_sha256") or "")
+    neutrality = {
+        "schema": "cke.xray.same-runtime-capture-neutrality.v1",
+        "acceptance_contract": "bit_exact_full_logits_same_binary_same_forced_prefix",
+        "baseline_sha256": baseline_logits_hash or None,
+        "captured_sha256": persistent_logits_hash,
+        "exact": bool(
+            baseline_logits_hash
+            and persistent_logits_hash
+            and baseline_logits_hash == persistent_logits_hash
+        ),
+    }
+    neutrality["status"] = "accepted" if neutrality["exact"] else "rejected"
+    neutrality["reason"] = (
+        None
+        if neutrality["exact"]
+        else "baseline_report_has_no_full_logits_hash"
+        if not baseline_logits_hash
+        else "same_runtime_capture_changed_full_logits"
+    )
+
+    oracle_comparison: dict[str, Any] | None = None
+    llama_dir_value = getattr(args, "llama_persistent_dump_dir", None)
+    if neutrality["status"] == "accepted" and llama_dir_value is not None:
+        llama_dir = Path(llama_dir_value).resolve()
+        try:
+            runtime_config = dict((inputs["runtime"].get("manifest") or {}).get("config") or {})
+            layer_count = int(runtime_config.get("num_layers", 0) or 0)
+            semantic_names = {
+                re.sub(r"-\d+$", "", name) for name in names
+            }
+            ck_dumps = _load_ck_hidden_exports(persistent_dir, names, layer)
+            ck_dumps = _normalize_ck_recurrent_state_layout(ck_dumps, runtime_config)
+            llama_dumps = first_token._load_llama_dump_dir(llama_dir)
+            if step_index == 0:
+                llama_dumps = _coalesce_segmented_prefill_oracle_dumps(llama_dumps)
+            ck_dumps = first_token._augment_layer_input_aliases(
+                ck_dumps,
+                layer_count=layer_count,
+                alias_after_attn="after_attn" in semantic_names,
+            )
+            llama_dumps = first_token._augment_layer_input_aliases(
+                llama_dumps,
+                layer_count=layer_count,
+                alias_after_attn="after_attn" in semantic_names,
+            )
+            oracle_comparison = first_token._compare_dump_sets(
+                ck_dumps,
+                llama_dumps,
+                atol=float(args.hidden_state_atol),
+                rtol=float(getattr(args, "hidden_state_rtol", 0.0)),
+                pass_filter="all",
+            )
+            oracle_comparison["status"] = (
+                "fail"
+                if oracle_comparison["summary"]["fail"]
+                or oracle_comparison["summary"]["error"]
+                or oracle_comparison["summary"]["missing"]
+                else "ok"
+            )
+            oracle_comparison["llama_dump_dir"] = str(llama_dir)
+        except Exception as exc:
+            oracle_comparison = {
+                "status": "error",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "llama_dump_dir": str(llama_dir),
+            }
     return {
         "step": int(step_index),
         "layer": int(layer),
@@ -1200,8 +1459,23 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
             "capture_layers": capture_layers,
             "available_exporter_count": len(catalog),
         },
-        "ck_execution_count": 2,
+        "ck_execution_count": 2 if run_full_replay else 1,
+        "full_replay_control": (
+            "enabled"
+            if run_full_replay
+            else "not_applicable_prefill"
+            if step_index == 0
+            else "skipped"
+        ),
         "atol": float(args.hidden_state_atol),
+        "rtol": float(getattr(args, "hidden_state_rtol", 0.0)),
+        "observational_neutrality": neutrality,
+        "oracle_comparison": oracle_comparison,
+        "oracle_first_issue": (
+            oracle_comparison.get("first_issue")
+            if oracle_comparison is not None and oracle_comparison.get("status") != "error"
+            else None
+        ),
         "first_issue": first_issue,
         "kv_cache": kv_comparison,
         "results": results,
@@ -1369,6 +1643,7 @@ def _init_ck_state(
 
 def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]:
     inputs = _prepare_inputs(args)
+    _configure_hidden_oracle_capture(inputs, args)
     mode_contract = getattr(args, "prefill_mode_contract", None)
     if not isinstance(mode_contract, dict):
         mode_contract = _resolve_oracle_prefill_mode(
@@ -1409,6 +1684,7 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
                 "generated_prefix": [int(t) for t in generated],
                 "prefix_len_after_image": int(len(inputs["tokens_after"]) + len(generated)),
                 "ck_next": ck_next,
+                "ck_logits_sha256": _logits_sha256(ck_logits),
                 "llama_next": llama_next,
                 "ck_next_text": tokenizer.decode([ck_next], skip_special=False),
                 "llama_next_text": tokenizer.decode([llama_next], skip_special=False),
@@ -1510,6 +1786,52 @@ def run_multimodal_multitoken_parity(args: argparse.Namespace) -> dict[str, Any]
         "first_divergence": first_divergence,
         "steps": steps,
     }
+
+
+def _configure_hidden_oracle_capture(
+    inputs: dict[str, Any], args: argparse.Namespace
+) -> None:
+    """Request matching llama.cpp boundaries for same-runtime CKE X-ray."""
+    step = getattr(args, "hidden_state_step", None)
+    if step is None:
+        return
+    step = int(step)
+    if step < 0:
+        raise ValueError("--hidden-state-step must be >= 0")
+    names = [
+        item.strip()
+        for item in str(getattr(args, "hidden_state_names", "")).split(",")
+        if item.strip()
+    ]
+    if not names:
+        raise ValueError("--hidden-state-names did not contain any names")
+    layer = int(getattr(args, "hidden_state_layer", -1))
+    requested = [f"{name}-{layer}" if layer >= 0 else name for name in names]
+    runtime_config = dict((inputs["runtime"].get("manifest") or {}).get("config") or {})
+    layer_count = int(runtime_config.get("num_layers", 0) or 0)
+    resolved_names = first_token._resolve_llama_dump_names(
+        ",".join(requested), layer_count=layer_count
+    )
+    explicit_step = getattr(args, "llama_persistent_dump_step", None)
+    explicit_names = str(getattr(args, "llama_persistent_dump_names", "") or "")
+    if explicit_step is not None and int(explicit_step) != step:
+        raise ValueError(
+            "hidden-state X-ray conflicts with explicit llama persistent dump step: "
+            f"hidden={step} explicit={int(explicit_step)}"
+        )
+    if explicit_names and explicit_names != resolved_names:
+        raise ValueError(
+            "hidden-state X-ray conflicts with explicit llama persistent dump names"
+        )
+    args.llama_persistent_dump_step = step
+    args.llama_persistent_dump_names = resolved_names
+    if getattr(args, "llama_persistent_dump_dir", None) is None:
+        root = (
+            Path(args.hidden_state_dir).resolve()
+            if getattr(args, "hidden_state_dir", None) is not None
+            else args.workdir.resolve() / f"hidden_state_step_{step:04d}"
+        )
+        args.llama_persistent_dump_dir = root / "llama"
 
 
 def _resolve_stop_token_ids(bridge_report: dict[str, Any]) -> set[int]:
@@ -1698,11 +2020,28 @@ def main() -> int:
     ap.add_argument("--dump-pass", choices=("all", "prefill", "decode"), default="decode")
     ap.add_argument("--dump-atol", type=float, default=1.0e-4)
     ap.add_argument("--dump-rtol", type=float, default=1.0e-3)
-    ap.add_argument("--hidden-state-step", type=int, default=None, help="Compare CK persistent decode hidden tensors against CK full replay at this generated step")
+    ap.add_argument(
+        "--hidden-state-step",
+        type=int,
+        default=None,
+        help=(
+            "Compare production CK hidden tensors with matching llama.cpp boundaries at trajectory step N; "
+            "step 0 captures mixed prefill, while later steps capture persistent decode"
+        ),
+    )
     ap.add_argument("--hidden-state-layer", type=int, default=0)
     ap.add_argument("--hidden-state-names", type=str, default="attn_out,out_proj,after_attn,layer_out")
     ap.add_argument("--hidden-state-dir", type=Path, default=None)
     ap.add_argument("--hidden-state-atol", type=float, default=1.0e-5)
+    ap.add_argument("--hidden-state-rtol", type=float, default=1.0e-3)
+    ap.add_argument(
+        "--hidden-state-skip-full-replay",
+        action="store_true",
+        help=(
+            "Capture only production persistent decode for CK-vs-llama X-ray; "
+            "skip the distinct full-prefill replay arithmetic schedule"
+        ),
+    )
     ap.add_argument("--summary", action="store_true")
     args = ap.parse_args()
     if args.dump_step is not None or args.dump_first_divergence:
