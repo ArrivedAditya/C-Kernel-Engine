@@ -9,7 +9,27 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <type_traits>
 #include <vector>
+
+template <typename Fn>
+static ggml_tensor * call_gated_delta_net_compat(
+        Fn fn,
+        ggml_context * ctx,
+        ggml_tensor * q,
+        ggml_tensor * k,
+        ggml_tensor * v,
+        ggml_tensor * g,
+        ggml_tensor * beta,
+        ggml_tensor * state) {
+    if constexpr (std::is_invocable_r_v<ggml_tensor *, Fn,
+            ggml_context *, ggml_tensor *, ggml_tensor *, ggml_tensor *,
+            ggml_tensor *, ggml_tensor *, ggml_tensor *>) {
+        return fn(ctx, q, k, v, g, beta, state);
+    } else {
+        return fn(ctx, q, k, v, g, beta, state, 1);
+    }
+}
 
 extern "C" {
 void gated_deltanet_llama_avx2_forward(
@@ -113,7 +133,8 @@ static bool llama_fused_graph(
         }
     }
 
-    ggml_tensor * result = ggml_gated_delta_net(ctx, tq, tk, tv, tg, tb, ts, 1);
+    ggml_tensor * result = call_gated_delta_net_compat(
+        &ggml_gated_delta_net, ctx, tq, tk, tv, tg, tb, ts);
     ggml_cgraph * graph = ggml_new_graph(ctx);
     ggml_build_forward_expand(graph, result);
     const int threads = std::max(1, std::atoi(
@@ -451,14 +472,16 @@ static bool run_norm_gate_case(int rows) {
 int main() {
     const bool decode = run_case(1);
     const bool qwen36_parallel_decode = run_case(1, 48, 16, true);
-    const bool qwen36_parallel_prefill = run_case(29, 48, 16, false, true);
+    const bool qwen36_short_prefill = run_case(9, 48, 16, false, true);
+    const bool qwen36_cross_chunk_prefill = run_case(65, 48, 16, false, true);
     const bool prefill = run_case(18);
     const bool prefill_cross_chunk = run_case(65);
     const bool chunk_prefill = run_chunk_case(18);
     const bool chunk_cross_chunk = run_chunk_case(65);
     const bool norm_decode = run_norm_gate_case(1);
     const bool norm_prefill = run_norm_gate_case(18);
-    return decode && qwen36_parallel_decode && qwen36_parallel_prefill &&
+    return decode && qwen36_parallel_decode && qwen36_short_prefill &&
+        qwen36_cross_chunk_prefill &&
         prefill && prefill_cross_chunk &&
         chunk_prefill && chunk_cross_chunk &&
         norm_decode && norm_prefill ? 0 : 1;

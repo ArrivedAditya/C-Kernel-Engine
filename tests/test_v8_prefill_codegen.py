@@ -326,6 +326,15 @@ class TestV8PrefillCodegen(unittest.TestCase):
             emitted,
         )
 
+        emitted_dump = codegen_prefill_v8.emit_prefill_op(
+            op, 1, {"embed_dim": 4096}, dump=True
+        )
+        self.assertIn(
+            'ck_dump_tensor((float*)LAYER_INPUT, 0, "layer_input", '
+            "(num_tokens) * (4096))",
+            emitted_dump,
+        )
+
         op["op_instance_idx"] = 1
         emitted_after_attention = codegen_prefill_v8.emit_prefill_op(
             op, 16, {"embed_dim": 4096}

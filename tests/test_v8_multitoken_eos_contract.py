@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import ctypes
 import json
 import struct
 import tempfile
@@ -27,6 +28,115 @@ def load_module():
 
 
 class MultitokenEOSContractTests(unittest.TestCase):
+    def test_hidden_xray_configures_matching_llama_boundary_capture(self) -> None:
+        args = Namespace(
+            hidden_state_step=8,
+            hidden_state_layer=3,
+            hidden_state_names="layer_input,after_attn,layer_out",
+            hidden_state_dir=Path("capture"),
+            llama_persistent_dump_dir=None,
+            workdir=Path("work"),
+        )
+        inputs = {"runtime": {"manifest": {"config": {"num_layers": 8}}}}
+
+        self.runner._configure_hidden_oracle_capture(inputs, args)
+
+        self.assertEqual(args.llama_persistent_dump_step, 8)
+        self.assertEqual(
+            args.llama_persistent_dump_names,
+            "l_out-2,attn_residual-3,l_out-3",
+        )
+        self.assertEqual(args.llama_persistent_dump_dir, Path("capture").resolve() / "llama")
+
+        args.llama_persistent_dump_step = 7
+        with self.assertRaisesRegex(ValueError, "conflicts.*dump step"):
+            self.runner._configure_hidden_oracle_capture(inputs, args)
+
+    def test_hidden_xray_accepts_prefill_trajectory_step_zero(self) -> None:
+        args = Namespace(
+            hidden_state_step=0,
+            hidden_state_layer=1,
+            hidden_state_names="new_state",
+            hidden_state_dir=Path("capture"),
+            llama_persistent_dump_dir=None,
+            workdir=Path("work"),
+        )
+        inputs = {"runtime": {"manifest": {"config": {"num_layers": 8}}}}
+
+        self.runner._configure_hidden_oracle_capture(inputs, args)
+
+        self.assertEqual(args.llama_persistent_dump_step, 0)
+        self.assertEqual(args.llama_persistent_dump_names, "new_state-1")
+
+    def test_load_ck_hidden_exports_preserves_layer_and_position(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "tok_1042_layer_003_layer_out.f32"
+            np.array([1.0, 2.0], dtype=np.float32).tofile(path)
+
+            dumps = self.runner._load_ck_hidden_exports(root, ["layer_out"], 3)
+
+            self.assertEqual(len(dumps), 1)
+            self.assertEqual(dumps[0].layer_id, 3)
+            self.assertEqual(dumps[0].op_name, "layer_out")
+            self.assertEqual(dumps[0].token_id, 1042)
+            np.testing.assert_array_equal(dumps[0].data, [1.0, 2.0])
+
+    def test_hidden_export_name_matching_is_not_suffix_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            np.array([1.0], dtype=np.float32).tofile(
+                root / "tok_0000_layer_000_attn_norm.f32"
+            )
+            np.array([2.0], dtype=np.float32).tofile(
+                root / "tok_0000_layer_000_post_attn_norm.f32"
+            )
+
+            selected = self.runner._hidden_named_files(root, "attn_norm")
+
+            self.assertEqual(
+                [path.name for path in selected],
+                ["tok_0000_layer_000_attn_norm.f32"],
+            )
+
+    def test_recurrent_state_layout_is_normalized_to_llama_axes(self) -> None:
+        dump = self.runner.first_token.parity_test_v7.ParityDump(
+            1,
+            "new_state",
+            np.arange(8, dtype=np.float32),
+            7,
+            "fp32",
+        )
+
+        result = self.runner._normalize_ck_recurrent_state_layout(
+            [dump], {"recurrent_num_heads": 2, "recurrent_head_dim": 2}
+        )
+
+        expected = np.arange(8, dtype=np.float32).reshape(2, 2, 2).transpose(0, 2, 1)
+        np.testing.assert_array_equal(result[0].data, expected)
+
+    def test_segmented_prefill_oracle_concatenates_rows_and_keeps_final_state(self) -> None:
+        dump_type = self.runner.first_token.parity_test_v7.ParityDump
+        row_dumps = [
+            dump_type(1, "attn_norm", np.asarray(values, dtype=np.float32), token, "fp32")
+            for values, token in (([1.0, 2.0], 8), ([3.0], 1016), ([4.0, 5.0], 62))
+        ]
+        state_dumps = [
+            dump_type(1, "new_state", np.asarray([value], dtype=np.float32), token, "fp32")
+            for value, token in ((10.0, 8), (20.0, 1016), (30.0, 62))
+        ]
+
+        result = self.runner._coalesce_segmented_prefill_oracle_dumps(
+            row_dumps + state_dumps
+        )
+
+        self.assertEqual([(row.op_name, row.token_id) for row in result], [
+            ("attn_norm", 62),
+            ("new_state", 62),
+        ])
+        np.testing.assert_array_equal(result[0].data, [1.0, 2.0, 3.0, 4.0, 5.0])
+        np.testing.assert_array_equal(result[1].data, [30.0])
+
     def test_llama_persistent_dump_uses_trajectory_logits_step_index(self) -> None:
         observed = {}
 
@@ -45,7 +155,7 @@ class MultitokenEOSContractTests(unittest.TestCase):
             max_new_tokens=2,
             threads=4,
             llama_no_repack=False,
-            llama_persistent_dump_step=5,
+            llama_persistent_dump_step=0,
             llama_persistent_dump_dir=Path("persistent-dump"),
             llama_persistent_dump_names="l_out-0",
             llama_persistent_dump_flash_inputs=True,
@@ -74,7 +184,7 @@ class MultitokenEOSContractTests(unittest.TestCase):
 
         command = observed["command"]
         index = command.index("--dump-greedy-decode-step")
-        self.assertEqual(command[index + 1], "5")
+        self.assertEqual(command[index + 1], "0")
         self.assertEqual(command[command.index("--dump-names") + 1], "l_out-0")
         self.assertIn("--dump-flash-inputs", command)
         self.assertEqual(result["oracle_evidence"]["commit"], "a" * 40)
@@ -400,6 +510,19 @@ class MultitokenEOSContractTests(unittest.TestCase):
                     {"workdir": root, "c_path": source}, ["qcur_normed"], 0
                 )
 
+    def test_recurrent_semantic_names_resolve_to_exact_exporters(self) -> None:
+        self.assertEqual(
+            self.runner._resolve_ck_hidden_export_names(
+                ["qkv", "q_predelta", "k_predelta", "new_state"]
+            ),
+            [
+                "linear_attn_qkv_mixed",
+                "q_conv_predelta",
+                "k_conv_predelta",
+                "new_state",
+            ],
+        )
+
     def test_hidden_capture_preflight_rejects_missing_replay_variant(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -413,6 +536,42 @@ class MultitokenEOSContractTests(unittest.TestCase):
                 self.runner._validate_hidden_capture_request(
                     {"workdir": root, "c_path": source}, ["attn_out"], 0
                 )
+
+            catalog = self.runner._validate_hidden_capture_request(
+                {"workdir": root, "c_path": source},
+                ["attn_out"],
+                0,
+                require_replay=False,
+            )
+            self.assertEqual(catalog["attn_out"], [0])
+
+    def test_hidden_capture_preflight_uses_prefill_source_for_step_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            decode_source = root / "decoder_v8.c"
+            prefill_source = root / "decoder_v8_prefill.c"
+            decode_source.write_text(
+                'ck_debug_export_hidden(model, 0, "decode_only", data, 1);\n',
+                encoding="utf-8",
+            )
+            prefill_source.write_text(
+                'ck_debug_export_hidden(model, 0, "new_state", data, 1);\n',
+                encoding="utf-8",
+            )
+
+            catalog = self.runner._validate_hidden_capture_request(
+                {
+                    "c_path": decode_source,
+                    "prefill_c_path": prefill_source,
+                    "prefill_so_path": root / "libdecoder_v8_prefill.so",
+                },
+                ["new_state"],
+                0,
+                require_replay=False,
+                execution_phase="prefill",
+            )
+
+            self.assertEqual(catalog["new_state"], [0])
 
     def test_hidden_capture_batches_multiple_names_into_two_model_executions(self) -> None:
         class Library:
@@ -435,7 +594,11 @@ class MultitokenEOSContractTests(unittest.TestCase):
                 encoding="utf-8",
             )
             inputs = {
-                "runtime": {"workdir": root, "c_path": source},
+                "runtime": {
+                    "workdir": root,
+                    "c_path": source,
+                    "prefill_c_path": source,
+                },
                 "tokens_after": [1, 2],
             }
             report = {
@@ -445,6 +608,9 @@ class MultitokenEOSContractTests(unittest.TestCase):
                         "generated_prefix": [10, 11],
                         "ck_next": 12,
                         "llama_next": 12,
+                        "ck_logits_sha256": self.runner._logits_sha256(
+                            np.zeros(3, dtype=np.float32)
+                        ),
                     },
                 ]
             }
@@ -457,7 +623,8 @@ class MultitokenEOSContractTests(unittest.TestCase):
                 workdir=root,
                 ck_strict_parity=False,
             )
-            init = mock.Mock(side_effect=[(Library(), object(), 3), (Library(), object(), 3)])
+            logits = (ctypes.c_float * 3)(0.0, 0.0, 0.0)
+            init = mock.Mock(side_effect=[(Library(), logits, 3), (Library(), logits, 3)])
 
             def hidden_file(_directory, name):
                 if name == "rope_k_last":
@@ -477,6 +644,71 @@ class MultitokenEOSContractTests(unittest.TestCase):
             self.assertEqual([row["name"] for row in result["results"]], names)
             self.assertEqual([row["status"] for row in result["results"]], ["ok", "error", "ok"])
             self.assertIn("missing rope_k", result["results"][1]["error"])
+            self.assertEqual(result["observational_neutrality"]["status"], "accepted")
+
+    def test_prefill_hidden_capture_arms_export_before_initialization_without_replay(self) -> None:
+        class Library:
+            def ck_model_decode(self, token, logits):
+                return 0
+
+            def ck_model_free(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "decoder_v8.c"
+            source.write_text(
+                'ck_debug_export_hidden(model, 0, "rope_q", data, 128);\n',
+                encoding="utf-8",
+            )
+            inputs = {
+                "runtime": {
+                    "workdir": root,
+                    "c_path": source,
+                    "prefill_c_path": source,
+                },
+                "tokens_after": [1, 2],
+            }
+            logits = (ctypes.c_float * 3)(0.0, 0.0, 0.0)
+            report = {
+                "steps": [{
+                    "generated_prefix": [],
+                    "ck_next": 12,
+                    "llama_next": 12,
+                    "ck_logits_sha256": self.runner._logits_sha256(
+                        np.zeros(3, dtype=np.float32)
+                    ),
+                }]
+            }
+            args = Namespace(
+                hidden_state_step=0,
+                hidden_state_layer=0,
+                hidden_state_names="rope_q",
+                hidden_state_dir=root / "capture",
+                hidden_state_atol=1.0e-5,
+                hidden_state_skip_full_replay=False,
+                llama_persistent_dump_dir=None,
+                workdir=root,
+                ck_strict_parity=False,
+            )
+
+            def init_state(*_args, **_kwargs):
+                self.assertEqual(
+                    self.runner.os.environ.get("CK_DEBUG_EXPORT_HIDDEN_NAMES"),
+                    "rope_q",
+                )
+                return Library(), logits, 3
+
+            with mock.patch.object(self.runner, "_prepare_inputs", return_value=inputs), \
+                 mock.patch.object(self.runner, "_init_ck_state", side_effect=init_state) as init:
+                result = self.runner._capture_hidden_state_step(report, args)
+
+            self.assertEqual(init.call_count, 1)
+            self.assertEqual(result["ck_execution_count"], 1)
+            self.assertEqual(result["full_replay_control"], "not_applicable_prefill")
+            self.assertEqual(result["results"], [])
+            self.assertIsNone(result["first_issue"])
+            self.assertEqual(result["observational_neutrality"]["status"], "accepted")
 
     def test_hidden_capture_exports_bounded_kv_for_every_requested_layer(self) -> None:
         class ExportKV:
@@ -758,6 +990,10 @@ class MultitokenEOSContractTests(unittest.TestCase):
         self.assertEqual(report["llama_oracle"]["commit"], "a" * 40)
         self.assertEqual(len(report["steps"]), 1)
         self.assertEqual(report["steps"][0]["ck_next"], 151645)
+        self.assertEqual(
+            report["steps"][0]["ck_logits_sha256"],
+            self.runner._logits_sha256(np.zeros(3, dtype=np.float32)),
+        )
         self.assertEqual(library.decode_calls, 0)
 
 

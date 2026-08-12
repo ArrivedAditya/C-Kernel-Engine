@@ -6,6 +6,7 @@ import importlib.util
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -448,9 +449,134 @@ def _summarize_statuses(results: list[dict[str, Any]]) -> dict[str, int]:
 
 def _canonical_dump_op_name(op_name: str) -> str:
     name = str(op_name)
+    aliases = {
+        "linear_attn_qkv_mixed": "qkv",
+        "q_conv_predelta": "q_predelta",
+        "k_conv_predelta": "k_predelta",
+        "attn_post_norm": "post_attn_norm",
+        "ffn_gate": "mlp_gate",
+        "gate_proj": "mlp_gate",
+        "ffn_up": "mlp_up",
+        "up_proj": "mlp_up",
+        "ffn_swiglu": "mlp_swiglu",
+        "ffn_out": "mlp_down",
+        "down_proj": "mlp_down",
+    }
+    if name in aliases:
+        return aliases[name]
     if name in {"attn_out", "kqv_wo"}:
         return "out_proj"
+    if name == "attn_residual":
+        return "after_attn"
     return name
+
+
+_LLAMA_SEMANTIC_DUMP_NAMES = {
+    "qkv": "linear_attn_qkv_mixed",
+    "q_predelta": "q_conv_predelta",
+    "k_predelta": "k_conv_predelta",
+    "after_attn": "attn_residual",
+    "layer_out": "l_out",
+    "post_attn_norm": "attn_post_norm",
+    "mlp_gate": "ffn_gate",
+    "mlp_up": "ffn_up",
+    "mlp_swiglu": "ffn_swiglu",
+    "mlp_down": "ffn_out",
+}
+
+
+def _resolve_llama_dump_names(dump_names: str, *, layer_count: int) -> str:
+    """Resolve circuit boundary names to exact llama.cpp graph tensor names.
+
+    A layer input is an edge rather than a llama.cpp graph node: layer zero
+    consumes ``model.input_embed`` and every later layer consumes the previous
+    layer's ``l_out``.  Unsuffixed semantic names intentionally expand across
+    all layers so callers can request a circuit boundary without knowing the
+    oracle's graph naming convention.
+    """
+    expanded: list[str] = []
+    seen: set[str] = set()
+
+    def append(name: str) -> None:
+        if name not in seen:
+            seen.add(name)
+            expanded.append(name)
+
+    for raw_name in str(dump_names).split(","):
+        requested = raw_name.strip()
+        if not requested:
+            continue
+        match = re.match(r"^(.*?)-(\d+)$", requested)
+        semantic_name = match.group(1) if match else requested
+        requested_layer = int(match.group(2)) if match else None
+        is_semantic = semantic_name == "layer_input" or semantic_name in _LLAMA_SEMANTIC_DUMP_NAMES
+        if not is_semantic:
+            append(requested)
+            continue
+        if requested_layer is not None:
+            layers = [requested_layer]
+        else:
+            if int(layer_count) <= 0:
+                raise ValueError(
+                    f"cannot expand unsuffixed semantic dump name {requested!r} "
+                    "without a positive decoder layer count"
+                )
+            layers = list(range(int(layer_count)))
+        for layer_id in layers:
+            if layer_id < 0 or (int(layer_count) > 0 and layer_id >= int(layer_count)):
+                raise ValueError(
+                    f"semantic dump layer {layer_id} is outside decoder layers [0, {int(layer_count) - 1}]"
+                )
+            if semantic_name == "layer_input":
+                append("model.input_embed" if layer_id == 0 else f"l_out-{layer_id - 1}")
+            else:
+                append(f"{_LLAMA_SEMANTIC_DUMP_NAMES[semantic_name]}-{layer_id}")
+    return ",".join(expanded)
+
+
+def _augment_layer_input_aliases(
+    dumps: list[Any], *, layer_count: int, alias_after_attn: bool = False
+) -> list[Any]:
+    """Expose the graph edge feeding each decoder layer as ``layer_input``."""
+    out: list[Any] = []
+    seen: set[tuple[int, str, int]] = set()
+    for dump in dumps:
+        layer_id = int(dump.layer_id)
+        op_name = _canonical_dump_op_name(str(dump.op_name))
+        if alias_after_attn and op_name == "ffn_inp":
+            op_name = "after_attn"
+        if op_name == "model.input_embed":
+            layer_id = 0
+            op_name = "layer_input"
+        normalized = parity_test_v7.ParityDump(
+            layer_id,
+            op_name,
+            dump.data,
+            int(getattr(dump, "token_id", 0)),
+            str(dump.dtype),
+            source_token_id=int(getattr(dump, "source_token_id", dump.token_id)),
+            source_name=getattr(dump, "source_name", None),
+        )
+        out.append(normalized)
+        seen.add((layer_id, op_name, int(normalized.token_id)))
+        if op_name != "layer_out" or layer_id + 1 >= int(layer_count):
+            continue
+        alias_key = (layer_id + 1, "layer_input", int(normalized.token_id))
+        if alias_key in seen:
+            continue
+        out.append(
+            parity_test_v7.ParityDump(
+                layer_id + 1,
+                "layer_input",
+                dump.data,
+                int(getattr(dump, "token_id", 0)),
+                str(dump.dtype),
+                source_token_id=int(getattr(dump, "source_token_id", dump.token_id)),
+                source_name=getattr(dump, "source_name", None),
+            )
+        )
+        seen.add(alias_key)
+    return out
 
 
 def _ck_dump_filter_names(dump_names: str) -> str:
@@ -463,7 +589,16 @@ def _ck_dump_filter_names(dump_names: str) -> str:
             continue
         layer_id, canonical_name = parity_test_v7._normalize_layer_and_op(-1, raw_name)
         canonical_filter = f"{canonical_name}-{layer_id}" if layer_id >= 0 else canonical_name
-        candidates = [raw_name, canonical_filter]
+        if canonical_name == "layer_input":
+            # Only layer zero has a distinct input tensor. Every later input is
+            # exactly the preceding layer_out edge and is aliased after load.
+            candidates = (
+                ["layer_input-0", "layer_out"]
+                if layer_id < 0
+                else (["layer_input-0"] if layer_id == 0 else [f"layer_out-{layer_id - 1}"])
+            )
+        else:
+            candidates = [raw_name, canonical_filter]
         # llama.cpp reuses Qcur/Kcur for projection, Q/K normalization, and
         # post-RoPE occurrences. CK gives those semantic boundaries distinct
         # names, so requesting the llama callback must enable every matching
@@ -480,6 +615,13 @@ def _ck_dump_filter_names(dump_names: str) -> str:
             )
         if canonical_name == "kqv_wo":
             candidates.append(f"attn_out-{layer_id}" if layer_id >= 0 else "attn_out")
+        if canonical_name == "after_attn":
+            candidates.extend(
+                (
+                    f"{name}-{layer_id}" if layer_id >= 0 else name
+                    for name in ("attn_residual", "ffn_inp")
+                )
+            )
         for candidate in candidates:
             if candidate not in seen:
                 seen.add(candidate)
@@ -1215,6 +1357,14 @@ def _capture_dump_compare(
     llama_prefix_decode_mode: str = "batched",
     llama_decode_mode: str = "sequential",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    runtime_config = dict((runtime.get("manifest") or {}).get("config") or {})
+    layer_count = int(runtime_config.get("num_layers", 0) or 0)
+    llama_dump_names = _resolve_llama_dump_names(dump_names, layer_count=layer_count)
+    semantic_names = {
+        re.sub(r"-\d+$", "", item.strip())
+        for item in str(dump_names).split(",")
+        if item.strip()
+    }
     if prefix_tokens > 0:
         prefix_path = dump_root / "prefix.f32"
         prefix_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1238,7 +1388,7 @@ def _capture_dump_compare(
         prefix_decode_mode=str(llama_prefix_decode_mode),
         decode_mode=str(llama_decode_mode),
         dump_dir=llama_dump_dir,
-        dump_names=dump_names,
+        dump_names=llama_dump_names,
     )
     ck_dump_names = _ck_dump_filter_names(dump_names)
     old_ck_op_filter = os.environ.get("CK_PARITY_OP_FILTER")
@@ -1288,6 +1438,16 @@ def _capture_dump_compare(
     ck_dump_path = ck_dump_dir / "dump.bin"
     ck_dumps = parity_test_v7.read_dump_file(ck_dump_path)
     llama_dumps = _load_llama_dump_dir(llama_dump_dir)
+    ck_dumps = _augment_layer_input_aliases(
+        ck_dumps,
+        layer_count=layer_count,
+        alias_after_attn="after_attn" in semantic_names,
+    )
+    llama_dumps = _augment_layer_input_aliases(
+        llama_dumps,
+        layer_count=layer_count,
+        alias_after_attn="after_attn" in semantic_names,
+    )
     tokens_before_count = len(list(tokens_before or []))
     ck_prompt_start_token = None
     llama_prompt_start_token = None
@@ -1347,6 +1507,9 @@ def _capture_dump_compare(
     return ck, {
         "status": status,
         "dump_names": [item.strip() for item in str(dump_names).split(",") if item.strip()],
+        "llama_dump_names": [
+            item.strip() for item in llama_dump_names.split(",") if item.strip()
+        ],
         "ck_dump_names": [item.strip() for item in ck_dump_names.split(",") if item.strip()],
         "pass_filter": str(dump_pass),
         "comparison_pass_filter": compare_pass,

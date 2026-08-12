@@ -100,6 +100,80 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             decoder_parity_v8._ck_dump_filter_names("Kcur-1"),
             "Kcur-1,k_proj-1,Kcur_normed-1,kcur_normed-1,Kcur_rope-1,kcur_rope-1",
         )
+        self.assertEqual(
+            decoder_parity_v8._ck_dump_filter_names("layer_input,after_attn,layer_out"),
+            "layer_input-0,layer_out,after_attn,attn_residual,ffn_inp",
+        )
+        self.assertEqual(
+            decoder_parity_v8._ck_dump_filter_names("layer_input-3,after_attn-3"),
+            "layer_out-2,after_attn-3,attn_residual-3,ffn_inp-3",
+        )
+
+    def test_resolve_llama_dump_names_expands_semantic_boundaries(self) -> None:
+        self.assertEqual(
+            decoder_parity_v8._resolve_llama_dump_names(
+                "layer_input,after_attn,layer_out", layer_count=3
+            ),
+            "model.input_embed,l_out-0,l_out-1,"
+            "attn_residual-0,attn_residual-1,attn_residual-2,"
+            "l_out-2",
+        )
+
+    def test_resolve_llama_dump_names_supports_layer_suffix_and_native_names(self) -> None:
+        self.assertEqual(
+            decoder_parity_v8._resolve_llama_dump_names(
+                "layer_input-2,after_attn-1,Qcur-4", layer_count=5
+            ),
+            "l_out-1,attn_residual-1,Qcur-4",
+        )
+        with self.assertRaisesRegex(ValueError, "outside decoder layers"):
+            decoder_parity_v8._resolve_llama_dump_names("layer_out-5", layer_count=5)
+
+    def test_resolve_llama_dump_names_maps_recurrent_mlp_boundaries(self) -> None:
+        self.assertEqual(
+            decoder_parity_v8._resolve_llama_dump_names(
+                "post_attn_norm-0,mlp_gate-0,mlp_up-0,mlp_swiglu-0,mlp_down-0",
+                layer_count=3,
+            ),
+            "attn_post_norm-0,ffn_gate-0,ffn_up-0,ffn_swiglu-0,ffn_out-0",
+        )
+        self.assertEqual(
+            [
+                decoder_parity_v8._canonical_dump_op_name(name)
+                for name in (
+                    "attn_post_norm", "gate_proj", "up_proj", "ffn_swiglu", "down_proj"
+                )
+            ],
+            ["post_attn_norm", "mlp_gate", "mlp_up", "mlp_swiglu", "mlp_down"],
+        )
+
+    def test_augment_llama_layer_input_aliases_preserves_shared_edge_identity(self) -> None:
+        dump = decoder_parity_v8.parity_test_v7.ParityDump
+        embedded = np.array([1.0, 2.0], dtype=np.float32)
+        layer_zero_out = np.array([3.0, 4.0], dtype=np.float32)
+        augmented = decoder_parity_v8._augment_layer_input_aliases(
+            [
+                dump(-1, "model.input_embed", embedded, 7, "fp32"),
+                dump(0, "layer_out", layer_zero_out, 7, "fp32"),
+            ],
+            layer_count=2,
+        )
+
+        self.assertEqual(
+            [(row.layer_id, row.op_name) for row in augmented],
+            [(0, "layer_input"), (0, "layer_out"), (1, "layer_input")],
+        )
+        self.assertIs(augmented[0].data, embedded)
+        self.assertIs(augmented[2].data, layer_zero_out)
+
+    def test_augment_semantic_after_attn_uses_ck_ffn_input_checkpoint(self) -> None:
+        dump = decoder_parity_v8.parity_test_v7.ParityDump
+        augmented = decoder_parity_v8._augment_layer_input_aliases(
+            [dump(3, "ffn_inp", np.array([1.0], dtype=np.float32), 8, "fp32")],
+            layer_count=4,
+            alias_after_attn=True,
+        )
+        self.assertEqual([(row.layer_id, row.op_name) for row in augmented], [(3, "after_attn")])
 
     def test_load_llama_dump_dir_parses_jsonl_index(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_decoder_llama_dump_") as tmpdir:
@@ -218,7 +292,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             pass_filter="decode",
         )
 
-        self.assertEqual([row["op"] for row in report["results"]], ["ffn_inp", "down_proj"])
+        self.assertEqual([row["op"] for row in report["results"]], ["ffn_inp", "mlp_down"])
         self.assertEqual(report["first_issue"]["op"], "ffn_inp")
 
     def test_compare_dump_sets_rejects_distinct_ambiguous_occurrences(self) -> None:

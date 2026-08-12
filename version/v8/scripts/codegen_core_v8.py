@@ -798,6 +798,13 @@ def emit_op(
                 f'    ck_debug_export_hidden(model, {int(layer)}, "{checkpoint}", '
                 f"(const float*)({src_expr}), ((size_t)({size_expr})) / sizeof(float));"
             )
+            if dump and op_instance_idx == 0:
+                lines.append("    #ifdef CK_PARITY_DUMP")
+                lines.append(
+                    f'    ck_dump_tensor((const float*)({src_expr}), {int(layer)}, "layer_input", '
+                    f"((size_t)({size_expr})) / sizeof(float));"
+                )
+                lines.append("    #endif")
 
     def _return_lines(*, append_stop: bool = False) -> str:
         if append_stop and seq_idx is not None:

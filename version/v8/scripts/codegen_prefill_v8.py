@@ -1447,7 +1447,13 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         num_kv_heads = _get_arg("num_kv_heads") or "NUM_KV_HEADS"
         head_dim = _get_arg("aligned_head_dim", "head_dim") or "HEAD_DIM"
 
-        if op_type == "qk_norm":
+        if op_type == "residual_save" and op_instance_idx == 0:
+            _emit_dump(
+                _get_arg("src", "input", "x"),
+                "layer_input",
+                _mul_expr(tokens, embed_dim_expr),
+            )
+        elif op_type == "qk_norm":
             q_expr = _get_arg("q")
             k_expr = _get_arg("k")
             q_size = _mul_expr(tokens, num_heads, head_dim)
@@ -2242,6 +2248,11 @@ def _emit_prefill_q4_gateup_swiglu_x16(
     )
     lines.extend("    " + line if line else line for line in old_code.splitlines())
     lines.append("    }")
+    raw_out = out_expr.replace("(float*)", "").replace("(void*)", "").strip()
+    lines.append(
+        f'    if ({fused_var}) ck_debug_export_hidden(model, {layer}, "mlp_swiglu", '
+        f'(const float*){raw_out}, ({m_expr}) * ({d_expr}));'
+    )
     return "\n".join(lines)
 
 def emit_prefill_from_embedded_function(
@@ -2498,6 +2509,32 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
                 profile=profile,
                 dump=dump,
             )
+            args_list = op.get("args", [])
+            m_arg = next(
+                (
+                    arg
+                    for arg in args_list
+                    if isinstance(arg, dict) and str(arg.get("name", "")).lower() == "m"
+                ),
+                None,
+            )
+            out_expr = (
+                _find_arg_expr(args_list, arg_name="output")
+                or _find_arg_expr(args_list, arg_name="out")
+                or _find_arg_expr(args_list, arg_name="C")
+                or _find_arg_expr(args_list, arg_name="c")
+                or _find_arg_expr(args_list, arg_name="y")
+            )
+            m_expr = _find_arg_expr(args_list, arg_name="M") or _find_arg_expr(args_list, arg_name="m") or "num_tokens"
+            if isinstance(m_arg, dict) and str(m_arg.get("source", "")).lower() == "dim:_m":
+                m_expr = "num_tokens"
+            n_expr = _find_arg_expr(args_list, arg_name="N") or _find_arg_expr(args_list, arg_name="n") or "EMBED_DIM"
+            if out_expr:
+                raw_out = out_expr.replace("(float*)", "").replace("(void*)", "").strip()
+                op_code += (
+                    f'\n    ck_debug_export_hidden(model, {int(op.get("layer", -1))}, "mlp_down", '
+                    f'(const float*){raw_out}, ({m_expr}) * ({n_expr}));'
+                )
         else:
             op_code = emit_prefill_op(op, seq_idx, config, profile=profile, dump=dump)
             if has_decoder_multimodal_bridge and op_type == "rope_qk":
