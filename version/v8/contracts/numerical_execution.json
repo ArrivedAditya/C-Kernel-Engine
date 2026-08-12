@@ -902,7 +902,7 @@
         "weight": "none",
         "accumulator": "fp32",
         "contraction": "enabled",
-        "evaluation_order": "ascending_token_grouped_qk_repeat_then_avx2_state_update_then_bf16_output_store"
+        "evaluation_order": "ascending_token_grouped_qk_repeat_interleave_group_equals_head_div_heads_per_group_then_avx2_state_update_then_bf16_output_store"
       },
       "rounding": {
         "mode": "rne",
@@ -921,7 +921,7 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "Qwen3.6 BF16 Gated DeltaNet provider: repeat each grouped Q/K head across its value-head group without reading beyond the compact Q/K buffers, retain FP32 recurrent state, and store the attention output to BF16."
+      "description": "Qwen3.6 BF16 Gated DeltaNet provider: expand compact Q/K groups across adjacent value heads using group = head / (H / G), retain FP32 recurrent state, and store the attention output to BF16."
     },
     "yarn_rope_cache_explicit_positions_fp32": {
       "operator_family": "yarn_rope_init",

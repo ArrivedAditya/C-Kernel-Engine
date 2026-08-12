@@ -696,6 +696,7 @@ PY_TESTS := unittest/test_layernorm.py \
             unittest/test_rmsnorm.py \
             unittest/test_qk_norm.py \
             tests/test_deltanet.py \
+            tests/test_deltanet_pytorch_bf16.py \
             unittest/test_recurrent_conv_state_update.py \
             unittest/test_nemotron_router.py \
             unittest/test_moe_relu2_expert.py \
@@ -1618,6 +1619,7 @@ vision-encoder-bf16-full:
 
 test-deltanet: $(LIB)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) tests/test_deltanet.py $(ARGS)
+	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) -m pytest -q tests/test_deltanet_pytorch_bf16.py $(ARGS)
 
 test-ssm-conv: $(LIB)
 	LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) unittest/test_ssm_conv.py $(ARGS)
