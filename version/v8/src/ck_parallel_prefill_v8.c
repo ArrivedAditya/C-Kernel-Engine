@@ -2612,9 +2612,9 @@ void geglu_forward_exact_parallel_dispatch(
     }
 }
 
-void gemm_nt_q5_k_parallel_dispatch(
+static void gemm_nt_q5_k_parallel_dispatch_impl(
     const float *A, const void *B, const float *bias, float *C,
-    int M, int N, int K)
+    int M, int N, int K, void *scratch, size_t scratch_bytes)
 {
     void *prepared = ck_find_prepared_q5_k(B, N, K);
     ck_threadpool_t *pool = ck_threadpool_global();
@@ -2636,8 +2636,8 @@ void gemm_nt_q5_k_parallel_dispatch(
         const int blocks_per_row = K / QK_K;
         const size_t q8_bytes =
             (size_t)M * (size_t)blocks_per_row * sizeof(block_q8_K);
-        block_q8_K *A_q8 = (block_q8_K *)malloc(q8_bytes);
-        if (A_q8) {
+        if (scratch && scratch_bytes >= q8_bytes) {
+            block_q8_K *A_q8 = (block_q8_K *)scratch;
             for (int m = 0; m < M; ++m) {
                 quantize_row_q8_k(
                     A + (size_t)m * K,
@@ -2654,7 +2654,6 @@ void gemm_nt_q5_k_parallel_dispatch(
             ck_threadpool_parallel_for_n(
                 pool, active, 0, jobs, 1,
                 work_gemm_nt_q5_k_prepared_nrange, &nsplit_args);
-            free(A_q8);
             return;
         }
     }
@@ -2670,4 +2669,21 @@ void gemm_nt_q5_k_parallel_dispatch(
                              : work_gemm_nt_q5_k_prepared)
                  : work_gemm_nt_q5_k,
         &args);
+}
+
+void gemm_nt_q5_k_parallel_dispatch_with_scratch(
+    const float *A, const void *B, const float *bias, float *C,
+    int M, int N, int K, void *scratch, size_t scratch_bytes)
+{
+    gemm_nt_q5_k_parallel_dispatch_impl(
+        A, B, bias, C, M, N, K, scratch, scratch_bytes);
+}
+
+void gemm_nt_q5_k_parallel_dispatch(
+    const float *A, const void *B, const float *bias, float *C,
+    int M, int N, int K)
+{
+    /* Compatibility callers remain allocation-free. Generated runtimes pass
+     * planner-owned scratch through the map-owned ABI above. */
+    gemm_nt_q5_k_parallel_dispatch_impl(A, B, bias, C, M, N, K, NULL, 0);
 }

@@ -117,6 +117,10 @@ void gemm_nt_q5_k_parallel_dispatch(
     const float *A, const void *B, const float *bias, float *C,
     int M, int N, int K);
 
+void gemm_nt_q5_k_parallel_dispatch_with_scratch(
+    const float *A, const void *B, const float *bias, float *C,
+    int M, int N, int K, void *scratch, size_t scratch_bytes);
+
 /* Macro overrides - when CK_PARALLEL_PREFILL is defined,
  * preprocessor redirects serial gemm_nt_*() calls to thread pool dispatch */
 #ifdef CK_PARALLEL_PREFILL

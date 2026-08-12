@@ -1318,7 +1318,7 @@ class NumericalExecutionContractTests(unittest.TestCase):
             "prefill": (
                 "decoder.recurrent_qkv_projection.q5_k.prefill",
                 "gemm_nt_q5_k",
-                "gemm_nt_q5_k_parallel_dispatch",
+                "gemm_nt_q5_k_parallel_dispatch_with_scratch",
             ),
             "decode": (
                 "decoder.recurrent_qkv_projection.q5_k.decode",
