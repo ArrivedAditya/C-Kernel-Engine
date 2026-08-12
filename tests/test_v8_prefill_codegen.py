@@ -621,10 +621,42 @@ class TestV8PrefillCodegen(unittest.TestCase):
         emitted = codegen_prefill_v8.emit_prefill_weight_prepare_function([op, op])
 
         self.assertEqual(emitted.count("ck_q5_0_prepare_q8_0_weight("), 1)
-        self.assertIn("SIZE_MAX - mapped_prepared_bytes_0", emitted)
-        self.assertIn("mapped_prepared_bytes_0 = SIZE_MAX", emitted)
-        self.assertIn("mapped_prepared_bytes_0 <= (size_t)1024", emitted)
+        self.assertIn("mapped_prepared_item_0_0 <= (size_t)1024", emitted)
+        self.assertIn(
+            "mapped_prepared_bytes_0 <= (size_t)1024 - mapped_prepared_item_0_0",
+            emitted,
+        )
+        self.assertIn("mapped_prepared_skipped_0 += 1", emitted)
+        self.assertIn("prepared %zu bytes within budget 1024; skipped %d weight(s)", emitted)
         self.assertIn("model->weight_q5, 64, 128", emitted)
+
+    def test_map_owned_weight_preparation_skips_only_items_beyond_budget(self) -> None:
+        preparation = {
+            "function": "prepare_weight",
+            "arguments": {"B": "B", "N": "N", "K": "K"},
+            "prepared_bytes": "N * K",
+            "max_total_bytes": 1024,
+        }
+
+        def op(weight: str, n: int, k: int) -> dict:
+            return {
+                "function": "gemm_nt_synthetic",
+                "args": [
+                    {"name": "B", "expr": weight},
+                    {"name": "N", "expr": str(n)},
+                    {"name": "K", "expr": str(k)},
+                ],
+                "call_abi": {"weight_preparation": preparation},
+            }
+
+        emitted = codegen_prefill_v8.emit_prefill_weight_prepare_function(
+            [op("model->small", 8, 8), op("model->large", 64, 64)]
+        )
+
+        self.assertIn("prepared += prepare_weight(model->small, 8, 8)", emitted)
+        self.assertIn("prepared += prepare_weight(model->large, 64, 64)", emitted)
+        self.assertEqual(emitted.count("mapped_prepared_skipped_0 += 1"), 2)
+        self.assertNotIn("if (mapped_prepared_bytes_0 <=", emitted)
 
 
 if __name__ == "__main__":

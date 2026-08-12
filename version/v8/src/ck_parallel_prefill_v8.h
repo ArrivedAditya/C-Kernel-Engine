@@ -54,6 +54,7 @@ int ck_q4k_prepare_vnni_x16_weight(const void *B, int N, int K);
 int ck_q4k_prepare_vnni_x8_weight(const void *B, int N, int K);
 int ck_q5_0_prepare_q8_0_weight(const void *B, int N, int K);
 int ck_q5_k_prepare_expanded_weight(const void *B, int N, int K);
+int ck_q6_k_prepare_expanded_weight(const void *B, int N, int K);
 
 void gated_deltanet_llama_prefill_parallel_dispatch(
     const float *q, const float *k, const float *v,

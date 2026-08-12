@@ -177,6 +177,13 @@ def _run_one(args: argparse.Namespace) -> int:
     ]
     fn.restype = None
 
+    if args.prepare_q6:
+        prepare = model.ck_q6_k_prepare_expanded_weight
+        prepare.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+        prepare.restype = ctypes.c_int
+        if prepare(b_buf, args.n, args.k) != 1:
+            raise RuntimeError('Q6_K weight preparation was rejected')
+
     for _ in range(args.warmup):
         fn(a_buf, b_buf, None, c, args.m, args.n, args.k)
 
@@ -189,7 +196,8 @@ def _run_one(args: argparse.Namespace) -> int:
     checksum = float(c[0]) + float(c[(args.m * args.n) // 2]) + float(c[args.m * args.n - 1])
     print(
         f'mode={args.mode} threads={args.threads} M={args.m} N={args.n} K={args.k} '
-        f'tile_m={os.getenv("CK_PREFILL_TILE_M", "")} tile_n={os.getenv("CK_PREFILL_TILE_N", "")}'
+        f'tile_m={os.getenv("CK_PREFILL_TILE_M", "")} tile_n={os.getenv("CK_PREFILL_TILE_N", "")} '
+        f'prepared={int(args.prepare_q6)}'
     )
     print('times_ms=' + ','.join(f'{t * 1000.0:.2f}' for t in times))
     print(f'best_ms={min(times) * 1000.0:.2f} avg_ms={sum(times) * 1000.0 / len(times):.2f}')
@@ -320,6 +328,63 @@ def _run_compare_m4(args: argparse.Namespace) -> int:
     return 0 if passed else 1
 
 
+def _run_compare_prepared(args: argparse.Namespace) -> int:
+    provider = _q6_provider_name(args.engine_lib)
+    if 'avx2' not in provider:
+        print(
+            'SKIP: prepared Q6_K performance gate requires the AVX2 '
+            f'provider (active={provider or "unknown"})'
+        )
+        return 0
+
+    script = Path(__file__).resolve()
+    base = [
+        sys.executable,
+        str(script),
+        '--mode', 'default',
+        '--m', str(args.m), '--n', str(args.n), '--k', str(args.k),
+        '--threads', str(args.threads), '--warmup', str(args.warmup),
+        '--iters', str(args.iters), '--seed', str(args.seed),
+        '--engine-lib', str(args.engine_lib),
+    ]
+    if args.model_lib is not None:
+        base.extend(['--model-lib', str(args.model_lib)])
+    env = os.environ.copy()
+    env.setdefault('OMP_NUM_THREADS', '1')
+    env['CK_NUM_THREADS'] = str(args.threads)
+
+    compact = subprocess.run(
+        base, env=env, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    prepared = subprocess.run(
+        base + ['--prepare-q6'], env=env, text=True,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    print('compact Q6_K baseline:')
+    print(compact.stdout.rstrip())
+    print('\nprepared Q6_K candidate:')
+    print(prepared.stdout.rstrip())
+
+    compact_match = BEST_MS_RE.search(compact.stdout)
+    prepared_match = BEST_MS_RE.search(prepared.stdout)
+    if (
+        compact.returncode != 0 or prepared.returncode != 0
+        or not compact_match or not prepared_match
+    ):
+        print('prepared_performance_gate=FAIL reason=benchmark')
+        return 1
+    compact_ms = float(compact_match.group(1))
+    prepared_ms = float(prepared_match.group(1))
+    speedup = compact_ms / prepared_ms if prepared_ms > 0.0 else 0.0
+    passed = speedup >= args.min_prepared_speedup
+    print(
+        f'prepared_speedup={speedup:.4f} compact_ms={compact_ms:.3f} '
+        f'prepared_ms={prepared_ms:.3f} '
+        f'min_required={args.min_prepared_speedup:.4f} '
+        f'prepared_performance_gate={"PASS" if passed else "FAIL"}'
+    )
+    return 0 if passed else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--m', type=int, default=1024, help='token rows')
@@ -333,11 +398,13 @@ def main() -> int:
     ap.add_argument('--tile-n', type=int, default=256)
     ap.add_argument('--engine-lib', type=Path, default=ROOT / 'build' / 'libckernel_engine.so')
     ap.add_argument('--model-lib', type=Path, default=None)
+    ap.add_argument('--prepare-q6', action='store_true')
     ap.add_argument(
         '--mode',
-        choices=('compare', 'compare-m4', 'default', 'row', '2d', 'm4'),
+        choices=('compare', 'compare-m4', 'compare-prepared', 'default', 'row', '2d', 'm4'),
         default='compare')
     ap.add_argument('--min-m4-speedup', type=float, default=1.05)
+    ap.add_argument('--min-prepared-speedup', type=float, default=1.15)
     ap.add_argument('--verify-row-exact', action='store_true',
                     help='compare every output byte with forced independent-row scheduling')
     args = ap.parse_args()
@@ -346,6 +413,8 @@ def main() -> int:
         return _run_compare(args)
     if args.mode == 'compare-m4':
         return _run_compare_m4(args)
+    if args.mode == 'compare-prepared':
+        return _run_compare_prepared(args)
     return _run_one(args)
 
 

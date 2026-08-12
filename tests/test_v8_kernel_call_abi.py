@@ -117,7 +117,12 @@ class V8KernelCallABITests(unittest.TestCase):
         preparations = build_ir_v8.load_kernel_weight_preparations()
         self.assertEqual(
             set(preparations),
-            {"gemm_nt_q4_k_q8_k", "gemm_nt_q5_0_q8_0", "gemm_nt_q5_k"},
+            {
+                "gemm_nt_q4_k_q8_k",
+                "gemm_nt_q5_0_q8_0",
+                "gemm_nt_q5_k",
+                "gemm_nt_q6_k_q8_k",
+            },
         )
         preparation = preparations["gemm_nt_q5_0_q8_0"]
         self.assertEqual(preparation["function"], "ck_q5_0_prepare_q8_0_weight")
@@ -141,6 +146,11 @@ class V8KernelCallABITests(unittest.TestCase):
         self.assertEqual(q4_k["prepared_format"], "q4_k_packed_vnni_x8")
         self.assertEqual(q4_k["max_total_bytes"], 2147483648)
         self.assertEqual(registry["gemm_nt_q4_k_q8_k"]["weight_preparation"], q4_k)
+        q6_k = preparations["gemm_nt_q6_k_q8_k"]
+        self.assertEqual(q6_k["function"], "ck_q6_k_prepare_expanded_weight")
+        self.assertEqual(q6_k["prepared_format"], "q6_k_expanded_integer_metadata_v1")
+        self.assertEqual(q6_k["max_total_bytes"], 1073741824)
+        self.assertEqual(registry["gemm_nt_q6_k_q8_k"]["weight_preparation"], q6_k)
 
     def test_weight_preparation_rejects_unknown_size_symbols(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cke_weight_preparation_") as td:
