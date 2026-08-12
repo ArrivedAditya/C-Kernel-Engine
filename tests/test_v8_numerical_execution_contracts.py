@@ -817,8 +817,8 @@ class NumericalExecutionContractTests(unittest.TestCase):
         )
         expected = {
             "prefill": (
-                "gated_deltanet_llama_avx2_prefill_fp32_state",
-                "gated_deltanet_llama_chunk64_prefill_parallel_dispatch",
+                "gated_deltanet_llama_fused_prefill_fp32_state",
+                "gated_deltanet_llama_prefill_parallel_dispatch",
             ),
             "decode": (
                 "gated_deltanet_llama_avx2_decode_fp32_state",

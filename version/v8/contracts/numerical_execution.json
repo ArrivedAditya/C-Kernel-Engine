@@ -292,6 +292,36 @@
       "position_transform": null,
       "description": "Gated DeltaNet prefill carries one FP32 recurrent state through prompt rows in ascending token order and delegates each update to the exact decode provider."
     },
+    "gated_deltanet_llama_fused_prefill_fp32_state": {
+      "operator_family": "gated_deltanet",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "ascending_token_llama_fused_gdn_state_update"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "weighted_product", "reduction_update", "reduction_finalize", "normalization_scale", "output_store"]
+      },
+      "reduction": {
+        "kind": "sum",
+        "order": "pairwise_tree",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_heads",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Production llama.cpp fused Gated DeltaNet prefill: prompt tokens update recurrent state in ascending order with compact Q/K groups tiled over independent value heads. Head-parallel execution preserves every per-head FP32 reduction tree."
+    },
     "gated_deltanet_llama_avx2_decode_fp32_state": {
       "operator_family": "gated_deltanet",
       "status": "validated",
