@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shlex
+import statistics
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ class ModelSpec:
     quant: str
     gguf: Path
     ck_model: str
+    ck_run_dir: Path | None = None
 
 
 MODELS: list[ModelSpec] = [
@@ -91,6 +93,20 @@ PROMPTS: dict[str, str] = {
 }
 
 
+def load_prompts(path: Path | None) -> dict[str, str]:
+    if path is None:
+        return dict(PROMPTS)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not payload:
+        raise ValueError("prompt file must contain a non-empty JSON object")
+    prompts: dict[str, str] = {}
+    for key, value in payload.items():
+        if not isinstance(key, str) or not key.strip() or not isinstance(value, str) or not value.strip():
+            raise ValueError("prompt keys and values must be non-empty strings")
+        prompts[key] = value
+    return prompts
+
+
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 CK_TIMING_RE = re.compile(
     r"prefill\s+(?P<prompt_tokens>\d+)\s+tok.*?"
@@ -144,12 +160,56 @@ def selected_models(keys: list[str]) -> list[ModelSpec]:
     return [by_key[key] for key in keys]
 
 
+def load_models(path: Path | None) -> list[ModelSpec]:
+    if path is None:
+        return list(MODELS)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    rows = payload.get("models") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list) or not rows:
+        raise ValueError("model manifest must contain a non-empty models array")
+    result: list[ModelSpec] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("each model manifest entry must be an object")
+        result.append(
+            ModelSpec(
+                key=str(row["key"]),
+                name=str(row["name"]),
+                quant=str(row["quant"]),
+                gguf=Path(os.path.expandvars(os.path.expanduser(str(row["gguf"])))),
+                ck_model=str(row["ck_model"]),
+                ck_run_dir=(
+                    Path(os.path.expandvars(os.path.expanduser(str(row["ck_run_dir"]))))
+                    if row.get("ck_run_dir")
+                    else None
+                ),
+            )
+        )
+    if len({row.key for row in result}) != len(result):
+        raise ValueError("model manifest keys must be unique")
+    return result
+
+
+def choose_models(catalog: list[ModelSpec], keys: list[str]) -> list[ModelSpec]:
+    if not keys or keys == ["all"]:
+        return catalog
+    by_key = {model.key: model for model in catalog}
+    missing = [key for key in keys if key not in by_key]
+    if missing:
+        raise SystemExit(f"Unknown model key(s): {', '.join(missing)}")
+    return [by_key[key] for key in keys]
+
+
 def ck_runtime_args(model: ModelSpec) -> list[str]:
-    run_dir = CK_MODEL_CACHE / model.ck_model
+    run_dir = model.ck_run_dir or (CK_MODEL_CACHE / model.ck_model)
     lib = run_dir / "libmodel.so"
     weights = run_dir / "weights.bump"
     if lib.exists() and weights.exists():
-        return ["--lib", str(lib), "--weights", str(weights)]
+        args = ["--lib", str(lib), "--weights", str(weights)]
+        manifest = run_dir / "weights_manifest.map"
+        if manifest.exists():
+            args.extend(["--manifest", str(manifest)])
+        return args
     return ["--model", model.ck_model]
 
 
@@ -181,6 +241,20 @@ def parse_ck_timing(output: str) -> dict[str, float]:
     }
 
 
+def parse_ck_timing_optional(output: str) -> dict[str, float] | None:
+    match = CK_TIMING_RE.search(clean_text(output))
+    return parse_ck_timing(match.group(0)) if match else None
+
+
+def median_metrics(samples: list[dict[str, float]]) -> dict[str, float]:
+    if not samples:
+        raise ValueError("cannot aggregate an empty sample set")
+    return {
+        key: statistics.median(float(sample[key]) for sample in samples)
+        for key in samples[0]
+    }
+
+
 def parse_llama_cli_timing(output: str) -> dict[str, float] | None:
     text = clean_text(output)
     match = LLAMA_TIMING_RE.search(text)
@@ -203,9 +277,23 @@ def extract_ck_generated(stdout: str) -> str:
     return text.strip()
 
 
+def extract_llama_generated(output: str) -> str:
+    text = clean_text(output)
+    # Recent llama-completion writes generated text before its stderr log
+    # stream when both are captured together.
+    text = text.split("\n\nwarning: no usable GPU", 1)[0]
+    if "\n> " in text:
+        text = text.split("\n> ", 1)[1]
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+    text = text.split("llama_memory_breakdown_print:", 1)[0]
+    text = re.split(r"\nprompt eval time\s*=", text, maxsplit=1)[0]
+    text = re.split(r"\n\[\s*Prompt:", text, maxsplit=1)[0]
+    return text.strip()
+
+
 def run_perf(args: argparse.Namespace, models: list[ModelSpec]) -> list[dict[str, Any]]:
-    llama_bench = PROJECT_ROOT / "llama.cpp/build/bin/llama-bench"
-    ck_cli = PROJECT_ROOT / "build/ck-cli-v8"
+    llama_bench = args.llama_root / "build/bin/llama-bench"
+    ck_cli = args.ck_cli
     token_csv = ",".join([str(args.prompt_token_id)] * args.prompt_tokens)
     env = os.environ.copy()
     env["CK_NUM_THREADS"] = str(args.threads)
@@ -230,16 +318,10 @@ def run_perf(args: argparse.Namespace, models: list[ModelSpec]) -> list[dict[str
             "-ngl",
             "0",
             "-r",
-            str(args.repetitions),
+            "1",
             "-o",
             "json",
         ]
-        llama_run = run_cmd(llama_cmd, env=env, timeout=args.timeout)
-        if llama_run["returncode"] != 0:
-            llama_metrics = {"error": llama_run["stderr"][-2000:]}
-        else:
-            llama_metrics = parse_llama_bench(json.loads(llama_run["stdout"]))
-
         ck_cmd = [
             str(ck_cli),
             *ck_runtime_args(model),
@@ -257,11 +339,39 @@ def run_perf(args: argparse.Namespace, models: list[ModelSpec]) -> list[dict[str
             "--no-stream",
             "--timing",
         ]
-        ck_run = run_cmd(ck_cmd, env=env, timeout=args.timeout)
-        if ck_run["returncode"] != 0:
-            ck_metrics = {"error": ck_run["stderr"][-2000:]}
-        else:
-            ck_metrics = parse_ck_timing(ck_run["stdout"] + ck_run["stderr"])
+        # Warm CKE once, then alternate backend order to reduce thermal and
+        # frequency bias. Each llama-bench sample performs its own warmup.
+        run_cmd(ck_cmd, env=env, timeout=args.timeout)
+        samples: dict[str, list[dict[str, float]]] = {"cke": [], "llama": []}
+        errors: dict[str, str] = {}
+        for repetition in range(args.repetitions):
+            order = ("cke", "llama") if repetition % 2 == 0 else ("llama", "cke")
+            for backend in order:
+                command = ck_cmd if backend == "cke" else llama_cmd
+                sample = run_cmd(command, env=env, timeout=args.timeout)
+                if sample["returncode"] != 0:
+                    errors[backend] = sample["stderr"][-2000:]
+                    continue
+                try:
+                    metrics = (
+                        parse_ck_timing(sample["stdout"] + sample["stderr"])
+                        if backend == "cke"
+                        else parse_llama_bench(json.loads(sample["stdout"]))
+                    )
+                    samples[backend].append(metrics)
+                except (ValueError, json.JSONDecodeError) as exc:
+                    errors[backend] = str(exc)
+
+        llama_metrics = (
+            median_metrics(samples["llama"])
+            if len(samples["llama"]) == args.repetitions
+            else {"error": errors.get("llama", "missing successful samples")}
+        )
+        ck_metrics = (
+            median_metrics(samples["cke"])
+            if len(samples["cke"]) == args.repetitions
+            else {"error": errors.get("cke", "missing successful samples")}
+        )
 
         entry = {
             "model_key": model.key,
@@ -269,6 +379,7 @@ def run_perf(args: argparse.Namespace, models: list[ModelSpec]) -> list[dict[str
             "quant": model.quant,
             "llama": llama_metrics,
             "cke": ck_metrics,
+            "samples": samples,
         }
         if "error" not in llama_metrics and "error" not in ck_metrics:
             entry["ratios"] = {
@@ -279,9 +390,13 @@ def run_perf(args: argparse.Namespace, models: list[ModelSpec]) -> list[dict[str
     return results
 
 
-def run_prompts(args: argparse.Namespace, models: list[ModelSpec]) -> list[dict[str, Any]]:
-    llama_cli = PROJECT_ROOT / "llama.cpp/build/bin/llama-cli"
-    ck_cli = PROJECT_ROOT / "build/ck-cli-v8"
+def run_prompts(
+    args: argparse.Namespace,
+    models: list[ModelSpec],
+    prompts: dict[str, str],
+) -> list[dict[str, Any]]:
+    llama_cli = args.llama_root / "build/bin/llama-cli"
+    ck_cli = args.ck_cli
     env = os.environ.copy()
     env["CK_NUM_THREADS"] = str(args.threads)
     env["OMP_NUM_THREADS"] = str(args.omp_threads)
@@ -291,7 +406,7 @@ def run_prompts(args: argparse.Namespace, models: list[ModelSpec]) -> list[dict[
         if not model.gguf.exists():
             print(f"SKIP missing GGUF: {model.gguf}", file=sys.stderr)
             continue
-        for prompt_key, prompt in PROMPTS.items():
+        for prompt_key, prompt in prompts.items():
             ck_cmd = [
                 str(ck_cli),
                 *ck_runtime_args(model),
@@ -330,16 +445,18 @@ def run_prompts(args: argparse.Namespace, models: list[ModelSpec]) -> list[dict[
                     "--temp",
                     "0",
                     "--no-display-prompt",
-                    "--no-conversation",
+                    "--conversation",
+                    "--single-turn",
                     "--no-warmup",
                     "--simple-io",
-                    "--show-timings",
+                    "--perf",
                 ]
                 llama_run = run_cmd(llama_cmd, env=env, timeout=args.prompt_timeout)
                 llama_text = clean_text(llama_run["stdout"] + llama_run["stderr"])
                 llama_result = {
                     "returncode": llama_run["returncode"],
                     "timing": parse_llama_cli_timing(llama_text),
+                    "generated": extract_llama_generated(llama_text),
                     "output": llama_text[-6000:],
                 }
 
@@ -352,7 +469,7 @@ def run_prompts(args: argparse.Namespace, models: list[ModelSpec]) -> list[dict[
                     "prompt": prompt,
                     "cke": {
                         "returncode": ck_run["returncode"],
-                        "timing": parse_ck_timing(ck_text) if "prefill" in ck_text and "decode" in ck_text else None,
+                        "timing": parse_ck_timing_optional(ck_text),
                         "generated": extract_ck_generated(ck_run["stdout"]),
                         "output": ck_text[-6000:],
                     },
@@ -403,7 +520,7 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
     prompt_runs = report.get("prompt_runs") or []
     if prompt_runs:
         lines += ["## Standard Prompts", ""]
-        for key, prompt in PROMPTS.items():
+        for key, prompt in report.get("prompts", {}).items():
             lines += [f"### `{key}`", "", "```text", prompt, "```", ""]
         lines += ["## Prompt Output Smoke", ""]
         for row in prompt_runs:
@@ -434,12 +551,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lane", choices=["perf", "prompts", "both"], default="both")
     parser.add_argument("--model", action="append", default=[], help="Model key to run, or all")
+    parser.add_argument("--model-manifest", type=Path, help="JSON model catalog for lab-specific families")
+    parser.add_argument("--ck-cli", type=Path, default=PROJECT_ROOT / "build/ck-cli-v8")
+    parser.add_argument("--llama-root", type=Path, default=PROJECT_ROOT / "llama.cpp")
     parser.add_argument("--threads", type=int, default=12)
     parser.add_argument("--omp-threads", type=int, default=1)
     parser.add_argument("--prompt-tokens", type=int, default=512)
     parser.add_argument("--decode-tokens", type=int, default=128)
     parser.add_argument("--prompt-token-id", type=int, default=100)
     parser.add_argument("--prompt-max-tokens", type=int, default=128)
+    parser.add_argument("--prompts-file", type=Path, help="JSON object of prompt key to prompt text")
     parser.add_argument("--prompt-engine", choices=["cke", "llama", "both"], default="cke")
     parser.add_argument("--prompt-timeout", type=int, default=90)
     parser.add_argument("--context", type=int, default=1024)
@@ -456,7 +577,10 @@ def main() -> int:
         args.prompt_max_tokens = min(args.prompt_max_tokens, 24)
         args.repetitions = 1
 
-    models = selected_models(args.model or ["all"])
+    models = choose_models(load_models(args.model_manifest), args.model or ["all"])
+    prompts = load_prompts(args.prompts_file)
+    args.ck_cli = args.ck_cli.expanduser().resolve()
+    args.llama_root = args.llama_root.expanduser().resolve()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     report: dict[str, Any] = {
@@ -471,14 +595,23 @@ def main() -> int:
             "prompt_engine": args.prompt_engine,
             "context": args.context,
             "repetitions": args.repetitions,
+            "ck_cli": str(args.ck_cli),
+            "llama_root": str(args.llama_root),
         },
-        "models": [model.__dict__ | {"gguf": str(model.gguf)} for model in models],
-        "prompts": PROMPTS,
+        "models": [
+            model.__dict__
+            | {
+                "gguf": str(model.gguf),
+                "ck_run_dir": str(model.ck_run_dir) if model.ck_run_dir else None,
+            }
+            for model in models
+        ],
+        "prompts": prompts,
     }
     if args.lane in {"perf", "both"}:
         report["perf"] = run_perf(args, models)
     if args.lane in {"prompts", "both"}:
-        report["prompt_runs"] = run_prompts(args, models)
+        report["prompt_runs"] = run_prompts(args, models, prompts)
 
     json_path = args.out_dir / "ck_llama_v8_compare.json"
     md_path = args.out_dir / "ck_llama_v8_compare.md"
@@ -486,7 +619,19 @@ def main() -> int:
     write_markdown(report, md_path)
     print(f"wrote {json_path}")
     print(f"wrote {md_path}")
-    return 0
+    perf_failed = any(
+        "error" in row.get("cke", {}) or "error" in row.get("llama", {})
+        for row in report.get("perf", [])
+    )
+    prompt_failed = any(
+        int(row.get("cke", {}).get("returncode", -1)) != 0
+        or (
+            row.get("llama") is not None
+            and int(row["llama"].get("returncode", -1)) != 0
+        )
+        for row in report.get("prompt_runs", [])
+    )
+    return 1 if perf_failed or prompt_failed else 0
 
 
 if __name__ == "__main__":

@@ -1,0 +1,127 @@
+{
+  "schema": "cke.v8.lab-models",
+  "version": 1,
+  "models": [
+    {
+      "key": "gemma3_270m",
+      "name": "Gemma3 270M",
+      "quant": "Q5_K_M",
+      "profile_model_id": "gemma3-270m-q5_k_m",
+      "modalities": [
+        "text"
+      ],
+      "required_isa": [
+        "avx2"
+      ],
+      "min_available_ram_gib": 4,
+      "node_classes": [
+        "intel-avx2",
+        "amd-avx512"
+      ],
+      "gguf": "~/.cache/ck-engine-v8/models/unsloth--gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf",
+      "ck_model": "gemma-3-270m-it-Q5_K_M",
+      "ck_run_dir": "/data/cke/models/v8-family-lab/gemma3_270m"
+    },
+    {
+      "key": "qwen2_05b",
+      "name": "Qwen2 0.5B",
+      "quant": "Q4_K_M",
+      "profile_model_id": "qwen2-0.5b-q4_k_m",
+      "modalities": [
+        "text"
+      ],
+      "required_isa": [
+        "avx2"
+      ],
+      "min_available_ram_gib": 4,
+      "node_classes": [
+        "intel-avx2",
+        "amd-avx512"
+      ],
+      "gguf": "~/.cache/ck-engine-v8/models/Qwen--Qwen2-0.5B-Instruct-GGUF/qwen2-0_5b-instruct-q4_k_m.gguf",
+      "ck_model": "qwen2-0_5b-instruct-q4_k_m",
+      "ck_run_dir": "/data/cke/models/v8-family-lab/qwen2_05b"
+    },
+    {
+      "key": "qwen3_06b",
+      "name": "Qwen3 0.6B",
+      "quant": "Q8_0",
+      "profile_model_id": "qwen3-0.6b-q8_0",
+      "modalities": [
+        "text"
+      ],
+      "required_isa": [
+        "avx2"
+      ],
+      "min_available_ram_gib": 5,
+      "node_classes": [
+        "intel-avx2",
+        "amd-avx512"
+      ],
+      "gguf": "~/.cache/ck-engine-v8/models/Qwen--Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf",
+      "ck_model": "Qwen--Qwen3-0.6B-GGUF",
+      "ck_run_dir": "/data/cke/models/v8-family-lab/qwen3_06b"
+    },
+    {
+      "key": "qwen35_08b",
+      "name": "Qwen3.5 0.8B",
+      "quant": "Q4_K_M",
+      "profile_model_id": "qwen35-0.8b-q4_k_m",
+      "modalities": [
+        "text"
+      ],
+      "required_isa": [
+        "avx2"
+      ],
+      "min_available_ram_gib": 5,
+      "node_classes": [
+        "intel-avx2",
+        "amd-avx512"
+      ],
+      "gguf": "~/.cache/ck-engine-v8/models/unsloth--Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-Q4_K_M.gguf",
+      "ck_model": "unsloth--Qwen3.5-0.8B-GGUF",
+      "ck_run_dir": "/data/cke/models/v8-family-lab/qwen35_08b"
+    },
+    {
+      "key": "nanbeige41_3b",
+      "name": "Nanbeige4.1 3B",
+      "quant": "Q4_K_M",
+      "profile_model_id": "nanbeige4.1-3b-q4_k_m",
+      "modalities": [
+        "text"
+      ],
+      "required_isa": [
+        "avx2"
+      ],
+      "min_available_ram_gib": 10,
+      "node_classes": [
+        "intel-avx2",
+        "amd-avx512"
+      ],
+      "gguf": "~/.cache/ck-engine-v8/models/mradermacher--Nanbeige4.1-3B-GGUF/Nanbeige4.1-3B.Q4_K_M.gguf",
+      "ck_model": "mradermacher--Nanbeige4.1-3B-GGUF",
+      "ck_run_dir": "/data/cke/models/v8-family-lab/nanbeige41_3b"
+    },
+    {
+      "key": "glm4_9b",
+      "name": "GLM-4 9B",
+      "quant": "Q4_K_M",
+      "profile_model_id": null,
+      "modalities": [
+        "text"
+      ],
+      "required_isa": [
+        "avx2"
+      ],
+      "min_available_ram_gib": 16,
+      "node_classes": [
+        "intel-avx2",
+        "amd-avx512",
+        "xeon"
+      ],
+      "gguf": "~/.cache/ck-engine-v8/models/unsloth--GLM-4-9B-0414-GGUF/GLM-4-9B-0414-Q4_K_M.gguf",
+      "ck_model": "GLM-4-9B-0414-Q4_K_M",
+      "ck_run_dir": "/data/cke/models/v8-family-lab/glm4_9b"
+    }
+  ]
+}
