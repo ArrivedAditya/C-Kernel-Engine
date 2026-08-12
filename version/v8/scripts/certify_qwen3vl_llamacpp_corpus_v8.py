@@ -287,6 +287,25 @@ def _pre_eos_tokens(report: dict[str, Any], key: str) -> list[int]:
     return tokens
 
 
+def _common_parity_prefix_tokens(report: dict[str, Any]) -> list[int]:
+    """Return equal CKE/llama tokens before EOS or the first divergence."""
+    stop_ids = {int(value) for value in report.get("stop_token_ids") or []}
+    tokens: list[int] = []
+    for row in report.get("steps") or []:
+        if not isinstance(row, dict):
+            break
+        ck_next = row.get("ck_next")
+        llama_next = row.get("llama_next")
+        if ck_next is None or llama_next is None:
+            break
+        ck_token = int(ck_next)
+        llama_token = int(llama_next)
+        if ck_token != llama_token or ck_token in stop_ids:
+            break
+        tokens.append(ck_token)
+    return tokens
+
+
 def _first_token_divergence(
     left: list[int],
     right: list[int],
@@ -402,11 +421,11 @@ def _redacted_row(
         }
     prefix = report.get("prefix")
     steps = len(report.get("steps") or [])
-    matched_tokens = (
-        int(native_comparison.get("native_tokens", 0))
-        if isinstance(native_comparison, dict)
-        else len(_pre_eos_tokens(report, "ck_next"))
-    )
+    # This field describes the common CKE/llama trajectory, not the number of
+    # tokens emitted by an independently continued native replay.  The latter
+    # can be longer after an early top-1 mismatch and previously made failed
+    # rows print misleading values such as matched=128/128.
+    matched_tokens = len(_common_parity_prefix_tokens(report))
     prefix_tokens = int(prefix.get("tokens", 0)) if isinstance(prefix, dict) else 0
     prompt_tokens = len(report.get("prompt_tokens_before_image") or []) + len(
         report.get("prompt_tokens_after_image") or []
@@ -481,13 +500,17 @@ def _progress_line(
     matched = int(row.get("matched_tokens", row.get("steps", 0)))
     target = int(row.get("requested_tokens", matched))
     native = row.get("native_cli")
-    native = native if isinstance(native, dict) else {}
+    native_text = (
+        f"{int(native.get('native_tokens', 0))}/{int(native.get('python_ck_tokens', 0))}"
+        if isinstance(native, dict)
+        else "skipped"
+    )
     suffix = " resumed" if resumed else ""
     return (
         f"[{completed}/{requested}] image {int(row['image_index']):02d}: "
         f"{str(row.get('status', 'unknown')).upper()} "
         f"matched={matched}/{target} "
-        f"native={int(native.get('native_tokens', 0))}/{int(native.get('python_ck_tokens', 0))} "
+        f"native={native_text} "
         f"prefix={int(row.get('prefix_tokens', 0))} "
         f"prompt={int(row.get('prompt_tokens', 0))} "
         f"prefill={int(row.get('prefill_tokens', 0))} "
@@ -569,8 +592,11 @@ def _print_private_case_details(
         f"compared {matched} = {int(row.get('context_tokens_after_comparison', 0))}/"
         f"{int(row.get('context_capacity', 0))}"
     )
+    comparison_runtimes = (
+        "native/Python/llama" if isinstance(row.get("native_cli"), dict) else "Python/llama"
+    )
     print(
-        f"Comparison  : {matched}/{requested} exact native/Python/llama pre-EOS tokens | "
+        f"Comparison  : {matched}/{requested} exact {comparison_runtimes} pre-EOS tokens | "
         f"stop={row.get('stop_reason') or 'token limit'}"
     )
     print(
@@ -583,8 +609,10 @@ def _print_private_case_details(
 
     shared_text = str(parity.get("generated_shared_text", "") or "")
     print("-" * 88)
-    if exact:
+    if exact and isinstance(row.get("native_cli"), dict):
         print("Output (native CLI == Python CKE == llama.cpp for every compared token):")
+    elif exact:
+        print("Output (Python CKE == llama.cpp for every compared token):")
     else:
         print("Shared output before the first divergence:")
     print(shared_text if shared_text else "<no decoded text>")
@@ -622,9 +650,15 @@ def _summary(
         status = "pass"
     else:
         status = "incomplete"
+    localization_only = bool(config.get("skip_native_cli"))
     return {
         "status": status,
-        "comparison": "exact native CLI, Python CKE, and llama.cpp pre-EOS greedy token parity",
+        "certification_scope": "localization" if localization_only else "full",
+        "comparison": (
+            "Python CKE and llama.cpp pre-EOS greedy token parity; native CLI not run"
+            if localization_only
+            else "exact native CLI, Python CKE, and llama.cpp pre-EOS greedy token parity"
+        ),
         "requested": len(selected),
         "completed": completed,
         "passed": passed,
@@ -649,7 +683,12 @@ def _case_config(
     }
 
 
-def _resumed_row(case_result: Path, expected_config: dict[str, Any]) -> dict[str, Any] | None:
+def _resumed_row(
+    case_result: Path,
+    expected_config: dict[str, Any],
+    *,
+    require_native: bool = True,
+) -> dict[str, Any] | None:
     if not case_result.is_file():
         return None
     payload = json.loads(case_result.read_text(encoding="utf-8"))
@@ -658,12 +697,13 @@ def _resumed_row(case_result: Path, expected_config: dict[str, Any]) -> dict[str
     row = payload.get("redacted_row")
     if not isinstance(row, dict) or row.get("status") != "pass":
         return None
-    native = row.get("native_cli")
-    if not isinstance(native, dict) or not native.get("pass"):
-        return None
-    native_comparison = _load_json_if_present(case_result.parent / "native_comparison.json")
-    if not native_comparison or not native_comparison.get("pass"):
-        return None
+    if require_native:
+        native = row.get("native_cli")
+        if not isinstance(native, dict) or not native.get("pass"):
+            return None
+        native_comparison = _load_json_if_present(case_result.parent / "native_comparison.json")
+        if not native_comparison or not native_comparison.get("pass"):
+            return None
     return row
 
 
@@ -734,6 +774,14 @@ def main() -> int:
     parser.add_argument("--keep-prefixes", action="store_true")
     parser.add_argument("--continue-on-failure", action="store_true")
     parser.add_argument(
+        "--skip-native-cli",
+        action="store_true",
+        help=(
+            "compare Python CKE directly with llama.cpp without the redundant native-CLI "
+            "replay; intended for broad failure-localization scans"
+        ),
+    )
+    parser.add_argument(
         "--force-rerun",
         action="store_true",
         help="ignore matching completed case results and execute the selected cases again",
@@ -772,7 +820,7 @@ def main() -> int:
         raise FileNotFoundError(args.encoder_runtime)
     if args.runtime_workdir is not None and not (args.runtime_workdir / "decoder").is_dir():
         raise FileNotFoundError(f"shared bridge workdir has no decoder runtime: {args.runtime_workdir}")
-    if not args.dry_run and not args.native_cli.is_file():
+    if not args.skip_native_cli and not args.dry_run and not args.native_cli.is_file():
         raise FileNotFoundError(f"native CLI is missing: {args.native_cli}")
     if not (args.llama_root / "build" / "bin" / "libllama.so").is_file():
         raise FileNotFoundError(f"llama.cpp build is missing libllama.so: {args.llama_root}")
@@ -825,8 +873,13 @@ def main() -> int:
         "gemm_schedule": args.gemm_schedule,
         "top_k": args.top_k,
         "llama_required_isa": args.llama_required_isa,
-        "native_cli": _file_identity(args.native_cli, hash_content=True),
-        "native_cli_sha256": _sha256_file(args.native_cli),
+        "native_cli": (
+            None
+            if args.skip_native_cli
+            else _file_identity(args.native_cli, hash_content=True)
+        ),
+        "native_cli_sha256": None if args.skip_native_cli else _sha256_file(args.native_cli),
+        "skip_native_cli": bool(args.skip_native_cli),
     }
     config_sha256 = _sha256_json(config)
     _json_write(args.output_dir / "run_config.json", config)
@@ -862,7 +915,15 @@ def main() -> int:
             global_config_sha256=config_sha256,
             sample=sample,
         )
-        resumed = None if args.force_rerun else _resumed_row(result_path, case_config)
+        resumed = (
+            None
+            if args.force_rerun
+            else _resumed_row(
+                result_path,
+                case_config,
+                require_native=not bool(args.skip_native_cli),
+            )
+        )
         if resumed is not None:
             resumed_report = _load_json_if_present(case_dir / "parity.json")
             resumed_native = _load_json_if_present(case_dir / "native_comparison.json")
@@ -927,17 +988,18 @@ def main() -> int:
                     log_path=case_dir / "parity.log",
                     dry_run=True,
                 )
-                _run_logged(
-                    _native_cli_command(
-                        args,
-                        bridge_report=bridge_report,
-                        runtime_dir=runtime_dir,
-                        trace_path=native_trace,
-                    ),
-                    env=env,
-                    log_path=case_dir / "native_cli.log",
-                    dry_run=True,
-                )
+                if not args.skip_native_cli:
+                    _run_logged(
+                        _native_cli_command(
+                            args,
+                            bridge_report=bridge_report,
+                            runtime_dir=runtime_dir,
+                            trace_path=native_trace,
+                        ),
+                        env=env,
+                        log_path=case_dir / "native_cli.log",
+                        dry_run=True,
+                    )
                 continue
             source_report = runtime_dir / "bridge_report.json"
             if not source_report.is_file():
@@ -959,20 +1021,22 @@ def main() -> int:
                 accepted_returncodes=(0, 3),
             )
             report = json.loads(parity_report.read_text(encoding="utf-8"))
-            elapsed["native_cli"] = _run_logged(
-                _native_cli_command(
-                    args,
-                    bridge_report=bridge_report,
-                    runtime_dir=runtime_dir,
-                    trace_path=native_trace,
-                ),
-                env=env,
-                log_path=case_dir / "native_cli.log",
-                dry_run=False,
-            )
-            trace = json.loads(native_trace.read_text(encoding="utf-8"))
-            native_comparison = _compare_native_trace(report, trace)
-            _json_write(native_comparison_path, native_comparison)
+            native_comparison = None
+            if not args.skip_native_cli:
+                elapsed["native_cli"] = _run_logged(
+                    _native_cli_command(
+                        args,
+                        bridge_report=bridge_report,
+                        runtime_dir=runtime_dir,
+                        trace_path=native_trace,
+                    ),
+                    env=env,
+                    log_path=case_dir / "native_cli.log",
+                    dry_run=False,
+                )
+                trace = json.loads(native_trace.read_text(encoding="utf-8"))
+                native_comparison = _compare_native_trace(report, trace)
+                _json_write(native_comparison_path, native_comparison)
             row = _redacted_row(
                 index=index,
                 image_sha256=sample["image_sha256"],
@@ -993,9 +1057,15 @@ def main() -> int:
                         "parity_report": str(parity_report),
                         "bridge_log": str(case_dir / "bridge.log"),
                         "parity_log": str(case_dir / "parity.log"),
-                        "native_trace": str(native_trace),
-                        "native_comparison": str(native_comparison_path),
-                        "native_cli_log": str(case_dir / "native_cli.log"),
+                        **(
+                            {
+                                "native_trace": str(native_trace),
+                                "native_comparison": str(native_comparison_path),
+                                "native_cli_log": str(case_dir / "native_cli.log"),
+                            }
+                            if not args.skip_native_cli
+                            else {}
+                        ),
                     },
                 },
             )
