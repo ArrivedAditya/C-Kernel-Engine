@@ -657,6 +657,48 @@ void gemm_nt_q5_k_prepared_m4(const float *A,
 #endif
 }
 
+void gemm_nt_q5_k_prepared_q8_m4_nrange(const void *A_q8,
+                                         const void *B_prepared,
+                                         const float *bias,
+                                         float *C,
+                                         int M, int N, int K,
+                                         int n_begin, int n_end)
+{
+#if !defined(__AVX2__)
+    (void)A_q8; (void)B_prepared; (void)bias; (void)C;
+    (void)M; (void)N; (void)K; (void)n_begin; (void)n_end;
+#else
+    if (!A_q8 || !B_prepared || !C || M <= 0 || N <= 0 || K <= 0 ||
+            (K % QK_K) != 0 || n_begin < 0 || n_end > N ||
+            n_begin >= n_end) return;
+    const int blocks_per_row = K / QK_K;
+    if (blocks_per_row > CK_Q5K_STACK_Q8_BLOCKS) return;
+    const block_q8_K *A = (const block_q8_K *)A_q8;
+    const block_q5_K_prepared *W =
+        (const block_q5_K_prepared *)B_prepared;
+
+    for (int m = 0; m < M; m += 4) {
+        const int rows = M - m < 4 ? M - m : 4;
+        const block_q8_K *row_ptrs[4] = {
+            A + (size_t)(m + 0) * blocks_per_row,
+            A + (size_t)(m + (rows > 1 ? 1 : 0)) * blocks_per_row,
+            A + (size_t)(m + (rows > 2 ? 2 : 0)) * blocks_per_row,
+            A + (size_t)(m + (rows > 3 ? 3 : 0)) * blocks_per_row,
+        };
+        for (int n = n_begin; n < n_end; ++n) {
+            float sums[4];
+            dot_q5_k_prepared_q8_k_m4_avx2(
+                W + (size_t)n * blocks_per_row,
+                row_ptrs, rows, blocks_per_row, sums);
+            for (int r = 0; r < rows; ++r) {
+                C[(size_t)(m + r) * N + n] =
+                    sums[r] + (bias ? bias[n] : 0.0f);
+            }
+        }
+    }
+#endif
+}
+
 /* ============================================================================
  * FP32 adapter path (keeps existing call sites stable)
  *

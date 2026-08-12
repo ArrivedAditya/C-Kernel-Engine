@@ -17922,6 +17922,24 @@
         ],
         "variants": [
           {
+            "name": "avx2_prepared_nsplit_m4",
+            "function": "gemm_nt_q5_k_parallel_dispatch",
+            "priority": 270,
+            "requires": [
+              "avx2",
+              "fma"
+            ],
+            "shape_constraints": {
+              "M_min": 64,
+              "M_max": 256,
+              "K_multiple": 256
+            },
+            "requires_prepared_format": "q5_k_expanded_integer_metadata_v1",
+            "activation_preparation": "q8_k_once_per_call",
+            "work_partition": "independent_output_columns",
+            "tile_n": 128
+          },
+          {
             "name": "avx2_prepared_m4",
             "function": "gemm_nt_q5_k_prepared_m4",
             "priority": 260,

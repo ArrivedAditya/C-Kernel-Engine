@@ -214,6 +214,10 @@ extern void gemm_nt_q5_k_prepared(const float *A, const void *B_prepared,
 extern void gemm_nt_q5_k_prepared_m4(const float *A, const void *B_prepared,
                                      const float *bias, float *C,
                                      int M, int N, int K);
+extern void quantize_row_q8_k(const float *x, void *y, int k);
+extern void gemm_nt_q5_k_prepared_q8_m4_nrange(
+    const void *A_q8, const void *B_prepared, const float *bias, float *C,
+    int M, int N, int K, int n_begin, int n_end);
 extern void gated_deltanet_llama_avx2_prefill_forward(
     const float *q, const float *k, const float *v,
     const float *g, const float *beta,
@@ -2019,6 +2023,22 @@ static void work_gemm_nt_q5_k_prepared_m4(int ith, int nth, void *args)
         r1 - r0, a->N, a->K);
 }
 
+static void work_gemm_nt_q5_k_prepared_nrange(
+    int begin, int end, void *args)
+{
+    const gemm_args_t *a = (const gemm_args_t *)args;
+    if (!a || begin < 0 || begin >= end) return;
+    const int tile_n = a->tile_n > 0 ? a->tile_n : 128;
+    for (int job = begin; job < end; ++job) {
+        const int n0 = job * tile_n;
+        const int n1 = ck_min_int(n0 + tile_n, a->N);
+        if (n0 >= n1) break;
+        gemm_nt_q5_k_prepared_q8_m4_nrange(
+            a->A, a->B, a->bias, a->C,
+            a->M, a->N, a->K, n0, n1);
+    }
+}
+
 /* ============================================================================
  * Parallel Dispatch Wrappers
  *
@@ -2607,8 +2627,37 @@ void gemm_nt_q5_k_parallel_dispatch(
         return;
     }
 
-    /* A is FP32 token-major [M, K] */
+    /* A is FP32 token-major [M, K]. Prepared medium/long prefill quantizes
+     * it once, then partitions output columns so each worker repeatedly uses
+     * a cache-sized weight slice across all rows. */
     size_t A_row_bytes = (size_t)K * sizeof(float);
+
+    if (prepared && M >= 64 && M <= 256 && (K % QK_K) == 0) {
+        const int blocks_per_row = K / QK_K;
+        const size_t q8_bytes =
+            (size_t)M * (size_t)blocks_per_row * sizeof(block_q8_K);
+        block_q8_K *A_q8 = (block_q8_K *)malloc(q8_bytes);
+        if (A_q8) {
+            for (int m = 0; m < M; ++m) {
+                quantize_row_q8_k(
+                    A + (size_t)m * K,
+                    A_q8 + (size_t)m * blocks_per_row, K);
+            }
+            gemm_args_t nsplit_args = {
+                .A = A_q8, .B = prepared, .bias = bias, .C = C,
+                .M = M, .N = N, .K = K,
+                .tile_n = 128,
+            };
+            const int jobs = ck_ceil_div_int(N, nsplit_args.tile_n);
+            const int active = ck_min_int(
+                ck_select_gemm_active_threads(pool, M, N, K), jobs);
+            ck_threadpool_parallel_for_n(
+                pool, active, 0, jobs, 1,
+                work_gemm_nt_q5_k_prepared_nrange, &nsplit_args);
+            free(A_q8);
+            return;
+        }
+    }
 
     gemm_args_t args = {
         .A = A, .B = prepared ? prepared : B, .bias = bias, .C = C,

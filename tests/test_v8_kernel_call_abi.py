@@ -141,6 +141,15 @@ class V8KernelCallABITests(unittest.TestCase):
         self.assertEqual(q5_k["prepared_format"], "q5_k_expanded_integer_metadata_v1")
         self.assertEqual(q5_k["max_total_bytes"], 268435456)
         self.assertEqual(registry["gemm_nt_q5_k"]["weight_preparation"], q5_k)
+        q5_variants = {
+            variant["name"]: variant
+            for variant in registry["gemm_nt_q5_k"]["impl"]["variants"]
+        }
+        nsplit = q5_variants["avx2_prepared_nsplit_m4"]
+        self.assertEqual(nsplit["shape_constraints"]["M_min"], 64)
+        self.assertEqual(nsplit["shape_constraints"]["M_max"], 256)
+        self.assertEqual(nsplit["work_partition"], "independent_output_columns")
+        self.assertEqual(nsplit["activation_preparation"], "q8_k_once_per_call")
         q4_k = preparations["gemm_nt_q4_k_q8_k"]
         self.assertEqual(q4_k["function"], "ck_q4k_prepare_vnni_x8_weight")
         self.assertEqual(q4_k["prepared_format"], "q4_k_packed_vnni_x8")
