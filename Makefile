@@ -4159,6 +4159,32 @@ profile-v8-prefill-ops: ck-cli-v8
 		$${CK_V8_PROFILE_REUSE:+--reuse-runtime} \
 		--json-out build/v8_prefill_ops_profile_t$${CK_NUM_THREADS:-12}_p$${CK_V8_PROFILE_PROMPT:-512}.json
 
+.PHONY: bench-v8-family-lab bench-v8-family-lab-quick
+bench-v8-family-lab: ck-cli-v8
+	@echo "Running resume-safe CKE/llama.cpp family lab sweep..."
+	$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_v8_family_lab.py \
+		--contexts $${CK_V8_LAB_CONTEXTS:-32,128,512,1024,2048} \
+		--threads $${CK_NUM_THREADS:-20} \
+		--decode-tokens $${CK_V8_LAB_DECODE_TOKENS:-64} \
+		--prompt-max-tokens $${CK_V8_LAB_OUTPUT_TOKENS:-256} \
+		--repetitions $${CK_V8_LAB_REPETITIONS:-3} \
+		--profile-limit $${CK_V8_LAB_PROFILE_LIMIT:-3} \
+		--output $${CK_V8_LAB_OUTPUT:-/data/cke/results/v8-family-lab/latest} \
+		--prepare-runtimes \
+		$${CK_V8_LAB_FORCE_PREPARE:+--force-prepare} \
+		$${CK_V8_LAB_RESUME:+--resume} \
+		$${CK_V8_LAB_PROFILE:+--run-profiles} \
+		$${CK_V8_LAB_SYSTEM_PROFILE:+--run-system-profiles}
+
+bench-v8-family-lab-quick: ck-cli-v8
+	@echo "Running quick CKE/llama.cpp family lab validation..."
+	$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_v8_family_lab.py \
+		--model qwen3_06b --contexts 32 --threads $${CK_NUM_THREADS:-20} \
+		--decode-tokens 4 --prompt-max-tokens 16 --repetitions 1 \
+		--prompt-context 512 \
+		--prepare-runtimes \
+		--output $${CK_V8_LAB_OUTPUT:-build/v8-family-lab-quick}
+
 profile-v8-prefill-ops-quick: ck-cli-v8
 	@echo "Profiling v8 prefill operator costs (quick)..."
 	CK_NUM_THREADS=$${CK_NUM_THREADS:-12} OMP_NUM_THREADS=$${OMP_NUM_THREADS:-1} \

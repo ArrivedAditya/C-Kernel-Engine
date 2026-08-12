@@ -228,11 +228,12 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=1200)
     parser.add_argument("--reuse-runtime", action="store_true", help="Do not force-recompile the profiled runtime")
     parser.add_argument("--runtime-root", type=Path, default=ROOT / "build" / "v8_profile_runtimes")
+    parser.add_argument("--artifact-root", type=Path, default=ROOT / "build", help="Directory for raw CSV/JSON profiler artifacts")
     parser.add_argument("--json-out", type=Path, default=ROOT / "build" / "v8_prefill_ops_profile.json")
     args = parser.parse_args()
 
     selected = list(MODELS) if args.models == "all" else [x.strip() for x in args.models.split(",") if x.strip()]
-    build_dir = ROOT / "build"
+    build_dir = args.artifact_root.expanduser().resolve()
     build_dir.mkdir(parents=True, exist_ok=True)
 
     results: list[dict[str, Any]] = []
@@ -338,6 +339,7 @@ def main() -> int:
             "limit": args.limit,
             "reuse_runtime": args.reuse_runtime,
             "runtime_root": str(args.runtime_root),
+            "artifact_root": str(build_dir),
         },
         "results": results,
     }
