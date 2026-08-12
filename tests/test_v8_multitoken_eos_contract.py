@@ -115,6 +115,29 @@ class MultitokenEOSContractTests(unittest.TestCase):
         expected = np.arange(8, dtype=np.float32).reshape(2, 2, 2).transpose(0, 2, 1)
         np.testing.assert_array_equal(result[0].data, expected)
 
+    def test_llama_physical_recurrent_state_layout_is_not_transposed(self) -> None:
+        values = np.arange(8, dtype=np.float32)
+        dump = self.runner.first_token.parity_test_v7.ParityDump(
+            1, "new_state", values.copy(), 7, "fp32"
+        )
+
+        result = self.runner._normalize_ck_recurrent_state_layout(
+            [dump],
+            {
+                "recurrent_num_heads": 2,
+                "recurrent_head_dim": 2,
+                "recurrent_state_physical_layout": "head_value_key_contiguous",
+            },
+        )
+
+        np.testing.assert_array_equal(result[0].data, values)
+
+    def test_unknown_recurrent_state_layout_fails_closed(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported recurrent_state_physical_layout"):
+            self.runner._normalize_ck_recurrent_state_layout(
+                [], {"recurrent_state_physical_layout": "ambiguous"}
+            )
+
     def test_segmented_prefill_oracle_concatenates_rows_and_keeps_final_state(self) -> None:
         dump_type = self.runner.first_token.parity_test_v7.ParityDump
         row_dumps = [

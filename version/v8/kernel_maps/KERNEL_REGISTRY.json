@@ -12998,7 +12998,12 @@
             "H",
             "D",
             "D"
-          ]
+          ],
+          "layout": "head_value_key_contiguous",
+          "access": "read",
+          "storage_class": "state",
+          "consumption": "required",
+          "desc": "Persistent recurrent state [head,value,key], with each logical key column contiguous"
         }
       ],
       "weights": [],
@@ -13010,7 +13015,12 @@
             "H",
             "D",
             "D"
-          ]
+          ],
+          "layout": "head_value_key_contiguous",
+          "access": "write",
+          "storage_class": "state",
+          "consumption": "required",
+          "desc": "Updated persistent recurrent state [head,value,key], with each logical key column contiguous"
         },
         {
           "name": "out",
@@ -13226,7 +13236,12 @@
             "H",
             "D",
             "D"
-          ]
+          ],
+          "layout": "head_value_key_contiguous",
+          "access": "read",
+          "storage_class": "state",
+          "consumption": "required",
+          "desc": "Persistent recurrent state [head,value,key], with each logical key column contiguous"
         }
       ],
       "weights": [],
@@ -13238,7 +13253,12 @@
             "H",
             "D",
             "D"
-          ]
+          ],
+          "layout": "head_value_key_contiguous",
+          "access": "write",
+          "storage_class": "state",
+          "consumption": "required",
+          "desc": "Updated persistent recurrent state [head,value,key], with each logical key column contiguous"
         },
         {
           "name": "out",
