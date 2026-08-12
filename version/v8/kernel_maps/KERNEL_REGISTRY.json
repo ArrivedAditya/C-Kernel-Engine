@@ -17937,7 +17937,7 @@
             "requires_prepared_format": "q5_k_expanded_integer_metadata_v1",
             "activation_preparation": "q8_k_once_per_call",
             "work_partition": "independent_output_columns",
-            "tile_n": 128
+            "tile_n": 64
           },
           {
             "name": "avx2_prepared_m4",
