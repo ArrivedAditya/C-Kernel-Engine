@@ -162,6 +162,81 @@ class V8KernelCallABITests(unittest.TestCase):
         self.assertEqual(q6_k["max_total_bytes"], 1073741824)
         self.assertEqual(registry["gemm_nt_q6_k_q8_k"]["weight_preparation"], q6_k)
 
+    def test_q5_k_activation_scratch_is_planner_owned_and_exactly_sized(self) -> None:
+        q5_map = load_json(MAPS / "gemm_nt_q5_k.json")
+        self.assertEqual(q5_map["impl"]["function"], "gemm_nt_q5_k_parallel_dispatch_with_scratch")
+        self.assertEqual(
+            [param["source"] for param in q5_map["call_abi"]["params"][-2:]],
+            ["scratch:activation_q8_k", "scratch_size:activation_q8_k"],
+        )
+        scratch = q5_map["scratch"][0]
+        self.assertEqual(
+            build_ir_v8._kernel_scratch_size_bytes(
+                scratch,
+                {"_m": 128, "_input_dim": 1024},
+                {},
+            ),
+            128 * (1024 // 256) * 292,
+        )
+
+        source = (ROOT / "version" / "v8" / "src" / "ck_parallel_prefill_v8.c").read_text()
+        body = source.split("static void gemm_nt_q5_k_parallel_dispatch_impl", 1)[1]
+        body = body.split("void gemm_nt_q5_k_parallel_dispatch_with_scratch", 1)[0]
+        self.assertNotIn("malloc(", body)
+        self.assertNotIn("free(", body)
+
+    def test_block_scratch_rejects_partial_storage_blocks(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "innermost extent must be divisible"):
+            build_ir_v8._kernel_scratch_size_bytes(
+                {
+                    "dtype": "q8_k",
+                    "shape": ["M", "K"],
+                    "block_elements": 256,
+                    "block_bytes": 292,
+                },
+                {"_m": 2, "_input_dim": 257},
+                {},
+            )
+
+    def test_q5_k_call_ready_ir_passes_scratch_pointer_and_capacity(self) -> None:
+        function = "gemm_nt_q5_k_parallel_dispatch_with_scratch"
+        lowered = {
+            "config": {},
+            "operations": [{
+                "idx": 0,
+                "kernel": "gemm_nt_q5_k",
+                "function": function,
+                "op": "recurrent_qkv_proj",
+                "layer": 0,
+                "section": "body",
+                "activations": {
+                    "A": {"activation_offset": 64, "buffer": "layer_input"},
+                },
+                "outputs": {
+                    "C": {"activation_offset": 4096, "buffer": "mlp_scratch"},
+                },
+                "weights": {
+                    "recurrent_qkv_weight": {"bump_offset": 8192, "name": "recurrent_qkv_weight"},
+                },
+                "scratch": [{
+                    "name": "activation_q8_k",
+                    "scratch_offset": 16384,
+                    "size": 128 * (1024 // 256) * 292,
+                }],
+                "params": {"_m": 128, "_output_dim": 1024, "_input_dim": 1024},
+                "resolved_contract": {
+                    "function": function,
+                    "kernel_id": "gemm_nt_q5_k",
+                    "operation": "decoder.recurrent_qkv_projection.q5_k.prefill",
+                },
+            }],
+        }
+        call = build_ir_v8.generate_ir_lower_3(lowered, "prefill")["operations"][0]
+        self.assertEqual(call["errors"], [])
+        args = {arg["name"]: arg["expr"] for arg in call["args"]}
+        self.assertIn("16384", args["scratch"])
+        self.assertEqual(args["scratch_bytes"], str(128 * (1024 // 256) * 292))
+
     def test_weight_preparation_rejects_unknown_size_symbols(self) -> None:
         with tempfile.TemporaryDirectory(prefix="cke_weight_preparation_") as td:
             root = Path(td)

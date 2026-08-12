@@ -17901,7 +17901,20 @@
           "desc": "Result [M, N]"
         }
       ],
-      "scratch": [],
+      "scratch": [
+        {
+          "name": "activation_q8_k",
+          "dtype": "q8_k_block",
+          "shape": [
+            "M",
+            "K_blocks"
+          ],
+          "alignment": 64,
+          "lifetime": "kernel_call",
+          "size_resolution": "required",
+          "desc": "Planner-owned canonical Q8_K activation rows reused by the prepared output-column provider."
+        }
+      ],
       "dims": [
         "M",
         "N",
@@ -17914,8 +17927,8 @@
         "notes": "Q5_K uses 256-value super-blocks; K should be a multiple of 256."
       },
       "impl": {
-        "function": "gemm_nt_q5_k_parallel_dispatch",
-        "c_declaration": "void gemm_nt_q5_k_parallel_dispatch(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);",
+        "function": "gemm_nt_q5_k_parallel_dispatch_with_scratch",
+        "c_declaration": "void gemm_nt_q5_k_parallel_dispatch_with_scratch(const float *A, const void *B, const float *bias, float *C, int M, int N, int K, void *scratch, size_t scratch_bytes);",
         "sources": [
           "src/kernels/gemm_kernels_q5_k.c",
           "version/v8/src/ck_parallel_prefill_v8.c"
@@ -17923,7 +17936,7 @@
         "variants": [
           {
             "name": "avx2_prepared_nsplit_m4",
-            "function": "gemm_nt_q5_k_parallel_dispatch",
+            "function": "gemm_nt_q5_k_parallel_dispatch_with_scratch",
             "priority": 270,
             "requires": [
               "avx2",
@@ -17991,8 +18004,8 @@
         }
       },
       "production": {
-        "function": "gemm_nt_q5_k_parallel_dispatch",
-        "threaded_function": "gemm_nt_q5_k_parallel_dispatch",
+        "function": "gemm_nt_q5_k_parallel_dispatch_with_scratch",
+        "threaded_function": "gemm_nt_q5_k_parallel_dispatch_with_scratch",
         "reference_comparison": {
           "requirement": "contract_tolerance",
           "absolute_tolerance": 0.0,
@@ -18033,7 +18046,7 @@
       "phase_selection": {
         "prefill": {
           "default_kernel": "gemm_nt_q5_k",
-          "dispatch_owner": "gemm_nt_q5_k_parallel_dispatch",
+          "dispatch_owner": "gemm_nt_q5_k_parallel_dispatch_with_scratch",
           "selection_policy": "The kernel map selects Q5_K from weight dtype and phase. The production dispatcher partitions independent activation rows without changing per-output arithmetic."
         }
       },
@@ -18057,7 +18070,7 @@
           "phases": [
             "prefill"
           ],
-          "function": "gemm_nt_q5_k_parallel_dispatch",
+          "function": "gemm_nt_q5_k_parallel_dispatch_with_scratch",
           "explicit_selector": true,
           "implementation": {
             "isa_dispatch": "compile_time",
@@ -18127,6 +18140,15 @@
           {
             "name": "K",
             "source": "dim:_input_dim"
+          },
+          {
+            "name": "scratch",
+            "source": "scratch:activation_q8_k",
+            "cast": "void*"
+          },
+          {
+            "name": "scratch_bytes",
+            "source": "scratch_size:activation_q8_k"
           }
         ]
       },

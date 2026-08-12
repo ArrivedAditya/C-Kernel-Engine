@@ -4193,6 +4193,7 @@ def _dtype_size_bytes(dtype: str) -> int:
         "int32": 4,
         "q8_0": 1,
         "q8_k": 1,
+        "q8_k_block": 292,
     }.get(str(dtype or "").strip().lower(), 4)
 
 
@@ -4206,17 +4207,23 @@ def _kernel_scratch_size_bytes(
         return int(raw_size) if isinstance(raw_size, int) else None
     values = dict(config)
     values.update(params)
+    k_extent = values.get("_k", values.get("_input_dim"))
+    if "K_blocks" in shape and k_extent is not None and int(k_extent) % 256 != 0:
+        raise RuntimeError(
+            f"HARD SCRATCH CONTRACT FAULT: Q8_K extent must be divisible by 256 ({k_extent})"
+        )
     symbols = {
         "H": values.get("num_heads", values.get("num_attention_heads")),
         "Tq": values.get("query_tokens", values.get("seq_len")),
         "Tk": values.get("key_tokens", values.get("seq_len")),
         "D": values.get("head_dim"),
         "M": values.get("_m", values.get("seq_len")),
-        "N": values.get("_n"),
-        "K": values.get("_k"),
+        "N": values.get("_n", values.get("_output_dim")),
+        "K": values.get("_k", values.get("_input_dim")),
+        "K_blocks": int(k_extent) // 256 if k_extent is not None else None,
         "T": values.get("seq_len"),
     }
-    elements = 1
+    extents = []
     for extent in shape:
         if isinstance(extent, int):
             value = extent
@@ -4225,7 +4232,28 @@ def _kernel_scratch_size_bytes(
             value = int(text) if text.isdigit() else symbols.get(text)
         if value is None or int(value) <= 0:
             return None
-        elements *= int(value)
+        extents.append(int(value))
+
+    block_elements = scratch.get("block_elements")
+    block_bytes = scratch.get("block_bytes")
+    if block_elements is not None or block_bytes is not None:
+        if not isinstance(block_elements, int) or block_elements <= 0:
+            raise RuntimeError("HARD SCRATCH CONTRACT FAULT: block_elements must be positive")
+        if not isinstance(block_bytes, int) or block_bytes <= 0:
+            raise RuntimeError("HARD SCRATCH CONTRACT FAULT: block_bytes must be positive")
+        if extents[-1] % block_elements != 0:
+            raise RuntimeError(
+                "HARD SCRATCH CONTRACT FAULT: innermost extent must be divisible by "
+                f"block_elements ({extents[-1]} % {block_elements})"
+            )
+        outer_elements = 1
+        for value in extents[:-1]:
+            outer_elements *= value
+        return outer_elements * (extents[-1] // block_elements) * block_bytes
+
+    elements = 1
+    for value in extents:
+        elements *= value
     return elements * _dtype_size_bytes(str(scratch.get("dtype", "fp32")))
 
 
@@ -8777,12 +8805,12 @@ def generate_ir_lower_1(
 
         # Map scratch buffers
         for scratch in kernel_map.get("scratch", []):
-            lowered_op["scratch"].append({
-                "name": scratch.get("name", f"scratch_{idx}"),
-                "size": scratch.get("size", "dynamic"),
-                "dtype": scratch.get("dtype", "fp32"),
-                "shape": copy.deepcopy(scratch.get("shape", [])),
-            })
+            lowered_scratch = copy.deepcopy(scratch)
+            lowered_scratch.setdefault("name", f"scratch_{idx}")
+            lowered_scratch.setdefault("size", "dynamic")
+            lowered_scratch.setdefault("dtype", "fp32")
+            lowered_scratch.setdefault("shape", [])
+            lowered_op["scratch"].append(lowered_scratch)
 
         lowered_ops.append(lowered_op)
 
@@ -11849,35 +11877,11 @@ def generate_ir_lower_2(
 
         # Process scratch buffers
         lowered_op["scratch"] = []
-        scratch_list = ir_op.get("scratch", [])
-        if scratch_list:
-            mlp_buf = activation_buffers.get("mlp_scratch")
-            scratch_cursor = int(mlp_buf["offset"]) if mlp_buf else 0
-            scratch_limit = scratch_cursor + int(mlp_buf.get("size", 0)) if mlp_buf else 0
-            for i, scratch in enumerate(scratch_list):
-                scratch_size = _kernel_scratch_size_bytes(
-                    scratch, ir_op.get("params", {}), config
-                )
-                if scratch_size is None:
-                    scratch_size = int(mlp_buf.get("size", 0)) if mlp_buf else 0
-                    scratch_offset = int(mlp_buf["offset"]) if mlp_buf else 0
-                else:
-                    scratch_offset = (scratch_cursor + 63) & ~63
-                    scratch_cursor = scratch_offset + int(scratch_size)
-                    if mlp_buf and scratch_cursor > scratch_limit:
-                        raise RuntimeError(
-                            "HARD MEMORY PLAN FAULT: kernel scratch exceeds mlp_scratch arena: "
-                            f"required={scratch_cursor - int(mlp_buf['offset'])} "
-                            f"available={int(mlp_buf.get('size', 0))}"
-                        )
-                lowered_op["scratch"].append({
-                    "name": scratch.get("name", f"scratch_{i}"),
-                    "scratch_offset": scratch_offset,
-                    "size": scratch_size,
-                    "dtype": scratch.get("dtype", "fp32"),
-                    "shape": copy.deepcopy(scratch.get("shape", [])),
-                    "ptr_expr": f"activations + {scratch_offset}",
-                })
+        kernel_scratch_list = ir_op.get("scratch", [])
+
+        # Kernel-map scratch is allocated after concrete operation dimensions
+        # are inferred below. Operation-specific scratch bindings can still be
+        # appended here because their offsets come from named circuit buffers.
 
         # Special handling for QK/Q-only norm: operate in-place on scratch buffers
         # between projection and RoPE.
@@ -12284,6 +12288,40 @@ def generate_ir_lower_2(
             )
         lowered_op["params"] = params
 
+        if kernel_scratch_list:
+            mlp_buf = activation_buffers.get("mlp_scratch")
+            scratch_cursor = int(mlp_buf["offset"]) if mlp_buf else 0
+            scratch_limit = scratch_cursor + int(mlp_buf.get("size", 0)) if mlp_buf else 0
+            planned_scratch = []
+            for i, scratch in enumerate(kernel_scratch_list):
+                scratch_size = _kernel_scratch_size_bytes(scratch, params, config)
+                if scratch_size is None:
+                    if scratch.get("size_resolution") == "required":
+                        raise RuntimeError(
+                            "HARD SCRATCH CONTRACT FAULT: kernel scratch size did not resolve "
+                            f"for {ir_op.get('kernel')}:{scratch.get('name', i)}"
+                        )
+                    scratch_size = int(mlp_buf.get("size", 0)) if mlp_buf else 0
+                    scratch_offset = int(mlp_buf["offset"]) if mlp_buf else 0
+                else:
+                    scratch_offset = (scratch_cursor + 63) & ~63
+                    scratch_cursor = scratch_offset + int(scratch_size)
+                    if not mlp_buf or scratch_cursor > scratch_limit:
+                        raise RuntimeError(
+                            "HARD MEMORY PLAN FAULT: kernel scratch exceeds mlp_scratch arena: "
+                            f"required={scratch_cursor - (int(mlp_buf['offset']) if mlp_buf else 0)} "
+                            f"available={int(mlp_buf.get('size', 0)) if mlp_buf else 0}"
+                        )
+                planned_scratch.append({
+                    "name": scratch.get("name", f"scratch_{i}"),
+                    "scratch_offset": scratch_offset,
+                    "size": scratch_size,
+                    "dtype": scratch.get("dtype", "fp32"),
+                    "shape": copy.deepcopy(scratch.get("shape", [])),
+                    "ptr_expr": f"activations + {scratch_offset}",
+                })
+            lowered_op["scratch"] = planned_scratch + lowered_op["scratch"]
+
         lowered_ops.append(lowered_op)
 
         # NOTE: residual_save ops are now explicitly in IR1 (inserted before rmsnorm)
@@ -12675,6 +12713,7 @@ _CALL_ABI_SOURCE_KINDS = {
     "resolved",
     "runtime",
     "scratch",
+    "scratch_size",
     "weight",
     "weight_f",
 }
@@ -13221,6 +13260,17 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                             expr = ptr_expr("model->bump", off_expr, cast or "float*")
                     else:
                         expr = ptr_expr("ACT", offset, cast or "float*")
+
+            elif src.startswith("scratch_size:"):
+                key = src.split(":", 1)[1]
+                info = scratch.get(key)
+                if not info and len(scratch) == 1:
+                    info = next(iter(scratch.values()))
+                if not info:
+                    op_errors.append(f"{func}.{name}: missing scratch size '{key}'")
+                    expr = "0"
+                else:
+                    expr = str(int(info.get("size", 0) or 0))
 
             elif src.startswith("weight_f:"):
                 key = src.split(":", 1)[1]

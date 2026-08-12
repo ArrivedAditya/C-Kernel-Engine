@@ -154,7 +154,7 @@ class ProviderSelectionTests(unittest.TestCase):
             ),
             "gemm_nt_q5_k": (
                 "q5_k_weight_q8_k_input_avx2_fma_fp32_output",
-                "gemm_nt_q5_k_parallel_dispatch",
+                "gemm_nt_q5_k_parallel_dispatch_with_scratch",
             ),
         }
         registry = {
