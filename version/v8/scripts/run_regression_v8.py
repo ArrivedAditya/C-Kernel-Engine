@@ -19,6 +19,7 @@ is stable enough to promote as the default regression path.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -75,6 +76,7 @@ class FamilySpec:
     response_contract: dict[str, Any]
     coherence_gate: bool
     runtime_expect: dict[str, Any]
+    repeatability: dict[str, Any] = field(default_factory=dict)
 
 
 def _cache_root() -> Path:
@@ -215,6 +217,7 @@ def load_families(path: Path, prompts: dict[str, PromptSpec]) -> list[FamilySpec
                 response_contract=dict(row.get("response_contract") or {}),
                 coherence_gate=bool(row.get("coherence_gate", True)),
                 runtime_expect=dict(row.get("runtime_expect") or {}),
+                repeatability=dict(row.get("repeatability") or {}),
             )
         )
     return out
@@ -505,6 +508,47 @@ def run_prompt(
     }
 
 
+def run_repeatability(
+    family: FamilySpec,
+    prompt: PromptSpec,
+    baseline: dict[str, Any],
+    run_dir: Path,
+    *,
+    cache_dir: Path,
+) -> dict[str, Any]:
+    config = family.repeatability
+    runs = max(1, int(config.get("runs") or 1))
+    rows = [baseline]
+    for _ in range(1, runs):
+        rows.append(
+            run_prompt(
+                family,
+                prompt,
+                run_dir,
+                force_rebuild=False,
+                cache_dir=cache_dir,
+            )
+        )
+
+    outputs = [str(row.get("assistant") or "") for row in rows]
+    hashes = [hashlib.sha256(output.encode("utf-8")).hexdigest() for output in outputs]
+    reasons: list[str] = []
+    if any(row.get("status") != PASS for row in rows):
+        reasons.append("repeat_command_failed")
+    if bool(config.get("require_nonempty", True)) and any(not output.strip() for output in outputs):
+        reasons.append("empty_output")
+    if len(set(hashes)) != 1:
+        reasons.append("output_mismatch")
+    return {
+        "status": FAIL if reasons else PASS,
+        "prompt_id": prompt.prompt_id,
+        "runs": runs,
+        "output_sha256": hashes,
+        "reasons": reasons,
+        "rows": rows[1:],
+    }
+
+
 def audit_runtime_contract(
     run_dir: Path,
     runtime_dir: Path,
@@ -768,6 +812,34 @@ def run_family(
             reasons = ",".join(row["coherence"].get("reasons") or [])
             failure_reason = f"coherence_failed:{prompt_id}:{reasons}"
 
+    repeatability_result: dict[str, Any] = {"status": SKIP}
+    repeat_prompt_id = str(family.repeatability.get("prompt") or "")
+    if smoke_status == PASS and repeat_prompt_id:
+        baseline = next(
+            (row for row in prompt_rows if row.get("prompt_id") == repeat_prompt_id),
+            None,
+        )
+        if baseline is None or repeat_prompt_id not in prompts:
+            repeatability_result = {
+                "status": FAIL,
+                "prompt_id": repeat_prompt_id,
+                "reasons": ["unknown_repeatability_prompt"],
+            }
+        else:
+            repeatability_result = run_repeatability(
+                family,
+                prompts[repeat_prompt_id],
+                baseline,
+                run_dir,
+                cache_dir=cache_dir,
+            )
+        if repeatability_result["status"] != PASS:
+            smoke_status = FAIL
+            failure_reason = (
+                f"repeatability_failed:{repeat_prompt_id}:"
+                + ",".join(repeatability_result.get("reasons") or [])
+            )
+
     runtime_dir = _resolve_runtime_dir(run_dir)
     contract_result: dict[str, Any] = {"status": SKIP}
     if build_status == PASS and smoke_status == PASS:
@@ -813,6 +885,7 @@ def run_family(
         "coherence_gate": family.coherence_gate,
         "prompts": prompt_rows,
         "contract_audit": contract_result,
+        "repeatability": repeatability_result,
         "status": overall,
     }
     (family_report_dir / "family_summary.json").write_text(json.dumps(family_result, indent=2), encoding="utf-8")

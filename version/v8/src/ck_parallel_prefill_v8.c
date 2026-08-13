@@ -2589,8 +2589,18 @@ void gemm_nt_q5_1_q8_1_parallel_dispatch(
 void geglu_forward_exact_parallel_dispatch(
     const float *input, float *output, int tokens, int dim)
 {
+    if (!input || !output || tokens <= 0 || dim <= 0) return;
+
+    const size_t input_bytes = (size_t)tokens * 2u * (size_t)dim * sizeof(*input);
+    const size_t output_bytes = (size_t)tokens * (size_t)dim * sizeof(*output);
+    const uintptr_t input_begin = (uintptr_t)input;
+    const uintptr_t input_end = input_begin + input_bytes;
+    const uintptr_t output_begin = (uintptr_t)output;
+    const uintptr_t output_end = output_begin + output_bytes;
+    const int buffers_overlap = output_begin < input_end && input_begin < output_end;
+
     ck_threadpool_t *pool = ck_threadpool_global();
-    if (!pool || ck_threadpool_n_threads(pool) <= 1 || tokens <= 1) {
+    if (!pool || ck_threadpool_n_threads(pool) <= 1 || tokens <= 1 || buffers_overlap) {
         geglu_forward_exact(input, output, tokens, dim);
         return;
     }

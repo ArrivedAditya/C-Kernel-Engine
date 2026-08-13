@@ -14324,7 +14324,17 @@
     {
       "id": "geglu_forward_exact",
       "op": "geglu",
+      "operation_interface": "geglu.fp32_compacting.v1",
       "variant": "geglu_fp32_exact",
+      "selection": {
+        "status": "production",
+        "priority": 200,
+        "equivalence_group": "geglu_tanh_fp32_exact",
+        "phases": [
+          "prefill",
+          "decode"
+        ]
+      },
       "quant": {
         "activation": "fp32",
         "output": "fp32"
@@ -14337,9 +14347,14 @@
             "tokens",
             "2*dim"
           ],
+          "layout": "token_major_contiguous",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required",
           "desc": "Input tensor [tokens, 2*dim], split into [gate, up] along last dim"
         }
       ],
+      "weights": [],
       "outputs": [
         {
           "name": "out",
@@ -14348,9 +14363,17 @@
             "tokens",
             "dim"
           ],
-          "desc": "Exact GeGLU output tensor [tokens, dim], where out = GELU_tanh(gate) * up"
+          "layout": "token_major_contiguous",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required",
+          "desc": "Exact compacted GeGLU output tensor [tokens, dim], where out = GELU_tanh(gate) * up"
         }
       ],
+      "memory_contract": {
+        "input_output_overlap": "allowed_with_ascending_serial_compaction",
+        "disjoint_buffers": "parallel_independent_rows"
+      },
       "dims": [
         "tokens",
         "dim"
@@ -14372,7 +14395,8 @@
             "shape_constraints": {
               "tokens_min": 2
             },
-            "work_partition": "independent_rows"
+            "work_partition": "independent_rows",
+            "alias_policy": "dispatch_parallel_only_for_disjoint_buffers"
           },
           {
             "name": "serial_reference",
@@ -14418,7 +14442,7 @@
         ],
         "parity": []
       },
-      "notes": "Exact GeGLU forward: out = GELU_tanh(gate) * up using scalar tanhf semantics. Production prefill schedules independent token rows through the persistent thread pool; each element retains the serial reference arithmetic.",
+      "notes": "Exact GeGLU forward: out = GELU_tanh(gate) * up using scalar tanhf semantics. The dispatcher parallelizes disjoint input/output buffers. In-place compaction overlaps unread [tokens, 2*dim] input rows, so it uses the ascending serial reference to prevent cross-row races.",
       "name": "geglu_forward_exact",
       "_source_file": "geglu_forward_exact.json"
     },
