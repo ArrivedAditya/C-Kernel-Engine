@@ -4,6 +4,7 @@
 #include "ggml-cpu.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -16,6 +17,9 @@ void ssm_conv1d_forward_llama_production(
 void ssm_conv1d_forward_llama_production_serial(
         const float * conv_x, const float * kernel, float * out,
         int kernel_size, int num_channels, int num_tokens, int num_seqs);
+void ssm_conv1d_forward_llama_fma(
+        const float * conv_x, const float * kernel, float * out,
+        int kernel_size, int num_channels, int num_tokens, int num_seqs);
 }
 
 namespace {
@@ -26,7 +30,35 @@ struct case_spec {
     int channels;
     int tokens;
     int sequences;
+    bool rounding_sensitive;
 };
+
+static float float_from_bits(uint32_t bits) {
+    float value;
+    static_assert(sizeof(value) == sizeof(bits), "float must be binary32");
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+static float separated_mul_add(
+        const float * input, const float * kernel, int count) {
+    float sum = 0.0f;
+    for (int i = 0; i < count; ++i) {
+        volatile float product = input[i] * kernel[i];
+        volatile float next = sum + product;
+        sum = next;
+    }
+    return sum;
+}
+
+static float fused_mul_add(
+        const float * input, const float * kernel, int count) {
+    float sum = 0.0f;
+    for (int i = 0; i < count; ++i) {
+        sum = std::fma(input[i], kernel[i], sum);
+    }
+    return sum;
+}
 
 static float input_value(int sequence, int channel, int position) {
     float value = 0.31f * std::sin(
@@ -92,73 +124,110 @@ static bool run_case(const case_spec & spec) {
             static_cast<size_t>(spec.sequences) * spec.tokens * spec.channels;
     std::vector<float> input(input_count);
     std::vector<float> kernel(kernel_count);
-    std::vector<float> ck(output_count, 0.0f);
+    std::vector<float> separated(output_count, 0.0f);
     std::vector<float> serial(output_count, 0.0f);
+    std::vector<float> fused(output_count, 0.0f);
     std::vector<float> llama(output_count, 0.0f);
 
-    for (int sequence = 0; sequence < spec.sequences; ++sequence) {
+    if (spec.rounding_sensitive) {
+        // This fixture differs by one ULP between a rounded multiply followed
+        // by add and a contracted FMA chain.  Smooth trigonometric fixtures do
+        // not reliably distinguish those two production contracts.
+        const uint32_t input_bits[] = {
+            0x3cac8de8u, 0x3d2fedc9u, 0x3d8458d7u, 0x3db01010u,
+        };
+        const uint32_t kernel_bits[] = {
+            0x3e6b339fu, 0x3e6947ecu, 0x3e5ef6ceu, 0x3e4c9f57u,
+        };
         for (int channel = 0; channel < spec.channels; ++channel) {
-            for (int position = 0; position < sequence_width; ++position) {
-                const size_t index =
-                        (static_cast<size_t>(sequence) * spec.channels + channel)
-                        * sequence_width + position;
-                input[index] = input_value(sequence, channel, position);
+            for (int i = 0; i < spec.kernel_size; ++i) {
+                input[static_cast<size_t>(channel) * sequence_width + i] =
+                        float_from_bits(input_bits[i]);
+                kernel[static_cast<size_t>(channel) * spec.kernel_size + i] =
+                        float_from_bits(kernel_bits[i]);
             }
         }
-    }
-    for (int channel = 0; channel < spec.channels; ++channel) {
-        for (int tap = 0; tap < spec.kernel_size; ++tap) {
-            kernel[static_cast<size_t>(channel) * spec.kernel_size + tap] =
-                    kernel_value(channel, tap);
+        const float separated = separated_mul_add(
+                input.data(), kernel.data(), spec.kernel_size);
+        const float fused = fused_mul_add(
+                input.data(), kernel.data(), spec.kernel_size);
+        if (std::memcmp(&separated, &fused, sizeof(float)) == 0) {
+            std::fprintf(
+                    stderr, "%s: fixture does not distinguish arithmetic contracts\n",
+                    spec.name);
+            return false;
+        }
+    } else {
+        for (int sequence = 0; sequence < spec.sequences; ++sequence) {
+            for (int channel = 0; channel < spec.channels; ++channel) {
+                for (int position = 0; position < sequence_width; ++position) {
+                    const size_t index =
+                            (static_cast<size_t>(sequence) * spec.channels + channel)
+                            * sequence_width + position;
+                    input[index] = input_value(sequence, channel, position);
+                }
+            }
+        }
+        for (int channel = 0; channel < spec.channels; ++channel) {
+            for (int tap = 0; tap < spec.kernel_size; ++tap) {
+                kernel[static_cast<size_t>(channel) * spec.kernel_size + tap] =
+                        kernel_value(channel, tap);
+            }
         }
     }
 
     ssm_conv1d_forward_llama_production(
-            input.data(), kernel.data(), ck.data(),
+            input.data(), kernel.data(), separated.data(),
             spec.kernel_size, spec.channels, spec.tokens, spec.sequences);
     ssm_conv1d_forward_llama_production_serial(
             input.data(), kernel.data(), serial.data(),
             spec.kernel_size, spec.channels, spec.tokens, spec.sequences);
     if (std::memcmp(
-                ck.data(), serial.data(), output_count * sizeof(float)) != 0) {
+                separated.data(), serial.data(), output_count * sizeof(float)) != 0) {
         std::fprintf(
                 stderr, "%s: parallel output differs from serial reference\n",
                 spec.name);
         return false;
     }
+    ssm_conv1d_forward_llama_fma(
+            input.data(), kernel.data(), fused.data(),
+            spec.kernel_size, spec.channels, spec.tokens, spec.sequences);
     if (!llama_ssm_conv(input, kernel, llama, spec)) {
         std::fprintf(stderr, "%s: llama.cpp graph execution failed\n", spec.name);
         return false;
     }
 
-    size_t different = 0;
-    size_t first = output_count;
-    size_t worst = 0;
-    float max_abs = 0.0f;
+    size_t separated_different = 0;
+    size_t fused_different = 0;
     for (size_t i = 0; i < output_count; ++i) {
-        if (std::memcmp(&ck[i], &llama[i], sizeof(float)) != 0) {
-            if (first == output_count) {
-                first = i;
-            }
-            ++different;
+        if (std::memcmp(&separated[i], &llama[i], sizeof(float)) != 0) {
+            ++separated_different;
         }
-        const float diff = std::fabs(ck[i] - llama[i]);
-        if (diff > max_abs) {
-            max_abs = diff;
-            worst = i;
+        if (std::memcmp(&fused[i], &llama[i], sizeof(float)) != 0) {
+            ++fused_different;
         }
     }
-    if (different != 0) {
+    const bool separated_exact = separated_different == 0;
+    const bool fused_exact = fused_different == 0;
+    if (spec.rounding_sensitive && separated_exact == fused_exact) {
         std::printf(
-                "%-24s different=%zu/%zu first=%zu worst=%zu "
-                "max_abs=%.9g ck=%.9g llama=%.9g [FAIL]\n",
-                spec.name, different, output_count, first, worst,
-                max_abs, ck[worst], llama[worst]);
+                "%-24s separated_diff=%zu fused_diff=%zu/%zu "
+                "oracle=ambiguous [FAIL]\n",
+                spec.name, separated_different, fused_different, output_count);
         return false;
     }
+    if (!separated_exact && !fused_exact) {
+        std::printf(
+                "%-24s separated_diff=%zu fused_diff=%zu/%zu "
+                "oracle=unclassified [FAIL]\n",
+                spec.name, separated_different, fused_different, output_count);
+        return false;
+    }
+    const char * oracle_arithmetic = fused_exact
+            ? "fused_fma" : "separated_mul_add";
     std::printf(
-            "%-24s bit_exact (%zu values) [PASS]\n",
-            spec.name, output_count);
+            "%-24s bit_exact (%zu values) oracle=%s [PASS]\n",
+            spec.name, output_count, oracle_arithmetic);
     return true;
 }
 
@@ -166,10 +235,11 @@ static bool run_case(const case_spec & spec) {
 
 int main() {
     const case_spec cases[] = {
-        {"decode_small", 4, 48, 1, 1},
-        {"prefill_small", 4, 96, 13, 3},
-        {"qwen36_decode", 4, 10240, 1, 1},
-        {"qwen36_prefill", 4, 10240, 65, 1},
+        {"rounding_sensitive", 4, 48, 1, 1, true},
+        {"decode_small", 4, 48, 1, 1, false},
+        {"prefill_small", 4, 96, 13, 3, false},
+        {"qwen36_decode", 4, 10240, 1, 1, false},
+        {"qwen36_prefill", 4, 10240, 65, 1, false},
     };
     int passed = 0;
     for (const case_spec & spec : cases) {

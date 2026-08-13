@@ -710,12 +710,12 @@
         "prefill": {
           "contract_id": "ssm_conv1d_llama_scalar_mul_add_fp32_output",
           "validation": "validated",
-          "evidence": "Production ggml graph parity is bit-exact for Qwen3.6 dimensions only with ascending rounded FP32 multiply/add operations; contraction or an optimized generic loop changes multi-token prefill rounding."
+          "evidence": "The separated provider retains the most stable certified Qwen3.6 trajectory while the independently certified FMA candidate exposes a compensating downstream deviation."
         },
         "decode": {
           "contract_id": "ssm_conv1d_llama_scalar_mul_add_fp32_output",
           "validation": "validated",
-          "evidence": "The scoped provider is bit-exact against the production ggml graph at one-token decode and preserves the same arithmetic contract across phases."
+          "evidence": "The separated provider remains production until the FMA candidate's earlier end-to-end trajectory divergence is attributed and resolved."
         }
       },
       "checkpoint": {

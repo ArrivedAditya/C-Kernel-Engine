@@ -524,6 +524,7 @@ class NumericalExecutionContractTests(unittest.TestCase):
             "recurrent_silu_forward_ggml": "recurrent_silu.fp32.v1",
             "recurrent_silu_forward_pytorch_bf16_storage": "recurrent_silu.fp32_bf16_values.v1",
             "ssm_conv1d_forward_llama_production": "ssm_conv1d.fp32.v1",
+            "ssm_conv1d_forward_llama_fma": "ssm_conv1d.fp32.v1",
             "ssm_conv1d_forward_pytorch_bf16_storage": "ssm_conv1d.fp32_bf16_values.v1",
             "swiglu_forward_ggml": "swiglu.fp32.v1",
             "swiglu_forward_pytorch_bf16_storage": "swiglu.fp32_bf16_values.v1",
@@ -560,15 +561,15 @@ class NumericalExecutionContractTests(unittest.TestCase):
         report = audit.build_report()
         baseline = audit._load(audit.BASELINE)
         audit.validate_ratchet(report, baseline)
-        self.assertEqual(report["counts"]["kernel_maps"], 281)
+        self.assertEqual(report["counts"]["kernel_maps"], 282)
         self.assertEqual(report["counts"]["physical_layout_maps"], 4)
-        self.assertEqual(report["counts"]["resolver_governed_maps"], 87)
-        self.assertEqual(report["counts"]["interface_hardened_maps"], 34)
+        self.assertEqual(report["counts"]["resolver_governed_maps"], 88)
+        self.assertEqual(report["counts"]["interface_hardened_maps"], 35)
         self.assertEqual(
-            report["counts"]["interface_abi_crossvalidated_maps"], 34
+            report["counts"]["interface_abi_crossvalidated_maps"], 35
         )
         self.assertEqual(report["counts"]["contract_pending_maps"], 53)
-        self.assertEqual(report["counts"]["map_owned_call_abi"], 134)
+        self.assertEqual(report["counts"]["map_owned_call_abi"], 135)
         self.assertEqual(report["counts"]["legacy_interface_ready_maps"], 26)
         self.assertEqual(report["counts"]["selection_managed_maps"], 49)
         self.assertEqual(report["selection"]["legacy_selection_if_statements"], 73)
@@ -1092,7 +1093,19 @@ class NumericalExecutionContractTests(unittest.TestCase):
         circuit_doc = resolver.load_json(
             ROOT / "version" / "v8" / "circuits" / "qwen35.json"
         )
-        for phase in ("prefill", "decode"):
+        expected = {
+            "prefill": (
+                "ssm_conv1d_llama_scalar_mul_add_fp32_output",
+                "ssm_conv1d_forward_llama_production",
+                "ascending_kernel_rounded_multiply_then_add",
+            ),
+            "decode": (
+                "ssm_conv1d_llama_scalar_mul_add_fp32_output",
+                "ssm_conv1d_forward_llama_production",
+                "ascending_kernel_rounded_multiply_then_add",
+            ),
+        }
+        for phase, (contract_id, kernel_id, evaluation_order) in expected.items():
             with self.subTest(phase=phase):
                 plan = resolver.resolve_contract(
                     circuit_doc,
@@ -1104,21 +1117,21 @@ class NumericalExecutionContractTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     plan["contract"]["id"],
-                    "ssm_conv1d_llama_scalar_mul_add_fp32_output",
+                    contract_id,
                 )
                 self.assertEqual(
                     plan["kernel"]["id"],
-                    "ssm_conv1d_forward_llama_production",
+                    kernel_id,
                 )
                 self.assertEqual(
                     plan["kernel"]["function"],
-                    "ssm_conv1d_forward_llama_production",
+                    kernel_id,
                 )
                 semantics = plan["contract"]["semantics"]
                 self.assertEqual(semantics["storage"]["output"], "fp32")
                 self.assertEqual(
                     semantics["compute"]["evaluation_order"],
-                    "ascending_kernel_rounded_multiply_then_add",
+                    evaluation_order,
                 )
                 self.assertEqual(
                     semantics["reduction"]["order"], "left_to_right"
