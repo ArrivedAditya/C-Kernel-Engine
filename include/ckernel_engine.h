@@ -2148,6 +2148,19 @@ void recurrent_conv_state_update_backward(const float *d_conv_x,
                                           int q_dim,
                                           int k_dim,
                                           int v_dim);
+void recurrent_conv_state_update_backward_workspace(const float *d_conv_x,
+                                                     const float *d_state_out,
+                                                     float *d_state_in,
+                                                     float *d_q,
+                                                     float *d_k,
+                                                     float *d_v,
+                                                     float *d_conv_total,
+                                                     int history_len,
+                                                     int num_seqs,
+                                                     int num_tokens,
+                                                     int q_dim,
+                                                     int k_dim,
+                                                     int v_dim);
 
 // Apply SiLU elementwise to recurrent convolution output rows.
 // Layout:

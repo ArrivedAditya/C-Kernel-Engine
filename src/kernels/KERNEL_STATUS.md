@@ -137,7 +137,7 @@ Track compliance with kernel guidelines. Last updated: 2026-01-17
 | Kernel | OpenMP | malloc | memcpy | Status | Notes |
 |--------|--------|--------|--------|--------|-------|
 | `rmsnorm_q8_k_fused.c` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | |
-| `fused_rmsnorm_linear.c` | :white_check_mark: | :x: | :x: | :x: | free() in test, memcpy |
+| `fused_rmsnorm_linear.c` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | Scalar bit-cast only; embedded heap test removed |
 | `rmsnorm_qkv.c` | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | |
 | `attention_mlp_fused.c` | :white_check_mark: | :white_check_mark: | :x: | :warning: | memcpy for layout |
 | `mega_fused_attention_avx.c` | :white_check_mark: | :x: | :x: | :x: | malloc + memcpy |
@@ -155,7 +155,6 @@ These use memcpy to reshape data - should use strided access instead:
 1. **`fused/mega_fused_attention_prefill.c`** - `flatten_head_major()` copies head→token layout
 2. **`fused/attention_mlp_fused.c`** - memcpy for layout changes
 3. **`fused/mega_fused_attention_avx.c`** - malloc + memcpy (needs full refactor)
-4. **`fused/fused_rmsnorm_linear.c`** - has free() and memcpy
 
 ### Acceptable memcpy (for struct unpacking)
 

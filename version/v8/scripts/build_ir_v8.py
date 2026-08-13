@@ -4222,6 +4222,12 @@ def _kernel_scratch_size_bytes(
         "K": values.get("_k", values.get("_input_dim")),
         "K_blocks": int(k_extent) // 256 if k_extent is not None else None,
         "T": values.get("seq_len"),
+        "num_seqs": values.get("num_seqs"),
+        "conv_total_tokens": (
+            int(values.get("ssm_conv_history", 0) or 0)
+            + int(values.get("seq_len", 0) or 0)
+        ),
+        "ssm_conv_channels": values.get("ssm_conv_channels"),
     }
     extents = []
     for extent in shape:

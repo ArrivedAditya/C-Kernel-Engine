@@ -13,6 +13,10 @@ Kernels must **NOT** allocate or free memory:
 - All memory is pre-allocated via bump allocator at orchestration layer
 - Pointers passed to kernel API
 
+The checked-in legacy debt is tracked by `make test-v8-kernel-allocations`.
+That ratchet rejects new allocator call sites while existing providers migrate
+to planner-owned workspace declared by their kernel maps.
+
 ### 2. No OpenMP Inside Kernels
 
 Kernels must **NOT** contain parallelization directives:

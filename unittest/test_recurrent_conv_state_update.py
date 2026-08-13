@@ -63,6 +63,11 @@ def _load_lib() -> ctypes.CDLL | None:
                 ctypes.c_int,
             ]
             bwd.restype = None
+            bwd_workspace = lib.recurrent_conv_state_update_backward_workspace
+            bwd_workspace.argtypes = bwd.argtypes[:6] + [
+                ctypes.POINTER(ctypes.c_float)
+            ] + bwd.argtypes[6:]
+            bwd_workspace.restype = None
             return lib
     return None
 
@@ -112,9 +117,11 @@ class TestRecurrentConvStateUpdate(unittest.TestCase):
         ck_d_q = np.zeros_like(q)
         ck_d_k = np.zeros_like(k)
         ck_d_v = np.zeros_like(v)
-        LIB.recurrent_conv_state_update_backward(
+        workspace = np.empty_like(ck_conv_x)
+        LIB.recurrent_conv_state_update_backward_workspace(
             _as_ptr(d_conv_x), _as_ptr(d_state_out),
             _as_ptr(ck_d_state_in), _as_ptr(ck_d_q), _as_ptr(ck_d_k), _as_ptr(ck_d_v),
+            _as_ptr(workspace),
             history_len, num_seqs, num_tokens, q_dim, k_dim, v_dim,
         )
 
