@@ -833,6 +833,36 @@
       "position_transform": null,
       "description": "llama.cpp GGML_OP_SSM_CONV production arithmetic: each channel/token output is an ascending scalar FP32 chain with a rounded product before every addition. The provider prevents contraction or vectorization from changing rounding boundaries."
     },
+    "ssm_conv1d_llama_fma_fp32_output": {
+      "operator_family": "ssm_conv1d",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "ascending_kernel_fused_multiply_add"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["reduction_update", "output_store"]
+      },
+      "reduction": {
+        "kind": "dot_product",
+        "order": "left_to_right",
+        "partial_accumulator": "fp32",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Contracted llama.cpp GGML_OP_SSM_CONV arithmetic observed when the compiler and target contract the source expression: each channel/token output is an ascending scalar FP32 fmaf chain. Contraction is a build property, not a source-revision guarantee. This remains an independently certified candidate until its earlier Qwen3.6 end-to-end divergence is attributed."
+    },
     "ssm_conv1d_pytorch_fp32_compute_bf16_output": {
       "operator_family": "ssm_conv1d",
       "status": "validated",
