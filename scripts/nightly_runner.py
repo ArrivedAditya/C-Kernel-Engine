@@ -1137,6 +1137,20 @@ def _summarize_make_failure_artifact(target: str, *, start_ts: float) -> str:
     if target == "v8-kernel-map-contracts":
         counts = payload.get("counts") if isinstance(payload.get("counts"), dict) else {}
         selection = payload.get("selection") if isinstance(payload.get("selection"), dict) else {}
+        allocation_path = (
+            ROOT
+            / "version"
+            / "v8"
+            / ".cache"
+            / "reports"
+            / "kernel_allocation_audit_latest.json"
+        )
+        allocation = _load_json_if_fresh(allocation_path, start_ts=start_ts) or {}
+        allocation_counts = (
+            allocation.get("counts")
+            if isinstance(allocation.get("counts"), dict)
+            else {}
+        )
         # Migration burn-down: hardened/ABI/selection-managed maps rise, contract
         # debt and legacy resolver conditionals fall. The ratchet enforces
         # monotonicity; this line makes the movement visible in nightly output.
@@ -1147,7 +1161,9 @@ def _summarize_make_failure_artifact(target: str, *, start_ts: float) -> str:
             f"selection_managed={counts.get('selection_managed_maps')} "
             f"map_abi={counts.get('map_owned_call_abi')} "
             f"legacy_if={selection.get('legacy_selection_if_statements')} "
-            f"op_if={selection.get('operation_specific_if_statements')}"
+            f"op_if={selection.get('operation_specific_if_statements')} "
+            f"kernel_allocs={allocation_counts.get('production_allocation_calls')} "
+            f"mapped_allocators={allocation_counts.get('mapped_allocating_providers')}"
         )
 
     if target == "regression-training-full":

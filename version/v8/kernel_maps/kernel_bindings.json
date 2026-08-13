@@ -1068,26 +1068,6 @@
         {"name": "v_dim", "source": "dim:v_dim"}
       ]
     },
-    "recurrent_conv_state_update_backward_f32": {
-      "note": "Backward pass for recurrent convolution state window construction.",
-      "params": [
-        {"name": "d_conv_x", "source": "activation:d_conv_x", "cast": "const float*"},
-        {"name": "state_in", "source": "activation:state_in", "cast": "const float*"},
-        {"name": "q", "source": "activation:q", "cast": "const float*"},
-        {"name": "k", "source": "activation:k", "cast": "const float*"},
-        {"name": "v", "source": "activation:v", "cast": "const float*"},
-        {"name": "d_state_in", "source": "output:d_state_in", "cast": "float*"},
-        {"name": "d_q", "source": "output:d_q", "cast": "float*"},
-        {"name": "d_k", "source": "output:d_k", "cast": "float*"},
-        {"name": "d_v", "source": "output:d_v", "cast": "float*"},
-        {"name": "history_len", "source": "dim:ssm_conv_history"},
-        {"name": "num_seqs", "source": "dim:num_seqs"},
-        {"name": "num_tokens", "source": "runtime:seq_len"},
-        {"name": "q_dim", "source": "dim:q_dim"},
-        {"name": "k_dim", "source": "dim:k_dim"},
-        {"name": "v_dim", "source": "dim:v_dim"}
-      ]
-    },
     "recurrent_silu_forward": {
       "note": "Apply SiLU elementwise to the recurrent convolution output rows.",
       "params": [

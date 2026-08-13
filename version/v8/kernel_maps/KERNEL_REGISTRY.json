@@ -32409,6 +32409,16 @@
       "id": "recurrent_conv_state_update_backward_f32",
       "op": "recurrent_conv_state_update",
       "variant": "backward_fp32",
+      "operation_interface": "recurrent_conv_state_update.backward.v1",
+      "numerical_contract": "recurrent_conv_state_update_backward_fp32_ordered.v1",
+      "selection": {
+        "status": "production",
+        "priority": 200,
+        "equivalence_group": "recurrent_conv_state_update_backward_fp32_ordered",
+        "phases": [
+          "backward"
+        ]
+      },
       "modes": {
         "inference": false,
         "training": true,
@@ -32427,7 +32437,12 @@
             "S",
             "Q+K+V",
             "H+T"
-          ]
+          ],
+          "layout": "sequence_channel_major",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         },
         {
           "name": "d_state_out",
@@ -32436,7 +32451,12 @@
             "S",
             "Q+K+V",
             "H"
-          ]
+          ],
+          "layout": "sequence_channel_major",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
       "weights": [],
@@ -32447,36 +32467,69 @@
           "dtype": "fp32",
           "shape": [
             "S",
-            "C",
+            "Q+K+V",
             "H"
-          ]
+          ],
+          "layout": "sequence_channel_major",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         },
         {
           "name": "d_q",
           "dtype": "fp32",
           "shape": [
-            "R",
+            "S*T",
             "Q"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         },
         {
           "name": "d_k",
           "dtype": "fp32",
           "shape": [
-            "R",
+            "S*T",
             "K"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         },
         {
           "name": "d_v",
           "dtype": "fp32",
           "shape": [
-            "R",
+            "S*T",
             "V"
-          ]
+          ],
+          "layout": "token_major_contiguous",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
         }
       ],
-      "scratch": [],
+      "scratch": [
+        {
+          "name": "d_conv_total",
+          "dtype": "fp32",
+          "shape": [
+            "num_seqs",
+            "conv_total_tokens",
+            "ssm_conv_channels"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "desc": "Planner-owned accumulated convolution gradient workspace."
+        }
+      ],
       "dims": [
         "H",
         "S",
@@ -32506,8 +32559,8 @@
         ]
       },
       "impl": {
-        "function": "recurrent_conv_state_update_backward",
-        "c_declaration": "void recurrent_conv_state_update_backward(const float *d_conv_x, const float *d_state_out, float *d_state_in, float *d_q, float *d_k, float *d_v, int history_len, int num_seqs, int num_tokens, int q_dim, int k_dim, int v_dim);",
+        "function": "recurrent_conv_state_update_backward_workspace",
+        "c_declaration": "void recurrent_conv_state_update_backward_workspace(const float *d_conv_x, const float *d_state_out, float *d_state_in, float *d_q, float *d_k, float *d_v, float *d_conv_total, int history_len, int num_seqs, int num_tokens, int q_dim, int k_dim, int v_dim);",
         "sources": [
           "src/kernels/recurrent_state_kernels.c"
         ],
@@ -32516,6 +32569,88 @@
             "name": "ref",
             "requires": [],
             "compile_flags": []
+          }
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "d_conv_x",
+            "source": "activation:d_conv_x",
+            "cast": "const float*",
+            "ports": [
+              "input:d_conv_x"
+            ]
+          },
+          {
+            "name": "d_state_out",
+            "source": "activation:d_state_out",
+            "cast": "const float*",
+            "ports": [
+              "input:d_state_out"
+            ]
+          },
+          {
+            "name": "d_state_in",
+            "source": "output:d_state_in",
+            "cast": "float*",
+            "ports": [
+              "output:d_state_in"
+            ]
+          },
+          {
+            "name": "d_q",
+            "source": "output:d_q",
+            "cast": "float*",
+            "ports": [
+              "output:d_q"
+            ]
+          },
+          {
+            "name": "d_k",
+            "source": "output:d_k",
+            "cast": "float*",
+            "ports": [
+              "output:d_k"
+            ]
+          },
+          {
+            "name": "d_v",
+            "source": "output:d_v",
+            "cast": "float*",
+            "ports": [
+              "output:d_v"
+            ]
+          },
+          {
+            "name": "d_conv_total",
+            "source": "scratch:d_conv_total",
+            "cast": "float*"
+          },
+          {
+            "name": "history_len",
+            "source": "dim:ssm_conv_history"
+          },
+          {
+            "name": "num_seqs",
+            "source": "dim:num_seqs"
+          },
+          {
+            "name": "num_tokens",
+            "source": "runtime:seq_len"
+          },
+          {
+            "name": "q_dim",
+            "source": "dim:q_dim"
+          },
+          {
+            "name": "k_dim",
+            "source": "dim:k_dim"
+          },
+          {
+            "name": "v_dim",
+            "source": "dim:v_dim"
           }
         ]
       },

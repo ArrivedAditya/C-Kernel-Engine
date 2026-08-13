@@ -12,9 +12,6 @@
  *
  * After changes: make test && make llamacpp-parity-full
  *
- * VIOLATION: Has free() calls and memcpy in test/benchmark code at end of file.
- * TODO: Move test code to unittest/, remove free()/memcpy from kernel file.
- *
  * FUSION BENEFIT:
  * ===============
  * Unfused:
@@ -303,65 +300,3 @@ void unfused_rmsnorm_linear_q4k_ref(float *y,
 
     /* No free needed - stack buffers auto-deallocate */
 }
-
-#ifdef FUSED_KERNEL_TEST
-/* Simple correctness test */
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
-
-int main(void) {
-    const int K = 512;   /* Hidden size */
-    const int M = 1536;  /* Output size (3 * hidden for QKV) */
-    const int nb = K / QK_K;
-
-    printf("Fused RMSNorm+Linear Test\n");
-    printf("K=%d, M=%d, blocks=%d\n", K, M, nb);
-
-    /* Allocate test data */
-    float *x = (float *)aligned_alloc(64, K * sizeof(float));
-    float *gamma = (float *)aligned_alloc(64, K * sizeof(float));
-    float *y_fused = (float *)aligned_alloc(64, M * sizeof(float));
-    float *y_unfused = (float *)aligned_alloc(64, M * sizeof(float));
-
-    /* Initialize with random data */
-    srand(42);
-    for (int i = 0; i < K; ++i) {
-        x[i] = (float)rand() / RAND_MAX * 2.0f - 1.0f;
-        gamma[i] = (float)rand() / RAND_MAX * 0.5f + 0.75f;
-    }
-
-    /* Create dummy Q4_K weights (in real usage, these come from model) */
-    block_q4_K *W = (block_q4_K *)aligned_alloc(64, M * nb * sizeof(block_q4_K));
-    memset(W, 0, M * nb * sizeof(block_q4_K));
-    for (int i = 0; i < M * nb; ++i) {
-        W[i].d = 0x3C00;  /* 1.0 in FP16 */
-        W[i].dmin = 0x0000;
-    }
-
-    /* Run both versions */
-    printf("Running fused version...\n");
-    fused_rmsnorm_linear_q4k(y_fused, x, gamma, W, M, K, 1e-5f);
-
-    printf("Running unfused version...\n");
-    unfused_rmsnorm_linear_q4k_ref(y_unfused, x, gamma, W, M, K, 1e-5f);
-
-    /* Compare results */
-    float max_diff = 0.0f;
-    for (int i = 0; i < M; ++i) {
-        float diff = fabsf(y_fused[i] - y_unfused[i]);
-        if (diff > max_diff) max_diff = diff;
-    }
-
-    printf("Max difference: %e\n", max_diff);
-    printf("Test %s\n", max_diff < 1e-3f ? "PASSED" : "FAILED");
-
-    free(x);
-    free(gamma);
-    free(y_fused);
-    free(y_unfused);
-    free(W);
-
-    return max_diff < 1e-3f ? 0 : 1;
-}
-#endif
