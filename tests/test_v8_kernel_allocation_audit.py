@@ -40,9 +40,13 @@ class TestKernelAllocationAudit(unittest.TestCase):
         baseline = json.loads(AUDIT.BASELINE.read_text(encoding="utf-8"))
         AUDIT.validate_ratchet(report, baseline)
         self.assertEqual(report["counts"]["production_allocation_calls"], 57)
-        self.assertEqual(report["counts"]["mapped_allocating_providers"], 12)
+        self.assertEqual(report["counts"]["mapped_allocating_providers"], 10)
         self.assertEqual(
-            report["counts"]["mapped_allocating_without_scratch_contract"], 11
+            report["counts"]["mapped_allocating_without_scratch_contract"], 10
+        )
+        self.assertEqual(
+            [warning["code"] for warning in report["warnings"]],
+            ["production_allocator_debt", "mapped_allocator_without_scratch"],
         )
 
     def test_new_allocator_identity_fails_closed(self):
@@ -103,6 +107,35 @@ class TestKernelAllocationAudit(unittest.TestCase):
             {"num_seqs": 2, "ssm_conv_history": 3, "ssm_conv_channels": 48},
         )
         self.assertEqual(size, 2 * (3 + 9) * 48 * 4)
+
+    def test_selected_attention_and_amx_providers_are_workspace_owned(self):
+        cases = {
+            "attention_forward_causal_head_major_gqa_flash_strided_f16kv.json": (
+                "attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace",
+                "rounded_kv",
+            ),
+            "gemm_nt_bf16_amx_bf16_storage.json": (
+                "gemm_nt_bf16_amx_bf16_storage_workspace",
+                "activation_bf16",
+            ),
+        }
+        allocating = {
+            row["function"] for row in AUDIT.build_report()["mapped_allocating_providers"]
+        }
+        for filename, (function, scratch_name) in cases.items():
+            with self.subTest(filename=filename):
+                kernel_map = json.loads(
+                    (ROOT / "version/v8/kernel_maps" / filename).read_text(encoding="utf-8")
+                )
+                self.assertEqual(kernel_map["impl"]["function"], function)
+                scratch = {entry["name"]: entry for entry in kernel_map["scratch"]}
+                self.assertEqual(scratch[scratch_name]["size_resolution"], "required")
+                sources = {
+                    param["name"]: param["source"]
+                    for param in kernel_map["call_abi"]["params"]
+                }
+                self.assertEqual(sources[scratch_name if scratch_name == "rounded_kv" else "a_bf16"], f"scratch:{scratch_name}")
+                self.assertNotIn(function, allocating)
 
 
 if __name__ == "__main__":

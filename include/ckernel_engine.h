@@ -246,11 +246,21 @@ void gemm_nt_bf16_amx_bf16_storage(const float *A,
                                     const float *bias,
                                     float *C,
                                     int M, int N, int K);
+void gemm_nt_bf16_amx_bf16_storage_workspace(const float *A,
+                                              const void *B,
+                                              const float *bias,
+                                              float *C,
+                                              int M, int N, int K,
+                                              uint16_t *a_bf16,
+                                              size_t a_bf16_bytes);
 void gemm_nt_bf16_prefill_shape_safe_bf16_storage(const float *A,
                                                    const void *B,
                                                    const float *bias,
                                                    float *C,
                                                    int M, int N, int K);
+void gemm_nt_bf16_prefill_shape_safe_bf16_storage_workspace(
+    const float *A, const void *B, const float *bias, float *C,
+    int M, int N, int K, uint16_t *a_bf16, size_t a_bf16_bytes);
 void gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage(const float *A,
                                                        const void *B,
                                                        const float *bias,
@@ -1686,6 +1696,11 @@ void attention_forward_causal_head_major_gqa_flash_strided_f16kv(const float *q,
                                                                  int head_dim,
                                                                  int aligned_head_dim,
                                                                  int kv_stride_tokens);
+void attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens, int head_dim,
+    int aligned_head_dim, int kv_stride_tokens,
+    float *rounded_kv, size_t rounded_kv_bytes);
 
 // Decode attention for a single token using a KV cache (flash-style).
 //   q_token: [num_heads, aligned_head_dim]

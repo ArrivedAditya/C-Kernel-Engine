@@ -21,6 +21,7 @@ LIB = ctypes.CDLL(str(LIB_PATH))
 KERNEL = LIB.gemm_nt_bf16_bf16_storage
 NATIVE_KERNEL = LIB.gemm_nt_bf16_native_bf16_storage
 AMX_KERNEL = LIB.gemm_nt_bf16_amx_bf16_storage
+AMX_WORKSPACE_KERNEL = LIB.gemm_nt_bf16_amx_bf16_storage_workspace
 SHAPE_SAFE_KERNEL = LIB.gemm_nt_bf16_prefill_shape_safe_bf16_storage
 FLOAT_P = ctypes.POINTER(ctypes.c_float)
 UINT16_P = ctypes.POINTER(ctypes.c_uint16)
@@ -33,6 +34,8 @@ NATIVE_KERNEL.argtypes = KERNEL.argtypes
 NATIVE_KERNEL.restype = None
 AMX_KERNEL.argtypes = KERNEL.argtypes
 AMX_KERNEL.restype = None
+AMX_WORKSPACE_KERNEL.argtypes = KERNEL.argtypes + [UINT16_P, ctypes.c_size_t]
+AMX_WORKSPACE_KERNEL.restype = None
 SHAPE_SAFE_KERNEL.argtypes = KERNEL.argtypes
 SHAPE_SAFE_KERNEL.restype = None
 AMX_AVAILABLE = LIB.ck_gemm_bf16_amx_available
@@ -81,6 +84,18 @@ def run_case_detailed(m: int, n: int, k: int, seed: int, *, kernel=KERNEL) -> di
     }
 
 
+def run_amx_workspace_case(m: int, n: int, k: int, seed: int) -> dict[str, float]:
+    workspace = np.empty(m * k, dtype=np.uint16)
+
+    def invoke(a, b, bias, output, rows, cols, reduction):
+        AMX_WORKSPACE_KERNEL(
+            a, b, bias, output, rows, cols, reduction,
+            workspace.ctypes.data_as(UINT16_P), ctypes.c_size_t(workspace.nbytes),
+        )
+
+    return run_case_detailed(m, n, k, seed, kernel=invoke)
+
+
 def run_case(m: int, n: int, k: int, seed: int) -> tuple[float, float]:
     metrics = run_case_detailed(m, n, k, seed)
     return metrics["max_abs"], metrics["rmse"]
@@ -118,7 +133,7 @@ def main() -> int:
         f"max_abs={segmented['max_abs']:.9g} rmse={segmented['rmse']:.9g}"
     )
     if amx_bf16_supported():
-        amx = run_case_detailed(16, 32, 32, 4, kernel=AMX_KERNEL)
+        amx = run_amx_workspace_case(16, 32, 32, 4)
         if amx["max_abs"] != 0.0 or amx["rmse"] != 0.0:
             raise AssertionError(f"AMX BF16 storage mismatch: {amx}")
         tested += 1

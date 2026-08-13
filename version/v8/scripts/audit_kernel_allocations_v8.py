@@ -201,21 +201,36 @@ def build_report() -> dict[str, Any]:
     allocation_by_class = Counter(
         call["classification"] for call in call_sites if call["allocator"] != "free"
     )
+    counts = {
+        "allocator_calls": len(call_sites),
+        "allocation_calls": sum(call["allocator"] != "free" for call in call_sites),
+        "free_calls": sum(call["allocator"] == "free" for call in call_sites),
+        "production_allocator_calls": by_class["production"],
+        "production_allocation_calls": allocation_by_class["production"],
+        "frontend_allocator_calls": by_class["frontend"],
+        "oracle_allocator_calls": by_class["oracle"],
+        "test_allocator_calls": by_class["test"],
+        "mapped_allocating_providers": len(mapped),
+        "mapped_allocating_without_scratch_contract": len(missing_scratch),
+    }
+    warnings = []
+    if counts["production_allocation_calls"]:
+        warnings.append({
+            "code": "production_allocator_debt",
+            "count": counts["production_allocation_calls"],
+            "message": "production kernel allocation calls remain",
+        })
+    if counts["mapped_allocating_without_scratch_contract"]:
+        warnings.append({
+            "code": "mapped_allocator_without_scratch",
+            "count": counts["mapped_allocating_without_scratch_contract"],
+            "message": "mapped allocating providers still lack complete scratch ownership",
+        })
     return {
         "schema": "cke.v8.kernel_allocation_audit",
         "schema_version": 1,
-        "counts": {
-            "allocator_calls": len(call_sites),
-            "allocation_calls": sum(call["allocator"] != "free" for call in call_sites),
-            "free_calls": sum(call["allocator"] == "free" for call in call_sites),
-            "production_allocator_calls": by_class["production"],
-            "production_allocation_calls": allocation_by_class["production"],
-            "frontend_allocator_calls": by_class["frontend"],
-            "oracle_allocator_calls": by_class["oracle"],
-            "test_allocator_calls": by_class["test"],
-            "mapped_allocating_providers": len(mapped),
-            "mapped_allocating_without_scratch_contract": len(missing_scratch),
-        },
+        "counts": counts,
+        "warnings": warnings,
         "call_site_identities": dict(sorted(identities.items())),
         "mapped_allocating_providers": mapped,
         "mapped_allocating_without_scratch_contract": missing_scratch,
@@ -263,8 +278,11 @@ def main() -> int:
         print(json.dumps(report, indent=2))
     else:
         counts = report["counts"]
+        prefix = "WARNING" if report["warnings"] else "PASS"
         print(
-            "kernel allocations: "
+            f"{prefix}: kernel allocations: "
+            f"allocations={counts['allocation_calls']} "
+            f"frees={counts['free_calls']} "
             f"production={counts['production_allocation_calls']} "
             f"frontend_total={counts['frontend_allocator_calls']} "
             f"oracle_total={counts['oracle_allocator_calls']} "

@@ -4214,6 +4214,7 @@ def _kernel_scratch_size_bytes(
         )
     symbols = {
         "H": values.get("num_heads", values.get("num_attention_heads")),
+        "KV": values.get("num_kv_heads"),
         "Tq": values.get("query_tokens", values.get("seq_len")),
         "Tk": values.get("key_tokens", values.get("seq_len")),
         "D": values.get("head_dim"),

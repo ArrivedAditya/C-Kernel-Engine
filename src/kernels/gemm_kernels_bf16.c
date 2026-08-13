@@ -1101,11 +1101,13 @@ int ck_gemm_bf16_fp32out_amx_raw(const uint16_t *A,
 #endif
 }
 
-void gemm_nt_bf16_amx_bf16_storage(const float *A,
-                                    const void *B,
-                                    const float *bias,
-                                    float *C,
-                                    int M, int N, int K)
+void gemm_nt_bf16_amx_bf16_storage_workspace(const float *A,
+                                              const void *B,
+                                              const float *bias,
+                                              float *C,
+                                              int M, int N, int K,
+                                              uint16_t *a_bf16,
+                                              size_t a_bf16_bytes)
 {
 #if HAVE_AMX_BF16
     if (!A || !B || !C || M < 16 || N < 16 || K < 32 ||
@@ -1117,9 +1119,9 @@ void gemm_nt_bf16_amx_bf16_storage(const float *A,
         abort();
     }
     const size_t input_count = (size_t)M * K;
-    uint16_t *a_bf16 = (uint16_t *)malloc(input_count * sizeof(uint16_t));
-    if (!a_bf16) {
-        fprintf(stderr, "HARD KERNEL CONTRACT FAULT: AMX BF16 activation workspace allocation failed\n");
+    if (!a_bf16 || input_count > SIZE_MAX / sizeof(uint16_t) ||
+        a_bf16_bytes < input_count * sizeof(uint16_t)) {
+        fprintf(stderr, "HARD KERNEL CONTRACT FAULT: AMX BF16 activation workspace is too small\n");
         abort();
     }
     ck_threadpool_t *pool = ck_threadpool_global();
@@ -1135,22 +1137,57 @@ void gemm_nt_bf16_amx_bf16_storage(const float *A,
     if (pool && active > 1) ck_threadpool_dispatch_n(pool, active, ck_gemm_bf16_amx_work, &gemm);
     else ck_gemm_bf16_amx_work(0, 1, &gemm);
     if (__atomic_load_n(&gemm.failed, __ATOMIC_RELAXED)) {
-        free(a_bf16);
         fprintf(stderr, "HARD KERNEL CONTRACT FAULT: AMX tile permission request failed\n");
         abort();
     }
     ck_bf16_round_args_t round = {.values=C, .count=(size_t)M * N};
     if (pool && active > 1) ck_threadpool_dispatch_n(pool, active, ck_bf16_round_work, &round);
     else ck_bf16_round_work(0, 1, &round);
-    free(a_bf16);
     return;
 #else
     (void)A; (void)B; (void)bias; (void)C; (void)M; (void)N; (void)K;
+    (void)a_bf16; (void)a_bf16_bytes;
     fprintf(stderr,
             "HARD KERNEL CONTRACT FAULT: gemm_nt_bf16_amx_bf16_storage was selected "
             "without AMX BF16 support\n");
     abort();
 #endif
+}
+
+void gemm_nt_bf16_amx_bf16_storage(const float *A,
+                                    const void *B,
+                                    const float *bias,
+                                    float *C,
+                                    int M, int N, int K)
+{
+    size_t input_count = 0;
+    if (M > 0 && K > 0 && (size_t)M <= SIZE_MAX / (size_t)K) {
+        input_count = (size_t)M * (size_t)K;
+    }
+    uint16_t *workspace = input_count > 0 && input_count <= SIZE_MAX / sizeof(uint16_t)
+        ? (uint16_t *)malloc(input_count * sizeof(uint16_t))
+        : NULL;
+    if (!workspace) {
+        fprintf(stderr, "HARD KERNEL CONTRACT FAULT: AMX BF16 compatibility workspace allocation failed\n");
+        abort();
+    }
+    gemm_nt_bf16_amx_bf16_storage_workspace(
+        A, B, bias, C, M, N, K, workspace, input_count * sizeof(uint16_t));
+    free(workspace);
+}
+
+void gemm_nt_bf16_prefill_shape_safe_bf16_storage_workspace(
+    const float *A, const void *B, const float *bias, float *C,
+    int M, int N, int K, uint16_t *a_bf16, size_t a_bf16_bytes)
+{
+    const int amx_shape = M >= 16 && N >= 16 && K >= 32 &&
+                          (M % 16) == 0 && (N % 16) == 0 && (K % 32) == 0;
+    if (amx_shape && ck_gemm_bf16_amx_available()) {
+        gemm_nt_bf16_amx_bf16_storage_workspace(
+            A, B, bias, C, M, N, K, a_bf16, a_bf16_bytes);
+        return;
+    }
+    gemm_nt_bf16_native_bf16_storage(A, B, bias, C, M, N, K);
 }
 
 void gemm_nt_bf16_prefill_shape_safe_bf16_storage(const float *A,

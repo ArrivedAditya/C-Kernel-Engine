@@ -1151,6 +1151,11 @@ def _summarize_make_failure_artifact(target: str, *, start_ts: float) -> str:
             if isinstance(allocation.get("counts"), dict)
             else {}
         )
+        allocation_warnings = (
+            allocation.get("warnings")
+            if isinstance(allocation.get("warnings"), list)
+            else []
+        )
         # Migration burn-down: hardened/ABI/selection-managed maps rise, contract
         # debt and legacy resolver conditionals fall. The ratchet enforces
         # monotonicity; this line makes the movement visible in nightly output.
@@ -1163,7 +1168,9 @@ def _summarize_make_failure_artifact(target: str, *, start_ts: float) -> str:
             f"legacy_if={selection.get('legacy_selection_if_statements')} "
             f"op_if={selection.get('operation_specific_if_statements')} "
             f"kernel_allocs={allocation_counts.get('production_allocation_calls')} "
-            f"mapped_allocators={allocation_counts.get('mapped_allocating_providers')}"
+            f"kernel_frees={allocation_counts.get('free_calls')} "
+            f"mapped_allocators={allocation_counts.get('mapped_allocating_providers')} "
+            f"allocation_warnings={len(allocation_warnings)}"
         )
 
     if target == "regression-training-full":

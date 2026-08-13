@@ -5327,10 +5327,11 @@ void attention_forward_causal_head_major_gqa_flash_strided_f16kv_serial(
     ck_attention_causal_f16kv_work(0, 1, &args);
 }
 
-void attention_forward_causal_head_major_gqa_flash_strided_f16kv(
+void attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace(
     const float *q, const float *k, const float *v, float *output,
     int num_heads, int num_kv_heads, int num_tokens, int head_dim,
-    int aligned_head_dim, int kv_stride_tokens)
+    int aligned_head_dim, int kv_stride_tokens,
+    float *rounded_kv, size_t rounded_kv_bytes)
 {
     if (!q || !k || !v || !output || num_heads <= 0 || num_kv_heads <= 0 ||
         num_tokens <= 0 || kv_stride_tokens < num_tokens) {
@@ -5343,23 +5344,18 @@ void attention_forward_causal_head_major_gqa_flash_strided_f16kv(
             elements = rows * (size_t)aligned_head_dim;
         }
     }
-    float *rounded_kv = elements > 0 && elements <= SIZE_MAX / (2 * sizeof(float))
-        ? (float *)malloc(2 * elements * sizeof(float))
-        : NULL;
-    const float *compute_k = k;
-    const float *compute_v = v;
-    int inputs_prerounded = 0;
-    if (rounded_kv) {
-        ck_round_fp16_buffer(k, rounded_kv, elements);
-        ck_round_fp16_buffer(v, rounded_kv + elements, elements);
-        compute_k = rounded_kv;
-        compute_v = rounded_kv + elements;
-        inputs_prerounded = 1;
+    if (elements == 0 || elements > SIZE_MAX / (2 * sizeof(float)) ||
+        !rounded_kv || rounded_kv_bytes < 2 * elements * sizeof(float)) {
+        fprintf(stderr,
+                "HARD KERNEL CONTRACT FAULT: FP16-KV attention workspace is too small\n");
+        abort();
     }
+    ck_round_fp16_buffer(k, rounded_kv, elements);
+    ck_round_fp16_buffer(v, rounded_kv + elements, elements);
     ck_attention_causal_f16kv_args_t args = {
-        q, compute_k, compute_v, output,
+        q, rounded_kv, rounded_kv + elements, output,
         num_heads, num_kv_heads, num_tokens,
-        head_dim, aligned_head_dim, kv_stride_tokens, inputs_prerounded,
+        head_dim, aligned_head_dim, kv_stride_tokens, 1,
     };
     ck_threadpool_t *pool = ck_threadpool_global();
     const int workers = pool ? ck_threadpool_n_threads(pool) : 1;
@@ -5369,7 +5365,35 @@ void attention_forward_causal_head_major_gqa_flash_strided_f16kv(
     } else {
         ck_attention_causal_f16kv_work(0, 1, &args);
     }
-    free(rounded_kv);
+}
+
+void attention_forward_causal_head_major_gqa_flash_strided_f16kv(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens, int head_dim,
+    int aligned_head_dim, int kv_stride_tokens)
+{
+    size_t elements = 0;
+    if (num_kv_heads > 0 && kv_stride_tokens > 0 && aligned_head_dim > 0 &&
+        (size_t)num_kv_heads <= SIZE_MAX / (size_t)kv_stride_tokens) {
+        const size_t rows = (size_t)num_kv_heads * (size_t)kv_stride_tokens;
+        if (rows <= SIZE_MAX / (size_t)aligned_head_dim) {
+            elements = rows * (size_t)aligned_head_dim;
+        }
+    }
+    float *workspace = elements > 0 && elements <= SIZE_MAX / (2 * sizeof(float))
+        ? (float *)malloc(2 * elements * sizeof(float))
+        : NULL;
+    if (!workspace) {
+        attention_forward_causal_head_major_gqa_flash_strided_f16kv_serial(
+            q, k, v, output, num_heads, num_kv_heads, num_tokens,
+            head_dim, aligned_head_dim, kv_stride_tokens);
+        return;
+    }
+    attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace(
+        q, k, v, output, num_heads, num_kv_heads, num_tokens, head_dim,
+        aligned_head_dim, kv_stride_tokens, workspace,
+        2 * elements * sizeof(float));
+    free(workspace);
 }
 
 void attention_forward_full_head_major_gqa_exact_strided(const float *q,
