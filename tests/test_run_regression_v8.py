@@ -93,6 +93,8 @@ class RegressionHarnessV8Tests(unittest.TestCase):
         self.assertEqual(arm_by_id["qwen3vl"]["runtime_expect"].get("manifest", {}).get("config.model"), "qwen3vl")
         self.assertEqual(by_id["nanbeige"].runtime_expect.get("config", {}).get("chat_contract.name"), "llama_chatml")
         self.assertEqual(by_id["gemma"].runtime_expect.get("config", {}).get("rope_layout"), "split")
+        self.assertEqual(by_id["gemma"].repeatability.get("prompt"), "hello")
+        self.assertEqual(by_id["gemma"].repeatability.get("runs"), 5)
         qwen35_lowered = by_id["qwen35"].runtime_expect.get("lowered_ops", [])
         self.assertEqual(qwen35_lowered[0].get("function_prefix"), "mrope_qk_text")
 
@@ -289,6 +291,53 @@ class RegressionHarnessV8Tests(unittest.TestCase):
 
         self.assertEqual(row["assistant"], "This image is a logo for C-earned Engineer.")
         self.assertEqual(row["bridge_report"]["status"], "ok")
+
+    def test_repeatability_rejects_empty_or_changed_output(self) -> None:
+        family = regression.FamilySpec(
+            family_id="gemma",
+            label="Gemma",
+            model="model.gguf",
+            context_len=1024,
+            runtime_args=[],
+            smoke_prompts=["hello"],
+            response_contract={},
+            coherence_gate=False,
+            runtime_expect={},
+            repeatability={"prompt": "hello", "runs": 3, "require_nonempty": True},
+        )
+        prompt = regression.PromptSpec("hello", "Hello", "Hello", 8, {})
+        baseline = {"status": regression.PASS, "assistant": "stable"}
+        repeated = [
+            {"status": regression.PASS, "assistant": "stable"},
+            {"status": regression.PASS, "assistant": "changed"},
+        ]
+        with mock.patch.object(regression, "run_prompt", side_effect=repeated):
+            result = regression.run_repeatability(
+                family,
+                prompt,
+                baseline,
+                Path("/tmp/repeatability"),
+                cache_dir=Path("/tmp/cache"),
+            )
+        self.assertEqual(result["status"], regression.FAIL)
+        self.assertIn("output_mismatch", result["reasons"])
+
+        with mock.patch.object(
+            regression,
+            "run_prompt",
+            side_effect=[
+                {"status": regression.PASS, "assistant": ""},
+                {"status": regression.PASS, "assistant": ""},
+            ],
+        ):
+            result = regression.run_repeatability(
+                family,
+                prompt,
+                {"status": regression.PASS, "assistant": ""},
+                Path("/tmp/repeatability"),
+                cache_dir=Path("/tmp/cache"),
+            )
+        self.assertIn("empty_output", result["reasons"])
 
     def test_runtime_contract_audit_checks_config_manifest_lowered_and_stdout(self) -> None:
         with tempfile.TemporaryDirectory(prefix="ck_reg_contract_v8_") as tmp:

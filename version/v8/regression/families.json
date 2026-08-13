@@ -15,6 +15,11 @@
         "1.1"
       ],
       "coherence_gate": false,
+      "repeatability": {
+        "prompt": "hello",
+        "runs": 5,
+        "require_nonempty": true
+      },
       "response_contract": {
         "stop_text_markers": [
           "<end_of_turn>"
