@@ -212,13 +212,31 @@ def _hidden_compare(a_path: Path, b_path: Path) -> dict[str, Any]:
 
 
 def _load_ck_hidden_exports(
-    root: Path, names: list[str], layer: int
+    root: Path,
+    names: list[str],
+    layer: int,
+    *,
+    allow_missing: bool = False,
 ) -> list[Any]:
-    """Load production-runtime hidden exports into the common parity format."""
+    """Load production-runtime hidden exports into the common parity format.
+
+    ``allow_missing`` is reserved for oracle attribution. A generated source
+    can advertise an exporter which the exact staged runtime did not compile
+    in. Retaining the exports that do exist lets the common comparator report
+    the absent boundary as MISSING without discarding every earlier result.
+    Direct callers remain fail-closed by default.
+    """
     dumps: list[Any] = []
     for name in names:
+        named_files = _hidden_named_files(root, name)
+        if allow_missing and not named_files:
+            continue
         files = (
-            {layer: _single_hidden_file(root, name)}
+            {
+                layer: _select_final_hidden_file(
+                    named_files, context=f"{name} in {root}"
+                )
+            }
             if layer >= 0
             else _hidden_files_by_layer(root, name)
         )
@@ -319,6 +337,45 @@ def _coalesce_segmented_prefill_oracle_dumps(dumps: list[Any]) -> list[Any]:
             )
         )
     return result
+
+
+def _dump_element_count_mismatches(
+    ck_dumps: list[Any], llama_dumps: list[Any]
+) -> list[dict[str, Any]]:
+    """Reject structurally incompatible captures before numerical comparison.
+
+    Alias expansion may create several candidates for one semantic boundary.
+    A boundary is structurally compatible when at least one candidate on each
+    side has the same element count; the ordinary alignment code then selects
+    the best matching candidate. Disjoint size sets mean the captures describe
+    different schedules or tensor extents and must not produce error metrics.
+    """
+    grouped: list[dict[tuple[int, str], list[int]]] = []
+    for dumps in (ck_dumps, llama_dumps):
+        by_key: dict[tuple[int, str], list[int]] = {}
+        for dump in dumps:
+            key = (
+                int(dump.layer_id),
+                first_token._canonical_dump_op_name(str(dump.op_name)),
+            )
+            by_key.setdefault(key, []).append(
+                int(np.asarray(dump.data).reshape(-1).size)
+            )
+        grouped.append(by_key)
+
+    ck_by_key, llama_by_key = grouped
+    mismatches: list[dict[str, Any]] = []
+    for layer_id, op_name in sorted(set(ck_by_key) & set(llama_by_key)):
+        ck_counts = sorted(set(ck_by_key[(layer_id, op_name)]))
+        llama_counts = sorted(set(llama_by_key[(layer_id, op_name)]))
+        if set(ck_counts).isdisjoint(llama_counts):
+            mismatches.append({
+                "layer": int(layer_id),
+                "op": str(op_name),
+                "ck_element_counts": ck_counts,
+                "llama_element_counts": llama_counts,
+            })
+    return mismatches
 
 
 def _hidden_full_replay_name(name: str) -> str:
@@ -1418,7 +1475,9 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
             semantic_names = {
                 re.sub(r"-\d+$", "", name) for name in names
             }
-            ck_dumps = _load_ck_hidden_exports(persistent_dir, names, layer)
+            ck_dumps = _load_ck_hidden_exports(
+                persistent_dir, names, layer, allow_missing=True
+            )
             ck_dumps = _normalize_ck_recurrent_state_layout(ck_dumps, runtime_config)
             llama_dumps = first_token._load_llama_dump_dir(llama_dir)
             if step_index == 0:
@@ -1433,20 +1492,35 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
                 layer_count=layer_count,
                 alias_after_attn="after_attn" in semantic_names,
             )
-            oracle_comparison = first_token._compare_dump_sets(
-                ck_dumps,
-                llama_dumps,
-                atol=float(args.hidden_state_atol),
-                rtol=float(getattr(args, "hidden_state_rtol", 0.0)),
-                pass_filter="all",
+            structural_mismatches = _dump_element_count_mismatches(
+                ck_dumps, llama_dumps
             )
-            oracle_comparison["status"] = (
-                "fail"
-                if oracle_comparison["summary"]["fail"]
-                or oracle_comparison["summary"]["error"]
-                or oracle_comparison["summary"]["missing"]
-                else "ok"
-            )
+            if structural_mismatches:
+                oracle_comparison = {
+                    "status": "rejected",
+                    "reason": "structural_element_count_mismatch",
+                    "structural_mismatches": structural_mismatches,
+                    "first_issue": structural_mismatches[0],
+                }
+            else:
+                oracle_comparison = first_token._compare_dump_sets(
+                    ck_dumps,
+                    llama_dumps,
+                    atol=float(args.hidden_state_atol),
+                    rtol=float(getattr(args, "hidden_state_rtol", 0.0)),
+                    pass_filter="all",
+                )
+                oracle_comparison["status"] = (
+                    "fail"
+                    if oracle_comparison["summary"]["fail"]
+                    or oracle_comparison["summary"]["error"]
+                    or oracle_comparison["summary"]["missing"]
+                    else "ok"
+                )
+            loaded_ck_names = {str(dump.op_name) for dump in ck_dumps}
+            oracle_comparison["runtime_missing_ck_exports"] = [
+                name for name in names if name not in loaded_ck_names
+            ]
             oracle_comparison["llama_dump_dir"] = str(llama_dir)
         except Exception as exc:
             oracle_comparison = {
@@ -1872,7 +1946,10 @@ def _resolve_oracle_prefill_mode(
         and schedule.get("cache_transition") == "append_preserve"
     )
     required = "batched" if segmented_append else None
-    resolved = "batched" if requested == "auto" and required == "batched" else requested
+    # The pinned oracle helper accepts only concrete batched/sequential modes.
+    # Batched is its production default even when CK's bridge does not impose
+    # the stronger segmented-append requirement.
+    resolved = "batched" if requested == "auto" else requested
     compatible = required is None or resolved == required
     if not compatible and not allow_diagnostic_mismatch:
         raise RuntimeError(

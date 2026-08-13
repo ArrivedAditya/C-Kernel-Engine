@@ -82,6 +82,30 @@ class MultitokenEOSContractTests(unittest.TestCase):
             self.assertEqual(dumps[0].token_id, 1042)
             np.testing.assert_array_equal(dumps[0].data, [1.0, 2.0])
 
+    def test_oracle_hidden_loader_retains_present_exports_when_one_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            np.array([1.0, 2.0], dtype=np.float32).tofile(
+                root / "tok_0000_layer_003_layer_out.f32"
+            )
+
+            dumps = self.runner._load_ck_hidden_exports(
+                root,
+                ["conv_input", "layer_out"],
+                3,
+                allow_missing=True,
+            )
+
+            self.assertEqual(
+                [(dump.layer_id, dump.op_name) for dump in dumps],
+                [(3, "layer_out")],
+            )
+
+    def test_hidden_loader_remains_fail_closed_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(RuntimeError, "expected hidden dump"):
+                self.runner._load_ck_hidden_exports(Path(tmp), ["conv_input"], 3)
+
     def test_hidden_export_name_matching_is_not_suffix_ambiguous(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -159,6 +183,35 @@ class MultitokenEOSContractTests(unittest.TestCase):
         ])
         np.testing.assert_array_equal(result[0].data, [1.0, 2.0, 3.0, 4.0, 5.0])
         np.testing.assert_array_equal(result[1].data, [30.0])
+
+    def test_structurally_mismatched_dumps_are_identified_before_comparison(self) -> None:
+        dump_type = self.runner.first_token.parity_test_v7.ParityDump
+        ck = [dump_type(1, "layer_out", np.zeros(18, dtype=np.float32), 0, "fp32")]
+        llama = [dump_type(1, "layer_out", np.zeros(1035, dtype=np.float32), 0, "fp32")]
+
+        result = self.runner._dump_element_count_mismatches(ck, llama)
+
+        self.assertEqual(
+            result,
+            [
+                {
+                    "layer": 1,
+                    "op": "layer_out",
+                    "ck_element_counts": [18],
+                    "llama_element_counts": [1035],
+                }
+            ],
+        )
+
+    def test_structural_check_accepts_one_compatible_alias_candidate(self) -> None:
+        dump_type = self.runner.first_token.parity_test_v7.ParityDump
+        ck = [
+            dump_type(1, "layer_out", np.zeros(18, dtype=np.float32), 0, "fp32"),
+            dump_type(1, "layer_out", np.zeros(36, dtype=np.float32), 0, "fp32"),
+        ]
+        llama = [dump_type(1, "layer_out", np.zeros(36, dtype=np.float32), 0, "fp32")]
+
+        self.assertEqual(self.runner._dump_element_count_mismatches(ck, llama), [])
 
     def test_llama_persistent_dump_uses_trajectory_logits_step_index(self) -> None:
         observed = {}
@@ -361,6 +414,15 @@ class MultitokenEOSContractTests(unittest.TestCase):
         self.assertEqual(result["resolved"], "batched")
         self.assertTrue(result["compatible"])
         self.assertEqual(result["scope"], "production")
+
+    def test_unified_prefill_auto_also_selects_concrete_batched_oracle(self) -> None:
+        result = self.runner._resolve_oracle_prefill_mode(
+            "auto", {"bridge_contract": {}}
+        )
+
+        self.assertEqual(result["resolved"], "batched")
+        self.assertIsNone(result["required"])
+        self.assertTrue(result["compatible"])
 
     def test_segmented_append_rejects_sequential_oracle(self) -> None:
         bridge = {
