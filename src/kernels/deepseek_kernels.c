@@ -552,23 +552,26 @@ void deepseek_hybrid_attention_f32(const float *q,
 }
 
 
-void deepseek_mla_attention_f32(const float *q,
-                                const float *k,
-                                const float *v,
-                                float *output,
-                                int num_heads,
-                                int num_kv_heads,
-                                int num_tokens,
-                                int qk_head_dim,
-                                int v_head_dim)
+void deepseek_mla_attention_f32_workspace(const float *q,
+                                          const float *k,
+                                          const float *v,
+                                          float *output,
+                                          int num_heads,
+                                          int num_kv_heads,
+                                          int num_tokens,
+                                          int qk_head_dim,
+                                          int v_head_dim,
+                                          float *scores,
+                                          size_t scores_bytes)
 {
     if (!q || !k || !v || !output || num_heads <= 0 || num_kv_heads <= 0 ||
         num_tokens <= 0 || qk_head_dim <= 0 || v_head_dim <= 0) {
         return;
     }
-
-    float *scores = (float *)malloc((size_t)num_tokens * sizeof(float));
-    if (!scores) return;
+    if ((size_t)num_tokens > SIZE_MAX / sizeof(float) || !scores ||
+        scores_bytes < (size_t)num_tokens * sizeof(float)) {
+        return;
+    }
 
     const float scale = 1.0f / sqrtf((float)qk_head_dim);
     for (int t = 0; t < num_tokens; ++t) {
@@ -607,6 +610,25 @@ void deepseek_mla_attention_f32(const float *q,
         }
     }
 
+}
+
+void deepseek_mla_attention_f32(const float *q,
+                                const float *k,
+                                const float *v,
+                                float *output,
+                                int num_heads,
+                                int num_kv_heads,
+                                int num_tokens,
+                                int qk_head_dim,
+                                int v_head_dim)
+{
+    if (num_tokens <= 0 || (size_t)num_tokens > SIZE_MAX / sizeof(float)) return;
+    const size_t scores_bytes = (size_t)num_tokens * sizeof(float);
+    float *scores = (float *)malloc(scores_bytes);
+    if (!scores) return;
+    deepseek_mla_attention_f32_workspace(
+        q, k, v, output, num_heads, num_kv_heads, num_tokens,
+        qk_head_dim, v_head_dim, scores, scores_bytes);
     free(scores);
 }
 
@@ -688,17 +710,19 @@ void deepseek_mla_kv_cache_store_f32(float *k_cache,
     }
 }
 
-void deepseek_mla_attention_decode_f32(const float *q,
-                                       const float *k_cache,
-                                       const float *v_cache,
-                                       float *output,
-                                       int num_heads,
-                                       int num_kv_heads,
-                                       int cache_len,
-                                       int qk_head_dim,
-                                       int v_head_dim,
-                                       int max_seq_len,
-                                       int cache_stride)
+void deepseek_mla_attention_decode_f32_workspace(const float *q,
+                                                 const float *k_cache,
+                                                 const float *v_cache,
+                                                 float *output,
+                                                 int num_heads,
+                                                 int num_kv_heads,
+                                                 int cache_len,
+                                                 int qk_head_dim,
+                                                 int v_head_dim,
+                                                 int max_seq_len,
+                                                 int cache_stride,
+                                                 float *scores,
+                                                 size_t scores_bytes)
 {
     if (!q || !k_cache || !v_cache || !output || num_heads <= 0 ||
         num_kv_heads <= 0 || cache_len <= 0 || qk_head_dim <= 0 ||
@@ -708,9 +732,10 @@ void deepseek_mla_attention_decode_f32(const float *q,
     if (qk_head_dim > cache_stride || v_head_dim > cache_stride) {
         return;
     }
-
-    float *scores = (float *)malloc((size_t)cache_len * sizeof(float));
-    if (!scores) return;
+    if ((size_t)cache_len > SIZE_MAX / sizeof(float) || !scores ||
+        scores_bytes < (size_t)cache_len * sizeof(float)) {
+        return;
+    }
 
     const float scale = 1.0f / sqrtf((float)qk_head_dim);
     for (int h = 0; h < num_heads; ++h) {
@@ -748,5 +773,27 @@ void deepseek_mla_attention_decode_f32(const float *q,
         }
     }
 
+}
+
+void deepseek_mla_attention_decode_f32(const float *q,
+                                       const float *k_cache,
+                                       const float *v_cache,
+                                       float *output,
+                                       int num_heads,
+                                       int num_kv_heads,
+                                       int cache_len,
+                                       int qk_head_dim,
+                                       int v_head_dim,
+                                       int max_seq_len,
+                                       int cache_stride)
+{
+    if (cache_len <= 0 || (size_t)cache_len > SIZE_MAX / sizeof(float)) return;
+    const size_t scores_bytes = (size_t)cache_len * sizeof(float);
+    float *scores = (float *)malloc(scores_bytes);
+    if (!scores) return;
+    deepseek_mla_attention_decode_f32_workspace(
+        q, k_cache, v_cache, output, num_heads, num_kv_heads, cache_len,
+        qk_head_dim, v_head_dim, max_seq_len, cache_stride,
+        scores, scores_bytes);
     free(scores);
 }

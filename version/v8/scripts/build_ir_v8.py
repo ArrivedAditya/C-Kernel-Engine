@@ -4223,6 +4223,7 @@ def _kernel_scratch_size_bytes(
         "K": values.get("_k", values.get("_input_dim")),
         "K_blocks": int(k_extent) // 256 if k_extent is not None else None,
         "T": values.get("seq_len"),
+        "S": values.get("max_seq_len"),
         "num_seqs": values.get("num_seqs"),
         "conv_total_tokens": (
             int(values.get("ssm_conv_history", 0) or 0)
@@ -9042,8 +9043,18 @@ def generate_ir_lower_1(
             # For decode mode, update attention ops to use decode kernel
             if explicit_mla_decode_cache and op["op"] == "mla_attention" and "mla_attention" in op["kernel"]:
                 decode_kernel = "deepseek_mla_attention_decode_f32"
+                decode_kernel_map = kernel_map_index.get(decode_kernel)
+                decode_function = str(
+                    ((decode_kernel_map or {}).get("impl") or {}).get("function", "")
+                    or ""
+                ).strip()
+                if not decode_function:
+                    raise RuntimeError(
+                        "HARD IR LOWERING FAULT: MLA decode provider has no mapped "
+                        f"implementation function: {decode_kernel!r}."
+                    )
                 op["kernel"] = decode_kernel
-                op["function"] = decode_kernel
+                op["function"] = decode_function
                 kv_read_layer = _kv_read_layer_for(int(op.get("layer", 0)))
                 op["_kv_cache_read_layer"] = kv_read_layer
                 op.setdefault("inputs", {})
