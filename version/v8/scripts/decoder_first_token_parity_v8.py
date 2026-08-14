@@ -370,7 +370,22 @@ def _load_llama_dump_dir(dump_dir: Path) -> list[Any]:
         if not bin_path.exists():
             continue
 
-        elem_size = nbytes // elem_count if nbytes % elem_count == 0 else 4
+        # The callback records ggml_nbytes(), which is the physical byte span
+        # for a tensor.  For a strided view that span includes padding between
+        # logical rows, so nbytes / elem_count is not an element width.  The
+        # per-dump sidecar retains the ggml ne[]/nb[] layout needed to recover
+        # logical values without comparing padding as model data.
+        sidecar_path = dump_dir / f"{row['name']}.json"
+        sidecar: dict[str, Any] = {}
+        if sidecar_path.is_file():
+            loaded = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                sidecar = loaded
+
+        ggml_type = int(sidecar.get("type", row.get("dtype", -1)) or 0)
+        elem_size = 4 if ggml_type == 0 else 2 if ggml_type == 1 else (
+            nbytes // elem_count if nbytes % elem_count == 0 else 1
+        )
         if elem_size == 4:
             raw = np.fromfile(bin_path, dtype=np.float32)
             dtype_name = "fp32"
@@ -380,6 +395,24 @@ def _load_llama_dump_dir(dump_dir: Path) -> list[Any]:
         else:
             raw = np.fromfile(bin_path, dtype=np.uint8).astype(np.float32)
             dtype_name = f"raw{elem_size}"
+
+        ne = [int(value) for value in list(sidecar.get("ne", []))]
+        nb = [int(value) for value in list(sidecar.get("nb", []))]
+        if (
+            int(raw.size) != elem_count
+            and ne
+            and len(ne) == len(nb)
+            and all(value > 0 for value in ne)
+            and all(value >= elem_size for value in nb)
+        ):
+            physical = np.memmap(bin_path, dtype=np.uint8, mode="r")
+            logical = np.ndarray(
+                shape=tuple(reversed(ne)),
+                dtype=np.float32 if elem_size == 4 else np.float16,
+                buffer=physical,
+                strides=tuple(reversed(nb)),
+            )
+            raw = np.asarray(logical, dtype=np.float32).reshape(-1)
 
         rank = max(1, int(row.get("rank", 1) or 1))
         raw_shape = row.get("shape", [])

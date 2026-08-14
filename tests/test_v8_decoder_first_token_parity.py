@@ -207,6 +207,39 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             self.assertEqual(dumps[0].token_id, 1)
             np.testing.assert_allclose(dumps[0].data, raw.reshape(2, 2))
 
+    def test_load_llama_dump_dir_removes_physical_stride_padding(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v8_decoder_llama_strided_dump_") as tmpdir:
+            tmp = Path(tmpdir)
+            name = "v_conv_predelta-1-token-000008-occ-000"
+            # Logical ggml shape [2, 2] with dimension zero contiguous and
+            # one padded float between rows: physical [1, 2, pad, 3, 4].
+            physical = np.array([1.0, 2.0, 99.0, 3.0, 4.0], dtype=np.float32)
+            (tmp / f"{name}.bin").write_bytes(physical.tobytes())
+            row = {
+                "name": name,
+                "base_name": "v_conv_predelta-1",
+                "token_id": 8,
+                "occurrence": 0,
+                "dtype": 0,
+                "rank": 2,
+                "shape": [2, 2, 1, 1],
+                "elem_count": 4,
+                "nbytes": 20,
+            }
+            (tmp / "index.json").write_text(json.dumps(row) + "\n", encoding="utf-8")
+            (tmp / f"{name}.json").write_text(
+                json.dumps({**row, "type": 0, "ne": [2, 2], "nb": [4, 12]}),
+                encoding="utf-8",
+            )
+
+            dumps = decoder_parity_v8._load_llama_dump_dir(tmp)
+
+            self.assertEqual(len(dumps), 1)
+            np.testing.assert_array_equal(
+                np.asarray(dumps[0].data).reshape(-1),
+                np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32),
+            )
+
     def test_load_llama_dump_dir_labels_post_rope_occurrence(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_decoder_llama_rope_dump_") as tmpdir:
             tmp = Path(tmpdir)
