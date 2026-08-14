@@ -1318,7 +1318,7 @@
       "supported_reductions": {
         "f16_online_single_range": {
           "status": "observed",
-          "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
+          "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace",
           "explicit_selector": true,
           "notes": "Single-range FP16-rounded Q/K/V compatibility route; dedicated oracle promotion remains open."
         }
@@ -1413,16 +1413,15 @@
         {
           "name": "rounded_kv",
           "dtype": "fp32",
-          "size_bytes": "2 * KV * S * D * 4",
+          "shape": [
+            2,
+            "KV",
+            "T",
+            "D"
+          ],
+          "size_resolution": "required",
           "lifetime": "kernel_call",
           "desc": "K/V values rounded through FP16 once and retained as FP32 for reuse by all causal queries"
-        },
-        {
-          "name": "rounded_query",
-          "dtype": "fp32",
-          "size_bytes": "D * 4",
-          "lifetime": "worker_query",
-          "desc": "One FP16-rounded query row per active worker"
         }
       ],
       "dims": [
@@ -1474,8 +1473,8 @@
         "notes": "Flash attention variant that rounds Q/K/V through FP16 to match llama.cpp flash-attn input handling. Production reuses one rounded K/V materialization across all queries without changing online-softmax or FP16 accumulator order."
       },
       "impl": {
-        "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
-        "c_declaration": "void attention_forward_causal_head_major_gqa_flash_strided_f16kv(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens);",
+        "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace",
+        "c_declaration": "void attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens, float *rounded_kv, size_t rounded_kv_bytes);",
         "sources": [
           "src/kernels/attention_kernels.c",
           "src/kernels/softmax_kernels.c"
@@ -1489,8 +1488,8 @@
         ]
       },
       "production": {
-        "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
-        "threaded_function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
+        "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace",
+        "threaded_function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace",
         "reference_comparison": {
           "requirement": "byte_exact",
           "absolute_tolerance": 0.0,
@@ -1582,6 +1581,15 @@
           {
             "name": "kv_stride_tokens",
             "source": "dim:seq_len"
+          },
+          {
+            "name": "rounded_kv",
+            "source": "scratch:rounded_kv",
+            "cast": "float*"
+          },
+          {
+            "name": "rounded_kv_bytes",
+            "source": "scratch_size:rounded_kv"
           }
         ]
       },
@@ -15532,7 +15540,19 @@
           "desc": "Result [M,N], BF16 RNE values represented in FP32 storage"
         }
       ],
-      "scratch": [],
+      "scratch": [
+        {
+          "name": "activation_bf16",
+          "dtype": "bf16",
+          "shape": [
+            "M",
+            "K"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "desc": "Planner-owned BF16 activation conversion reused by the AMX GEMM."
+        }
+      ],
       "dims": [
         "M",
         "N",
@@ -15544,8 +15564,8 @@
         "K_multiple": 32
       },
       "impl": {
-        "function": "gemm_nt_bf16_amx_bf16_storage",
-        "c_declaration": "void gemm_nt_bf16_amx_bf16_storage(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);",
+        "function": "gemm_nt_bf16_amx_bf16_storage_workspace",
+        "c_declaration": "void gemm_nt_bf16_amx_bf16_storage_workspace(const float *A, const void *B, const float *bias, float *C, int M, int N, int K, uint16_t *a_bf16, size_t a_bf16_bytes);",
         "sources": [
           "src/kernels/gemm_kernels_bf16.c"
         ],
@@ -15575,7 +15595,7 @@
           "phases": [
             "prefill"
           ],
-          "function": "gemm_nt_bf16_amx_bf16_storage",
+          "function": "gemm_nt_bf16_amx_bf16_storage_workspace",
           "explicit_selector": true,
           "implementation": {
             "isa_dispatch": "compile_time",
@@ -15637,6 +15657,15 @@
           {
             "name": "K",
             "source": "dim:_input_dim"
+          },
+          {
+            "cast": "uint16_t*",
+            "name": "a_bf16",
+            "source": "scratch:activation_bf16"
+          },
+          {
+            "name": "a_bf16_bytes",
+            "source": "scratch_size:activation_bf16"
           }
         ]
       },
@@ -15997,7 +16026,19 @@
           "desc": "BF16 RNE values represented in FP32 storage"
         }
       ],
-      "scratch": [],
+      "scratch": [
+        {
+          "name": "activation_bf16",
+          "dtype": "bf16",
+          "shape": [
+            "M",
+            "K"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "desc": "Planner-owned activation conversion used when runtime AMX dispatch is eligible."
+        }
+      ],
       "dims": [
         "M",
         "N",
@@ -16005,8 +16046,8 @@
       ],
       "constraints": {},
       "impl": {
-        "function": "gemm_nt_bf16_prefill_shape_safe_bf16_storage",
-        "c_declaration": "void gemm_nt_bf16_prefill_shape_safe_bf16_storage(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);",
+        "function": "gemm_nt_bf16_prefill_shape_safe_bf16_storage_workspace",
+        "c_declaration": "void gemm_nt_bf16_prefill_shape_safe_bf16_storage_workspace(const float *A, const void *B, const float *bias, float *C, int M, int N, int K, uint16_t *a_bf16, size_t a_bf16_bytes);",
         "sources": [
           "src/kernels/gemm_kernels_bf16.c"
         ],
@@ -16030,7 +16071,7 @@
           "phases": [
             "prefill"
           ],
-          "function": "gemm_nt_bf16_prefill_shape_safe_bf16_storage",
+          "function": "gemm_nt_bf16_prefill_shape_safe_bf16_storage_workspace",
           "explicit_selector": true,
           "implementation": {
             "isa_dispatch": "runtime",
@@ -16093,6 +16134,15 @@
           {
             "name": "K",
             "source": "dim:_input_dim"
+          },
+          {
+            "cast": "uint16_t*",
+            "name": "a_bf16",
+            "source": "scratch:activation_bf16"
+          },
+          {
+            "name": "a_bf16_bytes",
+            "source": "scratch_size:activation_bf16"
           }
         ]
       },

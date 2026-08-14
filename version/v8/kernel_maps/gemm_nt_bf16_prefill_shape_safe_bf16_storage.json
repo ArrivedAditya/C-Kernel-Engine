@@ -11,12 +11,21 @@
   "outputs": [
     {"name": "C", "dtype": "fp32", "shape": ["M", "N"], "desc": "BF16 RNE values represented in FP32 storage"}
   ],
-  "scratch": [],
+  "scratch": [
+    {
+      "name": "activation_bf16",
+      "dtype": "bf16",
+      "shape": ["M", "K"],
+      "size_resolution": "required",
+      "lifetime": "kernel_call",
+      "desc": "Planner-owned activation conversion used when runtime AMX dispatch is eligible."
+    }
+  ],
   "dims": ["M", "N", "K"],
   "constraints": {},
   "impl": {
-    "function": "gemm_nt_bf16_prefill_shape_safe_bf16_storage",
-    "c_declaration": "void gemm_nt_bf16_prefill_shape_safe_bf16_storage(const float *A, const void *B, const float *bias, float *C, int M, int N, int K);",
+    "function": "gemm_nt_bf16_prefill_shape_safe_bf16_storage_workspace",
+    "c_declaration": "void gemm_nt_bf16_prefill_shape_safe_bf16_storage_workspace(const float *A, const void *B, const float *bias, float *C, int M, int N, int K, uint16_t *a_bf16, size_t a_bf16_bytes);",
     "sources": ["src/kernels/gemm_kernels_bf16.c"],
     "variants": [
       {"name": "shape_safe", "requires": [], "compile_flags": []}
@@ -28,7 +37,7 @@
       "contract_id": "bf16_weight_bf16_input_shape_safe_prefill_bf16_output",
       "status": "validated",
       "phases": ["prefill"],
-      "function": "gemm_nt_bf16_prefill_shape_safe_bf16_storage",
+      "function": "gemm_nt_bf16_prefill_shape_safe_bf16_storage_workspace",
       "explicit_selector": true,
       "implementation": {
         "isa_dispatch": "runtime",
@@ -59,7 +68,9 @@
       {"cast": "float*", "name": "C", "source": "output:c"},
       {"name": "M", "source": "dim:_m"},
       {"name": "N", "source": "dim:_output_dim"},
-      {"name": "K", "source": "dim:_input_dim"}
+      {"name": "K", "source": "dim:_input_dim"},
+      {"cast": "uint16_t*", "name": "a_bf16", "source": "scratch:activation_bf16"},
+      {"name": "a_bf16_bytes", "source": "scratch_size:activation_bf16"}
     ]
   }
 }

@@ -1596,7 +1596,7 @@ class NumericalExecutionContractTests(unittest.TestCase):
             "vision.layer.attention": "attention_forward_full_head_major_gqa_pytorch_cpu_flash_bf16_storage",
             "vision.layer.out_projection": "gemm_nt_bf16_native_bf16_storage",
             "vision.layer.residual": "ck_residual_add_token_major_bf16_storage",
-            "vision.projector.projection": "gemm_nt_bf16_amx_bf16_storage",
+            "vision.projector.projection": "gemm_nt_bf16_amx_bf16_storage_workspace",
         }
         for operation, function in expected.items():
             with self.subTest(operation=operation):

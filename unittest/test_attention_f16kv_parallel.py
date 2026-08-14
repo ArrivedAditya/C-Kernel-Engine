@@ -25,11 +25,15 @@ _signature = [
     ctypes.c_int,
     ctypes.c_int,
 ]
+_workspace_signature = _signature + [
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_size_t,
+]
 serial = lib.attention_forward_causal_head_major_gqa_flash_strided_f16kv_serial
 serial.argtypes = _signature
 serial.restype = None
-parallel = lib.attention_forward_causal_head_major_gqa_flash_strided_f16kv
-parallel.argtypes = _signature
+parallel = lib.attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace
+parallel.argtypes = _workspace_signature
 parallel.restype = None
 
 
@@ -49,6 +53,7 @@ class CausalF16KVParallelTest(unittest.TestCase):
                     v = rng.standard_normal((kv_heads, stride, dim), dtype=np.float32)
                     expected = np.empty_like(q)
                     actual = np.empty_like(q)
+                    workspace = np.empty(2 * kv_heads * stride * dim, dtype=np.float32)
                     args = (
                         numpy_to_ptr(q), numpy_to_ptr(k), numpy_to_ptr(v),
                         ctypes.c_int(heads), ctypes.c_int(kv_heads),
@@ -57,7 +62,10 @@ class CausalF16KVParallelTest(unittest.TestCase):
                     )
                     serial(args[0], args[1], args[2], numpy_to_ptr(expected), *args[3:])
                     lib.ck_set_num_threads(ctypes.c_int(threads))
-                    parallel(args[0], args[1], args[2], numpy_to_ptr(actual), *args[3:])
+                    parallel(
+                        args[0], args[1], args[2], numpy_to_ptr(actual), *args[3:],
+                        numpy_to_ptr(workspace), ctypes.c_size_t(workspace.nbytes),
+                    )
                     np.testing.assert_array_equal(
                         actual.view(np.uint32), expected.view(np.uint32)
                     )
@@ -71,6 +79,7 @@ class CausalF16KVParallelTest(unittest.TestCase):
         v = rng.standard_normal((kv_heads, stride, dim), dtype=np.float32)
         expected = np.empty_like(q)
         actual = np.empty_like(q)
+        workspace = np.empty(2 * kv_heads * stride * dim, dtype=np.float32)
         args = (
             numpy_to_ptr(q), numpy_to_ptr(k), numpy_to_ptr(v),
             ctypes.c_int(heads), ctypes.c_int(kv_heads),
@@ -79,7 +88,10 @@ class CausalF16KVParallelTest(unittest.TestCase):
         )
         serial(args[0], args[1], args[2], numpy_to_ptr(expected), *args[3:])
         lib.ck_set_num_threads(ctypes.c_int(20))
-        parallel(args[0], args[1], args[2], numpy_to_ptr(actual), *args[3:])
+        parallel(
+            args[0], args[1], args[2], numpy_to_ptr(actual), *args[3:],
+            numpy_to_ptr(workspace), ctypes.c_size_t(workspace.nbytes),
+        )
         np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
 
 

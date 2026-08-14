@@ -433,7 +433,7 @@ class AttentionContractV8Tests(unittest.TestCase):
         )
         self.assertEqual(
             kernel["production"]["function"],
-            "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
+            "attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace",
         )
         self.assertEqual(
             kernel["reference"]["function"],

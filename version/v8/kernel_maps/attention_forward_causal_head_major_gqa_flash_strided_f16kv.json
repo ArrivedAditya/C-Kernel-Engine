@@ -22,7 +22,7 @@
   "supported_reductions": {
     "f16_online_single_range": {
       "status": "observed",
-      "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
+      "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace",
       "explicit_selector": true,
       "notes": "Single-range FP16-rounded Q/K/V compatibility route; dedicated oracle promotion remains open."
     }
@@ -53,8 +53,7 @@
     {"name": "out", "dtype": "fp32", "shape": ["H", "T", "D"], "layout": "head_major_contiguous", "placement": "local", "access": "write", "storage_class": "activation", "consumption": "required", "desc": "Attention output [heads, tokens, head_dim]"}
   ],
   "scratch": [
-    {"name": "rounded_kv", "dtype": "fp32", "size_bytes": "2 * KV * S * D * 4", "lifetime": "kernel_call", "desc": "K/V values rounded through FP16 once and retained as FP32 for reuse by all causal queries"},
-    {"name": "rounded_query", "dtype": "fp32", "size_bytes": "D * 4", "lifetime": "worker_query", "desc": "One FP16-rounded query row per active worker"}
+    {"name": "rounded_kv", "dtype": "fp32", "shape": [2, "KV", "T", "D"], "size_resolution": "required", "lifetime": "kernel_call", "desc": "K/V values rounded through FP16 once and retained as FP32 for reuse by all causal queries"}
   ],
   "dims": ["H", "KV", "T", "S", "D"],
   "params": [
@@ -79,16 +78,16 @@
     "notes": "Flash attention variant that rounds Q/K/V through FP16 to match llama.cpp flash-attn input handling. Production reuses one rounded K/V materialization across all queries without changing online-softmax or FP16 accumulator order."
   },
   "impl": {
-    "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
-    "c_declaration": "void attention_forward_causal_head_major_gqa_flash_strided_f16kv(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens);",
+    "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace",
+    "c_declaration": "void attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens, float *rounded_kv, size_t rounded_kv_bytes);",
     "sources": ["src/kernels/attention_kernels.c", "src/kernels/softmax_kernels.c"],
     "variants": [
       {"name": "ref", "requires": [], "compile_flags": []}
     ]
   },
   "production": {
-    "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
-    "threaded_function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv",
+    "function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace",
+    "threaded_function": "attention_forward_causal_head_major_gqa_flash_strided_f16kv_workspace",
     "reference_comparison": {
       "requirement": "byte_exact",
       "absolute_tolerance": 0.0,
@@ -167,6 +166,15 @@
       {
         "name": "kv_stride_tokens",
         "source": "dim:seq_len"
+      },
+      {
+        "name": "rounded_kv",
+        "source": "scratch:rounded_kv",
+        "cast": "float*"
+      },
+      {
+        "name": "rounded_kv_bytes",
+        "source": "scratch_size:rounded_kv"
       }
     ]
   }
