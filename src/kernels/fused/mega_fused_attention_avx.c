@@ -12,8 +12,8 @@
  *
  * After changes: make test && make llamacpp-parity-full
  *
- * VIOLATION: Uses malloc for intermediate buffers and memcpy for layout.
- * TODO: Refactor to use bump allocator workspace and strided access.
+ * The mapped decode provider receives planner-owned workspace. The legacy
+ * public wrapper retains one compatibility allocation for direct callers.
  *
  * Holy grail fusion: RMSNorm → QKV → RoPE → Flash Attention → OutProj + Residual
  *
@@ -586,7 +586,7 @@ static void mega_fuse_output_proj_residual(
  *
  * RMSNorm → QKV → RoPE → Flash Attn → OutProj + Residual
  */
-void mega_fused_attention_decode(
+void mega_fused_attention_decode_workspace(
     float *output,         /* [aligned_embed_dim] */
     const float *input,    /* [aligned_embed_dim] */
     const float *residual, /* [aligned_embed_dim] */
@@ -607,10 +607,14 @@ void mega_fused_attention_decode(
     int head_dim,
     int aligned_head_dim,
     int cache_capacity,
-    float eps)
+    float eps,
+    float *q_output_workspace,
+    size_t q_output_workspace_bytes,
+    float *kv_workspace,
+    size_t kv_workspace_bytes)
 {
     if (!output || !input || !ln1_gamma || !wq || !wk || !wv || !wo ||
-        !kv_cache_k || !kv_cache_v) {
+        !kv_cache_k || !kv_cache_v || !q_output_workspace || !kv_workspace) {
         return;
     }
     if (embed_dim <= 0 || aligned_embed_dim <= 0 || head_dim <= 0 || aligned_head_dim <= 0 ||
@@ -626,54 +630,21 @@ void mega_fused_attention_decode(
 
     const size_t q_elems = (size_t)num_heads * (size_t)aligned_head_dim;
     const size_t kv_elems = (size_t)num_kv_heads * (size_t)aligned_head_dim;
-
-    float q_stack[MEGA_STACK_MAX];
-    float k_stack[MEGA_STACK_MAX];
-    float v_stack[MEGA_STACK_MAX];
-    float o_stack[MEGA_STACK_MAX];
-
-    float *q = q_stack;
-    float *k = k_stack;
-    float *v = v_stack;
-    float *o = o_stack;
-
-    int free_q = 0;
-    int free_k = 0;
-    int free_v = 0;
-    int free_o = 0;
-
-    if (q_elems > MEGA_STACK_MAX) {
-        q = (float *)malloc(q_elems * sizeof(float));
-        if (!q) {
-            return;
-        }
-        free_q = 1;
+    if (q_elems > SIZE_MAX / (2 * sizeof(float)) ||
+        kv_elems > SIZE_MAX / (2 * sizeof(float))) {
+        return;
     }
-    if (kv_elems > MEGA_STACK_MAX) {
-        k = (float *)malloc(kv_elems * sizeof(float));
-        if (!k) {
-            if (free_q) free(q);
-            return;
-        }
-        v = (float *)malloc(kv_elems * sizeof(float));
-        if (!v) {
-            if (free_q) free(q);
-            free(k);
-            return;
-        }
-        free_k = 1;
-        free_v = 1;
+    const size_t q_output_required = 2 * q_elems * sizeof(float);
+    const size_t kv_required = 2 * kv_elems * sizeof(float);
+    if (q_output_workspace_bytes < q_output_required ||
+        kv_workspace_bytes < kv_required) {
+        return;
     }
-    if (q_elems > MEGA_STACK_MAX) {
-        o = (float *)malloc(q_elems * sizeof(float));
-        if (!o) {
-            if (free_q) free(q);
-            if (free_k) free(k);
-            if (free_v) free(v);
-            return;
-        }
-        free_o = 1;
-    }
+
+    float *q = q_output_workspace;
+    float *o = q + q_elems;
+    float *k = kv_workspace;
+    float *v = k + kv_elems;
 
     mega_fuse_rmsnorm_qkv_avx(q, k, v, input, ln1_gamma,
                               wq, bq, wk, bk, wv, bv,
@@ -702,8 +673,67 @@ void mega_fused_attention_decode(
                                    embed_dim, aligned_embed_dim,
                                    num_heads, head_dim, aligned_head_dim);
 
-    if (free_q) free(q);
-    if (free_k) free(k);
-    if (free_v) free(v);
-    if (free_o) free(o);
+}
+
+void mega_fused_attention_decode(
+    float *output,
+    const float *input,
+    const float *residual,
+    const float *ln1_gamma,
+    const float *wq, const float *bq,
+    const float *wk, const float *bk,
+    const float *wv, const float *bv,
+    const float *wo, const float *bo,
+    float *kv_cache_k,
+    float *kv_cache_v,
+    const float *rope_cos,
+    const float *rope_sin,
+    int pos,
+    int embed_dim,
+    int aligned_embed_dim,
+    int num_heads,
+    int num_kv_heads,
+    int head_dim,
+    int aligned_head_dim,
+    int cache_capacity,
+    float eps)
+{
+    if (num_heads <= 0 || num_kv_heads <= 0 || aligned_head_dim <= 0) {
+        return;
+    }
+    const size_t q_elems = (size_t)num_heads * (size_t)aligned_head_dim;
+    const size_t kv_elems = (size_t)num_kv_heads * (size_t)aligned_head_dim;
+    if (q_elems > SIZE_MAX / (2 * sizeof(float)) ||
+        kv_elems > SIZE_MAX / (2 * sizeof(float)) ||
+        q_elems > SIZE_MAX / 2 - kv_elems) {
+        return;
+    }
+    const size_t total_elems = 2 * (q_elems + kv_elems);
+    if (total_elems > SIZE_MAX / sizeof(float)) {
+        return;
+    }
+
+    float stack_workspace[4 * MEGA_STACK_MAX];
+    float *workspace = stack_workspace;
+    if (total_elems > 4 * MEGA_STACK_MAX) {
+        workspace = (float *)malloc(total_elems * sizeof(float));
+        if (!workspace) {
+            return;
+        }
+    }
+
+    const size_t q_output_bytes = 2 * q_elems * sizeof(float);
+    const size_t kv_bytes = 2 * kv_elems * sizeof(float);
+    mega_fused_attention_decode_workspace(
+        output, input, residual, ln1_gamma,
+        wq, bq, wk, bk, wv, bv, wo, bo,
+        kv_cache_k, kv_cache_v, rope_cos, rope_sin,
+        pos, embed_dim, aligned_embed_dim, num_heads, num_kv_heads,
+        head_dim, aligned_head_dim, cache_capacity, eps,
+        workspace, q_output_bytes,
+        workspace + 2 * q_elems, kv_bytes);
+
+    if (workspace != stack_workspace) {
+        free(workspace);
+    }
 }

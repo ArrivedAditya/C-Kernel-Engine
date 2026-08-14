@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -246,11 +247,22 @@ def parse_llama_bench(rows: list[dict[str, Any]]) -> dict[str, float]:
     if not prompt or not decode:
         raise ValueError("llama-bench JSON did not contain prompt and decode rows")
     return {
+        "prompt_tokens": int(prompt["n_prompt"]),
+        "decode_tokens": int(decode["n_gen"]),
         "prompt_tok_s": float(prompt["avg_ts"]),
         "decode_tok_s": float(decode["avg_ts"]),
         "prompt_ms": float(prompt["avg_ns"]) / 1_000_000.0,
         "decode_ms": float(decode["avg_ns"]) / 1_000_000.0,
     }
+
+
+def token_sequence_sha256(token_id: int, count: int) -> str:
+    """Hash the exact little-endian int32 token stream supplied to CKE."""
+    digest = hashlib.sha256()
+    encoded = int(token_id).to_bytes(4, byteorder="little", signed=True)
+    for _ in range(count):
+        digest.update(encoded)
+    return digest.hexdigest()
 
 
 def parse_ck_timing(output: str) -> dict[str, float]:
@@ -322,6 +334,9 @@ def run_perf(args: argparse.Namespace, models: list[ModelSpec]) -> list[dict[str
     llama_bench = args.llama_root / "build/bin/llama-bench"
     ck_cli = args.ck_cli
     token_csv = ",".join([str(args.prompt_token_id)] * args.prompt_tokens)
+    requested_token_hash = token_sequence_sha256(
+        args.prompt_token_id, args.prompt_tokens
+    )
     env = os.environ.copy()
     env["CK_NUM_THREADS"] = str(args.threads)
     env["OMP_NUM_THREADS"] = str(args.omp_threads)
@@ -400,6 +415,23 @@ def run_perf(args: argparse.Namespace, models: list[ModelSpec]) -> list[dict[str
             else {"error": errors.get("cke", "missing successful samples")}
         )
 
+        cke_consumed = all(
+            int(sample.get("prompt_tokens", -1)) == args.prompt_tokens
+            for sample in samples["cke"]
+        ) and len(samples["cke"]) == args.repetitions
+        llama_consumed = all(
+            int(sample.get("prompt_tokens", -1)) == args.prompt_tokens
+            for sample in samples["llama"]
+        ) and len(samples["llama"]) == args.repetitions
+        if not cke_consumed:
+            ck_metrics = {
+                "error": "CKE did not report consuming the complete requested token stream"
+            }
+        if not llama_consumed:
+            llama_metrics = {
+                "error": "llama.cpp did not report consuming the complete requested token count"
+            }
+
         entry = {
             "model_key": model.key,
             "model": model.name,
@@ -407,6 +439,13 @@ def run_perf(args: argparse.Namespace, models: list[ModelSpec]) -> list[dict[str
             "llama": llama_metrics,
             "cke": ck_metrics,
             "samples": samples,
+            "consumption": {
+                "requested_tokens": args.prompt_tokens,
+                "requested_token_id": args.prompt_token_id,
+                "requested_token_sha256": requested_token_hash,
+                "cke_count_verified": cke_consumed,
+                "llama_count_verified": llama_consumed,
+            },
         }
         if "error" not in llama_metrics and "error" not in ck_metrics:
             entry["ratios"] = {

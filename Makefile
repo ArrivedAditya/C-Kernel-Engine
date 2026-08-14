@@ -4163,7 +4163,7 @@ profile-v8-prefill-ops: ck-cli-v8
 bench-v8-family-lab: ck-cli-v8
 	@echo "Running resume-safe CKE/llama.cpp family lab sweep..."
 	$(PYTHON) $(PYTHONFLAGS) benchmarks/bench_v8_family_lab.py \
-		--contexts $${CK_V8_LAB_CONTEXTS:-32,128,512,1024,2048} \
+		--contexts $${CK_V8_LAB_CONTEXTS:-128,512,1024,2048} \
 		--threads $${CK_NUM_THREADS:-20} \
 		--decode-tokens $${CK_V8_LAB_DECODE_TOKENS:-64} \
 		--prompt-max-tokens $${CK_V8_LAB_OUTPUT_TOKENS:-256} \

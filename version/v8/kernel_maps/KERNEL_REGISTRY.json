@@ -25022,7 +25022,32 @@
           "desc": "Output [1, aligned_embed_dim]"
         }
       ],
-      "scratch": [],
+      "scratch": [
+        {
+          "name": "q_output_workspace",
+          "dtype": "fp32",
+          "shape": [
+            2,
+            "H",
+            "D"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "desc": "Planner-owned query and attention-output workspace."
+        },
+        {
+          "name": "kv_workspace",
+          "dtype": "fp32",
+          "shape": [
+            2,
+            "KV",
+            "D"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "desc": "Planner-owned key and value workspace."
+        }
+      ],
       "dims": [
         "E",
         "AE",
@@ -25074,10 +25099,10 @@
         "notes": "Single-token decode path. FP32 weights for simplicity."
       },
       "impl": {
-        "function": "mega_fused_attention_decode",
-        "c_declaration": "void mega_fused_attention_decode(float *output, const float *input, const float *residual, const float *ln1_gamma, const float *wq, const float *bq, const float *wk, const float *bk, const float *wv, const float *bv, const float *wo, const float *bo, float *kv_cache_k, float *kv_cache_v, const float *rope_cos, const float *rope_sin, int pos, int embed_dim, int aligned_embed_dim, int num_heads, int num_kv_heads, int head_dim, int aligned_head_dim, int cache_capacity, float eps);",
+        "function": "mega_fused_attention_decode_workspace",
+        "c_declaration": "void mega_fused_attention_decode_workspace(float *output, const float *input, const float *residual, const float *ln1_gamma, const float *wq, const float *bq, const float *wk, const float *bk, const float *wv, const float *bv, const float *wo, const float *bo, float *kv_cache_k, float *kv_cache_v, const float *rope_cos, const float *rope_sin, int pos, int embed_dim, int aligned_embed_dim, int num_heads, int num_kv_heads, int head_dim, int aligned_head_dim, int cache_capacity, float eps, float *q_output_workspace, size_t q_output_workspace_bytes, float *kv_workspace, size_t kv_workspace_bytes);",
         "sources": [
-          "src/kernels/fused/mega_fused_attention.c"
+          "src/kernels/fused/mega_fused_attention_avx.c"
         ],
         "variants": [
           {
@@ -25087,9 +25112,135 @@
           }
         ]
       },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*"
+          },
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*"
+          },
+          {
+            "name": "residual",
+            "source": "activation:residual",
+            "cast": "const float*"
+          },
+          {
+            "name": "ln1_gamma",
+            "source": "weight_f:ln1_gamma"
+          },
+          {
+            "name": "wq",
+            "source": "weight:wq"
+          },
+          {
+            "name": "bq",
+            "source": "weight_f:bq"
+          },
+          {
+            "name": "wk",
+            "source": "weight:wk"
+          },
+          {
+            "name": "bk",
+            "source": "weight_f:bk"
+          },
+          {
+            "name": "wv",
+            "source": "weight:wv"
+          },
+          {
+            "name": "bv",
+            "source": "weight_f:bv"
+          },
+          {
+            "name": "wo",
+            "source": "weight:wo"
+          },
+          {
+            "name": "bo",
+            "source": "weight_f:bo"
+          },
+          {
+            "name": "kv_cache_k",
+            "source": "runtime:kv_k"
+          },
+          {
+            "name": "kv_cache_v",
+            "source": "runtime:kv_v"
+          },
+          {
+            "name": "rope_cos",
+            "source": "runtime:rope_cos"
+          },
+          {
+            "name": "rope_sin",
+            "source": "runtime:rope_sin"
+          },
+          {
+            "name": "pos",
+            "source": "runtime:pos"
+          },
+          {
+            "name": "embed_dim",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "aligned_embed_dim",
+            "source": "dim:embed_dim"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "cache_capacity",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "eps",
+            "source": "dim:rms_eps"
+          },
+          {
+            "name": "q_output_workspace",
+            "source": "scratch:q_output_workspace",
+            "cast": "float*"
+          },
+          {
+            "name": "q_output_workspace_bytes",
+            "source": "scratch_size:q_output_workspace"
+          },
+          {
+            "name": "kv_workspace",
+            "source": "scratch:kv_workspace",
+            "cast": "float*"
+          },
+          {
+            "name": "kv_workspace_bytes",
+            "source": "scratch_size:kv_workspace"
+          }
+        ]
+      },
       "tests": {
         "unit": [
-          "unittest/test_mega_fused_attention_decode.py"
+          "unittest/fusion/test_mega_fused_attention.py"
         ],
         "bench": [
           "scripts/bench_mega_fused_attention_decode.py"

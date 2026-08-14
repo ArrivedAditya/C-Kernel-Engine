@@ -108,6 +108,26 @@ static int test_single_dispatch(void)
     return 1;
 }
 
+static int test_dispatch_profile(void)
+{
+    printf("  [profile] Dispatch timing counters...\n");
+    ck_threadpool_t *pool = ck_threadpool_create(1);
+    TEST_ASSERT(pool != NULL, "create profiling pool");
+    ck_threadpool_profile_reset(pool);
+    ck_threadpool_dispatch(pool, single_work, NULL);
+    ck_threadpool_dispatch(pool, single_work, NULL);
+
+    ck_threadpool_profile_t profile;
+    ck_threadpool_profile_snapshot(pool, &profile);
+    TEST_ASSERT(profile.dispatch_count == 2, "profile records every dispatch");
+    TEST_ASSERT(profile.dispatch_total_ns >= profile.main_work_ns,
+                "dispatch time covers main work");
+    TEST_ASSERT(profile.completion_wait_ns == 0,
+                "single-thread dispatch has no completion wait");
+    ck_threadpool_destroy(pool);
+    return 1;
+}
+
 /* ============================================================================
  * Test 3: Multi-Thread Dispatch
  * ============================================================================ */
@@ -597,6 +617,7 @@ int main(int argc, char **argv)
         int ok = 1;
         ok &= test_create_destroy();
         ok &= test_single_dispatch();
+        ok &= test_dispatch_profile();
         ok &= test_multi_dispatch();
         ok &= test_capacity_dispatch();
         ok &= test_barrier();

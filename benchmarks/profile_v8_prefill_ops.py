@@ -25,6 +25,11 @@ from bench_v8_decoder_matrix import ANSI_RE, CACHE, CK_CLI, CK_RE, MODELS  # noq
 
 CK_RUN_V8 = ROOT / "version" / "v8" / "scripts" / "ck_run_v8.py"
 PREFILL_RE = re.compile(r"prefill\s+(\d+)\s+tok.*?([0-9.]+)\s+ms\s+([0-9.]+)\s+tok/s", re.S)
+THREADPOOL_RE = re.compile(
+    r"\[CK threadpool profile\]\s+dispatches=(\d+)\s+"
+    r"total_ms=([0-9.]+)\s+main_work_ms=([0-9.]+)\s+"
+    r"completion_wait_ms=([0-9.]+)"
+)
 
 
 def _run(cmd: list[str], *, env: dict[str, str], timeout: int) -> tuple[int, str]:
@@ -96,6 +101,7 @@ def _profile_run(run_dir: Path, *, prompt: int, decode: int, threads: int, csv_p
     env["CK_NUM_THREADS"] = str(threads)
     env["OMP_NUM_THREADS"] = env.get("OMP_NUM_THREADS", "1")
     env["CK_PROFILE"] = "1"
+    env["CK_THREADPOOL_PROFILE"] = "1"
     env["CK_PROFILE_CSV"] = str(csv_path)
     env["CK_PROFILE_JSON"] = str(json_path)
     env["LD_LIBRARY_PATH"] = f"{ROOT / 'build'}:{run_dir}:{env.get('LD_LIBRARY_PATH', '')}"
@@ -149,6 +155,14 @@ def _profile_run(run_dir: Path, *, prompt: int, decode: int, threads: int, csv_p
                     "prompt_tok_s": float(prefill_match.group(3)),
                 }
             )
+    threadpool_match = THREADPOOL_RE.search(clean)
+    if threadpool_match:
+        row["threadpool"] = {
+            "dispatches": int(threadpool_match.group(1)),
+            "dispatch_total_ms": float(threadpool_match.group(2)),
+            "main_work_ms": float(threadpool_match.group(3)),
+            "completion_wait_ms": float(threadpool_match.group(4)),
+        }
     return row
 
 
