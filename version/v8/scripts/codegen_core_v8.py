@@ -1663,6 +1663,27 @@ def emit_op(
             lines.append(f"    if (stop_seq == {seq_idx}) return;")
         return "\n".join(lines)
 
+    if op_name == "recurrent_core":
+        pre_args = {
+            str(arg.get("name", "")).lower(): str(arg.get("expr", ""))
+            for arg in args
+            if str(arg.get("name", "")) and str(arg.get("expr", ""))
+        }
+        state_in = pre_args.get("state_in")
+        num_heads = pre_args.get("num_heads") or pre_args.get("groups")
+        state_dim = pre_args.get("state_dim") or pre_args.get("head_dim")
+        if state_in and num_heads and state_dim:
+            raw_state_in = (
+                state_in.replace("(const float*)", "")
+                .replace("(float*)", "")
+                .replace("(void*)", "")
+                .strip()
+            )
+            lines.append(
+                f'    ck_debug_export_hidden(model, {layer}, "state_predelta", '
+                f'(const float*){raw_state_in}, ({num_heads}) * ({state_dim}) * ({state_dim}));'
+            )
+
     if profile:
         lines.append(f"    CK_PROFILE_BEGIN();")
     if not args:

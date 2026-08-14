@@ -94,6 +94,7 @@ class HiddenExportExtentTests(unittest.TestCase):
             swiglu,
             23,
             "fused_23",
+            {},
             debug_flag_name="debug_gate",
             debug_input_name="debug_input",
         )
@@ -491,6 +492,29 @@ class HiddenExportExtentTests(unittest.TestCase):
         )
         self.assertIn('"post_attn_norm", (const float*)NORM, (18) * (1024)', norm)
         self.assertIn('"mlp_swiglu", (const float*)MLP, (18) * (3584)', swiglu)
+
+    def test_recurrent_core_exports_state_before_in_place_update(self) -> None:
+        op = {
+            "op": "recurrent_core",
+            "function": "gated_deltanet_forward",
+            "layer": 4,
+            "args": [
+                _arg("state_in", "STATE"),
+                _arg("state_out", "STATE"),
+                _arg("num_heads", "48"),
+                _arg("state_dim", "128"),
+                _arg("tokens", "1"),
+                _arg("output", "OUTPUT"),
+            ],
+        }
+        decode = codegen.emit_op(op)
+        prefill = prefill_codegen.emit_prefill_op(op, 1, {"embed_dim": 5120})
+
+        expected = '"state_predelta", (const float*)STATE, (48) * (128) * (128)'
+        self.assertIn(expected, decode)
+        self.assertIn(expected, prefill)
+        self.assertLess(decode.index('"state_predelta"'), decode.index("gated_deltanet_forward("))
+        self.assertLess(prefill.index('"state_predelta"'), prefill.index("gated_deltanet_forward("))
 
     def test_quantized_projection_exports_full_prefill_extents(self) -> None:
         resolved = {

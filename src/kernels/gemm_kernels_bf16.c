@@ -1405,6 +1405,9 @@ void patch_projection_bf16_pytorch_onednn_conv3d_storage(
     dnnl_memory_desc_t any_src_md = NULL, any_weight_md = NULL, any_dst_md = NULL;
     dnnl_primitive_desc_t conv_pd = NULL;
     dnnl_primitive_t conv = NULL;
+    dnnl_primitive_desc_t reorder_pd = NULL;
+    dnnl_primitive_t reorder = NULL;
+    dnnl_exec_arg_t reorder_args[2];
     dnnl_memory_t user_src = NULL, user_weight = NULL, bias_mem = NULL, user_dst = NULL;
     dnnl_memory_t conv_src = NULL, conv_weight = NULL, conv_dst = NULL;
     dnnl_status_t status = dnnl_success;
@@ -1451,9 +1454,6 @@ void patch_projection_bf16_pytorch_onednn_conv3d_storage(
     CK_DNNL_CONV(dnnl_memory_create(
         &conv_dst, conv_dst_md, ck_pytorch_brgemm_engine, DNNL_MEMORY_ALLOCATE));
 
-    dnnl_primitive_desc_t reorder_pd = NULL;
-    dnnl_primitive_t reorder = NULL;
-    dnnl_exec_arg_t reorder_args[2];
     CK_DNNL_CONV(dnnl_reorder_primitive_desc_create(
         &reorder_pd, user_src_md, ck_pytorch_brgemm_engine,
         conv_src_md, ck_pytorch_brgemm_engine, NULL));

@@ -95,6 +95,18 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
     int M, int N, int K);
 
+/* Preserve independent row-group reduction boundaries across a logical
+ * segmented prefix.  Segment lengths are runtime data (for example text,
+ * vision, text), and must sum to M.  Invalid plans fail closed to the
+ * ordinary unified provider. */
+void gemm_nt_q4_k_q8_k_segmented_pairwise_split_min_parallel_dispatch(
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K, const int *segment_lengths, int num_segments);
+
+void gemm_nt_q6_k_q8_k_segmented_parallel_dispatch(
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K, const int *segment_lengths, int num_segments);
+
 void gemv_q4_k_q8_k_repacked_parallel_dispatch(
     float *y, const void *W, const void *x_q8, int N, int K);
 

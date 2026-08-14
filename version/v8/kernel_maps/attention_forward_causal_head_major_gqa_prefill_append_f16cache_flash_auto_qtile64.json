@@ -30,6 +30,12 @@
   },
   "implementation": {
     "isa_dispatch": "runtime",
+    "segmented_query_provider": {
+      "function": "attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_contract_workspace",
+      "segment_lengths_dtype": "i32",
+      "boundary_semantics": "restart_query_tile_policy_at_each_segment",
+      "fallback": "reject_invalid_plan"
+    },
     "threading": {
       "runtime": "ck_threadpool",
       "work_partition": ["independent_heads"],

@@ -30,6 +30,26 @@ def resolved_quantized_linear_emission(op: Dict[str, Any]) -> Dict[str, Any] | N
     row_provider = diagnostics.get("row_quantized")
     if row_provider is not None:
         result["row_quantized_function"] = str(row_provider)
+    segmented_provider = implementation.get("segmented_row_provider")
+    if segmented_provider is not None:
+        if not isinstance(segmented_provider, dict):
+            raise RuntimeError("segmented-row linear provider metadata must be an object")
+        required_segmented = {
+            "function",
+            "segment_lengths_dtype",
+            "boundary_semantics",
+            "fallback",
+        }
+        if set(segmented_provider) != required_segmented:
+            raise RuntimeError(
+                "segmented-row linear provider must define exact function, segment "
+                "length dtype, boundary semantics, and fallback"
+            )
+        if segmented_provider["segment_lengths_dtype"] != "i32":
+            raise RuntimeError("segmented-row linear provider requires i32 segment lengths")
+        result["segmented_row_provider"] = {
+            key: str(value) for key, value in segmented_provider.items()
+        }
     return result
 
 

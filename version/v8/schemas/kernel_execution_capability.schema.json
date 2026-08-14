@@ -120,6 +120,28 @@
             "row_quantized": {"type": "string", "minLength": 1}
           }
         },
+        "segmented_row_provider": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["function", "segment_lengths_dtype", "boundary_semantics", "fallback"],
+          "properties": {
+            "function": {"type": "string", "minLength": 1},
+            "segment_lengths_dtype": {"const": "i32"},
+            "boundary_semantics": {"const": "restart_row_group_at_each_segment"},
+            "fallback": {"type": "string", "minLength": 1}
+          }
+        },
+        "segmented_query_provider": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["function", "segment_lengths_dtype", "boundary_semantics", "fallback"],
+          "properties": {
+            "function": {"type": "string", "minLength": 1},
+            "segment_lengths_dtype": {"const": "i32"},
+            "boundary_semantics": {"const": "restart_query_tile_policy_at_each_segment"},
+            "fallback": {"type": "string", "minLength": 1}
+          }
+        },
         "threading": {
           "type": "object",
           "additionalProperties": false,

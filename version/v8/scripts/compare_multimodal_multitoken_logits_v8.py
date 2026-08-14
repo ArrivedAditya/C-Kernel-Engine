@@ -133,6 +133,7 @@ _CK_HIDDEN_EXPORT_NAMES = {
     "qkv": "linear_attn_qkv_mixed",
     "q_predelta": "q_conv_predelta",
     "k_predelta": "k_conv_predelta",
+    "v_predelta": "v_conv_predelta",
 }
 
 
@@ -396,6 +397,9 @@ def _coalesce_segmented_prefill_dumps(dumps: list[Any]) -> list[Any]:
             result.append(rows[0])
             continue
         last = rows[-1]
+        if key[1] == "state_predelta":
+            result.append(rows[0])
+            continue
         if key[1] == "new_state":
             result.append(last)
             continue
@@ -1580,13 +1584,22 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
                     allow_missing=True,
                     runtime_config=runtime_config,
                 )
+                ck_dumps = first_token._normalize_ck_attention_head_major_layout(
+                    ck_dumps, runtime_config
+                )
                 ck_dumps = _coalesce_segmented_prefill_dumps(ck_dumps)
             else:
                 ck_dumps = _load_ck_hidden_exports(
                     persistent_dir, names, layer, allow_missing=True
                 )
+                ck_dumps = first_token._normalize_ck_attention_head_major_layout(
+                    ck_dumps, runtime_config
+                )
             ck_dumps = _normalize_ck_recurrent_state_layout(ck_dumps, runtime_config)
             llama_dumps = first_token._load_llama_dump_dir(llama_dir)
+            llama_dumps = first_token._apply_requested_oracle_attention_semantics(
+                llama_dumps, semantic_names
+            )
             if step_index == 0:
                 llama_dumps = _coalesce_segmented_prefill_oracle_dumps(llama_dumps)
             ck_dumps = first_token._augment_layer_input_aliases(

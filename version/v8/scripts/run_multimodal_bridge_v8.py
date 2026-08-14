@@ -3847,15 +3847,22 @@ def main(argv: list[str] | None = None) -> int:
         f"gguf={args.decoder_gguf.resolve()} context={decoder_context_len} prefix_budget={decoder_prefix_budget}"
     )
     decoder_prep_t0 = time.perf_counter()
+    decoder_runtime_overrides = {"multimodal_bridge_contract": bridge_contract}
+    if composition_circuit is not None:
+        declared_decoder_config = bridge_contract.get("decoder_runtime_config")
+        if declared_decoder_config is not None:
+            if not isinstance(declared_decoder_config, dict):
+                raise RuntimeError(
+                    "composition decoder_runtime_config must be an object"
+                )
+            decoder_runtime_overrides.update(declared_decoder_config)
     decoder_runtime = _prepare_decoder_runtime(
         args.decoder_gguf.resolve(),
         decoder_dir,
         context_override=decoder_context_len,
         profile=bool(args.profile_decoder),
         runtime_config_overrides=(
-            {"multimodal_bridge_contract": bridge_contract}
-            if composition_circuit is not None
-            else None
+            decoder_runtime_overrides if composition_circuit is not None else None
         ),
     )
     decoder_prepare_elapsed = time.perf_counter() - decoder_prep_t0
