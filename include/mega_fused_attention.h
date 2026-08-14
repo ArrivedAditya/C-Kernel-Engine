@@ -19,6 +19,7 @@
 #ifndef MEGA_FUSED_ATTENTION_H
 #define MEGA_FUSED_ATTENTION_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "ckernel_dtype.h"
@@ -98,6 +99,39 @@ void mega_fused_attention_decode(
     int aligned_head_dim,
     int cache_capacity,
     float eps
+);
+
+/**
+ * Allocation-free decode entry point used by generated runtimes.
+ * q_output_workspace holds 2 * num_heads * aligned_head_dim floats.
+ * kv_workspace holds 2 * num_kv_heads * aligned_head_dim floats.
+ */
+void mega_fused_attention_decode_workspace(
+    float *output,
+    const float *input,
+    const float *residual,
+    const float *ln1_gamma,
+    const float *wq, const float *bq,
+    const float *wk, const float *bk,
+    const float *wv, const float *bv,
+    const float *wo, const float *bo,
+    float *kv_cache_k,
+    float *kv_cache_v,
+    const float *rope_cos,
+    const float *rope_sin,
+    int pos,
+    int embed_dim,
+    int aligned_embed_dim,
+    int num_heads,
+    int num_kv_heads,
+    int head_dim,
+    int aligned_head_dim,
+    int cache_capacity,
+    float eps,
+    float *q_output_workspace,
+    size_t q_output_workspace_bytes,
+    float *kv_workspace,
+    size_t kv_workspace_bytes
 );
 
 /**

@@ -39,10 +39,10 @@ class TestKernelAllocationAudit(unittest.TestCase):
         report = AUDIT.build_report()
         baseline = json.loads(AUDIT.BASELINE.read_text(encoding="utf-8"))
         AUDIT.validate_ratchet(report, baseline)
-        self.assertEqual(report["counts"]["production_allocation_calls"], 54)
-        self.assertEqual(report["counts"]["mapped_allocating_providers"], 3)
+        self.assertEqual(report["counts"]["production_allocation_calls"], 51)
+        self.assertEqual(report["counts"]["mapped_allocating_providers"], 2)
         self.assertEqual(
-            report["counts"]["mapped_allocating_without_scratch_contract"], 3
+            report["counts"]["mapped_allocating_without_scratch_contract"], 2
         )
         self.assertEqual(
             [warning["code"] for warning in report["warnings"]],
@@ -96,6 +96,9 @@ class TestKernelAllocationAudit(unittest.TestCase):
             },
             "attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract.json": {
                 "token_workspace"
+            },
+            "mega_fused_attention_decode.json": {
+                "q_output_workspace", "kv_workspace"
             },
         }
         allocating = {
