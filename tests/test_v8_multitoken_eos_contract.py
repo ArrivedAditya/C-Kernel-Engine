@@ -242,17 +242,23 @@ class MultitokenEOSContractTests(unittest.TestCase):
             dump_type(1, "new_state", np.asarray([value], dtype=np.float32), token, "fp32")
             for value, token in ((10.0, 8), (20.0, 1016), (30.0, 62))
         ]
+        state_in_dumps = [
+            dump_type(1, "state_predelta", np.asarray([value], dtype=np.float32), token, "fp32")
+            for value, token in ((40.0, 8), (50.0, 1016), (60.0, 62))
+        ]
 
         result = self.runner._coalesce_segmented_prefill_oracle_dumps(
-            row_dumps + state_dumps
+            row_dumps + state_in_dumps + state_dumps
         )
 
         self.assertEqual([(row.op_name, row.token_id) for row in result], [
             ("attn_norm", 62),
+            ("state_predelta", 8),
             ("new_state", 62),
         ])
         np.testing.assert_array_equal(result[0].data, [1.0, 2.0, 3.0, 4.0, 5.0])
-        np.testing.assert_array_equal(result[1].data, [30.0])
+        np.testing.assert_array_equal(result[1].data, [40.0])
+        np.testing.assert_array_equal(result[2].data, [30.0])
 
     def test_structurally_mismatched_dumps_are_identified_before_comparison(self) -> None:
         dump_type = self.runner.first_token.parity_test_v7.ParityDump
@@ -668,12 +674,13 @@ class MultitokenEOSContractTests(unittest.TestCase):
     def test_recurrent_semantic_names_resolve_to_exact_exporters(self) -> None:
         self.assertEqual(
             self.runner._resolve_ck_hidden_export_names(
-                ["qkv", "q_predelta", "k_predelta", "new_state"]
+                ["qkv", "q_predelta", "k_predelta", "v_predelta", "new_state"]
             ),
             [
                 "linear_attn_qkv_mixed",
                 "q_conv_predelta",
                 "k_conv_predelta",
+                "v_conv_predelta",
                 "new_state",
             ],
         )
@@ -970,16 +977,14 @@ class MultitokenEOSContractTests(unittest.TestCase):
             ("text_after", 14, 1013),
         ]
 
-        labeled = self.runner.first_token._label_multimodal_prefill_segments(
+        labeled = self.runner.first_token._coalesce_multimodal_prefill_segments(
             dumps, specs, segments
         )
 
         self.assertEqual(
-            [(row.op_name, row.token_id, row.data.size) for row in labeled],
+            [(row.op_name, row.token_id, row.data.shape) for row in labeled],
             [
-                ("q_proj@text_before", 0, 20),
-                ("q_proj@visual", 5, 4032),
-                ("q_proj@text_after", 1013, 56),
+                ("q_proj", 0, (1027, 4)),
             ],
         )
 

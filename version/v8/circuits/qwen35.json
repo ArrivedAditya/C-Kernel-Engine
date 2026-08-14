@@ -704,7 +704,8 @@
       "template_ops": ["recurrent_ssm_conv"],
       "selector": {
         "config_not_equals": {
-          "recurrent_qkv_weight_dtype": "bf16"
+          "recurrent_qkv_weight_dtype": "bf16",
+          "recurrent_ssm_arithmetic": "llama_fma"
         }
       },
       "phases": {
@@ -717,6 +718,37 @@
           "contract_id": "ssm_conv1d_llama_scalar_mul_add_fp32_output",
           "validation": "validated",
           "evidence": "The separated provider remains production until the FMA candidate's earlier end-to-end trajectory divergence is attributed and resolved."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.recurrent_ssm_conv.output",
+        "producer": "recurrent_ssm_conv",
+        "logical_layout": "row_major",
+        "axis_names": ["token", "channel"]
+      }
+    },
+    "decoder.recurrent_ssm_conv_fma": {
+      "op": "ssm_conv1d",
+      "operation_interface": "ssm_conv1d.fp32.v1",
+      "template_ops": ["recurrent_ssm_conv"],
+      "selector": {
+        "config_equals": {
+          "recurrent_ssm_arithmetic": "llama_fma"
+        },
+        "config_not_equals": {
+          "recurrent_qkv_weight_dtype": "bf16"
+        }
+      },
+      "phases": {
+        "prefill": {
+          "contract_id": "ssm_conv1d_llama_fma_fp32_output",
+          "validation": "validated",
+          "evidence": "The explicit Qwen3.6-VL circuit pairs contracted SSM arithmetic with segment-preserving Q4 projection row groups; together the real OCR prefix is bit-exact through decoder layers 0 and 1."
+        },
+        "decode": {
+          "contract_id": "ssm_conv1d_llama_fma_fp32_output",
+          "validation": "validated",
+          "evidence": "The same contracted scalar chain is deterministic across thread counts and preserves the selected multimodal trajectory contract."
         }
       },
       "checkpoint": {

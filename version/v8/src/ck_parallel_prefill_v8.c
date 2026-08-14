@@ -2460,6 +2460,52 @@ void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
     }
 }
 
+void gemm_nt_q4_k_q8_k_segmented_pairwise_split_min_parallel_dispatch(
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K, const int *segment_lengths, int num_segments)
+{
+    if (!A || !B || !C || M <= 0 || N <= 0 || K <= 0 ||
+        !segment_lengths || num_segments <= 0) {
+        gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+            A, B, bias, C, M, N, K);
+        return;
+    }
+
+    int total_rows = 0;
+    for (int segment = 0; segment < num_segments; ++segment) {
+        const int rows = segment_lengths[segment];
+        if (rows < 0 || rows > M - total_rows) {
+            gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+                A, B, bias, C, M, N, K);
+            return;
+        }
+        total_rows += rows;
+    }
+    if (total_rows != M) {
+        gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+            A, B, bias, C, M, N, K);
+        return;
+    }
+
+    const size_t a_row_bytes =
+        (size_t)(K / QK_K) * sizeof(block_q8_K);
+    int row_offset = 0;
+    for (int segment = 0; segment < num_segments; ++segment) {
+        const int rows = segment_lengths[segment];
+        if (rows > 0) {
+            gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
+                (const uint8_t *)A + (size_t)row_offset * a_row_bytes,
+                B,
+                bias,
+                C + (size_t)row_offset * (size_t)N,
+                rows,
+                N,
+                K);
+        }
+        row_offset += rows;
+    }
+}
+
 void gemv_q4_k_q8_k_repacked_parallel_dispatch(
     float *y, const void *W, const void *x_q8, int N, int K)
 {
@@ -2551,6 +2597,49 @@ void gemm_nt_q6_k_q8_k_parallel_dispatch(
         }
     } else {
         ck_threadpool_dispatch_n(pool, active, work_gemm_nt_q6_k_q8_k, &args);
+    }
+}
+
+void gemm_nt_q6_k_q8_k_segmented_parallel_dispatch(
+    const void *A, const void *B, const float *bias, float *C,
+    int M, int N, int K, const int *segment_lengths, int num_segments)
+{
+    if (!A || !B || !C || M <= 0 || N <= 0 || K <= 0 ||
+        !segment_lengths || num_segments <= 0) {
+        gemm_nt_q6_k_q8_k_parallel_dispatch(A, B, bias, C, M, N, K);
+        return;
+    }
+
+    int total_rows = 0;
+    for (int segment = 0; segment < num_segments; ++segment) {
+        const int rows = segment_lengths[segment];
+        if (rows < 0 || rows > M - total_rows) {
+            gemm_nt_q6_k_q8_k_parallel_dispatch(A, B, bias, C, M, N, K);
+            return;
+        }
+        total_rows += rows;
+    }
+    if (total_rows != M) {
+        gemm_nt_q6_k_q8_k_parallel_dispatch(A, B, bias, C, M, N, K);
+        return;
+    }
+
+    const size_t a_row_bytes =
+        (size_t)(K / QK_K) * sizeof(block_q8_K);
+    int row_offset = 0;
+    for (int segment = 0; segment < num_segments; ++segment) {
+        const int rows = segment_lengths[segment];
+        if (rows > 0) {
+            gemm_nt_q6_k_q8_k_parallel_dispatch(
+                (const uint8_t *)A + (size_t)row_offset * a_row_bytes,
+                B,
+                bias,
+                C + (size_t)row_offset * (size_t)N,
+                rows,
+                N,
+                K);
+        }
+        row_offset += rows;
     }
 }
 

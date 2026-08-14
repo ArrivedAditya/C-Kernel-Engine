@@ -147,6 +147,114 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             ["post_attn_norm", "mlp_gate", "mlp_up", "mlp_swiglu", "mlp_down"],
         )
 
+    def test_resolve_llama_dump_names_maps_full_attention_boundaries(self) -> None:
+        self.assertEqual(
+            decoder_parity_v8._resolve_llama_dump_names(
+                "q_proj-3,v_proj-3,qk_norm_q-3,qk_norm_k-3,"
+                "rope_q-3,rope_k-3,attn_gate-3,attn_pregate-3,attn_out-3",
+                layer_count=4,
+            ),
+            "Qcur_full-3,Vcur-3,Qcur_normed-3,Kcur_normed-3,"
+            "Qcur-3,Kcur-3,gate_reshaped-3,attn_pregate-3,attn_gated-3",
+        )
+        self.assertEqual(
+            decoder_parity_v8._canonical_dump_op_name("gate_reshaped"),
+            "attn_gate",
+        )
+        self.assertEqual(
+            decoder_parity_v8._canonical_dump_op_name("attn_gated"),
+            "attn_out",
+        )
+        self.assertEqual(
+            decoder_parity_v8._canonical_dump_op_name("Qcur_full"),
+            "q_proj",
+        )
+        self.assertEqual(
+            decoder_parity_v8._canonical_dump_op_name("Qcur_normed"),
+            "qk_norm_q",
+        )
+
+    def test_ck_attention_head_major_capture_is_canonicalized_token_major(self) -> None:
+        dump = decoder_parity_v8.parity_test_v7.ParityDump(
+            3,
+            "qk_norm_q",
+            np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4),
+            0,
+            "fp32",
+        )
+        normalized = decoder_parity_v8._normalize_ck_attention_head_major_layout(
+            [dump],
+            {"num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 4},
+        )
+        expected = np.arange(24, dtype=np.float32).reshape(2, 3, 4).transpose(1, 0, 2)
+        np.testing.assert_array_equal(normalized[0].data, expected)
+
+        pregate = decoder_parity_v8.parity_test_v7.ParityDump(
+            3,
+            "attn_pregate",
+            np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4),
+            0,
+            "fp32",
+        )
+        decoder_parity_v8._normalize_ck_attention_head_major_layout(
+            [pregate],
+            {"num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 4},
+        )
+        np.testing.assert_array_equal(pregate.data, expected)
+
+        qwen_named = decoder_parity_v8.parity_test_v7.ParityDump(
+            3,
+            "attn_pregate",
+            np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4),
+            0,
+            "fp32",
+        )
+        decoder_parity_v8._normalize_ck_attention_head_major_layout(
+            [qwen_named],
+            {"num_heads": 2, "num_kv_heads": 1, "head_dim": 4},
+        )
+        np.testing.assert_array_equal(qwen_named.data, expected)
+
+    def test_requested_rope_semantics_disambiguate_llama_kcur_occurrences(self) -> None:
+        def dump(name: str) -> object:
+            return decoder_parity_v8.parity_test_v7.ParityDump(
+                3, "k_proj", np.array([1.0], dtype=np.float32), 0, "fp32",
+                source_name=name,
+            )
+
+        rows = decoder_parity_v8._apply_requested_oracle_attention_semantics(
+            [
+                dump("Kcur-3-token-000008-occ-000.bin"),
+                dump("Kcur-3-token-000008-occ-001.bin"),
+            ],
+            {"k_proj", "rope_k"},
+        )
+        self.assertEqual([row.op_name for row in rows], ["k_proj", "rope_k"])
+
+    def test_requested_v_projection_ignores_llama_tensor_view_occurrence(self) -> None:
+        dump = decoder_parity_v8.parity_test_v7.ParityDump
+        rows = decoder_parity_v8._apply_requested_oracle_attention_semantics(
+            [
+                dump(3, "v_proj", np.array([1.0], dtype=np.float32), 0, "fp32",
+                     source_name="Vcur-3-token-000008-occ-000.bin"),
+                dump(3, "v_proj", np.array([1.0], dtype=np.float32), 0, "fp32",
+                     source_name="Vcur-3-token-000008-occ-001.bin"),
+            ],
+            {"v_proj"},
+        )
+        self.assertEqual([row.op_name for row in rows], ["v_proj", "v_proj_view"])
+
+    def test_resolve_llama_dump_names_maps_recurrent_internal_boundaries(self) -> None:
+        self.assertEqual(
+            decoder_parity_v8._resolve_llama_dump_names(
+                "v_predelta-4,conv_output_raw-4,attn_output-4,new_state-4,"
+                "final_output-4,linear_attn_out-4",
+                layer_count=64,
+            ),
+            "v_conv_predelta-4,conv_output_raw-4,attn_output-4,new_state-4,"
+            "final_output-4,linear_attn_out-4",
+        )
+
     def test_augment_llama_layer_input_aliases_preserves_shared_edge_identity(self) -> None:
         dump = decoder_parity_v8.parity_test_v7.ParityDump
         embedded = np.array([1.0, 2.0], dtype=np.float32)
@@ -457,14 +565,14 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
         np.testing.assert_allclose(rows[-1].data, np.arange(280, 284, dtype=np.float32) + 3000.0)
 
     def test_expand_ck_prefill_decode_dumps_extracts_head_major_norm_rows(self) -> None:
-        # CK stores qcur_normed head-major as [heads, tokens, dim].
+        # CK stores qk_norm_q head-major as [heads, tokens, dim].
         # The parity comparator flattens both sides, so expansion must preserve
         # CK's native flat order rather than transposing into dim-major form.
         ck_tensor = np.arange(2 * 3 * 4, dtype=np.float32).reshape(2, 3, 4)
         ck_dumps = [
             decoder_parity_v8.parity_test_v7.ParityDump(
                 0,
-                "qcur_normed",
+                "qk_norm_q",
                 ck_tensor.reshape(-1),
                 0,
                 "fp32",
@@ -473,7 +581,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
         llama_dumps = [
             decoder_parity_v8.parity_test_v7.ParityDump(
                 0,
-                "qcur_normed",
+                "qk_norm_q",
                 np.zeros((4, 2), dtype=np.float32),
                 0,
                 "fp32",
@@ -487,7 +595,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             prompt_token_count=2,
         )
 
-        rows = [d for d in expanded if d.layer_id == 0 and d.op_name == "qcur_normed"]
+        rows = [d for d in expanded if d.layer_id == 0 and d.op_name == "qk_norm_q"]
         self.assertEqual([d.token_id for d in rows], [0, 1])
         np.testing.assert_allclose(rows[0].data, ck_tensor[:, 1, :])
         np.testing.assert_allclose(rows[1].data, ck_tensor[:, 2, :])
@@ -532,14 +640,14 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             [
                 decoder_parity_v8.parity_test_v7.ParityDump(
                     0,
-                    "qcur_normed",
+                    "qk_norm_q",
                     np.zeros(8, dtype=np.float32),
                     0,
                     "fp32",
                 ),
                 decoder_parity_v8.parity_test_v7.ParityDump(
                     0,
-                    "qcur_normed",
+                    "qk_norm_q",
                     np.zeros((4, 2), dtype=np.float32),
                     0,
                     "fp32",
@@ -547,7 +655,7 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(specs[(0, "qcur_normed")], (8, (4, 2)))
+        self.assertEqual(specs[(0, "qk_norm_q")], (8, (4, 2)))
 
     def test_trim_llama_prefill_decode_dumps_preserves_duplicate_occurrences(self) -> None:
         llama_dumps = [
@@ -1445,6 +1553,55 @@ class V8DecoderFirstTokenParityTests(unittest.TestCase):
             ])
             ck_capture.assert_called_once()
             llama_capture.assert_called_once()
+
+    def test_coalesce_multimodal_prefill_segments_joins_token_rows(self) -> None:
+        dump = decoder_parity_v8.parity_test_v7.ParityDump
+        segmented = [
+            dump(4, "qkv", np.full((1, 2), 1.0, dtype=np.float32), 8, "fp32"),
+            dump(4, "qkv", np.full((3, 2), 2.0, dtype=np.float32), 1016, "fp32"),
+            dump(4, "qkv", np.full((2, 2), 3.0, dtype=np.float32), 62, "fp32"),
+        ]
+        row_specs = {(4, "qkv"): (2, (2,))}
+        segments = [("text_before", 1, 0), ("visual", 3, 1), ("text_after", 2, 4)]
+
+        merged = decoder_parity_v8._coalesce_multimodal_prefill_segments(
+            segmented, row_specs, segments
+        )
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].op_name, "qkv")
+        np.testing.assert_array_equal(
+            merged[0].data,
+            np.array(
+                [[1.0, 1.0], [2.0, 2.0], [2.0, 2.0], [2.0, 2.0], [3.0, 3.0], [3.0, 3.0]],
+                dtype=np.float32,
+            ),
+        )
+
+    def test_coalesce_multimodal_prefill_segments_uses_state_endpoints(self) -> None:
+        dump = decoder_parity_v8.parity_test_v7.ParityDump
+        captures = []
+        for value in (1.0, 2.0, 3.0):
+            captures.append(
+                dump(4, "state_predelta", np.full(8, value, dtype=np.float32), 0, "fp32")
+            )
+        for value in (4.0, 5.0, 6.0):
+            captures.append(
+                dump(4, "new_state", np.full(8, value, dtype=np.float32), 0, "fp32")
+            )
+        row_specs = {
+            (4, "state_predelta"): (8, (8,)),
+            (4, "new_state"): (8, (8,)),
+        }
+        segments = [("text_before", 1, 0), ("visual", 3, 1), ("text_after", 2, 4)]
+
+        merged = decoder_parity_v8._coalesce_multimodal_prefill_segments(
+            captures, row_specs, segments
+        )
+
+        self.assertEqual([item.op_name for item in merged], ["state_predelta", "new_state"])
+        np.testing.assert_array_equal(merged[0].data, np.full(8, 1.0, dtype=np.float32))
+        np.testing.assert_array_equal(merged[1].data, np.full(8, 6.0, dtype=np.float32))
 
     def test_main_replays_segmented_prompt_from_bridge_report(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v8_decoder_bridge_report_") as tmpdir:

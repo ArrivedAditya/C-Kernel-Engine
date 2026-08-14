@@ -243,6 +243,27 @@ def lower(op):
 
         self.assertFalse(hydrated["config"]["prefill_gateup_swiglu_fusion_default"])
 
+    def test_qwen36vl_fma_ssm_selector_is_unique_and_explicit(self) -> None:
+        manifest = build_ir._hydrate_manifest_template({
+            "config": {
+                "model": "qwen35",
+                "recurrent_ssm_arithmetic": "llama_fma",
+            },
+            "template": {"name": "qwen35"},
+        })
+
+        plans = build_ir._resolve_manifest_execution_contracts(manifest, "prefill")
+        ssm_plans = [
+            plan
+            for plan in plans
+            if "recurrent_ssm_conv" in plan.get("template_ops", [])
+        ]
+        self.assertEqual(len(ssm_plans), 1)
+        self.assertEqual(
+            ssm_plans[0]["kernel"]["function"],
+            "ssm_conv1d_forward_llama_fma",
+        )
+
     def test_attention_dimensions_are_config_driven_across_layouts(self) -> None:
         uniform = {
             "embed_dim": 1024,

@@ -91,6 +91,27 @@ class Qwen36VLExplicitCircuitTests(unittest.TestCase):
             "embedded_input",
         )
         self.assertEqual(edge["required_contract"]["deepstack_injections"], 0)
+        self.assertEqual(
+            edge["required_contract"]["decoder_runtime_config"],
+            {"recurrent_ssm_arithmetic": "llama_fma"},
+        )
+        self.assertEqual(
+            edge["required_contract"]["prefill_schedule"][
+                "projection_row_group_boundaries"
+            ],
+            {
+                "policy": "restart_each_segment",
+                "operations": [
+                    "recurrent_qkv_proj",
+                    "recurrent_gate_proj",
+                    "recurrent_out_proj",
+                    "q_gate_proj",
+                    "v_proj",
+                    "mlp_gate_up",
+                    "mlp_down",
+                ],
+            },
+        )
         providers = edge["required_contract"]["providers"]
         self.assertEqual(
             providers["prefix_insert"]["resolved_function"],

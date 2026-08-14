@@ -283,6 +283,7 @@ class V8CodegenCapabilityTests(unittest.TestCase):
             prefill._emit_prefill_gemm_fp32_override(
                 op,
                 1,
+                {},
                 debug_flag_name="debug",
                 debug_input_name="input",
             )

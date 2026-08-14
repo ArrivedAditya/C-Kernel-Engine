@@ -40,6 +40,24 @@ class DirectLayoutAttentionTests(unittest.TestCase):
         mixed_signature = signature + [ctypes.c_int, ctypes.c_int]
         cls._lib.attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4.argtypes = mixed_signature
         cls._lib.attention_forward_mixed_visual_chunk_head_major_gqa_flash_strided_gemma4_token_output.argtypes = mixed_signature
+        prefill_workspace_signature = [
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.POINTER(ctypes.c_uint16),
+            ctypes.POINTER(ctypes.c_uint16),
+            ctypes.POINTER(ctypes.c_float),
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.POINTER(ctypes.c_float), ctypes.c_size_t,
+        ]
+        cls._lib.attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract_workspace.argtypes = (
+            prefill_workspace_signature
+        )
+        cls._lib.attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract_workspace.restype = ctypes.c_int
+        cls._lib.attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_contract_workspace.argtypes = (
+            prefill_workspace_signature
+            + [ctypes.POINTER(ctypes.c_int), ctypes.c_int]
+        )
+        cls._lib.attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_contract_workspace.restype = ctypes.c_int
 
     @classmethod
     def tearDownClass(cls):
@@ -143,6 +161,72 @@ class DirectLayoutAttentionTests(unittest.TestCase):
                 dst = (token * heads + head) * dim
                 expected[dst:dst + dim] = head_output[src:src + dim]
         self.assertEqual(expected.tobytes(), token_output.tobytes())
+
+    def test_segmented_prefill_matches_independent_segment_calls_bit_exactly(self):
+        heads, kv_heads, tokens, dim = 4, 2, 75, 16
+        segments = [9, 64, 2]
+        q = array("f", (
+            math.sin(index * 0.007 + 0.1)
+            for index in range(heads * tokens * dim)
+        ))
+
+        def fp16_bits(value):
+            import struct
+            return int.from_bytes(struct.pack("<e", value), "little")
+
+        k = array("H", (
+            fp16_bits(math.cos(index * 0.011))
+            for index in range(kv_heads * tokens * dim)
+        ))
+        v = array("H", (
+            fp16_bits(math.sin(index * 0.013 + 0.2))
+            for index in range(kv_heads * tokens * dim)
+        ))
+        expected = array("f", [0.0]) * (heads * tokens * dim)
+        actual = array("f", [0.0]) * (heads * tokens * dim)
+        workspace = array("f", [0.0]) * (2 * heads * dim)
+
+        def float_pointer(values):
+            return (ctypes.c_float * len(values)).from_buffer(values)
+
+        def half_pointer(values):
+            return (ctypes.c_uint16 * len(values)).from_buffer(values)
+
+        row_offset = 0
+        for rows in segments:
+            q_segment = array("f", [0.0]) * (heads * rows * dim)
+            for head in range(heads):
+                source = (head * tokens + row_offset) * dim
+                destination = head * rows * dim
+                q_segment[destination:destination + rows * dim] = q[
+                    source:source + rows * dim
+                ]
+            out_segment = array("f", [0.0]) * (heads * rows * dim)
+            status = self._lib.attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract_workspace(
+                float_pointer(q_segment), half_pointer(k), half_pointer(v),
+                float_pointer(out_segment), heads, kv_heads, rows, row_offset,
+                tokens, dim, dim, 3, float_pointer(workspace),
+                len(workspace) * ctypes.sizeof(ctypes.c_float),
+            )
+            self.assertEqual(status, 0)
+            for head in range(heads):
+                source = head * rows * dim
+                destination = (head * tokens + row_offset) * dim
+                expected[destination:destination + rows * dim] = out_segment[
+                    source:source + rows * dim
+                ]
+            row_offset += rows
+
+        segment_array = (ctypes.c_int * len(segments))(*segments)
+        status = self._lib.attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_contract_workspace(
+            float_pointer(q), half_pointer(k), half_pointer(v),
+            float_pointer(actual), heads, kv_heads, tokens, 0, tokens, dim, dim,
+            3, float_pointer(workspace),
+            len(workspace) * ctypes.sizeof(ctypes.c_float),
+            segment_array, len(segments),
+        )
+        self.assertEqual(status, 0)
+        self.assertEqual(expected.tobytes(), actual.tobytes())
 
 
 if __name__ == "__main__":

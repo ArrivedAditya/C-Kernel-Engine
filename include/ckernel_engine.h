@@ -1881,6 +1881,14 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16
     ck_attention_reduction_t reduction,
     float *token_workspace,
     size_t token_workspace_bytes);
+
+ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_contract_workspace(
+    const float *q, const uint16_t *k_cache, const uint16_t *v_cache,
+    float *output, int num_heads, int num_kv_heads, int q_tokens,
+    int past_tokens, int cache_capacity, int head_dim, int aligned_head_dim,
+    ck_attention_reduction_t reduction, float *token_workspace,
+    size_t token_workspace_bytes, const int *segment_lengths,
+    int num_segments);
 ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract(
     const float *q,
     const uint16_t *k_cache,

@@ -494,9 +494,18 @@ def _canonical_dump_op_name(op_name: str) -> str:
         "ffn_swiglu": "mlp_swiglu",
         "ffn_out": "mlp_down",
         "down_proj": "mlp_down",
+        # llama.cpp graph-node names for model-agnostic full-attention
+        # circuit edges.  Translation belongs in the oracle adapter rather
+        # than either backend's generated graph.
+        "gate_reshaped": "attn_gate",
+        "attn_gated": "attn_out",
+        "qcur_full": "q_proj",
+        "qcur_normed": "qk_norm_q",
+        "kcur_normed": "qk_norm_k",
     }
-    if name in aliases:
-        return aliases[name]
+    alias = aliases.get(name, aliases.get(name.lower()))
+    if alias is not None:
+        return alias
     if name in {"attn_out", "kqv_wo"}:
         return "out_proj"
     if name == "attn_residual":
@@ -508,6 +517,28 @@ _LLAMA_SEMANTIC_DUMP_NAMES = {
     "qkv": "linear_attn_qkv_mixed",
     "q_predelta": "q_conv_predelta",
     "k_predelta": "k_conv_predelta",
+    "v_predelta": "v_conv_predelta",
+    "z": "z",
+    "alpha": "alpha",
+    "beta": "beta",
+    "gate": "gate",
+    "state_predelta": "state_predelta",
+    "conv_output_raw": "conv_output_raw",
+    "conv_output_silu": "conv_output_silu",
+    "attn_output": "attn_output",
+    "new_state": "new_state",
+    "final_output": "final_output",
+    "linear_attn_out": "linear_attn_out",
+    "q_proj": "Qcur_full",
+    "k_proj": "Kcur",
+    "v_proj": "Vcur",
+    "qk_norm_q": "Qcur_normed",
+    "qk_norm_k": "Kcur_normed",
+    "rope_q": "Qcur",
+    "rope_k": "Kcur",
+    "attn_gate": "gate_reshaped",
+    "attn_pregate": "attn_pregate",
+    "attn_out": "attn_gated",
     "after_attn": "attn_residual",
     "layer_out": "l_out",
     "post_attn_norm": "attn_post_norm",
@@ -609,6 +640,57 @@ def _augment_layer_input_aliases(
             )
         )
         seen.add(alias_key)
+    return out
+
+
+def _apply_requested_oracle_attention_semantics(
+    dumps: list[Any], semantic_names: set[str]
+) -> list[Any]:
+    """Disambiguate reused llama.cpp Q/K graph-node names by occurrence.
+
+    Qwen attention reuses ``Kcur`` for the projection and post-RoPE tensors.
+    The callback occurrence is therefore part of the oracle ABI. Relabel only
+    boundaries explicitly requested by the caller, leaving legacy raw-name
+    captures unchanged.
+    """
+    requested = set(semantic_names)
+    if not requested.intersection({"rope_q", "k_proj", "rope_k", "v_proj"}):
+        return dumps
+    out: list[Any] = []
+    for dump in dumps:
+        source_name = str(getattr(dump, "source_name", "") or "")
+        alias = None
+        if "rope_q" in requested and source_name.startswith("Qcur-"):
+            alias = "rope_q"
+        elif source_name.startswith("Kcur-"):
+            occurrence = re.search(r"-occ-(\d+)", source_name)
+            occurrence_id = int(occurrence.group(1)) if occurrence else 0
+            if occurrence_id == 0 and "k_proj" in requested:
+                alias = "k_proj"
+            elif occurrence_id == 1 and "rope_k" in requested:
+                alias = "rope_k"
+        elif "v_proj" in requested and source_name.startswith("Vcur-"):
+            # llama.cpp exposes both the projection result and a later tensor
+            # view under Vcur.  Only occurrence zero is the projection edge;
+            # keeping the view under the same semantic name doubles the
+            # apparent element count and makes X-ray reject a valid capture.
+            occurrence = re.search(r"-occ-(\d+)", source_name)
+            occurrence_id = int(occurrence.group(1)) if occurrence else 0
+            alias = "v_proj" if occurrence_id == 0 else "v_proj_view"
+        if alias is None:
+            out.append(dump)
+            continue
+        out.append(
+            parity_test_v7.ParityDump(
+                int(dump.layer_id),
+                alias,
+                np.array(dump.data, copy=False),
+                int(getattr(dump, "token_id", 0)),
+                str(dump.dtype),
+                source_token_id=int(getattr(dump, "source_token_id", dump.token_id)),
+                source_name=getattr(dump, "source_name", None),
+            )
+        )
     return out
 
 
@@ -745,7 +827,12 @@ def _build_llama_row_specs(llama_dumps: list[Any]) -> dict[tuple[int, str], tupl
             if candidate and int(np.prod(np.array(candidate, dtype=np.int64))) == row_elems:
                 row_shape = candidate
         elif shapes:
-            shaped_qk_ops = {"qcur_normed", "kcur_normed", "qcur_rope", "kcur_rope"}
+            shaped_qk_ops = {
+                "qk_norm_q",
+                "qk_norm_k",
+                "rope_q",
+                "rope_k",
+            }
             ordered_shapes = sorted(
                 shapes,
                 key=lambda shape: len(shape) if key[1] in shaped_qk_ops else -len(shape),
@@ -880,7 +967,7 @@ def _expand_ck_prefill_decode_dumps(
         row_spec = row_specs.get(key)
         if row_spec is None:
             continue
-        row_elems, _ = row_spec
+        row_elems, row_shape = row_spec
         flat_size = int(np.asarray(dump.data).size)
         if row_elems <= 0 or flat_size <= row_elems or flat_size % row_elems != 0:
             continue
@@ -1236,17 +1323,72 @@ def _compare_dump_sets(
     }
 
 
-def _label_multimodal_prefill_segments(
+_PREFILL_STATE_SNAPSHOT_OPS = {"state_predelta", "new_state"}
+
+
+def _normalize_ck_attention_head_major_layout(
+    dumps: list[Any], runtime_config: dict[str, Any]
+) -> list[Any]:
+    """Canonicalize exported attention rows to token-major oracle order.
+
+    The production attention providers intentionally keep Q/K in
+    ``[head, token, dim]`` storage. llama.cpp's graph callback exposes the
+    corresponding normalization and RoPE edges as ``[token, head, dim]``.
+    X-ray compares logical edges, so transpose the captured copy only; model
+    execution and provider storage remain untouched.
+    """
+    q_heads = int(
+        runtime_config.get("num_attention_heads", 0)
+        or runtime_config.get("num_heads", 0)
+        or 0
+    )
+    kv_heads = int(
+        runtime_config.get("num_key_value_heads", 0)
+        or runtime_config.get("num_kv_heads", 0)
+        or 0
+    )
+    head_dim = int(runtime_config.get("head_dim", 0) or 0)
+    if q_heads <= 0 or kv_heads <= 0 or head_dim <= 0:
+        return dumps
+    head_major = {
+        "qk_norm_q": q_heads,
+        "rope_q": q_heads,
+        "qk_norm_k": kv_heads,
+        "rope_k": kv_heads,
+        "attn_pregate": q_heads,
+    }
+    for dump in dumps:
+        op_name = _canonical_dump_op_name(str(dump.op_name))
+        heads = head_major.get(op_name)
+        if heads is None:
+            continue
+        values = np.asarray(dump.data)
+        row_width = int(heads) * int(head_dim)
+        if values.size == 0 or values.size % row_width != 0:
+            continue
+        rows = int(values.size // row_width)
+        dump.data = np.ascontiguousarray(
+            values.reshape(heads, rows, head_dim).transpose(1, 0, 2)
+        )
+    return dumps
+
+
+def _coalesce_multimodal_prefill_segments(
     dumps: list[Any],
     row_specs: dict[tuple[int, str], tuple[int, tuple[int, ...]]],
     segments: list[tuple[str, int, int]],
 ) -> list[Any]:
-    """Give batched prefill captures stable execution-segment identities.
+    """Coalesce segmented prefill captures into one logical prompt tensor.
 
     The legacy CK dump header carries a decode token id, not a prefill pass or
     segment id. Segmented multimodal prefill can consequently emit text-before,
-    visual, and text-after tensors with the same token id. Tensor extent plus
-    execution order is the unambiguous contract for those captures.
+    visual, and text-after tensors with the same token id. Tensor extent and
+    execution order are the unambiguous contract for row-valued activations.
+
+    Persistent recurrent state is not row-valued. ``state_predelta`` is the
+    state before the first segment and ``new_state`` is the state after the
+    final segment. Selecting those snapshots prevents three state tensors from
+    being mistaken for three token batches.
     """
     grouped: dict[tuple[int, str], list[Any]] = {}
     key_order: list[tuple[int, str]] = []
@@ -1256,40 +1398,110 @@ def _label_multimodal_prefill_segments(
             key_order.append(key)
         grouped.setdefault(key, []).append(dump)
 
-    labeled: list[Any] = []
+    coalesced: list[Any] = []
+    total_rows = sum(int(count) for _, count, _ in segments)
     for key in key_order:
-        row_spec = row_specs.get(key)
-        if row_spec is None:
-            continue
-        row_elems, _ = row_spec
-        if row_elems <= 0:
+        candidates = grouped[key]
+        if key[1] in _PREFILL_STATE_SNAPSHOT_OPS:
+            selected = candidates[0] if key[1] == "state_predelta" else candidates[-1]
+            coalesced.append(
+                parity_test_v7.ParityDump(
+                    int(selected.layer_id),
+                    key[1],
+                    np.array(selected.data, copy=False),
+                    0,
+                    str(selected.dtype),
+                    source_token_id=int(
+                        getattr(selected, "source_token_id", selected.token_id)
+                    ),
+                    source_name=getattr(selected, "source_name", None),
+                )
+            )
             continue
 
-        remaining = list(segments)
-        for dump in grouped[key]:
-            flat = np.asarray(dump.data).reshape(-1)
-            if flat.size % row_elems != 0:
-                continue
-            batch_rows = int(flat.size // row_elems)
+        row_spec = row_specs.get(key)
+        if row_spec is None:
+            coalesced.extend(candidates)
+            continue
+        row_elems, row_shape = row_spec
+        if row_elems <= 0:
+            coalesced.extend(candidates)
+            continue
+
+        exact = [
+            dump
+            for dump in candidates
+            if int(np.asarray(dump.data).size) == int(row_elems) * int(total_rows)
+        ]
+        if exact:
+            selected = exact[-1]
+            coalesced.append(
+                parity_test_v7.ParityDump(
+                    int(selected.layer_id),
+                    key[1],
+                    np.array(selected.data, copy=False),
+                    0,
+                    str(selected.dtype),
+                    source_token_id=int(
+                        getattr(selected, "source_token_id", selected.token_id)
+                    ),
+                    source_name=getattr(selected, "source_name", None),
+                )
+            )
+            continue
+
+        ordered: list[Any] = []
+        cursor = 0
+        for _, segment_rows, _ in segments:
             match_idx = next(
-                (idx for idx, (_, count, _) in enumerate(remaining) if int(count) == batch_rows),
+                (
+                    idx
+                    for idx in range(cursor, len(candidates))
+                    if int(np.asarray(candidates[idx].data).size)
+                    == int(row_elems) * int(segment_rows)
+                ),
                 None,
             )
             if match_idx is None:
-                continue
-            segment_name, _, segment_start = remaining.pop(match_idx)
-            labeled.append(
-                parity_test_v7.ParityDump(
-                    int(dump.layer_id),
-                    f"{key[1]}@{segment_name}",
-                    np.array(dump.data, copy=False),
-                    int(segment_start),
-                    str(dump.dtype),
-                    source_token_id=int(getattr(dump, "source_token_id", dump.token_id)),
-                    source_name=getattr(dump, "source_name", None),
-                )
+                ordered = []
+                break
+            ordered.append(candidates[match_idx])
+            cursor = match_idx + 1
+        if len(ordered) != len(segments):
+            coalesced.extend(candidates)
+            continue
+
+        arrays = [np.asarray(dump.data) for dump in ordered]
+        segment_sizes = [int(count) for _, count, _ in segments]
+        token_axes: list[int] = []
+        for array, segment_rows in zip(arrays, segment_sizes):
+            axes = [axis for axis, extent in enumerate(array.shape) if int(extent) == segment_rows]
+            token_axes.append(axes[0] if len(axes) == 1 else -1)
+        if token_axes and token_axes[0] >= 0 and len(set(token_axes)) == 1:
+            merged = np.concatenate(arrays, axis=token_axes[0])
+        else:
+            # Flat legacy dumps for token-major providers have one complete
+            # row after another. Preserve that representation when the tensor
+            # metadata does not expose a unique token axis.
+            merged = np.concatenate([array.reshape(-1) for array in arrays])
+            if (
+                row_shape
+                and int(np.prod(np.array(row_shape, dtype=np.int64))) == int(row_elems)
+            ):
+                merged = merged.reshape((int(total_rows), *row_shape))
+        selected = ordered[-1]
+        coalesced.append(
+            parity_test_v7.ParityDump(
+                int(selected.layer_id),
+                key[1],
+                merged,
+                0,
+                str(selected.dtype),
+                source_token_id=int(getattr(selected, "source_token_id", selected.token_id)),
+                source_name=getattr(selected, "source_name", None),
             )
-    return labeled
+        )
+    return coalesced
 
 
 def _capture_ck_dump(
@@ -1471,6 +1683,9 @@ def _capture_dump_compare(
     ck_dump_path = ck_dump_dir / "dump.bin"
     ck_dumps = parity_test_v7.read_dump_file(ck_dump_path)
     llama_dumps = _load_llama_dump_dir(llama_dump_dir)
+    llama_dumps = _apply_requested_oracle_attention_semantics(
+        llama_dumps, semantic_names
+    )
     ck_dumps = _augment_layer_input_aliases(
         ck_dumps,
         layer_count=layer_count,
@@ -1515,9 +1730,12 @@ def _capture_dump_compare(
             ),
         ]
         segment_specs = [segment for segment in segment_specs if segment[1] > 0]
+        ck_dumps = _normalize_ck_attention_head_major_layout(ck_dumps, runtime_config)
         row_specs = _build_llama_row_specs(llama_dumps)
-        ck_dumps = _label_multimodal_prefill_segments(ck_dumps, row_specs, segment_specs)
-        llama_dumps = _label_multimodal_prefill_segments(llama_dumps, row_specs, segment_specs)
+        ck_dumps = _coalesce_multimodal_prefill_segments(ck_dumps, row_specs, segment_specs)
+        llama_dumps = _coalesce_multimodal_prefill_segments(
+            llama_dumps, row_specs, segment_specs
+        )
         compare_pass = "all"
         prefill_segments = [
             {"name": name, "rows": int(rows), "physical_start": int(start)}

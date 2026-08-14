@@ -166,7 +166,15 @@ def _last_token_row_offset_expr(func_name: str, embed_dim: int) -> Optional[str]
     return f"(size_t)(num_tokens - 1) * (size_t){embed_dim} * sizeof(float)"
 
 
-def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False, dump: bool = False) -> str:
+def emit_prefill_op(
+    op: Dict,
+    seq_idx: int,
+    config: Dict,
+    profile: bool = False,
+    dump: bool = False,
+    *,
+    segment_plan_available: bool = False,
+) -> str:
     """Emit a single op call for prefill mode.
 
     The IR already provides:
@@ -189,6 +197,12 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
     op_instance_idx = int(op.get("op_instance_idx", op.get("instance", 0)) or 0)
     args_list = op.get("args", [])
     linear_emission = resolved_quantized_linear_emission(op)
+    segmented_row_function = (
+        _segmented_row_provider(op, config) if segment_plan_available else ""
+    )
+    segmented_attention_function = (
+        _segmented_attention_provider(op) if segment_plan_available else ""
+    )
     quantization_emission = resolved_activation_quantization_emission(op)
     if op_type.startswith("quantize_") and quantization_emission is None:
         raise RuntimeError(
@@ -609,6 +623,22 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
         if name_key and expr and name_key not in arg_expr_by_name:
             arg_expr_by_name[name_key] = expr
 
+    if op_type == "recurrent_core":
+        state_in = arg_expr_by_name.get("state_in")
+        num_heads = arg_expr_by_name.get("num_heads") or arg_expr_by_name.get("groups")
+        state_dim = arg_expr_by_name.get("state_dim") or arg_expr_by_name.get("head_dim")
+        if state_in and num_heads and state_dim:
+            raw_state_in = (
+                state_in.replace("(const float*)", "")
+                .replace("(float*)", "")
+                .replace("(void*)", "")
+                .strip()
+            )
+            lines.append(
+                f'    ck_debug_export_hidden(model, {layer}, "state_predelta", '
+                f'(const float*){raw_state_in}, ({num_heads}) * ({state_dim}) * ({state_dim}));'
+            )
+
     # Prefill quantization preserves token-major row storage. A kernel map may
     # additionally declare a grouped arithmetic provider whose output keeps
     # that same storage ABI.
@@ -911,6 +941,36 @@ def emit_prefill_op(op: Dict, seq_idx: int, config: Dict, profile: bool = False,
                 )
                 lines.append("        }")
             lines.append("    }")
+    elif segmented_attention_function:
+        lines.append("    if (ck_multimodal_prefill_has_segment_plan(num_tokens)) {")
+        lines.append(f"        {segmented_attention_function}(")
+        for arg in args:
+            lines.append(f"            {arg},")
+        lines.append("            g_multimodal_prefill_segment_lengths,")
+        lines.append("            g_multimodal_prefill_num_segments")
+        lines.append("        );")
+        lines.append("    } else {")
+        lines.append(f"        {emitted_func}(")
+        for i, arg in enumerate(args):
+            comma = "," if i < len(args) - 1 else ""
+            lines.append(f"            {arg}{comma}")
+        lines.append("        );")
+        lines.append("    }")
+    elif segmented_row_function and len(args) == 7:
+        lines.append("    if (ck_multimodal_prefill_has_segment_plan(num_tokens)) {")
+        lines.append(f"        {segmented_row_function}(")
+        for arg in args:
+            lines.append(f"            {arg},")
+        lines.append("            g_multimodal_prefill_segment_lengths,")
+        lines.append("            g_multimodal_prefill_num_segments")
+        lines.append("        );")
+        lines.append("    } else {")
+        lines.append(f"        {emitted_func}(")
+        for i, arg in enumerate(args):
+            comma = "," if i < len(args) - 1 else ""
+            lines.append(f"            {arg}{comma}")
+        lines.append("        );")
+        lines.append("    }")
     elif (
         op_type in {"attn", "attn_sliding"}
         and func in {
@@ -1507,7 +1567,11 @@ def emit_prefill_function(ops: List[Dict], config: Dict, profile: bool = False, 
     scale_embeddings_sqrt_dim = bool(config.get("scale_embeddings_sqrt_dim", False))
     outproj_policy = str(config.get("out_proj_input_policy") or "").strip().lower()
     debug_outproj_default = 1 if outproj_policy in {"fp32", "fp32_input", "force_fp32"} else 0
-    q4_gateup_swiglu_x16_default = int(bool(config.get("prefill_gateup_swiglu_fusion_default", True)))
+    segment_preserving_ops = _segment_preserving_projection_operations(config)
+    q4_gateup_swiglu_x16_default = int(
+        bool(config.get("prefill_gateup_swiglu_fusion_default", True))
+        and "mlp_gate_up" not in segment_preserving_ops
+    )
     embed_scale_emitted = False
     prologue = """
 /* ============================================================================
@@ -1779,6 +1843,69 @@ def _has_unified_mixed_prefill_contract(config: Dict) -> bool:
     )
 
 
+def _segment_preserving_projection_operations(config: Dict) -> set[str]:
+    """Return circuit-owned operations whose row groups restart per segment."""
+    bridge = config.get("multimodal_bridge_contract")
+    if not isinstance(bridge, dict):
+        return set()
+    schedule = bridge.get("prefill_schedule")
+    if not isinstance(schedule, dict):
+        return set()
+    boundaries = schedule.get("projection_row_group_boundaries")
+    if not isinstance(boundaries, dict):
+        return set()
+    if boundaries.get("policy") != "restart_each_segment":
+        return set()
+    operations = boundaries.get("operations")
+    if not isinstance(operations, list) or not all(
+        isinstance(operation, str) and operation for operation in operations
+    ):
+        raise RuntimeError(
+            "segment-preserving projection contract requires a non-empty operation list"
+        )
+    return set(operations)
+
+
+def _segmented_row_provider(op: Dict, config: Dict) -> str:
+    if str(op.get("op", "")) not in _segment_preserving_projection_operations(config):
+        return ""
+    linear = resolved_quantized_linear_emission(op)
+    if not linear:
+        return ""
+    provider = linear.get("segmented_row_provider")
+    if not isinstance(provider, dict):
+        raise RuntimeError(
+            f"operation {op.get('op')!r} requires a map-owned segmented-row provider"
+        )
+    if provider.get("boundary_semantics") != "restart_row_group_at_each_segment":
+        raise RuntimeError("segmented-row provider has incompatible boundary semantics")
+    return str(provider["function"])
+
+
+def _segmented_attention_provider(op: Dict) -> str:
+    if str(op.get("op", "")) not in {"attn", "attn_sliding"}:
+        return ""
+    execution = op.get("resolved_execution")
+    implementation = execution.get("implementation") if isinstance(execution, dict) else None
+    provider = (
+        implementation.get("segmented_query_provider")
+        if isinstance(implementation, dict)
+        else None
+    )
+    if provider is None:
+        return ""
+    if not isinstance(provider, dict):
+        raise RuntimeError("segmented-query attention provider metadata must be an object")
+    required = {"function", "segment_lengths_dtype", "boundary_semantics", "fallback"}
+    if set(provider) != required:
+        raise RuntimeError("segmented-query provider must define the exact ABI contract")
+    if provider["segment_lengths_dtype"] != "i32":
+        raise RuntimeError("segmented-query provider requires i32 segment lengths")
+    if provider["boundary_semantics"] != "restart_query_tile_policy_at_each_segment":
+        raise RuntimeError("segmented-query provider has incompatible boundary semantics")
+    return str(provider["function"])
+
+
 def _emit_multimodal_prefill_bridge_helpers(config: Dict, text_mrope_function: str) -> str:
     embed_dim = int(config.get("embed_dim", 0) or 0)
     num_deepstack_layers = int(config.get("num_deepstack_layers", 0) or 0)
@@ -1858,6 +1985,8 @@ static int g_multimodal_prefill_prefix_tokens = 0;
 static int32_t *g_multimodal_prefill_positions = NULL;
 static const float *g_multimodal_prefill_rows = NULL;
 static int g_multimodal_prefill_row_dim = 0;
+static int g_multimodal_prefill_segment_lengths[3] = {{0, 0, 0}};
+static int g_multimodal_prefill_num_segments = 0;
 
 static void ck_multimodal_prefill_bridge_clear(void) {{
     g_multimodal_prefill_bridge_active = 0;
@@ -1869,6 +1998,10 @@ static void ck_multimodal_prefill_bridge_clear(void) {{
     g_multimodal_prefill_positions = NULL;
     g_multimodal_prefill_rows = NULL;
     g_multimodal_prefill_row_dim = 0;
+    g_multimodal_prefill_segment_lengths[0] = 0;
+    g_multimodal_prefill_segment_lengths[1] = 0;
+    g_multimodal_prefill_segment_lengths[2] = 0;
+    g_multimodal_prefill_num_segments = 0;
 }}
 
 static void ck_multimodal_prefill_bridge_free(void) {{
@@ -1888,6 +2021,17 @@ static int ck_multimodal_prefill_bridge_next_text_pos(void) {{
 
 static int ck_multimodal_prefill_bridge_is_active(void) {{
     return g_multimodal_prefill_bridge_active;
+}}
+
+static int ck_multimodal_prefill_has_segment_plan(int total_tokens) {{
+    if (!g_multimodal_prefill_bridge_active ||
+        g_multimodal_prefill_num_segments <= 0 ||
+        total_tokens != g_multimodal_prefill_total_tokens) return 0;
+    int rows = 0;
+    for (int i = 0; i < g_multimodal_prefill_num_segments; ++i) {{
+        rows += g_multimodal_prefill_segment_lengths[i];
+    }}
+    return rows == total_tokens;
 }}
 
 static int ck_multimodal_prefill_bridge_prepare(const float *rows,
@@ -1933,6 +2077,11 @@ static int ck_multimodal_prefill_bridge_prepare(const float *rows,
     g_multimodal_prefill_prefix_start = prefix_start;
     g_multimodal_prefill_prefix_tokens = prefix_tokens;
     g_multimodal_prefill_text_pos = resolved_text_pos;
+    g_multimodal_prefill_segment_lengths[0] = prefix_start;
+    g_multimodal_prefill_segment_lengths[1] = prefix_tokens;
+    g_multimodal_prefill_segment_lengths[2] =
+        total_tokens - prefix_start - prefix_tokens;
+    g_multimodal_prefill_num_segments = 3;
     g_multimodal_prefill_bridge_active = 1;
     return 0;
 }}
@@ -2057,7 +2206,7 @@ def _emit_prefill_quant_debug_override(op: Dict, seq_idx: int, config: Dict, *, 
     return "\n".join(lines)
 
 
-def _emit_prefill_gemm_fp32_override(op: Dict, seq_idx: int, *, debug_flag_name: str, debug_input_name: str, profile: bool = False, dump: bool = False) -> str:
+def _emit_prefill_gemm_fp32_override(op: Dict, seq_idx: int, config: Dict, *, debug_flag_name: str, debug_input_name: str, profile: bool = False, dump: bool = False) -> str:
     func = str(op.get("function", "") or "")
     linear_emission = resolved_quantized_linear_emission(op)
     if not is_q4_q6_q8_linear(linear_emission):
@@ -2087,6 +2236,11 @@ def _emit_prefill_gemm_fp32_override(op: Dict, seq_idx: int, *, debug_flag_name:
         raise RuntimeError("prefill fp32 override missing GEMM args")
 
     fp32_func = linear_emission["fp32_activation_function"]
+    segmented_row_function = (
+        _segmented_row_provider(op, config)
+        if _has_multimodal_bridge_contract(config)
+        else ""
+    )
     layer_value = op.get("layer", -1)
     layer = int(layer_value) if layer_value is not None else -1
     row_gemv_func = linear_emission["row_quantized_function"]
@@ -2148,19 +2302,48 @@ def _emit_prefill_gemm_fp32_override(op: Dict, seq_idx: int, *, debug_flag_name:
     lines.append("    } else {")
     if profile:
         lines.append("        CK_PROFILE_BEGIN();")
-    lines.extend(
-        [
-            f"        {func}(",
-            f"            {a_expr},",
-            f"            {b_expr},",
-            f"            {bias_expr},",
-            f"            {c_expr},",
-            f"            {m_expr},",
-            f"            {n_expr},",
-            f"            {k_expr}",
-            "        );",
-        ]
-    )
+    if segmented_row_function:
+        lines.extend(
+            [
+                "        if (ck_multimodal_prefill_has_segment_plan(num_tokens)) {",
+                f"            {segmented_row_function}(",
+                f"                {a_expr},",
+                f"                {b_expr},",
+                f"                {bias_expr},",
+                f"                {c_expr},",
+                f"                {m_expr},",
+                f"                {n_expr},",
+                f"                {k_expr},",
+                "                g_multimodal_prefill_segment_lengths,",
+                "                g_multimodal_prefill_num_segments",
+                "            );",
+                "        } else {",
+                f"            {func}(",
+                f"                {a_expr},",
+                f"                {b_expr},",
+                f"                {bias_expr},",
+                f"                {c_expr},",
+                f"                {m_expr},",
+                f"                {n_expr},",
+                f"                {k_expr}",
+                "            );",
+                "        }",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f"        {func}(",
+                f"            {a_expr},",
+                f"            {b_expr},",
+                f"            {bias_expr},",
+                f"            {c_expr},",
+                f"            {m_expr},",
+                f"            {n_expr},",
+                f"            {k_expr}",
+                "        );",
+            ]
+        )
     if profile:
         lines.append(f'        CK_PROFILE_END("prefill", "{func}", "{op.get("op", "unknown")}", {layer});')
     lines.append("    }")
@@ -2178,6 +2361,7 @@ def _emit_prefill_q4_gateup_swiglu_x16(
     swiglu_op: Dict,
     seq_idx: int,
     fused_var: str,
+    config: Dict,
     *,
     debug_flag_name: str,
     debug_input_name: str,
@@ -2241,6 +2425,7 @@ def _emit_prefill_q4_gateup_swiglu_x16(
     old_code = _emit_prefill_gemm_fp32_override(
         gate_op,
         seq_idx,
+        config,
         debug_flag_name=debug_flag_name,
         debug_input_name=debug_input_name,
         profile=profile,
@@ -2268,7 +2453,11 @@ def emit_prefill_from_embedded_function(
     debug_outproj_default = 1 if outproj_policy in {"fp32", "fp32_input", "force_fp32"} else 0
     embed_scale_emitted = False
     has_multimodal_bridge = _has_multimodal_bridge_contract(config)
-    q4_gateup_swiglu_x16_default = int(bool(config.get("prefill_gateup_swiglu_fusion_default", True)))
+    segment_preserving_ops = _segment_preserving_projection_operations(config)
+    q4_gateup_swiglu_x16_default = int(
+        bool(config.get("prefill_gateup_swiglu_fusion_default", True))
+        and "mlp_gate_up" not in segment_preserving_ops
+    )
     text_mrope_ops = [
         op
         for op in ops
@@ -2458,6 +2647,7 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
                     next_op,
                     seq_idx,
                     fused_var,
+                    config,
                     debug_flag_name="debug_mlp_gate_up_fp32",
                     debug_input_name="ck_debug_mlp_gate_up_fp32_input",
                     profile=profile,
@@ -2467,6 +2657,7 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
                 op_code = _emit_prefill_gemm_fp32_override(
                     op,
                     seq_idx,
+                    config,
                     debug_flag_name="debug_mlp_gate_up_fp32",
                     debug_input_name="ck_debug_mlp_gate_up_fp32_input",
                     profile=profile,
@@ -2504,6 +2695,7 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
             op_code = _emit_prefill_gemm_fp32_override(
                 op,
                 seq_idx,
+                config,
                 debug_flag_name="debug_mlp_down_fp32",
                 debug_input_name="ck_debug_mlp_down_fp32_input",
                 profile=profile,
@@ -2536,7 +2728,14 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
                     f'(const float*){raw_out}, ({m_expr}) * ({n_expr}));'
                 )
         else:
-            op_code = emit_prefill_op(op, seq_idx, config, profile=profile, dump=dump)
+            op_code = emit_prefill_op(
+                op,
+                seq_idx,
+                config,
+                profile=profile,
+                dump=dump,
+                segment_plan_available=has_decoder_multimodal_bridge,
+            )
             if has_decoder_multimodal_bridge and op_type == "rope_qk":
                 resolved_rope_function = str(op.get("function", "") or "").strip()
                 op_code = op_code.replace(

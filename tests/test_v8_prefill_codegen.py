@@ -27,6 +27,164 @@ codegen_prefill_v8 = _load_module("codegen_prefill_v8_tests", CODEGEN_PREFILL_PA
 
 
 class TestV8PrefillCodegen(unittest.TestCase):
+    @staticmethod
+    def _q4_segmented_projection_op(op_name: str = "recurrent_gate_proj") -> dict:
+        return {
+            "function": "gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch",
+            "op": op_name,
+            "layer": 0,
+            "resolved_execution": {
+                "numerical_contract": "q4_k_x_q8_k_repacked_matmul_fp32",
+                "implementation": {
+                    "weight_storage": {
+                        "format": "q4_k",
+                        "block_elements": 256,
+                        "block_bytes": 144,
+                    },
+                    "activation_storage": {
+                        "format": "q8_k",
+                        "block_elements": 256,
+                    },
+                    "diagnostic_providers": {
+                        "fp32_activation": "gemm_nt_q4_k",
+                        "row_quantized": "gemv_q4_k_q8_k",
+                    },
+                    "segmented_row_provider": {
+                        "function": "gemm_nt_q4_k_q8_k_segmented_pairwise_split_min_parallel_dispatch",
+                        "segment_lengths_dtype": "i32",
+                        "boundary_semantics": "restart_row_group_at_each_segment",
+                        "fallback": "gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch",
+                    },
+                },
+            },
+            "args": [
+                {"name": "A", "source": "activation:a", "expr": "A"},
+                {"name": "B", "source": "weight:_first_weight", "expr": "B"},
+                {"name": "bias", "source": "weight_f:_bias", "expr": "NULL"},
+                {"name": "C", "source": "output:c", "expr": "C"},
+                {"name": "M", "source": "dim:_m", "expr": "1035"},
+                {"name": "N", "source": "dim:_output_dim", "expr": "6144"},
+                {"name": "K", "source": "dim:_input_dim", "expr": "5120"},
+            ],
+        }
+
+    @staticmethod
+    def _segment_preserving_config() -> dict:
+        return {
+            "multimodal_bridge_contract": {
+                "prefix_policy": "mixed_visual_text_prefill",
+                "prefill_schedule": {
+                    "projection_row_group_boundaries": {
+                        "policy": "restart_each_segment",
+                        "operations": [
+                            "recurrent_qkv_proj",
+                            "recurrent_gate_proj",
+                            "mlp_gate_up",
+                        ],
+                    }
+                },
+            }
+        }
+
+    def test_q4_projection_uses_map_owned_runtime_segment_provider(self) -> None:
+        emitted = codegen_prefill_v8.emit_prefill_op(
+            self._q4_segmented_projection_op(),
+            6,
+            self._segment_preserving_config(),
+            segment_plan_available=True,
+        )
+        self.assertIn(
+            "gemm_nt_q4_k_q8_k_segmented_pairwise_split_min_parallel_dispatch(",
+            emitted,
+        )
+        self.assertIn("g_multimodal_prefill_segment_lengths", emitted)
+        self.assertIn("g_multimodal_prefill_num_segments", emitted)
+        self.assertIn("gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(", emitted)
+
+    def test_q4_projection_without_circuit_contract_keeps_unified_provider(self) -> None:
+        emitted = codegen_prefill_v8.emit_prefill_op(
+            self._q4_segmented_projection_op(), 6, {}
+        )
+        self.assertNotIn("segmented_pairwise_split_min", emitted)
+        self.assertIn("gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(", emitted)
+
+    def test_q6_projection_uses_map_owned_runtime_segment_provider(self) -> None:
+        op = self._q4_segmented_projection_op("recurrent_qkv_proj")
+        op["function"] = "gemm_nt_q6_k_q8_k"
+        op["resolved_execution"]["implementation"].update(
+            {
+                "weight_storage": {
+                    "format": "q6_k",
+                    "block_elements": 256,
+                    "block_bytes": 210,
+                },
+                "diagnostic_providers": {
+                    "fp32_activation": "gemm_nt_q6_k",
+                    "row_quantized": "gemv_q6_k_q8_k",
+                },
+                "segmented_row_provider": {
+                    "function": "gemm_nt_q6_k_q8_k_segmented_parallel_dispatch",
+                    "segment_lengths_dtype": "i32",
+                    "boundary_semantics": "restart_row_group_at_each_segment",
+                    "fallback": "gemm_nt_q6_k_q8_k_parallel_dispatch",
+                },
+            }
+        )
+        op["resolved_execution"]["numerical_contract"] = (
+            "q6_k_weight_q8_k_input_llama_fp32_output"
+        )
+
+        emitted = codegen_prefill_v8.emit_prefill_op(
+            op,
+            4,
+            self._segment_preserving_config(),
+            segment_plan_available=True,
+        )
+
+        self.assertIn("gemm_nt_q6_k_q8_k_segmented_parallel_dispatch(", emitted)
+        self.assertIn("g_multimodal_prefill_segment_lengths", emitted)
+        self.assertIn("gemm_nt_q6_k_q8_k(", emitted)
+
+    def test_attention_uses_map_owned_segmented_query_provider(self) -> None:
+        arg_names = [
+            "q", "k_cache", "v_cache", "output", "num_heads", "num_kv_heads",
+            "q_tokens", "past_tokens", "cache_capacity", "head_dim",
+            "aligned_head_dim", "reduction", "token_workspace",
+            "token_workspace_bytes",
+        ]
+        op = {
+            "function": "attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract_workspace",
+            "op": "attn",
+            "layer": 3,
+            "resolved_execution": {
+                "implementation": {
+                    "segmented_query_provider": {
+                        "function": "attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_contract_workspace",
+                        "segment_lengths_dtype": "i32",
+                        "boundary_semantics": "restart_query_tile_policy_at_each_segment",
+                        "fallback": "reject_invalid_plan",
+                    }
+                }
+            },
+            "args": [
+                {"name": name, "source": f"test:{name}", "expr": name}
+                for name in arg_names
+            ],
+        }
+        emitted = codegen_prefill_v8.emit_prefill_op(
+            op, 91, {}, segment_plan_available=True
+        )
+        self.assertIn(
+            "attention_forward_causal_head_major_gqa_prefill_segmented_f16cache_contract_workspace(",
+            emitted,
+        )
+        self.assertIn("g_multimodal_prefill_segment_lengths", emitted)
+        self.assertIn("g_multimodal_prefill_num_segments", emitted)
+        self.assertIn(
+            "attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract_workspace(",
+            emitted,
+        )
+
     def test_kv_transpose_exports_attention_consumed_layout(self) -> None:
         config = {"num_kv_heads": 8, "head_dim": 128, "context_len": 1034}
         for is_k, label in ((True, "k_head_major"), (False, "v_head_major")):

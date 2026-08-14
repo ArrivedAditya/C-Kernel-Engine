@@ -55,11 +55,26 @@
         "prefill_schedule": {
           "segments": ["text_before", "visual", "text_after"],
           "cache_transition": "single_pass",
-          "position_transition": "explicit_full_sequence"
+          "position_transition": "explicit_full_sequence",
+          "projection_row_group_boundaries": {
+            "policy": "restart_each_segment",
+            "operations": [
+              "recurrent_qkv_proj",
+              "recurrent_gate_proj",
+              "recurrent_out_proj",
+              "q_gate_proj",
+              "v_proj",
+              "mlp_gate_up",
+              "mlp_down"
+            ]
+          }
         },
         "cache_policy": "persistent_decoder_kv",
         "generation_policy": "incremental_decode_after_prefill",
         "runtime_policy": "decode_staged",
+        "decoder_runtime_config": {
+          "recurrent_ssm_arithmetic": "llama_fma"
+        },
         "grid_policy": "merged_hw",
         "image_begin_marker": "<|vision_start|>",
         "image_end_marker": "<|vision_end|>",
