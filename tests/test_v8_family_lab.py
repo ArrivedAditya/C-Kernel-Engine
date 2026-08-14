@@ -81,6 +81,43 @@ def test_html_report_escapes_model_output(tmp_path: Path) -> None:
     assert "<script>alert(1)</script>" not in rendered
 
 
+def test_html_report_surfaces_consumption_and_profile_evidence(tmp_path: Path) -> None:
+    report = {
+        "generated_at": "now",
+        "host": {"cpu": "test"},
+        "config": {"threads": 1},
+        "performance": [{
+            "model": "M", "quant": "Q4", "prompt_tokens": 128,
+            "cke": {"prompt_ms": 2, "decode_tok_s": 3},
+            "llama": {"prompt_ms": 3, "decode_tok_s": 4},
+            "ratios": {"prompt": 1.5},
+            "consumption": {
+                "cke_count_verified": True, "llama_count_verified": True,
+                "requested_token_sha256": "abcdef0123456789",
+            },
+        }],
+        "slowest_cases": [], "profiler_plan": [], "prompt_comparisons": [],
+        "model_artifacts": [],
+        "operation_profiles": [{
+            "model_key": "m", "prompt_tokens": 128, "prompt_ms": 2,
+            "profiled_ms": 1, "coverage_pct": 50, "top_operations": [],
+            "selected_kernels": [{"kernel": "q5_fast"}],
+            "threadpool": {"completion_wait_ms": 0.25},
+        }],
+        "system_profile_counters": [{
+            "model_key": "m", "prompt_tokens": 128,
+            "cke": {"cycles": 10}, "llama": {"cycles": 8},
+        }],
+    }
+    output = tmp_path / "index.html"
+    LAB.render_html(report, output)
+    rendered = output.read_text(encoding="utf-8")
+    assert "abcdef012345" in rendered
+    assert "q5_fast" in rendered
+    assert "0.25" in rendered
+    assert "Matched hardware counters" in rendered
+
+
 def test_median_metrics_uses_independent_samples() -> None:
     result = COMPARE.median_metrics(
         [
@@ -90,6 +127,12 @@ def test_median_metrics_uses_independent_samples() -> None:
         ]
     )
     assert result == {"prompt_ms": 2.0, "prompt_tok_s": 20.0}
+
+
+def test_fixed_token_hash_covers_order_and_count() -> None:
+    assert COMPARE.token_sequence_sha256(100, 128) == COMPARE.token_sequence_sha256(100, 128)
+    assert COMPARE.token_sequence_sha256(100, 128) != COMPARE.token_sequence_sha256(100, 127)
+    assert COMPARE.token_sequence_sha256(100, 128) != COMPARE.token_sequence_sha256(101, 128)
 
 
 def test_llama_completion_output_excludes_profiler_log() -> None:
@@ -119,6 +162,9 @@ def test_profiler_plan_contains_matched_native_commands(tmp_path: Path) -> None:
     assert "32" in plan[0]["llama_command"]
     names = {row["name"] for row in plan[0]["system_profiles"]}
     assert {"cke_perf_stat", "llama_perf_stat", "cke_vtune_hotspots", "llama_vtune_hotspots"} <= names
+    assert len(names) == len(plan[0]["system_profiles"])
+    cke_perf = next(row for row in plan[0]["system_profiles"] if row["name"] == "cke_perf_stat")
+    assert "CK_THREADPOOL_PROFILE=1" in cke_perf["command"]
 
 
 def test_slowest_cases_are_ranked_for_profile_limit() -> None:
@@ -136,7 +182,11 @@ def test_operation_profiles_are_collected_from_artifacts(tmp_path: Path) -> None
     (directory / "cke_ops.json").write_text(json.dumps({
         "results": [{
             "run": {"prompt_ms": 20.0},
-            "summary": {"prefill_total_ms": 15.0, "by_op": [{"op": "gemm", "time_ms": 10.0, "pct": 66.7}]},
+            "summary": {
+                "prefill_total_ms": 15.0,
+                "by_op": [{"op": "gemm", "time_ms": 10.0, "pct": 66.7}],
+                "by_kernel_op": [{"kernel": "gemm_fast", "op": "gemm", "time_ms": 10.0}],
+            },
         }]
     }), encoding="utf-8")
     rows = LAB.collect_operation_profiles([{
@@ -144,6 +194,26 @@ def test_operation_profiles_are_collected_from_artifacts(tmp_path: Path) -> None
     }])
     assert rows[0]["coverage_pct"] == 75.0
     assert rows[0]["top_operations"][0]["op"] == "gemm"
+    assert rows[0]["selected_kernels"][0]["kernel"] == "gemm_fast"
+
+
+def test_perf_stat_counters_are_machine_readable(tmp_path: Path) -> None:
+    path = tmp_path / "perf.csv"
+    path.write_text(
+        "1234,,cycles,100.00,100.00,\n42,,cache-misses,100.00,100.00,\n",
+        encoding="utf-8",
+    )
+    assert LAB.parse_perf_stat_csv(path) == {"cycles": 1234.0, "cache-misses": 42.0}
+
+
+def test_perf_stat_counters_aggregate_hybrid_core_types(tmp_path: Path) -> None:
+    path = tmp_path / "perf.csv"
+    path.write_text(
+        "10,,cpu_core/cycles/,100.00,100.00,\n"
+        "20,,cpu_atom/cycles/,100.00,100.00,\n",
+        encoding="utf-8",
+    )
+    assert LAB.parse_perf_stat_csv(path) == {"cycles": 30.0}
 
 
 def test_compare_rejects_runtime_below_requested_context(monkeypatch) -> None:

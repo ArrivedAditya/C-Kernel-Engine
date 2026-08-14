@@ -46,6 +46,7 @@
 #include "ck_sampler_v8.h"
 #include "ck_session_v8.h"
 #include "ckernel_audio.h"
+#include "ck_threadpool.h"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -67,6 +68,11 @@ static double g_decode_time_ms = 0.0;
 static int g_decode_count = 0;
 static int g_prompt_tokens = 0;
 static int g_user_tokens = 0;
+
+static int threadpool_profile_requested(void) {
+    const char *value = getenv("CK_THREADPOOL_PROFILE");
+    return value && value[0] && strcmp(value, "0") != 0;
+}
 
 static void handle_sigint(int sig) {
     (void)sig;
@@ -2565,6 +2571,19 @@ static int run_token_ids(ModelAPI *api, CLIOptions *opt, int32_t *ids, int n, in
     g_user_tokens = user_tokens;
 
     if (api->kv_reset) api->kv_reset();
+    ck_threadpool_t *profile_pool = NULL;
+    ck_threadpool_t *(*profile_global_fn)(void) = NULL;
+    void (*profile_reset_fn)(ck_threadpool_t *) = NULL;
+    void (*profile_snapshot_fn)(const ck_threadpool_t *, ck_threadpool_profile_t *) = NULL;
+    if (threadpool_profile_requested()) {
+        *(void **)(&profile_global_fn) = dlsym(api->handle, "ck_threadpool_global");
+        *(void **)(&profile_reset_fn) = dlsym(api->handle, "ck_threadpool_profile_reset");
+        *(void **)(&profile_snapshot_fn) = dlsym(api->handle, "ck_threadpool_profile_snapshot");
+        if (profile_global_fn && profile_reset_fn && profile_snapshot_fn) {
+            profile_pool = profile_global_fn();
+            profile_reset_fn(profile_pool);
+        }
+    }
 
     float *prefix_embeddings = NULL;
     int prefix_tokens = 0;
@@ -2612,6 +2631,17 @@ static int run_token_ids(ModelAPI *api, CLIOptions *opt, int32_t *ids, int n, in
     clock_gettime(CLOCK_MONOTONIC, &t1);
     g_prefill_time_ms = (t1.tv_sec - t0.tv_sec) * 1000.0 +
                         (t1.tv_nsec - t0.tv_nsec) / 1000000.0;
+    if (profile_pool) {
+        ck_threadpool_profile_t profile;
+        profile_snapshot_fn(profile_pool, &profile);
+        fprintf(stderr,
+                "[CK threadpool profile] dispatches=%llu total_ms=%.6f "
+                "main_work_ms=%.6f completion_wait_ms=%.6f\n",
+                (unsigned long long)profile.dispatch_count,
+                (double)profile.dispatch_total_ns / 1.0e6,
+                (double)profile.main_work_ns / 1.0e6,
+                (double)profile.completion_wait_ns / 1.0e6);
+    }
     free(prefix_embeddings);
     int generation_status = run_generation_loop(api, opt);
     free(ids);

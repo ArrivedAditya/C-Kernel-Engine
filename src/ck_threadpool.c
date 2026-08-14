@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
+#include <time.h>
 #ifdef __linux__
 #include <sched.h>
 #endif
@@ -101,7 +102,20 @@ struct ck_threadpool {
     pthread_mutex_t mutex;
     pthread_cond_t  cond_dispatch;  /* workers wait here when sleeping */
     pthread_cond_t  cond_done;      /* main waits here for completion */
+
+    _Alignas(CK_CACHE_LINE) atomic_int profile_enabled;
+    atomic_uint_fast64_t profile_dispatch_count;
+    atomic_uint_fast64_t profile_dispatch_total_ns;
+    atomic_uint_fast64_t profile_main_work_ns;
+    atomic_uint_fast64_t profile_completion_wait_ns;
 };
+
+static uint64_t monotonic_ns(void)
+{
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec;
+}
 
 /* ============================================================================
  * Barrier Implementation
@@ -273,6 +287,7 @@ ck_threadpool_t *ck_threadpool_create_capacity(int default_threads,
     atomic_store(&pool->active_threads, default_threads);
     atomic_store(&pool->stop, 0);
     atomic_store(&pool->paused, 0);
+    atomic_store(&pool->profile_enabled, 0);
     pool->work_fn = NULL;
     pool->work_args = NULL;
 
@@ -356,9 +371,25 @@ void ck_threadpool_dispatch_n(ck_threadpool_t *pool, int active_threads, ck_work
         active_threads = pool->n_threads;
     }
 
+    const int profile = atomic_load_explicit(
+        &pool->profile_enabled, memory_order_relaxed);
+    const uint64_t dispatch_start = profile ? monotonic_ns() : 0;
+
     /* Single-thread fast path: just call directly */
     if (active_threads == 1 || pool->n_threads == 1) {
         fn(0, 1, args);
+        if (profile) {
+            const uint64_t dispatch_end = monotonic_ns();
+            atomic_fetch_add_explicit(&pool->profile_dispatch_count, 1, memory_order_relaxed);
+            atomic_fetch_add_explicit(
+                &pool->profile_dispatch_total_ns,
+                dispatch_end - dispatch_start,
+                memory_order_relaxed);
+            atomic_fetch_add_explicit(
+                &pool->profile_main_work_ns,
+                dispatch_end - dispatch_start,
+                memory_order_relaxed);
+        }
         return;
     }
 
@@ -380,7 +411,9 @@ void ck_threadpool_dispatch_n(ck_threadpool_t *pool, int active_threads, ck_work
     pthread_mutex_unlock(&pool->mutex);
 
     /* Main thread (ith=0) does its share */
+    const uint64_t main_start = profile ? monotonic_ns() : 0;
     fn(0, active_threads, args);
+    const uint64_t main_end = profile ? monotonic_ns() : 0;
 
     /* Wait for all workers to complete */
     if (active_threads > 1) {
@@ -399,6 +432,22 @@ void ck_threadpool_dispatch_n(ck_threadpool_t *pool, int active_threads, ck_work
                 spins = 0;
             }
         }
+    }
+    if (profile) {
+        const uint64_t dispatch_end = monotonic_ns();
+        atomic_fetch_add_explicit(&pool->profile_dispatch_count, 1, memory_order_relaxed);
+        atomic_fetch_add_explicit(
+            &pool->profile_dispatch_total_ns,
+            dispatch_end - dispatch_start,
+            memory_order_relaxed);
+        atomic_fetch_add_explicit(
+            &pool->profile_main_work_ns,
+            main_end - main_start,
+            memory_order_relaxed);
+        atomic_fetch_add_explicit(
+            &pool->profile_completion_wait_ns,
+            dispatch_end - main_end,
+            memory_order_relaxed);
     }
 }
 
@@ -508,6 +557,32 @@ int ck_threadpool_thread_id(const ck_threadpool_t *pool)
         }
     }
     return -1;
+}
+
+void ck_threadpool_profile_reset(ck_threadpool_t *pool)
+{
+    if (!pool) return;
+    atomic_store_explicit(&pool->profile_dispatch_count, 0, memory_order_relaxed);
+    atomic_store_explicit(&pool->profile_dispatch_total_ns, 0, memory_order_relaxed);
+    atomic_store_explicit(&pool->profile_main_work_ns, 0, memory_order_relaxed);
+    atomic_store_explicit(&pool->profile_completion_wait_ns, 0, memory_order_relaxed);
+    atomic_store_explicit(&pool->profile_enabled, 1, memory_order_release);
+}
+
+void ck_threadpool_profile_snapshot(
+    const ck_threadpool_t *pool, ck_threadpool_profile_t *profile)
+{
+    if (!profile) return;
+    memset(profile, 0, sizeof(*profile));
+    if (!pool) return;
+    profile->dispatch_count = atomic_load_explicit(
+        &pool->profile_dispatch_count, memory_order_relaxed);
+    profile->dispatch_total_ns = atomic_load_explicit(
+        &pool->profile_dispatch_total_ns, memory_order_relaxed);
+    profile->main_work_ns = atomic_load_explicit(
+        &pool->profile_main_work_ns, memory_order_relaxed);
+    profile->completion_wait_ns = atomic_load_explicit(
+        &pool->profile_completion_wait_ns, memory_order_relaxed);
 }
 
 /* ============================================================================

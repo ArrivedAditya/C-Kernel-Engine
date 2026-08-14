@@ -75,6 +75,13 @@ typedef void (*ck_work_fn_t)(int ith, int nth, void *args);
  */
 typedef struct ck_threadpool ck_threadpool_t;
 
+typedef struct {
+    uint64_t dispatch_count;
+    uint64_t dispatch_total_ns;
+    uint64_t main_work_ns;
+    uint64_t completion_wait_ns;
+} ck_threadpool_profile_t;
+
 /** Process the half-open interval [begin, end). */
 typedef void (*ck_range_fn_t)(int begin, int end, void *args);
 
@@ -229,6 +236,13 @@ int ck_threadpool_capacity(const ck_threadpool_t *pool);
 
 /** Get thread index for current thread (0 = main, -1 if not in pool) */
 int ck_threadpool_thread_id(const ck_threadpool_t *pool);
+
+/** Enable profiling and reset cumulative dispatch timing counters. */
+void ck_threadpool_profile_reset(ck_threadpool_t *pool);
+
+/** Snapshot cumulative dispatch timing counters without stopping workers. */
+void ck_threadpool_profile_snapshot(
+    const ck_threadpool_t *pool, ck_threadpool_profile_t *profile);
 
 /* ============================================================================
  * Global Thread Pool (convenience)
