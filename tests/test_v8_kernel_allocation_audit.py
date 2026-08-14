@@ -39,10 +39,10 @@ class TestKernelAllocationAudit(unittest.TestCase):
         report = AUDIT.build_report()
         baseline = json.loads(AUDIT.BASELINE.read_text(encoding="utf-8"))
         AUDIT.validate_ratchet(report, baseline)
-        self.assertEqual(report["counts"]["production_allocation_calls"], 57)
-        self.assertEqual(report["counts"]["mapped_allocating_providers"], 10)
+        self.assertEqual(report["counts"]["production_allocation_calls"], 56)
+        self.assertEqual(report["counts"]["mapped_allocating_providers"], 7)
         self.assertEqual(
-            report["counts"]["mapped_allocating_without_scratch_contract"], 10
+            report["counts"]["mapped_allocating_without_scratch_contract"], 7
         )
         self.assertEqual(
             [warning["code"] for warning in report["warnings"]],
@@ -136,6 +136,70 @@ class TestKernelAllocationAudit(unittest.TestCase):
                 }
                 self.assertEqual(sources[scratch_name if scratch_name == "rounded_kv" else "a_bf16"], f"scratch:{scratch_name}")
                 self.assertNotIn(function, allocating)
+
+    def test_segmented_f16_attention_maps_share_planner_owned_workspace(self):
+        filenames = [
+            "attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract.json",
+            "attention_forward_causal_head_major_gqa_prefill_append_f16cache_single_range.json",
+            "attention_forward_causal_head_major_gqa_prefill_append_f16cache_flash_auto_qtile64.json",
+        ]
+        function = (
+            "attention_forward_causal_head_major_gqa_prefill_append_"
+            "f16cache_contract_workspace"
+        )
+        allocating = {
+            row["function"] for row in AUDIT.build_report()["mapped_allocating_providers"]
+        }
+        for filename in filenames:
+            with self.subTest(filename=filename):
+                kernel_map = json.loads(
+                    (ROOT / "version/v8/kernel_maps" / filename).read_text(
+                        encoding="utf-8"
+                    )
+                )
+                self.assertEqual(kernel_map["impl"]["function"], function)
+                self.assertEqual(
+                    kernel_map["scratch"],
+                    [{
+                        "name": "token_workspace",
+                        "dtype": "fp32",
+                        "shape": [2, "H", "D"],
+                        "size_resolution": "required",
+                        "lifetime": "kernel_call",
+                        "desc": kernel_map["scratch"][0]["desc"],
+                    }],
+                )
+                sources = {
+                    param["name"]: param["source"]
+                    for param in kernel_map["call_abi"]["params"]
+                }
+                self.assertEqual(sources["token_workspace"], "scratch:token_workspace")
+                self.assertEqual(
+                    sources["token_workspace_bytes"],
+                    "scratch_size:token_workspace",
+                )
+                self.assertNotIn(function, allocating)
+
+    def test_segmented_f16_attention_workspace_resolves_exact_bytes(self):
+        build_ir_path = ROOT / "version/v8/scripts/build_ir_v8.py"
+        sys.path.insert(0, str(build_ir_path.parent))
+        spec = importlib.util.spec_from_file_location(
+            "build_ir_v8_attention_workspace_test", build_ir_path
+        )
+        assert spec is not None and spec.loader is not None
+        build_ir = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(build_ir)
+        scratch = {
+            "dtype": "fp32",
+            "shape": [2, "H", "D"],
+            "size_resolution": "required",
+        }
+        size = build_ir._kernel_scratch_size_bytes(
+            scratch,
+            {"num_heads": 16, "head_dim": 128},
+            {},
+        )
+        self.assertEqual(size, 2 * 16 * 128 * 4)
 
 
 if __name__ == "__main__":

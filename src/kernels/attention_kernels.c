@@ -6516,7 +6516,7 @@ static void ck_attention_f16_prefill_qtile64_work(int ith, int nth, void *opaque
     }
 }
 
-ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract(
+ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract_workspace(
     const float *q,
     const uint16_t *k_cache,
     const uint16_t *v_cache,
@@ -6528,7 +6528,9 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16
     int cache_capacity,
     int head_dim,
     int aligned_head_dim,
-    ck_attention_reduction_t reduction)
+    ck_attention_reduction_t reduction,
+    float *token_workspace,
+    size_t token_workspace_bytes)
 {
     if (!q || !k_cache || !v_cache || !output ||
         num_heads <= 0 || num_kv_heads <= 0 || q_tokens <= 0 ||
@@ -6579,13 +6581,15 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16
     }
 
     const size_t token_elems = (size_t) num_heads * (size_t) aligned_head_dim;
-    float *q_token = (float *) malloc(token_elems * sizeof(float));
-    float *out_token = (float *) malloc(token_elems * sizeof(float));
-    if (!q_token || !out_token) {
-        free(q_token);
-        free(out_token);
+    if (token_elems > SIZE_MAX / (2 * sizeof(float))) {
         return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
     }
+    const size_t required_bytes = 2 * token_elems * sizeof(float);
+    if (!token_workspace || token_workspace_bytes < required_bytes) {
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+    float *q_token = token_workspace;
+    float *out_token = token_workspace + token_elems;
 
     ck_attention_status_t status = CK_ATTENTION_STATUS_OK;
     for (int t = 0; t < q_tokens; ++t) {
@@ -6614,8 +6618,47 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16
         }
     }
 
-    free(q_token);
-    free(out_token);
+    return status;
+}
+
+ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract(
+    const float *q,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int q_tokens,
+    int past_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    ck_attention_reduction_t reduction)
+{
+    if (reduction == CK_ATTN_REDUCTION_F16_FLASH_AUTO_QTILE64 &&
+        q_tokens >= CK_GGML_FA_TILE_Q) {
+        return attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract_workspace(
+            q, k_cache, v_cache, output, num_heads, num_kv_heads, q_tokens,
+            past_tokens, cache_capacity, head_dim, aligned_head_dim, reduction,
+            NULL, 0);
+    }
+
+    if (num_heads <= 0 || aligned_head_dim <= 0 ||
+        (size_t) num_heads > SIZE_MAX / (2 * (size_t) aligned_head_dim * sizeof(float))) {
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+    const size_t workspace_bytes =
+        2 * (size_t) num_heads * (size_t) aligned_head_dim * sizeof(float);
+    float *workspace = (float *) malloc(workspace_bytes);
+    if (!workspace) {
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+    const ck_attention_status_t status =
+        attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract_workspace(
+            q, k_cache, v_cache, output, num_heads, num_kv_heads, q_tokens,
+            past_tokens, cache_capacity, head_dim, aligned_head_dim, reduction,
+            workspace, workspace_bytes);
+    free(workspace);
     return status;
 }
 
