@@ -118,6 +118,9 @@ class Qwen36VLExplicitCircuitTests(unittest.TestCase):
         self.assertEqual(blocks[1]["template"]["name"], "qwen35")
         self.assertEqual(blocks[1]["template"]["sequence"], ["decoder"])
         self.assertEqual(blocks[1]["config"]["embed_dim"], 5120)
+        self.assertFalse(
+            blocks[1]["config"]["prefill_gateup_swiglu_fusion_default"]
+        )
 
     def test_nonzero_deepstack_is_rejected_instead_of_inferred(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "requires config num_deepstack_layers=0"):
