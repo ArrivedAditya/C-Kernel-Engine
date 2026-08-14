@@ -585,6 +585,61 @@ jobs:
                       "Preserved because this workflow did not publish a fresh kernel-map summary."
                   ).strip()
 
+          kernel_allocation_report = Path(
+              "version/v8/.cache/reports/kernel_allocation_audit_latest.json"
+          )
+          kernel_allocation_payload = {
+              "status": "not_run", "counts": {}, "warnings": [],
+              "remaining_providers": [], "allocation_sites": [],
+              "note": "v8 kernel allocation audit did not publish a nightly summary.",
+          }
+          if kernel_allocation_report.exists():
+              doc = json.loads(kernel_allocation_report.read_text(encoding="utf-8"))
+              counts = doc.get("counts") if isinstance(doc.get("counts"), dict) else {}
+              warnings = doc.get("warnings") if isinstance(doc.get("warnings"), list) else []
+              providers = doc.get("mapped_allocating_providers")
+              providers = providers if isinstance(providers, list) else []
+              provider_ids_by_function = {}
+              for row in providers:
+                  if isinstance(row, dict) and row.get("function"):
+                      provider_ids_by_function.setdefault(str(row["function"]), []).append(row.get("id"))
+              call_sites = doc.get("call_sites") if isinstance(doc.get("call_sites"), list) else []
+              kernel_allocation_payload = {
+                  "status": "warn" if warnings else "pass",
+                  "generated_at": _utc_mtime(kernel_allocation_report),
+                  "summary_path": str(kernel_allocation_report),
+                  "counts": counts,
+                  "warnings": warnings,
+                  "remaining_providers": [
+                      {
+                          "id": row.get("id"), "function": row.get("function"),
+                          "scratch_declared": bool(row.get("scratch_declared", False)),
+                          "scratch_bound": bool(row.get("scratch_bound", False)),
+                          "selection_status": row.get("selection_status"),
+                      }
+                      for row in providers if isinstance(row, dict)
+                  ],
+                  "allocation_sites": [
+                      {
+                          "path": row.get("path"), "line": row.get("line"),
+                          "function": row.get("function"), "allocator": row.get("allocator"),
+                          "classification": row.get("classification"),
+                          "provider_ids": provider_ids_by_function.get(str(row.get("function")), []),
+                      }
+                      for row in call_sites
+                      if isinstance(row, dict) and row.get("allocator") != "free"
+                  ],
+                  "note": f"Source: {kernel_allocation_report}",
+              }
+          else:
+              prev = _load_previous_payload("kernel_allocation")
+              if prev and (prev.get("counts") or prev.get("summary_path")):
+                  kernel_allocation_payload = dict(prev)
+                  kernel_allocation_payload["note"] = (
+                      f"{prev.get('note', 'Preserved previous allocation-debt snapshot.')} "
+                      "Preserved because this workflow did not publish a fresh allocation audit."
+                  ).strip()
+
           def _stage_group_status(row_passed, failed_stage_ids, prefix):
               if row_passed:
                   return "PASS"
@@ -669,6 +724,7 @@ jobs:
 
           data["regression_fast"] = regression_payload
           data["kernel_map_contracts"] = kernel_map_payload
+          data["kernel_allocation"] = kernel_allocation_payload
           data["backprop_regression"] = backprop_payload
           latest_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
           Path("build/nightly_report.json").write_text(json.dumps(data, indent=2), encoding="utf-8")

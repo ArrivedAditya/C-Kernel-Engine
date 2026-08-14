@@ -75,6 +75,18 @@ class V8DSLNightlyRegistrationTests(unittest.TestCase):
             with self.subTest(target=target):
                 self.assertIn(f"<code>{target}</code>", source)
 
+    def test_report_publishes_kernel_allocation_debt(self) -> None:
+        source = (ROOT / "docs" / "site" / "_pages" / "test-report.html").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "nightly.yml").read_text(encoding="utf-8")
+        self.assertIn("v8 Kernel Allocation Debt", source)
+        self.assertIn('id="kernel-allocation-tbody"', source)
+        self.assertIn("function renderKernelAllocation(data)", source)
+        self.assertIn("renderKernelAllocation(data.kernel_allocation || null)", source)
+        self.assertIn('data["kernel_allocation"] = kernel_allocation_payload', workflow)
+        self.assertIn('"allocation_sites": [', workflow)
+        self.assertIn("row.path || '-')}:${Number(row.line || 0)", source)
+        self.assertIn("mapped_allocating_without_scratch_contract", source)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
