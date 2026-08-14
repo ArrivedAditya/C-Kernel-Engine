@@ -47,6 +47,13 @@ lib.attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract.arg
     ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
 ]
 lib.attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract.restype = ctypes.c_int
+lib.attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract_workspace.argtypes = [
+    _FLOAT_P, _U16_P, _U16_P, _FLOAT_P,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    _FLOAT_P, ctypes.c_size_t,
+]
+lib.attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract_workspace.restype = ctypes.c_int
 lib.ck_get_num_threads.argtypes = []
 lib.ck_get_num_threads.restype = ctypes.c_int
 lib.ck_set_strict_parity.argtypes = [ctypes.c_int]
@@ -594,8 +601,15 @@ def _prefill_append_matches_decode_loop_case():
     k = _half_bits(rng.standard_normal((kv_heads, capacity, aligned), dtype=np.float32))
     v = _half_bits(rng.standard_normal((kv_heads, capacity, aligned), dtype=np.float32))
     actual = np.zeros_like(q)
-    status = lib.attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract(
+    workspace = np.empty((2, heads, aligned), dtype=np.float32)
+    status = lib.attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract_workspace(
         _f32_ptr(q), _u16_ptr(k), _u16_ptr(v), _f32_ptr(actual),
+        heads, kv_heads, q_tokens, past_tokens, capacity, head_dim, aligned, 2,
+        _f32_ptr(workspace), workspace.nbytes,
+    )
+    compatibility = np.zeros_like(q)
+    compatibility_status = lib.attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract(
+        _f32_ptr(q), _u16_ptr(k), _u16_ptr(v), _f32_ptr(compatibility),
         heads, kv_heads, q_tokens, past_tokens, capacity, head_dim, aligned, 2,
     )
     expected = np.zeros_like(q)
@@ -616,7 +630,10 @@ def _prefill_append_matches_decode_loop_case():
         "prefill_append_matches_decode_loop",
         diff if status == 0 else float("inf"),
         0.0,
-        status == 0 and np.array_equal(actual, expected),
+        status == 0
+        and compatibility_status == 0
+        and np.array_equal(actual, expected)
+        and np.array_equal(compatibility, actual),
     )
 
 

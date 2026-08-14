@@ -618,7 +618,7 @@ class V8CodegenBridgeTests(unittest.TestCase):
                 i
                 for i, op in enumerate(prefill_ops)
                 if op.get("function")
-                == "attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract"
+                == "attention_forward_causal_head_major_gqa_prefill_append_f16cache_contract_workspace"
             )
             self.assertLess(cache_copy_idx, append_attn_idx)
             cache_args = prefill_ops[cache_copy_idx].get("args", [])
@@ -629,6 +629,15 @@ class V8CodegenBridgeTests(unittest.TestCase):
             self.assertEqual(cache_arg_by_name["start_pos"].get("expr"), "model->pos")
             self.assertEqual(cache_arg_by_name["max_seq_len"].get("source"), "dim:max_seq_len")
             append_args = prefill_ops[append_attn_idx].get("args", [])
+            append_arg_by_name = {arg.get("name"): arg for arg in append_args}
+            self.assertEqual(
+                append_arg_by_name["token_workspace"].get("source"),
+                "scratch:token_workspace",
+            )
+            self.assertEqual(
+                append_arg_by_name["token_workspace_bytes"].get("source"),
+                "scratch_size:token_workspace",
+            )
             self.assertTrue(
                 any(
                     arg.get("name") == "past_tokens"
