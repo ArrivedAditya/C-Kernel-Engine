@@ -4223,7 +4223,9 @@ def _kernel_scratch_size_bytes(
         "K": values.get("_k", values.get("_input_dim")),
         "K_blocks": int(k_extent) // 256 if k_extent is not None else None,
         "T": values.get("seq_len"),
-        "S": values.get("max_seq_len"),
+        "S": values.get(
+            "max_seq_len", values.get("context_length", values.get("context_len"))
+        ),
         "num_seqs": values.get("num_seqs"),
         "conv_total_tokens": (
             int(values.get("ssm_conv_history", 0) or 0)
@@ -5506,6 +5508,21 @@ def _resolve_position_embeddings_kernel(config: Dict, template_kernels: Dict[str
             "HARD KERNEL RESOLUTION FAULT: position_embeddings requires an exact circuit kernel mapping."
         )
     return str(kernel_spec)
+
+
+def _require_phase_kernel_mapping(
+    template_kernels: Dict[str, Any], operation: str, phase: str
+) -> str:
+    """Return an exact circuit-owned phase provider or fail closed."""
+    kernel_id = str(
+        template_kernels.get(f"{operation}_{phase}", "") or ""
+    ).strip()
+    if not kernel_id:
+        raise RuntimeError(
+            "HARD KERNEL RESOLUTION FAULT: "
+            f"{operation}.{phase} requires an exact circuit kernel mapping."
+        )
+    return kernel_id
 
 
 def _attention_contract_is_causal(template: Dict[str, Any], config: Dict[str, Any]) -> bool:
@@ -6975,7 +6992,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         if op == "mla_kv_cache_store":
             return ["deepseek_mla_kv_cache_store_f32"]
         if op == "mla_attention":
-            return ["deepseek_mla_attention_f32"]
+            return [_require_phase_kernel_mapping(template_kernels, op, mode)]
         if op in {"v_norm", "projector_prep", "group_limited_topk_router", "mamba_in_proj_split"}:
             kernel_id = find_kernel(
                 registry,
@@ -8560,6 +8577,7 @@ _DECODE_ATTENTION_OPS = {
     "attn_sliding",
     "attn_shared_kv",
     "attn_sliding_shared_kv",
+    "mla_attention",
 }
 
 
@@ -9041,20 +9059,8 @@ def generate_ir_lower_1(
                 kv_store_count += 1
 
             # For decode mode, update attention ops to use decode kernel
-            if explicit_mla_decode_cache and op["op"] == "mla_attention" and "mla_attention" in op["kernel"]:
-                decode_kernel = "deepseek_mla_attention_decode_f32"
-                decode_kernel_map = kernel_map_index.get(decode_kernel)
-                decode_function = str(
-                    ((decode_kernel_map or {}).get("impl") or {}).get("function", "")
-                    or ""
-                ).strip()
-                if not decode_function:
-                    raise RuntimeError(
-                        "HARD IR LOWERING FAULT: MLA decode provider has no mapped "
-                        f"implementation function: {decode_kernel!r}."
-                    )
-                op["kernel"] = decode_kernel
-                op["function"] = decode_function
+            if explicit_mla_decode_cache and op["op"] == "mla_attention":
+                _require_resolved_decode_attention_kernel(op)
                 kv_read_layer = _kv_read_layer_for(int(op.get("layer", 0)))
                 op["_kv_cache_read_layer"] = kv_read_layer
                 op.setdefault("inputs", {})

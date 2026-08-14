@@ -127,6 +127,8 @@
     "kv_a_layernorm": "rmsnorm_forward_strided_f32",
     "kv_lora_decompress": "deepseek_mla_kv_decompress_f32",
     "partial_rope_concat": "deepseek_mla_partial_rope_concat_packed_f32",
+    "mla_attention_prefill": "deepseek_mla_attention_f32",
+    "mla_attention_decode": "deepseek_mla_attention_decode_f32",
     "moe_router": "gemm_nt_fp32_exact",
     "group_limited_topk_router": "group_limited_topk_router_sigmoid_f32",
     "router": "nemotron_group_limited_topk_router_f32",

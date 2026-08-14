@@ -202,6 +202,14 @@ class V8KimiTemplateTests(unittest.TestCase):
         )
         self.assertEqual(by_layer_op[(0, "kv_lora_decompress", 0)]["kernel"], "deepseek_mla_kv_decompress_bf16")
         self.assertEqual(by_layer_op[(0, "partial_rope_concat", 0)]["kernel"], "deepseek_mla_partial_rope_concat_packed_f32")
+        self.assertEqual(
+            by_layer_op[(0, "mla_attention", 0)]["kernel"],
+            "deepseek_mla_attention_decode_f32",
+        )
+        self.assertEqual(
+            prefill_by_layer_op[(0, "mla_attention", 0)]["kernel"],
+            "deepseek_mla_attention_f32",
+        )
         self.assertEqual(by_layer_op[(1, "moe_swiglu_expert_mlp", 0)]["kernel"], "moe_swiglu_expert_forward_bf16")
         self.assertEqual(by_layer_op[(1, "shared_swiglu_expert_mlp", 0)]["kernel"], "moe_swiglu_shared_forward_bf16")
         self.assertEqual(by_layer_op[(1, "moe_router", 0)]["kernel"], "gemm_nt_fp32_exact")
