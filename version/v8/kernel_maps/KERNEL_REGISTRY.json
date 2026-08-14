@@ -2529,7 +2529,7 @@
       "supported_reductions": {
         "bf16_pytorch_sdpa": {
           "status": "observed",
-          "function": "attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract",
+          "function": "attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract_workspace",
           "explicit_selector": true,
           "selector": "CK_ATTN_REDUCTION_BF16_PYTORCH_SDPA",
           "notes": "Unified mixed causal prefill over a BF16 DynamicCache with PyTorch-compatible BF16 output storage."
@@ -2554,12 +2554,26 @@
         "output": "bf16"
       },
       "impl": {
-        "function": "attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract",
-        "c_declaration": "ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract(const float *q, const uint16_t *k_cache, const uint16_t *v_cache, float *output, int num_heads, int num_kv_heads, int q_tokens, int past_tokens, int cache_capacity, int head_dim, int aligned_head_dim, ck_attention_reduction_t reduction);",
+        "function": "attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract_workspace",
+        "c_declaration": "ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract_workspace(const float *q, const uint16_t *k_cache, const uint16_t *v_cache, float *output, int num_heads, int num_kv_heads, int q_tokens, int past_tokens, int cache_capacity, int head_dim, int aligned_head_dim, ck_attention_reduction_t reduction, float *token_workspace, size_t token_workspace_bytes);",
         "sources": [
           "src/kernels/attention_kernels.c"
         ]
       },
+      "scratch": [
+        {
+          "name": "token_workspace",
+          "dtype": "fp32",
+          "shape": [
+            2,
+            "H",
+            "D"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "desc": "Planner-owned query/output token workspace for short segmented BF16 attention; accepted but unused by the tiled path."
+        }
+      ],
       "call_abi": {
         "version": 1,
         "params": [
@@ -2614,6 +2628,15 @@
           {
             "name": "reduction",
             "source": "resolved:kernel_selector"
+          },
+          {
+            "name": "token_workspace",
+            "source": "scratch:token_workspace",
+            "cast": "float*"
+          },
+          {
+            "name": "token_workspace_bytes",
+            "source": "scratch_size:token_workspace"
           }
         ]
       },
@@ -5387,6 +5410,7 @@
       "id": "attention_forward_full_head_major_gqa_ggml_strided",
       "op": "attention",
       "variant": "full_ggml_cpu_nonflash_fp32",
+      "mode": "prefill",
       "quant": {
         "weight": "none",
         "activation": "fp32",
@@ -5440,7 +5464,41 @@
           "desc": "Attention output [heads, tokens, head_dim] in head-major layout"
         }
       ],
-      "scratch": [],
+      "scratch": [
+        {
+          "name": "score_rows",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "T"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "desc": "Independent score row for every parallel query head."
+        },
+        {
+          "name": "v_columns",
+          "dtype": "fp32",
+          "shape": [
+            "H",
+            "D",
+            "T"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "desc": "Per-head transposed V columns reused across all query rows."
+        },
+        {
+          "name": "probability_row",
+          "dtype": "fp32",
+          "shape": [
+            "T"
+          ],
+          "size_resolution": "required",
+          "lifetime": "kernel_call",
+          "desc": "Strict llama.cpp parity probability row; retained for one serial head at a time."
+        }
+      ],
       "dims": [
         "H",
         "KV",
@@ -5489,8 +5547,8 @@
         "notes": "GGML-compatible non-flash full-sequence GQA attention used for parity-sensitive encoder prefill."
       },
       "impl": {
-        "function": "attention_forward_full_head_major_gqa_ggml_strided",
-        "c_declaration": "void attention_forward_full_head_major_gqa_ggml_strided(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens);",
+        "function": "attention_forward_full_head_major_gqa_ggml_strided_workspace",
+        "c_declaration": "void attention_forward_full_head_major_gqa_ggml_strided_workspace(const float *q, const float *k, const float *v, float *output, int num_heads, int num_kv_heads, int num_tokens, int head_dim, int aligned_head_dim, int kv_stride_tokens, float *score_rows, size_t score_rows_bytes, float *v_columns, size_t v_columns_bytes, float *probability_row, size_t probability_row_bytes);",
         "sources": [
           "src/kernels/attention_kernels.c",
           "src/kernels/softmax_kernels.c"
@@ -5540,6 +5598,82 @@
         ]
       },
       "notes": "Full / bidirectional grouped-query attention that mirrors the ggml CPU non-flash vision path more closely than the exact fused variant.",
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "q",
+            "source": "scratch:q_scratch",
+            "cast": "const float*"
+          },
+          {
+            "name": "k",
+            "source": "scratch:k_scratch",
+            "cast": "const float*"
+          },
+          {
+            "name": "v",
+            "source": "scratch:v_scratch",
+            "cast": "const float*"
+          },
+          {
+            "name": "output",
+            "source": "output:out",
+            "cast": "float*"
+          },
+          {
+            "name": "num_heads",
+            "source": "dim:num_heads"
+          },
+          {
+            "name": "num_kv_heads",
+            "source": "dim:num_kv_heads"
+          },
+          {
+            "name": "num_tokens",
+            "source": "dim:seq_len"
+          },
+          {
+            "name": "head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "aligned_head_dim",
+            "source": "dim:head_dim"
+          },
+          {
+            "name": "kv_stride_tokens",
+            "source": "dim:max_seq_len"
+          },
+          {
+            "name": "score_rows",
+            "source": "scratch:score_rows",
+            "cast": "float*"
+          },
+          {
+            "name": "score_rows_bytes",
+            "source": "scratch_size:score_rows"
+          },
+          {
+            "name": "v_columns",
+            "source": "scratch:v_columns",
+            "cast": "float*"
+          },
+          {
+            "name": "v_columns_bytes",
+            "source": "scratch_size:v_columns"
+          },
+          {
+            "name": "probability_row",
+            "source": "scratch:probability_row",
+            "cast": "float*"
+          },
+          {
+            "name": "probability_row_bytes",
+            "source": "scratch_size:probability_row"
+          }
+        ]
+      },
       "name": "attention_forward_full_head_major_gqa_ggml_strided",
       "_source_file": "attention_forward_full_head_major_gqa_ggml_strided.json"
     },

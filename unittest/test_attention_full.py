@@ -20,6 +20,8 @@ lib = load_lib("libckernel_engine.so", "libckernel_attention.so")
 
 lib.ck_set_num_threads.argtypes = [ctypes.c_int]
 lib.ck_set_num_threads.restype = None
+lib.ck_set_strict_parity.argtypes = [ctypes.c_int]
+lib.ck_set_strict_parity.restype = None
 
 lib.attention_forward_full_head_major_gqa_flash.argtypes = [
     ctypes.POINTER(ctypes.c_float),  # q
@@ -99,6 +101,16 @@ lib.attention_forward_full_head_major_gqa_ggml_strided.argtypes = [
     ctypes.c_int,                    # kv_stride_tokens
 ]
 lib.attention_forward_full_head_major_gqa_ggml_strided.restype = None
+lib.attention_forward_full_head_major_gqa_ggml_strided_workspace.argtypes = [
+    *lib.attention_forward_full_head_major_gqa_ggml_strided.argtypes,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_size_t,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_size_t,
+    ctypes.POINTER(ctypes.c_float),
+    ctypes.c_size_t,
+]
+lib.attention_forward_full_head_major_gqa_ggml_strided_workspace.restype = None
 
 lib.attention_forward_causal_head_major_gqa_flash.argtypes = [
     ctypes.POINTER(ctypes.c_float),
@@ -413,6 +425,35 @@ class TestAttentionFull(unittest.TestCase):
         got = torch.from_numpy(self.out_full[:, :, : self.D].copy())
         diff = max_diff(got, ref)
         self.assertLessEqual(diff, 1e-4)
+
+    def test_full_ggml_workspace_is_byte_exact_with_compatibility_entry(self) -> None:
+        try:
+            for strict in (0, 1):
+                lib.ck_set_strict_parity(strict)
+                expected = np.zeros_like(self.out_full)
+                actual = np.zeros_like(self.out_full)
+                lib.attention_forward_full_head_major_gqa_ggml_strided(
+                    numpy_to_ptr(self.q), numpy_to_ptr(self.k), numpy_to_ptr(self.v),
+                    numpy_to_ptr(expected), self.H, self.KV, self.T, self.D,
+                    self.aligned, self.T,
+                )
+                score_rows = np.empty((self.H, self.T), dtype=np.float32)
+                v_columns = np.empty((self.H, self.D, self.T), dtype=np.float32)
+                probability_row = np.empty(self.T, dtype=np.float32)
+                lib.attention_forward_full_head_major_gqa_ggml_strided_workspace(
+                    numpy_to_ptr(self.q), numpy_to_ptr(self.k), numpy_to_ptr(self.v),
+                    numpy_to_ptr(actual), self.H, self.KV, self.T, self.D,
+                    self.aligned, self.T,
+                    numpy_to_ptr(score_rows), score_rows.nbytes,
+                    numpy_to_ptr(v_columns), v_columns.nbytes,
+                    numpy_to_ptr(probability_row), probability_row.nbytes,
+                )
+                self.assertTrue(
+                    np.array_equal(actual.view(np.uint32), expected.view(np.uint32)),
+                    f"workspace drifted with strict={strict}",
+                )
+        finally:
+            lib.ck_set_strict_parity(0)
 
     def test_full_attention_differs_from_causal_when_future_tokens_exist(self) -> None:
         lib.attention_forward_full_head_major_gqa_flash(

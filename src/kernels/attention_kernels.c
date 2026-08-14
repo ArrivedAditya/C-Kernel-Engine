@@ -2372,57 +2372,6 @@ static CK_NOINLINE CK_OPTNONE void attention_query_full_ggml_regular(const float
     }
 }
 
-static CK_NOINLINE CK_OPTNONE void attention_query_full_ggml_regular_direct_v(const float *q_vec,
-                                                                              const float *k_head,
-                                                                              const float *v_head,
-                                                                              int kv_tokens,
-                                                                              int head_dim,
-                                                                              int aligned_head_dim,
-                                                                              float scale,
-                                                                              float *score_row,
-                                                                              float *out_vec)
-{
-    if (kv_tokens <= 0) {
-        for (int d = 0; d < aligned_head_dim; ++d) {
-            out_vec[d] = 0.0f;
-        }
-        return;
-    }
-
-    for (int j = 0; j < kv_tokens; ++j) {
-        const float *k_vec = k_head + (size_t) j * (size_t) aligned_head_dim;
-        score_row[j] = ck_ggml_vec_dot_f32_contig(q_vec, k_vec, head_dim);
-    }
-
-    float *logit_row = (float *) alloca((size_t) kv_tokens * sizeof(float));
-    memcpy(logit_row, score_row, (size_t) kv_tokens * sizeof(float));
-    ck_vec_scale_f32_inplace(logit_row, kv_tokens, scale);
-    const float max_score = ck_vec_max_f32_contig(logit_row, kv_tokens);
-    const double sum = ck_ggml_vec_soft_max_row(kv_tokens, score_row, logit_row, max_score);
-    if (sum > 0.0) {
-        const float inv_sum = (float) (1.0 / sum);
-        ck_vec_scale_f32_inplace(score_row, kv_tokens, inv_sum);
-        for (int d = 0; d < head_dim; ++d) {
-            out_vec[d] = 0.0f;
-        }
-        for (int j = 0; j < kv_tokens; ++j) {
-            const float w = score_row[j];
-            const float *v_vec = v_head + (size_t) j * (size_t) aligned_head_dim;
-            for (int d = 0; d < head_dim; ++d) {
-                out_vec[d] += w * v_vec[d];
-            }
-        }
-    } else {
-        for (int d = 0; d < head_dim; ++d) {
-            out_vec[d] = 0.0f;
-        }
-    }
-
-    for (int d = head_dim; d < aligned_head_dim; ++d) {
-        out_vec[d] = 0.0f;
-    }
-}
-
 #if CK_ENABLE_LLAMA_CPP_PARITY
 static CK_NOINLINE CK_OPTNONE void attention_query_full_dyn_ggml_regular(const float *q_vec,
                                                                          const float *k_head,
@@ -5473,16 +5422,23 @@ void attention_forward_full_head_major_gqa_exact_strided(const float *q,
     }
 }
 
-void attention_forward_full_head_major_gqa_ggml_strided(const float *q,
-                                                        const float *k,
-                                                        const float *v,
-                                                        float *output,
-                                                        int num_heads,
-                                                        int num_kv_heads,
-                                                        int num_tokens,
-                                                        int head_dim,
-                                                        int aligned_head_dim,
-                                                        int kv_stride_tokens)
+void attention_forward_full_head_major_gqa_ggml_strided_workspace(
+    const float *q,
+    const float *k,
+    const float *v,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int num_tokens,
+    int head_dim,
+    int aligned_head_dim,
+    int kv_stride_tokens,
+    float *score_rows,
+    size_t score_rows_bytes,
+    float *v_columns,
+    size_t v_columns_bytes,
+    float *probability_row,
+    size_t probability_row_bytes)
 {
     if (!q || !k || !v || !output) {
         return;
@@ -5494,11 +5450,31 @@ void attention_forward_full_head_major_gqa_ggml_strided(const float *q,
         return;
     }
 
+    const size_t T = (size_t) num_tokens;
+    if ((size_t) num_heads > SIZE_MAX / T ||
+        (size_t) head_dim > SIZE_MAX / T) {
+        return;
+    }
+    const size_t score_elements = (size_t) num_heads * T;
+    const size_t columns_per_head = (size_t) head_dim * T;
+    if ((size_t) num_heads > SIZE_MAX / columns_per_head ||
+        score_elements > SIZE_MAX / sizeof(float) ||
+        columns_per_head * (size_t) num_heads > SIZE_MAX / sizeof(float) ||
+        T > SIZE_MAX / sizeof(float)) {
+        return;
+    }
+    const size_t column_elements = columns_per_head * (size_t) num_heads;
+    if (!score_rows || score_rows_bytes < score_elements * sizeof(float) ||
+        !v_columns || v_columns_bytes < column_elements * sizeof(float) ||
+        !probability_row || probability_row_bytes < T * sizeof(float)) {
+        return;
+    }
+
     const int strict = ck_strict_parity_enabled();
     const float scale = strict
         ? ck_attention_strict_scale_f32(head_dim)
         : 1.0f / sqrtf((float) head_dim);
-    const int T = num_tokens;
+    const int token_count = num_tokens;
     const size_t kv_head_stride = (size_t) kv_stride_tokens * (size_t) aligned_head_dim;
     const int debug_layer_id = strict ? ck_attention_vec_dump_next_layer_id() : -1;
 #if CK_ENABLE_LLAMA_CPP_PARITY
@@ -5527,10 +5503,10 @@ void attention_forward_full_head_major_gqa_ggml_strided(const float *q,
     }
 #endif
     if (strict) {
-        float *score_row = (float *) alloca((size_t) T * sizeof(float));
-        float *v_cols = (float *) alloca((size_t) head_dim * (size_t) T * sizeof(float));
+        float *score_row = score_rows;
+        float *v_cols = v_columns;
 #if CK_ENABLE_LLAMA_CPP_PARITY
-        float *prob_row = (float *) alloca((size_t) T * sizeof(float));
+        float *prob_row = probability_row;
 #endif
 
         for (int h = 0; h < num_heads; ++h) {
@@ -5545,7 +5521,7 @@ void attention_forward_full_head_major_gqa_ggml_strided(const float *q,
                     k_head,
                     v_head,
                     out_head,
-                    T,
+                    token_count,
                     head_dim,
                     aligned_head_dim,
                     scale)) {
@@ -5554,8 +5530,8 @@ void attention_forward_full_head_major_gqa_ggml_strided(const float *q,
 #endif
 
             for (int d = 0; d < head_dim; ++d) {
-                float *dst_col = v_cols + (size_t) d * (size_t) T;
-                for (int j = 0; j < T; ++j) {
+                float *dst_col = v_cols + (size_t) d * (size_t) token_count;
+                for (int j = 0; j < token_count; ++j) {
                     dst_col[j] = v_head[(size_t) j * (size_t) aligned_head_dim + (size_t) d];
                 }
             }
@@ -5566,7 +5542,7 @@ void attention_forward_full_head_major_gqa_ggml_strided(const float *q,
                         q + (size_t) h * (size_t) T * (size_t) aligned_head_dim,
                         k_head,
                         v_cols,
-                        T,
+                        token_count,
                         head_dim,
                         aligned_head_dim,
                         scale,
@@ -5577,7 +5553,7 @@ void attention_forward_full_head_major_gqa_ggml_strided(const float *q,
                         softmax_fn,
                         debug_layer_id,
                         h)) {
-                    if (T > 0) {
+                    if (token_count > 0) {
                         ck_attention_trace("dyn_ggml_regular_graph_out", debug_layer_id, h);
                         ck_attention_trace_float("scale", debug_layer_id, h, scale);
                     }
@@ -5586,9 +5562,9 @@ void attention_forward_full_head_major_gqa_ggml_strided(const float *q,
             }
 #endif
 
-            for (int i = 0; i < T; ++i) {
-                const float *q_vec = q + qkv_index(h, i, 0, T, aligned_head_dim);
-                float *out_vec = output + qkv_index(h, i, 0, T, aligned_head_dim);
+            for (int i = 0; i < token_count; ++i) {
+                const float *q_vec = q + qkv_index(h, i, 0, token_count, aligned_head_dim);
+                float *out_vec = output + qkv_index(h, i, 0, token_count, aligned_head_dim);
 #if CK_ENABLE_LLAMA_CPP_PARITY
                 if (dot_fn && softmax_fn) {
                     if (i == 0) {
@@ -5598,7 +5574,7 @@ void attention_forward_full_head_major_gqa_ggml_strided(const float *q,
                     attention_query_full_dyn_ggml_regular(q_vec,
                                                           k_head,
                                                           v_cols,
-                                                          T,
+                                                          token_count,
                                                           head_dim,
                                                           aligned_head_dim,
                                                           scale,
@@ -5617,7 +5593,7 @@ void attention_forward_full_head_major_gqa_ggml_strided(const float *q,
                     attention_query_full_ggml_compute_regular(q_vec,
                                                               k_head,
                                                               v_cols,
-                                                              T,
+                                                              token_count,
                                                               head_dim,
                                                               aligned_head_dim,
                                                               scale,
@@ -5636,7 +5612,7 @@ void attention_forward_full_head_major_gqa_ggml_strided(const float *q,
                     attention_query_full_ggml_regular(q_vec,
                                                       k_head,
                                                       v_cols,
-                                                      T,
+                                                      token_count,
                                                       head_dim,
                                                       aligned_head_dim,
                                                       scale,
@@ -5653,53 +5629,76 @@ void attention_forward_full_head_major_gqa_ggml_strided(const float *q,
 
 #pragma omp parallel for schedule(static) if(num_heads > 1)
     for (int h = 0; h < num_heads; ++h) {
-        float *score_row_heap = (float *) malloc((size_t) T * sizeof(float));
-        float *v_cols = (float *) malloc((size_t) head_dim * (size_t) T * sizeof(float));
-        float *score_row = score_row_heap ? score_row_heap : (float *) alloca((size_t) T * sizeof(float));
+        float *score_row = score_rows + (size_t) h * (size_t) token_count;
+        float *v_cols = v_columns + (size_t) h * (size_t) head_dim * (size_t) token_count;
         const int kv_head = (int) ((long long) h * (long long) num_kv_heads / (long long) num_heads);
         const float *k_head = k + (size_t) kv_head * kv_head_stride;
         const float *v_head = v + (size_t) kv_head * kv_head_stride;
 
         if (v_cols) {
             for (int d = 0; d < head_dim; ++d) {
-                float *dst_col = v_cols + (size_t) d * (size_t) T;
-                for (int j = 0; j < T; ++j) {
+                float *dst_col = v_cols + (size_t) d * (size_t) token_count;
+                for (int j = 0; j < token_count; ++j) {
                     dst_col[j] = v_head[(size_t) j * (size_t) aligned_head_dim + (size_t) d];
                 }
             }
         }
 
-        for (int i = 0; i < T; ++i) {
-            const float *q_vec = q + qkv_index(h, i, 0, T, aligned_head_dim);
-            float *out_vec = output + qkv_index(h, i, 0, T, aligned_head_dim);
-            if (score_row && v_cols) {
-                attention_query_full_ggml_regular(q_vec,
-                                                  k_head,
-                                                  v_cols,
-                                                  T,
-                                                  head_dim,
-                                                  aligned_head_dim,
-                                                  scale,
-                                                  score_row,
-                                                  out_vec,
-                                                  -1,
-                                                  h,
-                                                  i);
-            } else if (score_row) {
-                attention_query_full_ggml_regular_direct_v(q_vec,
-                                                           k_head,
-                                                           v_head,
-                                                           T,
-                                                           head_dim,
-                                                           aligned_head_dim,
-                                                           scale,
-                                                           score_row,
-                                                           out_vec);
-            }
+        for (int i = 0; i < token_count; ++i) {
+            const float *q_vec = q + qkv_index(h, i, 0, token_count, aligned_head_dim);
+            float *out_vec = output + qkv_index(h, i, 0, token_count, aligned_head_dim);
+            attention_query_full_ggml_regular(q_vec,
+                                              k_head,
+                                              v_cols,
+                                              token_count,
+                                              head_dim,
+                                              aligned_head_dim,
+                                              scale,
+                                              score_row,
+                                              out_vec,
+                                              -1,
+                                              h,
+                                              i);
         }
-        free(v_cols);
-        free(score_row_heap);
     }
+}
+
+void attention_forward_full_head_major_gqa_ggml_strided(const float *q,
+                                                        const float *k,
+                                                        const float *v,
+                                                        float *output,
+                                                        int num_heads,
+                                                        int num_kv_heads,
+                                                        int num_tokens,
+                                                        int head_dim,
+                                                        int aligned_head_dim,
+                                                        int kv_stride_tokens)
+{
+    if (num_heads <= 0 || num_tokens <= 0 || head_dim <= 0 ||
+        (size_t) num_heads > SIZE_MAX / (size_t) num_tokens ||
+        (size_t) head_dim > SIZE_MAX / (size_t) num_tokens) {
+        return;
+    }
+    const size_t score_elements = (size_t) num_heads * (size_t) num_tokens;
+    const size_t columns_per_head = (size_t) head_dim * (size_t) num_tokens;
+    if ((size_t) num_heads > SIZE_MAX / columns_per_head) return;
+    const size_t column_elements = (size_t) num_heads * columns_per_head;
+    if (score_elements > SIZE_MAX - column_elements ||
+        score_elements + column_elements > SIZE_MAX - (size_t) num_tokens) return;
+    const size_t total_elements = score_elements + column_elements + (size_t) num_tokens;
+    if (total_elements > SIZE_MAX / sizeof(float)) return;
+    float *workspace = (float *) malloc(total_elements * sizeof(float));
+    if (!workspace) return;
+    float *score_rows = workspace;
+    float *v_columns = score_rows + score_elements;
+    float *probability_row = v_columns + column_elements;
+    attention_forward_full_head_major_gqa_ggml_strided_workspace(
+        q, k, v, output, num_heads, num_kv_heads, num_tokens, head_dim,
+        aligned_head_dim, kv_stride_tokens,
+        score_rows, score_elements * sizeof(float),
+        v_columns, column_elements * sizeof(float),
+        probability_row, (size_t) num_tokens * sizeof(float));
+    free(workspace);
 }
 
 /**
@@ -6644,11 +6643,14 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_f16
     }
 
     if (num_heads <= 0 || aligned_head_dim <= 0 ||
-        (size_t) num_heads > SIZE_MAX / (2 * (size_t) aligned_head_dim * sizeof(float))) {
+        (size_t) num_heads > SIZE_MAX / (size_t) aligned_head_dim) {
         return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
     }
-    const size_t workspace_bytes =
-        2 * (size_t) num_heads * (size_t) aligned_head_dim * sizeof(float);
+    const size_t token_elements = (size_t) num_heads * (size_t) aligned_head_dim;
+    if (token_elements > SIZE_MAX / (2 * sizeof(float))) {
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+    const size_t workspace_bytes = 2 * token_elements * sizeof(float);
     float *workspace = (float *) malloc(workspace_bytes);
     if (!workspace) {
         return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
@@ -7395,7 +7397,7 @@ ck_attention_status_t attention_forward_decode_head_major_gqa_bf16cache_pytorch_
 #endif
 }
 
-ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract(
+ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract_workspace(
     const float *q,
     const uint16_t *k_cache,
     const uint16_t *v_cache,
@@ -7407,7 +7409,9 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_bf1
     int cache_capacity,
     int head_dim,
     int aligned_head_dim,
-    ck_attention_reduction_t reduction)
+    ck_attention_reduction_t reduction,
+    float *token_workspace,
+    size_t token_workspace_bytes)
 {
     if (!q || !k_cache || !v_cache || !output ||
         num_heads <= 0 || num_kv_heads <= 0 || q_tokens <= 0 ||
@@ -7443,13 +7447,12 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_bf1
     }
 
     const size_t token_elems = (size_t)num_heads * (size_t)aligned_head_dim;
-    float *q_token = (float *)malloc(token_elems * sizeof(float));
-    float *out_token = (float *)malloc(token_elems * sizeof(float));
-    if (!q_token || !out_token) {
-        free(q_token);
-        free(out_token);
+    if (token_elems > SIZE_MAX / (2 * sizeof(float)) ||
+        !token_workspace || token_workspace_bytes < 2 * token_elems * sizeof(float)) {
         return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
     }
+    float *q_token = token_workspace;
+    float *out_token = token_workspace + token_elems;
     ck_attention_status_t status = CK_ATTENTION_STATUS_OK;
     for (int t = 0; t < q_tokens; ++t) {
         for (int h = 0; h < num_heads; ++h) {
@@ -7468,8 +7471,46 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_bf1
                    (size_t)aligned_head_dim * sizeof(float));
         }
     }
-    free(q_token);
-    free(out_token);
+    return status;
+}
+
+ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract(
+    const float *q,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int q_tokens,
+    int past_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    ck_attention_reduction_t reduction)
+{
+    if (q_tokens >= CK_GGML_FA_TILE_Q) {
+        return attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract_workspace(
+            q, k_cache, v_cache, output, num_heads, num_kv_heads, q_tokens,
+            past_tokens, cache_capacity, head_dim, aligned_head_dim, reduction,
+            NULL, 0);
+    }
+    if (num_heads <= 0 || aligned_head_dim <= 0 ||
+        (size_t) num_heads > SIZE_MAX / (size_t) aligned_head_dim) {
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+    const size_t token_elements = (size_t) num_heads * (size_t) aligned_head_dim;
+    if (token_elements > SIZE_MAX / (2 * sizeof(float))) {
+        return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    }
+    const size_t workspace_bytes = 2 * token_elements * sizeof(float);
+    float *workspace = (float *) malloc(workspace_bytes);
+    if (!workspace) return CK_ATTENTION_STATUS_INVALID_ARGUMENT;
+    const ck_attention_status_t status =
+        attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract_workspace(
+            q, k_cache, v_cache, output, num_heads, num_kv_heads, q_tokens,
+            past_tokens, cache_capacity, head_dim, aligned_head_dim, reduction,
+            workspace, workspace_bytes);
+    free(workspace);
     return status;
 }
 

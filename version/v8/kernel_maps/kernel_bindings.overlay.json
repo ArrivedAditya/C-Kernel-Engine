@@ -501,55 +501,6 @@
         }
       ]
     },
-    "attention_forward_full_head_major_gqa_ggml_strided": {
-      "note": "Prefill: GGML-compatible non-flash full / bidirectional grouped-query attention across the entire sequence",
-      "params": [
-        {
-          "cast": "float*",
-          "name": "q",
-          "source": "scratch:q_scratch"
-        },
-        {
-          "cast": "float*",
-          "name": "k",
-          "source": "scratch:k_scratch"
-        },
-        {
-          "cast": "float*",
-          "name": "v",
-          "source": "scratch:v_scratch"
-        },
-        {
-          "cast": "float*",
-          "name": "output",
-          "source": "output:out"
-        },
-        {
-          "name": "num_heads",
-          "source": "dim:num_heads"
-        },
-        {
-          "name": "num_kv_heads",
-          "source": "dim:num_kv_heads"
-        },
-        {
-          "name": "num_tokens",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "head_dim",
-          "source": "dim:head_dim"
-        },
-        {
-          "name": "aligned_head_dim",
-          "source": "dim:head_dim"
-        },
-        {
-          "name": "kv_stride_tokens",
-          "source": "dim:max_seq_len"
-        }
-      ]
-    },
     "feature_concat": {
       "note": "Concatenate a main output with fixed-width collected branch slices.",
       "params": [

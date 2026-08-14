@@ -1684,6 +1684,13 @@ void attention_forward_full_head_major_gqa_ggml_strided(const float *q,
                                                         int head_dim,
                                                         int aligned_head_dim,
                                                         int kv_stride_tokens);
+void attention_forward_full_head_major_gqa_ggml_strided_workspace(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens, int head_dim,
+    int aligned_head_dim, int kv_stride_tokens,
+    float *score_rows, size_t score_rows_bytes,
+    float *v_columns, size_t v_columns_bytes,
+    float *probability_row, size_t probability_row_bytes);
 
 // Llama-parity flash attention variant that rounds K/V through FP16 before use.
 void attention_forward_causal_head_major_gqa_flash_strided_f16kv(const float *q,
@@ -1863,6 +1870,21 @@ ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_bf1
     int head_dim,
     int aligned_head_dim,
     ck_attention_reduction_t reduction);
+ck_attention_status_t attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract_workspace(
+    const float *q,
+    const uint16_t *k_cache,
+    const uint16_t *v_cache,
+    float *output,
+    int num_heads,
+    int num_kv_heads,
+    int q_tokens,
+    int past_tokens,
+    int cache_capacity,
+    int head_dim,
+    int aligned_head_dim,
+    ck_attention_reduction_t reduction,
+    float *token_workspace,
+    size_t token_workspace_bytes);
 
 // Full-matrix PyTorch math-SDPA prefill. Unlike the row-at-a-time segmented
 // provider above, this entry point materializes [head, query, key] scores and

@@ -39,10 +39,10 @@ class TestKernelAllocationAudit(unittest.TestCase):
         report = AUDIT.build_report()
         baseline = json.loads(AUDIT.BASELINE.read_text(encoding="utf-8"))
         AUDIT.validate_ratchet(report, baseline)
-        self.assertEqual(report["counts"]["production_allocation_calls"], 56)
-        self.assertEqual(report["counts"]["mapped_allocating_providers"], 7)
+        self.assertEqual(report["counts"]["production_allocation_calls"], 54)
+        self.assertEqual(report["counts"]["mapped_allocating_providers"], 5)
         self.assertEqual(
-            report["counts"]["mapped_allocating_without_scratch_contract"], 7
+            report["counts"]["mapped_allocating_without_scratch_contract"], 5
         )
         self.assertEqual(
             [warning["code"] for warning in report["warnings"]],
@@ -88,6 +88,35 @@ class TestKernelAllocationAudit(unittest.TestCase):
             row["function"] for row in AUDIT.build_report()["mapped_allocating_providers"]
         }
         self.assertNotIn("recurrent_conv_state_update_backward_workspace", allocating)
+
+    def test_attention_workspace_providers_are_planner_owned(self):
+        expected = {
+            "attention_forward_full_head_major_gqa_ggml_strided.json": {
+                "score_rows", "v_columns", "probability_row"
+            },
+            "attention_forward_causal_head_major_gqa_prefill_append_bf16cache_pytorch_contract.json": {
+                "token_workspace"
+            },
+        }
+        allocating = {
+            row["function"] for row in AUDIT.build_report()["mapped_allocating_providers"]
+        }
+        for filename, scratch_names in expected.items():
+            kernel_map = json.loads(
+                (ROOT / "version/v8/kernel_maps" / filename).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                {entry["name"] for entry in kernel_map["scratch"]}, scratch_names
+            )
+            function = kernel_map["impl"]["function"]
+            self.assertTrue(function.endswith("_workspace"))
+            self.assertNotIn(function, allocating)
+            sources = {
+                param["source"] for param in kernel_map["call_abi"]["params"]
+            }
+            for name in scratch_names:
+                self.assertIn(f"scratch:{name}", sources)
+                self.assertIn(f"scratch_size:{name}", sources)
 
     def test_recurrent_workspace_shape_resolves_exact_bytes(self):
         build_ir_path = ROOT / "version/v8/scripts/build_ir_v8.py"
