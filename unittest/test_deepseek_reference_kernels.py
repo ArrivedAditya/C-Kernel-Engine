@@ -42,8 +42,14 @@ lib.deepseek_mla_kv_cache_batch_store_f32.argtypes = [fptr, fptr, fptr, fptr, ct
 lib.deepseek_mla_kv_cache_batch_store_f32.restype = None
 lib.deepseek_mla_kv_cache_store_f32.argtypes = [fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 lib.deepseek_mla_kv_cache_store_f32.restype = None
+lib.deepseek_mla_attention_f32.argtypes = [fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+lib.deepseek_mla_attention_f32.restype = None
+lib.deepseek_mla_attention_f32_workspace.argtypes = [*lib.deepseek_mla_attention_f32.argtypes, fptr, ctypes.c_size_t]
+lib.deepseek_mla_attention_f32_workspace.restype = None
 lib.deepseek_mla_attention_decode_f32.argtypes = [fptr, fptr, fptr, fptr, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 lib.deepseek_mla_attention_decode_f32.restype = None
+lib.deepseek_mla_attention_decode_f32_workspace.argtypes = [*lib.deepseek_mla_attention_decode_f32.argtypes, fptr, ctypes.c_size_t]
+lib.deepseek_mla_attention_decode_f32_workspace.restype = None
 
 
 def ptr(a):
@@ -55,6 +61,41 @@ def iptr_np(a):
 
 
 class TestDeepSeekReferenceKernels(unittest.TestCase):
+    def test_mla_prefill_workspace_is_byte_exact_and_bounded(self):
+        rng = np.random.default_rng(20260814)
+        tokens, heads, kv_heads, qk_dim, v_dim = 7, 4, 2, 5, 3
+        q = np.ascontiguousarray(
+            rng.normal(scale=0.12, size=(tokens, heads, qk_dim)).astype(np.float32)
+        )
+        k = np.ascontiguousarray(
+            rng.normal(scale=0.11, size=(tokens, kv_heads, qk_dim)).astype(np.float32)
+        )
+        v = np.ascontiguousarray(
+            rng.normal(scale=0.09, size=(tokens, kv_heads, v_dim)).astype(np.float32)
+        )
+        expected = np.empty((tokens, heads, v_dim), dtype=np.float32)
+        actual = np.empty_like(expected)
+        scores = np.empty(tokens, dtype=np.float32)
+
+        lib.deepseek_mla_attention_f32(
+            ptr(q), ptr(k), ptr(v), ptr(expected),
+            heads, kv_heads, tokens, qk_dim, v_dim,
+        )
+        lib.deepseek_mla_attention_f32_workspace(
+            ptr(q), ptr(k), ptr(v), ptr(actual),
+            heads, kv_heads, tokens, qk_dim, v_dim,
+            ptr(scores), scores.nbytes,
+        )
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+
+        sentinel = np.full_like(actual, -19.0)
+        lib.deepseek_mla_attention_f32_workspace(
+            ptr(q), ptr(k), ptr(v), ptr(sentinel),
+            heads, kv_heads, tokens, qk_dim, v_dim,
+            ptr(scores), scores.nbytes - ctypes.sizeof(ctypes.c_float),
+        )
+        np.testing.assert_array_equal(sentinel, -19.0)
+
     def test_mhc_mix_forward_backward(self):
         torch.manual_seed(7)
         tokens, streams, dim = 3, 4, 5
@@ -306,6 +347,43 @@ class TestDeepSeekReferenceKernels(unittest.TestCase):
         )
 
         np.testing.assert_allclose(out, ref, rtol=1e-6, atol=1e-6)
+
+    def test_mla_decode_workspace_is_byte_exact_and_bounded(self):
+        rng = np.random.default_rng(20260815)
+        heads, kv_heads, cache_len, qk_dim, v_dim, max_seq, stride = 4, 2, 7, 5, 3, 11, 7
+        q = np.ascontiguousarray(
+            rng.normal(scale=0.12, size=(heads, qk_dim)).astype(np.float32)
+        )
+        k_cache = np.zeros((kv_heads, max_seq, stride), dtype=np.float32)
+        v_cache = np.zeros_like(k_cache)
+        k_cache[:, :cache_len, :qk_dim] = rng.normal(
+            scale=0.11, size=(kv_heads, cache_len, qk_dim)
+        ).astype(np.float32)
+        v_cache[:, :cache_len, :v_dim] = rng.normal(
+            scale=0.09, size=(kv_heads, cache_len, v_dim)
+        ).astype(np.float32)
+        expected = np.empty((heads, v_dim), dtype=np.float32)
+        actual = np.empty_like(expected)
+        scores = np.empty(max_seq, dtype=np.float32)
+
+        args = (
+            ptr(q), ptr(k_cache), ptr(v_cache), ptr(expected),
+            heads, kv_heads, cache_len, qk_dim, v_dim, max_seq, stride,
+        )
+        lib.deepseek_mla_attention_decode_f32(*args)
+        workspace_args = (*args[:3], ptr(actual), *args[4:])
+        lib.deepseek_mla_attention_decode_f32_workspace(
+            *workspace_args, ptr(scores), scores.nbytes
+        )
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+
+        sentinel = np.full_like(actual, -23.0)
+        undersized_args = (*args[:3], ptr(sentinel), *args[4:])
+        lib.deepseek_mla_attention_decode_f32_workspace(
+            *undersized_args,
+            ptr(scores), cache_len * ctypes.sizeof(ctypes.c_float) - 1,
+        )
+        np.testing.assert_array_equal(sentinel, -23.0)
 
     def test_csa_attention_forward_backward(self):
         torch.manual_seed(13)

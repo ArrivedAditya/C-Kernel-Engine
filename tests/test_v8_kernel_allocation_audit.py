@@ -40,9 +40,9 @@ class TestKernelAllocationAudit(unittest.TestCase):
         baseline = json.loads(AUDIT.BASELINE.read_text(encoding="utf-8"))
         AUDIT.validate_ratchet(report, baseline)
         self.assertEqual(report["counts"]["production_allocation_calls"], 54)
-        self.assertEqual(report["counts"]["mapped_allocating_providers"], 5)
+        self.assertEqual(report["counts"]["mapped_allocating_providers"], 3)
         self.assertEqual(
-            report["counts"]["mapped_allocating_without_scratch_contract"], 5
+            report["counts"]["mapped_allocating_without_scratch_contract"], 3
         )
         self.assertEqual(
             [warning["code"] for warning in report["warnings"]],
@@ -117,6 +117,46 @@ class TestKernelAllocationAudit(unittest.TestCase):
             for name in scratch_names:
                 self.assertIn(f"scratch:{name}", sources)
                 self.assertIn(f"scratch_size:{name}", sources)
+
+    def test_deepseek_mla_workspace_providers_are_planner_owned(self):
+        cases = {
+            "deepseek_mla_attention_f32.json": ("T", 9 * 4),
+            "deepseek_mla_attention_decode_f32.json": ("S", 257 * 4),
+        }
+        allocating = {
+            row["function"] for row in AUDIT.build_report()["mapped_allocating_providers"]
+        }
+        build_ir_path = ROOT / "version/v8/scripts/build_ir_v8.py"
+        sys.path.insert(0, str(build_ir_path.parent))
+        spec = importlib.util.spec_from_file_location(
+            "build_ir_v8_mla_workspace_test", build_ir_path
+        )
+        assert spec is not None and spec.loader is not None
+        build_ir = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(build_ir)
+
+        for filename, (shape_symbol, expected_bytes) in cases.items():
+            with self.subTest(filename=filename):
+                kernel_map = json.loads(
+                    (ROOT / "version/v8/kernel_maps" / filename).read_text(
+                        encoding="utf-8"
+                    )
+                )
+                self.assertTrue(kernel_map["impl"]["function"].endswith("_workspace"))
+                self.assertEqual(kernel_map["scratch"][0]["shape"], [shape_symbol])
+                sources = {
+                    param["name"]: param["source"]
+                    for param in kernel_map["call_abi"]["params"]
+                }
+                self.assertEqual(sources["scores"], "scratch:scores")
+                self.assertEqual(sources["scores_bytes"], "scratch_size:scores")
+                self.assertNotIn(kernel_map["impl"]["function"], allocating)
+                size = build_ir._kernel_scratch_size_bytes(
+                    kernel_map["scratch"][0],
+                    {"seq_len": 9},
+                    {"max_seq_len": 257},
+                )
+                self.assertEqual(size, expected_bytes)
 
     def test_recurrent_workspace_shape_resolves_exact_bytes(self):
         build_ir_path = ROOT / "version/v8/scripts/build_ir_v8.py"

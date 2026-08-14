@@ -2621,50 +2621,6 @@
         }
       ]
     },
-    "deepseek_mla_attention_f32": {
-      "params": [
-        {
-          "name": "q",
-          "source": "scratch:q_scratch",
-          "cast": "float*"
-        },
-        {
-          "name": "k",
-          "source": "scratch:k_scratch",
-          "cast": "float*"
-        },
-        {
-          "name": "v",
-          "source": "scratch:v_scratch",
-          "cast": "float*"
-        },
-        {
-          "name": "output",
-          "source": "output:out",
-          "cast": "float*"
-        },
-        {
-          "name": "num_heads",
-          "source": "dim:num_heads"
-        },
-        {
-          "name": "num_kv_heads",
-          "source": "dim:num_kv_heads"
-        },
-        {
-          "name": "num_tokens",
-          "source": "dim:seq_len"
-        },
-        {
-          "name": "qk_head_dim",
-          "source": "dim:head_dim"
-        },
-        {
-          "name": "v_head_dim",
-          "source": "dim:v_head_dim"
-        }
-      ]
-    },
     "deepseek_mla_kv_cache_store_f32": {
       "params": [
         {
@@ -2694,58 +2650,6 @@
         {
           "name": "num_kv_heads",
           "source": "dim:num_kv_heads"
-        },
-        {
-          "name": "qk_head_dim",
-          "source": "dim:head_dim"
-        },
-        {
-          "name": "v_head_dim",
-          "source": "dim:v_head_dim"
-        },
-        {
-          "name": "max_seq_len",
-          "source": "dim:max_seq_len"
-        },
-        {
-          "name": "cache_stride",
-          "source": "dim:kv_cache_head_dim"
-        }
-      ]
-    },
-    "deepseek_mla_attention_decode_f32": {
-      "params": [
-        {
-          "name": "q",
-          "source": "scratch:q_scratch",
-          "cast": "const float*"
-        },
-        {
-          "name": "k_cache",
-          "source": "runtime:kv_cache_k_layer",
-          "cast": "const float*"
-        },
-        {
-          "name": "v_cache",
-          "source": "runtime:kv_cache_v_layer",
-          "cast": "const float*"
-        },
-        {
-          "name": "output",
-          "source": "output:out",
-          "cast": "float*"
-        },
-        {
-          "name": "num_heads",
-          "source": "dim:num_heads"
-        },
-        {
-          "name": "num_kv_heads",
-          "source": "dim:num_kv_heads"
-        },
-        {
-          "name": "cache_len",
-          "source": "runtime:cache_len"
         },
         {
           "name": "qk_head_dim",
