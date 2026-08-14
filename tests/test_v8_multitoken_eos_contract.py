@@ -82,6 +82,76 @@ class MultitokenEOSContractTests(unittest.TestCase):
             self.assertEqual(dumps[0].token_id, 1042)
             np.testing.assert_array_equal(dumps[0].data, [1.0, 2.0])
 
+    def test_segmented_ck_loader_preserves_all_position_occurrences(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for position, values in (
+                (0, [1.0, 2.0]),
+                (9, [3.0]),
+                (1017, [4.0, 5.0]),
+            ):
+                np.asarray(values, dtype=np.float32).tofile(
+                    root / f"tok_{position:04d}_layer_003_layer_out.f32"
+                )
+
+            dumps = self.runner._load_ck_hidden_export_occurrences(
+                root, ["layer_out"], 3
+            )
+
+            self.assertEqual([dump.token_id for dump in dumps], [0, 9, 1017])
+            np.testing.assert_array_equal(
+                self.runner._coalesce_segmented_prefill_dumps(dumps)[0].data,
+                [1.0, 2.0, 3.0, 4.0, 5.0],
+            )
+
+    def test_segmented_ck_loader_keeps_only_final_persistent_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for position, value in ((0, 10.0), (9, 20.0), (1017, 30.0)):
+                np.asarray([value], dtype=np.float32).tofile(
+                    root / f"tok_{position:04d}_layer_003_new_state.f32"
+                )
+
+            dumps = self.runner._load_ck_hidden_export_occurrences(
+                root, ["new_state"], 3
+            )
+            result = self.runner._coalesce_segmented_prefill_dumps(dumps)
+
+            self.assertEqual(result[0].token_id, 1017)
+            np.testing.assert_array_equal(result[0].data, [30.0])
+
+    def test_segmented_ck_loader_splits_pairwise_mlp_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # Two rows of [gate(2), up(2)] in the standalone-prefill layout.
+            np.asarray(
+                [1.0, 2.0, 11.0, 12.0, 3.0, 4.0, 13.0, 14.0],
+                dtype=np.float32,
+            ).tofile(root / "tok_0009_layer_003_mlp_gate_up.f32")
+
+            dumps = self.runner._load_ck_hidden_export_occurrences(
+                root,
+                ["mlp_gate", "mlp_up"],
+                3,
+                runtime_config={"intermediate_size": 2},
+            )
+
+            self.assertEqual([dump.op_name for dump in dumps], ["mlp_gate", "mlp_up"])
+            np.testing.assert_array_equal(dumps[0].data, [1.0, 2.0, 3.0, 4.0])
+            np.testing.assert_array_equal(dumps[1].data, [11.0, 12.0, 13.0, 14.0])
+
+    def test_segmented_ck_loader_requires_width_for_pairwise_mlp_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            np.asarray([1.0, 2.0], dtype=np.float32).tofile(
+                root / "tok_0000_layer_000_mlp_gate_up.f32"
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "positive intermediate_size"):
+                self.runner._load_ck_hidden_export_occurrences(
+                    root, ["mlp_gate"], 0, runtime_config={}
+                )
+
     def test_oracle_hidden_loader_retains_present_exports_when_one_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

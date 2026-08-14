@@ -256,6 +256,82 @@ def _load_ck_hidden_exports(
     return dumps
 
 
+def _load_ck_hidden_export_occurrences(
+    root: Path,
+    names: list[str],
+    layer: int,
+    *,
+    allow_missing: bool = False,
+    runtime_config: dict[str, Any] | None = None,
+) -> list[Any]:
+    """Load every position-distinguished CKE hidden export occurrence.
+
+    Segmented multimodal prefill invokes the generated graph once for
+    text-before, visual rows, and text-after. Generated C already gives these
+    calls stable identities through their starting model positions (for
+    example tok_0000, tok_0009, and tok_1017). Do not collapse them to the
+    highest position before reconstructing the logical mixed-prefill tensor.
+    """
+    dumps: list[Any] = []
+    for name in names:
+        named_files = _hidden_named_files(root, name)
+        split_half: int | None = None
+        split_offset = 0
+        if not named_files and name in {"mlp_gate", "mlp_up"}:
+            # Standalone prefill retains the natural pairwise GEMM layout as
+            # [token, gate || up], while decode exposes the two halves
+            # separately. Reconstruct the semantic boundary in the harness;
+            # production code must not copy or transpose merely for X-ray.
+            combined = _hidden_named_files(root, "mlp_gate_up")
+            intermediate_size = int(
+                (runtime_config or {}).get("intermediate_size", 0) or 0
+            )
+            if combined and intermediate_size <= 0:
+                raise RuntimeError(
+                    "cannot split mlp_gate_up without a positive intermediate_size"
+                )
+            if combined:
+                named_files = combined
+                split_half = intermediate_size
+                split_offset = 0 if name == "mlp_gate" else intermediate_size
+        if allow_missing and not named_files:
+            continue
+        if not named_files:
+            raise RuntimeError(f"expected hidden dump for {name} in {root}, found 0")
+        for path in named_files:
+            match = re.search(r"_layer_(\d+)_", path.name)
+            if match is None:
+                continue
+            layer_id = int(match.group(1))
+            if layer >= 0 and layer_id != layer:
+                continue
+            token_id = _hidden_token_position(path)
+            values = np.fromfile(path, dtype=np.float32)
+            if split_half is not None:
+                pair_width = 2 * split_half
+                if values.size % pair_width != 0:
+                    raise RuntimeError(
+                        f"{path} has {values.size} floats, not rows of {pair_width}"
+                    )
+                values = np.ascontiguousarray(
+                    values.reshape(-1, pair_width)[
+                        :, split_offset : split_offset + split_half
+                    ]
+                ).reshape(-1)
+            dumps.append(
+                first_token.parity_test_v7.ParityDump(
+                    layer_id,
+                    str(name),
+                    values,
+                    int(token_id or 0),
+                    "fp32",
+                    source_token_id=int(token_id or 0),
+                    source_name=path.name,
+                )
+            )
+    return dumps
+
+
 def _normalize_ck_recurrent_state_layout(
     dumps: list[Any], runtime_config: dict[str, Any]
 ) -> list[Any]:
@@ -292,14 +368,13 @@ def _normalize_ck_recurrent_state_layout(
     return dumps
 
 
-def _coalesce_segmented_prefill_oracle_dumps(dumps: list[Any]) -> list[Any]:
-    """Reconstruct the logical mixed-prefill boundary from llama segments.
+def _coalesce_segmented_prefill_dumps(dumps: list[Any]) -> list[Any]:
+    """Reconstruct a logical mixed-prefill boundary from execution segments.
 
-    llama.cpp evaluates text-before, visual rows, and text-after as three
-    batches. CKE's production mixed-prefill provider exposes the same logical
-    sequence as one tensor. Row-valued boundaries therefore concatenate in
-    execution order. Persistent recurrent state is a snapshot, so only the
-    final segment's state is comparable.
+    CKE segmented prefill and llama.cpp both evaluate text-before, visual rows,
+    and text-after as three batches. Row-valued boundaries concatenate in
+    position/execution order. Persistent recurrent state is a snapshot, so
+    only the final segment's state is comparable.
     """
     grouped: dict[tuple[int, str], list[Any]] = {}
     order: list[tuple[int, str]] = []
@@ -312,6 +387,10 @@ def _coalesce_segmented_prefill_oracle_dumps(dumps: list[Any]) -> list[Any]:
 
     result: list[Any] = []
     for key in order:
+        # Preserve loader/execution order. CKE filenames carry monotonically
+        # increasing segment start positions, whereas llama.cpp's token field
+        # identifies the segment's final token and is not numerically ordered
+        # across text-before, visual, and text-after.
         rows = grouped[key]
         if len(rows) == 1:
             result.append(rows[0])
@@ -337,6 +416,11 @@ def _coalesce_segmented_prefill_oracle_dumps(dumps: list[Any]) -> list[Any]:
             )
         )
     return result
+
+
+def _coalesce_segmented_prefill_oracle_dumps(dumps: list[Any]) -> list[Any]:
+    """Backward-compatible name for llama.cpp segmented dump coalescing."""
+    return _coalesce_segmented_prefill_dumps(dumps)
 
 
 def _dump_element_count_mismatches(
@@ -1171,6 +1255,19 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
     if not requested_names:
         raise ValueError("--hidden-state-names did not contain any names")
     names = _resolve_ck_hidden_export_names(requested_names)
+    bridge_report = inputs.get("bridge_report")
+    bridge_report = bridge_report if isinstance(bridge_report, dict) else {}
+    bridge_contract = bridge_report.get("bridge_contract")
+    bridge_contract = bridge_contract if isinstance(bridge_contract, dict) else {}
+    segmented_ck_prefill = (
+        step_index == 0
+        and bridge_contract.get("prefill_batching") == "segmented_append"
+    )
+    capture_names = list(names)
+    if segmented_ck_prefill and ({"mlp_gate", "mlp_up"} & set(names)):
+        # Standalone prefill has one model-agnostic pairwise projection
+        # exporter. The loader below splits it back into semantic boundaries.
+        capture_names.append("mlp_gate_up")
     # Step zero is already the production mixed-prefill execution. Replaying
     # the same prompt under *_last exporters adds no independent control and
     # can change the arithmetic schedule. Full replay remains an optional
@@ -1265,7 +1362,7 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
         _restore_process_env({key: None for key in env_keys})
         if not generated_prefix:
             _set_process_env("CK_DEBUG_EXPORT_HIDDEN", str(persistent_dir))
-            _set_process_env("CK_DEBUG_EXPORT_HIDDEN_NAMES", ",".join(names))
+            _set_process_env("CK_DEBUG_EXPORT_HIDDEN_NAMES", ",".join(capture_names))
             if layer >= 0:
                 _set_process_env("CK_DEBUG_EXPORT_HIDDEN_LAYER", str(layer))
         lib, logits_buf, _vocab_size = _init_ck_state(
@@ -1279,7 +1376,7 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
             for i, token in enumerate(generated_prefix):
                 if i == last_i:
                     _set_process_env("CK_DEBUG_EXPORT_HIDDEN", str(persistent_dir))
-                    _set_process_env("CK_DEBUG_EXPORT_HIDDEN_NAMES", ",".join(names))
+                    _set_process_env("CK_DEBUG_EXPORT_HIDDEN_NAMES", ",".join(capture_names))
                     if layer >= 0:
                         _set_process_env("CK_DEBUG_EXPORT_HIDDEN_LAYER", str(layer))
                 rc = lib.ck_model_decode(ctypes.c_int32(int(token)), logits_buf)
@@ -1475,9 +1572,19 @@ def _capture_hidden_state_step(report: dict[str, Any], args: argparse.Namespace)
             semantic_names = {
                 re.sub(r"-\d+$", "", name) for name in names
             }
-            ck_dumps = _load_ck_hidden_exports(
-                persistent_dir, names, layer, allow_missing=True
-            )
+            if segmented_ck_prefill:
+                ck_dumps = _load_ck_hidden_export_occurrences(
+                    persistent_dir,
+                    names,
+                    layer,
+                    allow_missing=True,
+                    runtime_config=runtime_config,
+                )
+                ck_dumps = _coalesce_segmented_prefill_dumps(ck_dumps)
+            else:
+                ck_dumps = _load_ck_hidden_exports(
+                    persistent_dir, names, layer, allow_missing=True
+                )
             ck_dumps = _normalize_ck_recurrent_state_layout(ck_dumps, runtime_config)
             llama_dumps = first_token._load_llama_dump_dir(llama_dir)
             if step_index == 0:

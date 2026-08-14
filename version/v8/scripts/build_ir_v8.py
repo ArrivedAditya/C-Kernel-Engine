@@ -5252,7 +5252,12 @@ def build_block_manifest(manifest: Dict[str, Any], block_name: str) -> Dict[str,
         block_name,
     )
     merged_config.update(_block_config_overrides(template, block_name))
-    block_manifest["config"] = _normalize_manifest_config(merged_config)
+    normalized_config = _normalize_manifest_config(merged_config)
+    block_manifest["config"] = _apply_circuit_runtime_defaults(
+        normalized_config,
+        block_manifest["template"],
+        source=f"component:{block_name}",
+    )
     block_manifest["block_name"] = block_name
 
     return block_manifest

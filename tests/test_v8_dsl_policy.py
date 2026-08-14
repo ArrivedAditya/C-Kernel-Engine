@@ -233,6 +233,16 @@ def lower(op):
         self.assertEqual(bridge.get("position_policy"), "mrope_2d")
         self.assertFalse(hydrated["config"]["prefill_gateup_swiglu_fusion_default"])
 
+    def test_qwen35_selects_certified_unfused_gateup_swiglu_by_default(self) -> None:
+        manifest = {
+            "config": {"model": "qwen35"},
+            "template": {"name": "qwen35"},
+        }
+
+        hydrated = build_ir._hydrate_manifest_template(manifest)
+
+        self.assertFalse(hydrated["config"]["prefill_gateup_swiglu_fusion_default"])
+
     def test_attention_dimensions_are_config_driven_across_layouts(self) -> None:
         uniform = {
             "embed_dim": 1024,
