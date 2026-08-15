@@ -2618,6 +2618,20 @@ QWEN3VL_PRIVATE_CORPUS_OUTPUT ?= $(HOME)/.cache/ck-engine-v8/private/qwen3vl-lla
 QWEN3VL_PRIVATE_CORPUS_ARGS ?=
 QWEN3VL_PRIVATE_CORPUS_PRETTY ?= auto
 QWEN3VL_PRIVATE_CORPUS_FORCE_RERUN ?= 0
+QWEN3VL_PRIVATE_CORPUS_REQUIRED_IMAGES ?= 40
+QWEN36VL_PRIVATE_CORPUS_MANIFEST ?= $(CK_QWEN36VL_OCR_MANIFEST)
+QWEN36VL_PRIVATE_CORPUS_DECODER ?= $(CK_QWEN36VL_DECODER_GGUF)
+QWEN36VL_PRIVATE_CORPUS_ENCODER_RUNTIME ?= $(CK_QWEN36VL_ENCODER_RUNTIME)
+QWEN36VL_PRIVATE_CORPUS_LLAMA_ROOT ?= $(CK_LLAMA_CPP_ROOT)
+QWEN36VL_PRIVATE_CORPUS_OUTPUT ?= $(HOME)/.cache/ck-engine-v8/private/qwen36vl-llamacpp-corpus
+QWEN36VL_PRIVATE_CORPUS_THREADS ?= 20
+QWEN36VL_PRIVATE_CORPUS_CONTEXT ?= 1400
+QWEN36VL_PRIVATE_CORPUS_MAX_NEW_TOKENS ?= 128
+QWEN36VL_PRIVATE_CORPUS_REQUIRED_IMAGES ?= 40
+QWEN36VL_PRIVATE_CORPUS_COMPILER ?= $(if $(CK_V8_COMPILER),$(CK_V8_COMPILER),gcc)
+QWEN36VL_PRIVATE_CORPUS_ARGS ?=
+QWEN36VL_PRIVATE_CORPUS_PRETTY ?= auto
+QWEN36VL_PRIVATE_CORPUS_FORCE_RERUN ?= 0
 QWEN3VL_BF16_PRIVATE_CORPUS_MANIFEST ?= $(CK_QWEN3VL_OCR_MANIFEST)
 QWEN3VL_BF16_PRIVATE_CHECKPOINT ?= $(CK_QWEN3VL_BF16_CHECKPOINT)
 QWEN3VL_BF16_PRIVATE_ENCODER_RUNTIMES ?= $(CK_QWEN3VL_BF16_ENCODER_RUNTIMES)
@@ -2648,16 +2662,51 @@ test-qwen3vl-private-corpus-parity-auto:
 		test -f "$(QWEN3VL_PRIVATE_CORPUS_LLAMA_ROOT)/build/bin/libllama.so" || { echo "ERROR: pinned llama.cpp build is missing"; exit 2; }; \
 		$(MAKE) --no-print-directory ck-cli-v8; \
 		$(PYTHON) version/v8/scripts/certify_qwen3vl_llamacpp_corpus_v8.py \
+			--model-profile qwen3vl \
 			--manifest "$(QWEN3VL_PRIVATE_CORPUS_MANIFEST)" \
 			--decoder-gguf "$(QWEN3VL_PRIVATE_CORPUS_DECODER)" \
 			--mmproj-gguf "$(QWEN3VL_PRIVATE_CORPUS_MMPROJ)" \
 			--llama-root "$(QWEN3VL_PRIVATE_CORPUS_LLAMA_ROOT)" \
 			--output-dir "$(QWEN3VL_PRIVATE_CORPUS_OUTPUT)" \
+			--require-images "$(QWEN3VL_PRIVATE_CORPUS_REQUIRED_IMAGES)" \
 			$(if $(filter 1,$(QWEN3VL_PRIVATE_CORPUS_PRETTY)),--show-private-details,) \
 			$(if $(filter 0,$(QWEN3VL_PRIVATE_CORPUS_PRETTY)),--redacted-console,) \
 			$(if $(filter 1,$(QWEN3VL_PRIVATE_CORPUS_FORCE_RERUN)),--force-rerun,) \
 			--continue-on-failure $(QWEN3VL_PRIVATE_CORPUS_ARGS); \
 	fi
+
+.PHONY: test-qwen36vl-private-corpus-parity-auto
+test-qwen36vl-private-corpus-parity-auto:
+	@if [ -z "$(QWEN36VL_PRIVATE_CORPUS_MANIFEST)" ]; then \
+		echo "SKIP: private Qwen3.6-VL corpus is not configured on this runner"; \
+	else \
+		test -f "$(QWEN36VL_PRIVATE_CORPUS_MANIFEST)" || { echo "ERROR: private corpus manifest is missing"; exit 2; }; \
+		test -f "$(QWEN36VL_PRIVATE_CORPUS_DECODER)" || { echo "ERROR: Qwen3.6-VL decoder GGUF is missing"; exit 2; }; \
+		test -d "$(QWEN36VL_PRIVATE_CORPUS_ENCODER_RUNTIME)" || { echo "ERROR: Qwen3.6-VL encoder runtime is missing"; exit 2; }; \
+		test -f "$(QWEN36VL_PRIVATE_CORPUS_ENCODER_RUNTIME)/libckernel_engine.so" || { echo "ERROR: Qwen3.6-VL encoder runtime engine is missing"; exit 2; }; \
+		test -f "$(QWEN36VL_PRIVATE_CORPUS_LLAMA_ROOT)/build/bin/libllama.so" || { echo "ERROR: pinned llama.cpp build is missing"; exit 2; }; \
+		$(MAKE) --no-print-directory ck-cli-v8; \
+		$(PYTHON) version/v8/scripts/certify_qwen3vl_llamacpp_corpus_v8.py \
+			--model-profile qwen36vl \
+			--manifest "$(QWEN36VL_PRIVATE_CORPUS_MANIFEST)" \
+			--decoder-gguf "$(QWEN36VL_PRIVATE_CORPUS_DECODER)" \
+			--encoder-runtime "$(QWEN36VL_PRIVATE_CORPUS_ENCODER_RUNTIME)" \
+			--llama-root "$(QWEN36VL_PRIVATE_CORPUS_LLAMA_ROOT)" \
+			--output-dir "$(QWEN36VL_PRIVATE_CORPUS_OUTPUT)" \
+			--threads "$(QWEN36VL_PRIVATE_CORPUS_THREADS)" \
+			--ck-threads "$(QWEN36VL_PRIVATE_CORPUS_THREADS)" \
+			--context-len "$(QWEN36VL_PRIVATE_CORPUS_CONTEXT)" \
+			--max-new-tokens "$(QWEN36VL_PRIVATE_CORPUS_MAX_NEW_TOKENS)" \
+			--require-images "$(QWEN36VL_PRIVATE_CORPUS_REQUIRED_IMAGES)" \
+			--compiler "$(QWEN36VL_PRIVATE_CORPUS_COMPILER)" \
+			$(if $(filter 1,$(QWEN36VL_PRIVATE_CORPUS_PRETTY)),--show-private-details,) \
+			$(if $(filter 0,$(QWEN36VL_PRIVATE_CORPUS_PRETTY)),--redacted-console,) \
+			$(if $(filter 1,$(QWEN36VL_PRIVATE_CORPUS_FORCE_RERUN)),--force-rerun,) \
+			--continue-on-failure $(QWEN36VL_PRIVATE_CORPUS_ARGS); \
+	fi
+
+.PHONY: test-qwen-vl-private-corpus-parity-auto
+test-qwen-vl-private-corpus-parity-auto: test-qwen3vl-private-corpus-parity-auto test-qwen36vl-private-corpus-parity-auto
 
 .PHONY: test-qwen3vl-bf16-private-corpus-parity-auto
 test-qwen3vl-bf16-private-corpus-parity-auto:
