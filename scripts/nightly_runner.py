@@ -911,6 +911,14 @@ MAKE_TARGETS = {
         "redact_output": True,
         "env": {"QWEN3VL_PRIVATE_CORPUS_PRETTY": "0"},
     },
+    "qwen36vl_private_corpus_parity": {
+        "name": "Qwen3.6-VL Private 40-Image E2E Parity",
+        "category": "parity",
+        "target": "test-qwen36vl-private-corpus-parity-auto",
+        "timeout_sec": 21600,
+        "redact_output": True,
+        "env": {"QWEN36VL_PRIVATE_CORPUS_PRETTY": "0"},
+    },
     "v8_qwen3vl_vision_smoke": {
         "name": "v8 Qwen3-VL Vision Smoke",
         "category": "inference",
@@ -1050,6 +1058,7 @@ NIGHTLY_PROFILES = {
         "v8_qwen36_highmem",
         "v8_qwen3vl_vision_smoke",
         "qwen3vl_private_corpus_parity",
+        "qwen36vl_private_corpus_parity",
         "qwen3vl_bf16_private_corpus_parity",
         "v8_glm4_highmem",
         "v8_kimi_highmem",
