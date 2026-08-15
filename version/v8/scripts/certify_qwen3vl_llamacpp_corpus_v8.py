@@ -27,6 +27,30 @@ PARITY = ROOT / "version" / "v8" / "scripts" / "compare_multimodal_multitoken_lo
 DEFAULT_NATIVE_CLI = ROOT / "build" / "ck-cli-v8"
 PINNED_LLAMA_COMMIT = "f3e182816421c648188b5eab269853bf1531d950"
 DEFAULT_PROMPT = "Extract visible form fields as compact JSON."
+MODEL_PROFILES: dict[str, dict[str, str | None]] = {
+    "qwen3vl": {
+        "model_label": "Qwen3-VL",
+        "chat_template": "qwen3vl",
+        "composition_circuit": None,
+    },
+    "qwen36vl": {
+        "model_label": "Qwen3.6-VL",
+        "chat_template": "auto",
+        "composition_circuit": "qwen36vl",
+    },
+}
+
+
+def _apply_model_profile(args: argparse.Namespace) -> None:
+    """Fill architecture controls from one explicit private-runner selector."""
+    profile_name = str(getattr(args, "model_profile", "qwen3vl"))
+    profile = MODEL_PROFILES[profile_name]
+    if getattr(args, "model_label", None) is None:
+        args.model_label = profile["model_label"]
+    if getattr(args, "chat_template", None) is None:
+        args.chat_template = profile["chat_template"]
+    if getattr(args, "composition_circuit", None) is None:
+        args.composition_circuit = profile["composition_circuit"]
 
 
 def _json_write(path: Path, value: Any, *, private: bool = True) -> None:
@@ -98,6 +122,17 @@ def _load_corpus(manifest_path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def _require_corpus_size(rows: list[dict[str, Any]], minimum: int | None) -> None:
+    if minimum is None:
+        return
+    if minimum < 1:
+        raise ValueError("--require-images must be positive")
+    if len(rows) < minimum:
+        raise ValueError(
+            f"private corpus contains {len(rows)} images; at least {minimum} are required"
+        )
+
+
 def _git_commit(repo: Path) -> str:
     probe = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "HEAD"],
@@ -116,12 +151,13 @@ def _run_logged(
     env: dict[str, str],
     log_path: Path,
     dry_run: bool,
+    show_dry_run_command: bool = True,
     accepted_returncodes: tuple[int, ...] = (0,),
 ) -> float:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     rendered = shlex.join(command)
     if dry_run:
-        print(rendered)
+        print(rendered if show_dry_run_command else "[dry-run] private command redacted")
         return 0.0
     started = time.perf_counter()
     with log_path.open("w", encoding="utf-8") as stream:
@@ -371,6 +407,9 @@ def _public_provenance(config: dict[str, Any]) -> dict[str, Any]:
     keys = (
         "version",
         "cke_commit",
+        "model_profile",
+        "model_label",
+        "composition_circuit",
         "manifest_sha256",
         "llama_commit",
         "expected_llama_commit",
@@ -379,6 +418,7 @@ def _public_provenance(config: dict[str, Any]) -> dict[str, Any]:
         "context_len",
         "image_max_tokens",
         "max_new_tokens",
+        "require_images",
         "append_on_divergence",
         "chat_template",
         "threads",
@@ -709,6 +749,12 @@ def _resumed_row(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--model-profile",
+        choices=tuple(MODEL_PROFILES),
+        default="qwen3vl",
+        help="explicit multimodal architecture profile (default: qwen3vl)",
+    )
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--decoder-gguf", type=Path, required=True)
     encoder_source = parser.add_mutually_exclusive_group(required=True)
@@ -726,14 +772,19 @@ def main() -> int:
         help="Reuse a shared bridge workdir containing decoder/ instead of storing it under --output-dir",
     )
     parser.add_argument("--prompt", default=DEFAULT_PROMPT)
-    parser.add_argument("--model-label", default="Qwen3-VL")
+    parser.add_argument("--model-label")
     parser.add_argument("--expected-llama-commit", default=PINNED_LLAMA_COMMIT)
     parser.add_argument("--start-index", type=int, default=1)
     parser.add_argument("--limit", type=int)
+    parser.add_argument(
+        "--require-images",
+        type=int,
+        help="fail unless the private manifest contains at least this many images",
+    )
     parser.add_argument("--max-new-tokens", type=int, default=128)
     parser.add_argument(
         "--chat-template",
-        default="qwen3vl",
+        default=None,
         help=(
             "decoder chat contract passed to the multimodal bridge; use auto for "
             "cross-model corpus runs (default preserves the certified Qwen3-VL lane)"
@@ -801,6 +852,7 @@ def main() -> int:
         help="print only redacted progress, even in an interactive local terminal",
     )
     args = parser.parse_args()
+    _apply_model_profile(args)
 
     os.umask(0o077)
     args.manifest = args.manifest.expanduser().resolve()
@@ -831,6 +883,7 @@ def main() -> int:
             f"expected={args.expected_llama_commit} actual={llama_commit}"
         )
     corpus = _load_corpus(args.manifest)
+    _require_corpus_size(corpus, args.require_images)
     if args.start_index < 1:
         raise ValueError("--start-index must be at least 1")
     selected = [row for row in corpus if int(row["index"]) >= args.start_index]
@@ -846,6 +899,7 @@ def main() -> int:
     runtime_dir = args.runtime_workdir or (args.output_dir / "runtime")
     config = {
         "version": 2,
+        "model_profile": args.model_profile,
         "cke_commit": _git_commit(ROOT),
         "manifest_sha256": _sha256_file(args.manifest),
         "decoder": _file_identity(args.decoder_gguf, hash_content=False),
@@ -859,12 +913,12 @@ def main() -> int:
         "expected_llama_commit": args.expected_llama_commit,
         "compiler": args.compiler,
         "prompt_sha256": hashlib.sha256(args.prompt.encode("utf-8")).hexdigest(),
-        "chat_template": str(args.chat_template),
         "model_label": str(args.model_label),
         "runtime_workdir": str(runtime_dir),
         "context_len": args.context_len,
         "image_max_tokens": args.image_max_tokens,
         "max_new_tokens": args.max_new_tokens,
+        "require_images": args.require_images,
         "append_on_divergence": args.append_on_divergence,
         "chat_template": args.chat_template,
         "composition_circuit": args.composition_circuit,
@@ -974,6 +1028,7 @@ def main() -> int:
                 env=env,
                 log_path=case_dir / "bridge.log",
                 dry_run=args.dry_run,
+                show_dry_run_command=_private_console_enabled(args),
             )
             if args.dry_run:
                 _run_logged(
@@ -987,6 +1042,7 @@ def main() -> int:
                     env=env,
                     log_path=case_dir / "parity.log",
                     dry_run=True,
+                    show_dry_run_command=_private_console_enabled(args),
                 )
                 if not args.skip_native_cli:
                     _run_logged(
@@ -999,6 +1055,7 @@ def main() -> int:
                         env=env,
                         log_path=case_dir / "native_cli.log",
                         dry_run=True,
+                        show_dry_run_command=_private_console_enabled(args),
                     )
                 continue
             source_report = runtime_dir / "bridge_report.json"

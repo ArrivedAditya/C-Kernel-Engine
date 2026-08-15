@@ -27,6 +27,71 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.module = _load_module()
 
+    def test_model_profiles_select_architecture_explicitly(self) -> None:
+        qwen3 = SimpleNamespace(
+            model_profile="qwen3vl",
+            model_label=None,
+            chat_template=None,
+            composition_circuit=None,
+        )
+        self.module._apply_model_profile(qwen3)
+        self.assertEqual(qwen3.model_label, "Qwen3-VL")
+        self.assertEqual(qwen3.chat_template, "qwen3vl")
+        self.assertIsNone(qwen3.composition_circuit)
+
+        qwen36 = SimpleNamespace(
+            model_profile="qwen36vl",
+            model_label=None,
+            chat_template=None,
+            composition_circuit=None,
+        )
+        self.module._apply_model_profile(qwen36)
+        self.assertEqual(qwen36.model_label, "Qwen3.6-VL")
+        self.assertEqual(qwen36.chat_template, "auto")
+        self.assertEqual(qwen36.composition_circuit, "qwen36vl")
+
+    def test_model_profile_preserves_explicit_overrides(self) -> None:
+        args = SimpleNamespace(
+            model_profile="qwen36vl",
+            model_label="private-label",
+            chat_template="qwen35",
+            composition_circuit="explicit-circuit",
+        )
+        self.module._apply_model_profile(args)
+        self.assertEqual(args.model_label, "private-label")
+        self.assertEqual(args.chat_template, "qwen35")
+        self.assertEqual(args.composition_circuit, "explicit-circuit")
+
+    def test_private_corpus_size_gate_requires_full_manifest(self) -> None:
+        rows = [{"index": index} for index in range(1, 41)]
+        self.module._require_corpus_size(rows, 40)
+        with self.assertRaisesRegex(ValueError, "contains 40 images"):
+            self.module._require_corpus_size(rows, 41)
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            self.module._require_corpus_size(rows, 0)
+
+    def test_makefile_exposes_both_private_model_profiles(self) -> None:
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertIn("test-qwen3vl-private-corpus-parity-auto:", makefile)
+        self.assertIn("--model-profile qwen3vl", makefile)
+        self.assertIn("test-qwen36vl-private-corpus-parity-auto:", makefile)
+        self.assertIn("--model-profile qwen36vl", makefile)
+        self.assertIn(
+            "QWEN36VL_PRIVATE_CORPUS_MANIFEST ?= $(CK_QWEN36VL_OCR_MANIFEST)",
+            makefile,
+        )
+        self.assertNotIn(
+            "QWEN36VL_PRIVATE_CORPUS_MANIFEST ?= "
+            "$(if $(CK_QWEN36VL_OCR_MANIFEST)",
+            makefile,
+        )
+        self.assertIn(
+            "test-qwen-vl-private-corpus-parity-auto: "
+            "test-qwen3vl-private-corpus-parity-auto "
+            "test-qwen36vl-private-corpus-parity-auto",
+            makefile,
+        )
+
     def test_manifest_order_and_hashes_are_deterministic(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -432,6 +497,20 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
             )
             self.assertGreaterEqual(elapsed, 0.0)
 
+    def test_redacted_dry_run_does_not_print_private_paths(self) -> None:
+        output = io.StringIO()
+        with mock.patch("sys.stdout", output):
+            self.module._run_logged(
+                ["runner", "--image", "/private/confidential-image.jpg"],
+                env={},
+                log_path=Path("unused.log"),
+                dry_run=True,
+                show_dry_run_command=False,
+            )
+        rendered = output.getvalue()
+        self.assertIn("private command redacted", rendered)
+        self.assertNotIn("confidential-image", rendered)
+
     def test_redacted_row_excludes_matched_eos_decision_from_context(self) -> None:
         report = {
             "pass": True,
@@ -603,6 +682,9 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
         return {
             "version": 1,
             "cke_commit": "cke",
+            "model_profile": "qwen3vl",
+            "model_label": "Qwen3-VL",
+            "composition_circuit": None,
             "manifest_sha256": "manifest",
             "decoder": {"path": "/private/decoder.gguf"},
             "mmproj": {"path": "/private/mmproj.gguf"},
@@ -614,6 +696,7 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
             "context_len": 4096,
             "image_max_tokens": 1024,
             "max_new_tokens": 128,
+            "require_images": 40,
             "append_on_divergence": "stop",
             "chat_template": "qwen3vl",
             "threads": 20,
