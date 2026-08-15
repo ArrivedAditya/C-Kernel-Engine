@@ -102,6 +102,7 @@ class NightlyArtifactStatusTests(unittest.TestCase):
             "v8_qwen36_highmem",
             "v8_qwen3vl_vision_smoke",
             "qwen3vl_private_corpus_parity",
+            "qwen36vl_private_corpus_parity",
             "qwen3vl_bf16_private_corpus_parity",
             "v8_glm4_highmem",
             "v8_kimi_highmem",
@@ -110,6 +111,12 @@ class NightlyArtifactStatusTests(unittest.TestCase):
         }
         self.assertTrue(expected.issubset(profile))
         self.assertTrue(all(key in runner.MAKE_TARGETS for key in profile))
+        qwen36vl = runner.MAKE_TARGETS["qwen36vl_private_corpus_parity"]
+        self.assertEqual(
+            qwen36vl["target"], "test-qwen36vl-private-corpus-parity-auto"
+        )
+        self.assertTrue(qwen36vl["redact_output"])
+        self.assertEqual(qwen36vl["timeout_sec"], 21600)
         sweep = runner.MAKE_TARGETS["v8_xeon_decoder_family_sweep"]
         self.assertEqual(sweep["profile_only"], "xeon-e2e")
 
