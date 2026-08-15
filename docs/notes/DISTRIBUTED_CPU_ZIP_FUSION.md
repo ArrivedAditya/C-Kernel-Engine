@@ -118,15 +118,18 @@ forcing communication.
 ## The Metric: Global Synchronization Boundaries per Layer
 
 The useful metric is **global synchronization boundaries per layer**, not
-tensor-parallel degree. A conventional TP schedule synchronizes after nearly
-every operator:
+tensor-parallel degree — and the honest baseline is stronger than a
+strawman. Established TP schedules already pair column-parallel with
+row-parallel linears, so a conventional layer pays roughly **two
+collectives**, not one per operator:
 
 ```text
-QKV GEMM → collective → attention → collective → output GEMM → collective
-→ MLP up → collective → activation → MLP down → collective
+QKV GEMM (column-parallel) → attention (head-local) → output GEMM (row-parallel)
+→ collective → MLP gate/up (column-parallel) → SwiGLU → MLP down (row-parallel)
+→ collective
 ```
 
-A hyper-fused schedule aims for one merge per fused region:
+A hyper-fused zip schedule aims for one merge per fused region:
 
 ```text
 NODE A                         NODE B
@@ -147,10 +150,16 @@ down projection partial        down projection partial
              one merge                  ← boundary 2
 ```
 
-"We support TP=2" says nothing about how often nodes stop to agree. Boundary
-count per layer is the statement that matters, and the interesting output of
-the experimental program is a **topology-versus-context map**, not a single
-tok/s figure:
+"We support TP=2" says nothing about how often nodes stop to agree. The real
+contrast with paired TP is not the nominal collective count but the
+**unresolved span**: paired TP keeps activations sharded between its two
+boundaries, while the zip schedule pushes the whole operator subgraph —
+quantized unpack, scale decode, local accumulation, RoPE / QK norm, SwiGLU,
+norm statistics, projection partials — into the shard layout, and asks
+experimentally whether `Shard → Shard → Shard → PartialSum` can stay
+unresolved for longer portions of the graph than existing schedules allow.
+The interesting output of the experimental program is a
+**topology-versus-context map**, not a single tok/s figure:
 
 ```text
 small context:        1 CPU node
@@ -204,6 +213,65 @@ Node A takes 30% of a tensor shard and Node B 70% because X-Ray measured them
 that way — rather than assuming equal ranks. The target is distributed graph
 compilation over heterogeneous CPU resources, with 200/400G RDMA-class links
 as the fabric assumption to be validated.
+
+## Quantitative Sizing Model (THEORETICAL)
+
+The HTML page carries the full worked version with figures; this note records
+the model itself. Everything in this section is an **OPTIMISTIC LOWER BOUND**
+— measured time will be ≥ predicted — and exists to be validated or
+falsified by the validation ladder, not to advertise a number.
+
+**Shard fractions.** Let `P_i` be node `i`'s X-Ray-measured CKE throughput
+for the relevant region — never nominal FLOPS:
+
+```text
+s_i = P_i / Σ_j P_j
+
+P_i(decode)  ≈ packed-weight stream bandwidth (the model's quant format,
+               e.g. an MXFP4-class format for the target model class)
+P_i(prefill) ≈ measured GEMM throughput (ISA-dependent: AVX2 / AVX-512 / AMX)
+```
+
+Decode is vector × matrix: every packed weight byte is read once and used
+once (≈ 2 FLOP/byte), so the region is bandwidth dominated. Prefill is
+token-matrix × weight-matrix: each byte is reused across T tokens, so the
+region is GEMM/compute dominated. The same nodes can therefore deserve
+different shard fractions — and even different topologies — per phase.
+
+**Region and token time.** For a region with `B_r` bytes and `F_r` FLOPs:
+
+```text
+T_r     = max( B_r / Σ_i BW_i,r , F_r / Σ_i FLOPS_i,r ) + T_sync,r
+T_token = Σ_r T_r
+tok/s   = 1 / T_token
+```
+
+The `max()` ignores overlap penalties, stragglers, collective algorithms and
+software overhead — hence the lower-bound label.
+
+**Worked example (parameterized, no real-model attribution).** 50 tok/s
+target → 20 ms/token; 93 layers → ≈ 215 µs/layer budget. Hidden 8192-dim
+BF16 → 16 KB per hidden-state reduction; 2 reductions/layer → 186 × 16 KB
+≈ 3 MB/token before collective-algorithm overhead. Local stream budget per
+layer at B_i = 80 GB/s: 80 GB/s × 215 µs ≈ 17.2 MB — cache-resident current
+tile plus DRAM streaming the next tile, not "fit the model in cache". A
+100 tok/s variant halves every budget and doubles the sync share, making it
+a stress test of the communication path.
+
+**Falsifiability rule (hypothetical example numbers).** If one node decodes
+at 0.20 tok/s and two deliver 0.38, the model is supported. If two deliver
+0.21, an assumption is falsified, and the per-region breakdown shows which
+term — bandwidth, GEMM, or sync — was wrong. The headline question is not
+"CPU vs GPU" but: **can transformer latency scale approximately with
+aggregate calibrated CPU capability until synchronization becomes the
+ceiling?**
+
+**Validation ladder evidence pack (published at every rung):** predicted vs
+measured region time; predicted vs measured tok/s; collective-time fraction;
+scaling efficiency; effective stream GB/s and prefill GEMM throughput;
+watts; hardware cost per added tok/s. Rungs: one node (calibration) → two
+identical nodes (purest scaling test) → heterogeneous pair (proportional
+shards) → larger fleet (find the ceiling).
 
 ## Open Questions
 
