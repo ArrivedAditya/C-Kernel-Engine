@@ -222,28 +222,58 @@ the model itself. Everything in this section is an **OPTIMISTIC LOWER BOUND**
 falsified by the validation ladder, not to advertise a number.
 
 **Shard fractions.** Let `P_i` be node `i`'s X-Ray-measured CKE throughput
-for the relevant region — never nominal FLOPS:
+for the relevant region — and note `P_i` is really `P_i(r, phase, dtype)`:
+never nominal FLOPS, and not one constant per node. The same Xeon/Ryzen
+ratio does not apply everywhere; that is exactly where this differs from a
+static `--tensor-split 0.2,0.2,0.6` — the shard size is operator- and
+phase-dependent:
 
 ```text
-s_i = P_i / Σ_j P_j
+s_i(r) = P_i(r) / Σ_j P_j(r)
 
-P_i(decode)  ≈ packed-weight stream bandwidth (the model's quant format,
-               e.g. an MXFP4-class format for the target model class)
-P_i(prefill) ≈ measured GEMM throughput (ISA-dependent: AVX2 / AVX-512 / AMX)
+P_i(decode)    ≈ packed-weight stream bandwidth (the model's quant format,
+                 e.g. an MXFP4-class format for the target model class)
+P_i(prefill)   ≈ measured GEMM throughput (ISA-dependent: AVX2 / AVX-512 / AMX)
+P_i(attention) ≈ f(BW_KV, F_attention) at long context
 ```
 
 Decode is vector × matrix: every packed weight byte is read once and used
-once (≈ 2 FLOP/byte), so the region is bandwidth dominated. Prefill is
-token-matrix × weight-matrix: each byte is reused across T tokens, so the
-region is GEMM/compute dominated. The same nodes can therefore deserve
-different shard fractions — and even different topologies — per phase.
-
-**Region and token time.** For a region with `B_r` bytes and `F_r` FLOPs:
+once, so the region is bandwidth dominated. The arithmetic intensity is
+format-dependent, not a universal constant:
 
 ```text
-T_r     = max( B_r / Σ_i BW_i,r , F_r / Σ_i FLOPS_i,r ) + T_sync,r
-T_token = Σ_r T_r
-tok/s   = 1 / T_token
+AI_decode ≈ 2 × P_active / B_packed weights
+FP32: 0.5 FLOP/B · BF16: 1 FLOP/B · ideal 4-bit: ≈ 4 FLOP/B
+(e.g. 100B params ≈ 50 GB packed → 200 GFLOP / 50 GB ≈ 4 FLOP/B,
+ before scale/block metadata, unpack overhead and activation traffic)
+```
+
+Prefill is token-matrix × weight-matrix: each byte is reused across T
+tokens, so the region is GEMM/compute dominated. The same nodes can
+therefore deserve different shard fractions — and even different
+topologies — per phase.
+
+**Fresh bytes.** The bandwidth variable is `B_fresh`, not total weight
+bytes:
+
+```text
+B_fresh = B_required − B_cache hits/reuse
+```
+
+This is why a large-cache node can outperform what its nominal two-channel
+DRAM bandwidth suggests on some regions. Execution model: compute the
+current tile in parallel with fetching the next tile.
+
+**Region and token time.** For a region with `B_fresh,r` fresh bytes and
+`F_r` FLOPs, with `C_r(N)` the measured, node-count-dependent collective /
+synchronization time:
+
+```text
+T_r     = max( B_fresh,r / Σ_i BW_i,r , F_r / Σ_i F_i,r ) + C_r(N)
+
+Headline equation — the whole hypothesis in one line:
+T_token = Σ_r [ max( B_fresh,r / Σ_i BW_i,r , F_r / Σ_i F_i,r ) + C_r(N) ]
+tok/s   = 1000 / T_token(ms)
 ```
 
 The `max()` ignores overlap penalties, stragglers, collective algorithms and
@@ -257,6 +287,32 @@ layer at B_i = 80 GB/s: 80 GB/s × 215 µs ≈ 17.2 MB — cache-resident curren
 tile plus DRAM streaming the next tile, not "fit the model in cache". A
 100 tok/s variant halves every budget and doubles the sync share, making it
 a stress test of the communication path.
+
+**The latency arithmetic (why 3 MB is not the story).** The reductions do
+not overlap each other; each layer boundary waits for its collective, so:
+
+```text
+T_collective/token = 186 × L_collective
+
+L =  2 µs → 0.372 ms  ( 1.9% of 20 ms)
+L =  5 µs → 0.93  ms  ( 4.7%)
+L = 10 µs → 1.86  ms  ( 9.3%)
+L = 20 µs → 3.72  ms  (18.6%)
+L = 50 µs → 9.3   ms  (46.5%)
+At 100 tok/s (10 ms/token) every share doubles.
+```
+
+The experimental gate: **can CKE get its real small-vector reduction into
+the latency regime the target token budget requires?** Measured L answers
+this, not the link sheet.
+
+**1M context: decode ≠ prefill.** Over the same heads × context grid,
+decode has one query (Q: 1×d against K,V: L×d); each context shard returns
+per-head statistics (m, l, o) — bytes-to-KB, independent of L. Prefill runs
+T simultaneous queries, so the sufficient statistics carry the query
+dimension and the merge payload scales with T — tiled/streamed, priced like
+a GEMM-shaped region. Any 1M-context claim that does not name its phase is
+incomplete.
 
 **Falsifiability rule (hypothetical example numbers).** If one node decodes
 at 0.20 tok/s and two deliver 0.38, the model is supported. If two deliver
