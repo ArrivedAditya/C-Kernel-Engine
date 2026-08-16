@@ -1101,6 +1101,77 @@
     same move: <strong>grow the overlap window or shrink the transfer until the exposure is zero.</strong>
 </p>
 
+<h2>Shape the Clocks: The Flowing Pipeline</h2>
+
+<p>
+    The maximum in the core equation is a bound, not the goal. The goal is to <strong>shape the work
+    assigned to every node so the clocks line up</strong> &mdash; during a region,
+    \(T_{\text{compute},i} \approx T_{\text{stream},i} \approx T_{\text{prefetch},i}\), with
+    synchronization from neighboring regions hidden or extremely short. The contrast is between a
+    stall pipeline (<code>fetch &rarr; stall &rarr; compute &rarr; stall &rarr; sync</code>) and a
+    flowing one, where DRAM streams continuously, the cache prefetches \(N+1\) and \(N+2\) ahead of
+    use, the CPU never waits, and the sync rides the boundary:
+</p>
+
+<div class="img-container svg-viewer" data-title="Stall pipeline versus flowing pipeline: the objective is to shape work so compute, stream and prefetch clocks line up and stall tends to zero">
+    <img src="assets/constraint-model-flowing-pipeline.svg" alt="Two timelines. The stall pipeline runs fetch, stall, compute, stall, sync, fetch — sequential phases with dead gaps where one clock waits on another. The flowing pipeline shows four lanes across a region boundary: DRAM streams region N weights then region N+1 weights continuously, the cache prefetches N+1 and N+2 ahead of use, the CPU computes region N then N+1 without gaps, and a small network sync rides the boundary while the next region is already flowing. The target is to minimize critical-path time plus stall time over shard, tile and prefetch choices, with the ideal that compute, stream and prefetch times per node are approximately equal and stall time goes to zero" style="width: 100%; max-width: 960px; margin: 0 auto; display: block;">
+</div>
+
+<p>
+    The optimization target is therefore not a single roof but a schedule:
+</p>
+
+\[ \min_{\{s_i,\ \text{tile}_i,\ \text{prefetch}_i\}} \left[ T_{\text{critical path}} + T_{\text{stall}} \right] \qquad \text{ideally } T_{\text{stall}} \rightarrow 0 \]
+
+<h3>Supply meets demand: the node gets what it can finish on time</h3>
+
+<p>
+    A node does not get &ldquo;its fair share&rdquo; &mdash; one fourth because there are four nodes.
+    It gets <strong>what it can finish before the boundary</strong>. If a Ryzen sustains
+    \(BW_i = 80\) GB/s on the actual CKE packed-weight path and its kernel can process a tile in
+    150 &micro;s, the memory system can only <em>supply</em> \(80 \times 150\,\mu s = 12\) MB of fresh
+    bytes in that window. With 4 MB of useful hot data already in cache, the region can operate on
+    roughly 16 MB. Assign 30 MB and the CPU waits on memory; assign 5 MB and memory capacity sits
+    unused while the CPU starves. The planner searches for:
+</p>
+
+\[ B_{\text{fresh},i} \approx BW_i \times T_{\text{compute},i} \qquad \text{(subject to cache reuse and overlap)} \]
+
+<p>
+    &mdash; arithmetic demand matched to the memory supply rate (all figures MODEL labels).
+</p>
+
+<h3>Cache as a queue: elasticity between unequal rates</h3>
+
+<p>
+    When arithmetic is the slower clock &mdash; \(T_{\text{fetch}} = 100\,\mu s\) against
+    \(T_{\text{compute}} = 250\,\mu s\) &mdash; memory gets ahead, and a large cache earns its keep in
+    a second way: it is a <strong>queue between two unequal rates</strong>,
+    DRAM producer &rarr; LLC buffer &rarr; CPU consumer. While the CPU computes tile \(N\), DRAM can
+    prefetch \(N+1\) and possibly \(N+2\), capacity and associativity permitting. When the CPU is
+    faster than DRAM, the planner's moves are the Theory-of-Constraints levers: smaller tiles, more
+    reuse, another memory-producing node or channel, or a restructured operator.
+</p>
+
+<h2>The Refined Core Equation</h2>
+
+<p>
+    With the overlap vocabulary in hand, the core equation sharpens from a max-of-roofs to a
+    <strong>critical path plus exposed stall</strong>:
+</p>
+
+\[ \boxed{\; T_r = T_{\text{critical-path},r} + T_{\text{exposed-stall},r} \;} \]
+
+\[ T_{\text{critical-path},r} = \max_i \left[ \max\!\left( \frac{B_{\text{fresh},i}}{BW_i},\ \frac{F_i}{P_i} \right) \right] \]
+
+\[ T_{\text{exposed-stall}} = T_{\text{sync not hidden}} + T_{\text{prefetch not hidden}} + T_{\text{storage not hidden}} \]
+
+<p>
+    and CKE's two jobs follow directly: <strong>minimize \(T_{\text{exposed-stall}}\)</strong> (hide
+    everything hidable) and <strong>minimize \(\max_i T_i\)</strong> (balance what cannot be hidden).
+    Theory of Constraints plus scheduling, in one line each.
+</p>
+
 <h2>The Heterogeneous Scheduler: Minimize the Critical-Path Maximum</h2>
 
 <p>
@@ -1118,6 +1189,24 @@
     &mdash; and \(\max_i T_i\) is minimized. This is the deterministic form of the
     <a href="distributed-cpu.html">distributed-CPU sizing model</a>: shard geometry derived from
     measured capability, not static ratios.
+</p>
+
+<h3>Balanced completion time, not balanced bytes</h3>
+
+<p>
+    The per-node estimate credits cache-resident reuse \(C_i\) against the fresh-byte term:
+</p>
+
+\[ T_i(s_i) = \max\!\left( \frac{B_i(s_i) - C_i}{BW_i},\ \frac{F_i(s_i)}{P_i} \right) \]
+
+<p>
+    and the planner solves \(T_1 \approx T_2 \approx \dots \approx T_N\) subject to
+    \(\sum_i s_i = 1\). Note what this does <em>not</em> do: it does not split bytes by bandwidth
+    ratio. With stream rates 80 : 80 : 400 GB/s but compute rates 2 : 2 : 8 TF/s, the correct split
+    is 80 : 80 : 400 <em>only if the region is bandwidth-bound</em> &mdash; for a compute-bound
+    region the 2 : 2 : 8 ratio governs, and for anything in between the max() decides per node.
+    The goal is balanced <strong>completion time</strong>; the byte split is a consequence, not the
+    objective.
 </p>
 
 <h2>Worked Example: One Ryzen Region (MODEL)</h2>
