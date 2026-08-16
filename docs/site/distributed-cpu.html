@@ -1464,6 +1464,22 @@
     ladder below, not to advertise a number.
 </p>
 
+<p>
+    On heterogeneous nodes the region finishes at the <em>slowest</em> lane's time, not the
+    fastest: lanes measuring 180, 182, 179 and 95 &micro;s produce a &asymp;182 &micro;s region,
+    with the fast node wasting 87 &micro;s at the barrier. Shard assignment is therefore the
+    critical-path minimization:
+</p>
+
+\[ \underset{s_1,\dots,s_N}{\arg\min}\ \left[ \max_i T_i(s_i)\ +\ T_{\text{sync}}(N, B) \right] \quad \text{subject to } \sum_i s_i = 1 \]
+
+<p>
+    Rebalance until the lanes tie &mdash; 180, 181, 179, 180 &mdash; and \(\max_i T_i\) is
+    minimized. This equation is the distributed instance of the
+    <a href="constraint-model.html">CKE Constraint Model</a>, which defines the shared
+    per-resource clocks and the exposed-versus-hidden vocabulary this page uses throughout.
+</p>
+
 <h2>The Topology-versus-Context Thesis</h2>
 
 <p>
@@ -1584,6 +1600,7 @@
 <h2>Related Pages</h2>
 
 <ul>
+    <li><a href="constraint-model.html">The CKE Constraint Model</a> &mdash; the umbrella math: per-resource clocks, exposed-vs-hidden transfers, and the critical-path scheduler this page instantiates</li>
     <li><a href="memory-tetris.html">Memory Tetris</a> &mdash; the residency design that makes tensor placement a scheduling dimension</li>
     <li><a href="support-hardware.html">Support Hardware</a> &mdash; the heterogeneous lab fleet this research targets</li>
     <li><a href="v8-numerical-contracts.html">v8 Numerical Contracts</a> &mdash; the zero-tolerance parity rules every distributed schedule must satisfy</li>

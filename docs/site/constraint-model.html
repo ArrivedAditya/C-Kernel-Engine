@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Architecture Links | C-Kernel-Engine</title>
-    <meta name="description" content="Index of architecture, runbook, parity, and design pages for C-Kernel-Engine, including the current v8 multimodal inference documentation.">
+    <title>The CKE Constraint Model | C-Kernel-Engine</title>
+    <meta name="description" content="Theory of Constraints as runtime math: per-region clocks for compute, cache, DRAM, network and storage; region time as max-plus-unhidden-sync; the exposed-transfer equation; the critical-path heterogeneous shard scheduler; CKU as the observable result; and the prediction-error control loop connecting Scaling Philosophy, CKU, Memory Tetris and Distributed Zip Fusion into one theory.">
     <meta name="robots" content="index,follow">
-    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/architecture-links.html">
-    <meta property="og:title" content="Architecture Links | C-Kernel-Engine">
-    <meta property="og:description" content="Index of architecture, runbook, parity, and design pages for C-Kernel-Engine, including the current v8 multimodal inference documentation.">
+    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/constraint-model.html">
+    <meta property="og:title" content="The CKE Constraint Model | C-Kernel-Engine">
+    <meta property="og:description" content="Theory of Constraints as runtime math: per-region clocks for compute, cache, DRAM, network and storage; region time as max-plus-unhidden-sync; the exposed-transfer equation; the critical-path heterogeneous shard scheduler; CKU as the observable result; and the prediction-error control loop connecting Scaling Philosophy, CKU, Memory Tetris and Distributed Zip Fusion into one theory.">
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/architecture-links.html">
+    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/constraint-model.html">
     <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
     <style>
         :root {
@@ -980,394 +980,280 @@
     <main>
 
 <style>
-.runbook-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 1rem;
-    margin: 0.75rem 0 1.5rem;
-}
-.runbook-card {
-    background: linear-gradient(145deg, rgba(255,180,0,0.09), rgba(7,173,248,0.06));
-    border: 1px solid var(--grey);
-    border-left: 4px solid var(--orange);
-    border-radius: 8px;
-    padding: 1rem 1.1rem;
-}
-.runbook-card h3 {
-    margin-top: 0;
-    margin-bottom: 0.45rem;
-}
-.runbook-card p {
-    margin-bottom: 0.8rem;
-}
-.runbook-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem;
-    margin-bottom: 0.85rem;
-}
-.runbook-tag {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.72rem;
-    background: rgba(255,180,0,0.12);
-    border: 1px solid rgba(255,180,0,0.3);
-    color: var(--text-secondary);
-    border-radius: 999px;
-    padding: 0.18rem 0.55rem;
-}
-.runbook-link {
-    display: inline-block;
-    text-decoration: none;
-    background: var(--orange);
-    color: var(--dark);
-    font-weight: 600;
-    border-radius: 6px;
-    padding: 0.45rem 0.75rem;
-}
-.runbook-link:hover {
-    background: var(--orange-light);
-    color: var(--dark);
+@media (max-width: 640px) {
+    main table { display: block; overflow-x: auto; }
+    main mjx-container[display="true"] { display: block; overflow-x: auto; overflow-y: hidden; max-width: 100%; }
 }
 </style>
 
-<h1>Architecture Links</h1>
+<h1>The CKE Constraint Model</h1>
 
-<p>A comprehensive guide to all architecture documentation in C-Kernel-Engine.</p>
-
-<h2>Runbooks</h2>
-
-<div class="runbook-grid">
-    <div class="runbook-card">
-        <h3>v8 Numerical Contracts</h3>
-        <p>How weights, circuits, kernel-map capabilities, complete reduction semantics, deterministic lowering, and parity gates prevent ad hoc runtime dispatch.</p>
-        <div class="runbook-tags"><span class="runbook-tag">circuits</span><span class="runbook-tag">kernel maps</span><span class="runbook-tag">reduction contracts</span></div>
-        <a class="runbook-link" href="v8-numerical-contracts.html">Open Numerical Contracts</a>
-    </div>
-    <div class="runbook-card">
-        <h3>Kernel Maps and Provider Selection</h3>
-        <p>How the v8 resolver picks a provider mechanically: the three-level separation, the map field reference, worked memcpy/GEMM/KV-cache examples, the fail-closed ranking rules, and the migration scoreboard.</p>
-        <div class="runbook-tags">
-            <span class="runbook-tag">kernel maps</span>
-            <span class="runbook-tag">provider selection</span>
-            <span class="runbook-tag">equivalence groups</span>
-            <span class="runbook-tag">fail-closed</span>
-        </div>
-        <a class="runbook-link" href="kernel-maps.html">Open Kernel Maps</a>
-    </div>
-    <div class="runbook-card">
-        <h3>The CKE Constraint Model</h3>
-        <p>Theory of Constraints as runtime math: per-region clocks (compute, cache, DRAM, network, storage), region time as max-plus-unhidden-sync, the exposed-transfer equation, the critical-path shard scheduler, and the prediction-error control loop that ties Scaling, CKU, Memory Tetris and Zip Fusion into one theory.</p>
-        <div class="runbook-tags">
-            <span class="runbook-tag">theory of constraints</span>
-            <span class="runbook-tag">critical path</span>
-            <span class="runbook-tag">control loop</span>
-        </div>
-        <a class="runbook-link" href="constraint-model.html">Open the Constraint Model</a>
-    </div>
-    <div class="runbook-card">
-        <h3>Memory Tetris</h3>
-        <p>Research design for DRAM as a software-managed tensor cache over NVMe: arena slots, prefetch overlap, safety contracts, and X-Ray evidence. Proposed, not implemented.</p>
-        <div class="runbook-tags">
-            <span class="runbook-tag">NVMe tiering</span>
-            <span class="runbook-tag">prefetch</span>
-            <span class="runbook-tag">research design</span>
-        </div>
-        <a class="runbook-link" href="memory-tetris.html">Open Memory Tetris</a>
-    </div>
-    <div class="runbook-card">
-        <h3>Distributed CPU: Zip Fusion</h3>
-        <p>Research design for whole-graph distributed CPU scheduling: fused 1-D lanes that unzip to 2-D head-by-context attention, sync boundaries per layer as the metric, and a measurement-first plan. Proposed, not implemented.</p>
-        <div class="runbook-tags">
-            <span class="runbook-tag">distributed CPU</span>
-            <span class="runbook-tag">zip fusion</span>
-            <span class="runbook-tag">research design</span>
-        </div>
-        <a class="runbook-link" href="distributed-cpu.html">Open Zip Fusion</a>
-    </div>
-    <div class="runbook-card">
-        <h3>v8 Runbook</h3>
-        <p>The scoped operator runbook for the validated <code>v8</code> lanes. v8 now supports vision (Qwen3-VL) and audio (Whisper Tiny) alongside text-family bring-up; the canonical commands for each lane live on the runbook page.</p>
-        <div class="runbook-tags">
-            <span class="runbook-tag">cks-v8-run</span>
-            <span class="runbook-tag">ck_run_v8.py</span>
-            <span class="runbook-tag">Qwen3-VL</span>
-            <span class="runbook-tag">run_whisper_v8.py</span>
-        </div>
-        <a class="runbook-link" href="v8-runbook.html">Open v8 Runbook</a>
-    </div>
-    <div class="runbook-card">
-        <h3>v8 Vision Encoder Architecture</h3>
-        <p>Design page for how the <code>v8</code> vision encoder is derived from GGUF + template + lowering, then stitched into the decoder bridge.</p>
-        <div class="runbook-tags">
-            <span class="runbook-tag">qwen3_vl_vision.json</span>
-            <span class="runbook-tag">build_ir_v8.py</span>
-            <span class="runbook-tag">encoder → bridge → decoder</span>
-        </div>
-        <a class="runbook-link" href="v8-vision-encoder.html">Open Vision Encoder Page</a>
-    </div>
-    <div class="runbook-card">
-        <h3>Whisper Tiny End-to-End</h3>
-        <p>Audio inference through the same circuit and kernel-contract path: PCM16 WAV to log-Mel, generated FP32 encoder and decoder, nightly audio gates, and the opt-in E2E artifact test.</p>
-        <div class="runbook-tags">
-            <span class="runbook-tag">audio_transformer_*.json</span>
-            <span class="runbook-tag">run_whisper_v8.py</span>
-            <span class="runbook-tag">WAV → log-Mel → encoder → decoder</span>
-        </div>
-        <a class="runbook-link" href="v8-whisper-tiny.html">Open Whisper Tiny Page</a>
-    </div>
-    <div class="runbook-card">
-        <h3>v7 Inference + Training Runbook</h3>
-        <p>Copy/paste workflow for HF GGUF inference plus <code>true_bpe</code> training and train->infer handoff.</p>
-        <div class="runbook-tags">
-            <span class="runbook-tag">ck_run_v7.py run</span>
-            <span class="runbook-tag">train_data_pipeline_v7.py</span>
-            <span class="runbook-tag">ck_chat.py</span>
-        </div>
-        <a class="runbook-link" href="v7-runbook.html">Open v7 Runbook</a>
-    </div>
-    <div class="runbook-card">
-        <h3>v7 Python Authoring Guide</h3>
-        <p>Step-by-step notebook launch order, Python authoring syntax, and the exact handoff boundary from notebooks or <code>ck.nn</code> into the existing <code>v7</code> scripts.</p>
-        <div class="runbook-tags">
-            <span class="runbook-tag">TrainingProject</span>
-            <span class="runbook-tag">ck.v7.compile(...)</span>
-            <span class="runbook-tag">notebooks 01 → 05</span>
-        </div>
-        <a class="runbook-link" href="v7-python-authoring.html">Open Python Authoring Guide</a>
-    </div>
-    <div class="runbook-card">
-        <h3>v7 Profiling Runbook</h3>
-        <p>Repeatable performance workflow for v7 training kernels with <code>perf</code>, VTune, flamegraphs, and Advisor.</p>
-        <div class="runbook-tags">
-            <span class="runbook-tag">perf</span>
-            <span class="runbook-tag">vtune</span>
-            <span class="runbook-tag">advisor</span>
-        </div>
-        <a class="runbook-link" href="v7-profiling.html">Open v7 Profiling</a>
-    </div>
-    <div class="runbook-card">
-        <h3>Kernel Tuning Methodology</h3>
-        <p>CPU-node tuning loop for v8/v7 kernels: practical coherence, fixed-token throughput, CK profile CSV, VTune, Advisor roofline, microkernel labs, and PR logs.</p>
-        <div class="runbook-tags">
-            <span class="runbook-tag">VTune</span>
-            <span class="runbook-tag">Advisor roofline</span>
-            <span class="runbook-tag">CK_PROFILE</span>
-        </div>
-        <a class="runbook-link" href="kernel-tuning-methodology.html">Open Methodology</a>
-    </div>
-    <div class="runbook-card">
-        <h3>Stitched Divergence Harness</h3>
-        <p>Backend parity method for finding the first CK-vs-reference tensor boundary across llama.cpp/mtmd GGUF lanes and future PyTorch adapters.</p>
-        <div class="runbook-tags">
-            <span class="runbook-tag">CKDMP</span>
-            <span class="runbook-tag">llama.cpp/mtmd</span>
-            <span class="runbook-tag">first divergence</span>
-        </div>
-        <a class="runbook-link" href="divergence-harness.html">Open Harness Guide</a>
-    </div>
-    <div class="runbook-card">
-        <h3>v7 SVG Dataset Runbook</h3>
-        <p>Operator workflow to generate Stage A pretraining and Stage B midtraining SVG corpora from <code>docs/site/assets/*.svg</code>, then hand off to v7 training.</p>
-        <div class="runbook-tags">
-            <span class="runbook-tag">build_svg_corpus_from_assets_v7.py</span>
-            <span class="runbook-tag">prepare_ascii_dataset_v7.py</span>
-            <span class="runbook-tag">curriculum-stage stage_a|stage_b</span>
-        </div>
-        <a class="runbook-link" href="v7-svg-dataset-runbook.html">Open SVG Dataset Runbook</a>
-    </div>
-</div>
-
-<div class="grid grid-2">
-    <div class="card card-accent">
-        <h3 style="margin-top: 0;">Core</h3>
-        <ul class="link-list">
-            <li><a href="architecture.html">System Overview</a>
-                <span class="subtitle">IR, Codegen, Kernels</span></li>
-            <li><a href="v8-numerical-contracts.html">v8 Numerical Contracts</a>
-                <span class="subtitle">Circuits, kernel capabilities, deterministic reduction resolution, and parity gates</span></li>
-            <li><a href="kernel-maps.html">Kernel Maps and Provider Selection</a>
-                <span class="subtitle">284 machine-checked maps, the fail-closed resolver, and the migration scoreboard</span></li>
-            <li><a href="ir-pipeline.html">IR Pipeline v6.6</a>
-                <span class="subtitle">Templates → IR1 → IR2 → Lowering</span></li>
-            <li><a href="v7-backprop-ir.html">v7 Backprop IR Pipeline</a>
-                <span class="subtitle">Init → IR1 → IR2 → Layout → Codegen + canary diagnostics</span></li>
-            <li><a href="v7-cross-entropy-parity.html">v7 Cross-Entropy Parity</a>
-                <span class="subtitle">p - one_hot derivation, PyTorch semantics, long-horizon drift fixes</span></li>
-            <li><a href="v7-grad-accum-windows.html">v7 Grad-Accum Windows</a>
-                <span class="subtitle">Micro-batch vs effective batch, N vs K, CPU batch simulation</span></li>
-            <li><a href="v7-backprop-ir.html#v7-train-data-pipeline">v7 Train Data Pipeline</a>
-                <span class="subtitle">One-command dataset -> tokenizer -> train orchestration</span></li>
-            <li><a href="v7-backprop-ir.html#v7-runtime-stitch-graph">v7 Runtime Stitch Graph</a>
-                <span class="subtitle">Function-level forward/backward/accum/optimizer stitching view</span></li>
-            <li><a href="v8-runbook.html">v8 Runbook</a>
-                <span class="subtitle">Current operator path for validated v8 text, vision, and Whisper Tiny audio inference</span></li>
-            <li><a href="v8-vision-encoder.html">v8 Vision Encoder Architecture</a>
-                <span class="subtitle">How GGUF intake, template lowering, memory planning, and bridge stitching power the working vision path</span></li>
-            <li><a href="v8-mla-kimi.html">v8 MLA / Kimi Decode Cache</a>
-                <span class="subtitle">Kimi/DeepSeek-style MLA template contract, explicit cache store/read lowering, and reference kernels</span></li>
-            <li><a href="v8-whisper-tiny.html">Whisper Tiny End-to-End</a>
-                <span class="subtitle">Generated FP32 audio encoder/decoder circuits from PCM16 WAV, with the pipeline infographic, nightly gates, and current limitations</span></li>
-            <li><a href="v7-runbook.html">v7 Inference + Training Runbook</a>
-                <span class="subtitle">Copy/paste commands for HF GGUF inference + true_bpe training</span></li>
-            <li><a href="v7-python-authoring.html">v7 Python Authoring Guide</a>
-                <span class="subtitle">Notebook lane, <code>TrainingProject</code>, and <code>ck.v7.compile(...)</code> in one place</span></li>
-            <li><a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook</a>
-                <span class="subtitle">Dataset generation for Stage A pretrain and Stage B midtrain</span></li>
-            <li><a href="model-kernel-matrix.html">Model + Kernel Matrix</a>
-                <span class="subtitle">Qwen2/Qwen3/Gemma + kernel coverage</span></li>
-            <li><a href="tokenizer.html">Tokenizer</a>
-                <span class="subtitle">BPE, WordPiece, Trie</span></li>
-            <li><a href="kernels.html">Kernel Reference</a>
-                <span class="subtitle">Forward/backward ops</span></li>
-            <li><a href="deltanet-deep-dive.html">Gated DeltaNet Deep Dive</a>
-                <span class="subtitle">Qwen3.5/qwen3next recurrent attention state update and kernel parity</span></li>
-            <li><a href="audio-kernels-deep-dive.html">Audio Kernels Deep Dive</a>
-                <span class="subtitle">WAV decode, resample, STFT, log-Mel, Conv1D stem, token transpose — math and parity oracles per kernel</span></li>
-            <li><a href="codegen.html">Code Generation</a>
-                <span class="subtitle">IR to C compilation</span></li>
-            <li><a href="iteration-philosophy.html">Iteration Philosophy</a>
-                <span class="subtitle">Why v1→v6 matters</span></li>
-            <li><a href="ir-v2.html">IR v2 Format</a>
-                <span class="subtitle">Case study: symbolic dimensions</span></li>
-            <li><a href="concepts.html">Deep Dive Concepts</a>
-                <span class="subtitle">RoPE, Flash Attention, GQA</span></li>
-        </ul>
-    </div>
-
-    <div class="card card-accent">
-        <h3 style="margin-top: 0;">Quantization</h3>
-        <ul class="link-list">
-            <li><a href="quantization.html">Quant Fundamentals</a>
-                <span class="subtitle">Block formats, grouping</span></li>
-            <li><a href="quantization-visuals.html">Bit Manipulation Visuals</a>
-                <span class="subtitle">Q5_0, Q4_K, INT8 with spaced repetition</span></li>
-            <li><a href="quant-formats.html">Quant Format Reference</a>
-                <span class="subtitle">Byte-level visualization</span></li>
-            <li><a href="gguf-bump.html">GGUF to Bump</a>
-                <span class="subtitle">Weight conversion</span></li>
-            <li><a href="gguf-conversion.html">GGUF Parsing</a>
-                <span class="subtitle">Byte-level guide</span></li>
-        </ul>
-    </div>
-
-    <div class="card card-accent">
-        <h3 style="margin-top: 0;">Optimization</h3>
-        <ul class="link-list">
-            <li><a href="gemm-memory-layout.html">GEMM Memory Layout</a>
-                <span class="subtitle">NN/NT layouts, offsets</span></li>
-            <li><a href="gemm-optimization.html">GEMM Optimization</a>
-                <span class="subtitle">AVX, MKL, blocking</span></li>
-            <li><a href="gemm-memory-layout.html#v7-train-parallel-plan">v7 Train Layout + Dispatch</a>
-                <span class="subtitle">IR3 memory + parallel execution plan</span></li>
-            <li><a href="gemm-optimization.html#v7-threadpool-playbook">Threadpool GEMM Playbook</a>
-                <span class="subtitle">Split M/N/K policy for training</span></li>
-            <li><a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a>
-                <span class="subtitle">VTune, Advisor, roofline, CK profile, parity, and benchmark log discipline</span></li>
-            <li><a href="simd-architecture.html">SIMD Architecture</a>
-                <span class="subtitle">AVX-512, VNNI, AMX</span></li>
-            <li><a href="flash_attention.html">Flash Attention Analysis</a>
-                <span class="subtitle">Why llama.cpp is faster</span></li>
-        </ul>
-    </div>
-
-    <div class="card card-accent">
-        <h3 style="margin-top: 0;">Infrastructure</h3>
-        <ul class="link-list">
-            <li><a href="memory-safety.html">Memory Safety</a>
-                <span class="subtitle">Bump allocator, canaries</span></li>
-            <li><a href="deterministic-memory.html">Deterministic Memory</a>
-                <span class="subtitle">RDMA, interpretability</span></li>
-            <li><a href="constraint-model.html">The CKE Constraint Model</a>
-                <span class="subtitle">Umbrella math tying Scaling, CKU, Memory Tetris and Zip into one control loop</span></li>
-            <li><a href="memory-tetris.html">Memory Tetris</a>
-                <span class="subtitle">Research design: DRAM as a tensor cache over NVMe (not implemented)</span></li>
-            <li><a href="distributed-cpu.html">Distributed CPU: Zip Fusion</a>
-                <span class="subtitle">Research design: whole-graph scheduling across CPU nodes (not implemented)</span></li>
-            <li><a href="profiling.html">Profiling Guide</a>
-                <span class="subtitle">Valgrind, perf, flamegraphs</span></li>
-            <li><a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a>
-                <span class="subtitle">CPU-node roofline workflow for v8/v7 kernel performance work</span></li>
-            <li><a href="v8-runbook.html">v8 Runbook</a>
-                <span class="subtitle">Validated text, vision, and Whisper Tiny audio operator workflows</span></li>
-            <li><a href="v8-vision-encoder.html">v8 Vision Encoder Architecture</a>
-                <span class="subtitle">Bridge and encoder design notes for the current multimodal inference lane</span></li>
-            <li><a href="v8-whisper-tiny.html">Whisper Tiny End-to-End</a>
-                <span class="subtitle">Generated audio encoder/decoder circuits, pipeline infographic, nightly gates</span></li>
-            <li><a href="v7-profiling.html">v7 Profiling Runbook</a>
-                <span class="subtitle">VTune + Advisor + perf/flamegraph on train kernels</span></li>
-            <li><a href="v7-runbook.html">v7 Inference + Training Runbook</a>
-                <span class="subtitle">Operational workflow from dataset to chat output</span></li>
-            <li><a href="v7-python-authoring.html">v7 Python Authoring Guide</a>
-                <span class="subtitle">Notebook-driven and module-driven authoring entrypoints for the same <code>v7</code> runtime</span></li>
-            <li><a href="testing.html">Testing</a>
-                <span class="subtitle">Numerical parity verification</span></li>
-            <li><a href="divergence-harness.html">Stitched Divergence Harness</a>
-                <span class="subtitle">First failing tensor boundary across CK and reference backends</span></li>
-        </ul>
-    </div>
-</div>
-
-<h2>Temp / Work in Progress</h2>
+<p class="lead">
+    Theory of Constraints expressed as runtime math. Every generated region has several clocks running
+    &mdash; compute, cache, DRAM, network, storage &mdash; and the region takes as long as the slowest
+    required path plus the synchronization that could not be hidden. Scaling says <em>why</em>, CKU
+    <em>measures</em>, Memory Tetris <em>places</em>, Distributed Zip <em>parallelizes</em> &mdash; and
+    measurement closes the loop.
+</p>
 
 <div class="alert alert-warning">
     <div class="alert-icon">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
     </div>
-    <div>
-        <strong>Draft Documentation</strong><br>
-        These pages are work-in-progress and may be moved or updated.
+    <div style="min-width: 0;">
+        <strong>Status: design vocabulary</strong><br>
+        The constraint model is the shared mathematical language of CKE's research pages. The
+        measurement and planning stages it names (X-Ray, kernel maps, numerical contracts) exist today;
+        the closed replanning loop is the <strong>research program, not a shipped feature</strong>.
+        Every equation on this page is a model to be validated &mdash; the distributed-CPU
+        <a href="distributed-cpu.html">validation ladder</a> is where the numbers come from.
     </div>
 </div>
+
+<h2>One Theory, Four Pages</h2>
+
+<p>
+    Four CKE documents have been circling the same idea from different altitudes. They are one theory:
+</p>
 
 <div class="grid grid-2">
     <div class="card card-green">
-        <h3 style="margin-top: 0;">Quantization Math Deep Dive</h3>
-        <p>Explains Q5_0/Q8_0 block formats, dequantization math, and AVX-512 vectorization strategy.</p>
-        <a href="quantization-math-temp.html" class="btn btn-primary">Read More</a>
+        <h3 style="margin-top: 0;">1. Scaling Philosophy &mdash; Why</h3>
+        <p>The system advances at the rate of its active constraint. Profile the slowest element; do not optimize irrelevant peaks. <a href="scaling.html">Open Scaling Philosophy</a>.</p>
     </div>
-
     <div class="card card-green">
-        <h3 style="margin-top: 0;">GEMM Memory Layout</h3>
-        <p>Covers quantized block storage, cache blocking strategies, and KV cache layouts.</p>
-        <a href="gemm-memory-layout-temp.html" class="btn btn-primary">Read More</a>
+        <h3 style="margin-top: 0;">2. CKU &mdash; Measure</h3>
+        <p>How much useful model-state work did the entire system advance per unit time? The common throughput unit and the node roofline. <a href="cke-throughput-unit.html">Open CKU</a>.</p>
+    </div>
+    <div class="card card-green">
+        <h3 style="margin-top: 0;">3. Memory Tetris &mdash; Place</h3>
+        <p>Where should each byte live, and when should it move? NVMe &rarr; DRAM &rarr; cache &rarr; compute, with known lifetimes, staging windows and exposed stalls. <a href="memory-tetris.html">Open Memory Tetris</a>.</p>
+    </div>
+    <div class="card card-green">
+        <h3 style="margin-top: 0;">4. Distributed Zip &mdash; Parallelize</h3>
+        <p>Which algebraic pieces can execute independently across nodes, and when must they synchronize? Shard &rarr; local execution &rarr; partial sum &rarr; minimal reduction. <a href="distributed-cpu.html">Open Zip Fusion</a>. Then measure CKU again.</p>
     </div>
 </div>
 
-<h2>Quick Navigation</h2>
+<h2>The Per-Region Clocks</h2>
 
-<div class="card">
-    <h3 style="margin-top: 0;">By Task</h3>
-    <table>
-        <tr>
-            <th>Task</th>
-            <th>Documentation</th>
-        </tr>
-        <tr>
-            <td><strong>Understanding the system</strong></td>
-            <td><a href="architecture.html">System Overview</a>, <a href="concepts.html">Concepts</a>, <a href="v7-backprop-ir.html">v7 Backprop IR</a>, <a href="v7-cross-entropy-parity.html">v7 CE Parity</a>, <a href="v7-grad-accum-windows.html">v7 Grad-Accum Windows</a>, <a href="v7-runbook.html">v7 Runbook</a>, <a href="v7-python-authoring.html">v7 Python Authoring Guide</a></td>
-        </tr>
-        <tr>
-            <td><strong>Implementing new kernels</strong></td>
-            <td><a href="kernels.html">Kernel Reference</a>, <a href="deltanet-deep-dive.html">Gated DeltaNet Deep Dive</a>, <a href="codegen.html">Codegen</a></td>
-        </tr>
-        <tr>
-            <td><strong>Quantization work</strong></td>
-            <td><a href="quantization.html">Quant Fundamentals</a>, <a href="quantization-visuals.html">Bit Visuals</a>, <a href="gguf-conversion.html">GGUF Parsing</a></td>
-        </tr>
-        <tr>
-            <td><strong>Performance optimization</strong></td>
-            <td><a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a>, <a href="gemm-memory-layout.html">GEMM Layout</a>, <a href="gemm-memory-layout.html#v7-train-parallel-plan">v7 Train Layout+Dispatch</a>, <a href="gemm-optimization.html#v7-threadpool-playbook">Threadpool Playbook</a>, <a href="simd-architecture.html">SIMD</a></td>
-        </tr>
-            <tr>
-                <td><strong>Debugging & profiling</strong></td>
-                <td><a href="kernel-tuning-methodology.html">Kernel Tuning Methodology</a>, <a href="profiling.html">Profiling</a>, <a href="v7-profiling.html">v7 Profiling Runbook</a>, <a href="testing.html">Testing</a>, <a href="divergence-harness.html">Stitched Divergence Harness</a>, <a href="v7-cross-entropy-parity.html">v7 CE Parity Deep Dive</a>, <a href="v7-backprop-ir.html#v7-runtime-stitch-graph">v7 Runtime Stitch Graph</a>, <a href="v7-runbook.html">v7 Runbook</a>, <a href="v7-python-authoring.html">v7 Python Authoring Guide</a></td>
-            </tr>
-            <tr>
-                <td><strong>Operator train + compute workflow</strong></td>
-                <td><a href="v7-svg-dataset-runbook.html">v7 SVG Dataset Runbook</a>, <a href="v7-runbook.html">v7 Inference + Training Runbook</a>, <a href="v7-python-authoring.html">v7 Python Authoring Guide</a>, <a href="v7-profiling.html">v7 Profiling Runbook</a></td>
-            </tr>
-        </table>
+<p>
+    For any generated region \(r\), a CPU node has several clocks running concurrently. Compute:
+</p>
+
+\[ T_{\text{compute},r} = \frac{F_r}{P_{\text{effective}}} \]
+
+<p>
+    DRAM, on <strong>fresh bytes</strong> (what DRAM must actually deliver after cache reuse):
+</p>
+
+\[ T_{\text{DRAM},r} = \frac{B_{\text{fresh},r}}{BW_{\text{DRAM}}} \]
+
+\[ T_{\text{cache},r} = \frac{B_{\text{cache},r}}{BW_{\text{cache}}} \]
+
+<p>
+    Network, where latency usually dominates the payload:
+</p>
+
+\[ T_{\text{network},r} = L_{\text{collective}} + \frac{B_{\text{sync},r}}{BW_{\text{network}}} \]
+
+<p>
+    and, when Memory Tetris tiering is involved, storage:
+</p>
+
+\[ T_{\text{storage},r} = L_{\text{storage}} + \frac{B_{\text{NVMe},r}}{BW_{\text{NVMe}}} \]
+
+<p>
+    When independent clocks overlap, region time is approximately their <strong>maximum</strong>,
+    not their sum &mdash; plus whatever synchronization could not be hidden:
+</p>
+
+\[ \boxed{\; T_r = \max\!\left( T_{\text{compute}},\ T_{\text{fresh-memory}},\ T_{\text{exposed-storage}} \right) + T_{\text{unhidden-sync}} \;} \]
+
+<p>
+    The slowest required path is the constraint. Optimizing any other clock buys nothing until the
+    constraint moves &mdash; that is Goldratt's observation, restated as runtime math.
+</p>
+
+<h2>Exposed vs Hidden: The Overlap Equation</h2>
+
+<p>
+    A transfer only costs wall time when it is <em>exposed</em> &mdash; longer than the work that
+    could have hidden it. One equation covers every tier:
+</p>
+
+\[ \boxed{\; T_{\text{exposed}} = \max\!\left( 0,\ T_{\text{transfer}} - T_{\text{overlap window}} \right) \;} \]
+
+<p>
+    Instantiated per path:
+</p>
+
+\[ T_{\text{exposed DRAM}} = \max(0,\ T_{\text{DRAM}} - T_{\text{compute}}) \]
+
+\[ T_{\text{exposed SSD}} = \max(0,\ T_{\text{SSD}} - T_{\text{lookahead}}) \]
+
+\[ T_{\text{exposed net}} = \max(0,\ T_{\text{network}} - T_{\text{independent work}}) \]
+
+<p>
+    A 250 &micro;s NVMe prefetch under 300 &micro;s of compute contributes <em>zero</em> exposed
+    storage time; a 500 &micro;s transfer under the same compute exposes 200 &micro;s. Memory Tetris's
+    residency choices, the zip schedule's independent lanes, and ordinary cache prefetch are all the
+    same move: <strong>grow the overlap window or shrink the transfer until the exposure is zero.</strong>
+</p>
+
+<h2>The Heterogeneous Scheduler: Minimize the Critical-Path Maximum</h2>
+
+<p>
+    On heterogeneous nodes the region does not finish at the fastest lane's time &mdash; it finishes
+    at the slowest lane's time, plus synchronization. If the lanes measure 180, 182, 179 and
+    95 &micro;s, the region takes &asymp;182 &micro;s \(+\ T_{\text{sync}}\), and the fast node wastes
+    87 &micro;s waiting. The planner's objective is therefore the critical-path maximum:
+</p>
+
+\[ \boxed{\; \underset{s_1,\dots,s_N}{\arg\min}\ \left[ \max_i T_i(s_i)\ +\ T_{\text{sync}}(N, B) \right] \quad \text{subject to } \sum_i s_i = 1 \;} \]
+
+<p>
+    where \(s_i\) is node \(i\)'s shard fraction and \(T_i\) follows from its measured
+    \(P_i(r, \text{phase}, \text{dtype})\). Rebalance until the lanes tie &mdash; 180, 181, 179, 180
+    &mdash; and \(\max_i T_i\) is minimized. This is the deterministic form of the
+    <a href="distributed-cpu.html">distributed-CPU sizing model</a>: shard geometry derived from
+    measured capability, not static ratios.
+</p>
+
+<h2>Worked Example: One Ryzen Region (MODEL)</h2>
+
+<p>
+    A parameterized example, all labels THEORETICAL. DDR5-5600 dual channel:
+</p>
+
+\[ 5600\ \text{MT/s} \times 8\ \text{B} = 44.8\ \text{GB/s per channel} \;\Rightarrow\; 89.6\ \text{GB/s theoretical DRAM} \]
+
+<p>
+    A ConnectX-class fabric at a nominal 400 Gb/s:
+</p>
+
+\[ 400\ \text{Gb/s} \;/\; 8 = 50\ \text{GB/s raw line rate} \]
+
+<p>
+    The hierarchy reads cache \(\gg\) 89.6 GB/s DRAM \(>\) 50 GB/s network &mdash; but the network does
+    <strong>not</strong> limit the transformer to 50 GB/s, because it does not carry the same bytes as
+    DRAM. That is the central zip insight. Suppose a 200 &micro;s region consumes 18 MB of local
+    weight data and synchronizes only 16 KB at its boundary:
+</p>
+
+\[ \frac{18\ \text{MB}}{89.6\ \text{GB/s}} \approx 201\ \mu\text{s} \qquad \frac{16\ \text{KB}}{50\ \text{GB/s}} \approx 0.32\ \mu\text{s} \]
+
+<p>
+    Network <em>bandwidth</em> is nearly irrelevant; the network <em>latency</em> is not. With a
+    collective latency of 8 &micro;s (unmeasured, MODEL):
+</p>
+
+\[ T_{\text{sync}} \approx 8 + 0.32 = 8.3\ \mu\text{s} \qquad T_r \approx 201 + 8.3 \approx 209\ \mu\text{s} \]
+
+<p>
+    This is the kind of calculation CKE should generate for every region &mdash; then replace with a
+    measurement. Note how it connects to the
+    <a href="distributed-cpu.html">token ruler</a>: 186 such boundaries per token make the
+    \(L_{\text{collective}}\) term, not the 0.32 &micro;s of transmission, the term to engineer down.
+</p>
+
+<h2>CKU Refined: The Critical-Path Unit</h2>
+
+<p>
+    The <a href="cke-throughput-unit.html">CKU roofline</a> already bounds a node by the minimum of
+    its memory, compute and network roofs. The zip schedule refines what &ldquo;network roof&rdquo;
+    means: not all active bytes cross all roofs. A node may process \(B_{\text{local}} = 18\) MB while
+    synchronizing only \(B_{\text{sync}} = 16\) KB. The byte classes have different paths, so CKU
+    becomes a per-path vector:
+</p>
+
+\[ CKU_{\text{path}} = \{\, CKU_{\text{compute}},\ CKU_{\text{memory}},\ CKU_{\text{network}},\ CKU_{\text{storage}} \,\} \]
+
+\[ B_{\text{local}} \neq B_{\text{network}} \]
+
+<p>
+    and effective throughput is constrained by the <strong>critical path</strong>, not by pretending
+    every byte crosses every roof:
+</p>
+
+\[ T_{\text{token}} = T_{\text{critical path}}, \qquad CKU = \frac{B_{\text{useful active path}}}{T_{\text{token}}} \]
+
+<p>
+    CKU is then the <em>observable result of the scheduler</em> &mdash; the number the control loop
+    tries to raise by moving the constraint.
+</p>
+
+<h2>&ldquo;Deterministic&rdquo; Means Predictable</h2>
+
+<p>
+    CKE knows the exact graph, exact tensor shapes, exact lifetimes, exact planned placements, exact
+    communication boundaries and calibrated machine capabilities. It can therefore produce an
+    execution schedule and <strong>predict its critical path</strong>:
+</p>
+
+\[ \text{IR} + \text{hardware profile} \rightarrow \text{constraint model} \rightarrow \text{schedule} \rightarrow \text{generated C} \rightarrow \text{measured execution} \]
+
+<p>
+    Prediction error becomes a first-class metric:
+</p>
+
+\[ \boxed{\; E = \frac{|\,T_{\text{measured}} - T_{\text{predicted}}\,|}{T_{\text{predicted}}} \;} \]
+
+<p>
+    The research program in one sentence: keep shrinking \(E\). If CKE predicts 2.4 tok/s and measures
+    2.2, the system model is good; add a node, change the shard geometry, predict 4.1, measure 3.9
+    &mdash; each cycle is a validated or falsified claim about the constraint map (illustrative
+    numbers, not results). That is deterministic computing in a stronger sense than deterministic
+    kernels: <strong>the runtime knows what it is about to cost.</strong>
+</p>
+
+<h2>The Control Loop</h2>
+
+<div class="img-container svg-viewer" data-title="The CKE constraint-model control loop: model and IR feed a constraint map, three resource lanes feed the planner, generated C executes, X-Ray measurement produces CKU, and the found constraint loops back into replanning">
+    <img src="assets/constraint-model-loop.svg" alt="A vertical control loop. Model and IR feed a constraint map of FLOPs, fresh bytes, lifetimes and dependencies. Three lanes branch out: compute roofline answered by the CKU page, memory placement answered by Memory Tetris, and network minimization answered by Distributed Zip. They converge into the CKE planner, which emits a schedule as generated C. Execution produces X-Ray and perf data, which produces the measured CKU and the active constraint. A feedback arrow returns from constraint found back to the constraint map for replanning. A footer states each pass aims to shrink the prediction error E. The measurement and planning stages exist today; the closed loop is the research program" style="width: 100%; max-width: 960px; margin: 0 auto; display: block;">
 </div>
+
+<h2>The Planner Discipline</h2>
+
+<p>
+    Each resource &mdash; arithmetic, cache, DRAM, NUMA, network, storage, synchronization &mdash;
+    presents the same quotient:
+</p>
+
+\[ \text{candidate time} = \frac{\text{required work}}{\text{measured capability}} \]
+
+<p>
+    and the planner attacks the active constraint in a fixed order:
+</p>
+
+<ol>
+    <li><strong>Reduce required work</strong> &mdash; smaller payloads, fewer boundaries, dead-tensor elimination.</li>
+    <li><strong>Overlap independent work</strong> &mdash; grow the window that hides the transfer.</li>
+    <li><strong>Rebalance shards</strong> &mdash; minimize the critical-path maximum across heterogeneous nodes.</li>
+    <li><strong>Eliminate unnecessary movement</strong> &mdash; residency, replication and placement choices.</li>
+    <li><strong>Minimize exposed synchronization</strong> &mdash; latency on the boundary, not bandwidth, is the term to engineer down.</li>
+    <li><strong>Add hardware only then</strong> &mdash; when the remaining constraint is physical, and the model says which one.</li>
+</ol>
+
+<div class="card card-accent">
+    <h3 style="margin-top: 0;">The universal statement</h3>
+    <p style="margin-bottom: 0;">
+        <strong>Every topology has a slowest active boundary; CKE explicitly models it.</strong>
+        Ryzen DDR, dual-socket NUMA, ConnectX, NVMe, HBM or NVLink &mdash; the clocks differ, the
+        equation does not.
+    </p>
+</div>
+
+<h2>Related Pages</h2>
+
+<ul>
+    <li><a href="scaling.html">Scaling Philosophy</a> &mdash; why the constraint, not the peak, is the unit of progress</li>
+    <li><a href="cke-throughput-unit.html">CKE Throughput Unit</a> &mdash; the measurement the loop optimizes</li>
+    <li><a href="memory-tetris.html">Memory Tetris</a> &mdash; placement: hiding slower tiers behind useful work</li>
+    <li><a href="distributed-cpu.html">Distributed CPU: Zip Fusion</a> &mdash; parallelization: the sizing model, token budget and validation ladder</li>
+    <li><a href="v8-numerical-contracts.html">v8 Numerical Contracts</a> &mdash; the parity rules every schedule must satisfy</li>
+    <li><a href="research.html">Research Tracker</a> &mdash; status of all proposed techniques</li>
+</ul>
     </main>
 
     <!-- SVG Viewer Overlay (shared across all pages) -->

@@ -1,6 +1,12 @@
 <!-- TITLE: CKE Throughput Unit -->
 <!-- NAV: cku -->
 
+<style>
+@media (max-width: 640px) {
+    main pre { overflow-x: auto; }
+}
+</style>
+
 <h1>CKE Throughput Unit</h1>
 
 <div class="card card-accent" style="border: 2px solid #ffb400; padding: 2rem; margin-bottom: 2rem;">
@@ -304,6 +310,33 @@ nodes_needed =
     also reach enormous aggregate bandwidth, but a 1 TB resident model may need
     many expensive HBM devices just for capacity before it even starts serving
     traffic.
+</p>
+
+<h3>Refinement: Not All Bytes Cross All Roofs</h3>
+
+<p>
+    The single <code>min(memory, compute, network)</code> roof is the right first
+    approximation, but the <a href="distributed-cpu.html">zip schedule</a> shows
+    where it over-pessimizes: byte classes have different paths. A node may
+    process 18 MB of local weight bytes in a region while synchronizing only
+    16 KB at its boundary &mdash; <code>B_local ≠ B_network</code>. Applying the
+    network roof to all active bytes understates the node. The
+    <a href="constraint-model.html">CKE Constraint Model</a> therefore treats CKU
+    as a per-path vector and makes the token time a critical-path quantity:
+</p>
+
+<pre><code>cku_path = { cku_compute, cku_memory, cku_network, cku_storage }
+
+T_token = T_critical_path
+        = Σ_r [ max(T_compute,r, T_fresh_memory,r, T_exposed_storage,r)
+                + T_unhidden_sync,r ]
+
+cku = useful_active_path_bytes / T_token</code></pre>
+
+<p>
+    Read this way, CKU is the <strong>observable result of the scheduler</strong>:
+    the measurement the control loop tries to raise by moving whichever roof is
+    the active constraint &mdash; not a static property of the silicon.
 </p>
 
 <h2>Memory Placement Is a Scheduling Problem</h2>
