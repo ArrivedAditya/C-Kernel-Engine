@@ -54,6 +54,7 @@ LOWERING CONTRACT:
 """
 
 import argparse
+import ast
 import copy
 import fnmatch
 import importlib.util
@@ -1863,6 +1864,13 @@ OP_DATAFLOW = {
         "inputs": {"x": "layer_input"},
         "outputs": {"y": {"slot": "mlp_scratch", "dtype": "fp32"}},
     },
+    "full_softmax_topk_router": {
+        "inputs": {"logits": "mlp_scratch"},
+        "outputs": {
+            "indices": {"slot": "q_scratch", "dtype": "i32"},
+            "weights": {"slot": "k_scratch", "dtype": "fp32"},
+        },
+    },
     "group_limited_topk_router": {
         "inputs": {"scores": "mlp_scratch"},
         "outputs": {
@@ -1920,6 +1928,13 @@ OP_DATAFLOW = {
         "outputs": {"output": {"slot": "mlp_scratch", "dtype": "fp32"}},
     },
     "shared_swiglu_expert_mlp": {
+        "inputs": {
+            "hidden": "layer_input",
+            "routed": "mlp_scratch",
+        },
+        "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
+    },
+    "gated_shared_swiglu_expert_mlp": {
         "inputs": {
             "hidden": "layer_input",
             "routed": "mlp_scratch",
@@ -3547,11 +3562,13 @@ TEMPLATE_TO_KERNEL_OP = {
     "mamba_rmsnorm_gate": "mamba_rmsnorm_gate",
     "mamba_out_proj": "matmul",
     "moe_router": "matmul",
+    "full_softmax_topk_router": "full_softmax_topk_router",
     "group_limited_topk_router": "group_limited_topk_router",
     "moe_relu2_expert_mlp": "moe_relu2_expert_mlp",
     "shared_relu2_expert_mlp": "shared_relu2_expert_mlp",
     "moe_swiglu_expert_mlp": "moe_swiglu_expert_mlp",
     "shared_swiglu_expert_mlp": "shared_swiglu_expert_mlp",
+    "gated_shared_swiglu_expert_mlp": "gated_shared_swiglu_expert_mlp",
     "farskip_routed_shared_combine": "farskip_routed_shared_combine",
     "kv_a_proj": "matmul",
     "kv_a_layernorm": "rmsnorm",
@@ -4190,6 +4207,7 @@ def _template_str_param(
 
 def _dtype_size_bytes(dtype: str) -> int:
     return {
+        "u8": 1,
         "fp32": 4,
         "f32": 4,
         "bf16": 2,
@@ -4202,6 +4220,103 @@ def _dtype_size_bytes(dtype: str) -> int:
         "q8_k": 1,
         "q8_k_block": 292,
     }.get(str(dtype or "").strip().lower(), 4)
+
+
+def _kernel_port_size_bytes(
+    port: Dict[str, Any], params: Dict[str, Any], config: Dict[str, Any]
+) -> Optional[int]:
+    """Resolve the physical byte extent of a mapped activation port."""
+    shape = port.get("shape")
+    if not isinstance(shape, list) or not shape:
+        return None
+
+    values = dict(config)
+    values.update(params)
+    symbols = {
+        **values,
+        "M": values.get("M", values.get("_m", values.get("seq_len"))),
+        "N": values.get("N", values.get("_n", values.get("_output_dim"))),
+        "K": values.get("K", values.get("_k", values.get("_input_dim"))),
+        "R": values.get("R", values.get("_m", values.get("seq_len"))),
+        "H": values.get("H", values.get("embed_dim", values.get("hidden_size"))),
+        "I": values.get(
+            "I", values.get("moe_intermediate_size", values.get("intermediate_size"))
+        ),
+        "E": values.get("E", values.get("n_routed_experts", values.get("num_experts"))),
+        "T": values.get("T", values.get("seq_len")),
+        "Tq": values.get("Tq", values.get("query_tokens", values.get("seq_len"))),
+        "Tk": values.get("Tk", values.get("key_tokens", values.get("seq_len"))),
+        "D": values.get("D", values.get("head_dim")),
+        "KV": values.get("KV", values.get("num_kv_heads")),
+    }
+
+    def _evaluate(node: ast.AST) -> int:
+        if isinstance(node, ast.Expression):
+            return _evaluate(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, int):
+            return int(node.value)
+        if isinstance(node, ast.Name):
+            value = symbols.get(node.id)
+            if value is None:
+                raise ValueError(node.id)
+            return int(value)
+        if isinstance(node, ast.BinOp) and isinstance(
+            node.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv)
+        ):
+            left = _evaluate(node.left)
+            right = _evaluate(node.right)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if right == 0:
+                raise RuntimeError("HARD PORT EXTENT FAULT: division by zero")
+            return left // right
+        raise RuntimeError(
+            "HARD PORT EXTENT FAULT: unsupported shape expression node "
+            f"{type(node).__name__}"
+        )
+
+    extents: List[int] = []
+    for raw_extent in shape:
+        if isinstance(raw_extent, bool):
+            return None
+        if isinstance(raw_extent, int):
+            extent = int(raw_extent)
+        else:
+            text = str(raw_extent).strip()
+            try:
+                extent = _evaluate(ast.parse(text, mode="eval"))
+            except (SyntaxError, TypeError, ValueError):
+                return None
+        if extent <= 0:
+            raise RuntimeError(
+                f"HARD PORT EXTENT FAULT: port {port.get('name', '<unnamed>')} "
+                f"resolved non-positive extent {extent} from {raw_extent!r}"
+            )
+        extents.append(extent)
+
+    elements = 1
+    for extent in extents:
+        elements *= extent
+
+    block_elements = port.get("block_elements")
+    block_bytes = port.get("block_bytes")
+    if block_elements is not None or block_bytes is not None:
+        if not isinstance(block_elements, int) or block_elements <= 0:
+            raise RuntimeError("HARD PORT EXTENT FAULT: block_elements must be positive")
+        if not isinstance(block_bytes, int) or block_bytes <= 0:
+            raise RuntimeError("HARD PORT EXTENT FAULT: block_bytes must be positive")
+        if extents[-1] % block_elements != 0:
+            raise RuntimeError(
+                "HARD PORT EXTENT FAULT: innermost extent is not block aligned"
+            )
+        outer = elements // extents[-1]
+        return outer * (extents[-1] // block_elements) * block_bytes
+
+    return elements * _dtype_size_bytes(str(port.get("dtype", "fp32")))
 
 
 def _validate_lowered_activation_memory(
@@ -4234,8 +4349,47 @@ def _validate_lowered_activation_memory(
         previous_name = name
 
     write_contracts: List[Dict[str, Any]] = []
+    scratch_contracts: List[Dict[str, Any]] = []
     operations = lowered_ir.get("operations", []) if isinstance(lowered_ir, dict) else []
     for op in operations:
+        for scratch in op.get("scratch", []) or []:
+            if not isinstance(scratch, dict):
+                continue
+            scratch_offset = int(scratch.get("scratch_offset", 0) or 0)
+            scratch_size = int(scratch.get("size", 0) or 0)
+            scratch_end = scratch_offset + scratch_size
+            if scratch_offset < 0 or scratch_size < 0 or scratch_end > total_size:
+                raise RuntimeError(
+                    "HARD SCRATCH LAYOUT FAULT: "
+                    f"{op.get('kernel')}:{scratch.get('name', '<unnamed>')} interval "
+                    f"[{scratch_offset}, {scratch_end}) is outside activation arena "
+                    f"[0, {total_size})"
+                )
+            disjoint_from = scratch.get("disjoint_from", []) or []
+            for live in disjoint_from:
+                if not isinstance(live, dict):
+                    continue
+                live_offset = int(live.get("offset", 0) or 0)
+                live_size = int(live.get("size", 0) or 0)
+                live_end = live_offset + live_size
+                if max(scratch_offset, live_offset) < min(scratch_end, live_end):
+                    raise RuntimeError(
+                        "HARD SCRATCH ALIAS FAULT: "
+                        f"{op.get('kernel')}:{scratch.get('name', '<unnamed>')} interval "
+                        f"[{scratch_offset}, {scratch_end}) overlaps live "
+                        f"{live.get('kind', 'port')}:{live.get('name', '<unnamed>')} "
+                        f"[{live_offset}, {live_end})"
+                    )
+            scratch_contracts.append({
+                "op": str(op.get("op", "")),
+                "layer": int(op.get("layer", -1) or -1),
+                "provider": str(op.get("kernel", "")),
+                "scratch": str(scratch.get("name", "")),
+                "offset": scratch_offset,
+                "required_bytes": scratch_size,
+                "disjoint_port_count": len(disjoint_from),
+            })
+
         capability = op.get("resolved_codegen_capability") or {}
         if capability.get("operator_family") != "activation_quantization":
             continue
@@ -4313,8 +4467,10 @@ def _validate_lowered_activation_memory(
         "status": "PASS",
         "activation_buffer_count": len(buffers),
         "quantized_write_count": len(write_contracts),
+        "scratch_contract_count": len(scratch_contracts),
         "arena_bytes": total_size,
         "writes": write_contracts,
+        "scratch": scratch_contracts,
     }
 
 
@@ -4322,12 +4478,94 @@ def _kernel_scratch_size_bytes(
     scratch: Dict[str, Any], params: Dict[str, Any], config: Dict[str, Any]
 ) -> Optional[int]:
     """Resolve a kernel-map scratch shape using the operation's concrete dimensions."""
+    values = dict(config)
+    values.update(params)
+
+    size_expression = scratch.get("size_bytes")
+    if isinstance(size_expression, int):
+        return int(size_expression) if size_expression >= 0 else None
+    if isinstance(size_expression, str) and size_expression.strip():
+        symbols = {
+            "R": values.get("_m", values.get("seq_len")),
+            "H": values.get("embed_dim", values.get("hidden_size")),
+            "I": values.get(
+                "moe_intermediate_size", values.get("intermediate_size")
+            ),
+            "E": values.get("n_routed_experts", values.get("num_experts")),
+            "K": values.get("experts_per_tok", values.get("num_experts_per_tok")),
+        }
+
+        def _row_bytes(extent: int, block_elements: int, block_bytes: int) -> int:
+            if extent <= 0 or extent % block_elements != 0:
+                raise RuntimeError(
+                    "HARD SCRATCH CONTRACT FAULT: quantized row extent "
+                    f"{extent} is not divisible by {block_elements}"
+                )
+            return (extent // block_elements) * block_bytes
+
+        functions = {
+            "align64": lambda value: (value + 63) & ~63,
+            "q8_k_row_bytes": lambda value: _row_bytes(value, 256, 292),
+            "q8_0_row_bytes": lambda value: _row_bytes(value, 32, 34),
+        }
+
+        def _evaluate(node: ast.AST) -> int:
+            if isinstance(node, ast.Expression):
+                return _evaluate(node.body)
+            if isinstance(node, ast.Constant) and isinstance(node.value, int):
+                return int(node.value)
+            if isinstance(node, ast.Name):
+                value = symbols.get(node.id)
+                if value is None:
+                    raise ValueError(node.id)
+                return int(value)
+            if isinstance(node, ast.BinOp) and isinstance(
+                node.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv)
+            ):
+                left = _evaluate(node.left)
+                right = _evaluate(node.right)
+                if isinstance(node.op, ast.Add):
+                    return left + right
+                if isinstance(node.op, ast.Sub):
+                    return left - right
+                if isinstance(node.op, ast.Mult):
+                    return left * right
+                if right == 0:
+                    raise RuntimeError("HARD SCRATCH CONTRACT FAULT: division by zero")
+                return left // right
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in functions
+                and len(node.args) == 1
+                and not node.keywords
+            ):
+                return int(functions[node.func.id](_evaluate(node.args[0])))
+            raise RuntimeError(
+                "HARD SCRATCH CONTRACT FAULT: unsupported size_bytes expression node "
+                f"{type(node).__name__}"
+            )
+
+        try:
+            resolved_size = _evaluate(ast.parse(size_expression, mode="eval"))
+        except ValueError:
+            return None
+        except RuntimeError:
+            if scratch.get("size_resolution") != "required":
+                return None
+            raise
+        except (SyntaxError, TypeError) as exc:
+            raise RuntimeError(
+                f"HARD SCRATCH CONTRACT FAULT: invalid size_bytes expression {size_expression!r}"
+            ) from exc
+        if resolved_size < 0:
+            raise RuntimeError("HARD SCRATCH CONTRACT FAULT: scratch size must be non-negative")
+        return resolved_size
+
     shape = scratch.get("shape")
     if not isinstance(shape, list) or not shape:
         raw_size = scratch.get("size")
         return int(raw_size) if isinstance(raw_size, int) else None
-    values = dict(config)
-    values.update(params)
     k_extent = values.get("_k", values.get("_input_dim"))
     if "K_blocks" in shape and k_extent is not None and int(k_extent) % 256 != 0:
         raise RuntimeError(
@@ -4386,6 +4624,56 @@ def _kernel_scratch_size_bytes(
     for value in extents:
         elements *= value
     return elements * _dtype_size_bytes(str(scratch.get("dtype", "fp32")))
+
+
+def _required_kernel_call_scratch_bytes(
+    ir_lower_1_ops: List[Dict[str, Any]],
+    config: Dict[str, Any],
+    seq_len: int,
+) -> int:
+    """Return the largest planner-owned call workspace selected by the IR."""
+    scratch_config = dict(config)
+    scratch_config["seq_len"] = int(seq_len)
+    scratch_config["context_length"] = int(
+        config.get("context_length", config.get("context_len", seq_len)) or seq_len
+    )
+
+    maximum = 0
+    for op in ir_lower_1_ops:
+        params = dict(op.get("params", {}) or {})
+        params["seq_len"] = int(seq_len)
+        params["_m"] = int(seq_len)
+        op_name = str(op.get("op", "") or "")
+        output_dim, input_dim = compute_matmul_dims(op_name, scratch_config)
+        if output_dim is not None:
+            params.setdefault("_output_dim", int(output_dim))
+        if input_dim is not None:
+            params.setdefault("_input_dim", int(input_dim))
+
+        raw_layer = op.get("layer", -1)
+        layer = int(raw_layer) if raw_layer is not None else -1
+        apply_layer_attention_dims(op_name, params, layer, scratch_config)
+        cursor = 0
+        for scratch in op.get("scratch", []) or []:
+            if not isinstance(scratch, dict):
+                continue
+            size = _kernel_scratch_size_bytes(scratch, params, scratch_config)
+            if size is None:
+                if scratch.get("size_resolution") == "required":
+                    raise RuntimeError(
+                        "HARD SCRATCH CONTRACT FAULT: planner cannot resolve required "
+                        f"workspace for {op.get('kernel')}:{scratch.get('name', '<unnamed>')}"
+                    )
+                continue
+            alignment = max(64, int(scratch.get("alignment", 64) or 64))
+            if alignment & (alignment - 1):
+                raise RuntimeError(
+                    "HARD SCRATCH CONTRACT FAULT: workspace alignment must be a power of two"
+                )
+            cursor = (cursor + alignment - 1) & ~(alignment - 1)
+            cursor += int(size)
+        maximum = max(maximum, cursor)
+    return maximum
 
 
 def _resolve_branch_collect_contract(
@@ -4611,6 +4899,24 @@ def _backfill_template_runtime_flags(manifest: Dict[str, Any]) -> None:
     config.setdefault("decode_kv_cache_dtype", _resolve_decode_kv_cache_dtype(template, config))
 
 
+def _apply_prefill_policy_override(manifest: Dict[str, Any], requested: str) -> None:
+    """Apply an explicit runtime policy override and retain its provenance."""
+    policy = str(requested or "auto").strip().lower()
+    if policy == "auto":
+        return
+    if policy not in {"batched", "sequential_decode"}:
+        raise RuntimeError(f"unsupported prefill policy override: {requested}")
+
+    config = manifest.get("config")
+    if not isinstance(config, dict):
+        config = {}
+        manifest["config"] = config
+    declared = str(config.get("prefill_policy") or "").strip().lower()
+    config["prefill_policy_declared"] = declared or "unspecified"
+    config["prefill_policy"] = policy
+    config["prefill_policy_source"] = "cli_override"
+
+
 def _backfill_vision_contract_config(manifest: Dict[str, Any]) -> None:
     config = manifest.get("config")
     if not isinstance(config, dict):
@@ -4803,7 +5109,11 @@ def compute_matmul_dims(op_name: str, config: Dict) -> Tuple[Optional[int], Opti
         return int(config.get("kv_lora_rank", 0) or 0) + int(config.get("qk_rope_head_dim", 0) or 0), embed
     if op_name in ("moe_relu2_expert_mlp", "moe_swiglu_expert_mlp"):
         return int(config.get("moe_intermediate_size", inter) or inter), embed
-    if op_name in ("shared_relu2_expert_mlp", "shared_swiglu_expert_mlp"):
+    if op_name in (
+        "shared_relu2_expert_mlp",
+        "shared_swiglu_expert_mlp",
+        "gated_shared_swiglu_expert_mlp",
+    ):
         return int(config.get("moe_shared_expert_intermediate_size", config.get("moe_intermediate_size", inter)) or inter), embed
     if op_name in ("mlp_gate_up",):
         return inter * 2, embed
@@ -6842,11 +7152,13 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     "mamba_rmsnorm_gate": ["mamba_norm"],
     "mamba_out_proj": ["mamba_out_proj"],
     "moe_router": ["moe_router"],
+    "full_softmax_topk_router": [],
     "group_limited_topk_router": ["moe_router_bias"],
     "moe_relu2_expert_mlp": ["moe_expert_up", "moe_expert_down"],
     "shared_relu2_expert_mlp": ["moe_shared_up", "moe_shared_down"],
     "moe_swiglu_expert_mlp": ["moe_expert_gate", "moe_expert_up", "moe_expert_down"],
     "shared_swiglu_expert_mlp": ["moe_shared_gate", "moe_shared_up", "moe_shared_down"],
+    "gated_shared_swiglu_expert_mlp": ["moe_shared_gate", "moe_shared_up", "moe_shared_down", "moe_shared_router"],
     "farskip_routed_shared_combine": ["moe_shared_gate", "moe_shared_up", "moe_shared_down"],
     "kv_a_proj": ["mla_kv_a_proj"],
     "kv_a_layernorm": ["mla_kv_a_norm"],
@@ -8955,8 +9267,19 @@ def generate_ir_lower_1(
             # Update current activation for next kernel
             current_activation = output_buffer
 
-        # Map scratch buffers
+        # Map only call-bound scratch buffers. Runtime-lifetime preparation
+        # caches are owned by model initialization and must not be overlaid on
+        # an operation's live activation/output arena.
+        call_scratch_names = {
+            str(param.get("source", "")).split(":", 1)[1]
+            for param in (kernel_map.get("call_abi", {}).get("params", []) or [])
+            if isinstance(param, dict)
+            and str(param.get("source", "")).startswith(("scratch:", "scratch_size:"))
+        }
         for scratch in kernel_map.get("scratch", []):
+            scratch_name = str(scratch.get("name", "") or "")
+            if scratch.get("lifetime") == "model_runtime" and scratch_name not in call_scratch_names:
+                continue
             lowered_scratch = copy.deepcopy(scratch)
             lowered_scratch.setdefault("name", f"scratch_{idx}")
             lowered_scratch.setdefault("size", "dynamic")
@@ -9592,6 +9915,7 @@ WEIGHT_PATTERNS = {
     "moe_shared_gate": ["layer.{L}.moe_shared_gate"],
     "moe_shared_up": ["layer.{L}.moe_shared_up"],
     "moe_shared_down": ["layer.{L}.moe_shared_down"],
+    "moe_shared_router": ["layer.{L}.moe_shared_router"],
 
     # Output projection
     "wo": ["layer.{L}.wo", "layers.{L}.attention.wo", "layer.{L}.attn_output", "layer.{L}.attn_o", "layer.{L}.mla_out_proj"],
@@ -9775,6 +10099,7 @@ TEMPLATE_OP_WEIGHTS = {
     "shared_relu2_expert_mlp": ["moe_shared_up", "moe_shared_down"],
     "moe_swiglu_expert_mlp": ["moe_expert_gate", "moe_expert_up", "moe_expert_down"],
     "shared_swiglu_expert_mlp": ["moe_shared_gate", "moe_shared_up", "moe_shared_down"],
+    "gated_shared_swiglu_expert_mlp": ["moe_shared_gate", "moe_shared_up", "moe_shared_down", "moe_shared_router"],
     "farskip_routed_shared_combine": ["moe_shared_gate", "moe_shared_up", "moe_shared_down"],
     "kv_a_proj": ["mla_kv_a_proj"],
     "kv_a_layernorm": ["mla_kv_a_norm"],
@@ -10362,8 +10687,19 @@ def generate_memory_layout(
     fused_attn_scratch = max(350 * 1024, 3 * num_heads * seq_len * max_attn_head_dim * 4 + embed_dim * 4 * seq_len * 4)
     # BF16 GeGLU needs 3 * seq_len * dim * 4 (input [a,b] + output)
     geglu_bf16_scratch = seq_len * intermediate_size * 3 * 4
-    scratch_size = max(mlp_size, fused_attn_scratch, geglu_bf16_scratch)
-    add_buffer("mlp_scratch", scratch_size, f"[max({seq_len}*{intermediate_size*2}, fused_attn, geglu_bf16)]")
+    provider_scratch_reserve = _required_kernel_call_scratch_bytes(
+        ir_lower_1_ops, config, seq_len
+    )
+    scratch_size = (
+        max(mlp_size, fused_attn_scratch, geglu_bf16_scratch)
+        + provider_scratch_reserve
+    )
+    add_buffer(
+        "mlp_scratch",
+        scratch_size,
+        f"[max({seq_len}*{intermediate_size*2}, fused_attn, geglu_bf16) + "
+        f"provider_scratch({provider_scratch_reserve})]",
+    )
 
     # Layer output: [seq_len, embed_dim]
     layer_out_size = seq_len * embed_dim * 4
@@ -10576,6 +10912,27 @@ def generate_memory_layout_packed(
         num_layers_override=layer_limit,
         template=template_doc,
     )
+    seq_len = 1 if mode == "decode" else int(
+        min(
+            context_len if context_len is not None else config.get("context_length", 32768),
+            config.get("context_length", 32768),
+        )
+    )
+    provider_scratch_reserve = _required_kernel_call_scratch_bytes(
+        ir_lower_1_ops, config, seq_len
+    )
+    if provider_scratch_reserve:
+        mlp_spec = act_specs.get("mlp_scratch")
+        if not isinstance(mlp_spec, dict):
+            raise RuntimeError(
+                "HARD SCRATCH CONTRACT FAULT: selected providers require workspace "
+                "but the activation plan has no mlp_scratch arena"
+            )
+        mlp_spec["size"] = int(mlp_spec.get("size", 0) or 0) + provider_scratch_reserve
+        mlp_spec["shape"] = (
+            f"{mlp_spec.get('shape', '[mlp_scratch]')} + "
+            f"provider_scratch({provider_scratch_reserve})"
+        )
 
     weight_offset = 0
     act_offset = 0
@@ -12395,6 +12752,27 @@ def generate_ir_lower_2(
 
         # Keep _m aligned with effective seq_len for token-major kernels.
         params["_m"] = params.get("seq_len", 1)
+        if op_type in {
+            "full_softmax_topk_router",
+            "moe_swiglu_expert_mlp",
+            "gated_shared_swiglu_expert_mlp",
+        }:
+            params.update({
+                "R": int(params["_m"]),
+                "H": int(config.get("embed_dim", config.get("hidden_size", 0)) or 0),
+                "I": int(config.get("moe_intermediate_size", config.get("intermediate_size", 0)) or 0),
+                "E": int(config.get("n_routed_experts", config.get("num_experts", 0)) or 0),
+                "K": int(config.get("experts_per_tok", config.get("num_experts_per_tok", 0)) or 0),
+            })
+            if op_type == "gated_shared_swiglu_expert_mlp":
+                params["I"] = int(
+                    config.get("moe_shared_expert_intermediate_size", params["I"])
+                    or params["I"]
+                )
+        if op_type == "full_softmax_topk_router":
+            params["routed_scaling_factor"] = float(
+                config.get("routed_scaling_factor", 1.0) or 1.0
+            )
         if op_type in ("cross_k_proj", "cross_v_proj"):
             params["_m"] = int(config.get("encoder_memory_length", 0) or 0)
         if op_type == "cross_attn":
@@ -12443,6 +12821,53 @@ def generate_ir_lower_2(
             mlp_buf = activation_buffers.get("mlp_scratch")
             scratch_cursor = int(mlp_buf["offset"]) if mlp_buf else 0
             scratch_limit = scratch_cursor + int(mlp_buf.get("size", 0)) if mlp_buf else 0
+            required_scratch_contract = any(
+                scratch.get("size_resolution") == "required"
+                for scratch in kernel_scratch_list
+                if isinstance(scratch, dict)
+            )
+            live_port_ranges: List[Dict[str, Any]] = []
+            for port_kind, logical_ports, physical_ports in (
+                ("input", ir_op.get("inputs", {}), lowered_op.get("activations", {})),
+                ("output", ir_op.get("outputs", {}), lowered_op.get("outputs", {})),
+            ):
+                if not isinstance(logical_ports, dict) or not isinstance(physical_ports, dict):
+                    continue
+                for port_name, physical in physical_ports.items():
+                    if not isinstance(physical, dict) or physical.get("buffer") != "mlp_scratch":
+                        continue
+                    logical = logical_ports.get(port_name)
+                    if not isinstance(logical, dict):
+                        if required_scratch_contract:
+                            raise RuntimeError(
+                                "HARD SCRATCH CONTRACT FAULT: cannot resolve live port metadata "
+                                f"for {ir_op.get('kernel')}:{port_kind}:{port_name}"
+                            )
+                        continue
+                    required_bytes = _kernel_port_size_bytes(logical, params, config)
+                    if required_bytes is None:
+                        if required_scratch_contract:
+                            raise RuntimeError(
+                                "HARD SCRATCH CONTRACT FAULT: cannot resolve live port extent "
+                                f"for {ir_op.get('kernel')}:{port_kind}:{port_name}"
+                            )
+                        continue
+                    port_offset = int(physical.get("activation_offset", mlp_buf["offset"]))
+                    port_end = port_offset + int(required_bytes)
+                    if not mlp_buf or port_offset < int(mlp_buf["offset"]) or port_end > scratch_limit:
+                        raise RuntimeError(
+                            "HARD MEMORY PLAN FAULT: live kernel port exceeds mlp_scratch arena: "
+                            f"provider={ir_op.get('kernel')} port={port_kind}:{port_name} "
+                            f"interval=[{port_offset}, {port_end}) arena="
+                            f"[{int(mlp_buf['offset']) if mlp_buf else 0}, {scratch_limit})"
+                        )
+                    live_port_ranges.append({
+                        "kind": port_kind,
+                        "name": port_name,
+                        "offset": port_offset,
+                        "size": int(required_bytes),
+                    })
+                    scratch_cursor = max(scratch_cursor, port_end)
             planned_scratch = []
             for i, scratch in enumerate(kernel_scratch_list):
                 scratch_size = _kernel_scratch_size_bytes(scratch, params, config)
@@ -12470,6 +12895,9 @@ def generate_ir_lower_2(
                     "dtype": scratch.get("dtype", "fp32"),
                     "shape": copy.deepcopy(scratch.get("shape", [])),
                     "ptr_expr": f"activations + {scratch_offset}",
+                    "disjoint_from": (
+                        copy.deepcopy(live_port_ranges) if required_scratch_contract else []
+                    ),
                 })
             lowered_op["scratch"] = planned_scratch + lowered_op["scratch"]
 
@@ -14113,6 +14541,15 @@ def main(args: List[str]) -> int:
         help="Logits buffer layout (auto=decode last/prefill full)"
     )
     parser.add_argument(
+        "--prefill-policy-override",
+        choices=["auto", "batched", "sequential_decode"],
+        default="auto",
+        help=(
+            "Explicit generated-runtime prefill policy. auto preserves the model "
+            "contract; non-auto values are recorded as CLI overrides."
+        ),
+    )
+    parser.add_argument(
         "--no-fusion",
         action="store_true",
         help="Disable kernel fusion pass (use unfused ops)"
@@ -14176,6 +14613,7 @@ def main(args: List[str]) -> int:
     _hydrate_manifest_template(manifest)
     _backfill_template_runtime_flags(manifest)
     manifest["config"] = _normalize_manifest_config(manifest.get("config", {}))
+    _apply_prefill_policy_override(manifest, parsed_args.prefill_policy_override)
     if parsed_args.prefer_q8_activation:
         manifest.setdefault("config", {})["prefer_q8_activation"] = True
     # Override logits layout if requested (propagates into layout + codegen config)

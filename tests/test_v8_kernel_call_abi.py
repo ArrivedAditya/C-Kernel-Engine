@@ -15,8 +15,8 @@ SCHEMA = ROOT / "version" / "v8" / "schemas" / "kernel_call_abi.schema.json"
 REGISTRY = MAPS / "KERNEL_REGISTRY.json"
 EXCLUDED = {"KERNEL_REGISTRY.json", "kernel_bindings.json", "kernel_bindings.overlay.json"}
 BUILD_IR = ROOT / "version" / "v8" / "scripts" / "build_ir_v8.py"
-EXPECTED_GOVERNED_MAP_COUNT = 107
-EXPECTED_MAP_OWNED_ABI_COUNT = 140
+EXPECTED_GOVERNED_MAP_COUNT = 111
+EXPECTED_MAP_OWNED_ABI_COUNT = 144
 GLM4_PARITY_PROVIDERS = {
     "rope_forward_qk_pairwise_llama_cpu",
     "rope_precompute_cache_llama_cpu",
@@ -122,6 +122,7 @@ class V8KernelCallABITests(unittest.TestCase):
                 "gemm_nt_q5_0_q8_0",
                 "gemm_nt_q5_k",
                 "gemm_nt_q6_k_q8_k",
+                "moe_swiglu_expert_forward_q4k_q5k_bucketed",
             },
         )
         preparation = preparations["gemm_nt_q5_0_q8_0"]
@@ -161,6 +162,17 @@ class V8KernelCallABITests(unittest.TestCase):
         self.assertEqual(q6_k["prepared_format"], "q6_k_expanded_integer_metadata_v1")
         self.assertEqual(q6_k["max_total_bytes"], 1073741824)
         self.assertEqual(registry["gemm_nt_q6_k_q8_k"]["weight_preparation"], q6_k)
+        moe = preparations["moe_swiglu_expert_forward_q4k_q5k_bucketed"]
+        self.assertEqual(
+            moe["function"], "ck_moe_prepare_q4k_gate_up_vnni_x8"
+        )
+        self.assertEqual(moe["max_total_bytes"], 16 * 1024**3)
+        self.assertEqual(
+            registry["moe_swiglu_expert_forward_q4k_q5k_bucketed"][
+                "weight_preparation"
+            ],
+            moe,
+        )
 
     def test_q5_k_activation_scratch_is_planner_owned_and_exactly_sized(self) -> None:
         q5_map = load_json(MAPS / "gemm_nt_q5_k.json")

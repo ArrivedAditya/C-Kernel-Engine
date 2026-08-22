@@ -2375,6 +2375,109 @@
       "position_transform": null,
       "description": "Observed Instella FarSkip shared-expert reference order. BF16 weights feed FP32 ascending reductions; the shared result is reused for routed-inclusive and routed-free residual streams with the reference parenthesization. Full-model PyTorch certification is still required before promotion to validated."
     },
+    "llama_full_softmax_topk_selected_renorm_fp32_avx2": {
+      "operator_family": "moe_router",
+      "status": "observed",
+      "storage": {
+        "input": "fp32",
+        "weight": "none",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "none",
+        "accumulator": "fp64",
+        "contraction": "enabled",
+        "evaluation_order": "full_vector_max_then_avx2_fma_exponential_chunks_then_fp64_chunk_sum_then_fp32_probability_scale_then_topk_then_fp64_selected_sum_cast_fp32_clamp_divide_and_scale"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "vector_exponential",
+          "reduction_update",
+          "softmax_probability_store",
+          "reduction_finalize",
+          "output_divide",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "composite",
+        "order": "stage_ordered",
+        "partial_accumulator": "fp64",
+        "merge_order": "selected_slot_order"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Observed llama.cpp-compatible AVX2 full-softmax top-k MoE routing order. Distinct-score Qwen3.5 production shapes are bit-exact; equal-score cross-toolchain ordering remains uncertified."
+    },
+    "q8_0_q8_0_shared_swiglu_fp32_sigmoid_gate_then_routed_add": {
+      "operator_family": "moe_shared_swiglu",
+      "status": "observed",
+      "storage": {"input": "fp32", "weight": "q8_0", "output": "fp32"},
+      "compute": {
+        "input": "int8",
+        "weight": "int8",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "quantize_hidden_q8_0_then_q8_0_gate_up_then_ggml_swiglu_then_quantize_activation_q8_0_then_q8_0_down_then_fp32_scalar_gate_then_sigmoid_then_rounded_shared_multiply_then_routed_add"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": ["input_load", "reduction_update", "activation_intermediate_store", "activation_intermediate_load", "vector_exponential", "weighted_product", "output_store"]
+      },
+      "reduction": {"kind": "composite", "order": "stage_ordered", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "independent_rows", "split_strategy": "independent_outputs", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Observed compact Q8_0 shared SwiGLU composition with a separate FP32 sigmoid gate. The gated shared product is rounded before routed addition to retain graph-operation semantics."
+    },
+    "q4_k_q8_k_gate_up_ggml_swiglu_q5_k_q8_k_down_weighted_fp32": {
+      "operator_family": "moe_swiglu_expert",
+      "status": "observed",
+      "storage": {
+        "input": "fp32",
+        "weight": "q4_k_q5_k",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "int8",
+        "weight": "int4_int5",
+        "accumulator": "fp32",
+        "contraction": "enabled",
+        "evaluation_order": "quantize_hidden_q8_k_then_q4_k_gate_up_then_ggml_swiglu_then_quantize_activation_q8_k_then_q5_k_down_then_selected_slot_order_weighted_sum"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "weighted_product",
+          "reduction_update",
+          "activation_intermediate_store",
+          "activation_intermediate_load",
+          "vector_exponential",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "composite",
+        "order": "stage_ordered",
+        "partial_accumulator": "fp32",
+        "merge_order": "selected_slot_order"
+      },
+      "threading": {
+        "work_partition": "independent_rows",
+        "split_strategy": "independent_outputs",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Observed compact routed SwiGLU composition for Q4_K gate/up and Q5_K down experts. Constituent primitives are certified; complete llama.cpp mul_mat_id and expert-merge parity remains required before promotion."
+    },
     "bf16_weight_bf16_input_pytorch_onednn_brgemm_bf16_output": {
       "status": "validated",
       "storage": {

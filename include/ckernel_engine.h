@@ -2905,10 +2905,16 @@ void sigmoid_backward_bf16(const uint16_t *input,
 	                          int tokens,
 	                          int dim);
 
-	void swiglu_forward_ggml(const float *input,
-	                         float *output,
-	                         int tokens,
-	                         int dim);
+void swiglu_forward_ggml(const float *input,
+                         float *output,
+                         int tokens,
+                         int dim);
+
+void swiglu_forward_ggml_split(const float *gate,
+                               const float *up,
+                               float *output,
+                               int tokens,
+                               int dim);
 
 	void swiglu_forward_pytorch_bf16_storage(const float *input,
 	                                         float *output,
@@ -3111,6 +3117,138 @@ void moe_swiglu_expert_forward_bf16(const float *hidden,
                                     int n_experts,
                                     int top_k);
 
+size_t moe_swiglu_expert_q4k_q5k_workspace_bytes(int hidden_dim,
+                                                  int intermediate_dim);
+
+int moe_swiglu_expert_forward_q4k_q5k_workspace(
+    const float *hidden,
+    const int *indices,
+    const float *routing_weights,
+    const void *expert_gate,
+    const void *expert_up,
+    const void *expert_down,
+    float *output,
+    int rows,
+    int hidden_dim,
+    int intermediate_dim,
+    int n_experts,
+    int top_k,
+    void *workspace,
+    size_t workspace_bytes);
+
+int moe_swiglu_expert_forward_q4k_q5k_parallel_workspace(
+    const float *hidden,
+    const int *indices,
+    const float *routing_weights,
+    const void *expert_gate,
+    const void *expert_up,
+    const void *expert_down,
+    float *output,
+    int rows,
+    int hidden_dim,
+    int intermediate_dim,
+    int n_experts,
+    int top_k,
+    void *workspace,
+    size_t workspace_bytes);
+
+int moe_swiglu_expert_forward_q4k_q5k_bucketed_workspace(
+    const float *hidden,
+    const int *indices,
+    const float *routing_weights,
+    const void *expert_gate,
+    const void *expert_up,
+    const void *expert_down,
+    float *output,
+    int rows,
+    int hidden_dim,
+    int intermediate_dim,
+    int n_experts,
+    int top_k,
+    void *workspace,
+    size_t workspace_bytes);
+
+int moe_swiglu_expert_forward_q4k_q5k_bucketed_prepared_workspace(
+    const float *hidden,
+    const int *indices,
+    const float *routing_weights,
+    const void *expert_gate,
+    const void *expert_up,
+    const void *expert_down,
+    const void *expert_gate_packed,
+    const void *expert_up_packed,
+    float *output,
+    int rows,
+    int hidden_dim,
+    int intermediate_dim,
+    int n_experts,
+    int top_k,
+    void *workspace,
+    size_t workspace_bytes);
+
+int moe_swiglu_expert_forward_q4k_q5k_auto_workspace(
+    const float *hidden,
+    const int *indices,
+    const float *routing_weights,
+    const void *expert_gate,
+    const void *expert_up,
+    const void *expert_down,
+    float *output,
+    int rows,
+    int hidden_dim,
+    int intermediate_dim,
+    int n_experts,
+    int top_k,
+    void *workspace,
+    size_t workspace_bytes);
+
+int moe_swiglu_expert_forward_q4k_q5k_auto_prepared_workspace(
+    const float *hidden,
+    const int *indices,
+    const float *routing_weights,
+    const void *expert_gate,
+    const void *expert_up,
+    const void *expert_down,
+    float *output,
+    int rows,
+    int hidden_dim,
+    int intermediate_dim,
+    int n_experts,
+    int top_k,
+    void *workspace,
+    size_t workspace_bytes);
+
+size_t moe_swiglu_shared_q8_0_gated_workspace_bytes(int hidden_dim,
+                                                    int intermediate_dim);
+
+int moe_swiglu_shared_forward_q8_0_gated_workspace(
+    const float *hidden,
+    const float *routed,
+    const void *shared_gate,
+    const void *shared_up,
+    const void *shared_down,
+    const float *shared_gate_input,
+    float *output,
+    int rows,
+    int hidden_dim,
+    int intermediate_dim,
+    void *workspace,
+    size_t workspace_bytes);
+
+int moe_swiglu_shared_forward_q8_0_gated_parallel_workspace(
+    const float *hidden,
+    const float *routed,
+    const void *shared_gate,
+    const void *shared_up,
+    const void *shared_down,
+    const float *shared_gate_input,
+    float *output,
+    int rows,
+    int hidden_dim,
+    int intermediate_dim,
+    void *workspace,
+    size_t workspace_bytes);
+
 void moe_swiglu_shared_forward_bf16(const float *hidden,
                                     const float *routed,
                                     const uint16_t *shared_gate,
@@ -3177,6 +3315,19 @@ void topk_softmax_f32(const float *scores,
                       int k,
                       int *indices,
                       float *weights);
+
+size_t moe_softmax_topk_router_workspace_bytes(int n_experts);
+
+int moe_softmax_topk_router_llama_f32_workspace(
+    const float *logits,
+    int *indices,
+    float *weights,
+    int rows,
+    int n_experts,
+    int top_k,
+    float routed_scaling_factor,
+    void *workspace,
+    size_t workspace_bytes);
 
 // Backward for hard top-k followed by softmax over selected values.
 void topk_softmax_backward_f32(const int *indices,

@@ -1,0 +1,543 @@
+#!/usr/bin/env python3
+"""Contract tests for compact Q4_K/Q5_K routed SwiGLU composition."""
+
+from __future__ import annotations
+
+import ctypes
+import struct
+import unittest
+from pathlib import Path
+
+import numpy as np
+
+
+ROOT = Path(__file__).resolve().parents[1]
+LIB = ctypes.CDLL(str(ROOT / "build" / "libckernel_engine.so"))
+FPTR = ctypes.POINTER(ctypes.c_float)
+IPTR = ctypes.POINTER(ctypes.c_int)
+QK_K = 256
+Q4_K_BYTES = 144
+Q5_K_BYTES = 176
+Q8_K_BYTES = 292
+
+
+def _fptr(array: np.ndarray) -> FPTR:
+    return array.ctypes.data_as(FPTR)
+
+
+def _iptr(array: np.ndarray) -> IPTR:
+    return array.ctypes.data_as(IPTR)
+
+
+def _weight_blocks(count: int, block_bytes: int, seed: int) -> ctypes.Array:
+    rng = np.random.default_rng(seed)
+    raw = bytearray(count * block_bytes)
+    for block in range(count):
+        offset = block * block_bytes
+        struct.pack_into("<H", raw, offset, 0x211F + block % 7)
+        struct.pack_into("<H", raw, offset + 2, 0x1800 + block % 5)
+        raw[offset + 4 : offset + 16] = rng.integers(
+            0, 256, size=12, dtype=np.uint8
+        ).tobytes()
+        raw[offset + 16 : offset + block_bytes] = rng.integers(
+            0, 256, size=block_bytes - 16, dtype=np.uint8
+        ).tobytes()
+    return ctypes.create_string_buffer(bytes(raw), len(raw))
+
+
+class CompactRoutedSwiGLUTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        LIB.moe_swiglu_expert_q4k_q5k_workspace_bytes.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+        ]
+        LIB.moe_swiglu_expert_q4k_q5k_workspace_bytes.restype = ctypes.c_size_t
+        LIB.moe_swiglu_expert_forward_q4k_q5k_workspace.argtypes = [
+            FPTR,
+            IPTR,
+            FPTR,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            FPTR,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+        ]
+        LIB.moe_swiglu_expert_forward_q4k_q5k_workspace.restype = ctypes.c_int
+        LIB.moe_swiglu_expert_forward_q4k_q5k_parallel_workspace.argtypes = (
+            LIB.moe_swiglu_expert_forward_q4k_q5k_workspace.argtypes
+        )
+        LIB.moe_swiglu_expert_forward_q4k_q5k_parallel_workspace.restype = ctypes.c_int
+        LIB.moe_swiglu_expert_q4k_q5k_bucketed_workspace_bytes.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+        ]
+        LIB.moe_swiglu_expert_q4k_q5k_bucketed_workspace_bytes.restype = (
+            ctypes.c_size_t
+        )
+        LIB.moe_swiglu_expert_forward_q4k_q5k_bucketed_workspace.argtypes = (
+            LIB.moe_swiglu_expert_forward_q4k_q5k_workspace.argtypes
+        )
+        LIB.moe_swiglu_expert_forward_q4k_q5k_bucketed_workspace.restype = (
+            ctypes.c_int
+        )
+        LIB.moe_swiglu_expert_forward_q4k_q5k_bucketed_prepared_workspace.argtypes = [
+            FPTR,
+            IPTR,
+            FPTR,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            FPTR,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+        ]
+        LIB.moe_swiglu_expert_forward_q4k_q5k_bucketed_prepared_workspace.restype = (
+            ctypes.c_int
+        )
+        LIB.quantize_row_q8_k.argtypes = [FPTR, ctypes.c_void_p, ctypes.c_int]
+        LIB.gemv_q4_k_q8_k.argtypes = [
+            FPTR,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_int,
+        ]
+        LIB.gemv_q5_k_q8_k.argtypes = LIB.gemv_q4_k_q8_k.argtypes
+        LIB.swiglu_forward_ggml.argtypes = [FPTR, FPTR, ctypes.c_int, ctypes.c_int]
+        LIB.swiglu_forward_ggml_split.argtypes = [
+            FPTR, FPTR, FPTR, ctypes.c_int, ctypes.c_int
+        ]
+        LIB.q4_k_packed_vnni_x8_block_size.restype = ctypes.c_size_t
+        LIB.ck_q4k_packed_vnni_x8_available.restype = ctypes.c_int
+        LIB.ck_q4k_packed_vnni_x8_compact_order_available.restype = ctypes.c_int
+        LIB.pack_q4_k_to_packed_vnni_x8.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int
+        ]
+        LIB.axpy_f32.argtypes = [FPTR, FPTR, ctypes.c_float, ctypes.c_int]
+
+    def setUp(self) -> None:
+        self.rows = 2
+        self.hidden = QK_K
+        self.intermediate = QK_K
+        self.experts = 3
+        self.top_k = 2
+        rng = np.random.default_rng(1234)
+        self.x = np.ascontiguousarray(
+            rng.normal(0.0, 0.2, size=(self.rows, self.hidden)).astype(np.float32)
+        )
+        self.indices = np.ascontiguousarray(
+            np.array([[2, 0], [1, 2]], dtype=np.int32)
+        )
+        self.routing = np.ascontiguousarray(
+            np.array([[0.65, 0.35], [0.55, 0.45]], dtype=np.float32)
+        )
+        blocks_up = self.experts * self.intermediate
+        blocks_down = self.experts * self.hidden
+        self.gate = _weight_blocks(blocks_up, Q4_K_BYTES, 1)
+        self.up = _weight_blocks(blocks_up, Q4_K_BYTES, 2)
+        self.down = _weight_blocks(blocks_down, Q5_K_BYTES, 3)
+
+    def _run_composed_reference(self) -> np.ndarray:
+        result = np.zeros((self.rows, self.hidden), dtype=np.float32)
+        hidden_q8 = ctypes.create_string_buffer(Q8_K_BYTES)
+        act_q8 = ctypes.create_string_buffer(Q8_K_BYTES)
+        gate_up = np.empty(2 * self.intermediate, dtype=np.float32)
+        expert_output = np.empty(self.hidden, dtype=np.float32)
+        q4_expert_stride = self.intermediate * Q4_K_BYTES
+        q5_expert_stride = self.hidden * Q5_K_BYTES
+
+        for row in range(self.rows):
+            LIB.quantize_row_q8_k(_fptr(self.x[row]), hidden_q8, self.hidden)
+            for slot in range(self.top_k):
+                expert = int(self.indices[row, slot])
+                gate_ptr = ctypes.byref(self.gate, expert * q4_expert_stride)
+                up_ptr = ctypes.byref(self.up, expert * q4_expert_stride)
+                down_ptr = ctypes.byref(self.down, expert * q5_expert_stride)
+                LIB.gemv_q4_k_q8_k(
+                    _fptr(gate_up), gate_ptr, hidden_q8, self.intermediate, self.hidden
+                )
+                LIB.gemv_q4_k_q8_k(
+                    _fptr(gate_up[self.intermediate :]),
+                    up_ptr,
+                    hidden_q8,
+                    self.intermediate,
+                    self.hidden,
+                )
+                LIB.swiglu_forward_ggml(
+                    _fptr(gate_up), _fptr(gate_up), 1, self.intermediate
+                )
+                LIB.quantize_row_q8_k(_fptr(gate_up), act_q8, self.intermediate)
+                LIB.gemv_q5_k_q8_k(
+                    _fptr(expert_output),
+                    down_ptr,
+                    act_q8,
+                    self.hidden,
+                    self.intermediate,
+                )
+                LIB.axpy_f32(
+                    _fptr(result[row]),
+                    _fptr(expert_output),
+                    float(self.routing[row, slot]),
+                    self.hidden,
+                )
+        return result
+
+    def test_matches_composed_primitives_bit_exact(self) -> None:
+        expected = self._run_composed_reference()
+        actual = np.full_like(expected, np.nan)
+        workspace_bytes = LIB.moe_swiglu_expert_q4k_q5k_workspace_bytes(
+            self.hidden, self.intermediate
+        )
+        workspace = ctypes.create_string_buffer(workspace_bytes)
+        status = LIB.moe_swiglu_expert_forward_q4k_q5k_workspace(
+            _fptr(self.x),
+            _iptr(self.indices),
+            _fptr(self.routing),
+            self.gate,
+            self.up,
+            self.down,
+            _fptr(actual),
+            self.rows,
+            self.hidden,
+            self.intermediate,
+            self.experts,
+            self.top_k,
+            workspace,
+            workspace_bytes,
+        )
+        self.assertEqual(status, 0)
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+
+    def test_parallel_rows_match_serial_provider_bit_exact(self) -> None:
+        expected = np.empty((self.rows, self.hidden), dtype=np.float32)
+        actual = np.empty_like(expected)
+        row_workspace_bytes = LIB.moe_swiglu_expert_q4k_q5k_workspace_bytes(
+            self.hidden, self.intermediate
+        )
+        serial_workspace = ctypes.create_string_buffer(row_workspace_bytes)
+        parallel_workspace = ctypes.create_string_buffer(
+            row_workspace_bytes * self.rows
+        )
+        serial_status = LIB.moe_swiglu_expert_forward_q4k_q5k_workspace(
+            _fptr(self.x), _iptr(self.indices), _fptr(self.routing),
+            self.gate, self.up, self.down, _fptr(expected),
+            self.rows, self.hidden, self.intermediate, self.experts, self.top_k,
+            serial_workspace, row_workspace_bytes,
+        )
+        parallel_status = LIB.moe_swiglu_expert_forward_q4k_q5k_parallel_workspace(
+            _fptr(self.x), _iptr(self.indices), _fptr(self.routing),
+            self.gate, self.up, self.down, _fptr(actual),
+            self.rows, self.hidden, self.intermediate, self.experts, self.top_k,
+            parallel_workspace, len(parallel_workspace),
+        )
+        self.assertEqual(serial_status, 0)
+        self.assertEqual(parallel_status, 0)
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+
+    def test_bucketed_experts_match_serial_provider_bit_exact(self) -> None:
+        expected = np.empty((self.rows, self.hidden), dtype=np.float32)
+        actual = np.empty_like(expected)
+        serial_workspace_bytes = LIB.moe_swiglu_expert_q4k_q5k_workspace_bytes(
+            self.hidden, self.intermediate
+        )
+        serial_workspace = ctypes.create_string_buffer(serial_workspace_bytes)
+        bucketed_workspace_bytes = (
+            LIB.moe_swiglu_expert_q4k_q5k_bucketed_workspace_bytes(
+                self.rows,
+                self.hidden,
+                self.intermediate,
+                self.experts,
+                self.top_k,
+            )
+        )
+        bucketed_workspace = ctypes.create_string_buffer(bucketed_workspace_bytes)
+
+        serial_status = LIB.moe_swiglu_expert_forward_q4k_q5k_workspace(
+            _fptr(self.x), _iptr(self.indices), _fptr(self.routing),
+            self.gate, self.up, self.down, _fptr(expected),
+            self.rows, self.hidden, self.intermediate, self.experts, self.top_k,
+            serial_workspace, serial_workspace_bytes,
+        )
+        bucketed_status = (
+            LIB.moe_swiglu_expert_forward_q4k_q5k_bucketed_workspace(
+                _fptr(self.x), _iptr(self.indices), _fptr(self.routing),
+                self.gate, self.up, self.down, _fptr(actual),
+                self.rows, self.hidden, self.intermediate, self.experts, self.top_k,
+                bucketed_workspace, bucketed_workspace_bytes,
+            )
+        )
+        self.assertEqual(serial_status, 0)
+        self.assertEqual(bucketed_status, 0)
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+
+    def test_bucketed_skewed_routing_matches_serial_bit_exact(self) -> None:
+        rows = 9
+        rng = np.random.default_rng(4321)
+        hidden = np.ascontiguousarray(
+            rng.normal(0.0, 0.2, size=(rows, self.hidden)).astype(np.float32)
+        )
+        indices = np.ascontiguousarray(
+            np.array(
+                [
+                    [0, 2], [0, 2], [0, 2],
+                    [0, 1], [0, 1], [1, 2],
+                    [1, 0], [2, 0], [2, 1],
+                ],
+                dtype=np.int32,
+            )
+        )
+        routing = np.ascontiguousarray(
+            rng.uniform(0.1, 0.9, size=(rows, self.top_k)).astype(np.float32)
+        )
+        expected = np.empty((rows, self.hidden), dtype=np.float32)
+        actual = np.empty_like(expected)
+        serial_bytes = LIB.moe_swiglu_expert_q4k_q5k_workspace_bytes(
+            self.hidden, self.intermediate
+        )
+        bucketed_bytes = LIB.moe_swiglu_expert_q4k_q5k_bucketed_workspace_bytes(
+            rows, self.hidden, self.intermediate, self.experts, self.top_k
+        )
+        serial_workspace = ctypes.create_string_buffer(serial_bytes)
+        bucketed_workspace = ctypes.create_string_buffer(bucketed_bytes)
+
+        self.assertEqual(
+            LIB.moe_swiglu_expert_forward_q4k_q5k_workspace(
+                _fptr(hidden), _iptr(indices), _fptr(routing),
+                self.gate, self.up, self.down, _fptr(expected),
+                rows, self.hidden, self.intermediate, self.experts, self.top_k,
+                serial_workspace, serial_bytes,
+            ),
+            0,
+        )
+        self.assertEqual(
+            LIB.moe_swiglu_expert_forward_q4k_q5k_bucketed_workspace(
+                _fptr(hidden), _iptr(indices), _fptr(routing),
+                self.gate, self.up, self.down, _fptr(actual),
+                rows, self.hidden, self.intermediate, self.experts, self.top_k,
+                bucketed_workspace, bucketed_bytes,
+            ),
+            0,
+        )
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+
+    def test_prepared_bucketed_gate_up_matches_compact_bit_exact(self) -> None:
+        if not LIB.ck_q4k_packed_vnni_x8_compact_order_available():
+            self.skipTest("AVX-512 compact-order x8 provider is unavailable")
+        rows = 9
+        rng = np.random.default_rng(9321)
+        hidden = np.ascontiguousarray(
+            rng.normal(0.0, 0.2, size=(rows, self.hidden)).astype(np.float32)
+        )
+        indices = np.ascontiguousarray(
+            rng.integers(0, self.experts, size=(rows, self.top_k), dtype=np.int32)
+        )
+        routing = np.ascontiguousarray(
+            rng.uniform(0.1, 0.9, size=(rows, self.top_k)).astype(np.float32)
+        )
+        expected = np.empty((rows, self.hidden), dtype=np.float32)
+        actual = np.empty_like(expected)
+        workspace_bytes = LIB.moe_swiglu_expert_q4k_q5k_bucketed_workspace_bytes(
+            rows, self.hidden, self.intermediate, self.experts, self.top_k
+        )
+        compact_workspace = ctypes.create_string_buffer(workspace_bytes)
+        prepared_workspace = ctypes.create_string_buffer(workspace_bytes)
+        packed_blocks = (
+            ((self.experts * self.intermediate + 7) // 8)
+            * (self.hidden // QK_K)
+        )
+        packed_bytes = packed_blocks * LIB.q4_k_packed_vnni_x8_block_size()
+        gate_packed = ctypes.create_string_buffer(packed_bytes)
+        up_packed = ctypes.create_string_buffer(packed_bytes)
+        LIB.pack_q4_k_to_packed_vnni_x8(
+            self.gate, gate_packed, self.experts * self.intermediate, self.hidden
+        )
+        LIB.pack_q4_k_to_packed_vnni_x8(
+            self.up, up_packed, self.experts * self.intermediate, self.hidden
+        )
+
+        self.assertEqual(
+            LIB.moe_swiglu_expert_forward_q4k_q5k_bucketed_workspace(
+                _fptr(hidden), _iptr(indices), _fptr(routing),
+                self.gate, self.up, self.down, _fptr(expected),
+                rows, self.hidden, self.intermediate, self.experts, self.top_k,
+                compact_workspace, workspace_bytes,
+            ),
+            0,
+        )
+        self.assertEqual(
+            LIB.moe_swiglu_expert_forward_q4k_q5k_bucketed_prepared_workspace(
+                _fptr(hidden), _iptr(indices), _fptr(routing),
+                self.gate, self.up, self.down, gate_packed, up_packed,
+                _fptr(actual), rows, self.hidden, self.intermediate,
+                self.experts, self.top_k, prepared_workspace, workspace_bytes,
+            ),
+            0,
+        )
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+
+    def test_prepared_bucketed_matches_compact_at_qwen35_expert_shape(self) -> None:
+        if not LIB.ck_q4k_packed_vnni_x8_compact_order_available():
+            self.skipTest("AVX-512 compact-order x8 provider is unavailable")
+
+        rows = 17
+        hidden = 2048
+        intermediate = 512
+        experts = 2
+        top_k = 2
+        rng = np.random.default_rng(13579)
+        activations = np.ascontiguousarray(
+            rng.normal(0.0, 0.2, size=(rows, hidden)).astype(np.float32)
+        )
+        indices = np.ascontiguousarray(
+            rng.integers(0, experts, size=(rows, top_k), dtype=np.int32)
+        )
+        routing = np.ascontiguousarray(
+            rng.uniform(0.1, 0.9, size=(rows, top_k)).astype(np.float32)
+        )
+        q4_blocks = experts * intermediate * (hidden // QK_K)
+        q5_blocks = experts * hidden * (intermediate // QK_K)
+        gate = _weight_blocks(q4_blocks, Q4_K_BYTES, 101)
+        up = _weight_blocks(q4_blocks, Q4_K_BYTES, 102)
+        down = _weight_blocks(q5_blocks, Q5_K_BYTES, 103)
+        expected = np.empty((rows, hidden), dtype=np.float32)
+        actual = np.empty_like(expected)
+        workspace_bytes = LIB.moe_swiglu_expert_q4k_q5k_bucketed_workspace_bytes(
+            rows, hidden, intermediate, experts, top_k
+        )
+        compact_workspace = ctypes.create_string_buffer(workspace_bytes)
+        prepared_workspace = ctypes.create_string_buffer(workspace_bytes)
+        packed_blocks = (
+            ((experts * intermediate + 7) // 8) * (hidden // QK_K)
+        )
+        packed_bytes = packed_blocks * LIB.q4_k_packed_vnni_x8_block_size()
+        gate_packed = ctypes.create_string_buffer(packed_bytes)
+        up_packed = ctypes.create_string_buffer(packed_bytes)
+        LIB.pack_q4_k_to_packed_vnni_x8(
+            gate, gate_packed, experts * intermediate, hidden
+        )
+        LIB.pack_q4_k_to_packed_vnni_x8(
+            up, up_packed, experts * intermediate, hidden
+        )
+
+        self.assertEqual(
+            LIB.moe_swiglu_expert_forward_q4k_q5k_bucketed_workspace(
+                _fptr(activations), _iptr(indices), _fptr(routing),
+                gate, up, down, _fptr(expected), rows, hidden, intermediate,
+                experts, top_k, compact_workspace, workspace_bytes,
+            ),
+            0,
+        )
+        self.assertEqual(
+            LIB.moe_swiglu_expert_forward_q4k_q5k_bucketed_prepared_workspace(
+                _fptr(activations), _iptr(indices), _fptr(routing),
+                gate, up, down, gate_packed, up_packed, _fptr(actual),
+                rows, hidden, intermediate, experts, top_k,
+                prepared_workspace, workspace_bytes,
+            ),
+            0,
+        )
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+
+    def test_split_swiglu_matches_interleaved_bit_exact(self) -> None:
+        rng = np.random.default_rng(2026)
+        gate = np.ascontiguousarray(
+            rng.normal(size=(3, self.intermediate)).astype(np.float32)
+        )
+        up = np.ascontiguousarray(
+            rng.normal(size=(3, self.intermediate)).astype(np.float32)
+        )
+        interleaved = np.ascontiguousarray(
+            np.concatenate((gate, up), axis=1), dtype=np.float32
+        )
+        expected = np.empty_like(gate)
+        actual = np.empty_like(gate)
+        LIB.swiglu_forward_ggml(
+            _fptr(interleaved), _fptr(expected), 3, self.intermediate
+        )
+        LIB.swiglu_forward_ggml_split(
+            _fptr(gate), _fptr(up), _fptr(actual), 3, self.intermediate
+        )
+        np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+
+    def test_bucketed_workspace_and_indices_fail_closed(self) -> None:
+        output = np.zeros((self.rows, self.hidden), dtype=np.float32)
+        required = LIB.moe_swiglu_expert_q4k_q5k_bucketed_workspace_bytes(
+            self.rows,
+            self.hidden,
+            self.intermediate,
+            self.experts,
+            self.top_k,
+        )
+        workspace = ctypes.create_string_buffer(required)
+        status = LIB.moe_swiglu_expert_forward_q4k_q5k_bucketed_workspace(
+            _fptr(self.x), _iptr(self.indices), _fptr(self.routing),
+            self.gate, self.up, self.down, _fptr(output),
+            self.rows, self.hidden, self.intermediate, self.experts, self.top_k,
+            workspace, required - 1,
+        )
+        self.assertEqual(status, -1)
+
+        invalid = self.indices.copy()
+        invalid[-1, -1] = -1
+        status = LIB.moe_swiglu_expert_forward_q4k_q5k_bucketed_workspace(
+            _fptr(self.x), _iptr(invalid), _fptr(self.routing),
+            self.gate, self.up, self.down, _fptr(output),
+            self.rows, self.hidden, self.intermediate, self.experts, self.top_k,
+            workspace, required,
+        )
+        self.assertEqual(status, -2)
+        self.assertEqual(
+            LIB.moe_swiglu_expert_q4k_q5k_bucketed_workspace_bytes(
+                self.rows,
+                self.hidden,
+                self.intermediate,
+                self.experts,
+                self.experts + 1,
+            ),
+            0,
+        )
+
+    def test_workspace_and_indices_fail_closed(self) -> None:
+        output = np.zeros((self.rows, self.hidden), dtype=np.float32)
+        required = LIB.moe_swiglu_expert_q4k_q5k_workspace_bytes(
+            self.hidden, self.intermediate
+        )
+        workspace = ctypes.create_string_buffer(required)
+        status = LIB.moe_swiglu_expert_forward_q4k_q5k_workspace(
+            _fptr(self.x), _iptr(self.indices), _fptr(self.routing),
+            self.gate, self.up, self.down, _fptr(output),
+            self.rows, self.hidden, self.intermediate, self.experts, self.top_k,
+            workspace, required - 1,
+        )
+        self.assertEqual(status, -1)
+
+        invalid = self.indices.copy()
+        invalid[0, 0] = self.experts
+        status = LIB.moe_swiglu_expert_forward_q4k_q5k_workspace(
+            _fptr(self.x), _iptr(invalid), _fptr(self.routing),
+            self.gate, self.up, self.down, _fptr(output),
+            self.rows, self.hidden, self.intermediate, self.experts, self.top_k,
+            workspace, required,
+        )
+        self.assertEqual(status, -2)
+
+
+if __name__ == "__main__":
+    unittest.main()

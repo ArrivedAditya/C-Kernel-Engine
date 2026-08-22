@@ -1112,6 +1112,118 @@ def describe_layer_contract(tensors: Dict[str, "TensorInfo"], layer: int, arch: 
     return None
 
 
+def audit_qwen35moe_gguf_contract(
+    tensors: Dict[str, "TensorInfo"],
+    meta: Dict[str, object],
+) -> Dict[str, object]:
+    """Validate the structural Qwen3.5-MoE contract without reading weight data."""
+    arch = str(meta.get("general.architecture") or "").strip().lower()
+    if arch != "qwen35moe":
+        raise GGUFError(f"expected general.architecture=qwen35moe, got {arch or '<missing>'}")
+
+    def _meta_int(key: str) -> int:
+        value = meta.get(key)
+        if value is None:
+            raise GGUFError(f"qwen35moe metadata missing required key: {key}")
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise GGUFError(f"qwen35moe metadata {key} must be an integer, got {value!r}") from exc
+
+    block_count = _meta_int("qwen35moe.block_count")
+    hidden_dim = _meta_int("qwen35moe.embedding_length")
+    expert_count = _meta_int("qwen35moe.expert_count")
+    top_k = _meta_int("qwen35moe.expert_used_count")
+    expert_dim = _meta_int("qwen35moe.expert_feed_forward_length")
+    shared_expert_dim = _meta_int("qwen35moe.expert_shared_feed_forward_length")
+    full_attention_interval = _meta_int("qwen35moe.full_attention_interval")
+
+    if block_count <= 0 or hidden_dim <= 0 or expert_count <= 0 or expert_dim <= 0:
+        raise GGUFError("qwen35moe dimensions and expert counts must be positive")
+    if top_k <= 0 or top_k > expert_count:
+        raise GGUFError(
+            f"qwen35moe expert_used_count must be in [1, {expert_count}], got {top_k}"
+        )
+    if shared_expert_dim <= 0:
+        raise GGUFError("qwen35moe shared expert width must be positive")
+    if full_attention_interval <= 0:
+        raise GGUFError("qwen35moe full_attention_interval must be positive")
+
+    expected_expert_shapes = {
+        "ffn_gate_inp.weight": (hidden_dim, expert_count),
+        "ffn_gate_exps.weight": (hidden_dim, expert_dim, expert_count),
+        "ffn_up_exps.weight": (hidden_dim, expert_dim, expert_count),
+        "ffn_down_exps.weight": (expert_dim, hidden_dim, expert_count),
+        "ffn_gate_inp_shexp.weight": (hidden_dim,),
+        "ffn_gate_shexp.weight": (hidden_dim, shared_expert_dim),
+        "ffn_up_shexp.weight": (hidden_dim, shared_expert_dim),
+        "ffn_down_shexp.weight": (shared_expert_dim, hidden_dim),
+    }
+    layer_kinds: list[str] = []
+    quant_by_role: Dict[str, set[str]] = {
+        "expert_gate": set(),
+        "expert_up": set(),
+        "expert_down": set(),
+        "shared_gate": set(),
+        "shared_up": set(),
+        "shared_down": set(),
+    }
+    role_by_suffix = {
+        "ffn_gate_exps.weight": "expert_gate",
+        "ffn_up_exps.weight": "expert_up",
+        "ffn_down_exps.weight": "expert_down",
+        "ffn_gate_shexp.weight": "shared_gate",
+        "ffn_up_shexp.weight": "shared_up",
+        "ffn_down_shexp.weight": "shared_down",
+    }
+
+    for layer in range(block_count):
+        kind = gguf_ck_layer_kind_from_map("qwen35moe", _layer_tensor_suffixes(tensors, layer))
+        if kind not in {"recurrent_moe", "full_attention_moe"}:
+            raise GGUFError(
+                f"Layer {layer}: qwen35moe layer does not satisfy a registered recurrent/full-attention MoE contract"
+            )
+        expected_kind = (
+            "full_attention_moe"
+            if (layer + 1) % full_attention_interval == 0
+            else "recurrent_moe"
+        )
+        if kind != expected_kind:
+            raise GGUFError(
+                f"Layer {layer}: expected {expected_kind} from full_attention_interval="
+                f"{full_attention_interval}, got {kind}"
+            )
+        layer_kinds.append(kind)
+
+        for suffix, expected_shape in expected_expert_shapes.items():
+            name = f"blk.{layer}.{suffix}"
+            info = tensors.get(name)
+            if info is None:
+                raise GGUFError(f"Layer {layer}: missing required Qwen3.5-MoE tensor {name}")
+            if tuple(info.dims) != expected_shape:
+                raise GGUFError(
+                    f"{name}: expected GGUF dims={expected_shape}, got {tuple(info.dims)}"
+                )
+            role = role_by_suffix.get(suffix)
+            if role:
+                quant_by_role[role].add(ggml_type_name(info.ggml_type).lower())
+
+    return {
+        "architecture": arch,
+        "block_count": block_count,
+        "hidden_dim": hidden_dim,
+        "expert_count": expert_count,
+        "experts_per_token": top_k,
+        "expert_dim": expert_dim,
+        "shared_expert_dim": shared_expert_dim,
+        "full_attention_interval": full_attention_interval,
+        "layer_kinds": layer_kinds,
+        "quant_by_role": {
+            role: sorted(dtypes) for role, dtypes in quant_by_role.items()
+        },
+    }
+
+
 _QWEN35_MTP_TENSOR_SUFFIXES = frozenset({
     "eh_proj",
     "embed_tokens",
@@ -1386,6 +1498,11 @@ def build_qwen35_execution_plan(layer_kinds: list[str]) -> Dict[str, object]:
     }
 
 
+def resolve_qwen35_prefill_policy(*, moe: bool) -> str:
+    """Return the certified prompt execution policy for a Qwen3.5 variant."""
+    return "sequential_decode" if moe else "batched"
+
+
 def resolve_qwen35_recurrent_qkv_weight_dtype(
     layer_kinds: list[str],
     layer_quant_summary: Dict[str, Dict[str, str]],
@@ -1409,8 +1526,8 @@ def extract_mrope_sections_for_arch(meta: Dict[str, object], arch: str) -> Optio
     """Return GGUF RoPE dimension sections for architectures that use text MRoPE."""
     arch_lc = str(arch or "").strip().lower()
     key = "qwen3vl.rope.dimension_sections"
-    if arch_lc == "qwen35":
-        key = "qwen35.rope.dimension_sections"
+    if arch_lc in {"qwen35", "qwen35moe"}:
+        key = f"{arch_lc}.rope.dimension_sections"
     value = meta.get(key)
     if not isinstance(value, (list, tuple)) or len(value) != 4:
         return None
@@ -2399,6 +2516,31 @@ def main() -> None:
         "qwen35.ssm.inner_size",
         "qwen35.full_attention_interval",
         "qwen35.nextn_predict_layers",
+        # Qwen3.5 MoE hybrid keys. Keep these distinct from dense qwen35 so
+        # model-map validation can fail closed on router/expert mismatches.
+        "qwen35moe.block_count",
+        "qwen35moe.context_length",
+        "qwen35moe.embedding_length",
+        "qwen35moe.attention.head_count",
+        "qwen35moe.attention.head_count_kv",
+        "qwen35moe.attention.key_length",
+        "qwen35moe.attention.value_length",
+        "qwen35moe.attention.layer_norm_rms_epsilon",
+        "qwen35moe.rope.freq_base",
+        "qwen35moe.rope.dimension_count",
+        "qwen35moe.rope.dimension_sections",
+        "qwen35moe.ssm.conv_kernel",
+        "qwen35moe.ssm.state_size",
+        "qwen35moe.ssm.group_count",
+        "qwen35moe.ssm.time_step_rank",
+        "qwen35moe.ssm.inner_size",
+        "qwen35moe.full_attention_interval",
+        "qwen35moe.nextn_predict_layers",
+        "qwen35moe.expert_count",
+        "qwen35moe.expert_used_count",
+        "qwen35moe.expert_feed_forward_length",
+        "qwen35moe.expert_shared_feed_forward_length",
+        "qwen35moe.expert_weights_scale",
         # Nemotron-H Mamba/MLP/attention and MoE/Mamba hybrid keys
         "nemotron_h.block_count",
         "nemotron_h.context_length",
@@ -2676,6 +2818,37 @@ def main() -> None:
                     continue
                 print(f"  - {name}: {ggml_type_name(info.ggml_type)} dims={info.dims}")
 
+            if arch == "qwen35moe":
+                moe_audit = audit_qwen35moe_gguf_contract(tensors, meta)
+                quant = moe_audit["quant_by_role"]
+                recurrent_layers = sum(
+                    kind == "recurrent_moe" for kind in moe_audit["layer_kinds"]
+                )
+                full_layers = int(moe_audit["block_count"]) - recurrent_layers
+                print("[gguf] Qwen3.5-MoE contract:")
+                print(
+                    "  - layers="
+                    f"{moe_audit['block_count']} ({recurrent_layers} recurrent, {full_layers} full attention)"
+                )
+                print(
+                    "  - hidden="
+                    f"{moe_audit['hidden_dim']} experts={moe_audit['expert_count']} "
+                    f"top_k={moe_audit['experts_per_token']} expert_dim={moe_audit['expert_dim']} "
+                    f"shared_dim={moe_audit['shared_expert_dim']}"
+                )
+                print(
+                    "  - routed quant: "
+                    f"gate={','.join(quant['expert_gate'])} "
+                    f"up={','.join(quant['expert_up'])} "
+                    f"down={','.join(quant['expert_down'])}"
+                )
+                print(
+                    "  - shared quant: "
+                    f"gate={','.join(quant['shared_gate'])} "
+                    f"up={','.join(quant['shared_up'])} "
+                    f"down={','.join(quant['shared_down'])}"
+                )
+
             # Show per-layer quant types if --inspect-layers is set
             if args.inspect_layers:
                 # Count total layers
@@ -2748,6 +2921,12 @@ def main() -> None:
 
             # Exit after inspection (don't try to parse model config)
             return
+
+        qwen35moe_audit = (
+            audit_qwen35moe_gguf_contract(tensors, meta)
+            if arch == "qwen35moe"
+            else None
+        )
 
         # Pull core dims from metadata first; fall back to tensor shapes.
         # Support multiple architecture prefixes (llama, qwen2, etc.)
@@ -3746,7 +3925,7 @@ def main() -> None:
             raise GGUFError(f"{tok_name}: expected 2D, got dims={tok.dims}")
         embed_dim = meta_int(
             "deepseek2.embedding_length", "mistral3.embedding_length", "mistral.embedding_length",
-            "llama.embedding_length", "nemotron_h.embedding_length", "nemotron_h_moe.embedding_length", "qwen3vl.embedding_length", "qwen3.embedding_length", "qwen2.embedding_length",
+            "llama.embedding_length", "qwen35moe.embedding_length", "nemotron_h.embedding_length", "nemotron_h_moe.embedding_length", "qwen3vl.embedding_length", "qwen3.embedding_length", "qwen2.embedding_length",
             "gemma3.embedding_length", "gemma4.embedding_length", "glm4.embedding_length"
         ) or tok.ne0
         vocab_size = tok.ne1
@@ -3801,7 +3980,7 @@ def main() -> None:
 
         num_layers = meta_int(
             "deepseek2.block_count", "mistral3.block_count", "mistral.block_count",
-            "llama.block_count", "qwen35.block_count", "nemotron_h.block_count", "nemotron_h_moe.block_count", "qwen3vl.block_count", "qwen3.block_count", "qwen2.block_count",
+            "llama.block_count", "qwen35.block_count", "qwen35moe.block_count", "nemotron_h.block_count", "nemotron_h_moe.block_count", "qwen3vl.block_count", "qwen3.block_count", "qwen2.block_count",
             "gemma3.block_count", "gemma4.block_count", "glm4.block_count"
         )
         if num_layers is None:
@@ -3817,9 +3996,9 @@ def main() -> None:
                 raise GGUFError("Could not infer num_layers (missing block_count and no blk.* tensors found)")
             num_layers = max(layer_ids) + 1
         qwen35_nextn_layers = 0
-        if arch == "qwen35":
+        if arch in {"qwen35", "qwen35moe"}:
             qwen35_nextn_layers = int(
-                meta_int("qwen35.nextn_predict_layers") or 0
+                meta_int("qwen35.nextn_predict_layers", "qwen35moe.nextn_predict_layers") or 0
             )
             num_layers = qwen35_decoder_layer_count(
                 int(num_layers),
@@ -3828,7 +4007,7 @@ def main() -> None:
 
         intermediate = meta_int_or_list(
             "deepseek2.feed_forward_length", "mistral3.feed_forward_length", "mistral.feed_forward_length",
-            "llama.feed_forward_length", "qwen35.feed_forward_length", "nemotron_h.feed_forward_length", "nemotron_h_moe.feed_forward_length", "qwen3vl.feed_forward_length", "qwen3.feed_forward_length", "qwen2.feed_forward_length",
+            "llama.feed_forward_length", "qwen35.feed_forward_length", "qwen35moe.expert_feed_forward_length", "nemotron_h.feed_forward_length", "nemotron_h_moe.feed_forward_length", "qwen3vl.feed_forward_length", "qwen3.feed_forward_length", "qwen2.feed_forward_length",
             "gemma3.feed_forward_length", "gemma4.feed_forward_length", "glm4.feed_forward_length"
         )
         if isinstance(intermediate, list):
@@ -3843,14 +4022,14 @@ def main() -> None:
 
         num_heads = meta_int(
             "deepseek2.attention.head_count", "mistral3.attention.head_count", "mistral.attention.head_count",
-            "llama.attention.head_count", "qwen35.attention.head_count", "nemotron_h.attention.head_count", "nemotron_h_moe.attention.head_count", "qwen3vl.attention.head_count", "qwen3.attention.head_count", "qwen2.attention.head_count",
+            "llama.attention.head_count", "qwen35.attention.head_count", "qwen35moe.attention.head_count", "nemotron_h.attention.head_count", "nemotron_h_moe.attention.head_count", "qwen3vl.attention.head_count", "qwen3.attention.head_count", "qwen2.attention.head_count",
             "gemma3.attention.head_count", "gemma4.attention.head_count", "glm4.attention.head_count"
         )
         if num_heads is None:
             raise GGUFError("Missing attention.head_count (num_heads)")
         num_kv_heads_meta = meta_int_or_list(
             "deepseek2.attention.head_count_kv", "mistral3.attention.head_count_kv", "mistral.attention.head_count_kv",
-            "llama.attention.head_count_kv", "qwen35.attention.head_count_kv", "nemotron_h.attention.head_count_kv", "nemotron_h_moe.attention.head_count_kv", "qwen3vl.attention.head_count_kv", "qwen3.attention.head_count_kv", "qwen2.attention.head_count_kv",
+            "llama.attention.head_count_kv", "qwen35.attention.head_count_kv", "qwen35moe.attention.head_count_kv", "nemotron_h.attention.head_count_kv", "nemotron_h_moe.attention.head_count_kv", "qwen3vl.attention.head_count_kv", "qwen3.attention.head_count_kv", "qwen2.attention.head_count_kv",
             "gemma3.attention.head_count_kv", "gemma4.attention.head_count_kv", "glm4.attention.head_count_kv"
         )
         if isinstance(num_kv_heads_meta, list):
@@ -3860,7 +4039,7 @@ def main() -> None:
 
         context_len = meta_int(
             "deepseek2.context_length", "mistral3.context_length", "mistral.context_length",
-            "llama.context_length", "qwen35.context_length", "nemotron_h.context_length", "nemotron_h_moe.context_length", "qwen3vl.context_length", "qwen3.context_length", "qwen2.context_length",
+            "llama.context_length", "qwen35.context_length", "qwen35moe.context_length", "nemotron_h.context_length", "nemotron_h_moe.context_length", "qwen3vl.context_length", "qwen3.context_length", "qwen2.context_length",
             "gemma3.context_length", "gemma4.context_length", "glm4.context_length"
         ) or 0
         if args.context is not None:
@@ -3880,13 +4059,14 @@ def main() -> None:
 
         rope_theta = meta_float(
             "deepseek2.rope.freq_base", "mistral3.rope.freq_base", "mistral.rope.freq_base",
-            "llama.rope.freq_base", "qwen35.rope.freq_base", "nemotron_h.rope.freq_base", "nemotron_h_moe.rope.freq_base", "qwen3vl.rope.freq_base", "qwen3.rope.freq_base", "qwen2.rope.freq_base",
+            "llama.rope.freq_base", "qwen35.rope.freq_base", "qwen35moe.rope.freq_base", "nemotron_h.rope.freq_base", "nemotron_h_moe.rope.freq_base", "qwen3vl.rope.freq_base", "qwen3.rope.freq_base", "qwen2.rope.freq_base",
             "gemma3.rope.freq_base", "gemma4.rope.freq_base", "glm4.rope.freq_base"
         ) or 10000.0
 
         # Q/K/V head dimensions (some models report explicit key/value lengths)
         key_length_meta = meta_int(
             "qwen35.attention.key_length",
+            "qwen35moe.attention.key_length",
             "nemotron_h.attention.key_length",
             "nemotron_h_moe.attention.key_length",
             "qwen3vl.attention.key_length",
@@ -3898,6 +4078,7 @@ def main() -> None:
         )
         value_length_meta = meta_int(
             "qwen35.attention.value_length",
+            "qwen35moe.attention.value_length",
             "nemotron_h.attention.value_length",
             "nemotron_h_moe.attention.value_length",
             "qwen3vl.attention.value_length",
@@ -3912,6 +4093,7 @@ def main() -> None:
         # Resolve after head_dim is known.
         rotary_dim_meta = meta_int(
             "qwen35.rope.dimension_count",
+            "qwen35moe.rope.dimension_count",
             "nemotron_h.rope.dimension_count",
             "nemotron_h_moe.rope.dimension_count",
             "llama.rope.dim",
@@ -4011,7 +4193,7 @@ def main() -> None:
             "deepseek2.attention.layer_norm_rms_epsilon", "mistral3.attention.layer_norm_rms_epsilon",
             "mistral.attention.layer_norm_rms_epsilon", "llama.norm_rms_eps",
             "nemotron_h.attention.layer_norm_rms_epsilon", "nemotron_h_moe.attention.layer_norm_rms_epsilon",
-            "qwen35.attention.layer_norm_rms_epsilon", "qwen3vl.attention.layer_norm_rms_epsilon", "qwen3.attention.layer_norm_rms_epsilon", "qwen2.attention.layer_norm_rms_epsilon",
+            "qwen35.attention.layer_norm_rms_epsilon", "qwen35moe.attention.layer_norm_rms_epsilon", "qwen3vl.attention.layer_norm_rms_epsilon", "qwen3.attention.layer_norm_rms_epsilon", "qwen2.attention.layer_norm_rms_epsilon",
             "gemma3.attention.layer_norm_rms_epsilon", "gemma4.attention.layer_norm_rms_epsilon", "glm4.attention.layer_norm_rms_epsilon"
         ) or 1e-5
 
@@ -4052,7 +4234,7 @@ def main() -> None:
         }
         rope_layout = rope_layout_aliases.get(rope_layout, rope_layout)
         mrope_sections = extract_mrope_sections_for_arch(meta, arch)
-        if arch in ("qwen3vl", "qwen35") and mrope_sections:
+        if arch in ("qwen3vl", "qwen35", "qwen35moe") and mrope_sections:
             rope_layout = "multi_section_1d"
         rope_original_context_length = int(rope_original_context_length_meta or context_len)
         rope_beta_fast = float(rope_beta_fast_meta) if rope_beta_fast_meta is not None else 0.0
@@ -4155,6 +4337,8 @@ def main() -> None:
             "qwen2.tie_word_embeddings",
             "qwen3.tie_word_embeddings",
             "qwen3vl.tie_word_embeddings",
+            "qwen35.tie_word_embeddings",
+            "qwen35moe.tie_word_embeddings",
             "nemotron_h.tie_word_embeddings",
             "nemotron_h_moe.tie_word_embeddings",
             "gemma3.tie_word_embeddings",
@@ -4168,6 +4352,8 @@ def main() -> None:
             "qwen2.embedding_weight_tying",
             "qwen3.embedding_weight_tying",
             "qwen3vl.embedding_weight_tying",
+            "qwen35.embedding_weight_tying",
+            "qwen35moe.embedding_weight_tying",
             "nemotron_h.embedding_weight_tying",
             "nemotron_h_moe.embedding_weight_tying",
             "gemma3.embedding_weight_tying",
@@ -4200,7 +4386,7 @@ def main() -> None:
         output_dtype = weight_dtype(out_weight, "output.weight") if out_weight is not None else token_dtype
         needs_k_quant = token_dtype in (CK_DT_Q4_K, CK_DT_Q5_K, CK_DT_Q6_K) or output_dtype in (CK_DT_Q4_K, CK_DT_Q5_K, CK_DT_Q6_K)
 
-        if arch == "qwen35":
+        if arch in {"qwen35", "qwen35moe"}:
             def _qwen35_shape(info: TensorInfo) -> list[int]:
                 if len(info.dims) <= 1:
                     return [int(info.ne0)]
@@ -4253,17 +4439,68 @@ def main() -> None:
             if out_weight is not None:
                 _add_qwen35_entry(qwen35_plan, consumed_sources, "output.weight", "output.weight", label="output.weight")
 
-            full_attention_interval = meta_int("qwen35.full_attention_interval")
-            ssm_conv_kernel = meta_int("qwen35.ssm.conv_kernel")
-            ssm_state_size = meta_int("qwen35.ssm.state_size")
-            ssm_group_count = meta_int("qwen35.ssm.group_count")
-            ssm_time_step_rank = meta_int("qwen35.ssm.time_step_rank")
-            ssm_inner_size = meta_int("qwen35.ssm.inner_size")
+            metadata_prefix = "qwen35moe" if arch == "qwen35moe" else "qwen35"
+            full_attention_interval = meta_int(f"{metadata_prefix}.full_attention_interval")
+            ssm_conv_kernel = meta_int(f"{metadata_prefix}.ssm.conv_kernel")
+            ssm_state_size = meta_int(f"{metadata_prefix}.ssm.state_size")
+            ssm_group_count = meta_int(f"{metadata_prefix}.ssm.group_count")
+            ssm_time_step_rank = meta_int(f"{metadata_prefix}.ssm.time_step_rank")
+            ssm_inner_size = meta_int(f"{metadata_prefix}.ssm.inner_size")
             attn_q_gate_proj_dim = None
             attn_query_dim = None
 
+            moe_required = {
+                "ffn_gate_inp.weight": "moe_router",
+                "ffn_gate_exps.weight": "moe_expert_gate",
+                "ffn_up_exps.weight": "moe_expert_up",
+                "ffn_down_exps.weight": "moe_expert_down",
+                "ffn_gate_inp_shexp.weight": "moe_shared_router",
+                "ffn_gate_shexp.weight": "moe_shared_gate",
+                "ffn_up_shexp.weight": "moe_shared_up",
+                "ffn_down_shexp.weight": "moe_shared_down",
+            }
+
+            def _add_qwen35_mlp_entries(
+                layer: int,
+                layer_key: str,
+                layer_kind: str,
+                required: Dict[str, str],
+            ) -> None:
+                if arch == "qwen35moe":
+                    required.update({
+                        suffix: f"{layer_key}.{dst_suffix}"
+                        for suffix, dst_suffix in moe_required.items()
+                    })
+                else:
+                    required.update({
+                        "ffn_gate.weight": f"{layer_key}.ffn_gate",
+                        "ffn_up.weight": f"{layer_key}.ffn_up",
+                        "ffn_down.weight": f"{layer_key}.ffn_down",
+                    })
+
+                for src_suffix, dst_name in required.items():
+                    info = _add_qwen35_entry(
+                        qwen35_plan,
+                        consumed_sources,
+                        dst_name,
+                        f"blk.{layer}.{src_suffix}",
+                        label=src_suffix,
+                        layer_kind=layer_kind,
+                    )
+                    layer_quant_summary[layer_key][dst_name.split(".")[-1]] = ck_dtype_name(
+                        weight_dtype(info, src_suffix)
+                    ).lower()
+
             for layer in range(num_layers):
-                kind = classify_layer_contract(tensors, layer)
+                if qwen35moe_audit is not None:
+                    source_kind = qwen35moe_audit["layer_kinds"][layer]
+                    kind = (
+                        "qwen35_recurrent_hybrid"
+                        if source_kind == "recurrent_moe"
+                        else "qwen35_full_attention_hybrid"
+                    )
+                else:
+                    kind = classify_layer_contract(tensors, layer)
                 layer_key = f"layer.{layer}"
                 layer_quant_summary[layer_key] = {}
 
@@ -4281,20 +4518,8 @@ def main() -> None:
                         "ssm_a": f"{layer_key}.ssm_a",
                         "ssm_norm.weight": f"{layer_key}.ssm_norm",
                         "ssm_out.weight": f"{layer_key}.ssm_out",
-                        "ffn_gate.weight": f"{layer_key}.ffn_gate",
-                        "ffn_up.weight": f"{layer_key}.ffn_up",
-                        "ffn_down.weight": f"{layer_key}.ffn_down",
                     }
-                    for src_suffix, dst_name in required.items():
-                        info = _add_qwen35_entry(
-                            qwen35_plan,
-                            consumed_sources,
-                            dst_name,
-                            f"blk.{layer}.{src_suffix}",
-                            label=src_suffix,
-                            layer_kind="recurrent",
-                        )
-                        layer_quant_summary[layer_key][dst_name.split(".")[-1]] = ck_dtype_name(weight_dtype(info, src_suffix)).lower()
+                    _add_qwen35_mlp_entries(layer, layer_key, "recurrent", required)
                     continue
 
                 if kind == "qwen35_full_attention_hybrid":
@@ -4308,20 +4533,8 @@ def main() -> None:
                         "attn_output.weight": f"{layer_key}.attn_output",
                         "attn_q_norm.weight": f"{layer_key}.attn_q_norm",
                         "attn_k_norm.weight": f"{layer_key}.attn_k_norm",
-                        "ffn_gate.weight": f"{layer_key}.ffn_gate",
-                        "ffn_up.weight": f"{layer_key}.ffn_up",
-                        "ffn_down.weight": f"{layer_key}.ffn_down",
                     }
-                    for src_suffix, dst_name in required.items():
-                        info = _add_qwen35_entry(
-                            qwen35_plan,
-                            consumed_sources,
-                            dst_name,
-                            f"blk.{layer}.{src_suffix}",
-                            label=src_suffix,
-                            layer_kind="full_attention",
-                        )
-                        layer_quant_summary[layer_key][dst_name.split(".")[-1]] = ck_dtype_name(weight_dtype(info, src_suffix)).lower()
+                    _add_qwen35_mlp_entries(layer, layer_key, "full_attention", required)
                     if attn_q_gate_proj_dim is None:
                         q_info = tensors.get(f"blk.{layer}.attn_q.weight")
                         if q_info is not None:
@@ -4379,10 +4592,12 @@ def main() -> None:
                 layer_quant_summary,
             )
 
+            runtime_arch = "qwen35"
             qwen35_config = {
-                "model": arch,
-                "arch": arch,
-                "model_type": arch,
+                "model": runtime_arch,
+                "arch": runtime_arch,
+                "model_type": runtime_arch,
+                "source_arch": arch,
                 "embed_dim": int(embed_dim),
                 "attn_out_dim": int(attn_query_dim or (num_heads * head_dim)),
                 "num_heads": int(num_heads),
@@ -4422,7 +4637,7 @@ def main() -> None:
                 # static IR context length. The v8 prefill generator now emits
                 # dynamic num_tokens for those calls, and CK-vs-decode plus
                 # llama.cpp replay parity cover this contract.
-                "prefill_policy": "batched",
+                "prefill_policy": resolve_qwen35_prefill_policy(moe=False),
                 "recurrent_state_physical_layout": "head_value_key_contiguous",
                 "sampler_defaults": {
                     "repeat_penalty": 1.12,
@@ -4437,6 +4652,25 @@ def main() -> None:
                 # until the replacement policy is proven across multi-token
                 # parity, not just one borderline prefix.
             }
+            if qwen35moe_audit is not None:
+                qwen35_config.update({
+                    "mlp_execution_mode": "qwen35moe",
+                    # The routed-expert prefill path is currently certified
+                    # through causal decode replay. Keep this in model
+                    # metadata so every generated-runtime client follows the
+                    # same policy until batched MoE prefill is certified.
+                    "prefill_policy": resolve_qwen35_prefill_policy(moe=True),
+                    "n_routed_experts": int(qwen35moe_audit["expert_count"]),
+                    "num_experts": int(qwen35moe_audit["expert_count"]),
+                    "experts_per_tok": int(qwen35moe_audit["experts_per_token"]),
+                    "num_experts_per_tok": int(qwen35moe_audit["experts_per_token"]),
+                    "moe_intermediate_size": int(qwen35moe_audit["expert_dim"]),
+                    "moe_shared_expert_intermediate_size": int(qwen35moe_audit["shared_expert_dim"]),
+                    "router_norm_topk_prob": True,
+                    "routed_scaling_factor": float(
+                        meta_float("qwen35moe.expert_weights_scale") or 1.0
+                    ),
+                })
             if recurrent_qkv_weight_dtype:
                 qwen35_config["recurrent_qkv_weight_dtype"] = recurrent_qkv_weight_dtype
             if rope_layout:
@@ -4458,7 +4692,7 @@ def main() -> None:
                 qwen35_config["ssm_time_step_rank"] = int(ssm_time_step_rank)
             if ssm_inner_size is not None:
                 qwen35_config["ssm_inner_size"] = int(ssm_inner_size)
-            qwen35_config = _inject_runtime_config_defaults(qwen35_config, arch)
+            qwen35_config = _inject_runtime_config_defaults(qwen35_config, runtime_arch)
 
             qwen35_quant_summary: Dict[str, Any] = {
                 "token_emb": next(entry["dtype"] for entry in qwen35_plan if entry["name"] == "token_emb"),
@@ -4487,7 +4721,7 @@ def main() -> None:
             if args.config_out:
                 os.makedirs(os.path.dirname(args.config_out) or ".", exist_ok=True)
                 cfg = build_llama_config(
-                    model_type=arch,
+                    model_type=runtime_arch,
                     num_layers=num_layers,
                     vocab_size=vocab_size,
                     hidden_size=embed_dim,
@@ -4681,7 +4915,7 @@ def main() -> None:
             print(
                 f"[gguf->bump] version={args.bump_version} arch={arch} layers={num_layers} "
                 f"hidden={embed_dim} heads={num_heads}/{num_kv_heads} ff={intermediate} "
-                f"vocab={vocab_size} ctx={context_len} hybrid=qwen35 -> {args.output}"
+                f"vocab={vocab_size} ctx={context_len} hybrid={arch} -> {args.output}"
             )
             print_generic_conversion_report(
                 arch=arch,
