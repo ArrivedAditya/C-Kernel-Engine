@@ -10,6 +10,13 @@
       "oracle": "llama.cpp"
     },
     {
+      "id": "qwen36_35b_a3b",
+      "label": "Qwen3.6 35B-A3B",
+      "model_env": "V8_QWEN36_MOE_MODEL",
+      "gguf_env": "V8_QWEN36_MOE_GGUF",
+      "oracle": "llama.cpp"
+    },
+    {
       "id": "qwen38_27b",
       "label": "Qwen3.8 27B dense",
       "model_env": "V8_QWEN38_MODEL",
@@ -65,6 +72,14 @@
       "model_env": "V8_LAGUNA_MODEL",
       "gguf_env": "V8_LAGUNA_GGUF",
       "default_model": "hf://unsloth/Laguna-S-2.1-GGUF/Laguna-S-2.1-Q4_K_M.gguf",
+      "oracle": "llama.cpp"
+    },
+    {
+      "id": "laguna_xs_2_1",
+      "label": "Laguna-XS 2.1",
+      "model_env": "V8_LAGUNA_XS_MODEL",
+      "gguf_env": "V8_LAGUNA_XS_GGUF",
+      "default_model": "hf://ggml-org/Laguna-XS-2.1-GGUF/Laguna-XS-2.1-Q4_K_M.gguf",
       "oracle": "llama.cpp"
     },
     {

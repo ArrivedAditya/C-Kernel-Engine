@@ -295,8 +295,37 @@ def _proc_cpu_ticks_and_rss(root_pid: int) -> tuple[int, int]:
     return ticks, rss_kib
 
 
+def _system_cpu_totals(
+    cpu_ids: set[int] | None = None,
+    proc_stat: Path = Path("/proc/stat"),
+) -> dict[int, tuple[int, int]]:
+    """Return per-CPU (busy, total) ticks using the same counters as top."""
+    totals: dict[int, tuple[int, int]] = {}
+    try:
+        lines = proc_stat.read_text(encoding="ascii").splitlines()
+    except OSError:
+        return totals
+    for line in lines:
+        fields = line.split()
+        if not fields or not re.fullmatch(r"cpu\d+", fields[0]):
+            continue
+        cpu = int(fields[0][3:])
+        if cpu_ids is not None and cpu not in cpu_ids:
+            continue
+        try:
+            counters = [int(value) for value in fields[1:]]
+        except ValueError:
+            continue
+        if len(counters) < 4:
+            continue
+        total = sum(counters)
+        idle = counters[3] + (counters[4] if len(counters) > 4 else 0)
+        totals[cpu] = (total - idle, total)
+    return totals
+
+
 def summarize_utilization_samples(
-    samples: list[dict[str, float]], requested_threads: int
+    samples: list[dict[str, Any]], requested_threads: int
 ) -> dict[str, Any]:
     active = sorted(
         float(sample["active_cores"])
@@ -330,7 +359,25 @@ def summarize_utilization_samples(
     if low_started is not None:
         longest_low = max(longest_low, previous_time - low_started)
 
-    return {
+    per_cpu_values: dict[int, list[float]] = {}
+    selected_active: list[float] = []
+    all_cores_80_samples = 0
+    per_cpu_sample_count = 0
+    for sample in samples:
+        per_cpu = sample.get("per_cpu_busy_pct")
+        if not isinstance(per_cpu, dict) or not per_cpu:
+            continue
+        values = [float(value) for value in per_cpu.values()]
+        for cpu, value in per_cpu.items():
+            per_cpu_values.setdefault(int(cpu), []).append(float(value))
+        selected_active.append(sum(values) / 100.0)
+        all_cores_80_samples += int(all(value >= 80.0 for value in values))
+        per_cpu_sample_count += 1
+    per_cpu_means = {
+        str(cpu): statistics.fmean(values)
+        for cpu, values in sorted(per_cpu_values.items()) if values
+    }
+    result = {
         "sample_count": len(active),
         "requested_threads": requested_threads,
         "mean_active_cores": statistics.fmean(active),
@@ -345,32 +392,75 @@ def summarize_utilization_samples(
             (int(sample.get("rss_kib", 0)) for sample in samples), default=0
         ),
     }
+    if selected_active and per_cpu_means:
+        selected_sorted = sorted(selected_active)
+
+        def selected_percentile(fraction: float) -> float:
+            position = fraction * (len(selected_sorted) - 1)
+            lower = int(position)
+            upper = min(lower + 1, len(selected_sorted) - 1)
+            weight = position - lower
+            return selected_sorted[lower] * (1.0 - weight) + selected_sorted[upper] * weight
+
+        result.update({
+            "per_cpu_sample_count": per_cpu_sample_count,
+            "sampled_cpu_ids": [int(cpu) for cpu in per_cpu_means],
+            "per_cpu_mean_utilization_pct": per_cpu_means,
+            "mean_selected_cpu_active_cores": statistics.fmean(selected_active),
+            "p10_selected_cpu_active_cores": selected_percentile(0.10),
+            "minimum_per_cpu_mean_utilization_pct": min(per_cpu_means.values()),
+            "maximum_per_cpu_mean_utilization_pct": max(per_cpu_means.values()),
+            "all_sampled_cpus_ge_80pct_fraction": (
+                all_cores_80_samples / per_cpu_sample_count
+            ),
+        })
+    return result
 
 
 def _sample_process_tree(
     root_pid: int,
     stop: threading.Event,
-    samples: list[dict[str, float]],
+    samples: list[dict[str, Any]],
+    monitored_cpus: set[int] | None = None,
     interval_seconds: float = 0.25,
 ) -> None:
     ticks_per_second = float(os.sysconf("SC_CLK_TCK"))
     origin = time.monotonic()
     previous_time = origin
     previous_ticks: int | None = None
+    previous_cpu_totals: dict[int, tuple[int, int]] | None = None
     while True:
         now = time.monotonic()
         ticks, rss_kib = _proc_cpu_ticks_and_rss(root_pid)
+        cpu_totals = _system_cpu_totals(monitored_cpus)
         active_cores = None
+        per_cpu_busy_pct: dict[str, float] | None = None
         elapsed = now - previous_time
         if previous_ticks is not None and elapsed > 0.0 and ticks >= previous_ticks:
             active_cores = (ticks - previous_ticks) / ticks_per_second / elapsed
-        samples.append({
+        if previous_cpu_totals is not None:
+            per_cpu_busy_pct = {}
+            for cpu, (busy, total) in cpu_totals.items():
+                previous = previous_cpu_totals.get(cpu)
+                if previous is None:
+                    continue
+                busy_delta = busy - previous[0]
+                total_delta = total - previous[1]
+                if total_delta > 0 and busy_delta >= 0:
+                    per_cpu_busy_pct[str(cpu)] = min(
+                        100.0, 100.0 * busy_delta / total_delta
+                    )
+        sample: dict[str, Any] = {
             "elapsed_seconds": now - origin,
             "active_cores": active_cores,
             "rss_kib": float(rss_kib),
-        })
+        }
+        if per_cpu_busy_pct:
+            sample["per_cpu_busy_pct"] = per_cpu_busy_pct
+        samples.append(sample)
         previous_time = now
         previous_ticks = ticks
+        previous_cpu_totals = cpu_totals
         if stop.wait(interval_seconds):
             break
 
@@ -397,7 +487,7 @@ def run_command(
         preexec_fn = lambda: os.sched_setaffinity(0, affinity)
     started = dt.datetime.now(dt.timezone.utc)
     usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)
-    utilization_samples: list[dict[str, float]] = []
+    utilization_samples: list[dict[str, Any]] = []
     sampler_stop = threading.Event()
     sampler: threading.Thread | None = None
     try:
@@ -414,9 +504,10 @@ def run_command(
             preexec_fn=preexec_fn,
         )
         if timed and sys.platform.startswith("linux"):
+            monitored_cpus = affinity or set(os.sched_getaffinity(0))
             sampler = threading.Thread(
                 target=_sample_process_tree,
-                args=(process.pid, sampler_stop, utilization_samples),
+                args=(process.pid, sampler_stop, utilization_samples, monitored_cpus),
                 name=f"cke-utilization-{name}",
                 daemon=True,
             )
@@ -604,11 +695,17 @@ def extract_svg_markup(text: str) -> str:
     return text[start:end + len("</svg>")].strip() + "\n"
 
 
-def materialize_quality_prompt(prompt: dict[str, Any], dependencies: dict[str, str]) -> str:
+def materialize_quality_prompt(
+    prompt: dict[str, Any],
+    dependencies: dict[str, str],
+    prefix: str = "",
+) -> str:
     text = str(prompt["text"])
     dependency_id = str(prompt.get("depends_on", ""))
     if not dependency_id:
-        return text
+        if not prefix:
+            return text
+        return f"{prefix.rstrip()}\n\nTask:\n{text}"
     dependency = dependencies.get(dependency_id, "")
     if not dependency:
         raise ValueError(f"quality prompt {prompt['id']!r} requires missing {dependency_id!r}")
@@ -722,8 +819,8 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
         "", "## Engineering Quality", "",
         "The C gate is syntax-only and never executes generated code. Human review and a numerical oracle remain required before any kernel can enter CKE.",
         "",
-        "| Model | Task | Status | Prompt tokens | Compile/XML | Clean artifact | Raw response |",
-        "|---|---|---|---:|---|---|---|",
+        "| Model | Task | Status | Total context | Output budget | Prompt tokens | Generated tokens | Stop | Compile/XML | Clean artifact | Raw response |",
+        "|---|---|---|---:|---:|---:|---:|---|---|---|---|",
     ]
     for row in report.get("quality", []):
         quality = row.get("quality") or {}
@@ -732,8 +829,31 @@ def write_markdown(report: dict[str, Any], path: Path) -> None:
             validation = quality.get("xml_parseable", "-")
         lines.append(
             f"| {row['model']} | {row['prompt_id']} | {row['status']} | "
-            f"{(row.get('timing') or {}).get('prompt_tokens', '-')} | {validation} | "
+            f"{row.get('total_context_tokens', '-')} | {row.get('output_budget_tokens', '-')} | "
+            f"{(row.get('timing') or {}).get('prompt_tokens', '-')} | "
+            f"{(row.get('timing') or {}).get('decode_tokens', '-')} | "
+            f"{row.get('native_stop_reason', '-')} | {validation} | "
             f"`{row.get('artifact_path', '-')}` | `{row.get('raw_output_path', '-')}` |"
+        )
+    lines += [
+        "", "## Engineering Quality Performance", "",
+        "| Model | Task | Prefill tok/s | Decode tok/s | Process cores | p10 sampled cores | Top-like selected cores | Weakest core mean | >=80% all-core samples | Peak RAM |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for row in report.get("quality", []):
+        timing = row.get("timing") or {}
+        usage = row.get("resource_usage") or {}
+        utilization = row.get("utilization") or {}
+        peak = row.get("peak_rss_kib")
+        lines.append(
+            f"| {row['model']} | {row['prompt_id']} | "
+            f"{timing.get('prompt_tok_s', '-')} | {timing.get('decode_tok_s', '-')} | "
+            f"{usage.get('average_cpu_cores', '-')} | "
+            f"{utilization.get('p10_active_cores', '-')} | "
+            f"{utilization.get('mean_selected_cpu_active_cores', '-')} | "
+            f"{utilization.get('minimum_per_cpu_mean_utilization_pct', '-')} | "
+            f"{utilization.get('all_sampled_cpus_ge_80pct_fraction', '-')} | "
+            f"{f'{peak / 1048576:.2f} GiB' if isinstance(peak, int) else '-'} |"
         )
     lines += ["", "## Skips And Failures", ""]
     for row in report.get("events", []):
@@ -791,10 +911,42 @@ def write_quality_index(report: dict[str, Any], output_dir: Path) -> None:
             objective = quality.get("xml_parseable", False)
         usage = row.get("resource_usage") or {}
         active_cores = usage.get("average_cpu_cores")
+        utilization = row.get("utilization") or {}
+        timing = row.get("timing") or {}
         utilization_fact = (
             f'<span>average active cores: {float(active_cores):.1f}</span>'
             if isinstance(active_cores, (int, float)) else ""
         )
+        p10 = utilization.get("p10_active_cores")
+        selected = utilization.get("mean_selected_cpu_active_cores")
+        weakest = utilization.get("minimum_per_cpu_mean_utilization_pct")
+        sustained = utilization.get("all_sampled_cpus_ge_80pct_fraction")
+        peak = row.get("peak_rss_kib")
+        total_context = row.get("total_context_tokens")
+        output_budget = row.get("output_budget_tokens")
+        stop_reason = row.get("native_stop_reason")
+        performance_facts = "".join((
+            f'<span>total context: {int(total_context):,}</span>'
+            if isinstance(total_context, int) else "",
+            f'<span>output budget: {int(output_budget):,}</span>'
+            if isinstance(output_budget, int) else "",
+            f'<span>stop: {html.escape(str(stop_reason))}</span>'
+            if stop_reason else "",
+            f'<span>prefill: {float(timing["prompt_tok_s"]):.1f} tok/s</span>'
+            if isinstance(timing.get("prompt_tok_s"), (int, float)) else "",
+            f'<span>decode: {float(timing["decode_tok_s"]):.2f} tok/s</span>'
+            if isinstance(timing.get("decode_tok_s"), (int, float)) else "",
+            f'<span>p10 process cores: {float(p10):.1f}</span>'
+            if isinstance(p10, (int, float)) else "",
+            f'<span>top-like selected cores: {float(selected):.1f}</span>'
+            if isinstance(selected, (int, float)) else "",
+            f'<span>weakest core mean: {float(weakest):.1f}%</span>'
+            if isinstance(weakest, (int, float)) else "",
+            f'<span>all cores >=80%: {100.0 * float(sustained):.1f}% samples</span>'
+            if isinstance(sustained, (int, float)) else "",
+            f'<span>peak RAM: {float(peak) / 1048576.0:.2f} GiB</span>'
+            if isinstance(peak, int) else "",
+        ))
         cards.append(
             '<section class="result">'
             f'<header><div><h2>{html.escape(str(row.get("model", "unknown")))}</h2>'
@@ -802,7 +954,7 @@ def write_quality_index(report: dict[str, Any], output_dir: Path) -> None:
             f'<span class="status {status.lower()}">{html.escape(status)}</span></header>'
             f'<div class="facts"><span>{html.escape(objective_label)}: {str(bool(objective)).lower()}</span>'
             f'<span>characters: {int(quality.get("characters", quality.get("answer_characters", 0)))}</span>'
-            f'{utilization_fact}</div>'
+            f'{utilization_fact}{performance_facts}</div>'
             f'<nav>{" | ".join(links) if links else "no artifact"}</nav>{preview}{source_view}</section>'
         )
     document = f'''<!doctype html>
@@ -848,8 +1000,14 @@ def build_runtime(
     args: argparse.Namespace,
     env: dict[str, str],
     evidence_dir: Path,
+    *,
+    runtime_context: int | None = None,
 ) -> dict[str, Any]:
-    runtime_context = context_tokens + decode_tokens + 8
+    resolved_runtime_context = (
+        int(runtime_context)
+        if runtime_context is not None
+        else context_tokens + decode_tokens + 8
+    )
     command = [
         sys.executable,
         str(SCRIPT_DIR / "ck_run_v8.py"),
@@ -858,7 +1016,7 @@ def build_runtime(
         "--run",
         str(runtime_dir),
         "--context-len",
-        str(runtime_context),
+        str(resolved_runtime_context),
         "--prefill-chunk-len",
         str(min(args.prefill_chunk_tokens, context_tokens)),
         "--logits-layout",
@@ -869,6 +1027,34 @@ def build_runtime(
         command, timeout=args.build_timeout, env=env, output_dir=evidence_dir,
         name="build-runtime", timed=False,
     )
+
+
+def quality_context_plan(
+    input_reserve_tokens: int,
+    prompts: list[dict[str, Any]],
+    total_context_tokens: int,
+) -> dict[str, Any]:
+    if input_reserve_tokens <= 0:
+        raise ValueError("quality input reserve must be positive")
+    if total_context_tokens > 0:
+        output_budget_tokens = total_context_tokens - input_reserve_tokens - 8
+        if output_budget_tokens <= 0:
+            raise ValueError(
+                "--quality-total-context must exceed --quality-context by at least 9 tokens"
+            )
+        return {
+            "mode": "fixed_total_context",
+            "total_context_tokens": total_context_tokens,
+            "input_reserve_tokens": input_reserve_tokens,
+            "output_budget_tokens": output_budget_tokens,
+        }
+    legacy_output_budget = max(int(prompt["max_tokens"]) for prompt in prompts)
+    return {
+        "mode": "legacy_prompt_caps",
+        "total_context_tokens": input_reserve_tokens + legacy_output_budget + 8,
+        "input_reserve_tokens": input_reserve_tokens,
+        "output_budget_tokens": None,
+    }
 
 
 def classify_build_failure(build: dict[str, Any]) -> tuple[str, str]:
@@ -1086,22 +1272,29 @@ def run_quality(
     args: argparse.Namespace,
     env: dict[str, str],
     output_dir: Path,
+    *,
+    context_plan: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     output_dir.mkdir(parents=True, exist_ok=True)
     results = []
     dependencies: dict[str, str] = {}
+    quality_prefix = str(getattr(args, "quality_prefix", ""))
+    minimum_root_prefill_tokens = max(
+        0, int(getattr(args, "quality_min_root_prefill_tokens", 0))
+    )
+    resolved_context_plan = context_plan or {
+        "mode": "legacy_prompt_caps",
+        "total_context_tokens": runtime_context,
+        "input_reserve_tokens": None,
+        "output_budget_tokens": None,
+    }
     for prompt in prompts:
         prompt_id = str(prompt["id"])
         result_path = output_dir / f"{prompt_id}.json"
-        if args.resume and result_path.is_file():
-            cached = json.loads(result_path.read_text(encoding="utf-8"))
-            artifact_path = Path(str(cached.get("artifact_path", "")))
-            if artifact_path.is_file():
-                dependencies[prompt_id] = artifact_path.read_text(encoding="utf-8")
-            results.append(cached)
-            continue
         try:
-            prompt_text = materialize_quality_prompt(prompt, dependencies)
+            prompt_text = materialize_quality_prompt(
+                prompt, dependencies, quality_prefix
+            )
         except ValueError as exc:
             result = {
                 "model_id": row["id"], "model": row["label"], "prompt_id": prompt_id,
@@ -1110,6 +1303,38 @@ def run_quality(
             atomic_json(result_path, result)
             results.append(result)
             continue
+        prompt_sha256 = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
+        configured_prompt_cap = int(prompt["max_tokens"])
+        fixed_output_budget = resolved_context_plan.get("output_budget_tokens")
+        output_budget_tokens = (
+            int(fixed_output_budget)
+            if isinstance(fixed_output_budget, int)
+            else configured_prompt_cap
+        )
+        command_output_limit = output_budget_tokens + (
+            0 if resolved_context_plan.get("mode") == "fixed_total_context" else 1
+        )
+        run_signature_sha256 = hashlib.sha256(
+            json.dumps(
+                {
+                    "prompt_sha256": prompt_sha256,
+                    "runtime_context": runtime_context,
+                    "output_budget_tokens": output_budget_tokens,
+                    "context_mode": resolved_context_plan.get("mode"),
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        if args.resume and result_path.is_file():
+            cached = json.loads(result_path.read_text(encoding="utf-8"))
+            artifact_path = Path(str(cached.get("artifact_path", "")))
+            if (
+                cached.get("run_signature_sha256") == run_signature_sha256
+                and artifact_path.is_file()
+            ):
+                dependencies[prompt_id] = artifact_path.read_text(encoding="utf-8")
+                results.append(cached)
+                continue
         prompt_path = output_dir / f"{prompt_id}.prompt.txt"
         prompt_path.write_text(prompt_text + "\n", encoding="utf-8")
         trace_path = output_dir / f"{prompt_id}.trace.json"
@@ -1119,7 +1344,7 @@ def run_quality(
             "--weights", str(runtime_dir / "weights.bump"),
             "--manifest", str(runtime_dir / "weights_manifest.map"),
             "--prompt", prompt_text,
-            "--max-tokens", str(int(prompt["max_tokens"]) + 1),
+            "--max-tokens", str(command_output_limit),
             "--context", str(runtime_context),
             "--temperature", "0",
             "--no-stream", "--timing",
@@ -1150,17 +1375,53 @@ def run_quality(
             raise ValueError(f"unsupported quality prompt kind: {kind!r}")
         dependencies[prompt_id] = artifact_text
         timing = None
+        native_trace = None
         if command_result["returncode"] == 0:
             try:
                 timing = parse_timing(command_result["stdout"] + command_result["stderr"])
             except ValueError:
                 pass
+        if trace_path.is_file():
+            try:
+                native_trace = json.loads(trace_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                native_trace = None
+        prefill_requirement_applies = not str(prompt.get("depends_on", ""))
+        prefill_tokens = int(timing["prompt_tokens"]) if timing is not None else None
+        prompt_not_truncated = "truncat" not in str(command_result.get("stderr", "")).lower()
+        prefill_consumption_verified = (
+            not prefill_requirement_applies
+            or minimum_root_prefill_tokens == 0
+            or (
+                prefill_tokens is not None
+                and prefill_tokens >= minimum_root_prefill_tokens
+            )
+        )
         result = {
             "model_id": row["id"], "model": row["label"], "prompt_id": prompt_id,
-            "status": "PASS" if command_result["returncode"] == 0 and quality["pass"] else "FAIL",
+            "status": (
+                "PASS" if command_result["returncode"] == 0 and quality["pass"]
+                and prefill_consumption_verified and prompt_not_truncated else "FAIL"
+            ),
             "quality": quality, "timing": timing, "peak_rss_kib": command_result["peak_rss_kib"],
             "resource_usage": command_result["resource_usage"],
-            "prompt_sha256": hashlib.sha256(prompt_text.encode("utf-8")).hexdigest(),
+            "utilization": command_result.get("utilization", {}),
+            "utilization_timeline_path": command_result.get("utilization_timeline_path"),
+            "prompt_sha256": prompt_sha256,
+            "run_signature_sha256": run_signature_sha256,
+            "context_plan": resolved_context_plan,
+            "total_context_tokens": runtime_context,
+            "output_budget_tokens": output_budget_tokens,
+            "command_output_limit_tokens": command_output_limit,
+            "configured_prompt_cap_tokens": configured_prompt_cap,
+            "native_stop_reason": (
+                native_trace.get("stop_reason")
+                if isinstance(native_trace, dict) else None
+            ),
+            "minimum_root_prefill_tokens": minimum_root_prefill_tokens,
+            "prefill_requirement_applies": prefill_requirement_applies,
+            "prefill_consumption_verified": prefill_consumption_verified,
+            "prompt_not_truncated": prompt_not_truncated,
             "prompt_path": str(prompt_path), "raw_output_path": str(raw_output_path),
             "artifact_path": str(artifact_path), "output_path": str(artifact_path),
             "trace_path": str(trace_path),
@@ -1186,20 +1447,29 @@ def certify_quality_at_context(
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     model_id = str(row["id"])
     evidence_dir = args.output_dir / "quality" / model_id
-    max_tokens = max(int(prompt["max_tokens"]) for prompt in prompts)
+    context_plan = quality_context_plan(
+        context_tokens,
+        prompts,
+        int(getattr(args, "quality_total_context", 0)),
+    )
+    runtime_context = int(context_plan["total_context_tokens"])
+    build_decode_tokens = context_plan.get("output_budget_tokens")
+    if not isinstance(build_decode_tokens, int):
+        build_decode_tokens = max(int(prompt["max_tokens"]) for prompt in prompts)
     build = build_runtime(
-        model, runtime_dir, context_tokens, max_tokens, args, env, evidence_dir
+        model, runtime_dir, context_tokens, build_decode_tokens, args, env, evidence_dir,
+        runtime_context=runtime_context,
     )
     if build["returncode"] != 0:
         status, reason = classify_build_failure(build)
         return [], {
             "model_id": model_id,
             "status": status,
-            "reason": f"quality runtime build failed at {context_tokens} tokens: {reason}",
+            "reason": f"quality runtime build failed at {runtime_context} total tokens: {reason}",
         }
-    quality_context = context_tokens + max_tokens + 8
     return run_quality(
-        row, runtime_dir, quality_context, prompts, args, env, evidence_dir
+        row, runtime_dir, runtime_context, prompts, args, env, evidence_dir,
+        context_plan=context_plan,
     ), None
 
 
@@ -1232,6 +1502,28 @@ def main() -> int:
     parser.add_argument("--run-timeout", type=int, default=43200)
     parser.add_argument("--quality-timeout", type=int, default=43200)
     parser.add_argument("--quality-context", type=int, default=8192)
+    parser.add_argument(
+        "--quality-total-context", type=int, default=0,
+        help=(
+            "Allocate this exact total context for quality generation. Decode may use "
+            "all tokens remaining after --quality-context and an 8-token safety margin; "
+            "0 preserves per-prompt output caps."
+        ),
+    )
+    parser.add_argument(
+        "--quality-prefix-file", type=Path,
+        help=(
+            "Prepend this dossier to root quality prompts; dependent prompts "
+            "receive only their declared artifact"
+        ),
+    )
+    parser.add_argument(
+        "--quality-min-root-prefill-tokens", type=int, default=0,
+        help=(
+            "Fail a root quality prompt unless native timing reports at least "
+            "this many consumed prompt tokens"
+        ),
+    )
     parser.add_argument("--ck-cli", type=Path, default=ROOT / "build" / "ck-cli-v8")
     parser.add_argument("--llama-root", type=Path, default=ROOT / "llama.cpp")
     parser.add_argument("--allow-download", action="store_true")
@@ -1249,6 +1541,12 @@ def main() -> int:
         raise ValueError("at least two repetitions are required for first-logit repeatability")
     if args.threads < 0:
         raise ValueError("--threads must be non-negative")
+    if args.quality_min_root_prefill_tokens < 0:
+        raise ValueError("--quality-min-root-prefill-tokens must be non-negative")
+    if args.quality_context <= 0:
+        raise ValueError("--quality-context must be positive")
+    if args.quality_total_context < 0:
+        raise ValueError("--quality-total-context must be non-negative")
     if not 0.0 < args.min_active_core_fraction <= 1.0:
         raise ValueError("--min-active-core-fraction must be in (0, 1]")
     if args.quality_only and args.no_quality:
@@ -1257,6 +1555,19 @@ def main() -> int:
     catalog = load_schema(args.catalog, "cke.v8.long_context_model_catalog")
     prompt_payload = load_schema(args.quality_prompts, "cke.v8.long_context_quality_prompts")
     quality_prompts = validate_quality_prompts(prompt_payload)
+    quality_context_plan(
+        args.quality_context, quality_prompts, args.quality_total_context
+    )
+    args.quality_prefix = ""
+    quality_prefix_sha256 = None
+    if args.quality_prefix_file is not None:
+        prefix_path = args.quality_prefix_file.expanduser().resolve()
+        args.quality_prefix = prefix_path.read_text(encoding="utf-8")
+        if not args.quality_prefix.strip():
+            raise ValueError("--quality-prefix-file must not be empty")
+        quality_prefix_sha256 = hashlib.sha256(
+            args.quality_prefix.encode("utf-8")
+        ).hexdigest()
     selected = {item.strip() for item in args.models.split(",") if item.strip()}
     rows = [row for row in catalog["models"] if selected == {"all"} or row["id"] in selected]
     if not rows:
@@ -1277,6 +1588,14 @@ def main() -> int:
     env["OMP_NUM_THREADS"] = "1"
     env["CK_THREADPOOL_PROFILE"] = "1"
 
+    quality_signature = {
+        "quality_mode": "engineering_pair_v1",
+        "quality_prompt_sha256": hashlib.sha256(
+            args.quality_prompts.read_bytes()
+        ).hexdigest(),
+        "quality_prefix_sha256": quality_prefix_sha256,
+        "quality_min_root_prefill_tokens": args.quality_min_root_prefill_tokens,
+    }
     report: dict[str, Any] = {
         "schema": "cke.v8.long_context_certification", "schema_version": 1,
         "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -1289,18 +1608,23 @@ def main() -> int:
                    "parity_context": args.parity_context,
                    "parity_new_tokens": args.parity_new_tokens,
                    "quality_context": args.quality_context,
-                   "quality_mode": "engineering_pair_v1"},
+                   "quality_input_reserve_tokens": args.quality_context,
+                   "quality_total_context_tokens": args.quality_total_context,
+                   **quality_signature},
         "performance": [], "quality": [], "events": [],
     }
     summary_path = args.output_dir / "summary.json"
+    quality_resume_compatible = True
     if args.resume and summary_path.is_file():
         previous = json.loads(summary_path.read_text(encoding="utf-8"))
         if previous.get("schema") == report["schema"]:
+            previous_config = previous.get("config", {})
+            quality_resume_compatible = all(
+                previous_config.get(key) == value
+                for key, value in quality_signature.items()
+            )
             report = previous
-    report.setdefault("config", {}).update({
-        "quality_mode": "engineering_pair_v1",
-        "quality_prompt_sha256": hashlib.sha256(args.quality_prompts.read_bytes()).hexdigest(),
-    })
+    report.setdefault("config", {}).update(quality_signature)
 
     completed = {
         (row.get("model_id"), int(row.get("context_tokens", 0)))
@@ -1319,6 +1643,8 @@ def main() -> int:
         model_id for model_id, prompt_ids in quality_ids_by_model.items()
         if required_quality_ids <= prompt_ids
     }
+    if not quality_resume_compatible:
+        completed_quality.clear()
     model_runtime: dict[str, Path] = {}
     model_sources: dict[str, tuple[str, str]] = {}
     for row in rows:
