@@ -4044,6 +4044,42 @@ def _template_graph_slots(op_item: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _canonical_graph_slot_overrides(
+    op_type: str,
+    io_kind: str,
+    overrides: Optional[Dict[str, str]],
+) -> Dict[str, str]:
+    """Map unambiguous provider port names onto canonical dataflow ports."""
+    if not overrides:
+        return {}
+
+    canonical = OP_DATAFLOW.get(op_type, {}).get(io_kind, {})
+    if not isinstance(canonical, dict) or not canonical:
+        return dict(overrides)
+
+    result = {
+        name: slot
+        for name, slot in overrides.items()
+        if name in canonical
+    }
+    unmatched = [name for name in overrides if name not in canonical]
+    remaining = [name for name in canonical if name not in result]
+
+    # Matmul providers conventionally expose A/C while the operation graph uses
+    # x/y. A single-port edge is unambiguous and must retain the circuit slot.
+    if len(unmatched) == 1 and len(remaining) == 1:
+        result[remaining[0]] = overrides[unmatched[0]]
+        return result
+
+    if unmatched:
+        raise RuntimeError(
+            "HARD CIRCUIT DATAFLOW FAULT: graph_slots ports do not match "
+            f"canonical {io_kind} for op={op_type!r}: "
+            f"unmatched={unmatched!r}, canonical={sorted(canonical)!r}."
+        )
+    return result
+
+
 def _dedupe_preserve_order(items: List[str]) -> List[str]:
     seen = set()
     out: List[str] = []
@@ -4639,6 +4675,20 @@ def _validate_lowered_activation_memory(
                     "storage": "external_runtime",
                 })
                 continue
+            owner_name = str(scratch.get("buffer", "") or "").strip()
+            if not owner_name:
+                raise RuntimeError(
+                    "HARD SCRATCH OWNERSHIP FAULT: "
+                    f"{op.get('kernel')}:{scratch.get('name', '<unnamed>')} "
+                    "does not declare its activation buffer"
+                )
+            owner = by_name.get(owner_name)
+            if owner is None:
+                raise RuntimeError(
+                    "HARD SCRATCH OWNERSHIP FAULT: "
+                    f"{op.get('kernel')}:{scratch.get('name', '<unnamed>')} "
+                    f"references unknown activation buffer {owner_name!r}"
+                )
             scratch_offset = int(scratch.get("scratch_offset", 0) or 0)
             scratch_size = int(scratch.get("size", 0) or 0)
             scratch_end = scratch_offset + scratch_size
@@ -4652,6 +4702,15 @@ def _validate_lowered_activation_memory(
                     f"{op.get('kernel')}:{scratch.get('name', '<unnamed>')} interval "
                     f"[{scratch_offset}, {scratch_end}) is outside activation arena "
                     f"[{activation_base}, {activation_limit})"
+                )
+            owner_offset = int(owner.get("offset", 0) or 0)
+            owner_end = owner_offset + int(owner.get("size", 0) or 0)
+            if scratch_offset < owner_offset or scratch_end > owner_end:
+                raise RuntimeError(
+                    "HARD SCRATCH OWNERSHIP FAULT: "
+                    f"{op.get('kernel')}:{scratch.get('name', '<unnamed>')} interval "
+                    f"[{scratch_offset}, {scratch_end}) exceeds {owner_name} "
+                    f"[{owner_offset}, {owner_end})"
                 )
             disjoint_from = scratch.get("disjoint_from", []) or []
             for live in disjoint_from:
@@ -4673,6 +4732,7 @@ def _validate_lowered_activation_memory(
                 "layer": int(op.get("layer", -1) or -1),
                 "provider": str(op.get("kernel", "")),
                 "scratch": str(scratch.get("name", "")),
+                "buffer": owner_name,
                 "offset": scratch_offset,
                 "required_bytes": scratch_size,
                 "disjoint_port_count": len(disjoint_from),
@@ -8852,8 +8912,16 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         kernel_id = ir_op.get("kernel")
         input_override = _input_slot_override_for_kernel(op_type, kernel_id)
         graph_slots = ir_op.get("graph_slots", {}) if isinstance(ir_op.get("graph_slots"), dict) else {}
-        explicit_input_override = graph_slots.get("inputs") if isinstance(graph_slots.get("inputs"), dict) else {}
-        explicit_output_override = graph_slots.get("outputs") if isinstance(graph_slots.get("outputs"), dict) else {}
+        explicit_input_override = _canonical_graph_slot_overrides(
+            op_type,
+            "inputs",
+            graph_slots.get("inputs") if isinstance(graph_slots.get("inputs"), dict) else {},
+        )
+        explicit_output_override = _canonical_graph_slot_overrides(
+            op_type,
+            "outputs",
+            graph_slots.get("outputs") if isinstance(graph_slots.get("outputs"), dict) else {},
+        )
         # Template graph_slots describe the semantic producer/consumer edge.
         # Kernel activation dtype decides the physical view of that edge. For
         # example GLM4 q_proj semantically consumes main_stream, but a Q4_K x
@@ -8869,6 +8937,29 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             # override to the Q8 physical view produced by an inserted quantize op.
             if not (explicit_input_override and kernel_act == "fp32"):
                 merged_input_override.update(input_override)
+                # OP_DATAFLOW uses canonical semantic names such as ``x``,
+                # while hardened provider interfaces may expose the same
+                # activation as ``A``. Apply the selected quantized physical
+                # view to the provider's declared activation port as well.
+                # Otherwise the semantic slot can bypass the planner-owned Q8
+                # workspace, or force an inserted quantizer to read and write
+                # that workspace in place.
+                interface_validation = ir_op.get("interface_validation")
+                if (
+                    explicit_input_override
+                    and kernel_act != "fp32"
+                    and isinstance(interface_validation, dict)
+                    and interface_validation.get("status") == "validated"
+                ):
+                    physical_slots = set(input_override.values())
+                    if len(physical_slots) == 1:
+                        physical_slot = next(iter(physical_slots))
+                        input_dtypes = (
+                            interface_validation.get("port_dtypes", {}).get("inputs", {})
+                        )
+                        for port_name in explicit_input_override:
+                            if str(input_dtypes.get(port_name, "")).lower() == kernel_act:
+                                merged_input_override[port_name] = physical_slot
         dataflow_info = dataflow_tracker.record_op(
             op_id,
             op_type,
@@ -8878,6 +8969,14 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             explicit_output_override or None,
             ir_op.get("interface_validation"),
         )
+        for input_name, input_info in dataflow_info.get("inputs", {}).items():
+            source = str(input_info.get("from", ""))
+            if input_name in explicit_input_override and source.startswith("uninitialized:"):
+                raise RuntimeError(
+                    "HARD CIRCUIT DATAFLOW FAULT: explicit graph input reads an "
+                    f"uninitialized slot: op={op_type!r}, layer={layer}, "
+                    f"input={input_name!r}, slot={input_info.get('slot')!r}."
+                )
         ir_op["dataflow"] = dataflow_info
 
     # Print dataflow stats
@@ -12782,6 +12881,11 @@ def generate_ir_lower_2(
                 # Also try the original name if mapping didn't find it
                 if not planned:
                     planned = get_planned_buffer(op_id, "inputs", input_name)
+                if kernel_needs_q8_activation(registry, str(ir_op.get("kernel", ""))):
+                    canonical_name = kernel_to_dataflow_input.get(input_name, input_name)
+                    physical = get_planned_buffer(op_id, "inputs", canonical_name)
+                    if physical and str(physical.get("dtype", "")).lower() in {"q8_0", "q8_k"}:
+                        planned = physical
 
                 if op_type == "branch_concat" and input_name == "main_input" and last_output_buffer in activation_buffers:
                     # branch_concat's main side is an explicit producer edge
@@ -12794,9 +12898,16 @@ def generate_ir_lower_2(
                     # Use memory planner's assignment
                     planner_buf = planned.get("buffer", "embedded_input")
                     declared_slot = _get_declared_dataflow_slot(ir_op, "inputs", dataflow_name, input_name)
+                    planned_dtype = str(planned.get("dtype", "") or "").lower()
+                    # A quantizer materializes a physical view of the declared
+                    # semantic edge. The consumer must read that planned Q8
+                    # view, not reopen the pre-quantized semantic source.
+                    logical_slot = None if planned_dtype in {"q8_0", "q8_k"} else (
+                        declared_slot or input_info.get("slot")
+                    )
                     buf_name = _resolve_logical_buffer_name(
                         planner_buf,
-                        declared_slot or input_info.get("slot"),
+                        logical_slot,
                         activation_buffers,
                         buffer_name_map,
                     )
@@ -12969,6 +13080,7 @@ def generate_ir_lower_2(
                 if buf:
                     lowered_op["scratch"].append({
                         "name": scratch_name,
+                        "buffer": scratch_name,
                         "scratch_offset": buf["offset"],
                         "size": buf["size"],
                         "dtype": "fp32",
@@ -12983,6 +13095,7 @@ def generate_ir_lower_2(
             if q_buf:
                 lowered_op["scratch"].append({
                     "name": "q_scratch",
+                    "buffer": "q_scratch",
                     "scratch_offset": q_buf["offset"],
                     "size": q_buf["size"],
                     "dtype": "fp32",
@@ -12994,6 +13107,7 @@ def generate_ir_lower_2(
                 if k_buf:
                     lowered_op["scratch"].append({
                         "name": "k_scratch",
+                        "buffer": "k_scratch",
                         "scratch_offset": k_buf["offset"],
                         "size": k_buf["size"],
                         "dtype": "fp32",
@@ -13005,6 +13119,7 @@ def generate_ir_lower_2(
                 if buf:
                     lowered_op["scratch"].append({
                         "name": scratch_name,
+                        "buffer": scratch_name,
                         "scratch_offset": buf["offset"],
                         "size": buf["size"],
                         "dtype": "fp32",
@@ -13018,6 +13133,7 @@ def generate_ir_lower_2(
                 if buf:
                     lowered_op["scratch"].append({
                         "name": scratch_name,
+                        "buffer": scratch_name,
                         "scratch_offset": buf["offset"],
                         "size": buf["size"],
                         "dtype": "fp32",
@@ -13029,6 +13145,7 @@ def generate_ir_lower_2(
             if q_buf:
                 lowered_op["scratch"].append({
                     "name": "q_scratch",
+                    "buffer": "q_scratch",
                     "scratch_offset": q_buf["offset"],
                     "size": q_buf["size"],
                     "dtype": "fp32",
@@ -13075,6 +13192,7 @@ def generate_ir_lower_2(
                 if buf:
                     lowered_op["scratch"].append({
                         "name": scratch_name,
+                        "buffer": scratch_name,
                         "scratch_offset": buf["offset"],
                         "size": buf["size"],
                         "dtype": "fp32",
@@ -13087,6 +13205,7 @@ def generate_ir_lower_2(
             if buf:
                 lowered_op["scratch"].append({
                     "name": "residual",
+                    "buffer": "residual",
                     "scratch_offset": buf["offset"],
                     "size": buf["size"],
                     "dtype": "fp32",
@@ -13101,6 +13220,7 @@ def generate_ir_lower_2(
             if mlp_buf:
                 lowered_op["scratch"].append({
                     "name": "geglu_scratch",
+                    "buffer": "mlp_scratch",
                     "scratch_offset": mlp_buf["offset"],
                     "size": mlp_buf["size"],
                     "dtype": "fp32",
@@ -13463,6 +13583,7 @@ def generate_ir_lower_2(
                         )
                 planned_scratch.append({
                     "name": scratch.get("name", f"scratch_{i}"),
+                    "buffer": "mlp_scratch",
                     "scratch_offset": scratch_offset,
                     "size": scratch_size,
                     "dtype": scratch.get("dtype", "fp32"),
@@ -14429,7 +14550,7 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                     expr = "NULL"
                 else:
                     offset = info.get("scratch_offset", 0)
-                    buf_name = info.get("name", key)
+                    buf_name = info.get("buffer") or info.get("name", key)
                     if use_bump_base:
                         if info.get("runtime_expr"):
                             expr = f"({cast or 'float*'}){info['runtime_expr']}"
