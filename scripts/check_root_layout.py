@@ -31,7 +31,6 @@ ALLOWED_DIRS = {
     ".githooks",
     ".github",
     "benchmarks",
-    "ckernel_engine",
     "docs",
     "include",
     "llama.cpp",
