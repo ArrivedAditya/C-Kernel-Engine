@@ -114,15 +114,77 @@ def _load_explicit_composition_circuit(name: str | None) -> dict[str, Any] | Non
     return circuit
 
 
+def _prebuilt_runtime_template_name(runtime_dir: Path) -> str:
+    manifest_path = runtime_dir.resolve() / "weights_manifest.json"
+    if not manifest_path.is_file():
+        return ""
+    manifest = _json_read(manifest_path)
+    template = manifest.get("template") if isinstance(manifest, dict) else None
+    if not isinstance(template, dict):
+        return ""
+    return str(template.get("name") or "").strip().lower()
+
+
+def _infer_prebuilt_composition_circuit(
+    *,
+    encoder_runtime: Path | None,
+    decoder_runtime: Path | None,
+) -> dict[str, Any] | None:
+    if encoder_runtime is None or decoder_runtime is None:
+        return None
+    runtime_templates = {
+        "encoder": _prebuilt_runtime_template_name(encoder_runtime),
+        "decoder": _prebuilt_runtime_template_name(decoder_runtime),
+    }
+    if not all(runtime_templates.values()):
+        return None
+
+    matches: list[dict[str, Any]] = []
+    circuits_dir = SCRIPT_DIR.parent / "circuits"
+    for path in sorted(circuits_dir.glob("*.json")):
+        raw = _json_read(path)
+        if str(raw.get("family") or "").strip().lower() != "multimodal_composition":
+            continue
+        candidate = _load_explicit_composition_circuit(path.stem)
+        if candidate is None:
+            continue
+        component_templates: dict[str, str] = {}
+        for ref in dict(candidate.get("resolved_components") or {}).values():
+            if not isinstance(ref, dict):
+                continue
+            role = str(ref.get("runtime_role") or "").strip().lower()
+            circuit = str(ref.get("circuit") or "").strip().lower()
+            if role in runtime_templates and circuit:
+                component_templates[role] = circuit
+        if component_templates == runtime_templates:
+            matches.append(candidate)
+
+    if len(matches) > 1:
+        names = sorted(str(candidate.get("name") or "") for candidate in matches)
+        raise RuntimeError(
+            "prebuilt encoder/decoder runtimes match multiple multimodal compositions: "
+            + ", ".join(names)
+        )
+    return matches[0] if matches else None
+
+
 def _validate_composition_encoder_source(
     circuit: dict[str, Any] | None,
     *,
     encoder_gguf: Path | None,
     encoder_runtime: Path | None,
+    synthetic_prefix_tokens: int = 0,
 ) -> None:
-    if circuit is not None and encoder_gguf is None and encoder_runtime is None:
+    if (
+        circuit is not None
+        and encoder_gguf is None
+        and encoder_runtime is None
+        and synthetic_prefix_tokens <= 0
+    ):
         raise RuntimeError(
-            "explicit multimodal composition requires --encoder-gguf or --encoder-runtime"
+            "explicit multimodal composition requires --encoder-gguf or "
+            "--encoder-runtime, unless an explicit --synthetic-prefix-tokens "
+            "diagnostic is requested"
         )
 
 
@@ -263,6 +325,18 @@ def _local_prefix_text_pos_for_policy(
     if policy == "mrope_2d" and grid_x > 0 and grid_y > 0:
         return max(int(grid_x), int(grid_y))
     return max(0, int(prefix_tokens))
+
+
+def _resolved_encoder_prefix_policy(
+    encoder_report: dict[str, Any],
+    report_key: str,
+    declared_policy: str,
+    *,
+    composition_owned: bool,
+) -> str:
+    if composition_owned:
+        return declared_policy
+    return str(encoder_report.get(report_key, declared_policy) or declared_policy)
 
 
 def _parse_activation_preference_overrides(values: list[str] | None) -> dict[str, str]:
@@ -889,11 +963,22 @@ def _build_full_network_graph(
     encoder_dir: Path,
     decoder_dir: Path,
 ) -> dict[str, Any]:
+    def _first_existing(directory: Path, names: tuple[str, ...]) -> Path:
+        for name in names:
+            path = directory / name
+            if path.is_file():
+                return path
+        return directory / names[0]
+
     encoder_ir1 = _json_load(encoder_dir / "ir1.json")
     encoder_call = _json_load(encoder_dir / "call.json")
     encoder_layout = _json_load(encoder_dir / "layout.json")
     decoder_ir1 = _json_load(decoder_dir / "ir1_prefill.json")
-    decoder_call = _json_load(decoder_dir / "call_prefill.json")
+    decoder_call_path = _first_existing(
+        decoder_dir,
+        ("call_prefill.json", "lowered_prefill_call.json"),
+    )
+    decoder_call = _json_load(decoder_call_path)
     decoder_layout = _json_load(decoder_dir / "layout_prefill.json")
 
     encoder_ir_ops = _payload_ops(encoder_ir1)
@@ -1066,7 +1151,7 @@ def _build_full_network_graph(
             "encoder_call": str(encoder_dir / "call.json"),
             "encoder_layout": str(encoder_dir / "layout.json"),
             "decoder_ir1_prefill": str(decoder_dir / "ir1_prefill.json"),
-            "decoder_call_prefill": str(decoder_dir / "call_prefill.json"),
+            "decoder_call_prefill": str(decoder_call_path),
             "decoder_layout_prefill": str(decoder_dir / "layout_prefill.json"),
         },
     }
@@ -1613,8 +1698,10 @@ def _format_multimodal_prompt_segments(
 
 
 def _segment_text_has_bos_prefix(text: str) -> bool:
-    stripped = str(text or "").lstrip()
-    return stripped.startswith(("<bos>", "<s>", "<|begin_of_text|>"))
+    stripped = str(text or "").lstrip().lower()
+    return stripped.startswith(
+        ("<bos>", "<bos_token>", "<s>", "<|begin_of_text|>")
+    )
 
 
 def _encode_prompt_segment(tokenizer: Any, text: str, *, add_bos: bool) -> list[int]:
@@ -1975,6 +2062,73 @@ def _qwen3vl_geometry_overrides(
         "image_max_pixels": int(max_pixels),
         "image_min_tokens": int(min_pixels // patch_area),
         "image_max_tokens": int(max_pixels // patch_area),
+    }
+
+
+def _cohere_compass_geometry_overrides(
+    config: dict[str, Any], image_path: Path
+) -> dict[str, Any]:
+    source_width, source_height = _image_source_size(image_path)
+    patch_size = int(config.get("patch_size", 0) or 0)
+    merge_size = int(config.get("spatial_merge_size", 2) or 2)
+    align_size = int(config.get("image_resize_factor", 0) or patch_size * merge_size)
+    min_pixels = int(config.get("image_min_pixels", 0) or 0)
+    max_pixels = int(config.get("image_max_pixels", 0) or 0)
+    if patch_size <= 0 or merge_size <= 0 or align_size <= 0:
+        raise RuntimeError(
+            "invalid Cohere Compass patch/merge geometry: "
+            f"patch={patch_size} merge={merge_size} factor={align_size}"
+        )
+    if min_pixels <= 0 or max_pixels <= 0:
+        raise RuntimeError(
+            "Cohere Compass runtime is missing native resize bounds; "
+            "reconvert it from the checkpoint preprocessor_config.json"
+        )
+    aspect_ratio = max(source_width, source_height) / float(
+        min(source_width, source_height)
+    )
+    if aspect_ratio > 200.0:
+        raise RuntimeError(
+            f"Cohere Compass image aspect ratio must not exceed 200, got {aspect_ratio}"
+        )
+    image_width, image_height = _calc_qwen_vl_smart_resize(
+        source_width,
+        source_height,
+        align_size,
+        min_pixels,
+        max_pixels,
+    )
+    vision_grid_w = image_width // patch_size
+    vision_grid_h = image_height // patch_size
+    if image_width % patch_size or image_height % patch_size:
+        raise RuntimeError(
+            "Cohere Compass smart resize produced a non-patch-aligned image: "
+            f"{image_width}x{image_height} patch={patch_size}"
+        )
+    if vision_grid_w % merge_size or vision_grid_h % merge_size:
+        raise RuntimeError(
+            "Cohere Compass patch grid is not merge-aligned: "
+            f"{vision_grid_w}x{vision_grid_h} merge={merge_size}"
+        )
+    merge_factor = merge_size * merge_size
+    vision_num_patches = vision_grid_w * vision_grid_h
+    return {
+        "image_width": int(image_width),
+        "image_height": int(image_height),
+        "vision_grid_w": int(vision_grid_w),
+        "vision_grid_h": int(vision_grid_h),
+        "vision_num_patches": int(vision_num_patches),
+        "vision_merged_tokens": int(vision_num_patches // merge_factor),
+        "context_length": int(vision_num_patches),
+        "max_seq_len": int(vision_num_patches),
+        "merged_grid_x": int(vision_grid_w // merge_size),
+        "merged_grid_y": int(vision_grid_h // merge_size),
+        "image_source_width": int(source_width),
+        "image_source_height": int(source_height),
+        "image_min_pixels": int(min_pixels),
+        "image_max_pixels": int(max_pixels),
+        "image_resize_factor": int(align_size),
+        "image_resize_preserve_aspect": True,
     }
 
 
@@ -2440,6 +2594,120 @@ def _load_prebuilt_encoder_runtime(runtime_dir: Path) -> dict[str, Any]:
     }
 
 
+def _prepare_prebuilt_encoder_geometry_runtime(
+    runtime_dir: Path,
+    cache_root: Path,
+    image_path: Path,
+) -> dict[str, Any]:
+    source = _load_prebuilt_encoder_runtime(runtime_dir)
+    source_manifest_path = runtime_dir.resolve() / "weights_manifest.json"
+    if not source_manifest_path.is_file():
+        raise RuntimeError(
+            "geometry-adapted encoder runtime requires weights_manifest.json: "
+            f"{source_manifest_path}"
+        )
+    manifest = _json_read(source_manifest_path)
+    if not isinstance(manifest, dict):
+        raise RuntimeError(f"invalid encoder manifest: {source_manifest_path}")
+    config = dict(manifest.get("config", {}) or {})
+    encoder_model = str(config.get("model", config.get("arch", ""))).lower()
+    if encoder_model != "cohere_compass_vision":
+        raise RuntimeError(
+            "prebuilt geometry adaptation currently supports only the declared "
+            f"Cohere Compass native-resolution contract, got {encoder_model!r}"
+        )
+    config.update(_cohere_compass_geometry_overrides(config, image_path))
+    geometry_identity = {
+        "source_manifest_sha256": hashlib.sha256(
+            source_manifest_path.read_bytes()
+        ).hexdigest(),
+        "image_width": int(config["image_width"]),
+        "image_height": int(config["image_height"]),
+        "vision_num_patches": int(config["vision_num_patches"]),
+    }
+    cache_key = hashlib.sha256(
+        json.dumps(geometry_identity, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    output_dir = cache_root.resolve() / (
+        f"{encoder_model}-{config['image_width']}x{config['image_height']}-{cache_key}"
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest["config"] = config
+    manifest_path = output_dir / "weights_manifest.json"
+    config_path = output_dir / "config.json"
+    _json_write(manifest_path, manifest)
+    _json_write(config_path, config)
+
+    weights_bump = output_dir / "weights.bump"
+    if not weights_bump.exists():
+        weights_bump.symlink_to(Path(source["weights_bump"]).resolve())
+    ir1_path = output_dir / "ir1.json"
+    layout_path = output_dir / "layout.json"
+    lowered_path = output_dir / "lowered.json"
+    call_path = output_dir / "call.json"
+    manifest_map = output_dir / "weights_manifest.map"
+    c_path = output_dir / "encoder_v8.c"
+    so_path = output_dir / "libencoder_v8.so"
+    stamp_path = output_dir / "geometry_runtime.json"
+    reusable = all(
+        path.is_file()
+        for path in (ir1_path, layout_path, lowered_path, call_path, manifest_map, c_path)
+    )
+    if _json_read(stamp_path) != geometry_identity or not reusable:
+        rc = build_ir_v8.main(
+            [
+                "--manifest",
+                str(manifest_path),
+                "--mode",
+                "prefill",
+                "--output",
+                str(ir1_path),
+                "--layout-output",
+                str(layout_path),
+                "--lowered-output",
+                str(lowered_path),
+                "--call-output",
+                str(call_path),
+                "--manifest-map-output",
+                str(manifest_map),
+            ]
+        )
+        if rc != 0:
+            raise RuntimeError(f"geometry-adapted encoder IR build failed with rc={rc}")
+        old_argv = sys.argv[:]
+        try:
+            sys.argv = [
+                str(SCRIPT_DIR / "codegen_v8.py"),
+                "--ir",
+                str(call_path),
+                "--layout",
+                str(layout_path),
+                "--output",
+                str(c_path),
+            ]
+            codegen_rc = codegen_v8.main()
+        finally:
+            sys.argv = old_argv
+        if codegen_rc != 0:
+            raise RuntimeError(
+                f"geometry-adapted encoder codegen failed with rc={codegen_rc}"
+            )
+        _json_write(stamp_path, geometry_identity)
+    _compile_generated_model(c_path, so_path)
+    engine_so = so_path.parent / "libckernel_engine.so"
+    layout = _load_layout(layout_path)
+    return {
+        "gguf": None,
+        "runtime_dir": output_dir,
+        "weights_bump": weights_bump,
+        "manifest_map": manifest_map,
+        "layout_path": layout_path,
+        "so_path": so_path,
+        "engine_so": engine_so,
+        "embed_dim": int(layout.get("config", {}).get("embed_dim", 0) or 0),
+    }
+
+
 def _prepare_decoder_runtime(
     gguf_path: Path,
     output_dir: Path,
@@ -2684,6 +2952,89 @@ def _prepare_decoder_runtime(
     }
 
 
+def _load_prebuilt_decoder_runtime(
+    runtime_dir: Path,
+    *,
+    required_context: int | None = None,
+) -> dict[str, Any]:
+    """Load a generated text runtime for multimodal bridge execution."""
+    runtime_dir = runtime_dir.resolve()
+    if not runtime_dir.is_dir():
+        raise FileNotFoundError(f"prebuilt decoder runtime is missing: {runtime_dir}")
+    required = {
+        "weights_bump": runtime_dir / "weights.bump",
+        "manifest_path": runtime_dir / "weights_manifest.json",
+        "manifest_map": runtime_dir / "weights_manifest.map",
+        "prefill_layout_path": runtime_dir / "layout_prefill.json",
+        "decode_layout_path": runtime_dir / "layout_decode.json",
+        "so_path": runtime_dir / "libmodel.so",
+        "engine_so": runtime_dir / "libckernel_engine.so",
+        "tokenizer_so": runtime_dir / "libckernel_tokenizer.so",
+        "tokenizer_json": runtime_dir / "tokenizer.json",
+    }
+    missing = [str(path) for path in required.values() if not path.is_file()]
+    if missing:
+        raise RuntimeError(f"prebuilt decoder runtime is incomplete: missing={missing}")
+
+    manifest = _json_read(required["manifest_path"])
+    if not isinstance(manifest, dict):
+        raise RuntimeError(
+            f"prebuilt decoder manifest is not valid JSON: {required['manifest_path']}"
+        )
+    decode_layout = _load_layout(required["decode_layout_path"])
+    cfg = dict(decode_layout.get("config", {}) or {})
+    context_length = int(
+        cfg.get("context_length", cfg.get("context_len", cfg.get("max_seq_len", 0)))
+        or 0
+    )
+    if required_context is not None and context_length < int(required_context):
+        raise RuntimeError(
+            "prebuilt decoder context is too small for the requested bridge run: "
+            f"required={int(required_context)} available={context_length}"
+        )
+    embed_dim = int(cfg.get("embed_dim", 0) or 0)
+    num_deepstack_layers = int(cfg.get("num_deepstack_layers", 0) or 0)
+    input_embed_dim = int(cfg.get("input_embed_dim", 0) or 0)
+    if input_embed_dim <= 0 and embed_dim > 0 and num_deepstack_layers > 0:
+        input_embed_dim = embed_dim * (1 + num_deepstack_layers)
+    if input_embed_dim <= 0:
+        input_embed_dim = embed_dim
+
+    return {
+        "gguf": None,
+        "runtime_dir": runtime_dir,
+        "manifest": manifest,
+        "weights_bump": required["weights_bump"],
+        "manifest_map": required["manifest_map"],
+        "config_path": runtime_dir / "config.json",
+        "prefill_layout_path": required["prefill_layout_path"],
+        "decode_layout_path": required["decode_layout_path"],
+        "prefill_c_path": runtime_dir / "model_v8.c",
+        "prefill_so_path": required["so_path"],
+        "c_path": runtime_dir / "model_v8.c",
+        "so_path": required["so_path"],
+        "engine_so": required["engine_so"],
+        "embed_dim": embed_dim,
+        "input_embed_dim": input_embed_dim,
+        "num_deepstack_layers": num_deepstack_layers,
+        "context_length": context_length,
+        "vocab_size": int(cfg.get("vocab_size", 0) or 0),
+    }
+
+
+def _load_prebuilt_decoder_tokenizer(runtime_dir: Path) -> _TokenizerJSONAdapter:
+    runtime_dir = runtime_dir.resolve()
+    manifest_path = runtime_dir / "weights_manifest.json"
+    if not manifest_path.is_file():
+        raise RuntimeError(
+            f"prebuilt decoder runtime has no weights manifest: {runtime_dir}"
+        )
+    manifest = _json_read(manifest_path)
+    if not isinstance(manifest, dict):
+        raise RuntimeError(f"prebuilt decoder manifest is not valid JSON: {manifest_path}")
+    return _TokenizerJSONAdapter(runtime_dir, manifest)
+
+
 def _load_encoder_lib(model_so: Path, *, engine_so: Path | None = None) -> ctypes.CDLL:
     requested_engine = (engine_so if engine_so is not None else BUILD_DIR / "libckernel_engine.so").resolve()
     adjacent_engine = model_so.resolve().parent / "libckernel_engine.so"
@@ -2716,6 +3067,55 @@ class _DlInfo(ctypes.Structure):
         ("dli_sname", ctypes.c_char_p),
         ("dli_saddr", ctypes.c_void_p),
     ]
+
+
+class _TokenizerJSONAdapter:
+    """Expose the bridge tokenizer ABI for a staged HuggingFace tokenizer."""
+
+    def __init__(self, runtime_dir: Path, manifest: dict[str, Any]):
+        try:
+            from tokenizers import Tokenizer
+        except ImportError as exc:  # pragma: no cover - dependency gate
+            raise RuntimeError(
+                "prebuilt decoder runtimes require the tokenizers package"
+            ) from exc
+
+        tokenizer_path = runtime_dir / "tokenizer.json"
+        if not tokenizer_path.is_file():
+            raise RuntimeError(
+                f"prebuilt decoder runtime has no tokenizer.json: {runtime_dir}"
+            )
+        self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
+        self.token_to_id = {
+            str(token): int(token_id)
+            for token, token_id in self._tokenizer.get_vocab(with_added_tokens=True).items()
+        }
+        special = manifest.get("special_tokens")
+        if not isinstance(special, dict):
+            special = {}
+        self.bos_id = int(special.get("bos_token_id", -1) or -1)
+        self.eos_id = int(special.get("eos_token_id", -1) or -1)
+
+    def encode(self, text: str, *, add_bos: bool = False) -> list[int]:
+        token_ids = [
+            int(token_id)
+            for token_id in self._tokenizer.encode(
+                str(text or ""), add_special_tokens=False
+            ).ids
+        ]
+        if add_bos and self.bos_id >= 0 and (
+            not token_ids or token_ids[0] != self.bos_id
+        ):
+            token_ids.insert(0, self.bos_id)
+        return token_ids
+
+    def decode(self, token_ids: Sequence[int], *, skip_special: bool = True) -> str:
+        return str(
+            self._tokenizer.decode(
+                [int(token_id) for token_id in token_ids],
+                skip_special_tokens=bool(skip_special),
+            )
+        )
 
 
 def _resolved_symbol_library(lib: ctypes.CDLL, symbol: str) -> Path:
@@ -3652,7 +4052,13 @@ def _derive_decoder_context_len(
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Explicit v8 multimodal bridge runner")
-    ap.add_argument("--decoder-gguf", type=Path, required=True, help="Decoder GGUF to lower/codegen")
+    decoder_source = ap.add_mutually_exclusive_group(required=True)
+    decoder_source.add_argument("--decoder-gguf", type=Path, help="Decoder GGUF to lower/codegen")
+    decoder_source.add_argument(
+        "--decoder-runtime",
+        type=Path,
+        help="Provenance-complete prebuilt decoder runtime directory",
+    )
     encoder_source = ap.add_mutually_exclusive_group()
     encoder_source.add_argument("--encoder-gguf", type=Path, default=None, help="Optional vision encoder/mmproj GGUF")
     encoder_source.add_argument(
@@ -3660,6 +4066,15 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         default=None,
         help="Optional provenance-complete prebuilt vision encoder runtime directory",
+    )
+    ap.add_argument(
+        "--encoder-geometry-cache-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Recompile a geometry-specific prebuilt encoder layout in this shared cache; "
+            "currently used by native-resolution Cohere Compass vision runtimes"
+        ),
     )
     ap.add_argument(
         "--composition-circuit",
@@ -3727,19 +4142,35 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--vision-activation-pref cannot modify a prebuilt --encoder-runtime")
     if args.encoder_runtime is not None and args.profile_encoder:
         ap.error("--profile-encoder requires --encoder-gguf so a profile runtime can be compiled")
+    if args.decoder_runtime is not None and args.profile_decoder:
+        ap.error("--profile-decoder requires --decoder-gguf so a profile runtime can be compiled")
 
     _log_progress(f"start workdir={workdir}")
     has_encoder = bool(args.encoder_gguf is not None or args.encoder_runtime is not None)
     _ensure_engine_lib(openmp=has_encoder)
     _log_progress(f"engine ready openmp={'on' if has_encoder else 'off'}")
 
-    tokenizer = GGUFTokenizer.from_gguf(str(args.decoder_gguf.resolve()))
+    if args.decoder_runtime is not None:
+        tokenizer = _load_prebuilt_decoder_tokenizer(args.decoder_runtime)
+    else:
+        tokenizer = GGUFTokenizer.from_gguf(str(args.decoder_gguf.resolve()))
     chat_template_mode = "none" if args.no_chat_template else args.chat_template
     composition_circuit = _load_explicit_composition_circuit(args.composition_circuit)
+    if composition_circuit is None:
+        composition_circuit = _infer_prebuilt_composition_circuit(
+            encoder_runtime=args.encoder_runtime,
+            decoder_runtime=args.decoder_runtime,
+        )
+        if composition_circuit is not None:
+            _log_progress(
+                "composition circuit auto-resolved "
+                f"name={composition_circuit.get('name')}"
+            )
     _validate_composition_encoder_source(
         composition_circuit,
         encoder_gguf=args.encoder_gguf,
         encoder_runtime=args.encoder_runtime,
+        synthetic_prefix_tokens=args.synthetic_prefix_tokens,
     )
     if composition_circuit is not None:
         chat_contract = _composition_exported_contract(composition_circuit, "chat_contract")
@@ -3753,14 +4184,36 @@ def main(argv: list[str] | None = None) -> int:
         chat_contract["template_markers"] = markers
         chat_template_mode = str(composition_circuit.get("name") or args.composition_circuit)
     else:
-        chat_contract = _resolve_decoder_chat_contract(
-            args.decoder_gguf.resolve(),
-            chat_template_mode=chat_template_mode,
-        )
-        bridge_contract = _resolve_decoder_bridge_contract(
-            args.decoder_gguf.resolve(),
-            chat_template_mode=chat_template_mode,
-        )
+        if args.decoder_runtime is not None:
+            runtime_manifest = _json_read(
+                args.decoder_runtime.resolve() / "weights_manifest.json"
+            )
+            runtime_template = (
+                runtime_manifest.get("template")
+                if isinstance(runtime_manifest, dict)
+                and isinstance(runtime_manifest.get("template"), dict)
+                else {}
+            )
+            runtime_contract = (
+                runtime_template.get("contract")
+                if isinstance(runtime_template.get("contract"), dict)
+                else {}
+            )
+            chat_contract = copy.deepcopy(runtime_contract.get("chat_contract"))
+            bridge_contract = copy.deepcopy(
+                runtime_contract.get("multimodal_bridge_contract")
+                or runtime_contract.get("multimodal_bridge")
+                or {}
+            )
+        else:
+            chat_contract = _resolve_decoder_chat_contract(
+                args.decoder_gguf.resolve(),
+                chat_template_mode=chat_template_mode,
+            )
+            bridge_contract = _resolve_decoder_bridge_contract(
+                args.decoder_gguf.resolve(),
+                chat_template_mode=chat_template_mode,
+            )
     resolved_bridge_runtime = str(args.bridge_runtime or _bridge_runtime_from_policy(bridge_contract, fallback="prefill"))
     resolved_bridge_generation_mode = str(
         args.bridge_generation_mode
@@ -3819,7 +4272,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.encoder_runtime is not None:
         _log_progress(f"encoder runtime load start dir={args.encoder_runtime.resolve()}")
         encoder_prep_t0 = time.perf_counter()
-        encoder_runtime = _load_prebuilt_encoder_runtime(args.encoder_runtime)
+        if args.encoder_geometry_cache_dir is not None:
+            if args.image_path is None:
+                ap.error("--encoder-geometry-cache-dir requires --image-path")
+            encoder_runtime = _prepare_prebuilt_encoder_geometry_runtime(
+                args.encoder_runtime,
+                args.encoder_geometry_cache_dir,
+                args.image_path.resolve(),
+            )
+        else:
+            encoder_runtime = _load_prebuilt_encoder_runtime(args.encoder_runtime)
         encoder_prepare_elapsed = time.perf_counter() - encoder_prep_t0
         timings["encoder_prepare_ms"] = encoder_prepare_elapsed * 1000.0
         _log_progress(f"encoder runtime load done elapsed={encoder_prepare_elapsed:.2f}s")
@@ -3866,9 +4328,14 @@ def main(argv: list[str] | None = None) -> int:
         requested=args.decoder_context_len,
         slack_tokens=max(16, int(args.max_tokens or 0)),
     )
+    decoder_source_label = (
+        f"runtime={args.decoder_runtime.resolve()}"
+        if args.decoder_runtime is not None
+        else f"gguf={args.decoder_gguf.resolve()}"
+    )
     _log_progress(
         "decoder runtime prepare start "
-        f"gguf={args.decoder_gguf.resolve()} context={decoder_context_len} prefix_budget={decoder_prefix_budget}"
+        f"{decoder_source_label} context={decoder_context_len} prefix_budget={decoder_prefix_budget}"
     )
     decoder_prep_t0 = time.perf_counter()
     decoder_runtime_overrides = {"multimodal_bridge_contract": bridge_contract}
@@ -3880,15 +4347,21 @@ def main(argv: list[str] | None = None) -> int:
                     "composition decoder_runtime_config must be an object"
                 )
             decoder_runtime_overrides.update(declared_decoder_config)
-    decoder_runtime = _prepare_decoder_runtime(
-        args.decoder_gguf.resolve(),
-        decoder_dir,
-        context_override=decoder_context_len,
-        profile=bool(args.profile_decoder),
-        runtime_config_overrides=(
-            decoder_runtime_overrides if composition_circuit is not None else None
-        ),
-    )
+    if args.decoder_runtime is not None:
+        decoder_runtime = _load_prebuilt_decoder_runtime(
+            args.decoder_runtime,
+            required_context=decoder_context_len,
+        )
+    else:
+        decoder_runtime = _prepare_decoder_runtime(
+            args.decoder_gguf.resolve(),
+            decoder_dir,
+            context_override=decoder_context_len,
+            profile=bool(args.profile_decoder),
+            runtime_config_overrides=(
+                decoder_runtime_overrides if composition_circuit is not None else None
+            ),
+        )
     decoder_prepare_elapsed = time.perf_counter() - decoder_prep_t0
     timings["decoder_prepare_ms"] = decoder_prepare_elapsed * 1000.0
     _log_progress(f"decoder runtime prepare done elapsed={decoder_prepare_elapsed:.2f}s")
@@ -3907,14 +4380,21 @@ def main(argv: list[str] | None = None) -> int:
     composition_evidence: dict[str, Any] | None = None
     if composition_circuit is not None:
         if encoder_runtime is None:
-            raise RuntimeError("explicit multimodal composition did not produce an encoder runtime")
-        encoder_layout = _load_layout(Path(encoder_runtime["layout_path"]))
-        decoder_layout = _load_layout(Path(decoder_runtime["decode_layout_path"]))
-        composition_evidence = _validate_composition_runtime(
-            composition_circuit,
-            encoder_config=dict(encoder_layout.get("config", {}) or {}),
-            decoder_config=dict(decoder_layout.get("config", {}) or {}),
-        )
+            if args.synthetic_prefix_tokens <= 0:
+                raise RuntimeError("explicit multimodal composition did not produce an encoder runtime")
+            composition_evidence = {
+                "name": str(composition_circuit.get("name") or ""),
+                "synthetic_prefix_diagnostic": True,
+                "encoder_runtime_validated": False,
+            }
+        else:
+            encoder_layout = _load_layout(Path(encoder_runtime["layout_path"]))
+            decoder_layout = _load_layout(Path(decoder_runtime["decode_layout_path"]))
+            composition_evidence = _validate_composition_runtime(
+                composition_circuit,
+                encoder_config=dict(encoder_layout.get("config", {}) or {}),
+                decoder_config=dict(decoder_layout.get("config", {}) or {}),
+            )
 
     prefix_embed_dim = int(decoder_runtime["embed_dim"])
     if encoder_report is not None:
@@ -3928,9 +4408,20 @@ def main(argv: list[str] | None = None) -> int:
             grid_x = int(encoder_report.get("prefix_grid_x", 0) or 0)
             grid_y = int(encoder_report.get("prefix_grid_y", 0) or 0)
             if grid_x > 0 and grid_y > 0:
-                policy = str(encoder_report.get("prefix_position_policy", prefix_position_policy) or prefix_position_policy)
+                composition_owned = composition_circuit is not None
+                policy = _resolved_encoder_prefix_policy(
+                    encoder_report,
+                    "prefix_position_policy",
+                    prefix_position_policy,
+                    composition_owned=composition_owned,
+                )
                 prefix_position_policy = policy
-                prefix_decode_policy = str(encoder_report.get("prefix_decode_policy", prefix_decode_policy) or prefix_decode_policy)
+                prefix_decode_policy = _resolved_encoder_prefix_policy(
+                    encoder_report,
+                    "prefix_decode_policy",
+                    prefix_decode_policy,
+                    composition_owned=composition_owned,
+                )
                 if policy == "mrope_2d":
                     prefix_grid = (grid_x, grid_y)
                 default_local_text_pos = _local_prefix_text_pos_for_policy(
@@ -3939,9 +4430,12 @@ def main(argv: list[str] | None = None) -> int:
                     grid_x,
                     grid_y,
                 )
-                local_prefix_text_pos = int(
-                    encoder_report.get("prefix_text_pos", default_local_text_pos) or default_local_text_pos
-                )
+                local_prefix_text_pos = default_local_text_pos
+                if not composition_owned:
+                    local_prefix_text_pos = int(
+                        encoder_report.get("prefix_text_pos", default_local_text_pos)
+                        or default_local_text_pos
+                    )
                 prefix_text_pos = len(prompt_prefix_token_ids) + local_prefix_text_pos
         else:
             dim_mismatch = {
@@ -4074,8 +4568,13 @@ def main(argv: list[str] | None = None) -> int:
         "prefix_dump_path": dumped_prefix_path,
         "total_prefill_tokens": len(prompt_prefix_token_ids) + prefix_tokens + len(token_ids),
         "decoder_runtime": {
-            "gguf": str(args.decoder_gguf.resolve()),
-            "workdir": str(decoder_dir),
+            "source": "prebuilt" if args.decoder_runtime is not None else "gguf",
+            "gguf": None if args.decoder_gguf is None else str(args.decoder_gguf.resolve()),
+            "workdir": str(
+                args.decoder_runtime.resolve()
+                if args.decoder_runtime is not None
+                else decoder_dir
+            ),
             "so_path": str(decoder_runtime["so_path"]),
             "c_path": str(decoder_runtime["c_path"]),
         },
@@ -4164,8 +4663,16 @@ def main(argv: list[str] | None = None) -> int:
     full_network_graph = _build_full_network_graph(
         workdir=workdir,
         bridge_report=report,
-        encoder_dir=encoder_dir,
-        decoder_dir=decoder_dir,
+        encoder_dir=(
+            args.encoder_runtime.resolve()
+            if args.encoder_runtime is not None
+            else encoder_dir
+        ),
+        decoder_dir=(
+            args.decoder_runtime.resolve()
+            if args.decoder_runtime is not None
+            else decoder_dir
+        ),
     )
     full_network_path = workdir / "full_network_graph.json"
     _json_write(full_network_path, full_network_graph)

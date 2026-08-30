@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "name": "cohere_compass_text",
+  "family": "cohere_compass",
+  "extends": "cohere2",
+  "flags": {
+    "rope": "mrope"
+  },
+  "contract": {
+    "chat_contract": {
+      "version": 1,
+      "name": "cohere_compass",
+      "conversation_prefix": "",
+      "assistant_generation_prefix": "<|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>",
+      "force_bos_text_if_tokenizer_add_bos_false": "<BOS_TOKEN>",
+      "stop_text_markers": ["<|END_OF_TURN_TOKEN|>"],
+      "token_stop_markers": ["<|END_OF_TURN_TOKEN|>"],
+      "template_markers": [
+        "<BOS_TOKEN>",
+        "<|START_OF_TURN_TOKEN|>",
+        "<|SYSTEM_TOKEN|>",
+        "<|USER_TOKEN|>",
+        "<|CHATBOT_TOKEN|>",
+        "<|END_OF_TURN_TOKEN|>"
+      ]
+    },
+    "attention_contract": {
+      "causal": true,
+      "rope_layout": "multi_section_1d",
+      "rope_type": "mrope_on_sliding_layers_only",
+      "qk_norm": false,
+      "kv_layout": "layer_major_kv_cache",
+      "attn_variant": "hybrid_sliding_attention",
+      "layer_kind_config_key": "layer_kinds",
+      "sliding_window_config_key": "sliding_window"
+    },
+    "multimodal_bridge": {
+      "prefix_policy": "mixed_visual_text_prefill",
+      "generation_policy": "incremental_decode_after_prefill",
+      "position_policy": "mrope_2d",
+      "decode_policy": "causal_mixed_prefix",
+      "cache_policy": "persistent_decoder_kv",
+      "runtime_policy": "decode_staged",
+      "prefill_batching": "unified_mixed",
+      "prefill_schedule": {
+        "segments": ["text_before", "visual", "text_after"],
+        "cache_transition": "single_pass",
+        "position_transition": "explicit_full_sequence",
+        "deepstack_injection": {
+          "kernel_id": "ck_residual_add_token_major_bf16_storage",
+          "contract_id": "residual_add_bf16_input_fp32_add_bf16_output",
+          "target": "visual_rows_after_decoder_layer",
+          "layers_from_config": "num_deepstack_layers"
+        },
+        "projection_row_group_boundaries": {
+          "policy": "restart_each_segment",
+          "operations": ["qkv_proj", "out_proj", "mlp_gate_up", "mlp_down"]
+        }
+      },
+      "providers": {
+        "prefix_insert": {
+          "op": "multimodal_prefix_insert",
+          "kernel_id": "multimodal_prefix_insert_f32",
+          "operation_interface": "multimodal_prefix_insert.token_major.fp32.v1"
+        },
+        "position_builder": {
+          "op": "multimodal_position_builder",
+          "kernel_id": "multimodal_mrope_positions_2d",
+          "operation_interface": "multimodal_positions.mrope_2d.i32.v1"
+        },
+        "position_transform": {
+          "op": "rope",
+          "kernel_id": "mrope_qk_imrope_positions",
+          "operation_interface": "mrope.imrope_positions.fp32.v1"
+        }
+      }
+    }
+  },
+  "kernels": {
+    "rope_qk": "mrope_qk_text_imrope",
+    "rope_qk_decode": "mrope_qk_text_imrope"
+  },
+  "required_numerical_contracts": {
+    "decoder.mrope": {
+      "op": "rope",
+      "template_ops": ["rope_qk"],
+      "phases": {
+        "prefill": {
+          "contract_id": "text_imrope_fp32_input_fp32_compute_fp32_output",
+          "validation": "validated",
+          "evidence": "The shared interleaved multi-section text M-RoPE provider is selected from the model-declared section layout."
+        },
+        "decode": {
+          "contract_id": "text_imrope_fp32_input_fp32_compute_fp32_output",
+          "validation": "validated",
+          "evidence": "Decode uses the same map-owned interleaved section routing before cache append."
+        }
+      },
+      "checkpoint": {
+        "id": "decoder.layer.{layer}.mrope.output",
+        "producer": "rope_qk",
+        "logical_layout": "head_major",
+        "axis_names": ["head", "token", "channel"]
+      }
+    }
+  }
+}
