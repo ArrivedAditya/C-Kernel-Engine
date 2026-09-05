@@ -27,6 +27,26 @@ codegen_prefill_v8 = _load_module("codegen_prefill_v8_tests", CODEGEN_PREFILL_PA
 
 
 class TestV8PrefillCodegen(unittest.TestCase):
+    def test_hyper_prefill_exports_wide_boundaries_and_last_rows(self):
+        args = {"rows": "num_tokens", "streams": "4", "hidden_dim": "2560",
+                "dynamic_dim": "320", "normalized_scratch": "norm",
+                "dynamic_scratch": "dynamic", "mix_scratch": "gate",
+                "mixed_output": "mixed", "injection_output": "NULL", "output": "wide"}
+        for op_name, label in [("hyper_mix_attn", "attn_hyper_norm"),
+                               ("hyper_mix_mlp", "mlp_hyper_norm"),
+                               ("hyper_mix_final", "final_hyper_norm"),
+                               ("hyper_stream_expand", "hyper_stream"),
+                               ("hyper_inject_attn", "after_attn_hyper"),
+                               ("hyper_inject_mlp", "layer_out")]:
+            with self.subTest(op=op_name):
+                op = {"function": "test_provider", "op": op_name, "layer": 7,
+                      "args": [{"name": k, "expr": v} for k, v in args.items()]}
+                emitted = codegen_prefill_v8.emit_prefill_op(op, 0, {})
+                self.assertIn(f'"{label}"', emitted)
+                self.assertIn(f'"{label}_last"', emitted)
+                self.assertIn("(4) * (2560)", emitted)
+                self.assertNotIn('"final_injection_weights"', emitted)
+
     @staticmethod
     def _q4_segmented_projection_op(op_name: str = "recurrent_gate_proj") -> dict:
         return {
@@ -673,13 +693,23 @@ class TestV8PrefillCodegen(unittest.TestCase):
                 emitted = codegen_prefill_v8.emit_prefill_op(op, 1, {"embed_dim": 1024})
                 self.assertIn(expected, emitted)
 
-    def test_fp16_cache_batch_copy_targets_physical_cache_before_attention(self) -> None:
+    def test_registered_fp16_cache_batch_store_uses_physical_call_arguments(self) -> None:
         op = {
-            "function": "kv_cache_batch_copy",
-            "op": "kv_cache_batch_copy",
+            "function": "kv_cache_store_batch_f16",
+            "op": "kv_cache_store_batch_f16",
             "layer": 3,
             "section": "body",
-            "args": [],
+            "args": [
+                {"name": "kv_cache_k", "source": "runtime:kv_cache_k_layer_f16", "expr": "K_CACHE"},
+                {"name": "kv_cache_v", "source": "runtime:kv_cache_v_layer_f16", "expr": "V_CACHE"},
+                {"name": "k", "source": "activation:k_src", "expr": "K_SCRATCH"},
+                {"name": "v", "source": "activation:v_src", "expr": "V_SCRATCH"},
+                {"name": "start_pos", "source": "runtime:prefill_start_pos", "expr": "model->pos"},
+                {"name": "num_tokens", "source": "dim:seq_len", "expr": "1034"},
+                {"name": "num_kv_heads", "source": "dim:num_kv_heads", "expr": "8"},
+                {"name": "head_dim", "source": "dim:head_dim", "expr": "64"},
+                {"name": "max_seq_len", "source": "dim:max_seq_len", "expr": "1034"},
+            ],
         }
 
         emitted = codegen_prefill_v8.emit_prefill_op(
@@ -693,11 +723,13 @@ class TestV8PrefillCodegen(unittest.TestCase):
             },
         )
 
-        self.assertIn("uint16_t *kv_cache = (uint16_t*)model->kv_cache_f16;", emitted)
-        self.assertIn("ck_fp32_to_fp16_soft(ks[d])", emitted)
-        self.assertIn("ck_fp32_to_fp16_soft(vs[d])", emitted)
-        self.assertIn("(size_t)prefill_start_pos", emitted)
-        self.assertNotIn("memcpy(", emitted)
+        self.assertIn("kv_cache_store_batch_f16(", emitted)
+        self.assertIn("K_CACHE", emitted)
+        self.assertIn("V_CACHE", emitted)
+        self.assertIn("K_SCRATCH", emitted)
+        self.assertIn("V_SCRATCH", emitted)
+        self.assertIn("prefill_start_pos", emitted)
+        self.assertIn("num_tokens", emitted)
 
     def test_recurrent_prefill_seq_len_args_use_runtime_num_tokens(self) -> None:
         op = {

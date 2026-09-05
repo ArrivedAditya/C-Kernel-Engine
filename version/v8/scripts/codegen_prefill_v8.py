@@ -57,6 +57,25 @@ from codegen_capabilities_v8 import (
 )
 
 
+def _emit_terminal_row_selection(op: Dict) -> str:
+    plan = op.get("prefill_row_selection")
+    if not plan:
+        return ""
+    if plan.get("version") != 1 or plan.get("selection") != "last" or not plan.get("copies"):
+        raise ValueError("Invalid terminal row selection plan")
+    lines = ["    /* Compact planner-declared live inputs for the terminal suffix. */"]
+    for copy in plan["copies"]:
+        define = copy["define"]
+        width = copy["row_elements"]
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", define) or not isinstance(width, int) or width <= 0:
+            raise ValueError("Invalid terminal row copy")
+        lines.append(f"    memmove((void*)(model->bump + {define}), "
+                     f"(const float*)(model->bump + {define}) + (size_t)(num_tokens - 1) * {width}, "
+                     f"(size_t){width} * sizeof(float));")
+    lines.extend(["    model->pos = prefill_start_pos + num_tokens - 1;", "    num_tokens = 1;"])
+    return "\n".join(lines)
+
+
 def _annotate_kv_transpose_roles(ops: List[Dict]) -> None:
     """Mark synthetic transpose ops with K/V role and per-layer head geometry."""
 
@@ -93,7 +112,7 @@ def _annotate_kv_transpose_roles(ops: List[Dict]) -> None:
             "transpose_cross_q_to_head_major",
             "transpose_cross_kv_to_head_major",
             "transpose_cross_attn_out_to_token_major",
-            "kv_cache_batch_copy",
+            "kv_cache_store_batch_f32",
             "kv_cache_store_batch_bf16",
             "kv_cache_store_batch_f16",
         }:
@@ -352,98 +371,6 @@ def emit_prefill_op(
         {embed_dim}
     );
     ck_debug_export_hidden(model, -1, "logits", (const float*){output_expr}, VOCAB_SIZE);{dump_code}"""
-
-    if op_type == "kv_cache_batch_copy":
-        # Copy K/V from scratch (head-major after transpose) to KV cache
-        # Scratch layout: [num_kv_heads, num_tokens, head_dim] (compact, head-major)
-        # KV cache layout: [num_kv_heads, max_seq_len, head_dim] (with stride, head-major)
-        layer = op.get("layer", 0)
-        num_kv_heads = op.get("_num_kv_heads", config.get("num_kv_heads", 2))
-        head_dim = op.get("_head_dim", config.get("head_dim", 64))
-        context_len = config.get("context_len", config.get("context_length", 1024))
-        decode_kv_cache_dtype = str(config.get("decode_kv_cache_dtype", "fp32") or "fp32").strip().lower()
-        decode_uses_fp16_kv = decode_kv_cache_dtype in {"fp16", "f16"}
-        k_offsets = config.get("layer_k_cache_offset") or []
-        v_offsets = config.get("layer_v_cache_offset") or []
-        compact_kv_layout = bool(k_offsets or v_offsets)
-        if (
-            isinstance(k_offsets, list)
-            and layer < len(k_offsets)
-            and k_offsets[layer] is not None
-            and int(k_offsets[layer]) >= 0
-        ):
-            k_base_expr = f"kv_cache + ({int(k_offsets[layer])}ULL*cache_stride)"
-        else:
-            if compact_kv_layout:
-                raise RuntimeError(
-                    f"kv_cache_batch_copy layer {layer} does not own compact K storage"
-                )
-            k_base_expr = f"kv_cache + (1ULL*({layer}*2)*Hkv*cache_stride*D)"
-        if (
-            isinstance(v_offsets, list)
-            and layer < len(v_offsets)
-            and v_offsets[layer] is not None
-            and int(v_offsets[layer]) >= 0
-        ):
-            v_base_expr = f"kv_cache + ({int(v_offsets[layer])}ULL*cache_stride)"
-        else:
-            if compact_kv_layout:
-                raise RuntimeError(
-                    f"kv_cache_batch_copy layer {layer} does not own compact V storage"
-                )
-            v_base_expr = f"kv_cache + (1ULL*({layer}*2+1)*Hkv*cache_stride*D)"
-        if decode_uses_fp16_kv:
-            return f"""    /* Op {seq_idx}: kv_cache_batch_copy layer={layer} */
-    /* Copy K/V from head-major scratch to FP16 KV cache for subsequent decode */
-    {{
-        const int Hkv = {num_kv_heads};
-        const int D = {head_dim};
-        const int cache_stride = {context_len};
-        float *k_scratch = (float*)(model->bump + A_K_SCRATCH);
-        float *v_scratch = (float*)(model->bump + A_V_SCRATCH);
-        uint16_t *kv_cache = (uint16_t*)model->kv_cache_f16;
-        for (int h = 0; h < Hkv; h++) {{
-            uint16_t *k_dst = {k_base_expr} + ((size_t)h*cache_stride + (size_t)prefill_start_pos)*D;
-            uint16_t *v_dst = {v_base_expr} + ((size_t)h*cache_stride + (size_t)prefill_start_pos)*D;
-            const float *k_src = k_scratch + h*num_tokens*D;
-            const float *v_src = v_scratch + h*num_tokens*D;
-            for (int t = 0; t < num_tokens; ++t) {{
-                uint16_t *kd = k_dst + (size_t)t*D;
-                uint16_t *vd = v_dst + (size_t)t*D;
-                const float *ks = k_src + (size_t)t*D;
-                const float *vs = v_src + (size_t)t*D;
-                for (int d = 0; d < D; ++d) {{
-                    kd[d] = ck_fp32_to_fp16_soft(ks[d]);
-                    vd[d] = ck_fp32_to_fp16_soft(vs[d]);
-                }}
-            }}
-        }}
-    }}"""
-        return f"""    /* Op {seq_idx}: kv_cache_batch_copy layer={layer} */
-    /* Copy K/V from head-major scratch to KV cache for subsequent decode */
-    {{
-        const int Hkv = {num_kv_heads};
-        const int D = {head_dim};
-        const int cache_stride = {context_len};
-        float *k_scratch = (float*)(model->bump + A_K_SCRATCH);
-        float *v_scratch = (float*)(model->bump + A_V_SCRATCH);
-        float *kv_cache = (float*)model->kv_cache;
-        for (int h = 0; h < Hkv; h++) {{
-            /* K: copy from scratch[h, 0:num_tokens, :] to cache[h, 0:num_tokens, :] */
-            /* Scratch is compact: stride = num_tokens, Cache has stride = cache_stride */
-            memcpy(
-                {k_base_expr} + ((size_t)h*cache_stride + (size_t)prefill_start_pos)*D,
-                k_scratch + h*num_tokens*D,
-                (size_t)num_tokens * D * sizeof(float)
-            );
-            /* V: copy from scratch[h, 0:num_tokens, :] to cache[h, 0:num_tokens, :] */
-            memcpy(
-                {v_base_expr} + ((size_t)h*cache_stride + (size_t)prefill_start_pos)*D,
-                v_scratch + h*num_tokens*D,
-                (size_t)num_tokens * D * sizeof(float)
-            );
-        }}
-    }}"""
 
     # Handle transpose_kv_to_head_major: convert from [T, Hkv*D] to [Hkv, T, D]
     if op_type == "transpose_cross_q_to_head_major":
@@ -1131,7 +1058,39 @@ def emit_prefill_op(
         lines.append(f'        ck_debug_export_hidden(model, {layer}, "{label}_last", _ck_{safe_label}_last, _ck_{safe_label}_heads * _ck_{safe_label}_dim);')
         lines.append("    }")
 
-    if op_type == "residual_save":
+    if op_type in {"hyper_mix_attn", "hyper_mix_mlp", "hyper_mix_final"}:
+        prefix, mixed_label, injection_label = {
+            "hyper_mix_attn": ("attn_hyper", "attn_mixed_input", "attn_injection_weights"),
+            "hyper_mix_mlp": ("mlp_hyper", "mlp_mixed_input", "mlp_injection_weights"),
+            "hyper_mix_final": ("final_hyper", "final_hidden", "final_injection_weights"),
+        }[op_type]
+        rows = _hidden_arg("rows", "tokens")
+        hidden = _hidden_arg("hidden_dim", "embed_dim")
+        streams = _hidden_arg("streams")
+        wide = _hidden_mul(streams, hidden)
+        checkpoints = [
+            (_hidden_arg("normalized_scratch"), f"{prefix}_norm", wide),
+            (_hidden_arg("dynamic_scratch"), f"{prefix}_dynamic", _hidden_arg("dynamic_dim")),
+            (_hidden_arg("mix_scratch"), f"{prefix}_gate", wide),
+            (_hidden_arg("mixed_output", "output", "out"), mixed_label, hidden),
+        ]
+        injection = _hidden_arg("injection_output")
+        if injection and injection.strip() != "NULL":
+            checkpoints.append((injection, injection_label, streams))
+        for expr, label, width in checkpoints:
+            _emit_hidden_full(expr, label, _hidden_mul(rows, width))
+            _emit_hidden_last(expr, label, width)
+    elif op_type in {"hyper_stream_expand", "hyper_inject_attn", "hyper_inject_mlp"}:
+        label = {
+            "hyper_stream_expand": "hyper_stream",
+            "hyper_inject_attn": "after_attn_hyper",
+            "hyper_inject_mlp": "layer_out",
+        }[op_type]
+        width = _hidden_mul(_hidden_arg("streams"), _hidden_arg("hidden_dim", "embed_dim"))
+        output = _hidden_arg("output", "out")
+        _emit_hidden_full(output, label, _hidden_mul(_hidden_arg("rows", "tokens"), width))
+        _emit_hidden_last(output, label, width)
+    elif op_type == "residual_save":
         checkpoint = "layer_input" if op_instance_idx == 0 else "after_attn"
         _emit_hidden_full(
             _hidden_arg("src", "input", "x"),
@@ -1352,13 +1311,13 @@ def emit_prefill_op(
         )
         _emit_head_major_last(_hidden_arg("q"), "rope_q", _hidden_arg("num_heads") or "NUM_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
         _emit_head_major_last(_hidden_arg("k"), "rope_k", _hidden_arg("num_kv_heads") or "NUM_KV_HEADS", _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM")
-    elif op_type == "attn":
+    elif op_type in ("attn", "qsa_attention"):
         _emit_hidden_full(
             _hidden_arg("out_token", "output", "out", "c", "y"),
             "attn_pregate",
             _hidden_mul(
                 _hidden_arg("rows", "num_tokens") or "num_tokens",
-                _hidden_arg("num_heads") or "NUM_HEADS",
+                _hidden_arg("num_heads", "query_heads") or "NUM_HEADS",
                 _hidden_arg("aligned_head_dim", "head_dim") or "HEAD_DIM",
             ),
         )
@@ -1426,7 +1385,7 @@ def emit_prefill_op(
         _emit_hidden_last(_hidden_arg("output", "out", "x", "y"), "post_ffn_norm", "EMBED_DIM")
     elif op_type == "moe_router":
         width = _hidden_arg("N", "n", "n_experts") or "N_ROUTED_EXPERTS"
-        output = _hidden_arg("C", "output", "out")
+        output = _hidden_arg("C", "output", "out", "y")
         _emit_hidden_full(output, "moe_router_logits", _hidden_mul("num_tokens", width))
         _emit_hidden_last(output, "moe_router_logits", width)
     elif op_type in ("group_limited_topk_router", "full_softmax_topk_router"):
@@ -1440,7 +1399,7 @@ def emit_prefill_op(
             )
         _emit_hidden_full(weights, "moe_routing_weights", _hidden_mul("num_tokens", width))
         _emit_hidden_last(weights, "moe_routing_weights", width)
-    elif op_type == "moe_swiglu_expert_mlp":
+    elif op_type in ("moe_swiglu_expert_mlp", "moe_swiglu_packed_expert_mlp"):
         output = _hidden_arg("output", "out")
         _emit_hidden_full(output, "moe_routed_output", _hidden_mul("num_tokens", "EMBED_DIM"))
         _emit_hidden_last(output, "moe_routed_output", "EMBED_DIM")
@@ -1736,6 +1695,10 @@ static void ck_prefill_range(CKModel *model, const int32_t *tokens, int num_toke
     prologue = prologue.replace("CK_Q4_GATEUP_SWIGLU_X16_DEFAULT", str(q4_gateup_swiglu_x16_default))
     lines.append(prologue)
 
+    terminal_rows = any(op.get("prefill_row_selection") for op in ops)
+    if terminal_rows:
+        lines.append("    const int prefill_original_num_tokens = num_tokens;")
+
     if profile:
         lines.append("    CK_PROFILE_VARS();")
         lines.append("")
@@ -1750,6 +1713,8 @@ static void ck_prefill_range(CKModel *model, const int32_t *tokens, int num_toke
     swiglu_q8k_fusion_call: Optional[str] = None
 
     for seq_idx, op in enumerate(ops):
+        if op.get("prefill_row_selection"):
+            lines.append(_emit_terminal_row_selection(op))
         op_type_for_instance = str(op.get("op", ""))
         quantization_emission = resolved_activation_quantization_emission(op)
         if swiglu_q8k_fusion_guard and op_type_for_instance != "quantize_mlp_down_input":
@@ -1854,6 +1819,8 @@ static void ck_prefill_range(CKModel *model, const int32_t *tokens, int num_toke
             embed_scale_emitted = True
         lines.append("")
 
+    if terminal_rows:
+        lines.append("    num_tokens = prefill_original_num_tokens;")
     lines.append("    model->pos = prefill_start_pos + num_tokens;")
     lines.append("    model->rope_pos = prefill_start_pos + num_tokens;")
     if bool(config.get("_template_uses_persistent_cross_kv_cache", False)):
@@ -2696,6 +2663,10 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
 """
         )
 
+    terminal_rows = any(op.get("prefill_row_selection") for op in ops)
+    if terminal_rows:
+        lines.append("    const int prefill_original_num_tokens = num_tokens;")
+
     if profile:
         lines.append("    CK_PROFILE_VARS();")
         lines.append("")
@@ -2710,6 +2681,8 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
     swiglu_q8k_fusion_guard: Optional[str] = None
     swiglu_q8k_fusion_call: Optional[str] = None
     for seq_idx, op in enumerate(ops):
+        if op.get("prefill_row_selection"):
+            lines.append(_emit_terminal_row_selection(op))
         op_type = str(op.get("op", ""))
         if skip_swiglu_guard and op_type not in {"silu_mul", "swiglu"}:
             skip_swiglu_guard = None
@@ -2923,6 +2896,8 @@ static void ck_prefill_from_embedded_range(CKModel *model, int num_tokens, int p
                     lines.append(f"    ck_multimodal_prefill_deepstack_add(model, {deepstack_layer}, num_tokens);")
         lines.append("")
 
+    if terminal_rows:
+        lines.append("    num_tokens = prefill_original_num_tokens;")
     lines.append("    model->pos = prefill_start_pos + num_tokens;")
     if has_decoder_multimodal_bridge:
         lines.append("    model->rope_pos = ck_multimodal_prefill_bridge_is_active() ? ck_multimodal_prefill_bridge_next_text_pos() : prefill_rope_start_pos + num_tokens;")
