@@ -380,6 +380,20 @@ def main() -> int:
     run_rope_case(0, 93)
     run_rope_case(2047, 94)
     run_logits_case(95)
+    if os.environ.get("CK_MUSE_SKIP_ONEDNN_ATTENTION") == "1":
+        print(
+            "Muse-Glimmer portable BF16 normalization, Q/K, RoPE, and logits "
+            "contracts: exact (oneDNN attention not selected by this engine)"
+        )
+        return 0
+    if not os.environ.get("CK_SLEEF_LIBRARY"):
+        torch_cpu = Path(torch.__file__).resolve().parent / "lib" / "libtorch_cpu.so"
+        if not torch_cpu.is_file():
+            raise RuntimeError(
+                "Muse oneDNN attention requires CK_SLEEF_LIBRARY or PyTorch's "
+                "libtorch_cpu.so"
+            )
+        os.environ["CK_SLEEF_LIBRARY"] = str(torch_cpu)
     run_attention_case(4, 3, 96)
     run_decode_stride_case(97)
     probe_env = dict(os.environ)
@@ -393,7 +407,7 @@ def main() -> int:
     )
     assert probe.returncode != 0
     assert "undersized planner-owned workspace" in probe.stderr
-    print("Muse-Glimmer BF16 numerical contracts: exact")
+    print("Muse-Glimmer BF16 numerical contracts, including oneDNN attention: exact")
     return 0
 
 
