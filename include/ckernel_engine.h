@@ -496,6 +496,12 @@ void gemm_nt_bf16_pytorch_onednn_brgemm_bf16_storage(const float *A,
 void gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage(
     const float *A, const void *B, const float *bias, float *C,
     int M, int N, int K);
+void gemm_nt_bf16_pytorch_onednn_3_12_brgemm_bf16_storage_workspace(
+    const float *A, const void *B, const float *bias, float *C,
+    int M, int N, int K,
+    uint16_t *input_bf16, size_t input_bf16_bytes,
+    uint16_t *output_bf16, size_t output_bf16_bytes,
+    uint16_t *bias_bf16, size_t bias_bf16_bytes);
 void patch_projection_bf16_pytorch_onednn_conv3d_storage(
     const float *input, const void *weights, const float *bias, float *output,
     int batch, int out_channels, int in_channels, int temporal,
@@ -1282,6 +1288,32 @@ void rmsnorm_forward_qwen3next_pytorch_bf16_storage(const float *input,
                                                      int d_model,
                                                      int aligned_embed_dim,
                                                      float eps);
+void rmsnorm_forward_muse_centered_pytorch_bf16_storage(
+    const float *input,
+    const float *zero_centered_weight,
+    float *output,
+    float *rstd_cache,
+    int tokens,
+    int d_model,
+    int aligned_embed_dim,
+    float eps);
+void rmsnorm_forward_muse_weighted_pytorch_bf16_storage(
+    const float *input,
+    const float *weight,
+    float *output,
+    float *rstd_cache,
+    int tokens,
+    int d_model,
+    int aligned_embed_dim,
+    float eps);
+void rmsnorm_forward_muse_unweighted_pytorch_bf16_storage(
+    const float *input,
+    float *output,
+    float *rstd_cache,
+    int tokens,
+    int d_model,
+    int aligned_embed_dim,
+    float eps);
 void rmsnorm_forward_fp32_square_fp64_sum(const float *input,
                                           const float *gamma,
                                           float *output,
@@ -1404,6 +1436,15 @@ void qk_norm_forward_qwen4_pytorch_bf16_storage(float *q,
                                                 int num_tokens,
                                                 int head_dim,
                                                 float eps);
+void qk_norm_forward_muse_unweighted_scaled_pytorch_bf16_storage(
+    float *q,
+    float *k,
+    int num_heads,
+    int num_kv_heads,
+    int num_tokens,
+    int head_dim,
+    float eps,
+    float q_scale);
 void qk_norm_forward_prefill_exact(float *q, float *k,
                                    const float *q_gamma, const float *k_gamma,
                                    int num_heads, int num_kv_heads,
@@ -1472,6 +1513,14 @@ void final_logit_scale_f32(float *logits,
                            int tokens,
                            int vocab_size,
                            float scale);
+void final_logit_scale_muse_pytorch_bf16_storage(float *logits,
+                                                  int tokens,
+                                                  int vocab_size,
+                                                  float scale);
+void final_logit_softcap_muse_pytorch_bf16_storage(float *logits,
+                                                    int tokens,
+                                                    int vocab_size,
+                                                    float cap);
 void qk_norm_backward(const float *d_q_out,
                       const float *d_k_out,
                       const float *q_in,
@@ -1875,6 +1924,24 @@ void attention_forward_causal_head_major_gqa_flash_strided(const float *q,
                                                            int head_dim,
                                                            int aligned_head_dim,
                                                            int kv_stride_tokens);
+void attention_forward_causal_head_major_gqa_muse_eager_bf16_storage(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens, int head_dim,
+    int aligned_head_dim, int kv_stride_tokens,
+    float *scores, size_t scores_bytes,
+    uint16_t *key_rows, size_t key_rows_bytes,
+    uint16_t *value_columns, size_t value_columns_bytes,
+    uint16_t *gemm_rows, size_t gemm_rows_bytes,
+    uint16_t *gemm_scores, size_t gemm_scores_bytes);
+void attention_forward_causal_head_major_gqa_muse_eager_bf16_storage_sliding(
+    const float *q, const float *k, const float *v, float *output,
+    int num_heads, int num_kv_heads, int num_tokens, int head_dim,
+    int aligned_head_dim, int kv_stride_tokens, int sliding_window,
+    float *scores, size_t scores_bytes,
+    uint16_t *key_rows, size_t key_rows_bytes,
+    uint16_t *value_columns, size_t value_columns_bytes,
+    uint16_t *gemm_rows, size_t gemm_rows_bytes,
+    uint16_t *gemm_scores, size_t gemm_scores_bytes);
 
 void attention_forward_causal_head_major_gqa_flash_strided_token_output(
     const float *q,
@@ -2060,8 +2127,26 @@ void attention_forward_decode_head_major_gqa_flash(const float *q_token,
                                                   int num_kv_heads,
                                                   int kv_tokens,
                                                   int cache_capacity,
-                                                  int head_dim,
+                                                   int head_dim,
                                                    int aligned_head_dim);
+void attention_forward_decode_head_major_gqa_muse_eager_bf16_storage(
+    const float *q_token, const float *k_cache, const float *v_cache,
+    float *out_token, int num_heads, int num_kv_heads, int kv_tokens,
+    int cache_capacity, int head_dim, int aligned_head_dim,
+    float *scores, size_t scores_bytes,
+    uint16_t *key_rows, size_t key_rows_bytes,
+    uint16_t *value_columns, size_t value_columns_bytes,
+    uint16_t *gemm_rows, size_t gemm_rows_bytes,
+    uint16_t *gemm_scores, size_t gemm_scores_bytes);
+void attention_forward_decode_head_major_gqa_muse_eager_bf16_storage_sliding(
+    const float *q_token, const float *k_cache, const float *v_cache,
+    float *out_token, int num_heads, int num_kv_heads, int kv_tokens,
+    int cache_capacity, int head_dim, int aligned_head_dim, int sliding_window,
+    float *scores, size_t scores_bytes,
+    uint16_t *key_rows, size_t key_rows_bytes,
+    uint16_t *value_columns, size_t value_columns_bytes,
+    uint16_t *gemm_rows, size_t gemm_rows_bytes,
+    uint16_t *gemm_scores, size_t gemm_scores_bytes);
 void attention_forward_decode_head_major_gqa_flash_gemma4(const float *q_token,
                                                           const float *k_cache,
                                                           const float *v_cache,
@@ -4651,6 +4736,10 @@ void rope_forward_qk_split_direct_f32(float *q,
                                       int pos_offset,
                                       int rotary_dim,
                                       float freq_base);
+void rope_forward_qk_split_direct_muse_pytorch_bf16_storage(
+    float *q, float *k, const float *freq_factors, int use_freq_factors,
+    int num_heads, int num_kv_heads, int num_tokens, int head_dim,
+    int aligned_head_dim, int pos_offset, int rotary_dim, float freq_base);
 void rope_forward_qk_split_direct_token_range_f32(
     float *q,
     float *k,

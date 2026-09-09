@@ -1808,6 +1808,10 @@ OP_DATAFLOW = {
         "inputs": {"input": "main_stream"},
         "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
     },
+    "unweighted_rmsnorm": {
+        "inputs": {"input": "main_stream"},
+        "outputs": {"output": {"slot": "main_stream", "dtype": "fp32"}},
+    },
     "assistant_post_projection": {
         "inputs": {"x": "main_stream"},
         "outputs": {"y": {"slot": "backbone_stream", "dtype": "fp32"}},
@@ -2043,6 +2047,13 @@ OP_DATAFLOW = {
     "attn_gate_sigmoid_mul": {
         "inputs": {"x": "attn_scratch", "gate": "attn_gate"},
         "outputs": {"out": {"slot": "attn_scratch", "dtype": "fp32"}},
+    },
+    "qk_norm_no_weight_scaled": {
+        "inputs": {"q": "q_scratch", "k": "k_scratch"},
+        "outputs": {
+            "q": {"slot": "q_scratch", "dtype": "fp32"},
+            "k": {"slot": "k_scratch", "dtype": "fp32"},
+        },
     },
     "attn_gate_softplus_mul": {
         "inputs": {"x": "attn_scratch", "gate": "attn_gate"},
@@ -3995,6 +4006,7 @@ TEMPLATE_TO_KERNEL_OP = {
 
     # Attention block
     "rmsnorm": "rmsnorm",
+    "unweighted_rmsnorm": "unweighted_rmsnorm",
     "layernorm": "layernorm",
     "attn_norm": "rmsnorm",
     "block_rmsnorm": "rmsnorm",
@@ -4035,6 +4047,7 @@ TEMPLATE_TO_KERNEL_OP = {
     "recurrent_core": "gated_deltanet",
     "recurrent_norm_gate": "recurrent_norm_gate",
     "attn_gate_sigmoid_mul": "attn_gate_sigmoid_mul",
+    "qk_norm_no_weight_scaled": "qk_norm_no_weight_scaled",
     "attn_gate_softplus_mul": "attn_gate_softplus_mul",
     "recurrent_out_proj": "matmul",
     "hyper_mix_attn": "hyper_connection_mix",
@@ -5273,6 +5286,9 @@ def _kernel_scratch_size_bytes(
         "K": values.get("_k", values.get("_input_dim")),
         "K_blocks": int(k_extent) // 256 if k_extent is not None else None,
         "T": values.get("seq_len"),
+        "C": values.get(
+            "context_length", values.get("context_len", values.get("max_seq_len"))
+        ),
         "S": values.get(
             "max_seq_len", values.get("context_length", values.get("context_len"))
         ),
@@ -5389,7 +5405,16 @@ def _required_kernel_call_storage_bytes(
 
         workspace_cursor = 0
         arena_cursor = live_prefix
+        scratch_budget = None
         for scratch in scratch_items:
+            declared_budget = scratch.get("aggregate_budget_bytes")
+            if declared_budget is not None:
+                declared_budget = int(declared_budget)
+                scratch_budget = (
+                    declared_budget
+                    if scratch_budget is None
+                    else min(scratch_budget, declared_budget)
+                )
             size = _kernel_scratch_size_bytes(scratch, params, scratch_config)
             if size is None:
                 if scratch.get("size_resolution") == "required":
@@ -5407,6 +5432,12 @@ def _required_kernel_call_storage_bytes(
             workspace_cursor += int(size)
             arena_cursor = (arena_cursor + alignment - 1) & ~(alignment - 1)
             arena_cursor += int(size)
+        if scratch_budget is not None and workspace_cursor > scratch_budget:
+            raise RuntimeError(
+                "HARD SCRATCH BUDGET FAULT: selected bounded provider "
+                f"{op.get('kernel')} requires {workspace_cursor} bytes, exceeding "
+                f"its declared {scratch_budget}-byte call-workspace budget"
+            )
         maximum_workspace = max(maximum_workspace, workspace_cursor)
         maximum_arena = max(maximum_arena, arena_cursor)
     return maximum_workspace, maximum_arena
@@ -5987,6 +6018,12 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
         layer,
         int(config.get("attn_out_dim", num_heads * v_head_dim) or (num_heads * v_head_dim)),
     )
+    attention_gate_dim = _config_layer_int(
+        config,
+        "layer_attention_gate_dim",
+        layer,
+        int(config.get("attn_gate_dim", num_heads) or num_heads),
+    )
     k_dim = num_kv_heads * k_head_dim
     v_dim = num_kv_heads * v_head_dim
     rotary_default = int(config.get("mrope_n_dims", config.get("rotary_dim", q_head_dim)) or q_head_dim)
@@ -6006,6 +6043,7 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
         "k_proj",
         "v_proj",
         "qk_norm",
+        "qk_norm_no_weight_scaled",
         "q_norm",
         "v_norm",
         "rope_qk",
@@ -6016,6 +6054,7 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
         "attn_shared_kv",
         "attn_sliding_shared_kv",
         "attn_gate_softplus_mul",
+        "attn_gate_sigmoid_mul",
         "out_proj",
         "quantize_out_proj_input",
     }
@@ -6030,12 +6069,32 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
         )
         params["_input_dim"] = embed_dim
     elif op_name == "attention_gate_projection":
-        params["_output_dim"] = num_heads
+        params["_output_dim"] = attention_gate_dim
         params["_input_dim"] = embed_dim
-        params["output_dim"] = num_heads
+        params["output_dim"] = attention_gate_dim
     elif op_name == "attn_gate_softplus_mul":
+        # This provider consumes one scalar gate per head and broadcasts it
+        # across that head's value channels.
         params["head_dim"] = v_head_dim
         params["state_dim"] = v_head_dim
+    elif op_name == "attn_gate_sigmoid_mul":
+        # Packed-Q/gate paths produce one gate per value channel. Circuits with
+        # a separate gate projection declare its independent width explicitly.
+        has_explicit_gate_width = (
+            "attn_gate_dim" in config or "layer_attention_gate_dim" in config
+        )
+        gate_state_dim = (
+            attention_gate_dim // max(1, num_heads)
+            if has_explicit_gate_width
+            else v_head_dim
+        )
+        if has_explicit_gate_width and attention_gate_dim % max(1, num_heads) != 0:
+            raise ValueError(
+                "attention gate width must be divisible by num_heads: "
+                f"gate_dim={attention_gate_dim} num_heads={num_heads}"
+            )
+        params["head_dim"] = gate_state_dim
+        params["state_dim"] = gate_state_dim
     elif op_name == "q_proj":
         params["_output_dim"] = q_dim
         params["_input_dim"] = embed_dim
@@ -6058,6 +6117,7 @@ def apply_layer_attention_dims(op_name: str, params: Dict, layer: int, config: D
         params["input_dim"] = attention_output_dim
     elif op_name in (
         "qk_norm",
+        "qk_norm_no_weight_scaled",
         "q_norm",
         "rope_qk",
         "rope_q",
@@ -8436,6 +8496,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
         "final_logit_softcap": None,
         "final_logit_scale": None,
         "v_norm": [],
+        "unweighted_rmsnorm": [],
+        "qk_norm_no_weight_scaled": [],
         "final_rmsnorm": None,
         "qk_norm": None,  # Per-head RMSNorm gamma is always fp32
         "q_norm": None,  # Gemma4 assistant per-head Q RMSNorm gamma is fp32
@@ -8659,7 +8721,14 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
             return ["memcpy"]
         if op == "mla_attention":
             return [_require_phase_kernel_mapping(template_kernels, op, mode)]
-        if op in {"v_norm", "projector_prep", "group_limited_topk_router", "mamba_in_proj_split"}:
+        if op in {
+            "v_norm",
+            "unweighted_rmsnorm",
+            "qk_norm_no_weight_scaled",
+            "projector_prep",
+            "group_limited_topk_router",
+            "mamba_in_proj_split",
+        }:
             kernel_id = find_kernel(
                 registry,
                 op=kernel_op,
@@ -10753,6 +10822,11 @@ def generate_ir_lower_1(
         for op in lowered_ops
         if str(op.get("op", "")) in {"rope_qk", "rope_q", "mrope_qk"}
     }
+    decode_qk_norm_layers = {
+        int(op.get("layer", 0))
+        for op in lowered_ops
+        if str(op.get("op", "")) in {"qk_norm", "qk_norm_no_weight_scaled"}
+    }
     decode_mla_layers = {
         int(op.get("layer", 0))
         for op in lowered_ops
@@ -10929,6 +11003,7 @@ def generate_ir_lower_1(
                 op_name == "v_proj"
                 and layer in decode_attention_layers
                 and layer not in decode_rope_layers
+                and layer not in decode_qk_norm_layers
                 and layer not in decode_explicit_v_bias_layers
             )
             should_store_after_v_bias = (
@@ -10936,8 +11011,14 @@ def generate_ir_lower_1(
                 and str(op.get("bias_for", "")) == "v_proj"
                 and layer in decode_attention_layers
                 and layer not in decode_rope_layers
+                and layer not in decode_qk_norm_layers
             )
-            if should_store_after_rope or should_store_after_v:
+            should_store_after_qk_norm = (
+                op_name in {"qk_norm", "qk_norm_no_weight_scaled"}
+                and layer in decode_attention_layers
+                and layer not in decode_rope_layers
+            )
+            if should_store_after_rope or should_store_after_v or should_store_after_qk_norm:
                 final_ops.append(_make_decode_kv_store_op(op))
                 kv_store_count += 1
             elif should_store_after_v_bias:
@@ -11517,6 +11598,8 @@ TEMPLATE_OP_WEIGHTS = {
     "final_logit_softcap": [],
     "final_logit_scale": [],
     "v_norm": [],
+    "unweighted_rmsnorm": [],
+    "qk_norm_no_weight_scaled": [],
     "final_rmsnorm": ["final_ln_weight", "final_ln_bias"],
     "qkv_proj": ["wq", "wk", "wv", "bq", "bk", "bv"],  # QKV + optional biases (for fused kernel)
     "qkv_packed_proj": ["attn_qkv", "bqkv"],
@@ -13081,7 +13164,7 @@ def generate_ir_lower_2(
                             "ptr_expr": f"activations + {v_buf['offset'] if v_buf else 0}",
                         }
                         last_output_buffer = "v_scratch"
-        elif op_type in ("q_proj", "q_gate_proj", "k_proj", "v_proj", "recurrent_qkv_proj", "recurrent_gate_proj", "recurrent_alpha_proj", "recurrent_beta_proj", "mamba_in_proj"):
+        elif op_type in ("q_proj", "q_gate_proj", "attention_gate_projection", "k_proj", "v_proj", "recurrent_qkv_proj", "recurrent_gate_proj", "recurrent_alpha_proj", "recurrent_beta_proj", "mamba_in_proj"):
             # ═══════════════════════════════════════════════════════════════
             # USE MEMORY PLANNER for QKV input buffer assignment
             # The memory planner knows the correct buffer (main_stream_q8)
@@ -13215,6 +13298,28 @@ def generate_ir_lower_2(
                         "dtype": output_info.get("dtype", "fp32"),
                         "ptr_expr": f"activations + {buf['offset'] if buf else 0}",
                     }
+            elif op_type == "attention_gate_projection":
+                for output_name, output_info in ir_op.get("outputs", {}).items():
+                    planned = (
+                        get_planned_buffer(op_id, "outputs", output_name)
+                        or get_planned_buffer(op_id, "outputs", "y")
+                    )
+                    declared_slot = _get_declared_dataflow_slot(
+                        ir_op, "outputs", output_name, "y"
+                    )
+                    buf_name = _resolve_logical_buffer_name(
+                        planned.get("buffer", "attn_gate") if planned else "attn_gate",
+                        declared_slot or output_info.get("slot"),
+                        activation_buffers,
+                        buffer_name_map,
+                    )
+                    buf = activation_buffers.get(buf_name)
+                    lowered_op["outputs"][output_name] = {
+                        "buffer": buf_name,
+                        "activation_offset": buf["offset"] if buf else 0,
+                        "dtype": output_info.get("dtype", "fp32"),
+                        "ptr_expr": f"activations + {buf['offset'] if buf else 0}",
+                    }
             # K/V write to their respective scratch buffers
             elif op_type == "k_proj":
                 buf = activation_buffers.get("k_scratch")
@@ -13267,6 +13372,8 @@ def generate_ir_lower_2(
                 last_output_buffer = "q_scratch"
             elif op_type == "q_gate_proj":
                 last_output_buffer = "attn_q_gate_packed"
+            elif op_type == "attention_gate_projection":
+                last_output_buffer = "attn_gate"
             elif op_type == "k_proj":
                 last_output_buffer = "k_scratch"
             elif op_type == "v_proj":
@@ -13946,8 +14053,12 @@ def generate_ir_lower_2(
 
         # Special handling for QK/Q-only norm: operate in-place on scratch buffers
         # between projection and RoPE.
-        if ir_op.get("op", "") in ("qk_norm", "q_norm"):
-            scratch_names = ["q_scratch", "k_scratch"] if ir_op.get("op", "") == "qk_norm" else ["q_scratch"]
+        if ir_op.get("op", "") in ("qk_norm", "qk_norm_no_weight_scaled", "q_norm"):
+            scratch_names = (
+                ["q_scratch", "k_scratch"]
+                if ir_op.get("op", "") in ("qk_norm", "qk_norm_no_weight_scaled")
+                else ["q_scratch"]
+            )
             for scratch_name in scratch_names:
                 buf = activation_buffers.get(scratch_name)
                 if buf:
