@@ -742,6 +742,14 @@ TEST_SUITES = {
         "Kokoro Pinned BUMP Export and Waveform Invariant", "kernels",
         ROOT / "tests" / "test_v8_kokoro_bump_export_live.py",
     ),
+    "tts_kokoro_checkpoint_manifest": TestSuite(
+        "Kokoro Predictor Checkpoint Manifest", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_checkpoint_manifest.py",
+    ),
+    "tts_kokoro_checkpoint_live": TestSuite(
+        "Kokoro Pinned Predictor Checkpoint Recapture", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_checkpoint_capture_live.py",
+    ),
     "tts_live_torch_oracles": TestSuite(
         "TTS Live PyTorch Oracles", "kernels",
         ROOT / "tests" / "test_v8_tts_live_torch_oracles.py",
@@ -1359,6 +1367,7 @@ QUICK_TESTS = [
     "tts_lstm_scan_oracle",
     "tts_adaptive_layer_norm_oracle",
     "tts_kokoro_bump_export", "tts_kokoro_bump_export_live",
+    "tts_kokoro_checkpoint_manifest", "tts_kokoro_checkpoint_live",
     "tts_runtime_extent", "tts_runtime_extent_contract", "tts_checked_call_codegen",
     "tts_runtime_extent_lowering",
     "tts_live_torch_oracles",
