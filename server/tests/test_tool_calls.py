@@ -19,6 +19,7 @@ from server.schemas.streaming import ResponseStreamEvent
 # Reuse inline Qwen3 contract from test_live_app
 QWEN3_CONTRACT = {
     "name": "qwen3",
+    "tool_protocol": "bare_json",
     "turn_prefix": "<|im_start|>{role}\n",
     "turn_suffix": "<|im_end|>\n",
     "assistant_generation_prefix": "<|im_start|>assistant\n",
@@ -117,13 +118,14 @@ def test_tool_call_single_non_stream():
     assert json.loads(fc["arguments"]) == {"location": "Paris"}
 
 
-def test_qwen_tagged_tool_call_non_stream():
+NATIVE_TOOL_TEMPLATE = """{% for message in messages %}{{ message.role }}: {{ message.content }}
+{% endfor %}{% if tools %}<tools>{{ tools | tojson }}</tools>{% endif %}<tool_call>{"name": "probe"}</tool_call>"""
+
+
+def test_native_tagged_tool_call_non_stream():
     session = FakeSession(
         chunks=(
-            "<tool_call>\n<function=read_file>\n"
-            "<parameter=path>\nserver/README.md\n</parameter>\n"
-            "<parameter=line_end>\n20\n</parameter>\n"
-            "</function>\n</tool_call>",
+            '<tool_call>\n{"name": "read_file", "arguments": {"path": "server/README.md", "line_end": 20}}\n</tool_call>',
         )
     )
     client = TestClient(
@@ -131,7 +133,8 @@ def test_qwen_tagged_tool_call_non_stream():
             session,
             model="fake-model",
             chat_contract=QWEN3_CONTRACT,
-            chat_templates=DUMMY_CHAT_TEMPLATES,
+            chat_templates={"tool_use": NATIVE_TOOL_TEMPLATE},
+            tool_protocol="tagged_json",
         )
     )
     response = client.post(
@@ -156,7 +159,84 @@ def test_qwen_tagged_tool_call_non_stream():
     }
 
 
-def test_qwen_tagged_tool_call_rejects_duplicate_parameters():
+def test_qwen_xml_tool_call_and_continuation():
+    session = FakeSession(chunks=(
+        '<tool_call><function=read_file><parameter=path>server/README.md</parameter></function></tool_call>',
+    ))
+    client = TestClient(create_app(
+        session, model="fake-model", chat_contract=QWEN3_CONTRACT,
+        chat_templates={"tool_use": NATIVE_TOOL_TEMPLATE}, tool_protocol="qwen_xml",
+    ))
+    response = client.post("/v1/responses", json={
+        "model": "fake-model", "input": "read it",
+        "tools": [{"type": "function", "name": "read_file", "parameters": {}}],
+    })
+    assert response.status_code == 200
+    call = next(item for item in response.json()["output"] if item["type"] == "function_call")
+    assert call["name"] == "read_file"
+    assert json.loads(call["arguments"]) == {"path": "server/README.md"}
+    session.chunks = ["The file was read."]
+    followup = client.post("/v1/responses", json={
+        "model": "fake-model", "previous_response_id": response.json()["id"],
+        "input": [{"type": "function_call_output", "call_id": call["call_id"], "output": "file data"}],
+        "tools": [{"type": "function", "name": "read_file", "parameters": {}}],
+    })
+    assert followup.status_code == 200
+    assert "file data" in session.last_user
+
+
+def test_qwen_xml_rejects_duplicate_parameter():
+    from ck_serve_v8 import _extract_tool_calls_from_text
+
+    text = "<tool_call><function=read_file><parameter=path>a</parameter><parameter=path>b</parameter></function></tool_call>"
+    calls, code, message = _extract_tool_calls_from_text(text, {"read_file"}, tool_syntax="qwen_xml")
+    assert calls == []
+    assert code == "malformed"
+    assert "duplicate" in message
+
+
+def test_qwen_xml_respects_declared_parameter_types():
+    from ck_serve_v8 import _extract_tool_calls_from_text
+
+    text = (
+        "<tool_call><function=inspect>"
+        "<parameter=path>123</parameter>"
+        "<parameter=line_end>20</parameter>"
+        "<parameter=enabled>true</parameter>"
+        "<parameter=options>{\"limit\":2}</parameter>"
+        "</function></tool_call>"
+    )
+    schema = {"inspect": {"properties": {
+        "path": {"type": "string"}, "line_end": {"type": "integer"},
+        "enabled": {"type": "boolean"}, "options": {"type": "object"},
+    }}}
+    calls, code, _ = _extract_tool_calls_from_text(
+        text, {"inspect"}, tool_syntax="qwen_xml", tool_parameters=schema,
+    )
+    assert code is None
+    assert json.loads(calls[0]["arguments"]) == {
+        "path": "123", "line_end": 20, "enabled": True, "options": {"limit": 2},
+    }
+    bad = text.replace("<parameter=line_end>20", "<parameter=line_end>twenty")
+    calls, code, _ = _extract_tool_calls_from_text(
+        bad, {"inspect"}, tool_syntax="qwen_xml", tool_parameters=schema,
+    )
+    assert calls == []
+    assert code == "malformed"
+
+
+def test_nonfinite_tool_arguments_are_not_executable():
+    from ck_serve_v8 import _extract_tool_calls_from_text
+
+    calls, code, _ = _extract_tool_calls_from_text(
+        '{"name":"read_file","arguments":{"line":NaN}}',
+        {"read_file"}, tool_syntax="json",
+    )
+    assert calls == []
+    assert code == "malformed"
+
+
+def test_legacy_qwen_xml_tags_rejected_as_malformed():
     session = FakeSession(
         chunks=(
             "<tool_call><function=read_file>"
@@ -169,7 +249,8 @@ def test_qwen_tagged_tool_call_rejects_duplicate_parameters():
             session,
             model="fake-model",
             chat_contract=QWEN3_CONTRACT,
-            chat_templates=DUMMY_CHAT_TEMPLATES,
+            chat_templates={"tool_use": NATIVE_TOOL_TEMPLATE},
+            tool_protocol="tagged_json",
         )
     )
     response = client.post(
@@ -184,7 +265,42 @@ def test_qwen_tagged_tool_call_rejects_duplicate_parameters():
     )
 
     assert response.json()["status"] == "failed"
-    assert "duplicate tool-call parameter" in response.json()["error"]["message"]
+    assert "malformed tool call" in response.json()["error"]["message"]
+
+
+def test_detect_template_tool_syntax():
+    from server.live import _detect_template_tool_syntax
+
+    assert (
+        _detect_template_tool_syntax("<tool_call>{\"a\": 1}</tool_call>", None)
+        == "tool_call_json"
+    )
+    assert (
+        _detect_template_tool_syntax(None, {"tool_use": "x <TOOL_CALL> y"})
+        == "tool_call_json"
+    )
+    assert _detect_template_tool_syntax("plain {{ messages }}", None) == "json"
+    assert _detect_template_tool_syntax(None, None) == "json"
+
+
+def test_json_example_in_assistant_text_is_not_a_tool_call():
+    from server.live import _extract_tool_calls_from_text
+
+    example = 'An example is {"name":"read_file","arguments":{"path":"x"}}.'
+    assert _extract_tool_calls_from_text(
+        example, {"read_file"}, tool_syntax="json"
+    ) == ([], None, None)
+    assert _extract_tool_calls_from_text(
+        '{"name":"read_file","arguments":{"path":"x"}}',
+        {"read_file"}, tool_syntax="tool_call_json",
+    ) == ([], None, None)
+
+
+def test_unrelated_template_does_not_declare_tool_support():
+    from server.live import _has_tool_support
+
+    assert not _has_tool_support(None, {"default": "plain {{ messages }}"})
+    assert not _has_tool_support("this prose mentions tools", None)
 
 
 def test_tool_call_single_stream():
@@ -200,14 +316,20 @@ def test_tool_call_single_stream():
     events = iter_sse(resp.text)
     assert_valid_stream(events)
     assert not any(ev == "response.output_text.delta" for ev, _ in events)
-    deltas = [p["delta"] for ev, p in events if ev == "response.function_call_arguments.delta"]
+    # The delta contains validated function arguments, not the raw envelope.
+    deltas = [(ev, p) for ev, p in events if ev == "response.function_call_arguments.delta"]
     assert len(deltas) == 1
-    assert json.loads(deltas[0]) == {"location": "Paris"}
+    assert json.loads(deltas[0][1]["delta"]) == {"location": "Paris"}
     done = [p for ev, p in events if ev == "response.function_call_arguments.done"]
-    assert done[0]["arguments"] == deltas[0]
+    assert json.loads(done[0]["arguments"]) == {"location": "Paris"}
+    # added -> delta -> done reference the same item.
+    added = [p for ev, p in events if ev == "response.output_item.added"]
+    assert len(added) == 1
+    assert added[0]["item"]["id"] == deltas[0][1]["item_id"] == done[0]["item_id"]
     completed = next(p["response"] for ev, p in events if ev == "response.completed")
     fc = next(i for i in completed["output"] if i["type"] == "function_call")
     assert fc["name"] == "get_weather"
+    assert fc["id"] == added[0]["item"]["id"]
 
 
 def test_tool_call_malformed_failed():
@@ -279,6 +401,71 @@ def test_tool_call_parallel_false_incomplete():
     assert any(ev == "response.incomplete" for ev, _ in events)
     completed = next(p["response"] for ev, p in events if ev == "response.incomplete")
     assert len([i for i in completed["output"] if i["type"] == "function_call"]) == 1
+
+
+def test_assistant_message_without_tool_calls_renders():
+    # Regression: a plain assistant-role message in `input` must not 422.
+    # Native templates read `message.tool_calls` unguarded, which raised
+    # under StrictUndefined when the key was missing.
+    session = FakeSession(chunks=("done",))
+    client = TestClient(
+        create_app(
+            session,
+            model="fake-model",
+            chat_contract=QWEN3_CONTRACT,
+            chat_templates={"tool_use": NATIVE_TOOL_TEMPLATE},
+        )
+    )
+    resp = client.post(
+        "/v1/responses",
+        json={
+            "model": "fake-model",
+            "input": [
+                {"type": "message", "role": "assistant", "content": "thinking..."},
+                {"type": "message", "role": "user", "content": "hi"},
+            ],
+            "tools": [
+                {"type": "function", "name": "get_weather", "parameters": {}}
+            ],
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "completed"
+
+
+def test_plain_text_history_renders_followup_turn():
+    # Regression: a stored assistant turn without tool calls must render
+    # on the follow-up turn (previous_response_id path).
+    session = FakeSession(chunks=("plain answer",))
+    client = TestClient(
+        create_app(
+            session,
+            model="fake-model",
+            chat_contract=QWEN3_CONTRACT,
+            chat_templates={"tool_use": NATIVE_TOOL_TEMPLATE},
+        )
+    )
+    tools = [{"type": "function", "name": "get_weather", "parameters": {}}]
+    first = client.post(
+        "/v1/responses",
+        json={"model": "fake-model", "input": "hi", "tools": tools},
+    ).json()
+    assert first["status"] == "completed"
+    assert "function_call" not in [
+        i["type"] for i in first["output"]
+    ]
+    session.chunks = ("follow-up answer",)
+    second = client.post(
+        "/v1/responses",
+        json={
+            "model": "fake-model",
+            "previous_response_id": first["id"],
+            "input": "and then?",
+            "tools": tools,
+        },
+    )
+    assert second.status_code == 200
+    assert second.json()["status"] == "completed"
 
 
 def test_function_output_continues_stored_tool_history():

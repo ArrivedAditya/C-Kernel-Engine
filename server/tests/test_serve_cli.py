@@ -7,6 +7,8 @@ build command construction; no native library, model, or network is touched.
 from __future__ import annotations
 
 import sys
+import hashlib
+import json
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "version" / "v8" / "scripts"))
@@ -304,27 +306,84 @@ def test_runtime_context_rejects_missing_or_invalid_layout(tmp_path, payload):
 
 
 def test_manifest_loader_reads_chat_template_and_contract(tmp_path):
+    from ck_serve_runtime_v8 import load_manifest_templates
+
+    (tmp_path / "chat_template.jinja").write_text("my-jinja", encoding="utf-8")
+    variants = tmp_path / "additional_chat_templates"
+    variants.mkdir()
+    (variants / "tool_use.jinja").write_text("tool-jinja", encoding="utf-8")
+    ct, cts, cc = load_manifest_templates(tmp_path)
+    assert ct == "my-jinja"
+    assert cts == {"tool_use": "tool-jinja"}
+    assert cc is None
+
+
+def test_native_chat_template_sidecar_keeps_exact_source_bytes(tmp_path):
+    from convert_gguf_to_bump_v8 import _write_native_chat_template_sidecar
+    from ck_serve_runtime_v8 import load_manifest_templates
+
+    native = "\n{%- for m in messages %}{{ m.content }}{% endfor %}  "
+    sidecar = _write_native_chat_template_sidecar(
+        native, gguf_path="source.gguf", manifest_out=str(tmp_path / "weights_manifest.json"),
+        config_out=None, output=None,
+    )
+    assert sidecar is not None
+    assert Path(sidecar).read_text(encoding="utf-8") == native
+    loaded, _, _ = load_manifest_templates(tmp_path)
+    assert loaded == native
+
+
+def test_tool_protocol_requires_selected_template_identity(tmp_path):
+    from ck_serve_v8 import load_tool_protocol
+
+    templates = {"tool_use": "selected-tool-template", "default": "other-template"}
+    digest = hashlib.sha256(templates["tool_use"].encode()).hexdigest()
+    sidecar = tmp_path / "tool_protocol.json"
+    assert load_tool_protocol(tmp_path, "base-template", templates) is None
+    sidecar.write_text(json.dumps({
+        "schema": "cke.v8.tool_protocol.v1",
+        "protocol": "tagged_json",
+        "template_sha256": digest,
+    }), encoding="utf-8")
+    assert load_tool_protocol(tmp_path, "base-template", templates) == "tagged_json"
+    with pytest.raises(ValueError, match="does not match selected chat template"):
+        load_tool_protocol(tmp_path, "base-template", {"tool_use": "changed-template"})
+
+
+def test_app_factory_rejects_conflicting_tool_protocol_before_session_open(tmp_path):
+    from server.live import create_live_app_from_run_dir
+
+    template = "native-template"
+    (tmp_path / "chat_template.jinja").write_text(template, encoding="utf-8")
+    (tmp_path / "tool_protocol.json").write_text(json.dumps({
+        "schema": "cke.v8.tool_protocol.v1", "protocol": "tagged_json",
+        "template_sha256": hashlib.sha256(template.encode()).hexdigest(),
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="conflicts with tool_protocol.json"):
+        create_live_app_from_run_dir(tmp_path, tool_protocol="qwen_xml")
+
+
+@pytest.mark.parametrize("content", ["not-json", "{}", '{"schema":"cke.v8.tool_protocol.v1","protocol":"unknown"}'])
+def test_tool_protocol_rejects_malformed_sidecar(tmp_path, content):
+    from ck_serve_v8 import load_tool_protocol
+
+    (tmp_path / "tool_protocol.json").write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_tool_protocol(tmp_path, "template", None)
+
+
+def test_manifest_loader_ignores_embedded_template_without_sidecar(tmp_path):
     import json
 
     from ck_serve_runtime_v8 import load_manifest_templates
 
-    contract = {
-        "name": "qwen3",
-        "turn_prefix": "<|im_start|>{role}\n",
-        "turn_suffix": "<|im_end|>\n",
-        "assistant_generation_prefix": "<|im_start|>assistant\n",
-        "thinking_mode_default": "visible",
-        "assistant_generation_prefix_by_thinking_mode": {
-            "visible": "<|im_start|>assistant\n",
-            "suppressed": "<|im_start|>assistant\n<think>\n\n</think>\n\n",
-        },
-        "last_user_prefix_by_thinking_mode": {"visible": "", "suppressed": "/no_think\n"},
-    }
     (tmp_path / "weights_manifest.json").write_text(
-        json.dumps({"config": {"chat_template": "my-jinja", "chat_templates": {"tool_use": "tool-jinja"}, "chat_contract": contract}}),
+        json.dumps({"config": {"chat_template": "stale-embed"}}),
         encoding="utf-8",
     )
-    ct, cts, cc = load_manifest_templates(tmp_path)
-    assert ct == "my-jinja"
-    assert cts == {"tool_use": "tool-jinja"}
-    assert cc == contract
+    (tmp_path / "config.json").write_text(
+        json.dumps({"chat_template": "stale-config"}),
+        encoding="utf-8",
+    )
+    ct, _, _ = load_manifest_templates(tmp_path)
+    assert ct is None
