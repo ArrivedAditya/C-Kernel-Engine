@@ -14,6 +14,9 @@ on:
       - 'tests/test_v8_kokoro_bump_export.py'
       - 'tests/test_v8_kokoro_bump_export_live.py'
       - 'version/v8/tts/export_kokoro_bump.py'
+      - 'tests/test_v8_kokoro_checkpoint_manifest.py'
+      - 'tests/test_v8_kokoro_checkpoint_capture_live.py'
+      - 'version/v8/tts/reference/**'
       - 'version/v8/kernel_maps/audio_lstm_bidirectional_scan_f32.json'
       - 'version/v8/kernel_maps/audio_adaptive_layer_norm_f32.json'
       - 'include/ckernel_runtime_extent.h'
@@ -58,6 +61,9 @@ on:
       - 'tests/test_v8_kokoro_bump_export.py'
       - 'tests/test_v8_kokoro_bump_export_live.py'
       - 'version/v8/tts/export_kokoro_bump.py'
+      - 'tests/test_v8_kokoro_checkpoint_manifest.py'
+      - 'tests/test_v8_kokoro_checkpoint_capture_live.py'
+      - 'version/v8/tts/reference/**'
       - 'version/v8/kernel_maps/audio_lstm_bidirectional_scan_f32.json'
       - 'version/v8/kernel_maps/audio_adaptive_layer_norm_f32.json'
       - 'include/ckernel_runtime_extent.h'
@@ -128,3 +134,5 @@ jobs:
             tests.test_v8_xray_numerical_parity.XRayNumericalParityTests.test_runtime_valid_extent_ignores_padded_physical_columns \
             tests.test_v8_xray_numerical_parity.XRayNumericalParityTests.test_builder_preserves_runtime_capture_geometry \
             tests.test_v8_xray_numerical_parity.XRayNumericalParityTests.test_generated_duration_graph_matches_independent_oracle_capture
+      - name: Verify pinned Kokoro predictor checkpoint coverage
+        run: python3 -m unittest tests.test_v8_kokoro_checkpoint_manifest

@@ -25,6 +25,10 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 PIN = json.loads((HERE / "kokoro_v1_reference.json").read_text())
+CAPTURED_REFERENCE = json.loads((HERE / "fixture_manifest.json").read_text())
+FINE_PREDICTOR_HOOKS = tuple(
+    f"predictor.text_encoder.lstms.{index}" for index in range(6)
+)
 
 
 def sha256(path: Path) -> str:
@@ -88,9 +92,20 @@ def main() -> int:
     missing = [str(path) for path in required if not path.is_file()]
     if missing:
         parser.error("missing pinned local asset(s): " + ", ".join(missing))
+    for path in required:
+        name = str(path.relative_to(model_dir))
+        expected_hash = CAPTURED_REFERENCE["assets"][name]
+        actual_hash = sha256(path)
+        if actual_hash != expected_hash:
+            parser.error(f"{name}: SHA-256 {actual_hash} != pinned {expected_hash}")
 
     import torch
     from kokoro import KModel, KPipeline
+
+    for package, expected_version in CAPTURED_REFERENCE["environment"]["packages"].items():
+        actual_version = package_version(package)
+        if actual_version != expected_version:
+            parser.error(f"{package} {actual_version} != pinned {expected_version}")
 
     torch.set_grad_enabled(False)
     torch.set_num_threads(1)
@@ -155,16 +170,22 @@ def main() -> int:
         "predictor.duration_proj", "predictor.shared", "predictor.F0_proj",
         "predictor.N_proj", "text_encoder", "decoder", "decoder.generator",
         "decoder.generator.conv_post",
-    )
+    ) + FINE_PREDICTOR_HOOKS
     modules = dict(model.named_modules())
     hooks = []
     for name in module_names:
         module = modules.get(name)
         if module is None:
+            if name in FINE_PREDICTOR_HOOKS:
+                raise RuntimeError(f"pinned predictor checkpoint module missing: {name}")
             record.setdefault("unavailable_hooks", []).append(name)
             continue
         def on_output(_module, _inputs, output, label=name):
-            capture_tensor(output, label.replace(".", "_"), out_dir, record["tensors"])
+            stem = label.replace(".", "_")
+            if label in FINE_PREDICTOR_HOOKS:
+                capture_tensor(_inputs, f"{stem}_input", out_dir, record["tensors"])
+                stem += "_output"
+            capture_tensor(output, stem, out_dir, record["tensors"])
         hooks.append(module.register_forward_hook(on_output))
     stft = model.decoder.generator.stft
     original_inverse = stft.inverse
@@ -179,6 +200,13 @@ def main() -> int:
         stft.inverse = original_inverse
         for hook in hooks:
             hook.remove()
+    for name in FINE_PREDICTOR_HOOKS:
+        stem = name.replace(".", "_")
+        if not any(key.startswith(f"{stem}_input") for key in record["tensors"]):
+            raise RuntimeError(f"pinned predictor input checkpoint not reached: {name}")
+        if not any(key.startswith(f"{stem}_output") for key in record["tensors"]):
+            raise RuntimeError(f"pinned predictor output checkpoint not reached: {name}")
+    record["fine_predictor_hooks"] = list(FINE_PREDICTOR_HOOKS)
     capture_tensor(output.pred_dur, "predicted_duration", out_dir, record["tensors"])
     durations = output.pred_dur.detach().cpu().reshape(-1).to(torch.int64)
     if len(durations) != len(ids) or (durations < 1).any():
