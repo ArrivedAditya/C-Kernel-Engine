@@ -2403,7 +2403,7 @@ make test-native-session-v8</pre>
 <div class="card">
     <h3 style="margin-top: 0;">Qwen Code Interactive And Overnight Profiles</h3>
     <p>
-        The validated pilot connects Qwen Code 0.21.5 to the Chat Completions compatibility route
+        The historical validated pilot connects Qwen Code 0.21.5 to the Chat Completions compatibility route
         backed by the native Responses server. It uses the pinned Qwen3.8 27B Q4_K_M artifact and a
         generated runtime with at least 16K context. Repository-owned settings separate short
         interactive work from large overnight artifact generation without replacing the user's
@@ -2417,6 +2417,7 @@ version/v8/scripts/cks-v8-run serve \
   --run /path/to/qwen38-agent-runtime \
   --context-len 16384 \
   --force-compile \
+  --tool-protocol qwen_xml \
   --model-name qwen38-27b-q4km</pre>
     </div>
     <div class="cmd-block">
@@ -2424,6 +2425,7 @@ version/v8/scripts/cks-v8-run serve \
 <pre>OPENAI_API_KEY=cke-local-only \
 OPENAI_BASE_URL=http://127.0.0.1:8080/v1 \
 OPENAI_MODEL=qwen38-27b-q4km \
+QWEN_CODE_MAX_OUTPUT_TOKENS=2048 \
 QWEN_CODE_SYSTEM_SETTINGS_PATH="$PWD/server/qwen-code/interactive.settings.json" \
 qwen --bare \
   --system-prompt 'Use read_file exactly once when asked, then answer without another tool call.' \
@@ -2437,6 +2439,7 @@ qwen --bare \
 <pre>OPENAI_API_KEY=cke-local-only \
 OPENAI_BASE_URL=http://127.0.0.1:8080/v1 \
 OPENAI_MODEL=qwen38-27b-q4km \
+QWEN_CODE_MAX_OUTPUT_TOKENS=32768 \
 QWEN_CODE_SYSTEM_SETTINGS_PATH="$PWD/server/qwen-code/overnight.settings.json" \
 qwen --bare \
   --allowed-tools read_file \
@@ -2448,12 +2451,24 @@ qwen --bare \
   &gt; /path/to/task-events.jsonl</pre>
     </div>
     <p style="margin-bottom: 0;" class="mini-note">
+        The explicit <code>qwen_xml</code> protocol matches the inspected Qwen3.8 template's
+        <code>&lt;function=...&gt;</code> and <code>&lt;parameter=...&gt;</code> tool-call format.
+        Other converted bundles must select their own actual protocol. A hash-bound
+        <code>tool_protocol.json</code> sidecar can carry this selection; a stale template hash
+        fails startup. Tool-bearing streams keep the connection alive and publish parsed calls
+        only after validation. The source GGUF is unnecessary for <code>--no-build</code> serving
+        when the generated bundle and sidecars are retained.
+    </p>
+    <p style="margin-bottom: 0;" class="mini-note">
         Qwen Code 0.21.5 ignores <code>--core-tools</code> in bare mode, so these commands explicitly
         remove unused bare-mode tools. The interactive profile uses 16K context and a 2K output
         allowance. The overnight profile requires a 256K generated runtime, advertises that capacity
         to the client, and reserves up to 32K output tokens. It does not add mid-generation resume,
         automatic publication, commits, or deployment. On later <code>--no-build</code> starts, the
         server reads the compiled capacity from <code>layout_decode.json</code>.
+        Qwen Code 0.24.6 needs the explicit <code>QWEN_CODE_MAX_OUTPUT_TOKENS</code>
+        environment value in these examples; the older settings profile alone did not
+        constrain its output request in a bounded local probe.
     </p>
     <p class="mini-note">
         <code>GET /v1/models/{model}</code> reports the loaded CKE context capacity. The server uses
