@@ -152,7 +152,7 @@ def normalize_capture_report(
         if row is None:
             comparison = {
                 "checkpoint_id": checkpoint_id,
-                "status": "fail",
+                "status": "incomplete",
                 "classification": "MISSING_CHECKPOINT",
                 "subject_present": False,
                 "oracle_present": False,
@@ -163,9 +163,11 @@ def normalize_capture_report(
         else:
             consumed_keys.add((result_layer, result_name))
             legacy_status = str(row.get("status", "ERROR")).upper()
-            incomplete = bool(row.get("size_mismatch"))
+            incomplete = bool(row.get("size_mismatch")) or legacy_status not in {"PASS", "FAIL"}
             status = "incomplete" if incomplete else ("pass" if legacy_status == "PASS" else "fail")
-            if incomplete:
+            if legacy_status in {"MISSING", "WARN"}:
+                classification = "MISSING_CHECKPOINT"
+            elif incomplete:
                 classification = "INCOMPLETE_CAPTURE"
             elif status == "pass":
                 classification = "MATCH"
@@ -180,7 +182,7 @@ def normalize_capture_report(
                 "status": status,
                 "classification": classification,
                 "legacy_tensor": result_name,
-                "metrics": _canonical_metrics(row),
+                "metrics": None if incomplete else _canonical_metrics(row),
                 "capture_extents": {
                     "subject": row.get("test_shape"), "oracle": row.get("ref_shape")
                 } if incomplete else None,

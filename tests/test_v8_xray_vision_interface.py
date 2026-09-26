@@ -219,6 +219,36 @@ class XRayVisionInterfaceTests(unittest.TestCase):
         )
         self.assertEqual(result["next_plan"]["status"], "first_observed_comparable_divergence")
 
+    def test_missing_capture_then_aligned_failure_is_not_a_kernel_attribution(self) -> None:
+        profile = xray.load_json(PROFILE)
+        rows = [
+            {"layer": int(mapping.get("result_layer", 0)),
+             "op": str(mapping["result_tensor"]), "status": "PASS", "max_abs_diff": 0.0}
+            for _, mapping in llama._active_checkpoints(profile, 0)
+        ]
+        next(row for row in rows if row["op"] == "q_proj").update({
+            "status": "MISSING", "max_abs_diff": 1.7976931348623157e308,
+        })
+        next(row for row in rows if row["op"] == "k_proj").update({
+            "status": "FAIL", "max_abs_diff": 0.5,
+        })
+        result = llama.normalize_capture_report({"results": rows}, profile, layer=0)
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["coverage_status"], "incomplete")
+        self.assertEqual(result["first_incomplete_capture"]["classification"], "MISSING_CHECKPOINT")
+        self.assertIsNone(result["first_incomplete_capture"]["metrics"])
+        self.assertEqual(result["first_divergence"]["classification"], "OBSERVED_DIVERGENCE")
+        self.assertEqual(result["first_divergence"]["metrics"]["max_abs"], 0.5)
+        self.assertEqual(result["next_plan"]["status"], "first_observed_comparable_divergence")
+
+    def test_absent_required_checkpoint_is_incomplete_without_numerical_verdict(self) -> None:
+        profile = xray.load_json(PROFILE)
+        result = llama.normalize_capture_report({"results": []}, profile, layer=0)
+        self.assertEqual(result["status"], "incomplete")
+        self.assertEqual(result["coverage_status"], "incomplete")
+        self.assertIsNone(result["first_divergence"])
+        self.assertEqual(result["first_incomplete_capture"]["classification"], "MISSING_CHECKPOINT")
+
     def test_incomplete_xray_report_is_non_passing_at_cli_boundary(self) -> None:
         with mock.patch.object(llama, "run", return_value={"status": "incomplete", "final_report": {}}):
             self.assertNotEqual(llama.main(["--gguf", "model.gguf"]), 0)
