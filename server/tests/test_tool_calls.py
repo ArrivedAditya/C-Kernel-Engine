@@ -236,6 +236,48 @@ def test_nonfinite_tool_arguments_are_not_executable():
     assert code == "malformed"
 
 
+def test_broken_qwen_xml_delimiter_fails_closed():
+    from ck_serve_v8 import _extract_tool_calls_from_text
+
+    calls, code, message = _extract_tool_calls_from_text(
+        "<tool_\n>\n<function=\n>\n</function>\n</tool_",
+        {"read_file"}, tool_syntax="qwen_xml",
+    )
+    assert calls == []
+    assert code == "malformed"
+    assert "delimiter" in message
+
+
+def test_tool_call_requires_declared_argument_names():
+    from ck_serve_v8 import _extract_tool_calls_from_text
+
+    schema = {"read_file": {
+        "properties": {"file_path": {"type": "string"}},
+        "required": ["file_path"], "additionalProperties": False,
+    }}
+    wrong = "<tool_call><function=read_file><parameter=path>README.md</parameter></function></tool_call>"
+    calls, code, message = _extract_tool_calls_from_text(
+        wrong, {"read_file"}, tool_syntax="qwen_xml", tool_parameters=schema,
+    )
+    assert calls == []
+    assert code == "malformed"
+    assert "missing required" in message
+    right = wrong.replace("parameter=path", "parameter=file_path")
+    calls, code, _ = _extract_tool_calls_from_text(
+        right, {"read_file"}, tool_syntax="qwen_xml", tool_parameters=schema,
+    )
+    assert code is None
+    assert json.loads(calls[0]["arguments"]) == {"file_path": "README.md"}
+
+    empty = '<tool_call>{"name":"read_file","arguments":""}</tool_call>'
+    calls, code, message = _extract_tool_calls_from_text(
+        empty, {"read_file"}, tool_parameters=schema,
+    )
+    assert calls == []
+    assert code == "malformed"
+    assert "missing required" in message
+
+
 def test_legacy_qwen_xml_tags_rejected_as_malformed():
     session = FakeSession(
         chunks=(

@@ -696,6 +696,12 @@ def _extract_tool_calls_from_text(
             tool_blocks.append(m.group(1).strip())
         if text.lower().count("<tool_call>") != len(tool_blocks):
             return [], "malformed", "malformed tool call: missing closing </tool_call>"
+        remainder = re.sub(
+            r"<tool_call>.*?</tool_call>", "", text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        if re.search(r"</?\s*(?:tool[_\s-]|function\s*=|parameter\s*=)", remainder, re.IGNORECASE):
+            return [], "malformed", "malformed tool call delimiter outside a complete block"
     else:
         tool_blocks = []
     candidates: list[str | dict[str, Any]] = []
@@ -784,11 +790,26 @@ def _extract_tool_calls_from_text(
                         strict_json_loads(args)
                     except (json.JSONDecodeError, ValueError) as exc:
                         return [], "malformed", f"malformed tool call arguments: {exc}"
-                args_str = args
+                args_str = args if args.strip() else "{}"
             elif args is None:
                 args_str = "{}"
             else:
                 return [], "malformed", "malformed tool call: invalid arguments"
+            contract = (tool_parameters or {}).get(name)
+            if isinstance(contract, dict):
+                parsed_args = strict_json_loads(args_str)
+                if not isinstance(parsed_args, dict):
+                    return [], "malformed", f"tool {name!r} arguments must be an object"
+                required = contract.get("required", [])
+                if isinstance(required, list):
+                    missing = [key for key in required if isinstance(key, str) and key not in parsed_args]
+                    if missing:
+                        return [], "malformed", f"tool {name!r} missing required arguments: {', '.join(missing)}"
+                properties = contract.get("properties", {})
+                if contract.get("additionalProperties") is False and isinstance(properties, dict):
+                    unknown = sorted(set(parsed_args) - set(properties))
+                    if unknown:
+                        return [], "malformed", f"tool {name!r} has unknown arguments: {', '.join(unknown)}"
             tool_calls.append(
                 {
                     "name": name,
