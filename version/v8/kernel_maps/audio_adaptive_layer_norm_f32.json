@@ -1,0 +1,269 @@
+{
+  "id": "audio_adaptive_layer_norm_f32",
+  "op": "audio_adaptive_layer_norm",
+  "operation_interface": "audio.adaptive_layer_norm.style_linear.token_major.fp32.v1",
+  "variant": "style_projected_affine_batch_one_fp32",
+  "selection": {
+    "status": "candidate",
+    "priority": 100,
+    "equivalence_group": "audio_adaptive_layer_norm_style_linear_fp32",
+    "phases": [
+      "prefill",
+      "decode"
+    ]
+  },
+  "quant": {
+    "weight": "fp32",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "C"
+      ],
+      "layout": "token_major_input_stride",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "style",
+      "dtype": "fp32",
+      "shape": [
+        "S"
+      ],
+      "layout": "feature_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "weights": [
+    {
+      "name": "projection_weight",
+      "dtype": "fp32",
+      "shape": [
+        "2*C",
+        "S"
+      ],
+      "layout": "output_feature_major",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "weight",
+      "consumption": "required"
+    },
+    {
+      "name": "projection_bias",
+      "dtype": "fp32",
+      "shape": [
+        "2*C"
+      ],
+      "layout": "feature_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "weight",
+      "consumption": "required"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "C"
+      ],
+      "layout": "token_major_output_stride",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "scratch": [
+    {
+      "name": "projection",
+      "dtype": "fp32",
+      "shape": [
+        "2*C"
+      ],
+      "size_bytes": "2 * channels * 4",
+      "size_resolution": "required",
+      "lifetime": "kernel_call",
+      "alignment": 64,
+      "layout": "feature_contiguous",
+      "access": "read_write",
+      "storage_class": "scratch",
+      "consumption": "required"
+    }
+  ],
+  "dims": [
+    "input_elements",
+    "style_elements",
+    "projection_weight_elements",
+    "projection_bias_elements",
+    "output_elements",
+    "projection_scratch_bytes",
+    "tokens",
+    "channels",
+    "style_dim",
+    "input_stride",
+    "output_stride",
+    "normalization_epsilon"
+  ],
+  "impl": {
+    "function": "audio_adaptive_layer_norm_f32",
+    "c_declaration": "int audio_adaptive_layer_norm_f32(const float *input, size_t input_elements, const float *style, size_t style_elements, const float *projection_weight, size_t projection_weight_elements, const float *projection_bias, size_t projection_bias_elements, float *output, size_t output_elements, float *projection_scratch, size_t projection_scratch_bytes, int tokens, int channels, int style_dim, size_t input_stride, size_t output_stride, float epsilon);",
+    "sources": [
+      "src/kernels/audio_adaptive_layer_norm.c"
+    ]
+  },
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "numerical_capabilities": [
+    {
+      "contract_id": "audio_adaptive_layer_norm_style_linear_fp32",
+      "status": "validated",
+      "phases": [
+        "prefill",
+        "decode"
+      ],
+      "function": "audio_adaptive_layer_norm_f32",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "serial"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "contract_defined"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "fp64",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "serial"
+      }
+    }
+  ],
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "input",
+        "source": "activation:input",
+        "cast": "const float*",
+        "ports": [
+          "input:input"
+        ]
+      },
+      {
+        "name": "input_elements",
+        "source": "runtime:input_elements"
+      },
+      {
+        "name": "style",
+        "source": "activation:style",
+        "cast": "const float*",
+        "ports": [
+          "input:style"
+        ]
+      },
+      {
+        "name": "style_elements",
+        "source": "runtime:style_elements"
+      },
+      {
+        "name": "projection_weight",
+        "source": "weight_f:projection_weight",
+        "cast": "const float*",
+        "ports": [
+          "weight:projection_weight"
+        ]
+      },
+      {
+        "name": "projection_weight_elements",
+        "source": "runtime:projection_weight_elements"
+      },
+      {
+        "name": "projection_bias",
+        "source": "weight_f:projection_bias",
+        "cast": "const float*",
+        "ports": [
+          "weight:projection_bias"
+        ]
+      },
+      {
+        "name": "projection_bias_elements",
+        "source": "runtime:projection_bias_elements"
+      },
+      {
+        "name": "output",
+        "source": "output:output",
+        "cast": "float*",
+        "ports": [
+          "output:output"
+        ]
+      },
+      {
+        "name": "output_elements",
+        "source": "runtime:output_elements"
+      },
+      {
+        "name": "projection_scratch",
+        "source": "scratch:projection",
+        "cast": "float*"
+      },
+      {
+        "name": "projection_scratch_bytes",
+        "source": "scratch_size:projection"
+      },
+      {
+        "name": "tokens",
+        "source": "runtime:tokens"
+      },
+      {
+        "name": "channels",
+        "source": "dim:channels"
+      },
+      {
+        "name": "style_dim",
+        "source": "dim:style_dim"
+      },
+      {
+        "name": "input_stride",
+        "source": "runtime:input_stride"
+      },
+      {
+        "name": "output_stride",
+        "source": "runtime:output_stride"
+      },
+      {
+        "name": "epsilon",
+        "source": "dim:normalization_epsilon"
+      }
+    ]
+  },
+  "tests": {
+    "unit": [
+      "tests/test_v8_audio_adaptive_layer_norm_oracle.py"
+    ],
+    "oracle": "Independent torch.nn.functional.linear and layer_norm FP32 CPU; committed fixture and live 24x512x128 test"
+  },
+  "notes": "Batch-one token-major input with explicit input/output row strides. Style projection uses [2*C,S] output-feature-major weights and first C gamma, second C beta. Biased variance uses ascending double accumulation; projection and modulation are FP32. Epsilon is positive finite. Only logical columns are read; padding is untouched. All buffers caller-owned; no aliasing between input, weights, style, output or scratch. Output remains unchanged on null, geometry, capacity or nonfinite rejection. Inference only; backward unsupported."
+}
