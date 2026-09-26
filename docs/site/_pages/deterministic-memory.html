@@ -257,13 +257,13 @@ Layer 15, Neuron 847:
 
   <h3>Step 1: Run a Stable Repro Case</h3>
   <pre><code class="language-bash"># Use one fixed model + prompt + token budget
-python3 version/v6.6/scripts/ck_run_v6_6.py run \
+python3 version/legacy/v6.6/scripts/ck_run_v6_6.py run \
   hf://Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf \
   --context-len 1024 --max-tokens 32 --force-compile --force-convert \
   --prompt "Explain why matrix multiplication is associative."</code></pre>
 
   <h3>Step 2: Probe Layer-Level Sanity (L0+)</h3>
-  <pre><code class="language-bash">python version/v6.6/test/test_layer_by_layer.py \
+  <pre><code class="language-bash">python version/legacy/v6.6/test/test_layer_by_layer.py \
   --model ~/.cache/ck-engine-v6.6/models/Qwen--Qwen3-0.6B-GGUF \
   --token 25</code></pre>
   <p>
@@ -271,7 +271,7 @@ python3 version/v6.6/scripts/ck_run_v6_6.py run \
   </p>
 
   <h3>Step 3: Capture Stop-Point Activations</h3>
-  <pre><code class="language-bash">python version/v6.6/test/v6_6_comprehensive_debug.py \
+  <pre><code class="language-bash">python version/legacy/v6.6/test/v6_6_comprehensive_debug.py \
   --model-dir ~/.cache/ck-engine-v6.6/models/Qwen--Qwen3-0.6B-GGUF \
   --token 25 --stop-at 5 --threads 1 --context-len 1024</code></pre>
   <p>
@@ -280,7 +280,7 @@ python3 version/v6.6/scripts/ck_run_v6_6.py run \
   </p>
 
   <h3>Step 4: Locate First Divergence</h3>
-  <pre><code class="language-bash">python version/v6.6/test/trace_divergence.py \
+  <pre><code class="language-bash">python version/legacy/v6.6/test/trace_divergence.py \
   --model ~/.cache/ck-engine-v6.6/models/Qwen--Qwen3-0.6B-GGUF \
   --token 25 --threads 1 --context-len 1024</code></pre>
   <p>
@@ -288,7 +288,7 @@ python3 version/v6.6/scripts/ck_run_v6_6.py run \
   </p>
 
   <h3>Step 5: Use IR Visualizer as the Analysis Surface</h3>
-  <pre><code class="language-bash">python version/v6.6/tools/open_ir_visualizer.py Qwen--Qwen3-0.6B-GGUF</code></pre>
+  <pre><code class="language-bash">python version/legacy/v6.6/tools/open_ir_visualizer.py Qwen--Qwen3-0.6B-GGUF</code></pre>
   <ul>
     <li><strong>Interpretability tab:</strong> inspect math blocks and generated dump instrumentation.</li>
     <li><strong>Dataflow tab:</strong> confirm producer/consumer chain for suspect ops.</li>

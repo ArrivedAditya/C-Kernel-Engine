@@ -20,7 +20,7 @@ The format is designed to be:
 
 ```
 ┌─────────────────┐     ┌──────────────────────┐     ┌─────────────────┐
-│  HuggingFace    │     │  version/v6.6/       │     │  build_ir_v2.py │
+│  HuggingFace    │     │  version/legacy/v6.6/       │     │  build_ir_v2.py │
 │  config.json    │────▶│  legacy_kernel_maps/ │────▶│  (the compiler) │
 │                 │     │  *.json plans+buffers│     │                 │
 └─────────────────┘     └──────────────────────┘     └────────┬────────┘
@@ -164,7 +164,7 @@ Downloaded from the model repository, provides dimensions:
 }
 ```
 
-### 2. version/v6.6/legacy_kernel_maps/global_buffers.json
+### 2. version/legacy/v6.6/legacy_kernel_maps/global_buffers.json
 
 Defines global buffers (embeddings, final norm, logits):
 
@@ -179,7 +179,7 @@ Defines global buffers (embeddings, final norm, logits):
 }
 ```
 
-### 3. version/v6.6/legacy_kernel_maps/decoder_layer_plan.json
+### 3. version/legacy/v6.6/legacy_kernel_maps/decoder_layer_plan.json
 
 Defines the operations in each transformer layer:
 

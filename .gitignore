@@ -115,7 +115,7 @@ version/v7/scripts/spec_family_monitor_loop_v7.sh
 version/v7/tools/monitor_train_run_v7.py
 
 # v6.6 generated report snapshots
-version/v6.6/tools/*_latest.json
+version/legacy/v6.6/tools/*_latest.json
 
 # Local scratch/debug artifacts
 .tmp/

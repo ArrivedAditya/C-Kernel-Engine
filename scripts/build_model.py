@@ -31,7 +31,7 @@ from typing import Dict, List, Optional
 class PipelineConfig:
     """Configuration for the build pipeline."""
     model: Path
-    kernel_maps_dir: Path = Path("version/v6.6/kernel_maps")
+    kernel_maps_dir: Path = Path("version/legacy/v6.6/kernel_maps")
     ir_dir: Path = Path("build/ir")
     fused_ir_dir: Path = Path("build/fused_ir")
     output_dir: Path = Path("build")
@@ -184,7 +184,7 @@ class PipelineRunner:
 def main():
     parser = argparse.ArgumentParser(description="CK-Engine Build Pipeline")
     parser.add_argument("--model", "-m", required=True, help="Model file (GGUF/Safetensors)")
-    parser.add_argument("--kernel-maps", "-k", default="version/v6.6/kernel_maps",
+    parser.add_argument("--kernel-maps", "-k", default="version/legacy/v6.6/kernel_maps",
                         help="Kernel maps directory")
     parser.add_argument("--ir-dir", default="build/ir", help="IR output directory")
     parser.add_argument("--fused-ir-dir", default="build/fused_ir",

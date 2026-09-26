@@ -11,7 +11,7 @@ v6 features:
 
 Usage:
   (Obsolete) Use the v6.6 runner instead:
-  python version/v6.6/scripts/ck_run_v6_6.py run <model>
+  python version/legacy/v6.6/scripts/ck_run_v6_6.py run <model>
 """
 
 import argparse

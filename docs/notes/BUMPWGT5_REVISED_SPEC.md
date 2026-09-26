@@ -298,6 +298,6 @@ if (magic == CK_BUMP_MAGIC_V5) {
 
 **Ready to implement Phase 1:**
 1. `include/ckernel_bump_v5.h` - Header definition
-2. `version/v6.6/docs/BUMPWGT5_SPEC.md` - Documentation
+2. `version/legacy/v6.6/docs/BUMPWGT5_SPEC.md (removed in v6.6 archival; see the v66-legacy.html archive page and git history)` - Documentation
 
 This EOF-based design is bulletproof for backward compatibility.

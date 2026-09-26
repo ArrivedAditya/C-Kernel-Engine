@@ -1423,7 +1423,7 @@ def _select_make_targets(*, category: Optional[str] = None) -> list[str]:
 
 
 MAKE_TARGET_FAILURE_ARTIFACTS = {
-    "v6.6-validate-matrix-nightly": ROOT / "version" / "v6.6" / "tools" / "model_matrix_report_latest.json",
+    "v6.6-validate-matrix-nightly": ROOT / "version" / "legacy" / "v6.6" / "tools" / "model_matrix_report_latest.json",
     "v7-kernel-map-contracts": ROOT / "version" / "v7" / ".cache" / "reports" / "kernel_map_validation_latest.json",
     "regression-training-full": ROOT / "version" / "v7" / ".cache" / "reports" / "backprop_family_matrix" / "full" / "v7_backprop_family_matrix_latest.json",
     "v8-training-certify-fp32": ROOT / "version" / "v8" / ".cache" / "reports" / "training_certification_latest.json",

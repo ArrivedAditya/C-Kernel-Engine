@@ -36,7 +36,7 @@ FAILED=0
 # Check 0: Kernel Map Validation (NEW - no build required)
 # -----------------------------------------------------------------------------
 echo -e "${CYAN}[0/5] Kernel Map Validation${NC}"
-KERNEL_MAPS_DIR="$ROOT_DIR/version/v6.6/kernel_maps"
+KERNEL_MAPS_DIR="$ROOT_DIR/version/legacy/v6.6/kernel_maps"
 if [ -f "$KERNEL_MAPS_DIR/validate_kernel_maps.py" ]; then
     if python "$KERNEL_MAPS_DIR/validate_kernel_maps.py" > /dev/null 2>&1; then
         echo -e "${GREEN}[PASS]${NC} Kernel maps are valid"

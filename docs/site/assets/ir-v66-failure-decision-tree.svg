@@ -54,13 +54,13 @@
   <text x="150" y="450" class="cmd">make v6.6-kernel-map-gate</text>
   <text x="150" y="476" class="cmd">make v6.6-validate-contracts</text>
   <text x="150" y="508" class="a">First inspect:</text>
-  <text x="150" y="532" class="cmd">version/v6.6/tools/contract_report_latest.json</text>
+  <text x="150" y="532" class="cmd">version/legacy/v6.6/tools/contract_report_latest.json</text>
 
   <text x="690" y="390" class="q">L2 fail?</text>
   <text x="690" y="420" class="a">Matrix smoke failed (build/artifact/smoke).</text>
   <text x="690" y="450" class="cmd">make v6.6-validate-matrix-smoke</text>
   <text x="690" y="482" class="a">Inspect report row by model first.</text>
-  <text x="690" y="506" class="cmd">version/v6.6/tools/model_matrix_report_latest.json</text>
+  <text x="690" y="506" class="cmd">version/legacy/v6.6/tools/model_matrix_report_latest.json</text>
 
   <text x="1230" y="390" class="q">L3/L4 fail?</text>
   <text x="1230" y="420" class="a">Parity matrix or long-decode gate failed.</text>
@@ -74,15 +74,15 @@
 
   <text x="150" y="662" class="q">Contract drift branch</text>
   <text x="150" y="692" class="a">Compare changed script signatures, flags, and maps.</text>
-  <text x="150" y="722" class="cmd">git diff version/v6.6/scripts</text>
-  <text x="150" y="748" class="cmd">git diff version/v6.6/kernel_maps</text>
+  <text x="150" y="722" class="cmd">git diff version/legacy/v6.6/scripts</text>
+  <text x="150" y="748" class="cmd">git diff version/legacy/v6.6/kernel_maps</text>
   <text x="150" y="780" class="a">Re-run only failing contract checker before full gate.</text>
 
   <text x="690" y="662" class="q">Model row failure branch</text>
   <text x="690" y="692" class="a">Use failing row note, then rerun single model command.</text>
-  <text x="690" y="722" class="cmd">python version/v6.6/scripts/validate_model_matrix_v6_6.py --with-smoke</text>
+  <text x="690" y="722" class="cmd">python version/legacy/v6.6/scripts/validate_model_matrix_v6_6.py --with-smoke</text>
   <text x="690" y="754" class="a">Typical causes: cache mismatch, smoke load, build artifact path.</text>
-  <text x="690" y="784" class="cmd">version/v6.6/tools/model_matrix_report_latest.json</text>
+  <text x="690" y="784" class="cmd">version/legacy/v6.6/tools/model_matrix_report_latest.json</text>
 
   <text x="1230" y="662" class="q">Parity/long-decode branch</text>
   <text x="1230" y="692" class="a">If runtime is missing, SKIP may fail with require-all.</text>

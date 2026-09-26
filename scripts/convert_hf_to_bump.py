@@ -3,7 +3,7 @@
 LEGACY CONVERTER HELPER MODULE.
 
 v6.6+ versioned pipelines should use the version-local copies instead:
-  - version/v6.6/scripts/convert_hf_to_bump.py
+  - version/legacy/v6.6/scripts/convert_hf_to_bump.py
   - version/v7/scripts/convert_hf_to_bump.py
 
 This top-level file is kept for older root-level scripts and backward compatibility.

@@ -50,13 +50,13 @@
   <rect x="94" y="204" width="92" height="24" rx="12" fill="#9fe3ff"/>
   <text x="118" y="220" class="pill">INPUTS</text>
   <text x="94" y="252" class="h">Kernel maps + registry</text>
-  <text x="94" y="282" class="p">version/v6.6/kernel_maps/*.json</text>
+  <text x="94" y="282" class="p">version/legacy/v6.6/kernel_maps/*.json</text>
   <text x="94" y="310" class="b">Source of truth for kernel IDs, bindings, and map sync.</text>
 
   <rect x="94" y="414" width="92" height="24" rx="12" fill="#9fe3ff"/>
   <text x="118" y="430" class="pill">INPUTS</text>
   <text x="94" y="462" class="h">Templates + family maps</text>
-  <text x="94" y="492" class="p">version/v6.6/templates/*.json</text>
+  <text x="94" y="492" class="p">version/legacy/v6.6/templates/*.json</text>
   <text x="94" y="520" class="b">Feeds static tooling contract checks (family coverage and parity map alignment).</text>
 
   <rect x="94" y="624" width="92" height="24" rx="12" fill="#9fe3ff"/>
@@ -88,19 +88,19 @@
   <text x="664" y="940" class="b">Strict parity and sustained decode stability gates.</text>
 
   <text x="1234" y="252" class="h">contract_report_latest.json</text>
-  <text x="1234" y="282" class="p">version/v6.6/tools/contract_report_latest.json</text>
+  <text x="1234" y="282" class="p">version/legacy/v6.6/tools/contract_report_latest.json</text>
   <text x="1234" y="310" class="b">Static contract verdicts (PASS/WARN/FAIL).</text>
 
   <text x="1234" y="462" class="h">model_matrix_report_latest.json</text>
-  <text x="1234" y="492" class="p">version/v6.6/tools/model_matrix_report_latest.json</text>
+  <text x="1234" y="492" class="p">version/legacy/v6.6/tools/model_matrix_report_latest.json</text>
   <text x="1234" y="520" class="b">Per-model build/smoke/sliding results.</text>
 
   <text x="1234" y="672" class="h">parity_matrix_report_latest.json</text>
-  <text x="1234" y="702" class="p">version/v6.6/tools/parity_matrix_report_latest.json</text>
+  <text x="1234" y="702" class="p">version/legacy/v6.6/tools/parity_matrix_report_latest.json</text>
   <text x="1234" y="730" class="b">Per-model strict parity and coverage result rows.</text>
 
   <text x="1234" y="882" class="h">long_decode_report_latest.json</text>
-  <text x="1234" y="912" class="p">version/v6.6/tools/long_decode_report_latest.json</text>
+  <text x="1234" y="912" class="p">version/legacy/v6.6/tools/long_decode_report_latest.json</text>
   <text x="1234" y="940" class="b">Decode stability summary and failure notes.</text>
 
   <line x1="570" y1="265" x2="638" y2="265" stroke="#8fc4eb" stroke-width="3" marker-end="url(#arrow)"/>

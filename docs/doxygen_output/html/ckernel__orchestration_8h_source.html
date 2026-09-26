@@ -135,10 +135,10 @@ $(document).ready(function(){initNavTree('ckernel__orchestration_8h_source.html'
 <div class="line"><a name="l00009"></a><span class="lineno">    9</span>&#160;<span class="comment"> * v6.6 uses IR Lower 3 + codegen instead of hardcoded orchestration.</span></div>
 <div class="line"><a name="l00010"></a><span class="lineno">   10</span>&#160;<span class="comment"> *</span></div>
 <div class="line"><a name="l00011"></a><span class="lineno">   11</span>&#160;<span class="comment"> * v6.6 Architecture (REPLACEMENT):</span></div>
-<div class="line"><a name="l00012"></a><span class="lineno">   12</span>&#160;<span class="comment"> *   - Kernel dispatch: version/v6.6/scripts/build_ir_v6_6.py + ckernel_codegen.c</span></div>
-<div class="line"><a name="l00013"></a><span class="lineno">   13</span>&#160;<span class="comment"> *   - Memory planning: version/v6.6/scripts/memory_planner_v6_6.py</span></div>
-<div class="line"><a name="l00014"></a><span class="lineno">   14</span>&#160;<span class="comment"> *   - Registry: version/v6.6/kernel_maps/KERNEL_REGISTRY.json</span></div>
-<div class="line"><a name="l00015"></a><span class="lineno">   15</span>&#160;<span class="comment"> *   - Kernel bindings: version/v6.6/kernel_maps/kernel_bindings.json</span></div>
+<div class="line"><a name="l00012"></a><span class="lineno">   12</span>&#160;<span class="comment"> *   - Kernel dispatch: version/legacy/v6.6/scripts/build_ir_v6_6.py + ckernel_codegen.c</span></div>
+<div class="line"><a name="l00013"></a><span class="lineno">   13</span>&#160;<span class="comment"> *   - Memory planning: version/legacy/v6.6/scripts/memory_planner_v6_6.py</span></div>
+<div class="line"><a name="l00014"></a><span class="lineno">   14</span>&#160;<span class="comment"> *   - Registry: version/legacy/v6.6/kernel_maps/KERNEL_REGISTRY.json</span></div>
+<div class="line"><a name="l00015"></a><span class="lineno">   15</span>&#160;<span class="comment"> *   - Kernel bindings: version/legacy/v6.6/kernel_maps/kernel_bindings.json</span></div>
 <div class="line"><a name="l00016"></a><span class="lineno">   16</span>&#160;<span class="comment"> *</span></div>
 <div class="line"><a name="l00017"></a><span class="lineno">   17</span>&#160;<span class="comment"> * Deprecated functions (NOT used in v6.6):</span></div>
 <div class="line"><a name="l00018"></a><span class="lineno">   18</span>&#160;<span class="comment"> *   - ck_layer_forward_rmsnorm_swiglu*      -&gt; IR Lower 3 + mega_fused_* kernels</span></div>

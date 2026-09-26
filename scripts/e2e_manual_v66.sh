@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RUNNER="$ROOT_DIR/version/v6.6/scripts/ck_run_v6_6.py"
+RUNNER="$ROOT_DIR/version/legacy/v6.6/scripts/ck_run_v6_6.py"
 
 if [ ! -f "$RUNNER" ]; then
   echo "ERROR: v6.6 runner not found at $RUNNER"

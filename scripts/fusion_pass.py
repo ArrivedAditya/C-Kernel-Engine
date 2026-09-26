@@ -3,7 +3,7 @@
 Fusion Pass - Detect and apply fusion patterns to IR.
 
 Usage:
-    python scripts/fusion_pass.py --ir ir/layer_00.json --kernel-maps version/v6.6/kernel_maps
+    python scripts/fusion_pass.py --ir ir/layer_00.json --kernel-maps version/legacy/v6.6/kernel_maps
     python scripts/fusion_pass.py --ir-dir ir/ --output build/fused_ir/
 """
 
@@ -276,7 +276,7 @@ def main():
     parser = argparse.ArgumentParser(description="Apply fusion patterns to IR")
     parser.add_argument("--ir", help="Single IR file to fuse")
     parser.add_argument("--ir-dir", help="Directory of IR files")
-    parser.add_argument("--kernel-maps", "-k", default="version/v6.6/kernel_maps",
+    parser.add_argument("--kernel-maps", "-k", default="version/legacy/v6.6/kernel_maps",
                         help="Kernel maps directory")
     parser.add_argument("--output", "-o", default="build/fused_ir",
                         help="Output directory for fused IR")

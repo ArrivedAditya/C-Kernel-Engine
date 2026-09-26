@@ -2,7 +2,7 @@
 
 ## Target Command
 ```bash
-python version/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
+python version/legacy/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
     --context-len 1024 \
     --force-compile \
     --detailed-llamacpp-parity
@@ -20,7 +20,7 @@ Goal: find the first divergence quickly without dumping everything.
 1. End-to-end check (logits only)
 
 ```bash
-python version/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
+python version/legacy/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
   --context-len 1024 \
   --force-compile \
   --detailed-llamacpp-parity \
@@ -32,7 +32,7 @@ python version/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF
 2. Layer 0 check (core ops only)
 
 ```bash
-python version/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
+python version/legacy/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
   --context-len 1024 \
   --force-compile \
   --detailed-llamacpp-parity \
@@ -45,7 +45,7 @@ python version/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF
 3. If llama.cpp still times out, make it even smaller
 
 ```bash
-python version/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
+python version/legacy/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
   --context-len 1024 \
   --force-compile \
   --detailed-llamacpp-parity \
@@ -59,7 +59,7 @@ python version/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF
 4. If you truly need full-layer dumps, bump the timeout
 
 ```bash
-python version/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
+python version/legacy/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
   --context-len 1024 \
   --force-compile \
   --detailed-llamacpp-parity \
@@ -70,7 +70,7 @@ python version/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF
 5. Optional: limit CKE dumps with CK_STOP_OP
 
 ```bash
-CK_STOP_OP=26 python version/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
+CK_STOP_OP=26 python version/legacy/v6.6/scripts/ck_run_v6_6.py run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
   --context-len 1024 \
   --force-compile \
   --parity-dump \
@@ -140,7 +140,7 @@ For ck-cli parity, use `--max-tokens 1` even if you only care about prefill. `--
 │   ├── llama_to_ck_converter.py     # Optional: raw dump → CKDMP using index.json
 │   └── model_family_detector.py     # Optional: GGUF-based family detection
 │
-└── version/v6.6/scripts/
+└── version/legacy/v6.6/scripts/
     └── ck_run_v6_6.py               # Uses ck-cli-v6.6 for detailed parity
 ```
 

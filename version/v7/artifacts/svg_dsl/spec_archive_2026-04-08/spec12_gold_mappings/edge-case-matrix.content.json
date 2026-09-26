@@ -60,7 +60,7 @@
         [
           "Flat vs legacy layout schema",
           "Schema drift breaks smoke and analysis parsers",
-          "python version/v6.6/scripts/validate_tooling_contracts.py",
+          "python version/legacy/v6.6/scripts/validate_tooling_contracts.py",
           "IR tooling"
         ],
         [

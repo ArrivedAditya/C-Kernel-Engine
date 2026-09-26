@@ -9,10 +9,10 @@
  * v6.6 uses IR Lower 3 + codegen instead of hardcoded orchestration.
  *
  * v6.6 Architecture (REPLACEMENT):
- *   - Kernel dispatch: version/v6.6/scripts/build_ir_v6_6.py + ckernel_codegen.c
- *   - Memory planning: version/v6.6/scripts/memory_planner_v6_6.py
- *   - Registry: version/v6.6/kernel_maps/KERNEL_REGISTRY.json
- *   - Kernel bindings: version/v6.6/kernel_maps/kernel_bindings.json
+ *   - Kernel dispatch: version/legacy/v6.6/scripts/build_ir_v6_6.py + ckernel_codegen.c
+ *   - Memory planning: version/legacy/v6.6/scripts/memory_planner_v6_6.py
+ *   - Registry: version/legacy/v6.6/kernel_maps/KERNEL_REGISTRY.json
+ *   - Kernel bindings: version/legacy/v6.6/kernel_maps/kernel_bindings.json
  *
  * Deprecated functions (NOT used in v6.6):
  *   - ck_layer_forward_rmsnorm_swiglu*      -> IR Lower 3 + mega_fused_* kernels

@@ -9,14 +9,14 @@ OUTPUT_FILE="$(dirname "$0")/../_partials/folder_structure.html"
 # the optional `tree` package installed, so keep a Python fallback.
 if command -v tree >/dev/null 2>&1; then
     TREE_OUTPUT=$(cd "$PROJECT_ROOT" && tree -d -L 3 --dirsfirst \
-        src/kernels version/v6.6 version/v7 \
+        src/kernels version/legacy/v6.6 version/v7 \
         -I '__pycache__|.cache|*.o|*.pyc|doxygen_output|build|.git|node_modules|*.bin|*.so' \
         --charset=ascii 2>/dev/null)
 else
     TREE_OUTPUT=$(cd "$PROJECT_ROOT" && python3 - <<'PY'
 from pathlib import Path
 
-roots = [Path("src/kernels"), Path("version/v6.6"), Path("version/v7")]
+roots = [Path("src/kernels"), Path("version/legacy/v6.6"), Path("version/v7")]
 ignore = {"__pycache__", ".cache", "doxygen_output", "build", ".git", "node_modules"}
 max_depth = 3
 dir_count = 0
@@ -56,7 +56,7 @@ cat > "$OUTPUT_FILE" << 'HEADER'
 <div class="folder-structure">
     <div class="folder-header">
         <span class="folder-title">Focused Source Tree</span>
-        <span class="folder-scope">src/kernels · version/v6.6 · version/v7</span>
+        <span class="folder-scope">src/kernels · version/legacy/v6.6 · version/v7</span>
         <span class="folder-updated">Updated: TIMESTAMP</span>
     </div>
     <pre class="tree-output">

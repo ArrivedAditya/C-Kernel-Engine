@@ -10,13 +10,13 @@ Add Gemma support without changing default behavior for Qwen2/Qwen3.
 - `src/kernels/gemm_kernels_q5_1_q8_1.c`
 - `src/kernels/gemm_kernels_q8_0_q8_0_contract.c`
 - `src/tokenizer/tokenizer_spm.c` (plus minimal tokenizer wiring only)
-- `version/v6.6/kernel_maps/<new gemma map files>.json`
-- `version/v6.6/kernel_maps/KERNEL_REGISTRY.json`
-- `version/v6.6/templates/gemma3.json`
+- `version/legacy/v6.6/kernel_maps/<new gemma map files>.json`
+- `version/legacy/v6.6/kernel_maps/KERNEL_REGISTRY.json`
+- `version/legacy/v6.6/templates/gemma3.json`
 - Minimal, Gemma-flag-gated edits in:
-  - `version/v6.6/scripts/build_ir_v6_6.py`
-  - `version/v6.6/scripts/codegen_prefill_v6_6.py`
-  - `version/v6.6/scripts/memory_planner_v6_6.py`
+  - `version/legacy/v6.6/scripts/build_ir_v6_6.py`
+  - `version/legacy/v6.6/scripts/codegen_prefill_v6_6.py`
+  - `version/legacy/v6.6/scripts/memory_planner_v6_6.py`
 
 ## Not Allowed (Unless Explicitly Required)
 - Broad/global behavior changes for all models.
