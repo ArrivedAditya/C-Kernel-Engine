@@ -151,6 +151,23 @@ int audio_lstm_bidirectional_scan_f32(
     int tokens, int input_size, int hidden_size,
     size_t input_stride, size_t output_stride);
 
+/* Token-major adaptive LayerNorm: gamma,beta = linear(style), then
+ * (1 + gamma) * layer_norm(input, epsilon) + beta on each token.
+ * Projection weights are [2*channels, style_dim], output-feature major.
+ * All capacities are explicit; scratch needs 2*channels floats.
+ * Returns -1 null, -2 invalid/overflowing geometry, -3 capacity,
+ * -4 nonfinite input or result. Output is unchanged on rejection.
+ */
+int audio_adaptive_layer_norm_f32(
+    const float *input, size_t input_elements,
+    const float *style, size_t style_elements,
+    const float *projection_weight, size_t projection_weight_elements,
+    const float *projection_bias, size_t projection_bias_elements,
+    float *output, size_t output_elements,
+    float *projection_scratch, size_t projection_scratch_bytes,
+    int tokens, int channels, int style_dim,
+    size_t input_stride, size_t output_stride, float epsilon);
+
 int audio_stft_precompute_tables_f32(
     int n_fft,
     float *window,

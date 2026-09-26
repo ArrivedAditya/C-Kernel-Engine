@@ -3448,6 +3448,48 @@
       "position_transform": null,
       "description": "Parakeet Transformer-XL eager relative attention using one caller-owned T-element score row per independently scheduled head."
     },
+    "audio_adaptive_layer_norm_style_linear_fp32": {
+      "operator_family": "layernorm",
+      "status": "validated",
+      "storage": {
+        "input": "fp32",
+        "weight": "fp32",
+        "output": "fp32"
+      },
+      "compute": {
+        "input": "fp32",
+        "weight": "fp32",
+        "accumulator": "fp64",
+        "contraction": "enabled",
+        "evaluation_order": "ascending_style_projection_in_fp32_then_ascending_token_channel_mean_and_biased_variance_in_fp64_then_fp32_gamma_beta_modulation"
+      },
+      "rounding": {
+        "mode": "rne",
+        "points": [
+          "input_load",
+          "weighted_product",
+          "reduction_update",
+          "norm_sqrt",
+          "activation_intermediate_store",
+          "affine_normalization",
+          "output_store"
+        ]
+      },
+      "reduction": {
+        "kind": "composite",
+        "order": "stage_ordered",
+        "partial_accumulator": "fp64",
+        "merge_order": "none"
+      },
+      "threading": {
+        "work_partition": "serial",
+        "split_strategy": "serial",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false
+      },
+      "position_transform": null,
+      "description": "Token-major FP32 adaptive LayerNorm with output-major FP32 style projection, double mean and biased variance, (1+gamma)*normalized+beta, caller-owned 2C projection scratch, and output unchanged on rejection."
+    },
     "audio_lstm_pytorch_ifgo_single_step_fp32": {
       "operator_family": "audio_lstm",
       "status": "validated",

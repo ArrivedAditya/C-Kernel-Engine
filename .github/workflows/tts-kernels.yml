@@ -8,8 +8,11 @@ on:
       - 'include/ckernel_audio.h'
       - 'src/kernels/audio_kernels.c'
       - 'src/kernels/audio_lstm_scan.c'
+      - 'src/kernels/audio_adaptive_layer_norm.c'
       - 'tests/test_v8_audio_lstm_scan_oracle.py'
+      - 'tests/test_v8_audio_adaptive_layer_norm_oracle.py'
       - 'version/v8/kernel_maps/audio_lstm_bidirectional_scan_f32.json'
+      - 'version/v8/kernel_maps/audio_adaptive_layer_norm_f32.json'
       - 'include/ckernel_runtime_extent.h'
       - 'src/kernels/runtime_extent.c'
       - 'tests/test_v8_runtime_extent_kernel.py'
@@ -46,8 +49,11 @@ on:
       - 'include/ckernel_audio.h'
       - 'src/kernels/audio_kernels.c'
       - 'src/kernels/audio_lstm_scan.c'
+      - 'src/kernels/audio_adaptive_layer_norm.c'
       - 'tests/test_v8_audio_lstm_scan_oracle.py'
+      - 'tests/test_v8_audio_adaptive_layer_norm_oracle.py'
       - 'version/v8/kernel_maps/audio_lstm_bidirectional_scan_f32.json'
+      - 'version/v8/kernel_maps/audio_adaptive_layer_norm_f32.json'
       - 'include/ckernel_runtime_extent.h'
       - 'src/kernels/runtime_extent.c'
       - 'tests/test_v8_runtime_extent_kernel.py'
@@ -103,7 +109,11 @@ jobs:
             tests.test_v8_audio_lstm_scan_oracle.AudioLstmScanOracleTest.test_committed_torch_fixture \
             tests.test_v8_audio_lstm_scan_oracle.AudioLstmScanOracleTest.test_rejection_preserves_output \
             tests.test_v8_audio_lstm_scan_oracle.AudioLstmScanOracleTest.test_exact_capacity_and_null_pointer \
-            tests.test_v8_audio_lstm_scan_oracle.AudioLstmScanOracleTest.test_hostile_hidden_size_rejected_before_buffer_access
+            tests.test_v8_audio_lstm_scan_oracle.AudioLstmScanOracleTest.test_hostile_hidden_size_rejected_before_buffer_access \
+            tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_committed_torch_fixture \
+            tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_optimized_matches_scalar \
+            tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_rejection_preserves_output \
+            tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_exact_capacity_and_large_geometry_rejection
       - name: Verify generated graph X-Ray capture against independent oracle
         run: |
           python3 -m unittest \
