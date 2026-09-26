@@ -1,0 +1,89 @@
+<!-- TITLE: v6.6 Engine (Legacy Archive) -->
+<!-- NAV: architecture -->
+
+<div class="container">
+  <h1>v6.6 Engine (Legacy Archive)</h1>
+  <p class="lead">v6.6 was the template-driven inference generation of C-Kernel-Engine: GGUF conversion, hand-merged graph templates, IR1/IR2 lowering, quantized GEMM/GEMV dispatch, and generated-C execution. It is <strong>archived</strong> under <code>version/legacy/v6.6/</code>. Active development is <a href="v8-runbook.html">v8 inference</a> (circuits, kernel maps, generated-C runtime) and <a href="v7-backprop-ir.html">v7 training</a>.</p>
+
+  <div class="alert alert-info"><div><strong>Reading this page.</strong> The v6.6 tree previously carried 51 Markdown documents. The reference content that still matters is summarized below; session handoffs, upgrade plans, roadmaps, and debugging diaries were removed during archival. The complete pre-archival text of every document remains in git history.</div></div>
+
+  <h2 id="pipeline">Build pipeline and IR</h2>
+  <div class="card">
+    <h3 style="margin-top: 0;">End-to-end pipeline (was PIPELINE.md, docs/BUILD_PIPELINE.md)</h3>
+    <p>The v6.6 flow converted a Hugging Face config plus GGUF metadata into <code>weights.bump</code> with a sidecar manifest, built IR1 (a forward op graph with typed tensors and kernel IDs) by merging the model's graph template with the manifest, lowered through IR2 (fusion detection, MEGA kernel grouping), planned one contiguous memory layout, and emitted a single generated C file plus an OpenMP thread-pool runtime. Each phase had a named script and a named artifact, which made the pipeline debuggable stage by stage.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Template to graph flow (was templates/PIPELINE.md, templates/README.md)</h3>
+    <p>Templates defined the per-layer operation sequence — the logical graph — independently of any concrete weights. The three-stage pipeline (template &rarr; GraphIR &rarr; LoweredIR) resolved template ops against the parsed GGUF/sidecar metadata, so one template could serve several weight variants of the same architecture family.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">IR1 architecture (was scripts/IR1_ARCHITECTURE.md)</h3>
+    <p>IR1 was a direct template-to-kernel mapping produced by <code>build_ir_v6_6.py</code>: no general graph optimizer, just a deterministic walk from template ops to kernel IDs with typed tensor slots. The deliberate simplicity made generated behavior auditable — a principle v8 keeps, with circuits and kernel maps replacing templates and op builders.</p>
+  </div>
+
+  <h2 id="memory-formats">Memory planning and formats</h2>
+  <div class="card">
+    <h3 style="margin-top: 0;">Single contiguous allocation (was MEMORY_PLANNING_SPEC.md)</h3>
+    <p>All runtime buffers came from one dynamically generated arena: tensor lifetimes were computed from the IR, offsets assigned with cache alignment, and the generated C addressed everything as base-plus-offset. The spec covered section ordering, alignment rules, lifetime reuse, and canary placement. This is the direct ancestor of v8's memory planner.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">BUMPWGT5 (was docs/BUMPWGT5_SPEC.md)</h3>
+    <p>BUMPWGT5 kept the BUMPWGT4 payload layout intact and appended a self-describing metadata block at EOF, located via a fixed-size footer — so older readers could still consume the payload while newer tooling read full tensor metadata. v8's <code>weights.bump</code> plus sidecar manifest carries the same idea forward.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">The .ck container draft (was src/ck_format.md)</h3>
+    <p>A draft single-file container (v0) for weights, tokenizer data, alignment, and metadata. It was never the production format — <code>weights.bump</code> + sidecar won on simplicity — but its self-description goals survived in the BUMPWGT5 footer and the v8 manifest.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Logits buffer management (was docs/IR_LOGITS_BUFFER_PROPOSAL.md)</h3>
+    <p>A proposal to move logits-buffer decisions out of runtime codegen logic and into the IR, so buffer shape and lifetime were planned artifacts rather than emitted conditionals. Superseded by v8's planner-owned buffers.</p>
+  </div>
+
+  <h2 id="kernels-op-builders">Kernels and op builders</h2>
+  <div class="card">
+    <h3 style="margin-top: 0;">Three-level kernel mapping (was scripts/KERNEL_MAPPING.md)</h3>
+    <p>Level 1: template ops (architecture-level names). Level 2: kernel ops (operation families with contracts). Level 3: concrete kernel functions (quantization- and ISA-specific implementations). Selection walked the levels with explicit conditions — the conceptual seed of v8's provider-selection metadata, equivalence groups, and fail-closed resolution.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Kernel maps as single source of truth (was kernel_maps/README.md, legacy_kernel_maps/README.md)</h3>
+    <p>Each kernel-map JSON described one concrete kernel variant: shapes, dtypes, quantization layout, and entry symbol. The archived <code>kernel_maps/</code> and <code>legacy_kernel_maps/</code> directories remain under <code>version/legacy/v6.6/</code> as data; the v8 registry and hardened map format are the live descendants.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Auto-generated op builders (was scripts/OP_BUILDER_DESIGN.md, scripts/README_OP_BUILDERS.md)</h3>
+    <p>Op builders — the glue that turned IR ops into concrete kernel calls — were generated from the kernel registry instead of hand-written, eliminating a whole class of drift between registry metadata and emitted calls. v8's map-owned call ABI is the hardened form of the same requirement.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Kernel development workflow (was docs/KERNEL_DEV_WORKFLOW.md)</h3>
+    <p>Write the scalar kernel, register its map, regenerate specs, add a ctypes parity test against PyTorch, then optimize with profiling. The modern, fuller version of this loop is the <a href="model-bringup-guide.html">model bring-up guide</a>.</p>
+  </div>
+
+  <h2 id="testing-parity">Testing, parity, and profiling</h2>
+  <div class="card">
+    <h3 style="margin-top: 0;">llama.cpp parity debugging (was testing/TESTING.md)</h3>
+    <p>Layer-by-layer comparison harness against llama.cpp to catch model-compatibility issues: capture both runtimes' intermediates, walk layers in order, and stop at the first divergence. The five-minute corpus runs and exact-trajectory gates in current CI descend from this harness.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Parity CI system (was tools/PARITY_README.md)</h3>
+    <p>The automated layer-comparison CI that ran those llama.cpp diffs per model and reported first-divergence artifacts — the direct ancestor of today's nightly numerical contracts and X-Ray boundary comparisons.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Manual E2E reference (was E2E_HELP.md)</h3>
+    <p>A short operator reference for manual end-to-end checks on v6.6 Gemma/Qwen models with the pinned Hugging Face URLs of the time. Superseded by the <a href="v8-runbook.html">v8 runbook</a>.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Profiling notes (was src/profiling.md)</h3>
+    <p>oneAPI/VTune environment setup and perf workflows used during v6.6 optimization. Current guidance lives in <a href="profiling.html">Profiling</a> and <a href="v7-profiling.html">v7 Profiling</a>.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Historical v1&ndash;v5 lineage (was src/v6.6_pipeline.md)</h3>
+    <p>A narrative of the early generations: v1 established kernel-level PyTorch parity for inference and backprop; later versions added IR, quantized dispatch, and the template machinery that v6.6 finalized. Kept for historical context only.</p>
+  </div>
+
+  <h2 id="pointers">Where to go instead</h2>
+  <ul>
+    <li><a href="v8-runbook.html">v8 runbook</a> — current inference commands for every supported model family.</li>
+    <li><a href="model-bringup-guide.html">Model bring-up guide</a> — the current contributor path from math to standalone C.</li>
+    <li><a href="ir-pipeline.html">IR pipeline (v6.6, legacy)</a> — the original v6.6 pipeline page, retained and marked legacy.</li>
+    <li><a href="version-history.html">Version history</a> — how v6.6 relates to v7 and v8.</li>
+  </ul>
+</div>

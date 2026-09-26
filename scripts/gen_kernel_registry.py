@@ -4,7 +4,7 @@ Generate KERNEL_REGISTRY.json by scanning src/kernels/**/*.c
 
 Usage:
     python scripts/gen_kernel_registry.py
-    python scripts/gen_kernel_registry.py --output version/v6.6/kernel_maps/KERNEL_REGISTRY.json
+    python scripts/gen_kernel_registry.py --output version/legacy/v6.6/kernel_maps/KERNEL_REGISTRY.json
 
 The script:
 1. Scans all .c files in src/kernels/
@@ -161,7 +161,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate kernel registry from source files")
     parser.add_argument(
         "--output", "-o",
-        default="version/v6.6/kernel_maps/KERNEL_REGISTRY.json",
+        default="version/legacy/v6.6/kernel_maps/KERNEL_REGISTRY.json",
         help="Output path for registry JSON"
     )
     parser.add_argument(

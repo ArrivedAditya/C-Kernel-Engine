@@ -245,7 +245,7 @@ class TestV66VsV65Parity:
             ]
         else:
             cmd = [
-                sys.executable, "version/v6.6/scripts/ck_run_v6_6.py", "run",
+                sys.executable, "version/legacy/v6.6/scripts/ck_run_v6_6.py", "run",
                 "Qwen/Qwen2-0.5B-Instruct-GGUF",
                 "--weight-dtype=q4_k_m",
                 "--context-len=100",

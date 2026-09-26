@@ -217,5 +217,5 @@ This keeps runtime artifacts self-contained (no external JS build dependency).
 - `ck-cli-v7 train` now exports a final runtime checkpoint for token-file/BPE flows:
   `run_dir/checkpoints/weights_step_XXXXXXXX.bump` + `weights_step_XXXXXXXX_manifest.json`,
   and records them in `training_checkpoint_policy_latest.json` + `train_e2e_latest.json`.
-- Inference baseline is synced from `version/v6.6` into `version/v7` so inference and
+- Inference baseline is synced from `version/legacy/v6.6` into `version/v7` so inference and
   backprop can evolve together in one track.

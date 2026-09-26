@@ -11,7 +11,7 @@
  *
  * v6.6 Architecture:
  *   - IR Lower 1/2/3 drives execution planning
- *   - version/v6.6/scripts/codegen_v6_6.py emits model_v6_6.c directly
+ *   - version/legacy/v6.6/scripts/codegen_v6_6.py emits model_v6_6.c directly
  *   - Kernel dispatch is selected from kernel_maps + lowered call IR
  *
  * To remove completely:

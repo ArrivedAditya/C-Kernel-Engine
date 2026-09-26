@@ -91,7 +91,7 @@ def load_template_for_model(model_type: str) -> dict:
     template_path = os.path.join(base_dir, f"{template_name}.json")
     # ... load template with fallback to llama.json ...
 ```
-- Loads actual template JSON files from `version/v6.6/templates/` directory
+- Loads actual template JSON files from `version/legacy/v6.6/templates/` directory
 - Fallback: If specific template missing, falls back to `llama.json`
 - Error handling: Clear error message if no template found
 - **Benefit:** Real template support instead of placeholder
@@ -306,13 +306,13 @@ struct CKBumpMetaFooterV5 {
 - [x] Schema version as integer
 
 ### 📝 Files Modified
-1. `version/v6.6/scripts/convert_hf_to_bump_v6_6.py`
+1. `version/legacy/v6.6/scripts/convert_hf_to_bump_v6_6.py`
    - Added footer-based metadata writing
    - Added template loading
    - Updated all metadata functions
    - Simplified workflow
 
-2. `version/v6.6/scripts/convert_gguf_to_bump_v6_6.py`
+2. `version/legacy/v6.6/scripts/convert_gguf_to_bump_v6_6.py`
    - ✅ Already has all improvements applied
    - Footer-based metadata writing
    - Template loading (`load_template_for_arch()`)
@@ -325,7 +325,7 @@ struct CKBumpMetaFooterV5 {
 ## Recommendations
 
 ### 1. **Create Template Files** 📄
-Create actual template JSON files in `version/v6.6/templates/`:
+Create actual template JSON files in `version/legacy/v6.6/templates/`:
 - `llama.json` (base template)
 - `qwen2.json`
 - `mistral3.json`

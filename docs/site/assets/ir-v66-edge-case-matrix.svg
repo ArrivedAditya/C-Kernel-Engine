@@ -56,7 +56,7 @@
   <text x="102" y="627" class="tag">LAYOUT</text>
   <text x="90" y="662" class="b">Flat vs legacy layout schema</text>
   <text x="520" y="642" class="b">Schema drift can break smoke/analysis paths that parse layout fields.</text>
-  <text x="1020" y="634" class="cmd">python version/v6.6/scripts/validate_tooling_contracts.py</text>
+  <text x="1020" y="634" class="cmd">python version/legacy/v6.6/scripts/validate_tooling_contracts.py</text>
   <text x="1470" y="652" class="b">IR tooling</text>
 
   <rect x="60" y="710" width="1660" height="104" rx="10" fill="#102133" stroke="#35577b"/>

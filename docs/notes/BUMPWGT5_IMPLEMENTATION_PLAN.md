@@ -36,7 +36,7 @@ This plan implements BUMPWGT5: a self-describing weight format with embedded met
 │                                                                              │
 │  Phase 6: Tests & Documentation                                             │
 │  ─────────────────────────────────────────────────────────────────────────  │
-│  Files: test_bump_v5.py, version/v6.6/docs/BUMPWGT5_SPEC.md                │
+│  Files: test_bump_v5.py, version/legacy/v6.6/docs/BUMPWGT5_SPEC.md (removed in v6.6 archival; see the v66-legacy.html archive page and git history)                │
 │  Add: test coverage, spec documentation                                    │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -166,7 +166,7 @@ int ck_bumpv5_parse_metadata(FILE *fp, const CKBMFV5Header *header,
 
 ## Phase 2: Converter Updates (Write BUMPWGT5)
 
-### File: `version/v6.6/scripts/convert_gguf_to_bump_v6_6.py`
+### File: `version/legacy/v6.6/scripts/convert_gguf_to_bump_v6_6.py`
 
 **Changes:**
 
@@ -320,7 +320,7 @@ if __name__ == '__main__':
 - `write_bumpv5_header()` - Write header struct
 - `convert_to_bumpv5()` - Main conversion with v5 format
 
-### File: `version/v6.6/scripts/convert_hf_to_bump_v6_6.py`
+### File: `version/legacy/v6.6/scripts/convert_hf_to_bump_v6_6.py`
 
 **Similar changes for HF (HuggingFace) format:**
 - Same BUMPWGT5 header writing
@@ -419,7 +419,7 @@ int ck_load_model_v5(FILE *fp, CKModel *model,
 - `ck_load_model_v5()` - BUMPWGT5 specific loader
 - `ck_bumpv5_parse_metadata()` - Extract metadata JSON
 
-### File: `version/v6.6/src/test_bump_tokenizer.c`
+### File: `version/legacy/v6.6/src/test_bump_tokenizer.c`
 
 **Changes to support BUMPWGT5:**
 
@@ -458,7 +458,7 @@ int main(int argc, char **argv) {
 
 ## Phase 4: IR Pipeline Integration
 
-### File: `version/v6.6/scripts/build_ir_v6_6.py`
+### File: `version/legacy/v6.6/scripts/build_ir_v6_6.py`
 
 **Changes:**
 
@@ -558,7 +558,7 @@ if __name__ == '__main__':
 
 ## Phase 5: Tools & Validation
 
-### File: `version/v6.6/scripts/bump_inspect.py`
+### File: `version/legacy/v6.6/scripts/bump_inspect.py`
 
 **Purpose:** Inspect BUMP file metadata
 
@@ -610,7 +610,7 @@ if __name__ == '__main__':
     inspect_bump(args.bump_path)
 ```
 
-### File: `version/v6.6/scripts/validate_bump_v5.py`
+### File: `version/legacy/v6.6/scripts/validate_bump_v5.py`
 
 **Purpose:** Validate BUMPWGT5 integrity
 
@@ -690,7 +690,7 @@ if __name__ == '__main__':
 
 ## Phase 6: Tests & Documentation
 
-### File: `version/v6.6/tests/test_bump_v5.py`
+### File: `version/legacy/v6.6/tests/test_bump_v5.py`
 
 ```python
 #!/usr/bin/env python3
@@ -740,7 +740,7 @@ if __name__ == '__main__':
     test_bumpv4_compatibility()
 ```
 
-### File: `version/v6.6/docs/BUMPWGT5_SPEC.md`
+### File: `version/legacy/v6.6/docs/BUMPWGT5_SPEC.md (removed in v6.6 archival; see the v66-legacy.html archive page and git history)`
 
 ```markdown
 # BUMPWGT5 Specification

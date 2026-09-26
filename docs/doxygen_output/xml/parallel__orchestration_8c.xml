@@ -643,7 +643,7 @@
     </briefdescription>
     <detaileddescription>
 <para>This file was an early prototype demonstrating llama.cpp-style OpenMP parallelization patterns. It is NOT compiled into the v6.6 build and has no callers in the generated inference code path.</para>
-<para>v6.6 decode runs entirely through the generated code in: version/v6.6/src/generated/ck-kernel-inference.c → ck_model_decode_internal()</para>
+<para>v6.6 decode runs entirely through the generated code in: version/legacy/v6.6/src/generated/ck-kernel-inference.c → ck_model_decode_internal()</para>
 <para>Threading for v6.6 is handled by ck_threadpool (<ref refid="ck__threadpool_8h" kindref="compound">include/ck_threadpool.h</ref>), which replaces the OpenMP approach used here.</para>
 <para>Kept for reference only. See the original design notes below.</para>
 <para>Original design (OpenMP, superseded):<itemizedlist>
@@ -664,7 +664,7 @@
 <codeline lineno="7"><highlight class="comment"><sp/>*<sp/>has<sp/>no<sp/>callers<sp/>in<sp/>the<sp/>generated<sp/>inference<sp/>code<sp/>path.</highlight></codeline>
 <codeline lineno="8"><highlight class="comment"><sp/>*</highlight></codeline>
 <codeline lineno="9"><highlight class="comment"><sp/>*<sp/>v6.6<sp/>decode<sp/>runs<sp/>entirely<sp/>through<sp/>the<sp/>generated<sp/>code<sp/>in:</highlight></codeline>
-<codeline lineno="10"><highlight class="comment"><sp/>*<sp/><sp/><sp/>version/v6.6/src/generated/ck-kernel-inference.c</highlight></codeline>
+<codeline lineno="10"><highlight class="comment"><sp/>*<sp/><sp/><sp/>version/legacy/v6.6/src/generated/ck-kernel-inference.c</highlight></codeline>
 <codeline lineno="11"><highlight class="comment"><sp/>*<sp/><sp/><sp/><sp/><sp/>→<sp/>ck_model_decode_internal()</highlight></codeline>
 <codeline lineno="12"><highlight class="comment"><sp/>*</highlight></codeline>
 <codeline lineno="13"><highlight class="comment"><sp/>*<sp/>Threading<sp/>for<sp/>v6.6<sp/>is<sp/>handled<sp/>by<sp/>ck_threadpool<sp/>(include/ck_threadpool.h),</highlight></codeline>

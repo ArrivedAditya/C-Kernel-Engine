@@ -85,6 +85,10 @@
       "title": "Getting Started",
       "description": "Quickstart guide for building and running C-Kernel-Engine, including the current v7 runtime path plus the v8 text-inference and Qwen3-VL multimodal bring-up surfaces."
     },
+    "v66-legacy.html": {
+      "title": "v6.6 Engine (Legacy Archive)",
+      "description": "Archived v6.6 template-driven inference generation: pipeline, memory planning, kernel maps, and parity testing summaries with pointers to the active v8 and v7 lanes."
+    },
     "contributing.html": {
       "title": "Contributor Path: Start Small and Build Evidence",
       "description": "Five contribution levels for C-Kernel-Engine, from Linux compatibility and profiling through numerical fixtures, CPU kernels, compiler work, multimodal parity, and distributed execution."

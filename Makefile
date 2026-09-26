@@ -633,7 +633,7 @@ IR_V2_DEMO := $(BUILD_DIR)/ck_ir_v2_demo
 IR_V2_SCRIPT := scripts/build_ir_v2.py
 IR_V4_SCRIPT := scripts/v4/build_ir_v4.py
 IR_V4_Q4K_SCRIPT := scripts/v4/build_ir_v4_q4k.py
-DEFAULT_CONFIG := version/v6.6/configs/default.config.json
+DEFAULT_CONFIG := version/legacy/v6.6/configs/default.config.json
 CONFIG ?= $(DEFAULT_CONFIG)
 OUT ?= $(BUILD_DIR)/generated_model.c
 IR ?=
@@ -928,12 +928,12 @@ test-tokenizer-spm: $(LIB_TOKENIZER)
 	@echo "========================================"
 	@echo "  Tokenizer Codegen Sync (init vs C)"
 	@echo "========================================"
-	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) version/v6.6/test/test_tokenizer_codegen_sync.py
+	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) version/legacy/v6.6/test/test_tokenizer_codegen_sync.py
 	@echo ""
 	@echo "========================================"
 	@echo "  Model Tokenizer Regression (GGUF vs C)"
 	@echo "========================================"
-	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) version/v6.6/test/test_tokenizer_model_parity.py
+	@LD_LIBRARY_PATH=$(BUILD_DIR):$$LD_LIBRARY_PATH $(PYTHON) $(PYTHONFLAGS) version/legacy/v6.6/test/test_tokenizer_model_parity.py
 
 .PHONY: tokenizer test-tokenizer test-tokenizer-quick test-tokenizer-llama test-tokenizer-special test-tokenizer-spm
 
@@ -1983,7 +1983,7 @@ e2e-v66:
 	@echo "[1/2] Run v6.6 gate suite (contracts + matrix-smoke + parity + long decode)..."
 	@$(MAKE) --no-print-directory v6.6-gate || { echo "v6.6 gate failed"; exit 1; }
 	@echo "[2/2] Run quick sanity tests..."
-	@cd version/v6.6/test && $(MAKE) quick || { echo "Tests failed"; exit 1; }
+	@cd version/legacy/v6.6/test && $(MAKE) quick || { echo "Tests failed"; exit 1; }
 	@echo "========================================"
 	@echo "  v6.6 E2E Test PASSED"
 	@echo "========================================"
@@ -1994,7 +1994,7 @@ e2e-v66-full:
 	@echo "  CK-Engine v6.6 Full E2E Test"
 	@echo "========================================"
 	@$(MAKE) --no-print-directory v6.6-gate || { echo "v6.6 gate failed"; exit 1; }
-	@cd version/v6.6/test && $(MAKE) all
+	@cd version/legacy/v6.6/test && $(MAKE) all
 	@echo "========================================"
 	@echo "  v6.6 Full E2E Test PASSED"
 	@echo "========================================"
@@ -2011,26 +2011,26 @@ ci-local:
 	@echo "========================================"
 	@echo ""
 	@echo "[1/7] Tooling contract validation..."
-	@$(PYTHON) version/v6.6/scripts/validate_tooling_contracts.py || { echo "FAIL: Tooling contracts"; exit 1; }
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_tooling_contracts.py || { echo "FAIL: Tooling contracts"; exit 1; }
 	@echo ""
 	@echo "[2/7] Kernel map validation..."
-	@$(PYTHON) version/v6.6/kernel_maps/test_validation.py --quick || { echo "FAIL: Kernel map validation"; exit 1; }
+	@$(PYTHON) version/legacy/v6.6/kernel_maps/test_validation.py --quick || { echo "FAIL: Kernel map validation"; exit 1; }
 	@echo ""
 	@echo "[3/7] Registry validation..."
-	@$(PYTHON) version/v6.6/scripts/validate_kernel_registry.py || { echo "FAIL: Registry validation"; exit 1; }
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_kernel_registry.py || { echo "FAIL: Registry validation"; exit 1; }
 	@echo ""
 	@echo "[4/7] Unit tests (bindings, IR lowering, templates)..."
-	@$(PYTHON) -m pytest version/v6.6/test/test_kernel_bindings.py version/v6.6/test/test_ir_lowering.py version/v6.6/test/test_template_smoke.py -v || { echo "FAIL: Unit tests"; exit 1; }
+	@$(PYTHON) -m pytest version/legacy/v6.6/test/test_kernel_bindings.py version/legacy/v6.6/test/test_ir_lowering.py version/legacy/v6.6/test/test_template_smoke.py -v || { echo "FAIL: Unit tests"; exit 1; }
 	@echo ""
 	@echo "[5/7] Build CK-Engine..."
 	@$(MAKE) clean || true
 	@$(MAKE) -j$(nproc) || { echo "FAIL: Build"; exit 1; }
 	@echo ""
 	@echo "[6/7] E2E Qwen2..."
-	@$(PYTHON) version/v6.6/scripts/ck_run_v6_6.py run "hf://Qwen/Qwen2-0.5B-Instruct-GGUF/qwen2-0_5b-instruct-q4_k_m.gguf" --prompt "Hello" --max-tokens 4 --context-len 512 --force-compile || { echo "FAIL: Qwen2 E2E"; exit 1; }
+	@$(PYTHON) version/legacy/v6.6/scripts/ck_run_v6_6.py run "hf://Qwen/Qwen2-0.5B-Instruct-GGUF/qwen2-0_5b-instruct-q4_k_m.gguf" --prompt "Hello" --max-tokens 4 --context-len 512 --force-compile || { echo "FAIL: Qwen2 E2E"; exit 1; }
 	@echo ""
 	@echo "[7/7] E2E Qwen3..."
-	@$(PYTHON) version/v6.6/scripts/ck_run_v6_6.py run "hf://Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf" --prompt "Hello" --max-tokens 4 --context-len 512 --force-compile || { echo "FAIL: Qwen3 E2E"; exit 1; }
+	@$(PYTHON) version/legacy/v6.6/scripts/ck_run_v6_6.py run "hf://Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf" --prompt "Hello" --max-tokens 4 --context-len 512 --force-compile || { echo "FAIL: Qwen3 E2E"; exit 1; }
 	@echo ""
 	@echo "========================================"
 	@echo "  Local CI PASSED - safe to push"
@@ -2043,16 +2043,16 @@ ci-local-fast:
 	@echo "========================================"
 	@echo ""
 	@echo "[1/4] Tooling contract validation..."
-	@$(PYTHON) version/v6.6/scripts/validate_tooling_contracts.py || { echo "FAIL: Tooling contracts"; exit 1; }
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_tooling_contracts.py || { echo "FAIL: Tooling contracts"; exit 1; }
 	@echo ""
 	@echo "[2/4] Kernel map validation..."
-	@$(PYTHON) version/v6.6/kernel_maps/test_validation.py --quick || { echo "FAIL: Kernel map validation"; exit 1; }
+	@$(PYTHON) version/legacy/v6.6/kernel_maps/test_validation.py --quick || { echo "FAIL: Kernel map validation"; exit 1; }
 	@echo ""
 	@echo "[3/4] Registry validation..."
-	@$(PYTHON) version/v6.6/scripts/validate_kernel_registry.py || { echo "FAIL: Registry validation"; exit 1; }
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_kernel_registry.py || { echo "FAIL: Registry validation"; exit 1; }
 	@echo ""
 	@echo "[4/4] Unit tests (bindings, IR lowering, templates)..."
-	@$(PYTHON) -m pytest version/v6.6/test/test_kernel_bindings.py version/v6.6/test/test_ir_lowering.py version/v6.6/test/test_template_smoke.py -v || { echo "FAIL: Unit tests"; exit 1; }
+	@$(PYTHON) -m pytest version/legacy/v6.6/test/test_kernel_bindings.py version/legacy/v6.6/test/test_ir_lowering.py version/legacy/v6.6/test/test_template_smoke.py -v || { echo "FAIL: Unit tests"; exit 1; }
 	@echo ""
 	@echo "========================================"
 	@echo "  Fast CI PASSED - ready for full CI"
@@ -3591,7 +3591,7 @@ Q4K_GATEUP_SWIGLU_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu
 Q4K_GATEUP_SWIGLU_OMP_BIN := $(BUILD_DIR)/bench_q4k_gateup_swiglu_omp_standalone
 QWEN3VL_ENCODER_ATTN_BIN := $(BUILD_DIR)/bench_qwen3vl_encoder_attention
 Q80_FP32_GEMM_BIN := $(BUILD_DIR)/bench_q8_0_fp32_gemm
-V66_SRC_DIR    := version/v6.6/src
+V66_SRC_DIR    := version/legacy/v6.6/src
 V8_SRC_DIR     := version/v8/src
 V8_KERNEL_DISPATCH_POLICY := $(V8_SRC_DIR)/ck_kernel_dispatch_policy_v8.inc
 
@@ -5351,10 +5351,10 @@ litmus-test:
 CK_TOKENIZER := src/ck_tokenizer.c
 CK_SERVER := tools/ck_server.c
 CK_CLI := tools/ck.c
-CK_CLI_V4 := version/v6.6/tools/ck_v4.c
+CK_CLI_V4 := version/legacy/v6.6/tools/ck_v4.c
 CK_CLI_V6 := src/v6/ck_cli_v6.c
 CK_CLI_V65 := src/v6.5/ck_cli_v6.5.c
-CK_CLI_V66 := version/v6.6/src/ck_cli_v6.6.c
+CK_CLI_V66 := version/legacy/v6.6/src/ck_cli_v6.6.c
 CK_CLI_V7 := version/v7/src/ck_cli_v7.c
 CK_CLI_V8 := version/v8/src/ck_cli_v8.c
 CK_AUDIO_TRANSCRIBE_V8 := version/v8/src/ck_audio_transcribe_v8.c
@@ -5978,7 +5978,7 @@ report-md:
 .PHONY: ck-cli-v7 ck-cli-v8 ck-session-v8 ck-bpe-train
 
 # ============================================================================
-# v6.6 Test Suite (delegates to version/v6.6/test/Makefile)
+# v6.6 Test Suite (delegates to version/legacy/v6.6/test/Makefile)
 # ============================================================================
 # Usage:
 #   make v6.6-test-quick        - Quick sanity check
@@ -6006,7 +6006,7 @@ V66_FORCE_COMPILE_ARG := $(if $(filter 1,$(V66_FORCE_COMPILE)),--force-compile,)
 V66_CLI_TEMPLATE_ARGS = $(if $(filter none,$(V66_CHAT_TEMPLATE)),--no-chat-template,$(if $(findstring --chat-template none,$(V66_RUN_ARGS)),--no-chat-template,))
 
 v6.6-test-help:
-	@cd version/v6.6/test && make help
+	@cd version/legacy/v6.6/test && make help
 
 v6.6-help:
 	@echo "=== v6.6 Quick Help ==="
@@ -6024,68 +6024,67 @@ v6.6-help:
 	@echo "  (strict runtime-required parity matrix for CI/release)"
 	@echo ""
 	@echo "Manual E2E (HF URLs):"
-	@echo "  python3 version/v6.6/scripts/ck_run_v6_6.py run \\"
+	@echo "  python3 version/legacy/v6.6/scripts/ck_run_v6_6.py run \\"
 	@echo "    \"hf://Qwen/Qwen2-0.5B-Instruct-GGUF/qwen2-0_5b-instruct-q4_k_m.gguf\" \\"
 	@echo "    --context-len 1024 --force-compile --prompt \"Hello\" --max-tokens 32"
-	@echo "  python3 version/v6.6/scripts/ck_run_v6_6.py run \\"
+	@echo "  python3 version/legacy/v6.6/scripts/ck_run_v6_6.py run \\"
 	@echo "    \"hf://Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf\" \\"
 	@echo "    --context-len 1024 --force-compile --prompt \"Hello\" --max-tokens 32"
-	@echo "  python3 version/v6.6/scripts/ck_run_v6_6.py run \\"
+	@echo "  python3 version/legacy/v6.6/scripts/ck_run_v6_6.py run \\"
 	@echo "    \"hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf\" \\"
 	@echo "    --context-len 1024 --force-compile --prompt \"Hello\" --max-tokens 32"
 	@echo ""
 	@echo "Docs:"
-	@echo "  version/v6.6/run_me.read.md"
-	@echo "  version/v6.6/E2E_HELP.md"
+	@echo "  docs site: v66-legacy.html (v6.6 legacy archive page)"
 
 v6.6-test-quick v6.6-sanity:
-	@cd version/v6.6/test && $(MAKE) quick
+	@cd version/legacy/v6.6/test && $(MAKE) quick
 
 v6.6-test-parity:
-	@cd version/v6.6/test && $(MAKE) parity
+	@cd version/legacy/v6.6/test && $(MAKE) parity
 
 v6.6-test-memory:
-	@cd version/v6.6/test && $(MAKE) memory
+	@cd version/legacy/v6.6/test && $(MAKE) memory
 
 v6.6-test-divergence:
-	@cd version/v6.6/test && $(MAKE) divergence
+	@cd version/legacy/v6.6/test && $(MAKE) divergence
 
 v6.6-test-nan:
-	@cd version/v6.6/test && $(MAKE) nan
+	@cd version/legacy/v6.6/test && $(MAKE) nan
 
 v6.6-test-all:
-	@cd version/v6.6/test && $(MAKE) all
+	@cd version/legacy/v6.6/test && $(MAKE) all
 
 v6.6-test-trace:
-	@cd version/v6.6/test && $(MAKE) trace ARGS=$(ARGS)
+	@cd version/legacy/v6.6/test && $(MAKE) trace ARGS=$(ARGS)
 
 v6.6-test: v6.6-test-quick
 	@echo "Run 'make v6.6-test-all' for comprehensive testing"
 
 v6.6-download:
-	@$(PYTHON) version/v6.6/scripts/ck_run_v6_6.py run "$(V66_MODEL)" --inspect-only
+	@$(PYTHON) version/legacy/v6.6/scripts/ck_run_v6_6.py run "$(V66_MODEL)" --inspect-only
 
 v6.6-kernel-map-regenerate:
-	@$(PYTHON) version/v6.6/scripts/gen_kernel_registry_from_maps.py
+	@$(PYTHON) version/legacy/v6.6/scripts/gen_kernel_registry_from_maps.py
 
 v6.6-kernel-map-gate:
-	@$(PYTHON) version/v6.6/scripts/gen_kernel_registry_from_maps.py --check
-	@$(PYTHON) version/v6.6/kernel_maps/check_kernel_map_sync.py
-	@$(PYTHON) version/v6.6/scripts/validate_kernel_registry.py
+	@$(PYTHON) version/legacy/v6.6/scripts/gen_kernel_registry_from_maps.py --check
+	@$(PYTHON) version/legacy/v6.6/kernel_maps/check_kernel_map_sync.py
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_kernel_registry.py
 
 validate-registry:
 	@echo "Validating kernel registry..."
-	@$(PYTHON) version/v6.6/scripts/validate_kernel_registry.py
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_kernel_registry.py
 	@if [ $$? -ne 0 ]; then \
 		echo "Registry validation failed"; \
 		exit 1; \
 	fi
 
 v6.6-validate-contracts:
-	@$(PYTHON) version/v6.6/scripts/validate_tooling_contracts.py --json-out version/v6.6/tools/contract_report_latest.json
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_tooling_contracts.py --json-out version/legacy/v6.6/tools/contract_report_latest.json
 
 v6.6-validate-matrix:
-	@$(PYTHON) version/v6.6/scripts/validate_model_matrix_v6_6.py --allow-download --require-all --json-out version/v6.6/tools/model_matrix_report_latest.json
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_model_matrix_v6_6.py --allow-download --require-all --json-out version/legacy/v6.6/tools/model_matrix_report_latest.json
 
 # Nightly matrix variant:
 # - skips static preflight that is already covered by v6.6-validate-contracts
@@ -6093,31 +6092,31 @@ v6.6-validate-matrix:
 # - keeps nightly as compatibility coverage instead of requiring every legacy row
 #   to be present in every runner/cache state
 v6.6-validate-matrix-nightly:
-	@$(PYTHON) version/v6.6/scripts/validate_model_matrix_v6_6.py --allow-download --skip-static-contracts --retries 3 --retry-backoff-sec 5 --json-out version/v6.6/tools/model_matrix_report_latest.json
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_model_matrix_v6_6.py --allow-download --skip-static-contracts --retries 3 --retry-backoff-sec 5 --json-out version/legacy/v6.6/tools/model_matrix_report_latest.json
 
 v6.6-validate-matrix-smoke:
-	@$(PYTHON) version/v6.6/scripts/validate_model_matrix_v6_6.py --allow-download --with-smoke --require-all --json-out version/v6.6/tools/model_matrix_report_latest.json
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_model_matrix_v6_6.py --allow-download --with-smoke --require-all --json-out version/legacy/v6.6/tools/model_matrix_report_latest.json
 
 # Runtime-optional parity pass for local developer gates.
 # If llama runtime is missing, rows are SKIP and this target still exits 0.
 v6.6-validate-parity-matrix:
-	@$(PYTHON) version/v6.6/scripts/validate_parity_matrix_v6_6.py --allow-download --json-out version/v6.6/tools/parity_matrix_report_latest.json
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_parity_matrix_v6_6.py --allow-download --json-out version/legacy/v6.6/tools/parity_matrix_report_latest.json
 
 v6.6-validate-parity-matrix-required:
-	@$(PYTHON) version/v6.6/scripts/validate_parity_matrix_v6_6.py --allow-download --require-runtime --require-all --json-out version/v6.6/tools/parity_matrix_report_latest.json
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_parity_matrix_v6_6.py --allow-download --require-runtime --require-all --json-out version/legacy/v6.6/tools/parity_matrix_report_latest.json
 
 v6.6-validate-longdecode:
-	@$(PYTHON) version/v6.6/scripts/validate_long_decode_stability_v6_6.py --allow-download --require-all --json-out version/v6.6/tools/long_decode_report_latest.json
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_long_decode_stability_v6_6.py --allow-download --require-all --json-out version/legacy/v6.6/tools/long_decode_report_latest.json
 
 v6.6-gate:
 	@$(MAKE) --no-print-directory v6.6-kernel-map-gate
-	@$(PYTHON) version/v6.6/scripts/validate_tooling_contracts.py --strict --json-out version/v6.6/tools/contract_report_latest.json
-	@$(PYTHON) version/v6.6/scripts/validate_model_matrix_v6_6.py --allow-download --with-smoke --require-all --skip-static-contracts --json-out version/v6.6/tools/model_matrix_report_latest.json
-	@$(PYTHON) version/v6.6/scripts/validate_parity_matrix_v6_6.py --allow-download --json-out version/v6.6/tools/parity_matrix_report_latest.json
-	@$(PYTHON) version/v6.6/scripts/validate_long_decode_stability_v6_6.py --allow-download --require-all --json-out version/v6.6/tools/long_decode_report_latest.json
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_tooling_contracts.py --strict --json-out version/legacy/v6.6/tools/contract_report_latest.json
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_model_matrix_v6_6.py --allow-download --with-smoke --require-all --skip-static-contracts --json-out version/legacy/v6.6/tools/model_matrix_report_latest.json
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_parity_matrix_v6_6.py --allow-download --json-out version/legacy/v6.6/tools/parity_matrix_report_latest.json
+	@$(PYTHON) version/legacy/v6.6/scripts/validate_long_decode_stability_v6_6.py --allow-download --require-all --json-out version/legacy/v6.6/tools/long_decode_report_latest.json
 
 v6.6-build: validate-registry v6.6-gate
-	@$(PYTHON) version/v6.6/scripts/ck_run_v6_6.py run "$(V66_MODEL)" --generate-only $(V66_FORCE_COMPILE_ARG) --context-len 128 --max-tokens 1 --prompt "Hello"
+	@$(PYTHON) version/legacy/v6.6/scripts/ck_run_v6_6.py run "$(V66_MODEL)" --generate-only $(V66_FORCE_COMPILE_ARG) --context-len 128 --max-tokens 1 --prompt "Hello"
 
 v6.6: v6.6-build
 
@@ -6486,7 +6485,7 @@ v7-help:
 	@echo ""
 	@echo "Notes:"
 	@echo "  - inference baseline is v7-named under version/v7/"
-	@echo "  - run v7-sync-inference only when intentionally re-syncing from version/v6.6"
+	@echo "  - run v7-sync-inference only when intentionally re-syncing from version/legacy/v6.6"
 	@echo "  - v7.0 scope: deterministic fp32 correctness only"
 	@echo "  - v7.2 scope: bf16, optimization, threaded fast mode"
 	@echo "  - reports written to $(V7_REPORT_DIR)/*.json"
@@ -7847,7 +7846,7 @@ v7: v7-gate
 v6.6-ir-visualizer:
 	@if command -v python3 >/dev/null 2>&1; then \
 		echo "Opening IR visualizer..."; \
-		python3 -m http.server 8080 --directory version/v6.6/tools & \
+		python3 -m http.server 8080 --directory version/legacy/v6.6/tools & \
 		sleep 2 && xdg-open http://localhost:8080/ir_visualizer.html 2>/dev/null || \
 		open http://localhost:8080/ir_visualizer.html 2>/dev/null || \
 		echo "Open http://localhost:8080/ir_visualizer.html in your browser"; \
@@ -7858,27 +7857,27 @@ v6.6-ir-visualizer:
 
 vis:
 	@echo "Opening IR visualizer..."
-	@python version/v6.6/tools/open_ir_visualizer.py
+	@python version/legacy/v6.6/tools/open_ir_visualizer.py
 
 vis-list:
 	@echo "Available models in cache:"
-	@python version/v6.6/tools/open_ir_visualizer.py --list
+	@python version/legacy/v6.6/tools/open_ir_visualizer.py --list
 
 vis-%:
 	@echo "Opening IR visualizer for $*..."
-	@python version/v6.6/tools/open_ir_visualizer.py $*
+	@python version/legacy/v6.6/tools/open_ir_visualizer.py $*
 
 # =============================================================================
 # V6.6 Comprehensive Profiling
 # =============================================================================
 
-PROFILE_V6_SCRIPT := version/v6.6/scripts/ck_run_v6_6.py
-PERF_ARTIFACTS_V6_SCRIPT := version/v6.6/scripts/perf_artifacts_v6_6.py
-VTUNE_ARTIFACTS_V6_SCRIPT := version/v6.6/scripts/vtune_artifacts_v6_6.py
-MEMORY_SIGNOFF_V6_SCRIPT := version/v6.6/scripts/memory_signoff_v6_6.py
-PERF_GATE_V6_SCRIPT := version/v6.6/scripts/perf_gate_v6_6.py
-RESOLVE_MODEL_DIR_V6_SCRIPT := version/v6.6/scripts/resolve_model_dir_v6_6.py
-PROFILE_V6_SUMMARY_SCRIPT := version/v6.6/scripts/generate_profile_summary_v6_6.py
+PROFILE_V6_SCRIPT := version/legacy/v6.6/scripts/ck_run_v6_6.py
+PERF_ARTIFACTS_V6_SCRIPT := version/legacy/v6.6/scripts/perf_artifacts_v6_6.py
+VTUNE_ARTIFACTS_V6_SCRIPT := version/legacy/v6.6/scripts/vtune_artifacts_v6_6.py
+MEMORY_SIGNOFF_V6_SCRIPT := version/legacy/v6.6/scripts/memory_signoff_v6_6.py
+PERF_GATE_V6_SCRIPT := version/legacy/v6.6/scripts/perf_gate_v6_6.py
+RESOLVE_MODEL_DIR_V6_SCRIPT := version/legacy/v6.6/scripts/resolve_model_dir_v6_6.py
+PROFILE_V6_SUMMARY_SCRIPT := version/legacy/v6.6/scripts/generate_profile_summary_v6_6.py
 PROFILE_V6_PERF_DATA ?= build/ck_v6_perf.data
 PROFILE_V6_PERF_FOLDED ?= build/ck_v6_perf.folded
 PROFILE_V6_FLAMEGRAPH_SVG ?= build/flamegraph_v6.svg
@@ -8912,7 +8911,7 @@ v8-perf-gate-evaluate:
 	@CK_CACHE_DIR="$${CK_CACHE_DIR:-$$HOME/.cache/ck-engine-v8/models}" $(PYTHON) $(PERF_GATE_V8_SCRIPT) --model-input "$(V8_MODEL)"
 
 v6.6-memory-signoff:
-	@$(PYTHON) version/v6.6/scripts/ck_run_v6_6.py run "$(V66_MODEL)" --generate-only $(V66_FORCE_COMPILE_ARG) --context-len 128 --max-tokens 1 --prompt "Hello" $(V66_RUN_ARGS)
+	@$(PYTHON) version/legacy/v6.6/scripts/ck_run_v6_6.py run "$(V66_MODEL)" --generate-only $(V66_FORCE_COMPILE_ARG) --context-len 128 --max-tokens 1 --prompt "Hello" $(V66_RUN_ARGS)
 	@$(PYTHON) $(MEMORY_SIGNOFF_V6_SCRIPT) --model-input "$(V66_MODEL)"
 
 v6.6-perf-gate:

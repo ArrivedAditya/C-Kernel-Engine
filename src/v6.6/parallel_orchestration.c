@@ -7,7 +7,7 @@
  * has no callers in the generated inference code path.
  *
  * v6.6 decode runs entirely through the generated code in:
- *   version/v6.6/src/generated/ck-kernel-inference.c
+ *   version/legacy/v6.6/src/generated/ck-kernel-inference.c
  *     → ck_model_decode_internal()
  *
  * Threading for v6.6 is handled by ck_threadpool (include/ck_threadpool.h),

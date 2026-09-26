@@ -19,7 +19,7 @@ from typing import Iterable, List
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SRC_ROOT = ROOT / "version" / "v6.6"
+SRC_ROOT = ROOT / "version" / "legacy" / "v6.6"
 DST_ROOT = ROOT / "version" / "v7"
 
 IGNORE_NAMES = {"__pycache__", ".pytest_cache"}
@@ -129,7 +129,7 @@ def _source_candidates(rel_path: str) -> List[Path]:
     Resolve v7-named sync entries against v6.6 source filenames.
 
     The destination in v7 is intentionally v7-named, but source files in
-    version/v6.6 still use mixed v6_6/v6.6 suffix styles.
+    version/legacy/v6.6 still use mixed v6_6/v6.6 suffix styles.
     """
     candidates: List[str] = [rel_path]
 
@@ -217,7 +217,7 @@ def main() -> int:
         "- keep inference parity tooling available while building backprop/training in v7\n"
         "- avoid rewriting stable v6.6 runtime pieces during early v7 work\n\n"
         "Update workflow:\n"
-        "1. modify source inference in version/v6.6\n"
+        "1. modify source inference in version/legacy/v6.6\n"
         "2. run `make v7-sync-inference`\n"
         "3. re-run v7 validation gates\n"
     )

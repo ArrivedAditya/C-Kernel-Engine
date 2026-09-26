@@ -47,8 +47,8 @@
       "title": "Contract Drift Branch",
       "body": "Compare changed script signatures, flags, and kernel maps first.",
       "detail": [
-        "git diff version/v6.6/scripts",
-        "git diff version/v6.6/kernel_maps"
+        "git diff version/legacy/v6.6/scripts",
+        "git diff version/legacy/v6.6/kernel_maps"
       ]
     },
     "model_row": {
