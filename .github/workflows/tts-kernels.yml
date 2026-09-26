@@ -11,6 +11,9 @@ on:
       - 'src/kernels/audio_adaptive_layer_norm.c'
       - 'tests/test_v8_audio_lstm_scan_oracle.py'
       - 'tests/test_v8_audio_adaptive_layer_norm_oracle.py'
+      - 'tests/test_v8_kokoro_bump_export.py'
+      - 'tests/test_v8_kokoro_bump_export_live.py'
+      - 'version/v8/tts/export_kokoro_bump.py'
       - 'version/v8/kernel_maps/audio_lstm_bidirectional_scan_f32.json'
       - 'version/v8/kernel_maps/audio_adaptive_layer_norm_f32.json'
       - 'include/ckernel_runtime_extent.h'
@@ -52,6 +55,9 @@ on:
       - 'src/kernels/audio_adaptive_layer_norm.c'
       - 'tests/test_v8_audio_lstm_scan_oracle.py'
       - 'tests/test_v8_audio_adaptive_layer_norm_oracle.py'
+      - 'tests/test_v8_kokoro_bump_export.py'
+      - 'tests/test_v8_kokoro_bump_export_live.py'
+      - 'version/v8/tts/export_kokoro_bump.py'
       - 'version/v8/kernel_maps/audio_lstm_bidirectional_scan_f32.json'
       - 'version/v8/kernel_maps/audio_adaptive_layer_norm_f32.json'
       - 'include/ckernel_runtime_extent.h'
@@ -114,6 +120,8 @@ jobs:
             tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_optimized_matches_scalar \
             tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_rejection_preserves_output \
             tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_exact_capacity_and_large_geometry_rejection
+      - name: Verify Kokoro import envelope and rejection contracts
+        run: python3 -m unittest tests.test_v8_kokoro_bump_export
       - name: Verify generated graph X-Ray capture against independent oracle
         run: |
           python3 -m unittest \
