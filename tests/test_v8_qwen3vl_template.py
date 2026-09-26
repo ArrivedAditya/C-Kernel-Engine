@@ -1367,7 +1367,13 @@ class V8Qwen3VLTemplateTests(unittest.TestCase):
 
     def test_qwen3vl_codegen_smoke_emits_c(self) -> None:
         manifest = _make_qwen3vl_manifest()
-        manifest["config"]["position_interpolation_policy"] = "align_corners_bilinear"
+        convert_gguf_to_bump_v8._inject_runtime_config_defaults(
+            manifest["config"], "qwen3_vl_vision"
+        )
+        self.assertEqual(
+            manifest["config"]["position_interpolation_policy"],
+            "align_corners_bilinear",
+        )
         with tempfile.TemporaryDirectory(prefix="v8_qwen3vl_codegen_") as td:
             td_path = Path(td)
             manifest_path = td_path / "weights_manifest.json"

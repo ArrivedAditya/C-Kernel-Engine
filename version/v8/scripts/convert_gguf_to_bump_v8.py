@@ -626,6 +626,7 @@ def _inject_runtime_config_defaults(config: dict, arch: str) -> dict:
         )
     elif arch_lc == "qwen3_vl_vision":
         config.setdefault("prefer_q8_0_contract", True)
+        config.setdefault("position_interpolation_policy", "align_corners_bilinear")
         # GGUF mmproj tensors enter vision M-RoPE as FP32 and retain FP32
         # storage. The circuit resolves the exact provider from this boundary;
         # lowering must not infer it from the model family or kernel spelling.
