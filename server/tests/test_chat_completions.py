@@ -67,7 +67,7 @@ def make_client(chunks=("hello",), **session_kwargs):
         session,
         model="qwen38-local",
         chat_template=TOOL_TEMPLATE,
-        chat_contract={"name": "test"},
+        chat_contract={"name": "test", "tool_protocol": "bare_json"},
         viz=False,
     )
     return TestClient(app), session

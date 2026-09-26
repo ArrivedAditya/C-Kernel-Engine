@@ -42,7 +42,7 @@ chat template from the model name.
 
 ## Qwen Code profiles
 
-The validated pilot uses Qwen Code 0.21.5 and the Qwen3.8 27B Q4_K_M artifact.
+The historical validated pilot used Qwen Code 0.21.5 and the Qwen3.8 27B Q4_K_M artifact.
 CKE provides separate settings profiles for short interactive work and large,
 unattended artifact generation. They are loaded as Qwen Code system settings
 and do not overwrite `~/.qwen/settings.json`.
@@ -57,12 +57,29 @@ version/v8/scripts/cks-v8-run serve \
   --run /path/to/qwen38-agent-runtime \
   --context-len 16384 \
   --force-compile \
+  --tool-protocol qwen_xml \
   --model-name qwen38-27b-q4km
 ```
 
 The server reuses cached model bytes and regenerates the candidate runtime. On
 later `--no-build` starts it reads the compiled capacity from
 `layout_decode.json`; an explicit context larger than that plan is rejected.
+The explicit `qwen_xml` choice matches the inspected Qwen3.8 template's
+`<tool_call><function=...><parameter=...>` output. Other bundles must declare
+their actual tool protocol; a template mentioning tools does not enable tool
+calls automatically. Supported choices are `tagged_json`, `qwen_xml`, and
+`bare_json`. A `tool_protocol.json` sidecar may record the choice with schema
+`cke.v8.tool_protocol.v1`, `protocol`, and the SHA-256 of the selected
+`chat_template.jinja` (or selected `additional_chat_templates/tool_use.jinja`)
+as `template_sha256`. A mismatched sidecar fails startup. Serving a converted
+bundle needs its BUMP, generated libraries, tokenizer, and template sidecars;
+the source GGUF is not needed for `--no-build`.
+
+Tool output is parsed only under the selected protocol. A template render
+error returns an explicit failure instead of silently switching prompt format.
+Tool-bearing streamed responses buffer model text until it can be validated;
+the connection receives keep-alives while generation runs. This favors tool
+correctness over live token display for these requests.
 
 Point Qwen Code at the local server and begin with a read-only, bounded task:
 
@@ -71,6 +88,7 @@ CKE_ROOT=$(pwd)
 OPENAI_API_KEY=cke-local-only \
 OPENAI_BASE_URL=http://127.0.0.1:8080/v1 \
 OPENAI_MODEL=qwen38-27b-q4km \
+QWEN_CODE_MAX_OUTPUT_TOKENS=2048 \
 QWEN_CODE_SYSTEM_SETTINGS_PATH="$CKE_ROOT/server/qwen-code/interactive.settings.json" \
 qwen --bare \
   --system-prompt 'Use read_file exactly once when asked, then answer without another tool call.' \
@@ -95,6 +113,7 @@ CKE_ROOT=$(pwd)
 OPENAI_API_KEY=cke-local-only \
 OPENAI_BASE_URL=http://127.0.0.1:8080/v1 \
 OPENAI_MODEL=qwen38-27b-q4km \
+QWEN_CODE_MAX_OUTPUT_TOKENS=32768 \
 QWEN_CODE_SYSTEM_SETTINGS_PATH="$CKE_ROOT/server/qwen-code/overnight.settings.json" \
 qwen --bare \
   --allowed-tools read_file \
@@ -111,6 +130,10 @@ tokens for output. It does not provide mid-generation resume, a durable server
 queue, or permission to publish, commit, or deploy results. Use an external
 task ledger to retry whole tasks after interruption and retain outputs for
 review.
+On Qwen Code 0.24.6, the explicit output-cap environment variable is needed
+for this local endpoint: the older settings profile alone did not constrain
+the request in the bounded probe. Confirm the effective prompt and output
+allowance against the generated runtime before an overnight task.
 
 `GET /v1/models/{model}` reports `cke_context_length` and
 `cke_default_max_output_tokens`. Before native execution, the server tokenizes

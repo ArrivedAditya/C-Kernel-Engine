@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(
@@ -143,6 +144,14 @@ def test_create_response_with_instructions_prepends_system():
     )
     assert resp.status_code == 200
     assert resp.json()["output"][0]["content"][0]["text"] == "ok"
+
+
+def test_selected_template_error_rejects_simple_user_request():
+    client, session = make_client(chunks=("should not run",), chat_template="{{ missing_feature() }}")
+    response = client.post("/v1/responses", json={"model": "fake-model", "input": "hello"})
+    assert response.status_code == 422
+    assert "template" in response.json()["detail"].lower()
+    assert session.last_user is None
 
 
 def test_create_response_usage_counts_output_tokens():
@@ -422,8 +431,13 @@ def test_busy_non_stream_returns_429():
     )
 
 
-def test_busy_stream_returns_429():
-    """Concurrent streaming request gets 429 when the flight lock is held."""
+def test_busy_stream_queues_then_succeeds():
+    """Concurrent streaming request waits for the flight lock, then succeeds.
+
+    Single-flight is enforced, but a second request queues (up to
+    ``_FLIGHT_WAIT_SECONDS``) instead of failing instantly; only a genuinely
+    stuck generation still answers 429 (see test_harness_errors).
+    """
     import threading as _threading
 
     lock_held = _threading.Event()
@@ -462,17 +476,21 @@ def test_busy_stream_returns_429():
         # Wait for the worker thread to enter generate() and hold the lock
         lock_held.wait(timeout=5)
 
-        # Second request: should get 429 because lock is held
-        resp = client.post(
-            "/v1/responses", json={"model": "busy-model", "input": "hi", "stream": True}
-        )
-        assert resp.status_code == 429
-        assert (
-            resp.json()["detail"]
-            == "Session busy: another request is in progress. Retry later."
-        )
+        # Second request: queues behind the in-flight stream, then succeeds
+        # once the first request drains.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool2:
+            second = pool2.submit(
+                client.post,
+                "/v1/responses",
+                json={"model": "busy-model", "input": "hi", "stream": True},
+            )
+            time.sleep(0.2)  # let the second request start waiting on the lock
+            lock_release.set()  # let both generations drain
+            resp = second.result(timeout=15)
+        assert resp.status_code == 200
+        assert "response.completed" in resp.text
 
-        # Unblock the first request
+        # Unblock the first request (already released above; harmless)
         lock_release.set()
         first.result(timeout=5)
 
@@ -482,6 +500,7 @@ def test_busy_stream_returns_429():
 # Inline Qwen3-like contract mirroring version/v8/circuits/qwen3.json:22
 QWEN3_CONTRACT: dict = {
     "name": "qwen3",
+    "tool_protocol": "bare_json",
     "turn_prefix": "<|im_start|>{role}\n",
     "turn_suffix": "<|im_end|>\n",
     "assistant_generation_prefix": "<|im_start|>assistant\n",
@@ -599,24 +618,23 @@ def test_suppressed_thinking_stream():
 
 
 def test_load_runtime_chat_contract_via_manifest(tmp_path):
-    contract = {"name": "qwen3", "assistant_generation_prefix": "<x>", "thinking_mode_default": "visible"}
+    # No chat contract is loaded from disk (pure-Jinja runtime).
     (tmp_path / "weights_manifest.json").write_text(
-        json.dumps({"config": {"chat_contract": contract}}), encoding="utf-8"
+        json.dumps({"config": {"chat_contract": {"name": "qwen3"}}}), encoding="utf-8"
     )
-    assert _load_runtime_chat_contract(tmp_path) == contract
+    assert _load_runtime_chat_contract(tmp_path) is None
     # also via load_manifest_templates helper
     from ck_serve_runtime_v8 import load_manifest_templates
 
-    ct, cts, cc = load_manifest_templates(tmp_path)
-    assert cc == contract
+    _, _, cc = load_manifest_templates(tmp_path)
+    assert cc is None
 
 
 def test_runtime_manifest_contract_precedes_legacy_nested_copies(tmp_path):
-    expected = {"name": "root", "assistant_generation_prefix": "<root>"}
     (tmp_path / "weights_manifest.json").write_text(
         json.dumps(
             {
-                "chat_contract": expected,
+                "chat_contract": {"name": "root"},
                 "config": {"chat_contract": {"name": "config"}},
                 "template": {"contract": {"chat_contract": {"name": "template"}}},
             }
@@ -624,7 +642,7 @@ def test_runtime_manifest_contract_precedes_legacy_nested_copies(tmp_path):
         encoding="utf-8",
     )
 
-    assert _load_runtime_chat_contract(tmp_path) == expected
+    assert _load_runtime_chat_contract(tmp_path) is None
 
 
 def test_runtime_manifest_chat_contract_missing(tmp_path):
@@ -699,7 +717,17 @@ def test_request_rejects_tools_without_chat_templates():
         },
     )
     assert response.status_code == 501
-    assert "Model doesn't support tool calling" in response.json()["detail"]
+    assert "tool protocol is undeclared" in response.json()["detail"]
+
+
+def test_request_rejects_unsupported_tool_type():
+    client, _ = make_client()
+    response = client.post("/v1/responses", json={
+        "model": "fake-model", "input": "search now",
+        "tools": [{"type": "web_search"}],
+    })
+    assert response.status_code == 501
+    assert "unsupported tool types" in response.json()["detail"]
 
 
 def test_request_accepts_tools_with_chat_templates():
