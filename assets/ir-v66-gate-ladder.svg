@@ -50,35 +50,35 @@
   <text x="220" y="232" class="gate">Kernel-Map Gate</text>
   <text x="220" y="264" class="cmd">make v6.6-kernel-map-gate</text>
   <text x="220" y="292" class="body">Checks kernel map sync, regenerated registry consistency, and registry/header contract alignment.</text>
-  <text x="220" y="322" class="meta">Primary file: version/v6.6/kernel_maps/KERNEL_REGISTRY.json</text>
+  <text x="220" y="322" class="meta">Primary file: version/legacy/v6.6/kernel_maps/KERNEL_REGISTRY.json</text>
 
   <rect x="112" y="394" width="86" height="28" rx="14" fill="#7be0a0"/>
   <text x="140" y="413" class="pill">L1</text>
   <text x="220" y="414" class="gate">Tooling Contract Gate</text>
   <text x="220" y="446" class="cmd">make v6.6-validate-contracts</text>
   <text x="220" y="474" class="body">Verifies template-family maps, parity API compatibility, CLI flag contracts, and preflight wiring.</text>
-  <text x="220" y="504" class="meta">Artifact: version/v6.6/tools/contract_report_latest.json</text>
+  <text x="220" y="504" class="meta">Artifact: version/legacy/v6.6/tools/contract_report_latest.json</text>
 
   <rect x="112" y="576" width="86" height="28" rx="14" fill="#7be0a0"/>
   <text x="140" y="595" class="pill">L2</text>
   <text x="220" y="596" class="gate">Build + Smoke Matrix Gate</text>
   <text x="220" y="628" class="cmd">make v6.6-validate-matrix-smoke</text>
   <text x="220" y="656" class="body">Runs Qwen2/Qwen3/Gemma build checks, required artifact checks, and smoke-runtime execution.</text>
-  <text x="220" y="686" class="meta">Artifact: version/v6.6/tools/model_matrix_report_latest.json</text>
+  <text x="220" y="686" class="meta">Artifact: version/legacy/v6.6/tools/model_matrix_report_latest.json</text>
 
   <rect x="112" y="758" width="86" height="28" rx="14" fill="#ffd488"/>
   <text x="140" y="777" class="pill">L3</text>
   <text x="220" y="778" class="gate">Strict Parity Matrix Gate</text>
   <text x="220" y="810" class="cmd">make v6.6-validate-parity-matrix</text>
   <text x="220" y="838" class="body">Runs detailed parity matrix; may SKIP when llama parity runtime is unavailable and fail under require-all mode.</text>
-  <text x="220" y="868" class="meta">Artifact: version/v6.6/tools/parity_matrix_report_latest.json</text>
+  <text x="220" y="868" class="meta">Artifact: version/legacy/v6.6/tools/parity_matrix_report_latest.json</text>
 
   <rect x="112" y="940" width="86" height="28" rx="14" fill="#ffd488"/>
   <text x="140" y="959" class="pill">L4</text>
   <text x="220" y="960" class="gate">Long Decode Stability Gate</text>
   <text x="220" y="992" class="cmd">make v6.6-validate-longdecode</text>
   <text x="220" y="1020" class="body">Validates sustained decode behavior (minimum runs, no NaN/Inf drift, report integrity across model matrix).</text>
-  <text x="220" y="1050" class="meta">Artifact: version/v6.6/tools/long_decode_report_latest.json</text>
+  <text x="220" y="1050" class="meta">Artifact: version/legacy/v6.6/tools/long_decode_report_latest.json</text>
 
   <line x1="800" y1="352" x2="800" y2="366" stroke="#8ebce0" stroke-width="3" marker-end="url(#arrow)"/>
   <line x1="800" y1="534" x2="800" y2="548" stroke="#8ebce0" stroke-width="3" marker-end="url(#arrow)"/>

@@ -2726,9 +2726,9 @@ make test-threadpool-parity-verbose
 
 <p>Files affected by this decision:</p>
 <ul>
-    <li><code>version/v6.6/scripts/parallel_pass.py</code> &mdash; header documents "SUPERSEDED BY THREAD POOL DISPATCH"</li>
-    <li><code>version/v6.6/scripts/build_ir_v6_6.py</code> &mdash; <code>run_parallel_pass()</code> commented out with ADR</li>
-    <li><code>version/v6.6/scripts/ck_run_v6_6.py</code> &mdash; <code>--parallel-decode</code> flag deprecated (warns and continues)</li>
+    <li><code>version/legacy/v6.6/scripts/parallel_pass.py</code> &mdash; header documents "SUPERSEDED BY THREAD POOL DISPATCH"</li>
+    <li><code>version/legacy/v6.6/scripts/build_ir_v6_6.py</code> &mdash; <code>run_parallel_pass()</code> commented out with ADR</li>
+    <li><code>version/legacy/v6.6/scripts/ck_run_v6_6.py</code> &mdash; <code>--parallel-decode</code> flag deprecated (warns and continues)</li>
 </ul>
 
 <h3>Related Test Suites</h3>
@@ -2763,7 +2763,7 @@ make test-threadpool-parity-verbose
     </tr>
     <tr>
         <td><code>e2e-v66</code></td>
-        <td><code>version/v6.6/test/Makefile</code></td>
+        <td><code>version/legacy/v6.6/test/Makefile</code></td>
         <td>Full v6.6 pipeline: IR &rarr; codegen &rarr; compile &rarr; run (thread pool always enabled)</td>
     </tr>
 </table>

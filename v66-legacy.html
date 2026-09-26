@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Spec Training Results and Run History | C-Kernel-Engine</title>
-    <meta name="description" content="Manifest-driven run history for C-Kernel-Engine specs, including best rungs, recent results, and the archive split between stable docs and raw run artifacts.">
+    <title>v6.6 Engine (Legacy Archive) | C-Kernel-Engine</title>
+    <meta name="description" content="Archived v6.6 template-driven inference generation: pipeline, memory planning, kernel maps, and parity testing summaries with pointers to the active v8 and v7 lanes.">
     <meta name="robots" content="index,follow">
-    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/spec-training-results.html">
-    <meta property="og:title" content="Spec Training Results and Run History | C-Kernel-Engine">
-    <meta property="og:description" content="Manifest-driven run history for C-Kernel-Engine specs, including best rungs, recent results, and the archive split between stable docs and raw run artifacts.">
+    <link rel="canonical" href="https://c-kernel-engine.github.io/C-Kernel-Engine/v66-legacy.html">
+    <meta property="og:title" content="v6.6 Engine (Legacy Archive) | C-Kernel-Engine">
+    <meta property="og:description" content="Archived v6.6 template-driven inference generation: pipeline, memory planning, kernel maps, and parity testing summaries with pointers to the active v8 and v7 lanes.">
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/spec-training-results.html">
+    <meta property="og:url" content="https://c-kernel-engine.github.io/C-Kernel-Engine/v66-legacy.html">
     <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
     <style>
         :root {
@@ -946,14 +946,14 @@
         <nav class="site-nav">
             <a href="index.html" class="">Home</a>
             <a href="spectrum.html" class="" style="color:var(--orange)">⚡ Spectrum</a>
-            <a href="quickstart.html" class="active">Getting Started</a>
+            <a href="quickstart.html" class="">Getting Started</a>
             <a href="developer-guide.html" class="">Developer Guide</a>
             <a href="contributing.html" class="">Contribute</a>
             <a href="scaling.html" class="">Scaling</a>
             <a href="support-hardware.html" class="" style="color:var(--green)">Support Lab</a>
             <a href="cke-throughput-unit.html" class="" style="color:var(--orange)">CKU</a>
             <div class="nav-dropdown">
-                <span class="nav-trigger ">Architecture</span>
+                <span class="nav-trigger active">Architecture</span>
                 <div class="nav-dropdown-menu mega-menu">
                     <!-- Architecture Home Link -->
                     <div class="menu-section" style="grid-column: 1 / -1; border-bottom: 1px solid var(--grey); padding-bottom: 0.5rem; margin-bottom: 0.5rem;">
@@ -1027,250 +1027,91 @@
     </header>
     <main>
 
-<style>
-.results-hero {
-    position: relative;
-    overflow: hidden;
-}
+<div class="container">
+  <h1>v6.6 Engine (Legacy Archive)</h1>
+  <p class="lead">v6.6 was the template-driven inference generation of C-Kernel-Engine: GGUF conversion, hand-merged graph templates, IR1/IR2 lowering, quantized GEMM/GEMV dispatch, and generated-C execution. It is <strong>archived</strong> under <code>version/legacy/v6.6/</code>. Active development is <a href="v8-runbook.html">v8 inference</a> (circuits, kernel maps, generated-C runtime) and <a href="v7-backprop-ir.html">v7 training</a>.</p>
 
-.results-hero::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background:
-        radial-gradient(circle at 16% 18%, rgba(7,173,248,0.18), transparent 30%),
-        radial-gradient(circle at 82% 14%, rgba(255,180,0,0.16), transparent 28%),
-        linear-gradient(145deg, rgba(71,180,117,0.08), rgba(255,255,255,0));
-    pointer-events: none;
-}
+  <div class="alert alert-info"><div><strong>Reading this page.</strong> The v6.6 tree previously carried 51 Markdown documents. The reference content that still matters is summarized below; session handoffs, upgrade plans, roadmaps, and debugging diaries were removed during archival. The complete pre-archival text of every document remains in git history.</div></div>
 
-.results-hero-inner {
-    position: relative;
-    z-index: 1;
-}
+  <h2 id="pipeline">Build pipeline and IR</h2>
+  <div class="card">
+    <h3 style="margin-top: 0;">End-to-end pipeline (was PIPELINE.md, docs/BUILD_PIPELINE.md)</h3>
+    <p>The v6.6 flow converted a Hugging Face config plus GGUF metadata into <code>weights.bump</code> with a sidecar manifest, built IR1 (a forward op graph with typed tensors and kernel IDs) by merging the model's graph template with the manifest, lowered through IR2 (fusion detection, MEGA kernel grouping), planned one contiguous memory layout, and emitted a single generated C file plus an OpenMP thread-pool runtime. Each phase had a named script and a named artifact, which made the pipeline debuggable stage by stage.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Template to graph flow (was templates/PIPELINE.md, templates/README.md)</h3>
+    <p>Templates defined the per-layer operation sequence — the logical graph — independently of any concrete weights. The three-stage pipeline (template &rarr; GraphIR &rarr; LoweredIR) resolved template ops against the parsed GGUF/sidecar metadata, so one template could serve several weight variants of the same architecture family.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">IR1 architecture (was scripts/IR1_ARCHITECTURE.md)</h3>
+    <p>IR1 was a direct template-to-kernel mapping produced by <code>build_ir_v6_6.py</code>: no general graph optimizer, just a deterministic walk from template ops to kernel IDs with typed tensor slots. The deliberate simplicity made generated behavior auditable — a principle v8 keeps, with circuits and kernel maps replacing templates and op builders.</p>
+  </div>
 
-.results-kicker {
-    color: var(--orange);
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    margin-bottom: 0.65rem;
-}
+  <h2 id="memory-formats">Memory planning and formats</h2>
+  <div class="card">
+    <h3 style="margin-top: 0;">Single contiguous allocation (was MEMORY_PLANNING_SPEC.md)</h3>
+    <p>All runtime buffers came from one dynamically generated arena: tensor lifetimes were computed from the IR, offsets assigned with cache alignment, and the generated C addressed everything as base-plus-offset. The spec covered section ordering, alignment rules, lifetime reuse, and canary placement. This is the direct ancestor of v8's memory planner.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">BUMPWGT5 (was docs/BUMPWGT5_SPEC.md)</h3>
+    <p>BUMPWGT5 kept the BUMPWGT4 payload layout intact and appended a self-describing metadata block at EOF, located via a fixed-size footer — so older readers could still consume the payload while newer tooling read full tensor metadata. v8's <code>weights.bump</code> plus sidecar manifest carries the same idea forward.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">The .ck container draft (was src/ck_format.md)</h3>
+    <p>A draft single-file container (v0) for weights, tokenizer data, alignment, and metadata. It was never the production format — <code>weights.bump</code> + sidecar won on simplicity — but its self-description goals survived in the BUMPWGT5 footer and the v8 manifest.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Logits buffer management (was docs/IR_LOGITS_BUFFER_PROPOSAL.md)</h3>
+    <p>A proposal to move logits-buffer decisions out of runtime codegen logic and into the IR, so buffer shape and lifetime were planned artifacts rather than emitted conditionals. Superseded by v8's planner-owned buffers.</p>
+  </div>
 
-.results-subtitle,
-.results-note,
-.muted {
-    color: var(--text-secondary);
-}
+  <h2 id="kernels-op-builders">Kernels and op builders</h2>
+  <div class="card">
+    <h3 style="margin-top: 0;">Three-level kernel mapping (was scripts/KERNEL_MAPPING.md)</h3>
+    <p>Level 1: template ops (architecture-level names). Level 2: kernel ops (operation families with contracts). Level 3: concrete kernel functions (quantization- and ISA-specific implementations). Selection walked the levels with explicit conditions — the conceptual seed of v8's provider-selection metadata, equivalence groups, and fail-closed resolution.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Kernel maps as single source of truth (was kernel_maps/README.md, legacy_kernel_maps/README.md)</h3>
+    <p>Each kernel-map JSON described one concrete kernel variant: shapes, dtypes, quantization layout, and entry symbol. The archived <code>kernel_maps/</code> and <code>legacy_kernel_maps/</code> directories remain under <code>version/legacy/v6.6/</code> as data; the v8 registry and hardened map format are the live descendants.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Auto-generated op builders (was scripts/OP_BUILDER_DESIGN.md, scripts/README_OP_BUILDERS.md)</h3>
+    <p>Op builders — the glue that turned IR ops into concrete kernel calls — were generated from the kernel registry instead of hand-written, eliminating a whole class of drift between registry metadata and emitted calls. v8's map-owned call ABI is the hardened form of the same requirement.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Kernel development workflow (was docs/KERNEL_DEV_WORKFLOW.md)</h3>
+    <p>Write the scalar kernel, register its map, regenerate specs, add a ctypes parity test against PyTorch, then optimize with profiling. The modern, fuller version of this loop is the <a href="model-bringup-guide.html">model bring-up guide</a>.</p>
+  </div>
 
-.results-grid,
-.split-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-    gap: 1rem;
-    margin: 1.2rem 0 2rem 0;
-}
+  <h2 id="testing-parity">Testing, parity, and profiling</h2>
+  <div class="card">
+    <h3 style="margin-top: 0;">llama.cpp parity debugging (was testing/TESTING.md)</h3>
+    <p>Layer-by-layer comparison harness against llama.cpp to catch model-compatibility issues: capture both runtimes' intermediates, walk layers in order, and stop at the first divergence. The five-minute corpus runs and exact-trajectory gates in current CI descend from this harness.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Parity CI system (was tools/PARITY_README.md)</h3>
+    <p>The automated layer-comparison CI that ran those llama.cpp diffs per model and reported first-divergence artifacts — the direct ancestor of today's nightly numerical contracts and X-Ray boundary comparisons.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Manual E2E reference (was E2E_HELP.md)</h3>
+    <p>A short operator reference for manual end-to-end checks on v6.6 Gemma/Qwen models with the pinned Hugging Face URLs of the time. Superseded by the <a href="v8-runbook.html">v8 runbook</a>.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Profiling notes (was src/profiling.md)</h3>
+    <p>oneAPI/VTune environment setup and perf workflows used during v6.6 optimization. Current guidance lives in <a href="profiling.html">Profiling</a> and <a href="v7-profiling.html">v7 Profiling</a>.</p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top: 0;">Historical v1&ndash;v5 lineage (was src/v6.6_pipeline.md)</h3>
+    <p>A narrative of the early generations: v1 established kernel-level PyTorch parity for inference and backprop; later versions added IR, quantized dispatch, and the template machinery that v6.6 finalized. Kept for historical context only.</p>
+  </div>
 
-.results-card,
-.split-card {
-    border: 1px solid var(--grey);
-    border-radius: 12px;
-    padding: 1.1rem 1.2rem;
-    background: linear-gradient(155deg, rgba(255,255,255,0.02), rgba(7,173,248,0.05));
-    box-shadow: var(--shadow-sm);
-}
-
-.metric-label {
-    font-size: 0.76rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--text-muted);
-}
-
-.metric-value {
-    font-size: 1.7rem;
-    font-weight: 800;
-    margin: 0.15rem 0 0.35rem 0;
-    color: var(--text-primary);
-}
-
-.results-table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 1rem 0 2rem 0;
-    border: 1px solid var(--grey);
-    border-radius: 12px;
-    overflow: hidden;
-}
-
-.results-table th,
-.results-table td {
-    padding: 0.85rem 1rem;
-    border-bottom: 1px solid var(--grey);
-    text-align: left;
-    vertical-align: top;
-}
-
-.results-table th {
-    color: var(--orange);
-    background: var(--dark-card);
-    font-size: 0.82rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-}
-
-.results-table tbody tr:nth-child(even) {
-    background: rgba(255,255,255,0.02);
-}
-
-.results-table tbody tr:hover {
-    background: rgba(7,173,248,0.06);
-}
-
-.status {
-    display: inline-block;
-    padding: 0.2rem 0.5rem;
-    border-radius: 999px;
-    border: 1px solid rgba(255,180,0,0.25);
-    background: rgba(255,180,0,0.10);
-    color: var(--text-primary);
-    font-size: 0.76rem;
-    font-weight: 700;
-}
-
-.policy-callout {
-    margin: 1rem 0 1.8rem 0;
-    padding: 1rem 1.1rem;
-    border-radius: 12px;
-    border: 1px solid rgba(255,180,0,0.25);
-    background: linear-gradient(145deg, rgba(255,180,0,0.10), rgba(7,173,248,0.08));
-}
-
-.refresh-block {
-    margin: 1rem 0 0 0;
-}
-
-@media (max-width: 900px) {
-    .results-table {
-        display: block;
-        overflow-x: auto;
-    }
-}
-</style>
-
-<div class="card results-hero">
-    <div class="results-hero-inner">
-        <div class="results-kicker">Run History</div>
-        <h1>Spec Training Results</h1>
-        <p class="results-subtitle">
-            Manifest-driven visibility for the training lines. This page is generated from local run ledgers and probe reports,
-            while <a href="spec-training-method.html">spec-training-method.html</a> stays focused on the stable method and promotion rules.
-        </p>
-    </div>
-</div>
-
-<div class="policy-callout">
-    <strong>Page split:</strong> stable method lives on <a href="spec-training-method.html">Spec Training Method</a>,
-    generated run evidence lives here, and bulky raw artifacts are intended to move under <code>training-archive/</code>
-    as a future submodule mount instead of growing the main docs tree.
-</div>
-
-<div class="results-grid">
-    <div class="results-card">
-        <div class="metric-label">Specs With Probe Data</div>
-        <div class="metric-value">0</div>
-        <p class="results-note">Generated from 0 source roots and refreshed at 2026-09-26 23:24 UTC.</p>
-    </div>
-    <div class="results-card">
-        <div class="metric-label">Run Directories</div>
-        <div class="metric-value">0</div>
-        <p class="results-note">Stage records: 0. Probe reports: 0.</p>
-    </div>
-    <div class="results-card">
-        <div class="metric-label">Current Champion</div>
-        <div class="metric-value">—</div>
-        <p class="results-note">— at — visible exact and — hidden exact.</p>
-    </div>
-</div>
-
-<h2>History Split</h2>
-
-<div class="split-grid">
-    <div class="split-card">
-        <h3>Method Page</h3>
-        <p>Keep stable policy here: spec/rung definitions, reset-line rules, promotion gates, and decode-repair versus retrain decisions.</p>
-        <p><a href="spec-training-method.html">Open spec-training-method.html</a></p>
-    </div>
-    <div class="split-card">
-        <h3>Generated History</h3>
-        <p>This page is generated from <code>version/v7/reports/spec_training_manifest.json</code>, not hand-maintained prose.</p>
-        <p class="muted">It should be the first stop for “which rung is best?” and “what regressed?”</p>
-    </div>
-    <div class="split-card">
-        <h3>Archive Mount</h3>
-        <p>Raw ledgers, probe reports, tested-prompt reports, and large run folders can move under <code>training-archive/</code> as a submodule without breaking the docs surface.</p>
-        <p class="muted">The docs should depend on the compact manifest, not on browsing the archive directly.</p>
-    </div>
-</div>
-
-<h2>Best Rungs By Spec</h2>
-
-<table class="results-table">
-    <thead>
-        <tr>
-            <th>Spec</th>
-            <th>Best Rung</th>
-            <th>Visible Exact</th>
-            <th>Hidden Exact</th>
-            <th>Renderable</th>
-            <th>Run Dirs</th>
-            <th>Status / Lesson</th>
-        </tr>
-    </thead>
-    <tbody>
-        
-    </tbody>
-</table>
-
-<h2>Recent Run Ledger</h2>
-
-<table class="results-table">
-    <thead>
-        <tr>
-            <th>Run</th>
-            <th>Latest Stage</th>
-            <th>Finished</th>
-            <th>Visible Exact</th>
-            <th>Hidden Exact</th>
-            <th>Renderable</th>
-            <th>Artifact Dir</th>
-        </tr>
-    </thead>
-    <tbody>
-        
-    </tbody>
-</table>
-
-<h2>Archive Policy</h2>
-
-<div class="card">
-    <p><strong>Submodule-ready split:</strong> keep the compact manifest and generated docs page in the main repo, then mount a future raw artifact archive at <code>training-archive/</code>.</p>
-    <ul>
-        <li>Stable docs stay in <code>docs/site/_pages/</code>.</li>
-        <li>Run summaries stay in <code>version/v7/reports/spec_training_manifest.json</code>.</li>
-        <li>Heavy artifacts move to <code>training-archive/</code> once you are ready to create the separate repo.</li>
-    </ul>
-    <p class="muted">Current source roots:</p>
-    <ul>
-        
-    </ul>
-    <div class="refresh-block">
-        <p><strong>Refresh command:</strong></p>
-        <pre><code>bash docs/site/build.sh</code></pre>
-    </div>
+  <h2 id="pointers">Where to go instead</h2>
+  <ul>
+    <li><a href="v8-runbook.html">v8 runbook</a> — current inference commands for every supported model family.</li>
+    <li><a href="model-bringup-guide.html">Model bring-up guide</a> — the current contributor path from math to standalone C.</li>
+    <li><a href="ir-pipeline.html">IR pipeline (v6.6, legacy)</a> — the original v6.6 pipeline page, retained and marked legacy.</li>
+    <li><a href="version-history.html">Version history</a> — how v6.6 relates to v7 and v8.</li>
+  </ul>
 </div>
     </main>
 

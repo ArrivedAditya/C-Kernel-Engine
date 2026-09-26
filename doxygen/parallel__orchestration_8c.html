@@ -161,7 +161,7 @@ Functions</h2></td></tr>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>[LEGACY] Parallel decode orchestration prototype — NOT USED by v6.6 </p>
 <p>This file was an early prototype demonstrating llama.cpp-style OpenMP parallelization patterns. It is NOT compiled into the v6.6 build and has no callers in the generated inference code path.</p>
-<p>v6.6 decode runs entirely through the generated code in: version/v6.6/src/generated/ck-kernel-inference.c → ck_model_decode_internal()</p>
+<p>v6.6 decode runs entirely through the generated code in: version/legacy/v6.6/src/generated/ck-kernel-inference.c → ck_model_decode_internal()</p>
 <p>Threading for v6.6 is handled by ck_threadpool (<a class="el" href="ck__threadpool_8h.html" title="Persistent pthread thread pool for CK-Engine inference.">include/ck_threadpool.h</a>), which replaces the OpenMP approach used here.</p>
 <p>Kept for reference only. See the original design notes below.</p>
 <p>Original design (OpenMP, superseded):</p><ul>

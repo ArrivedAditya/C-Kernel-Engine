@@ -1027,7 +1027,9 @@
     </header>
     <main>
 
-<h1>IR Pipeline v6.6</h1>
+<h1>IR Pipeline v6.6 <span class="badge badge-amber" style="font-size: 0.85rem; vertical-align: middle;">Legacy</span></h1>
+
+<div class="alert alert-info"><div><strong>Legacy page.</strong> This documents the archived v6.6 engine (<code>version/legacy/v6.6/</code>). The active inference pipeline is v8: see the <a href="v8-runbook.html">v8 runbook</a>, <a href="codegen.html">code generation</a>, and the <a href="v66-legacy.html">v6.6 legacy archive page</a>.</div></div>
 
 <p>This page explains the v6.6 pipeline using visuals that match how the engine actually builds and runs models today. The goal is clarity: templates are declarative, IR is dynamic, and codegen is intentionally dumb.</p>
 
@@ -1124,38 +1126,38 @@ make v6.6-validate-parity-matrix-required</pre>
     <tr>
         <td><strong>L0</strong> Kernel map sync</td>
         <td><code>make v6.6-kernel-map-gate</code></td>
-        <td><code>version/v6.6/kernel_maps/KERNEL_REGISTRY.json</code></td>
+        <td><code>version/legacy/v6.6/kernel_maps/KERNEL_REGISTRY.json</code></td>
     </tr>
     <tr>
         <td><strong>L1</strong> Tooling contracts</td>
         <td><code>make v6.6-validate-contracts</code></td>
-        <td><code>version/v6.6/tools/contract_report_latest.json</code></td>
+        <td><code>version/legacy/v6.6/tools/contract_report_latest.json</code></td>
     </tr>
     <tr>
         <td><strong>L2</strong> Matrix smoke</td>
         <td><code>make v6.6-validate-matrix-smoke</code></td>
-        <td><code>version/v6.6/tools/model_matrix_report_latest.json</code></td>
+        <td><code>version/legacy/v6.6/tools/model_matrix_report_latest.json</code></td>
     </tr>
     <tr>
         <td><strong>L3</strong> Parity matrix (runtime-optional)</td>
         <td><code>make v6.6-validate-parity-matrix</code></td>
-        <td><code>version/v6.6/tools/parity_matrix_report_latest.json</code></td>
+        <td><code>version/legacy/v6.6/tools/parity_matrix_report_latest.json</code></td>
     </tr>
     <tr>
         <td><strong>L3R</strong> Strict parity matrix (runtime-required)</td>
         <td><code>make v6.6-validate-parity-matrix-required</code></td>
-        <td><code>version/v6.6/tools/parity_matrix_report_latest.json</code></td>
+        <td><code>version/legacy/v6.6/tools/parity_matrix_report_latest.json</code></td>
     </tr>
     <tr>
         <td><strong>L4</strong> Long decode stability</td>
         <td><code>make v6.6-validate-longdecode</code></td>
-        <td><code>version/v6.6/tools/long_decode_report_latest.json</code></td>
+        <td><code>version/legacy/v6.6/tools/long_decode_report_latest.json</code></td>
     </tr>
 </table>
 
 <h2>Live Gate Status (From JSON Reports)</h2>
 
-<p>This panel reads the latest v6.6 gate artifacts from <code>version/v6.6/tools/*.json</code> and summarizes gate health at a glance.</p>
+<p>This panel reads the latest v6.6 gate artifacts from <code>version/legacy/v6.6/tools/*.json</code> and summarizes gate health at a glance.</p>
 
 <div class="card card-accent" id="v66-live-gate-card">
     <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; flex-wrap: wrap;">
@@ -1325,7 +1327,7 @@ make v6.6-validate-parity-matrix-required</pre>
         <li>Attach dataflow edges (op IDs → inputs)</li>
         <li>Record kernel IDs without allocating memory</li>
     </ul>
-    <p style="margin: 0.5rem 0 0;">Implementation: <code>version/v6.6/scripts/build_ir_v6_6.py</code></p>
+    <p style="margin: 0.5rem 0 0;">Implementation: <code>version/legacy/v6.6/scripts/build_ir_v6_6.py</code></p>
 </div>
 
 <h2>Kernel Maps + Registry</h2>
@@ -1398,7 +1400,7 @@ make v6.6-validate-parity-matrix-required</pre>
   "outputs": [{ "name": "output", "dtype": "fp32", "shape": ["T","E"] }]
 }</pre>
     <p style="margin: 0;">Lowered call will pass <code>token_ids</code> and <code>embedded_input</code> pointers.</p>
-    <p style="margin: 0.5rem 0 0;">See: <code>version/v6.6/kernel_maps/embedding_forward_q8_0.json</code></p>
+    <p style="margin: 0.5rem 0 0;">See: <code>version/legacy/v6.6/kernel_maps/embedding_forward_q8_0.json</code></p>
 </div>
 
 <h2>Producer vs Consumer (Plain Language)</h2>
@@ -1519,8 +1521,8 @@ make v6.6-validate-parity-matrix-required</pre>
 <div class="card">
     <h3 style="margin-top: 0;">References</h3>
     <ul>
-        <li><code>version/v6.6/kernel_maps/attention_forward_causal_head_major_gqa_flash_strided.json</code></li>
-        <li><code>version/v6.6/kernel_maps/attention_forward_causal_head_major_gqa_flash_strided_sliding.json</code></li>
+        <li><code>version/legacy/v6.6/kernel_maps/attention_forward_causal_head_major_gqa_flash_strided.json</code></li>
+        <li><code>version/legacy/v6.6/kernel_maps/attention_forward_causal_head_major_gqa_flash_strided_sliding.json</code></li>
         <li><code>src/kernels/attention_kernels.c</code></li>
         <li><code>src/kernels/attention_kernels_sliding.c</code></li>
     </ul>
@@ -1550,9 +1552,9 @@ make v6.6-validate-parity-matrix-required</pre>
 <div class="card card-accent">
     <h3 style="margin-top: 0;">IR2 Fusions (Currently Disabled / Conservative)</h3>
     <ul>
-        <li><code>version/v6.6/kernel_maps/mega_fused_attention_prefill.json</code></li>
-        <li><code>version/v6.6/kernel_maps/mega_fused_outproj_mlp_prefill.json</code></li>
-        <li><code>version/v6.6/kernel_maps/mega_fused_attention_decode_q5_0.json</code></li>
+        <li><code>version/legacy/v6.6/kernel_maps/mega_fused_attention_prefill.json</code></li>
+        <li><code>version/legacy/v6.6/kernel_maps/mega_fused_outproj_mlp_prefill.json</code></li>
+        <li><code>version/legacy/v6.6/kernel_maps/mega_fused_attention_decode_q5_0.json</code></li>
     </ul>
     <p style="margin: 0;">These exist in the registry but are kept conservative in v6.6 to avoid parity drift. Some require head-major constraints or rely on quantized activation contracts that are still being stabilized.</p>
 </div>
@@ -1725,17 +1727,17 @@ gemv_q8_0(
 
 <div class="card">
     <h3 style="margin-top: 0;">Quick Start</h3>
-    <pre>python version/v6.6/tools/open_ir_visualizer.py --list
-python version/v6.6/tools/open_ir_visualizer.py gemma3
+    <pre>python version/legacy/v6.6/tools/open_ir_visualizer.py --list
+python version/legacy/v6.6/tools/open_ir_visualizer.py gemma3
 
 # Or generate only (no browser):
-python version/v6.6/tools/open_ir_visualizer.py --generate gemma3
+python version/legacy/v6.6/tools/open_ir_visualizer.py --generate gemma3
 
 # Generate with decode profile artifacts:
-python version/v6.6/tools/open_ir_visualizer.py --generate gemma3 --with-profile --force-compile
+python version/legacy/v6.6/tools/open_ir_visualizer.py --generate gemma3 --with-profile --force-compile
 
 # Generate with probes (memory sign-off + perf stat/flamegraph + perf budgets):
-python version/v6.6/tools/open_ir_visualizer.py --generate gemma3 --with-probes --force-compile</pre>
+python version/legacy/v6.6/tools/open_ir_visualizer.py --generate gemma3 --with-probes --force-compile</pre>
     <p style="margin: 0;">This generates <code>ir_report.html</code> inside the model’s <code>ck_build</code> directory.</p>
     <p style="margin: 0.5rem 0 0; color: #9aa3ad;">
         For cached model aliases that are not directly runnable checkpoints, pass
@@ -1746,7 +1748,7 @@ python version/v6.6/tools/open_ir_visualizer.py --generate gemma3 --with-probes 
 
 <div class="card">
     <h3 style="margin-top: 0;">Manual Load</h3>
-    <p>Open <code>version/v6.6/tools/ir_visualizer.html</code> in a browser and load:</p>
+    <p>Open <code>version/legacy/v6.6/tools/ir_visualizer.html</code> in a browser and load:</p>
     <ul>
         <li><code>ir1_decode.json</code> / <code>ir1_prefill.json</code></li>
         <li><code>lowered_decode_call.json</code> / <code>lowered_prefill_call.json</code> (or <code>lowered_*.json</code> fallback)</li>
@@ -1759,19 +1761,19 @@ python version/v6.6/tools/open_ir_visualizer.py --generate gemma3 --with-probes 
 <div class="card card-accent">
     <h3 style="margin-top: 0;">Recommended Run Flow (Baked Report)</h3>
     <pre># 1) List models that already have IR artifacts
-python version/v6.6/tools/open_ir_visualizer.py --list
+python version/legacy/v6.6/tools/open_ir_visualizer.py --list
 
 # 2) Open an interactive report in your browser
-python version/v6.6/tools/open_ir_visualizer.py Qwen--Qwen3-0.6B-GGUF
+python version/legacy/v6.6/tools/open_ir_visualizer.py Qwen--Qwen3-0.6B-GGUF
 
 # 3) Generate report only (no auto-open)
-python version/v6.6/tools/open_ir_visualizer.py --generate Qwen--Qwen3-0.6B-GGUF
+python version/legacy/v6.6/tools/open_ir_visualizer.py --generate Qwen--Qwen3-0.6B-GGUF
 
 # Optional: custom output path
-python version/v6.6/tools/open_ir_visualizer.py --generate Qwen--Qwen3-0.6B-GGUF --output /tmp/ir_report.html
+python version/legacy/v6.6/tools/open_ir_visualizer.py --generate Qwen--Qwen3-0.6B-GGUF --output /tmp/ir_report.html
 
 # One-command rich report (profile + probes + embedded artifacts)
-python version/v6.6/tools/open_ir_visualizer.py \
+python version/legacy/v6.6/tools/open_ir_visualizer.py \
   --generate Qwen--Qwen3-0.6B-GGUF \
   --with-probes --force-compile \
   --output /tmp/ir_report.html</pre>
@@ -1787,7 +1789,7 @@ python version/v6.6/tools/open_ir_visualizer.py \
 xdg-open ~/.cache/ck-engine-v6.6/models/Qwen--Qwen3-0.6B-GGUF/ir_report.html
 
 # Or run auto-open directly (no separate xdg-open step)
-python version/v6.6/tools/open_ir_visualizer.py Qwen--Qwen3-0.6B-GGUF</pre>
+python version/legacy/v6.6/tools/open_ir_visualizer.py Qwen--Qwen3-0.6B-GGUF</pre>
     <p style="margin: 0;">
         If your environment has no GUI, copy the generated <code>ir_report.html</code> to a machine with a browser and open it there.
     </p>
@@ -1873,7 +1875,7 @@ make v6.6-gate
 make v6.6-validate-parity-matrix-required
 
 # Then inspect visual report for topology/memory sanity
-python version/v6.6/tools/open_ir_visualizer.py Qwen--Qwen3-0.6B-GGUF</pre>
+python version/legacy/v6.6/tools/open_ir_visualizer.py Qwen--Qwen3-0.6B-GGUF</pre>
 </div>
 
 <h2>What AMP Means Here</h2>
@@ -1966,9 +1968,9 @@ python version/v6.6/tools/open_ir_visualizer.py Qwen--Qwen3-0.6B-GGUF</pre>
 <script>
 (function () {
     const REPORT_CANDIDATE_BASES = [
-        "version/v6.6/tools/",
-        "./version/v6.6/tools/",
-        "/version/v6.6/tools/",
+        "version/legacy/v6.6/tools/",
+        "./version/legacy/v6.6/tools/",
+        "/version/legacy/v6.6/tools/",
         "assets/v6.6-tools/"
     ];
 
@@ -2118,7 +2120,7 @@ python version/v6.6/tools/open_ir_visualizer.py Qwen--Qwen3-0.6B-GGUF</pre>
             errors.textContent =
                 "Some reports are not reachable from this docs server root. Missing: " +
                 missing.join(", ") +
-                ". Run docs from repository root, or expose version/v6.6/tools/ under your docs server.";
+                ". Run docs from repository root, or expose version/legacy/v6.6/tools/ under your docs server.";
         }
     }
 

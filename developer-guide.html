@@ -1538,9 +1538,9 @@ void my_kernel_backward(float *dx, const float *dy, int N) { ... }</pre>
         <li><strong>Add to a <a href="kernel-maps.html">kernel map</a></strong> in <code>version/v8/kernel_maps/</code> (current provider-selection format)
             <pre>// version/v8/kernel_maps/my_kernel.json — see kernel-maps.html for the
 // v8 provider schema (ports, ABI, selection metadata)</pre>
-            The legacy v6/v7 training lane instead uses <code>version/v6.6/legacy_kernel_maps/kernels/</code>
+            The legacy v6/v7 training lane instead uses <code>version/legacy/v6.6/legacy_kernel_maps/kernels/</code>
             with the older forward/backward binding format:
-            <pre>// version/v6.6/legacy_kernel_maps/kernels/my_kernel.json
+            <pre>// version/legacy/v6.6/legacy_kernel_maps/kernels/my_kernel.json
 {
   "name": "my_kernel",
   "forward": "my_kernel_forward",
