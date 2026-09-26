@@ -155,6 +155,8 @@ Macros</h2></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="func-members" name="func-members"></a>
 Functions</h2></td></tr>
+<tr class="memitem:a4d0553f661e1a8e403ee7f78d18f6307" id="r_a4d0553f661e1a8e403ee7f78d18f6307"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="ckernel__audio_8h.html#a4d0553f661e1a8e403ee7f78d18f6307">audio_adaptive_layer_norm_f32</a> (const float *input, size_t input_elements, const float *<a class="el" href="tokenizer_8h.html#aebee6a319ed22559d77672c8b7663346">style</a>, size_t style_elements, const float *projection_weight, size_t projection_weight_elements, const float *projection_bias, size_t projection_bias_elements, float *output, size_t output_elements, float *projection_scratch, size_t projection_scratch_bytes, int tokens, int channels, int style_dim, size_t input_stride, size_t output_stride, float epsilon)</td></tr>
+<tr class="separator:a4d0553f661e1a8e403ee7f78d18f6307"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a6a5776244c3c4f843a9cca21633a2a31" id="r_a6a5776244c3c4f843a9cca21633a2a31"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="ckernel__audio_8h.html#a6a5776244c3c4f843a9cca21633a2a31">audio_argmax_first_f32</a> (const float *values, int elements, int *selected)</td></tr>
 <tr class="separator:a6a5776244c3c4f843a9cca21633a2a31"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3dabaffd1650f760ba18262ddcf76317" id="r_a3dabaffd1650f760ba18262ddcf76317"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="ckernel__audio_8h.html#a3dabaffd1650f760ba18262ddcf76317">audio_batch_norm_inference_channel_major_f32</a> (const float *input, const float *running_mean, const float *running_variance, const float *weight, const float *bias, float *output, int channels, int frames, float epsilon)</td></tr>
@@ -300,6 +302,214 @@ Functions</h2></td></tr>
 </div>
 </div>
 <h2 class="groupheader">Function Documentation</h2>
+<a id="a4d0553f661e1a8e403ee7f78d18f6307" name="a4d0553f661e1a8e403ee7f78d18f6307"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4d0553f661e1a8e403ee7f78d18f6307">&#9670;&#160;</a></span>audio_adaptive_layer_norm_f32()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int audio_adaptive_layer_norm_f32 </td>
+          <td>(</td>
+          <td class="paramtype">const float *&#160;</td>
+          <td class="paramname"><em>input</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>input_elements</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const float *&#160;</td>
+          <td class="paramname"><em>style</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>style_elements</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const float *&#160;</td>
+          <td class="paramname"><em>projection_weight</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>projection_weight_elements</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">const float *&#160;</td>
+          <td class="paramname"><em>projection_bias</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>projection_bias_elements</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">float *&#160;</td>
+          <td class="paramname"><em>output</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>output_elements</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">float *&#160;</td>
+          <td class="paramname"><em>projection_scratch</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>projection_scratch_bytes</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>tokens</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>channels</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">int&#160;</td>
+          <td class="paramname"><em>style_dim</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>input_stride</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">size_t&#160;</td>
+          <td class="paramname"><em>output_stride</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">float&#160;</td>
+          <td class="paramname"><em>epsilon</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p class="definition">Definition at line <a class="el" href="audio__adaptive__layer__norm_8c_source.html#l00048">48</a> of file <a class="el" href="audio__adaptive__layer__norm_8c_source.html">audio_adaptive_layer_norm.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">   57</span>{</div>
+<div class="line"><span class="lineno">   58</span>    <span class="keywordflow">if</span> (input == NULL || <a class="code hl_variable" href="tokenizer_8h.html#aebee6a319ed22559d77672c8b7663346">style</a> == NULL || projection_weight == NULL ||</div>
+<div class="line"><span class="lineno">   59</span>        projection_bias == NULL || output == NULL ||</div>
+<div class="line"><span class="lineno">   60</span>        projection_scratch == NULL) <span class="keywordflow">return</span> -1;</div>
+<div class="line"><span class="lineno">   61</span>    <span class="keywordflow">if</span> (tokens &lt;= 0 || channels &lt;= 0 || style_dim &lt;= 0 ||</div>
+<div class="line"><span class="lineno">   62</span>        !isfinite(epsilon) || epsilon &lt;= 0.0f) <span class="keywordflow">return</span> -2;</div>
+<div class="line"><span class="lineno">   63</span> </div>
+<div class="line"><span class="lineno">   64</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> rows = (size_t)tokens;</div>
+<div class="line"><span class="lineno">   65</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> width = (size_t)channels;</div>
+<div class="line"><span class="lineno">   66</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> style_width = (size_t)style_dim;</div>
+<div class="line"><span class="lineno">   67</span>    <span class="keywordtype">size_t</span> input_required, output_required, projection_width;</div>
+<div class="line"><span class="lineno">   68</span>    <span class="keywordtype">size_t</span> weight_required, scratch_required;</div>
+<div class="line"><span class="lineno">   69</span>    <span class="keywordflow">if</span> (input_stride &lt; width || output_stride &lt; width ||</div>
+<div class="line"><span class="lineno">   70</span>        !<a class="code hl_function" href="audio__adaptive__layer__norm_8c.html#a8251dfc88a5abc81c4d2f23c6fa9f253">checked_span</a>(rows, input_stride, width, &amp;input_required) ||</div>
+<div class="line"><span class="lineno">   71</span>        !<a class="code hl_function" href="audio__adaptive__layer__norm_8c.html#a8251dfc88a5abc81c4d2f23c6fa9f253">checked_span</a>(rows, output_stride, width, &amp;output_required) ||</div>
+<div class="line"><span class="lineno">   72</span>        !<a class="code hl_function" href="audio__adaptive__layer__norm_8c.html#a138a344a49aa4ebd426cba75bcc939db">checked_product</a>(width, 2u, &amp;projection_width) ||</div>
+<div class="line"><span class="lineno">   73</span>        !<a class="code hl_function" href="audio__adaptive__layer__norm_8c.html#a138a344a49aa4ebd426cba75bcc939db">checked_product</a>(projection_width, style_width, &amp;weight_required) ||</div>
+<div class="line"><span class="lineno">   74</span>        !<a class="code hl_function" href="audio__adaptive__layer__norm_8c.html#a138a344a49aa4ebd426cba75bcc939db">checked_product</a>(projection_width, <span class="keyword">sizeof</span>(<span class="keywordtype">float</span>), &amp;scratch_required) ||</div>
+<div class="line"><span class="lineno">   75</span>        !<a class="code hl_function" href="audio__adaptive__layer__norm_8c.html#af97a474229947062d9ac2438a20d1efc">checked_float_extent</a>(input_required) ||</div>
+<div class="line"><span class="lineno">   76</span>        !<a class="code hl_function" href="audio__adaptive__layer__norm_8c.html#af97a474229947062d9ac2438a20d1efc">checked_float_extent</a>(output_required) ||</div>
+<div class="line"><span class="lineno">   77</span>        !<a class="code hl_function" href="audio__adaptive__layer__norm_8c.html#af97a474229947062d9ac2438a20d1efc">checked_float_extent</a>(style_width) ||</div>
+<div class="line"><span class="lineno">   78</span>        !<a class="code hl_function" href="audio__adaptive__layer__norm_8c.html#af97a474229947062d9ac2438a20d1efc">checked_float_extent</a>(weight_required) ||</div>
+<div class="line"><span class="lineno">   79</span>        !<a class="code hl_function" href="audio__adaptive__layer__norm_8c.html#af97a474229947062d9ac2438a20d1efc">checked_float_extent</a>(projection_width))</div>
+<div class="line"><span class="lineno">   80</span>        <span class="keywordflow">return</span> -2;</div>
+<div class="line"><span class="lineno">   81</span>    <span class="keywordflow">if</span> (input_elements &lt; input_required || output_elements &lt; output_required ||</div>
+<div class="line"><span class="lineno">   82</span>        style_elements &lt; style_width ||</div>
+<div class="line"><span class="lineno">   83</span>        projection_weight_elements &lt; weight_required ||</div>
+<div class="line"><span class="lineno">   84</span>        projection_bias_elements &lt; projection_width ||</div>
+<div class="line"><span class="lineno">   85</span>        projection_scratch_bytes &lt; scratch_required) <span class="keywordflow">return</span> -3;</div>
+<div class="line"><span class="lineno">   86</span> </div>
+<div class="line"><span class="lineno">   87</span>    <span class="comment">/* Validate all external values before changing output or scratch. Padding</span></div>
+<div class="line"><span class="lineno">   88</span><span class="comment">     * is deliberately not read; only the declared logical columns are valid.</span></div>
+<div class="line"><span class="lineno">   89</span><span class="comment">     */</span></div>
+<div class="line"><span class="lineno">   90</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> index = 0u; index &lt; style_width; ++index)</div>
+<div class="line"><span class="lineno">   91</span>        <span class="keywordflow">if</span> (!isfinite(<a class="code hl_variable" href="tokenizer_8h.html#aebee6a319ed22559d77672c8b7663346">style</a>[index])) <span class="keywordflow">return</span> -4;</div>
+<div class="line"><span class="lineno">   92</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> index = 0u; index &lt; weight_required; ++index)</div>
+<div class="line"><span class="lineno">   93</span>        <span class="keywordflow">if</span> (!isfinite(projection_weight[index])) <span class="keywordflow">return</span> -4;</div>
+<div class="line"><span class="lineno">   94</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> index = 0u; index &lt; projection_width; ++index)</div>
+<div class="line"><span class="lineno">   95</span>        <span class="keywordflow">if</span> (!isfinite(projection_bias[index])) <span class="keywordflow">return</span> -4;</div>
+<div class="line"><span class="lineno">   96</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> row = 0u; row &lt; rows; ++row)</div>
+<div class="line"><span class="lineno">   97</span>        <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> channel = 0u; channel &lt; width; ++channel)</div>
+<div class="line"><span class="lineno">   98</span>            <span class="keywordflow">if</span> (!isfinite(input[row * input_stride + channel])) <span class="keywordflow">return</span> -4;</div>
+<div class="line"><span class="lineno">   99</span> </div>
+<div class="line"><span class="lineno">  100</span>    <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> channel = 0u; channel &lt; projection_width; ++channel) {</div>
+<div class="line"><span class="lineno">  101</span>        <span class="keywordtype">float</span> value = projection_bias[channel];</div>
+<div class="line"><span class="lineno">  102</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *weight = projection_weight + channel * style_width;</div>
+<div class="line"><span class="lineno">  103</span>        <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> index = 0u; index &lt; style_width; ++index)</div>
+<div class="line"><span class="lineno">  104</span>            value += weight[index] * <a class="code hl_variable" href="tokenizer_8h.html#aebee6a319ed22559d77672c8b7663346">style</a>[index];</div>
+<div class="line"><span class="lineno">  105</span>        <span class="keywordflow">if</span> (!isfinite(value)) <span class="keywordflow">return</span> -4;</div>
+<div class="line"><span class="lineno">  106</span>        projection_scratch[channel] = value;</div>
+<div class="line"><span class="lineno">  107</span>    }</div>
+<div class="line"><span class="lineno">  108</span> </div>
+<div class="line"><span class="lineno">  109</span>    <span class="comment">/* Validate every produced value before the first output write. The second</span></div>
+<div class="line"><span class="lineno">  110</span><span class="comment">     * pass repeats cheap normalization arithmetic without a hidden T*C buffer.</span></div>
+<div class="line"><span class="lineno">  111</span><span class="comment">     */</span></div>
+<div class="line"><span class="lineno">  112</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> pass = 0; pass &lt; 2; ++pass) {</div>
+<div class="line"><span class="lineno">  113</span>        <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> row = 0u; row &lt; rows; ++row) {</div>
+<div class="line"><span class="lineno">  114</span>            <span class="keyword">const</span> <span class="keywordtype">float</span> *input_row = input + row * input_stride;</div>
+<div class="line"><span class="lineno">  115</span>            <span class="keywordtype">float</span> *output_row = output + row * output_stride;</div>
+<div class="line"><span class="lineno">  116</span>            <span class="keywordtype">double</span> mean, inverse_std;</div>
+<div class="line"><span class="lineno">  117</span>            <span class="keywordflow">if</span> (!<a class="code hl_function" href="audio__adaptive__layer__norm_8c.html#a20ddcdfca18a95e063632138e5153ffe">row_stats</a>(input_row, width, epsilon, &amp;mean, &amp;inverse_std))</div>
+<div class="line"><span class="lineno">  118</span>                <span class="keywordflow">return</span> -4;</div>
+<div class="line"><span class="lineno">  119</span>            <span class="keywordflow">for</span> (<span class="keywordtype">size_t</span> channel = 0u; channel &lt; width; ++channel) {</div>
+<div class="line"><span class="lineno">  120</span>                <span class="keyword">const</span> <span class="keywordtype">float</span> normalized = (float)(</div>
+<div class="line"><span class="lineno">  121</span>                    ((<span class="keywordtype">double</span>)input_row[channel] - mean) * inverse_std);</div>
+<div class="line"><span class="lineno">  122</span>                <span class="keyword">const</span> <span class="keywordtype">float</span> gamma = projection_scratch[channel];</div>
+<div class="line"><span class="lineno">  123</span>                <span class="keyword">const</span> <span class="keywordtype">float</span> beta = projection_scratch[width + channel];</div>
+<div class="line"><span class="lineno">  124</span>                <span class="keyword">const</span> <span class="keywordtype">float</span> value = (1.0f + gamma) * normalized + beta;</div>
+<div class="line"><span class="lineno">  125</span>                <span class="keywordflow">if</span> (!isfinite(value)) <span class="keywordflow">return</span> -4;</div>
+<div class="line"><span class="lineno">  126</span>                <span class="keywordflow">if</span> (pass != 0) output_row[channel] = value;</div>
+<div class="line"><span class="lineno">  127</span>            }</div>
+<div class="line"><span class="lineno">  128</span>        }</div>
+<div class="line"><span class="lineno">  129</span>    }</div>
+<div class="line"><span class="lineno">  130</span>    <span class="keywordflow">return</span> 0;</div>
+<div class="line"><span class="lineno">  131</span>}</div>
+<div class="ttc" id="aaudio__adaptive__layer__norm_8c_html_a138a344a49aa4ebd426cba75bcc939db"><div class="ttname"><a href="audio__adaptive__layer__norm_8c.html#a138a344a49aa4ebd426cba75bcc939db">checked_product</a></div><div class="ttdeci">static int checked_product(size_t left, size_t right, size_t *result)</div><div class="ttdef"><b>Definition</b> <a href="audio__adaptive__layer__norm_8c_source.html#l00009">audio_adaptive_layer_norm.c:9</a></div></div>
+<div class="ttc" id="aaudio__adaptive__layer__norm_8c_html_a20ddcdfca18a95e063632138e5153ffe"><div class="ttname"><a href="audio__adaptive__layer__norm_8c.html#a20ddcdfca18a95e063632138e5153ffe">row_stats</a></div><div class="ttdeci">static int row_stats(const float *row, size_t channels, float epsilon, double *mean, double *inverse_std)</div><div class="ttdef"><b>Definition</b> <a href="audio__adaptive__layer__norm_8c_source.html#l00031">audio_adaptive_layer_norm.c:31</a></div></div>
+<div class="ttc" id="aaudio__adaptive__layer__norm_8c_html_a8251dfc88a5abc81c4d2f23c6fa9f253"><div class="ttname"><a href="audio__adaptive__layer__norm_8c.html#a8251dfc88a5abc81c4d2f23c6fa9f253">checked_span</a></div><div class="ttdeci">static int checked_span(size_t rows, size_t stride, size_t width, size_t *result)</div><div class="ttdef"><b>Definition</b> <a href="audio__adaptive__layer__norm_8c_source.html#l00016">audio_adaptive_layer_norm.c:16</a></div></div>
+<div class="ttc" id="aaudio__adaptive__layer__norm_8c_html_af97a474229947062d9ac2438a20d1efc"><div class="ttname"><a href="audio__adaptive__layer__norm_8c.html#af97a474229947062d9ac2438a20d1efc">checked_float_extent</a></div><div class="ttdeci">static int checked_float_extent(size_t elements)</div><div class="ttdef"><b>Definition</b> <a href="audio__adaptive__layer__norm_8c_source.html#l00026">audio_adaptive_layer_norm.c:26</a></div></div>
+<div class="ttc" id="atokenizer_8h_html_aebee6a319ed22559d77672c8b7663346"><div class="ttname"><a href="tokenizer_8h.html#aebee6a319ed22559d77672c8b7663346">style</a></div><div class="ttdeci">CKSpacePrefixStyle style</div><div class="ttdef"><b>Definition</b> <a href="tokenizer_8h_source.html#l00288">tokenizer.h:288</a></div></div>
+</div><!-- fragment -->
+<p class="reference">References <a class="el" href="audio__adaptive__layer__norm_8c_source.html#l00026">checked_float_extent()</a>, <a class="el" href="audio__adaptive__layer__norm_8c_source.html#l00009">checked_product()</a>, <a class="el" href="audio__adaptive__layer__norm_8c_source.html#l00016">checked_span()</a>, <a class="el" href="audio__adaptive__layer__norm_8c_source.html#l00031">row_stats()</a>, and <a class="el" href="tokenizer_8h_source.html#l00288">style</a>.</p>
+
+</div>
+</div>
 <a id="a6a5776244c3c4f843a9cca21633a2a31" name="a6a5776244c3c4f843a9cca21633a2a31"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a6a5776244c3c4f843a9cca21633a2a31">&#9670;&#160;</a></span>audio_argmax_first_f32()</h2>
 
