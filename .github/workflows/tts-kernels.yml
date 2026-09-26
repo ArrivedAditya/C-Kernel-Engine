@@ -36,15 +36,19 @@ on:
       - 'version/v8/kernel_maps/runtime_extent_sum_i32.json'
       - 'version/v8/kernel_maps/runtime_copy_valid_f32.json'
       - 'src/kernels/audio_duration_expand.c'
+      - 'src/kernels/audio_duration_logits.c'
       - 'src/kernels/audio_istft_mag_phase.c'
       - 'src/kernels/kokoro_shape_bounds.c'
       - 'tests/test_v8_kokoro_shape_bounds.c'
       - 'tests/test_v8_kokoro_shape_bounds.py'
       - 'tests/test_v8_audio_istft_oracle.py'
       - 'tests/test_v8_audio_duration_expand_oracle.py'
+      - 'tests/test_v8_audio_duration_logits_oracle.py'
+      - 'tests/test_v8_audio_duration_logits_live.py'
       - 'tests/test_v8_tts_live_torch_oracles.py'
       - 'tests/fixtures/tts/**'
       - 'version/v8/kernel_maps/audio_duration_expand_channel_major_f32.json'
+      - 'version/v8/kernel_maps/audio_duration_logits_to_frames_f32.json'
       - 'version/v8/kernel_maps/audio_istft_mag_phase_f32.json'
       - 'version/v8/contracts/numerical_execution.json'
       - 'version/v8/schemas/numerical_execution_contract_registry.schema.json'
@@ -83,15 +87,19 @@ on:
       - 'version/v8/kernel_maps/runtime_extent_sum_i32.json'
       - 'version/v8/kernel_maps/runtime_copy_valid_f32.json'
       - 'src/kernels/audio_duration_expand.c'
+      - 'src/kernels/audio_duration_logits.c'
       - 'src/kernels/audio_istft_mag_phase.c'
       - 'src/kernels/kokoro_shape_bounds.c'
       - 'tests/test_v8_kokoro_shape_bounds.c'
       - 'tests/test_v8_kokoro_shape_bounds.py'
       - 'tests/test_v8_audio_istft_oracle.py'
       - 'tests/test_v8_audio_duration_expand_oracle.py'
+      - 'tests/test_v8_audio_duration_logits_oracle.py'
+      - 'tests/test_v8_audio_duration_logits_live.py'
       - 'tests/test_v8_tts_live_torch_oracles.py'
       - 'tests/fixtures/tts/**'
       - 'version/v8/kernel_maps/audio_duration_expand_channel_major_f32.json'
+      - 'version/v8/kernel_maps/audio_duration_logits_to_frames_f32.json'
       - 'version/v8/kernel_maps/audio_istft_mag_phase_f32.json'
       - 'version/v8/contracts/numerical_execution.json'
       - 'version/v8/schemas/numerical_execution_contract_registry.schema.json'
@@ -116,6 +124,10 @@ jobs:
             tests.test_v8_runtime_extent_lowering \
             tests.test_v8_kokoro_shape_bounds \
             tests.test_v8_audio_duration_expand_oracle.AudioDurationExpandOracleTest.test_committed_torch_fixture \
+            tests.test_v8_audio_duration_logits_oracle.AudioDurationLogitsOracleTest.test_pinned_production_shape_against_committed_torch_fixture \
+            tests.test_v8_audio_duration_logits_oracle.AudioDurationLogitsOracleTest.test_layout_ties_and_clamping \
+            tests.test_v8_audio_duration_logits_oracle.AudioDurationLogitsOracleTest.test_rejections_leave_outputs_unchanged \
+            tests.test_v8_audio_duration_logits_oracle.AudioDurationLogitsOracleTest.test_hostile_geometry_rejected_before_buffer_access \
             tests.test_v8_audio_istft_oracle.AudioIstftOracleTest.test_committed_torch_fixture \
             tests.test_v8_audio_istft_oracle.AudioIstftSafetyTest \
             tests.test_v8_audio_lstm_scan_oracle.AudioLstmScanOracleTest.test_committed_torch_fixture \

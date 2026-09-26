@@ -1347,7 +1347,7 @@ dataset provenance.</p></section><section id="graph"><h2>Kokoro graph inventory<
 <p><code>emit_checked_calls()</code> consumes resolved IR Lower 3 calls and canonical kernel maps as a reusable backend component. <code>codegen_v8.main()</code> selects it for a circuit-declared checked native entry with a <code>runtime_extent_contract</code>; other model artifacts continue through the existing core backend. The command-level fixture compiles and executes the emitted function. This establishes ordinary command integration for the bounded synthetic graph, not complete Kokoro compilation, weight loading, or a production speech session.</p>
 <p>The checked entry requires a caller-owned arena aligned to at least 64 bytes, or the strongest selected provider alignment when greater. Generated C checks the base alignment and planned byte capacity before invoking providers. X-Ray records <code>artifact_library</code> as an on-disk path and hash. Its optional <code>runtime_library</code> record uses <code>dladdr</code> at capture time to identify the library containing the resolved symbol, with that path and file hash. These are distinct provenance claims. Symbol resolution and a file hash do not constitute an embedded runtime build-identity check.</p>
 <h2>Evidence still required</h2>
-<p>Capture the actual phonemes/IDs, selected voice row, imported effective weights and per-op checkpoint shapes/dtypes/hashes, duration vector, source RNG inputs, STFT outputs, decoder intermediate tensors, and full FP32 waveform. The current capture script hooks only coarse modules and inverse inputs; augment it before claiming per-primitive parity. Verify the exact output length, repeated calls, undersized workspace, malformed duration/state, finite outputs, clipping/silence, and a human listening fixture. Keep numerical parity, candidate-versus-baseline equality, and listening results separate. Until the generated C entry point produces and verifies the waveform, status remains <strong>unsupported / missing evidence</strong>.</p></section><section id="operator-checklist"><h2>Operation checklist for the first generated utterance</h2>
+<p>The pinned capture now records 63 named tensors, including six duration-encoder LSTM/AdaLN operation boundaries, duration logits, the duration vector, and the final FP32 waveform. Finer prosody/decoder checkpoints, source RNG inputs, imported-weight bindings, and a generated graph comparison remain required. Verify the exact generated output length, repeated calls, undersized workspace, malformed duration/state, finite outputs, clipping/silence, and a human listening fixture. Keep numerical parity, candidate-versus-baseline equality, and listening results separate. Until the generated C entry point produces and verifies the waveform, status remains <strong>unsupported / missing evidence</strong>.</p></section><section id="operator-checklist"><h2>Operation checklist for the first generated utterance</h2>
 <p>Scope: the pinned phoneme IDs and <code>af_heart[len(phonemes)-1]</code> row, batch one, FP32, and the short reference utterance. “Primitive oracle passed” describes an isolated operation under its own contract; it does not certify Kokoro's parameters, tensor connections, or waveform. “Candidate” means CKE has related math whose exact Kokoro contract still needs comparison. All TTS backward and complete waveform claims remain <strong>NOT_TESTED</strong>.</p>
 <table><thead><tr><th>Reached stage</th><th>Evidence available now</th><th>Missing work for the pinned path</th><th>Next independent proof</th></tr></thead><tbody>
 <tr><td>Phoneme IDs and voice conditioning</td><td>Pinned IDs and upstream captures exist in <code>version/v8/tts/reference/</code>. The offline importer now writes 599 effective FP32 model tensors and the selected voice row/slices into BUMPWGT5; an asset-backed test compares every tensor and reproduces the pinned upstream waveform.</td><td>Bind the canonical weights and voice tensors to declared circuit edges. The bundle is import evidence only: no generated Kokoro model consumes it yet. Native G2P is a later milestone.</td><td>Compare generated phoneme-encoder, duration and decoder checkpoints against the pinned PyTorch capture, then the final waveform.</td></tr>
@@ -1372,7 +1372,7 @@ python3 version/v8/tts/export_kokoro_bump.py \
   --model-dir /path/to/pinned/kokoro \
   --output-dir /path/to/kokoro-bump</code></pre></section>
 <section id="coverage"><h2>Numerical coverage</h2><h1>TTS kernel numerical coverage, 2026-09-24</h1>
-<p>This report concerns two scalar inference providers and a Kokoro-specific extent
+<p>This report records isolated inference providers and a Kokoro-specific extent
 preflight. It does <strong>not</strong> certify a generated Kokoro waveform or native text-to-speech.
 The provider maps declare backward and training unsupported.</p>
 <table>
@@ -1387,6 +1387,14 @@ The provider maps declare backward and training unsupported.</p>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><code>audio_duration_logits_to_frames_f32</code></td>
+<td>FP32 logits → int32 durations and valid extent / forward only</td>
+<td>Pinned PyTorch <code>sigmoid → sum → speed divide → round → clamp</code> at production <code>[36,50]</code> shape</td>
+<td><code>tests/test_v8_audio_duration_logits_oracle.py</code> and separate live <code>tests/test_v8_audio_duration_logits_live.py</code></td>
+<td><code>.github/workflows/tts-kernels.yml</code>; <code>scripts/nightly_runner.py</code> keys <code>tts_duration_logits_oracle</code> and <code>tts_duration_logits_live</code></td>
+<td>PASS locally: exact 36-token durations and 103-frame extent, ties-to-even, padded stride, invalid input and capacity rejection without output writes. Live PyTorch comparison PASS in the pinned local environment. Generated composition remains NOT_TESTED.</td>
+</tr>
 <tr>
 <td><code>audio_duration_expand_channel_major_f32</code></td>
 <td>FP32 + int32 durations / forward only</td>

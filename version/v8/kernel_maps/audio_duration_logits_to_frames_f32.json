@@ -1,0 +1,49 @@
+{
+  "id": "audio_duration_logits_to_frames_f32",
+  "op": "audio_duration_logits_to_frames",
+  "operation_interface": "audio.duration_logits.sigmoid_sum_round_even.checked.fp32.v1",
+  "variant": "token_major_fp32_to_checked_i32_durations",
+  "selection": {"status": "candidate", "priority": 100, "equivalence_group": "audio_duration_logits_to_frames_fp32", "phases": ["prefill"]},
+  "quant": {"weight": "none", "activation": "fp32", "output": "i32"},
+  "inputs": [
+    {"name": "logits", "dtype": "fp32", "shape": ["T", "B"], "layout": "token_major_input_stride", "placement": "local", "access": "read", "storage_class": "activation", "consumption": "required"}
+  ],
+  "weights": [],
+  "outputs": [
+    {"name": "durations", "dtype": "i32", "shape": ["T"], "layout": "token_contiguous", "placement": "local", "access": "write", "storage_class": "activation", "consumption": "required"},
+    {"name": "expanded_frames", "dtype": "i32", "shape": [1], "layout": "scalar", "placement": "local", "access": "write", "storage_class": "activation", "consumption": "required"}
+  ],
+  "scratch": [],
+  "dims": ["input_elements", "tokens", "bins", "input_stride", "speed", "duration_capacity", "max_duration_per_token", "max_expanded_frames"],
+  "constraints": {"notes": "Finite logits, positive finite speed, tokens and bins > 0, stride >= bins. Total capacity and per-token duration are bounded by INT32_MAX. Inputs and outputs do not alias. The provider validates every logit and total extent before either output is written."},
+  "impl": {
+    "function": "audio_duration_logits_to_frames_f32",
+    "c_declaration": "int audio_duration_logits_to_frames_f32(const float *logits, size_t input_elements, size_t tokens, size_t bins, size_t input_stride, float speed, int32_t *durations, size_t duration_capacity, size_t max_duration_per_token, size_t max_expanded_frames, int32_t *expanded_frames);",
+    "sources": ["src/kernels/audio_duration_logits.c"]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [{
+    "contract_id": "audio_duration_logits_sigmoid_sum_round_even_fp32",
+    "status": "validated",
+    "phases": ["prefill"],
+    "function": "audio_duration_logits_to_frames_f32",
+    "explicit_selector": true,
+    "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "none"}},
+    "arithmetic": {"partial_accumulator": "fp32", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "serial"}
+  }],
+  "call_abi": {"version": 1, "params": [
+    {"name": "logits", "source": "activation:logits", "cast": "const float*", "ports": ["input:logits"]},
+    {"name": "input_elements", "source": "runtime:logit_elements"},
+    {"name": "tokens", "source": "runtime:phoneme_count"},
+    {"name": "bins", "source": "dim:bins"},
+    {"name": "input_stride", "source": "runtime:logit_stride"},
+    {"name": "speed", "source": "config:speed"},
+    {"name": "durations", "source": "output:durations", "cast": "int32_t*", "ports": ["output:durations"]},
+    {"name": "duration_capacity", "source": "runtime:duration_capacity"},
+    {"name": "max_duration_per_token", "source": "runtime:max_duration"},
+    {"name": "max_expanded_frames", "source": "runtime:expanded_capacity"},
+    {"name": "expanded_frames", "source": "output:expanded_frames", "cast": "int32_t*", "ports": ["output:expanded_frames"]}
+  ]},
+  "tests": {"unit": ["tests/test_v8_audio_duration_logits_oracle.py", "tests/test_v8_audio_duration_logits_live.py"], "oracle": "Pinned Kokoro 0.9.4 PyTorch 2.8.0+cpu predictor duration logits and exact int32 result; separately classified live PyTorch recomputation"},
+  "notes": "Caller-owned nonaliasing buffers. Inference only. The first fixed-utterance circuit declares speed in config; a per-request speed setting requires a separate generic scalar-entry binding. Expanded-frames output is a named runtime valid length, not an allocation. Actual model-graph composition remains NOT_TESTED."
+}
