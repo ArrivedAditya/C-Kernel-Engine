@@ -6,12 +6,17 @@ on:
       - '.github/workflows/tts-kernels.yml'
       - 'include/ckernel_tts.h'
       - 'include/ckernel_embedding_checked.h'
+      - 'include/ckernel_linear_checked.h'
       - 'src/kernels/embedding_three_table_layer_norm.c'
+      - 'src/kernels/linear_rows_checked.c'
       - 'tests/test_v8_bert_embedding_oracle.py'
       - 'tests/test_v8_bert_embedding_live.py'
       - 'tests/test_v8_kokoro_generated_embedding.py'
+      - 'tests/test_v8_kokoro_generated_projection.py'
+      - 'tests/test_v8_linear_rows_oracle.py'
       - 'version/v8/tts/reference/capture_bert_embedding.py'
       - 'version/v8/kernel_maps/embedding_three_table_layer_norm_f32.json'
+      - 'version/v8/kernel_maps/linear_rows_checked_f32.json'
       - 'include/ckernel_audio.h'
       - 'src/kernels/audio_kernels.c'
       - 'src/kernels/audio_lstm_scan.c'
@@ -70,12 +75,17 @@ on:
     paths:
       - 'include/ckernel_tts.h'
       - 'include/ckernel_embedding_checked.h'
+      - 'include/ckernel_linear_checked.h'
       - 'src/kernels/embedding_three_table_layer_norm.c'
+      - 'src/kernels/linear_rows_checked.c'
       - 'tests/test_v8_bert_embedding_oracle.py'
       - 'tests/test_v8_bert_embedding_live.py'
       - 'tests/test_v8_kokoro_generated_embedding.py'
+      - 'tests/test_v8_kokoro_generated_projection.py'
+      - 'tests/test_v8_linear_rows_oracle.py'
       - 'version/v8/tts/reference/capture_bert_embedding.py'
       - 'version/v8/kernel_maps/embedding_three_table_layer_norm_f32.json'
+      - 'version/v8/kernel_maps/linear_rows_checked_f32.json'
       - 'include/ckernel_audio.h'
       - 'src/kernels/audio_kernels.c'
       - 'src/kernels/audio_lstm_scan.c'
@@ -151,6 +161,8 @@ jobs:
             tests.test_v8_runtime_extent_lowering \
             tests.test_v8_checked_static_entry \
             tests.test_v8_kokoro_generated_embedding \
+            tests.test_v8_linear_rows_oracle \
+            tests.test_v8_kokoro_generated_projection \
             tests.test_v8_duration_logits_runtime_graph \
             tests.test_v8_duration_two_stream_runtime_graph \
             tests.test_v8_kokoro_shape_bounds \

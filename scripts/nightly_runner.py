@@ -726,6 +726,14 @@ TEST_SUITES = {
         "TTS Kokoro Generated Embedding and X-Ray Oracle", "kernels",
         ROOT / "tests" / "test_v8_kokoro_generated_embedding.py",
     ),
+    "tts_linear_rows_oracle": TestSuite(
+        "TTS Checked FP32 Linear Rows PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_linear_rows_oracle.py",
+    ),
+    "tts_kokoro_generated_projection": TestSuite(
+        "TTS Kokoro Generated Embedding and Projection X-Ray Oracle", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_generated_projection.py",
+    ),
     "tts_duration_logits_runtime_graph": TestSuite(
         "TTS Duration Logits Full v8 Lowering", "kernels",
         ROOT / "tests" / "test_v8_duration_logits_runtime_graph.py",

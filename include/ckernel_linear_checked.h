@@ -1,0 +1,16 @@
+#ifndef CKE_LINEAR_CHECKED_H
+#define CKE_LINEAR_CHECKED_H
+
+#include <stddef.h>
+
+/* Row-major Y = X W^T + bias. All buffers are caller owned and nonaliasing.
+ * Physical row strides may exceed logical widths. Rejection returns -1 before
+ * any output write. This scalar inference provider accumulates in FP64. */
+int linear_rows_checked_f32(
+    const float *input, size_t input_elements, size_t input_stride,
+    const float *weight, size_t weight_elements, size_t weight_stride,
+    const float *bias, size_t bias_elements,
+    float *output, size_t output_elements, size_t output_stride,
+    size_t rows, size_t input_channels, size_t output_channels);
+
+#endif
