@@ -135,5 +135,21 @@ class AudioDurationLogitsOracleTest(unittest.TestCase):
         self.assertEqual(output[0], -777)
         self.assertEqual(extent.value, 987654)
 
+    def test_large_integer_limit_does_not_round_up_in_float(self):
+        # FP32(16777219) rounds to 16777220. The rounded duration must still
+        # be checked against the exact integer capacity before either write.
+        status, output, extent = invoke(
+            self.fn, [0.0, 0.0], 1, 2, speed=1.0 / 16777220,
+            max_duration_per_token=16777219,
+            max_expanded_frames=16777220)
+        self.assertEqual(status, -2)
+        self.assertEqual(output, [-777])
+        self.assertEqual(extent, 987654)
+        self.assertEqual(
+            invoke(self.fn, [0.0, 0.0], 1, 2, speed=1.0 / 16777220,
+                   max_duration_per_token=16777220,
+                   max_expanded_frames=16777220),
+            (0, [16777220], 16777220))
+
 if __name__ == "__main__":
     unittest.main()

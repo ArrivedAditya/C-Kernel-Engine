@@ -128,6 +128,7 @@ jobs:
             tests.test_v8_audio_duration_logits_oracle.AudioDurationLogitsOracleTest.test_layout_ties_and_clamping \
             tests.test_v8_audio_duration_logits_oracle.AudioDurationLogitsOracleTest.test_rejections_leave_outputs_unchanged \
             tests.test_v8_audio_duration_logits_oracle.AudioDurationLogitsOracleTest.test_hostile_geometry_rejected_before_buffer_access \
+            tests.test_v8_audio_duration_logits_oracle.AudioDurationLogitsOracleTest.test_large_integer_limit_does_not_round_up_in_float \
             tests.test_v8_audio_istft_oracle.AudioIstftOracleTest.test_committed_torch_fixture \
             tests.test_v8_audio_istft_oracle.AudioIstftSafetyTest \
             tests.test_v8_audio_lstm_scan_oracle.AudioLstmScanOracleTest.test_committed_torch_fixture \

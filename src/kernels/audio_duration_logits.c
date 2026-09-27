@@ -31,9 +31,12 @@ static int token_frames(const float *logits, size_t bins, float speed,
         (fraction == 0.5f && fmodf(lower, 2.0f) != 0.0f))
         rounded += 1.0f;
     if (rounded < 1.0f) rounded = 1.0f;
-    if (rounded > (float)max_duration_per_token)
+    /* rounded is below 2^31, so the integer conversion is exact and safe.
+     * Compare integers: converting a large limit to float can round it up. */
+    const int32_t candidate = (int32_t)rounded;
+    if ((size_t)candidate > max_duration_per_token)
         return CK_AUDIO_EXTENT_LIMIT;
-    *frames = (int32_t)rounded;
+    *frames = candidate;
     return CK_AUDIO_EXTENT_OK;
 }
 
