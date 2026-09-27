@@ -25,9 +25,10 @@ make ck-session-v8
 
 A Python prototype may load that library with `ctypes` or `cffi`; a Rust server
 may bind the same C ABI. The host opens one generated model session, then calls
-`ck_session_v8_generate`. CKE performs circuit-derived chat formatting, native
-tokenization, model execution, generated stop/timestamp policy, and native
-detokenization. The callback receives each token ID and its UTF-8 bytes, which
+`ck_session_v8_generate`. For the live server, the selected Jinja sidecar
+renders the conversation and the session consumes that raw prompt. CKE then
+performs native tokenization, model execution, generated stop policy, and
+native detokenization. The callback receives each token ID and its UTF-8 bytes, which
 the HTTP layer can translate into response or SSE events.
 
 Sampling values such as `temperature` and `top_p` belong to each request. They
@@ -57,23 +58,33 @@ version/v8/scripts/cks-v8-run serve \
   --run /path/to/qwen38-agent-runtime \
   --context-len 16384 \
   --force-compile \
-  --tool-protocol qwen_xml \
   --model-name qwen38-27b-q4km
 ```
 
 The server reuses cached model bytes and regenerates the candidate runtime. On
 later `--no-build` starts it reads the compiled capacity from
 `layout_decode.json`; an explicit context larger than that plan is rejected.
-The explicit `qwen_xml` choice matches the inspected Qwen3.8 template's
-`<tool_call><function=...><parameter=...>` output. Other bundles must declare
-their actual tool protocol; a template mentioning tools does not enable tool
-calls automatically. Supported choices are `tagged_json`, `qwen_xml`, and
-`bare_json`. A `tool_protocol.json` sidecar may record the choice with schema
+Normal serving requires the converted `chat_template.jinja` before opening the
+native session. Intentional untemplated serving requires both
+`--no-chat-template` and `--allow-raw-prompt`; explicit serving overrides use
+`--chat-template-file` or `--chat-template-inline`.
+The native template's `qwen_xml` protocol recognizes
+`<tool_call><function=...><parameter=...>` output. The Qwen Code compatibility
+variant declares `qwen_code_xml` for the two XML envelopes observed in actual
+Qwen Code runs. Other bundles must declare their actual tool protocol; a
+template mentioning tools does not enable tool calls automatically. Supported
+choices are `tagged_json`, `qwen_xml`, `qwen_code_xml`, and `bare_json`.
+A `tool_protocol.json` sidecar records the choice with schema
 `cke.v8.tool_protocol.v1`, `protocol`, and the SHA-256 of the selected
 `chat_template.jinja` (or selected `additional_chat_templates/tool_use.jinja`)
 as `template_sha256`. A mismatched sidecar fails startup. Serving a converted
 bundle needs its BUMP, generated libraries, tokenizer, and template sidecars;
 the source GGUF is not needed for `--no-build`.
+
+For the pinned Qwen3.8 tool workload, see the
+[v8 serving runbook](https://c-kernel-engine.github.io/C-Kernel-Engine/v8-runbook.html#converted-jinja-serving)
+for the dedicated bundle setup, hash-bound Jinja variant, commands, nightly
+gates, and remaining native-tokenizer mismatch.
 
 Tool output is parsed only under the selected protocol. A template render
 error returns an explicit failure instead of silently switching prompt format.
@@ -91,6 +102,7 @@ OPENAI_MODEL=qwen38-27b-q4km \
 QWEN_CODE_MAX_OUTPUT_TOKENS=2048 \
 QWEN_CODE_SYSTEM_SETTINGS_PATH="$CKE_ROOT/server/qwen-code/interactive.settings.json" \
 qwen --bare \
+  --auth-type openai-responses \
   --system-prompt 'Use read_file exactly once when asked, then answer without another tool call.' \
   --allowed-tools read_file \
   --exclude-tools edit,notebook_edit,run_shell_command,get_goal,update_goal \
@@ -98,12 +110,14 @@ qwen --bare \
   --model qwen38-27b-q4km
 ```
 
-Qwen Code 0.21.5 ignores `--core-tools` in bare mode, so the command explicitly
+Qwen Code bare mode ignores `--core-tools`, so the command explicitly
 removes the other bare-mode tools. The interactive profile declares 16,384
 context tokens, a 2,048-token output allowance, and a 30-minute wall deadline.
-The real-model pilot certifies a two-turn `read_file` workflow. Editing, shell
-execution, and concurrent sessions require separate permission and reliability
-validation.
+The cached real-model pilot completed a server-issued `read_file` call and a
+separate bounded `read_file` → `edit` task. A `write_file` request failed because
+that tool was absent from Qwen Code's advertised tool set; the server rejected
+the unknown call. Shell execution, file creation, and concurrent sessions
+require separate permission and reliability validation.
 
 For a generated runtime with 262,144-token capacity, select the overnight
 profile instead:
@@ -154,6 +168,10 @@ Run the schema tests with:
 python3 -m pip install -r server/requirements.txt
 make test-server-schema
 ```
+
+`make test-v8-serve-native-jinja` checks the pinned Jinja request and
+continuation contract. Its scope and the model-backed nightly gate are
+explained in the v8 serving runbook linked above.
 
 Use `cks-v8-run serve` as the model lifecycle entry point rather than adding
 server flags to `ck_chat.py` or `ck_run_v8.py`.

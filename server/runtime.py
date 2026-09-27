@@ -61,21 +61,23 @@ def load_manifest_templates(
     sidecar = run_dir / "chat_template.jinja"
     if sidecar.is_file():
         try:
-            txt = sidecar.read_text(encoding="utf-8")
-            if txt.strip():
-                chat_template = txt
-        except OSError:
-            pass
+            txt = sidecar.read_bytes().decode("utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise ValueError(f"cannot read native chat template {sidecar}: {exc}") from exc
+        if not txt.strip():
+            raise ValueError(f"native chat template is empty: {sidecar}")
+        chat_template = txt
     additional_dir = run_dir / "additional_chat_templates"
     if additional_dir.is_dir():
         collected: dict[str, str] = {}
         for jinja_file in additional_dir.glob("*.jinja"):
             try:
-                txt = jinja_file.read_text(encoding="utf-8")
-                if txt.strip():
-                    collected[jinja_file.stem] = txt
-            except OSError:
-                continue
+                txt = jinja_file.read_bytes().decode("utf-8")
+            except (OSError, UnicodeError) as exc:
+                raise ValueError(f"cannot read chat template {jinja_file}: {exc}") from exc
+            if not txt.strip():
+                raise ValueError(f"chat template is empty: {jinja_file}")
+            collected[jinja_file.stem] = txt
         if collected:
             chat_templates = collected
     return chat_template, chat_templates, chat_contract
@@ -102,7 +104,7 @@ def load_tool_protocol(
     if not isinstance(document, dict) or document.get("schema") != "cke.v8.tool_protocol.v1":
         raise ValueError(f"invalid tool protocol sidecar schema: {path}")
     protocol = document.get("protocol")
-    if protocol not in {"tagged_json", "bare_json", "qwen_xml"}:
+    if protocol not in {"tagged_json", "bare_json", "qwen_xml", "qwen_code_xml"}:
         raise ValueError(f"unsupported tool protocol {protocol!r} in {path}")
     selected = None
     if isinstance(chat_templates, dict):

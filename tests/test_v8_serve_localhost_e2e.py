@@ -123,6 +123,19 @@ def test_cleanup_failure_cannot_preserve_success() -> None:
     assert "port remains open" in str(failure)
 
 
+def test_model_backed_e2e_requires_converted_jinja_sidecar() -> None:
+    MODULE._require_native_jinja_log(
+        "Loaded chat_template (8952 chars) from chat_template.jinja\n"
+    )
+    with pytest.raises(RuntimeError, match="did not load"):
+        MODULE._require_native_jinja_log("Serving in live mode\n")
+    with pytest.raises(RuntimeError, match="template override"):
+        MODULE._require_native_jinja_log(
+            "Using explicit serving Jinja override\n"
+            "Loaded chat_template (8952 chars) from chat_template.jinja\n"
+        )
+
+
 def test_stored_response_must_match_stream_and_terminal() -> None:
     doc = {
         "id": "resp_test",

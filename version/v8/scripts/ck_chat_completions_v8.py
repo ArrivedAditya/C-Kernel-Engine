@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from server.schemas.chat import CreateChatCompletionRequest
 from server.schemas.response import CreateResponseRequest, Reasoning
@@ -425,7 +426,7 @@ def add_chat_completions_route(
     ):
         request_started = time.perf_counter()
         responses_body = _to_responses_request(body)
-        response = create_response(responses_body, request)
+        response = await run_in_threadpool(create_response, responses_body, request)
         if body.stream:
             if not isinstance(response, StreamingResponse):
                 raise HTTPException(

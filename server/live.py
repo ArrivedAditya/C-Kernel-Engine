@@ -27,11 +27,13 @@ import re
 import threading
 import time
 import uuid
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+import anyio
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
@@ -557,7 +559,7 @@ def _has_tool_support(
         isinstance(chat_templates, dict)
         and any(isinstance(value, str) and value.strip() for value in chat_templates.values())
     )
-    return has_template and tool_protocol in {"tagged_json", "bare_json", "qwen_xml"}
+    return has_template and tool_protocol in {"tagged_json", "bare_json", "qwen_xml", "qwen_code_xml"}
 
 
 #: Tool-call syntax emitted by the model-native Jinja template: Qwen3-style
@@ -566,6 +568,7 @@ _TOOL_SYNTAX_TOOL_CALL_JSON = "tool_call_json"
 #: Plain JSON tool calls with no template-declared tag wrapper.
 _TOOL_SYNTAX_JSON = "json"
 _TOOL_SYNTAX_QWEN_XML = "qwen_xml"
+_TOOL_SYNTAX_QWEN_CODE_XML = "qwen_code_xml"
 _TOOL_SYNTAX_NONE = "none"
 
 
@@ -582,6 +585,8 @@ def _tool_syntax_for_protocol(protocol: str | None) -> str:
         return _TOOL_SYNTAX_JSON
     if protocol == "qwen_xml":
         return _TOOL_SYNTAX_QWEN_XML
+    if protocol == "qwen_code_xml":
+        return _TOOL_SYNTAX_QWEN_CODE_XML
     raise ValueError(f"unsupported tool protocol {protocol!r}")
 
 
@@ -663,6 +668,112 @@ def _render_with_chat_templates(
         ) from exc
 
 
+_TOOL_SCHEMA_TYPES = {"string", "integer", "number", "boolean", "object", "array", "null"}
+_TOOL_SCHEMA_KEYS = {
+    "type", "properties", "required", "additionalProperties", "items",
+    "enum", "description", "title", "default", "minimum", "maximum",
+    "minLength", "maxLength",
+}
+
+
+def _validate_tool_schema_subset(schema: Any, path: str = "parameters") -> None:
+    """Reject schemas the server cannot validate before a model sees them."""
+    if not isinstance(schema, dict):
+        raise ValueError(f"{path} must be an object schema")
+    unsupported = set(schema) - _TOOL_SCHEMA_KEYS
+    if unsupported:
+        raise ValueError(f"{path} has unsupported schema keywords: {', '.join(sorted(unsupported))}")
+    kind = schema.get("type")
+    kinds = kind if isinstance(kind, list) else [kind]
+    if kind is not None and (
+        not kinds or any(not isinstance(item, str) or item not in _TOOL_SCHEMA_TYPES for item in kinds)
+        or len(set(kinds)) != len(kinds)
+    ):
+        raise ValueError(f"{path} has unsupported type {kind!r}")
+    if "enum" in schema and not isinstance(schema["enum"], list):
+        raise ValueError(f"{path}.enum must be an array")
+    for bound in ("minimum", "maximum"):
+        if bound in schema:
+            value = schema[bound]
+            if kind is None or not ({"integer", "number"} & set(kinds)):
+                raise ValueError(f"{path}.{bound} requires a numeric type")
+            if type(value) not in (int, float) or not math.isfinite(value):
+                raise ValueError(f"{path}.{bound} must be a finite number")
+    if "minimum" in schema and "maximum" in schema and schema["minimum"] > schema["maximum"]:
+        raise ValueError(f"{path}.minimum exceeds maximum")
+    for bound in ("minLength", "maxLength"):
+        if bound in schema:
+            value = schema[bound]
+            if kind is None or "string" not in kinds:
+                raise ValueError(f"{path}.{bound} requires a string type")
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{path}.{bound} must be a nonnegative integer")
+    if "minLength" in schema and "maxLength" in schema and schema["minLength"] > schema["maxLength"]:
+        raise ValueError(f"{path}.minLength exceeds maxLength")
+    if "properties" in schema:
+        if kind not in (None, "object") or not isinstance(schema["properties"], dict):
+            raise ValueError(f"{path}.properties requires an object schema")
+        for key, child in schema["properties"].items():
+            if not isinstance(key, str):
+                raise ValueError(f"{path}.properties keys must be strings")
+            _validate_tool_schema_subset(child, f"{path}.properties.{key}")
+    if "required" in schema:
+        required = schema["required"]
+        if kind not in (None, "object") or not isinstance(required, list) or not all(
+            isinstance(key, str) for key in required
+        ):
+            raise ValueError(f"{path}.required must be an array of property names")
+    if "additionalProperties" in schema and not isinstance(schema["additionalProperties"], bool):
+        raise ValueError(f"{path}.additionalProperties must be boolean")
+    if "items" in schema:
+        if kind not in (None, "array"):
+            raise ValueError(f"{path}.items requires an array schema")
+        _validate_tool_schema_subset(schema["items"], f"{path}.items")
+
+
+def _tool_value_matches_schema(value: Any, schema: dict[str, Any]) -> bool:
+    kind = schema.get("type")
+    kinds = kind if isinstance(kind, list) else [kind]
+    matches = {
+        "string": lambda: isinstance(value, str),
+        "integer": lambda: type(value) is int,
+        "number": lambda: type(value) is int or (type(value) is float and math.isfinite(value)),
+        "boolean": lambda: type(value) is bool,
+        "object": lambda: isinstance(value, dict),
+        "array": lambda: isinstance(value, list),
+        "null": lambda: value is None,
+    }
+    if kind is not None and not any(matches[item]() for item in kinds):
+        return False
+    if "enum" in schema and value not in schema["enum"]:
+        return False
+    if type(value) in (int, float):
+        if "minimum" in schema and value < schema["minimum"]:
+            return False
+        if "maximum" in schema and value > schema["maximum"]:
+            return False
+    if isinstance(value, str):
+        if "minLength" in schema and len(value) < schema["minLength"]:
+            return False
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            return False
+    if isinstance(value, dict):
+        properties = schema.get("properties", {})
+        if any(key not in value for key in schema.get("required", [])):
+            return False
+        if schema.get("additionalProperties") is False and any(key not in properties for key in value):
+            return False
+        if any(
+            not _tool_value_matches_schema(item, properties[key])
+            for key, item in value.items() if key in properties
+        ):
+            return False
+    if isinstance(value, list) and "items" in schema:
+        if any(not _tool_value_matches_schema(item, schema["items"]) for item in value):
+            return False
+    return True
+
+
 def _extract_tool_calls_from_text(
     text: str,
     allowed_names: set[str] | None,
@@ -678,17 +789,53 @@ def _extract_tool_calls_from_text(
     """
     if not text or not text.strip():
         return [], None, None
+    for name, schema in (tool_parameters or {}).items():
+        try:
+            _validate_tool_schema_subset(schema, f"tool {name!r} parameters")
+        except ValueError as exc:
+            return [], "malformed", str(exc)
 
     def strict_json_loads(source: str) -> Any:
         def reject_constant(value: str) -> Any:
             raise ValueError(f"nonfinite JSON value {value}")
 
-        return json.loads(source, parse_constant=reject_constant)
+        def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate JSON key {key!r}")
+                result[key] = value
+            return result
+
+        return json.loads(
+            source, parse_constant=reject_constant,
+            object_pairs_hook=reject_duplicate_keys,
+        )
+
+    def declared_parameter_value(name: str, key: str, value: str) -> Any:
+        declared = (tool_parameters or {}).get(name, {})
+        properties = declared.get("properties", {}) if isinstance(declared, dict) else {}
+        property_schema = properties.get(key, {}) if isinstance(properties, dict) else {}
+        expected_type = property_schema.get("type") if isinstance(property_schema, dict) else None
+        types = expected_type if isinstance(expected_type, list) else [expected_type]
+        if expected_type is None or types == ["string"]:
+            return value
+        if "null" in types and value.strip() == "null":
+            return None
+        if "string" in types:
+            return value
+        try:
+            parsed = strict_json_loads(value.strip())
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(f"invalid {expected_type} tool parameter {key!r}") from exc
+        if not _tool_value_matches_schema(parsed, {"type": expected_type}):
+            raise ValueError(f"invalid {expected_type} tool parameter {key!r}")
+        return parsed
 
     stripped = text.strip()
     if tool_syntax == _TOOL_SYNTAX_NONE:
         return [], None, None
-    if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML}:
+    if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML}:
         tool_blocks: list[str] = []
         for m in re.finditer(
             r"<tool_call>(.*?)</tool_call>", text, flags=re.DOTALL | re.IGNORECASE
@@ -705,7 +852,39 @@ def _extract_tool_calls_from_text(
     else:
         tool_blocks = []
     candidates: list[str | dict[str, Any]] = []
-    if tool_blocks and tool_syntax == _TOOL_SYNTAX_QWEN_XML:
+    if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and stripped.startswith("<function_calls"):
+        try:
+            if "<!" in stripped:
+                raise ValueError("XML declarations are not allowed in tool calls")
+            root = ET.fromstring(stripped)
+            if root.tag != "function_calls" or root.attrib or (root.text or "").strip():
+                raise ValueError("expected a function_calls root")
+            if not len(root):
+                raise ValueError("empty function_calls envelope")
+            for invoke in root:
+                if invoke.tag != "invoke" or set(invoke.attrib) != {"name"} or (invoke.text or "").strip():
+                    raise ValueError("invalid invoke element")
+                name = invoke.attrib["name"]
+                if not re.fullmatch(r"[A-Za-z_][\w.-]*", name):
+                    raise ValueError("invalid function name")
+                parameters: dict[str, Any] = {}
+                for param in invoke:
+                    if param.tag != "parameter" or set(param.attrib) != {"name"} or len(param):
+                        raise ValueError("invalid parameter element")
+                    key = param.attrib["name"]
+                    if not re.fullmatch(r"[A-Za-z_][\w.-]*", key) or key in parameters:
+                        raise ValueError(f"duplicate or invalid tool parameter {key!r}")
+                    parameters[key] = declared_parameter_value(name, key, param.text or "")
+                    if (param.tail or "").strip():
+                        raise ValueError("text outside a parameter element")
+                if (invoke.tail or "").strip():
+                    raise ValueError("text outside an invoke element")
+                candidates.append({"name": name, "arguments": parameters})
+        except (ET.ParseError, ValueError) as exc:
+            return [], "malformed", f"malformed function_calls XML: {exc}"
+    elif tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and "<function_calls" in stripped:
+        return [], "malformed", "function_calls XML must be the entire response"
+    if tool_blocks and tool_syntax in {_TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML}:
         for block in tool_blocks:
             match = re.fullmatch(
                 r"\s*<function=([A-Za-z_][\w.-]*)>(.*?)</function>\s*",
@@ -722,29 +901,17 @@ def _extract_tool_calls_from_text(
                 key, value = param.groups()
                 if key in parameters:
                     return [], "malformed", f"duplicate tool parameter {key!r}"
-                value = value.strip()
-                declared = (tool_parameters or {}).get(name, {})
-                properties = declared.get("properties", {}) if isinstance(declared, dict) else {}
-                property_schema = properties.get(key, {}) if isinstance(properties, dict) else {}
-                expected_type = property_schema.get("type") if isinstance(property_schema, dict) else None
-                if isinstance(expected_type, str) and expected_type in {"integer", "number", "boolean", "object", "array", "null"}:
-                    try:
-                        parsed = strict_json_loads(value)
-                    except (json.JSONDecodeError, ValueError):
-                        return [], "malformed", f"invalid {expected_type} tool parameter {key!r}"
-                    valid = {
-                        "integer": lambda item: type(item) is int,
-                        "number": lambda item: type(item) is int or (type(item) is float and math.isfinite(item)),
-                        "boolean": lambda item: type(item) is bool,
-                        "object": lambda item: isinstance(item, dict),
-                        "array": lambda item: isinstance(item, list),
-                        "null": lambda item: item is None,
-                    }[expected_type](parsed)
-                    if not valid:
-                        return [], "malformed", f"invalid {expected_type} tool parameter {key!r}"
-                    parameters[key] = parsed
-                else:
-                    parameters[key] = value
+                # Native Qwen XML commonly puts one framing newline on each
+                # side of the value. Remove only that pair; spaces and any
+                # further newlines remain part of string arguments.
+                if value.startswith("\r\n") and value.endswith("\r\n"):
+                    value = value[2:-2]
+                elif value.startswith("\n") and value.endswith("\n"):
+                    value = value[1:-1]
+                try:
+                    parameters[key] = declared_parameter_value(name, key, value)
+                except ValueError as exc:
+                    return [], "malformed", str(exc)
             if parameter_pattern.sub("", body).strip():
                 return [], "malformed", "malformed Qwen XML tool parameters"
             candidates.append({"name": name, "arguments": parameters})
@@ -810,6 +977,8 @@ def _extract_tool_calls_from_text(
                     unknown = sorted(set(parsed_args) - set(properties))
                     if unknown:
                         return [], "malformed", f"tool {name!r} has unknown arguments: {', '.join(unknown)}"
+                if not _tool_value_matches_schema(parsed_args, contract):
+                    return [], "malformed", f"tool {name!r} arguments violate the declared schema"
             tool_calls.append(
                 {
                     "name": name,
@@ -838,7 +1007,9 @@ def _strip_tool_json_from_text(
         except json.JSONDecodeError:
             pass
     remaining = text
-    if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML}:
+    if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and stripped.startswith("<function_calls"):
+        return ""
+    if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML}:
         remaining = re.sub(
             r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL | re.IGNORECASE
         )
@@ -855,8 +1026,10 @@ def _classify_stream_mode(
     if stripped.startswith("{") or stripped.startswith("["):
         return "tool" if tool_syntax == _TOOL_SYNTAX_JSON else "text"
     if stripped.startswith("<"):
+        if stripped.lower().startswith("<function_calls"):
+            return "tool" if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML else "text"
         if stripped.lower().startswith("<tool_call"):
-            return "tool" if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML} else "text"
+            return "tool" if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML} else "text"
         return "text"
     return "text"
 
@@ -880,6 +1053,7 @@ def create_app(
     chat_template: str | None = None,
     chat_templates: dict[str, str] | None = None,
     tool_protocol: str | None = None,
+    allow_untemplated: bool = False,
     cancel_wait_seconds: float = 10.0,
     viz_html: str | None = None,
     extra_route_registrar: Callable[[APIRouter, Callable[..., Any]], None] | None = None,
@@ -891,6 +1065,13 @@ def create_app(
     ``(router, create_response)`` before the app is built so hosts can attach
     compatibility routes (e.g. Chat Completions) against the canonical handler.
     """
+
+    if not isinstance(chat_template, str) or not chat_template.strip():
+        if not allow_untemplated:
+            raise ValueError(
+                "normal chat serving requires a nonempty native Jinja template; "
+                "enable untemplated raw serving explicitly"
+            )
 
     router = APIRouter()
     response_store: OrderedDict[str, dict[str, Any]] = OrderedDict()
@@ -935,6 +1116,15 @@ def create_app(
                 501, f"unsupported tool types: {', '.join(unsupported_types)}",
                 err_type="invalid_request_error", code="unsupported_tool_type",
             )
+        for tool in _effective_tools(body):
+            if getattr(tool, "name", None):
+                try:
+                    _validate_tool_schema_subset(tool.parameters, f"tool {tool.name!r} parameters")
+                except ValueError as exc:
+                    raise _harness_error(
+                        400, str(exc), err_type="invalid_request_error",
+                        code="unsupported_tool_schema",
+                    ) from exc
         if (
             body.tools
             and _effective_tools(body)
@@ -1022,6 +1212,11 @@ def create_app(
                     422, str(exc), err_type="invalid_request_error",
                     code="template_render_failed",
                 ) from exc
+            if jinja_rendered is not None and not jinja_rendered.strip():
+                raise _harness_error(
+                    422, "selected chat template rendered an empty prompt",
+                    err_type="invalid_request_error", code="template_render_failed",
+                )
         requires_role_rendering = any(
             m.get("role") != "user" or m.get("tool_calls") for m in messages
         )
@@ -1997,13 +2192,46 @@ def create_app(
         non_stream_reasoning_id = (
             f"rsn_{uuid.uuid4().hex[:24]}" if think_enabled else None
         )
+        disconnect_cancelled = threading.Event()
+        monitor_stop = threading.Event()
+
+        async def _event_loop_token():
+            return anyio.lowlevel.current_token()
+
+        try:
+            loop_token = anyio.from_thread.run(_event_loop_token)
+        except RuntimeError:
+            loop_token = None
+
+        def _watch_disconnect():
+            while not monitor_stop.wait(0.1):
+                try:
+                    disconnected = anyio.from_thread.run(
+                        request.is_disconnected, token=loop_token
+                    )
+                except Exception:
+                    return
+                if disconnected and not monitor_stop.is_set():
+                    disconnect_cancelled.set()
+                    try:
+                        session.cancel()
+                    except Exception:
+                        pass
+                    return
+
+        monitor_thread = None
+        if loop_token is not None:
+            monitor_thread = threading.Thread(
+                target=_watch_disconnect, name="cke-request-disconnect", daemon=True
+            )
+            monitor_thread.start()
         try:
             try:
 
                 def _collect(_tid, text):
                     if text:
                         chunks.append(text)
-                    return 0
+                    return -1 if disconnect_cancelled.is_set() else 0
 
                 result = session.generate(
                     None,
@@ -2062,6 +2290,9 @@ def create_app(
                     _log_performance(model, err_resp.get("performance"))
                 return err_resp
         finally:
+            monitor_stop.set()
+            if monitor_thread is not None:
+                monitor_thread.join(timeout=1.0)
             _flight_lock.release()
         text = truncate_stop_markers("".join(chunks), all_stop_markers)
         thinking = None
@@ -2299,6 +2530,13 @@ def create_live_app_from_run_dir(
 
     run_dir = Path(run_dir).expanduser().resolve()
     chat_template, chat_templates, contract = load_manifest_templates(run_dir)
+    if not chat_template and not kwargs.get("allow_untemplated", False):
+        raise ValueError(
+            f"normal chat serving requires {run_dir / 'chat_template.jinja'} "
+            "before opening the native session"
+        )
+    if not chat_template:
+        kwargs["flags"] = int(kwargs.get("flags", 0)) | CK_SESSION_REQUEST_RAW_PROMPT
     sidecar_protocol = load_tool_protocol(run_dir, chat_template, chat_templates)
     explicit_protocol = kwargs.pop("tool_protocol", None)
     if explicit_protocol is not None and sidecar_protocol is not None and explicit_protocol != sidecar_protocol:

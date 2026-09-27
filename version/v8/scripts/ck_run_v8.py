@@ -1217,12 +1217,33 @@ def step_convert_gguf(
     manifest_path = output_dir / "weights_manifest.json"
     if weights_path.exists() and config_path.exists() and manifest_path.exists() and not force:
         log(f"  Using cached weights at {weights_path}", C_DIM)
-        if not (output_dir / "chat_template.jinja").is_file():
-            log(
-                "  Warning: chat_template.jinja missing in cached run dir; "
-                "rebuild with --force-convert to emit the GGUF-native sidecar",
-                C_DIM,
+        from convert_gguf_to_bump_v8 import read_native_chat_template_from_gguf
+
+        native = read_native_chat_template_from_gguf(str(gguf_path))
+        sidecar = output_dir / "chat_template.jinja"
+        if native is not None:
+            native_bytes = native.encode("utf-8")
+            if sidecar.is_file():
+                if sidecar.read_bytes() != native_bytes:
+                    raise RuntimeError(
+                        f"cached chat template {sidecar} differs from GGUF source {gguf_path}; "
+                        "rebuild with --force-convert"
+                    )
+            else:
+                with tempfile.NamedTemporaryFile(
+                    mode="wb", dir=output_dir,
+                    prefix=".chat-template-", suffix=".jinja", delete=False,
+                ) as staged:
+                    staged.write(native_bytes)
+                    staged_path = Path(staged.name)
+                os.replace(staged_path, sidecar)
+                log(f"  Restored GGUF-native chat template at {sidecar}", C_DIM)
+        elif sidecar.is_file():
+            raise RuntimeError(
+                f"cached chat template {sidecar} has no tokenizer.chat_template in {gguf_path}"
             )
+        else:
+            log("  GGUF contains no native chat template sidecar", C_DIM)
         return weights_path, config_path, manifest_path
     output_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
