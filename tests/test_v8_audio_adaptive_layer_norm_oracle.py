@@ -231,6 +231,7 @@ class AdaptiveLayerNormOracleTest(unittest.TestCase):
                 "live_torch": torch.__version__,
                 "python": platform.python_version(),
                 "machine": platform.machine(),
+                "host_node": platform.node(),
                 "processor": platform.processor(),
                 "torch_cpu_capability": capability() if callable(capability) else None,
                 "aten_cpu_capability_env": os.environ.get("ATEN_CPU_CAPABILITY"),

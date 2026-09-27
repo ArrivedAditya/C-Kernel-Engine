@@ -790,6 +790,7 @@ class AudioEncoderContractTests(unittest.TestCase):
             all(
                 "-c .github/requirements-nightly-constraints.txt" in line
                 or "-c ${{ matrix.constraints }}" in line
+                or "-c .github/requirements-nightly-torch28-constraints.txt" in line
                 for line in dependency_installs
             ),
             "every nightly dependency install must use the pinned constraints file",
@@ -811,6 +812,7 @@ class AudioEncoderContractTests(unittest.TestCase):
         self.assertIn("CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages-default.json",
                       workflow)
         self.assertIn("ATEN_CPU_CAPABILITY: default", workflow)
+        self.assertIn("build/torch28-reference/bin/python -m pip install", workflow)
         self.assertIn("name: tts-adaln-torch-${{ matrix.torch_version }}-stages",
                       workflow)
         self.assertIn("--index-url https://download.pytorch.org/whl/cpu",

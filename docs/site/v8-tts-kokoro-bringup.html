@@ -1558,7 +1558,9 @@ cause remains unproven. The nightly workflow runs direct native comparisons
 against pinned CPU wheels for both versions and uploads projection, normalized
 and final-output reference stages with runtime settings. Each version also runs
 with controlled default CPU dispatch on the same runner, so a backend-path
-effect can be distinguished from a version label. Fixture-versus-live
+effect can be distinguished from a version label. The PyTorch 2.12 job also
+runs an isolated 2.8 environment on that same host and publishes the first
+different reference stage under controlled dispatch. Fixture-versus-live
 keeps its original 1e-7 bound, so the Xeon drift remains an unresolved failing
 case; the native-versus-oracle bound remains 5e-6. If a
 future model requires another reduction order, it needs another kernel and

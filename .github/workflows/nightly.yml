@@ -59,6 +59,67 @@ jobs:
           CKE_EXPECTED_TORCH_VERSION: ${{ matrix.torch_version }}
           CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages-default.json
         run: python -m unittest tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_torch_oracle tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_production_geometry -v
+      - name: Install PyTorch 2.8 alongside 2.12 for paired reference capture
+        if: always() && matrix.torch_version == '2.12.1'
+        run: |
+          python -m venv build/torch28-reference
+          build/torch28-reference/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu -c .github/requirements-nightly-torch28-constraints.txt torch
+      - name: Capture PyTorch 2.8 under the same CPU dispatch
+        if: always() && matrix.torch_version == '2.12.1'
+        env:
+          ATEN_CPU_CAPABILITY: default
+          CKE_EXPECTED_TORCH_VERSION: '2.8.0'
+          CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages-paired-28-default.json
+        run: build/torch28-reference/bin/python -m unittest tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_torch_oracle -v
+      - name: Compare same-host reference stages
+        if: always() && matrix.torch_version == '2.12.1'
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path('build')
+          old = json.loads((root / 'tts-adaln-reference-stages-paired-28-default.json').read_text())
+          new = json.loads((root / 'tts-adaln-reference-stages-default.json').read_text())
+          if old['host_node'] != new['host_node']:
+              raise SystemExit('paired references did not run on the same host')
+          if old['aten_cpu_capability_env'] != 'default' or new['aten_cpu_capability_env'] != 'default':
+              raise SystemExit('paired references did not use controlled CPU dispatch')
+          if old['torch_threads'] != new['torch_threads']:
+              raise SystemExit('paired references used different thread counts')
+
+          def flat(value):
+              if isinstance(value, list):
+                  return [item for part in value for item in flat(part)]
+              return [value]
+
+          stages = {}
+          first = None
+          for stage in ('projection', 'normalized', 'output'):
+              worst = (0.0, None)
+              for case_index, (left, right) in enumerate(zip(old['cases'], new['cases'])):
+                  if left['shape'] != right['shape']:
+                      raise SystemExit('paired reference shapes differ')
+                  left_values, right_values = flat(left[stage]), flat(right[stage])
+                  if len(left_values) != len(right_values):
+                      raise SystemExit('paired reference stage lengths differ')
+                  values = zip(left_values, right_values)
+                  for index, (a, b) in enumerate(values):
+                      error = abs(a - b)
+                      if error > worst[0]:
+                          worst = (error, [case_index, index, a, b])
+              stages[stage] = {'max_abs': worst[0], 'worst': worst[1]}
+              if first is None and worst[0] != 0.0:
+                  first = stage
+          report = {'schema': 'cke.tts_adaln_paired_stages.v1',
+                    'host_node': old['host_node'],
+                    'versions': [old['live_torch'], new['live_torch']],
+                    'dispatch': 'default', 'first_divergent_stage': first,
+                    'stages': stages}
+          (root / 'tts-adaln-reference-stages-paired-comparison.json').write_text(
+              json.dumps(report, indent=2) + '\n')
+          print(json.dumps(report, indent=2))
+          PY
       - name: Upload versioned reference stages
         if: always()
         uses: actions/upload-artifact@v4
