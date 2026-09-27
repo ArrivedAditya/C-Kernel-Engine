@@ -806,6 +806,10 @@ class AudioEncoderContractTests(unittest.TestCase):
             self.assertIn(f"torch_version: '{version}'", workflow)
         self.assertIn("CKE_EXPECTED_TORCH_VERSION: ${{ matrix.torch_version }}",
                       workflow)
+        self.assertIn("CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages.json",
+                      workflow)
+        self.assertIn("name: tts-adaln-torch-${{ matrix.torch_version }}-stages",
+                      workflow)
         self.assertIn("--index-url https://download.pytorch.org/whl/cpu",
                       workflow)
         parsed = nightly.parse_sub_tests(

@@ -526,8 +526,10 @@ the normalized value to FP32 before applying <code>(1+gamma)*x+beta</code>. The
 committed fixture was captured with PyTorch 2.8.0. A PyTorch 2.12.1 CPU nightly
 run differed from that fixture by 1.19e-7 at one sample; the differing PyTorch
 stage has not been isolated. The nightly workflow runs direct native comparisons
-against pinned CPU wheels for both versions. It reports fixture-versus-live drift
-with a separate 1e-6 bound and retains the native-versus-oracle 5e-6 bound. If a
+against pinned CPU wheels for both versions and uploads projection, normalized
+and final-output reference stages with runtime settings. Fixture-versus-live
+keeps its original 1e-7 bound, so the Xeon drift remains an unresolved failing
+case; the native-versus-oracle bound remains 5e-6. If a
 future model requires another reduction order, it needs another kernel and
 canonical numerical contract so X-Ray can identify the selected arithmetic;
 changing this provider silently would erase that evidence.</p>

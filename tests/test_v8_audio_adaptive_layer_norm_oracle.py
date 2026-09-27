@@ -4,6 +4,7 @@ import ctypes
 import json
 import math
 import os
+import platform
 from pathlib import Path
 import subprocess
 import tempfile
@@ -184,18 +185,21 @@ class AdaptiveLayerNormOracleTest(unittest.TestCase):
         self.assert_pinned_torch(torch)
         fixture = json.loads(FIXTURE.read_text())
         # The committed oracle was generated with PyTorch 2.8.0. The pinned
-        # nightly PyTorch version and CPU backends can differ by a few FP32
-        # rounding steps; this cross-version check uses a tighter bound than
-        # the independent native-kernel parity contract (5e-6).
-        cross_version_tolerance = 1e-6
+        # nightly version/backend has shown unexplained FP32 drift on Xeon.
+        # Keep the original bound until stage captures identify the cause.
+        cross_version_tolerance = 1e-7
+        stage_cases = []
+        comparisons = []
         for case in fixture["cases"]:
             style = torch.tensor(case["style"], dtype=torch.float32)
             weight = torch.tensor(case["projection_weight"], dtype=torch.float32)
             bias = torch.tensor(case["projection_bias"], dtype=torch.float32)
             x = torch.tensor(case["input"], dtype=torch.float32)
-            gamma, beta = F.linear(style, weight, bias).chunk(2)
-            oracle = (1 + gamma) * F.layer_norm(
-                x, (case["channels"],), eps=case["epsilon"]) + beta
+            projection = F.linear(style, weight, bias)
+            gamma, beta = projection.chunk(2)
+            normalized = F.layer_norm(
+                x, (case["channels"],), eps=case["epsilon"])
+            oracle = (1 + gamma) * normalized + beta
             live_values = flat(oracle.tolist())
             fixture_values = flat(case["output"])
             self.assertEqual(len(live_values), len(fixture_values))
@@ -207,6 +211,36 @@ class AdaptiveLayerNormOracleTest(unittest.TestCase):
                 error = abs(actual - expected)
                 if error > worst[0]:
                     worst = (error, (index, actual, expected))
+            stage_cases.append({
+                "shape": [case["tokens"], case["channels"], case["style_dim"]],
+                "projection": projection.tolist(),
+                "normalized": normalized.tolist(),
+                "output": oracle.tolist(),
+                "fixture_vs_live_max_abs": worst[0],
+                "fixture_vs_live_worst": worst[1],
+            })
+            comparisons.append((case, oracle.tolist(), worst))
+        report_path = os.environ.get("CKE_ADALN_STAGE_REPORT")
+        if report_path:
+            capability = getattr(torch.backends.cpu, "get_cpu_capability", None)
+            report = {
+                "schema": "cke.tts_adaln_reference_stages.v1",
+                "provider": "audio_adaptive_layer_norm_f32",
+                "numerical_contract": "audio_adaptive_layer_norm_style_linear_fp32",
+                "fixture_torch": fixture["torch_version"],
+                "live_torch": torch.__version__,
+                "python": platform.python_version(),
+                "machine": platform.machine(),
+                "processor": platform.processor(),
+                "torch_cpu_capability": capability() if callable(capability) else None,
+                "torch_threads": torch.get_num_threads(),
+                "mkldnn_enabled": torch.backends.mkldnn.enabled,
+                "cases": stage_cases,
+            }
+            path = Path(report_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(report, indent=2) + "\n")
+        for case, live_output, worst in comparisons:
             self.assertLessEqual(
                 worst[0], cross_version_tolerance,
                 f"fixture torch={fixture['torch_version']} live torch={torch.__version__} "
@@ -218,7 +252,7 @@ class AdaptiveLayerNormOracleTest(unittest.TestCase):
                   f"tolerance={cross_version_tolerance:.9g}")
             # Check native arithmetic against this live oracle directly too;
             # fixture reproducibility alone cannot establish kernel parity.
-            self.assert_matches({**case, "output": oracle.tolist()})
+            self.assert_matches({**case, "output": live_output})
 
     def test_live_production_geometry(self):
         try:
