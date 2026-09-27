@@ -118,6 +118,83 @@ def test_tool_call_single_non_stream():
     assert json.loads(fc["arguments"]) == {"location": "Paris"}
 
 
+def test_dated_web_search_tool_type_reaches_unsupported_policy(monkeypatch):
+    # Regression: the OpenAI dated wire type web_search_2025_08_26 must pass
+    # schema validation and reach the explicit unsupported-tool 501 policy,
+    # not be rejected earlier with a 422 from the discriminated union.
+    #
+    # The "reject before rendering" claim is made executable: with a chat
+    # template configured (rendering would be possible), no Jinja rendering
+    # runs and no model generation happens, for stream=false and stream=true
+    # alike, and a mixed tool list that pairs a valid function tool with an
+    # unsupported web-search tool fails the same way.
+    import server.live as live
+
+    class GuardedSession(FakeSession):
+        def __init__(self):
+            super().__init__(chunks=("must not run",))
+            self.generate_calls = 0
+
+        def generate(self, *args, **kwargs):
+            self.generate_calls += 1
+            raise AssertionError("model generation ran for an unsupported tool request")
+
+    session = GuardedSession()
+    render_calls: list[tuple] = []
+
+    def _spy_render(*args, **kwargs):
+        render_calls.append((args, kwargs))
+
+    monkeypatch.setattr(live, "_render_with_chat_templates", _spy_render)
+
+    client = TestClient(create_app(
+        session,
+        model="fake-model",
+        chat_template="rendered: {{ messages | length }}",
+    ))
+
+    def _assert_unsupported(resp, tool_type):
+        assert resp.status_code == 501, (tool_type, resp.text)
+        error = resp.json()["error"]
+        assert error["code"] == "unsupported_tool_type"
+        assert tool_type in error["message"]
+
+    for stream in (False, True):
+        for tool_type in ("web_search", "web_search_2025_08_26"):
+            _assert_unsupported(
+                client.post("/v1/responses", json={
+                    "model": "fake-model",
+                    "input": "hi",
+                    "stream": stream,
+                    "tools": [{"type": tool_type, "external_web_access": True}],
+                }),
+                tool_type,
+            )
+
+    # A mixed list with one valid function tool plus one unsupported
+    # web-search tool is rejected before generation as well, in both
+    # streaming modes.
+    mixed_tools = [
+        {"type": "function", "name": "get_weather",
+         "parameters": {"type": "object",
+                        "properties": {"location": {"type": "string"}}}},
+        {"type": "web_search_2025_08_26", "external_web_access": True},
+    ]
+    for stream in (False, True):
+        _assert_unsupported(
+            client.post("/v1/responses", json={
+                "model": "fake-model",
+                "input": "hi",
+                "stream": stream,
+                "tools": mixed_tools,
+            }),
+            "web_search_2025_08_26",
+        )
+
+    assert session.generate_calls == 0
+    assert render_calls == [], "Jinja rendering must not run for unsupported tool requests"
+
+
 NATIVE_TOOL_TEMPLATE = """{% for message in messages %}{{ message.role }}: {{ message.content }}
 {% endfor %}{% if tools %}<tools>{{ tools | tojson }}</tools>{% endif %}<tool_call>{"name": "probe"}</tool_call>"""
 

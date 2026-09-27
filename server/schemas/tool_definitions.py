@@ -1,12 +1,18 @@
 """Tool-definition shapes; no tool execution is connected.
 
-Server policy (ck_serve_v8): all types validate and are echoed verbatim, and
-all are passed into the Jinja ``tools`` context for model visibility. The
-server never executes any tool server-side. Only function-like tools
-(function/mcp) are parsed back into ``function_call`` items for the client to
-execute (e.g. weather get_weather). file_search / computer(_use_preview) /
-web_search(_2025_08_26) / code_interpreter / image_generation are accepted +
-prompt-visible but never emitted as output items (plain text fallback).
+Schema policy: recognized tool types declared in these schemas validate
+here, including the dated OpenAI wire variant ``web_search_2025_08_26``.
+Unknown tool types and malformed payloads may legitimately remain
+validation errors (422); do not add permissive parsing to turn them into
+501s.
+
+Serving policy (server.live): serving separately rejects recognized but
+unsupported types with 501 ``unsupported_tool_type`` before rendering.
+Only function-like tools (function/mcp) are accepted for generation and
+parsed back into ``function_call`` items for the client to execute. All
+other recognized types (file_search, computer(_use_preview),
+web_search(_2025_08_26), code_interpreter, image_generation) are rejected
+before rendering. The server never executes any tool server-side.
 """
 
 from __future__ import annotations
@@ -57,7 +63,7 @@ class WebSearchUserLocation(BaseModel):
 
 
 class WebSearchTool(BaseModel):
-    type: Literal["web_search"]
+    type: Literal["web_search", "web_search_2025_08_26"]
     external_web_access: bool | None = None
     filters: dict[str, list[str]] | None = None
     search_context_size: Literal["low", "medium", "high"] | None = None
