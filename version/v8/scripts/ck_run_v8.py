@@ -2102,6 +2102,22 @@ def run_pipeline(args: argparse.Namespace) -> int:
         profile=getattr(args, "profile", False),
     )
 
+    manifest_doc = json.loads(manifest_path.read_bytes())
+    circuit_doc = manifest_doc.get("template", {})
+    if isinstance(circuit_doc, dict) and "serving" in circuit_doc:
+        from resolve_serving_bundle_v8 import resolve_serving_bundle
+
+        circuit_name = circuit_doc.get("name")
+        circuit_path = V8_ROOT / "circuits" / f"{circuit_name}.json"
+        if json.loads(circuit_path.read_bytes()) != circuit_doc:
+            raise ValueError("serving circuit snapshot differs from compiled circuit")
+        resolved = resolve_serving_bundle(
+            work_dir, circuit_path, variant=getattr(args, "serving_variant", None)
+        )
+        log(f"  Resolved serving bundle: {resolved['identity']} ({resolved['variant']})", C_DIM)
+    elif getattr(args, "serving_variant", None) is not None:
+        raise ValueError("selected circuit has no serving profile declaration")
+
     if getattr(args, "sweep_kernels", False):
         step_sweep_kernels(
             work_dir,
@@ -2614,6 +2630,8 @@ Examples:
     run_parser.add_argument("--force-compile", action="store_true")
     run_parser.add_argument("--generate-visualizer", action="store_true")
     run_parser.add_argument("--generate-only", action="store_true")
+    run_parser.add_argument("--serving-variant", default=None,
+                            help="Explicit variant from the circuit-linked serving profile; publisher assets remain the default")
     run_parser.add_argument(
         "--plan-only",
         action="store_true",

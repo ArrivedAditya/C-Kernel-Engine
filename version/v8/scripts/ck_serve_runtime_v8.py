@@ -124,6 +124,7 @@ def _build_runtime(
     python_tokenizer: bool,
     profile: bool,
     gemm_schedule: str | None,
+    serving_variant: str | None = None,
 ) -> Path:
     args = [
         "run",
@@ -154,6 +155,8 @@ def _build_runtime(
         args.append("--profile")
     if gemm_schedule:
         args.extend(["--gemm-schedule", gemm_schedule])
+    if serving_variant is not None:
+        args.extend(["--serving-variant", serving_variant])
 
     log("Building runtime via ck_run pipeline ...", C_ORANGE)
     proc = subprocess.run(

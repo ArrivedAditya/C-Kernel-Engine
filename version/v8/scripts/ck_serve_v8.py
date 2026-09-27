@@ -254,6 +254,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip building; require an existing run directory",
     )
+    parser.add_argument("--serving-variant", default=None,
+                        help="Explicit circuit-linked serving variant to resolve during bundle build")
     parser.add_argument(
         "--tool-protocol",
         choices=("none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2"),
@@ -350,6 +352,9 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _build_arg_parser().parse_args(argv)
 
+    if args.no_build and args.serving_variant is not None:
+        raise ValueError("--serving-variant requires bundle construction; use the explicit serving resolver for an existing bundle")
+
     if args.chat_template is not None:
         raise ValueError(
             "--chat-template is ambiguous for serving; use --chat-template-file "
@@ -394,6 +399,7 @@ def main(argv: list[str] | None = None) -> int:
             args.python_tokenizer,
             args.profile,
             args.gemm_schedule,
+            **({"serving_variant": args.serving_variant} if args.serving_variant is not None else {}),
         )
 
     ignored = []
@@ -429,10 +435,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.no_chat_template:
         chat_template, chat_templates, chat_contract = None, None, None
+        resolved_serving = None
         log("Using explicitly requested untemplated raw-prompt serving", C_GRAY)
     else:
-        chat_template, chat_templates, chat_contract = _load_runtime_templates(run_dir)
+        from server.serving_bundle import load_resolved_serving, resolved_templates
+        resolved_serving = load_resolved_serving(run_dir)
+        if resolved_serving is not None:
+            chat_template, chat_templates, chat_contract = resolved_templates(run_dir, resolved_serving)
+        else:
+            chat_template, chat_templates, chat_contract = _load_runtime_templates(run_dir)
     if override is not None:
+        if resolved_serving is not None:
+            raise ValueError("template override conflicts with resolved serving bundle; rebuild with the circuit profile variant")
         chat_template = override
         chat_templates = None
         log(
@@ -442,7 +456,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     elif chat_template:
         log(
-            f"Loaded chat_template ({len(chat_template)} chars) from chat_template.jinja",
+            f"Loaded chat_template ({len(chat_template)} chars) from "
+            + ("resolved serving bundle" if resolved_serving is not None else "chat_template.jinja"),
             C_GRAY,
         )
     elif not args.no_chat_template:
@@ -452,13 +467,13 @@ def main(argv: list[str] | None = None) -> int:
         )
     if chat_templates:
         log(
-            f"Loaded chat_templates variants {list(chat_templates.keys())} from additional_chat_templates/",
+            f"Loaded chat_templates variants {list(chat_templates.keys())} from "
+            + ("resolved serving bundle" if resolved_serving is not None else "additional_chat_templates/"),
             C_GRAY,
         )
     log("Chat contract disabled; prompt rendering is pure Jinja", C_GRAY)
-    sidecar_protocol = None if args.no_chat_template else load_tool_protocol(
-        run_dir, chat_template, chat_templates
-    )
+    sidecar_protocol = (resolved_serving["output_protocol"] if resolved_serving is not None
+                        else None if args.no_chat_template else load_tool_protocol(run_dir, chat_template, chat_templates))
     if args.tool_protocol is not None and sidecar_protocol is not None and args.tool_protocol != sidecar_protocol:
         raise ValueError(
             f"--tool-protocol {args.tool_protocol!r} conflicts with tool_protocol.json "
@@ -472,6 +487,13 @@ def main(argv: list[str] | None = None) -> int:
         run_dir,
         context_length=runtime_context_length,
     )
+    if resolved_serving is not None:
+        from server.serving_bundle import verify_loaded_libraries
+        try:
+            verify_loaded_libraries(resolved_serving)
+        except Exception:
+            session.close()
+            raise
 
     app = create_app(
         session,

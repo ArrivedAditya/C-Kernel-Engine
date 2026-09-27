@@ -1,0 +1,124 @@
+"""Validate resolved serving data without consulting repository model profiles."""
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+PROTOCOLS = frozenset({"tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2"})
+SCHEMA = "cke.resolved_serving.v1"
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(4 * 1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def contract_identity(document: dict[str, Any]) -> str:
+    payload = {key: value for key, value in document.items() if key != "identity"}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
+def bundle_path(run_dir: Path, relative: str) -> Path:
+    if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
+        raise ValueError("serving asset path must be bundle-relative")
+    path = run_dir / relative
+    if not path.resolve().is_relative_to(run_dir.resolve()):
+        raise ValueError(f"serving asset escapes bundle: {relative}")
+    return path
+
+
+def load_resolved_serving(run_dir: Path, *, document: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Return validated data; an invalid present sidecar never falls back."""
+    run_dir = Path(run_dir)
+    sidecar = run_dir / "serving.json"
+    if document is None and not sidecar.exists() and not sidecar.is_symlink():
+        return None  # Explicit legacy bundle support, not circuit certification.
+    try:
+        doc = document if document is not None else json.loads(sidecar.read_bytes())
+        if not isinstance(doc, dict) or doc.get("schema") != SCHEMA:
+            raise ValueError("invalid resolved serving schema")
+        if doc.get("identity") != contract_identity(doc):
+            raise ValueError("resolved serving identity mismatch")
+        if doc.get("renderer") != "jinja-chat-v1":
+            raise ValueError("unsupported serving renderer")
+        if doc.get("output_protocol") not in PROTOCOLS:
+            raise ValueError("unsupported serving output protocol")
+        if doc.get("input_modalities") != ["text"]:
+            raise ValueError("this resolved serving path supports text only")
+        assets = doc.get("assets")
+        if not isinstance(assets, dict) or not assets:
+            raise ValueError("missing serving asset inventory")
+        required = {"circuit", "profile", "chat", "tools", "config.json", "layout_decode.json", "libmodel.so", "libckernel_engine.so", "libckernel_tokenizer.so", "weights.bump", "weights_manifest.map"}
+        if not required.issubset(assets):
+            raise ValueError("incomplete serving asset inventory")
+        for name, item in assets.items():
+            if not isinstance(item, dict):
+                raise ValueError(f"invalid serving asset: {name}")
+            path = bundle_path(run_dir, item.get("path"))
+            if name.endswith((".json", ".so", ".bump", ".model", ".map")) and name not in {"circuit", "profile", "chat", "tools"} and item.get("path") != name:
+                raise ValueError(f"serving runtime asset has wrong binding: {name}")
+            if sha256_file(path) != item.get("sha256"):
+                raise ValueError(f"stale serving asset: {name}")
+        circuit = json.loads(bundle_path(run_dir, assets["circuit"]["path"]).read_bytes())
+        profile = json.loads(bundle_path(run_dir, assets["profile"]["path"]).read_bytes())
+        config = json.loads(bundle_path(run_dir, assets["config.json"]["path"]).read_bytes())
+        layout = json.loads(bundle_path(run_dir, assets["layout_decode.json"]["path"]).read_bytes())
+        declaration = circuit.get("serving", {})
+        if declaration.get("schema") != "cke.circuit_serving.v1" or declaration.get("profile_ref") != doc.get("profile_ref"):
+            raise ValueError("serving circuit/profile ownership mismatch")
+        if config.get("model") != circuit.get("name"):
+            raise ValueError("serving circuit does not match runtime configuration")
+        if profile.get("schema") != "cke.serving_profile.v1" or profile.get("id") != doc.get("profile_id"):
+            raise ValueError("serving profile identity mismatch")
+        variant = profile.get("variants", {}).get(doc.get("variant"))
+        if not isinstance(variant, dict) or variant.get("output_protocol") != doc["output_protocol"]:
+            raise ValueError("serving variant/protocol mismatch")
+        if profile.get("renderer") != doc["renderer"] or profile.get("input_modalities") != doc["input_modalities"]:
+            raise ValueError("serving profile capabilities mismatch")
+        capacity = layout.get("config", {}).get("context_length")
+        if not isinstance(capacity, int) or isinstance(capacity, bool) or capacity <= 0 or capacity != doc.get("context_capacity"):
+            raise ValueError("serving context capacity mismatch")
+        for role in ("chat", "tools"):
+            if not bundle_path(run_dir, assets[role]["path"]).read_bytes().decode("utf-8").strip():
+                raise ValueError(f"empty serving template: {role}")
+        return doc
+    except (OSError, UnicodeError, TypeError, KeyError, AttributeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid resolved serving bundle {sidecar}: {exc}") from exc
+
+
+def resolved_templates(run_dir: Path, doc: dict[str, Any]) -> tuple[str, dict[str, str], None]:
+    assets = doc["assets"]
+    chat = bundle_path(run_dir, assets["chat"]["path"]).read_bytes().decode("utf-8")
+    tools = bundle_path(run_dir, assets["tools"]["path"]).read_bytes().decode("utf-8")
+    return chat, {"tool_use": tools}, None
+
+
+def verify_loaded_libraries(doc: dict[str, Any], *, maps_text: str | None = None) -> None:
+    """Bind file validation to actual Linux native dependencies after session open."""
+    if maps_text is None:
+        try:
+            maps_text = Path("/proc/self/maps").read_text()
+        except OSError as exc:
+            raise ValueError("resolved serving requires Linux loaded-library identity inspection") from exc
+    paths = set()
+    for line in maps_text.splitlines():
+        fields = line.split(maxsplit=5)
+        if len(fields) == 6 and fields[5].startswith("/"):
+            paths.add(fields[5])
+    for name in ("libmodel.so", "libckernel_engine.so", "libckernel_tokenizer.so"):
+        loaded = {Path(path) for path in paths if Path(path.removesuffix(" (deleted)")).name == name}
+        if not loaded:
+            raise ValueError(f"required serving library is not loaded: {name}")
+        expected = doc["assets"][name]["sha256"]
+        for path in loaded:
+            try:
+                matches = sha256_file(path) == expected
+            except OSError as exc:
+                raise ValueError(f"cannot identify loaded serving library: {path}") from exc
+            if not matches:
+                raise ValueError(f"loaded serving library identity mismatch: {name}")

@@ -24,6 +24,17 @@ from ck_serve_v8 import _build_arg_parser, _build_runtime, _resolve_num_threads,
 HF_MODEL = "hf://Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf"
 
 
+def test_serving_variant_is_build_only_and_forwarded(monkeypatch):
+    from types import SimpleNamespace
+    calls = []
+    monkeypatch.setattr(ck_serve_runtime_v8.subprocess, "run", lambda command, **kwargs: (calls.append(command) or SimpleNamespace(returncode=0)))
+    _build_runtime("model", Path("/tmp/run"), None, False, False, False, None,
+                   None, False, False, False, False, None, serving_variant="compat")
+    assert calls[0][-2:] == ["--serving-variant", "compat"]
+    with pytest.raises(ValueError, match="requires bundle construction"):
+        main(["model", "--no-build", "--serving-variant", "compat"])
+
+
 def test_parser_exposes_serve_command():
     parser = _build_arg_parser()
     ns = parser.parse_args([HF_MODEL])
