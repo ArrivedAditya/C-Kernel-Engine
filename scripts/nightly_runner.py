@@ -738,6 +738,10 @@ TEST_SUITES = {
         "Checked Per-Operation ABI Constants Generated Graph", "kernels",
         ROOT / "tests" / "test_v8_checked_op_constants.py",
     ),
+    "tts_kokoro_generated_qkv": TestSuite(
+        "TTS Kokoro Generated QKV X-Ray Oracle", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_generated_qkv.py",
+    ),
     "tts_duration_logits_runtime_graph": TestSuite(
         "TTS Duration Logits Full v8 Lowering", "kernels",
         ROOT / "tests" / "test_v8_duration_logits_runtime_graph.py",
