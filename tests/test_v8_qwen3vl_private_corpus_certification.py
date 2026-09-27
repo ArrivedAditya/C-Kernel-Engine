@@ -367,6 +367,17 @@ class Qwen3VLCorpusCertificationTests(unittest.TestCase):
         self.assertEqual(summary["certification_scope"], "localization")
         self.assertIn("native CLI not run", summary["comparison"])
 
+    def test_native_summary_does_not_claim_independent_vision_certification(self) -> None:
+        summary = self.module._summary(
+            selected=[{"index": 1}],
+            rows=[{"image_index": 1, "status": "pass", "native_cli": {"pass": True}}],
+            config=self._config(),
+        )
+        self.assertEqual(summary["status"], "pass")
+        self.assertEqual(summary["certification_scope"], "shared_prefix_decoder")
+        self.assertNotEqual(summary["certification_scope"], "full")
+        self.assertIn("CKE-prefix decoder parity", summary["comparison"])
+
     def test_progress_line_discloses_skipped_native_cli(self) -> None:
         line = self.module._progress_line(
             {

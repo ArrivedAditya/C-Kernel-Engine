@@ -19,6 +19,20 @@ import qwen3vl_encoder_prefix_parity_suite_v8 as prefix_suite  # type: ignore  #
 
 
 class NumericParityQwen3VLMmprojV8Tests(unittest.TestCase):
+    def test_image_parity_input_uses_production_normalization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image = Path(tmpdir) / "red.ppm"
+            image.write_bytes(b"P6\n1 1\n255\n\xff\x00\x00")
+            report = npv8._load_image_file(
+                image,
+                1,
+                1,
+                {"image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5]},
+            )
+        self.assertEqual(report["interleaved"], [1.0, -1.0, -1.0])
+        self.assertEqual(report["planar"], [1.0, -1.0, -1.0])
+        self.assertIn("normalize_mean_std", report["preprocess"])
+
     def test_activation_runtime_base_uses_aligned_arena_boundary(self) -> None:
         layout = {
             "memory": {
