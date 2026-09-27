@@ -718,6 +718,10 @@ TEST_SUITES = {
         "TTS Runtime Extent Full v8 Lowering", "kernels",
         ROOT / "tests" / "test_v8_runtime_extent_lowering.py",
     ),
+    "tts_duration_logits_runtime_graph": TestSuite(
+        "TTS Duration Logits Full v8 Lowering", "kernels",
+        ROOT / "tests" / "test_v8_duration_logits_runtime_graph.py",
+    ),
     "tts_istft_oracle": TestSuite(
         "TTS Inverse STFT PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_istft_oracle.py",

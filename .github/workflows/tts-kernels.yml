@@ -25,6 +25,8 @@ on:
       - 'tests/test_v8_runtime_extent_contract.py'
       - 'tests/test_v8_checked_call_codegen.py'
       - 'tests/test_v8_runtime_extent_lowering.py'
+      - 'tests/test_v8_duration_logits_runtime_graph.py'
+      - 'tests/fixtures/tts/duration_logits_runtime_extent_circuit.json'
       - 'tests/test_v8_xray_numerical_parity.py'
       - 'version/v8/scripts/runtime_extent_contract_v8.py'
       - 'version/v8/scripts/codegen_checked_calls_v8.py'
@@ -76,6 +78,8 @@ on:
       - 'tests/test_v8_runtime_extent_contract.py'
       - 'tests/test_v8_checked_call_codegen.py'
       - 'tests/test_v8_runtime_extent_lowering.py'
+      - 'tests/test_v8_duration_logits_runtime_graph.py'
+      - 'tests/fixtures/tts/duration_logits_runtime_extent_circuit.json'
       - 'tests/test_v8_xray_numerical_parity.py'
       - 'version/v8/scripts/runtime_extent_contract_v8.py'
       - 'version/v8/scripts/codegen_checked_calls_v8.py'
@@ -122,6 +126,7 @@ jobs:
             tests.test_v8_runtime_extent_contract \
             tests.test_v8_checked_call_codegen \
             tests.test_v8_runtime_extent_lowering \
+            tests.test_v8_duration_logits_runtime_graph \
             tests.test_v8_kokoro_shape_bounds \
             tests.test_v8_audio_duration_expand_oracle.AudioDurationExpandOracleTest.test_committed_torch_fixture \
             tests.test_v8_audio_duration_logits_oracle.AudioDurationLogitsOracleTest.test_pinned_production_shape_against_committed_torch_fixture \

@@ -1811,6 +1811,13 @@ def _validate_segmented_prefill_contract(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 OP_DATAFLOW = {
+    "audio_duration_logits_to_frames": {
+        "inputs": {"logits": "external:audio_duration_logits"},
+        "outputs": {
+            "durations": {"slot": "runtime_values", "dtype": "i32"},
+            "expanded_frames": {"slot": "runtime_valid_extent", "dtype": "i32"},
+        },
+    },
     "runtime_extent_sum": {
         "inputs": {"values": "external:runtime_values"},
         "outputs": {"valid_extent": {"slot": "runtime_valid_extent", "dtype": "i32"}},
@@ -4364,6 +4371,7 @@ def _validated_kernel_codegen_capability(kernel_id: str, kernel_map: Dict) -> Op
 # source model is dense, recurrent, DeepStack-style, MoE, SSM, or something else.
 # Note: "matmul" is a logical op that maps to gemv (decode) or gemm (prefill) based on mode
 TEMPLATE_TO_KERNEL_OP = {
+    "audio_duration_logits_to_frames": "audio_duration_logits_to_frames",
     "runtime_extent_sum": "runtime_extent_sum",
     "audio_duration_expand": "audio_duration_expand",
     "runtime_copy_valid": "runtime_copy_valid",
@@ -8895,6 +8903,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     # Op → Weight mapping (which weights each op uses for quant lookup)
     # ═══════════════════════════════════════════════════════════
     OP_TO_WEIGHT_KEYS = {
+        "audio_duration_logits_to_frames": None,
         "runtime_extent_sum": None,
         "audio_duration_expand": None,
         "runtime_copy_valid": None,
@@ -12204,6 +12213,7 @@ WEIGHT_PATTERNS = {
 # Template op → weight refs it uses
 # This tells us which weights each template op needs
 TEMPLATE_OP_WEIGHTS = {
+    "audio_duration_logits_to_frames": [],
     "runtime_extent_sum": [],
     "audio_duration_expand": [],
     "runtime_copy_valid": [],
