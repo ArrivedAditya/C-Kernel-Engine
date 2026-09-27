@@ -5,6 +5,12 @@ on:
     paths:
       - '.github/workflows/tts-kernels.yml'
       - 'include/ckernel_tts.h'
+      - 'include/ckernel_embedding_checked.h'
+      - 'src/kernels/embedding_three_table_layer_norm.c'
+      - 'tests/test_v8_bert_embedding_oracle.py'
+      - 'tests/test_v8_bert_embedding_live.py'
+      - 'version/v8/tts/reference/capture_bert_embedding.py'
+      - 'version/v8/kernel_maps/embedding_three_table_layer_norm_f32.json'
       - 'include/ckernel_audio.h'
       - 'src/kernels/audio_kernels.c'
       - 'src/kernels/audio_lstm_scan.c'
@@ -60,6 +66,12 @@ on:
     branches: [main]
     paths:
       - 'include/ckernel_tts.h'
+      - 'include/ckernel_embedding_checked.h'
+      - 'src/kernels/embedding_three_table_layer_norm.c'
+      - 'tests/test_v8_bert_embedding_oracle.py'
+      - 'tests/test_v8_bert_embedding_live.py'
+      - 'version/v8/tts/reference/capture_bert_embedding.py'
+      - 'version/v8/kernel_maps/embedding_three_table_layer_norm_f32.json'
       - 'include/ckernel_audio.h'
       - 'src/kernels/audio_kernels.c'
       - 'src/kernels/audio_lstm_scan.c'
@@ -127,6 +139,7 @@ jobs:
         run: |
           python3 -m unittest \
             tests.test_v8_runtime_extent_kernel \
+            tests.test_v8_bert_embedding_oracle \
             tests.test_v8_runtime_extent_contract \
             tests.test_v8_checked_call_codegen \
             tests.test_v8_runtime_extent_lowering \

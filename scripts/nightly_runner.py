@@ -738,6 +738,14 @@ TEST_SUITES = {
         "TTS Duration Logits Committed PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_duration_logits_oracle.py",
     ),
+    "tts_embedding_oracle": TestSuite(
+        "TTS Three-Table Embedding Pinned PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_bert_embedding_oracle.py",
+    ),
+    "tts_embedding_live": TestSuite(
+        "TTS Three-Table Embedding Live Pinned PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_bert_embedding_live.py",
+    ),
     "tts_duration_logits_live": TestSuite(
         "TTS Duration Logits Live PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_duration_logits_live.py",
