@@ -173,6 +173,11 @@ class AdaptiveLayerNormOracleTest(unittest.TestCase):
         except ImportError as exc:
             self.skipTest(f"live PyTorch oracle dependency unavailable: {exc}")
         fixture = json.loads(FIXTURE.read_text())
+        # The committed oracle was generated with PyTorch 2.8.0. The pinned
+        # nightly PyTorch version and CPU backends can differ by a few FP32
+        # rounding steps; this cross-version check uses a tighter bound than
+        # the independent native-kernel parity contract (5e-6).
+        cross_version_tolerance = 1e-6
         for case in fixture["cases"]:
             style = torch.tensor(case["style"], dtype=torch.float32)
             weight = torch.tensor(case["projection_weight"], dtype=torch.float32)
@@ -181,9 +186,25 @@ class AdaptiveLayerNormOracleTest(unittest.TestCase):
             gamma, beta = F.linear(style, weight, bias).chunk(2)
             oracle = (1 + gamma) * F.layer_norm(
                 x, (case["channels"],), eps=case["epsilon"]) + beta
-            for actual, expected in zip(flat(oracle.tolist()),
-                                        flat(case["output"])):
-                self.assertLessEqual(abs(actual - expected), 1e-7)
+            live_values = flat(oracle.tolist())
+            fixture_values = flat(case["output"])
+            self.assertEqual(len(live_values), len(fixture_values))
+            worst = (0.0, None)
+            for index, (actual, expected) in enumerate(zip(
+                    live_values, fixture_values)):
+                self.assertTrue(math.isfinite(actual), (index, actual))
+                self.assertTrue(math.isfinite(expected), (index, expected))
+                error = abs(actual - expected)
+                if error > worst[0]:
+                    worst = (error, (index, actual, expected))
+            self.assertLessEqual(
+                worst[0], cross_version_tolerance,
+                f"fixture torch={fixture['torch_version']} live torch={torch.__version__} "
+                f"shape={case['tokens']}x{case['channels']} worst={worst[1]}",
+            )
+            # Check native arithmetic against this live oracle directly too;
+            # fixture reproducibility alone cannot establish kernel parity.
+            self.assert_matches({**case, "output": oracle.tolist()})
 
     def test_live_production_geometry(self):
         try:
