@@ -1,0 +1,278 @@
+{
+  "version": 3,
+  "name": "duration_logits_runtime_extent_two_stream",
+  "family": "bounded_graph",
+  "contract": {
+    "runtime_invariants": {
+      "inference_only": true,
+      "production_kernel_heap_allocation": false,
+      "valid_extent": "checked_sigmoid_sum_round_before_any_expansion_write"
+    }
+  },
+  "activation_buffers": {
+    "audio_duration_logits": {
+      "shape": [
+        36,
+        50
+      ]
+    },
+    "runtime_values": {
+      "shape": [
+        36
+      ]
+    },
+    "runtime_valid_extent": {
+      "shape": [
+        1
+      ]
+    },
+    "runtime_valid_copy": {
+      "shape": [
+        640,
+        128
+      ]
+    },
+    "duration_features": {
+      "shape": [
+        640,
+        40
+      ]
+    },
+    "text_features": {
+      "shape": [
+        640,
+        40
+      ]
+    },
+    "duration_expanded": {
+      "shape": [
+        640,
+        128
+      ]
+    },
+    "text_expanded": {
+      "shape": [
+        640,
+        128
+      ]
+    }
+  },
+  "activation_bindings": {
+    "audio_duration_logits": "audio_duration_logits",
+    "runtime_values": "runtime_values",
+    "runtime_valid_extent": "runtime_valid_extent",
+    "runtime_valid_copy": "runtime_valid_copy",
+    "duration_features": "duration_features",
+    "text_features": "text_features",
+    "duration_expanded": "duration_expanded",
+    "text_expanded": "text_expanded"
+  },
+  "native_entry": {
+    "function": "ck_test_duration_two_stream_graph",
+    "params": [
+      {
+        "c_type": "uint8_t *",
+        "name": "arena"
+      },
+      {
+        "c_type": "size_t",
+        "name": "arena_bytes"
+      },
+      {
+        "c_type": "int32_t *",
+        "name": "out_frames"
+      }
+    ],
+    "arena": {
+      "pointer": "arena",
+      "bytes": "arena_bytes"
+    },
+    "runtime_length_outputs": {
+      "expanded_frames": "out_frames"
+    }
+  },
+  "runtime_lengths": {
+    "expanded_frames": {
+      "producer": "duration_logits",
+      "result": "expanded_frames",
+      "capacity": 128,
+      "allow_zero": false
+    }
+  },
+  "runtime_views": {
+    "duration_expanded": {
+      "buffer": "duration_expanded",
+      "length": "expanded_frames",
+      "channels": 640,
+      "physical_stride": 128,
+      "element_bytes": 4,
+      "buffer_bytes": 327680
+    },
+    "text_expanded": {
+      "buffer": "text_expanded",
+      "length": "expanded_frames",
+      "channels": 512,
+      "physical_stride": 128,
+      "element_bytes": 4,
+      "buffer_bytes": 327680
+    }
+  },
+  "runtime_constants": {
+    "logit_elements": 1800,
+    "phoneme_count": 36,
+    "logit_stride": 50,
+    "duration_capacity": 36,
+    "max_duration": 50,
+    "expanded_capacity": 128,
+    "output_elements": 81920,
+    "input_elements": 25600,
+    "input_stride": 40,
+    "output_stride": 128,
+    "channels": 640,
+    "value_elements": 36,
+    "expanded_elements": 81920,
+    "expanded_stride": 128
+  },
+  "sequence": [
+    "bounded_graph"
+  ],
+  "block_types": {
+    "bounded_graph": {
+      "sequence": [
+        "header",
+        "body",
+        "footer"
+      ],
+      "header": [
+        {
+          "id": "duration_logits",
+          "op": "audio_duration_logits_to_frames",
+          "kernel": "audio_duration_logits_to_frames_f32",
+          "returns_status": true,
+          "produces_runtime_lengths": {
+            "expanded_frames": "expanded_frames"
+          },
+          "params": {
+            "bins": 50
+          },
+          "graph_slots": {
+            "inputs": {
+              "logits": "external:audio_duration_logits"
+            },
+            "outputs": {
+              "durations": "runtime_values",
+              "expanded_frames": "runtime_valid_extent"
+            }
+          }
+        }
+      ],
+      "body": {
+        "type": "dense",
+        "ops": [
+          {
+            "id": "expand_duration",
+            "op": "audio_duration_expand",
+            "kernel": "audio_duration_expand_channel_major_f32",
+            "returns_status": true,
+            "params": {
+              "channels": 640
+            },
+            "consumes_runtime_lengths": [
+              "expanded_frames"
+            ],
+            "graph_slots": {
+              "inputs": {
+                "features": "external:duration_features",
+                "durations": "runtime_values"
+              },
+              "outputs": {
+                "output": "duration_expanded"
+              }
+            }
+          },
+          {
+            "id": "expand_text",
+            "op": "audio_duration_expand",
+            "kernel": "audio_duration_expand_channel_major_f32",
+            "returns_status": true,
+            "params": {
+              "channels": 512
+            },
+            "consumes_runtime_lengths": [
+              "expanded_frames"
+            ],
+            "graph_slots": {
+              "inputs": {
+                "features": "external:text_features",
+                "durations": "runtime_values"
+              },
+              "outputs": {
+                "output": "text_expanded"
+              }
+            }
+          },
+          {
+            "id": "consume",
+            "op": "runtime_copy_valid",
+            "kernel": "runtime_copy_valid_f32",
+            "returns_status": true,
+            "consumes_runtime_lengths": [
+              "expanded_frames"
+            ],
+            "graph_slots": {
+              "inputs": {
+                "input": "duration_expanded"
+              },
+              "outputs": {
+                "output": "runtime_valid_copy"
+              }
+            }
+          }
+        ]
+      },
+      "footer": []
+    }
+  },
+  "semantic_checkpoints": {
+    "schema": "cke.semantic_checkpoint_contract",
+    "schema_version": 1,
+    "exports": {
+      "expand_duration": {
+        "section": "body",
+        "template_op_id": "expand_duration",
+        "op": "audio_duration_expand",
+        "checkpoints": [
+          {
+            "id": "kokoro.duration.duration.expanded",
+            "producer": "expand_duration",
+            "tensor": "duration_expanded",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      },
+      "expand_text": {
+        "section": "body",
+        "template_op_id": "expand_text",
+        "op": "audio_duration_expand",
+        "checkpoints": [
+          {
+            "id": "kokoro.duration.text.expanded",
+            "producer": "expand_text",
+            "tensor": "text_expanded",
+            "logical_layout": "channel_major",
+            "axis_names": [
+              "channel",
+              "frame"
+            ],
+            "storage_dtype": "fp32"
+          }
+        ]
+      }
+    }
+  }
+}

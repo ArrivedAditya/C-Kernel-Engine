@@ -16,8 +16,8 @@ sys.path.insert(0, str(ROOT / "version/v8/scripts"))
 import build_ir_v8
 
 
-def lower_fixture():
-    path = ROOT / "tests/fixtures/tts/duration_logits_runtime_extent_circuit.json"
+def lower_fixture(path=None):
+    path = path or ROOT / "tests/fixtures/tts/duration_logits_runtime_extent_circuit.json"
     template = json.loads(path.read_text())
     source = {
         "config": {
