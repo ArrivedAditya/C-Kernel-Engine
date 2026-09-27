@@ -10554,7 +10554,13 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     _check_ir1_completeness(manifest, arranged_kernels)
     _validate_resolved_kernels_are_emitted(numerical_contract_plans, arranged_kernels)
 
-    if template.get("runtime_lengths") or template.get("runtime_views"):
+    if ("checked_native_entry" in template
+            and not isinstance(template["checked_native_entry"], bool)):
+        raise RuntimeError("checked_native_entry must be boolean")
+    if (template.get("runtime_lengths") or template.get("runtime_views")
+            or template.get("checked_native_entry") is True):
+        if template.get("checked_native_entry") is True and "native_entry" not in template:
+            raise RuntimeError("checked native entry requires circuit-declared native_entry")
         if "native_entry" in template:
             manifest["config"]["native_entry"] = copy.deepcopy(template["native_entry"])
         declared_producers = {

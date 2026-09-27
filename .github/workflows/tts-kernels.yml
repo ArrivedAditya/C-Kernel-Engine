@@ -31,6 +31,7 @@ on:
       - 'tests/test_v8_runtime_extent_contract.py'
       - 'tests/test_v8_checked_call_codegen.py'
       - 'tests/test_v8_runtime_extent_lowering.py'
+      - 'tests/test_v8_checked_static_entry.py'
       - 'tests/test_v8_duration_logits_runtime_graph.py'
       - 'tests/test_v8_duration_two_stream_runtime_graph.py'
       - 'tests/fixtures/tts/duration_logits_runtime_extent_circuit.json'
@@ -92,6 +93,7 @@ on:
       - 'tests/test_v8_runtime_extent_contract.py'
       - 'tests/test_v8_checked_call_codegen.py'
       - 'tests/test_v8_runtime_extent_lowering.py'
+      - 'tests/test_v8_checked_static_entry.py'
       - 'tests/test_v8_duration_logits_runtime_graph.py'
       - 'tests/test_v8_duration_two_stream_runtime_graph.py'
       - 'tests/fixtures/tts/duration_logits_runtime_extent_circuit.json'
@@ -143,6 +145,7 @@ jobs:
             tests.test_v8_runtime_extent_contract \
             tests.test_v8_checked_call_codegen \
             tests.test_v8_runtime_extent_lowering \
+            tests.test_v8_checked_static_entry \
             tests.test_v8_duration_logits_runtime_graph \
             tests.test_v8_duration_two_stream_runtime_graph \
             tests.test_v8_kokoro_shape_bounds \

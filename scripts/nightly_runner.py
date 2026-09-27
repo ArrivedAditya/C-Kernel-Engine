@@ -718,6 +718,10 @@ TEST_SUITES = {
         "TTS Runtime Extent Full v8 Lowering", "kernels",
         ROOT / "tests" / "test_v8_runtime_extent_lowering.py",
     ),
+    "tts_checked_static_entry": TestSuite(
+        "TTS Fixed-Size Checked Native Entry", "kernels",
+        ROOT / "tests" / "test_v8_checked_static_entry.py",
+    ),
     "tts_duration_logits_runtime_graph": TestSuite(
         "TTS Duration Logits Full v8 Lowering", "kernels",
         ROOT / "tests" / "test_v8_duration_logits_runtime_graph.py",

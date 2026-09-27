@@ -1,0 +1,45 @@
+{
+  "version": 3,
+  "name": "checked_static_entry_synthetic",
+  "family": "bounded_graph",
+  "contract": {"runtime_invariants": {"inference_only": true, "production_kernel_heap_allocation": false}},
+  "checked_native_entry": true,
+  "activation_buffers": {
+    "audio_magnitude": {"shape": [7, 11]},
+    "audio_phase": {"shape": [7, 11]},
+    "audio_waveform": {"shape": [30]}
+  },
+  "activation_bindings": {
+    "audio_magnitude": "audio_magnitude",
+    "audio_phase": "audio_phase",
+    "audio_waveform": "audio_waveform"
+  },
+  "native_entry": {
+    "function": "ck_test_checked_static_entry",
+    "params": [
+      {"c_type": "uint8_t *", "name": "arena"},
+      {"c_type": "size_t", "name": "arena_bytes"}
+    ],
+    "arena": {"pointer": "arena", "bytes": "arena_bytes"}
+  },
+  "runtime_constants": {"spectral_elements": 77, "frames": 7, "output_capacity": 30, "scratch_elements": 120},
+  "sequence": ["bounded_graph"],
+  "block_types": {
+    "bounded_graph": {
+      "sequence": ["header", "body", "footer"],
+      "header": [],
+      "body": {"type": "dense", "ops": [
+        {
+          "id": "reconstruct", "op": "audio_istft_mag_phase",
+          "kernel": "audio_istft_mag_phase_f32", "returns_status": true,
+          "params": {"n_fft": 20, "hop": 5},
+          "graph_slots": {
+            "inputs": {"magnitude": "external:audio_magnitude", "phase": "external:audio_phase"},
+            "outputs": {"output": "audio_waveform"}
+          }
+        }
+      ]},
+      "footer": []
+    }
+  }
+}
