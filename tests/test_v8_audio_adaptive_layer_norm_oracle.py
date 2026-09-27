@@ -29,6 +29,9 @@ class AdaptiveLayerNormOracleTest(unittest.TestCase):
         if expected:
             self.assertEqual(torch.__version__.split("+", 1)[0], expected)
             self.assertIsNone(torch.version.cuda, "nightly oracle must use CPU wheels")
+        expected_mkl = os.environ.get("CKE_EXPECTED_MKL_CBWR")
+        if expected_mkl:
+            self.assertEqual(os.environ.get("MKL_CBWR"), expected_mkl)
 
     @classmethod
     def setUpClass(cls):
@@ -235,6 +238,8 @@ class AdaptiveLayerNormOracleTest(unittest.TestCase):
                 "processor": platform.processor(),
                 "torch_cpu_capability": capability() if callable(capability) else None,
                 "aten_cpu_capability_env": os.environ.get("ATEN_CPU_CAPABILITY"),
+                "mkl_cbwr_env": os.environ.get("MKL_CBWR"),
+                "torch_mkl_available": torch.backends.mkl.is_available(),
                 "torch_threads": torch.get_num_threads(),
                 "mkldnn_enabled": torch.backends.mkldnn.enabled,
                 "cases": stage_cases,

@@ -30,6 +30,9 @@ jobs:
     name: TTS AdaLN PyTorch ${{ matrix.torch_version }} CPU oracle
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      MKL_CBWR: AVX2
+      CKE_EXPECTED_MKL_CBWR: AVX2
     permissions:
       contents: read
     strategy:
