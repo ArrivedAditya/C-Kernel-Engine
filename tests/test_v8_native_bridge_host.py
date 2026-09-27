@@ -100,6 +100,17 @@ def _make_qwen3_decoder_manifest(*, include_tokenizer_contract: bool = False) ->
     vocab_tokens[1] = "Hello"
     vocab_tokens[2] = " world"
     vocab_tokens[9] = "<|endoftext|>"
+    if include_tokenizer_contract:
+        # The formatted chat must encode completely within the 32-token
+        # context. This ASCII fixture has no merges, so include the markers
+        # and individual characters used by its role labels and message.
+        chat_pieces = [
+            "<|im_start|>", "<|im_end|>", "\n", "H", "a", "e",
+            "i", "l", "n", "o", "r", "s", "t", "u",
+        ]
+        chat_ids = [3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17]
+        for token_id, piece in zip(chat_ids, chat_pieces):
+            vocab_tokens[token_id] = piece
 
     vocab_offsets: list[int] = []
     vocab_strings = bytearray()
@@ -1561,6 +1572,35 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                     b"<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n",
                 )
 
+                expected_prompt_ids = [
+                    3, 17, 15, 8, 14, 5, 6, 8, 11, 11, 13, 4, 5,
+                    3, 7, 15, 15, 10, 15, 16, 7, 12, 16, 5,
+                ]
+                prompt_count = session_lib.ck_session_v8_encode(
+                    session, formatted.value, None, 0
+                )
+                self.assertEqual(prompt_count, len(expected_prompt_ids))
+                prompt_ids = (ctypes.c_int32 * prompt_count)()
+                self.assertEqual(
+                    session_lib.ck_session_v8_encode(
+                        session, formatted.value, prompt_ids, prompt_count
+                    ),
+                    prompt_count,
+                )
+                self.assertEqual(list(prompt_ids), expected_prompt_ids)
+                self.assertEqual(
+                    session_lib.ck_session_v8_encode(
+                        session, formatted.value, prompt_ids, prompt_count - 1
+                    ),
+                    -8,  # caller buffer too small
+                )
+                self.assertEqual(
+                    session_lib.ck_session_v8_encode(
+                        session, b"u" * 33, None, 0
+                    ),
+                    -7,  # native tokenizer rejects context overflow
+                )
+
                 encoded_count = session_lib.ck_session_v8_encode(
                     session, b"Hello", None, 0
                 )
@@ -1605,7 +1645,7 @@ class V8NativeBridgeHostTests(unittest.TestCase):
                 )
                 self.assertEqual(generation.generated_tokens, 1)
                 self.assertEqual(generation.stop_reason, 2)  # token limit
-                self.assertGreater(generation.prompt_tokens, 0)
+                self.assertEqual(generation.prompt_tokens, len(expected_prompt_ids))
                 self.assertGreaterEqual(generation.prefill_time_ms, 0.0)
                 self.assertEqual(streamed, [(0, b"<|pad|>", 0)])
 
