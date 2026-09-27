@@ -54,6 +54,9 @@ lib.ck_true_bpe_add_merge.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_
 lib.ck_true_bpe_add_special_token.restype = ctypes.c_int
 lib.ck_true_bpe_add_special_token.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int32]
 
+lib.ck_true_bpe_set_special_ids.restype = None
+lib.ck_true_bpe_set_special_ids.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32]
+
 lib.ck_true_bpe_lookup.restype = ctypes.c_int32
 lib.ck_true_bpe_lookup.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
 
@@ -99,12 +102,12 @@ def load_hf_qwen_tokenizer():
     if _HF_TOKENIZER is not None:
         return _HF_TOKENIZER
     if not HAS_HF:
-        print("FAIL: transformers is required by the strict tokenizer parity gate")
+        print(("FAIL" if REQUIRE_HF_ORACLE else "SKIP") + ": transformers oracle is unavailable")
         return None
     try:
         _HF_TOKENIZER = AutoTokenizer.from_pretrained("Qwen/Qwen2-0.5B-Instruct")
     except Exception as exc:
-        print(f"FAIL: Could not load Qwen tokenizer oracle: {exc}")
+        print(f"{'FAIL' if REQUIRE_HF_ORACLE else 'SKIP'}: Could not load Qwen tokenizer oracle: {exc}")
         return None
     return _HF_TOKENIZER
 
@@ -253,7 +256,7 @@ def test_special_token_encoding():
     print("\nLoading Qwen2-0.5B-Instruct tokenizer...")
     hf = load_hf_qwen_tokenizer()
     if hf is None:
-        return not REQUIRE_HF_ORACLE
+        return False if REQUIRE_HF_ORACLE else None
 
     # Create C tokenizer
     bpe = lib.ck_true_bpe_create()
@@ -344,7 +347,7 @@ def test_gpt2_byte_decoding():
     print("\nLoading Qwen2-0.5B-Instruct tokenizer...")
     hf = load_hf_qwen_tokenizer()
     if hf is None:
-        return not REQUIRE_HF_ORACLE
+        return False if REQUIRE_HF_ORACLE else None
 
     # Create C tokenizer
     bpe = lib.ck_true_bpe_create()
@@ -458,7 +461,7 @@ def test_chat_template_encoding():
     print("\nLoading Qwen2-0.5B-Instruct tokenizer...")
     hf = load_hf_qwen_tokenizer()
     if hf is None:
-        return not REQUIRE_HF_ORACLE
+        return False if REQUIRE_HF_ORACLE else None
 
     # Create C tokenizer
     bpe = lib.ck_true_bpe_create()
@@ -548,6 +551,10 @@ def test_long_prompt_completeness():
             return False
         if lib.ck_true_bpe_add_token(bpe, "Ġ-".encode(), 4, 0.0) != 0:
             return False
+        if lib.ck_true_bpe_add_token(bpe, "Ã".encode(), 7, 0.0) != 0:
+            return False
+        if lib.ck_true_bpe_add_token(bpe, "©".encode(), 8, 0.0) != 0:
+            return False
         if lib.ck_true_bpe_add_token(bpe, b"<|im_end|>", 3, 0.0) != 0:
             return False
         if lib.ck_true_bpe_add_special_token(bpe, b"<|im_end|>", 3) != 0:
@@ -563,6 +570,10 @@ def test_long_prompt_completeness():
         if count != len(expected) or list(output[:count]) != expected:
             print(f"FAIL: long prompt yielded {count} tokens; expected {len(expected)}")
             return False
+        exact = (ctypes.c_int32 * len(expected))()
+        if lib.ck_true_bpe_encode(bpe, payload, len(payload), exact, len(exact)) != len(expected):
+            print("FAIL: exact output capacity was rejected")
+            return False
         too_small = (ctypes.c_int32 * (len(expected) - 1))()
         if lib.ck_true_bpe_encode(bpe, payload, len(payload), too_small, len(too_small)) != -1:
             print("FAIL: insufficient output capacity was accepted")
@@ -571,6 +582,52 @@ def test_long_prompt_completeness():
         if lib.ck_true_bpe_encode(bpe, punct, len(punct), output, len(output)) != 2 or list(output[:2]) != [2, 4]:
             print("FAIL: space before punctuation was split incorrectly")
             return False
+        unicode_payload = "é".encode() * 9000
+        unicode_count = lib.ck_true_bpe_encode(bpe, unicode_payload, len(unicode_payload), output, len(output))
+        if unicode_count != 18000 or list(output[:unicode_count]) != [7, 8] * 9000:
+            print(f"FAIL: Unicode-heavy long prompt yielded {unicode_count} tokens")
+            return False
+        if lib.ck_true_bpe_encode(bpe, b"a", 1, output, len(output)) != 1 or output[0] != 1:
+            print("FAIL: tokenizer did not recover after a capacity error")
+            return False
+
+        lib.ck_true_bpe_set_special_ids(bpe, -1, 5, 6, -1)
+        cfg = CKBPEConfig(True, True, False, CK_SPACE_PREFIX_GPT2, 0)
+        lib.ck_true_bpe_set_config(bpe, ctypes.byref(cfg))
+        with_bos_eos = (ctypes.c_int32 * 3)()
+        if lib.ck_true_bpe_encode(bpe, b"a", 1, with_bos_eos, 3) != 3 or list(with_bos_eos) != [5, 1, 6]:
+            print("FAIL: BOS/EOS exact capacity encoding diverged")
+            return False
+        if lib.ck_true_bpe_encode(bpe, b"a", 1, with_bos_eos, 2) != -1:
+            print("FAIL: EOS capacity exhaustion was accepted")
+            return False
+        if lib.ck_true_bpe_encode(bpe, b"a", 1, with_bos_eos, 1) != -1:
+            print("FAIL: BOS plus text capacity exhaustion was accepted")
+            return False
+        if lib.ck_true_bpe_encode(bpe, b"a", 1, with_bos_eos, 0) != -1:
+            print("FAIL: zero capacity was accepted")
+            return False
+
+        # No registered special tokens exercises the direct-segment fast path.
+        fast = lib.ck_true_bpe_create()
+        if not fast:
+            return False
+        try:
+            if lib.ck_true_bpe_add_token(fast, b"a", 1, 0.0) != 0:
+                return False
+            if lib.ck_true_bpe_add_token(fast, "Ġ".encode(), 2, 0.0) != 0:
+                return False
+            lib.ck_true_bpe_set_config(fast, ctypes.byref(CKBPEConfig(False, False, False, CK_SPACE_PREFIX_GPT2, 0)))
+            fast_payload = b"a " * 9000
+            fast_output = (ctypes.c_int32 * 18000)()
+            if lib.ck_true_bpe_encode(fast, fast_payload, len(fast_payload), fast_output, len(fast_output)) != 18000:
+                print("FAIL: no-special-token fast path lost a long segment")
+                return False
+            if lib.ck_true_bpe_encode(fast, fast_payload, len(fast_payload), fast_output, 17999) != -1:
+                print("FAIL: no-special-token fast path accepted truncation")
+                return False
+        finally:
+            lib.ck_true_bpe_free(fast)
         print("PASS: long segments and capacity preserve complete prompt")
         return True
     finally:
@@ -604,9 +661,9 @@ def main():
 
     all_pass = True
     for name, passed in results:
-        status = "PASS" if passed else "FAIL"
+        status = "SKIP" if passed is None else "PASS" if passed else "FAIL"
         print(f"  {status}: {name}")
-        if not passed:
+        if passed is False:
             all_pass = False
 
     print("="*60)

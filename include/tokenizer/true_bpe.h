@@ -264,7 +264,9 @@ CK_TRUE_BPE_API CKSpacePrefixStyle ck_true_bpe_detect_space_style(CKTrueBPE *bpe
  * @param ids       Output token IDs array
  * @param max_ids   Maximum IDs to write
  * @return          Number of tokens written, or -1 if the input cannot be
- *                  encoded completely (including insufficient output capacity)
+ *                  encoded completely (including insufficient output capacity).
+ *                  On -1, the output buffer may contain a partial encoding and
+ *                  must not be consumed.
  */
 CK_TRUE_BPE_API int ck_true_bpe_encode(CKTrueBPE *bpe,
                                         const char *text,
