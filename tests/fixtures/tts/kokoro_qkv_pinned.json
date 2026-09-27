@@ -1,0 +1,48 @@
+{
+  "oracle": "PyTorch 2.12.1+cpu torch.nn.functional.linear",
+  "scope": "first shared ALBERT Q/K/V projections from pinned generated-encoder input",
+  "bundle_manifest_sha256": "4b1efaf94191ab30e5a5e88a44a9e6a82ba295e6eeae8b639604b2855cc51d82",
+  "input_fixture_sha256": "8dfda8edff715001fcfa3f167b5cb10e1d14f716a688026644258a308dcbea53",
+  "fixture_sha256": "f870afedce410f84fb36120016598247924c3c99c733aabfa5546f33977efe85",
+  "shapes": {
+    "input": [
+      36,
+      768
+    ],
+    "query_weight": [
+      768,
+      768
+    ],
+    "query_bias": [
+      768
+    ],
+    "query_expected": [
+      36,
+      768
+    ],
+    "key_weight": [
+      768,
+      768
+    ],
+    "key_bias": [
+      768
+    ],
+    "key_expected": [
+      36,
+      768
+    ],
+    "value_weight": [
+      768,
+      768
+    ],
+    "value_bias": [
+      768
+    ],
+    "value_expected": [
+      36,
+      768
+    ]
+  },
+  "complete_albert_layer": "NOT_TESTED",
+  "generated_waveform": "NOT_TESTED"
+}
