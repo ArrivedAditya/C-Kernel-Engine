@@ -84,7 +84,7 @@ from validate_circuit_interfaces_v8 import (
     validate_graph_slots,
 )
 from resolve_layout_chain_v8 import rank_layout_routes
-from runtime_extent_contract_v8 import normalize_runtime_extents
+from runtime_extent_contract_v8 import SIZE_MAX, normalize_runtime_extents
 
 
 class BuildDiagnosticError(RuntimeError):
@@ -5260,6 +5260,8 @@ def _kernel_port_size_bytes(
     values = dict(config)
     values.update(runtime_constants)
     values.update(params)
+    if isinstance(params.get("call_constants"), dict):
+        values.update(params["call_constants"])
     symbols = {
         **values,
         "M": values.get("M", values.get("_m", values.get("seq_len"))),
@@ -16317,6 +16319,26 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
         scratch_list = op.get("scratch", [])
         scratch = {s.get("name"): s for s in scratch_list if s.get("name")}
         params = op.get("params", {})
+        # Circuit-owned constants may vary between calls to the same provider.
+        # Keep the map's ordered ABI and the provider mathematics unchanged.
+        call_constants = params.get("call_constants", {}) if isinstance(params, dict) else {}
+        if not isinstance(call_constants, dict):
+            op_errors.append(f"{func}: params.call_constants must be an object")
+            call_constants = {}
+        abi_runtime_keys = {
+            str(param.get("source", "")).split(":", 1)[1]
+            for param in (binding.get("params", []) if isinstance(binding, dict) else [])
+            if str(param.get("source", "")).startswith("runtime:")
+        }
+        declared_lengths = (op.get("runtime_extent_contract", {}) or {}).get(
+            "runtime_lengths", {})
+        for constant_name, constant_value in call_constants.items():
+            if (not isinstance(constant_name, str) or not constant_name.isidentifier()
+                    or constant_name not in abi_runtime_keys
+                    or constant_name in declared_lengths
+                    or not isinstance(constant_value, int) or isinstance(constant_value, bool)
+                    or constant_value < 0 or constant_value > SIZE_MAX):
+                op_errors.append(f"{func}: invalid params.call_constants entry {constant_name!r}")
 
         # Aliases for activation/output key lookups (handles case differences between bindings and IR)
         act_aliases = {
@@ -16562,6 +16584,8 @@ def generate_ir_lower_3(lowered_ir: Dict, mode: str) -> Dict:
                 declared_constants = extent_contract.get("runtime_constants", {}) if isinstance(extent_contract, dict) else {}
                 if key in declared_lengths:
                     expr = f"runtime_extents.{key}"
+                elif key in call_constants:
+                    expr = str(call_constants[key])
                 elif key in declared_constants:
                     expr = str(declared_constants[key])
                 elif key in audio_runtime_exprs:
