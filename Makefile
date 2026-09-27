@@ -541,22 +541,20 @@ X86_ONLY_SRCS := src/kernels/gemm_kernels_q5_0_sse_v2.c \
 	           src/kernels/gemm_kernels_q4k_avx.c \
 	           src/kernels/gemm_kernels_q6k_sse.c \
 	           src/kernels/gemm_kernels_q4k_q8k_avx2.c \
-	           src/kernels/gemm_kernels_q4k_q8k_vnni.c \
 	           src/kernels/gemm_kernels_amx.c \
 	           src/kernels/gemv_omp.c \
 	           src/kernels/quantize_row_q8_k_sse.c \
 	           src/kernels/quantize_row_q8_k_avx.c \
 	           src/kernels/quantize_row_q8_k_avx2.c \
 	           src/kernels/quantize_row_q8_k_avx512.c \
-	           src/kernels/fused/rmsnorm_q8_k_fused.c \
-	           version/v8/src/ck_parallel_decode_v8.c \
-	           version/v8/src/ck_parallel_prefill_v8.c
+	           src/kernels/fused/rmsnorm_q8_k_fused.c
 
 ifeq ($(IS_ARM_ARCH),)
 else
 SRCS := $(filter-out $(X86_ONLY_SRCS),$(SRCS))
 AVX_FLAGS :=
 SSSE3_FLAGS :=
+ARM_ENGINE_LINK_FLAGS := -Wl,-z,defs
 endif
 
 # Opt-in llama.cpp-backed engine for strict stitched parity diagnostics.
@@ -864,7 +862,7 @@ $(BUILD_STAMP): FORCE_BUILD_FLAGS | $(BUILD_DIR)
 
 $(LIB): $(BUILD_STAMP) $(SRCS) Makefile
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -shared -Wl,-soname,libckernel_engine.so -o $@ $(SRCS) $(LDFLAGS) -lm -lpthread
+	$(CC) $(CFLAGS) -shared -Wl,-soname,libckernel_engine.so $(ARM_ENGINE_LINK_FLAGS) -o $@ $(SRCS) $(LDFLAGS) -lm -lpthread
 
 $(IR_DEMO): $(BUILD_DIR) src/ckernel_ir.c src/ckernel_ir_demo.c src/ckernel_codegen.c src/ckernel_kernel_specs.c src/ckernel_registry.c include/ckernel_ir.h include/ckernel_codegen.h include/ckernel_registry.h include/ckernel_kernel_specs.h
 	$(CC) -O2 -Wall -Iinclude -o $@ src/ckernel_ir.c src/ckernel_codegen.c src/ckernel_kernel_specs.c src/ckernel_registry.c src/ckernel_ir_demo.c
@@ -6801,7 +6799,23 @@ regression-fast: v8-regression-fast
 
 V8_ARM_REGRESSION_MANIFEST ?= version/v8/regression/families_arm.json
 
-regression-fast-arm:
+.PHONY: test-v8-arm-runtime
+test-v8-arm-runtime: $(LIB)
+	@$(PYTHON) -m pytest -q unittest/test_bump_alloc_mixed.py unittest/test_v8_arm_q4k_oracle.py unittest/test_hyper_connection_quantized.py unittest/test_moe_swiglu_q4k_q5k.py
+	@$(PYTHON) -c 'import ctypes, os; ctypes.CDLL("$(abspath $(LIB))", mode=os.RTLD_NOW)'
+
+.PHONY: test-v8-arm-model-smoke
+test-v8-arm-model-smoke: test-v8-arm-runtime ck-cli-v8
+	@test -n "$(CK_ARM_MODEL_DIR)" || { echo "Set CK_ARM_MODEL_DIR to a generated v8 model directory"; exit 2; }
+	@CK_BUMP_FORCE_MIXED=1 CK_DISABLE_TOKENIZER=1 CK_DISABLE_FULL_BPE_TOKENIZER=1 \
+		$(BUILD_DIR)/ck-cli-v8 \
+		--lib "$(CK_ARM_MODEL_DIR)/libmodel.so" \
+		--weights "$(CK_ARM_MODEL_DIR)/weights.bump" \
+		--manifest "$(CK_ARM_MODEL_DIR)/weights_manifest.map" \
+		--context $${CK_ARM_CONTEXT:-100} --max-tokens 2 \
+		--prompt-tokens 2,3 --timing
+
+regression-fast-arm: test-v8-arm-runtime
 	@echo "Running ARM-focused v8 regression fast suite..."
 	@$(PYTHON) version/v8/scripts/run_regression_v8.py --mode fast --force-rebuild --families-manifest "$(V8_ARM_REGRESSION_MANIFEST)" $(REGRESSION_ARGS)
 

@@ -44,8 +44,10 @@ typedef struct {
  *
  * The allocator first tries the existing anonymous DRAM path. On Linux, if that
  * fails, it can fall back to a mixed-backed arena where the weights region is
- * file-backed from weights.bump and the runtime region is anonymous memory,
- * while preserving one contiguous virtual address space.
+ * file-backed read-only from weights.bump and the runtime region is anonymous
+ * writable memory, while preserving one contiguous virtual address space.
+ * Mixed mode is for inference only: callers that update weights must request
+ * an anonymous writable allocation instead.
  */
 int ck_bump_alloc_init(ck_bump_alloc_t *alloc,
                        const char *weights_path,

@@ -35,6 +35,10 @@
  * Reuses the same global thread pool as decode (ck_threadpool_global()).
  */
 
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "ck_parallel_prefill_v8.h"
 #include "ck_threadpool.h"
 #include "ckernel_quant.h"
