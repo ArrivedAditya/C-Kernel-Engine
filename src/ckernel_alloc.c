@@ -69,6 +69,10 @@ static ck_huge_alloc_entry_t *detach_allocation(void *ptr)
 
 void *ck_huge_alloc(size_t bytes)
 {
+    if (bytes == 0 || bytes > SIZE_MAX - (HUGE_PAGE_SIZE - 1)) {
+        errno = ENOMEM;
+        return NULL;
+    }
     size_t len = align_up_bytes(bytes, HUGE_PAGE_SIZE);
 
     /* First, try explicit huge pages via mmap + MAP_HUGETLB. */
@@ -171,6 +175,10 @@ static int ck_bump_alloc_try_mixed(ck_bump_alloc_t *alloc, const char *weights_p
         return -1;
     }
 
+    if (alloc->total_size > SIZE_MAX - (page_size - 1)) {
+        fprintf(stderr, "ck_bump_alloc_init: bump size overflows page alignment\n");
+        return -1;
+    }
     mapped_len = align_up_bytes(alloc->total_size, page_size);
     weights_len = alloc->activations_base;
     weights_file_len = weights_len - weights_len % page_size;
@@ -193,7 +201,8 @@ static int ck_bump_alloc_try_mixed(ck_bump_alloc_t *alloc, const char *weights_p
         return -1;
     }
     alloc->weights_file_size = (size_t)st.st_size;
-    if (weights_len > align_up_bytes(alloc->weights_file_size, page_size)) {
+    if (alloc->weights_file_size > SIZE_MAX - (page_size - 1) ||
+        weights_len > align_up_bytes(alloc->weights_file_size, page_size)) {
         fprintf(stderr,
                 "ck_bump_alloc_init: weights file too small for mixed mapping (%zu < %zu bytes)\n",
                 alloc->weights_file_size, weights_len);
@@ -283,7 +292,8 @@ int ck_bump_alloc_init(ck_bump_alloc_t *alloc,
     int force_mixed = 0;
     int disable_mixed = 0;
 
-    if (!alloc || total_size == 0) {
+    if (!alloc || total_size == 0 ||
+        total_size > SIZE_MAX - (HUGE_PAGE_SIZE - 1)) {
         fprintf(stderr, "ck_bump_alloc_init: invalid arguments\n");
         return -1;
     }

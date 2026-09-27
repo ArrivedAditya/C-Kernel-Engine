@@ -6802,7 +6802,7 @@ V8_ARM_REGRESSION_MANIFEST ?= version/v8/regression/families_arm.json
 
 .PHONY: test-v8-arm-runtime
 test-v8-arm-runtime: $(LIB)
-	@$(PYTHON) -m pytest -q unittest/test_bump_alloc_mixed.py
+	@$(PYTHON) -m pytest -q unittest/test_bump_alloc_mixed.py unittest/test_v8_arm_q4k_oracle.py unittest/test_hyper_connection_quantized.py unittest/test_moe_swiglu_q4k_q5k.py
 	@$(PYTHON) -c 'import ctypes, os; ctypes.CDLL("$(abspath $(LIB))", mode=os.RTLD_NOW)'
 
 .PHONY: test-v8-arm-model-smoke

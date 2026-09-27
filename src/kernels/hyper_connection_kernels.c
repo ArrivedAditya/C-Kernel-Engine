@@ -9,6 +9,13 @@
 void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
     int M, int N, int K);
+#if !defined(CK_TARGET_ARM)
+void gemv_q4_k_q8_k_avx2(float *y,
+                         const void *W,
+                         const void *x_q8,
+                         int M,
+                         int K);
+#endif
 void gemm_nt_q5_0_q8_0_parallel_dispatch(
     const void *A, const void *B, const float *bias, float *C,
     int M, int N, int K);
@@ -186,7 +193,11 @@ static void hyper_injection_q4k_q8k_llama_dispatch(
         float *output_row = output + (size_t)row * (size_t)output_dim;
         const void *input_row =
             (const uint8_t *)input + (size_t)row * input_row_bytes;
+#if defined(CK_TARGET_ARM)
         gemv_q4_k_q8_k(
+#else
+        gemv_q4_k_q8_k_avx2(
+#endif
             output_row, weight, input_row, output_dim, input_dim);
         if (bias) {
             for (int col = 0; col < output_dim; ++col) {
