@@ -1,0 +1,75 @@
+{
+  "oracle": "Kokoro 0.9.4 / Transformers 5.17.0 / PyTorch 2.8.0+cpu",
+  "reference_model_sha256": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+  "input_ids": [
+    0,
+    123,
+    156,
+    51,
+    46,
+    16,
+    81,
+    102,
+    61,
+    16,
+    83,
+    61,
+    156,
+    102,
+    61,
+    62,
+    42,
+    56,
+    62,
+    16,
+    123,
+    83,
+    61,
+    58,
+    156,
+    69,
+    56,
+    61,
+    16,
+    83,
+    54,
+    156,
+    39,
+    46,
+    4,
+    0
+  ],
+  "epsilon": 1e-12,
+  "array_shapes": {
+    "ids": [
+      36
+    ],
+    "type_ids": [
+      36
+    ],
+    "word": [
+      178,
+      128
+    ],
+    "position": [
+      512,
+      128
+    ],
+    "token_type": [
+      2,
+      128
+    ],
+    "gamma": [
+      128
+    ],
+    "beta": [
+      128
+    ],
+    "expected": [
+      36,
+      128
+    ]
+  },
+  "fixture_sha256": "c2a18dea47a3542ec5199def3156ce5b8cd01dc51e40a569732ab215da34a3e6",
+  "status": "oracle_embedding_boundary_only; complete_encoder_not_tested"
+}

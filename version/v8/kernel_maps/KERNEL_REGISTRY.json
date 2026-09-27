@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 388,
+      "total": 389,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -49,6 +49,7 @@
         "copy_last_logits": 1,
         "embedding": 7,
         "embedding_backward": 1,
+        "embedding_three_table_layer_norm": 1,
         "farskip_routed_shared_combine": 1,
         "feature_concat": 1,
         "feature_slice_copy": 1,
@@ -23049,6 +23050,329 @@
       "notes": "Token embedding lookup with Q8_0 quantized weights. Simple table lookup operation.",
       "name": "embedding_forward_q8_0",
       "_source_file": "embedding_forward_q8_0.json"
+    },
+    {
+      "id": "embedding_three_table_layer_norm_f32",
+      "op": "embedding_three_table_layer_norm",
+      "operation_interface": "embedding.word_type_position.layer_norm.checked.fp32.v1",
+      "variant": "token_major_fp32_checked",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "embedding_three_table_layer_norm_fp32",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "word_ids",
+          "dtype": "i32",
+          "shape": [
+            "T"
+          ],
+          "layout": "token_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        },
+        {
+          "name": "type_ids",
+          "dtype": "i32",
+          "shape": [
+            "T"
+          ],
+          "layout": "token_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [
+        {
+          "name": "word",
+          "dtype": "fp32",
+          "shape": [
+            "V",
+            "C"
+          ],
+          "layout": "row_major_weight_stride",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        },
+        {
+          "name": "position",
+          "dtype": "fp32",
+          "shape": [
+            "P",
+            "C"
+          ],
+          "layout": "row_major_weight_stride",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        },
+        {
+          "name": "token_type",
+          "dtype": "fp32",
+          "shape": [
+            "Y",
+            "C"
+          ],
+          "layout": "row_major_weight_stride",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        },
+        {
+          "name": "gamma",
+          "dtype": "fp32",
+          "shape": [
+            "C"
+          ],
+          "layout": "feature_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        },
+        {
+          "name": "beta",
+          "dtype": "fp32",
+          "shape": [
+            "C"
+          ],
+          "layout": "feature_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "T",
+            "C"
+          ],
+          "layout": "token_major_output_stride",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [],
+      "dims": [
+        "id_elements",
+        "word_elements",
+        "vocab_size",
+        "position_elements",
+        "position_count",
+        "type_elements",
+        "type_count",
+        "norm_elements",
+        "output_elements",
+        "tokens",
+        "channels",
+        "weight_stride",
+        "output_stride",
+        "epsilon"
+      ],
+      "constraints": {
+        "notes": "Nonaliasing caller-owned buffers. T and C positive; IDs in range; T <= P; strides >= C; all accessed FP32 weights finite; epsilon finite and positive. Rejection leaves output unchanged. Positions are generated 0..T-1. Physical padding is untouched."
+      },
+      "impl": {
+        "function": "embedding_three_table_layer_norm_f32",
+        "c_declaration": "int embedding_three_table_layer_norm_f32(const int32_t *word_ids, const int32_t *type_ids, size_t id_elements, const float *word, size_t word_elements, size_t vocab_size, const float *position, size_t position_elements, size_t position_count, const float *token_type, size_t type_elements, size_t type_count, const float *gamma, const float *beta, size_t norm_elements, float *output, size_t output_elements, size_t tokens, size_t channels, size_t weight_stride, size_t output_stride, float epsilon);",
+        "sources": [
+          "src/kernels/embedding_three_table_layer_norm.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "embedding_three_table_layer_norm_fp32_reference",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "embedding_three_table_layer_norm_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "serial"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp64",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "serial"
+          }
+        }
+      ],
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "word_ids",
+            "source": "activation:word_ids",
+            "cast": "const int32_t*",
+            "ports": [
+              "input:word_ids"
+            ]
+          },
+          {
+            "name": "type_ids",
+            "source": "activation:type_ids",
+            "cast": "const int32_t*",
+            "ports": [
+              "input:type_ids"
+            ]
+          },
+          {
+            "name": "id_elements",
+            "source": "runtime:id_elements"
+          },
+          {
+            "name": "word",
+            "source": "weight:word",
+            "cast": "const float*",
+            "ports": [
+              "weight:word"
+            ]
+          },
+          {
+            "name": "word_elements",
+            "source": "runtime:word_elements"
+          },
+          {
+            "name": "vocab_size",
+            "source": "runtime:vocab_size"
+          },
+          {
+            "name": "position",
+            "source": "weight:position",
+            "cast": "const float*",
+            "ports": [
+              "weight:position"
+            ]
+          },
+          {
+            "name": "position_elements",
+            "source": "runtime:position_elements"
+          },
+          {
+            "name": "position_count",
+            "source": "runtime:position_count"
+          },
+          {
+            "name": "token_type",
+            "source": "weight:token_type",
+            "cast": "const float*",
+            "ports": [
+              "weight:token_type"
+            ]
+          },
+          {
+            "name": "type_elements",
+            "source": "runtime:type_elements"
+          },
+          {
+            "name": "type_count",
+            "source": "runtime:type_count"
+          },
+          {
+            "name": "gamma",
+            "source": "weight:gamma",
+            "cast": "const float*",
+            "ports": [
+              "weight:gamma"
+            ]
+          },
+          {
+            "name": "beta",
+            "source": "weight:beta",
+            "cast": "const float*",
+            "ports": [
+              "weight:beta"
+            ]
+          },
+          {
+            "name": "norm_elements",
+            "source": "runtime:norm_elements"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:output_elements"
+          },
+          {
+            "name": "tokens",
+            "source": "runtime:tokens"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:channels"
+          },
+          {
+            "name": "weight_stride",
+            "source": "runtime:weight_stride"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:output_stride"
+          },
+          {
+            "name": "epsilon",
+            "source": "config:epsilon"
+          }
+        ]
+      },
+      "tests": {
+        "unit": [
+          "tests/test_v8_bert_embedding_oracle.py",
+          "tests/test_v8_bert_embedding_live.py"
+        ],
+        "oracle": "Pinned Kokoro/Transformers PyTorch ALBERT embedding module output at 36x128; independent committed fixture and optional live pinned-model recomputation"
+      },
+      "notes": "Reusable three-table embedding and LayerNorm; Kokoro is one consumer. This provider only certifies the embedding boundary, not the full encoder or waveform. Inference only.",
+      "name": "embedding_three_table_layer_norm_f32",
+      "_source_file": "embedding_three_table_layer_norm_f32.json"
     },
     {
       "id": "farskip_swiglu_shared_combine_bf16",
