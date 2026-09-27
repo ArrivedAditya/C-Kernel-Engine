@@ -1061,6 +1061,17 @@ static int gpt2_pretokenize(const char *text, int text_len, PretokChunk *chunks,
             /* Check what follows the spaces */
             if (space_end < text_len) {
                 int next_len = utf8_char_len((unsigned char)text[space_end]);
+                if (space_count > 1 && is_bpe_punct(text + space_end, next_len)) {
+                    /* The optional space in the punctuation branch belongs to
+                     * the punctuation chunk; preceding spaces form their own
+                     * whitespace chunk. */
+                    chunks[num_chunks].start = text + pos;
+                    chunks[num_chunks].len = (space_count - 1) * 2;
+                    chunks[num_chunks].type = CHUNK_WHITESPACE;
+                    num_chunks++;
+                    pos += (space_count - 1) * 2;
+                    continue;
+                }
                 if (is_bpe_letter(text + space_end, next_len)) {
                     /* Letters follow - output (n-1) spaces, then space+word (pattern 2) */
                     if (space_count > 1) {
@@ -1220,7 +1231,7 @@ static int apply_bpe_merges(CKTrueBPE *bpe, CKBPETokenList *list) {
             size_t right_len = list->tokens[best_pos + 1].len;
 
             if (left_len + right_len >= sizeof(merged_buf)) {
-                break;  /* Too long */
+                return -1;  /* Cannot encode this merge completely */
             }
 
             memcpy(merged_buf, list->tokens[best_pos].str, left_len);
@@ -1231,7 +1242,7 @@ static int apply_bpe_merges(CKTrueBPE *bpe, CKBPETokenList *list) {
 
         /* Apply the merge */
         if (token_list_merge_at(list, best_pos, merged_str, strlen(merged_str), best_merge->merged_id) != 0) {
-            break;
+            return -1;
         }
     }
 
@@ -1257,29 +1268,30 @@ static int encode_chunk(CKTrueBPE *bpe, const char *chunk, int chunk_len,
                 ids[0] = chunk_id;
                 return 1;
             }
-            return 0;
+            return -1;
         }
     }
 
     /* Initialize token list from chunk characters */
     if (init_tokens_from_text(bpe, list, chunk, chunk_len) != 0) {
-        return 0;
+        return -1;
     }
 
     /* Apply BPE merges to this chunk */
-    apply_bpe_merges(bpe, list);
+    if (apply_bpe_merges(bpe, list) != 0) return -1;
 
     /* Extract token IDs from this chunk */
     int out_idx = 0;
     CKSpacePrefixStyle style = bpe->config.space_prefix_style;
-    for (size_t i = 0; i < list->count && out_idx < max_ids; i++) {
+    for (size_t i = 0; i < list->count; i++) {
         int32_t id = list->tokens[i].id;
 
         /* Handle unknown tokens */
         if (id < 0) {
             if (bpe->config.byte_fallback) {
                 /* Output each byte as separate token (byte fallback) */
-                for (size_t j = 0; j < list->tokens[i].len && out_idx < max_ids; j++) {
+                for (size_t j = 0; j < list->tokens[i].len; j++) {
+                    if (out_idx >= max_ids) return -1;
                     unsigned char raw_b = (unsigned char)list->tokens[i].str[j];
                     int32_t byte_id = -1;
 
@@ -1310,9 +1322,11 @@ static int encode_chunk(CKTrueBPE *bpe, const char *chunk, int chunk_len,
                     ids[out_idx++] = (byte_id >= 0) ? byte_id : bpe->unk_id;
                 }
             } else {
+                if (out_idx >= max_ids) return -1;
                 ids[out_idx++] = bpe->unk_id;
             }
         } else {
+            if (out_idx >= max_ids) return -1;
             ids[out_idx++] = id;
         }
     }
@@ -1328,10 +1342,15 @@ static int encode_text_segment(CKTrueBPE *bpe, const char *text, int text_len,
     if (text_len <= 0) return 0;
 
     /* Preprocess text (byte-level encoding) */
-    char preprocessed[16384];
-    int pp_len = preprocess_text(bpe, text, text_len, preprocessed, sizeof(preprocessed) - 1);
+    /* GPT-2 byte mapping can expand one input byte to three UTF-8 bytes. */
+    if (text_len > (INT_MAX - 4) / 3) return -1;
+    size_t pp_capacity = (size_t)text_len * 3 + 4;
+    char *preprocessed = malloc(pp_capacity);
+    if (!preprocessed) return -1;
+    int pp_len = preprocess_text(bpe, text, text_len, preprocessed, (int)pp_capacity - 1);
     if (pp_len < 0) {
-        return 0;
+        free(preprocessed);
+        return -1;
     }
     preprocessed[pp_len] = '\0';
 
@@ -1342,34 +1361,63 @@ static int encode_text_segment(CKTrueBPE *bpe, const char *text, int text_len,
     if (style == CK_SPACE_PREFIX_GPT2 || style == CK_SPACE_PREFIX_AUTO) {
 
         /* Pretokenize */
-        PretokChunk chunks[1024];
+        /* Every chunk consumes at least one preprocessed byte. */
+        if ((size_t)pp_len > SIZE_MAX / sizeof(PretokChunk)) {
+            free(preprocessed);
+            return -1;
+        }
+        PretokChunk *chunks = malloc((size_t)pp_len * sizeof(*chunks));
+        if (!chunks) {
+            free(preprocessed);
+            return -1;
+        }
         int num_chunks = gpt2_pretokenize(
-            preprocessed, pp_len, chunks, 1024, bpe->config.pretokenizer);
+            preprocessed, pp_len, chunks, pp_len, bpe->config.pretokenizer);
 
         /* Create reusable token list */
         CKBPETokenList *list = token_list_create(INITIAL_TOKEN_CAPACITY);
-        if (!list) return out_idx;
+        if (!list) {
+            free(chunks);
+            free(preprocessed);
+            return -1;
+        }
 
         /* Process each chunk independently with BPE */
-        for (int c = 0; c < num_chunks && out_idx < max_ids; c++) {
+        for (int c = 0; c < num_chunks; c++) {
             int chunk_ids = encode_chunk(bpe, chunks[c].start, chunks[c].len,
                                          ids + out_idx, max_ids - out_idx, list);
+            if (chunk_ids < 0) {
+                token_list_free(list);
+                free(chunks);
+                free(preprocessed);
+                return -1;
+            }
             out_idx += chunk_ids;
         }
 
         token_list_free(list);
+        free(chunks);
     } else {
         /* SentencePiece style: no pretokenization, process entire text */
         CKBPETokenList *list = token_list_create(INITIAL_TOKEN_CAPACITY);
-        if (!list) return out_idx;
+        if (!list) {
+            free(preprocessed);
+            return -1;
+        }
 
         int chunk_ids = encode_chunk(bpe, preprocessed, pp_len,
                                      ids + out_idx, max_ids - out_idx, list);
+        if (chunk_ids < 0) {
+            token_list_free(list);
+            free(preprocessed);
+            return -1;
+        }
         out_idx += chunk_ids;
 
         token_list_free(list);
     }
 
+    free(preprocessed);
     return out_idx;
 }
 
@@ -1393,8 +1441,12 @@ static int match_special_token(const CKTrueBPE *bpe, const char *text, int text_
 }
 
 int ck_true_bpe_encode(CKTrueBPE *bpe, const char *text, int text_len, int32_t *ids, int max_ids) {
-    if (!bpe || !text || !ids || max_ids <= 0) return 0;
-    if (text_len < 0) text_len = (int)strlen(text);
+    if (!bpe || !text || !ids || max_ids <= 0) return -1;
+    if (text_len < 0) {
+        size_t inferred_len = strlen(text);
+        if (inferred_len > INT_MAX) return -1;
+        text_len = (int)inferred_len;
+    }
     if (text_len == 0) return 0;
 
     /* Auto-detect space style if needed */
@@ -1405,33 +1457,37 @@ int ck_true_bpe_encode(CKTrueBPE *bpe, const char *text, int text_len, int32_t *
     int out_idx = 0;
 
     /* Add BOS token if configured */
-    if (bpe->config.add_bos && bpe->bos_id >= 0 && out_idx < max_ids) {
+    if (bpe->config.add_bos && bpe->bos_id >= 0) {
+        if (out_idx >= max_ids) return -1;
         ids[out_idx++] = bpe->bos_id;
     }
 
     /* If no special tokens registered, use fast path */
     if (bpe->num_special_tokens == 0) {
-        out_idx += encode_text_segment(bpe, text, text_len, ids + out_idx, max_ids - out_idx);
+        int segment_count = encode_text_segment(bpe, text, text_len, ids + out_idx, max_ids - out_idx);
+        if (segment_count < 0) return -1;
+        out_idx += segment_count;
     } else {
         /* Scan for special tokens and encode segments between them */
         int pos = 0;
         int segment_start = 0;
 
-        while (pos < text_len && out_idx < max_ids) {
+        while (pos < text_len) {
             int match = match_special_token(bpe, text, text_len, pos);
 
             if (match >= 0) {
                 /* Found special token - first encode any text before it */
                 if (pos > segment_start) {
                     int seg_len = pos - segment_start;
-                    out_idx += encode_text_segment(bpe, text + segment_start, seg_len,
-                                                   ids + out_idx, max_ids - out_idx);
+                    int segment_count = encode_text_segment(bpe, text + segment_start, seg_len,
+                                                            ids + out_idx, max_ids - out_idx);
+                    if (segment_count < 0) return -1;
+                    out_idx += segment_count;
                 }
 
                 /* Output the special token ID */
-                if (out_idx < max_ids) {
-                    ids[out_idx++] = bpe->special_tokens[match].id;
-                }
+                if (out_idx >= max_ids) return -1;
+                ids[out_idx++] = bpe->special_tokens[match].id;
 
                 /* Advance past the special token */
                 pos += bpe->special_tokens[match].len;
@@ -1443,14 +1499,17 @@ int ck_true_bpe_encode(CKTrueBPE *bpe, const char *text, int text_len, int32_t *
         }
 
         /* Encode any remaining text after last special token */
-        if (segment_start < text_len && out_idx < max_ids) {
-            out_idx += encode_text_segment(bpe, text + segment_start, text_len - segment_start,
-                                           ids + out_idx, max_ids - out_idx);
+        if (segment_start < text_len) {
+            int segment_count = encode_text_segment(bpe, text + segment_start, text_len - segment_start,
+                                                    ids + out_idx, max_ids - out_idx);
+            if (segment_count < 0) return -1;
+            out_idx += segment_count;
         }
     }
 
     /* Add EOS token if configured */
-    if (bpe->config.add_eos && bpe->eos_id >= 0 && out_idx < max_ids) {
+    if (bpe->config.add_eos && bpe->eos_id >= 0) {
+        if (out_idx >= max_ids) return -1;
         ids[out_idx++] = bpe->eos_id;
     }
 
