@@ -340,7 +340,7 @@ def test_cached_gguf_restores_native_jinja_and_rejects_stale_bytes(tmp_path):
         raw = value.encode("utf-8")
         return struct.pack("<Q", len(raw)) + raw
 
-    native = "{%- for message in messages %}{{ message.content }}{%- endfor %}"
+    native = "{%- for message in messages %}\n{{ message.content }}{%- endfor %}"
     source = tmp_path / "source.gguf"
     source.write_bytes(
         b"GGUF" + struct.pack("<IQQ", 3, 0, 2)
@@ -355,8 +355,11 @@ def test_cached_gguf_restores_native_jinja_and_rejects_stale_bytes(tmp_path):
 
     ck_run_v8.step_convert_gguf(source, run)
     sidecar = run / "chat_template.jinja"
-    assert sidecar.read_text(encoding="utf-8") == native
+    assert sidecar.read_bytes() == native.encode("utf-8")
     ck_run_v8.step_convert_gguf(source, run)
+    sidecar.write_bytes(native.encode("utf-8").replace(b"\n", b"\r\n"))
+    with pytest.raises(RuntimeError, match="differs from GGUF source"):
+        ck_run_v8.step_convert_gguf(source, run)
     sidecar.write_text("stale-template", encoding="utf-8")
     with pytest.raises(RuntimeError, match="differs from GGUF source"):
         ck_run_v8.step_convert_gguf(source, run)

@@ -829,8 +829,8 @@ def _write_native_chat_template_sidecar(
     sidecar_dir = os.path.dirname(os.path.abspath(anchor)) or "."
     os.makedirs(sidecar_dir, exist_ok=True)
     sidecar_path = os.path.join(sidecar_dir, "chat_template.jinja")
-    with open(sidecar_path, "w", encoding="utf-8") as sf:
-        sf.write(text)
+    with open(sidecar_path, "wb") as sf:
+        sf.write(text.encode("utf-8"))
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
     print(
         f"[chat_template] source=gguf-native len={len(text)} sha={digest} -> {sidecar_path}"

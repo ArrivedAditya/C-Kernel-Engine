@@ -27,6 +27,7 @@ import re
 import threading
 import time
 import uuid
+import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -557,7 +558,7 @@ def _has_tool_support(
         isinstance(chat_templates, dict)
         and any(isinstance(value, str) and value.strip() for value in chat_templates.values())
     )
-    return has_template and tool_protocol in {"tagged_json", "bare_json", "qwen_xml"}
+    return has_template and tool_protocol in {"tagged_json", "bare_json", "qwen_xml", "qwen_code_xml"}
 
 
 #: Tool-call syntax emitted by the model-native Jinja template: Qwen3-style
@@ -566,6 +567,7 @@ _TOOL_SYNTAX_TOOL_CALL_JSON = "tool_call_json"
 #: Plain JSON tool calls with no template-declared tag wrapper.
 _TOOL_SYNTAX_JSON = "json"
 _TOOL_SYNTAX_QWEN_XML = "qwen_xml"
+_TOOL_SYNTAX_QWEN_CODE_XML = "qwen_code_xml"
 _TOOL_SYNTAX_NONE = "none"
 
 
@@ -582,6 +584,8 @@ def _tool_syntax_for_protocol(protocol: str | None) -> str:
         return _TOOL_SYNTAX_JSON
     if protocol == "qwen_xml":
         return _TOOL_SYNTAX_QWEN_XML
+    if protocol == "qwen_code_xml":
+        return _TOOL_SYNTAX_QWEN_CODE_XML
     raise ValueError(f"unsupported tool protocol {protocol!r}")
 
 
@@ -685,10 +689,33 @@ def _extract_tool_calls_from_text(
 
         return json.loads(source, parse_constant=reject_constant)
 
+    def declared_parameter_value(name: str, key: str, value: str) -> Any:
+        declared = (tool_parameters or {}).get(name, {})
+        properties = declared.get("properties", {}) if isinstance(declared, dict) else {}
+        property_schema = properties.get(key, {}) if isinstance(properties, dict) else {}
+        expected_type = property_schema.get("type") if isinstance(property_schema, dict) else None
+        if expected_type not in {"integer", "number", "boolean", "object", "array", "null"}:
+            return value.strip()
+        try:
+            parsed = strict_json_loads(value.strip())
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(f"invalid {expected_type} tool parameter {key!r}") from exc
+        valid = {
+            "integer": lambda item: type(item) is int,
+            "number": lambda item: type(item) is int or (type(item) is float and math.isfinite(item)),
+            "boolean": lambda item: type(item) is bool,
+            "object": lambda item: isinstance(item, dict),
+            "array": lambda item: isinstance(item, list),
+            "null": lambda item: item is None,
+        }[expected_type](parsed)
+        if not valid:
+            raise ValueError(f"invalid {expected_type} tool parameter {key!r}")
+        return parsed
+
     stripped = text.strip()
     if tool_syntax == _TOOL_SYNTAX_NONE:
         return [], None, None
-    if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML}:
+    if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML}:
         tool_blocks: list[str] = []
         for m in re.finditer(
             r"<tool_call>(.*?)</tool_call>", text, flags=re.DOTALL | re.IGNORECASE
@@ -705,7 +732,39 @@ def _extract_tool_calls_from_text(
     else:
         tool_blocks = []
     candidates: list[str | dict[str, Any]] = []
-    if tool_blocks and tool_syntax == _TOOL_SYNTAX_QWEN_XML:
+    if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and stripped.startswith("<function_calls"):
+        try:
+            if "<!" in stripped:
+                raise ValueError("XML declarations are not allowed in tool calls")
+            root = ET.fromstring(stripped)
+            if root.tag != "function_calls" or root.attrib or (root.text or "").strip():
+                raise ValueError("expected a function_calls root")
+            if not len(root):
+                raise ValueError("empty function_calls envelope")
+            for invoke in root:
+                if invoke.tag != "invoke" or set(invoke.attrib) != {"name"} or (invoke.text or "").strip():
+                    raise ValueError("invalid invoke element")
+                name = invoke.attrib["name"]
+                if not re.fullmatch(r"[A-Za-z_][\w.-]*", name):
+                    raise ValueError("invalid function name")
+                parameters: dict[str, Any] = {}
+                for param in invoke:
+                    if param.tag != "parameter" or set(param.attrib) != {"name"} or len(param):
+                        raise ValueError("invalid parameter element")
+                    key = param.attrib["name"]
+                    if not re.fullmatch(r"[A-Za-z_][\w.-]*", key) or key in parameters:
+                        raise ValueError(f"duplicate or invalid tool parameter {key!r}")
+                    parameters[key] = declared_parameter_value(name, key, param.text or "")
+                    if (param.tail or "").strip():
+                        raise ValueError("text outside a parameter element")
+                if (invoke.tail or "").strip():
+                    raise ValueError("text outside an invoke element")
+                candidates.append({"name": name, "arguments": parameters})
+        except (ET.ParseError, ValueError) as exc:
+            return [], "malformed", f"malformed function_calls XML: {exc}"
+    elif tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and "<function_calls" in stripped:
+        return [], "malformed", "function_calls XML must be the entire response"
+    if tool_blocks and tool_syntax in {_TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML}:
         for block in tool_blocks:
             match = re.fullmatch(
                 r"\s*<function=([A-Za-z_][\w.-]*)>(.*?)</function>\s*",
@@ -722,29 +781,10 @@ def _extract_tool_calls_from_text(
                 key, value = param.groups()
                 if key in parameters:
                     return [], "malformed", f"duplicate tool parameter {key!r}"
-                value = value.strip()
-                declared = (tool_parameters or {}).get(name, {})
-                properties = declared.get("properties", {}) if isinstance(declared, dict) else {}
-                property_schema = properties.get(key, {}) if isinstance(properties, dict) else {}
-                expected_type = property_schema.get("type") if isinstance(property_schema, dict) else None
-                if isinstance(expected_type, str) and expected_type in {"integer", "number", "boolean", "object", "array", "null"}:
-                    try:
-                        parsed = strict_json_loads(value)
-                    except (json.JSONDecodeError, ValueError):
-                        return [], "malformed", f"invalid {expected_type} tool parameter {key!r}"
-                    valid = {
-                        "integer": lambda item: type(item) is int,
-                        "number": lambda item: type(item) is int or (type(item) is float and math.isfinite(item)),
-                        "boolean": lambda item: type(item) is bool,
-                        "object": lambda item: isinstance(item, dict),
-                        "array": lambda item: isinstance(item, list),
-                        "null": lambda item: item is None,
-                    }[expected_type](parsed)
-                    if not valid:
-                        return [], "malformed", f"invalid {expected_type} tool parameter {key!r}"
-                    parameters[key] = parsed
-                else:
-                    parameters[key] = value
+                try:
+                    parameters[key] = declared_parameter_value(name, key, value)
+                except ValueError as exc:
+                    return [], "malformed", str(exc)
             if parameter_pattern.sub("", body).strip():
                 return [], "malformed", "malformed Qwen XML tool parameters"
             candidates.append({"name": name, "arguments": parameters})
@@ -838,7 +878,9 @@ def _strip_tool_json_from_text(
         except json.JSONDecodeError:
             pass
     remaining = text
-    if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML}:
+    if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and stripped.startswith("<function_calls"):
+        return ""
+    if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML}:
         remaining = re.sub(
             r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL | re.IGNORECASE
         )
@@ -855,8 +897,10 @@ def _classify_stream_mode(
     if stripped.startswith("{") or stripped.startswith("["):
         return "tool" if tool_syntax == _TOOL_SYNTAX_JSON else "text"
     if stripped.startswith("<"):
+        if stripped.lower().startswith("<function_calls"):
+            return "tool" if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML else "text"
         if stripped.lower().startswith("<tool_call"):
-            return "tool" if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML} else "text"
+            return "tool" if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML} else "text"
         return "text"
     return "text"
 

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from server.live import create_app
+from server.live import _extract_tool_calls_from_text, create_app
 from server.runtime import load_manifest_templates, load_tool_protocol
 from server.session_v8 import CK_SESSION_REQUEST_RAW_PROMPT
 
@@ -124,7 +124,7 @@ def test_operator_jinja_variant_is_selected_without_inline_tool_marker(tmp_path:
     (variants_dir / "tool_use.jinja").write_text(variant, encoding="utf-8")
     (tmp_path / "tool_protocol.json").write_text(json.dumps({
         "schema": "cke.v8.tool_protocol.v1",
-        "protocol": "qwen_xml",
+        "protocol": "qwen_code_xml",
         "template_sha256": hashlib.sha256(variant.encode()).hexdigest(),
     }), encoding="utf-8")
     selected_native, variants, contract = load_manifest_templates(tmp_path)
@@ -132,8 +132,9 @@ def test_operator_jinja_variant_is_selected_without_inline_tool_marker(tmp_path:
     assert variants == {"tool_use": variant}
     protocol = load_tool_protocol(tmp_path, selected_native, variants)
     session = RecordingSession([
-        "<tool_call>\n<function=read_file>\n<parameter=file_path>\n"
-        "/tmp/cke-qwen/q\n</parameter>\n</function>\n</tool_call>",
+        '<function_calls><invoke name="read_file">'
+        '<parameter name="file_path">/tmp/cke-qwen/q</parameter>'
+        '</invoke></function_calls>',
         "CKE_OK",
     ])
     client = TestClient(create_app(
@@ -145,7 +146,7 @@ def test_operator_jinja_variant_is_selected_without_inline_tool_marker(tmp_path:
     })
     assert response.status_code == 200, response.text
     assert any(item["type"] == "function_call" for item in response.json()["output"])
-    assert "Qwen XML function call" in session.prompts[0]
+    assert "XML envelope" in session.prompts[0]
     assert "<tool_call>" not in session.prompts[0]
     assert session.flags[0] & CK_SESSION_REQUEST_RAW_PROMPT
     call = next(item for item in response.json()["output"] if item["type"] == "function_call")
@@ -162,6 +163,39 @@ def test_operator_jinja_variant_is_selected_without_inline_tool_marker(tmp_path:
     assert session.flags[1] & CK_SESSION_REQUEST_RAW_PROMPT
     with pytest.raises(ValueError, match="does not match selected chat template"):
         load_tool_protocol(tmp_path, selected_native, {"tool_use": variant + " changed"})
+
+
+def test_qwen_code_xml_rejects_malformed_unknown_and_example_text() -> None:
+    valid = ('<function_calls><invoke name="read_file">'
+             '<parameter name="file_path">/tmp/a</parameter>'
+             '</invoke></function_calls>')
+    schema = {"read_file": TOOL["parameters"]}
+    calls, code, _ = _extract_tool_calls_from_text(
+        valid, {"read_file"}, tool_syntax="qwen_code_xml", tool_parameters=schema,
+    )
+    assert code is None and json.loads(calls[0]["arguments"]) == {"file_path": "/tmp/a"}
+    for corrupted in (
+        valid.replace('name="read_file"', 'name="unknown"'),
+        valid.replace('name="file_path"', 'name="other"'),
+        valid.replace('</invoke>', '<parameter name="file_path">b</parameter></invoke>'),
+        valid.replace('</function_calls>', ''),
+    ):
+        bad, error, _ = _extract_tool_calls_from_text(
+            corrupted, {"read_file"}, tool_syntax="qwen_code_xml",
+            tool_parameters=schema,
+        )
+        assert not bad and error in {"unknown", "malformed"}
+    example, error, _ = _extract_tool_calls_from_text(
+        "For example, JSON like {\"name\":\"read_file\"} is text.",
+        {"read_file"}, tool_syntax="qwen_code_xml", tool_parameters=schema,
+    )
+    assert example == [] and error is None
+    native_form = ("I'll read this. <tool_call><function=read_file>"
+                   "<parameter=file_path>/tmp/a</parameter></function></tool_call>")
+    calls, code, _ = _extract_tool_calls_from_text(
+        native_form, {"read_file"}, tool_syntax="qwen_code_xml", tool_parameters=schema,
+    )
+    assert code is None and json.loads(calls[0]["arguments"]) == {"file_path": "/tmp/a"}
 
 
 def test_broken_selected_jinja_fails_before_generation(tmp_path: Path) -> None:

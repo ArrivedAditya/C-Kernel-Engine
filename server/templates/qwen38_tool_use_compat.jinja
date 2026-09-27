@@ -3,7 +3,7 @@
 {%- for tool in tools %}
 {{- tool | tojson ~ '\n' }}
 {%- endfor %}
-{{- 'If you need a function, reply with exactly one Qwen XML function call using the listed function and parameter names. Do not add text after the call. If you already have the result, reply with the answer only.\n<|im_end|>\n' }}
+{{- 'If you need a function, reply with exactly one XML envelope using this format:\n<function_calls><invoke name="FUNCTION_NAME"><parameter name="PARAMETER_NAME">VALUE</parameter></invoke></function_calls>\nUse the listed function and parameter names. Do not add text outside the envelope. If you already have the result, reply with the answer only.\n<|im_end|>\n' }}
 {%- endif %}
 {%- for message in messages %}
 {%- if message.role == 'tool' %}
