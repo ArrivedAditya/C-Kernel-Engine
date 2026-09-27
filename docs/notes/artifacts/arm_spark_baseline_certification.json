@@ -1,0 +1,133 @@
+{
+  "label": "NEW CERTIFICATION",
+  "label_note": "New ARM certification baseline established on NVIDIA DGX Spark (GB10 Grace Blackwell), 2026-09-26. This is NOT recovered TDA4VM parity: the historical TDA4VM evidence is unrecoverable (full git-history search finds only documentation mentions; no retained model/artifact/token-ID reports). All numbers below are freshly measured.",
+  "certification_date_utc": "2026-09-26",
+  "cke_revision": {
+    "base_sha": "50cb9915b6f449b25bc89a08170b83f6eddb52c9",
+    "base_subject": "Merge pull request #572 from C-Kernel-Engine/feat/v8-audio-adaln",
+    "branch": "test/arm-spark-baseline",
+    "arm_build_fixes_on_top": [
+      "src/kernels/gemm_kernels_q4k_q8k.c: guard #include <immintrin.h> behind __AVX__/__AVX2__/__AVX512F__ (only ARM build blocker in engine sources)",
+      "src/kernels/gemm_kernels_q4k_q8k_arm_stubs.c (new): non-x86 link stubs for x86-only Q4_K packed/VNNI providers; availability probes return 0, unreachable compute entry points abort loudly; compiled only in the ARM Makefile branch",
+      "Makefile: add the stub file to SRCS in the IS_ARM_ARCH branch only"
+    ]
+  },
+  "hardware": {
+    "machine": "NVIDIA DGX Spark (GB10 Grace Blackwell), hostname promaxgb10-9abd",
+    "arch": "aarch64",
+    "cpus": "20 cores (Cortex-X925 + Cortex-A725 big.LITTLE), 20 online",
+    "ram_total_gb": 121,
+    "ram_available_at_run_gb": 30,
+    "isa_features": "fp asimd (NEON) sve sve2 sveaes svepmull svebitperm svesha3 svesm4 svei8mm svebf16 i8mm bf16 asimddp asimdfhm asimdhp fcma sha3 sha512 sm3 sm4 dcpop dcpodp frint ecv bti paca pacg (full lscpu flags recorded in PR)",
+    "sve2_present": true,
+    "os_kernel": "Linux 7.0.0-1019-nvidia #19~24.04.2-Ubuntu SMP aarch64 (Ubuntu 24.04)"
+  },
+  "toolchain": {
+    "gcc": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+    "make": "GNU Make 4.3",
+    "python": "3.12.3 (repo-local .venv; torch 2.14.0+cpu aarch64, numpy 2.5.3)",
+    "engine_build_flags_baseline": "gcc -O3 -fPIC -Wall -Wno-unknown-pragmas -Wno-unused-function -DCK_TARGET_ARM=1 -mtune=native -fno-math-errno -Iinclude (no -mcpu/-march ISA flags; generic AArch64/NEON baseline; x86-only sources filtered out by the Makefile ARM branch)",
+    "generated_model_c_compile_flags": "gcc -shared -fPIC -O3 -march=native -std=c11 -fvisibility=default -fopenmp -DCK_TARGET_ARM=1 -Iinclude -Iversion/v8/src (canonical cks-v8-run flow; -march=native is the harness default for the model TU and is recorded here explicitly)"
+  },
+  "model": {
+    "source": "hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf",
+    "quant": "Q5_K_M (converted tensor dtypes: 81x Q5_1, 27x Q5_K, 9x Q6_K, 9x Q8_0, 73x F32; no Q4_K tensors)",
+    "gguf_sha256": "0d29b1a23a4cb1f14fda28c9e63563fa4bbefb6f34db4f7e873bb72edd932b00",
+    "gguf_sha256_matches_x86_cache": true,
+    "conversion_report": "[gguf->bump] version=5 arch=gemma3 layers=18 hidden=640 heads=4/1 ff=2048 vocab=262144 ctx=32768 no biases; 182 from GGUF, 109 zeros placeholders, 41 other; [tokenizer] extracted 262144 tokens, 0 merges, 2577510 bytes from GGUF metadata"
+  },
+  "run_config": {
+    "flow": "version/v8/scripts/cks-v8-run run <model> --context-len 1024 --force-compile --force-convert --temperature 0.0 --max-tokens 32 --prompt \"hello\" --chat-template auto",
+    "context_len": 1024,
+    "threads": 4,
+    "threads_env": "CK_NUM_THREADS=4 (auto-detect would be 20)",
+    "formatted_prompt": "<start_of_turn>user\nhello<end_of_turn>\n<start_of_turn>model\n",
+    "tokenizer": "built-in C tokenizer (llama contract), tokenizer.json extracted from GGUF"
+  },
+  "providers_executed_prefill": {
+    "note": "lowered_prefill.json is positionally identical between Spark ARM and x86 (427 ops, 0 diffs); cross-ISA divergence is intra-kernel only",
+    "kernels": {
+      "attention_forward_causal_head_major_gqa_llama_regular_strided_sliding_workspace": 18,
+      "ck_memcpy_parallel_dispatch": 36,
+      "ck_residual_add_token_major_parallel_dispatch": 36,
+      "embedding_forward_q8_0": 1,
+      "geglu_forward_ggml_native": 18,
+      "gemm_nt_q5_1_q8_1_parallel_dispatch": 63,
+      "gemm_nt_q5_k_parallel_dispatch_with_scratch": 27,
+      "gemm_nt_q6_k_q8_k": 9,
+      "gemm_nt_q8_0_q8_0_contract": 10,
+      "kv_cache_store_batch_f32": 18,
+      "memmove": 1,
+      "qk_norm_forward_llama_production_parallel_dispatch": 18,
+      "quantize_row_q8_k": 9,
+      "rmsnorm_forward_llama_production_parallel_dispatch": 73,
+      "rope_forward_qk_split_llama_parallel_dispatch": 18,
+      "transpose_inplace": 72
+    }
+  },
+  "results": {
+    "prompt_token_ids": [2, 105, 2364, 107, 23391, 106, 107, 105, 4368, 107],
+    "prompt_token_ids_match_x86": true,
+    "first_prefill_logits": {
+      "vocab": 262144,
+      "spark_sha256": "f8d395e95ebecc7b6a2ff3553bafaf3336f0430b211ae1bc52476d70e4beb587",
+      "x86_sha256": "005776e37abcb7a2031cbae15ffac24431dfb80127fd97bb0813437725dee726",
+      "argmax_spark": 9259,
+      "argmax_x86": 9259,
+      "spark_vs_x86": {"max_abs_diff": 4.8705, "mean_abs_diff": 0.84642, "cosine": 0.999704},
+      "torch_fp32_oracle_vs_spark": {"max_abs_diff": 4.5194, "mean_abs_diff": 1.51372, "cosine": 0.999817},
+      "torch_fp32_oracle_vs_x86": {"max_abs_diff": 6.0447, "mean_abs_diff": 1.80417, "cosine": 0.999740},
+      "oracle_note": "PyTorch oracle: transformers 5.17.0 + torch 2.14.0 fp32, GGUF dequantized, same 10 prompt IDs, last-position logits. The Spark ARM build is slightly CLOSER to the fp32 oracle than the x86 build on every metric; both CKE builds share a common reduced-intermediate-precision offset from the oracle. Top-3 order identical across all three; top-8 sets identical.",
+      "top8_spark": [[9259, 3.097], [10979, 1.966], [3910, 0.257], [236777, -1.979], [23391, -2.428], [242687, -3.046], [125508, -3.172], [144626, -3.943]],
+      "top8_x86": [[9259, 4.218], [10979, 2.594], [3910, 1.588], [242687, -2.059], [144626, -3.208], [125508, -3.345], [236777, -3.789], [23391, -3.914]],
+      "top8_torch": [[9259, 6.251], [10979, 3.654], [3910, 2.426], [236777, -0.195], [242687, -0.341], [23391, -0.527], [125508, -0.946], [144626, -2.243]]
+    },
+    "decode_trajectory": {
+      "through_eos_token_ids": [9259, 236888, 2088, 740, 564, 1601, 611, 3124, 236881, 107, 106],
+      "first_eos_index": 10,
+      "matches_x86_exactly_through_eos": true,
+      "post_eos_note": "after EOS the model emits newline/EOS near-ties (106/107) whose margins are below run-to-run numeric noise; tail is bounded to {106, 107}, not pinned",
+      "rendered_response": "Hello! How can I help you today?"
+    },
+    "repeat_penalty_note": "the cks-v8-run default repeat-penalty (1.05) flipped the step-10 106/emoji near-tie on the Spark CLI run (extra emoji token before EOS); with --repeat-penalty 1.0 both machines produce byte-identical output and EOS at decode run 10. Raw argmax trajectories (probe) are identical.",
+    "timings_spark": {
+      "cli_run": {"prefill_ms_per_10_tokens": 181.51, "prefill_tok_s": 55.09, "decode_ms_per_token": 80.14, "decode_tok_s": 12.48, "wall_s_total_flow": 21.27},
+      "probe": {"prefill_ms": 286.0, "decode_ms_per_token": 96.33},
+      "peak_rss_full_flow_kib": 2986988,
+      "peak_rss_probe_bytes": 3056934912
+    },
+    "timings_x86_reference": {
+      "host": "x86_64, 28 cores, AVX2/AVX-VNNI build",
+      "cli_run": {"prefill_ms_per_10_tokens": 45.26, "decode_ms_per_token": 8.36},
+      "probe": {"prefill_ms": 51.0, "decode_ms_per_token": 7.72},
+      "peak_rss_full_flow_kib": 3012980
+    }
+  },
+  "optimized_provider_pass": {
+    "build": "separate directory build-neoverse, CFLAGS=-O3 -fPIC -DCK_TARGET_ARM=1 -mcpu=neoverse-v2 -fno-math-errno (SVE2/I8MM/BF16 enabled)",
+    "first_logits_vs_baseline": "bit-identical (max-abs-diff 0.0)",
+    "trajectory_vs_baseline": "identical",
+    "timing": {"baseline_prefill_ms": 286.0, "neoverse_prefill_ms": 309.7, "baseline_decode_ms_per_token": 96.33, "neoverse_decode_ms_per_token": 92.91},
+    "conclusion": "No numerical drift and no meaningful performance change. The repo contains NEON (arm_neon.h) providers only for q5_0/q8_0/q6k_q8k GEMM kernels and NO SVE/SVE2 providers anywhere (no arm_sve.h in the tree); the dominant gemma3 270M GEMMs (gemm_nt_q5_1_q8_1, gemm_nt_q5_k) execute as portable scalar C on ARM. No optimization is claimed."
+  },
+  "tolerances": {
+    "prompt_token_ids": "exact",
+    "decode_trajectory_through_eos": "exact",
+    "post_eos_tail": "membership in {106, 107}",
+    "first_prefill_argmax": "exact",
+    "first_prefill_top8_set": "exact",
+    "first_prefill_top8_values_abs": 0.25
+  },
+  "regression_fixture": {
+    "test": "tests/test_arm_spark_baseline.py (pytest; skips unless platform.machine() is aarch64/arm64 and a compiled runtime exists at CK_ARM_SPARK_MODEL_DIR or ~/.cache/ck-engine-v8/models/unsloth--gemma-3-270m-it-GGUF)",
+    "probe": "version/v8/scripts/arm_baseline_probe_v8.py",
+    "make_target": "test-arm-spark-baseline (prints SKIP on non-ARM hosts)",
+    "runtime_on_spark_s": 4.0
+  },
+  "known_limitations": [
+    "Q4_K packed-provider routes (prefill/decode packed-meta and VNNI dispatch) are x86-only; on ARM the availability probes return 0 and the entry points abort loudly if reached. Models with Q4_K GEMM tensors (e.g. Qwen2 0.5B Q4_K_M) are NOT certified on ARM in this baseline.",
+    "The canonical cks-v8-run flow compiles model_v8.c with -march=native on all hosts; the generic-ISA baseline applies to the engine/tokenizer libraries.",
+    "Post-EOS 106/107 near-ties are below run-to-run numeric noise on both ISAs and are not pinned.",
+    "libswiglu and some v6.x make targets still compile x86-only sources unconditionally and are not expected to build on ARM; the v8 inference lane (engine, tokenizer, generated runtime) is what this certification covers."
+  ]
+}
