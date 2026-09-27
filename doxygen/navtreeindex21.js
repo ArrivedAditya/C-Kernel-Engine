@@ -1,5 +1,6 @@
 var NAVTREEINDEX21 =
 {
+"structQWEN2__0__5B__DECODEModel.html#a07e198cd09baeda89471f687bf5ac3b7":[1,0,86,0],
 "structQWEN2__0__5B__DECODEModel.html#a60fe84f331aa220d10a5335f16d02fe5":[1,0,86,1],
 "structRecommendation.html":[1,0,87],
 "structRecommendation.html#a2dea715a398d739605559094647c11eb":[1,0,87,3],
@@ -248,6 +249,5 @@ var NAVTREEINDEX21 =
 "tokenizer_8h.html#a65b78014f5b24adcc90623cfa9ba6123":[2,0,0,1,3,35],
 "tokenizer_8h.html#a6cf5b659a496d344ebd7ae14a0392033":[2,0,0,1,3,41],
 "tokenizer_8h.html#a70e41f10b6806f4f543285d3484da0c3":[2,0,0,1,3,27],
-"tokenizer_8h.html#a7b861b5a4ce2546abb39e12cedd14cb2":[2,0,0,1,3,6],
-"tokenizer_8h.html#a7cc51ec584feb41327c453e546740e7c":[2,0,0,1,3,28]
+"tokenizer_8h.html#a7b861b5a4ce2546abb39e12cedd14cb2":[2,0,0,1,3,6]
 };

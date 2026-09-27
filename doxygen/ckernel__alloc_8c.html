@@ -258,7 +258,7 @@ Variables</h2></td></tr>
 <div class="line"><span class="lineno">   34</span>    <span class="keywordflow">return</span> (n + align - 1) &amp; ~(align - 1);</div>
 <div class="line"><span class="lineno">   35</span>}</div>
 </div><!-- fragment -->
-<p class="reference">Referenced by <a class="el" href="ckernel__alloc_8c_source.html#l00257">ck_bump_alloc_init()</a>, and <a class="el" href="ckernel__alloc_8c_source.html#l00070">ck_huge_alloc()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ckernel__alloc_8c_source.html#l00286">ck_bump_alloc_init()</a>, and <a class="el" href="ckernel__alloc_8c_source.html#l00070">ck_huge_alloc()</a>.</p>
 
 </div>
 </div>
@@ -278,25 +278,25 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="ckernel__alloc_8c_source.html#l00313">313</a> of file <a class="el" href="ckernel__alloc_8c_source.html">ckernel_alloc.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">  314</span>{</div>
-<div class="line"><span class="lineno">  315</span>    <span class="keywordflow">if</span> (!alloc || !alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a66772500081c422f01e036ff8f6db361">base</a>) {</div>
-<div class="line"><span class="lineno">  316</span>        <a class="code hl_function" href="ckernel__alloc_8c.html#a83159dbff7edb50adf987baf39f232c8">ck_bump_alloc_reset</a>(alloc);</div>
-<div class="line"><span class="lineno">  317</span>        <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno">  318</span>    }</div>
-<div class="line"><span class="lineno">  319</span> </div>
-<div class="line"><span class="lineno">  320</span>    <span class="keywordflow">if</span> (alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac9f12cd3ed6cd33ea08e2bcabe752d9c">mode</a> == <a class="code hl_enumvalue" href="ckernel__alloc_8h.html#a0da00fcc3e414b93752ee0dd9d279e37a0b7c2025d4e1c115d94a20dd029cc35c">CK_BUMP_MODE_MIXED_FILE_BACKED</a>) {</div>
-<div class="line"><span class="lineno">  321</span>        <span class="keywordflow">if</span> (alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a64fefe4e274a20faac155fc87b4dfc4a">mapped_len</a> &gt; 0) {</div>
-<div class="line"><span class="lineno">  322</span>            munmap(alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a66772500081c422f01e036ff8f6db361">base</a>, alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a64fefe4e274a20faac155fc87b4dfc4a">mapped_len</a>);</div>
-<div class="line"><span class="lineno">  323</span>        }</div>
-<div class="line"><span class="lineno">  324</span>    } <span class="keywordflow">else</span> <span class="keywordflow">if</span> (alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac9f12cd3ed6cd33ea08e2bcabe752d9c">mode</a> == <a class="code hl_enumvalue" href="ckernel__alloc_8h.html#a0da00fcc3e414b93752ee0dd9d279e37a00e422091cb4a66d33750afcda75068a">CK_BUMP_MODE_ANON</a>) {</div>
-<div class="line"><span class="lineno">  325</span>        <a class="code hl_function" href="ckernel__alloc_8c.html#af814a916b578d2824aa0e9ec230ea166">ck_huge_free</a>(alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a66772500081c422f01e036ff8f6db361">base</a>, alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac6dedb478c486e2b22066b7bef49676d">total_size</a>);</div>
-<div class="line"><span class="lineno">  326</span>    }</div>
-<div class="line"><span class="lineno">  327</span> </div>
-<div class="line"><span class="lineno">  328</span>    <a class="code hl_function" href="ckernel__alloc_8c.html#a83159dbff7edb50adf987baf39f232c8">ck_bump_alloc_reset</a>(alloc);</div>
-<div class="line"><span class="lineno">  329</span>}</div>
-<div class="ttc" id="ackernel__alloc_8c_html_a83159dbff7edb50adf987baf39f232c8"><div class="ttname"><a href="ckernel__alloc_8c.html#a83159dbff7edb50adf987baf39f232c8">ck_bump_alloc_reset</a></div><div class="ttdeci">static void ck_bump_alloc_reset(ck_bump_alloc_t *alloc)</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8c_source.html#l00138">ckernel_alloc.c:138</a></div></div>
-<div class="ttc" id="ackernel__alloc_8c_html_af814a916b578d2824aa0e9ec230ea166"><div class="ttname"><a href="ckernel__alloc_8c.html#af814a916b578d2824aa0e9ec230ea166">ck_huge_free</a></div><div class="ttdeci">void ck_huge_free(void *ptr, size_t bytes)</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8c_source.html#l00104">ckernel_alloc.c:104</a></div></div>
+<p class="definition">Definition at line <a class="el" href="ckernel__alloc_8c_source.html#l00343">343</a> of file <a class="el" href="ckernel__alloc_8c_source.html">ckernel_alloc.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">  344</span>{</div>
+<div class="line"><span class="lineno">  345</span>    <span class="keywordflow">if</span> (!alloc || !alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a66772500081c422f01e036ff8f6db361">base</a>) {</div>
+<div class="line"><span class="lineno">  346</span>        <a class="code hl_function" href="ckernel__alloc_8c.html#a83159dbff7edb50adf987baf39f232c8">ck_bump_alloc_reset</a>(alloc);</div>
+<div class="line"><span class="lineno">  347</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">  348</span>    }</div>
+<div class="line"><span class="lineno">  349</span> </div>
+<div class="line"><span class="lineno">  350</span>    <span class="keywordflow">if</span> (alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac9f12cd3ed6cd33ea08e2bcabe752d9c">mode</a> == <a class="code hl_enumvalue" href="ckernel__alloc_8h.html#a0da00fcc3e414b93752ee0dd9d279e37a0b7c2025d4e1c115d94a20dd029cc35c">CK_BUMP_MODE_MIXED_FILE_BACKED</a>) {</div>
+<div class="line"><span class="lineno">  351</span>        <span class="keywordflow">if</span> (alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a64fefe4e274a20faac155fc87b4dfc4a">mapped_len</a> &gt; 0) {</div>
+<div class="line"><span class="lineno">  352</span>            munmap(alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a66772500081c422f01e036ff8f6db361">base</a>, alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a64fefe4e274a20faac155fc87b4dfc4a">mapped_len</a>);</div>
+<div class="line"><span class="lineno">  353</span>        }</div>
+<div class="line"><span class="lineno">  354</span>    } <span class="keywordflow">else</span> <span class="keywordflow">if</span> (alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac9f12cd3ed6cd33ea08e2bcabe752d9c">mode</a> == <a class="code hl_enumvalue" href="ckernel__alloc_8h.html#a0da00fcc3e414b93752ee0dd9d279e37a00e422091cb4a66d33750afcda75068a">CK_BUMP_MODE_ANON</a>) {</div>
+<div class="line"><span class="lineno">  355</span>        <a class="code hl_function" href="ckernel__alloc_8c.html#af814a916b578d2824aa0e9ec230ea166">ck_huge_free</a>(alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a66772500081c422f01e036ff8f6db361">base</a>, alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac6dedb478c486e2b22066b7bef49676d">total_size</a>);</div>
+<div class="line"><span class="lineno">  356</span>    }</div>
+<div class="line"><span class="lineno">  357</span> </div>
+<div class="line"><span class="lineno">  358</span>    <a class="code hl_function" href="ckernel__alloc_8c.html#a83159dbff7edb50adf987baf39f232c8">ck_bump_alloc_reset</a>(alloc);</div>
+<div class="line"><span class="lineno">  359</span>}</div>
+<div class="ttc" id="ackernel__alloc_8c_html_a83159dbff7edb50adf987baf39f232c8"><div class="ttname"><a href="ckernel__alloc_8c.html#a83159dbff7edb50adf987baf39f232c8">ck_bump_alloc_reset</a></div><div class="ttdeci">static void ck_bump_alloc_reset(ck_bump_alloc_t *alloc)</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8c_source.html#l00142">ckernel_alloc.c:142</a></div></div>
+<div class="ttc" id="ackernel__alloc_8c_html_af814a916b578d2824aa0e9ec230ea166"><div class="ttname"><a href="ckernel__alloc_8c.html#af814a916b578d2824aa0e9ec230ea166">ck_huge_free</a></div><div class="ttdeci">void ck_huge_free(void *ptr, size_t bytes)</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8c_source.html#l00108">ckernel_alloc.c:108</a></div></div>
 <div class="ttc" id="ackernel__alloc_8h_html_a0da00fcc3e414b93752ee0dd9d279e37a00e422091cb4a66d33750afcda75068a"><div class="ttname"><a href="ckernel__alloc_8h.html#a0da00fcc3e414b93752ee0dd9d279e37a00e422091cb4a66d33750afcda75068a">CK_BUMP_MODE_ANON</a></div><div class="ttdeci">@ CK_BUMP_MODE_ANON</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8h_source.html#l00028">ckernel_alloc.h:28</a></div></div>
 <div class="ttc" id="ackernel__alloc_8h_html_a0da00fcc3e414b93752ee0dd9d279e37a0b7c2025d4e1c115d94a20dd029cc35c"><div class="ttname"><a href="ckernel__alloc_8h.html#a0da00fcc3e414b93752ee0dd9d279e37a0b7c2025d4e1c115d94a20dd029cc35c">CK_BUMP_MODE_MIXED_FILE_BACKED</a></div><div class="ttdeci">@ CK_BUMP_MODE_MIXED_FILE_BACKED</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8h_source.html#l00029">ckernel_alloc.h:29</a></div></div>
 <div class="ttc" id="astructck__bump__alloc__t_html_a64fefe4e274a20faac155fc87b4dfc4a"><div class="ttname"><a href="structck__bump__alloc__t.html#a64fefe4e274a20faac155fc87b4dfc4a">ck_bump_alloc_t::mapped_len</a></div><div class="ttdeci">size_t mapped_len</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8h_source.html#l00037">ckernel_alloc.h:37</a></div></div>
@@ -304,7 +304,7 @@ Variables</h2></td></tr>
 <div class="ttc" id="astructck__bump__alloc__t_html_ac6dedb478c486e2b22066b7bef49676d"><div class="ttname"><a href="structck__bump__alloc__t.html#ac6dedb478c486e2b22066b7bef49676d">ck_bump_alloc_t::total_size</a></div><div class="ttdeci">size_t total_size</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8h_source.html#l00034">ckernel_alloc.h:34</a></div></div>
 <div class="ttc" id="astructck__bump__alloc__t_html_ac9f12cd3ed6cd33ea08e2bcabe752d9c"><div class="ttname"><a href="structck__bump__alloc__t.html#ac9f12cd3ed6cd33ea08e2bcabe752d9c">ck_bump_alloc_t::mode</a></div><div class="ttdeci">ck_bump_mode_t mode</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8h_source.html#l00039">ckernel_alloc.h:39</a></div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="ckernel__alloc_8h_source.html#l00033">ck_bump_alloc_t::base</a>, <a class="el" href="ckernel__alloc_8c_source.html#l00138">ck_bump_alloc_reset()</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00028">CK_BUMP_MODE_ANON</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00029">CK_BUMP_MODE_MIXED_FILE_BACKED</a>, <a class="el" href="ckernel__alloc_8c_source.html#l00104">ck_huge_free()</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00037">ck_bump_alloc_t::mapped_len</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00039">ck_bump_alloc_t::mode</a>, and <a class="el" href="ckernel__alloc_8h_source.html#l00034">ck_bump_alloc_t::total_size</a>.</p>
+<p class="reference">References <a class="el" href="ckernel__alloc_8h_source.html#l00033">ck_bump_alloc_t::base</a>, <a class="el" href="ckernel__alloc_8c_source.html#l00142">ck_bump_alloc_reset()</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00028">CK_BUMP_MODE_ANON</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00029">CK_BUMP_MODE_MIXED_FILE_BACKED</a>, <a class="el" href="ckernel__alloc_8c_source.html#l00108">ck_huge_free()</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00037">ck_bump_alloc_t::mapped_len</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00039">ck_bump_alloc_t::mode</a>, and <a class="el" href="ckernel__alloc_8h_source.html#l00034">ck_bump_alloc_t::total_size</a>.</p>
 
 </div>
 </div>
@@ -352,65 +352,66 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="ckernel__alloc_8c_source.html#l00257">257</a> of file <a class="el" href="ckernel__alloc_8c_source.html">ckernel_alloc.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">  262</span>{</div>
-<div class="line"><span class="lineno">  263</span>    <span class="keywordtype">int</span> force_mixed = 0;</div>
-<div class="line"><span class="lineno">  264</span>    <span class="keywordtype">int</span> disable_mixed = 0;</div>
-<div class="line"><span class="lineno">  265</span> </div>
-<div class="line"><span class="lineno">  266</span>    <span class="keywordflow">if</span> (!alloc || total_size == 0) {</div>
-<div class="line"><span class="lineno">  267</span>        fprintf(stderr, <span class="stringliteral">&quot;ck_bump_alloc_init: invalid arguments\n&quot;</span>);</div>
-<div class="line"><span class="lineno">  268</span>        <span class="keywordflow">return</span> -1;</div>
-<div class="line"><span class="lineno">  269</span>    }</div>
-<div class="line"><span class="lineno">  270</span> </div>
-<div class="line"><span class="lineno">  271</span>    <a class="code hl_function" href="ckernel__alloc_8c.html#a83159dbff7edb50adf987baf39f232c8">ck_bump_alloc_reset</a>(alloc);</div>
-<div class="line"><span class="lineno">  272</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac6dedb478c486e2b22066b7bef49676d">total_size</a> = total_size;</div>
-<div class="line"><span class="lineno">  273</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a02f56f6e9492c422502b8d69a9d266cc">weights_base</a> = weights_base;</div>
-<div class="line"><span class="lineno">  274</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a197ed664fe2b6dd05130e00c6093225d">activations_base</a> = activations_base;</div>
-<div class="line"><span class="lineno">  275</span>    force_mixed = <a class="code hl_function" href="ckernel__alloc_8c.html#a84aed96cdab140dbf1477d4914743513">env_flag_enabled</a>(<span class="stringliteral">&quot;CK_BUMP_FORCE_MIXED&quot;</span>);</div>
-<div class="line"><span class="lineno">  276</span>    disable_mixed = <a class="code hl_function" href="ckernel__alloc_8c.html#a84aed96cdab140dbf1477d4914743513">env_flag_enabled</a>(<span class="stringliteral">&quot;CK_BUMP_DISABLE_MIXED&quot;</span>);</div>
-<div class="line"><span class="lineno">  277</span> </div>
-<div class="line"><span class="lineno">  278</span>    <span class="keywordflow">if</span> (weights_base &gt; activations_base || activations_base &gt; total_size) {</div>
-<div class="line"><span class="lineno">  279</span>        fprintf(stderr,</div>
-<div class="line"><span class="lineno">  280</span>                <span class="stringliteral">&quot;ck_bump_alloc_init: invalid bump layout weights=%zu activations=%zu total=%zu\n&quot;</span>,</div>
-<div class="line"><span class="lineno">  281</span>                weights_base, activations_base, total_size);</div>
-<div class="line"><span class="lineno">  282</span>        <a class="code hl_function" href="ckernel__alloc_8c.html#a83159dbff7edb50adf987baf39f232c8">ck_bump_alloc_reset</a>(alloc);</div>
-<div class="line"><span class="lineno">  283</span>        <span class="keywordflow">return</span> -1;</div>
-<div class="line"><span class="lineno">  284</span>    }</div>
-<div class="line"><span class="lineno">  285</span> </div>
-<div class="line"><span class="lineno">  286</span>    <span class="keywordflow">if</span> (!force_mixed) {</div>
-<div class="line"><span class="lineno">  287</span>        <span class="keywordtype">void</span> *anon = <a class="code hl_function" href="ckernel__alloc_8c.html#ada1defb15c658adb17b9058087525057">ck_huge_alloc</a>(total_size);</div>
-<div class="line"><span class="lineno">  288</span>        <span class="keywordflow">if</span> (anon) {</div>
-<div class="line"><span class="lineno">  289</span>            alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a66772500081c422f01e036ff8f6db361">base</a> = (uint8_t *)anon;</div>
-<div class="line"><span class="lineno">  290</span>            alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a64fefe4e274a20faac155fc87b4dfc4a">mapped_len</a> = <a class="code hl_function" href="ckernel__alloc_8c.html#a19108c1ddea653d46840daefcf542bb5">align_up_bytes</a>(total_size, <a class="code hl_define" href="ckernel__alloc_8c.html#af40ff2d14fdebba00915237c11b490c8">HUGE_PAGE_SIZE</a>);</div>
-<div class="line"><span class="lineno">  291</span>            alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac9f12cd3ed6cd33ea08e2bcabe752d9c">mode</a> = <a class="code hl_enumvalue" href="ckernel__alloc_8h.html#a0da00fcc3e414b93752ee0dd9d279e37a00e422091cb4a66d33750afcda75068a">CK_BUMP_MODE_ANON</a>;</div>
-<div class="line"><span class="lineno">  292</span>            <span class="keywordflow">return</span> 0;</div>
-<div class="line"><span class="lineno">  293</span>        }</div>
-<div class="line"><span class="lineno">  294</span>    }</div>
-<div class="line"><span class="lineno">  295</span> </div>
-<div class="line"><span class="lineno">  296</span><span class="preprocessor">#ifdef __linux__</span></div>
-<div class="line"><span class="lineno">  297</span>    <span class="keywordflow">if</span> (!disable_mixed) {</div>
-<div class="line"><span class="lineno">  298</span>        <span class="keywordflow">if</span> (ck_bump_alloc_try_mixed(alloc, weights_path) == 0) {</div>
-<div class="line"><span class="lineno">  299</span>            <span class="keywordflow">return</span> 0;</div>
-<div class="line"><span class="lineno">  300</span>        }</div>
-<div class="line"><span class="lineno">  301</span>    }</div>
-<div class="line"><span class="lineno">  302</span><span class="preprocessor">#else</span></div>
-<div class="line"><span class="lineno">  303</span>    (void)weights_path;</div>
-<div class="line"><span class="lineno">  304</span><span class="preprocessor">#endif</span></div>
-<div class="line"><span class="lineno">  305</span> </div>
-<div class="line"><span class="lineno">  306</span>    fprintf(stderr,</div>
-<div class="line"><span class="lineno">  307</span>            <span class="stringliteral">&quot;ck_bump_alloc_init: failed to allocate bump arena (%zu bytes, %.2f MiB)\n&quot;</span>,</div>
-<div class="line"><span class="lineno">  308</span>            total_size, (<span class="keywordtype">double</span>)total_size / (1024.0 * 1024.0));</div>
-<div class="line"><span class="lineno">  309</span>    <a class="code hl_function" href="ckernel__alloc_8c.html#a83159dbff7edb50adf987baf39f232c8">ck_bump_alloc_reset</a>(alloc);</div>
-<div class="line"><span class="lineno">  310</span>    <span class="keywordflow">return</span> -1;</div>
-<div class="line"><span class="lineno">  311</span>}</div>
+<p class="definition">Definition at line <a class="el" href="ckernel__alloc_8c_source.html#l00286">286</a> of file <a class="el" href="ckernel__alloc_8c_source.html">ckernel_alloc.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">  291</span>{</div>
+<div class="line"><span class="lineno">  292</span>    <span class="keywordtype">int</span> force_mixed = 0;</div>
+<div class="line"><span class="lineno">  293</span>    <span class="keywordtype">int</span> disable_mixed = 0;</div>
+<div class="line"><span class="lineno">  294</span> </div>
+<div class="line"><span class="lineno">  295</span>    <span class="keywordflow">if</span> (!alloc || total_size == 0 ||</div>
+<div class="line"><span class="lineno">  296</span>        total_size &gt; SIZE_MAX - (<a class="code hl_define" href="ckernel__alloc_8c.html#af40ff2d14fdebba00915237c11b490c8">HUGE_PAGE_SIZE</a> - 1)) {</div>
+<div class="line"><span class="lineno">  297</span>        fprintf(stderr, <span class="stringliteral">&quot;ck_bump_alloc_init: invalid arguments\n&quot;</span>);</div>
+<div class="line"><span class="lineno">  298</span>        <span class="keywordflow">return</span> -1;</div>
+<div class="line"><span class="lineno">  299</span>    }</div>
+<div class="line"><span class="lineno">  300</span> </div>
+<div class="line"><span class="lineno">  301</span>    <a class="code hl_function" href="ckernel__alloc_8c.html#a83159dbff7edb50adf987baf39f232c8">ck_bump_alloc_reset</a>(alloc);</div>
+<div class="line"><span class="lineno">  302</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac6dedb478c486e2b22066b7bef49676d">total_size</a> = total_size;</div>
+<div class="line"><span class="lineno">  303</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a02f56f6e9492c422502b8d69a9d266cc">weights_base</a> = weights_base;</div>
+<div class="line"><span class="lineno">  304</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a197ed664fe2b6dd05130e00c6093225d">activations_base</a> = activations_base;</div>
+<div class="line"><span class="lineno">  305</span>    force_mixed = <a class="code hl_function" href="ckernel__alloc_8c.html#a84aed96cdab140dbf1477d4914743513">env_flag_enabled</a>(<span class="stringliteral">&quot;CK_BUMP_FORCE_MIXED&quot;</span>);</div>
+<div class="line"><span class="lineno">  306</span>    disable_mixed = <a class="code hl_function" href="ckernel__alloc_8c.html#a84aed96cdab140dbf1477d4914743513">env_flag_enabled</a>(<span class="stringliteral">&quot;CK_BUMP_DISABLE_MIXED&quot;</span>);</div>
+<div class="line"><span class="lineno">  307</span> </div>
+<div class="line"><span class="lineno">  308</span>    <span class="keywordflow">if</span> (weights_base &gt; activations_base || activations_base &gt; total_size) {</div>
+<div class="line"><span class="lineno">  309</span>        fprintf(stderr,</div>
+<div class="line"><span class="lineno">  310</span>                <span class="stringliteral">&quot;ck_bump_alloc_init: invalid bump layout weights=%zu activations=%zu total=%zu\n&quot;</span>,</div>
+<div class="line"><span class="lineno">  311</span>                weights_base, activations_base, total_size);</div>
+<div class="line"><span class="lineno">  312</span>        <a class="code hl_function" href="ckernel__alloc_8c.html#a83159dbff7edb50adf987baf39f232c8">ck_bump_alloc_reset</a>(alloc);</div>
+<div class="line"><span class="lineno">  313</span>        <span class="keywordflow">return</span> -1;</div>
+<div class="line"><span class="lineno">  314</span>    }</div>
+<div class="line"><span class="lineno">  315</span> </div>
+<div class="line"><span class="lineno">  316</span>    <span class="keywordflow">if</span> (!force_mixed) {</div>
+<div class="line"><span class="lineno">  317</span>        <span class="keywordtype">void</span> *anon = <a class="code hl_function" href="ckernel__alloc_8c.html#ada1defb15c658adb17b9058087525057">ck_huge_alloc</a>(total_size);</div>
+<div class="line"><span class="lineno">  318</span>        <span class="keywordflow">if</span> (anon) {</div>
+<div class="line"><span class="lineno">  319</span>            alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a66772500081c422f01e036ff8f6db361">base</a> = (uint8_t *)anon;</div>
+<div class="line"><span class="lineno">  320</span>            alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a64fefe4e274a20faac155fc87b4dfc4a">mapped_len</a> = <a class="code hl_function" href="ckernel__alloc_8c.html#a19108c1ddea653d46840daefcf542bb5">align_up_bytes</a>(total_size, <a class="code hl_define" href="ckernel__alloc_8c.html#af40ff2d14fdebba00915237c11b490c8">HUGE_PAGE_SIZE</a>);</div>
+<div class="line"><span class="lineno">  321</span>            alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac9f12cd3ed6cd33ea08e2bcabe752d9c">mode</a> = <a class="code hl_enumvalue" href="ckernel__alloc_8h.html#a0da00fcc3e414b93752ee0dd9d279e37a00e422091cb4a66d33750afcda75068a">CK_BUMP_MODE_ANON</a>;</div>
+<div class="line"><span class="lineno">  322</span>            <span class="keywordflow">return</span> 0;</div>
+<div class="line"><span class="lineno">  323</span>        }</div>
+<div class="line"><span class="lineno">  324</span>    }</div>
+<div class="line"><span class="lineno">  325</span> </div>
+<div class="line"><span class="lineno">  326</span><span class="preprocessor">#ifdef __linux__</span></div>
+<div class="line"><span class="lineno">  327</span>    <span class="keywordflow">if</span> (!disable_mixed) {</div>
+<div class="line"><span class="lineno">  328</span>        <span class="keywordflow">if</span> (ck_bump_alloc_try_mixed(alloc, weights_path) == 0) {</div>
+<div class="line"><span class="lineno">  329</span>            <span class="keywordflow">return</span> 0;</div>
+<div class="line"><span class="lineno">  330</span>        }</div>
+<div class="line"><span class="lineno">  331</span>    }</div>
+<div class="line"><span class="lineno">  332</span><span class="preprocessor">#else</span></div>
+<div class="line"><span class="lineno">  333</span>    (void)weights_path;</div>
+<div class="line"><span class="lineno">  334</span><span class="preprocessor">#endif</span></div>
+<div class="line"><span class="lineno">  335</span> </div>
+<div class="line"><span class="lineno">  336</span>    fprintf(stderr,</div>
+<div class="line"><span class="lineno">  337</span>            <span class="stringliteral">&quot;ck_bump_alloc_init: failed to allocate bump arena (%zu bytes, %.2f MiB)\n&quot;</span>,</div>
+<div class="line"><span class="lineno">  338</span>            total_size, (<span class="keywordtype">double</span>)total_size / (1024.0 * 1024.0));</div>
+<div class="line"><span class="lineno">  339</span>    <a class="code hl_function" href="ckernel__alloc_8c.html#a83159dbff7edb50adf987baf39f232c8">ck_bump_alloc_reset</a>(alloc);</div>
+<div class="line"><span class="lineno">  340</span>    <span class="keywordflow">return</span> -1;</div>
+<div class="line"><span class="lineno">  341</span>}</div>
 <div class="ttc" id="ackernel__alloc_8c_html_a19108c1ddea653d46840daefcf542bb5"><div class="ttname"><a href="ckernel__alloc_8c.html#a19108c1ddea653d46840daefcf542bb5">align_up_bytes</a></div><div class="ttdeci">static size_t align_up_bytes(size_t n, size_t align)</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8c_source.html#l00031">ckernel_alloc.c:31</a></div></div>
-<div class="ttc" id="ackernel__alloc_8c_html_a84aed96cdab140dbf1477d4914743513"><div class="ttname"><a href="ckernel__alloc_8c.html#a84aed96cdab140dbf1477d4914743513">env_flag_enabled</a></div><div class="ttdeci">static int env_flag_enabled(const char *name)</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8c_source.html#l00126">ckernel_alloc.c:126</a></div></div>
+<div class="ttc" id="ackernel__alloc_8c_html_a84aed96cdab140dbf1477d4914743513"><div class="ttname"><a href="ckernel__alloc_8c.html#a84aed96cdab140dbf1477d4914743513">env_flag_enabled</a></div><div class="ttdeci">static int env_flag_enabled(const char *name)</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8c_source.html#l00130">ckernel_alloc.c:130</a></div></div>
 <div class="ttc" id="ackernel__alloc_8c_html_ada1defb15c658adb17b9058087525057"><div class="ttname"><a href="ckernel__alloc_8c.html#ada1defb15c658adb17b9058087525057">ck_huge_alloc</a></div><div class="ttdeci">void * ck_huge_alloc(size_t bytes)</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8c_source.html#l00070">ckernel_alloc.c:70</a></div></div>
 <div class="ttc" id="ackernel__alloc_8c_html_af40ff2d14fdebba00915237c11b490c8"><div class="ttname"><a href="ckernel__alloc_8c.html#af40ff2d14fdebba00915237c11b490c8">HUGE_PAGE_SIZE</a></div><div class="ttdeci">#define HUGE_PAGE_SIZE</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8c_source.html#l00018">ckernel_alloc.c:18</a></div></div>
 <div class="ttc" id="astructck__bump__alloc__t_html_a02f56f6e9492c422502b8d69a9d266cc"><div class="ttname"><a href="structck__bump__alloc__t.html#a02f56f6e9492c422502b8d69a9d266cc">ck_bump_alloc_t::weights_base</a></div><div class="ttdeci">size_t weights_base</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8h_source.html#l00035">ckernel_alloc.h:35</a></div></div>
 <div class="ttc" id="astructck__bump__alloc__t_html_a197ed664fe2b6dd05130e00c6093225d"><div class="ttname"><a href="structck__bump__alloc__t.html#a197ed664fe2b6dd05130e00c6093225d">ck_bump_alloc_t::activations_base</a></div><div class="ttdeci">size_t activations_base</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8h_source.html#l00036">ckernel_alloc.h:36</a></div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="ckernel__alloc_8h_source.html#l00036">ck_bump_alloc_t::activations_base</a>, <a class="el" href="ckernel__alloc_8c_source.html#l00031">align_up_bytes()</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00033">ck_bump_alloc_t::base</a>, <a class="el" href="ckernel__alloc_8c_source.html#l00138">ck_bump_alloc_reset()</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00028">CK_BUMP_MODE_ANON</a>, <a class="el" href="ckernel__alloc_8c_source.html#l00070">ck_huge_alloc()</a>, <a class="el" href="ckernel__alloc_8c_source.html#l00126">env_flag_enabled()</a>, <a class="el" href="ckernel__alloc_8c_source.html#l00018">HUGE_PAGE_SIZE</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00037">ck_bump_alloc_t::mapped_len</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00039">ck_bump_alloc_t::mode</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00034">ck_bump_alloc_t::total_size</a>, and <a class="el" href="ckernel__alloc_8h_source.html#l00035">ck_bump_alloc_t::weights_base</a>.</p>
+<p class="reference">References <a class="el" href="ckernel__alloc_8h_source.html#l00036">ck_bump_alloc_t::activations_base</a>, <a class="el" href="ckernel__alloc_8c_source.html#l00031">align_up_bytes()</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00033">ck_bump_alloc_t::base</a>, <a class="el" href="ckernel__alloc_8c_source.html#l00142">ck_bump_alloc_reset()</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00028">CK_BUMP_MODE_ANON</a>, <a class="el" href="ckernel__alloc_8c_source.html#l00070">ck_huge_alloc()</a>, <a class="el" href="ckernel__alloc_8c_source.html#l00130">env_flag_enabled()</a>, <a class="el" href="ckernel__alloc_8c_source.html#l00018">HUGE_PAGE_SIZE</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00037">ck_bump_alloc_t::mapped_len</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00039">ck_bump_alloc_t::mode</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00034">ck_bump_alloc_t::total_size</a>, and <a class="el" href="ckernel__alloc_8h_source.html#l00035">ck_bump_alloc_t::weights_base</a>.</p>
 
 </div>
 </div>
@@ -430,13 +431,13 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="ckernel__alloc_8c_source.html#l00331">331</a> of file <a class="el" href="ckernel__alloc_8c_source.html">ckernel_alloc.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">  332</span>{</div>
-<div class="line"><span class="lineno">  333</span>    <span class="keywordflow">if</span> (!alloc) {</div>
-<div class="line"><span class="lineno">  334</span>        <span class="keywordflow">return</span> 1;</div>
-<div class="line"><span class="lineno">  335</span>    }</div>
-<div class="line"><span class="lineno">  336</span>    <span class="keywordflow">return</span> alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac9f12cd3ed6cd33ea08e2bcabe752d9c">mode</a> != <a class="code hl_enumvalue" href="ckernel__alloc_8h.html#a0da00fcc3e414b93752ee0dd9d279e37a0b7c2025d4e1c115d94a20dd029cc35c">CK_BUMP_MODE_MIXED_FILE_BACKED</a>;</div>
-<div class="line"><span class="lineno">  337</span>}</div>
+<p class="definition">Definition at line <a class="el" href="ckernel__alloc_8c_source.html#l00361">361</a> of file <a class="el" href="ckernel__alloc_8c_source.html">ckernel_alloc.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">  362</span>{</div>
+<div class="line"><span class="lineno">  363</span>    <span class="keywordflow">if</span> (!alloc) {</div>
+<div class="line"><span class="lineno">  364</span>        <span class="keywordflow">return</span> 1;</div>
+<div class="line"><span class="lineno">  365</span>    }</div>
+<div class="line"><span class="lineno">  366</span>    <span class="keywordflow">return</span> alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac9f12cd3ed6cd33ea08e2bcabe752d9c">mode</a> != <a class="code hl_enumvalue" href="ckernel__alloc_8h.html#a0da00fcc3e414b93752ee0dd9d279e37a0b7c2025d4e1c115d94a20dd029cc35c">CK_BUMP_MODE_MIXED_FILE_BACKED</a>;</div>
+<div class="line"><span class="lineno">  367</span>}</div>
 </div><!-- fragment -->
 <p class="reference">References <a class="el" href="ckernel__alloc_8h_source.html#l00029">CK_BUMP_MODE_MIXED_FILE_BACKED</a>, and <a class="el" href="ckernel__alloc_8h_source.html#l00039">ck_bump_alloc_t::mode</a>.</p>
 
@@ -466,25 +467,25 @@ Variables</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="ckernel__alloc_8c_source.html#l00138">138</a> of file <a class="el" href="ckernel__alloc_8c_source.html">ckernel_alloc.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">  139</span>{</div>
-<div class="line"><span class="lineno">  140</span>    <span class="keywordflow">if</span> (!alloc) {</div>
-<div class="line"><span class="lineno">  141</span>        <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno">  142</span>    }</div>
-<div class="line"><span class="lineno">  143</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a66772500081c422f01e036ff8f6db361">base</a> = NULL;</div>
-<div class="line"><span class="lineno">  144</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac6dedb478c486e2b22066b7bef49676d">total_size</a> = 0;</div>
-<div class="line"><span class="lineno">  145</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a02f56f6e9492c422502b8d69a9d266cc">weights_base</a> = 0;</div>
-<div class="line"><span class="lineno">  146</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a197ed664fe2b6dd05130e00c6093225d">activations_base</a> = 0;</div>
-<div class="line"><span class="lineno">  147</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a64fefe4e274a20faac155fc87b4dfc4a">mapped_len</a> = 0;</div>
-<div class="line"><span class="lineno">  148</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ab1f7de12a27705ebfc6390028d494a4b">weights_file_size</a> = 0;</div>
-<div class="line"><span class="lineno">  149</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac9f12cd3ed6cd33ea08e2bcabe752d9c">mode</a> = <a class="code hl_enumvalue" href="ckernel__alloc_8h.html#a0da00fcc3e414b93752ee0dd9d279e37ab8e3208f81ccb32730270a4efa84a033">CK_BUMP_MODE_UNINITIALIZED</a>;</div>
-<div class="line"><span class="lineno">  150</span>}</div>
+<p class="definition">Definition at line <a class="el" href="ckernel__alloc_8c_source.html#l00142">142</a> of file <a class="el" href="ckernel__alloc_8c_source.html">ckernel_alloc.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">  143</span>{</div>
+<div class="line"><span class="lineno">  144</span>    <span class="keywordflow">if</span> (!alloc) {</div>
+<div class="line"><span class="lineno">  145</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">  146</span>    }</div>
+<div class="line"><span class="lineno">  147</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a66772500081c422f01e036ff8f6db361">base</a> = NULL;</div>
+<div class="line"><span class="lineno">  148</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac6dedb478c486e2b22066b7bef49676d">total_size</a> = 0;</div>
+<div class="line"><span class="lineno">  149</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a02f56f6e9492c422502b8d69a9d266cc">weights_base</a> = 0;</div>
+<div class="line"><span class="lineno">  150</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a197ed664fe2b6dd05130e00c6093225d">activations_base</a> = 0;</div>
+<div class="line"><span class="lineno">  151</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#a64fefe4e274a20faac155fc87b4dfc4a">mapped_len</a> = 0;</div>
+<div class="line"><span class="lineno">  152</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ab1f7de12a27705ebfc6390028d494a4b">weights_file_size</a> = 0;</div>
+<div class="line"><span class="lineno">  153</span>    alloc-&gt;<a class="code hl_variable" href="structck__bump__alloc__t.html#ac9f12cd3ed6cd33ea08e2bcabe752d9c">mode</a> = <a class="code hl_enumvalue" href="ckernel__alloc_8h.html#a0da00fcc3e414b93752ee0dd9d279e37ab8e3208f81ccb32730270a4efa84a033">CK_BUMP_MODE_UNINITIALIZED</a>;</div>
+<div class="line"><span class="lineno">  154</span>}</div>
 <div class="ttc" id="ackernel__alloc_8h_html_a0da00fcc3e414b93752ee0dd9d279e37ab8e3208f81ccb32730270a4efa84a033"><div class="ttname"><a href="ckernel__alloc_8h.html#a0da00fcc3e414b93752ee0dd9d279e37ab8e3208f81ccb32730270a4efa84a033">CK_BUMP_MODE_UNINITIALIZED</a></div><div class="ttdeci">@ CK_BUMP_MODE_UNINITIALIZED</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8h_source.html#l00027">ckernel_alloc.h:27</a></div></div>
 <div class="ttc" id="astructck__bump__alloc__t_html_ab1f7de12a27705ebfc6390028d494a4b"><div class="ttname"><a href="structck__bump__alloc__t.html#ab1f7de12a27705ebfc6390028d494a4b">ck_bump_alloc_t::weights_file_size</a></div><div class="ttdeci">size_t weights_file_size</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8h_source.html#l00038">ckernel_alloc.h:38</a></div></div>
 </div><!-- fragment -->
 <p class="reference">References <a class="el" href="ckernel__alloc_8h_source.html#l00036">ck_bump_alloc_t::activations_base</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00033">ck_bump_alloc_t::base</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00027">CK_BUMP_MODE_UNINITIALIZED</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00037">ck_bump_alloc_t::mapped_len</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00039">ck_bump_alloc_t::mode</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00034">ck_bump_alloc_t::total_size</a>, <a class="el" href="ckernel__alloc_8h_source.html#l00035">ck_bump_alloc_t::weights_base</a>, and <a class="el" href="ckernel__alloc_8h_source.html#l00038">ck_bump_alloc_t::weights_file_size</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="ckernel__alloc_8c_source.html#l00313">ck_bump_alloc_free()</a>, and <a class="el" href="ckernel__alloc_8c_source.html#l00257">ck_bump_alloc_init()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ckernel__alloc_8c_source.html#l00343">ck_bump_alloc_free()</a>, and <a class="el" href="ckernel__alloc_8c_source.html#l00286">ck_bump_alloc_init()</a>.</p>
 
 </div>
 </div>
@@ -512,40 +513,44 @@ Variables</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="ckernel__alloc_8c_source.html#l00070">70</a> of file <a class="el" href="ckernel__alloc_8c_source.html">ckernel_alloc.c</a>.</p>
 <div class="fragment"><div class="line"><span class="lineno">   71</span>{</div>
-<div class="line"><span class="lineno">   72</span>    <span class="keywordtype">size_t</span> len = <a class="code hl_function" href="ckernel__alloc_8c.html#a19108c1ddea653d46840daefcf542bb5">align_up_bytes</a>(bytes, <a class="code hl_define" href="ckernel__alloc_8c.html#af40ff2d14fdebba00915237c11b490c8">HUGE_PAGE_SIZE</a>);</div>
-<div class="line"><span class="lineno">   73</span> </div>
-<div class="line"><span class="lineno">   74</span>    <span class="comment">/* First, try explicit huge pages via mmap + MAP_HUGETLB. */</span></div>
-<div class="line"><span class="lineno">   75</span>    <span class="keywordtype">void</span> *p = mmap(NULL, len,</div>
-<div class="line"><span class="lineno">   76</span>                   PROT_READ | PROT_WRITE,</div>
-<div class="line"><span class="lineno">   77</span>                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB,</div>
-<div class="line"><span class="lineno">   78</span>                   -1, 0);</div>
-<div class="line"><span class="lineno">   79</span>    <span class="keywordflow">if</span> (p != MAP_FAILED) {</div>
-<div class="line"><span class="lineno">   80</span>        <span class="keywordflow">if</span> (!<a class="code hl_function" href="ckernel__alloc_8c.html#a78d026646faf03ea83ff458d93f99b6a">record_allocation</a>(p, len, 1)) {</div>
-<div class="line"><span class="lineno">   81</span>            munmap(p, len);</div>
-<div class="line"><span class="lineno">   82</span>            <span class="keywordflow">return</span> NULL;</div>
-<div class="line"><span class="lineno">   83</span>        }</div>
-<div class="line"><span class="lineno">   84</span>        <span class="keywordflow">return</span> p;</div>
-<div class="line"><span class="lineno">   85</span>    }</div>
-<div class="line"><span class="lineno">   86</span> </div>
-<div class="line"><span class="lineno">   87</span>    <span class="comment">/* Fallback: aligned_alloc with transparent hugepage hint. */</span></div>
-<div class="line"><span class="lineno">   88</span>    <span class="keywordtype">void</span> *q = aligned_alloc(<a class="code hl_define" href="ckernel__alloc_8c.html#af40ff2d14fdebba00915237c11b490c8">HUGE_PAGE_SIZE</a>, len);</div>
-<div class="line"><span class="lineno">   89</span>    <span class="keywordflow">if</span> (!q) {</div>
-<div class="line"><span class="lineno">   90</span>        fprintf(stderr, <span class="stringliteral">&quot;ck_huge_alloc: aligned_alloc failed for %zu bytes: %s\n&quot;</span>,</div>
-<div class="line"><span class="lineno">   91</span>                len, strerror(errno));</div>
-<div class="line"><span class="lineno">   92</span>        <span class="keywordflow">return</span> NULL;</div>
-<div class="line"><span class="lineno">   93</span>    }</div>
-<div class="line"><span class="lineno">   94</span> </div>
-<div class="line"><span class="lineno">   95</span>    <span class="comment">/* Best-effort hint; ignore errors. */</span></div>
-<div class="line"><span class="lineno">   96</span>    (void)madvise(q, len, MADV_HUGEPAGE);</div>
-<div class="line"><span class="lineno">   97</span>    <span class="keywordflow">if</span> (!<a class="code hl_function" href="ckernel__alloc_8c.html#a78d026646faf03ea83ff458d93f99b6a">record_allocation</a>(q, len, 0)) {</div>
-<div class="line"><span class="lineno">   98</span>        free(q);</div>
-<div class="line"><span class="lineno">   99</span>        <span class="keywordflow">return</span> NULL;</div>
-<div class="line"><span class="lineno">  100</span>    }</div>
-<div class="line"><span class="lineno">  101</span>    <span class="keywordflow">return</span> q;</div>
-<div class="line"><span class="lineno">  102</span>}</div>
+<div class="line"><span class="lineno">   72</span>    <span class="keywordflow">if</span> (bytes == 0 || bytes &gt; SIZE_MAX - (<a class="code hl_define" href="ckernel__alloc_8c.html#af40ff2d14fdebba00915237c11b490c8">HUGE_PAGE_SIZE</a> - 1)) {</div>
+<div class="line"><span class="lineno">   73</span>        errno = ENOMEM;</div>
+<div class="line"><span class="lineno">   74</span>        <span class="keywordflow">return</span> NULL;</div>
+<div class="line"><span class="lineno">   75</span>    }</div>
+<div class="line"><span class="lineno">   76</span>    <span class="keywordtype">size_t</span> len = <a class="code hl_function" href="ckernel__alloc_8c.html#a19108c1ddea653d46840daefcf542bb5">align_up_bytes</a>(bytes, <a class="code hl_define" href="ckernel__alloc_8c.html#af40ff2d14fdebba00915237c11b490c8">HUGE_PAGE_SIZE</a>);</div>
+<div class="line"><span class="lineno">   77</span> </div>
+<div class="line"><span class="lineno">   78</span>    <span class="comment">/* First, try explicit huge pages via mmap + MAP_HUGETLB. */</span></div>
+<div class="line"><span class="lineno">   79</span>    <span class="keywordtype">void</span> *p = mmap(NULL, len,</div>
+<div class="line"><span class="lineno">   80</span>                   PROT_READ | PROT_WRITE,</div>
+<div class="line"><span class="lineno">   81</span>                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB,</div>
+<div class="line"><span class="lineno">   82</span>                   -1, 0);</div>
+<div class="line"><span class="lineno">   83</span>    <span class="keywordflow">if</span> (p != MAP_FAILED) {</div>
+<div class="line"><span class="lineno">   84</span>        <span class="keywordflow">if</span> (!<a class="code hl_function" href="ckernel__alloc_8c.html#a78d026646faf03ea83ff458d93f99b6a">record_allocation</a>(p, len, 1)) {</div>
+<div class="line"><span class="lineno">   85</span>            munmap(p, len);</div>
+<div class="line"><span class="lineno">   86</span>            <span class="keywordflow">return</span> NULL;</div>
+<div class="line"><span class="lineno">   87</span>        }</div>
+<div class="line"><span class="lineno">   88</span>        <span class="keywordflow">return</span> p;</div>
+<div class="line"><span class="lineno">   89</span>    }</div>
+<div class="line"><span class="lineno">   90</span> </div>
+<div class="line"><span class="lineno">   91</span>    <span class="comment">/* Fallback: aligned_alloc with transparent hugepage hint. */</span></div>
+<div class="line"><span class="lineno">   92</span>    <span class="keywordtype">void</span> *q = aligned_alloc(<a class="code hl_define" href="ckernel__alloc_8c.html#af40ff2d14fdebba00915237c11b490c8">HUGE_PAGE_SIZE</a>, len);</div>
+<div class="line"><span class="lineno">   93</span>    <span class="keywordflow">if</span> (!q) {</div>
+<div class="line"><span class="lineno">   94</span>        fprintf(stderr, <span class="stringliteral">&quot;ck_huge_alloc: aligned_alloc failed for %zu bytes: %s\n&quot;</span>,</div>
+<div class="line"><span class="lineno">   95</span>                len, strerror(errno));</div>
+<div class="line"><span class="lineno">   96</span>        <span class="keywordflow">return</span> NULL;</div>
+<div class="line"><span class="lineno">   97</span>    }</div>
+<div class="line"><span class="lineno">   98</span> </div>
+<div class="line"><span class="lineno">   99</span>    <span class="comment">/* Best-effort hint; ignore errors. */</span></div>
+<div class="line"><span class="lineno">  100</span>    (void)madvise(q, len, MADV_HUGEPAGE);</div>
+<div class="line"><span class="lineno">  101</span>    <span class="keywordflow">if</span> (!<a class="code hl_function" href="ckernel__alloc_8c.html#a78d026646faf03ea83ff458d93f99b6a">record_allocation</a>(q, len, 0)) {</div>
+<div class="line"><span class="lineno">  102</span>        free(q);</div>
+<div class="line"><span class="lineno">  103</span>        <span class="keywordflow">return</span> NULL;</div>
+<div class="line"><span class="lineno">  104</span>    }</div>
+<div class="line"><span class="lineno">  105</span>    <span class="keywordflow">return</span> q;</div>
+<div class="line"><span class="lineno">  106</span>}</div>
 <div class="ttc" id="ackernel__alloc_8c_html_a78d026646faf03ea83ff458d93f99b6a"><div class="ttname"><a href="ckernel__alloc_8c.html#a78d026646faf03ea83ff458d93f99b6a">record_allocation</a></div><div class="ttdeci">static int record_allocation(void *ptr, size_t len, int was_mmap)</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8c_source.html#l00037">ckernel_alloc.c:37</a></div></div>
 </div><!-- fragment -->
-<p class="reference">Referenced by <a class="el" href="ckernel__alloc_8c_source.html#l00257">ck_bump_alloc_init()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ckernel__alloc_8c_source.html#l00286">ck_bump_alloc_init()</a>.</p>
 
 </div>
 </div>
@@ -577,30 +582,30 @@ Variables</h2></td></tr>
 <p>Free memory allocated by ck_huge_alloc.</p>
 <p>The bytes parameter should be the same size passed to ck_huge_alloc. </p>
 
-<p class="definition">Definition at line <a class="el" href="ckernel__alloc_8c_source.html#l00104">104</a> of file <a class="el" href="ckernel__alloc_8c_source.html">ckernel_alloc.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">  105</span>{</div>
-<div class="line"><span class="lineno">  106</span>    <span class="keywordflow">if</span> (!ptr || bytes == 0) {</div>
-<div class="line"><span class="lineno">  107</span>        <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno">  108</span>    }</div>
-<div class="line"><span class="lineno">  109</span> </div>
-<div class="line"><span class="lineno">  110</span>    ck_huge_alloc_entry_t *entry = <a class="code hl_function" href="ckernel__alloc_8c.html#a9483fdd187f4e96dce86fdfa0bc060fe">detach_allocation</a>(ptr);</div>
-<div class="line"><span class="lineno">  111</span>    <span class="keywordflow">if</span> (!entry) {</div>
-<div class="line"><span class="lineno">  112</span>        <span class="comment">/* Fall back to malloc/free if the allocation wasn&#39;t tracked. */</span></div>
-<div class="line"><span class="lineno">  113</span>        free(ptr);</div>
-<div class="line"><span class="lineno">  114</span>        <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno">  115</span>    }</div>
-<div class="line"><span class="lineno">  116</span> </div>
-<div class="line"><span class="lineno">  117</span>    <span class="keywordflow">if</span> (entry-&gt;was_mmap) {</div>
-<div class="line"><span class="lineno">  118</span>        munmap(ptr, entry-&gt;len);</div>
-<div class="line"><span class="lineno">  119</span>    } <span class="keywordflow">else</span> {</div>
-<div class="line"><span class="lineno">  120</span>        free(ptr);</div>
-<div class="line"><span class="lineno">  121</span>    }</div>
-<div class="line"><span class="lineno">  122</span> </div>
-<div class="line"><span class="lineno">  123</span>    free(entry);</div>
-<div class="line"><span class="lineno">  124</span>}</div>
+<p class="definition">Definition at line <a class="el" href="ckernel__alloc_8c_source.html#l00108">108</a> of file <a class="el" href="ckernel__alloc_8c_source.html">ckernel_alloc.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">  109</span>{</div>
+<div class="line"><span class="lineno">  110</span>    <span class="keywordflow">if</span> (!ptr || bytes == 0) {</div>
+<div class="line"><span class="lineno">  111</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">  112</span>    }</div>
+<div class="line"><span class="lineno">  113</span> </div>
+<div class="line"><span class="lineno">  114</span>    ck_huge_alloc_entry_t *entry = <a class="code hl_function" href="ckernel__alloc_8c.html#a9483fdd187f4e96dce86fdfa0bc060fe">detach_allocation</a>(ptr);</div>
+<div class="line"><span class="lineno">  115</span>    <span class="keywordflow">if</span> (!entry) {</div>
+<div class="line"><span class="lineno">  116</span>        <span class="comment">/* Fall back to malloc/free if the allocation wasn&#39;t tracked. */</span></div>
+<div class="line"><span class="lineno">  117</span>        free(ptr);</div>
+<div class="line"><span class="lineno">  118</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">  119</span>    }</div>
+<div class="line"><span class="lineno">  120</span> </div>
+<div class="line"><span class="lineno">  121</span>    <span class="keywordflow">if</span> (entry-&gt;was_mmap) {</div>
+<div class="line"><span class="lineno">  122</span>        munmap(ptr, entry-&gt;len);</div>
+<div class="line"><span class="lineno">  123</span>    } <span class="keywordflow">else</span> {</div>
+<div class="line"><span class="lineno">  124</span>        free(ptr);</div>
+<div class="line"><span class="lineno">  125</span>    }</div>
+<div class="line"><span class="lineno">  126</span> </div>
+<div class="line"><span class="lineno">  127</span>    free(entry);</div>
+<div class="line"><span class="lineno">  128</span>}</div>
 <div class="ttc" id="ackernel__alloc_8c_html_a9483fdd187f4e96dce86fdfa0bc060fe"><div class="ttname"><a href="ckernel__alloc_8c.html#a9483fdd187f4e96dce86fdfa0bc060fe">detach_allocation</a></div><div class="ttdeci">static ck_huge_alloc_entry_t * detach_allocation(void *ptr)</div><div class="ttdef"><b>Definition</b> <a href="ckernel__alloc_8c_source.html#l00053">ckernel_alloc.c:53</a></div></div>
 </div><!-- fragment -->
-<p class="reference">Referenced by <a class="el" href="ckernel__alloc_8c_source.html#l00313">ck_bump_alloc_free()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ckernel__alloc_8c_source.html#l00343">ck_bump_alloc_free()</a>.</p>
 
 </div>
 </div>
@@ -649,7 +654,7 @@ Variables</h2></td></tr>
 </div><!-- fragment -->
 <p class="reference">References <a class="el" href="ckernel__alloc_8c_source.html#l00029">g_alloc_list</a>, and <a class="el" href="ckernel__alloc_8c_source.html#l00028">g_alloc_mutex</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="ckernel__alloc_8c_source.html#l00104">ck_huge_free()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ckernel__alloc_8c_source.html#l00108">ck_huge_free()</a>.</p>
 
 </div>
 </div>
@@ -677,19 +682,19 @@ Variables</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="ckernel__alloc_8c_source.html#l00126">126</a> of file <a class="el" href="ckernel__alloc_8c_source.html">ckernel_alloc.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">  127</span>{</div>
-<div class="line"><span class="lineno">  128</span>    <span class="keyword">const</span> <span class="keywordtype">char</span> *value = getenv(name);</div>
-<div class="line"><span class="lineno">  129</span>    <span class="keywordflow">if</span> (!value || !*value) {</div>
-<div class="line"><span class="lineno">  130</span>        <span class="keywordflow">return</span> 0;</div>
-<div class="line"><span class="lineno">  131</span>    }</div>
-<div class="line"><span class="lineno">  132</span>    <span class="keywordflow">if</span> (strcmp(value, <span class="stringliteral">&quot;0&quot;</span>) == 0 || strcasecmp(value, <span class="stringliteral">&quot;false&quot;</span>) == 0 || strcasecmp(value, <span class="stringliteral">&quot;no&quot;</span>) == 0) {</div>
-<div class="line"><span class="lineno">  133</span>        <span class="keywordflow">return</span> 0;</div>
-<div class="line"><span class="lineno">  134</span>    }</div>
-<div class="line"><span class="lineno">  135</span>    <span class="keywordflow">return</span> 1;</div>
-<div class="line"><span class="lineno">  136</span>}</div>
+<p class="definition">Definition at line <a class="el" href="ckernel__alloc_8c_source.html#l00130">130</a> of file <a class="el" href="ckernel__alloc_8c_source.html">ckernel_alloc.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">  131</span>{</div>
+<div class="line"><span class="lineno">  132</span>    <span class="keyword">const</span> <span class="keywordtype">char</span> *value = getenv(name);</div>
+<div class="line"><span class="lineno">  133</span>    <span class="keywordflow">if</span> (!value || !*value) {</div>
+<div class="line"><span class="lineno">  134</span>        <span class="keywordflow">return</span> 0;</div>
+<div class="line"><span class="lineno">  135</span>    }</div>
+<div class="line"><span class="lineno">  136</span>    <span class="keywordflow">if</span> (strcmp(value, <span class="stringliteral">&quot;0&quot;</span>) == 0 || strcasecmp(value, <span class="stringliteral">&quot;false&quot;</span>) == 0 || strcasecmp(value, <span class="stringliteral">&quot;no&quot;</span>) == 0) {</div>
+<div class="line"><span class="lineno">  137</span>        <span class="keywordflow">return</span> 0;</div>
+<div class="line"><span class="lineno">  138</span>    }</div>
+<div class="line"><span class="lineno">  139</span>    <span class="keywordflow">return</span> 1;</div>
+<div class="line"><span class="lineno">  140</span>}</div>
 </div><!-- fragment -->
-<p class="reference">Referenced by <a class="el" href="ckernel__alloc_8c_source.html#l00257">ck_bump_alloc_init()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ckernel__alloc_8c_source.html#l00286">ck_bump_alloc_init()</a>.</p>
 
 </div>
 </div>

@@ -191,7 +191,7 @@ Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00172">172</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
+<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00174">174</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
 
 </div>
 </div>
@@ -220,16 +220,16 @@ Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00024">24</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">   24</span>                                               {</div>
-<div class="line"><span class="lineno">   25</span>    <span class="keywordflow">return</span> <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(<a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(value));</div>
-<div class="line"><span class="lineno">   26</span>}</div>
+<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00026">26</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">   26</span>                                               {</div>
+<div class="line"><span class="lineno">   27</span>    <span class="keywordflow">return</span> <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(<a class="code hl_function" href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a>(value));</div>
+<div class="line"><span class="lineno">   28</span>}</div>
 <div class="ttc" id="abf16__utils_8h_html_a174b16a92b3a5972230d7519fc0c5aa3"><div class="ttname"><a href="bf16__utils_8h.html#a174b16a92b3a5972230d7519fc0c5aa3">float_to_bf16</a></div><div class="ttdeci">static uint16_t float_to_bf16(float f)</div><div class="ttdef"><b>Definition</b> <a href="bf16__utils_8h_source.html#l00090">bf16_utils.h:90</a></div></div>
 <div class="ttc" id="abf16__utils_8h_html_a314c3970fd5e2770d19b1bb49aefcf94"><div class="ttname"><a href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a></div><div class="ttdeci">static float bf16_to_float(uint16_t v)</div><div class="ttdef"><b>Definition</b> <a href="bf16__utils_8h_source.html#l00038">bf16_utils.h:38</a></div></div>
 </div><!-- fragment -->
 <p class="reference">References <a class="el" href="bf16__utils_8h_source.html#l00038">bf16_to_float()</a>, and <a class="el" href="bf16__utils_8h_source.html#l00090">float_to_bf16()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00028">ck_sigmoid_bf16()</a>, <a class="el" href="hyper__connection__kernels_8c_source.html#l00071">hyper_connection_mix_bf16()</a>, <a class="el" href="hyper__connection__kernels_8c_source.html#l00051">hyper_stream_expand_bf16()</a>, and <a class="el" href="hyper__connection__kernels_8c_source.html#l00392">hyper_stream_inject_bf16()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00030">ck_sigmoid_bf16()</a>, <a class="el" href="hyper__connection__kernels_8c_source.html#l00073">hyper_connection_mix_bf16()</a>, <a class="el" href="hyper__connection__kernels_8c_source.html#l00053">hyper_stream_expand_bf16()</a>, and <a class="el" href="hyper__connection__kernels_8c_source.html#l00398">hyper_stream_inject_bf16()</a>.</p>
 
 </div>
 </div>
@@ -257,15 +257,15 @@ Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00028">28</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">   28</span>                                                 {</div>
-<div class="line"><span class="lineno">   29</span>    <span class="keywordflow">return</span> <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(1.0f / (1.0f + expf(-value)));</div>
-<div class="line"><span class="lineno">   30</span>}</div>
-<div class="ttc" id="ahyper__connection__kernels_8c_html_aa1831a4dc6f249f45ea4a2591971b697"><div class="ttname"><a href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a></div><div class="ttdeci">static float ck_bf16_round(float value)</div><div class="ttdef"><b>Definition</b> <a href="hyper__connection__kernels_8c_source.html#l00024">hyper_connection_kernels.c:24</a></div></div>
+<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00030">30</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">   30</span>                                                 {</div>
+<div class="line"><span class="lineno">   31</span>    <span class="keywordflow">return</span> <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(1.0f / (1.0f + expf(-value)));</div>
+<div class="line"><span class="lineno">   32</span>}</div>
+<div class="ttc" id="ahyper__connection__kernels_8c_html_aa1831a4dc6f249f45ea4a2591971b697"><div class="ttname"><a href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a></div><div class="ttdeci">static float ck_bf16_round(float value)</div><div class="ttdef"><b>Definition</b> <a href="hyper__connection__kernels_8c_source.html#l00026">hyper_connection_kernels.c:26</a></div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="hyper__connection__kernels_8c_source.html#l00024">ck_bf16_round()</a>.</p>
+<p class="reference">References <a class="el" href="hyper__connection__kernels_8c_source.html#l00026">ck_bf16_round()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00071">hyper_connection_mix_bf16()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00073">hyper_connection_mix_bf16()</a>.</p>
 
 </div>
 </div>
@@ -325,7 +325,7 @@ Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00344">hyper_connection_mix_q4k_q5_0_q4k()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00350">hyper_connection_mix_q4k_q5_0_q4k()</a>.</p>
 
 </div>
 </div>
@@ -385,7 +385,7 @@ Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00204">hyper_connection_mix_quantized()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00210">hyper_connection_mix_quantized()</a>.</p>
 
 </div>
 </div>
@@ -445,7 +445,7 @@ Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00368">hyper_connection_mix_q6k_q5_0_q4k()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00374">hyper_connection_mix_q6k_q5_0_q4k()</a>.</p>
 
 </div>
 </div>
@@ -513,11 +513,11 @@ Functions</h2></td></tr>
 <div class="line"><span class="lineno">  138</span><span class="preprocessor">#endif</span></div>
 <div class="line"><span class="lineno">  139</span>}</div>
 <div class="ttc" id="ackernel__quant_8h_html_afd2f43dcca46f268b2008cb200198e50"><div class="ttname"><a href="ckernel__quant_8h.html#afd2f43dcca46f268b2008cb200198e50">QK_K</a></div><div class="ttdeci">#define QK_K</div><div class="ttdef"><b>Definition</b> <a href="ckernel__quant_8h_source.html#l00175">ckernel_quant.h:175</a></div></div>
-<div class="ttc" id="agemm__kernels__q4k__q8k__avx2_8c_html_ac01f8caf84e100f3c72919c71217010e"><div class="ttname"><a href="gemm__kernels__q4k__q8k__avx2_8c.html#ac01f8caf84e100f3c72919c71217010e">gemv_q4_k_q8_k_ref</a></div><div class="ttdeci">void gemv_q4_k_q8_k_ref(float *y, const void *W, const void *x_q8, int M, int K)</div><div class="ttdef"><b>Definition</b> <a href="gemm__kernels__q4k__q8k_8c_source.html#l00201">gemm_kernels_q4k_q8k.c:201</a></div></div>
+<div class="ttc" id="agemm__kernels__q4k__q8k__avx2_8c_html_ac01f8caf84e100f3c72919c71217010e"><div class="ttname"><a href="gemm__kernels__q4k__q8k__avx2_8c.html#ac01f8caf84e100f3c72919c71217010e">gemv_q4_k_q8_k_ref</a></div><div class="ttdeci">void gemv_q4_k_q8_k_ref(float *y, const void *W, const void *x_q8, int M, int K)</div><div class="ttdef"><b>Definition</b> <a href="gemm__kernels__q4k__q8k_8c_source.html#l00203">gemm_kernels_q4k_q8k.c:203</a></div></div>
 <div class="ttc" id="astructblock__q4__K_html"><div class="ttname"><a href="structblock__q4__K.html">block_q4_K</a></div><div class="ttdef"><b>Definition</b> <a href="ckernel__quant_8h_source.html#l00178">ckernel_quant.h:178</a></div></div>
 <div class="ttc" id="astructblock__q8__K_html"><div class="ttname"><a href="structblock__q8__K.html">block_q8_K</a></div><div class="ttdef"><b>Definition</b> <a href="ckernel__quant_8h_source.html#l00207">ckernel_quant.h:207</a></div></div>
 </div><!-- fragment -->
-<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00175">hyper_injection_q4k_q8k_llama_dispatch()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00177">hyper_injection_q4k_q8k_llama_dispatch()</a>.</p>
 
 </div>
 </div>
@@ -631,96 +631,96 @@ Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00071">71</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">   86</span>                                                   {</div>
-<div class="line"><span class="lineno">   87</span>    <span class="keywordflow">if</span> (!hyper_input || !norm_weight || !mix_down_weight || !mix_up_weight ||</div>
-<div class="line"><span class="lineno">   88</span>        !mixed_output || !normalized_scratch || !dynamic_scratch || !mix_scratch ||</div>
-<div class="line"><span class="lineno">   89</span>        rows &lt;= 0 || streams &lt;= 0 || hidden_dim &lt;= 0 || dynamic_dim &lt;= 0) {</div>
-<div class="line"><span class="lineno">   90</span>        <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno">   91</span>    }</div>
-<div class="line"><span class="lineno">   92</span>    <span class="keywordflow">if</span> (emit_injection &amp;&amp; (!inject_weight || !injection_output)) {</div>
-<div class="line"><span class="lineno">   93</span>        <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno">   94</span>    }</div>
-<div class="line"><span class="lineno">   95</span> </div>
-<div class="line"><span class="lineno">   96</span>    <span class="keyword">const</span> <span class="keywordtype">int</span> hyper_dim = streams * hidden_dim;</div>
-<div class="line"><span class="lineno">   97</span>    <span class="keyword">const</span> <span class="keywordtype">float</span> inv_streams = 1.0f / (float)streams;</div>
-<div class="line"><span class="lineno">   98</span> </div>
-<div class="line"><span class="lineno">   99</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
-<div class="line"><span class="lineno">  100</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *input_row =</div>
-<div class="line"><span class="lineno">  101</span>            hyper_input + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
-<div class="line"><span class="lineno">  102</span>        <span class="keywordtype">float</span> *norm_row =</div>
-<div class="line"><span class="lineno">  103</span>            normalized_scratch + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
-<div class="line"><span class="lineno">  104</span>        <span class="keywordtype">float</span> *dynamic_row =</div>
-<div class="line"><span class="lineno">  105</span>            dynamic_scratch + (size_t)row * (<span class="keywordtype">size_t</span>)dynamic_dim;</div>
-<div class="line"><span class="lineno">  106</span>        <span class="keywordtype">float</span> *mix_row = mix_scratch + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
-<div class="line"><span class="lineno">  107</span> </div>
-<div class="line"><span class="lineno">  108</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
-<div class="line"><span class="lineno">  109</span>            <span class="keyword">const</span> <span class="keywordtype">int</span> base = stream * hidden_dim;</div>
-<div class="line"><span class="lineno">  110</span>            <a class="code hl_function" href="ckernel__engine_8h.html#a1eac561e5f84ca18385a9489e1a6d01b">rmsnorm_forward_qwen3next_pytorch_bf16_storage</a>(</div>
-<div class="line"><span class="lineno">  111</span>                input_row + base,</div>
-<div class="line"><span class="lineno">  112</span>                norm_weight + base,</div>
-<div class="line"><span class="lineno">  113</span>                norm_row + base,</div>
-<div class="line"><span class="lineno">  114</span>                NULL,</div>
-<div class="line"><span class="lineno">  115</span>                1,</div>
-<div class="line"><span class="lineno">  116</span>                hidden_dim,</div>
-<div class="line"><span class="lineno">  117</span>                hidden_dim,</div>
-<div class="line"><span class="lineno">  118</span>                eps</div>
-<div class="line"><span class="lineno">  119</span>            );</div>
-<div class="line"><span class="lineno">  120</span>        }</div>
-<div class="line"><span class="lineno">  121</span> </div>
-<div class="line"><span class="lineno">  122</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> out = 0; out &lt; dynamic_dim; ++out) {</div>
-<div class="line"><span class="lineno">  123</span>            <span class="keyword">const</span> uint16_t *weight_row =</div>
-<div class="line"><span class="lineno">  124</span>                mix_down_weight + (size_t)out * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
-<div class="line"><span class="lineno">  125</span>            <span class="keywordtype">float</span> sum = 0.0f;</div>
-<div class="line"><span class="lineno">  126</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hyper_dim; ++col) {</div>
-<div class="line"><span class="lineno">  127</span>                sum += norm_row[col] * <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(weight_row[col]);</div>
-<div class="line"><span class="lineno">  128</span>            }</div>
-<div class="line"><span class="lineno">  129</span>            <span class="keyword">const</span> <span class="keywordtype">float</span> projected = <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(sum * inv_streams);</div>
-<div class="line"><span class="lineno">  130</span>            dynamic_row[out] = <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(</div>
-<div class="line"><span class="lineno">  131</span>                projected / (1.0f + expf(-projected)));</div>
-<div class="line"><span class="lineno">  132</span>        }</div>
-<div class="line"><span class="lineno">  133</span> </div>
-<div class="line"><span class="lineno">  134</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> out = 0; out &lt; hyper_dim; ++out) {</div>
-<div class="line"><span class="lineno">  135</span>            <span class="keyword">const</span> uint16_t *weight_row =</div>
-<div class="line"><span class="lineno">  136</span>                mix_up_weight + (size_t)out * (<span class="keywordtype">size_t</span>)dynamic_dim;</div>
-<div class="line"><span class="lineno">  137</span>            <span class="keywordtype">float</span> sum = 0.0f;</div>
-<div class="line"><span class="lineno">  138</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; dynamic_dim; ++col) {</div>
-<div class="line"><span class="lineno">  139</span>                sum += dynamic_row[col] * <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(weight_row[col]);</div>
-<div class="line"><span class="lineno">  140</span>            }</div>
-<div class="line"><span class="lineno">  141</span>            mix_row[out] = <a class="code hl_function" href="hyper__connection__kernels_8c.html#a01609ec0952da9be3347459e153d2859">ck_sigmoid_bf16</a>(<a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(sum));</div>
-<div class="line"><span class="lineno">  142</span>        }</div>
-<div class="line"><span class="lineno">  143</span> </div>
-<div class="line"><span class="lineno">  144</span>        <span class="keywordtype">float</span> *mixed_row =</div>
-<div class="line"><span class="lineno">  145</span>            mixed_output + (size_t)row * (<span class="keywordtype">size_t</span>)hidden_dim;</div>
-<div class="line"><span class="lineno">  146</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
-<div class="line"><span class="lineno">  147</span>            <span class="keywordtype">float</span> sum = 0.0f;</div>
-<div class="line"><span class="lineno">  148</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
-<div class="line"><span class="lineno">  149</span>                <span class="keyword">const</span> <span class="keywordtype">int</span> index = stream * hidden_dim + col;</div>
-<div class="line"><span class="lineno">  150</span>                sum += <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(norm_row[index] * mix_row[index]);</div>
-<div class="line"><span class="lineno">  151</span>            }</div>
-<div class="line"><span class="lineno">  152</span>            mixed_row[col] = <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(sum * inv_streams);</div>
-<div class="line"><span class="lineno">  153</span>        }</div>
-<div class="line"><span class="lineno">  154</span> </div>
-<div class="line"><span class="lineno">  155</span>        <span class="keywordflow">if</span> (emit_injection) {</div>
-<div class="line"><span class="lineno">  156</span>            <span class="keywordtype">float</span> *injection_row =</div>
-<div class="line"><span class="lineno">  157</span>                injection_output + (size_t)row * (<span class="keywordtype">size_t</span>)streams;</div>
-<div class="line"><span class="lineno">  158</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
-<div class="line"><span class="lineno">  159</span>                <span class="keyword">const</span> uint16_t *weight_row =</div>
-<div class="line"><span class="lineno">  160</span>                    inject_weight + (size_t)stream * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
-<div class="line"><span class="lineno">  161</span>                <span class="keywordtype">float</span> sum = 0.0f;</div>
-<div class="line"><span class="lineno">  162</span>                <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hyper_dim; ++col) {</div>
-<div class="line"><span class="lineno">  163</span>                    sum += norm_row[col] * <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(weight_row[col]);</div>
-<div class="line"><span class="lineno">  164</span>                }</div>
-<div class="line"><span class="lineno">  165</span>                injection_row[stream] = <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(</div>
-<div class="line"><span class="lineno">  166</span>                    2.0f * <a class="code hl_function" href="hyper__connection__kernels_8c.html#a01609ec0952da9be3347459e153d2859">ck_sigmoid_bf16</a>(<a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(sum * inv_streams)));</div>
-<div class="line"><span class="lineno">  167</span>            }</div>
-<div class="line"><span class="lineno">  168</span>        }</div>
-<div class="line"><span class="lineno">  169</span>    }</div>
-<div class="line"><span class="lineno">  170</span>}</div>
+<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00073">73</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">   88</span>                                                   {</div>
+<div class="line"><span class="lineno">   89</span>    <span class="keywordflow">if</span> (!hyper_input || !norm_weight || !mix_down_weight || !mix_up_weight ||</div>
+<div class="line"><span class="lineno">   90</span>        !mixed_output || !normalized_scratch || !dynamic_scratch || !mix_scratch ||</div>
+<div class="line"><span class="lineno">   91</span>        rows &lt;= 0 || streams &lt;= 0 || hidden_dim &lt;= 0 || dynamic_dim &lt;= 0) {</div>
+<div class="line"><span class="lineno">   92</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">   93</span>    }</div>
+<div class="line"><span class="lineno">   94</span>    <span class="keywordflow">if</span> (emit_injection &amp;&amp; (!inject_weight || !injection_output)) {</div>
+<div class="line"><span class="lineno">   95</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">   96</span>    }</div>
+<div class="line"><span class="lineno">   97</span> </div>
+<div class="line"><span class="lineno">   98</span>    <span class="keyword">const</span> <span class="keywordtype">int</span> hyper_dim = streams * hidden_dim;</div>
+<div class="line"><span class="lineno">   99</span>    <span class="keyword">const</span> <span class="keywordtype">float</span> inv_streams = 1.0f / (float)streams;</div>
+<div class="line"><span class="lineno">  100</span> </div>
+<div class="line"><span class="lineno">  101</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
+<div class="line"><span class="lineno">  102</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *input_row =</div>
+<div class="line"><span class="lineno">  103</span>            hyper_input + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
+<div class="line"><span class="lineno">  104</span>        <span class="keywordtype">float</span> *norm_row =</div>
+<div class="line"><span class="lineno">  105</span>            normalized_scratch + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
+<div class="line"><span class="lineno">  106</span>        <span class="keywordtype">float</span> *dynamic_row =</div>
+<div class="line"><span class="lineno">  107</span>            dynamic_scratch + (size_t)row * (<span class="keywordtype">size_t</span>)dynamic_dim;</div>
+<div class="line"><span class="lineno">  108</span>        <span class="keywordtype">float</span> *mix_row = mix_scratch + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
+<div class="line"><span class="lineno">  109</span> </div>
+<div class="line"><span class="lineno">  110</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
+<div class="line"><span class="lineno">  111</span>            <span class="keyword">const</span> <span class="keywordtype">int</span> base = stream * hidden_dim;</div>
+<div class="line"><span class="lineno">  112</span>            <a class="code hl_function" href="ckernel__engine_8h.html#a1eac561e5f84ca18385a9489e1a6d01b">rmsnorm_forward_qwen3next_pytorch_bf16_storage</a>(</div>
+<div class="line"><span class="lineno">  113</span>                input_row + base,</div>
+<div class="line"><span class="lineno">  114</span>                norm_weight + base,</div>
+<div class="line"><span class="lineno">  115</span>                norm_row + base,</div>
+<div class="line"><span class="lineno">  116</span>                NULL,</div>
+<div class="line"><span class="lineno">  117</span>                1,</div>
+<div class="line"><span class="lineno">  118</span>                hidden_dim,</div>
+<div class="line"><span class="lineno">  119</span>                hidden_dim,</div>
+<div class="line"><span class="lineno">  120</span>                eps</div>
+<div class="line"><span class="lineno">  121</span>            );</div>
+<div class="line"><span class="lineno">  122</span>        }</div>
+<div class="line"><span class="lineno">  123</span> </div>
+<div class="line"><span class="lineno">  124</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> out = 0; out &lt; dynamic_dim; ++out) {</div>
+<div class="line"><span class="lineno">  125</span>            <span class="keyword">const</span> uint16_t *weight_row =</div>
+<div class="line"><span class="lineno">  126</span>                mix_down_weight + (size_t)out * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
+<div class="line"><span class="lineno">  127</span>            <span class="keywordtype">float</span> sum = 0.0f;</div>
+<div class="line"><span class="lineno">  128</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hyper_dim; ++col) {</div>
+<div class="line"><span class="lineno">  129</span>                sum += norm_row[col] * <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(weight_row[col]);</div>
+<div class="line"><span class="lineno">  130</span>            }</div>
+<div class="line"><span class="lineno">  131</span>            <span class="keyword">const</span> <span class="keywordtype">float</span> projected = <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(sum * inv_streams);</div>
+<div class="line"><span class="lineno">  132</span>            dynamic_row[out] = <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(</div>
+<div class="line"><span class="lineno">  133</span>                projected / (1.0f + expf(-projected)));</div>
+<div class="line"><span class="lineno">  134</span>        }</div>
+<div class="line"><span class="lineno">  135</span> </div>
+<div class="line"><span class="lineno">  136</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> out = 0; out &lt; hyper_dim; ++out) {</div>
+<div class="line"><span class="lineno">  137</span>            <span class="keyword">const</span> uint16_t *weight_row =</div>
+<div class="line"><span class="lineno">  138</span>                mix_up_weight + (size_t)out * (<span class="keywordtype">size_t</span>)dynamic_dim;</div>
+<div class="line"><span class="lineno">  139</span>            <span class="keywordtype">float</span> sum = 0.0f;</div>
+<div class="line"><span class="lineno">  140</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; dynamic_dim; ++col) {</div>
+<div class="line"><span class="lineno">  141</span>                sum += dynamic_row[col] * <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(weight_row[col]);</div>
+<div class="line"><span class="lineno">  142</span>            }</div>
+<div class="line"><span class="lineno">  143</span>            mix_row[out] = <a class="code hl_function" href="hyper__connection__kernels_8c.html#a01609ec0952da9be3347459e153d2859">ck_sigmoid_bf16</a>(<a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(sum));</div>
+<div class="line"><span class="lineno">  144</span>        }</div>
+<div class="line"><span class="lineno">  145</span> </div>
+<div class="line"><span class="lineno">  146</span>        <span class="keywordtype">float</span> *mixed_row =</div>
+<div class="line"><span class="lineno">  147</span>            mixed_output + (size_t)row * (<span class="keywordtype">size_t</span>)hidden_dim;</div>
+<div class="line"><span class="lineno">  148</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
+<div class="line"><span class="lineno">  149</span>            <span class="keywordtype">float</span> sum = 0.0f;</div>
+<div class="line"><span class="lineno">  150</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
+<div class="line"><span class="lineno">  151</span>                <span class="keyword">const</span> <span class="keywordtype">int</span> index = stream * hidden_dim + col;</div>
+<div class="line"><span class="lineno">  152</span>                sum += <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(norm_row[index] * mix_row[index]);</div>
+<div class="line"><span class="lineno">  153</span>            }</div>
+<div class="line"><span class="lineno">  154</span>            mixed_row[col] = <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(sum * inv_streams);</div>
+<div class="line"><span class="lineno">  155</span>        }</div>
+<div class="line"><span class="lineno">  156</span> </div>
+<div class="line"><span class="lineno">  157</span>        <span class="keywordflow">if</span> (emit_injection) {</div>
+<div class="line"><span class="lineno">  158</span>            <span class="keywordtype">float</span> *injection_row =</div>
+<div class="line"><span class="lineno">  159</span>                injection_output + (size_t)row * (<span class="keywordtype">size_t</span>)streams;</div>
+<div class="line"><span class="lineno">  160</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
+<div class="line"><span class="lineno">  161</span>                <span class="keyword">const</span> uint16_t *weight_row =</div>
+<div class="line"><span class="lineno">  162</span>                    inject_weight + (size_t)stream * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
+<div class="line"><span class="lineno">  163</span>                <span class="keywordtype">float</span> sum = 0.0f;</div>
+<div class="line"><span class="lineno">  164</span>                <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hyper_dim; ++col) {</div>
+<div class="line"><span class="lineno">  165</span>                    sum += norm_row[col] * <a class="code hl_function" href="bf16__utils_8h.html#a314c3970fd5e2770d19b1bb49aefcf94">bf16_to_float</a>(weight_row[col]);</div>
+<div class="line"><span class="lineno">  166</span>                }</div>
+<div class="line"><span class="lineno">  167</span>                injection_row[stream] = <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(</div>
+<div class="line"><span class="lineno">  168</span>                    2.0f * <a class="code hl_function" href="hyper__connection__kernels_8c.html#a01609ec0952da9be3347459e153d2859">ck_sigmoid_bf16</a>(<a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(sum * inv_streams)));</div>
+<div class="line"><span class="lineno">  169</span>            }</div>
+<div class="line"><span class="lineno">  170</span>        }</div>
+<div class="line"><span class="lineno">  171</span>    }</div>
+<div class="line"><span class="lineno">  172</span>}</div>
 <div class="ttc" id="ackernel__engine_8h_html_a1eac561e5f84ca18385a9489e1a6d01b"><div class="ttname"><a href="ckernel__engine_8h.html#a1eac561e5f84ca18385a9489e1a6d01b">rmsnorm_forward_qwen3next_pytorch_bf16_storage</a></div><div class="ttdeci">void rmsnorm_forward_qwen3next_pytorch_bf16_storage(const float *input, const float *gamma, float *output, float *rstd_cache, int tokens, int d_model, int aligned_embed_dim, float eps)</div><div class="ttdef"><b>Definition</b> <a href="rmsnorm__kernels_8c_source.html#l00438">rmsnorm_kernels.c:438</a></div></div>
-<div class="ttc" id="ahyper__connection__kernels_8c_html_a01609ec0952da9be3347459e153d2859"><div class="ttname"><a href="hyper__connection__kernels_8c.html#a01609ec0952da9be3347459e153d2859">ck_sigmoid_bf16</a></div><div class="ttdeci">static float ck_sigmoid_bf16(float value)</div><div class="ttdef"><b>Definition</b> <a href="hyper__connection__kernels_8c_source.html#l00028">hyper_connection_kernels.c:28</a></div></div>
+<div class="ttc" id="ahyper__connection__kernels_8c_html_a01609ec0952da9be3347459e153d2859"><div class="ttname"><a href="hyper__connection__kernels_8c.html#a01609ec0952da9be3347459e153d2859">ck_sigmoid_bf16</a></div><div class="ttdeci">static float ck_sigmoid_bf16(float value)</div><div class="ttdef"><b>Definition</b> <a href="hyper__connection__kernels_8c_source.html#l00030">hyper_connection_kernels.c:30</a></div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="bf16__utils_8h_source.html#l00038">bf16_to_float()</a>, <a class="el" href="hyper__connection__kernels_8c_source.html#l00024">ck_bf16_round()</a>, <a class="el" href="hyper__connection__kernels_8c_source.html#l00028">ck_sigmoid_bf16()</a>, and <a class="el" href="rmsnorm__kernels_8c_source.html#l00438">rmsnorm_forward_qwen3next_pytorch_bf16_storage()</a>.</p>
+<p class="reference">References <a class="el" href="bf16__utils_8h_source.html#l00038">bf16_to_float()</a>, <a class="el" href="hyper__connection__kernels_8c_source.html#l00026">ck_bf16_round()</a>, <a class="el" href="hyper__connection__kernels_8c_source.html#l00030">ck_sigmoid_bf16()</a>, and <a class="el" href="rmsnorm__kernels_8c_source.html#l00438">rmsnorm_forward_qwen3next_pytorch_bf16_storage()</a>.</p>
 
 </div>
 </div>
@@ -834,20 +834,20 @@ Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00344">344</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">  359</span>                                                           {</div>
-<div class="line"><span class="lineno">  360</span>    <a class="code hl_function" href="hyper__connection__kernels_8c.html#ade43e6853729e97fad6bc921fa103c00">hyper_connection_mix_quantized</a>(</div>
-<div class="line"><span class="lineno">  361</span>        hyper_input, norm_weight, mix_down_weight, mix_up_weight, inject_weight,</div>
-<div class="line"><span class="lineno">  362</span>        mixed_output, injection_output, normalized_scratch, dynamic_scratch,</div>
-<div class="line"><span class="lineno">  363</span>        mix_scratch, rows, streams, hidden_dim, dynamic_dim, eps,</div>
-<div class="line"><span class="lineno">  364</span>        emit_injection, <a class="code hl_function" href="hyper__connection__kernels_8c.html#af6ff1e0af1098365392123549dbd762c">hyper_injection_q4k_q8k_llama_dispatch</a>,</div>
-<div class="line"><span class="lineno">  365</span>        <a class="code hl_function" href="hyper__connection__kernels_8c.html#acce1e0ceb5eeb4134d5c71ee97d76a66">gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch</a>);</div>
-<div class="line"><span class="lineno">  366</span>}</div>
+<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00350">350</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">  365</span>                                                           {</div>
+<div class="line"><span class="lineno">  366</span>    <a class="code hl_function" href="hyper__connection__kernels_8c.html#ade43e6853729e97fad6bc921fa103c00">hyper_connection_mix_quantized</a>(</div>
+<div class="line"><span class="lineno">  367</span>        hyper_input, norm_weight, mix_down_weight, mix_up_weight, inject_weight,</div>
+<div class="line"><span class="lineno">  368</span>        mixed_output, injection_output, normalized_scratch, dynamic_scratch,</div>
+<div class="line"><span class="lineno">  369</span>        mix_scratch, rows, streams, hidden_dim, dynamic_dim, eps,</div>
+<div class="line"><span class="lineno">  370</span>        emit_injection, <a class="code hl_function" href="hyper__connection__kernels_8c.html#af6ff1e0af1098365392123549dbd762c">hyper_injection_q4k_q8k_llama_dispatch</a>,</div>
+<div class="line"><span class="lineno">  371</span>        <a class="code hl_function" href="hyper__connection__kernels_8c.html#acce1e0ceb5eeb4134d5c71ee97d76a66">gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch</a>);</div>
+<div class="line"><span class="lineno">  372</span>}</div>
 <div class="ttc" id="ahyper__connection__kernels_8c_html_acce1e0ceb5eeb4134d5c71ee97d76a66"><div class="ttname"><a href="hyper__connection__kernels_8c.html#acce1e0ceb5eeb4134d5c71ee97d76a66">gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch</a></div><div class="ttdeci">void gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch(const void *A, const void *B, const float *bias, float *C, int M, int N, int K)</div></div>
-<div class="ttc" id="ahyper__connection__kernels_8c_html_ade43e6853729e97fad6bc921fa103c00"><div class="ttname"><a href="hyper__connection__kernels_8c.html#ade43e6853729e97fad6bc921fa103c00">hyper_connection_mix_quantized</a></div><div class="ttdeci">static void hyper_connection_mix_quantized(const float *hyper_input, const float *norm_weight, const void *mix_down_weight, const void *mix_up_weight, const void *inject_weight, float *mixed_output, float *injection_output, float *normalized_scratch, float *dynamic_scratch, float *mix_scratch, int rows, int streams, int hidden_dim, int dynamic_dim, float eps, int emit_injection, ck_hyper_q8k_gemm_fn injection_gemm, ck_hyper_q8k_gemm_fn down_gemm)</div><div class="ttdef"><b>Definition</b> <a href="hyper__connection__kernels_8c_source.html#l00204">hyper_connection_kernels.c:204</a></div></div>
-<div class="ttc" id="ahyper__connection__kernels_8c_html_af6ff1e0af1098365392123549dbd762c"><div class="ttname"><a href="hyper__connection__kernels_8c.html#af6ff1e0af1098365392123549dbd762c">hyper_injection_q4k_q8k_llama_dispatch</a></div><div class="ttdeci">static void hyper_injection_q4k_q8k_llama_dispatch(const void *input, const void *weight, const float *bias, float *output, int rows, int output_dim, int input_dim)</div><div class="ttdef"><b>Definition</b> <a href="hyper__connection__kernels_8c_source.html#l00175">hyper_connection_kernels.c:175</a></div></div>
+<div class="ttc" id="ahyper__connection__kernels_8c_html_ade43e6853729e97fad6bc921fa103c00"><div class="ttname"><a href="hyper__connection__kernels_8c.html#ade43e6853729e97fad6bc921fa103c00">hyper_connection_mix_quantized</a></div><div class="ttdeci">static void hyper_connection_mix_quantized(const float *hyper_input, const float *norm_weight, const void *mix_down_weight, const void *mix_up_weight, const void *inject_weight, float *mixed_output, float *injection_output, float *normalized_scratch, float *dynamic_scratch, float *mix_scratch, int rows, int streams, int hidden_dim, int dynamic_dim, float eps, int emit_injection, ck_hyper_q8k_gemm_fn injection_gemm, ck_hyper_q8k_gemm_fn down_gemm)</div><div class="ttdef"><b>Definition</b> <a href="hyper__connection__kernels_8c_source.html#l00210">hyper_connection_kernels.c:210</a></div></div>
+<div class="ttc" id="ahyper__connection__kernels_8c_html_af6ff1e0af1098365392123549dbd762c"><div class="ttname"><a href="hyper__connection__kernels_8c.html#af6ff1e0af1098365392123549dbd762c">hyper_injection_q4k_q8k_llama_dispatch</a></div><div class="ttdeci">static void hyper_injection_q4k_q8k_llama_dispatch(const void *input, const void *weight, const float *bias, float *output, int rows, int output_dim, int input_dim)</div><div class="ttdef"><b>Definition</b> <a href="hyper__connection__kernels_8c_source.html#l00177">hyper_connection_kernels.c:177</a></div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="hyper__connection__kernels_8c.html#acce1e0ceb5eeb4134d5c71ee97d76a66">gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch()</a>, <a class="el" href="hyper__connection__kernels_8c_source.html#l00204">hyper_connection_mix_quantized()</a>, and <a class="el" href="hyper__connection__kernels_8c_source.html#l00175">hyper_injection_q4k_q8k_llama_dispatch()</a>.</p>
+<p class="reference">References <a class="el" href="hyper__connection__kernels_8c.html#acce1e0ceb5eeb4134d5c71ee97d76a66">gemm_nt_q4_k_q8_k_pairwise_split_min_parallel_dispatch()</a>, <a class="el" href="hyper__connection__kernels_8c_source.html#l00210">hyper_connection_mix_quantized()</a>, and <a class="el" href="hyper__connection__kernels_8c_source.html#l00177">hyper_injection_q4k_q8k_llama_dispatch()</a>.</p>
 
 </div>
 </div>
@@ -961,18 +961,18 @@ Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00368">368</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">  383</span>                                                           {</div>
-<div class="line"><span class="lineno">  384</span>    <a class="code hl_function" href="hyper__connection__kernels_8c.html#ade43e6853729e97fad6bc921fa103c00">hyper_connection_mix_quantized</a>(</div>
-<div class="line"><span class="lineno">  385</span>        hyper_input, norm_weight, mix_down_weight, mix_up_weight, inject_weight,</div>
-<div class="line"><span class="lineno">  386</span>        mixed_output, injection_output, normalized_scratch, dynamic_scratch,</div>
-<div class="line"><span class="lineno">  387</span>        mix_scratch, rows, streams, hidden_dim, dynamic_dim, eps,</div>
-<div class="line"><span class="lineno">  388</span>        emit_injection, <a class="code hl_function" href="hyper__connection__kernels_8c.html#af6ff1e0af1098365392123549dbd762c">hyper_injection_q4k_q8k_llama_dispatch</a>,</div>
-<div class="line"><span class="lineno">  389</span>        <a class="code hl_function" href="hyper__connection__kernels_8c.html#a6972ea09e82d3da8da8f45154a790ceb">gemm_nt_q6_k_q8_k_parallel_dispatch</a>);</div>
-<div class="line"><span class="lineno">  390</span>}</div>
+<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00374">374</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">  389</span>                                                           {</div>
+<div class="line"><span class="lineno">  390</span>    <a class="code hl_function" href="hyper__connection__kernels_8c.html#ade43e6853729e97fad6bc921fa103c00">hyper_connection_mix_quantized</a>(</div>
+<div class="line"><span class="lineno">  391</span>        hyper_input, norm_weight, mix_down_weight, mix_up_weight, inject_weight,</div>
+<div class="line"><span class="lineno">  392</span>        mixed_output, injection_output, normalized_scratch, dynamic_scratch,</div>
+<div class="line"><span class="lineno">  393</span>        mix_scratch, rows, streams, hidden_dim, dynamic_dim, eps,</div>
+<div class="line"><span class="lineno">  394</span>        emit_injection, <a class="code hl_function" href="hyper__connection__kernels_8c.html#af6ff1e0af1098365392123549dbd762c">hyper_injection_q4k_q8k_llama_dispatch</a>,</div>
+<div class="line"><span class="lineno">  395</span>        <a class="code hl_function" href="hyper__connection__kernels_8c.html#a6972ea09e82d3da8da8f45154a790ceb">gemm_nt_q6_k_q8_k_parallel_dispatch</a>);</div>
+<div class="line"><span class="lineno">  396</span>}</div>
 <div class="ttc" id="ahyper__connection__kernels_8c_html_a6972ea09e82d3da8da8f45154a790ceb"><div class="ttname"><a href="hyper__connection__kernels_8c.html#a6972ea09e82d3da8da8f45154a790ceb">gemm_nt_q6_k_q8_k_parallel_dispatch</a></div><div class="ttdeci">void gemm_nt_q6_k_q8_k_parallel_dispatch(const void *A, const void *B, const float *bias, float *C, int M, int N, int K)</div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="hyper__connection__kernels_8c.html#a6972ea09e82d3da8da8f45154a790ceb">gemm_nt_q6_k_q8_k_parallel_dispatch()</a>, <a class="el" href="hyper__connection__kernels_8c_source.html#l00204">hyper_connection_mix_quantized()</a>, and <a class="el" href="hyper__connection__kernels_8c_source.html#l00175">hyper_injection_q4k_q8k_llama_dispatch()</a>.</p>
+<p class="reference">References <a class="el" href="hyper__connection__kernels_8c.html#a6972ea09e82d3da8da8f45154a790ceb">gemm_nt_q6_k_q8_k_parallel_dispatch()</a>, <a class="el" href="hyper__connection__kernels_8c_source.html#l00210">hyper_connection_mix_quantized()</a>, and <a class="el" href="hyper__connection__kernels_8c_source.html#l00177">hyper_injection_q4k_q8k_llama_dispatch()</a>.</p>
 
 </div>
 </div>
@@ -1106,140 +1106,140 @@ Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00204">204</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">  221</span>                                                                           {</div>
-<div class="line"><span class="lineno">  222</span>    <span class="keywordflow">if</span> (!hyper_input || !norm_weight || !mix_down_weight || !mix_up_weight ||</div>
-<div class="line"><span class="lineno">  223</span>        !mixed_output || !normalized_scratch || !dynamic_scratch || !mix_scratch ||</div>
-<div class="line"><span class="lineno">  224</span>        !injection_gemm || !down_gemm || rows &lt;= 0 || streams &lt;= 0 || hidden_dim &lt;= 0 ||</div>
-<div class="line"><span class="lineno">  225</span>        dynamic_dim &lt;= 0) {</div>
-<div class="line"><span class="lineno">  226</span>        <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno">  227</span>    }</div>
-<div class="line"><span class="lineno">  228</span>    <span class="keywordflow">if</span> (emit_injection &amp;&amp; (!inject_weight || !injection_output)) {</div>
-<div class="line"><span class="lineno">  229</span>        <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno">  230</span>    }</div>
-<div class="line"><span class="lineno">  231</span> </div>
-<div class="line"><span class="lineno">  232</span>    <span class="keyword">const</span> <span class="keywordtype">int</span> hyper_dim = streams * hidden_dim;</div>
-<div class="line"><span class="lineno">  233</span>    <span class="keyword">const</span> <span class="keywordtype">float</span> inv_streams = 1.0f / (float)streams;</div>
-<div class="line"><span class="lineno">  234</span>    <span class="keywordflow">if</span> (hyper_dim % <a class="code hl_define" href="ckernel__quant_8h.html#afd2f43dcca46f268b2008cb200198e50">QK_K</a> != 0 || dynamic_dim % <a class="code hl_define" href="ckernel__quant_8h.html#af13e8b7fd92d0f48c1cfca7161552d4a">QK8_0</a> != 0) {</div>
+<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00210">210</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">  227</span>                                                                           {</div>
+<div class="line"><span class="lineno">  228</span>    <span class="keywordflow">if</span> (!hyper_input || !norm_weight || !mix_down_weight || !mix_up_weight ||</div>
+<div class="line"><span class="lineno">  229</span>        !mixed_output || !normalized_scratch || !dynamic_scratch || !mix_scratch ||</div>
+<div class="line"><span class="lineno">  230</span>        !injection_gemm || !down_gemm || rows &lt;= 0 || streams &lt;= 0 || hidden_dim &lt;= 0 ||</div>
+<div class="line"><span class="lineno">  231</span>        dynamic_dim &lt;= 0) {</div>
+<div class="line"><span class="lineno">  232</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">  233</span>    }</div>
+<div class="line"><span class="lineno">  234</span>    <span class="keywordflow">if</span> (emit_injection &amp;&amp; (!inject_weight || !injection_output)) {</div>
 <div class="line"><span class="lineno">  235</span>        <span class="keywordflow">return</span>;</div>
 <div class="line"><span class="lineno">  236</span>    }</div>
 <div class="line"><span class="lineno">  237</span> </div>
-<div class="line"><span class="lineno">  238</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> normalized_q8_row_bytes =</div>
-<div class="line"><span class="lineno">  239</span>        (size_t)(hyper_dim / <a class="code hl_define" href="ckernel__quant_8h.html#afd2f43dcca46f268b2008cb200198e50">QK_K</a>) * <span class="keyword">sizeof</span>(<a class="code hl_struct" href="structblock__q8__K.html">block_q8_K</a>);</div>
-<div class="line"><span class="lineno">  240</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> dynamic_q8_row_bytes =</div>
-<div class="line"><span class="lineno">  241</span>        (size_t)(dynamic_dim / <a class="code hl_define" href="ckernel__quant_8h.html#af13e8b7fd92d0f48c1cfca7161552d4a">QK8_0</a>) * <span class="keyword">sizeof</span>(<a class="code hl_struct" href="structblock__q8__0.html">block_q8_0</a>);</div>
-<div class="line"><span class="lineno">  242</span>    <a class="code hl_struct" href="structblock__q8__K.html">block_q8_K</a> *normalized_q8 = (<a class="code hl_struct" href="structblock__q8__K.html">block_q8_K</a> *)mix_scratch;</div>
-<div class="line"><span class="lineno">  243</span>    <a class="code hl_struct" href="structblock__q8__0.html">block_q8_0</a> dynamic_q8[dynamic_dim / <a class="code hl_define" href="ckernel__quant_8h.html#af13e8b7fd92d0f48c1cfca7161552d4a">QK8_0</a>];</div>
-<div class="line"><span class="lineno">  244</span> </div>
-<div class="line"><span class="lineno">  245</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
-<div class="line"><span class="lineno">  246</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *input_row = hyper_input + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
-<div class="line"><span class="lineno">  247</span>        <span class="keywordtype">float</span> *norm_row = normalized_scratch + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
-<div class="line"><span class="lineno">  248</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
-<div class="line"><span class="lineno">  249</span>            <span class="keyword">const</span> <span class="keywordtype">int</span> base = stream * hidden_dim;</div>
-<div class="line"><span class="lineno">  250</span>            <span class="keywordtype">double</span> sum_sq = 0.0;</div>
-<div class="line"><span class="lineno">  251</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
-<div class="line"><span class="lineno">  252</span>                <span class="keyword">const</span> <span class="keywordtype">float</span> value = input_row[base + col];</div>
-<div class="line"><span class="lineno">  253</span>                sum_sq += (double)(value * value);</div>
-<div class="line"><span class="lineno">  254</span>            }</div>
-<div class="line"><span class="lineno">  255</span>            <span class="keyword">const</span> <span class="keywordtype">float</span> mean = (float)(sum_sq / (<span class="keywordtype">double</span>)hidden_dim);</div>
-<div class="line"><span class="lineno">  256</span>            <span class="keyword">const</span> <span class="keywordtype">float</span> rstd = 1.0f / sqrtf(mean + eps);</div>
+<div class="line"><span class="lineno">  238</span>    <span class="keyword">const</span> <span class="keywordtype">int</span> hyper_dim = streams * hidden_dim;</div>
+<div class="line"><span class="lineno">  239</span>    <span class="keyword">const</span> <span class="keywordtype">float</span> inv_streams = 1.0f / (float)streams;</div>
+<div class="line"><span class="lineno">  240</span>    <span class="keywordflow">if</span> (hyper_dim % <a class="code hl_define" href="ckernel__quant_8h.html#afd2f43dcca46f268b2008cb200198e50">QK_K</a> != 0 || dynamic_dim % <a class="code hl_define" href="ckernel__quant_8h.html#af13e8b7fd92d0f48c1cfca7161552d4a">QK8_0</a> != 0) {</div>
+<div class="line"><span class="lineno">  241</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">  242</span>    }</div>
+<div class="line"><span class="lineno">  243</span> </div>
+<div class="line"><span class="lineno">  244</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> normalized_q8_row_bytes =</div>
+<div class="line"><span class="lineno">  245</span>        (size_t)(hyper_dim / <a class="code hl_define" href="ckernel__quant_8h.html#afd2f43dcca46f268b2008cb200198e50">QK_K</a>) * <span class="keyword">sizeof</span>(<a class="code hl_struct" href="structblock__q8__K.html">block_q8_K</a>);</div>
+<div class="line"><span class="lineno">  246</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> dynamic_q8_row_bytes =</div>
+<div class="line"><span class="lineno">  247</span>        (size_t)(dynamic_dim / <a class="code hl_define" href="ckernel__quant_8h.html#af13e8b7fd92d0f48c1cfca7161552d4a">QK8_0</a>) * <span class="keyword">sizeof</span>(<a class="code hl_struct" href="structblock__q8__0.html">block_q8_0</a>);</div>
+<div class="line"><span class="lineno">  248</span>    <a class="code hl_struct" href="structblock__q8__K.html">block_q8_K</a> *normalized_q8 = (<a class="code hl_struct" href="structblock__q8__K.html">block_q8_K</a> *)mix_scratch;</div>
+<div class="line"><span class="lineno">  249</span>    <a class="code hl_struct" href="structblock__q8__0.html">block_q8_0</a> dynamic_q8[dynamic_dim / <a class="code hl_define" href="ckernel__quant_8h.html#af13e8b7fd92d0f48c1cfca7161552d4a">QK8_0</a>];</div>
+<div class="line"><span class="lineno">  250</span> </div>
+<div class="line"><span class="lineno">  251</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
+<div class="line"><span class="lineno">  252</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *input_row = hyper_input + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
+<div class="line"><span class="lineno">  253</span>        <span class="keywordtype">float</span> *norm_row = normalized_scratch + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
+<div class="line"><span class="lineno">  254</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
+<div class="line"><span class="lineno">  255</span>            <span class="keyword">const</span> <span class="keywordtype">int</span> base = stream * hidden_dim;</div>
+<div class="line"><span class="lineno">  256</span>            <span class="keywordtype">double</span> sum_sq = 0.0;</div>
 <div class="line"><span class="lineno">  257</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
-<div class="line"><span class="lineno">  258</span>                <span class="keyword">const</span> <span class="keywordtype">int</span> index = base + col;</div>
-<div class="line"><span class="lineno">  259</span>                norm_row[index] = input_row[index] * rstd * norm_weight[index];</div>
+<div class="line"><span class="lineno">  258</span>                <span class="keyword">const</span> <span class="keywordtype">float</span> value = input_row[base + col];</div>
+<div class="line"><span class="lineno">  259</span>                sum_sq += (double)(value * value);</div>
 <div class="line"><span class="lineno">  260</span>            }</div>
-<div class="line"><span class="lineno">  261</span>        }</div>
-<div class="line"><span class="lineno">  262</span> </div>
-<div class="line"><span class="lineno">  263</span>        <a class="code hl_function" href="ckernel__engine_8h.html#a8a2064dd87b86a56f41b163bef7bdd9d">quantize_row_q8_k</a>(</div>
-<div class="line"><span class="lineno">  264</span>            norm_row,</div>
-<div class="line"><span class="lineno">  265</span>            (uint8_t *)normalized_q8 + (<span class="keywordtype">size_t</span>)row * normalized_q8_row_bytes,</div>
-<div class="line"><span class="lineno">  266</span>            hyper_dim);</div>
-<div class="line"><span class="lineno">  267</span>    }</div>
+<div class="line"><span class="lineno">  261</span>            <span class="keyword">const</span> <span class="keywordtype">float</span> mean = (float)(sum_sq / (<span class="keywordtype">double</span>)hidden_dim);</div>
+<div class="line"><span class="lineno">  262</span>            <span class="keyword">const</span> <span class="keywordtype">float</span> rstd = 1.0f / sqrtf(mean + eps);</div>
+<div class="line"><span class="lineno">  263</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
+<div class="line"><span class="lineno">  264</span>                <span class="keyword">const</span> <span class="keywordtype">int</span> index = base + col;</div>
+<div class="line"><span class="lineno">  265</span>                norm_row[index] = input_row[index] * rstd * norm_weight[index];</div>
+<div class="line"><span class="lineno">  266</span>            }</div>
+<div class="line"><span class="lineno">  267</span>        }</div>
 <div class="line"><span class="lineno">  268</span> </div>
-<div class="line"><span class="lineno">  269</span>    down_gemm(</div>
-<div class="line"><span class="lineno">  270</span>        normalized_q8,</div>
-<div class="line"><span class="lineno">  271</span>        mix_down_weight,</div>
-<div class="line"><span class="lineno">  272</span>        NULL,</div>
-<div class="line"><span class="lineno">  273</span>        dynamic_scratch,</div>
-<div class="line"><span class="lineno">  274</span>        rows,</div>
-<div class="line"><span class="lineno">  275</span>        dynamic_dim,</div>
-<div class="line"><span class="lineno">  276</span>        hyper_dim);</div>
-<div class="line"><span class="lineno">  277</span> </div>
-<div class="line"><span class="lineno">  278</span>    <span class="keywordflow">if</span> (emit_injection) {</div>
-<div class="line"><span class="lineno">  279</span>        injection_gemm(</div>
-<div class="line"><span class="lineno">  280</span>            normalized_q8,</div>
-<div class="line"><span class="lineno">  281</span>            inject_weight,</div>
-<div class="line"><span class="lineno">  282</span>            NULL,</div>
-<div class="line"><span class="lineno">  283</span>            injection_output,</div>
-<div class="line"><span class="lineno">  284</span>            rows,</div>
-<div class="line"><span class="lineno">  285</span>            streams,</div>
-<div class="line"><span class="lineno">  286</span>            hyper_dim);</div>
-<div class="line"><span class="lineno">  287</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
-<div class="line"><span class="lineno">  288</span>            <span class="keywordtype">float</span> *injection_row = injection_output + (size_t)row * (<span class="keywordtype">size_t</span>)streams;</div>
-<div class="line"><span class="lineno">  289</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
-<div class="line"><span class="lineno">  290</span>                injection_row[stream] *= inv_streams;</div>
-<div class="line"><span class="lineno">  291</span>            }</div>
-<div class="line"><span class="lineno">  292</span>            <a class="code hl_function" href="ckernel__engine_8h.html#a33632320e455741062d562d8aca62627">recurrent_sigmoid_forward_ggml</a>(</div>
-<div class="line"><span class="lineno">  293</span>                injection_row, injection_row, 1, streams);</div>
-<div class="line"><span class="lineno">  294</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
-<div class="line"><span class="lineno">  295</span>                injection_row[stream] *= 2.0f;</div>
-<div class="line"><span class="lineno">  296</span>            }</div>
-<div class="line"><span class="lineno">  297</span>        }</div>
-<div class="line"><span class="lineno">  298</span>    }</div>
-<div class="line"><span class="lineno">  299</span> </div>
-<div class="line"><span class="lineno">  300</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
-<div class="line"><span class="lineno">  301</span>        <span class="keywordtype">float</span> *dynamic_row = dynamic_scratch + (size_t)row * (<span class="keywordtype">size_t</span>)dynamic_dim;</div>
-<div class="line"><span class="lineno">  302</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; dynamic_dim; ++col) {</div>
-<div class="line"><span class="lineno">  303</span>            dynamic_row[col] *= inv_streams;</div>
-<div class="line"><span class="lineno">  304</span>        }</div>
-<div class="line"><span class="lineno">  305</span>        <a class="code hl_function" href="ckernel__engine_8h.html#a68d1de609142507727987cabe36fe7a6">recurrent_silu_forward_ggml</a>(</div>
-<div class="line"><span class="lineno">  306</span>            dynamic_row, dynamic_row, 1, dynamic_dim);</div>
-<div class="line"><span class="lineno">  307</span> </div>
-<div class="line"><span class="lineno">  308</span>        <a class="code hl_function" href="ckernel__engine_8h.html#aaed08819c4a21e49ca43bc3094022eaa">quantize_row_q8_0</a>(dynamic_row, dynamic_q8, dynamic_dim);</div>
-<div class="line"><span class="lineno">  309</span>        memcpy(</div>
-<div class="line"><span class="lineno">  310</span>            (uint8_t *)dynamic_scratch + (<span class="keywordtype">size_t</span>)row * dynamic_q8_row_bytes,</div>
-<div class="line"><span class="lineno">  311</span>            dynamic_q8,</div>
-<div class="line"><span class="lineno">  312</span>            dynamic_q8_row_bytes);</div>
-<div class="line"><span class="lineno">  313</span>    }</div>
-<div class="line"><span class="lineno">  314</span> </div>
-<div class="line"><span class="lineno">  315</span>    <a class="code hl_function" href="hyper__connection__kernels_8c.html#afac10cd3b8fd76b0abe4d3dc71fe7982">gemm_nt_q5_0_q8_0_parallel_dispatch</a>(</div>
-<div class="line"><span class="lineno">  316</span>        dynamic_scratch,</div>
-<div class="line"><span class="lineno">  317</span>        mix_up_weight,</div>
-<div class="line"><span class="lineno">  318</span>        NULL,</div>
-<div class="line"><span class="lineno">  319</span>        mix_scratch,</div>
-<div class="line"><span class="lineno">  320</span>        rows,</div>
-<div class="line"><span class="lineno">  321</span>        hyper_dim,</div>
-<div class="line"><span class="lineno">  322</span>        dynamic_dim);</div>
-<div class="line"><span class="lineno">  323</span> </div>
-<div class="line"><span class="lineno">  324</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
-<div class="line"><span class="lineno">  325</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *norm_row =</div>
-<div class="line"><span class="lineno">  326</span>            normalized_scratch + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
-<div class="line"><span class="lineno">  327</span>        <span class="keywordtype">float</span> *mix_row = mix_scratch + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
-<div class="line"><span class="lineno">  328</span>        <a class="code hl_function" href="ckernel__engine_8h.html#a33632320e455741062d562d8aca62627">recurrent_sigmoid_forward_ggml</a>(</div>
-<div class="line"><span class="lineno">  329</span>            mix_row, mix_row, 1, hyper_dim);</div>
-<div class="line"><span class="lineno">  330</span> </div>
-<div class="line"><span class="lineno">  331</span>        <span class="keywordtype">float</span> *mixed_row = mixed_output + (size_t)row * (<span class="keywordtype">size_t</span>)hidden_dim;</div>
-<div class="line"><span class="lineno">  332</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
-<div class="line"><span class="lineno">  333</span>            <span class="keywordtype">float</span> sum = 0.0f;</div>
-<div class="line"><span class="lineno">  334</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
-<div class="line"><span class="lineno">  335</span>                <span class="keyword">const</span> <span class="keywordtype">int</span> index = stream * hidden_dim + col;</div>
-<div class="line"><span class="lineno">  336</span>                sum += norm_row[index] * mix_row[index];</div>
-<div class="line"><span class="lineno">  337</span>            }</div>
-<div class="line"><span class="lineno">  338</span>            mixed_row[col] = sum * inv_streams;</div>
-<div class="line"><span class="lineno">  339</span>        }</div>
-<div class="line"><span class="lineno">  340</span> </div>
-<div class="line"><span class="lineno">  341</span>    }</div>
-<div class="line"><span class="lineno">  342</span>}</div>
+<div class="line"><span class="lineno">  269</span>        <a class="code hl_function" href="ckernel__engine_8h.html#a8a2064dd87b86a56f41b163bef7bdd9d">quantize_row_q8_k</a>(</div>
+<div class="line"><span class="lineno">  270</span>            norm_row,</div>
+<div class="line"><span class="lineno">  271</span>            (uint8_t *)normalized_q8 + (<span class="keywordtype">size_t</span>)row * normalized_q8_row_bytes,</div>
+<div class="line"><span class="lineno">  272</span>            hyper_dim);</div>
+<div class="line"><span class="lineno">  273</span>    }</div>
+<div class="line"><span class="lineno">  274</span> </div>
+<div class="line"><span class="lineno">  275</span>    down_gemm(</div>
+<div class="line"><span class="lineno">  276</span>        normalized_q8,</div>
+<div class="line"><span class="lineno">  277</span>        mix_down_weight,</div>
+<div class="line"><span class="lineno">  278</span>        NULL,</div>
+<div class="line"><span class="lineno">  279</span>        dynamic_scratch,</div>
+<div class="line"><span class="lineno">  280</span>        rows,</div>
+<div class="line"><span class="lineno">  281</span>        dynamic_dim,</div>
+<div class="line"><span class="lineno">  282</span>        hyper_dim);</div>
+<div class="line"><span class="lineno">  283</span> </div>
+<div class="line"><span class="lineno">  284</span>    <span class="keywordflow">if</span> (emit_injection) {</div>
+<div class="line"><span class="lineno">  285</span>        injection_gemm(</div>
+<div class="line"><span class="lineno">  286</span>            normalized_q8,</div>
+<div class="line"><span class="lineno">  287</span>            inject_weight,</div>
+<div class="line"><span class="lineno">  288</span>            NULL,</div>
+<div class="line"><span class="lineno">  289</span>            injection_output,</div>
+<div class="line"><span class="lineno">  290</span>            rows,</div>
+<div class="line"><span class="lineno">  291</span>            streams,</div>
+<div class="line"><span class="lineno">  292</span>            hyper_dim);</div>
+<div class="line"><span class="lineno">  293</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
+<div class="line"><span class="lineno">  294</span>            <span class="keywordtype">float</span> *injection_row = injection_output + (size_t)row * (<span class="keywordtype">size_t</span>)streams;</div>
+<div class="line"><span class="lineno">  295</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
+<div class="line"><span class="lineno">  296</span>                injection_row[stream] *= inv_streams;</div>
+<div class="line"><span class="lineno">  297</span>            }</div>
+<div class="line"><span class="lineno">  298</span>            <a class="code hl_function" href="ckernel__engine_8h.html#a33632320e455741062d562d8aca62627">recurrent_sigmoid_forward_ggml</a>(</div>
+<div class="line"><span class="lineno">  299</span>                injection_row, injection_row, 1, streams);</div>
+<div class="line"><span class="lineno">  300</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
+<div class="line"><span class="lineno">  301</span>                injection_row[stream] *= 2.0f;</div>
+<div class="line"><span class="lineno">  302</span>            }</div>
+<div class="line"><span class="lineno">  303</span>        }</div>
+<div class="line"><span class="lineno">  304</span>    }</div>
+<div class="line"><span class="lineno">  305</span> </div>
+<div class="line"><span class="lineno">  306</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
+<div class="line"><span class="lineno">  307</span>        <span class="keywordtype">float</span> *dynamic_row = dynamic_scratch + (size_t)row * (<span class="keywordtype">size_t</span>)dynamic_dim;</div>
+<div class="line"><span class="lineno">  308</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; dynamic_dim; ++col) {</div>
+<div class="line"><span class="lineno">  309</span>            dynamic_row[col] *= inv_streams;</div>
+<div class="line"><span class="lineno">  310</span>        }</div>
+<div class="line"><span class="lineno">  311</span>        <a class="code hl_function" href="ckernel__engine_8h.html#a68d1de609142507727987cabe36fe7a6">recurrent_silu_forward_ggml</a>(</div>
+<div class="line"><span class="lineno">  312</span>            dynamic_row, dynamic_row, 1, dynamic_dim);</div>
+<div class="line"><span class="lineno">  313</span> </div>
+<div class="line"><span class="lineno">  314</span>        <a class="code hl_function" href="ckernel__engine_8h.html#aaed08819c4a21e49ca43bc3094022eaa">quantize_row_q8_0</a>(dynamic_row, dynamic_q8, dynamic_dim);</div>
+<div class="line"><span class="lineno">  315</span>        memcpy(</div>
+<div class="line"><span class="lineno">  316</span>            (uint8_t *)dynamic_scratch + (<span class="keywordtype">size_t</span>)row * dynamic_q8_row_bytes,</div>
+<div class="line"><span class="lineno">  317</span>            dynamic_q8,</div>
+<div class="line"><span class="lineno">  318</span>            dynamic_q8_row_bytes);</div>
+<div class="line"><span class="lineno">  319</span>    }</div>
+<div class="line"><span class="lineno">  320</span> </div>
+<div class="line"><span class="lineno">  321</span>    <a class="code hl_function" href="hyper__connection__kernels_8c.html#afac10cd3b8fd76b0abe4d3dc71fe7982">gemm_nt_q5_0_q8_0_parallel_dispatch</a>(</div>
+<div class="line"><span class="lineno">  322</span>        dynamic_scratch,</div>
+<div class="line"><span class="lineno">  323</span>        mix_up_weight,</div>
+<div class="line"><span class="lineno">  324</span>        NULL,</div>
+<div class="line"><span class="lineno">  325</span>        mix_scratch,</div>
+<div class="line"><span class="lineno">  326</span>        rows,</div>
+<div class="line"><span class="lineno">  327</span>        hyper_dim,</div>
+<div class="line"><span class="lineno">  328</span>        dynamic_dim);</div>
+<div class="line"><span class="lineno">  329</span> </div>
+<div class="line"><span class="lineno">  330</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
+<div class="line"><span class="lineno">  331</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *norm_row =</div>
+<div class="line"><span class="lineno">  332</span>            normalized_scratch + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
+<div class="line"><span class="lineno">  333</span>        <span class="keywordtype">float</span> *mix_row = mix_scratch + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
+<div class="line"><span class="lineno">  334</span>        <a class="code hl_function" href="ckernel__engine_8h.html#a33632320e455741062d562d8aca62627">recurrent_sigmoid_forward_ggml</a>(</div>
+<div class="line"><span class="lineno">  335</span>            mix_row, mix_row, 1, hyper_dim);</div>
+<div class="line"><span class="lineno">  336</span> </div>
+<div class="line"><span class="lineno">  337</span>        <span class="keywordtype">float</span> *mixed_row = mixed_output + (size_t)row * (<span class="keywordtype">size_t</span>)hidden_dim;</div>
+<div class="line"><span class="lineno">  338</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
+<div class="line"><span class="lineno">  339</span>            <span class="keywordtype">float</span> sum = 0.0f;</div>
+<div class="line"><span class="lineno">  340</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
+<div class="line"><span class="lineno">  341</span>                <span class="keyword">const</span> <span class="keywordtype">int</span> index = stream * hidden_dim + col;</div>
+<div class="line"><span class="lineno">  342</span>                sum += norm_row[index] * mix_row[index];</div>
+<div class="line"><span class="lineno">  343</span>            }</div>
+<div class="line"><span class="lineno">  344</span>            mixed_row[col] = sum * inv_streams;</div>
+<div class="line"><span class="lineno">  345</span>        }</div>
+<div class="line"><span class="lineno">  346</span> </div>
+<div class="line"><span class="lineno">  347</span>    }</div>
+<div class="line"><span class="lineno">  348</span>}</div>
 <div class="ttc" id="ackernel__engine_8h_html_a33632320e455741062d562d8aca62627"><div class="ttname"><a href="ckernel__engine_8h.html#a33632320e455741062d562d8aca62627">recurrent_sigmoid_forward_ggml</a></div><div class="ttdeci">void recurrent_sigmoid_forward_ggml(const float *x, float *out, int rows, int dim)</div><div class="ttdef"><b>Definition</b> <a href="recurrent__gate__kernels_8c_source.html#l00543">recurrent_gate_kernels.c:543</a></div></div>
 <div class="ttc" id="ackernel__engine_8h_html_a68d1de609142507727987cabe36fe7a6"><div class="ttname"><a href="ckernel__engine_8h.html#a68d1de609142507727987cabe36fe7a6">recurrent_silu_forward_ggml</a></div><div class="ttdeci">void recurrent_silu_forward_ggml(const float *x, float *out, int rows, int dim)</div><div class="ttdef"><b>Definition</b> <a href="recurrent__gate__kernels_8c_source.html#l00510">recurrent_gate_kernels.c:510</a></div></div>
-<div class="ttc" id="ackernel__engine_8h_html_a8a2064dd87b86a56f41b163bef7bdd9d"><div class="ttname"><a href="ckernel__engine_8h.html#a8a2064dd87b86a56f41b163bef7bdd9d">quantize_row_q8_k</a></div><div class="ttdeci">void quantize_row_q8_k(const float *x, void *y, int k)</div><div class="ttdef"><b>Definition</b> <a href="gemm__kernels__q4k__q8k_8c_source.html#l00121">gemm_kernels_q4k_q8k.c:121</a></div></div>
+<div class="ttc" id="ackernel__engine_8h_html_a8a2064dd87b86a56f41b163bef7bdd9d"><div class="ttname"><a href="ckernel__engine_8h.html#a8a2064dd87b86a56f41b163bef7bdd9d">quantize_row_q8_k</a></div><div class="ttdeci">void quantize_row_q8_k(const float *x, void *y, int k)</div><div class="ttdef"><b>Definition</b> <a href="gemm__kernels__q4k__q8k_8c_source.html#l00123">gemm_kernels_q4k_q8k.c:123</a></div></div>
 <div class="ttc" id="ackernel__engine_8h_html_aaed08819c4a21e49ca43bc3094022eaa"><div class="ttname"><a href="ckernel__engine_8h.html#aaed08819c4a21e49ca43bc3094022eaa">quantize_row_q8_0</a></div><div class="ttdeci">void quantize_row_q8_0(const float *x, void *y, int k)</div><div class="ttdoc">Quantize FP32 to Q8_0 format (scalar reference)</div><div class="ttdef"><b>Definition</b> <a href="gemm__kernels__q8__0_8c_source.html#l00125">gemm_kernels_q8_0.c:125</a></div></div>
 <div class="ttc" id="ackernel__quant_8h_html_af13e8b7fd92d0f48c1cfca7161552d4a"><div class="ttname"><a href="ckernel__quant_8h.html#af13e8b7fd92d0f48c1cfca7161552d4a">QK8_0</a></div><div class="ttdeci">#define QK8_0</div><div class="ttdef"><b>Definition</b> <a href="ckernel__quant_8h_source.html#l00102">ckernel_quant.h:102</a></div></div>
 <div class="ttc" id="ahyper__connection__kernels_8c_html_afac10cd3b8fd76b0abe4d3dc71fe7982"><div class="ttname"><a href="hyper__connection__kernels_8c.html#afac10cd3b8fd76b0abe4d3dc71fe7982">gemm_nt_q5_0_q8_0_parallel_dispatch</a></div><div class="ttdeci">void gemm_nt_q5_0_q8_0_parallel_dispatch(const void *A, const void *B, const float *bias, float *C, int M, int N, int K)</div></div>
 <div class="ttc" id="astructblock__q8__0_html"><div class="ttname"><a href="structblock__q8__0.html">block_q8_0</a></div><div class="ttdef"><b>Definition</b> <a href="ckernel__quant_8h_source.html#l00104">ckernel_quant.h:104</a></div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="hyper__connection__kernels_8c.html#afac10cd3b8fd76b0abe4d3dc71fe7982">gemm_nt_q5_0_q8_0_parallel_dispatch()</a>, <a class="el" href="ckernel__quant_8h_source.html#l00102">QK8_0</a>, <a class="el" href="ckernel__quant_8h_source.html#l00175">QK_K</a>, <a class="el" href="gemm__kernels__q8__0_8c_source.html#l00125">quantize_row_q8_0()</a>, <a class="el" href="gemm__kernels__q4k__q8k_8c_source.html#l00121">quantize_row_q8_k()</a>, <a class="el" href="recurrent__gate__kernels_8c_source.html#l00543">recurrent_sigmoid_forward_ggml()</a>, and <a class="el" href="recurrent__gate__kernels_8c_source.html#l00510">recurrent_silu_forward_ggml()</a>.</p>
+<p class="reference">References <a class="el" href="hyper__connection__kernels_8c.html#afac10cd3b8fd76b0abe4d3dc71fe7982">gemm_nt_q5_0_q8_0_parallel_dispatch()</a>, <a class="el" href="ckernel__quant_8h_source.html#l00102">QK8_0</a>, <a class="el" href="ckernel__quant_8h_source.html#l00175">QK_K</a>, <a class="el" href="gemm__kernels__q8__0_8c_source.html#l00125">quantize_row_q8_0()</a>, <a class="el" href="gemm__kernels__q4k__q8k_8c_source.html#l00123">quantize_row_q8_k()</a>, <a class="el" href="recurrent__gate__kernels_8c_source.html#l00543">recurrent_sigmoid_forward_ggml()</a>, and <a class="el" href="recurrent__gate__kernels_8c_source.html#l00510">recurrent_silu_forward_ggml()</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00344">hyper_connection_mix_q4k_q5_0_q4k()</a>, and <a class="el" href="hyper__connection__kernels_8c_source.html#l00368">hyper_connection_mix_q6k_q5_0_q4k()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00350">hyper_connection_mix_q4k_q5_0_q4k()</a>, and <a class="el" href="hyper__connection__kernels_8c_source.html#l00374">hyper_connection_mix_q6k_q5_0_q4k()</a>.</p>
 
 </div>
 </div>
@@ -1307,33 +1307,38 @@ Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00175">175</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">  182</span>                   {</div>
-<div class="line"><span class="lineno">  183</span>    <span class="keywordflow">if</span> (!input || !weight || !output || rows &lt;= 0 || output_dim &lt;= 0 ||</div>
-<div class="line"><span class="lineno">  184</span>        input_dim &lt;= 0 || input_dim % <a class="code hl_define" href="ckernel__quant_8h.html#afd2f43dcca46f268b2008cb200198e50">QK_K</a> != 0) {</div>
-<div class="line"><span class="lineno">  185</span>        <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno">  186</span>    }</div>
-<div class="line"><span class="lineno">  187</span> </div>
-<div class="line"><span class="lineno">  188</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> input_row_bytes =</div>
-<div class="line"><span class="lineno">  189</span>        (size_t)(input_dim / <a class="code hl_define" href="ckernel__quant_8h.html#afd2f43dcca46f268b2008cb200198e50">QK_K</a>) * <span class="keyword">sizeof</span>(<a class="code hl_struct" href="structblock__q8__K.html">block_q8_K</a>);</div>
-<div class="line"><span class="lineno">  190</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
-<div class="line"><span class="lineno">  191</span>        <span class="keywordtype">float</span> *output_row = output + (size_t)row * (<span class="keywordtype">size_t</span>)output_dim;</div>
-<div class="line"><span class="lineno">  192</span>        <span class="keyword">const</span> <span class="keywordtype">void</span> *input_row =</div>
-<div class="line"><span class="lineno">  193</span>            (<span class="keyword">const</span> uint8_t *)input + (<span class="keywordtype">size_t</span>)row * input_row_bytes;</div>
-<div class="line"><span class="lineno">  194</span>        <a class="code hl_function" href="hyper__connection__kernels_8c.html#a030c98b26ad610ccea6dabf993b60cdf">gemv_q4_k_q8_k_avx2</a>(</div>
-<div class="line"><span class="lineno">  195</span>            output_row, weight, input_row, output_dim, input_dim);</div>
-<div class="line"><span class="lineno">  196</span>        <span class="keywordflow">if</span> (bias) {</div>
-<div class="line"><span class="lineno">  197</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; output_dim; ++col) {</div>
-<div class="line"><span class="lineno">  198</span>                output_row[col] += bias[col];</div>
-<div class="line"><span class="lineno">  199</span>            }</div>
-<div class="line"><span class="lineno">  200</span>        }</div>
-<div class="line"><span class="lineno">  201</span>    }</div>
-<div class="line"><span class="lineno">  202</span>}</div>
+<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00177">177</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">  184</span>                   {</div>
+<div class="line"><span class="lineno">  185</span>    <span class="keywordflow">if</span> (!input || !weight || !output || rows &lt;= 0 || output_dim &lt;= 0 ||</div>
+<div class="line"><span class="lineno">  186</span>        input_dim &lt;= 0 || input_dim % <a class="code hl_define" href="ckernel__quant_8h.html#afd2f43dcca46f268b2008cb200198e50">QK_K</a> != 0) {</div>
+<div class="line"><span class="lineno">  187</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">  188</span>    }</div>
+<div class="line"><span class="lineno">  189</span> </div>
+<div class="line"><span class="lineno">  190</span>    <span class="keyword">const</span> <span class="keywordtype">size_t</span> input_row_bytes =</div>
+<div class="line"><span class="lineno">  191</span>        (size_t)(input_dim / <a class="code hl_define" href="ckernel__quant_8h.html#afd2f43dcca46f268b2008cb200198e50">QK_K</a>) * <span class="keyword">sizeof</span>(<a class="code hl_struct" href="structblock__q8__K.html">block_q8_K</a>);</div>
+<div class="line"><span class="lineno">  192</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
+<div class="line"><span class="lineno">  193</span>        <span class="keywordtype">float</span> *output_row = output + (size_t)row * (<span class="keywordtype">size_t</span>)output_dim;</div>
+<div class="line"><span class="lineno">  194</span>        <span class="keyword">const</span> <span class="keywordtype">void</span> *input_row =</div>
+<div class="line"><span class="lineno">  195</span>            (<span class="keyword">const</span> uint8_t *)input + (<span class="keywordtype">size_t</span>)row * input_row_bytes;</div>
+<div class="line"><span class="lineno">  196</span><span class="preprocessor">#if defined(CK_TARGET_ARM)</span></div>
+<div class="line"><span class="lineno">  197</span>        <a class="code hl_function" href="ckernel__engine_8h.html#abd2ce09c06d448b502b30fac01bc1d30">gemv_q4_k_q8_k</a>(</div>
+<div class="line"><span class="lineno">  198</span>#<span class="keywordflow">else</span></div>
+<div class="line"><span class="lineno">  199</span>        <a class="code hl_function" href="hyper__connection__kernels_8c.html#a030c98b26ad610ccea6dabf993b60cdf">gemv_q4_k_q8_k_avx2</a>(</div>
+<div class="line"><span class="lineno">  200</span>#endif</div>
+<div class="line"><span class="lineno">  201</span>            output_row, weight, input_row, output_dim, input_dim);</div>
+<div class="line"><span class="lineno">  202</span>        <span class="keywordflow">if</span> (bias) {</div>
+<div class="line"><span class="lineno">  203</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; output_dim; ++col) {</div>
+<div class="line"><span class="lineno">  204</span>                output_row[col] += bias[col];</div>
+<div class="line"><span class="lineno">  205</span>            }</div>
+<div class="line"><span class="lineno">  206</span>        }</div>
+<div class="line"><span class="lineno">  207</span>    }</div>
+<div class="line"><span class="lineno">  208</span>}</div>
+<div class="ttc" id="ackernel__engine_8h_html_abd2ce09c06d448b502b30fac01bc1d30"><div class="ttname"><a href="ckernel__engine_8h.html#abd2ce09c06d448b502b30fac01bc1d30">gemv_q4_k_q8_k</a></div><div class="ttdeci">void gemv_q4_k_q8_k(float *y, const void *W, const void *x_q8, int M, int K)</div><div class="ttdef"><b>Definition</b> <a href="gemm__kernels__q4k__q8k_8c_source.html#l00275">gemm_kernels_q4k_q8k.c:275</a></div></div>
 <div class="ttc" id="ahyper__connection__kernels_8c_html_a030c98b26ad610ccea6dabf993b60cdf"><div class="ttname"><a href="hyper__connection__kernels_8c.html#a030c98b26ad610ccea6dabf993b60cdf">gemv_q4_k_q8_k_avx2</a></div><div class="ttdeci">void gemv_q4_k_q8_k_avx2(float *y, const void *W, const void *x_q8, int M, int K)</div><div class="ttdef"><b>Definition</b> <a href="gemm__kernels__q4k__q8k__avx2_8c_source.html#l00118">gemm_kernels_q4k_q8k_avx2.c:118</a></div></div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="gemm__kernels__q4k__q8k__avx2_8c_source.html#l00118">gemv_q4_k_q8_k_avx2()</a>, and <a class="el" href="ckernel__quant_8h_source.html#l00175">QK_K</a>.</p>
+<p class="reference">References <a class="el" href="gemm__kernels__q4k__q8k_8c_source.html#l00275">gemv_q4_k_q8_k()</a>, <a class="el" href="gemm__kernels__q4k__q8k__avx2_8c_source.html#l00118">gemv_q4_k_q8_k_avx2()</a>, and <a class="el" href="ckernel__quant_8h_source.html#l00175">QK_K</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00344">hyper_connection_mix_q4k_q5_0_q4k()</a>, and <a class="el" href="hyper__connection__kernels_8c_source.html#l00368">hyper_connection_mix_q6k_q5_0_q4k()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="hyper__connection__kernels_8c_source.html#l00350">hyper_connection_mix_q4k_q5_0_q4k()</a>, and <a class="el" href="hyper__connection__kernels_8c_source.html#l00374">hyper_connection_mix_q6k_q5_0_q4k()</a>.</p>
 
 </div>
 </div>
@@ -1381,24 +1386,24 @@ Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00051">51</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">   55</span>                                              {</div>
-<div class="line"><span class="lineno">   56</span>    <span class="keywordflow">if</span> (!input || !output || rows &lt;= 0 || streams &lt;= 0 || hidden_dim &lt;= 0) {</div>
-<div class="line"><span class="lineno">   57</span>        <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno">   58</span>    }</div>
-<div class="line"><span class="lineno">   59</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
-<div class="line"><span class="lineno">   60</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *src = input + (size_t)row * (<span class="keywordtype">size_t</span>)hidden_dim;</div>
-<div class="line"><span class="lineno">   61</span>        <span class="keywordtype">float</span> *dst = output + (size_t)row * (<span class="keywordtype">size_t</span>)streams * (size_t)hidden_dim;</div>
-<div class="line"><span class="lineno">   62</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
-<div class="line"><span class="lineno">   63</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
-<div class="line"><span class="lineno">   64</span>                dst[(size_t)stream * (<span class="keywordtype">size_t</span>)hidden_dim + (size_t)col] =</div>
-<div class="line"><span class="lineno">   65</span>                    <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(src[col]);</div>
-<div class="line"><span class="lineno">   66</span>            }</div>
-<div class="line"><span class="lineno">   67</span>        }</div>
-<div class="line"><span class="lineno">   68</span>    }</div>
-<div class="line"><span class="lineno">   69</span>}</div>
+<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00053">53</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">   57</span>                                              {</div>
+<div class="line"><span class="lineno">   58</span>    <span class="keywordflow">if</span> (!input || !output || rows &lt;= 0 || streams &lt;= 0 || hidden_dim &lt;= 0) {</div>
+<div class="line"><span class="lineno">   59</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">   60</span>    }</div>
+<div class="line"><span class="lineno">   61</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
+<div class="line"><span class="lineno">   62</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *src = input + (size_t)row * (<span class="keywordtype">size_t</span>)hidden_dim;</div>
+<div class="line"><span class="lineno">   63</span>        <span class="keywordtype">float</span> *dst = output + (size_t)row * (<span class="keywordtype">size_t</span>)streams * (size_t)hidden_dim;</div>
+<div class="line"><span class="lineno">   64</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
+<div class="line"><span class="lineno">   65</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
+<div class="line"><span class="lineno">   66</span>                dst[(size_t)stream * (<span class="keywordtype">size_t</span>)hidden_dim + (size_t)col] =</div>
+<div class="line"><span class="lineno">   67</span>                    <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(src[col]);</div>
+<div class="line"><span class="lineno">   68</span>            }</div>
+<div class="line"><span class="lineno">   69</span>        }</div>
+<div class="line"><span class="lineno">   70</span>    }</div>
+<div class="line"><span class="lineno">   71</span>}</div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="hyper__connection__kernels_8c_source.html#l00024">ck_bf16_round()</a>.</p>
+<p class="reference">References <a class="el" href="hyper__connection__kernels_8c_source.html#l00026">ck_bf16_round()</a>.</p>
 
 </div>
 </div>
@@ -1446,21 +1451,21 @@ Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00032">32</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">   36</span>                                             {</div>
-<div class="line"><span class="lineno">   37</span>    <span class="keywordflow">if</span> (!input || !output || rows &lt;= 0 || streams &lt;= 0 || hidden_dim &lt;= 0) {</div>
-<div class="line"><span class="lineno">   38</span>        <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno">   39</span>    }</div>
-<div class="line"><span class="lineno">   40</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
-<div class="line"><span class="lineno">   41</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *src = input + (size_t)row * (<span class="keywordtype">size_t</span>)hidden_dim;</div>
-<div class="line"><span class="lineno">   42</span>        <span class="keywordtype">float</span> *dst = output + (size_t)row * (<span class="keywordtype">size_t</span>)streams * (size_t)hidden_dim;</div>
-<div class="line"><span class="lineno">   43</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
-<div class="line"><span class="lineno">   44</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
-<div class="line"><span class="lineno">   45</span>                dst[(size_t)stream * (<span class="keywordtype">size_t</span>)hidden_dim + (size_t)col] = src[col];</div>
-<div class="line"><span class="lineno">   46</span>            }</div>
-<div class="line"><span class="lineno">   47</span>        }</div>
-<div class="line"><span class="lineno">   48</span>    }</div>
-<div class="line"><span class="lineno">   49</span>}</div>
+<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00034">34</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">   38</span>                                             {</div>
+<div class="line"><span class="lineno">   39</span>    <span class="keywordflow">if</span> (!input || !output || rows &lt;= 0 || streams &lt;= 0 || hidden_dim &lt;= 0) {</div>
+<div class="line"><span class="lineno">   40</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">   41</span>    }</div>
+<div class="line"><span class="lineno">   42</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
+<div class="line"><span class="lineno">   43</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *src = input + (size_t)row * (<span class="keywordtype">size_t</span>)hidden_dim;</div>
+<div class="line"><span class="lineno">   44</span>        <span class="keywordtype">float</span> *dst = output + (size_t)row * (<span class="keywordtype">size_t</span>)streams * (size_t)hidden_dim;</div>
+<div class="line"><span class="lineno">   45</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
+<div class="line"><span class="lineno">   46</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
+<div class="line"><span class="lineno">   47</span>                dst[(size_t)stream * (<span class="keywordtype">size_t</span>)hidden_dim + (size_t)col] = src[col];</div>
+<div class="line"><span class="lineno">   48</span>            }</div>
+<div class="line"><span class="lineno">   49</span>        }</div>
+<div class="line"><span class="lineno">   50</span>    }</div>
+<div class="line"><span class="lineno">   51</span>}</div>
 </div><!-- fragment -->
 </div>
 </div>
@@ -1520,33 +1525,33 @@ Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00392">392</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">  398</span>                                              {</div>
-<div class="line"><span class="lineno">  399</span>    <span class="keywordflow">if</span> (!hyper_input || !block_output || !injection_weight || !output ||</div>
-<div class="line"><span class="lineno">  400</span>        rows &lt;= 0 || streams &lt;= 0 || hidden_dim &lt;= 0) {</div>
-<div class="line"><span class="lineno">  401</span>        <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno">  402</span>    }</div>
-<div class="line"><span class="lineno">  403</span>    <span class="keyword">const</span> <span class="keywordtype">int</span> hyper_dim = streams * hidden_dim;</div>
-<div class="line"><span class="lineno">  404</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
-<div class="line"><span class="lineno">  405</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *hyper_row =</div>
-<div class="line"><span class="lineno">  406</span>            hyper_input + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
-<div class="line"><span class="lineno">  407</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *block_row =</div>
-<div class="line"><span class="lineno">  408</span>            block_output + (size_t)row * (<span class="keywordtype">size_t</span>)hidden_dim;</div>
-<div class="line"><span class="lineno">  409</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *inject_row =</div>
-<div class="line"><span class="lineno">  410</span>            injection_weight + (size_t)row * (<span class="keywordtype">size_t</span>)streams;</div>
-<div class="line"><span class="lineno">  411</span>        <span class="keywordtype">float</span> *output_row = output + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
-<div class="line"><span class="lineno">  412</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
-<div class="line"><span class="lineno">  413</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
-<div class="line"><span class="lineno">  414</span>                <span class="keyword">const</span> <span class="keywordtype">int</span> index = stream * hidden_dim + col;</div>
-<div class="line"><span class="lineno">  415</span>                output_row[index] = <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(</div>
-<div class="line"><span class="lineno">  416</span>                    hyper_row[index] +</div>
-<div class="line"><span class="lineno">  417</span>                    <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(block_row[col] * inject_row[stream]));</div>
-<div class="line"><span class="lineno">  418</span>            }</div>
-<div class="line"><span class="lineno">  419</span>        }</div>
-<div class="line"><span class="lineno">  420</span>    }</div>
-<div class="line"><span class="lineno">  421</span>}</div>
+<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00398">398</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">  404</span>                                              {</div>
+<div class="line"><span class="lineno">  405</span>    <span class="keywordflow">if</span> (!hyper_input || !block_output || !injection_weight || !output ||</div>
+<div class="line"><span class="lineno">  406</span>        rows &lt;= 0 || streams &lt;= 0 || hidden_dim &lt;= 0) {</div>
+<div class="line"><span class="lineno">  407</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">  408</span>    }</div>
+<div class="line"><span class="lineno">  409</span>    <span class="keyword">const</span> <span class="keywordtype">int</span> hyper_dim = streams * hidden_dim;</div>
+<div class="line"><span class="lineno">  410</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
+<div class="line"><span class="lineno">  411</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *hyper_row =</div>
+<div class="line"><span class="lineno">  412</span>            hyper_input + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
+<div class="line"><span class="lineno">  413</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *block_row =</div>
+<div class="line"><span class="lineno">  414</span>            block_output + (size_t)row * (<span class="keywordtype">size_t</span>)hidden_dim;</div>
+<div class="line"><span class="lineno">  415</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *inject_row =</div>
+<div class="line"><span class="lineno">  416</span>            injection_weight + (size_t)row * (<span class="keywordtype">size_t</span>)streams;</div>
+<div class="line"><span class="lineno">  417</span>        <span class="keywordtype">float</span> *output_row = output + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
+<div class="line"><span class="lineno">  418</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
+<div class="line"><span class="lineno">  419</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
+<div class="line"><span class="lineno">  420</span>                <span class="keyword">const</span> <span class="keywordtype">int</span> index = stream * hidden_dim + col;</div>
+<div class="line"><span class="lineno">  421</span>                output_row[index] = <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(</div>
+<div class="line"><span class="lineno">  422</span>                    hyper_row[index] +</div>
+<div class="line"><span class="lineno">  423</span>                    <a class="code hl_function" href="hyper__connection__kernels_8c.html#aa1831a4dc6f249f45ea4a2591971b697">ck_bf16_round</a>(block_row[col] * inject_row[stream]));</div>
+<div class="line"><span class="lineno">  424</span>            }</div>
+<div class="line"><span class="lineno">  425</span>        }</div>
+<div class="line"><span class="lineno">  426</span>    }</div>
+<div class="line"><span class="lineno">  427</span>}</div>
 </div><!-- fragment -->
-<p class="reference">References <a class="el" href="hyper__connection__kernels_8c_source.html#l00024">ck_bf16_round()</a>.</p>
+<p class="reference">References <a class="el" href="hyper__connection__kernels_8c_source.html#l00026">ck_bf16_round()</a>.</p>
 
 </div>
 </div>
@@ -1606,31 +1611,31 @@ Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00423">423</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
-<div class="fragment"><div class="line"><span class="lineno">  429</span>                                             {</div>
-<div class="line"><span class="lineno">  430</span>    <span class="keywordflow">if</span> (!hyper_input || !block_output || !injection_weight || !output ||</div>
-<div class="line"><span class="lineno">  431</span>        rows &lt;= 0 || streams &lt;= 0 || hidden_dim &lt;= 0) {</div>
-<div class="line"><span class="lineno">  432</span>        <span class="keywordflow">return</span>;</div>
-<div class="line"><span class="lineno">  433</span>    }</div>
-<div class="line"><span class="lineno">  434</span>    <span class="keyword">const</span> <span class="keywordtype">int</span> hyper_dim = streams * hidden_dim;</div>
-<div class="line"><span class="lineno">  435</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
-<div class="line"><span class="lineno">  436</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *hyper_row =</div>
-<div class="line"><span class="lineno">  437</span>            hyper_input + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
-<div class="line"><span class="lineno">  438</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *block_row =</div>
-<div class="line"><span class="lineno">  439</span>            block_output + (size_t)row * (<span class="keywordtype">size_t</span>)hidden_dim;</div>
-<div class="line"><span class="lineno">  440</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *inject_row =</div>
-<div class="line"><span class="lineno">  441</span>            injection_weight + (size_t)row * (<span class="keywordtype">size_t</span>)streams;</div>
-<div class="line"><span class="lineno">  442</span>        <span class="keywordtype">float</span> *output_row = output + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
-<div class="line"><span class="lineno">  443</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
-<div class="line"><span class="lineno">  444</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
-<div class="line"><span class="lineno">  445</span>                <span class="keyword">const</span> <span class="keywordtype">int</span> index = stream * hidden_dim + col;</div>
-<div class="line"><span class="lineno">  446</span>                <span class="keyword">volatile</span> <span class="keyword">const</span> <span class="keywordtype">float</span> weighted =</div>
-<div class="line"><span class="lineno">  447</span>                    block_row[col] * inject_row[stream];</div>
-<div class="line"><span class="lineno">  448</span>                output_row[index] = hyper_row[index] + weighted;</div>
-<div class="line"><span class="lineno">  449</span>            }</div>
-<div class="line"><span class="lineno">  450</span>        }</div>
-<div class="line"><span class="lineno">  451</span>    }</div>
-<div class="line"><span class="lineno">  452</span>}</div>
+<p class="definition">Definition at line <a class="el" href="hyper__connection__kernels_8c_source.html#l00429">429</a> of file <a class="el" href="hyper__connection__kernels_8c_source.html">hyper_connection_kernels.c</a>.</p>
+<div class="fragment"><div class="line"><span class="lineno">  435</span>                                             {</div>
+<div class="line"><span class="lineno">  436</span>    <span class="keywordflow">if</span> (!hyper_input || !block_output || !injection_weight || !output ||</div>
+<div class="line"><span class="lineno">  437</span>        rows &lt;= 0 || streams &lt;= 0 || hidden_dim &lt;= 0) {</div>
+<div class="line"><span class="lineno">  438</span>        <span class="keywordflow">return</span>;</div>
+<div class="line"><span class="lineno">  439</span>    }</div>
+<div class="line"><span class="lineno">  440</span>    <span class="keyword">const</span> <span class="keywordtype">int</span> hyper_dim = streams * hidden_dim;</div>
+<div class="line"><span class="lineno">  441</span>    <span class="keywordflow">for</span> (<span class="keywordtype">int</span> row = 0; row &lt; rows; ++row) {</div>
+<div class="line"><span class="lineno">  442</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *hyper_row =</div>
+<div class="line"><span class="lineno">  443</span>            hyper_input + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
+<div class="line"><span class="lineno">  444</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *block_row =</div>
+<div class="line"><span class="lineno">  445</span>            block_output + (size_t)row * (<span class="keywordtype">size_t</span>)hidden_dim;</div>
+<div class="line"><span class="lineno">  446</span>        <span class="keyword">const</span> <span class="keywordtype">float</span> *inject_row =</div>
+<div class="line"><span class="lineno">  447</span>            injection_weight + (size_t)row * (<span class="keywordtype">size_t</span>)streams;</div>
+<div class="line"><span class="lineno">  448</span>        <span class="keywordtype">float</span> *output_row = output + (size_t)row * (<span class="keywordtype">size_t</span>)hyper_dim;</div>
+<div class="line"><span class="lineno">  449</span>        <span class="keywordflow">for</span> (<span class="keywordtype">int</span> stream = 0; stream &lt; streams; ++stream) {</div>
+<div class="line"><span class="lineno">  450</span>            <span class="keywordflow">for</span> (<span class="keywordtype">int</span> col = 0; col &lt; hidden_dim; ++col) {</div>
+<div class="line"><span class="lineno">  451</span>                <span class="keyword">const</span> <span class="keywordtype">int</span> index = stream * hidden_dim + col;</div>
+<div class="line"><span class="lineno">  452</span>                <span class="keyword">volatile</span> <span class="keyword">const</span> <span class="keywordtype">float</span> weighted =</div>
+<div class="line"><span class="lineno">  453</span>                    block_row[col] * inject_row[stream];</div>
+<div class="line"><span class="lineno">  454</span>                output_row[index] = hyper_row[index] + weighted;</div>
+<div class="line"><span class="lineno">  455</span>            }</div>
+<div class="line"><span class="lineno">  456</span>        }</div>
+<div class="line"><span class="lineno">  457</span>    }</div>
+<div class="line"><span class="lineno">  458</span>}</div>
 </div><!-- fragment -->
 </div>
 </div>

@@ -1,5 +1,6 @@
 var deltanet__kernels_8c =
 [
+    [ "_GNU_SOURCE", "deltanet__kernels_8c.html#a369266c24eacffb87046522897a570d5", null ],
     [ "CK_DELTANET_LLAMA_CHUNK_MAX_DIM", "deltanet__kernels_8c.html#a81e2285f3a1a0673862f3dadc219b21f", null ],
     [ "CK_DELTANET_LLAMA_CHUNK_SIZE", "deltanet__kernels_8c.html#a07d3fe27a8dc9dda88a30039edd6cfbb", null ],
     [ "CK_DELTANET_MAX_STACK_DIM", "deltanet__kernels_8c.html#ab4de31192bb2a9b88daba6b8693e9483", null ],

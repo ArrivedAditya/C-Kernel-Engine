@@ -1,5 +1,6 @@
 var NAVTREEINDEX15 =
 {
+"mega__fused__attention__avx_8c.html#afb10ce2e9784bf731312a52032176aaa":[2,0,1,1,0,3,4],
 "mega__fused__attention__avx_8c_source.html":[2,0,1,1,0,3],
 "mega__fused__attention__decode__q5__0_8c.html":[2,0,1,1,0,4],
 "mega__fused__attention__decode__q5__0_8c.html#a3c6fc830704a70059d6f5ae9df4b0fce":[2,0,1,1,0,4,5],
@@ -248,6 +249,5 @@ var NAVTREEINDEX15 =
 "qwen4__exp__kernels_8c.html#af109c824b998965c1da1addd58ec56d0":[2,0,1,1,78,16],
 "qwen4__exp__kernels_8c_source.html":[2,0,1,1,78],
 "recurrent__gate__kernels_8c.html":[2,0,1,1,79],
-"recurrent__gate__kernels_8c.html#a29f48b99af73f1ef9c48b8a9ce53397d":[2,0,1,1,79,1],
-"recurrent__gate__kernels_8c.html#a33632320e455741062d562d8aca62627":[2,0,1,1,79,8]
+"recurrent__gate__kernels_8c.html#a29f48b99af73f1ef9c48b8a9ce53397d":[2,0,1,1,79,1]
 };
