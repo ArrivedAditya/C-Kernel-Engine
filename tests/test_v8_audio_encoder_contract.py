@@ -770,6 +770,10 @@ class AudioEncoderContractTests(unittest.TestCase):
             ROOT / ".github" / "requirements-nightly-constraints.txt"
         ).read_text(encoding="utf-8")
         self.assertIn("torch==2.12.1", constraints.splitlines())
+        historical_constraints = (
+            ROOT / ".github" / "requirements-nightly-torch28-constraints.txt"
+        ).read_text(encoding="utf-8")
+        self.assertIn("torch==2.8.0", historical_constraints.splitlines())
         workflow = (
             ROOT / ".github" / "workflows" / "nightly.yml"
         ).read_text(encoding="utf-8")
@@ -785,10 +789,34 @@ class AudioEncoderContractTests(unittest.TestCase):
         self.assertTrue(
             all(
                 "-c .github/requirements-nightly-constraints.txt" in line
+                or "-c ${{ matrix.constraints }}" in line
+                or "-c .github/requirements-nightly-torch28-constraints.txt" in line
                 for line in dependency_installs
             ),
             "every nightly dependency install must use the pinned constraints file",
         )
+        self.assertIn(
+            "constraints: .github/requirements-nightly-torch28-constraints.txt",
+            workflow,
+        )
+        self.assertIn(
+            "constraints: .github/requirements-nightly-constraints.txt",
+            workflow,
+        )
+        for version in ("2.8.0", "2.12.1"):
+            self.assertIn(f"torch_version: '{version}'", workflow)
+        self.assertIn("CKE_EXPECTED_TORCH_VERSION: ${{ matrix.torch_version }}",
+                      workflow)
+        self.assertIn("CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages.json",
+                      workflow)
+        self.assertIn("CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages-default.json",
+                      workflow)
+        self.assertIn("ATEN_CPU_CAPABILITY: default", workflow)
+        self.assertIn("build/torch28-reference/bin/python -m pip install", workflow)
+        self.assertIn("name: tts-adaln-torch-${{ matrix.torch_version }}-stages",
+                      workflow)
+        self.assertIn("--index-url https://download.pytorch.org/whl/cpu",
+                      workflow)
         parsed = nightly.parse_sub_tests(
             "audio_encoder_self_attention_equal "
             "max_diff=2.98e-08 tol=2.0e-06 [PASS]\n"

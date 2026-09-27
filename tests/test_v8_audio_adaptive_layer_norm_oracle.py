@@ -3,6 +3,8 @@
 import ctypes
 import json
 import math
+import os
+import platform
 from pathlib import Path
 import subprocess
 import tempfile
@@ -22,6 +24,12 @@ def flat(value):
 
 
 class AdaptiveLayerNormOracleTest(unittest.TestCase):
+    def assert_pinned_torch(self, torch):
+        expected = os.environ.get("CKE_EXPECTED_TORCH_VERSION")
+        if expected:
+            self.assertEqual(torch.__version__.split("+", 1)[0], expected)
+            self.assertIsNone(torch.version.cuda, "nightly oracle must use CPU wheels")
+
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
@@ -171,26 +179,92 @@ class AdaptiveLayerNormOracleTest(unittest.TestCase):
             import torch
             import torch.nn.functional as F
         except ImportError as exc:
+            if os.environ.get("CKE_EXPECTED_TORCH_VERSION"):
+                self.fail(f"pinned live PyTorch oracle unavailable: {exc}")
             self.skipTest(f"live PyTorch oracle dependency unavailable: {exc}")
+        self.assert_pinned_torch(torch)
         fixture = json.loads(FIXTURE.read_text())
+        # The committed oracle was generated with PyTorch 2.8.0. The pinned
+        # nightly version/backend has shown unexplained FP32 drift on Xeon.
+        # Keep the original bound until stage captures identify the cause.
+        cross_version_tolerance = 1e-7
+        stage_cases = []
+        comparisons = []
         for case in fixture["cases"]:
             style = torch.tensor(case["style"], dtype=torch.float32)
             weight = torch.tensor(case["projection_weight"], dtype=torch.float32)
             bias = torch.tensor(case["projection_bias"], dtype=torch.float32)
             x = torch.tensor(case["input"], dtype=torch.float32)
-            gamma, beta = F.linear(style, weight, bias).chunk(2)
-            oracle = (1 + gamma) * F.layer_norm(
-                x, (case["channels"],), eps=case["epsilon"]) + beta
-            for actual, expected in zip(flat(oracle.tolist()),
-                                        flat(case["output"])):
-                self.assertLessEqual(abs(actual - expected), 1e-7)
+            projection = F.linear(style, weight, bias)
+            gamma, beta = projection.chunk(2)
+            normalized = F.layer_norm(
+                x, (case["channels"],), eps=case["epsilon"])
+            oracle = (1 + gamma) * normalized + beta
+            live_values = flat(oracle.tolist())
+            fixture_values = flat(case["output"])
+            self.assertEqual(len(live_values), len(fixture_values))
+            worst = (0.0, None)
+            for index, (actual, expected) in enumerate(zip(
+                    live_values, fixture_values)):
+                self.assertTrue(math.isfinite(actual), (index, actual))
+                self.assertTrue(math.isfinite(expected), (index, expected))
+                error = abs(actual - expected)
+                if error > worst[0]:
+                    worst = (error, (index, actual, expected))
+            stage_cases.append({
+                "shape": [case["tokens"], case["channels"], case["style_dim"]],
+                "projection": projection.tolist(),
+                "normalized": normalized.tolist(),
+                "output": oracle.tolist(),
+                "fixture_vs_live_max_abs": worst[0],
+                "fixture_vs_live_worst": worst[1],
+            })
+            comparisons.append((case, oracle.tolist(), worst))
+        report_path = os.environ.get("CKE_ADALN_STAGE_REPORT")
+        if report_path:
+            capability = getattr(torch.backends.cpu, "get_cpu_capability", None)
+            report = {
+                "schema": "cke.tts_adaln_reference_stages.v1",
+                "provider": "audio_adaptive_layer_norm_f32",
+                "numerical_contract": "audio_adaptive_layer_norm_style_linear_fp32",
+                "fixture_torch": fixture["torch_version"],
+                "live_torch": torch.__version__,
+                "python": platform.python_version(),
+                "machine": platform.machine(),
+                "host_node": platform.node(),
+                "processor": platform.processor(),
+                "torch_cpu_capability": capability() if callable(capability) else None,
+                "aten_cpu_capability_env": os.environ.get("ATEN_CPU_CAPABILITY"),
+                "torch_threads": torch.get_num_threads(),
+                "mkldnn_enabled": torch.backends.mkldnn.enabled,
+                "cases": stage_cases,
+            }
+            path = Path(report_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(report, indent=2) + "\n")
+        for case, live_output, worst in comparisons:
+            self.assertLessEqual(
+                worst[0], cross_version_tolerance,
+                f"fixture torch={fixture['torch_version']} live torch={torch.__version__} "
+                f"shape={case['tokens']}x{case['channels']} worst={worst[1]}",
+            )
+            print(f"adaptive_layer_norm fixture_torch={fixture['torch_version']} "
+                  f"live_torch={torch.__version__} shape={case['tokens']}x{case['channels']} "
+                  f"fixture_vs_live_max_abs={worst[0]:.9g} worst={worst[1]} "
+                  f"tolerance={cross_version_tolerance:.9g}")
+            # Check native arithmetic against this live oracle directly too;
+            # fixture reproducibility alone cannot establish kernel parity.
+            self.assert_matches({**case, "output": live_output})
 
     def test_live_production_geometry(self):
         try:
             import torch
             import torch.nn.functional as F
         except ImportError as exc:
+            if os.environ.get("CKE_EXPECTED_TORCH_VERSION"):
+                self.fail(f"pinned live PyTorch oracle unavailable: {exc}")
             self.skipTest(f"live PyTorch oracle dependency unavailable: {exc}")
+        self.assert_pinned_torch(torch)
         tokens, channels, style_dim = 24, 512, 128
         torch.manual_seed(4428128)
         x = torch.randn(tokens, channels) * 0.2

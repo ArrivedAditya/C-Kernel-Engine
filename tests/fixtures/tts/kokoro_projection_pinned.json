@@ -1,0 +1,26 @@
+{
+  "oracle": "PyTorch 2.12.1+cpu torch.nn.functional.linear",
+  "reference_scope": "pinned Kokoro embedding plus exported BUMP projection weights; isolated linear operation",
+  "bundle_manifest_sha256": "4b1efaf94191ab30e5a5e88a44a9e6a82ba295e6eeae8b639604b2855cc51d82",
+  "embedding_fixture_sha256": "c2a18dea47a3542ec5199def3156ce5b8cd01dc51e40a569732ab215da34a3e6",
+  "shapes": {
+    "input": [
+      36,
+      128
+    ],
+    "weight": [
+      768,
+      128
+    ],
+    "bias": [
+      768
+    ],
+    "expected": [
+      36,
+      768
+    ]
+  },
+  "fixture_sha256": "8dfda8edff715001fcfa3f167b5cb10e1d14f716a688026644258a308dcbea53",
+  "complete_encoder": "NOT_TESTED",
+  "generated_waveform": "NOT_TESTED"
+}

@@ -1,0 +1,52 @@
+{
+  "id": "linear_rows_checked_f32",
+  "op": "linear_rows_checked",
+  "operation_interface": "linear.row_major.checked.fp32.v1",
+  "variant": "strided_row_major_scalar_fp64_accumulation",
+  "selection": {"status": "candidate", "priority": 100, "equivalence_group": "linear_rows_checked_fp32", "phases": ["prefill"]},
+  "quant": {"weight": "fp32", "activation": "fp32", "output": "fp32"},
+  "inputs": [
+    {"name": "input", "dtype": "fp32", "shape": ["M", "K"], "layout": "row_major_input_stride", "placement": "local", "access": "read", "storage_class": "activation", "consumption": "required"}
+  ],
+  "weights": [
+    {"name": "weight", "dtype": "fp32", "shape": ["N", "K"], "layout": "row_major_weight_stride", "placement": "local", "access": "read", "storage_class": "weight", "consumption": "required"},
+    {"name": "bias", "dtype": "fp32", "shape": ["N"], "layout": "feature_contiguous", "placement": "local", "access": "read", "storage_class": "weight", "consumption": "required"}
+  ],
+  "outputs": [
+    {"name": "output", "dtype": "fp32", "shape": ["M", "N"], "layout": "row_major_output_stride", "placement": "local", "access": "write", "storage_class": "activation", "consumption": "required"}
+  ],
+  "scratch": [],
+  "dims": ["input_elements", "input_stride", "weight_elements", "weight_stride", "bias_elements", "output_elements", "output_stride", "rows", "input_channels", "output_channels"],
+  "constraints": {"notes": "M, K, N positive; checked physical spans; nonaliasing caller-owned buffers; all accessed inputs and results finite. Rejection leaves all output unchanged. No allocation or global state."},
+  "impl": {
+    "function": "linear_rows_checked_f32",
+    "c_declaration": "int linear_rows_checked_f32(const float *input, size_t input_elements, size_t input_stride, const float *weight, size_t weight_elements, size_t weight_stride, const float *bias, size_t bias_elements, float *output, size_t output_elements, size_t output_stride, size_t rows, size_t input_channels, size_t output_channels);",
+    "sources": ["src/kernels/linear_rows_checked.c"]
+  },
+  "modes": {"inference": true, "training": false, "backward": false},
+  "numerical_capabilities": [{
+    "contract_id": "linear_rows_checked_f32_scalar_fp64_accumulation",
+    "status": "validated", "phases": ["prefill"],
+    "function": "linear_rows_checked_f32", "explicit_selector": true,
+    "implementation": {"isa_dispatch": "scalar", "threading": {"runtime": "serial", "work_partition": ["serial"], "dispatch": ["inline"], "reduction_order_effect": "none"}},
+    "arithmetic": {"partial_accumulator": "fp64", "merge_order": "none", "deterministic": true, "thread_count_changes_arithmetic_order": false, "split_strategy": "serial"}
+  }],
+  "call_abi": {"version": 1, "params": [
+    {"name": "input", "source": "activation:input", "cast": "const float*", "ports": ["input:input"]},
+    {"name": "input_elements", "source": "runtime:linear_input_elements"},
+    {"name": "input_stride", "source": "runtime:linear_input_stride"},
+    {"name": "weight", "source": "weight:weight", "cast": "const float*", "ports": ["weight:weight"]},
+    {"name": "weight_elements", "source": "runtime:linear_weight_elements"},
+    {"name": "weight_stride", "source": "runtime:linear_weight_stride"},
+    {"name": "bias", "source": "weight:bias", "cast": "const float*", "ports": ["weight:bias"]},
+    {"name": "bias_elements", "source": "runtime:linear_bias_elements"},
+    {"name": "output", "source": "output:output", "cast": "float*", "ports": ["output:output"]},
+    {"name": "output_elements", "source": "runtime:linear_output_elements"},
+    {"name": "output_stride", "source": "runtime:linear_output_stride"},
+    {"name": "rows", "source": "runtime:linear_rows"},
+    {"name": "input_channels", "source": "runtime:linear_input_channels"},
+    {"name": "output_channels", "source": "runtime:linear_output_channels"}
+  ]},
+  "tests": {"unit": ["tests/test_v8_linear_rows_oracle.py", "tests/test_v8_kokoro_generated_projection.py"], "oracle": "Independent PyTorch torch.nn.functional.linear at small and pinned Kokoro [36,128]→[36,768] shapes; checked strided rows and two-operation generated graph"},
+  "notes": "Reusable checked linear operator for inference only; Kokoro ALBERT projection is one consumer. FP64 accumulation is deliberately distinct from PyTorch's FP32 reduction and uses an explicit numerical tolerance."
+}

@@ -3,6 +3,17 @@
   "schema_version": 1,
   "engine_contract_version": "8",
   "contracts": {
+    "linear_rows_checked_f32_scalar_fp64_accumulation": {
+      "operator_family": "linear_rows_checked",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp64", "contraction": "disabled", "evaluation_order": "validate_all_spans_and_finiteness_then_preflight_every_row_output_in_ascending_order_then_repeat_dot_and_store"},
+      "rounding": {"mode": "rne", "points": ["weighted_product", "reduction_update", "output_store"]},
+      "reduction": {"kind": "sum", "order": "left_to_right", "partial_accumulator": "fp64", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Checked row-major FP32 linear with FP64 ascending-channel dot accumulation, strided rows, explicit capacities, and unchanged output on rejection. PyTorch F.linear comparison uses elementwise tolerance because its reduction differs."
+    },
     "embedding_three_table_layer_norm_fp32_reference": {
       "operator_family": "embedding_three_table_layer_norm",
       "status": "validated",
@@ -3510,7 +3521,7 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "Token-major FP32 adaptive LayerNorm with output-major FP32 style projection, double mean and biased variance, (1+gamma)*normalized+beta, caller-owned 2C projection scratch, and output unchanged on rejection."
+      "description": "Token-major FP32 adaptive LayerNorm with ascending FP32 output-major style projection, ascending FP64 mean and biased-variance channel reductions, (1+gamma)*normalized+beta, caller-owned 2C projection scratch, and output unchanged on rejection. Across separate AVX512 and AVX2 nightly hosts, the first reference-stage difference appears in PyTorch F.linear while LayerNorm outputs match; a version-specific cause is unproven. A new reduction order requires a distinct provider and numerical contract."
     },
     "audio_lstm_pytorch_ifgo_single_step_fp32": {
       "operator_family": "audio_lstm",

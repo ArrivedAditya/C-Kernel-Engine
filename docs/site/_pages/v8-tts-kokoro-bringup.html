@@ -326,8 +326,8 @@ dataset provenance.</p></section><section id="graph"><h2>Kokoro graph inventory<
 <p>The pinned capture now records 63 named tensors, including six duration-encoder LSTM/AdaLN operation boundaries, duration logits, the duration vector, and the final FP32 waveform. Finer prosody/decoder checkpoints, source RNG inputs, imported-weight bindings, and a generated graph comparison remain required. Verify the exact generated output length, repeated calls, undersized workspace, malformed duration/state, finite outputs, clipping/silence, and a human listening fixture. Keep numerical parity, candidate-versus-baseline equality, and listening results separate. Until the generated C entry point produces and verifies the waveform, status remains <strong>unsupported / missing evidence</strong>.</p></section><section id="operator-checklist"><h2>Operation checklist for the first generated utterance</h2>
 <p>Scope: the pinned phoneme IDs and <code>af_heart[len(phonemes)-1]</code> row, batch one, FP32, and the short reference utterance. “Primitive oracle passed” describes an isolated operation under its own contract; it does not certify Kokoro's parameters, tensor connections, or waveform. “Candidate” means CKE has related math whose exact Kokoro contract still needs comparison. All TTS backward and complete waveform claims remain <strong>NOT_TESTED</strong>.</p>
 <table><thead><tr><th>Reached stage</th><th>Evidence available now</th><th>Missing work for the pinned path</th><th>Next independent proof</th></tr></thead><tbody>
-<tr><td>Phoneme IDs and voice conditioning</td><td>Pinned IDs and upstream captures exist in <code>version/v8/tts/reference/</code>. The offline importer writes 599 effective FP32 model tensors and the selected voice row/slices into BUMPWGT5; an asset-backed test compares every tensor and reproduces the pinned upstream waveform. The generated embedding boundary now consumes five exported weight payloads.</td><td>Bind the remaining canonical weights and voice tensors to declared circuit edges. Native G2P is a later milestone.</td><td>Compare generated phoneme-encoder, duration and decoder checkpoints against the pinned PyTorch capture, then the final waveform.</td></tr>
-<tr><td>ALBERT phoneme encoder</td><td>The checked three-table embedding plus LayerNorm kernel matches the pinned Kokoro <code>[36,128]</code> PyTorch boundary. A one-operation v8 circuit now binds the five BUMP tables, lowers through normal codegen, and runs generated native C. X-Ray compares its compiler-declared embedding checkpoint with the pinned oracle. The largest observed absolute error is 2.384185791015625e-7. The optional exported-BUMP test also passes against the local pinned bundle.</td><td>Declare the embedding projection, shared/grouped ALBERT layers, masks, GELU variant and final 768→512 projection. Resolve each provider's exact numerical contract. The current circuit supplies fixed phoneme IDs and covers only the embedding operation.</td><td>Compare one generated shared ALBERT layer and final encoder output against pinned PyTorch checkpoints. Complete phoneme encoder and waveform remain NOT_TESTED.</td></tr>
+<tr><td>Phoneme IDs and voice conditioning</td><td>Pinned IDs and upstream captures exist in <code>version/v8/tts/reference/</code>. The offline importer writes 599 effective FP32 model tensors and the selected voice row/slices into BUMPWGT5; an asset-backed test compares every tensor and reproduces the pinned upstream waveform. The generated embedding and projection graph now consumes seven exported weight payloads.</td><td>Bind the remaining canonical weights and voice tensors to declared circuit edges. Native G2P is a later milestone.</td><td>Compare generated phoneme-encoder, duration and decoder checkpoints against the pinned PyTorch capture, then the final waveform.</td></tr>
+<tr><td>ALBERT phoneme encoder</td><td>The generated circuit now connects the checked three-table embedding and a checked FP32 row-major 128→768 linear projection using seven BUMP weights. Both compiler-declared X-Ray boundaries match independent PyTorch fixtures. The linear primitive's largest absolute error at 36×768 is 9.5367431640625e-7; the local asset-backed run also passes against the exported BUMP bundle.</td><td>Declare the shared/grouped ALBERT attention and feed-forward layers, masks, GELU variant and final 768→512 projection. Resolve each provider's exact numerical contract. The current circuit supplies fixed phoneme IDs and stops after the input projection.</td><td>Compare one generated shared ALBERT layer and final encoder output against pinned PyTorch checkpoints. Complete phoneme encoder and waveform remain NOT_TESTED.</td></tr>
 <tr><td>Duration and text-encoder recurrent blocks</td><td><code>audio_lstm_step_f32</code> has a single-step oracle; <code>audio_lstm_bidirectional_scan_f32</code> has independent PyTorch scan fixtures. The pinned predictor capture now records each packed LSTM input/output, batch-size metadata, and final hidden/cell state.</td><td>Connect forward and reverse scans in Kokoro circuits with exact weights, valid lengths and per-request state reset. The new checkpoint captures are upstream oracle data, not generated-C parity.</td><td>Compare each generated recurrent stage and repeated-request reset against those pinned checkpoints.</td></tr>
 <tr><td>Style-conditioned adaptive layer norm</td><td><code>audio_adaptive_layer_norm_f32</code> has PyTorch primitive oracles, explicit strides/capacities and caller-owned scratch. The pinned reference now captures input features, predictor style and output for all three occurrences.</td><td>Bind Kokoro's effective projection weights and predictor style in the circuit. The complete predictor graph remains <strong>NOT_TESTED</strong>.</td><td>Compare each generated adaptive-layer-norm stage against its pinned input/output checkpoint.</td></tr>
 <tr><td>Duration head and checked frame count</td><td><code>audio_duration_logits_to_frames_f32</code> passes the pinned 36×50 PyTorch fixture and native bounds tests; the generated duration subgraph binds its checked <code>A</code> to downstream calls.</td><td>Generate the 50 logits from the pinned encoder and duration-predictor weights. The current subgraph supplies logits externally; request-time speed binding remains a separate generic entry contract.</td><td>Compare generated predictor logits, per-token durations and <code>A</code> to the pinned reference; retain nonfinite, overflow and over-capacity rejection before consumers run.</td></tr>
@@ -363,6 +363,14 @@ The provider maps declare backward and training unsupported.</p>
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><code>linear_rows_checked_f32</code> and generated Kokoro embedding → input projection</td>
+<td>FP32 input/weights/output, int32 phoneme IDs / inference only</td>
+<td>Pinned embedding capture plus exported Kokoro projection weights evaluated by PyTorch <code>torch.nn.functional.linear</code> at [36,128]→[36,768]</td>
+<td><code>tests/test_v8_linear_rows_oracle.py</code>; <code>tests/test_v8_kokoro_generated_projection.py</code></td>
+<td><code>.github/workflows/tts-kernels.yml</code>; <code>scripts/nightly_runner.py</code> keys <code>tts_linear_rows_oracle</code> and <code>tts_kokoro_generated_projection</code></td>
+<td>PASS locally: scalar linear max absolute error 9.5367431640625e-7, strided padding, invalid geometry and nonfinite rejection, repeated requests, generated failure propagation, two compiler-declared X-Ray checkpoints, and optional 602-entry exported-BUMP verification. The optional asset and live-PyTorch checks report SKIP when unavailable. X-Ray currently labels the exact resolved numerical-contract ID <code>unresolved</code>; the map declares it separately. This is an isolated projection oracle; complete ALBERT encoder and speech remain NOT_TESTED.</td>
+</tr>
 <tr>
 <td>Generated Kokoro embedding boundary via <code>embedding_three_table_layer_norm_f32</code></td>
 <td>FP32 weights/output, int32 IDs / inference only</td>
@@ -511,6 +519,27 @@ comparison targets; no generated predictor stage has passed them yet.</p>
 calls against these PyTorch checkpoints. Their maximum absolute errors were
 2.38e-6, 1.43e-6 and 1.61e-6, each below the declared 5e-6 elementwise limit.
 This is real-weight primitive parity, not circuit stitching or waveform parity.</p>
+<p><strong>Adaptive LayerNorm numerical identity:</strong> the CKE provider performs the
+style projection as an ascending FP32 multiply/add reduction, then computes
+mean and biased variance as separate ascending FP64 channel reductions. It casts
+the normalized value to FP32 before applying <code>(1+gamma)*x+beta</code>. The
+committed fixture was captured with PyTorch 2.8.0. Nightly runs under both
+PyTorch 2.8.0 and 2.12.1 have shown a 1.19e-7 fixture difference on different
+hosts. In separate pinned-version stage captures, the first difference was at
+<code>F.linear</code> style projection; their <code>layer_norm</code> outputs
+matched. One job used AVX512 dispatch and the other AVX2, so a version-specific
+cause remains unproven. The nightly workflow runs direct native comparisons
+against pinned CPU wheels for both versions and uploads projection, normalized
+and final-output reference stages with runtime settings. Each version also runs
+with controlled default CPU dispatch on the same runner, so a backend-path
+effect can be distinguished from a version label. The PyTorch 2.12 job also
+runs an isolated 2.8 environment on that same host and publishes the first
+different reference stage under controlled dispatch. Fixture-versus-live
+keeps its original 1e-7 bound, so the Xeon drift remains an unresolved failing
+case; the native-versus-oracle bound remains 5e-6. If a
+future model requires another reduction order, it needs another kernel and
+canonical numerical contract so X-Ray can identify the selected arithmetic;
+changing this provider silently would erase that evidence.</p>
 <p>The selected style row is <code>af_heart[len(phonemes)-1]</code>; the predictor receives its
 last 128 columns and the decoder receives its first 128. The generated manifest
 marks any missing hook explicitly.</p></section>

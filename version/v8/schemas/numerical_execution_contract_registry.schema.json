@@ -88,6 +88,7 @@
             "audio_duration_expand",
             "audio_duration_logits_to_frames",
             "embedding_three_table_layer_norm",
+            "linear_rows_checked",
             "runtime_extent_sum",
             "runtime_copy_valid",
             "audio_istft_mag_phase",
