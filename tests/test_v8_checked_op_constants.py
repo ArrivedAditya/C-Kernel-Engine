@@ -1,5 +1,7 @@
 """Model-neutral normal-codegen proof for per-operation checked ABI constants."""
 import contextlib
+import copy
+import hashlib
 import ctypes
 import io
 import json
@@ -14,8 +16,22 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "version/v8/scripts"))
 import build_ir_v8
-sys.path.insert(0, str(ROOT / "version/v8/tts"))
-import export_kokoro_bump as exporter
+
+
+def write_synthetic_weights(root, tensors):
+    """Write only the planner's entry/payload contract for this compiler test."""
+    payload = bytearray()
+    entries = []
+    for name, value in sorted(tensors.items()):
+        payload.extend(b"\0" * ((-len(payload)) & 63))
+        offset = len(payload)
+        raw = np.ascontiguousarray(value, dtype="<f4").tobytes()
+        payload.extend(raw)
+        entries.append({"name": name, "dtype": "fp32", "shape": list(value.shape),
+                        "file_offset": offset, "size": len(raw),
+                        "sha256": hashlib.sha256(raw).hexdigest()})
+    (root / "weights.fixture").write_bytes(payload)
+    return {"entries": entries}
 
 
 def linear_op(name, input_name, output_name, k, n, weight, bias):
@@ -35,7 +51,7 @@ def linear_op(name, input_name, output_name, k, n, weight, bias):
 
 
 class CheckedOpConstantsTest(unittest.TestCase):
-    def compile_graph(self, *, corrupt=None):
+    def compile_graph(self, *, corrupt=None, mutate=None):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         root = Path(temp.name)
@@ -45,15 +61,15 @@ class CheckedOpConstantsTest(unittest.TestCase):
             "fixture.second.weight": np.arange(8, dtype=np.float32).reshape(2, 4) / 20,
             "fixture.second.bias": np.arange(2, dtype=np.float32) / 10,
         }
-        origins = {name: {"source_name": name, "transform": "identity"} for name in tensors}
-        bundle = exporter.write_bundle(root, tensors, origins, {
-            "n_token": 1, "hidden_dim": 4,
-            "plbert": {"intermediate_size": 4, "max_position_embeddings": 2,
-                       "num_attention_heads": 1}}, {"source": "synthetic two-linear fixture"})
+        bundle = write_synthetic_weights(root, tensors)
         first = linear_op("first", "external:input", "middle", 3, 4,
                           "fixture.first.weight", "fixture.first.bias")
         second = linear_op("second", "middle", "output", 4, 2,
                            "fixture.second.weight", "fixture.second.bias")
+        first["params"]["call_constants"].update(
+            linear_output_elements=10, linear_output_stride=5)
+        second["params"]["call_constants"].update(
+            linear_input_elements=10, linear_input_stride=5)
         if corrupt is not None:
             second["params"]["call_constants"]["linear_input_stride"] = corrupt
         template = {
@@ -62,7 +78,7 @@ class CheckedOpConstantsTest(unittest.TestCase):
                                                  "production_kernel_heap_allocation": False}},
             "checked_native_entry": True,
             "activation_buffers": {"input": {"shape": [2, 3]},
-                                   "middle": {"shape": [2, 4]},
+                                   "middle": {"shape": [2, 5]},
                                    "output": {"shape": [2, 2]}},
             "activation_bindings": {"input": "input", "middle": "middle",
                                     "output": "output"},
@@ -76,6 +92,8 @@ class CheckedOpConstantsTest(unittest.TestCase):
                                            "body": {"type": "dense", "ops": [first, second]},
                                            "footer": []}},
         }
+        if mutate is not None:
+            mutate(template)
         circuit = root / "circuit.json"
         circuit.write_text(json.dumps(template))
         source = {"config": {
@@ -121,7 +139,7 @@ class CheckedOpConstantsTest(unittest.TestCase):
         size = layout["memory"]["arena"]["total_size"]
         raw = (ctypes.c_uint8 * (size + 63))()
         arena = (ctypes.c_uint8 * size).from_buffer(raw, (-ctypes.addressof(raw)) & 63)
-        bump = (root / "weights.bump").read_bytes()
+        bump = (root / "weights.fixture").read_bytes()
         entries = {entry["name"]: entry for entry in bundle["entries"]}
         for planned in layout["memory"]["weights"]["entries"]:
             entry = entries[planned["name"]]
@@ -132,6 +150,9 @@ class CheckedOpConstantsTest(unittest.TestCase):
         x = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
         np.ndarray((2, 3), dtype=np.float32, buffer=arena,
                    offset=activations["input"]["abs_offset"])[:] = x
+        middle = np.ndarray((2, 5), dtype=np.float32, buffer=arena,
+                            offset=activations["middle"]["abs_offset"])
+        middle[:] = -777
         output = np.ndarray((2, 2), dtype=np.float32, buffer=arena,
                             offset=activations["output"]["abs_offset"])
         output[:] = -777
@@ -139,6 +160,7 @@ class CheckedOpConstantsTest(unittest.TestCase):
         expected = (x @ tensors["fixture.first.weight"].T + tensors["fixture.first.bias"])
         expected = expected @ tensors["fixture.second.weight"].T + tensors["fixture.second.bias"]
         np.testing.assert_allclose(output, expected, rtol=1e-6, atol=1e-6)
+        self.assertTrue(np.all(middle[:, 4] == -777))
         output[:] = -777
         self.assertEqual(fn(arena, len(arena) - 1), -2)
         self.assertTrue(np.all(output == -777))
@@ -150,10 +172,56 @@ class CheckedOpConstantsTest(unittest.TestCase):
         self.assertTrue(np.all(output == -777))
 
     def test_invalid_per_call_constant_rejected_before_codegen(self):
-        for value in (True, -1, "4;abort()"):
+        for value in (True, -1, "4;abort()", 1 << 64):
             with self.subTest(value=value):
-                _root, _bundle, _tensors, _layout, call_ir = self.compile_graph(corrupt=value)
-                self.assertTrue(call_ir["errors"])
+                with self.assertRaisesRegex(RuntimeError, "HARD CALL CONSTANT FAULT"):
+                    self.compile_graph(corrupt=value)
+
+    def test_unknown_nonobject_length_override_and_pointer_rejected(self):
+        mutations = [
+            lambda t: t["block_types"]["component"]["body"]["ops"][1]["params"].update(
+                call_constants={"unknown_capacity": 1}),
+            lambda t: t["block_types"]["component"]["body"]["ops"][1]["params"].update(
+                call_constants=[1, 2]),
+        ]
+        for mutate in mutations:
+            with self.assertRaisesRegex(RuntimeError, "HARD CALL CONSTANT FAULT"):
+                self.compile_graph(mutate=mutate)
+        kernel_map = json.loads((ROOT / "version/v8/kernel_maps/linear_rows_checked_f32.json").read_text())
+        op = {"params": {"M": 2, "K": 3, "N": 4,
+                         "call_constants": {"linear_rows": 2}},
+              "runtime_extent_contract": {"runtime_lengths": {"linear_rows": {}}}}
+        with self.assertRaisesRegex(RuntimeError, "not an overridable size_t scalar"):
+            build_ir_v8._validated_call_constants(op, kernel_map)
+        pointer_map = copy.deepcopy(kernel_map)
+        pointer_map["call_abi"]["params"][-3] = {
+            "name": "state", "source": "runtime:state", "cast": "float*"}
+        op["runtime_extent_contract"] = {}
+        op["params"]["call_constants"] = {"state": 0}
+        with self.assertRaisesRegex(RuntimeError, "not an overridable size_t scalar"):
+            build_ir_v8._validated_call_constants(op, pointer_map)
+
+    def test_shape_stride_and_capacity_disagreements_rejected(self):
+        def change(key, value):
+            def mutate(template):
+                op = template["block_types"]["component"]["body"]["ops"][1]
+                if key in {"M", "K", "N"}:
+                    op["params"][key] = value
+                else:
+                    op["params"]["call_constants"][key] = value
+            return mutate
+        cases = [
+            ("K", 5), ("linear_input_channels", 5),
+            ("linear_input_stride", 6),
+            ("linear_input_elements", 11),
+            ("linear_weight_elements", 9),
+            ("linear_output_elements", 5),
+            ("linear_rows", 3),
+        ]
+        for key, value in cases:
+            with self.subTest(key=key, value=value):
+                with self.assertRaisesRegex(RuntimeError, "HARD CALL CONSTANT FAULT"):
+                    self.compile_graph(mutate=change(key, value))
 
 
 if __name__ == "__main__":
