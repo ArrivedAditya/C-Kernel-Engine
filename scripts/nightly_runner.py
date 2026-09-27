@@ -827,6 +827,11 @@ TEST_SUITES = {
         "parity",
         ROOT / "tests" / "test_v8_qwen3vl_private_corpus_certification.py",
     ),
+    "qwen3vl_encoder_input_contract": TestSuite(
+        "Qwen3-VL Encoder Input Contract",
+        "parity",
+        ROOT / "tests" / "test_v8_numeric_parity_qwen3vl_mmproj.py",
+    ),
     "v8_generated_layout_bridges": TestSuite(
         "v8 Generated Layout Bridge Execution",
         "parity",

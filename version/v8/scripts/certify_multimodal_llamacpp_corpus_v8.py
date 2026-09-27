@@ -692,11 +692,11 @@ def _summary(
     localization_only = bool(config.get("skip_native_cli"))
     return {
         "status": status,
-        "certification_scope": "localization" if localization_only else "full",
+        "certification_scope": "localization" if localization_only else "shared_prefix_decoder",
         "comparison": (
-            "Python CKE and llama.cpp pre-EOS greedy token parity; native CLI not run"
+            "CKE-prefix decoder parity: Python CKE and llama.cpp pre-EOS greedy tokens; native CLI not run"
             if localization_only
-            else "exact native CLI, Python CKE, and llama.cpp pre-EOS greedy token parity"
+            else "CKE-prefix decoder parity: exact native CLI, Python CKE, and llama.cpp pre-EOS greedy tokens"
         ),
         "requested": len(selected),
         "completed": completed,

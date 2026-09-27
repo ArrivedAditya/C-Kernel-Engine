@@ -16,12 +16,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-try:
-    from PIL import Image
-except ImportError:  # pragma: no cover - Pillow is optional at import time.
-    Image = None
-
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[2]
 V8_TOOLS = REPO_ROOT / "version" / "v8" / "tools"
@@ -42,7 +36,10 @@ from vision_bridge_runtime_v8 import (  # type: ignore  # noqa: E402
     resolve_vision_bridge_contract,
     try_named_activation_view,
 )
-from run_multimodal_bridge_v8 import _qwen3vl_geometry_overrides  # type: ignore  # noqa: E402
+from run_multimodal_bridge_v8 import (  # type: ignore  # noqa: E402
+    _load_image_file as _load_bridge_image_file,
+    _qwen3vl_geometry_overrides,
+)
 
 
 def _run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -510,118 +507,14 @@ def _build_test_image(height: int, width: int, mode: str) -> tuple[list[float], 
 
 
 
-def _ppm_skip_ws_and_comments(data: bytes, idx: int) -> int:
-    while idx < len(data):
-        b = data[idx]
-        if b in b" \t\r\n":
-            idx += 1
-            continue
-        if b == ord("#"):
-            while idx < len(data) and data[idx] not in b"\r\n":
-                idx += 1
-            continue
-        break
-    return idx
-
-
-def _ppm_next_token(data: bytes, idx: int) -> tuple[str, int]:
-    idx = _ppm_skip_ws_and_comments(data, idx)
-    start = idx
-    while idx < len(data) and data[idx] not in b" \t\r\n#":
-        idx += 1
-    if idx == start:
-        raise ValueError("malformed PPM header")
-    return data[start:idx].decode("ascii"), idx
-
-
-def _read_ppm_rgb8(path: Path) -> tuple[int, int, list[tuple[int, int, int]]]:
-    data = path.read_bytes()
-    magic, idx = _ppm_next_token(data, 0)
-    width_s, idx = _ppm_next_token(data, idx)
-    height_s, idx = _ppm_next_token(data, idx)
-    maxval_s, idx = _ppm_next_token(data, idx)
-    width = int(width_s)
-    height = int(height_s)
-    maxval = int(maxval_s)
-    if width <= 0 or height <= 0 or maxval <= 0 or maxval > 255:
-        raise ValueError(f"unsupported PPM shape/maxval: {width}x{height} max={maxval}")
-    pixels: list[tuple[int, int, int]] = []
-    if magic == "P6":
-        idx = _ppm_skip_ws_and_comments(data, idx)
-        if idx < len(data) and data[idx] in b" \t\r\n":
-            idx += 1
-        payload = data[idx:]
-        expected = width * height * 3
-        if len(payload) < expected:
-            raise ValueError(f"PPM payload too short: {len(payload)} < {expected}")
-        for i in range(0, expected, 3):
-            pixels.append((payload[i], payload[i + 1], payload[i + 2]))
-    elif magic == "P3":
-        for _ in range(width * height):
-            r, idx = _ppm_next_token(data, idx)
-            g, idx = _ppm_next_token(data, idx)
-            b, idx = _ppm_next_token(data, idx)
-            pixels.append((int(r), int(g), int(b)))
-    else:
-        raise ValueError(f"unsupported PPM magic: {magic}")
-    if maxval != 255:
-        pixels = [tuple(int(round(c * 255.0 / maxval)) for c in px) for px in pixels]
-    return width, height, pixels
-
-
-def _resize_pixels_nearest(pixels: list[tuple[int, int, int]], src_w: int, src_h: int, dst_w: int, dst_h: int) -> list[tuple[int, int, int]]:
-    if (src_w, src_h) == (dst_w, dst_h):
-        return pixels
-    out: list[tuple[int, int, int]] = []
-    for y in range(dst_h):
-        sy = min(src_h - 1, int((y + 0.5) * src_h / dst_h))
-        row = sy * src_w
-        for x in range(dst_w):
-            sx = min(src_w - 1, int((x + 0.5) * src_w / dst_w))
-            out.append(pixels[row + sx])
-    return out
-
-def _load_image_file(image_path: Path, height: int, width: int) -> dict[str, Any]:
-    if not image_path.exists():
-        raise FileNotFoundError(f"image file not found: {image_path}")
-
-    if image_path.suffix.lower() == ".ppm":
-        source_width, source_height, pixels = _read_ppm_rgb8(image_path)
-        pixels = _resize_pixels_nearest(pixels, source_width, source_height, width, height)
-    else:
-        if Image is None:
-            raise RuntimeError("Pillow is required for non-PPM --image-path support")
-        with Image.open(image_path) as src:
-            source_width, source_height = src.size
-            rgb = src.convert("RGB")
-            if rgb.size != (width, height):
-                if hasattr(Image, "Resampling"):
-                    rgb = rgb.resize((width, height), Image.Resampling.BILINEAR)
-                else:  # pragma: no cover - compatibility with older Pillow.
-                    rgb = rgb.resize((width, height), Image.BILINEAR)
-            pixels = list(rgb.getdata())
-
-    interleaved = [0.0] * (height * width * 3)
-    planar = [0.0] * (height * width * 3)
-    for idx, (r, g, b) in enumerate(pixels):
-        rf = float(r) / 255.0
-        gf = float(g) / 255.0
-        bf = float(b) / 255.0
-        base_i = idx * 3
-        interleaved[base_i + 0] = rf
-        interleaved[base_i + 1] = gf
-        interleaved[base_i + 2] = bf
-        planar[idx] = rf
-        planar[height * width + idx] = gf
-        planar[2 * height * width + idx] = bf
-    return {
-        "interleaved": interleaved,
-        "planar": planar,
-        "image_source": "file",
-        "image_path": str(image_path.resolve()),
-        "source_image_size": [source_width, source_height],
-        "preprocess": "rgb_bilinear_resize_to_square_0_1",
-    }
+def _load_image_file(image_path: Path, height: int, width: int, config: dict[str, Any]) -> dict[str, Any]:
+    return _load_bridge_image_file(
+        image_path,
+        height,
+        width,
+        image_mean=config.get("image_mean"),
+        image_std=config.get("image_std"),
+    )
 
 
 def _resolve_generated_engine(model_so: Path) -> Path:
@@ -1473,10 +1366,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     llama_reference_output = _resolve_llama_reference_output_name(config, args.llama_output_name)
     if args.image_path is not None:
-        image_report = _load_image_file(args.image_path.resolve(), height, width)
+        source_image_sha256 = hashlib.sha256(args.image_path.read_bytes()).hexdigest()
+        image_report = _load_image_file(args.image_path.resolve(), height, width, config)
         interleaved = image_report["interleaved"]
         planar = image_report["planar"]
     else:
+        source_image_sha256 = None
         interleaved, planar = _build_test_image(height, width, args.image_mode)
         image_report = {
             "image_source": "synthetic",
@@ -1592,8 +1487,11 @@ def main(argv: list[str] | None = None) -> int:
     }
     t_metrics = time.perf_counter()
     lowering = report.get("lowering", {}) if isinstance(report, dict) else {}
+    if args.image_path is not None and hashlib.sha256(args.image_path.read_bytes()).hexdigest() != source_image_sha256:
+        raise RuntimeError("source image changed during encoder parity execution")
     notes = [
         "llama.cpp reference uses clip_encode_float_image from libmtmd via a local C shim.",
+        "Both encoders receive the same prepared tensor; this does not certify independent image preprocessing.",
     ]
     if _normalize_output_name(args.ck_output_name) == "auto":
         notes.append(
@@ -1613,8 +1511,12 @@ def main(argv: list[str] | None = None) -> int:
         "image_source": str(image_report["image_source"]),
         "image_mode": image_report.get("image_mode"),
         "image_path": image_report.get("image_path"),
+        "source_image_sha256": source_image_sha256,
+        "prepared_input_f32_sha256": hashlib.sha256(array("f", interleaved).tobytes()).hexdigest(),
+        "prepared_input_f32_byteorder": sys.byteorder,
         "source_image_size": image_report.get("source_image_size"),
         "preprocess": str(image_report["preprocess"]),
+        "input_provenance": "shared_processed_tensor",
         "height": height,
         "width": width,
         "image_min_tokens": args.image_min_tokens,
