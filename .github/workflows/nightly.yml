@@ -52,12 +52,19 @@ jobs:
           CKE_EXPECTED_TORCH_VERSION: ${{ matrix.torch_version }}
           CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages.json
         run: python -m unittest tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_torch_oracle tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_production_geometry -v
+      - name: Compare controlled CPU dispatch on the same runner
+        if: always()
+        env:
+          ATEN_CPU_CAPABILITY: default
+          CKE_EXPECTED_TORCH_VERSION: ${{ matrix.torch_version }}
+          CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages-default.json
+        run: python -m unittest tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_torch_oracle tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_production_geometry -v
       - name: Upload versioned reference stages
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: tts-adaln-torch-${{ matrix.torch_version }}-stages
-          path: build/tts-adaln-reference-stages.json
+          path: build/tts-adaln-reference-stages*.json
           if-no-files-found: error
 
   arm-portability:

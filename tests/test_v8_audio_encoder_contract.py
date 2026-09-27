@@ -808,6 +808,9 @@ class AudioEncoderContractTests(unittest.TestCase):
                       workflow)
         self.assertIn("CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages.json",
                       workflow)
+        self.assertIn("CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages-default.json",
+                      workflow)
+        self.assertIn("ATEN_CPU_CAPABILITY: default", workflow)
         self.assertIn("name: tts-adaln-torch-${{ matrix.torch_version }}-stages",
                       workflow)
         self.assertIn("--index-url https://download.pytorch.org/whl/cpu",

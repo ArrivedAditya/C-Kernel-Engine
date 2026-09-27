@@ -3521,7 +3521,7 @@
         "thread_count_changes_arithmetic_order": false
       },
       "position_transform": null,
-      "description": "Token-major FP32 adaptive LayerNorm with ascending FP32 output-major style projection, ascending FP64 mean and biased-variance channel reductions, (1+gamma)*normalized+beta, caller-owned 2C projection scratch, and output unchanged on rejection. The pinned PyTorch 2.8.0 fixture and live PyTorch 2.12.1 CPU can differ by FP32 rounding; the differing upstream stage is not isolated. A new reduction order requires a distinct provider and numerical contract."
+      "description": "Token-major FP32 adaptive LayerNorm with ascending FP32 output-major style projection, ascending FP64 mean and biased-variance channel reductions, (1+gamma)*normalized+beta, caller-owned 2C projection scratch, and output unchanged on rejection. Across separate AVX512 and AVX2 nightly hosts, the first reference-stage difference appears in PyTorch F.linear while LayerNorm outputs match; a version-specific cause is unproven. A new reduction order requires a distinct provider and numerical contract."
     },
     "audio_lstm_pytorch_ifgo_single_step_fp32": {
       "operator_family": "audio_lstm",

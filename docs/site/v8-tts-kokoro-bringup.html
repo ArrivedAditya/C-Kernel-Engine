@@ -1549,11 +1549,16 @@ This is real-weight primitive parity, not circuit stitching or waveform parity.<
 style projection as an ascending FP32 multiply/add reduction, then computes
 mean and biased variance as separate ascending FP64 channel reductions. It casts
 the normalized value to FP32 before applying <code>(1+gamma)*x+beta</code>. The
-committed fixture was captured with PyTorch 2.8.0. A PyTorch 2.12.1 CPU nightly
-run differed from that fixture by 1.19e-7 at one sample; the differing PyTorch
-stage has not been isolated. The nightly workflow runs direct native comparisons
+committed fixture was captured with PyTorch 2.8.0. Nightly runs under both
+PyTorch 2.8.0 and 2.12.1 have shown a 1.19e-7 fixture difference on different
+hosts. In separate pinned-version stage captures, the first difference was at
+<code>F.linear</code> style projection; their <code>layer_norm</code> outputs
+matched. One job used AVX512 dispatch and the other AVX2, so a version-specific
+cause remains unproven. The nightly workflow runs direct native comparisons
 against pinned CPU wheels for both versions and uploads projection, normalized
-and final-output reference stages with runtime settings. Fixture-versus-live
+and final-output reference stages with runtime settings. Each version also runs
+with controlled default CPU dispatch on the same runner, so a backend-path
+effect can be distinguished from a version label. Fixture-versus-live
 keeps its original 1e-7 bound, so the Xeon drift remains an unresolved failing
 case; the native-versus-oracle bound remains 5e-6. If a
 future model requires another reduction order, it needs another kernel and

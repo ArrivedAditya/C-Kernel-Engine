@@ -3,10 +3,12 @@
  * ascending FP32 multiply/add loop. Row mean and biased variance each use an
  * ascending FP64 channel sum. This is the kernel's numerical contract, not a
  * promise of bitwise equality with any PyTorch backend or release. The pinned
- * Kokoro fixture was captured with PyTorch 2.8.0; a PyTorch 2.12.1 CPU run
- * showed a 1.19e-7 difference from that fixture on one nightly runner. The
- * differing PyTorch operation has not been isolated. If a future reference
- * needs another reduction order, add a separate kernel and map contract.
+ * Kokoro fixture was captured with PyTorch 2.8.0; PyTorch 2.8.0 and 2.12.1
+ * CPU runs have each shown a 1.19e-7 difference on different nightly hosts. Stage
+ * captures first differ at PyTorch F.linear, while LayerNorm output matches;
+ * those runs used AVX512 and AVX2, so version versus CPU dispatch is still
+ * unresolved. If a future reference needs another reduction order, add a
+ * separate kernel and map contract.
  */
 #include "ckernel_audio.h"
 
