@@ -68,6 +68,25 @@ int audio_duration_expand_channel_major_f32(
     size_t output_elements,
     size_t output_stride);
 
+/* Reduce token-major [tokens, bins] duration logits as Kokoro's inference
+ * path does: FP32 sigmoid, ascending-bin FP32 sum, divide by positive speed,
+ * round to nearest even, clamp to at least one frame. The output is int32
+ * durations plus their checked total valid extent. The two-pass validation
+ * leaves both outputs untouched on any error, including a total above
+ * max_expanded_frames. All pointers are caller-owned and nonaliasing. */
+int audio_duration_logits_to_frames_f32(
+    const float *logits,
+    size_t input_elements,
+    size_t tokens,
+    size_t bins,
+    size_t input_stride,
+    float speed,
+    int32_t *durations,
+    size_t duration_capacity,
+    size_t max_duration_per_token,
+    size_t max_expanded_frames,
+    int32_t *expanded_frames);
+
 /* Centered inverse STFT from frame-major [frame, fft/2+1] magnitude/phase.
  * Periodic Hann, inverse DFT scaled by 1/n_fft, overlap-add normalization, then
  * removal of n_fft/2 samples at each end. Supported geometry is frames >= 2,

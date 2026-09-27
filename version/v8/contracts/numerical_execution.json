@@ -3,6 +3,17 @@
   "schema_version": 1,
   "engine_contract_version": "8",
   "contracts": {
+    "audio_duration_logits_sigmoid_sum_round_even_fp32": {
+      "operator_family": "audio_duration_logits_to_frames",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "int32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "ascending_token_then_ascending_bin_fp32_sigmoid_sum_then_speed_divide_then_nearest_even_round_then_min_one_clamp"},
+      "rounding": {"mode": "rne", "points": ["vector_exponential", "output_divide", "reduction_update", "integer_round", "output_store"]},
+      "reduction": {"kind": "sum", "order": "left_to_right", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Reduce finite token-major logits to positive int32 durations with a checked total valid extent. Reject oversized values and leave outputs unchanged. Independent PyTorch fixture certifies the pinned production shape; exact integer parity is required there."
+    },
     "runtime_extent_sum_checked_i32": {
       "operator_family": "runtime_extent_sum",
       "status": "validated",

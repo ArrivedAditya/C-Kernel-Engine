@@ -726,6 +726,14 @@ TEST_SUITES = {
         "TTS Duration Expansion PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_duration_expand_oracle.py",
     ),
+    "tts_duration_logits_oracle": TestSuite(
+        "TTS Duration Logits Committed PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_duration_logits_oracle.py",
+    ),
+    "tts_duration_logits_live": TestSuite(
+        "TTS Duration Logits Live PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_duration_logits_live.py",
+    ),
     "tts_lstm_scan_oracle": TestSuite(
         "TTS Bidirectional LSTM Scan PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_lstm_scan_oracle.py",
