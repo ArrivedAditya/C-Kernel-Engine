@@ -53,7 +53,7 @@ class RecordingSession:
         pass
 
 
-def test_qwen_code_xml_accepts_terminal_envelope_after_plain_preamble() -> None:
+def test_qwen_code_xml_raw_v2_accepts_terminal_envelope_after_plain_preamble() -> None:
     envelope = (
         '<function_calls><invoke name="read_file">'
         '<parameter name="file_path">/tmp/a</parameter>'
@@ -62,12 +62,12 @@ def test_qwen_code_xml_accepts_terminal_envelope_after_plain_preamble() -> None:
     generated = "I'll read the file first.\n\n" + envelope
     schema = {"read_file": TOOL["parameters"]}
     calls, error, _ = _extract_tool_calls_from_text(
-        generated, {"read_file"}, tool_syntax="qwen_code_xml", tool_parameters=schema,
+        generated, {"read_file"}, tool_syntax="qwen_code_xml_raw_v2", tool_parameters=schema,
     )
     assert error is None
     assert len(calls) == 1
     assert json.loads(calls[0]["arguments"]) == {"file_path": "/tmp/a"}
-    assert _strip_tool_json_from_text(generated, calls, tool_syntax="qwen_code_xml") == "I'll read the file first."
+    assert _strip_tool_json_from_text(generated, calls, tool_syntax="qwen_code_xml_raw_v2") == "I'll read the file first."
 
     for invalid in (
         "Example: " + envelope,
@@ -77,12 +77,12 @@ def test_qwen_code_xml_accepts_terminal_envelope_after_plain_preamble() -> None:
         "I'll read it.\n\n" + envelope + envelope,
     ):
         rejected, code, _ = _extract_tool_calls_from_text(
-            invalid, {"read_file"}, tool_syntax="qwen_code_xml", tool_parameters=schema,
+            invalid, {"read_file"}, tool_syntax="qwen_code_xml_raw_v2", tool_parameters=schema,
         )
         assert not rejected and code == "malformed"
 
 
-def test_qwen_code_xml_preamble_and_tool_round_trip() -> None:
+def test_qwen_code_xml_raw_v2_preamble_and_tool_round_trip() -> None:
     output = (
         "I'll read the file first.\n\n"
         '<function_calls><invoke name="read_file">'
@@ -92,7 +92,7 @@ def test_qwen_code_xml_preamble_and_tool_round_trip() -> None:
     session = RecordingSession([output, "The file says CKE_OK."])
     client = TestClient(create_app(
         session, model="qwen-local", chat_template=TOOL_VARIANT.read_text(),
-        tool_protocol="qwen_code_xml",
+        tool_protocol="qwen_code_xml_raw_v2",
     ))
     response = client.post("/v1/responses", json={
         "model": "qwen-local", "input": "Read /tmp/a", "tools": [TOOL],
@@ -112,7 +112,7 @@ def test_qwen_code_xml_preamble_and_tool_round_trip() -> None:
     assert continuation.json()["output_text"] == "The file says CKE_OK."
 
 
-def test_qwen_code_xml_preserves_raw_edit_strings() -> None:
+def test_qwen_code_xml_raw_v2_preserves_raw_edit_strings() -> None:
     old = "<!-- exact old comment -->"
     new = "<p>First & second</p>\n<p>  indented\n</p>\n"
     generated = (
@@ -128,7 +128,7 @@ def test_qwen_code_xml_preserves_raw_edit_strings() -> None:
     }, "required": ["file_path", "old_string", "new_string"],
         "additionalProperties": False}}
     calls, error, _ = _extract_tool_calls_from_text(
-        generated, {"edit"}, tool_syntax="qwen_code_xml", tool_parameters=schema,
+        generated, {"edit"}, tool_syntax="qwen_code_xml_raw_v2", tool_parameters=schema,
     )
     assert error is None
     assert json.loads(calls[0]["arguments"]) == {
@@ -141,9 +141,69 @@ def test_qwen_code_xml_preserves_raw_edit_strings() -> None:
                           '<parameter name="new_string">x</parameter><parameter name="new_string">'),
     ):
         rejected, code, _ = _extract_tool_calls_from_text(
-            broken, {"edit"}, tool_syntax="qwen_code_xml", tool_parameters=schema,
+            broken, {"edit"}, tool_syntax="qwen_code_xml_raw_v2", tool_parameters=schema,
         )
         assert not rejected and code == "malformed"
+
+
+def test_qwen_code_xml_versions_keep_distinct_entity_and_preamble_rules() -> None:
+    envelope = (
+        '<function_calls><invoke name="read_file">'
+        '<parameter name="file_path">/tmp/a&amp;b</parameter>'
+        '</invoke></function_calls>'
+    )
+    schema = {"read_file": TOOL["parameters"]}
+    legacy, code, _ = _extract_tool_calls_from_text(
+        envelope, {"read_file"}, tool_syntax="qwen_code_xml", tool_parameters=schema,
+    )
+    assert code is None
+    assert json.loads(legacy[0]["arguments"]) == {"file_path": "/tmp/a&b"}
+    raw, code, _ = _extract_tool_calls_from_text(
+        envelope, {"read_file"}, tool_syntax="qwen_code_xml_raw_v2", tool_parameters=schema,
+    )
+    assert code is None
+    assert json.loads(raw[0]["arguments"]) == {"file_path": "/tmp/a&amp;b"}
+    preambled = "Reading now.\n\n" + envelope
+    legacy, code, _ = _extract_tool_calls_from_text(
+        preambled, {"read_file"}, tool_syntax="qwen_code_xml", tool_parameters=schema,
+    )
+    assert not legacy and code == "malformed"
+
+
+def test_qwen_code_xml_raw_v2_enforces_request_single_call_policy() -> None:
+    invoke = ('<invoke name="read_file">'
+              '<parameter name="file_path">/tmp/a</parameter></invoke>')
+    output = "<function_calls>" + invoke + invoke + "</function_calls>"
+    calls, code, message = _extract_tool_calls_from_text(
+        output, {"read_file"}, tool_syntax="qwen_code_xml_raw_v2",
+        tool_parameters={"read_file": TOOL["parameters"]},
+    )
+    assert code is None and len(calls) == 2
+    session = RecordingSession([output])
+    client = TestClient(create_app(
+        session, model="qwen-local", chat_template=TOOL_VARIANT.read_text(),
+        tool_protocol="qwen_code_xml_raw_v2",
+    ))
+    response = client.post("/v1/responses", json={
+        "model": "qwen-local", "input": "Read /tmp/a", "tools": [TOOL],
+        "parallel_tool_calls": False,
+    })
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert "parallel_tool_calls=false" in response.json()["error"]["message"]
+    assert not any(item["type"] == "function_call" for item in response.json()["output"])
+    parallel_session = RecordingSession([output])
+    parallel_client = TestClient(create_app(
+        parallel_session, model="qwen-local", chat_template=TOOL_VARIANT.read_text(),
+        tool_protocol="qwen_code_xml_raw_v2",
+    ))
+    parallel = parallel_client.post("/v1/responses", json={
+        "model": "qwen-local", "input": "Read /tmp/a", "tools": [TOOL],
+        "parallel_tool_calls": True,
+    })
+    assert parallel.status_code == 200
+    assert len([item for item in parallel.json()["output"]
+                if item["type"] == "function_call"]) == 2
 
 
 def _bundle(tmp_path: Path) -> tuple[str, str]:
@@ -217,7 +277,7 @@ def test_operator_jinja_variant_is_selected_without_inline_tool_marker(tmp_path:
     (variants_dir / "tool_use.jinja").write_text(variant, encoding="utf-8")
     (tmp_path / "tool_protocol.json").write_text(json.dumps({
         "schema": "cke.v8.tool_protocol.v1",
-        "protocol": "qwen_code_xml",
+        "protocol": "qwen_code_xml_raw_v2",
         "template_sha256": hashlib.sha256(variant.encode()).hexdigest(),
     }), encoding="utf-8")
     selected_native, variants, contract = load_manifest_templates(tmp_path)
@@ -257,6 +317,54 @@ def test_operator_jinja_variant_is_selected_without_inline_tool_marker(tmp_path:
     assert session.flags[1] & CK_SESSION_REQUEST_RAW_PROMPT
     with pytest.raises(ValueError, match="does not match selected chat template"):
         load_tool_protocol(tmp_path, selected_native, {"tool_use": variant + " changed"})
+
+
+def test_copied_bundle_owns_tool_template_without_repository_asset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "copied-bundle"
+    (bundle / "additional_chat_templates").mkdir(parents=True)
+    native_bytes = FIXTURE.read_bytes()
+    variant_bytes = TOOL_VARIANT.read_bytes()
+    (bundle / "chat_template.jinja").write_bytes(native_bytes)
+    (bundle / "additional_chat_templates" / "tool_use.jinja").write_bytes(variant_bytes)
+    (bundle / "tool_protocol.json").write_text(json.dumps({
+        "schema": "cke.v8.tool_protocol.v1",
+        "protocol": "qwen_code_xml_raw_v2",
+        "template_sha256": hashlib.sha256(variant_bytes).hexdigest(),
+    }), encoding="utf-8")
+    original_read_bytes = Path.read_bytes
+
+    def bundle_only_read(path: Path) -> bytes:
+        if path.resolve() == TOOL_VARIANT.resolve():
+            raise AssertionError("runtime read the repository template")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", bundle_only_read)
+    native, variants, _ = load_manifest_templates(bundle)
+    protocol = load_tool_protocol(bundle, native, variants)
+    session = RecordingSession([
+        '<function_calls><invoke name="read_file">'
+        '<parameter name="file_path">/tmp/a</parameter>'
+        '</invoke></function_calls>',
+        "Read complete.",
+    ])
+    client = TestClient(create_app(
+        session, model="qwen-local", chat_template=native,
+        chat_templates=variants, tool_protocol=protocol,
+    ))
+    first = client.post("/v1/responses", json={
+        "model": "qwen-local", "input": "Read /tmp/a", "tools": [TOOL],
+    })
+    assert first.status_code == 200
+    call = next(item for item in first.json()["output"] if item["type"] == "function_call")
+    second = client.post("/v1/responses", json={
+        "model": "qwen-local", "previous_response_id": first.json()["id"],
+        "input": [{"type": "function_call_output", "call_id": call["call_id"],
+                   "output": "done"}], "tools": [TOOL],
+    })
+    assert second.status_code == 200
+    assert second.json()["output_text"] == "Read complete."
 
 
 def test_qwen_code_xml_rejects_malformed_unknown_and_example_text() -> None:

@@ -1419,8 +1419,12 @@ make test-native-session-v8</pre>
         its tool delimiter is split into ordinary CKE tokens while the upstream tokenizer uses
         one special token. For a bounded Qwen Code tool task, the operator-authored
         <code>server/templates/qwen38_tool_use_compat.jinja</code> avoids that literal delimiter
-        in the prompt. Install it in a dedicated bundle and bind <code>qwen_code_xml</code> to its
-        exact bytes; ordinary chat continues to use the native sidecar.
+        in the prompt. This repository copy is only an explicit installation source: install it
+        as an opt-in, hash-bound variant in a dedicated bundle. The server reads the selected
+        Jinja from that bundle, never from <code>server/templates/</code> at request time.
+        Publisher templates remain the default; ordinary chat continues to use the native
+        sidecar. Retest native-template token-ID parity after tokenizer changes before keeping
+        this compatibility variant as a long-term requirement.
     </p>
     <p>
         A separate native-BPE input limit once reduced a 33,379-byte Qwen Code tool prompt
@@ -1428,12 +1432,17 @@ make test-native-session-v8</pre>
         model, engine, and tokenizer matched all 7,773 IDs and completed a cached
         <code>read_file</code> and tool-result continuation. Rebuild those three libraries
         together; replacing only the tokenizer under an older generated model is unsafe.
-        The declared <code>qwen_code_xml</code> protocol accepts a short plain-text
+        The declared <code>qwen_code_xml_raw_v2</code> protocol accepts a short plain-text
         introduction followed by one terminal XML envelope. It still rejects inline
-        examples, fenced XML, trailing text, and unadvertised tools. Its delimited
+        examples, fenced XML, trailing text, and unadvertised tools. If a request sets
+        <code>parallel_tool_calls=false</code>, multiple invokes fail atomically; the server
+        does not forward the first call while dropping the rest.
+        Its delimited
         parameter bodies preserve raw HTML and code for edit arguments; a literal
         closing <code>&lt;/parameter&gt;</code> inside a value is outside this
-        compatibility protocol. One cached Qwen Code run recovered from a
+        compatibility protocol. The older <code>qwen_code_xml</code> protocol keeps its
+        strict whole-response XML/entity interpretation for existing bundles; opt in to v2
+        by updating the bundle's hash-bound <code>tool_protocol.json</code>. One cached Qwen Code run recovered from a
         read-before-edit rejection, read the file, and applied a bounded HTML
         edit in a disposable worktree. That does not certify general edit-and-test
         reliability, cancellation recovery, or 262K actual input.
@@ -1450,7 +1459,7 @@ run = Path(os.environ["RUN_DIR"])
 template = (run / "additional_chat_templates/tool_use.jinja").read_bytes()
 (run / "tool_protocol.json").write_text(json.dumps({
     "schema": "cke.v8.tool_protocol.v1",
-    "protocol": "qwen_code_xml",
+    "protocol": "qwen_code_xml_raw_v2",
     "template_sha256": hashlib.sha256(template).hexdigest(),
 }, indent=2) + "\n")
 PY

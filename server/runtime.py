@@ -104,7 +104,9 @@ def load_tool_protocol(
     if not isinstance(document, dict) or document.get("schema") != "cke.v8.tool_protocol.v1":
         raise ValueError(f"invalid tool protocol sidecar schema: {path}")
     protocol = document.get("protocol")
-    if protocol not in {"tagged_json", "bare_json", "qwen_xml", "qwen_code_xml"}:
+    if protocol not in {
+        "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2",
+    }:
         raise ValueError(f"unsupported tool protocol {protocol!r} in {path}")
     selected = None
     if isinstance(chat_templates, dict):

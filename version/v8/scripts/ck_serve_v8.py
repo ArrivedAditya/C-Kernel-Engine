@@ -256,7 +256,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--tool-protocol",
-        choices=("none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml"),
+        choices=("none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2"),
         default=None,
         help="Explicit tool output protocol; defaults to a hash-bound tool_protocol.json sidecar or disabled",
     )

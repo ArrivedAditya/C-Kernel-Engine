@@ -182,26 +182,27 @@ def test_tagged_tool_call_streams_live():
 
 
 def test_qwen_code_xml_chunk_split_streams_validated_arguments():
-    session = FakeSession(chunks=(
-        "<function_", 'calls><invoke name="get_weather">',
-        '<parameter name="location">Pa', 'ris</parameter></invoke>',
-        "</function_calls>",
-    ))
-    client = TestClient(create_app(
-        session, model="m", chat_templates=NATIVE_TOOL_TEMPLATES,
-        tool_protocol="qwen_code_xml",
-    ))
-    resp = client.post("/v1/responses", json={
-        "model": "m", "input": "hi", "stream": True, "tools": TOOLS,
-    })
-    assert resp.status_code == 200
-    events = iter_sse(resp.text)
-    assert_valid_stream(events)
-    assert not any(ev == "response.output_text.delta" for ev, _ in events)
-    completed = next(p["response"] for ev, p in events if ev == "response.completed")
-    call = next(item for item in completed["output"] if item["type"] == "function_call")
-    assert json.loads(call["arguments"]) == {"location": "Paris"}
-    assert call["call_id"].startswith("call_")
+    for protocol in ("qwen_code_xml", "qwen_code_xml_raw_v2"):
+        session = FakeSession(chunks=(
+            "<function_", 'calls><invoke name="get_weather">',
+            '<parameter name="location">Pa', 'ris</parameter></invoke>',
+            "</function_calls>",
+        ))
+        client = TestClient(create_app(
+            session, model="m", chat_templates=NATIVE_TOOL_TEMPLATES,
+            tool_protocol=protocol,
+        ))
+        resp = client.post("/v1/responses", json={
+            "model": "m", "input": "hi", "stream": True, "tools": TOOLS,
+        })
+        assert resp.status_code == 200
+        events = iter_sse(resp.text)
+        assert_valid_stream(events)
+        assert not any(ev == "response.output_text.delta" for ev, _ in events)
+        completed = next(p["response"] for ev, p in events if ev == "response.completed")
+        call = next(item for item in completed["output"] if item["type"] == "function_call")
+        assert json.loads(call["arguments"]) == {"location": "Paris"}
+        assert call["call_id"].startswith("call_")
 
 
 def test_mixed_prose_and_tool_never_streams_protocol_tags():
