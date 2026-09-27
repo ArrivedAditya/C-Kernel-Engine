@@ -671,7 +671,7 @@ def _render_with_chat_templates(
 _TOOL_SCHEMA_TYPES = {"string", "integer", "number", "boolean", "object", "array", "null"}
 _TOOL_SCHEMA_KEYS = {
     "type", "properties", "required", "additionalProperties", "items",
-    "enum", "description", "title", "default",
+    "enum", "description", "title", "default", "minimum", "maximum",
 }
 
 
@@ -691,6 +691,15 @@ def _validate_tool_schema_subset(schema: Any, path: str = "parameters") -> None:
         raise ValueError(f"{path} has unsupported type {kind!r}")
     if "enum" in schema and not isinstance(schema["enum"], list):
         raise ValueError(f"{path}.enum must be an array")
+    for bound in ("minimum", "maximum"):
+        if bound in schema:
+            value = schema[bound]
+            if kind is None or not ({"integer", "number"} & set(kinds)):
+                raise ValueError(f"{path}.{bound} requires a numeric type")
+            if type(value) not in (int, float) or not math.isfinite(value):
+                raise ValueError(f"{path}.{bound} must be a finite number")
+    if "minimum" in schema and "maximum" in schema and schema["minimum"] > schema["maximum"]:
+        raise ValueError(f"{path}.minimum exceeds maximum")
     if "properties" in schema:
         if kind not in (None, "object") or not isinstance(schema["properties"], dict):
             raise ValueError(f"{path}.properties requires an object schema")
@@ -728,6 +737,11 @@ def _tool_value_matches_schema(value: Any, schema: dict[str, Any]) -> bool:
         return False
     if "enum" in schema and value not in schema["enum"]:
         return False
+    if type(value) in (int, float):
+        if "minimum" in schema and value < schema["minimum"]:
+            return False
+        if "maximum" in schema and value > schema["maximum"]:
+            return False
     if isinstance(value, dict):
         properties = schema.get("properties", {})
         if any(key not in value for key in schema.get("required", [])):

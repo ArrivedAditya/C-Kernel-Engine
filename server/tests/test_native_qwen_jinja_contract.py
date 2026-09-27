@@ -326,6 +326,33 @@ def test_unsupported_schema_and_duplicate_json_keys_fail_closed() -> None:
     assert calls == [] and code == "malformed" and "duplicate JSON key" in message
 
 
+def test_qwen_shell_numeric_bounds_are_checked() -> None:
+    schema = {"run_shell_command": {"type": "object", "properties": {
+        "command": {"type": "string"},
+        "timeout": {"type": ["integer", "null"], "minimum": 1, "maximum": 600000},
+    }, "required": ["command"]}}
+    session = RecordingSession(["ready"])
+    client = TestClient(create_app(
+        session, model="qwen-local", chat_template="{{ messages[0].content }}",
+        tool_protocol="qwen_code_xml",
+    ))
+    tool = {"type": "function", "name": "run_shell_command", "parameters": schema["run_shell_command"]}
+    response = client.post("/v1/responses", json={"model": "qwen-local", "input": "hello", "tools": [tool]})
+    assert response.status_code == 200
+    assert session.prompts
+
+    for timeout in (0, 600001):
+        generated = ("<function_calls><invoke name=\"run_shell_command\">"
+                     "<parameter name=\"command\">pwd</parameter>"
+                     f"<parameter name=\"timeout\">{timeout}</parameter>"
+                     "</invoke></function_calls>")
+        calls, code, _ = _extract_tool_calls_from_text(
+            generated, {"run_shell_command"}, tool_syntax="qwen_code_xml",
+            tool_parameters=schema,
+        )
+        assert calls == [] and code == "malformed"
+
+
 def test_untemplated_app_requires_explicit_raw_mode() -> None:
     with pytest.raises(ValueError, match="requires a nonempty native Jinja template"):
         create_app(RecordingSession(["unused"]), model="qwen-local")
