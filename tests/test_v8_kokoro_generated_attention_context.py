@@ -1,0 +1,263 @@
+"""Connected Kokoro encoder prefix through first unmasked ALBERT attention context."""
+import contextlib
+import ctypes
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "version/v8/scripts"))
+import build_ir_v8
+import build_xray_checkpoint_manifest_v8 as xray_builder
+import xray_numerical_parity_v8 as xray
+
+sys.path.insert(0, str(ROOT / "version/v8/tts"))
+import export_kokoro_bump as exporter
+
+PREFIX = "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.attention"
+BASE_WEIGHTS = {
+    "word": "phoneme_encoder.embeddings.word_embeddings.weight",
+    "position": "phoneme_encoder.embeddings.position_embeddings.weight",
+    "token_type": "phoneme_encoder.embeddings.token_type_embeddings.weight",
+    "gamma": "phoneme_encoder.embeddings.LayerNorm.weight",
+    "beta": "phoneme_encoder.embeddings.LayerNorm.bias",
+    "projection_weight": "phoneme_encoder.encoder.embedding_hidden_mapping_in.weight",
+    "projection_bias": "phoneme_encoder.encoder.embedding_hidden_mapping_in.bias",
+}
+
+
+class KokoroGeneratedAttentionContextTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        fixtures = ROOT / "tests/fixtures/tts"
+        cls.embed = dict(np.load(fixtures / "bert_embedding_pinned.npz"))
+        cls.projection = dict(np.load(fixtures / "kokoro_projection_pinned.npz"))
+        fixture_path = fixtures / "kokoro_qkv_pinned.npz"
+        cls.qkv = dict(np.load(fixture_path))
+        cls.meta = json.loads(fixture_path.with_suffix(".json").read_text())
+        context_path = fixtures / "kokoro_attention_context_pinned.npz"
+        cls.context = dict(np.load(context_path))
+        cls.context_meta = json.loads(context_path.with_suffix(".json").read_text())
+        if hashlib.sha256(context_path.read_bytes()).hexdigest() != cls.context_meta["fixture_sha256"]:
+            raise RuntimeError("attention-context fixture hash mismatch")
+        if hashlib.sha256(fixture_path.read_bytes()).hexdigest() != cls.meta["fixture_sha256"]:
+            raise RuntimeError("Q/K/V fixture hash mismatch")
+        cls.temp = tempfile.TemporaryDirectory()
+        temp = Path(cls.temp.name)
+        tensors = {BASE_WEIGHTS[key]: cls.embed[key] for key in
+                   ("word", "position", "token_type", "gamma", "beta")}
+        tensors[BASE_WEIGHTS["projection_weight"]] = cls.projection["weight"]
+        tensors[BASE_WEIGHTS["projection_bias"]] = cls.projection["bias"]
+        for name in ("query", "key", "value"):
+            for suffix in ("weight", "bias"):
+                tensors[f"{PREFIX}.{name}.{suffix}"] = cls.qkv[f"{name}_{suffix}"]
+        origins = {name: {"source_name": name, "transform": "identity"} for name in tensors}
+        bundle = exporter.write_bundle(temp, tensors, origins, {
+            "n_token": 178, "hidden_dim": 512,
+            "plbert": {"intermediate_size": 2048, "max_position_embeddings": 512,
+                       "num_attention_heads": 12}},
+            {"source": "pinned embedding, projection and PyTorch Q/K/V fixtures"})
+        exporter.verify_bundle(temp)
+        cls.bump = (temp / "weights.bump").read_bytes()
+        cls.entries = {item["name"]: item for item in bundle["entries"]}
+        circuit = fixtures / "kokoro_embedding_projection_attention_generated_circuit.json"
+        template = json.loads(circuit.read_text())
+        source = {
+            "config": {
+                "model": template["name"], "arch": template["name"],
+                "num_layers": 1, "embed_dim": 128, "num_heads": 1,
+                "num_kv_heads": 1, "head_dim": 128, "intermediate_size": 256,
+                "context_length": 36, "max_seq_len": 36, "vocab_size": 178,
+                "T": 36, "C": 128, "epsilon": 1e-12,
+                "activation_buffer_dtypes": {"word_ids": "i32", "type_ids": "i32"},
+            },
+            "entries": bundle["entries"], "quant_summary": {}, "template": template,
+        }
+        registry = build_ir_v8.load_kernel_registry()
+        with contextlib.redirect_stdout(io.StringIO()):
+            ir1 = build_ir_v8.build_ir1_direct(source, circuit, mode="prefill")
+            lower1 = build_ir_v8.generate_ir_lower_1(ir1, registry, source, "prefill")
+            layout = build_ir_v8.generate_memory_layout(
+                lower1, source, registry, mode="prefill", context_len=36)
+            lower2 = build_ir_v8.generate_ir_lower_2(
+                lower1, layout, source, registry, mode="prefill")
+            call_ir = build_ir_v8.generate_ir_lower_3(lower2, mode="prefill")
+        cls.layout, cls.call_ir = layout, call_ir
+        (temp / "layout.json").write_text(json.dumps(layout))
+        (temp / "call.json").write_text(json.dumps(call_ir))
+        generated = temp / "generated.c"
+        subprocess.run([
+            sys.executable, str(ROOT / "version/v8/scripts/codegen_v8.py"),
+            "--ir", str(temp / "call.json"), "--layout", str(temp / "layout.json"),
+            "--output", str(generated),
+        ], check=True, capture_output=True, text=True)
+        library = temp / "generated.so"
+        subprocess.run([
+            "cc", "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-pedantic",
+            "-shared", "-fPIC", str(generated),
+            str(ROOT / "src/kernels/embedding_three_table_layer_norm.c"),
+            str(ROOT / "src/kernels/linear_rows_checked.c"),
+            str(ROOT / "src/kernels/attention_full_token_major.c"),
+            "-I", str(ROOT / "include"), "-lm", "-o", str(library),
+        ], check=True, capture_output=True, text=True)
+        cls.library = library
+        cls.loaded = ctypes.CDLL(str(library))
+        cls.fn = cls.loaded.ck_kokoro_embedding_projection_attention_boundary
+        cls.fn.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t]
+        cls.fn.restype = ctypes.c_int
+        cls.weights = {item["name"]: item for item in layout["memory"]["weights"]["entries"]}
+        cls.activations = {item["name"]: item for item in
+                           layout["memory"]["activations"]["buffers"]}
+        cls.arena_size = layout["memory"]["arena"]["total_size"]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temp.cleanup()
+
+    def vector(self, arena, name, dtype, count):
+        return np.ndarray((count,), dtype=dtype, buffer=arena,
+                          offset=self.activations[name]["abs_offset"])
+
+    def arena(self):
+        raw = (ctypes.c_uint8 * (self.arena_size + 63))()
+        offset = (-ctypes.addressof(raw)) & 63
+        arena = (ctypes.c_uint8 * self.arena_size).from_buffer(raw, offset)
+        for name, planned in self.weights.items():
+            entry = self.entries[name]
+            payload = self.bump[entry["file_offset"]:entry["file_offset"] + entry["size"]]
+            self.assertEqual(hashlib.sha256(payload).hexdigest(), entry["sha256"])
+            arena[planned["abs_offset"]:planned["abs_offset"] + len(payload)] = payload
+        self.vector(arena, "word_ids", np.int32, 36)[:] = self.embed["ids"]
+        self.vector(arena, "type_ids", np.int32, 36)[:] = self.embed["type_ids"]
+        for name, count in (("embedding_output", 4608), ("projection_output", 27648),
+                            ("query_output", 27648), ("key_output", 27648),
+                            ("value_output", 27648), ("attention_context_output", 27648)):
+            self.vector(arena, name, np.float32, count)[:] = -777.
+        return arena
+
+    def test_generated_attention_context_and_xray(self):
+        self.assertEqual(self.call_ir["errors"], [])
+        self.assertEqual([op["function"] for op in self.call_ir["operations"]],
+                         ["embedding_three_table_layer_norm_f32"] +
+                         ["linear_rows_checked_f32"] * 4 +
+                         ["attention_full_token_major_f32_checked"])
+        arena = self.arena()
+        self.assertEqual(self.fn(arena, len(arena)), 0)
+        boundaries = [
+            ("embedding_output", self.embed["expected"],
+             "kokoro.phoneme_encoder.embeddings"),
+            ("projection_output", self.projection["expected"],
+             "kokoro.phoneme_encoder.input_projection"),
+        ] + [(f"{name}_output", self.qkv[f"{name}_expected"],
+              f"kokoro.phoneme_encoder.albert0.{name}") for name in ("query", "key", "value")] + [
+            ("attention_context_output", self.context["context_expected"],
+             "kokoro.phoneme_encoder.albert0.attention_context")]
+        report = {"torch": {"tensors": {}}, "comparisons": {}}
+        errors = {}
+        for name, expected, checkpoint in boundaries:
+            actual = self.vector(arena, name, np.float32, expected.size).reshape(expected.shape)
+            self.assertTrue(np.isfinite(actual).all())
+            error = np.abs(actual - expected)
+            errors[checkpoint] = float(np.max(error))
+            self.assertLessEqual(errors[checkpoint], 3e-5)
+            candidate_path = Path(self.temp.name) / f"{name}-candidate.f32"
+            oracle_path = Path(self.temp.name) / f"{name}-oracle.f32"
+            actual.tofile(candidate_path)
+            expected.tofile(oracle_path)
+            selector = f"{name}@0" if name != "embedding_output" else name
+            report["torch"]["tensors"][selector] = {
+                "path": str(oracle_path), "shape": list(expected.shape)}
+            report["comparisons"][selector] = {
+                "ck_path": str(candidate_path), "shape": list(expected.shape),
+                "physical_shape": list(expected.shape), "capacity_shape": list(expected.shape),
+                "valid_shape": list(expected.shape), "physical_strides": [expected.shape[1], 1]}
+        runtime = xray_builder.capture_runtime_library_identity(
+            self.loaded, "ck_kokoro_embedding_projection_attention_boundary")
+        candidate = xray_builder.build_manifest(
+            backend="ck", call_ir=self.call_ir, tensor_report=report,
+            model="kokoro_embedding_projection_attention_generated_boundary", source="generated_native",
+            phase="prefill", loaded_library=self.library, runtime_library=runtime)
+        oracle = xray_builder.build_manifest(
+            backend="pytorch", call_ir=self.call_ir, tensor_report=report,
+            model="kokoro_embedding_projection_attention_generated_boundary", source="pinned_capture",
+            phase="prefill")
+        order = [checkpoint for _name, _expected, checkpoint in boundaries]
+        profile = {
+            "schema": "cke.parity_profile", "schema_version": 1, "name": "kokoro_attention_context",
+            "backend": "pytorch", "contract_schema_version": 1,
+            "required_match_fields": ["checkpoint_id", "producer", "logical_layout",
+                                      "axis_names", "resolved_contract_id", "kernel_id", "function"],
+            "observed_storage": {"default": "fp32", "checkpoints": {}},
+            "dtype_thresholds": {"fp32": {"cosine_min": 0.99999, "rmse_max": 3e-5,
+                                           "relative_rmse_max": 3e-5, "max_abs_max": 3e-5,
+                                           "finite_required": True}},
+            "checkpoint_order": order, "interval_expansions": {}, "backend_mappings": {},
+        }
+        self.assertEqual(xray.compare_manifests(candidate, oracle, profile)["status"], "pass")
+        print("TTS_GENERATED_ATTENTION_CONTEXT_EVIDENCE " + json.dumps({
+            "status": "PASS", "oracle": self.context_meta["oracle"], "max_abs_errors": errors,
+            "generated_library_sha256": hashlib.sha256(self.library.read_bytes()).hexdigest(),
+            "complete_albert_layer": "NOT_TESTED", "generated_waveform": "NOT_TESTED"},
+            sort_keys=True))
+
+    def test_failed_qkv_producer_preserves_dependent_outputs(self):
+        arena = self.arena()
+        item = self.weights[f"{PREFIX}.query.weight"]
+        np.ndarray((1,), dtype=np.float32, buffer=arena,
+                   offset=item["abs_offset"])[0] = np.nan
+        self.assertNotEqual(self.fn(arena, len(arena)), 0)
+        for name in ("query_output", "key_output", "value_output", "attention_context_output"):
+            self.assertTrue(np.all(self.vector(arena, name, np.float32, 27648) == -777.))
+
+    def test_repeated_requests_and_bounds(self):
+        arena = self.arena()
+        self.assertEqual(self.fn(arena, len(arena)), 0)
+        first = self.vector(arena, "attention_context_output", np.float32, 27648).copy()
+        self.vector(arena, "word_ids", np.int32, 36)[:] = 0
+        self.assertEqual(self.fn(arena, len(arena)), 0)
+        self.assertFalse(np.array_equal(first,
+                          self.vector(arena, "attention_context_output", np.float32, 27648)))
+        self.vector(arena, "attention_context_output", np.float32, 27648)[:] = -777.
+        self.assertEqual(self.fn(arena, len(arena) - 1), -2)
+        self.assertTrue(np.all(self.vector(arena, "attention_context_output", np.float32, 27648) == -777.))
+
+    def test_exported_bump_attention_when_available(self):
+        bundle_dir = os.environ.get("CKE_KOKORO_BUMP_DIR")
+        if not bundle_dir:
+            self.skipTest("CKE_KOKORO_BUMP_DIR unset; exported bundle NOT_TESTED")
+        bundle_dir = Path(bundle_dir)
+        self.assertEqual(hashlib.sha256(
+            (bundle_dir / "weights_manifest.json").read_bytes()).hexdigest(),
+            self.meta["bundle_manifest_sha256"])
+        entries = {entry["name"]: entry for entry in
+                   exporter.verify_bundle(bundle_dir)["entries"]}
+        arena = self.arena()
+        with (bundle_dir / "weights.bump").open("rb") as stream:
+            for name, planned in self.weights.items():
+                entry = entries[name]
+                self.assertEqual(entry["size"], planned["size"])
+                stream.seek(entry["file_offset"])
+                payload = stream.read(entry["size"])
+                self.assertEqual(hashlib.sha256(payload).hexdigest(), entry["sha256"])
+                start = planned["abs_offset"]
+                arena[start:start + len(payload)] = payload
+        self.assertEqual(self.fn(arena, len(arena)), 0)
+        for name in ("query", "key", "value"):
+            actual = self.vector(arena, f"{name}_output", np.float32, 27648)
+            self.assertLessEqual(float(np.max(np.abs(
+                actual - self.qkv[f"{name}_expected"].ravel()))), 3e-5)
+        actual = self.vector(arena, "attention_context_output", np.float32, 27648)
+        self.assertLessEqual(float(np.max(np.abs(
+            actual - self.context["context_expected"].ravel()))), 3e-5)
+
+
+if __name__ == "__main__":
+    unittest.main()

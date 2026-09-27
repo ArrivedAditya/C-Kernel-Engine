@@ -3,6 +3,17 @@
   "schema_version": 1,
   "engine_contract_version": "8",
   "contracts": {
+    "attention_full_token_major_scalar_fp64_dot_fp32_scores_fp64_softmax": {
+      "operator_family": "attention",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp64", "contraction": "disabled", "evaluation_order": "validate_geometry_inputs_and_all_fp32_score_ranges_before_writes_then_ascending_query_head_key_channel_fp64_dot_then_fp32_score_store_then_stable_fp64_softmax_then_ascending_key_fp64_value_sum_then_fp32_output_store"},
+      "rounding": {"mode": "rne", "points": ["activation_intermediate_store", "softmax_probability_store", "output_store"]},
+      "reduction": {"kind": "sum", "order": "left_to_right", "partial_accumulator": "fp64", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Checked full unmasked attention for token-major FP32 Q/K/V with 36x12x64 Kokoro PyTorch eager context oracle. FP64 dot and weighted reductions differ from PyTorch FP32 matmul; elementwise tolerance is explicit."
+    },
     "linear_rows_checked_f32_scalar_fp64_accumulation": {
       "operator_family": "linear_rows_checked",
       "status": "validated",
