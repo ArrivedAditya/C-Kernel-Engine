@@ -40,6 +40,14 @@ class BertEmbeddingLiveTest(unittest.TestCase):
             self.assertTrue(np.isfinite(actual).all())
             error = np.abs(actual.reshape(live["expected"].shape) - live["expected"])
             self.assertLessEqual(float(error.max()), 2e-5)
+            worst = np.unravel_index(np.argmax(error), error.shape)
+            print("TTS_EMBEDDING_LIVE_EVIDENCE " + json.dumps({
+                "status": "PASS", "oracle": metadata["oracle"],
+                "shape": list(live["expected"].shape),
+                "max_abs_error": float(error[worst]),
+                "worst_token_channel": [int(value) for value in worst],
+                "reproduce": "CKE_KOKORO_MODEL_DIR=<pinned-assets> CKE_KOKORO_ORACLE_PYTHON=<pinned-python> python3 -m unittest tests.test_v8_bert_embedding_live",
+            }, sort_keys=True))
         finally:
             oracle.BertEmbeddingOracleTest.tearDownClass()
 
