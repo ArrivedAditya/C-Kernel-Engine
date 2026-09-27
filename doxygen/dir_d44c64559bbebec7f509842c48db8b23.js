@@ -25,6 +25,7 @@ var dir_d44c64559bbebec7f509842c48db8b23 =
     [ "ckernel_ir_v2.h", "ckernel__ir__v2_8h.html", "ckernel__ir__v2_8h" ],
     [ "ckernel_ir_v2_lower.h", "ckernel__ir__v2__lower_8h.html", "ckernel__ir__v2__lower_8h" ],
     [ "ckernel_kernel_specs.h", "ckernel__kernel__specs_8h.html", "ckernel__kernel__specs_8h" ],
+    [ "ckernel_linear_checked.h", "ckernel__linear__checked_8h.html", "ckernel__linear__checked_8h" ],
     [ "ckernel_mem_plan.h", "ckernel__mem__plan_8h.html", "ckernel__mem__plan_8h" ],
     [ "ckernel_memory_layout.h", "ckernel__memory__layout_8h.html", "ckernel__memory__layout_8h" ],
     [ "ckernel_model.h", "ckernel__model_8h.html", "ckernel__model_8h" ],
