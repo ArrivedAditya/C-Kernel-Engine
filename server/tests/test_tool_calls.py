@@ -172,20 +172,24 @@ def test_dated_web_search_tool_type_reaches_unsupported_policy(monkeypatch):
             )
 
     # A mixed list with one valid function tool plus one unsupported
-    # web-search tool is rejected before generation as well.
-    _assert_unsupported(
-        client.post("/v1/responses", json={
-            "model": "fake-model",
-            "input": "hi",
-            "tools": [
-                {"type": "function", "name": "get_weather",
-                 "parameters": {"type": "object",
-                                "properties": {"location": {"type": "string"}}}},
-                {"type": "web_search_2025_08_26", "external_web_access": True},
-            ],
-        }),
-        "web_search_2025_08_26",
-    )
+    # web-search tool is rejected before generation as well, in both
+    # streaming modes.
+    mixed_tools = [
+        {"type": "function", "name": "get_weather",
+         "parameters": {"type": "object",
+                        "properties": {"location": {"type": "string"}}}},
+        {"type": "web_search_2025_08_26", "external_web_access": True},
+    ]
+    for stream in (False, True):
+        _assert_unsupported(
+            client.post("/v1/responses", json={
+                "model": "fake-model",
+                "input": "hi",
+                "stream": stream,
+                "tools": mixed_tools,
+            }),
+            "web_search_2025_08_26",
+        )
 
     assert session.generate_calls == 0
     assert render_calls == [], "Jinja rendering must not run for unsupported tool requests"
