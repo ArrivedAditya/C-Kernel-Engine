@@ -718,6 +718,22 @@ TEST_SUITES = {
         "TTS Runtime Extent Full v8 Lowering", "kernels",
         ROOT / "tests" / "test_v8_runtime_extent_lowering.py",
     ),
+    "tts_checked_static_entry": TestSuite(
+        "TTS Fixed-Size Checked Native Entry", "kernels",
+        ROOT / "tests" / "test_v8_checked_static_entry.py",
+    ),
+    "tts_kokoro_generated_embedding": TestSuite(
+        "TTS Kokoro Generated Embedding and X-Ray Oracle", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_generated_embedding.py",
+    ),
+    "tts_duration_logits_runtime_graph": TestSuite(
+        "TTS Duration Logits Full v8 Lowering", "kernels",
+        ROOT / "tests" / "test_v8_duration_logits_runtime_graph.py",
+    ),
+    "tts_duration_two_stream_runtime_graph": TestSuite(
+        "TTS Two-Stream Duration Generated Graph", "kernels",
+        ROOT / "tests" / "test_v8_duration_two_stream_runtime_graph.py",
+    ),
     "tts_istft_oracle": TestSuite(
         "TTS Inverse STFT PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_istft_oracle.py",
@@ -725,6 +741,22 @@ TEST_SUITES = {
     "tts_duration_expand_oracle": TestSuite(
         "TTS Duration Expansion PyTorch Oracle", "kernels",
         ROOT / "tests" / "test_v8_audio_duration_expand_oracle.py",
+    ),
+    "tts_duration_logits_oracle": TestSuite(
+        "TTS Duration Logits Committed PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_duration_logits_oracle.py",
+    ),
+    "tts_embedding_oracle": TestSuite(
+        "TTS Three-Table Embedding Pinned PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_bert_embedding_oracle.py",
+    ),
+    "tts_embedding_live": TestSuite(
+        "TTS Three-Table Embedding Live Pinned PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_bert_embedding_live.py",
+    ),
+    "tts_duration_logits_live": TestSuite(
+        "TTS Duration Logits Live PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_audio_duration_logits_live.py",
     ),
     "tts_lstm_scan_oracle": TestSuite(
         "TTS Bidirectional LSTM Scan PyTorch Oracle", "kernels",

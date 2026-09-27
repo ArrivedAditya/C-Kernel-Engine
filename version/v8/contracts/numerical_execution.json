@@ -3,6 +3,28 @@
   "schema_version": 1,
   "engine_contract_version": "8",
   "contracts": {
+    "embedding_three_table_layer_norm_fp32_reference": {
+      "operator_family": "embedding_three_table_layer_norm",
+      "status": "validated",
+      "storage": {"input": "int32", "weight": "fp32", "output": "fp32"},
+      "compute": {"input": "fp32", "weight": "fp32", "accumulator": "fp64", "contraction": "disabled", "evaluation_order": "ascending_token_then_channel_word_plus_type_then_position_fp32_then_fp64_mean_square_sum_then_fp32_affine"},
+      "rounding": {"mode": "rne", "points": ["activation_intermediate_store", "reduction_update", "reduction_finalize", "reciprocal_sqrt", "affine_normalization", "output_store"]},
+      "reduction": {"kind": "sum", "order": "left_to_right", "partial_accumulator": "fp64", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Checked three-table FP32 embedding followed by population-variance LayerNorm. Pinned 36x128 Kokoro/PyTorch boundary is within 2e-5 absolute error. Rejection leaves output untouched."
+    },
+    "audio_duration_logits_sigmoid_sum_round_even_fp32": {
+      "operator_family": "audio_duration_logits_to_frames",
+      "status": "validated",
+      "storage": {"input": "fp32", "weight": "none", "output": "int32"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp32", "contraction": "disabled", "evaluation_order": "ascending_token_then_ascending_bin_fp32_sigmoid_sum_then_speed_divide_then_nearest_even_round_then_min_one_clamp"},
+      "rounding": {"mode": "rne", "points": ["vector_exponential", "output_divide", "reduction_update", "integer_round", "output_store"]},
+      "reduction": {"kind": "sum", "order": "left_to_right", "partial_accumulator": "fp32", "merge_order": "none"},
+      "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},
+      "position_transform": null,
+      "description": "Reduce finite token-major logits to positive int32 durations with a checked total valid extent. Reject oversized values and leave outputs unchanged. Independent PyTorch fixture certifies the pinned production shape; exact integer parity is required there."
+    },
     "runtime_extent_sum_checked_i32": {
       "operator_family": "runtime_extent_sum",
       "status": "validated",

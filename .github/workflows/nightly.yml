@@ -26,6 +26,28 @@ permissions:
   pages: write
 
 jobs:
+  arm-portability:
+    name: ARM64 engine and numerical contracts
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install focused test dependencies
+        run: python -m pip install numpy pytest
+      - name: Build and verify portable ARM engine
+        run: |
+          make build/libckernel_engine.so
+          ldd -r build/libckernel_engine.so
+          python -m pytest -q \
+            unittest/test_bump_alloc_mixed.py \
+            unittest/test_v8_arm_q4k_oracle.py \
+            unittest/test_hyper_connection_quantized.py \
+            unittest/test_moe_swiglu_q4k_q5k.py
+
   documentation-policy:
     name: Documentation policy and migration debt
     runs-on: ubuntu-latest

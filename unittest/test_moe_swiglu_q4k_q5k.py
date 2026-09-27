@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ctypes
+import platform
 import struct
 import unittest
 from pathlib import Path
@@ -420,6 +421,25 @@ class CompactRoutedSwiGLUTests(unittest.TestCase):
             0,
         )
         np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+
+    @unittest.skipUnless(platform.machine() in ("aarch64", "arm64"), "ARM-only rejection")
+    def test_arm_rejects_packed_gate_up(self) -> None:
+        required = LIB.moe_swiglu_expert_q4k_q5k_bucketed_workspace_bytes(
+            self.rows, self.hidden, self.intermediate, self.experts, self.top_k
+        )
+        workspace = ctypes.create_string_buffer(required)
+        output = np.full((self.rows, self.hidden), np.nan, dtype=np.float32)
+        packed = ctypes.create_string_buffer(16)
+        for gate_packed, up_packed in ((packed, None), (None, packed), (packed, packed)):
+            with self.subTest(gate=gate_packed is not None, up=up_packed is not None):
+                status = LIB.moe_swiglu_expert_forward_q4k_q5k_bucketed_prepared_workspace(
+                    _fptr(self.x), _iptr(self.indices), _fptr(self.routing),
+                    self.gate, self.up, self.down, gate_packed, up_packed,
+                    _fptr(output), self.rows, self.hidden, self.intermediate,
+                    self.experts, self.top_k, workspace, required,
+                )
+                self.assertEqual(status, -1)
+                self.assertTrue(np.isnan(output).all())
 
     def test_prepared_bucketed_matches_compact_at_qwen35_expert_shape(self) -> None:
         if not LIB.ck_q4k_packed_vnni_x8_compact_order_available():

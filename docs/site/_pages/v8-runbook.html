@@ -611,6 +611,16 @@ python -m pip install -r version/v8/requirements.txt</pre>
     </div>
 </div>
 
+<h2 id="arm-low-memory">ARM Low-Memory Bring-Up</h2>
+
+<div class="card">
+    <p>On Linux ARM, verify that the v8 engine links without unresolved symbols and that mixed BUMP allocation maps complete weight pages read-only. The unaligned weights/activations boundary is copied into one writable anonymous page.</p>
+    <div class="v8-cmd"><pre>make test-v8-arm-runtime
+make test-v8-arm-model-smoke CK_ARM_MODEL_DIR=/path/to/generated-v8-model</pre></div>
+    <p>The model smoke expects an artifact generated at context length 100. It forces file-backed weights and token-ID input with the full tokenizer disabled. This checks native forward execution, not raw-text tokenization, output quality, or performance parity. <code>regression-fast-arm</code> remains the broader family gate.</p>
+    <p>For low-RAM deployment, set <code>CK_BUMP_FORCE_MIXED=1</code>: Linux overcommit can let an anonymous reservation succeed before the process is OOM-killed. Mapping weights from disk does not prove that the full model will fit or run at useful speed. Page faults, activations and tokenizer memory are separate costs. On TDA4VM, the 2.33&nbsp;GiB Nanbeige BUMP mapped successfully, but end-to-end Nanbeige inference has not been certified. A full 262k-token Gemma SPM tokenizer was OOM-killed; tokenizer-disabled token-ID inference passed. Test raw-text chat separately.</p>
+</div>
+
 <h2>Canonical Text Bring-Up</h2>
 
 <div class="card">

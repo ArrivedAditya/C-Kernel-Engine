@@ -1811,6 +1811,17 @@ def _validate_segmented_prefill_contract(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 OP_DATAFLOW = {
+    "embedding_three_table_layer_norm": {
+        "inputs": {"word_ids": "external:word_ids", "type_ids": "external:type_ids"},
+        "outputs": {"output": {"slot": "embedding_output", "dtype": "fp32"}},
+    },
+    "audio_duration_logits_to_frames": {
+        "inputs": {"logits": "external:audio_duration_logits"},
+        "outputs": {
+            "durations": {"slot": "runtime_values", "dtype": "i32"},
+            "expanded_frames": {"slot": "runtime_valid_extent", "dtype": "i32"},
+        },
+    },
     "runtime_extent_sum": {
         "inputs": {"values": "external:runtime_values"},
         "outputs": {"valid_extent": {"slot": "runtime_valid_extent", "dtype": "i32"}},
@@ -4364,6 +4375,8 @@ def _validated_kernel_codegen_capability(kernel_id: str, kernel_map: Dict) -> Op
 # source model is dense, recurrent, DeepStack-style, MoE, SSM, or something else.
 # Note: "matmul" is a logical op that maps to gemv (decode) or gemm (prefill) based on mode
 TEMPLATE_TO_KERNEL_OP = {
+    "embedding_three_table_layer_norm": "embedding_three_table_layer_norm",
+    "audio_duration_logits_to_frames": "audio_duration_logits_to_frames",
     "runtime_extent_sum": "runtime_extent_sum",
     "audio_duration_expand": "audio_duration_expand",
     "runtime_copy_valid": "runtime_copy_valid",
@@ -8895,6 +8908,8 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     # Op → Weight mapping (which weights each op uses for quant lookup)
     # ═══════════════════════════════════════════════════════════
     OP_TO_WEIGHT_KEYS = {
+        "embedding_three_table_layer_norm": ["word", "position", "token_type", "gamma", "beta"],
+        "audio_duration_logits_to_frames": None,
         "runtime_extent_sum": None,
         "audio_duration_expand": None,
         "runtime_copy_valid": None,
@@ -10545,7 +10560,13 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     _check_ir1_completeness(manifest, arranged_kernels)
     _validate_resolved_kernels_are_emitted(numerical_contract_plans, arranged_kernels)
 
-    if template.get("runtime_lengths") or template.get("runtime_views"):
+    if ("checked_native_entry" in template
+            and not isinstance(template["checked_native_entry"], bool)):
+        raise RuntimeError("checked_native_entry must be boolean")
+    if (template.get("runtime_lengths") or template.get("runtime_views")
+            or template.get("checked_native_entry") is True):
+        if template.get("checked_native_entry") is True and "native_entry" not in template:
+            raise RuntimeError("checked native entry requires circuit-declared native_entry")
         if "native_entry" in template:
             manifest["config"]["native_entry"] = copy.deepcopy(template["native_entry"])
         declared_producers = {
@@ -12204,6 +12225,8 @@ WEIGHT_PATTERNS = {
 # Template op → weight refs it uses
 # This tells us which weights each template op needs
 TEMPLATE_OP_WEIGHTS = {
+    "embedding_three_table_layer_norm": ["word", "position", "token_type", "gamma", "beta"],
+    "audio_duration_logits_to_frames": [],
     "runtime_extent_sum": [],
     "audio_duration_expand": [],
     "runtime_copy_valid": [],

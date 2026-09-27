@@ -34,6 +34,10 @@
  *     is enabled, in which case it falls back to *_ref.
  */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "bf16_utils.h"
 #include "ckernel_engine.h"
 

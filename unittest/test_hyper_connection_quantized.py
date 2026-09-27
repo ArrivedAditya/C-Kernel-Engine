@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ctypes
+import platform
 import struct
 import unittest
 from pathlib import Path
@@ -65,7 +66,11 @@ class QuantizedHyperConnectionTest(unittest.TestCase):
             F32P, F32P, ctypes.c_int, ctypes.c_int,
         ]
         LIB.gemv_q4_k_q8_k.argtypes = [F32P, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
-        LIB.gemv_q4_k_q8_k_avx2.argtypes = [F32P, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+        cls.injection_provider = getattr(
+            LIB, "gemv_q4_k_q8_k_ref" if platform.machine() in ("aarch64", "arm64")
+            else "gemv_q4_k_q8_k_avx2"
+        )
+        cls.injection_provider.argtypes = LIB.gemv_q4_k_q8_k.argtypes
         LIB.gemv_q5_0_q8_0.argtypes = [F32P, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
         LIB.gemv_q4_k_q8_k_repacked_parallel_dispatch.argtypes = [
             F32P, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
@@ -141,7 +146,7 @@ class QuantizedHyperConnectionTest(unittest.TestCase):
                 * gate.reshape(streams, hidden)
             ).mean(axis=0)
             raw_inject = np.empty(streams, dtype=np.float32)
-            LIB.gemv_q4_k_q8_k_avx2(
+            self.injection_provider(
                 _f32(raw_inject), inject, norm_q8, streams, hyper_dim
             )
             raw_inject /= streams
@@ -189,7 +194,7 @@ class QuantizedHyperConnectionTest(unittest.TestCase):
         norm_q8 = ctypes.create_string_buffer((hyper_dim // QK_K) * 292)
         LIB.quantize_row_q8_k(_f32(normalized[0]), norm_q8, hyper_dim)
         raw_injection = np.empty(streams, dtype=np.float32)
-        LIB.gemv_q4_k_q8_k_avx2(
+        self.injection_provider(
             _f32(raw_injection), inject, norm_q8, streams, hyper_dim
         )
         expected = 2.0 / (1.0 + np.exp(-(raw_injection / streams)))

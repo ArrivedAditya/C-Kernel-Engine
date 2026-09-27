@@ -2719,9 +2719,15 @@ static inline void gemm_q4_packed_vnni_x8_q8k_4m_job(
 
     for (int row = 0; row < rows; ++row) {
         float values[8];
+#if defined(__AVX2__)
         _mm256_storeu_ps(values, _mm256_sub_ps(
                 _mm256_loadu_ps(acc[row]),
                 _mm256_loadu_ps(acc_min[row])));
+#else
+        for (int lane = 0; lane < active; ++lane) {
+            values[lane] = acc[row][lane] - acc_min[row][lane];
+        }
+#endif
         float *output = a->C + (size_t)(m0 + row) * (size_t)a->N;
         for (int lane = 0; lane < active; ++lane) {
             output[n0 + lane] = values[lane] +

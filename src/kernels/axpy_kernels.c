@@ -2356,6 +2356,22 @@ static void ck_moe_q4k_q5k_bucket_work(int ith, int nth, void *opaque)
                     hidden_rows[batch_row] = hidden_rows[0];
                 }
 
+#if defined(CK_TARGET_ARM)
+                {
+                    const int gate_up_stride = 2 * args->intermediate_dim;
+                    for (int batch_row = 0; batch_row < batch_rows; ++batch_row) {
+                        float *values = gate_up +
+                            (size_t)batch_row * (size_t)gate_up_stride;
+                        gemv_q4_k_q8_k(values, gate, hidden_rows[batch_row],
+                                        args->intermediate_dim, args->hidden_dim);
+                        gemv_q4_k_q8_k(values + args->intermediate_dim, up,
+                                        hidden_rows[batch_row],
+                                        args->intermediate_dim, args->hidden_dim);
+                    }
+                    swiglu_forward_ggml(
+                        gate_up, gate_up, batch_rows, args->intermediate_dim);
+                }
+#else
                 if (gate_packed && up_packed) {
                     float *up_rows = gate_up +
                         4u * (size_t)args->intermediate_dim;
@@ -2382,6 +2398,7 @@ static void ck_moe_q4k_q5k_bucket_work(int ith, int nth, void *opaque)
                     swiglu_forward_ggml(
                         gate_up, gate_up, batch_rows, args->intermediate_dim);
                 }
+#endif
                 for (int batch_row = 0; batch_row < batch_rows; ++batch_row) {
                     void *activation = (uint8_t *)act_q8 +
                         (size_t)batch_row * act_q8_row_bytes;
@@ -2443,6 +2460,9 @@ static int ck_moe_swiglu_expert_forward_q4k_q5k_bucketed_impl(
         workspace_bytes < layout.total_bytes) {
         return -1;
     }
+#if defined(CK_TARGET_ARM)
+    if (expert_gate_packed || expert_up_packed) return -1;
+#endif
 
     uint8_t *base = (uint8_t *)workspace;
     uint8_t *hidden_q8 = base + layout.hidden_q8_offset;
@@ -2498,9 +2518,13 @@ static int ck_moe_swiglu_expert_forward_q4k_q5k_bucketed_impl(
 
     const size_t q4_expert_stride = (size_t)intermediate_dim *
         ck_dtype_row_bytes(CK_DT_Q4_K, (size_t)hidden_dim);
+#if defined(CK_TARGET_ARM)
+    const size_t q4_packed_expert_stride = 0;
+#else
     const size_t q4_packed_expert_stride =
         (size_t)((intermediate_dim + 7) / 8) *
         (size_t)(hidden_dim / 256) * q4_k_packed_vnni_x8_block_size();
+#endif
     const size_t q5_expert_stride = (size_t)hidden_dim *
         ck_dtype_row_bytes(CK_DT_Q5_K, (size_t)intermediate_dim);
     for (int slot = 0; slot < top_k; ++slot) {

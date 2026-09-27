@@ -82,8 +82,8 @@ def emit_checked_calls(call_ir: dict, root: Path) -> str:
     except RuntimeExtentContractError as error:
         raise CheckedCallCodegenError(str(error)) from error
     lengths = contract.get("runtime_lengths", {})
-    if not isinstance(lengths, dict) or not lengths:
-        raise CheckedCallCodegenError("named runtime lengths are required")
+    if not isinstance(lengths, dict):
+        raise CheckedCallCodegenError("runtime lengths must be an object")
     length_outputs = entry.get("runtime_length_outputs", {})
     if not isinstance(length_outputs, dict):
         raise CheckedCallCodegenError("runtime_length_outputs must be an object")
@@ -127,8 +127,11 @@ def emit_checked_calls(call_ir: dict, root: Path) -> str:
         buffers = memory.get("activations", {}).get("buffers", [])
         if not isinstance(buffers, list):
             raise CheckedCallCodegenError("call IR lacks planned activation buffers")
+        weights = memory.get("weights", {}).get("entries", [])
+        if not isinstance(weights, list):
+            raise CheckedCallCodegenError("call IR lacks planned weight entries")
         seen_defines = set()
-        for buffer in buffers:
+        for buffer in [*weights, *buffers]:
             define = _ident(buffer.get("define"), "planned buffer define")
             offset = buffer.get("abs_offset")
             size = buffer.get("size")
@@ -165,17 +168,15 @@ def emit_checked_calls(call_ir: dict, root: Path) -> str:
             lines.append(declaration)
             declarations_seen.add(declaration)
         map_docs.append(kernel)
-    lines += [
-        "typedef struct CKRuntimeExtents {",
-    ]
-    for name in lengths:
-        lines.append(f"    int32_t {_ident(name, 'runtime length')};")
-    lines += [
-        "} CKRuntimeExtents;",
-        f"int {function_name}({', '.join(declarations)}) {{",
-        "    CKRuntimeExtents runtime_extents = {0};",
-        "    int status = 0;",
-    ]
+    if lengths:
+        lines.append("typedef struct CKRuntimeExtents {")
+        for name in lengths:
+            lines.append(f"    int32_t {_ident(name, 'runtime length')};")
+        lines.append("} CKRuntimeExtents;")
+    lines.append(f"int {function_name}({', '.join(declarations)}) {{")
+    if lengths:
+        lines.append("    CKRuntimeExtents runtime_extents = {0};")
+    lines.append("    int status = 0;")
     lines.extend(arena_check)
     for parameter_name in length_outputs.values():
         lines.append(f"    if (!{parameter_name}) return -1;")
