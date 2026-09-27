@@ -533,6 +533,51 @@ Hello, how are you?<|im_end|>
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# LONG PROMPT / CAPACITY REGRESSION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def test_long_prompt_completeness():
+    """Long tool instructions must not disappear or stop at the 1024th chunk."""
+    bpe = lib.ck_true_bpe_create()
+    if not bpe:
+        return False
+    try:
+        if lib.ck_true_bpe_add_token(bpe, b"a", 1, 0.0) != 0:
+            return False
+        if lib.ck_true_bpe_add_token(bpe, "Ġ".encode(), 2, 0.0) != 0:
+            return False
+        if lib.ck_true_bpe_add_token(bpe, "Ġ-".encode(), 4, 0.0) != 0:
+            return False
+        if lib.ck_true_bpe_add_token(bpe, b"<|im_end|>", 3, 0.0) != 0:
+            return False
+        if lib.ck_true_bpe_add_special_token(bpe, b"<|im_end|>", 3) != 0:
+            return False
+        cfg = CKBPEConfig(False, False, False, CK_SPACE_PREFIX_GPT2, 0)
+        lib.ck_true_bpe_set_config(bpe, ctypes.byref(cfg))
+
+        # The first text segment exceeds 16 KiB and contains over 1024 chunks.
+        payload = b"a " * 9000 + b"<|im_end|>" + b"a " * 1100
+        output = (ctypes.c_int32 * 30000)()
+        count = lib.ck_true_bpe_encode(bpe, payload, len(payload), output, len(output))
+        expected = [1, 2] * 9000 + [3] + [1, 2] * 1100
+        if count != len(expected) or list(output[:count]) != expected:
+            print(f"FAIL: long prompt yielded {count} tokens; expected {len(expected)}")
+            return False
+        too_small = (ctypes.c_int32 * (len(expected) - 1))()
+        if lib.ck_true_bpe_encode(bpe, payload, len(payload), too_small, len(too_small)) != -1:
+            print("FAIL: insufficient output capacity was accepted")
+            return False
+        punct = b"  -"
+        if lib.ck_true_bpe_encode(bpe, punct, len(punct), output, len(output)) != 2 or list(output[:2]) != [2, 4]:
+            print("FAIL: space before punctuation was split incorrectly")
+            return False
+        print("PASS: long segments and capacity preserve complete prompt")
+        return True
+    finally:
+        lib.ck_true_bpe_free(bpe)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -549,6 +594,7 @@ def main():
     results.append(("Exhaustive GPT-2 Byte Table", test_exhaustive_gpt2_byte_table()))
     results.append(("Late SPM Space Prefix Detection", test_late_spm_space_prefix_detection()))
     results.append(("Unicode Isolated Pretokenizer", test_unicode_isolated_pretokenizer_keeps_punctuation_out_of_word_merges()))
+    results.append(("Long Prompt Completeness", test_long_prompt_completeness()))
     results.append(("Chat Template Encoding", test_chat_template_encoding()))
 
     # Summary
