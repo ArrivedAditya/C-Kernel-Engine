@@ -79,7 +79,14 @@ Tool output is parsed only under the selected protocol. A template render
 error returns an explicit failure instead of silently switching prompt format.
 Tool-bearing streamed responses buffer model text until it can be validated;
 the connection receives keep-alives while generation runs. This favors tool
-correctness over live token display for these requests.
+correctness over live token display for these requests. Thinking deltas still
+stream live while tools are attached.
+
+Vision input (`input_image` parts: http(s) or `data:image/...` URLs, at most
+8 per request) requires both a vision-capable chat template and a generated
+runtime with a vision encoder (auto-detected from `layout_decode.json`;
+otherwise 422 `invalid_image`). Without an encoder the model receives
+template placeholders, not pixel bytes.
 
 Point Qwen Code at the local server and begin with a read-only, bounded task:
 

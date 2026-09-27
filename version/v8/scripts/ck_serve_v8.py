@@ -64,6 +64,7 @@ from server.live import (
     _IGNORED_TOOL_TYPES,
     _StreamThinkSplitter,
     _classify_stream_mode,
+    _content_parts,
     _content_text,
     _detect_template_tool_syntax,
     _effective_tools,
@@ -79,18 +80,22 @@ from server.live import (
     _load_runtime_templates,
     _log_performance,
     _log_rejection,
+    _message_has_vision,
     _performance_profile,
+    _prompt_opens_thinking,
     _render_with_chat_templates,
     _resolve_contract_thinking_overrides,
     _resolve_thinking_mode,
     _sse,
     _strip_tool_json_from_text,
+    _template_supports_vision,
     _truncate_stop_markers,
     _usage,
+    _vision_content_for_jinja,
     create_app as _live_create_app,
     split_thinking,
 )
-from server.runtime import load_manifest_templates, load_tool_protocol, resolve_runtime_context_length
+from server.runtime import load_manifest_templates, load_tool_protocol, resolve_runtime_context_length, resolve_runtime_vision_capability
 from server.session_v8 import (
     CK_SESSION_REQUEST_RAW_PROMPT,
     _Config,
@@ -142,6 +147,7 @@ __all__ = [
     "_classify_stream_mode",
     "_configure_abi",
     "_configure_lib",
+    "_content_parts",
     "_content_text",
     "_detect_template_tool_syntax",
     "_detect_threads",
@@ -160,7 +166,9 @@ __all__ = [
     "_load_runtime_templates",
     "_log_performance",
     "_log_rejection",
+    "_message_has_vision",
     "_performance_profile",
+    "_prompt_opens_thinking",
     "_render_with_chat_templates",
     "_resolve_contract_thinking_overrides",
     "_resolve_thinking_mode",
@@ -169,12 +177,15 @@ __all__ = [
     "_sse",
     "_stop_reason_name",
     "_strip_tool_json_from_text",
+    "_template_supports_vision",
     "_truncate_stop_markers",
     "_usage",
+    "_vision_content_for_jinja",
     "add_chat_completions_route",
     "create_app",
     "load_manifest_templates",
     "load_tool_protocol",
+    "resolve_runtime_vision_capability",
     "log",
     "log_error",
     "main",
@@ -182,7 +193,24 @@ __all__ = [
     "split_thinking",
     "stop_reason_name",
     "truncate_stop_markers",
+    "_undeclared_protocol_warning",
 ]
+
+
+def _undeclared_protocol_warning(
+    chat_template: str | None,
+    chat_templates: dict[str, str] | None,
+    protocol: str | None,
+) -> str | None:
+    """Startup warning when tool requests are doomed to 501."""
+    if protocol in (None, "none") and (chat_template or chat_templates):
+        return (
+            "Warning: tool protocol is undeclared; tool requests will fail with "
+            "501 tool_protocol_undeclared until --tool-protocol "
+            "tagged_json|qwen_xml|bare_json is passed or a matching "
+            "tool_protocol.json sidecar is present"
+        )
+    return None
 
 
 def create_app(session, *, viz: bool = True, **kwargs):
@@ -445,11 +473,22 @@ def main(argv: list[str] | None = None) -> int:
     selected_tool_protocol = args.tool_protocol or sidecar_protocol
     if selected_tool_protocol not in (None, "none") and not (chat_template or chat_templates):
         raise ValueError("tool protocol requires a nonempty selected chat template")
+    warning = _undeclared_protocol_warning(
+        chat_template, chat_templates, selected_tool_protocol
+    )
+    if warning is not None:
+        log(warning, C_ORANGE)
 
     session = SessionV8.open(
         run_dir,
         context_length=runtime_context_length,
     )
+
+    vision_capability = resolve_runtime_vision_capability(run_dir)
+    if vision_capability:
+        log("Vision input enabled (generated runtime has a vision encoder)", C_GRAY)
+    else:
+        log("Vision input disabled (no vision encoder in generated runtime)", C_GRAY)
 
     app = create_app(
         session,
@@ -471,6 +510,7 @@ def main(argv: list[str] | None = None) -> int:
         chat_template=chat_template,
         chat_templates=chat_templates,
         tool_protocol=selected_tool_protocol,
+        vision_capability=vision_capability,
     )
 
     try:

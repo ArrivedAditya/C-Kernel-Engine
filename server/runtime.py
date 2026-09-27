@@ -43,6 +43,38 @@ def resolve_runtime_context_length(run_dir: Path, requested: int | None) -> int 
     return planned
 
 
+def resolve_runtime_vision_capability(run_dir: Path) -> bool:
+    """Whether the generated runtime has a vision encoder.
+
+    Reads ``layout_decode.json`` config for the vision path markers used by
+    the bridge contract (patch counts plus projector dims). Text-only
+    bundles lack these keys and report ``False``; unreadable manifests
+    fail closed to ``False``.
+    """
+    layout_path = Path(run_dir) / "layout_decode.json"
+    try:
+        payload = json.loads(layout_path.read_text(encoding="utf-8"))
+        config = payload.get("config", {})
+    except (OSError, UnicodeDecodeError, ValueError, AttributeError):
+        return False
+    if not isinstance(config, dict):
+        return False
+
+    def _positive(*keys: str) -> bool:
+        for key in keys:
+            try:
+                value = int(config.get(key) or 0)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return True
+        return False
+
+    return _positive("vision_num_patches", "vision_merged_tokens") and _positive(
+        "projector_out_dim", "projection_dim", "projector_total_out_dim"
+    )
+
+
 def load_manifest_templates(
     run_dir: Path,
 ) -> tuple[str | None, dict[str, str] | None, dict[str, Any] | None]:

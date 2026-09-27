@@ -140,6 +140,93 @@ def _log_rejection(server_model: str, body: Any, exc: HTTPException) -> None:
 # --- prompt helpers -----------------------------------------------------------
 
 
+def _image_identifier(part: Any) -> str:
+    for attr in ("image_url", "file_id", "file_url", "url"):
+        try:
+            value = getattr(part, attr, None)
+        except (AttributeError, ValueError, TypeError):
+            value = None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    try:
+        raw = getattr(part, "model_dump", None)
+        if callable(raw):
+            data = raw()
+            for key in ("image_url", "file_id", "file_url", "url"):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+                if isinstance(value, dict):
+                    nested = value.get("url")
+                    if isinstance(nested, str) and nested.strip():
+                        return nested.strip()
+    except (AttributeError, ValueError, TypeError):
+        pass
+    return ""
+
+
+_MAX_VISION_IMAGES = 8
+_MAX_IMAGE_REF_CHARS = 5_000_000
+
+
+def _check_image_ref(ident: str) -> str:
+    ident = (ident or "").strip()
+    if not ident:
+        raise ValueError("input_image is missing image_url or file_id")
+    if len(ident) > _MAX_IMAGE_REF_CHARS:
+        raise ValueError(
+            f"input_image exceeds {_MAX_IMAGE_REF_CHARS} characters; "
+            "upload a smaller image"
+        )
+    lowered = ident.lower()
+    if lowered.startswith(("http://", "https://", "data:image/")):
+        return ident
+    raise ValueError(
+        "input_image must be an http(s) URL or data:image/... URL, "
+        "not raw base64 or a file path"
+    )
+
+
+def _content_parts(content: Any) -> tuple[str, list[str]]:
+    """Split message content into text plus vision image references.
+
+    Returns (text, image_urls). Text-only content yields ([text], []).
+    File parts are rejected - callers map ValueError to 400.
+    """
+    if content is None:
+        return "", []
+    if isinstance(content, str):
+        return content, []
+    if not isinstance(content, list):
+        return "", []
+    texts: list[str] = []
+    images: list[str] = []
+    for part in content:
+        if isinstance(part, str):
+            texts.append(part)
+            continue
+        part_type = getattr(part, "type", None)
+        part_type = getattr(part_type, "value", part_type)
+        if isinstance(part, dict):
+            part_type = part.get("type", part_type)
+        if part_type == "input_text":
+            text = part.get("text") if isinstance(part, dict) else getattr(part, "text", None)
+            if isinstance(text, str):
+                texts.append(text)
+        elif part_type == "input_image":
+            ident = part.get("image_url") if isinstance(part, dict) else _image_identifier(part)
+            if isinstance(ident, dict):
+                ident = ident.get("url", "")
+            images.append(_check_image_ref(str(ident or "")))
+        elif part_type == "input_file":
+            raise ValueError("input_file content is not supported for chat templates")
+        else:
+            text = part.get("text") if isinstance(part, dict) else getattr(part, "text", None)
+            if isinstance(text, str):
+                texts.append(text)
+    return "\n".join(texts), images
+
+
 def _extract_prompt(body: Any) -> str:
     if body.input is None:
         return ""
@@ -154,13 +241,14 @@ def _extract_prompt(body: Any) -> str:
         if isinstance(content, str):
             parts.append(content)
         elif isinstance(content, list):
-            for part in content:
-                if isinstance(part, str):
-                    parts.append(part)
-                    continue
-                text = getattr(part, "text", None)
-                if isinstance(text, str):
-                    parts.append(text)
+            try:
+                text, images = _content_parts(content)
+            except ValueError:
+                continue
+            if text:
+                parts.append(text)
+            for ident in images:
+                parts.append(f"[image: {ident}]" if ident else "[image]")
     return "\n".join(parts)
 
 
@@ -169,15 +257,48 @@ def _content_text(content: Any) -> str:
         return content
     if not isinstance(content, list):
         return ""
-    parts: list[str] = []
-    for part in content:
-        if isinstance(part, str):
-            parts.append(part)
-            continue
-        text = getattr(part, "text", None)
-        if isinstance(text, str):
-            parts.append(text)
-    return "\n".join(parts)
+    try:
+        text, images = _content_parts(content)
+    except ValueError:
+        return ""
+    if images:
+        markers = ["[image: " + i + "]" if i else "[image]" for i in images]
+        return "\n".join([text, *markers]) if text else "\n".join(markers)
+    return text
+
+
+def _vision_content_for_jinja(text: str, images: list[str]) -> Any:
+    if not images:
+        return text
+    parts: list[dict[str, Any]] = []
+    if text:
+        parts.append({"type": "text", "text": text})
+    for ident in images:
+        parts.append({"type": "image", "image_url": ident, "image": ident})
+    return parts
+
+
+def _message_has_vision(message: dict[str, Any]) -> bool:
+    content = message.get("content")
+    return isinstance(content, list) and any(
+        isinstance(p, dict) and p.get("type") == "image" for p in content
+    )
+
+
+def _template_supports_vision(
+    chat_template: str | None, chat_templates: dict[str, str] | None
+) -> bool:
+    texts: list[str] = []
+    if isinstance(chat_template, str) and chat_template.strip():
+        texts.append(chat_template.lower())
+    if isinstance(chat_templates, dict):
+        for value in chat_templates.values():
+            if isinstance(value, str) and value.strip():
+                texts.append(value.lower())
+    if not texts:
+        return False
+    markers = ("vision_start", "image_pad", "vision_end", "image_url", "render_content")
+    return any(m in t for t in texts for m in markers)
 
 
 def _input_chat_messages(value: Any) -> list[dict[str, Any]]:
@@ -193,11 +314,16 @@ def _input_chat_messages(value: Any) -> list[dict[str, Any]]:
         ):
             role = getattr(item, "role", "user")
             role = getattr(role, "value", role)
+            role_str = str(role)
+            text, images = _content_parts(item.content)
+            if images and role_str == "system":
+                raise ValueError("System message cannot contain images.")
+            content: Any = _vision_content_for_jinja(text, images)
             message: dict[str, Any] = {
-                "role": str(role),
-                "content": _content_text(item.content),
+                "role": role_str,
+                "content": content,
             }
-            if str(role) == "assistant":
+            if role_str == "assistant":
                 # Native templates (e.g. Qwen3 line 48
                 # `{%- if message.tool_calls %}`) read this key unguarded;
                 # under StrictUndefined a missing key aborts the whole
@@ -319,14 +445,28 @@ def split_thinking(text: str) -> tuple[str, str]:
     return "", text
 
 
+def _prompt_opens_thinking(prompt: str) -> bool:
+    """Whether the rendered prompt ends with unclosed thinking.
+
+    Qwen3.5/QwQ-style templates emit ``<think>`` as the generation prefix,
+    so the stream continues thinking with no open tag. Count-based: an
+    unmatched open marker means generation starts inside thinking.
+    """
+    if not prompt:
+        return False
+    lowered = prompt.lower()
+    return lowered.count(_THINK_OPEN) > lowered.count(_THINK_CLOSE)
+
+
 class _StreamThinkSplitter:
     _KEEP = len(_THINK_CLOSE) + 2
 
-    def __init__(self) -> None:
+    def __init__(self, *, start_thinking: bool = False) -> None:
         self._look = ""
-        self._mode = "undetermined"
+        self._mode = "thinking" if start_thinking else "undetermined"
         self._thinking_lstrip = True
         self._answer_lstrip = True
+        self._strip_leading_open = start_thinking
 
     def feed(self, chunk: str):
         if self._mode == "answer":
@@ -338,6 +478,19 @@ class _StreamThinkSplitter:
             yield ("answer", chunk)
             return
         buf = self._look + chunk
+        if self._mode == "thinking" and self._strip_leading_open:
+            head = buf.lstrip()
+            if head[: len(_THINK_OPEN)].lower() == _THINK_OPEN:
+                buf = head[len(_THINK_OPEN) :]
+                self._look = ""
+                self._strip_leading_open = False
+            elif len(head) < len(_THINK_OPEN) and _THINK_OPEN.startswith(
+                head.lower()
+            ):
+                self._look = buf
+                return
+            else:
+                self._strip_leading_open = False
         if self._mode == "undetermined":
             open_idx = _marker_index(buf.lower(), _THINK_OPEN)
             close_idx = _marker_index(buf.lower(), _THINK_CLOSE)
@@ -641,6 +794,10 @@ def _render_with_chat_templates(
         tools = None
         if body is not None and getattr(body, "tools", None):
             tools = [t.model_dump() for t in body.tools]
+
+        def _raise_exception(message: str = "") -> None:
+            raise ValueError(str(message))
+
         env = jinja2.sandbox.SandboxedEnvironment(
             undefined=jinja2.StrictUndefined, autoescape=False
         )
@@ -654,6 +811,8 @@ def _render_with_chat_templates(
                 else None,
                 enable_thinking=(effective_thinking == "visible"),
                 add_generation_prompt=True,
+                add_vision_id=False,
+                raise_exception=_raise_exception,
             )
         )
     except Exception as exc:
@@ -880,6 +1039,7 @@ def create_app(
     chat_template: str | None = None,
     chat_templates: dict[str, str] | None = None,
     tool_protocol: str | None = None,
+    vision_capability: bool = False,
     cancel_wait_seconds: float = 10.0,
     viz_html: str | None = None,
     extra_route_registrar: Callable[[APIRouter, Callable[..., Any]], None] | None = None,
@@ -996,6 +1156,38 @@ def create_app(
     def _prepare_request(body):
         _validate_request(body)
         messages = _request_messages(body)
+        vision_n = sum(
+            sum(
+                1
+                for p in (m.get("content") or [])
+                if isinstance(p, dict) and p.get("type") == "image"
+            )
+            for m in messages
+            if isinstance(m.get("content"), list)
+        )
+        if vision_n > _MAX_VISION_IMAGES:
+            raise _harness_error(
+                400,
+                f"at most {_MAX_VISION_IMAGES} images per request, got {vision_n}",
+                err_type="invalid_request_error",
+                code="invalid_image",
+            )
+        if any(_message_has_vision(m) for m in messages) and not _template_supports_vision(
+            chat_template, chat_templates
+        ):
+            raise _harness_error(
+                422,
+                "vision input requires a chat template with vision support",
+                err_type="invalid_request_error",
+                code="invalid_image",
+            )
+        if any(_message_has_vision(m) for m in messages) and not vision_capability:
+            raise _harness_error(
+                422,
+                "loaded model has no vision encoder; vision input is rejected",
+                err_type="invalid_request_error",
+                code="invalid_image",
+            )
         prompt = _extract_prompt(body)
         tok_limit = (
             body.max_output_tokens if body.max_output_tokens is not None else max_tokens
@@ -1287,24 +1479,27 @@ def create_app(
         events: queue.Queue = queue.Queue()
         cancelled = threading.Event()
         worker_finished = threading.Event()
-        splitter = _StreamThinkSplitter() if think_enabled else None
+        splitter = (
+            _StreamThinkSplitter(start_thinking=_prompt_opens_thinking(prompt))
+            if think_enabled
+            else None
+        )
         # Tool-bearing output is buffered until the complete protocol
         # envelope can be parsed and validated.
 
         def on_token(_tid, text):
             if text:
                 complete.append(text)
-                if not _has_function_tools(body):
-                    if splitter is not None:
-                        for state, delta in splitter.feed(text):
-                            events.put(
-                                (
-                                    "reasoning_text" if state == "thinking" else "text",
-                                    delta,
-                                )
-                            )
-                    else:
-                        events.put(("text", text))
+                if splitter is not None:
+                    for state, delta in splitter.feed(text):
+                        if state == "thinking":
+                            events.put(("reasoning_text", delta))
+                        elif not _has_function_tools(body):
+                            events.put(("text", delta))
+                    # Tool-bearing answer text stays buffered until the
+                    # full response is parsed and validated at terminal.
+                elif not _has_function_tools(body):
+                    events.put(("text", text))
                 # A tool-bearing response can switch from prose to a tool
                 # envelope at any token boundary. Buffer it until the full
                 # response is parsed, then emit only validated content.
@@ -1323,11 +1518,12 @@ def create_app(
                     stop_on_text=stop_markers,
                     stop_at_eos=stop_at_eos,
                 )
-                if splitter is not None and not _has_function_tools(body):
+                if splitter is not None:
                     for state, delta in splitter.flush():
-                        events.put(
-                            ("reasoning_text" if state == "thinking" else "text", delta)
-                        )
+                        if state == "thinking":
+                            events.put(("reasoning_text", delta))
+                        elif not _has_function_tools(body):
+                            events.put(("text", delta))
                 terminal_event = ("done", result)
             except SessionBusyError:
                 terminal_event = (

@@ -372,6 +372,29 @@ def test_tool_protocol_rejects_malformed_sidecar(tmp_path, content):
         load_tool_protocol(tmp_path, "template", None)
 
 
+@pytest.mark.parametrize(
+    ("template", "templates", "protocol", "warns"),
+    [
+        ("tmpl", None, None, True),
+        (None, {"tool_use": "tmpl"}, None, True),
+        ("tmpl", None, "none", True),
+        ("tmpl", None, "qwen_xml", False),
+        (None, None, None, False),
+        ("", None, None, False),
+    ],
+)
+def test_undeclared_protocol_warning(template, templates, protocol, warns):
+    from ck_serve_v8 import _undeclared_protocol_warning
+
+    message = _undeclared_protocol_warning(template, templates, protocol)
+    if warns:
+        assert message is not None
+        assert "501 tool_protocol_undeclared" in message
+        assert "--tool-protocol" in message
+    else:
+        assert message is None
+
+
 def test_manifest_loader_ignores_embedded_template_without_sidecar(tmp_path):
     import json
 

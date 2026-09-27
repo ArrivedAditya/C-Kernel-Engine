@@ -772,3 +772,420 @@ def test_tool_call_cancellation_reports_native_failure_and_timeout():
             assert cancelled.status_code == expected_status
             session.release.set()
             future.result(timeout=5)
+
+
+def _load_template(name):
+    root = Path(__file__).resolve().parents[2]
+    return (root / "llama.cpp" / "models" / "templates" / name).read_text(encoding="utf-8")
+
+
+def test_qwen3_template_tagged_json_round_trip():
+    from server.live import (
+        _extract_tool_calls_from_text,
+        _input_chat_messages,
+        _render_with_chat_templates,
+        _template_supports_vision,
+    )
+    from server.schemas.response import CreateResponseRequest
+
+    template = _load_template("Qwen-Qwen3-0.6B.jinja")
+    assert not _template_supports_vision(template, None)
+    body = CreateResponseRequest(
+        model="fake-model",
+        input="hello",
+        tools=[{"type": "function", "name": "read_file", "parameters": {}}],
+    )
+    messages = _input_chat_messages(body.input)
+    rendered = _render_with_chat_templates(template, None, messages, body)
+    assert rendered is not None
+    assert "<|im_start|>user" in rendered
+    assert "<|im_start|>assistant" in rendered
+
+    session = FakeSession(
+        chunks=(
+            '<tool_call>\n{"name": "read_file", "arguments": {"path": "a"}}\n</tool_call>',
+        )
+    )
+    client = TestClient(
+        create_app(
+            session,
+            model="fake-model",
+            chat_template=template,
+            tool_protocol="tagged_json",
+        )
+    )
+    resp = client.post(
+        "/v1/responses",
+        json={
+            "model": "fake-model",
+            "input": "read it",
+            "tools": [{"type": "function", "name": "read_file", "parameters": {}}],
+        },
+    )
+    assert resp.status_code == 200
+    call = next(i for i in resp.json()["output"] if i["type"] == "function_call")
+    assert call["name"] == "read_file"
+    calls, code, _ = _extract_tool_calls_from_text(
+        '<tool_call>{"name":"read_file","arguments":{"path":"a"}}</tool_call>',
+        {"read_file"},
+        tool_syntax="tool_call_json",
+    )
+    assert code is None and calls[0]["name"] == "read_file"
+
+
+def test_qwen35_template_qwen_xml_and_vision():
+    from server.live import (
+        _extract_tool_calls_from_text,
+        _input_chat_messages,
+        _render_with_chat_templates,
+        _template_supports_vision,
+    )
+    from server.schemas.response import CreateResponseRequest
+
+    template = _load_template("Qwen3.5-4B.jinja")
+    assert _template_supports_vision(template, None)
+
+    body = CreateResponseRequest(
+        model="fake-model",
+        input=[
+            {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "what is this?"},
+                    {"type": "input_image", "image_url": "http://x/i.png"},
+                ],
+            }
+        ],
+        tools=[{"type": "function", "name": "read_file", "parameters": {}}],
+    )
+    messages = _input_chat_messages(body.input)
+    assert messages[0]["content"][1]["type"] == "image"
+    rendered = _render_with_chat_templates(template, None, messages, body)
+    assert rendered is not None
+    assert "<|vision_start|><|image_pad|><|vision_end|>" in rendered
+
+    session = FakeSession(
+        chunks=(
+            "<tool_call><function=read_file><parameter=path>server/README.md</parameter></function></tool_call>",
+        )
+    )
+    client = TestClient(
+        create_app(
+            session,
+            model="fake-model",
+            chat_template=template,
+            tool_protocol="qwen_xml",
+            vision_capability=True,
+        )
+    )
+    resp = client.post(
+        "/v1/responses",
+        json={
+            "model": "fake-model",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "read it"},
+                        {"type": "input_image", "image_url": "http://x/i.png"},
+                    ],
+                }
+            ],
+            "tools": [{"type": "function", "name": "read_file", "parameters": {}}],
+        },
+    )
+    assert resp.status_code == 200
+    call = next(i for i in resp.json()["output"] if i["type"] == "function_call")
+    assert call["name"] == "read_file"
+
+    calls, code, _ = _extract_tool_calls_from_text(
+        "<tool_call><function=read_file><parameter=path>a</parameter></function></tool_call>",
+        {"read_file"},
+        tool_syntax="qwen_xml",
+    )
+    assert code is None and calls[0]["name"] == "read_file"
+
+
+def test_vision_rejected_without_vision_template():
+    qwen3 = _load_template("Qwen-Qwen3-0.6B.jinja")
+    session = FakeSession(chunks=("done",))
+    client = TestClient(
+        create_app(session, model="fake-model", chat_template=qwen3)
+    )
+    resp = client.post(
+        "/v1/responses",
+        json={
+            "model": "fake-model",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "hi"},
+                        {"type": "input_image", "image_url": "http://x/i.png"},
+                    ],
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 422
+
+
+def test_vision_system_image_rejected():
+    qwen35 = _load_template("Qwen3.5-4B.jinja")
+    session = FakeSession(chunks=("done",))
+    client = TestClient(
+        create_app(session, model="fake-model", chat_template=qwen35)
+    )
+    resp = client.post(
+        "/v1/responses",
+        json={
+            "model": "fake-model",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "system",
+                    "content": [
+                        {"type": "input_text", "text": "sys"},
+                        {"type": "input_image", "image_url": "http://x/i.png"},
+                    ],
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 400
+
+
+def test_vision_rejects_bare_base64_and_too_many_images():
+    qwen35 = _load_template("Qwen3.5-4B.jinja")
+    session = FakeSession(chunks=("done",))
+    client = TestClient(
+        create_app(session, model="fake-model", chat_template=qwen35)
+    )
+    bare = client.post(
+        "/v1/responses",
+        json={
+            "model": "fake-model",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "hi"},
+                        {"type": "input_image", "image_url": "iVBORw0KGgoAAAANSUhEUg"},
+                    ],
+                }
+            ],
+        },
+    )
+    assert bare.status_code == 400
+    many = [
+        {"type": "input_image", "image_url": f"http://x/{i}.png"}
+        for i in range(9)
+    ]
+    crowded = client.post(
+        "/v1/responses",
+        json={
+            "model": "fake-model",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "hi"}, *many],
+                }
+            ],
+        },
+    )
+    assert crowded.status_code == 400
+
+
+def test_vision_rejected_without_encoder_capability():
+    qwen35 = _load_template("Qwen3.5-4B.jinja")
+    session = FakeSession(chunks=("done",))
+    client = TestClient(
+        create_app(session, model="fake-model", chat_template=qwen35)
+    )
+    resp = client.post(
+        "/v1/responses",
+        json={
+            "model": "fake-model",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "hi"},
+                        {"type": "input_image", "image_url": "http://x/i.png"},
+                    ],
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 422
+    assert "no vision encoder" in resp.json()["error"]["message"]
+
+    session2 = FakeSession(chunks=("seen",))
+    client2 = TestClient(
+        create_app(
+            session2, model="fake-model", chat_template=qwen35, vision_capability=True
+        )
+    )
+    ok = client2.post(
+        "/v1/responses",
+        json={
+            "model": "fake-model",
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "hi"},
+                        {"type": "input_image", "image_url": "http://x/i.png"},
+                    ],
+                }
+            ],
+        },
+    )
+    assert ok.status_code == 200
+    assert ok.json()["status"] == "completed"
+
+
+def test_resolve_runtime_vision_capability(tmp_path):
+    from server.runtime import resolve_runtime_vision_capability
+
+    assert not resolve_runtime_vision_capability(tmp_path)
+    (tmp_path / "layout_decode.json").write_text(
+        '{"config": {"context_length": 1024}}', encoding="utf-8"
+    )
+    assert not resolve_runtime_vision_capability(tmp_path)
+    (tmp_path / "layout_decode.json").write_text(
+        '{"config": {"vision_num_patches": 256, "projector_out_dim": 1024}}',
+        encoding="utf-8",
+    )
+    assert resolve_runtime_vision_capability(tmp_path)
+    (tmp_path / "layout_decode.json").write_text(
+        '{"config": {"vision_num_patches": 256}}', encoding="utf-8"
+    )
+    assert not resolve_runtime_vision_capability(tmp_path)
+
+
+def test_streaming_thinking_flows_with_tools_attached():
+    two_calls = (
+        "<think>\nchecking files\n</think>\n"
+        '<tool_call>{"name": "a", "arguments": {}}</tool_call>'
+        '<tool_call>{"name": "b", "arguments": {}}</tool_call>'
+    )
+    session = FakeSession(chunks=(two_calls,))
+    client = TestClient(
+        create_app(
+            session,
+            model="fake-model",
+            chat_template=NATIVE_TOOL_TEMPLATE,
+            tool_protocol="tagged_json",
+        )
+    )
+    tools = [
+        {"type": "function", "name": "a", "parameters": {}},
+        {"type": "function", "name": "b", "parameters": {}},
+    ]
+    resp = client.post(
+        "/v1/responses",
+        json={
+            "model": "fake-model",
+            "input": "hi",
+            "stream": True,
+            "reasoning": {"effort": "medium"},
+            "tools": tools,
+        },
+    )
+    assert resp.status_code == 200
+    events = iter_sse(resp.text)
+    assert_valid_stream(events)
+    deltas = [p for ev, p in events if ev == "response.reasoning_text.delta"]
+    assert deltas, "thinking must stream while tools are attached"
+    assert any("checking files" in d["delta"] for d in deltas)
+    done = [p for ev, p in events if ev == "response.completed"]
+    assert done, [ev for ev, _ in events]
+    out = done[0]["response"]["output"]
+    assert [i["name"] for i in out if i["type"] == "function_call"] == ["a", "b"]
+
+
+def test_streaming_thinking_streams_when_prompt_opens_think():
+    template = "{% for m in messages %}{{ m.role }}: {{ m.content }}\n{% endfor %}<think>\n"
+    session = FakeSession(chunks=("pondering", " this", "</think>", "answer"))
+    client = TestClient(
+        create_app(session, model="fake-model", chat_template=template)
+    )
+    resp = client.post(
+        "/v1/responses",
+        json={
+            "model": "fake-model",
+            "input": "hi",
+            "stream": True,
+            "reasoning": {"effort": "medium"},
+        },
+    )
+    assert resp.status_code == 200
+    events = iter_sse(resp.text)
+    assert_valid_stream(events)
+    deltas = [p for ev, p in events if ev == "response.reasoning_text.delta"]
+    assert len(deltas) > 1
+    assert "".join(d["delta"] for d in deltas) == "pondering this"
+    done = [p for ev, p in events if ev == "response.completed"]
+    out = done[0]["response"]["output"]
+    thinking = next(i for i in out if i["type"] == "reasoning")
+    assert thinking["content"][0]["text"] == "pondering this"
+
+
+def test_parallel_tool_calls_all_emitted_qwen_xml():
+    two_calls = (
+        "<tool_call><function=a><parameter=x>1</parameter></function></tool_call>"
+        "<tool_call><function=b><parameter=y>2</parameter></function></tool_call>"
+    )
+    tools = [
+        {"type": "function", "name": "a", "parameters": {}},
+        {"type": "function", "name": "b", "parameters": {}},
+    ]
+    session = FakeSession(chunks=(two_calls,))
+    client = TestClient(
+        create_app(
+            session,
+            model="fake-model",
+            chat_template=NATIVE_TOOL_TEMPLATE,
+            tool_protocol="qwen_xml",
+        )
+    )
+    resp = client.post(
+        "/v1/responses",
+        json={"model": "fake-model", "input": "hi", "tools": tools},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "completed"
+    assert [i["name"] for i in data["output"] if i["type"] == "function_call"] == [
+        "a",
+        "b",
+    ]
+
+    session2 = FakeSession(chunks=(two_calls,))
+    client2 = TestClient(
+        create_app(
+            session2,
+            model="fake-model",
+            chat_template=NATIVE_TOOL_TEMPLATE,
+            tool_protocol="qwen_xml",
+        )
+    )
+    streamed = client2.post(
+        "/v1/responses",
+        json={"model": "fake-model", "input": "hi", "stream": True, "tools": tools},
+    )
+    events = iter_sse(streamed.text)
+    assert_valid_stream(events)
+    added = [p for ev, p in events if ev == "response.output_item.added"]
+    assert len([p for p in added if p["item"]["type"] == "function_call"]) == 2
+    done = [p for ev, p in events if ev == "response.completed"]
+    out = done[0]["response"]["output"]
+    assert [i["name"] for i in out if i["type"] == "function_call"] == ["a", "b"]

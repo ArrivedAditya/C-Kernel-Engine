@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "version" / "v8" / "scripts"))
 
-from ck_serve_v8 import _StreamThinkSplitter, split_thinking
+from ck_serve_v8 import _prompt_opens_thinking, _StreamThinkSplitter, split_thinking
 
 
 def test_split_thinking_open_and_close_markers():
@@ -66,3 +66,35 @@ def test_stream_splitter_no_markers_emits_only_answer_on_flush():
         states.extend(splitter.feed(chunk))
     states.extend(splitter.flush())
     assert states == [("answer", "plain answer")]
+
+
+def test_prompt_opens_thinking_detects_unclosed_marker():
+    assert _prompt_opens_thinking("<|im_start|>assistant\n<think>\n")
+    assert _prompt_opens_thinking("a<think>b</think>c<think>")
+    assert not _prompt_opens_thinking("<|im_start|>assistant\n")
+    assert not _prompt_opens_thinking("a<think>b</think>c")
+    assert not _prompt_opens_thinking("")
+
+
+def test_stream_splitter_prompt_opened_thinking_streams_token_wise():
+    splitter = _StreamThinkSplitter(start_thinking=True)
+    thinking = []
+    answer = []
+    for chunk in ("The user", " is asking", " for this", "</think>", "done"):
+        for state, delta in splitter.feed(chunk):
+            (thinking if state == "thinking" else answer).append(delta)
+    for state, delta in splitter.flush():
+        (thinking if state == "thinking" else answer).append(delta)
+    assert len(thinking) > 1
+    assert "".join(thinking) == "The user is asking for this"
+    assert "".join(answer) == "done"
+
+
+def test_stream_splitter_prompt_opened_strips_reemitted_open_tag():
+    splitter = _StreamThinkSplitter(start_thinking=True)
+    thinking = []
+    for chunk in ("<thi", "nk>\nhello", "</think>"):
+        for state, delta in splitter.feed(chunk):
+            assert state == "thinking"
+            thinking.append(delta)
+    assert "".join(thinking) == "hello"
