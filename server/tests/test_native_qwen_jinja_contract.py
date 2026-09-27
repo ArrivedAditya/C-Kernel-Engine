@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from server.live import _extract_tool_calls_from_text, create_app, create_live_app_from_run_dir
+from server.live import _extract_tool_calls_from_text, _strip_tool_json_from_text, create_app, create_live_app_from_run_dir
 from server.runtime import load_manifest_templates, load_tool_protocol
 from server.session_v8 import CK_SESSION_REQUEST_RAW_PROMPT
 
@@ -51,6 +51,99 @@ class RecordingSession:
 
     def close(self):
         pass
+
+
+def test_qwen_code_xml_accepts_terminal_envelope_after_plain_preamble() -> None:
+    envelope = (
+        '<function_calls><invoke name="read_file">'
+        '<parameter name="file_path">/tmp/a</parameter>'
+        '</invoke></function_calls>'
+    )
+    generated = "I'll read the file first.\n\n" + envelope
+    schema = {"read_file": TOOL["parameters"]}
+    calls, error, _ = _extract_tool_calls_from_text(
+        generated, {"read_file"}, tool_syntax="qwen_code_xml", tool_parameters=schema,
+    )
+    assert error is None
+    assert len(calls) == 1
+    assert json.loads(calls[0]["arguments"]) == {"file_path": "/tmp/a"}
+    assert _strip_tool_json_from_text(generated, calls, tool_syntax="qwen_code_xml") == "I'll read the file first."
+
+    for invalid in (
+        "Example: " + envelope,
+        "Here is XML:\n" + envelope,
+        "```xml\n" + envelope,
+        "I'll read it.\n\n" + envelope + "\nDone.",
+        "I'll read it.\n\n" + envelope + envelope,
+    ):
+        rejected, code, _ = _extract_tool_calls_from_text(
+            invalid, {"read_file"}, tool_syntax="qwen_code_xml", tool_parameters=schema,
+        )
+        assert not rejected and code == "malformed"
+
+
+def test_qwen_code_xml_preamble_and_tool_round_trip() -> None:
+    output = (
+        "I'll read the file first.\n\n"
+        '<function_calls><invoke name="read_file">'
+        '<parameter name="file_path">/tmp/a</parameter>'
+        '</invoke></function_calls>'
+    )
+    session = RecordingSession([output, "The file says CKE_OK."])
+    client = TestClient(create_app(
+        session, model="qwen-local", chat_template=TOOL_VARIANT.read_text(),
+        tool_protocol="qwen_code_xml",
+    ))
+    response = client.post("/v1/responses", json={
+        "model": "qwen-local", "input": "Read /tmp/a", "tools": [TOOL],
+        "parallel_tool_calls": False,
+    })
+    assert response.status_code == 200, response.text
+    first = response.json()
+    assert first["status"] == "completed"
+    assert first["output_text"] == "I'll read the file first."
+    call = next(item for item in first["output"] if item["type"] == "function_call")
+    continuation = client.post("/v1/responses", json={
+        "model": "qwen-local", "previous_response_id": first["id"],
+        "input": [{"type": "function_call_output", "call_id": call["call_id"],
+                   "output": "CKE_OK"}], "tools": [TOOL],
+    })
+    assert continuation.status_code == 200, continuation.text
+    assert continuation.json()["output_text"] == "The file says CKE_OK."
+
+
+def test_qwen_code_xml_preserves_raw_edit_strings() -> None:
+    old = "<!-- exact old comment -->"
+    new = "<p>First & second</p>\n<p>  indented\n</p>\n"
+    generated = (
+        '<function_calls><invoke name="edit">'
+        '<parameter name="file_path">/tmp/page.html</parameter>'
+        f'<parameter name="old_string">{old}</parameter>'
+        f'<parameter name="new_string">{new}</parameter>'
+        '</invoke></function_calls>'
+    )
+    schema = {"edit": {"type": "object", "properties": {
+        "file_path": {"type": "string"}, "old_string": {"type": "string"},
+        "new_string": {"type": "string"},
+    }, "required": ["file_path", "old_string", "new_string"],
+        "additionalProperties": False}}
+    calls, error, _ = _extract_tool_calls_from_text(
+        generated, {"edit"}, tool_syntax="qwen_code_xml", tool_parameters=schema,
+    )
+    assert error is None
+    assert json.loads(calls[0]["arguments"]) == {
+        "file_path": "/tmp/page.html", "old_string": old, "new_string": new,
+    }
+    for broken in (
+        generated.replace("</parameter>", "", 1),
+        generated.replace("</function_calls>", "trailing</function_calls>"),
+        generated.replace('<parameter name="new_string">',
+                          '<parameter name="new_string">x</parameter><parameter name="new_string">'),
+    ):
+        rejected, code, _ = _extract_tool_calls_from_text(
+            broken, {"edit"}, tool_syntax="qwen_code_xml", tool_parameters=schema,
+        )
+        assert not rejected and code == "malformed"
 
 
 def _bundle(tmp_path: Path) -> tuple[str, str]:
@@ -147,6 +240,7 @@ def test_operator_jinja_variant_is_selected_without_inline_tool_marker(tmp_path:
     assert response.status_code == 200, response.text
     assert any(item["type"] == "function_call" for item in response.json()["output"])
     assert "XML envelope" in session.prompts[0]
+    assert "Call only one function per response" in session.prompts[0]
     assert "<tool_call>" not in session.prompts[0]
     assert session.flags[0] & CK_SESSION_REQUEST_RAW_PROMPT
     call = next(item for item in response.json()["output"] if item["type"] == "function_call")

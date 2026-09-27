@@ -1422,6 +1422,22 @@ make test-native-session-v8</pre>
         in the prompt. Install it in a dedicated bundle and bind <code>qwen_code_xml</code> to its
         exact bytes; ordinary chat continues to use the native sidecar.
     </p>
+    <p>
+        A separate native-BPE input limit once reduced a 33,379-byte Qwen Code tool prompt
+        to 304 CKE tokens instead of the independent GGUF tokenizer's 7,773 tokens. A rebuilt
+        model, engine, and tokenizer matched all 7,773 IDs and completed a cached
+        <code>read_file</code> and tool-result continuation. Rebuild those three libraries
+        together; replacing only the tokenizer under an older generated model is unsafe.
+        The declared <code>qwen_code_xml</code> protocol accepts a short plain-text
+        introduction followed by one terminal XML envelope. It still rejects inline
+        examples, fenced XML, trailing text, and unadvertised tools. Its delimited
+        parameter bodies preserve raw HTML and code for edit arguments; a literal
+        closing <code>&lt;/parameter&gt;</code> inside a value is outside this
+        compatibility protocol. One cached Qwen Code run recovered from a
+        read-before-edit rejection, read the file, and applied a bounded HTML
+        edit in a disposable worktree. That does not certify general edit-and-test
+        reliability, cancellation recovery, or 262K actual input.
+    </p>
     <div class="cmd-block">
         <button class="copy-btn" type="button">Copy</button>
 <pre>RUN_DIR=/path/to/dedicated/qwen38-generated-runtime

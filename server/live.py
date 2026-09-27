@@ -27,7 +27,6 @@ import re
 import threading
 import time
 import uuid
-import xml.etree.ElementTree as ET
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -852,38 +851,68 @@ def _extract_tool_calls_from_text(
     else:
         tool_blocks = []
     candidates: list[str | dict[str, Any]] = []
-    if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and stripped.startswith("<function_calls"):
+    xml_envelope = stripped
+    if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and not stripped.startswith("<function_calls"):
+        marker = "<function_calls"
+        start = stripped.find(marker)
+        if start >= 0:
+            preamble = stripped[:start]
+            # This protocol permits one short plain-text introduction before a
+            # terminal XML envelope. It never mines inline examples or fenced
+            # code for executable calls.
+            if (
+                not preamble.endswith("\n\n")
+                or len(preamble) > 1024
+                or any(char in preamble for char in "<>`")
+                or stripped.count(marker) != 1
+            ):
+                return [], "malformed", "function_calls XML must be a terminal envelope"
+            xml_envelope = stripped[start:]
+    if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and xml_envelope.startswith("<function_calls"):
         try:
-            if "<!" in stripped:
-                raise ValueError("XML declarations are not allowed in tool calls")
-            root = ET.fromstring(stripped)
-            if root.tag != "function_calls" or root.attrib or (root.text or "").strip():
-                raise ValueError("expected a function_calls root")
-            if not len(root):
-                raise ValueError("empty function_calls envelope")
-            for invoke in root:
-                if invoke.tag != "invoke" or set(invoke.attrib) != {"name"} or (invoke.text or "").strip():
+            opening, closing = "<function_calls>", "</function_calls>"
+            if not xml_envelope.startswith(opening) or not xml_envelope.endswith(closing):
+                raise ValueError("expected a complete function_calls envelope")
+            # This is a delimited tool protocol, not general XML. Treat the
+            # parameter body as raw text so edit arguments retain HTML, code,
+            # ampersands, whitespace, and comments byte-for-byte. The closing
+            # </parameter> delimiter itself cannot occur in a raw value.
+            body = xml_envelope[len(opening):-len(closing)]
+            pos = 0
+            while pos < len(body):
+                pos += len(body[pos:]) - len(body[pos:].lstrip())
+                if pos == len(body):
+                    break
+                invoke = re.match(r'<invoke name="([A-Za-z_][\w.-]*)">', body[pos:])
+                if invoke is None:
                     raise ValueError("invalid invoke element")
-                name = invoke.attrib["name"]
-                if not re.fullmatch(r"[A-Za-z_][\w.-]*", name):
-                    raise ValueError("invalid function name")
+                name = invoke.group(1)
+                pos += invoke.end()
                 parameters: dict[str, Any] = {}
-                for param in invoke:
-                    if param.tag != "parameter" or set(param.attrib) != {"name"} or len(param):
+                while True:
+                    pos += len(body[pos:]) - len(body[pos:].lstrip())
+                    if body.startswith("</invoke>", pos):
+                        pos += len("</invoke>")
+                        break
+                    param = re.match(r'<parameter name="([A-Za-z_][\w.-]*)">', body[pos:])
+                    if param is None:
                         raise ValueError("invalid parameter element")
-                    key = param.attrib["name"]
-                    if not re.fullmatch(r"[A-Za-z_][\w.-]*", key) or key in parameters:
-                        raise ValueError(f"duplicate or invalid tool parameter {key!r}")
-                    parameters[key] = declared_parameter_value(name, key, param.text or "")
-                    if (param.tail or "").strip():
-                        raise ValueError("text outside a parameter element")
-                if (invoke.tail or "").strip():
-                    raise ValueError("text outside an invoke element")
+                    key = param.group(1)
+                    if key in parameters:
+                        raise ValueError(f"duplicate tool parameter {key!r}")
+                    pos += param.end()
+                    end = body.find("</parameter>", pos)
+                    if end < 0:
+                        raise ValueError(f"unterminated tool parameter {key!r}")
+                    parameters[key] = declared_parameter_value(name, key, body[pos:end])
+                    pos = end + len("</parameter>")
                 candidates.append({"name": name, "arguments": parameters})
-        except (ET.ParseError, ValueError) as exc:
+            if not candidates:
+                raise ValueError("empty function_calls envelope")
+        except ValueError as exc:
             return [], "malformed", f"malformed function_calls XML: {exc}"
     elif tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and "<function_calls" in stripped:
-        return [], "malformed", "function_calls XML must be the entire response"
+        return [], "malformed", "function_calls XML must be a terminal envelope"
     if tool_blocks and tool_syntax in {_TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML}:
         for block in tool_blocks:
             match = re.fullmatch(
@@ -1007,8 +1036,10 @@ def _strip_tool_json_from_text(
         except json.JSONDecodeError:
             pass
     remaining = text
-    if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and stripped.startswith("<function_calls"):
-        return ""
+    if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML:
+        start = stripped.find("<function_calls")
+        if start >= 0:
+            return stripped[:start].strip()
     if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML}:
         remaining = re.sub(
             r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL | re.IGNORECASE
