@@ -11316,7 +11316,7 @@
         "head_dim"
       ],
       "constraints": {
-        "notes": "Full bidirectional, unmasked attention. Batch one, token-major contiguous FP32 Q/K/V and output. All tokens are valid. Caller-owned nonaliasing buffers and scratch. Checked spans, nonfinite and FP32-score-overflow rejection before output writes; no internal allocation."
+        "notes": "Softmax maximum is computed from stored FP32 scores; exponent differences are nonpositive and at least one weight is exactly one. Full bidirectional, unmasked attention. Batch one, token-major contiguous FP32 Q/K/V and output. All tokens are valid. Caller-owned nonaliasing buffers and scratch. Checked spans, nonfinite and FP32-score-overflow rejection before output writes; no internal allocation."
       },
       "impl": {
         "function": "attention_full_token_major_f32_checked",

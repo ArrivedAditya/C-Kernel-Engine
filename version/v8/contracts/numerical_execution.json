@@ -7,7 +7,7 @@
       "operator_family": "attention",
       "status": "validated",
       "storage": {"input": "fp32", "weight": "none", "output": "fp32"},
-      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp64", "contraction": "disabled", "evaluation_order": "validate_geometry_inputs_and_all_fp32_score_ranges_before_writes_then_ascending_query_head_key_channel_fp64_dot_then_fp32_score_store_then_stable_fp64_softmax_then_ascending_key_fp64_value_sum_then_fp32_output_store"},
+      "compute": {"input": "fp32", "weight": "none", "accumulator": "fp64", "contraction": "disabled", "evaluation_order": "validate_geometry_inputs_and_all_fp32_score_ranges_before_writes_then_ascending_query_head_key_channel_fp64_dot_then_fp32_score_store_then_max_of_stored_fp32_scores_then_stable_fp64_softmax_then_ascending_key_fp64_value_sum_then_fp32_output_store"},
       "rounding": {"mode": "rne", "points": ["activation_intermediate_store", "softmax_probability_store", "output_store"]},
       "reduction": {"kind": "sum", "order": "left_to_right", "partial_accumulator": "fp64", "merge_order": "none"},
       "threading": {"work_partition": "serial", "split_strategy": "serial", "deterministic": true, "thread_count_changes_arithmetic_order": false},

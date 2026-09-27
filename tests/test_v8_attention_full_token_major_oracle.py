@@ -81,6 +81,46 @@ class FullTokenMajorAttentionOracleTest(unittest.TestCase):
                 self.assertEqual(again, 0)
                 np.testing.assert_array_equal(actual, repeated)
 
+    def test_single_token_identity_with_large_signed_scores(self):
+        # A one-element softmax is exactly one regardless of its finite score.
+        for query, key in ((1e10, 1e10), (-1e10, -1e10),
+                           (1e10, -1e10), (-1e10, 1e10), (0., 0.),
+                           (1e19, 1e19), (1e19, -1e19)):
+            with self.subTest(query=query, key=key):
+                q = np.array([[query]], dtype=np.float32)
+                k = np.array([[key]], dtype=np.float32)
+                v = np.array([[2.]], dtype=np.float32)
+                status, actual = self.run_kernel(q, k, v, 1)
+                self.assertEqual(status, 0)
+                self.assertTrue(np.isfinite(actual).all())
+                np.testing.assert_array_equal(actual, v)
+
+    def test_large_equal_and_opposing_scores(self):
+        for sign in (-1., 1.):
+            with self.subTest(sign=sign):
+                q = np.full((3, 1), 1e10, dtype=np.float32)
+                k = np.full((3, 1), sign * 1e10, dtype=np.float32)
+                v = np.array([[-6.], [2.], [10.]], dtype=np.float32)
+                status, actual = self.run_kernel(q, k, v, 1)
+                self.assertEqual(status, 0)
+                self.assertTrue(np.isfinite(actual).all())
+                # Equal rounded scores must produce uniform probabilities.
+                np.testing.assert_array_equal(actual, np.full((3, 1), 2., dtype=np.float32))
+        q = np.array([[1e10], [-1e10], [0.]], dtype=np.float32)
+        k = np.array([[1e10], [-1e10], [0.]], dtype=np.float32)
+        v = np.array([[4.], [-2.], [1.]], dtype=np.float32)
+        status, actual = self.run_kernel(q, k, v, 1)
+        self.assertEqual(status, 0)
+        self.assertTrue(np.isfinite(actual).all())
+        np.testing.assert_array_equal(actual, np.array([[4.], [-2.], [1.]], dtype=np.float32))
+        # Zero logits with extreme finite values are still a convex combination.
+        q.fill(0.)
+        v = np.full((3, 1), np.finfo(np.float32).max, dtype=np.float32)
+        status, actual = self.run_kernel(q, k, v, 1)
+        self.assertEqual(status, 0)
+        self.assertTrue(np.isfinite(actual).all())
+        np.testing.assert_array_equal(actual, v)
+
     def test_pinned_kokoro_py_torch_capture(self):
         path = ROOT / "tests/fixtures/tts/kokoro_attention_context_pinned.npz"
         meta = json.loads(path.with_suffix(".json").read_text())
@@ -116,6 +156,7 @@ class FullTokenMajorAttentionOracleTest(unittest.TestCase):
         status, actual = self.run_kernel(*arrays, 12)
         self.assertEqual(status, 0)
         self.assertTrue(np.isfinite(expected).all())
+        self.assertTrue(np.isfinite(actual).all())
         error = np.abs(actual - expected)
         self.assertLessEqual(float(error.max()), 1e-5,
                              f"PyTorch {torch.__version__}; worst sample "
@@ -129,7 +170,10 @@ class FullTokenMajorAttentionOracleTest(unittest.TestCase):
         infinite[0, 0] = np.inf
         huge = data.copy()
         huge[0, 0] = np.finfo(np.float32).max
+        late_overflow = data.copy()
+        late_overflow[-1, -1] = np.finfo(np.float32).max
         cases = [
+            (late_overflow, late_overflow, data, {}),
             (data, data, data, {"query_elements": 29}),
             (data, data, data, {"key_elements": 29}),
             (data, data, data, {"value_elements": 29}),

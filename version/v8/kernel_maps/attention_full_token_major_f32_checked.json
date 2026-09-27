@@ -16,7 +16,7 @@
   ],
   "scratch": [{"name": "scores", "dtype": "fp32", "shape": ["T"], "size_bytes": "4 * T", "size_resolution": "required", "lifetime": "kernel_call", "alignment": 64, "layout": "contiguous", "access": "read_write", "storage_class": "scratch", "consumption": "required"}],
   "dims": ["query_elements", "key_elements", "value_elements", "output_elements", "scratch_bytes", "tokens", "heads", "head_dim"],
-  "constraints": {"notes": "Full bidirectional, unmasked attention. Batch one, token-major contiguous FP32 Q/K/V and output. All tokens are valid. Caller-owned nonaliasing buffers and scratch. Checked spans, nonfinite and FP32-score-overflow rejection before output writes; no internal allocation."},
+  "constraints": {"notes": "Softmax maximum is computed from stored FP32 scores; exponent differences are nonpositive and at least one weight is exactly one. Full bidirectional, unmasked attention. Batch one, token-major contiguous FP32 Q/K/V and output. All tokens are valid. Caller-owned nonaliasing buffers and scratch. Checked spans, nonfinite and FP32-score-overflow rejection before output writes; no internal allocation."},
   "impl": {
     "function": "attention_full_token_major_f32_checked",
     "c_declaration": "int attention_full_token_major_f32_checked(const float *query, size_t query_elements, const float *key, size_t key_elements, const float *value, size_t value_elements, float *output, size_t output_elements, float *scratch, size_t scratch_bytes, size_t tokens, size_t heads, size_t head_dim);",

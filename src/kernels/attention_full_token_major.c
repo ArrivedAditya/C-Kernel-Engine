@@ -67,7 +67,11 @@ int attention_full_token_major_f32_checked(
                 const float *kv = key + k * width + h * head_dim;
                 const double s = score(q, kv, head_dim, scale);
                 scratch[k] = (float)s;
-                if (s > maximum) maximum = s;
+                /* Softmax consumes rounded FP32 scores. Its maximum must be
+                 * drawn from those same values: using the unrounded dot can
+                 * make even a one-token softmax overflow or underflow. At least
+                 * one exponent is then exactly exp(0), and all are in [0, 1]. */
+                if ((double)scratch[k] > maximum) maximum = scratch[k];
             }
             double denominator = 0.0;
             for (size_t k = 0; k < tokens; ++k) {

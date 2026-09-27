@@ -4,7 +4,9 @@
 #include <stddef.h>
 
 /* Full, unmasked self-attention over token-major [tokens, heads * head_dim]
- * FP32 Q/K/V. Scores and softmax use FP64 scalar accumulation. Output uses the
+ * FP32 Q/K/V. Dots use FP64 scalar accumulation then FP32 score storage.
+ * Softmax subtracts the maximum of those stored scores, exponentiates in FP64,
+ * stores FP32 weights, and sums/normalizes in FP64. Output uses the
  * same token-major layout. All buffers are caller owned and must not alias.
  * scratch_bytes reserves at least tokens floats. Returns zero on success; invalid
  * geometry, capacity, or nonfinite input returns -1 before output is written.
