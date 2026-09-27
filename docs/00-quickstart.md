@@ -1,76 +1,124 @@
 # Quickstart Guide
 
-This guide gets you from a fresh checkout to a deterministic generated-token output with the current **v8** inference lane in a few minutes. The v8 runner downloads a supported model, converts it, generates C, compiles a model runtime, and runs it — all from one command.
-
-For depth, see the [v8 runbook](site/_pages/v8-runbook.html) and [version/v8/README.md](../version/v8/README.md).
+This guide will get you up and running with the C-Kernel-Engine in less than 5 minutes.
 
 ## Prerequisites
 
-- **Linux** with a working C toolchain (**GCC** with OpenMP) and **Make**
-- **Python 3** with `venv`
-- Enough RAM for the model you pick (the example below is a 270M-parameter model)
+- **Linux** (tested on Ubuntu 20.04+)
+- **GCC** (with OpenMP support)
+- **Make**
+- **Python 3** (for running tests and PyTorch comparisons)
+- **PyTorch** (only for running comparison tests)
 
 ## 1. Build the Engine
 
+The project uses a standard Makefile. To build the shared library and the IR demo tool:
+
 ```bash
+# Core runtime (kernels + orchestration)
 make
+
+# IR + codegen tool (HF config.json -> IR -> generated C)
+make build/ck_ir_demo
+
+# Optional: build the orchestrator CLI ("ck")
+make ck-cli
 ```
 
-This builds `build/libckernel_engine.so`, the core runtime library. The v8 runner also (re)builds the engine and tokenizer libraries itself when you pass `--force-compile`, so a stale build can never be paired with freshly generated model code.
+This will create:
+- `build/libckernel_engine.so`: The main runtime library (kernels + orchestration).
+- `build/ck_ir_demo`: The compiler tool that converts a model `config.json` -> generated C.
+- `build/ck`: Optional CLI that wires download/convert/codegen for you.
 
-## 2. Set Up the Python Environment
+## 2. Run the Compiler Demo
 
-The v8 runner needs the packages in `version/v8/requirements.txt`:
+The "Hello World" of this engine is compiling a standard Llama-style configuration into a C runtime.
+
+We have a default configuration file ready: `version/legacy/v6.6/configs/default.config.json`.
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -r version/v8/requirements.txt
+make ck
 ```
 
-If you skip this step, the `cks-v8-run` wrapper detects the missing environment and offers to bootstrap it interactively.
+**What just happened?**
+1. The tool parsed `version/legacy/v6.6/configs/default.config.json`.
+2. It generated an **Intermediate Representation (IR)** of the model's compute graph.
+3. It emitted a `generated_model.c` file (conceptually) or printed the skeleton to stdout.
 
-## 3. Convert, Compile, and Run a Model
+You should see output like:
 
-One command handles the whole flow — download, convert to BUMP weights, build the v8 IR, generate C, compile `libmodel.so`, and generate tokens:
+```text
+=== Forward IR ===
+CKIRGraph: layers=32, hidden_size=4096 ...
+  L0 N0 RMSNORM       outputs=[L0:N0:0]              inputs=[IN]
+  L0 N1 LINEAR_QKV    outputs=[L0:N1:0]              inputs=[L0:N0]
+  ...
+```
+
+## 3. Run the Unit Tests
+
+We use Python to verify that our C kernels match PyTorch's output exactly.
 
 ```bash
-version/v8/scripts/cks-v8-run run \
-  hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf \
-  --context-len 1024 \
-  --force-convert --force-compile \
-  --chat-template auto \
-  --prompt "Give me a concise example of C code." \
-  --max-tokens 64 \
-  --temperature 0.0
+make test
 ```
 
-What happens, step by step:
+This command will:
+1. Build individual shared libraries for each kernel family (e.g., `libckernel_gelu.so`).
+2. Run the Python scripts in `unittest/`.
+3. Report `OK` if the C implementation matches PyTorch within floating-point tolerance.
 
-1. **Download** — the `hf://repo/file.gguf` source is fetched into the local model cache (`~/.cache/ck-engine-v8/models`, override with `CK_CACHE_DIR`). A local `.gguf` path or an existing run directory works too.
-2. **Convert** — weights are converted to the engine's BUMP format (`--force-convert` forces a fresh conversion).
-3. **Compile** — the v8 IR is built, C code is generated, and `libmodel.so` is compiled and link-checked (`--force-compile` force-builds the engine and tokenizer libraries first).
-4. **Generate** — `--temperature 0.0` gives deterministic greedy decoding, and `--prompt` + `--max-tokens` make the run non-interactive and bounded.
+## 4. Generate a Standalone Runtime
 
-Notes:
-
-- **Gemma 3**: keep `--chat-template auto` for the instruction/chat path. `--chat-template none` is raw continuation mode and requires `--allow-raw-prompt`.
-- `--context-len` is context *capacity*, not consumed prompt length — allocate only what fits your RAM.
-- Models are also accepted as **safetensors** checkpoints (an `hf://` repo without a `.gguf` filename, or a local checkpoint directory); those convert straight to BUMP via the safetensors path instead of GGUF.
-- Add `--generate-visualizer` to emit an interactive IR report for the run.
-
-## 4. Reuse the Runtime
-
-Re-running the same command without `--force-convert --force-compile` reuses the cached conversion and compiled runtime. To see the runtimes you have built:
+To generate a full C file `ai.c` that you could compile and run (this feature is currently in active development):
 
 ```bash
-./build/ck-cli-v8 --list
+./build/ck_ir_demo version/legacy/v6.6/configs/default.config.json --emit build/ai.c
 ```
 
-## 5. Go Deeper
+Open `build/ai.c` to see how the engine structures the forward pass using the "Header / Block / Footer" pattern.
 
-- [v8 runbook](site/_pages/v8-runbook.html) — the operator runbook: promoted text-family bring-up commands, the validated Qwen3-VL multimodal path, audio, and the certified FP32 training starter.
-- [version/v8/README.md](../version/v8/README.md) — canonical per-family bring-up commands (Qwen, Gemma, GLM4, Nemotron, and more) and what each support level means.
-- `version/v8/scripts/cks-v8-run run --help` — full runner option list.
+## 5. Generate a `libmodel.so` With Prefill + Decode (KV Cache)
+
+For inference you typically want:
+- **Prefill** once (process the whole prompt).
+- **Decode** many times (one token at a time) using a KV cache.
+
+The codegen tool can emit a library-mode C file that exports a stable API:
+
+```bash
+./build/ck_ir_demo version/legacy/v6.6/configs/default.config.json --emit build/model.c --emit-lib
+```
+
+This produces:
+- `build/model.c` (generated model runtime + exported API)
+- `build/model.c.kernels` (one kernel source path per line to link into the shared object)
+
+Compile it into a self-contained shared library:
+
+```bash
+cc -O3 -fPIC -fopenmp -shared -Iinclude -o build/libmodel.so build/model.c $(cat build/model.c.kernels) -lm
+```
+
+### 5.1 Inference Call Sequence
+
+At runtime:
+
+- Initialize: `ck_model_init(weights.bump)`
+- Enable KV cache: `ck_model_kv_cache_enable(capacity)`
+- **Prefill**: `ck_model_embed_tokens(prompt_tokens, n)` then `ck_model_forward(NULL)`
+- **Decode**: repeatedly call `ck_model_decode(next_token, NULL)`
+
+The helpers `ck_model_get_logits()` / `ck_model_get_active_tokens()` let you read logits for sampling.
+
+### 5.2 Training / Backprop
+
+Training uses the full forward+backward graph and does **not** use KV-cache decode:
+
+- Enable training: set `CK_ENABLE_TRAINING=1` before `ck_model_init(...)`, or call `ck_model_enable_training(lr)`
+- Run `ck_model_forward(NULL)` then `ck_model_backward(tokens, targets, &loss)`
+
+KV-cache decode is explicitly **disabled when training is enabled**.
 
 ## v7 SVG Training Docs
 
