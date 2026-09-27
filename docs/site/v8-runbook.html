@@ -2301,8 +2301,9 @@ make test-native-session-v8</pre>
         safetensors conversion stages its tokenizer template assets. The live server loads the
         selected sidecar, renders the conversation with Jinja, and passes that raw prompt to
         the native tokenizer. A separate <code>tool_protocol.json</code> declares how tool output
-        is parsed and binds the protocol to the selected template's SHA-256. A failed render or
-        stale hash is an error, not a reason to silently switch prompt formats.
+        is parsed and binds the protocol to the selected template's SHA-256. An unreadable
+        sidecar, empty render, or stale hash is an error, not a reason to silently switch
+        prompt formats.
     </p>
     <p>
         A cached GGUF conversion can recover a missing native sidecar by reading only GGUF

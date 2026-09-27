@@ -211,3 +211,38 @@ def test_broken_selected_jinja_fails_before_generation(tmp_path: Path) -> None:
     assert result.status_code == 422
     assert result.json()["error"]["code"] == "template_render_failed"
     assert not session.prompts
+
+
+def test_blank_selected_jinja_does_not_fall_back_for_simple_request() -> None:
+    session = RecordingSession(["should not run"])
+    client = TestClient(create_app(
+        session, model="qwen-local", chat_template="{% if false %}ignored{% endif %}",
+    ))
+    result = client.post("/v1/responses", json={
+        "model": "qwen-local", "input": "hello",
+    })
+    assert result.status_code == 422
+    assert result.json()["error"]["code"] == "template_render_failed"
+    assert not session.prompts
+
+
+def test_template_loader_preserves_crlf_bytes_and_rejects_empty_sidecar(tmp_path: Path) -> None:
+    raw = b"{{ messages[0].content }}\r\n"
+    native = tmp_path / "chat_template.jinja"
+    native.write_bytes(raw)
+    (tmp_path / "tool_protocol.json").write_text(json.dumps({
+        "schema": "cke.v8.tool_protocol.v1", "protocol": "qwen_xml",
+        "template_sha256": hashlib.sha256(raw).hexdigest(),
+    }), encoding="utf-8")
+    template, variants, _ = load_manifest_templates(tmp_path)
+    assert template.encode("utf-8") == raw
+    assert load_tool_protocol(tmp_path, template, variants) == "qwen_xml"
+    native.write_bytes(b" \r\n ")
+    with pytest.raises(ValueError, match="native chat template is empty"):
+        load_manifest_templates(tmp_path)
+    native.write_bytes(raw)
+    variants_dir = tmp_path / "additional_chat_templates"
+    variants_dir.mkdir()
+    (variants_dir / "tool_use.jinja").write_bytes(b" ")
+    with pytest.raises(ValueError, match="chat template is empty"):
+        load_manifest_templates(tmp_path)

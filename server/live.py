@@ -1066,6 +1066,11 @@ def create_app(
                     422, str(exc), err_type="invalid_request_error",
                     code="template_render_failed",
                 ) from exc
+            if jinja_rendered is not None and not jinja_rendered.strip():
+                raise _harness_error(
+                    422, "selected chat template rendered an empty prompt",
+                    err_type="invalid_request_error", code="template_render_failed",
+                )
         requires_role_rendering = any(
             m.get("role") != "user" or m.get("tool_calls") for m in messages
         )
