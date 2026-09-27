@@ -25,9 +25,10 @@ make ck-session-v8
 
 A Python prototype may load that library with `ctypes` or `cffi`; a Rust server
 may bind the same C ABI. The host opens one generated model session, then calls
-`ck_session_v8_generate`. CKE performs circuit-derived chat formatting, native
-tokenization, model execution, generated stop/timestamp policy, and native
-detokenization. The callback receives each token ID and its UTF-8 bytes, which
+`ck_session_v8_generate`. For the live server, the selected Jinja sidecar
+renders the conversation and the session consumes that raw prompt. CKE then
+performs native tokenization, model execution, generated stop policy, and
+native detokenization. The callback receives each token ID and its UTF-8 bytes, which
 the HTTP layer can translate into response or SSE events.
 
 Sampling values such as `temperature` and `top_p` belong to each request. They
@@ -75,6 +76,39 @@ as `template_sha256`. A mismatched sidecar fails startup. Serving a converted
 bundle needs its BUMP, generated libraries, tokenizer, and template sidecars;
 the source GGUF is not needed for `--no-build`.
 
+For the pinned Qwen3.8 Q4_K_M tool workload, an operator-authored Jinja
+variant is available at `server/templates/qwen38_tool_use_compat.jinja`. It
+keeps the converted `chat_template.jinja` for ordinary chat while selecting
+the variant for tool requests. The variant avoids placing the literal tool
+delimiter in the prompt, which the cached generated tokenizer splits into
+ordinary tokens. Install it in a dedicated runtime bundle and bind the
+declared wire protocol to its exact bytes:
+
+```bash
+RUN_DIR=/path/to/dedicated/generated-runtime
+install -D -m 644 server/templates/qwen38_tool_use_compat.jinja \
+  "$RUN_DIR/additional_chat_templates/tool_use.jinja"
+RUN_DIR="$RUN_DIR" python3 - <<'PY'
+import hashlib, json, os
+from pathlib import Path
+run = Path(os.environ["RUN_DIR"])
+template = (run / "additional_chat_templates/tool_use.jinja").read_bytes()
+(run / "tool_protocol.json").write_text(json.dumps({
+    "schema": "cke.v8.tool_protocol.v1",
+    "protocol": "qwen_xml",
+    "template_sha256": hashlib.sha256(template).hexdigest(),
+}, indent=2) + "\n")
+PY
+```
+
+Start the server from that bundle without a `--chat-template` or
+`--tool-protocol` override. The variant is a bounded compatibility option for
+this model and harness; other converted models need their own template/token
+parity and tool round-trip evidence. On the cached Ryzen Qwen3.8 Q4_K_M
+runtime, Qwen Code 0.24.6 completed a two-turn `read_file` task through this
+sidecar path and returned the file content exactly. That does not certify
+arbitrary tools or long-context behavior.
+
 Tool output is parsed only under the selected protocol. A template render
 error returns an explicit failure instead of silently switching prompt format.
 Tool-bearing streamed responses buffer model text until it can be validated;
@@ -91,6 +125,7 @@ OPENAI_MODEL=qwen38-27b-q4km \
 QWEN_CODE_MAX_OUTPUT_TOKENS=2048 \
 QWEN_CODE_SYSTEM_SETTINGS_PATH="$CKE_ROOT/server/qwen-code/interactive.settings.json" \
 qwen --bare \
+  --auth-type openai-responses \
   --system-prompt 'Use read_file exactly once when asked, then answer without another tool call.' \
   --allowed-tools read_file \
   --exclude-tools edit,notebook_edit,run_shell_command,get_goal,update_goal \
@@ -98,7 +133,7 @@ qwen --bare \
   --model qwen38-27b-q4km
 ```
 
-Qwen Code 0.21.5 ignores `--core-tools` in bare mode, so the command explicitly
+Qwen Code bare mode ignores `--core-tools`, so the command explicitly
 removes the other bare-mode tools. The interactive profile declares 16,384
 context tokens, a 2,048-token output allowance, and a 30-minute wall deadline.
 The real-model pilot certifies a two-turn `read_file` workflow. Editing, shell
@@ -154,6 +189,13 @@ Run the schema tests with:
 python3 -m pip install -r server/requirements.txt
 make test-server-schema
 ```
+
+`make test-v8-serve-native-jinja` is a nightly contract gate for the pinned
+native Qwen Jinja template. It loads the converted sidecar, renders a tool
+request and result continuation through the live server path, and rejects a
+changed template hash or failed render. The separate cached-model gate must
+compare rendered token IDs with an upstream tokenizer and complete a real
+tool round trip; this contract test does not certify model arithmetic.
 
 Use `cks-v8-run serve` as the model lifecycle entry point rather than adding
 server flags to `ck_chat.py` or `ck_run_v8.py`.

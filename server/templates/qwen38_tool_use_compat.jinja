@@ -1,0 +1,21 @@
+{%- if tools %}
+{{- '<|im_start|>system\nYou have these functions:\n' }}
+{%- for tool in tools %}
+{{- tool | tojson ~ '\n' }}
+{%- endfor %}
+{{- 'If you need a function, reply with exactly one Qwen XML function call using the listed function and parameter names. Do not add text after the call. If you already have the result, reply with the answer only.\n<|im_end|>\n' }}
+{%- endif %}
+{%- for message in messages %}
+{%- if message.role == 'tool' %}
+{{- '<|im_start|>user\nTool result: ' ~ message.content ~ '<|im_end|>\n' }}
+{%- elif message.role == 'assistant' and message.get('tool_calls', []) %}
+{{- '<|im_start|>assistant\n' }}
+{%- for call in message.tool_calls %}
+{{- '{"name":' ~ (call.function.name | tojson) ~ ',"arguments":' ~ (call.function.arguments | tojson) ~ '}' }}
+{%- endfor %}
+{{- '<|im_end|>\n' }}
+{%- else %}
+{{- '<|im_start|>' ~ message.role ~ '\n' ~ message.content ~ '<|im_end|>\n' }}
+{%- endif %}
+{%- endfor %}
+{{- '<|im_start|>assistant\n<think>\n\n</think>\n\n' }}

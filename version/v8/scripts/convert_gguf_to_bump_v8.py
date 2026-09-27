@@ -838,6 +838,36 @@ def _write_native_chat_template_sidecar(
     return sidecar_path
 
 
+def read_native_chat_template_from_gguf(gguf_path: str) -> Optional[str]:
+    """Read only tokenizer.chat_template from a GGUF header.
+
+    Cached converted weights may predate the sidecar. Skip unrelated metadata
+    without materializing the tokenizer vocabulary or any model tensor.
+    """
+    with open(gguf_path, "rb") as f:
+        reader = GGUFReader(f)
+        if reader._read_exact(4) != b"GGUF":
+            raise GGUFError(f"{gguf_path}: invalid GGUF magic")
+        version = reader.u32()
+        if version >= 2:
+            n_tensors, n_kv = reader.u64(), reader.u64()
+        else:
+            n_tensors, n_kv = reader.u32(), reader.u32()
+        if n_tensors > 1_000_000 or n_kv > 1_000_000:
+            raise GGUFError(f"{gguf_path}: GGUF header counts look corrupt")
+        native_template: Optional[str] = None
+        for _ in range(n_kv):
+            key = reader.key_str()
+            value_type = reader.u32()
+            if key == "tokenizer.chat_template":
+                native_template = _normalize_gguf_chat_template(
+                    _gguf_read_value(reader, value_type)
+                )
+            else:
+                _gguf_skip_value(reader, value_type)
+        return native_template
+
+
 def _extract_chat_contract(
     template_data: Optional[dict],
     meta: dict,

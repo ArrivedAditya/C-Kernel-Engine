@@ -1324,6 +1324,12 @@ MAKE_TARGETS = {
         "target": "test-v8-serve-localhost-e2e",
         "timeout_sec": 600,
     },
+    "v8_serve_native_jinja": {
+        "name": "v8 Serve Native Qwen Jinja Tool Contract",
+        "category": "inference",
+        "target": "test-v8-serve-native-jinja",
+        "timeout_sec": 60,
+    },
 }
 
 # Benchmark targets with perf extraction

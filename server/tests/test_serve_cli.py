@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 import hashlib
 import json
+import struct
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "version" / "v8" / "scripts"))
@@ -16,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "version" / "v8" / 
 import pytest
 
 import ck_serve_runtime_v8
+import ck_run_v8
 from ck_serve_v8 import _build_arg_parser, _build_runtime, _resolve_num_threads, main
 
 HF_MODEL = "hf://Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf"
@@ -331,6 +333,33 @@ def test_native_chat_template_sidecar_keeps_exact_source_bytes(tmp_path):
     assert Path(sidecar).read_text(encoding="utf-8") == native
     loaded, _, _ = load_manifest_templates(tmp_path)
     assert loaded == native
+
+
+def test_cached_gguf_restores_native_jinja_and_rejects_stale_bytes(tmp_path):
+    def gguf_string(value: str) -> bytes:
+        raw = value.encode("utf-8")
+        return struct.pack("<Q", len(raw)) + raw
+
+    native = "{%- for message in messages %}{{ message.content }}{%- endfor %}"
+    source = tmp_path / "source.gguf"
+    source.write_bytes(
+        b"GGUF" + struct.pack("<IQQ", 3, 0, 2)
+        + gguf_string("general.name") + struct.pack("<I", 8) + gguf_string("fixture")
+        + gguf_string("tokenizer.chat_template") + struct.pack("<I", 8)
+        + gguf_string(native)
+    )
+    run = tmp_path / "run"
+    run.mkdir()
+    for name in ("weights.bump", "config.json", "weights_manifest.json"):
+        (run / name).write_text("cached", encoding="utf-8")
+
+    ck_run_v8.step_convert_gguf(source, run)
+    sidecar = run / "chat_template.jinja"
+    assert sidecar.read_text(encoding="utf-8") == native
+    ck_run_v8.step_convert_gguf(source, run)
+    sidecar.write_text("stale-template", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="differs from GGUF source"):
+        ck_run_v8.step_convert_gguf(source, run)
 
 
 def test_tool_protocol_requires_selected_template_identity(tmp_path):
