@@ -80,6 +80,15 @@ class BertEmbeddingOracleTest(unittest.TestCase):
             self.assertLessEqual(float(error[worst]), 2e-5,
                                  f"worst token/channel {worst}: {actual[worst]} vs {expected[worst]}")
             self.assertTrue(np.all(output.reshape(-1, 136)[:, 128:] == -777.0))
+        print("TTS_EMBEDDING_EVIDENCE " + json.dumps({
+            "status": "PASS", "provider": "embedding_three_table_layer_norm_f32",
+            "oracle": self.manifest["oracle"], "shape": list(expected.shape),
+            "max_abs_error": float(error[worst]),
+            "worst_token_channel": [int(value) for value in worst],
+            "candidate_sample": float(actual[worst]),
+            "oracle_sample": float(expected[worst]),
+            "reproduce": "python3 -m unittest tests.test_v8_bert_embedding_oracle",
+        }, sort_keys=True))
 
     def test_invalid_ids_and_capacity_preserve_output(self):
         bad_ids = self.data["ids"].copy()
