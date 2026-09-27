@@ -459,7 +459,7 @@ Variables</h2></td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>Number of tokens written</dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>Number of tokens written, or -1 if the input cannot be encoded completely (including insufficient output capacity). On -1, the output buffer may contain a partial encoding and must not be consumed.</dd></dl>
 <p>Decode token IDs to text.</p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
@@ -554,7 +554,7 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="true__bpe_8h_source.html#l00271">271</a> of file <a class="el" href="true__bpe_8h_source.html">true_bpe.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="true__bpe_8h_source.html#l00274">274</a> of file <a class="el" href="true__bpe_8h_source.html">true_bpe.h</a>.</p>
 
 </div>
 </div>
@@ -590,7 +590,7 @@ Variables</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="true__bpe_8h_source.html#l00120">120</a> of file <a class="el" href="true__bpe_8h_source.html">true_bpe.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="true__bpe_8c_source.html#l00498">ck_true_bpe_add_merge()</a>, <a class="el" href="true__bpe_8c_source.html#l01180">find_best_merge()</a>, <a class="el" href="true__bpe_8c_source.html#l00153">merge_key()</a>, and <a class="el" href="true__bpe_8c_source.html#l00226">merge_table_lookup()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="true__bpe_8c_source.html#l00498">ck_true_bpe_add_merge()</a>, <a class="el" href="true__bpe_8c_source.html#l01191">find_best_merge()</a>, <a class="el" href="true__bpe_8c_source.html#l00153">merge_key()</a>, and <a class="el" href="true__bpe_8c_source.html#l00226">merge_table_lookup()</a>.</p>
 
 </div>
 </div>
@@ -606,9 +606,9 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="true__bpe_8h_source.html#l00272">272</a> of file <a class="el" href="true__bpe_8h_source.html">true_bpe.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="true__bpe_8h_source.html#l00275">275</a> of file <a class="el" href="true__bpe_8h_source.html">true_bpe.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="ck__tokenizer_8c_source.html#l00635">ck_tokenizer_encode()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00792">ck_tokenizer_encode_spm_dispatch()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00480">ck_tokenizer_encode_spm_impl()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00290">ck_tokenizer_encode_spm_llama_impl()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00670">ck_tokenizer_encode_spm_plain_segment()</a>, <a class="el" href="true__bpe_8c_source.html#l01395">ck_true_bpe_encode()</a>, <a class="el" href="true__bpe_8c_source.html#l01244">encode_chunk()</a>, <a class="el" href="true__bpe_8c_source.html#l01326">encode_text_segment()</a>, <a class="el" href="test__tokenizer_8c_source.html#l00010">main()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00684">spm_encode_byte_fallback()</a>, and <a class="el" href="tokenizer__spm_8c_source.html#l00259">spm_llama_resegment_node()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ck__tokenizer_8c_source.html#l00635">ck_tokenizer_encode()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00792">ck_tokenizer_encode_spm_dispatch()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00480">ck_tokenizer_encode_spm_impl()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00290">ck_tokenizer_encode_spm_llama_impl()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00670">ck_tokenizer_encode_spm_plain_segment()</a>, <a class="el" href="true__bpe_8c_source.html#l01443">ck_true_bpe_encode()</a>, <a class="el" href="true__bpe_8c_source.html#l01255">encode_chunk()</a>, <a class="el" href="true__bpe_8c_source.html#l01340">encode_text_segment()</a>, <a class="el" href="test__tokenizer_8c_source.html#l00010">main()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00684">spm_encode_byte_fallback()</a>, and <a class="el" href="tokenizer__spm_8c_source.html#l00259">spm_llama_resegment_node()</a>.</p>
 
 </div>
 </div>
@@ -624,9 +624,9 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="true__bpe_8h_source.html#l00288">288</a> of file <a class="el" href="true__bpe_8h_source.html">true_bpe.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="true__bpe_8h_source.html#l00291">291</a> of file <a class="el" href="true__bpe_8h_source.html">true_bpe.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="ck__tokenizer_8c_source.html#l00734">ck_tokenizer_decode()</a>, <a class="el" href="true__bpe_8c_source.html#l01517">ck_true_bpe_decode()</a>, <a class="el" href="tokenizer_8c_source.html#l00354">find_longest_match_hash()</a>, <a class="el" href="ck__tokenizer_8c_source.html#l00311">json_parse_string()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00758">spm_count_unknown_run()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00707">spm_find_candidates_at_pos()</a>, and <a class="el" href="tokenizer__spm_8c_source.html#l00045">spm_find_special_token_at_pos()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ck__tokenizer_8c_source.html#l00734">ck_tokenizer_decode()</a>, <a class="el" href="true__bpe_8c_source.html#l01576">ck_true_bpe_decode()</a>, <a class="el" href="tokenizer_8c_source.html#l00354">find_longest_match_hash()</a>, <a class="el" href="ck__tokenizer_8c_source.html#l00311">json_parse_string()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00758">spm_count_unknown_run()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00707">spm_find_candidates_at_pos()</a>, and <a class="el" href="tokenizer__spm_8c_source.html#l00045">spm_find_special_token_at_pos()</a>.</p>
 
 </div>
 </div>
@@ -678,7 +678,7 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="true__bpe_8h_source.html#l00286">286</a> of file <a class="el" href="true__bpe_8h_source.html">true_bpe.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="true__bpe_8h_source.html#l00289">289</a> of file <a class="el" href="true__bpe_8h_source.html">true_bpe.h</a>.</p>
 
 </div>
 </div>
@@ -784,7 +784,7 @@ Variables</h2></td></tr>
 
 <p class="definition">Definition at line <a class="el" href="true__bpe_8h_source.html#l00121">121</a> of file <a class="el" href="true__bpe_8h_source.html">true_bpe.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="true__bpe_8c_source.html#l00498">ck_true_bpe_add_merge()</a>, <a class="el" href="true__bpe_8c_source.html#l01180">find_best_merge()</a>, <a class="el" href="true__bpe_8c_source.html#l00153">merge_key()</a>, and <a class="el" href="true__bpe_8c_source.html#l00226">merge_table_lookup()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="true__bpe_8c_source.html#l00498">ck_true_bpe_add_merge()</a>, <a class="el" href="true__bpe_8c_source.html#l01191">find_best_merge()</a>, <a class="el" href="true__bpe_8c_source.html#l00153">merge_key()</a>, and <a class="el" href="true__bpe_8c_source.html#l00226">merge_table_lookup()</a>.</p>
 
 </div>
 </div>
@@ -834,7 +834,7 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="true__bpe_8h_source.html#l00269">269</a> of file <a class="el" href="true__bpe_8h_source.html">true_bpe.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="true__bpe_8h_source.html#l00272">272</a> of file <a class="el" href="true__bpe_8h_source.html">true_bpe.h</a>.</p>
 
 </div>
 </div>
@@ -850,9 +850,9 @@ Variables</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p class="definition">Definition at line <a class="el" href="true__bpe_8h_source.html#l00270">270</a> of file <a class="el" href="true__bpe_8h_source.html">true_bpe.h</a>.</p>
+<p class="definition">Definition at line <a class="el" href="true__bpe_8h_source.html#l00273">273</a> of file <a class="el" href="true__bpe_8h_source.html">true_bpe.h</a>.</p>
 
-<p class="reference">Referenced by <a class="el" href="ck__tokenizer_8c_source.html#l00635">ck_tokenizer_encode()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00792">ck_tokenizer_encode_spm_dispatch()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00480">ck_tokenizer_encode_spm_impl()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00290">ck_tokenizer_encode_spm_llama_impl()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00670">ck_tokenizer_encode_spm_plain_segment()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00029">ck_tokenizer_lookup_exact_n()</a>, <a class="el" href="trie_8c_source.html#l00142">ck_trie_find_longest()</a>, <a class="el" href="trie_8c_source.html#l00181">ck_trie_has_prefix()</a>, <a class="el" href="true__bpe_8c_source.html#l01395">ck_true_bpe_encode()</a>, <a class="el" href="true__bpe_8c_source.html#l01326">encode_text_segment()</a>, <a class="el" href="tokenizer_8c_source.html#l00384">find_longest_match()</a>, <a class="el" href="tokenizer_8c_source.html#l00354">find_longest_match_hash()</a>, <a class="el" href="tokenizer_8c_source.html#l00343">find_longest_match_trie()</a>, <a class="el" href="true__bpe_8c_source.html#l00936">gpt2_pretokenize()</a>, <a class="el" href="true__bpe_8c_source.html#l01145">init_tokens_from_text()</a>, <a class="el" href="true__bpe_8c_source.html#l01380">match_special_token()</a>, <a class="el" href="tokenizer_8c_source.html#l00396">preprocess_bpe_spaces()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00202">preprocess_spm_llama_text()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00411">preprocess_spm_text()</a>, <a class="el" href="true__bpe_8c_source.html#l00756">preprocess_text()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00758">spm_count_unknown_run()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00684">spm_encode_byte_fallback()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00707">spm_find_candidates_at_pos()</a>, and <a class="el" href="tokenizer__spm_8c_source.html#l00045">spm_find_special_token_at_pos()</a>.</p>
+<p class="reference">Referenced by <a class="el" href="ck__tokenizer_8c_source.html#l00635">ck_tokenizer_encode()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00792">ck_tokenizer_encode_spm_dispatch()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00480">ck_tokenizer_encode_spm_impl()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00290">ck_tokenizer_encode_spm_llama_impl()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00670">ck_tokenizer_encode_spm_plain_segment()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00029">ck_tokenizer_lookup_exact_n()</a>, <a class="el" href="trie_8c_source.html#l00142">ck_trie_find_longest()</a>, <a class="el" href="trie_8c_source.html#l00181">ck_trie_has_prefix()</a>, <a class="el" href="true__bpe_8c_source.html#l01443">ck_true_bpe_encode()</a>, <a class="el" href="true__bpe_8c_source.html#l01340">encode_text_segment()</a>, <a class="el" href="tokenizer_8c_source.html#l00384">find_longest_match()</a>, <a class="el" href="tokenizer_8c_source.html#l00354">find_longest_match_hash()</a>, <a class="el" href="tokenizer_8c_source.html#l00343">find_longest_match_trie()</a>, <a class="el" href="true__bpe_8c_source.html#l00936">gpt2_pretokenize()</a>, <a class="el" href="true__bpe_8c_source.html#l01156">init_tokens_from_text()</a>, <a class="el" href="true__bpe_8c_source.html#l01428">match_special_token()</a>, <a class="el" href="tokenizer_8c_source.html#l00396">preprocess_bpe_spaces()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00202">preprocess_spm_llama_text()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00411">preprocess_spm_text()</a>, <a class="el" href="true__bpe_8c_source.html#l00756">preprocess_text()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00758">spm_count_unknown_run()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00684">spm_encode_byte_fallback()</a>, <a class="el" href="tokenizer__spm_8c_source.html#l00707">spm_find_candidates_at_pos()</a>, and <a class="el" href="tokenizer__spm_8c_source.html#l00045">spm_find_special_token_at_pos()</a>.</p>
 
 </div>
 </div>
