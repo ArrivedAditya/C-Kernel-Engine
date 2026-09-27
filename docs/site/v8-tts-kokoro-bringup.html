@@ -1545,6 +1545,18 @@ comparison targets; no generated predictor stage has passed them yet.</p>
 calls against these PyTorch checkpoints. Their maximum absolute errors were
 2.38e-6, 1.43e-6 and 1.61e-6, each below the declared 5e-6 elementwise limit.
 This is real-weight primitive parity, not circuit stitching or waveform parity.</p>
+<p><strong>Adaptive LayerNorm numerical identity:</strong> the CKE provider performs the
+style projection as an ascending FP32 multiply/add reduction, then computes
+mean and biased variance as separate ascending FP64 channel reductions. It casts
+the normalized value to FP32 before applying <code>(1+gamma)*x+beta</code>. The
+committed fixture was captured with PyTorch 2.8.0. A PyTorch 2.12.1 CPU nightly
+run differed from that fixture by 1.19e-7 at one sample; the differing PyTorch
+stage has not been isolated. The nightly workflow runs direct native comparisons
+against pinned CPU wheels for both versions. It reports fixture-versus-live drift
+with a separate 1e-6 bound and retains the native-versus-oracle 5e-6 bound. If a
+future model requires another reduction order, it needs another kernel and
+canonical numerical contract so X-Ray can identify the selected arithmetic;
+changing this provider silently would erase that evidence.</p>
 <p>The selected style row is <code>af_heart[len(phonemes)-1]</code>; the predictor receives its
 last 128 columns and the decoder receives its first 128. The generated manifest
 marks any missing hook explicitly.</p></section>

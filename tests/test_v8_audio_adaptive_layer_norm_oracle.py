@@ -3,6 +3,7 @@
 import ctypes
 import json
 import math
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -22,6 +23,12 @@ def flat(value):
 
 
 class AdaptiveLayerNormOracleTest(unittest.TestCase):
+    def assert_pinned_torch(self, torch):
+        expected = os.environ.get("CKE_EXPECTED_TORCH_VERSION")
+        if expected:
+            self.assertEqual(torch.__version__.split("+", 1)[0], expected)
+            self.assertIsNone(torch.version.cuda, "nightly oracle must use CPU wheels")
+
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory()
@@ -171,7 +178,10 @@ class AdaptiveLayerNormOracleTest(unittest.TestCase):
             import torch
             import torch.nn.functional as F
         except ImportError as exc:
+            if os.environ.get("CKE_EXPECTED_TORCH_VERSION"):
+                self.fail(f"pinned live PyTorch oracle unavailable: {exc}")
             self.skipTest(f"live PyTorch oracle dependency unavailable: {exc}")
+        self.assert_pinned_torch(torch)
         fixture = json.loads(FIXTURE.read_text())
         # The committed oracle was generated with PyTorch 2.8.0. The pinned
         # nightly PyTorch version and CPU backends can differ by a few FP32
@@ -202,6 +212,10 @@ class AdaptiveLayerNormOracleTest(unittest.TestCase):
                 f"fixture torch={fixture['torch_version']} live torch={torch.__version__} "
                 f"shape={case['tokens']}x{case['channels']} worst={worst[1]}",
             )
+            print(f"adaptive_layer_norm fixture_torch={fixture['torch_version']} "
+                  f"live_torch={torch.__version__} shape={case['tokens']}x{case['channels']} "
+                  f"fixture_vs_live_max_abs={worst[0]:.9g} worst={worst[1]} "
+                  f"tolerance={cross_version_tolerance:.9g}")
             # Check native arithmetic against this live oracle directly too;
             # fixture reproducibility alone cannot establish kernel parity.
             self.assert_matches({**case, "output": oracle.tolist()})
@@ -211,7 +225,10 @@ class AdaptiveLayerNormOracleTest(unittest.TestCase):
             import torch
             import torch.nn.functional as F
         except ImportError as exc:
+            if os.environ.get("CKE_EXPECTED_TORCH_VERSION"):
+                self.fail(f"pinned live PyTorch oracle unavailable: {exc}")
             self.skipTest(f"live PyTorch oracle dependency unavailable: {exc}")
+        self.assert_pinned_torch(torch)
         tokens, channels, style_dim = 24, 512, 128
         torch.manual_seed(4428128)
         x = torch.randn(tokens, channels) * 0.2

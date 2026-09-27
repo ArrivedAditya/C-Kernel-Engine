@@ -26,6 +26,32 @@ permissions:
   pages: write
 
 jobs:
+  tts-adaln-torch-versions:
+    name: TTS AdaLN PyTorch ${{ matrix.torch_version }} CPU oracle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - torch_version: '2.8.0'
+            constraints: .github/requirements-nightly-torch28-constraints.txt
+          - torch_version: '2.12.1'
+            constraints: .github/requirements-nightly-constraints.txt
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pinned CPU oracle
+        run: python -m pip install --index-url https://download.pytorch.org/whl/cpu -c ${{ matrix.constraints }} torch
+      - name: Compare fixture and native kernel with pinned oracle
+        env:
+          CKE_EXPECTED_TORCH_VERSION: ${{ matrix.torch_version }}
+        run: python -m unittest tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_torch_oracle tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_production_geometry -v
+
   arm-portability:
     name: ARM64 engine and numerical contracts
     runs-on: ubuntu-24.04-arm
