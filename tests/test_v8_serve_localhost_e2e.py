@@ -131,7 +131,7 @@ def test_model_backed_e2e_requires_converted_jinja_sidecar() -> None:
         MODULE._require_native_jinja_log("Serving in live mode\n")
     with pytest.raises(RuntimeError, match="template override"):
         MODULE._require_native_jinja_log(
-            "Using explicit --chat-template override\n"
+            "Using explicit serving Jinja override\n"
             "Loaded chat_template (8952 chars) from chat_template.jinja\n"
         )
 

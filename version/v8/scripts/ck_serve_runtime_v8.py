@@ -186,7 +186,7 @@ def add_build_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     build.add_argument(
         "--chat-template",
         default=None,
-        help="Raw Jinja template or path to a .jinja file (overrides chat_template.jinja)",
+        help="Runtime-build override; the serve command requires --chat-template-file or --chat-template-inline",
     )
     build.add_argument("--no-chat-template", action="store_true")
     build.add_argument(

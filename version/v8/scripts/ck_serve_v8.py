@@ -239,6 +239,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--model-name", default="ck-v8", help="Model string reported in responses"
     )
     parser.add_argument(
+        "--chat-template-file", default=None,
+        help="Explicit UTF-8 Jinja file for serving; replaces native and tool variants",
+    )
+    parser.add_argument(
+        "--chat-template-inline", default=None,
+        help="Explicit inline Jinja source for serving; replaces native and tool variants",
+    )
+    parser.add_argument(
         "--run", dest="run_dir", default=None, help="Explicit run directory"
     )
     parser.add_argument(
@@ -248,7 +256,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--tool-protocol",
-        choices=("none", "tagged_json", "bare_json", "qwen_xml"),
+        choices=("none", "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml"),
         default=None,
         help="Explicit tool output protocol; defaults to a hash-bound tool_protocol.json sidecar or disabled",
     )
@@ -342,6 +350,32 @@ def main(argv: list[str] | None = None) -> int:
 
     args = _build_arg_parser().parse_args(argv)
 
+    if args.chat_template is not None:
+        raise ValueError(
+            "--chat-template is ambiguous for serving; use --chat-template-file "
+            "or --chat-template-inline"
+        )
+    if args.chat_template_file is not None and args.chat_template_inline is not None:
+        raise ValueError("select only one serving template override")
+    if args.no_chat_template and (args.chat_template_file or args.chat_template_inline):
+        raise ValueError("--no-chat-template conflicts with a serving template override")
+    if args.no_chat_template and not args.allow_raw_prompt:
+        raise ValueError("--no-chat-template requires explicit --allow-raw-prompt")
+    override: str | None = None
+    build_template_arg: str | None = None
+    if args.chat_template_file is not None:
+        override_path = Path(args.chat_template_file).expanduser()
+        try:
+            override = override_path.read_bytes().decode("utf-8")
+        except (OSError, UnicodeError) as exc:
+            raise ValueError(f"cannot read --chat-template-file {override_path}: {exc}") from exc
+        build_template_arg = str(override_path)
+    elif args.chat_template_inline is not None:
+        override = args.chat_template_inline
+        build_template_arg = override
+    if override is not None and not override.strip():
+        raise ValueError("serving template override is empty")
+
     _ensure_native_session_lib()
 
     run_dir = _resolve_run_dir(args.model, args.run_dir)
@@ -354,7 +388,7 @@ def main(argv: list[str] | None = None) -> int:
             args.force_compile,
             args.force_download,
             args.logits_layout,
-            args.chat_template,
+            build_template_arg,
             args.no_chat_template,
             args.allow_raw_prompt,
             args.python_tokenizer,
@@ -393,40 +427,28 @@ def main(argv: list[str] | None = None) -> int:
             C_ORANGE,
         )
 
-    chat_template, chat_templates, chat_contract = _load_runtime_templates(run_dir)
     if args.no_chat_template:
-        chat_template = None
+        chat_template, chat_templates, chat_contract = None, None, None
+        log("Using explicitly requested untemplated raw-prompt serving", C_GRAY)
+    else:
+        chat_template, chat_templates, chat_contract = _load_runtime_templates(run_dir)
+    if override is not None:
+        chat_template = override
         chat_templates = None
-        log("Chat templates disabled via --no-chat-template", C_GRAY)
-    elif args.chat_template:
-        override = str(args.chat_template)
-        override_path = Path(override).expanduser()
-        if override_path.is_file():
-            try:
-                override = override_path.read_text(encoding="utf-8")
-            except OSError as exc:
-                log_error(f"cannot read --chat-template file {override_path}: {exc}")
-                override = ""
-        if override.strip():
-            chat_template = override
-            log(
-                f"Using explicit --chat-template override ({len(chat_template)} chars); "
-                "chat_template.jinja sidecar ignored",
-                C_GRAY,
-            )
-        else:
-            chat_template = None
-            chat_templates = None
+        log(
+            f"Using explicit serving Jinja override ({len(chat_template)} chars); "
+            "native sidecar and tool variants ignored",
+            C_GRAY,
+        )
     elif chat_template:
         log(
             f"Loaded chat_template ({len(chat_template)} chars) from chat_template.jinja",
             C_GRAY,
         )
-    else:
-        log(
-            "chat_template.jinja missing or empty in run dir; "
-            "continuing without native Jinja template",
-            C_ORANGE,
+    elif not args.no_chat_template:
+        raise ValueError(
+            f"normal chat serving requires {run_dir / 'chat_template.jinja'}; "
+            "use --no-chat-template --allow-raw-prompt only for intentional raw serving"
         )
     if chat_templates:
         log(
@@ -471,6 +493,7 @@ def main(argv: list[str] | None = None) -> int:
         chat_template=chat_template,
         chat_templates=chat_templates,
         tool_protocol=selected_tool_protocol,
+        allow_untemplated=args.no_chat_template and args.allow_raw_prompt,
     )
 
     try:

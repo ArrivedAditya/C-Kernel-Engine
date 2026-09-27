@@ -11,8 +11,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "version" / "v8" / 
 from fastapi.testclient import TestClient
 from pydantic import TypeAdapter
 
-from ck_serve_v8 import _classify_stream_mode, create_app
+from ck_serve_v8 import _classify_stream_mode, create_app as _create_app
 from server.schemas.streaming import ResponseStreamEvent
+
+
+def create_app(*args, **kwargs):
+    # Existing streaming fixtures include explicit legacy untemplated cases.
+    return _create_app(*args, allow_untemplated=True, **kwargs)
 
 QWEN3_CONTRACT = {
     "name": "qwen3",

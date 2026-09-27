@@ -64,6 +64,10 @@ version/v8/scripts/cks-v8-run serve \
 The server reuses cached model bytes and regenerates the candidate runtime. On
 later `--no-build` starts it reads the compiled capacity from
 `layout_decode.json`; an explicit context larger than that plan is rejected.
+Normal serving requires the converted `chat_template.jinja` before opening the
+native session. Intentional untemplated serving requires both
+`--no-chat-template` and `--allow-raw-prompt`; explicit serving overrides use
+`--chat-template-file` or `--chat-template-inline`.
 The native template's `qwen_xml` protocol recognizes
 `<tool_call><function=...><parameter=...>` output. The Qwen Code compatibility
 variant declares `qwen_code_xml` for the two XML envelopes observed in actual

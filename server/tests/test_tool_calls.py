@@ -13,8 +13,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "version" / "v8" / 
 from fastapi.testclient import TestClient
 from pydantic import TypeAdapter
 
-from ck_serve_v8 import create_app, CK_SESSION_REQUEST_RAW_PROMPT
+from ck_serve_v8 import create_app as _create_app, CK_SESSION_REQUEST_RAW_PROMPT
 from server.schemas.streaming import ResponseStreamEvent
+
+
+def create_app(*args, **kwargs):
+    # Legacy protocol fixtures intentionally exercise the untemplated path.
+    return _create_app(*args, allow_untemplated=True, **kwargs)
 
 # Reuse inline Qwen3 contract from test_live_app
 QWEN3_CONTRACT = {

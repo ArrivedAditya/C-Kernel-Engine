@@ -93,7 +93,7 @@ def _wait_port_free(port: int, timeout: float = 5.0) -> bool:
 def _require_native_jinja_log(log_text: str) -> None:
     """The model-backed nightly must use the converted Jinja sidecar."""
     clean = re.sub(r"\x1b\[[0-9;]*m", "", log_text)
-    if "Using explicit --chat-template override" in clean:
+    if "Using explicit serving Jinja override" in clean:
         raise RuntimeError("serve E2E used a template override instead of the converted Jinja sidecar")
     if not re.search(
         r"(?m)^Loaded chat_template \([1-9][0-9]* chars\) from chat_template\.jinja$",

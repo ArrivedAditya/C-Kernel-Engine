@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from server.live import _extract_tool_calls_from_text, create_app
+from server.live import _extract_tool_calls_from_text, create_app, create_live_app_from_run_dir
 from server.runtime import load_manifest_templates, load_tool_protocol
 from server.session_v8 import CK_SESSION_REQUEST_RAW_PROMPT
 
@@ -246,3 +246,95 @@ def test_template_loader_preserves_crlf_bytes_and_rejects_empty_sidecar(tmp_path
     (variants_dir / "tool_use.jinja").write_bytes(b" ")
     with pytest.raises(ValueError, match="chat template is empty"):
         load_manifest_templates(tmp_path)
+
+
+def test_xml_string_arguments_preserve_payload_whitespace() -> None:
+    schema = {"edit": {"type": "object", "properties": {
+        "replacement": {"type": "string"},
+    }, "required": ["replacement"], "additionalProperties": False}}
+    examples = (
+        ("<function_calls><invoke name=\"edit\"><parameter name=\"replacement\">"
+         "  indented\n</parameter></invoke></function_calls>", "  indented\n"),
+        ("<tool_call><function=edit><parameter=replacement>\n"
+         "  indented\n\n</parameter></function></tool_call>", "  indented\n"),
+        ("<function_calls><invoke name=\"edit\"><parameter name=\"replacement\">"
+         "   </parameter></invoke></function_calls>", "   "),
+    )
+    for generated, expected in examples:
+        calls, code, _ = _extract_tool_calls_from_text(
+            generated, {"edit"}, tool_syntax="qwen_code_xml", tool_parameters=schema,
+        )
+        assert code is None
+        assert json.loads(calls[0]["arguments"])["replacement"] == expected
+
+
+def test_unsupported_schema_and_duplicate_json_keys_fail_closed() -> None:
+    union_schema = {"read_file": {"type": "object", "properties": {
+        "file_path": {"type": "string"},
+        "offset": {"type": ["integer", "null"]},
+    }}}
+    generated = ("<function_calls><invoke name=\"read_file\">"
+                 "<parameter name=\"file_path\">/tmp/a</parameter>"
+                 "<parameter name=\"offset\">null</parameter>"
+                 "</invoke></function_calls>")
+    calls, code, message = _extract_tool_calls_from_text(
+        generated, {"read_file"}, tool_syntax="qwen_code_xml",
+        tool_parameters=union_schema,
+    )
+    assert code is None and json.loads(calls[0]["arguments"])["offset"] is None
+    integer_call = generated.replace("null</parameter>", "42</parameter>")
+    calls, code, _ = _extract_tool_calls_from_text(
+        integer_call, {"read_file"}, tool_syntax="qwen_code_xml",
+        tool_parameters=union_schema,
+    )
+    assert code is None and json.loads(calls[0]["arguments"])["offset"] == 42
+
+    unsupported_schema = {"read_file": {"type": "object", "properties": {
+        "file_path": {"type": ["string", "unknown"]},
+    }}}
+    calls, code, message = _extract_tool_calls_from_text(
+        generated, {"read_file"}, tool_syntax="qwen_code_xml",
+        tool_parameters=unsupported_schema,
+    )
+    assert calls == [] and code == "malformed" and "unsupported type" in message
+
+    session = RecordingSession(["should not run"])
+    client = TestClient(create_app(
+        session, model="qwen-local", chat_template="{{ messages[0].content }}",
+        tool_protocol="qwen_code_xml",
+    ))
+    tool = dict(TOOL, parameters=unsupported_schema["read_file"])
+    response = client.post("/v1/responses", json={
+        "model": "qwen-local", "input": "Read a file", "tools": [tool],
+    })
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "unsupported_tool_schema"
+    assert not session.prompts
+
+    good = client.post("/v1/responses", json={
+        "model": "qwen-local", "input": "hello",
+    })
+    assert good.status_code == 200
+    assert session.prompts
+
+    duplicate = ('<tool_call>{"name":"read_file","arguments":'
+                 '{"file_path":"/tmp/a","file_path":"/tmp/b"}}</tool_call>')
+    calls, code, message = _extract_tool_calls_from_text(
+        duplicate, {"read_file"}, tool_syntax="tool_call_json",
+        tool_parameters={"read_file": TOOL["parameters"]},
+    )
+    assert calls == [] and code == "malformed" and "duplicate JSON key" in message
+
+
+def test_untemplated_app_requires_explicit_raw_mode() -> None:
+    with pytest.raises(ValueError, match="requires a nonempty native Jinja template"):
+        create_app(RecordingSession(["unused"]), model="qwen-local")
+    create_app(RecordingSession(["raw"]), model="qwen-local", allow_untemplated=True)
+
+
+def test_run_directory_rejects_missing_template_before_session_open(tmp_path: Path, monkeypatch) -> None:
+    from server import session_v8
+
+    monkeypatch.setattr(session_v8.SessionV8, "open", lambda *a, **k: pytest.fail("session opened"))
+    with pytest.raises(ValueError, match="normal chat serving requires"):
+        create_live_app_from_run_dir(tmp_path)

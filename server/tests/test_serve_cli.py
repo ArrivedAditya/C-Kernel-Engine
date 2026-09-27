@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "version" / "v8" / 
 import pytest
 
 import ck_serve_runtime_v8
+import ck_serve_v8
 import ck_run_v8
 from ck_serve_v8 import _build_arg_parser, _build_runtime, _resolve_num_threads, main
 
@@ -191,6 +192,58 @@ def test_main_without_serve_prefix_passes_through(monkeypatch):
     with pytest.raises(SystemExit):
         main([HF_MODEL, "--no-build"])
     assert captured["argv"] == [HF_MODEL, "--no-build"]
+
+
+def test_missing_template_rejected_before_session_open(tmp_path, monkeypatch):
+    monkeypatch.setattr(ck_serve_v8, "_ensure_native_session_lib", lambda: None)
+    monkeypatch.setattr(ck_serve_v8, "_resolve_run_dir", lambda *_: tmp_path)
+    monkeypatch.setattr(ck_serve_v8.SessionV8, "open", lambda *a, **k: pytest.fail("session opened"))
+    with pytest.raises(ValueError, match="normal chat serving requires"):
+        main([str(tmp_path), "--no-build", "--no-viz"])
+    with pytest.raises(ValueError, match="requires explicit --allow-raw-prompt"):
+        main([str(tmp_path), "--no-build", "--no-chat-template"])
+
+
+def test_template_override_is_explicit_and_suppresses_tool_variants(tmp_path, monkeypatch):
+    monkeypatch.setattr(ck_serve_v8, "_ensure_native_session_lib", lambda: None)
+    monkeypatch.setattr(ck_serve_v8, "_resolve_run_dir", lambda *_: tmp_path)
+    monkeypatch.setattr(ck_serve_v8.SessionV8, "open", lambda *a, **k: pytest.fail("session opened"))
+    with pytest.raises(ValueError, match="ambiguous for serving"):
+        main([str(tmp_path), "--no-build", "--chat-template", "missing.jinja"])
+    with pytest.raises(ValueError, match="cannot read --chat-template-file"):
+        main([str(tmp_path), "--no-build", "--chat-template-file", str(tmp_path / "missing.jinja")])
+
+    native = tmp_path / "chat_template.jinja"
+    native.write_text("native", encoding="utf-8")
+    variants = tmp_path / "additional_chat_templates"
+    variants.mkdir()
+    (variants / "tool_use.jinja").write_text("old tool variant", encoding="utf-8")
+    (tmp_path / "tool_protocol.json").write_text(json.dumps({
+        "schema": "cke.v8.tool_protocol.v1", "protocol": "qwen_xml",
+        "template_sha256": hashlib.sha256(b"old tool variant").hexdigest(),
+    }), encoding="utf-8")
+    override = tmp_path / "override.jinja"
+    override.write_bytes(b"{{ messages[0].content }}\r\n")
+    with pytest.raises(ValueError, match="does not match selected chat template"):
+        main([str(tmp_path), "--no-build", "--chat-template-file", str(override)])
+
+    (tmp_path / "tool_protocol.json").unlink()
+    captured = {}
+
+    class FakeSession:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(ck_serve_v8.SessionV8, "open", lambda *a, **k: FakeSession())
+    monkeypatch.setattr(ck_serve_v8, "create_app", lambda *a, **k: captured.update(k) or object())
+    monkeypatch.setattr("uvicorn.run", lambda *a, **k: None)
+    assert main([str(tmp_path), "--no-build", "--chat-template-file", str(override), "--no-viz"]) == 0
+    assert captured["chat_template"].encode("utf-8") == override.read_bytes()
+    assert captured["chat_templates"] is None
+    assert captured["allow_untemplated"] is False
+    assert main([str(tmp_path), "--no-build", "--no-chat-template", "--allow-raw-prompt", "--no-viz"]) == 0
+    assert captured["chat_template"] is None
+    assert captured["allow_untemplated"] is True
 
 
 def test_build_runtime_constructs_ck_run_pipeline_command(monkeypatch):

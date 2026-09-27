@@ -2313,6 +2313,18 @@ make test-native-session-v8</pre>
         together when moving the bundle.
     </p>
     <p>
+        Normal serving requires a nonempty <code>chat_template.jinja</code> before opening the
+        native session. To intentionally serve untemplated raw prompts, set both
+        <code>--no-chat-template</code> and <code>--allow-raw-prompt</code>. Serving overrides use
+        <code>--chat-template-file PATH</code> or <code>--chat-template-inline SOURCE</code>;
+        the ambiguous <code>--chat-template</code> option is rejected by the serve command.
+        An override replaces the native template and all tool variants. An existing
+        <code>tool_protocol.json</code> must match that effective template or startup fails.
+        String tool arguments preserve their payload whitespace; the native Qwen XML form
+        removes only one paired framing newline. Unsupported tool-schema forms fail before
+        generation, while supported arguments are checked against their declared schema.
+    </p>
+    <p>
         The cached Qwen3.8 Q4_K_M runtime has a known native-template tokenizer mismatch:
         its tool delimiter is split into ordinary CKE tokens while the upstream tokenizer uses
         one special token. For a bounded Qwen Code tool task, the operator-authored
