@@ -155,9 +155,9 @@ static int ck_bump_alloc_try_mixed(ck_bump_alloc_t *alloc, const char *weights_p
     long page_size_raw = sysconf(_SC_PAGESIZE);
     size_t page_size = page_size_raw > 0 ? (size_t)page_size_raw : 4096U;
     size_t mapped_len = 0;
-    size_t prefix_len = 0;
     size_t weights_len = 0;
-    size_t weights_map_len = 0;
+    size_t weights_file_len = 0;
+    size_t boundary_len = 0;
     size_t runtime_map_start = 0;
     int fd = -1;
     struct stat st;
@@ -172,9 +172,9 @@ static int ck_bump_alloc_try_mixed(ck_bump_alloc_t *alloc, const char *weights_p
     }
 
     mapped_len = align_up_bytes(alloc->total_size, page_size);
-    prefix_len = 0;
     weights_len = alloc->activations_base;
-    weights_map_len = align_up_bytes(weights_len, page_size);
+    weights_file_len = weights_len - weights_len % page_size;
+    boundary_len = weights_len - weights_file_len;
     runtime_map_start = align_up_bytes(alloc->activations_base, page_size);
 
     fd = open(weights_path, O_RDONLY | O_CLOEXEC);
@@ -193,10 +193,10 @@ static int ck_bump_alloc_try_mixed(ck_bump_alloc_t *alloc, const char *weights_p
         return -1;
     }
     alloc->weights_file_size = (size_t)st.st_size;
-    if (weights_len > 0 && weights_map_len > align_up_bytes(alloc->weights_file_size, page_size)) {
+    if (weights_len > align_up_bytes(alloc->weights_file_size, page_size)) {
         fprintf(stderr,
                 "ck_bump_alloc_init: weights file too small for mixed mapping (%zu < %zu bytes)\n",
-                alloc->weights_file_size, weights_map_len);
+                alloc->weights_file_size, weights_len);
         close(fd);
         return -1;
     }
@@ -209,25 +209,45 @@ static int ck_bump_alloc_try_mixed(ck_bump_alloc_t *alloc, const char *weights_p
         return -1;
     }
 
-    if (prefix_len > 0) {
-        void *prefix = mmap(base, prefix_len, PROT_READ | PROT_WRITE,
-                            MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
-        if (prefix == MAP_FAILED) {
-            fprintf(stderr, "ck_bump_alloc_init: prefix mmap failed: %s\n", strerror(errno));
+    if (weights_file_len > 0) {
+        void *mapped = mmap(base, weights_file_len,
+                            PROT_READ, MAP_PRIVATE | MAP_FIXED, fd, 0);
+        if (mapped == MAP_FAILED) {
+            fprintf(stderr, "ck_bump_alloc_init: weights mmap failed: %s\n", strerror(errno));
             munmap(base, mapped_len);
             close(fd);
             return -1;
         }
     }
 
-    if (weights_map_len > 0) {
-        void *mapped = mmap(base, weights_map_len,
-                            PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, fd, 0);
-        if (mapped == MAP_FAILED) {
-            fprintf(stderr, "ck_bump_alloc_init: weights mmap failed: %s\n", strerror(errno));
+    if (boundary_len > 0) {
+        uint8_t *boundary = mmap(base + weights_file_len, page_size,
+                                 PROT_READ | PROT_WRITE,
+                                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+        size_t copied = 0;
+        if (boundary == MAP_FAILED) {
+            fprintf(stderr, "ck_bump_alloc_init: boundary mmap failed: %s\n", strerror(errno));
             munmap(base, mapped_len);
             close(fd);
             return -1;
+        }
+        size_t available = alloc->weights_file_size > weights_file_len
+            ? alloc->weights_file_size - weights_file_len : 0;
+        size_t copy_len = available < boundary_len ? available : boundary_len;
+        while (copied < copy_len) {
+            ssize_t count = pread(fd, boundary + copied, copy_len - copied,
+                                  (off_t)(weights_file_len + copied));
+            if (count < 0 && errno == EINTR) {
+                continue;
+            }
+            if (count <= 0) {
+                fprintf(stderr, "ck_bump_alloc_init: boundary read failed: %s\n",
+                        count < 0 ? strerror(errno) : "unexpected EOF");
+                munmap(base, mapped_len);
+                close(fd);
+                return -1;
+            }
+            copied += (size_t)count;
         }
     }
 

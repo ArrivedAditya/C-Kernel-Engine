@@ -47,6 +47,25 @@ entry point, scalar reference function, adapter, fixed comparison tolerance,
 and external-oracle status. The compiler validates and carries these bindings;
 it does not choose a different function from shape or performance heuristics.
 
+## ARM low-memory checks
+
+On Linux ARM, the engine must link without unresolved symbols and map BUMP
+weights read-only when anonymous allocation is too large. Run the fast build,
+load, and allocator gate with `make test-v8-arm-runtime`. After generating a
+v8 model at context length 100, run a native forward smoke test with:
+
+```bash
+make test-v8-arm-model-smoke CK_ARM_MODEL_DIR=/path/to/generated-model
+```
+
+The model smoke forces mixed file-backed weights and uses token IDs with the
+optional full tokenizer disabled. It checks native inference, not raw-text
+tokenization or output quality. Large-vocabulary tokenizers may still exceed
+RAM even when weights map successfully; test raw-text chat separately on the
+target board. Set `CK_BUMP_FORCE_MIXED=1` for low-RAM runs because Linux
+overcommit may let anonymous reservation succeed before the process is OOM-killed.
+`regression-fast-arm` remains the broader family regression gate.
+
 Canonical text bring-up examples:
 - `version/v8/scripts/cks-v8-run run hf://unsloth/gemma-3-270m-it-GGUF/gemma-3-270m-it-Q5_K_M.gguf --context-len 1024 --force-compile --force-convert --chat-template=auto --generate-visualizer`
 - `version/v8/scripts/cks-v8-run run hf://Qwen/Qwen2-0.5B-Instruct-GGUF/qwen2-0_5b-instruct-q4_k_m.gguf --context-len 1024 --force-compile --force-convert --generate-visualizer`
