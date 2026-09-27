@@ -353,6 +353,32 @@ def test_qwen_shell_numeric_bounds_are_checked() -> None:
         assert calls == [] and code == "malformed"
 
 
+def test_qwen_goal_string_bounds_are_checked() -> None:
+    schema = {"update_goal": {"type": "object", "properties": {
+        "reason": {"type": "string", "minLength": 2, "maxLength": 8},
+    }, "required": ["reason"]}}
+    session = RecordingSession(["ready"])
+    client = TestClient(create_app(
+        session, model="qwen-local", chat_template="{{ messages[0].content }}",
+        tool_protocol="qwen_code_xml",
+    ))
+    response = client.post("/v1/responses", json={
+        "model": "qwen-local", "input": "hello", "tools": [{
+            "type": "function", "name": "update_goal", "parameters": schema["update_goal"],
+        }],
+    })
+    assert response.status_code == 200
+    for reason in ("x", "too lengthy"):
+        generated = ("<function_calls><invoke name=\"update_goal\">"
+                     f"<parameter name=\"reason\">{reason}</parameter>"
+                     "</invoke></function_calls>")
+        calls, code, _ = _extract_tool_calls_from_text(
+            generated, {"update_goal"}, tool_syntax="qwen_code_xml",
+            tool_parameters=schema,
+        )
+        assert calls == [] and code == "malformed"
+
+
 def test_untemplated_app_requires_explicit_raw_mode() -> None:
     with pytest.raises(ValueError, match="requires a nonempty native Jinja template"):
         create_app(RecordingSession(["unused"]), model="qwen-local")

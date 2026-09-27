@@ -672,6 +672,7 @@ _TOOL_SCHEMA_TYPES = {"string", "integer", "number", "boolean", "object", "array
 _TOOL_SCHEMA_KEYS = {
     "type", "properties", "required", "additionalProperties", "items",
     "enum", "description", "title", "default", "minimum", "maximum",
+    "minLength", "maxLength",
 }
 
 
@@ -700,6 +701,15 @@ def _validate_tool_schema_subset(schema: Any, path: str = "parameters") -> None:
                 raise ValueError(f"{path}.{bound} must be a finite number")
     if "minimum" in schema and "maximum" in schema and schema["minimum"] > schema["maximum"]:
         raise ValueError(f"{path}.minimum exceeds maximum")
+    for bound in ("minLength", "maxLength"):
+        if bound in schema:
+            value = schema[bound]
+            if kind is None or "string" not in kinds:
+                raise ValueError(f"{path}.{bound} requires a string type")
+            if type(value) is not int or value < 0:
+                raise ValueError(f"{path}.{bound} must be a nonnegative integer")
+    if "minLength" in schema and "maxLength" in schema and schema["minLength"] > schema["maxLength"]:
+        raise ValueError(f"{path}.minLength exceeds maxLength")
     if "properties" in schema:
         if kind not in (None, "object") or not isinstance(schema["properties"], dict):
             raise ValueError(f"{path}.properties requires an object schema")
@@ -741,6 +751,11 @@ def _tool_value_matches_schema(value: Any, schema: dict[str, Any]) -> bool:
         if "minimum" in schema and value < schema["minimum"]:
             return False
         if "maximum" in schema and value > schema["maximum"]:
+            return False
+    if isinstance(value, str):
+        if "minLength" in schema and len(value) < schema["minLength"]:
+            return False
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
             return False
     if isinstance(value, dict):
         properties = schema.get("properties", {})
