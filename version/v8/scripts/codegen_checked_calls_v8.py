@@ -127,8 +127,11 @@ def emit_checked_calls(call_ir: dict, root: Path) -> str:
         buffers = memory.get("activations", {}).get("buffers", [])
         if not isinstance(buffers, list):
             raise CheckedCallCodegenError("call IR lacks planned activation buffers")
+        weights = memory.get("weights", {}).get("entries", [])
+        if not isinstance(weights, list):
+            raise CheckedCallCodegenError("call IR lacks planned weight entries")
         seen_defines = set()
-        for buffer in buffers:
+        for buffer in [*weights, *buffers]:
             define = _ident(buffer.get("define"), "planned buffer define")
             offset = buffer.get("abs_offset")
             size = buffer.get("size")

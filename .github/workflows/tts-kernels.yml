@@ -9,6 +9,7 @@ on:
       - 'src/kernels/embedding_three_table_layer_norm.c'
       - 'tests/test_v8_bert_embedding_oracle.py'
       - 'tests/test_v8_bert_embedding_live.py'
+      - 'tests/test_v8_kokoro_generated_embedding.py'
       - 'version/v8/tts/reference/capture_bert_embedding.py'
       - 'version/v8/kernel_maps/embedding_three_table_layer_norm_f32.json'
       - 'include/ckernel_audio.h'
@@ -42,6 +43,7 @@ on:
       - 'version/v8/scripts/codegen_v8.py'
       - 'version/v8/scripts/build_xray_checkpoint_manifest_v8.py'
       - 'version/v8/scripts/xray_numerical_parity_v8.py'
+      - 'version/v8/schemas/parity_profile.schema.json'
       - 'version/v8/schemas/checkpoint_manifest.schema.json'
       - 'version/v8/scripts/build_ir_v8.py'
       - 'version/v8/kernel_maps/runtime_extent_sum_i32.json'
@@ -71,6 +73,7 @@ on:
       - 'src/kernels/embedding_three_table_layer_norm.c'
       - 'tests/test_v8_bert_embedding_oracle.py'
       - 'tests/test_v8_bert_embedding_live.py'
+      - 'tests/test_v8_kokoro_generated_embedding.py'
       - 'version/v8/tts/reference/capture_bert_embedding.py'
       - 'version/v8/kernel_maps/embedding_three_table_layer_norm_f32.json'
       - 'include/ckernel_audio.h'
@@ -104,6 +107,7 @@ on:
       - 'version/v8/scripts/codegen_v8.py'
       - 'version/v8/scripts/build_xray_checkpoint_manifest_v8.py'
       - 'version/v8/scripts/xray_numerical_parity_v8.py'
+      - 'version/v8/schemas/parity_profile.schema.json'
       - 'version/v8/schemas/checkpoint_manifest.schema.json'
       - 'version/v8/scripts/build_ir_v8.py'
       - 'version/v8/kernel_maps/runtime_extent_sum_i32.json'
@@ -146,6 +150,7 @@ jobs:
             tests.test_v8_checked_call_codegen \
             tests.test_v8_runtime_extent_lowering \
             tests.test_v8_checked_static_entry \
+            tests.test_v8_kokoro_generated_embedding \
             tests.test_v8_duration_logits_runtime_graph \
             tests.test_v8_duration_two_stream_runtime_graph \
             tests.test_v8_kokoro_shape_bounds \

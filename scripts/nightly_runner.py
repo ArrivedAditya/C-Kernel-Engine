@@ -722,6 +722,10 @@ TEST_SUITES = {
         "TTS Fixed-Size Checked Native Entry", "kernels",
         ROOT / "tests" / "test_v8_checked_static_entry.py",
     ),
+    "tts_kokoro_generated_embedding": TestSuite(
+        "TTS Kokoro Generated Embedding and X-Ray Oracle", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_generated_embedding.py",
+    ),
     "tts_duration_logits_runtime_graph": TestSuite(
         "TTS Duration Logits Full v8 Lowering", "kernels",
         ROOT / "tests" / "test_v8_duration_logits_runtime_graph.py",

@@ -1,0 +1,88 @@
+{
+  "version": 3,
+  "name": "kokoro_embedding_generated_boundary",
+  "family": "bounded_graph",
+  "contract": {"runtime_invariants": {"inference_only": true, "production_kernel_heap_allocation": false}},
+  "checked_native_entry": true,
+  "activation_buffers": {
+    "word_ids": {"shape": [36]},
+    "type_ids": {"shape": [36]},
+    "embedding_output": {"shape": [36, 128]}
+  },
+  "activation_bindings": {
+    "word_ids": "word_ids",
+    "type_ids": "type_ids",
+    "embedding_output": "embedding_output"
+  },
+  "native_entry": {
+    "function": "ck_kokoro_embedding_boundary",
+    "params": [
+      {"c_type": "uint8_t *", "name": "arena"},
+      {"c_type": "size_t", "name": "arena_bytes"}
+    ],
+    "arena": {"pointer": "arena", "bytes": "arena_bytes"}
+  },
+  "runtime_constants": {
+    "id_elements": 36,
+    "word_elements": 22784,
+    "vocab_size": 178,
+    "position_elements": 65536,
+    "position_count": 512,
+    "type_elements": 256,
+    "type_count": 2,
+    "norm_elements": 128,
+    "output_elements": 4608,
+    "tokens": 36,
+    "channels": 128,
+    "weight_stride": 128,
+    "output_stride": 128
+  },
+  "sequence": ["phoneme_encoder"],
+  "block_types": {
+    "phoneme_encoder": {
+      "sequence": ["header", "body", "footer"],
+      "header": [
+        {
+          "id": "albert_embeddings",
+          "op": "embedding_three_table_layer_norm",
+          "kernel": "embedding_three_table_layer_norm_f32",
+          "returns_status": true,
+          "weight_refs": {
+            "word": "phoneme_encoder.embeddings.word_embeddings.weight",
+            "position": "phoneme_encoder.embeddings.position_embeddings.weight",
+            "token_type": "phoneme_encoder.embeddings.token_type_embeddings.weight",
+            "gamma": "phoneme_encoder.embeddings.LayerNorm.weight",
+            "beta": "phoneme_encoder.embeddings.LayerNorm.bias"
+          },
+          "graph_slots": {
+            "inputs": {"word_ids": "external:word_ids", "type_ids": "external:type_ids"},
+            "outputs": {"output": "embedding_output"}
+          }
+        }
+      ],
+      "body": {"type": "dense", "ops": []},
+      "footer": []
+    }
+  },
+  "semantic_checkpoints": {
+    "schema": "cke.semantic_checkpoint_contract",
+    "schema_version": 1,
+    "exports": {
+      "albert_embeddings": {
+        "section": "header",
+        "template_op_id": "albert_embeddings",
+        "op": "embedding_three_table_layer_norm",
+        "checkpoints": [
+          {
+            "id": "kokoro.phoneme_encoder.embeddings",
+            "producer": "albert_embeddings",
+            "tensor": "embedding_output",
+            "logical_layout": "token_major",
+            "axis_names": ["token", "channel"],
+            "storage_dtype": "fp32"
+          }
+        ]
+      }
+    }
+  }
+}
