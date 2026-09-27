@@ -6165,7 +6165,7 @@ test_attention.py::TestAttentionForward::test_flash_decode</p>
 
 
 <details open>
-    <summary>Sigmoid Activation (24)</summary>
+    <summary>Sigmoid Activation (25)</summary>
     <div class="accordion-content">
 
 
@@ -6366,6 +6366,16 @@ test_attention.py::TestAttentionForward::test_flash_decode</p>
             </div>
             <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">void sigmoid_backward_bf16(const uint16_t * input, const uint16_t * d_output, uint16_t * d_input, size_t n, float * scratch_input, float * scratch_d_output, float * scratch_d_input)</pre>
             <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">Backward pass / gradient computation</p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">sigmoid_f32</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">float sigmoid_f32(float x)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
         </div>
 
 
@@ -7962,7 +7972,7 @@ test_rope.py::TestRoPECache::test_cache_values</p>
 
 
 <details open>
-    <summary>Other Functions (1410)</summary>
+    <summary>Other Functions (1412)</summary>
     <div class="accordion-content">
 
 
@@ -8444,6 +8454,16 @@ test_multi_layer_parity.py::TestMultiLayerParity::test_residual_add</p>
                 <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
             </div>
             <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int audio_duration_expand_channel_major_f32(const float * features, size_t input_elements, size_t channels, size_t phoneme_count, size_t input_stride, const int32_t * durations, size_t expanded_frames, float * output, size_t output_elements, size_t output_stride)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">audio_duration_logits_to_frames_f32</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int audio_duration_logits_to_frames_f32(const float * logits, size_t input_elements, size_t tokens, size_t bins, size_t input_stride, float speed, int32_t * durations, size_t duration_capacity, size_t max_duration_per_token, size_t max_expanded_frames, int32_t * expanded_frames)</pre>
             <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
         </div>
 
@@ -21505,6 +21525,16 @@ The IR graph structure (number of layers, op types)</p>
                 <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
             </div>
             <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int tile_order_linear_index_2d(int y, int x, int grid_h, int grid_w, int merge_size)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">token_frames</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int token_frames(const float * logits, size_t bins, float speed, size_t max_duration_per_token, int32_t * frames)</pre>
             <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
         </div>
 
