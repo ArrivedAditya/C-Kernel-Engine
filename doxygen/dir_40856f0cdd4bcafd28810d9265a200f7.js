@@ -4,6 +4,7 @@ var dir_40856f0cdd4bcafd28810d9265a200f7 =
     [ "add_kernels_bf16.c", "add__kernels__bf16_8c.html", "add__kernels__bf16_8c" ],
     [ "attention_decode_fused.c", "attention__decode__fused_8c.html", "attention__decode__fused_8c" ],
     [ "attention_flash_true.c", "attention__flash__true_8c.html", "attention__flash__true_8c" ],
+    [ "attention_full_token_major.c", "attention__full__token__major_8c.html", "attention__full__token__major_8c" ],
     [ "attention_kernels.c", "attention__kernels_8c.html", "attention__kernels_8c" ],
     [ "attention_kernels_sliding.c", "attention__kernels__sliding_8c.html", "attention__kernels__sliding_8c" ],
     [ "attention_oracle_ggml.c", "attention__oracle__ggml_8c.html", "attention__oracle__ggml_8c" ],

@@ -4011,7 +4011,7 @@ test_softmax.py::TestSoftmaxForward::test_exact_vs_fast</p>
 
 
 <details open>
-    <summary>Attention (181)</summary>
+    <summary>Attention (182)</summary>
     <div class="accordion-content">
 
 
@@ -4710,6 +4710,16 @@ test_attention.py::TestAttentionForward::test_flash_decode</p>
             </div>
             <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">void attention_forward_sparse_token_major_gqa_bf16cache_pytorch_cpu_flash_contract(const float * query, const uint16_t * key_cache, const uint16_t * value_cache, const float * selected_indices, float * output, float * score_scratch, int rows, int query_heads, int kv_heads, int head_dim, int selection_width, int context_length, int position)</pre>
             <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">Forward pass computation</p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">attention_full_token_major_f32_checked</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int attention_full_token_major_f32_checked(const float * query, size_t query_elements, const float * key, size_t key_elements, const float * value, size_t value_elements, float * output, size_t output_elements, float * scratch, size_t scratch_bytes, size_t tokens, size_t heads, size_t head_dim)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
         </div>
 
 
@@ -7972,7 +7982,7 @@ test_rope.py::TestRoPECache::test_cache_values</p>
 
 
 <details open>
-    <summary>Other Functions (1416)</summary>
+    <summary>Other Functions (1418)</summary>
     <div class="accordion-content">
 
 
@@ -9034,6 +9044,16 @@ test_multi_layer_parity.py::TestMultiLayerParity::test_residual_add</p>
                 <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
             </div>
             <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int checked_float_extent(size_t elements)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">checked_geometry</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">int checked_geometry(size_t tokens, size_t heads, size_t head_dim, size_t * width, size_t * elements)</pre>
             <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
         </div>
 
@@ -21186,6 +21206,16 @@ The IR graph structure (number of layers, op types)</p>
             </div>
             <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">void scal_copy_f32(float * y, const float * x, float alpha, int n)</pre>
             <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">Scaled copy: y = alpha * x.</p>
+        </div>
+
+
+        <div class="card" style="margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <code style="font-size: 1rem; background: none; color: var(--orange); padding: 0;">score</code>
+                <span class="badge badge-green" style="margin-left: 0.5rem;">Forward</span>
+            </div>
+            <pre style="margin: 0.5rem 0; font-size: 0.8rem; overflow-x: auto;">double score(const float * query, const float * key, size_t head_dim, double scale)</pre>
+            <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;"></p>
         </div>
 
 
