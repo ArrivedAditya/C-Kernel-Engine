@@ -779,7 +779,7 @@ class AudioEncoderContractTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         dependency_installs = [
             line.strip()
-            for line in workflow.splitlines()
+            for line in workflow.replace("\\\n", " ").splitlines()
             if "pip install" in line and "--upgrade pip" not in line
         ]
         self.assertTrue(
@@ -789,32 +789,32 @@ class AudioEncoderContractTests(unittest.TestCase):
         self.assertTrue(
             all(
                 "-c .github/requirements-nightly-constraints.txt" in line
-                or "-c ${{ matrix.constraints }}" in line
+                or '-c "$constraints"' in line
                 or "-c .github/requirements-nightly-torch28-constraints.txt" in line
                 for line in dependency_installs
             ),
             "every nightly dependency install must use the pinned constraints file",
         )
+        # Versioned references execute inside standard nightly, using literal
+        # pinned specs to bind the constraints variable; no standalone matrix.
         self.assertIn(
-            "constraints: .github/requirements-nightly-torch28-constraints.txt",
+            "for spec in '28:2.8.0:.github/requirements-nightly-torch28-constraints.txt' "
+            "'212:2.12.1:.github/requirements-nightly-constraints.txt'; do",
             workflow,
         )
-        self.assertIn(
-            "constraints: .github/requirements-nightly-constraints.txt",
-            workflow,
-        )
-        for version in ("2.8.0", "2.12.1"):
-            self.assertIn(f"torch_version: '{version}'", workflow)
-        self.assertIn("CKE_EXPECTED_TORCH_VERSION: ${{ matrix.torch_version }}",
-                      workflow)
-        self.assertIn("CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages.json",
-                      workflow)
-        self.assertIn("CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages-default.json",
-                      workflow)
-        self.assertIn("ATEN_CPU_CAPABILITY: default", workflow)
-        self.assertIn("build/torch28-reference/bin/python -m pip install", workflow)
-        self.assertIn("name: tts-adaln-torch-${{ matrix.torch_version }}-stages",
-                      workflow)
+        self.assertIn('IFS=: read -r tag version constraints <<< "$spec"', workflow)
+        self.assertIn('CKE_EXPECTED_TORCH_VERSION="$version"', workflow)
+        self.assertIn('CKE_ADALN_STAGE_REPORT="$reports/tts-adaln-reference-stages-${lane}.json"', workflow)
+        self.assertIn('settings+=(ATEN_CPU_CAPABILITY=default)', workflow)
+        self.assertIn('tests+=(tts_adaptive_layer_norm_reference)', workflow)
+        self.assertIn('tests=(tts_adaptive_layer_norm_live)', workflow)
+        self.assertIn('for lane in historical native default; do', workflow)
+        self.assertIn('--require-executed', workflow)
+        self.assertIn('exit "$oracle_status"', workflow)
+        self.assertNotIn('matrix.torch_version', workflow)
+        oracle_step = workflow.split('      - name: Run versioned numerical oracle environments inside nightly', 1)[1].split('      - name:', 1)[0]
+        self.assertIn("if: always() && github.event_name != 'pull_request'", oracle_step)
+        self.assertIn('run_case() { "$@" || oracle_status=1; }', oracle_step)
         self.assertIn("--index-url https://download.pytorch.org/whl/cpu",
                       workflow)
         parsed = nightly.parse_sub_tests(
