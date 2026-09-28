@@ -1811,6 +1811,10 @@ def _validate_segmented_prefill_contract(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 OP_DATAFLOW = {
+    "attention_full_token_major_checked": {
+        "inputs": {"query": "external:query", "key": "external:key", "value": "external:value"},
+        "outputs": {"output": {"slot": "attention_context", "dtype": "fp32"}},
+    },
     "linear_rows_checked": {
         "inputs": {"input": "external:linear_input"},
         "outputs": {"output": {"slot": "linear_output", "dtype": "fp32"}},
@@ -4379,6 +4383,7 @@ def _validated_kernel_codegen_capability(kernel_id: str, kernel_map: Dict) -> Op
 # source model is dense, recurrent, DeepStack-style, MoE, SSM, or something else.
 # Note: "matmul" is a logical op that maps to gemv (decode) or gemm (prefill) based on mode
 TEMPLATE_TO_KERNEL_OP = {
+    "attention_full_token_major_checked": "attention_full_token_major_checked",
     "linear_rows_checked": "linear_rows_checked",
     "embedding_three_table_layer_norm": "embedding_three_table_layer_norm",
     "audio_duration_logits_to_frames": "audio_duration_logits_to_frames",
@@ -9018,6 +9023,7 @@ def build_ir1_direct(manifest: Dict, manifest_path: Path, mode: str = "decode",
     # Op → Weight mapping (which weights each op uses for quant lookup)
     # ═══════════════════════════════════════════════════════════
     OP_TO_WEIGHT_KEYS = {
+        "attention_full_token_major_checked": None,
         "linear_rows_checked": ["weight", "bias"],
         "embedding_three_table_layer_norm": ["word", "position", "token_type", "gamma", "beta"],
         "audio_duration_logits_to_frames": None,

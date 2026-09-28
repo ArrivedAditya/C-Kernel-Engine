@@ -767,6 +767,18 @@ TEST_SUITES = {
         "TTS Kokoro Generated QKV X-Ray Oracle", "kernels",
         ROOT / "tests" / "test_v8_kokoro_generated_qkv.py",
     ),
+    "tts_attention_full_token_major_oracle": TestSuite(
+        "TTS Full Token-Major Attention PyTorch Oracle", "kernels",
+        ROOT / "tests" / "test_v8_attention_full_token_major_oracle.py",
+    ),
+    "tts_attention_full_token_major_generated": TestSuite(
+        "Model-Neutral Generated Full Token-Major Attention", "kernels",
+        ROOT / "tests" / "test_v8_attention_full_token_major_generated.py",
+    ),
+    "tts_kokoro_generated_attention_context": TestSuite(
+        "TTS Kokoro Generated Attention Context X-Ray Oracle", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_generated_attention_context.py",
+    ),
     "tts_duration_logits_runtime_graph": TestSuite(
         "TTS Duration Logits Full v8 Lowering", "kernels",
         ROOT / "tests" / "test_v8_duration_logits_runtime_graph.py",
