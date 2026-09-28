@@ -5,7 +5,7 @@
     "generated_by": "ck_run_v8.py",
     "source_dir": "version/v8/kernel_maps",
     "counts": {
-      "total": 391,
+      "total": 393,
       "by_op": {
         "add_backward": 1,
         "add_stream": 2,
@@ -64,7 +64,7 @@
         "gated_deltanet": 7,
         "gated_shared_swiglu_expert_mlp": 4,
         "geglu": 5,
-        "gelu": 8,
+        "gelu": 9,
         "gemm": 23,
         "gemm_backward": 1,
         "gemma4_per_layer_embed": 1,
@@ -80,7 +80,7 @@
         "kv_cache_store_batch_f16": 1,
         "kv_cache_store_batch_f32": 1,
         "kv_lora_decompress": 2,
-        "layernorm": 4,
+        "layernorm": 5,
         "layout_convert": 2,
         "layout_transform": 1,
         "linear_rows_checked": 1,
@@ -27570,6 +27570,239 @@
       "_source_file": "gelu_pytorch_tanh_bf16_storage.json"
     },
     {
+      "id": "gelu_rows_tanh_checked_f32",
+      "op": "gelu",
+      "operation_interface": "activation.gelu.tanh.rows.checked.fp32.v1",
+      "variant": "checked_legacy_scalar_tanh",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "gelu_rows_tanh_checked_f32",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "none",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [
+        {
+          "name": "scratch",
+          "dtype": "fp32",
+          "shape": [
+            "Q"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "lifetime": "kernel_call",
+          "alignment": 4,
+          "desc": "Caller-owned staged output; Q must cover rows*channels.",
+          "size_bytes": "4 * Q",
+          "size_resolution": "required"
+        }
+      ],
+      "dims": [
+        "input_elements",
+        "input_stride",
+        "output_elements",
+        "output_stride",
+        "scratch_elements",
+        "rows",
+        "channels"
+      ],
+      "constraints": {
+        "notes": "Positive rows/channels, checked physical spans and capacities; no aliasing of output/scratch with accessed read buffers. Input row padding is ignored; output padding unchanged. All valid inputs/results finite. Rejection leaves output unchanged. No internal allocation."
+      },
+      "impl": {
+        "function": "gelu_rows_tanh_checked_f32",
+        "c_declaration": "int gelu_rows_tanh_checked_f32(const float *input, size_t input_elements, size_t input_stride, float *output, size_t output_elements, size_t output_stride, float *scratch, size_t scratch_elements, size_t rows, size_t channels);",
+        "sources": [
+          "src/kernels/gelu_rows_tanh_checked.c",
+          "src/kernels/gelu_kernels.c",
+          "src/ckernel_strict.c",
+          "src/ck_threadpool.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "M": "gelu_rows",
+          "C": "gelu_channels",
+          "Q": "gelu_scratch_elements"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "gelu_input_elements",
+            "stride": "gelu_input_stride",
+            "physical_row_stride": true,
+            "rows": "gelu_rows",
+            "width": "gelu_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "gelu_output_elements",
+            "stride": "gelu_output_stride",
+            "physical_row_stride": true,
+            "rows": "gelu_rows",
+            "width": "gelu_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "scratch",
+            "elements": "gelu_scratch_elements",
+            "rows": "gelu_scratch_elements",
+            "width": 1,
+            "element_bytes": 4
+          }
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:gelu_input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:gelu_input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:gelu_output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:gelu_output_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "scratch",
+            "source": "scratch:scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "scratch_elements",
+            "source": "runtime:gelu_scratch_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:gelu_rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:gelu_channels",
+            "value_type": "size_t"
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "gelu_tanh_legacy_scalar_fp32_checked",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "gelu_rows_tanh_checked_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "scalar",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "none"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "none",
+            "merge_order": "none",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "tests": {
+        "unit": [
+          "tests/test_v8_normalization_checked_oracle.py",
+          "tests/test_v8_normalization_checked_generated.py",
+          "tests/test_v8_kokoro_generated_albert_layer.py"
+        ],
+        "oracle": "Pinned independent Kokoro/PyTorch 2.8 first-layer operation captures; live PyTorch at small widths and SIMD tails; bounds, padding, rejection and repeated calls"
+      },
+      "notes": "Checked adapter preserves the existing arithmetic. Independent native-versus-PyTorch contract uses a 1e-6 elementwise absolute bound for tanh GELU. The legacy function named gelu_exact_inplace implements tanh; erf is a different provider. Backward support is explicitly uncertified. Complete native model remains NOT_TESTED.",
+      "name": "gelu_rows_tanh_checked_f32",
+      "_source_file": "gelu_rows_tanh_checked_f32.json"
+    },
+    {
       "id": "gemm_backward_f32",
       "op": "gemm_backward",
       "variant": "fp32_reference",
@@ -39548,6 +39781,310 @@
       "_source_file": "layernorm_fp32_exact.json"
     },
     {
+      "id": "layernorm_rows_checked_f32",
+      "op": "layernorm",
+      "operation_interface": "normalization.layernorm.rows.checked.fp32.v1",
+      "variant": "checked_legacy_ggml_reduction",
+      "selection": {
+        "status": "candidate",
+        "priority": 100,
+        "equivalence_group": "layernorm_rows_checked_f32",
+        "phases": [
+          "prefill"
+        ]
+      },
+      "quant": {
+        "weight": "fp32",
+        "activation": "fp32",
+        "output": "fp32"
+      },
+      "inputs": [
+        {
+          "name": "input",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "weights": [
+        {
+          "name": "gamma",
+          "dtype": "fp32",
+          "shape": [
+            "C"
+          ],
+          "layout": "feature_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        },
+        {
+          "name": "beta",
+          "dtype": "fp32",
+          "shape": [
+            "C"
+          ],
+          "layout": "feature_contiguous",
+          "placement": "local",
+          "access": "read",
+          "storage_class": "weight",
+          "consumption": "required"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "dtype": "fp32",
+          "shape": [
+            "M",
+            "C"
+          ],
+          "layout": "row_major_strided",
+          "placement": "local",
+          "access": "write",
+          "storage_class": "activation",
+          "consumption": "required"
+        }
+      ],
+      "scratch": [
+        {
+          "name": "scratch",
+          "dtype": "fp32",
+          "shape": [
+            "Q"
+          ],
+          "layout": "contiguous",
+          "placement": "local",
+          "access": "read_write",
+          "storage_class": "scratch",
+          "consumption": "required",
+          "lifetime": "kernel_call",
+          "alignment": 4,
+          "desc": "Caller-owned staged output and row statistics. Q must cover rows*(channels+2).",
+          "size_bytes": "4 * Q",
+          "size_resolution": "required"
+        }
+      ],
+      "dims": [
+        "input_elements",
+        "input_stride",
+        "gamma_elements",
+        "beta_elements",
+        "output_elements",
+        "output_stride",
+        "scratch_elements",
+        "rows",
+        "channels"
+      ],
+      "constraints": {
+        "notes": "Positive rows/channels, checked physical spans and capacities; no aliasing of output/scratch with accessed read buffers. Input row padding is ignored; output padding unchanged. All valid inputs/results finite. Rejection leaves output unchanged. No internal allocation."
+      },
+      "impl": {
+        "function": "layernorm_rows_checked_f32",
+        "c_declaration": "int layernorm_rows_checked_f32(const float *input, size_t input_elements, size_t input_stride, const float *gamma, size_t gamma_elements, const float *beta, size_t beta_elements, float *output, size_t output_elements, size_t output_stride, float *scratch, size_t scratch_elements, size_t rows, size_t channels, float epsilon);",
+        "sources": [
+          "src/kernels/layernorm_rows_checked.c",
+          "src/kernels/layernorm_kernels.c",
+          "src/ckernel_strict.c",
+          "src/ck_threadpool.c"
+        ]
+      },
+      "modes": {
+        "inference": true,
+        "training": false,
+        "backward": false
+      },
+      "call_constant_contract": {
+        "shape_symbols": {
+          "M": "norm_rows",
+          "C": "norm_channels",
+          "Q": "norm_scratch_elements"
+        },
+        "buffer_spans": [
+          {
+            "pointer": "input",
+            "elements": "norm_input_elements",
+            "stride": "norm_input_stride",
+            "physical_row_stride": true,
+            "rows": "norm_rows",
+            "width": "norm_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "output",
+            "elements": "norm_output_elements",
+            "stride": "norm_output_stride",
+            "physical_row_stride": true,
+            "rows": "norm_rows",
+            "width": "norm_channels",
+            "element_bytes": 4
+          },
+          {
+            "pointer": "gamma",
+            "elements": "norm_gamma_elements",
+            "rows": "norm_channels",
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "beta",
+            "elements": "norm_beta_elements",
+            "rows": "norm_channels",
+            "width": 1,
+            "element_bytes": 4
+          },
+          {
+            "pointer": "scratch",
+            "elements": "norm_scratch_elements",
+            "rows": "norm_scratch_elements",
+            "width": 1,
+            "element_bytes": 4
+          }
+        ]
+      },
+      "call_abi": {
+        "version": 1,
+        "params": [
+          {
+            "name": "input",
+            "source": "activation:input",
+            "cast": "const float*",
+            "ports": [
+              "input:input"
+            ]
+          },
+          {
+            "name": "input_elements",
+            "source": "runtime:norm_input_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "input_stride",
+            "source": "runtime:norm_input_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "gamma",
+            "source": "weight:gamma",
+            "cast": "const float*",
+            "ports": [
+              "weight:gamma"
+            ]
+          },
+          {
+            "name": "gamma_elements",
+            "source": "runtime:norm_gamma_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "beta",
+            "source": "weight:beta",
+            "cast": "const float*",
+            "ports": [
+              "weight:beta"
+            ]
+          },
+          {
+            "name": "beta_elements",
+            "source": "runtime:norm_beta_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output",
+            "source": "output:output",
+            "cast": "float*",
+            "ports": [
+              "output:output"
+            ]
+          },
+          {
+            "name": "output_elements",
+            "source": "runtime:norm_output_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "output_stride",
+            "source": "runtime:norm_output_stride",
+            "value_type": "size_t"
+          },
+          {
+            "name": "scratch",
+            "source": "scratch:scratch",
+            "cast": "float*"
+          },
+          {
+            "name": "scratch_elements",
+            "source": "runtime:norm_scratch_elements",
+            "value_type": "size_t"
+          },
+          {
+            "name": "rows",
+            "source": "runtime:norm_rows",
+            "value_type": "size_t"
+          },
+          {
+            "name": "channels",
+            "source": "runtime:norm_channels",
+            "value_type": "size_t"
+          },
+          {
+            "name": "epsilon",
+            "source": "config:epsilon"
+          }
+        ]
+      },
+      "numerical_capabilities": [
+        {
+          "contract_id": "layernorm_rows_checked_fp32_ggml_chunked_contracted",
+          "status": "validated",
+          "phases": [
+            "prefill"
+          ],
+          "function": "layernorm_rows_checked_f32",
+          "explicit_selector": true,
+          "implementation": {
+            "isa_dispatch": "compile_time",
+            "threading": {
+              "runtime": "serial",
+              "work_partition": [
+                "independent_rows"
+              ],
+              "dispatch": [
+                "inline"
+              ],
+              "reduction_order_effect": "contract_defined"
+            }
+          },
+          "arithmetic": {
+            "partial_accumulator": "fp32",
+            "merge_order": "ascending_chunk",
+            "deterministic": true,
+            "thread_count_changes_arithmetic_order": false,
+            "split_strategy": "independent_outputs"
+          }
+        }
+      ],
+      "tests": {
+        "unit": [
+          "tests/test_v8_normalization_checked_oracle.py",
+          "tests/test_v8_normalization_checked_generated.py",
+          "tests/test_v8_kokoro_generated_albert_layer.py"
+        ],
+        "oracle": "Pinned independent Kokoro/PyTorch 2.8 first-layer operation captures; live PyTorch at small widths and SIMD tails; bounds, padding, rejection and repeated calls"
+      },
+      "notes": "Checked adapter preserves the existing arithmetic. Independent native-versus-PyTorch contract uses the existing FP32 LayerNorm family 1e-5 absolute bound; this is not the AdaLN reproducibility bound. Backward support is explicitly uncertified. Complete native model remains NOT_TESTED.",
+      "name": "layernorm_rows_checked_f32",
+      "_source_file": "layernorm_rows_checked_f32.json"
+    },
+    {
       "id": "layout_convert_head_to_token_f32",
       "op": "layout_convert",
       "selection": {
@@ -39955,11 +40492,12 @@
           "tests/test_v8_linear_rows_oracle.py",
           "tests/test_v8_kokoro_generated_projection.py",
           "tests/test_v8_checked_op_constants.py",
-          "tests/test_v8_kokoro_generated_qkv.py"
+          "tests/test_v8_kokoro_generated_qkv.py",
+          "tests/test_v8_kokoro_generated_albert_layer.py"
         ],
         "oracle": "Independent PyTorch torch.nn.functional.linear at small, pinned Kokoro [36,128]\u2192[36,768], and first shared-layer [36,768]\u2192[36,768] Q/K/V shapes; checked strided rows, bounded per-call capacities, and connected generated graphs"
       },
-      "notes": "Reusable checked linear operator for inference only; Kokoro ALBERT projection is one consumer. FP64 accumulation is deliberately distinct from PyTorch's FP32 reduction and uses an explicit numerical tolerance.",
+      "notes": "Reusable checked linear operator for inference only; Kokoro ALBERT projection is one consumer. FP64 accumulation is deliberately distinct from PyTorch's FP32 reduction and uses an explicit numerical tolerance. Pinned first Kokoro ALBERT FFN projection at [36,2048] to [36,768] differs from PyTorch 2.8 FP32 by 3.814697265625e-5 on oracle-fed inputs while matching independently executed FP64 arithmetic exactly. Its new composition fixture declares its own 5e-5 absolute projection/residual bound and keeps normalized outputs at 1e-5; existing projection/QKV bounds remain unchanged. If a tighter PyTorch-dispatch match is required, add a separately named reduction provider/contract rather than modifying this FP64 provider.",
       "name": "linear_rows_checked_f32",
       "_source_file": "linear_rows_checked_f32.json"
     },

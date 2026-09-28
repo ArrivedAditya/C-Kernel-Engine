@@ -1811,6 +1811,10 @@ def _validate_segmented_prefill_contract(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 OP_DATAFLOW = {
+    "audio_scaled_residual_add": {
+        "inputs": {"residual": "external:residual", "branch": "external:branch"},
+        "outputs": {"output": {"slot": "residual_sum", "dtype": "fp32"}},
+    },
     "attention_full_token_major_checked": {
         "inputs": {"query": "external:query", "key": "external:key", "value": "external:value"},
         "outputs": {"output": {"slot": "attention_context", "dtype": "fp32"}},
@@ -4383,6 +4387,7 @@ def _validated_kernel_codegen_capability(kernel_id: str, kernel_map: Dict) -> Op
 # source model is dense, recurrent, DeepStack-style, MoE, SSM, or something else.
 # Note: "matmul" is a logical op that maps to gemv (decode) or gemm (prefill) based on mode
 TEMPLATE_TO_KERNEL_OP = {
+    "audio_scaled_residual_add": "audio_scaled_residual_add",
     "attention_full_token_major_checked": "attention_full_token_major_checked",
     "linear_rows_checked": "linear_rows_checked",
     "embedding_three_table_layer_norm": "embedding_three_table_layer_norm",
