@@ -194,6 +194,8 @@ jobs:
       - name: Install numerical test dependencies
         run: python3 -m pip install numpy jsonschema
       - name: Verify registered kernel-map numerical and composition cases
+        env:
+          CKE_KOKORO_LAYER_EVIDENCE_DIR: ${{ github.workspace }}/build/kernel-oracle-captures/kokoro-first-layer
         run: |
           python3 scripts/nightly_runner.py --kernel-map-tests \
             version/v8/kernel_maps/embedding_three_table_layer_norm_f32.json \
@@ -230,7 +232,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kernel-map-pr-report
-          path: build/kernel-map-pr-report.json
+          path: |
+            build/kernel-map-pr-report.json
+            build/kernel-oracle-captures/**
           if-no-files-found: error
       - name: Verify Kokoro import envelope and rejection contracts
         run: python3 -m unittest tests.test_v8_kokoro_bump_export
