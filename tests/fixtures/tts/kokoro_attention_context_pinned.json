@@ -1,0 +1,29 @@
+{
+  "oracle": "PyTorch 2.12.1+cpu eager matmul/softmax/matmul",
+  "scope": "first shared ALBERT attention context, all 36 tokens valid, no dropout",
+  "source_fixture_sha256": "f870afedce410f84fb36120016598247924c3c99c733aabfa5546f33977efe85",
+  "fixture_sha256": "123f51b8034fbfa1eff4ef5c719bc28119c52469ef711d18f62b7275c608ea16",
+  "heads": 12,
+  "head_dim": 64,
+  "tokens": 36,
+  "shapes": {
+    "query": [
+      36,
+      768
+    ],
+    "key": [
+      36,
+      768
+    ],
+    "value": [
+      36,
+      768
+    ],
+    "context_expected": [
+      36,
+      768
+    ]
+  },
+  "complete_albert_layer": "NOT_TESTED",
+  "generated_waveform": "NOT_TESTED"
+}
