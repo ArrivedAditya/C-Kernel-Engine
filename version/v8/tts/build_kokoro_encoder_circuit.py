@@ -11,14 +11,14 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-SOURCE = ROOT / 'tests/fixtures/tts/kokoro_first_albert_layer_generated_circuit.json'
+from build_kokoro_albert_circuit import build_circuit as build_albert_circuit, specialize
 OUTPUT = ROOT / 'version/v8/circuits/kokoro_phoneme_encoder_bounded.json'
 
 
 def build_circuit(tokens=36):
     if isinstance(tokens, bool) or not isinstance(tokens, int) or not 2 <= tokens <= 512:
         raise ValueError('encoder tokens must be an integer between 2 and 512')
-    graph = json.loads(SOURCE.read_text())
+    graph = build_albert_circuit()
     graph['name'] = 'kokoro_phoneme_encoder_bounded'
     graph['native_entry']['function'] = 'ck_kokoro_phoneme_encoder'
     graph['contract']['runtime_invariants'].update(
@@ -82,24 +82,7 @@ def build_circuit(tokens=36):
         request['phases']['prefill']['evidence'] = 'tests/test_v8_kokoro_generated_encoder.py'
     # Storage capacities and per-call dimensions are authored together. This
     # specializes a graph; it does not claim runtime-changing valid lengths.
-    for buffer in graph['activation_buffers'].values():
-        buffer['shape'][0] = tokens
-    for key in ('id_elements', 'tokens'):
-        graph['runtime_constants'][key] = tokens
-    graph['runtime_constants']['output_elements'] = tokens * 128
-    for op in header + body + [final]:
-        params = op.get('params', {})
-        if op['op'] == 'audio_scaled_residual_add':
-            params['N'] = params['elements'] = tokens * 768
-        for key in ('M', 'T', 'Q'):
-            if key in params:
-                params[key] = params[key] // 36 * tokens
-        for name, value in params.get('call_constants', {}).items():
-            if name in ('linear_rows', 'norm_rows', 'gelu_rows', 'attention_tokens'):
-                params['call_constants'][name] = tokens
-            elif name.endswith(('_input_elements', '_output_elements', '_scratch_elements',
-                               '_query_elements', '_key_elements', '_value_elements')):
-                params['call_constants'][name] = value // 36 * tokens
+    specialize(graph, tokens)
     return graph
 
 

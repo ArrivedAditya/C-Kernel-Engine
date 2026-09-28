@@ -21,39 +21,12 @@ import xray_numerical_parity_v8 as xray
 sys.path.insert(0, str(ROOT / "version/v8/tts"))
 import export_kokoro_bump as exporter
 
-PREFIX = "phoneme_encoder.encoder.albert_layer_groups.0.albert_layers.0.attention"
-BASE_WEIGHTS = {
-    "word": "phoneme_encoder.embeddings.word_embeddings.weight",
-    "position": "phoneme_encoder.embeddings.position_embeddings.weight",
-    "token_type": "phoneme_encoder.embeddings.token_type_embeddings.weight",
-    "gamma": "phoneme_encoder.embeddings.LayerNorm.weight",
-    "beta": "phoneme_encoder.embeddings.LayerNorm.bias",
-    "projection_weight": "phoneme_encoder.encoder.embedding_hidden_mapping_in.weight",
-    "projection_bias": "phoneme_encoder.encoder.embedding_hidden_mapping_in.bias",
-}
-
+from tests.v8_kokoro_fixture_support import PREFIX, load_first_layer_fixtures
 
 class KokoroGeneratedAlbertLayerTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        fixtures = ROOT / "tests/fixtures/tts"
-        cls.embed = dict(np.load(fixtures / "bert_embedding_pinned.npz"))
-        cls.projection = dict(np.load(fixtures / "kokoro_projection_pinned.npz"))
-        fixture_path = fixtures / "kokoro_qkv_pinned.npz"
-        cls.qkv = dict(np.load(fixture_path))
-        cls.meta = json.loads(fixture_path.with_suffix(".json").read_text())
-        context_path = fixtures / "kokoro_attention_context_pinned.npz"
-        cls.context = dict(np.load(context_path))
-        cls.context_meta = json.loads(context_path.with_suffix(".json").read_text())
-        if hashlib.sha256(context_path.read_bytes()).hexdigest() != cls.context_meta["fixture_sha256"]:
-            raise RuntimeError("attention-context fixture hash mismatch")
-        if hashlib.sha256(fixture_path.read_bytes()).hexdigest() != cls.meta["fixture_sha256"]:
-            raise RuntimeError("Q/K/V fixture hash mismatch")
-        layer_path = fixtures / "kokoro_albert_layer_pinned.npz"
-        cls.layer = dict(np.load(layer_path))
-        cls.layer_meta = json.loads(layer_path.with_suffix(".json").read_text())
-        if hashlib.sha256(layer_path.read_bytes()).hexdigest() != cls.layer_meta["fixture_sha256"]:
-            raise RuntimeError("first-layer oracle fixture hash mismatch")
+        tensors = load_first_layer_fixtures(cls)
         evidence = os.environ.get("CKE_KOKORO_LAYER_EVIDENCE_DIR")
         if evidence:
             path = Path(evidence).resolve()
@@ -62,17 +35,6 @@ class KokoroGeneratedAlbertLayerTest(unittest.TestCase):
         else:
             cls.temp = tempfile.TemporaryDirectory()
         temp = Path(cls.temp.name)
-        tensors = {BASE_WEIGHTS[key]: cls.embed[key] for key in
-                   ("word", "position", "token_type", "gamma", "beta")}
-        tensors[BASE_WEIGHTS["projection_weight"]] = cls.projection["weight"]
-        tensors[BASE_WEIGHTS["projection_bias"]] = cls.projection["bias"]
-        for name in ("query", "key", "value"):
-            for suffix in ("weight", "bias"):
-                tensors[f"{PREFIX}.{name}.{suffix}"] = cls.qkv[f"{name}_{suffix}"]
-        for name, tensor in cls.layer.items():
-            if name.startswith("weight__"):
-                canonical = PREFIX.removesuffix(".attention") + "." + name.removeprefix("weight__").replace("__", ".")
-                tensors[canonical] = tensor
         origins = {name: {"source_name": name, "transform": "identity"} for name in tensors}
         bundle = exporter.write_bundle(temp, tensors, origins, {
             "n_token": 178, "hidden_dim": 512,
@@ -82,7 +44,7 @@ class KokoroGeneratedAlbertLayerTest(unittest.TestCase):
         exporter.verify_bundle(temp)
         cls.bump = (temp / "weights.bump").read_bytes()
         cls.entries = {item["name"]: item for item in bundle["entries"]}
-        circuit = fixtures / "kokoro_first_albert_layer_generated_circuit.json"
+        circuit = ROOT / "tests/fixtures/tts/kokoro_first_albert_layer_generated_circuit.json"
         template = json.loads(circuit.read_text())
         source = {
             "config": {

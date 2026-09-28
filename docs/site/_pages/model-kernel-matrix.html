@@ -418,12 +418,35 @@
 
   <h2 style="color: var(--orange); margin-top: 2rem;">One Pipeline, Every Model</h2>
   <p class="lead" style="margin-top: 0;">
-    Every supported family enters through the same deterministic compile path. The artifact (GGUF) carries the numbers,
+    Every supported family enters through the same deterministic compile path. The artifact (GGUF or BUMP) carries the numbers,
     the template carries the structure, and lowering turns both into a concrete C runtime with a fixed memory plan.
     Vision families add a second lane that produces an encoder prefix and bridges it into the decoder.
-    Audio families arrive as safetensors &rarr; BUMP and run an encoder&ndash;decoder pair: the audio encoder's output
-    becomes cross-attention memory that the decoder reads on every generated token.
+    Audio assets can arrive as safetensors &rarr; BUMP, with distinct declared dataflows. Whisper uses encoder memory and decoder cross-attention; transducer ASR uses encoder, prediction and joiner components. TTS connects phoneme/text encoding, conditioning, duration expansion, prosody and waveform generation. These share compilation infrastructure, not one runtime topology.
   </p>
+
+  <figure aria-labelledby="tts-flow-caption">
+    <svg viewBox="0 0 1120 230" role="img" aria-label="Kokoro dataflow: certified phoneme encoder; unfinished text encoder, duration and prosody, expansion joins and waveform generator. Voice conditioning feeds declared consumers. Oracle and X-Ray observe execution." style="width:100%;font-family:Inter,system-ui,sans-serif">
+      <g fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="15" y="45" width="220" height="55" rx="6"/>
+        <rect x="285" y="45" width="230" height="55" rx="6" stroke-dasharray="6 4"/>
+        <rect x="550" y="80" width="245" height="65" rx="6" stroke-dasharray="6 4"/>
+        <rect x="840" y="80" width="260" height="65" rx="6" stroke-dasharray="6 4"/>
+        <rect x="285" y="145" width="230" height="50" rx="6" stroke-dasharray="6 4"/>
+        <path d="M235 72H280 M515 72H530V105H545 M515 170H530V125H545 M795 112H835"/>
+      </g>
+      <g fill="currentColor" text-anchor="middle" font-size="14">
+        <text x="125" y="65">Fixed phoneme IDs → encoder</text><text x="125" y="86">CERTIFIED: features</text>
+        <text x="400" y="65">Duration / prosody</text><text x="400" y="86">UNFINISHED</text>
+        <text x="400" y="165">Text encoder</text><text x="400" y="185">UNFINISHED</text>
+        <text x="672" y="103">Duration expansion / joins</text><text x="672" y="127">UNFINISHED</text>
+        <text x="970" y="103">Acoustic generator → waveform</text><text x="970" y="127">UNFINISHED</text>
+        <text x="560" y="22">One compilation pipeline; explicit tensor and state edges define the dataflow</text>
+        <text x="145" y="150">IDs also feed text encoder →</text>
+        <text x="560" y="219">Voice/style → declared consumers. Oracle + X-Ray observe execution outside the runtime path.</text>
+      </g>
+    </svg>
+    <figcaption id="tts-flow-caption">Kokoro status: solid box = certified component; dashed boxes = unfinished composition. Native text preparation is also unfinished. No generated speech is claimed.</figcaption>
+  </figure>
 
   <div class="svg-expand">
   <svg viewBox="0 0 1180 648" width="100%" role="img" tabindex="0" data-svg-title="One pipeline, every model — compile path"
@@ -617,6 +640,7 @@
           <tr><th>Model</th><th>Runtime status</th><th>Strongest evidence</th><th>Max tested context</th><th>Oracle</th><th>Remaining gap</th></tr>
         </thead>
         <tbody>
+          <tr><td class="cert-model">Kokoro v1 / af_heart</td><td><span class="cert-status st-num">Encoder numerical parity</span></td><td>147 generated operations; twelve shared ALBERT invocations; FP32 phoneme features, not audio</td><td>Separate all-valid lengths 2, 8, 36, 64</td><td>Pinned PyTorch 2.8 captures</td><td>Duration/prosody, text features, native waveform generation and full speech remain NOT_TESTED. <a href="v8-tts-kokoro-bringup.html">Current coverage and commands</a></td></tr>
           <tr><td class="cert-model">Qwen2 0.5B</td><td><span class="cert-status st-e2e">Coherent E2E</span></td><td>nightly regression smoke</td><td>1,024</td><td>v8 nightly regression</td><td>long-context and perf sweeps</td></tr>
           <tr><td class="cert-model">Qwen3 0.6B</td><td><span class="cert-status st-e2e">Coherent E2E</span></td><td>nightly regression smoke</td><td>1,024</td><td>v8 nightly regression</td><td>long-context and perf sweeps</td></tr>
           <tr><td class="cert-model">Qwen3.5 0.8B</td><td><span class="cert-status st-e2e">Coherent E2E</span></td><td>nightly regression smoke (hybrid DeltaNet)</td><td>1,034</td><td>v8 nightly regression</td><td>long-generation parity monitored</td></tr>
