@@ -11483,7 +11483,8 @@
         "unit": [
           "tests/test_v8_attention_full_token_major_oracle.py",
           "tests/test_v8_attention_full_token_major_generated.py",
-          "tests/test_v8_kokoro_generated_attention_context.py"
+          "tests/test_v8_kokoro_generated_attention_context.py",
+          "tests/test_v8_kokoro_generated_encoder.py"
         ],
         "oracle": "Independent PyTorch matmul/softmax/matmul on small and pinned first Kokoro ALBERT attention-context shapes; model-neutral generated-C graph"
       },
@@ -18075,7 +18076,8 @@
       },
       "tests": {
         "unit": [
-          "unittest/test_audio_encoder.py"
+          "unittest/test_audio_encoder.py",
+          "tests/test_v8_kokoro_generated_encoder.py"
         ],
         "oracle": "NumPy FP32 multiply followed by FP32 add"
       },
@@ -23646,7 +23648,8 @@
       "tests": {
         "unit": [
           "tests/test_v8_bert_embedding_oracle.py",
-          "tests/test_v8_bert_embedding_live.py"
+          "tests/test_v8_bert_embedding_live.py",
+          "tests/test_v8_kokoro_generated_encoder.py"
         ],
         "oracle": "Pinned Kokoro/Transformers PyTorch ALBERT embedding module output at 36x128; independent committed fixture and optional live pinned-model recomputation"
       },
@@ -27794,7 +27797,8 @@
         "unit": [
           "tests/test_v8_normalization_checked_oracle.py",
           "tests/test_v8_normalization_checked_generated.py",
-          "tests/test_v8_kokoro_generated_albert_layer.py"
+          "tests/test_v8_kokoro_generated_albert_layer.py",
+          "tests/test_v8_kokoro_generated_encoder.py"
         ],
         "oracle": "Pinned independent Kokoro/PyTorch 2.8 first-layer operation captures; live PyTorch at small widths and SIMD tails; bounds, padding, rejection and repeated calls"
       },
@@ -40076,7 +40080,8 @@
         "unit": [
           "tests/test_v8_normalization_checked_oracle.py",
           "tests/test_v8_normalization_checked_generated.py",
-          "tests/test_v8_kokoro_generated_albert_layer.py"
+          "tests/test_v8_kokoro_generated_albert_layer.py",
+          "tests/test_v8_kokoro_generated_encoder.py"
         ],
         "oracle": "Pinned independent Kokoro/PyTorch 2.8 first-layer operation captures; live PyTorch at small widths and SIMD tails; bounds, padding, rejection and repeated calls"
       },
@@ -40493,7 +40498,8 @@
           "tests/test_v8_kokoro_generated_projection.py",
           "tests/test_v8_checked_op_constants.py",
           "tests/test_v8_kokoro_generated_qkv.py",
-          "tests/test_v8_kokoro_generated_albert_layer.py"
+          "tests/test_v8_kokoro_generated_albert_layer.py",
+          "tests/test_v8_kokoro_generated_encoder.py"
         ],
         "oracle": "Independent PyTorch torch.nn.functional.linear at small, pinned Kokoro [36,128]\u2192[36,768], and first shared-layer [36,768]\u2192[36,768] Q/K/V shapes; checked strided rows, bounded per-call capacities, and connected generated graphs"
       },

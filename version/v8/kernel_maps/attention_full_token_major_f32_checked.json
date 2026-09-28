@@ -54,6 +54,6 @@
     {"name": "heads", "source": "runtime:attention_heads", "value_type": "size_t"},
     {"name": "head_dim", "source": "runtime:attention_head_dim", "value_type": "size_t"}
   ]},
-  "tests": {"unit": ["tests/test_v8_attention_full_token_major_oracle.py", "tests/test_v8_attention_full_token_major_generated.py", "tests/test_v8_kokoro_generated_attention_context.py"], "oracle": "Independent PyTorch matmul/softmax/matmul on small and pinned first Kokoro ALBERT attention-context shapes; model-neutral generated-C graph"},
+  "tests": {"unit": ["tests/test_v8_attention_full_token_major_oracle.py", "tests/test_v8_attention_full_token_major_generated.py", "tests/test_v8_kokoro_generated_attention_context.py", "tests/test_v8_kokoro_generated_encoder.py"], "oracle": "Independent PyTorch matmul/softmax/matmul on small and pinned first Kokoro ALBERT attention-context shapes; model-neutral generated-C graph"},
   "notes": "Inference-only full attention for token-major FP32 inputs. No causal mask, key padding, dropout, output projection, or residual/LayerNorm. Kokoro's fixed 36-token fixture has no padding; other mask semantics require a separate contract."
 }

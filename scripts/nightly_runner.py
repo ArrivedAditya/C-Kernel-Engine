@@ -787,6 +787,10 @@ TEST_SUITES = {
         "Kokoro Complete First ALBERT Layer and X-Ray Oracle", "kernels",
         ROOT / "tests" / "test_v8_kokoro_generated_albert_layer.py",
     ),
+    "tts_kokoro_generated_encoder": TestSuite(
+        "Kokoro Complete Shared-Layer Encoder and X-Ray Oracle", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_encoder.py",
+    ),
     "normalization_checked_oracle": TestSuite(
         "Checked LayerNorm and Tanh GELU Numerical Contracts", "kernels",
         ROOT / "tests" / "test_v8_normalization_checked_oracle.py",
