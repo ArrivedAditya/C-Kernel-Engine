@@ -779,6 +779,18 @@ TEST_SUITES = {
         "TTS Kokoro Generated Attention Context X-Ray Oracle", "kernels",
         ROOT / "tests" / "test_v8_kokoro_generated_attention_context.py",
     ),
+    "normalization_checked_generated": TestSuite(
+        "Model-Neutral Checked Normalization Generated Graph", "kernels",
+        ROOT / "tests" / "test_v8_normalization_checked_generated.py",
+    ),
+    "tts_kokoro_generated_albert_layer": TestSuite(
+        "Kokoro Complete First ALBERT Layer and X-Ray Oracle", "kernels",
+        ROOT / "tests" / "test_v8_kokoro_generated_albert_layer.py",
+    ),
+    "normalization_checked_oracle": TestSuite(
+        "Checked LayerNorm and Tanh GELU Numerical Contracts", "kernels",
+        ROOT / "tests" / "test_v8_normalization_checked_oracle.py",
+    ),
     "tts_duration_logits_runtime_graph": TestSuite(
         "TTS Duration Logits Full v8 Lowering", "kernels",
         ROOT / "tests" / "test_v8_duration_logits_runtime_graph.py",

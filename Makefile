@@ -444,6 +444,8 @@ SRCS    := src/backend_native.c \
             src/kernels/layout_kernels.c \
             src/kernels/gemm_microkernel.c \
 	           src/kernels/layernorm_kernels.c \
+	           src/kernels/layernorm_rows_checked.c \
+	           src/kernels/gelu_rows_tanh_checked.c \
 	           src/kernels/layernorm_kernels_bf16.c \
 	           src/kernels/gelu_kernels.c \
 	           src/kernels/geglu_kernels.c \

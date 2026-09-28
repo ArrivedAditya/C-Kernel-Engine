@@ -422,6 +422,7 @@ jobs:
           # local runs), which must not break the workflow.
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_HOME: ${{ github.workspace }}/.cache/huggingface
+          CKE_KOKORO_LAYER_EVIDENCE_DIR: ${{ github.workspace }}/build/kernel-oracle-captures/kokoro-first-layer
         run: |
           set -o pipefail
           echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
@@ -1143,6 +1144,7 @@ jobs:
             build/v8_serve_e2e_last_failure/**
             build/vision_encoder_accuracy/**
             build/oracle-environments/**
+            build/kernel-oracle-captures/**
             build/regression-reports/**
             version/v7/.cache/reports/kernel_map_validation_latest.json
             version/v7/.cache/reports/backprop_family_matrix/**

@@ -8,6 +8,18 @@ on:
       - 'include/ckernel_embedding_checked.h'
       - 'include/ckernel_linear_checked.h'
       - 'include/ckernel_attention_full_token_major.h'
+      - 'include/ckernel_normalization_checked.h'
+      - 'src/kernels/checked_float_buffer.h'
+      - 'src/kernels/layernorm_rows_checked.c'
+      - 'src/kernels/gelu_rows_tanh_checked.c'
+      - 'src/kernels/layernorm_kernels.c'
+      - 'src/kernels/gelu_kernels.c'
+      - 'tests/test_v8_normalization_checked_oracle.py'
+      - 'tests/test_v8_normalization_checked_generated.py'
+      - 'tests/test_v8_kokoro_generated_albert_layer.py'
+      - 'tests/v8_checked_graph_test_support.py'
+      - 'version/v8/kernel_maps/layernorm_rows_checked_f32.json'
+      - 'version/v8/kernel_maps/gelu_rows_tanh_checked_f32.json'
       - 'src/kernels/embedding_three_table_layer_norm.c'
       - 'src/kernels/linear_rows_checked.c'
       - 'src/kernels/attention_full_token_major.c'
@@ -86,6 +98,18 @@ on:
       - 'include/ckernel_embedding_checked.h'
       - 'include/ckernel_linear_checked.h'
       - 'include/ckernel_attention_full_token_major.h'
+      - 'include/ckernel_normalization_checked.h'
+      - 'src/kernels/checked_float_buffer.h'
+      - 'src/kernels/layernorm_rows_checked.c'
+      - 'src/kernels/gelu_rows_tanh_checked.c'
+      - 'src/kernels/layernorm_kernels.c'
+      - 'src/kernels/gelu_kernels.c'
+      - 'tests/test_v8_normalization_checked_oracle.py'
+      - 'tests/test_v8_normalization_checked_generated.py'
+      - 'tests/test_v8_kokoro_generated_albert_layer.py'
+      - 'tests/v8_checked_graph_test_support.py'
+      - 'version/v8/kernel_maps/layernorm_rows_checked_f32.json'
+      - 'version/v8/kernel_maps/gelu_rows_tanh_checked_f32.json'
       - 'src/kernels/embedding_three_table_layer_norm.c'
       - 'src/kernels/linear_rows_checked.c'
       - 'src/kernels/attention_full_token_major.c'
@@ -170,11 +194,15 @@ jobs:
       - name: Install numerical test dependencies
         run: python3 -m pip install numpy jsonschema
       - name: Verify registered kernel-map numerical and composition cases
+        env:
+          CKE_KOKORO_LAYER_EVIDENCE_DIR: ${{ github.workspace }}/build/kernel-oracle-captures/kokoro-first-layer
         run: |
           python3 scripts/nightly_runner.py --kernel-map-tests \
             version/v8/kernel_maps/embedding_three_table_layer_norm_f32.json \
             version/v8/kernel_maps/linear_rows_checked_f32.json \
             version/v8/kernel_maps/attention_full_token_major_f32_checked.json \
+            version/v8/kernel_maps/layernorm_rows_checked_f32.json \
+            version/v8/kernel_maps/gelu_rows_tanh_checked_f32.json \
             version/v8/kernel_maps/audio_duration_expand_channel_major_f32.json \
             version/v8/kernel_maps/audio_duration_logits_to_frames_f32.json \
             version/v8/kernel_maps/audio_istft_mag_phase_f32.json \
@@ -204,7 +232,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kernel-map-pr-report
-          path: build/kernel-map-pr-report.json
+          path: |
+            build/kernel-map-pr-report.json
+            build/kernel-oracle-captures/**
           if-no-files-found: error
       - name: Verify Kokoro import envelope and rejection contracts
         run: python3 -m unittest tests.test_v8_kokoro_bump_export
