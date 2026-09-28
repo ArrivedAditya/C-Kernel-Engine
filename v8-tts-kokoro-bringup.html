@@ -1038,7 +1038,20 @@
   .tts-page code { overflow-wrap: anywhere; }
 </style>
 <div class="tts-page">
-<p><a href="index.html">C-Kernel-Engine</a> / TTS bring-up</p><h1>Kokoro TTS bring-up</h1><p>This page records the first bounded phoneme-to-waveform groundwork. Generated Kokoro waveform, native text preparation, listening, playback, and P3/Ryzen performance remain <strong>NOT_TESTED</strong>.</p><nav class="tts-local-nav" aria-label="On this page"><a href="#plan">Implementation plan</a><a href="#graph">Kokoro graph inventory</a><a href="#operator-checklist">Operation checklist</a><a href="#coverage">Numerical coverage</a><a href="#reference">Pinned reference capture</a></nav><section id="plan"><h2>Implementation plan</h2>
+<p><a href="index.html">C-Kernel-Engine</a> / TTS bring-up</p>
+<h1>Kokoro TTS bring-up</h1>
+<p><strong>Current execution coverage:</strong> generated phoneme encoder certified for separately compiled, all-valid lengths 2, 8, 36 and 64. Output: FP32 encoder features. Complete native speech: <strong>NOT_TESTED</strong>. Native text preparation, listening, playback and P3/Ryzen performance remain unverified.</p>
+<section id="encoder-authoring"><h2>Current authoring and regression contract</h2>
+<p><code>version/v8/tts/kokoro_albert_block.json</code> is the canonical block declaration. <code>build_kokoro_albert_circuit.py</code> generates the first-layer test circuit; <code>build_kokoro_encoder_circuit.py</code> expands the same declaration into twelve shared-weight invocations and the final projection. Production authoring does not read test fixtures. Token capacities, row strides and LayerNorm/GELU scratch are derived explicitly from dimensions. The generated 147-operation encoder schedule is unchanged.</p>
+<p>Fixture loading is shared without compiling a prefix. The first-layer suite still executes independently; the complete encoder suite compiles only the graphs it actually certifies. Its 300-second timeout remains a failure, with completed diagnostics preserved. Numerical comparison counts are checkpoint comparisons, not independent model counts.</p>
+<pre>python3 version/v8/tts/build_kokoro_albert_circuit.py --check
+python3 version/v8/tts/build_kokoro_encoder_circuit.py --check
+python3 -m unittest tests.test_v8_kokoro_generated_encoder tests.test_v8_kokoro_generated_albert_layer -v</pre>
+<p>Negative controls compile geometry-valid graphs with an incorrect second-layer input edge or query/key shared-weight binding. Independent pinned captures must detect both the changed checkpoint and final features. Swapped invocation captures must also fail the elementwise gate. These are expected-rejection tests, not speech certification.</p>
+<p><strong>X-Ray limitation:</strong> the suite enforces the full elementwise propagation contract; current X-Ray profiles receive its maximum scalar allowance. An isolated X-Ray PASS therefore provides a weaker gate. Sharing that numerical-contract representation with X-Ray remains follow-up work coordinated with the shared comparator owner; this cleanup does not change tolerances or claim that refinement is complete.</p>
+<p><strong>Next execution milestone:</strong> generated encoder features plus pinned voice conditioning through the duration predictor to logits, token durations and checked frame extent. Text encoding, expansion/layout joins, prosody, acoustic decoding, native waveform-source generation and inverse-STFT composition still precede the first generated WAV.</p>
+</section>
+<nav class="tts-local-nav" aria-label="On this page"><a href="#plan">Implementation plan</a><a href="#graph">Kokoro graph inventory</a><a href="#operator-checklist">Operation checklist</a><a href="#coverage">Numerical coverage</a><a href="#reference">Pinned reference capture</a></nav><section id="plan"><h2>Implementation plan</h2>
 <p>Status: architecture and interface proposal. No CKE TTS model, speech session,
 quality result, or CPU speed is certified by this document.</p>
 <h2>Scope and ordering</h2>
@@ -1056,7 +1069,7 @@ reserve P3 or Ryzen for uncontended numerical and performance certification.</p>
 <p>The accessibility design is in <code>docs/notes/ACCESSIBLE_AGENT_MEMORY_PALACE.md</code> in
 the active accessibility checkout. Its application owns speech queuing, playback,
 policy, emergency stop, and sentence navigation. Generated model code owns only
-mathematical execution. The host owns text preparation, model state, scheduling,
+mathematical execution. The host owns text preparation, request state, output buffers,
 PCM conversion, and cancellation.</p>
 <h2>Current CKE boundary</h2>
 <p><code>include/ck_session_v8.h</code> describes a text token session. The current
