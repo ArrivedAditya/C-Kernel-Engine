@@ -433,13 +433,12 @@ def main(argv: list[str] | None = None) -> int:
             C_ORANGE,
         )
 
+    from server.serving_bundle import load_resolved_serving, resolved_templates
+    resolved_serving = load_resolved_serving(run_dir)
     if args.no_chat_template:
         chat_template, chat_templates, chat_contract = None, None, None
-        resolved_serving = None
         log("Using explicitly requested untemplated raw-prompt serving", C_GRAY)
     else:
-        from server.serving_bundle import load_resolved_serving, resolved_templates
-        resolved_serving = load_resolved_serving(run_dir)
         if resolved_serving is not None:
             chat_template, chat_templates, chat_contract = resolved_templates(run_dir, resolved_serving)
         else:
@@ -472,8 +471,9 @@ def main(argv: list[str] | None = None) -> int:
             C_GRAY,
         )
     log("Chat contract disabled; prompt rendering is pure Jinja", C_GRAY)
-    sidecar_protocol = (resolved_serving["output_protocol"] if resolved_serving is not None
-                        else None if args.no_chat_template else load_tool_protocol(run_dir, chat_template, chat_templates))
+    sidecar_protocol = (None if args.no_chat_template else
+                        resolved_serving["output_protocol"] if resolved_serving is not None else
+                        load_tool_protocol(run_dir, chat_template, chat_templates))
     if args.tool_protocol is not None and sidecar_protocol is not None and args.tool_protocol != sidecar_protocol:
         raise ValueError(
             f"--tool-protocol {args.tool_protocol!r} conflicts with tool_protocol.json "

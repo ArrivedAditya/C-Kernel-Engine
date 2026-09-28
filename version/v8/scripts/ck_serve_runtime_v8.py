@@ -145,8 +145,10 @@ def _build_runtime(
         args.extend(["--logits-layout", logits_layout])
     if no_chat_template:
         args.append("--no-chat-template")
-    elif chat_template:
-        args.extend(["--chat-template", chat_template])
+    else:
+        args.append("--resolve-serving")
+        if chat_template:
+            args.extend(["--chat-template", chat_template])
     if allow_raw_prompt:
         args.append("--allow-raw-prompt")
     if python_tokenizer:

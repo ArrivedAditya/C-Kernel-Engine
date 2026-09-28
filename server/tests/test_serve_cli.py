@@ -31,6 +31,7 @@ def test_serving_variant_is_build_only_and_forwarded(monkeypatch):
     _build_runtime("model", Path("/tmp/run"), None, False, False, False, None,
                    None, False, False, False, False, None, serving_variant="compat")
     assert calls[0][-2:] == ["--serving-variant", "compat"]
+    assert "--resolve-serving" in calls[0]
     with pytest.raises(ValueError, match="requires bundle construction"):
         main(["model", "--no-build", "--serving-variant", "compat"])
 
@@ -291,6 +292,7 @@ def test_build_runtime_constructs_ck_run_pipeline_command(monkeypatch):
     assert "--context-len" in cmd and "1024" in cmd
     assert "--logits-layout" in cmd and "full" in cmd
     assert "--no-chat-template" in cmd
+    assert "--resolve-serving" not in cmd
     assert "--allow-raw-prompt" in cmd
     assert "--python-tokenizer" in cmd
     assert "--gemm-schedule" in cmd and "dynamic" in cmd
