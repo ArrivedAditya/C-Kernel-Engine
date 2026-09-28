@@ -1393,7 +1393,7 @@ test-v8-serve-localhost-e2e:
 
 .PHONY: test-v8-serve-native-jinja
 test-v8-serve-native-jinja:
-	$(PYTHON) $(PYTHONFLAGS) -m pytest -q server/tests/test_native_qwen_jinja_contract.py
+	$(PYTHON) $(PYTHONFLAGS) -m pytest -q server/tests/test_native_qwen_jinja_contract.py server/tests/test_serving_bundle.py
 
 .PHONY: test-native-session-v8
 test-native-session-v8: $(BUILD_DIR)/libckernel_engine.so ck-cli-v8 ck-session-v8

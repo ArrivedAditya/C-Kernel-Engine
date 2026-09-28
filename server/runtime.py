@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .session_v8 import BUILD_DIR, PROJECT_ROOT, SESSION_LIB_PATH
+from .serving_bundle import load_resolved_serving, resolved_templates
 
 
 def ensure_native_session_lib() -> None:
@@ -48,13 +49,16 @@ def load_manifest_templates(
 ) -> tuple[str | None, dict[str, str] | None, dict[str, Any] | None]:
     """Load (chat_template, chat_templates, chat_contract) for a run dir.
 
-    The native ``chat_template`` comes exclusively from the canonical
-    ``chat_template.jinja`` sidecar emitted by GGUF conversion.
+    Resolved bundles use only their validated serving.json and packaged assets.
+    Legacy bundles use the canonical chat_template.jinja sidecar.
     ``weights_manifest.json`` / ``config.json`` are never read here, and no
     chat contract is loaded from disk (always ``None``) — prompt rendering
     is pure Jinja from the sidecar.
     """
     run_dir = Path(run_dir)
+    resolved = load_resolved_serving(run_dir)
+    if resolved is not None:
+        return resolved_templates(run_dir, resolved)
     chat_template: str | None = None
     chat_templates: dict[str, str] | None = None
     chat_contract: dict[str, Any] | None = None
@@ -94,6 +98,12 @@ def load_tool_protocol(
     sidecar is operator-authored and deliberately separate from executed
     certification evidence.
     """
+    resolved = load_resolved_serving(Path(run_dir))
+    if resolved is not None:
+        expected_chat, expected_variants, _ = resolved_templates(Path(run_dir), resolved)
+        if chat_template != expected_chat or chat_templates != expected_variants:
+            raise ValueError("template override conflicts with resolved serving bundle")
+        return resolved["output_protocol"]
     path = Path(run_dir) / "tool_protocol.json"
     if not path.is_file():
         return None

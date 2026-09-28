@@ -21,7 +21,7 @@ from server.session_v8 import CK_SESSION_REQUEST_RAW_PROMPT
 
 FIXTURE = Path(__file__).parent / "fixtures" / "qwen38_native_chat_template.jinja"
 FIXTURE_SHA256 = "c3cf9e34abf4f9e36c2d72165aa9c132d3e2a725b6c2586aaa3a8af9d7a81041"
-TOOL_VARIANT = Path(__file__).resolve().parents[1] / "templates" / "qwen38_tool_use_compat.jinja"
+TOOL_VARIANT = Path(__file__).resolve().parent / "fixtures" / "qwen_code_xml_compat.jinja"
 TOOL = {
     "type": "function",
     "name": "read_file",

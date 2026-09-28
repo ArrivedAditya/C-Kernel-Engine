@@ -1,0 +1,13 @@
+{
+  "schema": "cke.serving_profile.v1",
+  "id": "qwen-tools-v1",
+  "renderer": "jinja-chat-v1",
+  "input_modalities": ["text"],
+  "variants": {
+    "publisher": {
+      "chat": {"source": "publisher", "variant": "default"},
+      "tools": {"source": "publisher", "variant": "tool_use", "fallback_variant": "default"},
+      "output_protocol": "qwen_xml"
+    }
+  }
+}
