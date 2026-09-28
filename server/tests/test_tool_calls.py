@@ -1139,6 +1139,142 @@ def test_streaming_thinking_streams_when_prompt_opens_think():
     assert thinking["content"][0]["text"] == "pondering this"
 
 
+def test_max_tool_calls_caps_emitted_calls():
+    three_calls = (
+        '<tool_call>{"name": "a", "arguments": {}}</tool_call>'
+        '<tool_call>{"name": "b", "arguments": {}}</tool_call>'
+        '<tool_call>{"name": "c", "arguments": {}}</tool_call>'
+    )
+    tools = [
+        {"type": "function", "name": "a", "parameters": {}},
+        {"type": "function", "name": "b", "parameters": {}},
+        {"type": "function", "name": "c", "parameters": {}},
+    ]
+    session = FakeSession(chunks=(three_calls,))
+    client = TestClient(
+        create_app(
+            session,
+            model="fake-model",
+            chat_contract=QWEN3_CONTRACT,
+            chat_templates={"tool_use": NATIVE_TOOL_TEMPLATE},
+            tool_protocol="tagged_json",
+        )
+    )
+    resp = client.post(
+        "/v1/responses",
+        json={"model": "fake-model", "input": "hi", "tools": tools, "max_tool_calls": 2},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "incomplete"
+    assert data["incomplete_details"]["reason"] == "max_tool_calls"
+    assert [i["name"] for i in data["output"] if i["type"] == "function_call"] == [
+        "a",
+        "b",
+    ]
+
+    bad = client.post(
+        "/v1/responses",
+        json={"model": "fake-model", "input": "hi", "tools": tools, "max_tool_calls": 0},
+    )
+    assert bad.status_code == 400
+
+
+def test_tool_choice_required_none_and_named():
+    tools = [{"type": "function", "name": "a", "parameters": {}}]
+
+    def _client(chunks):
+        session = FakeSession(chunks=chunks)
+        return TestClient(
+            create_app(
+                session,
+                model="fake-model",
+                chat_contract=QWEN3_CONTRACT,
+                chat_templates={"tool_use": NATIVE_TOOL_TEMPLATE},
+                tool_protocol="tagged_json",
+            )
+        )
+
+    call = ('<tool_call>{"name": "a", "arguments": {}}</tool_call>',)
+    resp = _client(("plain answer",)).post(
+        "/v1/responses",
+        json={"model": "fake-model", "input": "hi", "tools": tools, "tool_choice": "required"},
+    )
+    assert resp.json()["status"] == "failed"
+    assert "required" in resp.json()["error"]["message"]
+
+    resp = _client(call).post(
+        "/v1/responses",
+        json={"model": "fake-model", "input": "hi", "tools": tools, "tool_choice": "required"},
+    )
+    assert resp.json()["status"] == "completed"
+
+    resp = _client(call).post(
+        "/v1/responses",
+        json={
+            "model": "fake-model",
+            "input": "hi",
+            "tools": tools,
+            "tool_choice": {"type": "function", "function": {"name": "other"}},
+        },
+    )
+    assert resp.json()["status"] == "failed"
+    assert "other" in resp.json()["error"]["message"]
+
+    resp = _client(call).post(
+        "/v1/responses",
+        json={"model": "fake-model", "input": "hi", "tools": tools, "tool_choice": "none"},
+    )
+    data = resp.json()
+    assert data["status"] == "completed"
+    assert "function_call" not in [i["type"] for i in data["output"]]
+
+
+def test_strict_tool_rejects_unknown_and_optional_arguments():
+    tools = [
+        {
+            "type": "function",
+            "name": "read_file",
+            "strict": True,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "line_end": {"type": "integer"},
+                },
+            },
+        }
+    ]
+
+    def _client(chunks):
+        session = FakeSession(chunks=chunks)
+        return TestClient(
+            create_app(
+                session,
+                model="fake-model",
+                chat_contract=QWEN3_CONTRACT,
+                chat_templates={"tool_use": NATIVE_TOOL_TEMPLATE},
+                tool_protocol="tagged_json",
+            )
+        )
+
+    extra = _client(
+        ('<tool_call>{"name": "read_file", "arguments": {"path": "a", "bogus": 1}}</tool_call>',)
+    ).post("/v1/responses", json={"model": "fake-model", "input": "hi", "tools": tools})
+    assert extra.json()["status"] == "failed"
+
+    missing = _client(
+        ('<tool_call>{"name": "read_file", "arguments": {"path": "a"}}</tool_call>',)
+    ).post("/v1/responses", json={"model": "fake-model", "input": "hi", "tools": tools})
+    assert missing.json()["status"] == "failed"
+    assert "missing required" in missing.json()["error"]["message"]
+
+    full = _client(
+        ('<tool_call>{"name": "read_file", "arguments": {"path": "a", "line_end": 3}}</tool_call>',)
+    ).post("/v1/responses", json={"model": "fake-model", "input": "hi", "tools": tools})
+    assert full.json()["status"] == "completed"
+
+
 def test_parallel_tool_calls_all_emitted_qwen_xml():
     two_calls = (
         "<tool_call><function=a><parameter=x>1</parameter></function></tool_call>"

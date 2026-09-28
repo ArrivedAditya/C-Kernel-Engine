@@ -1004,6 +1004,89 @@ def _strip_tool_json_from_text(
     return remaining.strip()
 
 
+def _tool_call_limit(parallel: Any, max_calls: Any) -> int | None:
+    """Effective cap on emitted tool calls, or None for unlimited."""
+    if parallel is False:
+        return 1
+    if max_calls is None:
+        return None
+    try:
+        n = int(max_calls)
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 1 else None
+
+
+def _apply_tool_call_limits(
+    tool_calls: list[dict[str, Any]] | None, *, parallel: Any, max_calls: Any
+) -> tuple[list[dict[str, Any]] | None, bool]:
+    """Trim parsed calls to the effective cap. Returns (kept, truncated)."""
+    if not tool_calls:
+        return tool_calls, False
+    cap = _tool_call_limit(parallel, max_calls)
+    if cap is not None and len(tool_calls) > cap:
+        return tool_calls[:cap], True
+    return tool_calls, False
+
+
+def _required_tool_name(tool_choice: Any) -> str | None:
+    if isinstance(tool_choice, dict):
+        func = tool_choice.get("function")
+        if isinstance(func, dict):
+            name = func.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+    return None
+
+
+def _enforce_tool_choice(
+    tool_calls: list[dict[str, Any]] | None, *, tool_choice: Any
+) -> tuple[str | None, bool]:
+    """Enforce the request's tool_choice. Returns (error, drop_calls).
+
+    ``auto`` (or unset/unknown shapes) enforces nothing. ``required`` (or
+    a ``{"function": {"name"}}`` dict) fails when no call was parsed.
+    ``none`` drops parsed calls so nothing executes; the model text is
+    returned as-is so the misbehavior stays visible.
+    """
+    if tool_choice is None or tool_choice == "auto":
+        return None, False
+    if tool_choice == "none":
+        return (None, True) if tool_calls else (None, False)
+    if tool_choice == "required":
+        if not tool_calls:
+            return "tool_choice 'required' but the model made no tool call", False
+        return None, False
+    name = _required_tool_name(tool_choice)
+    if name is not None:
+        if not tool_calls or all(tc.get("name") != name for tc in tool_calls):
+            return (
+                f"tool_choice requires tool {name!r} but the model did not call it",
+                False,
+            )
+        return None, False
+    return None, False
+
+
+def _strict_tool_parameters(params: dict[str, Any]) -> dict[str, Any]:
+    """Tighten a tool schema for ``strict: true`` (pure tightening).
+
+    All declared properties become required and unknown arguments are
+    rejected. Explicit author settings are preserved where they already
+    constrain at least as much.
+    """
+    tightened = dict(params)
+    properties = tightened.get("properties")
+    if isinstance(properties, dict):
+        required = tightened.get("required")
+        required_set = set(required) if isinstance(required, list) else set()
+        required_set.update(k for k in properties if isinstance(k, str))
+        tightened["required"] = sorted(required_set)
+    if tightened.get("additionalProperties") is not False:
+        tightened["additionalProperties"] = False
+    return tightened
+
+
 def _classify_stream_mode(
     buffer: str, *, tool_syntax: str = _TOOL_SYNTAX_TOOL_CALL_JSON
 ) -> str | None:
@@ -1106,6 +1189,17 @@ def create_app(
                 501, "tool protocol is undeclared for the selected chat template",
                 err_type="invalid_request_error", code="tool_protocol_undeclared",
             )
+        max_calls = getattr(body, "max_tool_calls", None)
+        if max_calls is not None:
+            try:
+                valid_max = int(max_calls) >= 1
+            except (TypeError, ValueError):
+                valid_max = False
+            if not valid_max:
+                raise _harness_error(
+                    400, "max_tool_calls must be a positive integer",
+                    err_type="invalid_request_error", code="invalid_request",
+                )
 
     def _store_response(
         response_id: str, response: dict[str, Any], history: list[dict[str, Any]]
@@ -1127,7 +1221,8 @@ def create_app(
             if previous is None:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Previous response {body.previous_response_id!r} not found",
+                    detail=f"Previous response {body.previous_response_id!r} not found; "
+                    "responses created with store:false are ephemeral and cannot be chained",
                 )
             messages.extend(dict(m) for m in previous)
         try:
@@ -1421,10 +1516,15 @@ def create_app(
         if not _has_function_tools(body):
             return None, None, None
         allowed = {t.name for t in _effective_tools(body) if getattr(t, "name", None)}
-        parameter_schemas = {
-            t.name: t.parameters for t in _effective_tools(body)
-            if getattr(t, "name", None) and isinstance(getattr(t, "parameters", None), dict)
-        }
+        parameter_schemas = {}
+        for t in _effective_tools(body):
+            name = getattr(t, "name", None)
+            params = getattr(t, "parameters", None)
+            if not name or not isinstance(params, dict):
+                continue
+            if getattr(t, "strict", False):
+                params = _strict_tool_parameters(params)
+            parameter_schemas[name] = params
         tool_calls, code, msg = _extract_tool_calls_from_text(
             text, allowed, tool_syntax=tool_syntax, tool_parameters=parameter_schemas
         )
@@ -1714,6 +1814,15 @@ def create_app(
                     tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(
                         text, body
                     )
+                    if tool_error_code is None:
+                        choice_error, drop = _enforce_tool_choice(
+                            tool_calls,
+                            tool_choice=getattr(body, "tool_choice", None),
+                        )
+                        if choice_error is not None:
+                            tool_error_code, tool_error_msg = "choice", choice_error
+                        elif drop:
+                            tool_calls = None
                     if tool_error_code is not None and not is_cancelled:
                         if think_enabled:
                             yield from emit_reasoning_lifecycle(thinking, is_cancelled)
@@ -1763,14 +1872,12 @@ def create_app(
                         )
                         return
                     incomplete_details = None
-                    tool_incomplete = False
-                    if (
-                        tool_calls
-                        and getattr(body, "parallel_tool_calls", True) is False
-                        and len(tool_calls) > 1
-                    ):
-                        tool_calls = tool_calls[:1]
-                        tool_incomplete = True
+                    tool_calls, tool_incomplete = _apply_tool_call_limits(
+                        tool_calls,
+                        parallel=getattr(body, "parallel_tool_calls", True),
+                        max_calls=getattr(body, "max_tool_calls", None),
+                    )
+                    if tool_incomplete:
                         incomplete_details = {"reason": "max_tool_calls"}
                     remaining_text = (
                         _strip_tool_json_from_text(text, tool_calls, tool_syntax=tool_syntax)
@@ -2268,6 +2375,14 @@ def create_app(
             if thinking is not None:
                 reasoning_tokens = max(0, len(thinking) // 4)
         tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(text, body)
+        if tool_error_code is None:
+            choice_error, drop = _enforce_tool_choice(
+                tool_calls, tool_choice=getattr(body, "tool_choice", None)
+            )
+            if choice_error is not None:
+                tool_error_code, tool_error_msg = "choice", choice_error
+            elif drop:
+                tool_calls = None
         remaining_text = (
             _strip_tool_json_from_text(text, tool_calls, tool_syntax=tool_syntax)
             if tool_calls
@@ -2280,6 +2395,11 @@ def create_app(
             else len(chunks)
         )
         stop_reason_val = int(result.get("stop_reason") or 0) if result else 0
+        tool_calls, tool_incomplete = _apply_tool_call_limits(
+            tool_calls,
+            parallel=getattr(body, "parallel_tool_calls", True),
+            max_calls=getattr(body, "max_tool_calls", None),
+        )
         incomplete_details = None
         final_status = ResponseStatus.completed
         item_status = "completed"
@@ -2291,12 +2411,7 @@ def create_app(
                 "code": "server_error",
                 "message": tool_error_msg or "tool call failed",
             }
-        elif (
-            tool_calls
-            and getattr(body, "parallel_tool_calls", True) is False
-            and len(tool_calls) > 1
-        ):
-            tool_calls = tool_calls[:1]
+        elif tool_incomplete:
             incomplete_details = {"reason": "max_tool_calls"}
             final_status = ResponseStatus.incomplete
             item_status = "incomplete"
