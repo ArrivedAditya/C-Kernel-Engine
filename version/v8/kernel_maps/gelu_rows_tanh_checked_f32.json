@@ -223,7 +223,7 @@
     "unit": [
       "tests/test_v8_normalization_checked_oracle.py",
       "tests/test_v8_normalization_checked_generated.py",
-      "tests/test_v8_kokoro_generated_albert_layer.py"
+      "tests/test_v8_kokoro_generated_albert_layer.py", "tests/test_v8_kokoro_generated_encoder.py"
     ],
     "oracle": "Pinned independent Kokoro/PyTorch 2.8 first-layer operation captures; live PyTorch at small widths and SIMD tails; bounds, padding, rejection and repeated calls"
   },

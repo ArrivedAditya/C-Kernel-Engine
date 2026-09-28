@@ -61,6 +61,6 @@
     {"name": "output_stride", "source": "runtime:output_stride"},
     {"name": "epsilon", "source": "config:epsilon"}
   ]},
-  "tests": {"unit": ["tests/test_v8_bert_embedding_oracle.py", "tests/test_v8_bert_embedding_live.py"], "oracle": "Pinned Kokoro/Transformers PyTorch ALBERT embedding module output at 36x128; independent committed fixture and optional live pinned-model recomputation"},
+  "tests": {"unit": ["tests/test_v8_bert_embedding_oracle.py", "tests/test_v8_bert_embedding_live.py", "tests/test_v8_kokoro_generated_encoder.py"], "oracle": "Pinned Kokoro/Transformers PyTorch ALBERT embedding module output at 36x128; independent committed fixture and optional live pinned-model recomputation"},
   "notes": "Reusable three-table embedding and LayerNorm; Kokoro is one consumer. This provider only certifies the embedding boundary, not the full encoder or waveform. Inference only."
 }

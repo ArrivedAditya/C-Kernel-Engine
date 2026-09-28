@@ -17,6 +17,9 @@ on:
       - 'tests/test_v8_normalization_checked_oracle.py'
       - 'tests/test_v8_normalization_checked_generated.py'
       - 'tests/test_v8_kokoro_generated_albert_layer.py'
+      - 'tests/test_v8_kokoro_generated_encoder.py'
+      - 'version/v8/tts/build_kokoro_encoder_circuit.py'
+      - 'version/v8/circuits/kokoro_phoneme_encoder_bounded.json'
       - 'tests/v8_checked_graph_test_support.py'
       - 'version/v8/kernel_maps/layernorm_rows_checked_f32.json'
       - 'version/v8/kernel_maps/gelu_rows_tanh_checked_f32.json'
@@ -107,6 +110,9 @@ on:
       - 'tests/test_v8_normalization_checked_oracle.py'
       - 'tests/test_v8_normalization_checked_generated.py'
       - 'tests/test_v8_kokoro_generated_albert_layer.py'
+      - 'tests/test_v8_kokoro_generated_encoder.py'
+      - 'version/v8/tts/build_kokoro_encoder_circuit.py'
+      - 'version/v8/circuits/kokoro_phoneme_encoder_bounded.json'
       - 'tests/v8_checked_graph_test_support.py'
       - 'version/v8/kernel_maps/layernorm_rows_checked_f32.json'
       - 'version/v8/kernel_maps/gelu_rows_tanh_checked_f32.json'
@@ -196,6 +202,7 @@ jobs:
       - name: Verify registered kernel-map numerical and composition cases
         env:
           CKE_KOKORO_LAYER_EVIDENCE_DIR: ${{ github.workspace }}/build/kernel-oracle-captures/kokoro-first-layer
+          CKE_KOKORO_ENCODER_EVIDENCE_DIR: ${{ github.workspace }}/build/kernel-oracle-captures/kokoro-encoder
         run: |
           python3 scripts/nightly_runner.py --kernel-map-tests \
             version/v8/kernel_maps/embedding_three_table_layer_norm_f32.json \

@@ -145,7 +145,7 @@
   },
   "tests": {
     "unit": [
-      "unittest/test_audio_encoder.py"
+      "unittest/test_audio_encoder.py", "tests/test_v8_kokoro_generated_encoder.py"
     ],
     "oracle": "NumPy FP32 multiply followed by FP32 add"
   }

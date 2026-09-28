@@ -147,6 +147,50 @@ class KernelOracleReportingTest(unittest.TestCase):
         self.assertEqual(result.status, "fail")
         self.assertIn("zero cases", result.error_msg)
 
+    def test_timeout_preserves_completed_cases_and_failure_status(self):
+        suite = nightly.TEST_SUITES["tts_kokoro_generated_encoder"]
+        record = {"case_id": "encoder.partial", "name": "completed-boundary",
+                  "status": "pass", "max_diff": 1e-6, "tolerance": 3e-5}
+        stdout = "CKE_NUMERICAL_CASE " + json.dumps(record) + "\n"
+        stderr = "test_finished (tests.oracle.Case.test_finished) ... ok\n"
+        for binary in (False, True):
+            with self.subTest(binary=binary):
+                expired = nightly.subprocess.TimeoutExpired("native-oracle", suite.timeout_sec,
+                    output=stdout.encode() if binary else stdout,
+                    stderr=stderr.encode() if binary else stderr)
+                with mock.patch.object(nightly.subprocess, "run", side_effect=expired) as run:
+                    result = nightly.run_python_test(suite)
+                self.assertEqual(run.call_args.args[0][1], "-u")
+                self.assertEqual(result.status, "timeout")
+                self.assertEqual(result.duration_sec, 300)
+                self.assertIn("300s", result.error_msg)
+                self.assertIn("encoder.partial", result.stdout)
+                self.assertIn("test_finished", result.stderr)
+                self.assertEqual(len(result.sub_tests), 2)
+                self.assertTrue(all(case.status == "pass" for case in result.sub_tests))
+
+    def test_timeout_without_output_remains_timeout(self):
+        suite = nightly.TEST_SUITES["tts_duration_logits_live"]
+        with mock.patch.object(nightly.subprocess, "run",
+                side_effect=nightly.subprocess.TimeoutExpired("empty", suite.timeout_sec)):
+            result = nightly.run_python_test(suite)
+        self.assertEqual(result.status, "timeout")
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(result.sub_tests, [])
+
+    def test_timeout_with_invalid_partial_metrics_retains_diagnostic(self):
+        suite = nightly.TEST_SUITES["tts_duration_logits_live"]
+        output = 'CKE_NUMERICAL_CASE ' + json.dumps({"case_id": "invalid-partial",
+            "name": "invalid", "status": "pass", "max_diff": float("nan"), "tolerance": 1e-5})
+        with mock.patch.object(nightly.subprocess, "run",
+                side_effect=nightly.subprocess.TimeoutExpired("invalid", suite.timeout_sec, output=output)):
+            result = nightly.run_python_test(suite)
+        self.assertEqual(result.status, "timeout")
+        self.assertIn("partial-output parsing failed", result.error_msg)
+        self.assertIn("invalid-partial", result.stdout)
+        self.assertEqual(result.sub_tests, [])
+
     def test_nonfinite_metrics_cannot_report_pass(self):
         for maximum in (float("nan"), float("inf"), 2e-5):
             with self.subTest(maximum=maximum):

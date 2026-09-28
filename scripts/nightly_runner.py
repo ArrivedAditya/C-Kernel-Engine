@@ -787,6 +787,13 @@ TEST_SUITES = {
         "Kokoro Complete First ALBERT Layer and X-Ray Oracle", "kernels",
         ROOT / "tests" / "test_v8_kokoro_generated_albert_layer.py",
     ),
+    "tts_kokoro_generated_encoder": TestSuite(
+        "Kokoro Complete Shared-Layer Encoder and X-Ray Oracle", "inference",
+        ROOT / "tests" / "test_v8_kokoro_generated_encoder.py",
+        # Four compiled 147-operation graphs, independent affine checks and
+        # standalone replay exceeded the default 120s on a hosted runner.
+        timeout_sec=300,
+    ),
     "normalization_checked_oracle": TestSuite(
         "Checked LayerNorm and Tanh GELU Numerical Contracts", "kernels",
         ROOT / "tests" / "test_v8_normalization_checked_oracle.py",
@@ -1886,8 +1893,8 @@ def run_python_test(suite: TestSuite, verbose: bool = False) -> TestResult:
     start = time.time()
     try:
         result = subprocess.run(
-            ([sys.executable, "-m", "unittest", *suite.unittest_targets, "-v"]
-             if suite.unittest_targets else [sys.executable, str(suite.test_file)]),
+            ([sys.executable, "-u", "-m", "unittest", *suite.unittest_targets, "-v"]
+             if suite.unittest_targets else [sys.executable, "-u", str(suite.test_file)]),
             cwd=str(ROOT),
             capture_output=True,
             text=True,
@@ -1968,13 +1975,27 @@ def run_python_test(suite: TestSuite, verbose: bool = False) -> TestResult:
                 sub_tests=sub_tests,
             )
 
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as expired:
+        # TimeoutExpired can hold bytes even when subprocess.run(text=True).
+        # Preserve completed cases without turning an incomplete suite into PASS.
+        def decoded(output):
+            return output.decode("utf-8", errors="replace") if isinstance(output, bytes) else output or ""
+        stdout, stderr = decoded(expired.stdout), decoded(expired.stderr)
+        error_msg = f"Test timed out after {suite.timeout_sec}s"
+        try:
+            sub_tests = parse_sub_tests(stdout) + parse_unittest_cases(stderr)
+        except (ValueError, TypeError) as parse_error:
+            sub_tests = []
+            error_msg += f"; partial-output parsing failed: {parse_error}"
         return TestResult(
             name=suite.name,
             category=suite.category,
             status="timeout",
             duration_sec=suite.timeout_sec,
-            error_msg=f"Test timed out after {suite.timeout_sec}s",
+            error_msg=error_msg,
+            stdout=_trim_output(stdout, FAIL_STDOUT_CHARS, keep_head_tail=True),
+            stderr=_trim_output(stderr, FAIL_STDERR_CHARS, keep_head_tail=True),
+            sub_tests=sub_tests,
         )
     except Exception as e:
         return TestResult(
