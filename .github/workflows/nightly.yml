@@ -50,32 +50,49 @@ jobs:
       - name: Compare fixture and native kernel with pinned oracle
         env:
           CKE_EXPECTED_TORCH_VERSION: ${{ matrix.torch_version }}
+          MKL_CBWR: AVX2
+          CKE_EXPECTED_MKL_CBWR: AVX2
+          CKE_ORACLE_LANE: historical-avx2-requested
           CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages.json
-        run: python -m unittest tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_torch_oracle tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_production_geometry -v
-      - name: Compare controlled CPU dispatch on the same runner
+        run: python scripts/nightly_runner.py --require-executed --tests tts_adaptive_layer_norm_live tts_adaptive_layer_norm_reference --json build/nightly-report-historical.json
+      - name: Compare native CPU dispatch against live oracle
+        if: always()
+        env:
+          CKE_EXPECTED_TORCH_VERSION: ${{ matrix.torch_version }}
+          CKE_ORACLE_LANE: native-dispatch
+          CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages-native.json
+        run: python scripts/nightly_runner.py --require-executed --tests tts_adaptive_layer_norm_live --json build/nightly-report-native.json
+      - name: Compare requested historical settings on the same runner
         if: always()
         env:
           ATEN_CPU_CAPABILITY: default
           CKE_EXPECTED_TORCH_VERSION: ${{ matrix.torch_version }}
+          MKL_CBWR: AVX2
+          CKE_EXPECTED_MKL_CBWR: AVX2
+          CKE_ORACLE_LANE: default-aten-avx2-mkl-requested
           CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages-default.json
-        run: python -m unittest tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_torch_oracle tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_production_geometry -v
+        run: python scripts/nightly_runner.py --require-executed --tests tts_adaptive_layer_norm_live tts_adaptive_layer_norm_reference --json build/nightly-report-default.json
       - name: Install PyTorch 2.8 alongside 2.12 for paired reference capture
         if: always() && matrix.torch_version == '2.12.1'
         run: |
           python -m venv build/torch28-reference
           build/torch28-reference/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu -c .github/requirements-nightly-torch28-constraints.txt torch
-      - name: Capture PyTorch 2.8 under the same CPU dispatch
+      - name: Capture PyTorch 2.8 with the same requested settings
         if: always() && matrix.torch_version == '2.12.1'
         env:
           ATEN_CPU_CAPABILITY: default
           CKE_EXPECTED_TORCH_VERSION: '2.8.0'
+          MKL_CBWR: AVX2
+          CKE_EXPECTED_MKL_CBWR: AVX2
+          CKE_ORACLE_LANE: paired28-default-aten-avx2-mkl-requested
           CKE_ADALN_STAGE_REPORT: build/tts-adaln-reference-stages-paired-28-default.json
-        run: build/torch28-reference/bin/python -m unittest tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_live_torch_oracle -v
+        run: build/torch28-reference/bin/python scripts/nightly_runner.py --require-executed --tests tts_adaptive_layer_norm_reference --json build/nightly-report-paired28.json
       - name: Compare same-host reference stages
         if: always() && matrix.torch_version == '2.12.1'
         run: |
           python - <<'PY'
           import json
+          import math
           from pathlib import Path
 
           root = Path('build')
@@ -84,7 +101,7 @@ jobs:
           if old['host_node'] != new['host_node']:
               raise SystemExit('paired references did not run on the same host')
           if old['aten_cpu_capability_env'] != 'default' or new['aten_cpu_capability_env'] != 'default':
-              raise SystemExit('paired references did not use controlled CPU dispatch')
+              raise SystemExit('paired references did not request the same ATen capability')
           if old['torch_threads'] != new['torch_threads']:
               raise SystemExit('paired references used different thread counts')
 
@@ -93,6 +110,8 @@ jobs:
                   return [item for part in value for item in flat(part)]
               return [value]
 
+          if len(old['cases']) != len(new['cases']):
+              raise SystemExit('paired reference case counts differ')
           stages = {}
           first = None
           for stage in ('projection', 'normalized', 'output'):
@@ -105,6 +124,8 @@ jobs:
                       raise SystemExit('paired reference stage lengths differ')
                   values = zip(left_values, right_values)
                   for index, (a, b) in enumerate(values):
+                      if not math.isfinite(a) or not math.isfinite(b):
+                          raise SystemExit(f'nonfinite paired reference: {stage} case={case_index} sample={index}')
                       error = abs(a - b)
                       if error > worst[0]:
                           worst = (error, [case_index, index, a, b])
@@ -114,7 +135,8 @@ jobs:
           report = {'schema': 'cke.tts_adaln_paired_stages.v1',
                     'host_node': old['host_node'],
                     'versions': [old['live_torch'], new['live_torch']],
-                    'dispatch': 'default', 'first_divergent_stage': first,
+                    'aten_dispatch_requested': 'default', 'mkl_cbwr_requested': 'AVX2',
+                    'dispatch_identity_verified': False, 'first_divergent_stage': first,
                     'stages': stages}
           (root / 'tts-adaln-reference-stages-paired-comparison.json').write_text(
               json.dumps(report, indent=2) + '\n')
@@ -125,7 +147,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tts-adaln-torch-${{ matrix.torch_version }}-stages
-          path: build/tts-adaln-reference-stages*.json
+          path: |
+            build/tts-adaln-reference-stages*.json
+            build/nightly-report*.json
           if-no-files-found: error
 
   arm-portability:
@@ -149,6 +173,19 @@ jobs:
             unittest/test_v8_arm_q4k_oracle.py \
             unittest/test_hyper_connection_quantized.py \
             unittest/test_moe_swiglu_q4k_q5k.py
+
+      - name: Verify portable normalization fixture on native ARM64
+        if: always()
+        env:
+          CKE_ORACLE_LANE: arm64-native-fixture
+        run: python scripts/nightly_runner.py --require-executed --tests tts_adaptive_layer_norm_oracle --json build/nightly-report-arm.json
+      - name: Upload native ARM64 fixture report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tts-adaln-torch-arm-stages
+          path: build/nightly-report-arm.json
+          if-no-files-found: error
 
   documentation-policy:
     name: Documentation policy and migration debt
@@ -190,6 +227,8 @@ jobs:
           if-no-files-found: error
 
   build-and-test:
+    needs: [tts-adaln-torch-versions, arm-portability]
+    if: always() && !cancelled()
     name: Required nightly verdict
     runs-on: ubuntu-latest
 
@@ -1046,6 +1085,19 @@ jobs:
           Path("build/nightly_report.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
           print("Attached v8 inference/training and v7 training summaries to nightly latest.json")
           PY
+
+      - name: Download independent oracle environment reports
+        if: always()
+        uses: actions/download-artifact@v4
+        with:
+          pattern: tts-adaln-torch-*-stages
+          path: build/oracle-environments
+      - name: Attach oracle cases to the existing nightly dashboard
+        if: always()
+        continue-on-error: true
+        run: |
+          python scripts/nightly_runner.py --merge-reports build/oracle-environments --expected-reports 8 --json docs/site/site/nightly-results/latest.json
+          cp docs/site/site/nightly-results/latest.json build/nightly_report.json
 
       - name: Clean regression run artifacts
         if: always()

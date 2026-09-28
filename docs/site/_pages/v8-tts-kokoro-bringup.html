@@ -471,12 +471,8 @@ The provider maps declare backward and training unsupported.</p>
 </tr>
 </tbody>
 </table>
-<p>The committed fixtures make cheap PR tests independent of a PyTorch installation.
-The nightly runner runs live PyTorch checks when available; if the dependency is
-missing, those individual checks are SKIP with a reason. The nightly JSON and dashboard expose the live-oracle suite as SKIP with a dependency reason while the committed-fixture suite remains PASS. A skipped oracle is not
-evidence of parity. The scalar providers have no multithread execution mode, so
-single-versus-multithread numerical comparison is not applicable. Performance and
-P3/Ryzen certification have not been run.</p>
+<p>Numerical cases use canonical kernel-map test paths and the existing <code>scripts/nightly_runner.py</code> registration and JSON/dashboard. The PR workflow selects registered suites from map metadata instead of maintaining a second list of kernel test methods. The former aggregate TTS live-oracle script has been removed; its duration, inverse-STFT and adaptive-normalization cases remain in their normal suites. Incompatible PyTorch versions still require isolated environments.</p>
+<p>Adaptive LayerNorm publishes native-versus-fixture, native-versus-live and fixture-versus-live as distinct cases, including provider, direction, dtype, shape, backend version, settings and reproduction command. A failed historical reproduction does not prevent native comparisons from running. Missing live dependencies are SKIP, not evidence of parity. Ordinary native-dispatch comparisons remain enabled in addition to the historical requested-dispatch lane. Matrix reports are attached to the same nightly JSON with their own hardware and source identities; missing reports and stale commits fail integration. Scalar providers have no multithread execution mode; P3/Ryzen performance certification remains NOT_TESTED.</p>
 <p>Reproduce the cheap PR checks:</p>
 <pre><code class="language-sh">python3 -m unittest \
   tests.test_v8_kokoro_shape_bounds \
@@ -545,19 +541,7 @@ committed fixture was captured with PyTorch 2.8.0. Nightly runs under both
 PyTorch 2.8.0 and 2.12.1 have shown a 1.19e-7 fixture difference on different
 hosts. In separate pinned-version stage captures, the first difference was at
 <code>F.linear</code> style projection; their <code>layer_norm</code> outputs
-matched. One job used AVX512 dispatch and the other AVX2, so a version-specific
-cause remains unproven. The nightly workflow runs direct native comparisons
-against pinned CPU wheels for both versions and uploads projection, normalized
-and final-output reference stages with runtime settings. Each version also runs
-with controlled default CPU dispatch on the same runner, so a backend-path
-effect can be distinguished from a version label. The PyTorch 2.12 job also
-runs an isolated 2.8 environment on that same host and publishes the first
-different reference stage under controlled dispatch. Fixture-versus-live
-keeps its original 1e-7 bound, so the Xeon drift remains an unresolved failing
-case; the native-versus-oracle bound remains 5e-6. If a
-future model requires another reduction order, it needs another kernel and
-canonical numerical contract so X-Ray can identify the selected arithmetic;
-changing this provider silently would erase that evidence.</p>
+matched. The hosts reported AVX512 and AVX2 capability, which does not prove the operation-specific backend dispatch or a version-specific cause. The supported historical reproduction lane uses the pinned PyTorch 2.8 or 2.12 CPU wheel with MKL available, requests <code>MKL_CBWR=AVX2</code>, records thread count and build configuration, and retains the original 1e-7 bound. A missing MKL backend is SKIP/NOT_TESTED, and a required lane fails after publishing its report. This is a bounded reproducibility contract; arbitrary CPUs or requested settings alone do not establish equivalent dispatch. Separate native-dispatch lanes compare the CKE provider to live PyTorch using the unchanged 5e-6 bound. Both PyTorch versions publish projection, normalization and final-output stages; the 2.12 job also captures 2.8 on the same host with the same requested settings. Reports identify those settings as requested, with actual dispatch identity unverified. A future reduction order needs a separate provider and canonical numerical contract so X-Ray can identify its arithmetic; silently changing this provider would erase that evidence.</p>
 <p>The selected style row is <code>af_heart[len(phonemes)-1]</code>; the predictor receives its
 last 128 columns and the decoder receives its first 128. The generated manifest
 marks any missing hook explicitly.</p></section>

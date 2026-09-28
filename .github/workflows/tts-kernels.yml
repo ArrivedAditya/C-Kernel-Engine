@@ -71,7 +71,8 @@ on:
       - 'tests/test_v8_audio_duration_expand_oracle.py'
       - 'tests/test_v8_audio_duration_logits_oracle.py'
       - 'tests/test_v8_audio_duration_logits_live.py'
-      - 'tests/test_v8_tts_live_torch_oracles.py'
+      - 'scripts/nightly_runner.py'
+      - 'tests/test_kernel_oracle_reporting.py'
       - 'tests/fixtures/tts/**'
       - 'version/v8/kernel_maps/audio_duration_expand_channel_major_f32.json'
       - 'version/v8/kernel_maps/audio_duration_logits_to_frames_f32.json'
@@ -148,7 +149,8 @@ on:
       - 'tests/test_v8_audio_duration_expand_oracle.py'
       - 'tests/test_v8_audio_duration_logits_oracle.py'
       - 'tests/test_v8_audio_duration_logits_live.py'
-      - 'tests/test_v8_tts_live_torch_oracles.py'
+      - 'scripts/nightly_runner.py'
+      - 'tests/test_kernel_oracle_reporting.py'
       - 'tests/fixtures/tts/**'
       - 'version/v8/kernel_maps/audio_duration_expand_channel_major_f32.json'
       - 'version/v8/kernel_maps/audio_duration_logits_to_frames_f32.json'
@@ -167,42 +169,43 @@ jobs:
           python-version: '3.11'
       - name: Install numerical test dependencies
         run: python3 -m pip install numpy jsonschema
-      - name: Compile and verify portable scalar kernels
+      - name: Verify registered kernel-map numerical and composition cases
+        run: |
+          python3 scripts/nightly_runner.py --kernel-map-tests \
+            version/v8/kernel_maps/embedding_three_table_layer_norm_f32.json \
+            version/v8/kernel_maps/linear_rows_checked_f32.json \
+            version/v8/kernel_maps/attention_full_token_major_f32_checked.json \
+            version/v8/kernel_maps/audio_duration_expand_channel_major_f32.json \
+            version/v8/kernel_maps/audio_duration_logits_to_frames_f32.json \
+            version/v8/kernel_maps/audio_istft_mag_phase_f32.json \
+            version/v8/kernel_maps/audio_lstm_bidirectional_scan_f32.json \
+            version/v8/kernel_maps/audio_adaptive_layer_norm_f32.json \
+            --json build/kernel-map-pr-report.json
+      - name: Verify generic compiler and oracle reporting contracts
+        if: always()
         run: |
           python3 -m unittest \
             tests.test_v8_runtime_extent_kernel \
-            tests.test_v8_bert_embedding_oracle \
             tests.test_v8_runtime_extent_contract \
             tests.test_v8_checked_call_codegen \
             tests.test_v8_runtime_extent_lowering \
             tests.test_v8_checked_static_entry \
             tests.test_v8_kokoro_generated_embedding \
-            tests.test_v8_linear_rows_oracle \
             tests.test_v8_kokoro_generated_projection \
             tests.test_v8_checked_op_constants \
             tests.test_v8_kokoro_generated_qkv \
-            tests.test_v8_attention_full_token_major_oracle \
             tests.test_v8_attention_full_token_major_generated \
             tests.test_v8_kokoro_generated_attention_context \
             tests.test_v8_duration_logits_runtime_graph \
             tests.test_v8_duration_two_stream_runtime_graph \
-            tests.test_v8_kokoro_shape_bounds \
-            tests.test_v8_audio_duration_expand_oracle.AudioDurationExpandOracleTest.test_committed_torch_fixture \
-            tests.test_v8_audio_duration_logits_oracle.AudioDurationLogitsOracleTest.test_pinned_production_shape_against_committed_torch_fixture \
-            tests.test_v8_audio_duration_logits_oracle.AudioDurationLogitsOracleTest.test_layout_ties_and_clamping \
-            tests.test_v8_audio_duration_logits_oracle.AudioDurationLogitsOracleTest.test_rejections_leave_outputs_unchanged \
-            tests.test_v8_audio_duration_logits_oracle.AudioDurationLogitsOracleTest.test_hostile_geometry_rejected_before_buffer_access \
-            tests.test_v8_audio_duration_logits_oracle.AudioDurationLogitsOracleTest.test_large_integer_limit_does_not_round_up_in_float \
-            tests.test_v8_audio_istft_oracle.AudioIstftOracleTest.test_committed_torch_fixture \
-            tests.test_v8_audio_istft_oracle.AudioIstftSafetyTest \
-            tests.test_v8_audio_lstm_scan_oracle.AudioLstmScanOracleTest.test_committed_torch_fixture \
-            tests.test_v8_audio_lstm_scan_oracle.AudioLstmScanOracleTest.test_rejection_preserves_output \
-            tests.test_v8_audio_lstm_scan_oracle.AudioLstmScanOracleTest.test_exact_capacity_and_null_pointer \
-            tests.test_v8_audio_lstm_scan_oracle.AudioLstmScanOracleTest.test_hostile_hidden_size_rejected_before_buffer_access \
-            tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_committed_torch_fixture \
-            tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_optimized_matches_scalar \
-            tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_rejection_preserves_output \
-            tests.test_v8_audio_adaptive_layer_norm_oracle.AdaptiveLayerNormOracleTest.test_exact_capacity_and_large_geometry_rejection
+            tests.test_kernel_oracle_reporting
+      - name: Upload existing-format kernel numerical report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-map-pr-report
+          path: build/kernel-map-pr-report.json
+          if-no-files-found: error
       - name: Verify Kokoro import envelope and rejection contracts
         run: python3 -m unittest tests.test_v8_kokoro_bump_export
       - name: Verify generated graph X-Ray capture against independent oracle
