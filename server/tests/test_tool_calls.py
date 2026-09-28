@@ -492,7 +492,7 @@ def test_tool_call_unknown_tool_failed():
     assert "unknown tool" in resp.json()["error"]["message"]
 
 
-def test_tool_call_parallel_false_incomplete():
+def test_tool_call_parallel_false_rejects_all_calls():
     session = FakeSession(chunks=('[{"name":"a","arguments":{}},{"name":"b","arguments":{}}]',))
     client = TestClient(create_app(session, model="fake-model", chat_contract=QWEN3_CONTRACT, chat_templates=DUMMY_CHAT_TEMPLATES))
     resp = client.post("/v1/responses", json={
@@ -504,11 +504,10 @@ def test_tool_call_parallel_false_incomplete():
         "parallel_tool_calls": False,
     })
     data = resp.json()
-    assert data["status"] == "incomplete"
-    assert data["incomplete_details"]["reason"] == "max_tool_calls"
+    assert data["status"] == "failed"
+    assert "parallel_tool_calls=false" in data["error"]["message"]
     fcs = [i for i in data["output"] if i["type"] == "function_call"]
-    assert len(fcs) == 1
-    assert fcs[0]["name"] == "a"
+    assert fcs == []
     # streaming variant
     session2 = FakeSession(chunks=('[{"name":"a","arguments":{}},{"name":"b","arguments":{}}]',))
     client2 = TestClient(create_app(session2, model="fake-model", chat_contract=QWEN3_CONTRACT, chat_templates=DUMMY_CHAT_TEMPLATES))
@@ -522,9 +521,10 @@ def test_tool_call_parallel_false_incomplete():
     })
     events = iter_sse(resp2.text)
     assert_valid_stream(events)
-    assert any(ev == "response.incomplete" for ev, _ in events)
-    completed = next(p["response"] for ev, p in events if ev == "response.incomplete")
-    assert len([i for i in completed["output"] if i["type"] == "function_call"]) == 1
+    assert any(ev == "response.failed" for ev, _ in events)
+    failed = next(p["response"] for ev, p in events if ev == "response.failed")
+    assert "parallel_tool_calls=false" in failed["error"]["message"]
+    assert not any(i["type"] == "function_call" for i in failed["output"])
 
 
 def test_assistant_message_without_tool_calls_renders():

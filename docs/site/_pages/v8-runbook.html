@@ -1417,30 +1417,72 @@ make test-native-session-v8</pre>
     <p>
         The cached Qwen3.8 Q4_K_M runtime has a known native-template tokenizer mismatch:
         its tool delimiter is split into ordinary CKE tokens while the upstream tokenizer uses
-        one special token. For a bounded Qwen Code tool task, the operator-authored
-        <code>server/templates/qwen38_tool_use_compat.jinja</code> avoids that literal delimiter
-        in the prompt. Install it in a dedicated bundle and bind <code>qwen_code_xml</code> to its
-        exact bytes; ordinary chat continues to use the native sidecar.
+        one special token. That numerical gap remains open. A separate Ryzen probe with the
+        publisher Jinja and native <code>qwen_xml</code> output protocol nevertheless completed
+        a Qwen Code <code>read_file</code> continuation and an HTML <code>read_file</code> →
+        <code>edit</code> task using the harness's ordinary system prompt. The compatibility
+        template installation path has therefore been retired; its bytes are retained only as
+        a legacy protocol test fixture. The <code>qwen38.json</code> circuit owns
+        an explicit <code>serving.profile_ref</code> to this reusable profile. Bundle construction
+        resolves the selected variant together with imported publisher assets, then packages
+        content-addressed templates and circuit/profile snapshots in the deployment bundle.
+        The server reads only that bundle's <code>serving.json</code> and assets; it never searches
+        repository profiles or <code>server/templates/</code> at request time.
+        Publisher templates are the shipped profile's only variant. Task success does not
+        certify exact native token IDs, cancellation recovery, or compatibility with other artifacts.
+    </p>
+    <p>
+        A separate native-BPE input limit once reduced a 33,379-byte Qwen Code tool prompt
+        to 304 CKE tokens instead of the independent GGUF tokenizer's 7,773 tokens. A rebuilt
+        model, engine, and tokenizer matched all 7,773 IDs and completed a cached
+        <code>read_file</code> and tool-result continuation. Rebuild those three libraries
+        together; replacing only the tokenizer under an older generated model is unsafe.
+        The declared <code>qwen_code_xml_raw_v2</code> protocol accepts a short plain-text
+        introduction followed by one terminal XML envelope. It still rejects inline
+        examples, fenced XML, trailing text, and unadvertised tools. If a request sets
+        <code>parallel_tool_calls=false</code>, multiple invokes fail atomically; the server
+        does not forward the first call while dropping the rest.
+        Its delimited
+        parameter bodies preserve raw HTML and code for edit arguments; a literal
+        closing <code>&lt;/parameter&gt;</code> inside a value is outside this
+        compatibility protocol. The older <code>qwen_code_xml</code> protocol keeps its
+        strict whole-response XML/entity interpretation for existing bundles; opt in to v2
+        only for existing explicitly configured compatibility bundles. Legacy bundles without
+        <code>serving.json</code> retain their hash-bound <code>tool_protocol.json</code> path.
+        One cached Qwen Code run recovered from a
+        read-before-edit rejection, read the file, and applied a bounded HTML
+        edit in a disposable worktree. That does not certify general edit-and-test
+        reliability, cancellation recovery, or 262K actual input.
     </p>
     <div class="cmd-block">
         <button class="copy-btn" type="button">Copy</button>
 <pre>RUN_DIR=/path/to/dedicated/qwen38-generated-runtime
-install -D -m 644 server/templates/qwen38_tool_use_compat.jinja \
-  "$RUN_DIR/additional_chat_templates/tool_use.jinja"
-RUN_DIR="$RUN_DIR" python3 - &lt;&lt;'PY'
-import hashlib, json, os
-from pathlib import Path
-run = Path(os.environ["RUN_DIR"])
-template = (run / "additional_chat_templates/tool_use.jinja").read_bytes()
-(run / "tool_protocol.json").write_text(json.dumps({
-    "schema": "cke.v8.tool_protocol.v1",
-    "protocol": "qwen_code_xml",
-    "template_sha256": hashlib.sha256(template).hexdigest(),
-}, indent=2) + "\n")
-PY
+# Explicit metadata upgrade of an existing, complete generated bundle.
+# Publisher assets are the default; no repository template installation is needed.
+python3 version/v8/scripts/resolve_serving_bundle_v8.py \
+  --run "$RUN_DIR" --circuit version/v8/circuits/qwen38.json
 version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
   --no-build --model-name qwen38-27b-q4km --host 127.0.0.1 --port 8080</pre>
     </div>
+    <p>
+        For a new chat bundle, <code>ck_run_v8.py run ... --generate-only --resolve-serving</code>
+        resolves the circuit profile after compilation. Normal chat serving requests this automatically.
+        Raw/token-ID builds do not require publisher chat assets; omit <code>--resolve-serving</code>
+        or build with <code>--no-chat-template</code>. Unsupported selections
+        fail explicitly. The circuit's publisher variant is the default. Safetensors
+        tokenizer configuration can supply embedded or named publisher templates; conflicts with
+        colocated Jinja files fail instead of choosing one silently. Startup validates template,
+        tokenizer, weights, configuration, layout, and generated-library hashes, so hashing large
+        weights is part of setup time. Rebuilding these assets requires explicit re-resolution.
+        Explicit upgrades verify the retained manifest → IR → generated C → runtime stamp chain
+        against the current bundle bytes. A matching model name alone is insufficient. Missing build
+        provenance requires a rebuild. Computational circuit changes are rejected; only changes confined
+        to the <code>serving</code> section may be allowed with <code>--allow-serving-update</code>.
+        A missing or invalid resolved asset never falls back to a legacy template. Raw serving skips
+        formatting but still validates a present resolved bundle and actual loaded libraries. Runtime template
+        overrides are rejected for resolved bundles. The sidecar marks certification
+        <code>NOT_TESTED</code>; dependency resolution alone is not a model/tool certification.
+    </p>
     <p>
         Run <code>make test-v8-serve-native-jinja</code> for the deterministic sidecar-loader,
         Jinja-renderer, request/continuation, hash, and render-failure contract. The nightly

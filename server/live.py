@@ -559,7 +559,9 @@ def _has_tool_support(
         isinstance(chat_templates, dict)
         and any(isinstance(value, str) and value.strip() for value in chat_templates.values())
     )
-    return has_template and tool_protocol in {"tagged_json", "bare_json", "qwen_xml", "qwen_code_xml"}
+    return has_template and tool_protocol in {
+        "tagged_json", "bare_json", "qwen_xml", "qwen_code_xml", "qwen_code_xml_raw_v2",
+    }
 
 
 #: Tool-call syntax emitted by the model-native Jinja template: Qwen3-style
@@ -569,6 +571,7 @@ _TOOL_SYNTAX_TOOL_CALL_JSON = "tool_call_json"
 _TOOL_SYNTAX_JSON = "json"
 _TOOL_SYNTAX_QWEN_XML = "qwen_xml"
 _TOOL_SYNTAX_QWEN_CODE_XML = "qwen_code_xml"
+_TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2 = "qwen_code_xml_raw_v2"
 _TOOL_SYNTAX_NONE = "none"
 
 
@@ -587,6 +590,8 @@ def _tool_syntax_for_protocol(protocol: str | None) -> str:
         return _TOOL_SYNTAX_QWEN_XML
     if protocol == "qwen_code_xml":
         return _TOOL_SYNTAX_QWEN_CODE_XML
+    if protocol == "qwen_code_xml_raw_v2":
+        return _TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2
     raise ValueError(f"unsupported tool protocol {protocol!r}")
 
 
@@ -835,7 +840,10 @@ def _extract_tool_calls_from_text(
     stripped = text.strip()
     if tool_syntax == _TOOL_SYNTAX_NONE:
         return [], None, None
-    if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML}:
+    if tool_syntax in {
+        _TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML,
+        _TOOL_SYNTAX_QWEN_CODE_XML,
+    }:
         tool_blocks: list[str] = []
         for m in re.finditer(
             r"<tool_call>(.*?)</tool_call>", text, flags=re.DOTALL | re.IGNORECASE
@@ -851,6 +859,8 @@ def _extract_tool_calls_from_text(
             return [], "malformed", "malformed tool call delimiter outside a complete block"
     else:
         tool_blocks = []
+    if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2 and stripped.startswith("<tool_call"):
+        return [], "malformed", "qwen_code_xml_raw_v2 requires a function_calls envelope"
     candidates: list[str | dict[str, Any]] = []
     if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and stripped.startswith("<function_calls"):
         try:
@@ -884,7 +894,71 @@ def _extract_tool_calls_from_text(
             return [], "malformed", f"malformed function_calls XML: {exc}"
     elif tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and "<function_calls" in stripped:
         return [], "malformed", "function_calls XML must be the entire response"
-    if tool_blocks and tool_syntax in {_TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML}:
+    xml_envelope = stripped
+    if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2 and not stripped.startswith("<function_calls"):
+        marker = "<function_calls"
+        start = stripped.find(marker)
+        if start >= 0:
+            preamble = stripped[:start]
+            # This protocol permits one short plain-text introduction before a
+            # terminal XML envelope. It never mines inline examples or fenced
+            # code for executable calls.
+            if (
+                not preamble.endswith("\n\n")
+                or len(preamble) > 1024
+                or any(char in preamble for char in "<>`")
+                or stripped.count(marker) != 1
+            ):
+                return [], "malformed", "function_calls XML must be a terminal envelope"
+            xml_envelope = stripped[start:]
+    if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2 and xml_envelope.startswith("<function_calls"):
+        try:
+            opening, closing = "<function_calls>", "</function_calls>"
+            if not xml_envelope.startswith(opening) or not xml_envelope.endswith(closing):
+                raise ValueError("expected a complete function_calls envelope")
+            # This is a delimited tool protocol, not general XML. Treat the
+            # parameter body as raw text so edit arguments retain HTML, code,
+            # ampersands, whitespace, and comments byte-for-byte. The closing
+            # </parameter> delimiter itself cannot occur in a raw value.
+            body = xml_envelope[len(opening):-len(closing)]
+            pos = 0
+            while pos < len(body):
+                pos += len(body[pos:]) - len(body[pos:].lstrip())
+                if pos == len(body):
+                    break
+                invoke = re.match(r'<invoke name="([A-Za-z_][\w.-]*)">', body[pos:])
+                if invoke is None:
+                    raise ValueError("invalid invoke element")
+                name = invoke.group(1)
+                pos += invoke.end()
+                parameters: dict[str, Any] = {}
+                while True:
+                    pos += len(body[pos:]) - len(body[pos:].lstrip())
+                    if body.startswith("</invoke>", pos):
+                        pos += len("</invoke>")
+                        break
+                    param = re.match(r'<parameter name="([A-Za-z_][\w.-]*)">', body[pos:])
+                    if param is None:
+                        raise ValueError("invalid parameter element")
+                    key = param.group(1)
+                    if key in parameters:
+                        raise ValueError(f"duplicate tool parameter {key!r}")
+                    pos += param.end()
+                    end = body.find("</parameter>", pos)
+                    if end < 0:
+                        raise ValueError(f"unterminated tool parameter {key!r}")
+                    parameters[key] = declared_parameter_value(name, key, body[pos:end])
+                    pos = end + len("</parameter>")
+                candidates.append({"name": name, "arguments": parameters})
+            if not candidates:
+                raise ValueError("empty function_calls envelope")
+        except ValueError as exc:
+            return [], "malformed", f"malformed function_calls XML: {exc}"
+    elif tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2 and "<function_calls" in stripped:
+        return [], "malformed", "function_calls XML must be a terminal envelope"
+    if tool_blocks and tool_syntax in {
+        _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML,
+    }:
         for block in tool_blocks:
             match = re.fullmatch(
                 r"\s*<function=([A-Za-z_][\w.-]*)>(.*?)</function>\s*",
@@ -1009,6 +1083,10 @@ def _strip_tool_json_from_text(
     remaining = text
     if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML and stripped.startswith("<function_calls"):
         return ""
+    if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2:
+        start = stripped.find("<function_calls")
+        if start >= 0:
+            return stripped[:start].strip()
     if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML}:
         remaining = re.sub(
             r"<tool_call>.*?</tool_call>", "", text, flags=re.DOTALL | re.IGNORECASE
@@ -1027,7 +1105,9 @@ def _classify_stream_mode(
         return "tool" if tool_syntax == _TOOL_SYNTAX_JSON else "text"
     if stripped.startswith("<"):
         if stripped.lower().startswith("<function_calls"):
-            return "tool" if tool_syntax == _TOOL_SYNTAX_QWEN_CODE_XML else "text"
+            return "tool" if tool_syntax in {
+                _TOOL_SYNTAX_QWEN_CODE_XML, _TOOL_SYNTAX_QWEN_CODE_XML_RAW_V2,
+            } else "text"
         if stripped.lower().startswith("<tool_call"):
             return "tool" if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML} else "text"
         return "text"
@@ -1431,6 +1511,12 @@ def create_app(
         tool_calls, code, msg = _extract_tool_calls_from_text(
             text, allowed, tool_syntax=tool_syntax, tool_parameters=parameter_schemas
         )
+        if (code is None and tool_calls
+                and getattr(body, "parallel_tool_calls", True) is False
+                and len(tool_calls) > 1):
+            return [], "parallel_tool_calls_disallowed", (
+                "parallel_tool_calls=false forbids multiple tool calls in one response"
+            )
         if code is None and not tool_calls:
             return None, None, None
         if tool_calls == [] and code is None:
@@ -1762,15 +1848,6 @@ def create_app(
                         )
                         return
                     incomplete_details = None
-                    tool_incomplete = False
-                    if (
-                        tool_calls
-                        and getattr(body, "parallel_tool_calls", True) is False
-                        and len(tool_calls) > 1
-                    ):
-                        tool_calls = tool_calls[:1]
-                        tool_incomplete = True
-                        incomplete_details = {"reason": "max_tool_calls"}
                     remaining_text = (
                         _strip_tool_json_from_text(text, tool_calls, tool_syntax=tool_syntax)
                         if tool_calls
@@ -1778,9 +1855,6 @@ def create_app(
                     )
                     if is_cancelled:
                         final_status = ResponseStatus.cancelled
-                        msg_status = "incomplete"
-                    elif tool_incomplete:
-                        final_status = ResponseStatus.incomplete
                         msg_status = "incomplete"
                     elif stop_reason_val == 2:
                         final_status = ResponseStatus.incomplete
@@ -2326,15 +2400,6 @@ def create_app(
                 "code": "server_error",
                 "message": tool_error_msg or "tool call failed",
             }
-        elif (
-            tool_calls
-            and getattr(body, "parallel_tool_calls", True) is False
-            and len(tool_calls) > 1
-        ):
-            tool_calls = tool_calls[:1]
-            incomplete_details = {"reason": "max_tool_calls"}
-            final_status = ResponseStatus.incomplete
-            item_status = "incomplete"
         elif stop_reason_val == 3:
             final_status = ResponseStatus.cancelled
             item_status = "incomplete"
