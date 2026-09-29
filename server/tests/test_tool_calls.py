@@ -1056,18 +1056,13 @@ def test_resolve_runtime_vision_capability(tmp_path):
     from server.runtime import resolve_runtime_vision_capability
 
     assert not resolve_runtime_vision_capability(tmp_path)
-    (tmp_path / "layout_decode.json").write_text(
-        '{"config": {"context_length": 1024}}', encoding="utf-8"
-    )
-    assert not resolve_runtime_vision_capability(tmp_path)
-    (tmp_path / "layout_decode.json").write_text(
-        '{"config": {"vision_num_patches": 256, "projector_out_dim": 1024}}',
-        encoding="utf-8",
-    )
+    (tmp_path / "config.json").write_text('{"has_vision_encoder": true}', encoding="utf-8")
     assert resolve_runtime_vision_capability(tmp_path)
-    (tmp_path / "layout_decode.json").write_text(
-        '{"config": {"vision_num_patches": 256}}', encoding="utf-8"
-    )
+    (tmp_path / "config.json").write_text('{"has_vision_encoder": false}', encoding="utf-8")
+    assert not resolve_runtime_vision_capability(tmp_path)
+    (tmp_path / "config.json").write_text('{"has_vision_encoder": 1}', encoding="utf-8")
+    assert not resolve_runtime_vision_capability(tmp_path)
+    (tmp_path / "config.json").write_text("not-json", encoding="utf-8")
     assert not resolve_runtime_vision_capability(tmp_path)
 
 

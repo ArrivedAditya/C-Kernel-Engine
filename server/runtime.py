@@ -46,33 +46,19 @@ def resolve_runtime_context_length(run_dir: Path, requested: int | None) -> int 
 def resolve_runtime_vision_capability(run_dir: Path) -> bool:
     """Whether the generated runtime has a vision encoder.
 
-    Reads ``layout_decode.json`` config for the vision path markers used by
-    the bridge contract (patch counts plus projector dims). Text-only
-    bundles lack these keys and report ``False``; unreadable manifests
-    fail closed to ``False``.
+    Reads the ``has_vision_encoder`` flag from ``config.json`` (written
+    by GGUF/safetensors conversion from ``clip.has_vision_encoder``).
+    Only an explicit JSON ``true`` reports ``True``; missing files,
+    malformed documents, and any other value fail closed to ``False``.
     """
-    layout_path = Path(run_dir) / "layout_decode.json"
+    config_path = Path(run_dir) / "config.json"
     try:
-        payload = json.loads(layout_path.read_text(encoding="utf-8"))
-        config = payload.get("config", {})
-    except (OSError, UnicodeDecodeError, ValueError, AttributeError):
+        document = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
         return False
-    if not isinstance(config, dict):
+    if not isinstance(document, dict):
         return False
-
-    def _positive(*keys: str) -> bool:
-        for key in keys:
-            try:
-                value = int(config.get(key) or 0)
-            except (TypeError, ValueError):
-                continue
-            if value > 0:
-                return True
-        return False
-
-    return _positive("vision_num_patches", "vision_merged_tokens") and _positive(
-        "projector_out_dim", "projection_dim", "projector_total_out_dim"
-    )
+    return document.get("has_vision_encoder") is True
 
 
 def load_manifest_templates(
