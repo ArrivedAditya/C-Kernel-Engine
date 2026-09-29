@@ -174,7 +174,8 @@
       },
       {
         "name": "input_elements",
-        "source": "runtime:input_elements"
+        "source": "runtime:adaln_input_elements",
+        "value_type": "size_t"
       },
       {
         "name": "style",
@@ -186,7 +187,8 @@
       },
       {
         "name": "style_elements",
-        "source": "runtime:style_elements"
+        "source": "runtime:adaln_style_elements",
+        "value_type": "size_t"
       },
       {
         "name": "projection_weight",
@@ -198,7 +200,8 @@
       },
       {
         "name": "projection_weight_elements",
-        "source": "runtime:projection_weight_elements"
+        "source": "runtime:adaln_projection_weight_elements",
+        "value_type": "size_t"
       },
       {
         "name": "projection_bias",
@@ -210,7 +213,8 @@
       },
       {
         "name": "projection_bias_elements",
-        "source": "runtime:projection_bias_elements"
+        "source": "runtime:adaln_projection_bias_elements",
+        "value_type": "size_t"
       },
       {
         "name": "output",
@@ -222,7 +226,8 @@
       },
       {
         "name": "output_elements",
-        "source": "runtime:output_elements"
+        "source": "runtime:adaln_output_elements",
+        "value_type": "size_t"
       },
       {
         "name": "projection_scratch",
@@ -247,11 +252,13 @@
       },
       {
         "name": "input_stride",
-        "source": "runtime:input_stride"
+        "source": "runtime:adaln_input_stride",
+        "value_type": "size_t"
       },
       {
         "name": "output_stride",
-        "source": "runtime:output_stride"
+        "source": "runtime:adaln_output_stride",
+        "value_type": "size_t"
       },
       {
         "name": "epsilon",
@@ -261,9 +268,68 @@
   },
   "tests": {
     "unit": [
+      "tests/test_v8_kokoro_generated_duration.py",
       "tests/test_v8_audio_adaptive_layer_norm_oracle.py"
     ],
     "oracle": "Independent torch.nn.functional.linear and layer_norm FP32 CPU; separately registered native-versus-fixture, native-versus-live at small and 24x512x128 shapes, and historical fixture-versus-live PyTorch 2.8.0 and 2.12.1 comparisons; all use existing nightly reporting."
   },
-  "notes": "Batch-one token-major input with explicit input/output row strides. Style projection uses [2*C,S] output-feature-major weights, first C gamma, second C beta, and an ascending FP32 multiply/add reduction. Mean and biased variance each use an ascending FP64 channel reduction; normalization casts to FP32 before affine modulation. This reduction order is a separate numerical identity from a future alternative provider. The pinned Kokoro fixture was captured under PyTorch 2.8.0. Nightly stage captures first differed at PyTorch F.linear projection while normalized LayerNorm output matched. The compared hosts reported AVX512 and AVX2 capability; this does not identify the exact operation backend dispatch or prove version-specific drift. Historical fixture reproduction requests MKL_CBWR=AVX2 and preserves its original 1e-7 bound. Separate native-dispatch lanes compare CKE to live PyTorch at the unchanged 5e-6 bound; neither lane silently refreshes the fixture. Reports retain versions, stage tensors and requested settings, explicitly marking actual dispatch identity unverified. Fixture reproduction and native parity have distinct case identities and execute independently. Epsilon is positive finite. Only logical columns are read; padding is untouched. All buffers caller-owned; no aliasing between input, weights, style, output or scratch. Output remains unchanged on null, geometry, capacity or nonfinite rejection. Inference only; backward unsupported."
+  "notes": "Batch-one token-major input with explicit input/output row strides. Style projection uses [2*C,S] output-feature-major weights, first C gamma, second C beta, and an ascending FP32 multiply/add reduction. Mean and biased variance each use an ascending FP64 channel reduction; normalization casts to FP32 before affine modulation. This reduction order is a separate numerical identity from a future alternative provider. The pinned Kokoro fixture was captured under PyTorch 2.8.0. Nightly stage captures first differed at PyTorch F.linear projection while normalized LayerNorm output matched. The compared hosts reported AVX512 and AVX2 capability; this does not identify the exact operation backend dispatch or prove version-specific drift. Historical fixture reproduction requests MKL_CBWR=AVX2 and preserves its original 1e-7 bound. Separate native-dispatch lanes compare CKE to live PyTorch at the unchanged 5e-6 bound; neither lane silently refreshes the fixture. Reports retain versions, stage tensors and requested settings, explicitly marking actual dispatch identity unverified. Fixture reproduction and native parity have distinct case identities and execute independently. Epsilon is positive finite. Only logical columns are read; padding is untouched. All buffers caller-owned; no aliasing between input, weights, style, output or scratch. Output remains unchanged on null, geometry, capacity or nonfinite rejection. Inference only; backward unsupported. Operation-local size_t capacity/stride overrides are checked against planner-owned storage; the provider validates logical geometry before writes.",
+  "call_constant_contract": {
+    "shape_symbols": {},
+    "buffer_spans": [
+      {
+        "pointer": "input",
+        "elements": "adaln_input_elements",
+        "rows": 1,
+        "width": "adaln_input_elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "style",
+        "elements": "adaln_style_elements",
+        "rows": 1,
+        "width": "adaln_style_elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "projection_weight",
+        "elements": "adaln_projection_weight_elements",
+        "rows": 1,
+        "width": "adaln_projection_weight_elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "projection_bias",
+        "elements": "adaln_projection_bias_elements",
+        "rows": 1,
+        "width": "adaln_projection_bias_elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "output",
+        "elements": "adaln_output_elements",
+        "rows": 1,
+        "width": "adaln_output_elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "input",
+        "elements": "adaln_input_elements",
+        "rows": 1,
+        "width": 1,
+        "stride": "adaln_input_stride",
+        "physical_row_stride": true,
+        "element_bytes": 4
+      },
+      {
+        "pointer": "output",
+        "elements": "adaln_output_elements",
+        "rows": 1,
+        "width": 1,
+        "stride": "adaln_output_stride",
+        "physical_row_stride": true,
+        "element_bytes": 4
+      }
+    ]
+  }
 }

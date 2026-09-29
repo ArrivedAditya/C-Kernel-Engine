@@ -1,0 +1,239 @@
+{
+  "id": "feature_concat_broadcast_rows_f32",
+  "op": "feature_concat_broadcast_rows",
+  "operation_interface": "tensor.concat.broadcast_feature_rows.strided.fp32.v1",
+  "variant": "checked_scalar_reuse",
+  "selection": {
+    "status": "candidate",
+    "priority": 100,
+    "equivalence_group": "feature_concat_broadcast_rows_f32",
+    "phases": [
+      "prefill"
+    ]
+  },
+  "quant": {
+    "weight": "none",
+    "activation": "fp32",
+    "output": "fp32"
+  },
+  "inputs": [
+    {
+      "name": "input",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "C"
+      ],
+      "layout": "row_major_strided",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    },
+    {
+      "name": "feature",
+      "dtype": "fp32",
+      "shape": [
+        "S"
+      ],
+      "layout": "feature_contiguous",
+      "placement": "local",
+      "access": "read",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "weights": [],
+  "outputs": [
+    {
+      "name": "output",
+      "dtype": "fp32",
+      "shape": [
+        "T",
+        "N"
+      ],
+      "layout": "row_major_strided",
+      "placement": "local",
+      "access": "write",
+      "storage_class": "activation",
+      "consumption": "required"
+    }
+  ],
+  "scratch": [],
+  "dims": [
+    "input_elements",
+    "input_stride",
+    "feature_elements",
+    "output_elements",
+    "output_stride",
+    "rows",
+    "input_channels",
+    "feature_channels",
+    "output_channels"
+  ],
+  "constraints": {
+    "notes": "Positive rows/channels; output_channels must equal input_channels+feature_channels within INT_MAX. Checked physical spans and capacities. Output may not alias either input. Logical inputs must be finite; row padding is ignored, output padding untouched. Rejection leaves output unchanged. No internal allocation or persistent state."
+  },
+  "impl": {
+    "function": "feature_concat_broadcast_rows_f32",
+    "c_declaration": "int feature_concat_broadcast_rows_f32(const float *input, size_t input_elements, size_t input_stride, const float *feature, size_t feature_elements, float *output, size_t output_elements, size_t output_stride, size_t rows, size_t input_channels, size_t feature_channels, size_t output_channels);",
+    "sources": [
+      "src/kernels/feature_concat_broadcast_rows.c",
+      "src/kernels/vision_kernels.c"
+    ]
+  },
+  "modes": {
+    "inference": true,
+    "training": false,
+    "backward": false
+  },
+  "call_constant_contract": {
+    "shape_symbols": {
+      "T": "concat_rows",
+      "C": "concat_input_channels",
+      "S": "concat_feature_channels",
+      "N": "concat_output_channels"
+    },
+    "buffer_spans": [
+      {
+        "pointer": "input",
+        "elements": "concat_input_elements",
+        "rows": "concat_rows",
+        "width": "concat_input_channels",
+        "stride": "concat_input_stride",
+        "physical_row_stride": true,
+        "element_bytes": 4
+      },
+      {
+        "pointer": "feature",
+        "elements": "concat_feature_elements",
+        "rows": 1,
+        "width": "concat_feature_channels",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "output",
+        "elements": "concat_output_elements",
+        "rows": "concat_rows",
+        "width": "concat_output_channels",
+        "stride": "concat_output_stride",
+        "physical_row_stride": true,
+        "element_bytes": 4
+      }
+    ]
+  },
+  "call_abi": {
+    "version": 1,
+    "params": [
+      {
+        "name": "input",
+        "source": "activation:input",
+        "cast": "const float*",
+        "ports": [
+          "input:input"
+        ]
+      },
+      {
+        "name": "input_elements",
+        "source": "runtime:concat_input_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "input_stride",
+        "source": "runtime:concat_input_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "feature",
+        "source": "activation:feature",
+        "cast": "const float*",
+        "ports": [
+          "input:feature"
+        ]
+      },
+      {
+        "name": "feature_elements",
+        "source": "runtime:concat_feature_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output",
+        "source": "output:output",
+        "cast": "float*",
+        "ports": [
+          "output:output"
+        ]
+      },
+      {
+        "name": "output_elements",
+        "source": "runtime:concat_output_elements",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_stride",
+        "source": "runtime:concat_output_stride",
+        "value_type": "size_t"
+      },
+      {
+        "name": "rows",
+        "source": "runtime:concat_rows",
+        "value_type": "size_t"
+      },
+      {
+        "name": "input_channels",
+        "source": "runtime:concat_input_channels",
+        "value_type": "size_t"
+      },
+      {
+        "name": "feature_channels",
+        "source": "runtime:concat_feature_channels",
+        "value_type": "size_t"
+      },
+      {
+        "name": "output_channels",
+        "source": "runtime:concat_output_channels",
+        "value_type": "size_t"
+      }
+    ]
+  },
+  "numerical_capabilities": [
+    {
+      "contract_id": "feature_concat_broadcast_rows_copy_fp32",
+      "status": "validated",
+      "phases": [
+        "prefill"
+      ],
+      "function": "feature_concat_broadcast_rows_f32",
+      "explicit_selector": true,
+      "implementation": {
+        "isa_dispatch": "scalar",
+        "threading": {
+          "runtime": "serial",
+          "work_partition": [
+            "independent_rows"
+          ],
+          "dispatch": [
+            "inline"
+          ],
+          "reduction_order_effect": "none"
+        }
+      },
+      "arithmetic": {
+        "partial_accumulator": "none",
+        "merge_order": "none",
+        "deterministic": true,
+        "thread_count_changes_arithmetic_order": false,
+        "split_strategy": "independent_outputs"
+      }
+    }
+  ],
+  "tests": {
+    "unit": [
+      "tests/test_v8_feature_concat_broadcast_oracle.py",
+      "tests/test_v8_feature_concat_broadcast_generated.py",
+      "tests/test_v8_kokoro_generated_duration.py"
+    ],
+    "oracle": "Independent NumPy concatenate and optional live PyTorch expand/cat; exact bitwise copy, padded/tail/production widths, bounds, malformed metadata and output-preserving rejection."
+  },
+  "notes": "Reuses the existing scalar feature_concat one row at a time, with a checked broadcast, physical-stride and capacity ABI. Output columns are input features followed by repeated feature-vector values. No reduction; exact FP32 bit copy. Input padding is not consumed and output padding is not written. Inference only; backward uncertified."
+}

@@ -10,6 +10,13 @@ on:
       - 'include/ckernel_attention_full_token_major.h'
       - 'include/ckernel_normalization_checked.h'
       - 'src/kernels/checked_float_buffer.h'
+      - 'src/kernels/feature_concat_broadcast_rows.c'
+      - 'src/kernels/vision_kernels.c'
+      - 'include/ckernel_feature_concat_checked.h'
+      - 'version/v8/kernel_maps/feature_concat_broadcast_rows_f32.json'
+      - 'tests/test_v8_feature_concat_broadcast_oracle.py'
+      - 'tests/test_v8_feature_concat_broadcast_generated.py'
+      - 'tests/test_v8_kernel_call_abi.py'
       - 'src/kernels/layernorm_rows_checked.c'
       - 'src/kernels/gelu_rows_tanh_checked.c'
       - 'src/kernels/layernorm_kernels.c'
@@ -18,6 +25,12 @@ on:
       - 'tests/test_v8_normalization_checked_generated.py'
       - 'tests/test_v8_kokoro_generated_albert_layer.py'
       - 'tests/test_v8_kokoro_generated_encoder.py'
+      - 'tests/test_v8_kokoro_generated_duration.py'
+      - 'tests/fixtures/tts/kokoro_duration_predictor_pinned.npz'
+      - 'tests/fixtures/tts/kokoro_duration_predictor_pinned.json'
+      - 'version/v8/tts/build_kokoro_duration_circuit.py'
+      - 'version/v8/tts/reference/capture_kokoro_duration_predictor.py'
+      - 'version/v8/circuits/kokoro_duration_predictor_bounded.json'
       - 'version/v8/tts/build_kokoro_encoder_circuit.py'
       - 'version/v8/tts/build_kokoro_albert_circuit.py'
       - 'version/v8/tts/kokoro_albert_block.json'
@@ -106,6 +119,13 @@ on:
       - 'include/ckernel_attention_full_token_major.h'
       - 'include/ckernel_normalization_checked.h'
       - 'src/kernels/checked_float_buffer.h'
+      - 'src/kernels/feature_concat_broadcast_rows.c'
+      - 'src/kernels/vision_kernels.c'
+      - 'include/ckernel_feature_concat_checked.h'
+      - 'version/v8/kernel_maps/feature_concat_broadcast_rows_f32.json'
+      - 'tests/test_v8_feature_concat_broadcast_oracle.py'
+      - 'tests/test_v8_feature_concat_broadcast_generated.py'
+      - 'tests/test_v8_kernel_call_abi.py'
       - 'src/kernels/layernorm_rows_checked.c'
       - 'src/kernels/gelu_rows_tanh_checked.c'
       - 'src/kernels/layernorm_kernels.c'
@@ -114,6 +134,12 @@ on:
       - 'tests/test_v8_normalization_checked_generated.py'
       - 'tests/test_v8_kokoro_generated_albert_layer.py'
       - 'tests/test_v8_kokoro_generated_encoder.py'
+      - 'tests/test_v8_kokoro_generated_duration.py'
+      - 'tests/fixtures/tts/kokoro_duration_predictor_pinned.npz'
+      - 'tests/fixtures/tts/kokoro_duration_predictor_pinned.json'
+      - 'version/v8/tts/build_kokoro_duration_circuit.py'
+      - 'version/v8/tts/reference/capture_kokoro_duration_predictor.py'
+      - 'version/v8/circuits/kokoro_duration_predictor_bounded.json'
       - 'version/v8/tts/build_kokoro_encoder_circuit.py'
       - 'version/v8/tts/build_kokoro_albert_circuit.py'
       - 'version/v8/tts/kokoro_albert_block.json'
@@ -209,6 +235,7 @@ jobs:
         env:
           CKE_KOKORO_LAYER_EVIDENCE_DIR: ${{ github.workspace }}/build/kernel-oracle-captures/kokoro-first-layer
           CKE_KOKORO_ENCODER_EVIDENCE_DIR: ${{ github.workspace }}/build/kernel-oracle-captures/kokoro-encoder
+          CKE_KOKORO_DURATION_EVIDENCE_DIR: ${{ github.workspace }}/build/kernel-oracle-captures/kokoro-duration
         run: |
           python3 scripts/nightly_runner.py --kernel-map-tests \
             version/v8/kernel_maps/embedding_three_table_layer_norm_f32.json \
@@ -220,6 +247,7 @@ jobs:
             version/v8/kernel_maps/audio_duration_logits_to_frames_f32.json \
             version/v8/kernel_maps/audio_istft_mag_phase_f32.json \
             version/v8/kernel_maps/audio_lstm_bidirectional_scan_f32.json \
+            version/v8/kernel_maps/feature_concat_broadcast_rows_f32.json \
             version/v8/kernel_maps/audio_adaptive_layer_norm_f32.json \
             --json build/kernel-map-pr-report.json
       - name: Verify generic compiler and oracle reporting contracts
@@ -234,6 +262,7 @@ jobs:
             tests.test_v8_kokoro_generated_embedding \
             tests.test_v8_kokoro_generated_projection \
             tests.test_v8_checked_op_constants \
+            tests.test_v8_feature_concat_broadcast_generated \
             tests.test_v8_kokoro_generated_qkv \
             tests.test_v8_attention_full_token_major_generated \
             tests.test_v8_kokoro_generated_attention_context \

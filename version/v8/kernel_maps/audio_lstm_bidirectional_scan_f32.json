@@ -224,7 +224,8 @@
       },
       {
         "name": "input_elements",
-        "source": "runtime:input_elements"
+        "source": "runtime:scan_input_elements",
+        "value_type": "size_t"
       },
       {
         "name": "weight_ih",
@@ -236,7 +237,8 @@
       },
       {
         "name": "weight_ih_elements",
-        "source": "runtime:weight_ih_elements"
+        "source": "runtime:scan_weight_ih_elements",
+        "value_type": "size_t"
       },
       {
         "name": "weight_hh",
@@ -248,7 +250,8 @@
       },
       {
         "name": "weight_hh_elements",
-        "source": "runtime:weight_hh_elements"
+        "source": "runtime:scan_weight_hh_elements",
+        "value_type": "size_t"
       },
       {
         "name": "bias_ih",
@@ -260,7 +263,8 @@
       },
       {
         "name": "bias_ih_elements",
-        "source": "runtime:bias_ih_elements"
+        "source": "runtime:scan_bias_ih_elements",
+        "value_type": "size_t"
       },
       {
         "name": "bias_hh",
@@ -272,7 +276,8 @@
       },
       {
         "name": "bias_hh_elements",
-        "source": "runtime:bias_hh_elements"
+        "source": "runtime:scan_bias_hh_elements",
+        "value_type": "size_t"
       },
       {
         "name": "output",
@@ -284,7 +289,8 @@
       },
       {
         "name": "output_elements",
-        "source": "runtime:output_elements"
+        "source": "runtime:scan_output_elements",
+        "value_type": "size_t"
       },
       {
         "name": "hidden_state",
@@ -293,7 +299,8 @@
       },
       {
         "name": "hidden_state_elements",
-        "source": "runtime:hidden_state_elements"
+        "source": "runtime:scan_hidden_state_elements",
+        "value_type": "size_t"
       },
       {
         "name": "cell_state",
@@ -302,7 +309,8 @@
       },
       {
         "name": "cell_state_elements",
-        "source": "runtime:cell_state_elements"
+        "source": "runtime:scan_cell_state_elements",
+        "value_type": "size_t"
       },
       {
         "name": "gates_scratch",
@@ -327,19 +335,87 @@
       },
       {
         "name": "input_stride",
-        "source": "runtime:input_stride"
+        "source": "runtime:scan_input_stride",
+        "value_type": "size_t"
       },
       {
         "name": "output_stride",
-        "source": "runtime:output_stride"
+        "source": "runtime:scan_output_stride",
+        "value_type": "size_t"
       }
     ]
   },
   "tests": {
     "unit": [
-      "tests/test_v8_audio_lstm_scan_oracle.py"
+      "tests/test_v8_audio_lstm_scan_oracle.py",
+      "tests/test_v8_kokoro_generated_duration.py"
     ],
     "oracle": "torch.nn.LSTM bidirectional FP32 CPU; committed reference outputs plus live PyTorch reconstruction"
   },
-  "notes": "Batch-one bidirectional zero-state IFGO scan. Requires 0 < H <= INT_MAX/4 for signed IFGO gate indexing. Input/output physical row strides are explicit. State and gates are caller-owned scratch reset per invocation. Inputs, weights, output, and scratch must not alias; valid capacity is checked before writing. Serial forward then reverse recurrence; output concatenates forward and reverse hidden features. Inference only; backward unsupported."
+  "notes": "Batch-one bidirectional zero-state IFGO scan. Requires 0 < H <= INT_MAX/4 for signed IFGO gate indexing. Input/output physical row strides are explicit. State and gates are caller-owned scratch reset per invocation. Inputs, weights, output, and scratch must not alias; valid capacity is checked before writing. Serial forward then reverse recurrence; output concatenates forward and reverse hidden features. Inference only; backward unsupported. Operation-local size_t capacity/stride overrides are checked against planner-owned storage; the provider validates logical geometry before writes.",
+  "call_constant_contract": {
+    "shape_symbols": {},
+    "buffer_spans": [
+      {
+        "pointer": "input",
+        "elements": "scan_input_elements",
+        "rows": 1,
+        "width": "scan_input_elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "weight_ih",
+        "elements": "scan_weight_ih_elements",
+        "rows": 1,
+        "width": "scan_weight_ih_elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "weight_hh",
+        "elements": "scan_weight_hh_elements",
+        "rows": 1,
+        "width": "scan_weight_hh_elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "bias_ih",
+        "elements": "scan_bias_ih_elements",
+        "rows": 1,
+        "width": "scan_bias_ih_elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "bias_hh",
+        "elements": "scan_bias_hh_elements",
+        "rows": 1,
+        "width": "scan_bias_hh_elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "output",
+        "elements": "scan_output_elements",
+        "rows": 1,
+        "width": "scan_output_elements",
+        "element_bytes": 4
+      },
+      {
+        "pointer": "input",
+        "elements": "scan_input_elements",
+        "rows": 1,
+        "width": 1,
+        "stride": "scan_input_stride",
+        "physical_row_stride": true,
+        "element_bytes": 4
+      },
+      {
+        "pointer": "output",
+        "elements": "scan_output_elements",
+        "rows": 1,
+        "width": 1,
+        "stride": "scan_output_stride",
+        "physical_row_stride": true,
+        "element_bytes": 4
+      }
+    ]
+  }
 }

@@ -1,0 +1,323 @@
+{
+  "schema": "cke.kokoro.duration_predictor.oracle.v1",
+  "scope": "pinned all-valid 36-token phoneme encoder through duration logits and checked frame count",
+  "model_pin": {
+    "repository": "hexgrad/Kokoro-82M",
+    "revision": "e8a90b41091c3c5b70375c47cc959799920fa4d6",
+    "files": [
+      "config.json",
+      "kokoro-v1_0.pth",
+      "voices/af_heart.pt"
+    ],
+    "license": "Apache-2.0"
+  },
+  "asset_hashes": {
+    "config.json": "5abb01e2403b072bf03d04fde160443e209d7a0dad49a423be15196b9b43c17f",
+    "kokoro-v1_0.pth": "496dba118d1a58f5f3db2efc88dbdc216e0483fc89fe6e47ee1f2c53f18ad1e4",
+    "voices/af_heart.pt": "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"
+  },
+  "voice": "af_heart",
+  "voice_row_index": 33,
+  "conditioning_selection": "voice_pack[len(phonemes)-1]; predictor style is columns 128:256, decoder style is columns 0:128",
+  "dependencies": {
+    "kokoro": "0.9.4",
+    "torch": "2.8.0+cpu",
+    "transformers": "5.17.0"
+  },
+  "torch_build_configuration": "PyTorch built with:\n  - GCC 13.3\n  - C++ Version: 201703\n  - Intel(R) oneAPI Math Kernel Library Version 2024.2-Product Build 20240605 for Intel(R) 64 architecture applications\n  - Intel(R) MKL-DNN v3.7.1 (Git Hash 8d263e693366ef8db40acc569cc7d8edf644556d)\n  - OpenMP 201511 (a.k.a. OpenMP 4.5)\n  - LAPACK is enabled (usually provided by MKL)\n  - NNPACK is enabled\n  - CPU capability usage: AVX2\n  - Build settings: BLAS_INFO=mkl, BUILD_TYPE=Release, COMMIT_SHA=a1cb3cc05d46d198467bebbb6e8fba50a325d4e7, CXX_COMPILER=/opt/rh/gcc-toolset-13/root/usr/bin/c++, CXX_FLAGS= -fvisibility-inlines-hidden -DUSE_PTHREADPOOL -DNDEBUG -DUSE_KINETO -DLIBKINETO_NOCUPTI -DLIBKINETO_NOROCTRACER -DLIBKINETO_NOXPUPTI=ON -DUSE_FBGEMM -DUSE_PYTORCH_QNNPACK -DUSE_XNNPACK -DSYMBOLICATE_MOBILE_DEBUG_HANDLE -O2 -fPIC -DC10_NODEPRECATED -Wall -Wextra -Werror=return-type -Werror=non-virtual-dtor -Werror=range-loop-construct -Werror=bool-operation -Wnarrowing -Wno-missing-field-initializers -Wno-unknown-pragmas -Wno-unused-parameter -Wno-strict-overflow -Wno-strict-aliasing -Wno-stringop-overflow -Wsuggest-override -Wno-psabi -Wno-error=old-style-cast -faligned-new -Wno-maybe-uninitialized -fno-math-errno -fno-trapping-math -Werror=format -Wno-dangling-reference -Wno-error=dangling-reference -Wno-stringop-overflow, LAPACK_INFO=mkl, PERF_WITH_AVX=1, PERF_WITH_AVX2=1, TORCH_VERSION=2.8.0, USE_CUDA=0, USE_CUDNN=OFF, USE_CUSPARSELT=OFF, USE_GFLAGS=OFF, USE_GLOG=OFF, USE_GLOO=ON, USE_MKL=ON, USE_MKLDNN=ON, USE_MPI=OFF, USE_NCCL=OFF, USE_NNPACK=ON, USE_OPENMP=ON, USE_ROCM=OFF, USE_ROCM_KERNEL_ASSERT=OFF, USE_XCCL=OFF, USE_XPU=OFF, \n",
+  "torch_cpu_capability_reported": "AVX2",
+  "dispatch_identity": "NOT_VERIFIED",
+  "threads": 1,
+  "weights": {
+    "weight__duration_prosody.text_encoder.scan0__weight_ih": {
+      "source_name": "duration_prosody.text_encoder.lstms.0.weight_ih_l0,duration_prosody.text_encoder.lstms.0.weight_ih_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.text_encoder.scan0__weight_hh": {
+      "source_name": "duration_prosody.text_encoder.lstms.0.weight_hh_l0,duration_prosody.text_encoder.lstms.0.weight_hh_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.text_encoder.scan0__bias_ih": {
+      "source_name": "duration_prosody.text_encoder.lstms.0.bias_ih_l0,duration_prosody.text_encoder.lstms.0.bias_ih_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.text_encoder.scan0__bias_hh": {
+      "source_name": "duration_prosody.text_encoder.lstms.0.bias_hh_l0,duration_prosody.text_encoder.lstms.0.bias_hh_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.text_encoder.scan1__weight_ih": {
+      "source_name": "duration_prosody.text_encoder.lstms.2.weight_ih_l0,duration_prosody.text_encoder.lstms.2.weight_ih_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.text_encoder.scan1__weight_hh": {
+      "source_name": "duration_prosody.text_encoder.lstms.2.weight_hh_l0,duration_prosody.text_encoder.lstms.2.weight_hh_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.text_encoder.scan1__bias_ih": {
+      "source_name": "duration_prosody.text_encoder.lstms.2.bias_ih_l0,duration_prosody.text_encoder.lstms.2.bias_ih_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.text_encoder.scan1__bias_hh": {
+      "source_name": "duration_prosody.text_encoder.lstms.2.bias_hh_l0,duration_prosody.text_encoder.lstms.2.bias_hh_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.text_encoder.scan2__weight_ih": {
+      "source_name": "duration_prosody.text_encoder.lstms.4.weight_ih_l0,duration_prosody.text_encoder.lstms.4.weight_ih_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.text_encoder.scan2__weight_hh": {
+      "source_name": "duration_prosody.text_encoder.lstms.4.weight_hh_l0,duration_prosody.text_encoder.lstms.4.weight_hh_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.text_encoder.scan2__bias_ih": {
+      "source_name": "duration_prosody.text_encoder.lstms.4.bias_ih_l0,duration_prosody.text_encoder.lstms.4.bias_ih_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.text_encoder.scan2__bias_hh": {
+      "source_name": "duration_prosody.text_encoder.lstms.4.bias_hh_l0,duration_prosody.text_encoder.lstms.4.bias_hh_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.head_scan__weight_ih": {
+      "source_name": "duration_prosody.lstm.weight_ih_l0,duration_prosody.lstm.weight_ih_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.head_scan__weight_hh": {
+      "source_name": "duration_prosody.lstm.weight_hh_l0,duration_prosody.lstm.weight_hh_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.head_scan__bias_ih": {
+      "source_name": "duration_prosody.lstm.bias_ih_l0,duration_prosody.lstm.bias_ih_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.head_scan__bias_hh": {
+      "source_name": "duration_prosody.lstm.bias_hh_l0,duration_prosody.lstm.bias_hh_l0_reverse",
+      "transform": "stack_direction_axis_0"
+    },
+    "weight__duration_prosody.text_encoder.norm0__projection_weight": {
+      "source_name": "duration_prosody.text_encoder.lstms.1.fc.weight",
+      "transform": "identity"
+    },
+    "weight__duration_prosody.text_encoder.norm0__projection_bias": {
+      "source_name": "duration_prosody.text_encoder.lstms.1.fc.bias",
+      "transform": "identity"
+    },
+    "weight__duration_prosody.text_encoder.norm1__projection_weight": {
+      "source_name": "duration_prosody.text_encoder.lstms.3.fc.weight",
+      "transform": "identity"
+    },
+    "weight__duration_prosody.text_encoder.norm1__projection_bias": {
+      "source_name": "duration_prosody.text_encoder.lstms.3.fc.bias",
+      "transform": "identity"
+    },
+    "weight__duration_prosody.text_encoder.norm2__projection_weight": {
+      "source_name": "duration_prosody.text_encoder.lstms.5.fc.weight",
+      "transform": "identity"
+    },
+    "weight__duration_prosody.text_encoder.norm2__projection_bias": {
+      "source_name": "duration_prosody.text_encoder.lstms.5.fc.bias",
+      "transform": "identity"
+    },
+    "weight__duration_prosody.duration_head__weight": {
+      "source_name": "duration_prosody.duration_proj.linear_layer.weight",
+      "transform": "identity"
+    },
+    "weight__duration_prosody.duration_head__bias": {
+      "source_name": "duration_prosody.duration_proj.linear_layer.bias",
+      "transform": "identity"
+    }
+  },
+  "shapes": {
+    "word_ids": [
+      36
+    ],
+    "predictor_style": [
+      128
+    ],
+    "scan0_input": [
+      36,
+      640
+    ],
+    "scan0_output": [
+      36,
+      512
+    ],
+    "norm0_input": [
+      36,
+      512
+    ],
+    "norm0_output": [
+      36,
+      512
+    ],
+    "scan1_input": [
+      36,
+      640
+    ],
+    "scan1_output": [
+      36,
+      512
+    ],
+    "norm1_input": [
+      36,
+      512
+    ],
+    "norm1_output": [
+      36,
+      512
+    ],
+    "scan2_input": [
+      36,
+      640
+    ],
+    "scan2_output": [
+      36,
+      512
+    ],
+    "norm2_input": [
+      36,
+      512
+    ],
+    "norm2_output": [
+      36,
+      512
+    ],
+    "head_scan_input": [
+      36,
+      640
+    ],
+    "head_scan_output": [
+      36,
+      512
+    ],
+    "duration_logits_input": [
+      36,
+      512
+    ],
+    "duration_logits_output": [
+      36,
+      50
+    ],
+    "encoder_features": [
+      36,
+      512
+    ],
+    "predictor_output": [
+      36,
+      640
+    ],
+    "duration_logits": [
+      36,
+      50
+    ],
+    "durations": [
+      36
+    ],
+    "expanded_frames": [
+      1
+    ],
+    "weight__duration_prosody.text_encoder.scan0__weight_ih": [
+      2,
+      1024,
+      640
+    ],
+    "weight__duration_prosody.text_encoder.scan0__weight_hh": [
+      2,
+      1024,
+      256
+    ],
+    "weight__duration_prosody.text_encoder.scan0__bias_ih": [
+      2,
+      1024
+    ],
+    "weight__duration_prosody.text_encoder.scan0__bias_hh": [
+      2,
+      1024
+    ],
+    "weight__duration_prosody.text_encoder.scan1__weight_ih": [
+      2,
+      1024,
+      640
+    ],
+    "weight__duration_prosody.text_encoder.scan1__weight_hh": [
+      2,
+      1024,
+      256
+    ],
+    "weight__duration_prosody.text_encoder.scan1__bias_ih": [
+      2,
+      1024
+    ],
+    "weight__duration_prosody.text_encoder.scan1__bias_hh": [
+      2,
+      1024
+    ],
+    "weight__duration_prosody.text_encoder.scan2__weight_ih": [
+      2,
+      1024,
+      640
+    ],
+    "weight__duration_prosody.text_encoder.scan2__weight_hh": [
+      2,
+      1024,
+      256
+    ],
+    "weight__duration_prosody.text_encoder.scan2__bias_ih": [
+      2,
+      1024
+    ],
+    "weight__duration_prosody.text_encoder.scan2__bias_hh": [
+      2,
+      1024
+    ],
+    "weight__duration_prosody.head_scan__weight_ih": [
+      2,
+      1024,
+      640
+    ],
+    "weight__duration_prosody.head_scan__weight_hh": [
+      2,
+      1024,
+      256
+    ],
+    "weight__duration_prosody.head_scan__bias_ih": [
+      2,
+      1024
+    ],
+    "weight__duration_prosody.head_scan__bias_hh": [
+      2,
+      1024
+    ],
+    "weight__duration_prosody.text_encoder.norm0__projection_weight": [
+      1024,
+      128
+    ],
+    "weight__duration_prosody.text_encoder.norm0__projection_bias": [
+      1024
+    ],
+    "weight__duration_prosody.text_encoder.norm1__projection_weight": [
+      1024,
+      128
+    ],
+    "weight__duration_prosody.text_encoder.norm1__projection_bias": [
+      1024
+    ],
+    "weight__duration_prosody.text_encoder.norm2__projection_weight": [
+      1024,
+      128
+    ],
+    "weight__duration_prosody.text_encoder.norm2__projection_bias": [
+      1024
+    ],
+    "weight__duration_prosody.duration_head__weight": [
+      50,
+      512
+    ],
+    "weight__duration_prosody.duration_head__bias": [
+      50
+    ]
+  },
+  "fixture_sha256": "8b4ab025e27cb024711d3e8b3c51f02e71a49937156ea8199a1ab90dcda1828c",
+  "capture_source_sha256": "a818169b5e3502f9f8b5a3cb7e80e266d68803d67e505fd9a73849f9bb470894",
+  "generated_waveform": "NOT_TESTED",
+  "complete_native_duration": "NOT_TESTED"
+}
