@@ -196,6 +196,14 @@ CK_TRUE_BPE_API int ck_true_bpe_load_binary(CKTrueBPE *bpe,
                                             int num_merges,
                                             const int32_t *merges);
 
+/* Register exact-match tokens from imported GGUF token-type metadata.
+ * CONTROL (3) and USER_DEFINED (4) bypass ordinary BPE splitting. The
+ * metadata must describe the entire loaded vocabulary; errors are fatal to
+ * tokenizer initialization rather than silently changing prompt IDs. */
+CK_TRUE_BPE_API int ck_true_bpe_register_token_types(CKTrueBPE *bpe,
+                                                     const uint8_t *types,
+                                                     size_t count);
+
 /* ═══════════════════════════════════════════════════════════════════════════════
  * Token Lookup
  * ═══════════════════════════════════════════════════════════════════════════════ */

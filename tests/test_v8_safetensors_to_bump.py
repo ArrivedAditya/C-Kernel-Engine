@@ -415,6 +415,25 @@ def test_tokenizer_contract_preserves_unicode_isolated_split_profile(tmp_path: P
     assert contract["tokenizer_type"] == "bpe"
     assert contract["pretokenizer"] == "unicode_split_isolated"
 
+
+def test_safetensors_import_preserves_publisher_special_token_types(tmp_path: Path) -> None:
+    converter = _load_converter()
+    checkpoint = tmp_path / "typed_tokens"
+    checkpoint.mkdir()
+    _write_tiny_bpe_tokenizer(checkpoint, vocab_size=32)
+    path = checkpoint / "tokenizer.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    doc["added_tokens"].append({"id": 31, "content": "<tok_31>", "special": True})
+    path.write_text(json.dumps(doc) + "\n", encoding="utf-8")
+    payloads, contract, _special = converter._tokenizer_payloads_from_json(checkpoint, 32)
+    by_name = {name: data for name, _dtype, data, _shape, _source in payloads}
+    assert contract["tokenizer_type"] == "bpe"
+    assert len(by_name["vocab_types"]) == 32
+    assert by_name["vocab_types"][31] == 4
+    assert by_name["vocab_types"][1] == 4  # BOS from tokenizer_config.json
+    assert by_name["vocab_types"][2] == 4  # EOS from tokenizer_config.json
+    assert by_name["vocab_types"][3] == 1  # ordinary token
+
 def test_qwen3_safetensors_to_bump_smoke(tmp_path: Path) -> None:
     torch, st = _require_torch_safetensors()
     checkpoint = tmp_path / "qwen3"
@@ -492,7 +511,7 @@ def test_qwen3_safetensors_to_bump_smoke(tmp_path: Path) -> None:
     assert "layer.0.k_norm" in names
     assert "output.weight" in names
     assert {"vocab_offsets", "vocab_strings", "vocab_merges"}.issubset(set(names))
-    assert names[-3:] == ["vocab_offsets", "vocab_strings", "vocab_merges"]
+    assert names[-4:] == ["vocab_offsets", "vocab_strings", "vocab_merges", "vocab_types"]
     entries = {entry["name"]: entry for entry in manifest["entries"]}
     assert entries["vocab_offsets"]["dtype"] == "i32"
     assert entries["vocab_strings"]["dtype"] == "u8"

@@ -142,6 +142,104 @@ def _log_rejection(server_model: str, body: Any, exc: HTTPException) -> None:
 # --- prompt helpers -----------------------------------------------------------
 
 
+def _image_identifier(part: Any) -> str:
+    for attr in ("image_url", "file_id", "file_url", "url"):
+        try:
+            value = getattr(part, attr, None)
+        except (AttributeError, ValueError, TypeError):
+            value = None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    try:
+        raw = getattr(part, "model_dump", None)
+        if callable(raw):
+            data = raw()
+            for key in ("image_url", "file_id", "file_url", "url"):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+                if isinstance(value, dict):
+                    nested = value.get("url")
+                    if isinstance(nested, str) and nested.strip():
+                        return nested.strip()
+    except (AttributeError, ValueError, TypeError):
+        pass
+    return ""
+
+
+_MAX_VISION_IMAGES = 8
+_MAX_IMAGE_REF_CHARS = 5_000_000
+
+
+def _check_image_ref(ident: str) -> str:
+    ident = (ident or "").strip()
+    if not ident:
+        raise ValueError("input_image is missing image_url or file_id")
+    if len(ident) > _MAX_IMAGE_REF_CHARS:
+        raise ValueError(
+            f"input_image exceeds {_MAX_IMAGE_REF_CHARS} characters; "
+            "upload a smaller image"
+        )
+    lowered = ident.lower()
+    if lowered.startswith(("http://", "https://", "data:image/")):
+        return ident
+    raise ValueError(
+        "input_image must be an http(s) URL or data:image/... URL, "
+        "not raw base64 or a file path"
+    )
+
+
+def _ordered_content_parts(content: Any) -> Any:
+    """Render-only normalization preserving interleaved text and image order."""
+    if content is None or isinstance(content, str):
+        return content or ""
+    if not isinstance(content, list):
+        raise ValueError("message content must be text or ordered parts")
+    parts = []
+    for part in content:
+        data = part if isinstance(part, dict) else part.model_dump()
+        kind = data.get("type")
+        if kind in ("input_text", "output_text", "text"):
+            parts.append({"type": "text", "text": data.get("text", "")})
+        elif kind in ("input_image", "image", "image_url"):
+            ident = data.get("image_url", data.get("image", ""))
+            if isinstance(ident, dict):
+                ident = ident.get("url", "")
+            ident = _check_image_ref(str(ident))
+            parts.append({"type": "image", "image_url": ident, "image": ident})
+        else:
+            raise ValueError(f"unsupported content part {kind!r}")
+    return parts
+
+
+def _content_parts(content: Any) -> tuple[str, list[str]]:
+    parts = _ordered_content_parts(content)
+    if isinstance(parts, str):
+        return parts, []
+    return ("\n".join(p["text"] for p in parts if p["type"] == "text"),
+            [p["image"] for p in parts if p["type"] == "image"])
+
+
+def _reject_live_media(value: Any) -> None:
+    """Inspect original typed input, including tool results, before extraction."""
+    if hasattr(value, "model_dump"):
+        value = value.model_dump()
+    if isinstance(value, list):
+        for item in value:
+            _reject_live_media(item)
+    elif isinstance(value, dict):
+        kind = value.get("type")
+        if kind in {"input_image", "image", "image_url", "input_file", "file",
+                    "input_audio", "audio", "video", "input_video"}:
+            raise _harness_error(
+                422, f"typed {kind} input is unsupported by this text-only native session; "
+                "no connected generated media pipeline is available",
+                err_type="invalid_request_error", code="unsupported_media",
+            )
+        for item in value.values():
+            _reject_live_media(item)
+
+
 def _extract_prompt(body: Any) -> str:
     if body.input is None:
         return ""
@@ -156,13 +254,14 @@ def _extract_prompt(body: Any) -> str:
         if isinstance(content, str):
             parts.append(content)
         elif isinstance(content, list):
-            for part in content:
-                if isinstance(part, str):
-                    parts.append(part)
-                    continue
-                text = getattr(part, "text", None)
-                if isinstance(text, str):
-                    parts.append(text)
+            try:
+                text, images = _content_parts(content)
+            except ValueError:
+                continue
+            if text:
+                parts.append(text)
+            for ident in images:
+                parts.append(f"[image: {ident}]" if ident else "[image]")
     return "\n".join(parts)
 
 
@@ -171,15 +270,34 @@ def _content_text(content: Any) -> str:
         return content
     if not isinstance(content, list):
         return ""
-    parts: list[str] = []
-    for part in content:
-        if isinstance(part, str):
-            parts.append(part)
-            continue
-        text = getattr(part, "text", None)
-        if isinstance(text, str):
-            parts.append(text)
-    return "\n".join(parts)
+    try:
+        text, images = _content_parts(content)
+    except ValueError:
+        raise
+    if images:
+        markers = ["[image: " + i + "]" if i else "[image]" for i in images]
+        return "\n".join([text, *markers]) if text else "\n".join(markers)
+    return text
+
+
+def _select_template(
+    chat_template: str | None,
+    chat_templates: dict[str, str] | None,
+    *,
+    has_tools: bool,
+) -> str | None:
+    """Return the template the renderer will use (single source of truth).
+
+    Select the tool variant when tools are attached, otherwise the base.
+    """
+    if has_tools and isinstance(chat_templates, dict):
+        for key in ("tool_use", "tools", "default"):
+            candidate = chat_templates.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate
+    if isinstance(chat_template, str) and chat_template.strip():
+        return chat_template
+    return None
 
 
 def _input_chat_messages(value: Any) -> list[dict[str, Any]]:
@@ -195,11 +313,15 @@ def _input_chat_messages(value: Any) -> list[dict[str, Any]]:
         ):
             role = getattr(item, "role", "user")
             role = getattr(role, "value", role)
+            role_str = str(role)
+            content = _ordered_content_parts(item.content)
+            if isinstance(content, list) and all(p["type"] == "text" for p in content):
+                content = "\n".join(p["text"] for p in content)
             message: dict[str, Any] = {
-                "role": str(role),
-                "content": _content_text(item.content),
+                "role": role_str,
+                "content": content,
             }
-            if str(role) == "assistant":
+            if role_str == "assistant":
                 # Native templates (e.g. Qwen3 line 48
                 # `{%- if message.tool_calls %}`) read this key unguarded;
                 # under StrictUndefined a missing key aborts the whole
@@ -321,14 +443,20 @@ def split_thinking(text: str) -> tuple[str, str]:
     return "", text
 
 
+def _prompt_opens_thinking(generation_prefix: str) -> bool:
+    """Inspect only the isolated generation suffix, never arbitrary prompt text."""
+    return generation_prefix.rstrip().lower().endswith(_THINK_OPEN)
+
+
 class _StreamThinkSplitter:
     _KEEP = len(_THINK_CLOSE) + 2
 
-    def __init__(self) -> None:
+    def __init__(self, *, start_thinking: bool = False) -> None:
         self._look = ""
-        self._mode = "undetermined"
+        self._mode = "thinking" if start_thinking else "undetermined"
         self._thinking_lstrip = True
         self._answer_lstrip = True
+        self._strip_leading_open = start_thinking
 
     def feed(self, chunk: str):
         if self._mode == "answer":
@@ -340,6 +468,19 @@ class _StreamThinkSplitter:
             yield ("answer", chunk)
             return
         buf = self._look + chunk
+        if self._mode == "thinking" and self._strip_leading_open:
+            head = buf.lstrip()
+            if head[: len(_THINK_OPEN)].lower() == _THINK_OPEN:
+                buf = head[len(_THINK_OPEN) :]
+                self._look = ""
+                self._strip_leading_open = False
+            elif len(head) < len(_THINK_OPEN) and _THINK_OPEN.startswith(
+                head.lower()
+            ):
+                self._look = buf
+                return
+            else:
+                self._strip_leading_open = False
         if self._mode == "undetermined":
             open_idx = _marker_index(buf.lower(), _THINK_OPEN)
             close_idx = _marker_index(buf.lower(), _THINK_CLOSE)
@@ -616,6 +757,14 @@ def _detect_template_tool_syntax(
     return _TOOL_SYNTAX_JSON
 
 
+def _split_generated_thinking(text: str, generation_prefix: str) -> tuple[str, str]:
+    splitter = _StreamThinkSplitter(start_thinking=_prompt_opens_thinking(generation_prefix))
+    thinking, answer = [], []
+    for state, delta in [*splitter.feed(text), *splitter.flush()]:
+        (thinking if state == "thinking" else answer).append(delta)
+    return "".join(thinking).strip(), "".join(answer).strip()
+
+
 def _render_with_chat_templates(
     chat_template: str | None,
     chat_templates: dict[str, str] | None,
@@ -623,20 +772,13 @@ def _render_with_chat_templates(
     body: Any,
     chat_contract: dict[str, Any] | None = None,
     effective_thinking: str = "suppressed",
+    *, add_generation_prompt: bool = True,
 ) -> str | None:
-    tmpl_str: str | None = None
-    if (
-        body is not None
-        and getattr(body, "tools", None)
-        and isinstance(chat_templates, dict)
-    ):
-        for key in ("tool_use", "tools", "default"):
-            candidate = chat_templates.get(key)
-            if isinstance(candidate, str) and candidate.strip():
-                tmpl_str = candidate
-                break
-    if tmpl_str is None and isinstance(chat_template, str) and chat_template.strip():
-        tmpl_str = chat_template
+    tmpl_str = _select_template(
+        chat_template,
+        chat_templates,
+        has_tools=bool(body is not None and getattr(body, "tools", None)),
+    )
     if not tmpl_str:
         return None
     digest = hashlib.sha256(tmpl_str.encode("utf-8")).hexdigest()
@@ -651,6 +793,10 @@ def _render_with_chat_templates(
         tools = None
         if body is not None and getattr(body, "tools", None):
             tools = [t.model_dump() for t in body.tools]
+
+        def _raise_exception(message: str = "") -> None:
+            raise ValueError(str(message))
+
         env = jinja2.sandbox.SandboxedEnvironment(
             undefined=jinja2.StrictUndefined, autoescape=False
         )
@@ -663,7 +809,9 @@ def _render_with_chat_templates(
                 if body is not None
                 else None,
                 enable_thinking=(effective_thinking == "visible"),
-                add_generation_prompt=True,
+                add_generation_prompt=add_generation_prompt,
+                add_vision_id=False,
+                raise_exception=_raise_exception,
             )
         )
     except Exception as exc:
@@ -1094,6 +1242,77 @@ def _strip_tool_json_from_text(
     return remaining.strip()
 
 
+def _tool_call_limit(parallel: Any, max_calls: Any) -> int | None:
+    """Effective cap on emitted tool calls, or None for unlimited."""
+    if parallel is False:
+        return 1
+    if max_calls is None:
+        return None
+    try:
+        n = int(max_calls)
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 1 else None
+
+
+def _required_tool_name(tool_choice: Any) -> str | None:
+    if isinstance(tool_choice, dict):
+        func = tool_choice.get("function")
+        if isinstance(func, dict):
+            name = func.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+    return None
+
+
+def _enforce_tool_choice(
+    tool_calls: list[dict[str, Any]] | None, *, tool_choice: Any
+) -> tuple[str | None, bool]:
+    """Enforce the request's tool_choice. Returns (error, drop_calls).
+
+    ``auto`` (or unset/unknown shapes) enforces nothing. ``required`` (or
+    a ``{"function": {"name"}}`` dict) fails when no call was parsed.
+    ``none`` drops parsed calls so nothing executes; the model text is
+    returned as-is so the misbehavior stays visible.
+    """
+    if tool_choice is None or tool_choice == "auto":
+        return None, False
+    if tool_choice == "none":
+        return (None, True) if tool_calls else (None, False)
+    if tool_choice == "required":
+        if not tool_calls:
+            return "tool_choice 'required' but the model made no tool call", False
+        return None, False
+    name = _required_tool_name(tool_choice)
+    if name is not None:
+        if not tool_calls or any(tc.get("name") != name for tc in tool_calls):
+            return (
+                f"tool_choice requires tool {name!r} but the model did not call it",
+                False,
+            )
+        return None, False
+    return None, False
+
+
+def _strict_tool_parameters(params: dict[str, Any]) -> dict[str, Any]:
+    """Tighten a tool schema for ``strict: true`` (pure tightening).
+
+    All declared properties become required and unknown arguments are
+    rejected. Explicit author settings are preserved where they already
+    constrain at least as much.
+    """
+    tightened = dict(params)
+    properties = tightened.get("properties")
+    if isinstance(properties, dict):
+        required = tightened.get("required")
+        required_set = set(required) if isinstance(required, list) else set()
+        required_set.update(k for k in properties if isinstance(k, str))
+        tightened["required"] = sorted(required_set)
+    if tightened.get("additionalProperties") is not False:
+        tightened["additionalProperties"] = False
+    return tightened
+
+
 def _classify_stream_mode(
     buffer: str, *, tool_syntax: str = _TOOL_SYNTAX_TOOL_CALL_JSON
 ) -> str | None:
@@ -1112,6 +1331,65 @@ def _classify_stream_mode(
             return "tool" if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML} else "text"
         return "text"
     return "text"
+
+
+class _FlightLease:
+    """One request's execution ownership, independent of HTTP consumption."""
+    def __init__(self, lock, session):
+        self.lock = lock
+        self.session = session
+        self.guard = threading.Lock()
+        self.active = True
+        self.worker_started = False
+        self.cancelled = None
+
+    def start_worker(self, cancelled):
+        with self.guard:
+            if not self.active:
+                return False
+            self.worker_started = True
+            self.cancelled = cancelled
+            return True
+
+    def release(self):
+        with self.guard:
+            if self.active:
+                self.active = False
+                self.lock.release()
+
+    def cancel(self):
+        with self.guard:
+            if not self.active:
+                return
+            if self.cancelled is not None:
+                self.cancelled.set()
+            if self.worker_started:
+                self.session.cancel()
+
+    def disconnect(self):
+        with self.guard:
+            if not self.active:
+                return
+            if self.worker_started:
+                self.cancelled.set()
+                self.session.cancel()
+                # Native completion, not a timeout or disconnected consumer,
+                # releases state still in use.
+            else:
+                self.active = False
+                self.lock.release()
+
+
+class _OwnedStreamingResponse(StreamingResponse):
+    def __init__(self, *args, lease, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.lease = lease
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.lease.disconnect()
 
 
 # --- app factory --------------------------------------------------------------
@@ -1181,6 +1459,7 @@ def create_app(
         return None
 
     def _validate_request(body) -> None:
+        _reject_live_media(body.input)
         if body.model != model:
             raise HTTPException(
                 status_code=404,
@@ -1216,6 +1495,17 @@ def create_app(
                 501, "tool protocol is undeclared for the selected chat template",
                 err_type="invalid_request_error", code="tool_protocol_undeclared",
             )
+        max_calls = getattr(body, "max_tool_calls", None)
+        if max_calls is not None:
+            try:
+                valid_max = int(max_calls) >= 1
+            except (TypeError, ValueError):
+                valid_max = False
+            if not valid_max:
+                raise _harness_error(
+                    400, "max_tool_calls must be a positive integer",
+                    err_type="invalid_request_error", code="invalid_request",
+                )
 
     def _store_response(
         response_id: str, response: dict[str, Any], history: list[dict[str, Any]]
@@ -1237,7 +1527,8 @@ def create_app(
             if previous is None:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Previous response {body.previous_response_id!r} not found",
+                    detail=f"Previous response {body.previous_response_id!r} not found; "
+                    "responses created with store:false are ephemeral and cannot be chained",
                 )
             messages.extend(dict(m) for m in previous)
         try:
@@ -1277,6 +1568,7 @@ def create_app(
         effective_flags = flags
         effective_thinking = _resolve_thinking_mode(body)
         jinja_rendered: str | None = None
+        generation_prefix = ""
         if chat_template is not None or chat_templates is not None:
             try:
                 jinja_rendered = _render_with_chat_templates(
@@ -1287,6 +1579,14 @@ def create_app(
                     chat_contract,
                     effective_thinking,
                 )
+                without_prefix = _render_with_chat_templates(
+                    chat_template, chat_templates, messages, body, chat_contract,
+                    effective_thinking, add_generation_prompt=False,
+                )
+                if jinja_rendered is not None and without_prefix is not None:
+                    if not jinja_rendered.startswith(without_prefix):
+                        raise TemplateRenderError("cannot isolate selected template generation prefix")
+                    generation_prefix = jinja_rendered[len(without_prefix):]
             except TemplateRenderError as exc:
                 raise _harness_error(
                     422, str(exc), err_type="invalid_request_error",
@@ -1347,7 +1647,7 @@ def create_app(
                         err_type="invalid_request_error",
                         code="context_length_exceeded",
                     )
-        return prompt, tok_limit, temperature_eff, top_p_eff, effective_flags
+        return prompt, tok_limit, temperature_eff, top_p_eff, effective_flags, generation_prefix
 
     def build_response(
         body,
@@ -1504,10 +1804,15 @@ def create_app(
         if not _has_function_tools(body):
             return None, None, None
         allowed = {t.name for t in _effective_tools(body) if getattr(t, "name", None)}
-        parameter_schemas = {
-            t.name: t.parameters for t in _effective_tools(body)
-            if getattr(t, "name", None) and isinstance(getattr(t, "parameters", None), dict)
-        }
+        parameter_schemas = {}
+        for t in _effective_tools(body):
+            name = getattr(t, "name", None)
+            params = getattr(t, "parameters", None)
+            if not name or not isinstance(params, dict):
+                continue
+            if getattr(t, "strict", False):
+                params = _strict_tool_parameters(params)
+            parameter_schemas[name] = params
         tool_calls, code, msg = _extract_tool_calls_from_text(
             text, allowed, tool_syntax=tool_syntax, tool_parameters=parameter_schemas
         )
@@ -1517,6 +1822,10 @@ def create_app(
             return [], "parallel_tool_calls_disallowed", (
                 "parallel_tool_calls=false forbids multiple tool calls in one response"
             )
+        cap = _tool_call_limit(getattr(body, "parallel_tool_calls", True),
+                               getattr(body, "max_tool_calls", None))
+        if code is None and tool_calls and cap is not None and len(tool_calls) > cap:
+            return [], "max_tool_calls_exceeded", "generated response exceeds max_tool_calls; no calls emitted"
         if code is None and not tool_calls:
             return None, None, None
         if tool_calls == [] and code is None:
@@ -1532,6 +1841,8 @@ def create_app(
         top_p,
         effective_flags=None,
         request=None,
+        generation_prefix="",
+        lease=None,
     ):
         think_enabled = _resolve_thinking_mode(body) == "visible"
         response_id = f"resp_{uuid.uuid4().hex[:24]}"
@@ -1568,24 +1879,27 @@ def create_app(
         events: queue.Queue = queue.Queue()
         cancelled = threading.Event()
         worker_finished = threading.Event()
-        splitter = _StreamThinkSplitter() if think_enabled else None
+        splitter = (
+            _StreamThinkSplitter(start_thinking=_prompt_opens_thinking(generation_prefix))
+            if think_enabled
+            else None
+        )
         # Tool-bearing output is buffered until the complete protocol
         # envelope can be parsed and validated.
 
         def on_token(_tid, text):
             if text:
                 complete.append(text)
-                if not _has_function_tools(body):
-                    if splitter is not None:
-                        for state, delta in splitter.feed(text):
-                            events.put(
-                                (
-                                    "reasoning_text" if state == "thinking" else "text",
-                                    delta,
-                                )
-                            )
-                    else:
-                        events.put(("text", text))
+                if splitter is not None:
+                    for state, delta in splitter.feed(text):
+                        if state == "thinking":
+                            events.put(("reasoning_text", delta))
+                        elif not _has_function_tools(body):
+                            events.put(("text", delta))
+                    # Tool-bearing answer text stays buffered until the
+                    # full response is parsed and validated at terminal.
+                elif not _has_function_tools(body):
+                    events.put(("text", text))
                 # A tool-bearing response can switch from prose to a tool
                 # envelope at any token boundary. Buffer it until the full
                 # response is parsed, then emit only validated content.
@@ -1604,11 +1918,12 @@ def create_app(
                     stop_on_text=stop_markers,
                     stop_at_eos=stop_at_eos,
                 )
-                if splitter is not None and not _has_function_tools(body):
+                if splitter is not None:
                     for state, delta in splitter.flush():
-                        events.put(
-                            ("reasoning_text" if state == "thinking" else "text", delta)
-                        )
+                        if state == "thinking":
+                            events.put(("reasoning_text", delta))
+                        elif not _has_function_tools(body):
+                            events.put(("text", delta))
                 terminal_event = ("done", result)
             except SessionBusyError:
                 terminal_event = (
@@ -1618,6 +1933,9 @@ def create_app(
             except Exception as e:
                 terminal_event = ("error", str(e))
             finally:
+                with active_streams_lock:
+                    active_streams.pop(response_id, None)
+                lease.release()
                 worker_finished.set()
             events.put(terminal_event)
 
@@ -1627,8 +1945,20 @@ def create_app(
                 "cancelled": cancelled,
                 "finished": worker_finished,
                 "thread": worker_thread,
+                "lease": lease,
             }
-        worker_thread.start()
+        if not lease.start_worker(cancelled):
+            with active_streams_lock:
+                active_streams.pop(response_id, None)
+            worker_finished.set()
+            return
+        try:
+            worker_thread.start()
+        except BaseException:
+            with active_streams_lock:
+                active_streams.pop(response_id, None)
+            lease.release()
+            raise
 
         reasoning_started = False
         message_started = False
@@ -1791,7 +2121,7 @@ def create_app(
                     text = truncate_stop_markers("".join(complete), all_stop_markers)
                     thinking = None
                     if think_enabled:
-                        thinking, text = split_thinking(text)
+                        thinking, text = _split_generated_thinking(text, generation_prefix)
                         thinking = thinking or None
                     input_tokens = int(result.get("prompt_tokens") or 0)
                     output_tokens = int(result.get("generated_tokens") or len(complete))
@@ -1799,6 +2129,15 @@ def create_app(
                     tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(
                         text, body
                     )
+                    if tool_error_code is None:
+                        choice_error, drop = _enforce_tool_choice(
+                            tool_calls,
+                            tool_choice=getattr(body, "tool_choice", None),
+                        )
+                        if choice_error is not None:
+                            tool_error_code, tool_error_msg = "choice", choice_error
+                        elif drop:
+                            tool_calls = None
                     if tool_error_code is not None and not is_cancelled:
                         if think_enabled:
                             yield from emit_reasoning_lifecycle(thinking, is_cancelled)
@@ -2187,25 +2526,16 @@ def create_app(
                     return
         finally:
             if not worker_finished.is_set():
-                cancelled.set()
-                try:
-                    session.cancel()
-                except Exception:
-                    pass
-                worker_thread.join(timeout=10.0)
-            with active_streams_lock:
-                active_streams.pop(response_id, None)
-            try:
-                _flight_lock.release()
-            except RuntimeError:
-                pass
+                lease.cancel()
+
 
     def _acquire_flight_or_429(timeout: float | None = None) -> None:
         """Take the single-flight lock, waiting briefly for harness bursts.
 
         Concurrent harness requests (e.g. title + main, client retries) wait
-        up to ``_FLIGHT_WAIT_SECONDS`` instead of failing instantly; only a
-        genuinely stuck generation still answers 429 with ``Retry-After``.
+        up to ``_FLIGHT_WAIT_SECONDS`` instead of failing instantly. A healthy
+        long generation may still answer 429 after that wait; retries are not
+        a substitute for a bounded scheduler or confirmed worker completion.
         """
         if timeout is None:
             timeout = _FLIGHT_WAIT_SECONDS
@@ -2226,24 +2556,26 @@ def create_app(
     @router.post("/responses", response_model=None)
     def create_response(body: CreateResponseRequest, request: Request):
         acquired = False
+        lease = None
         try:
             _validate_request(body)
             _acquire_flight_or_429()
             acquired = True
-            prompt, tok_limit, temperature_eff, top_p_eff, effective_flags = (
+            lease = _FlightLease(_flight_lock, session)
+            prompt, tok_limit, temperature_eff, top_p_eff, effective_flags, generation_prefix = (
                 _prepare_request(body)
             )
         except HTTPException as exc:
             _log_rejection(model, body, exc)
             if acquired:
-                _flight_lock.release()
+                lease.release()
             raise
         except Exception:
             if acquired:
-                _flight_lock.release()
+                lease.release()
             raise
         if body.stream:
-            return StreamingResponse(
+            return _OwnedStreamingResponse(
                 stream_events(
                     body,
                     prompt,
@@ -2252,7 +2584,10 @@ def create_app(
                     top_p=top_p_eff,
                     effective_flags=effective_flags,
                     request=request,
+                    generation_prefix=generation_prefix,
+                    lease=lease,
                 ),
+                lease=lease,
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -2267,6 +2602,7 @@ def create_app(
             f"rsn_{uuid.uuid4().hex[:24]}" if think_enabled else None
         )
         disconnect_cancelled = threading.Event()
+        lease.start_worker(disconnect_cancelled)
         monitor_stop = threading.Event()
 
         async def _event_loop_token():
@@ -2286,9 +2622,8 @@ def create_app(
                 except Exception:
                     return
                 if disconnected and not monitor_stop.is_set():
-                    disconnect_cancelled.set()
                     try:
-                        session.cancel()
+                        lease.cancel()
                     except Exception:
                         pass
                     return
@@ -2367,16 +2702,24 @@ def create_app(
             monitor_stop.set()
             if monitor_thread is not None:
                 monitor_thread.join(timeout=1.0)
-            _flight_lock.release()
+            lease.release()
         text = truncate_stop_markers("".join(chunks), all_stop_markers)
         thinking = None
         reasoning_tokens = 0
         if think_enabled:
-            thinking, text = split_thinking(text)
+            thinking, text = _split_generated_thinking(text, generation_prefix)
             thinking = thinking or None
             if thinking is not None:
                 reasoning_tokens = max(0, len(thinking) // 4)
         tool_calls, tool_error_code, tool_error_msg = _parse_tool_result(text, body)
+        if tool_error_code is None:
+            choice_error, drop = _enforce_tool_choice(
+                tool_calls, tool_choice=getattr(body, "tool_choice", None)
+            )
+            if choice_error is not None:
+                tool_error_code, tool_error_msg = "choice", choice_error
+            elif drop:
+                tool_calls = None
         remaining_text = (
             _strip_tool_json_from_text(text, tool_calls, tool_syntax=tool_syntax)
             if tool_calls
@@ -2452,9 +2795,8 @@ def create_app(
         with active_streams_lock:
             entry = active_streams.get(response_id)
         if entry is not None:
-            entry["cancelled"].set()
             try:
-                session.cancel()
+                entry["lease"].cancel()
             except Exception as exc:
                 raise HTTPException(
                     status_code=500, detail=f"Native session cancellation failed: {exc}"

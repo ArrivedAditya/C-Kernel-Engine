@@ -163,7 +163,8 @@ def test_create_response_with_tools():
             ],
         },
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 501
+    assert resp.json()["detail"]["error"]["code"] == "tool_protocol_undeclared"
 
 
 def test_create_response_with_web_search_tool():
@@ -174,7 +175,8 @@ def test_create_response_with_web_search_tool():
             "tools": [{"type": "web_search"}],
         },
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 501
+    assert resp.json()["detail"]["error"]["code"] == "unsupported_tool_type"
 
 
 def test_create_response_with_file_search_tool():
@@ -190,7 +192,8 @@ def test_create_response_with_file_search_tool():
             ],
         },
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 501
+    assert resp.json()["detail"]["error"]["code"] == "unsupported_tool_type"
 
 
 def test_conversation_with_items():

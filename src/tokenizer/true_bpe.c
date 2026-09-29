@@ -565,7 +565,6 @@ void ck_true_bpe_set_config(CKTrueBPE *bpe, const CKBPEConfig *config) {
 
 int ck_true_bpe_add_special_token(CKTrueBPE *bpe, const char *token, int32_t id) {
     if (!bpe || !token || id < 0) return -1;
-    if (bpe->num_special_tokens >= MAX_SPECIAL_TOKENS) return -1;
 
     int token_len = (int)strlen(token);
     if (token_len == 0) return -1;
@@ -579,6 +578,10 @@ int ck_true_bpe_add_special_token(CKTrueBPE *bpe, const char *token, int32_t id)
             return 0;
         }
     }
+    if (bpe->num_special_tokens >= MAX_SPECIAL_TOKENS) return -1;
+
+    char *copy = strdup(token);
+    if (!copy) return -1;
 
     /* Find insertion point (keep sorted by length, longest first) */
     int insert_idx = bpe->num_special_tokens;
@@ -595,8 +598,7 @@ int ck_true_bpe_add_special_token(CKTrueBPE *bpe, const char *token, int32_t id)
     }
 
     /* Insert new entry */
-    bpe->special_tokens[insert_idx].token = strdup(token);
-    if (!bpe->special_tokens[insert_idx].token) return -1;
+    bpe->special_tokens[insert_idx].token = copy;
     bpe->special_tokens[insert_idx].id = id;
     bpe->special_tokens[insert_idx].len = token_len;
     bpe->num_special_tokens++;
@@ -633,6 +635,25 @@ int ck_true_bpe_load_binary(CKTrueBPE *bpe,
         }
     }
 
+    return 0;
+}
+
+int ck_true_bpe_register_token_types(CKTrueBPE *bpe,
+                                     const uint8_t *types,
+                                     size_t count) {
+    if (!bpe || !types || count != bpe->vocab_size) return -1;
+    size_t needed = 0;
+    for (size_t id = 0; id < count; id++) {
+        if (types[id] != 3 && types[id] != 4) continue;
+        const char *token = bpe->id_to_token[id];
+        if (!token || !*token) return -1;
+        needed++;
+    }
+    if (needed > MAX_SPECIAL_TOKENS - (size_t)bpe->num_special_tokens) return -1;
+    for (size_t id = 0; id < count; id++) {
+        if (types[id] != 3 && types[id] != 4) continue;
+        if (ck_true_bpe_add_special_token(bpe, bpe->id_to_token[id], (int32_t)id) != 0) return -1;
+    }
     return 0;
 }
 

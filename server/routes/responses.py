@@ -303,6 +303,32 @@ def _stream_response(resp: Response) -> StreamingResponse:
 
 @router.post("/responses", response_model=None)
 def create_response(body: CreateResponseRequest):
+    # Mirror the live serving policy so harness authors get the same
+    # rejections from the schema scaffold (no inference here).
+    if body.tools:
+        function_like = {"function", "mcp"}
+        unsupported = sorted({
+            str(getattr(tool, "type", "unknown"))
+            for tool in body.tools
+            if getattr(tool, "type", None) not in function_like
+        })
+        if unsupported:
+            raise HTTPException(
+                status_code=501,
+                detail={"error": {
+                    "message": f"unsupported tool types: {', '.join(unsupported)}",
+                    "type": "invalid_request_error",
+                    "code": "unsupported_tool_type",
+                }},
+            )
+        raise HTTPException(
+            status_code=501,
+            detail={"error": {
+                "message": "tool protocol is undeclared for the selected chat template",
+                "type": "invalid_request_error",
+                "code": "tool_protocol_undeclared",
+            }},
+        )
     resp = _make_mock_response(body.model, body)
     if body.stream:
         return _stream_response(resp)

@@ -30,6 +30,9 @@ build_ir_v8 = _load_module("build_ir_v8_for_tests", V8_BUILD_PATH)
 
 def _normalized_template_doc(doc: dict) -> dict:
     normalized = json.loads(json.dumps(doc))
+    # Serving is a v8 bundle declaration, independent of the inherited
+    # computational graph compared against the v7 seed below.
+    normalized.pop("serving", None)
     normalized.pop("required_contracts", None)
     normalized.pop("required_numerical_contracts", None)
     # v8 makes the seed's implicit projection source explicit. Validate these
@@ -101,6 +104,21 @@ class BuildIrV8ScaffoldTests(unittest.TestCase):
                     {op: {"x": "main_stream_q8"} for op in projections},
                 )
                 self.assertEqual(_normalized_template_doc(v8_doc), _normalized_template_doc(v7_doc))
+
+    def test_qwen35_serving_profile_is_declared_separately_from_graph(self) -> None:
+        circuit = json.loads((ROOT / "version" / "v8" / "circuits" / "qwen35.json").read_text(encoding="utf-8"))
+        self.assertEqual(
+            circuit.get("serving"),
+            {
+                "schema": "cke.circuit_serving.v1",
+                "profile_ref": "serving_profiles/qwen_tools_v1.json",
+                "default_variant": "publisher",
+            },
+        )
+        profile_path = ROOT / "version" / "v8" / circuit["serving"]["profile_ref"]
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        self.assertEqual(profile["schema"], "cke.serving_profile.v1")
+        self.assertEqual(profile["variants"]["publisher"]["output_protocol"], "qwen_xml")
 
     def test_v8_seeded_templates_do_not_embed_runtime_policy_flags(self) -> None:
         for name in ("gemma3", "llama", "qwen2", "qwen3", "qwen35"):

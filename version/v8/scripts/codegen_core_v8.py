@@ -3763,8 +3763,9 @@ static int do_load_manifest(const char *weights_path, const char *manifest_path)
 
 /* Post-weights initialization (tokenizer, etc.)
  * MUST be called AFTER do_load_manifest() because these ops read from bump memory */
-static void do_post_weights_init(void) {{
+static int do_post_weights_init(void) {{
 {post_weights_init_code}
+    return 0;
 }}
 
 static void print_omp_info(void) {{
@@ -3785,7 +3786,7 @@ CK_EXPORT int ck_model_init(const char *weights_path) {{
     if (do_init(weights_path) != 0) return -1;
     if (build_manifest_path(weights_path, manifest_path, sizeof(manifest_path)) != 0) return -1;
     if (do_load_manifest(weights_path, manifest_path) != 0) return -1;
-    do_post_weights_init();  /* Initialize tokenizer AFTER weights are loaded */
+    if (do_post_weights_init() != 0) return -1;  /* Tokenizer errors are fatal */
     print_omp_info();
 #ifdef CK_PARALLEL_DECODE
     ck_parallel_decode_init();
@@ -3806,7 +3807,7 @@ CK_EXPORT int ck_model_init(const char *weights_path) {{
 CK_EXPORT int ck_model_init_with_manifest(const char *weights_path, const char *manifest_path) {{
     if (do_init(weights_path) != 0) return -1;
     if (do_load_manifest(weights_path, manifest_path) != 0) return -1;
-    do_post_weights_init();  /* Initialize tokenizer AFTER weights are loaded */
+    if (do_post_weights_init() != 0) return -1;  /* Tokenizer errors are fatal */
     print_omp_info();
 #ifdef CK_PARALLEL_DECODE
     ck_parallel_decode_init();

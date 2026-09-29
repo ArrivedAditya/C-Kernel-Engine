@@ -2996,7 +2996,7 @@ def _tokenizer_payloads_from_json(model_dir: Path, vocab_size: int) -> tuple[lis
     tok_type = str(info.get("model_type") or "").strip().lower()
     if tok_type not in {"bpe", "wordpiece"}:
         return [], None, {}
-    offsets, strings_blob, merges, _scores, _types = load_tokenizer_json(str(tok_path), int(vocab_size))
+    offsets, strings_blob, merges, _scores, types = load_tokenizer_json(str(tok_path), int(vocab_size))
     offsets_bytes = struct.pack(f"<{len(offsets)}i", *offsets)
     merges_bytes = struct.pack(f"<{len(merges)}i", *merges) if merges else b""
     payloads = [
@@ -3004,6 +3004,8 @@ def _tokenizer_payloads_from_json(model_dir: Path, vocab_size: int) -> tuple[lis
         ("vocab_strings", "u8", strings_blob, [len(strings_blob)], "tokenizer_json"),
         ("vocab_merges", "i32", merges_bytes, [len(merges)], "tokenizer_json"),
     ]
+    if tok_type == "bpe":
+        payloads.append(("vocab_types", "u8", bytes(types), [len(types)], "tokenizer_json"))
     contract: dict[str, Any] = {
         "tokenizer_type": tok_type,
         "source": "tokenizer_json",

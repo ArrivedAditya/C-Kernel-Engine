@@ -61,7 +61,7 @@
   </div>
 
   <details class="tools-panel" id="tools-panel" open>
-    <summary>Tools (OpenAI Responses)</summary>
+    <summary>Tools</summary>
     <div class="body">
       <div class="toggle">
         <input id="enable-tools" type="checkbox">
@@ -87,9 +87,11 @@
       <label for="tools-json">tools JSON (list of FunctionTool)</label>
       <textarea id="tools-json" style="min-height:120px">[{"type":"function","name":"get_weather","description":"Get weather for a location","parameters":{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}}]</textarea>
       <div id="tools-error" style="color:#d45d5d;font-size:12px;min-height:16px"></div>
-      <div style="font-size:11px;color:#6a7383;margin-top:4px">Demo: prompt "What is weather in Paris?" → streams <code>function_call</code> with <code>response.function_call_arguments.delta/done</code>. Try malformed JSON or unknown tool to see <code>failed</code>, or two tools with parallel false to see <code>incomplete:max_tool_calls</code>.</div>
+      <div style="font-size:11px;color:#6a7383;margin-top:4px">Demo: prompt "What is weather in Paris?" → streams <code>function_call</code> with <code>response.function_call_arguments.delta/done</code>. Malformed JSON, unknown tools and too many calls fail without emitting a partial call set. Tools require the server to declare a protocol (<code>--tool-protocol tagged_json|qwen_xml|bare_json</code>); otherwise requests fail 501 <code>tool_protocol_undeclared</code>.</div>
     </div>
   </details>
+
+  <p class="mini-note" id="vision-status">Typed image/file input is unavailable in this text-only serving path. A template marker does not execute an encoder. Plain file paths remain text for harness tools.</p>
 
   <button id="run">Generate</button>
   <button id="cancel" disabled>Cancel</button>
@@ -128,7 +130,6 @@
   let currentResponseId = null;
   let currentAbort = null;
   const toolCallsMap = new Map(); // item_id -> {name, arguments, el}
-
   function ensureToolCall(item_id, name) {
     if (toolCallsMap.has(item_id)) return toolCallsMap.get(item_id);
     const div = document.createElement("div");
@@ -203,7 +204,6 @@
     thinkingBox.open = true;
     clearToolCalls();
     currentResponseId = null;
-
     const body = {
       model: "ck-v8",
       input: prompt,
@@ -249,7 +249,15 @@
         statusEl.textContent = "HTTP " + res.status;
         try {
           const j = await res.json();
-          if (j.detail) statusEl.textContent += ": " + j.detail;
+          const errMsg = (j && j.error && j.error.message)
+            || (typeof j.detail === "string" ? j.detail : null)
+            || (j && j.detail && j.detail.error && j.detail.error.message);
+          if (errMsg) statusEl.textContent += ": " + errMsg;
+          const errCode = (j && j.error && j.error.code)
+            || (j && j.detail && j.detail.error && j.detail.error.code);
+          if (res.status === 501 && errCode === "tool_protocol_undeclared") {
+            statusEl.textContent += " -- serve with an explicit protocol, e.g. --tool-protocol qwen_xml plus a matching tool_protocol.json sidecar";
+          }
         } catch (e) {}
         return;
       }

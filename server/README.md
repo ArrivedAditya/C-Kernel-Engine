@@ -90,7 +90,11 @@ Tool output is parsed only under the selected protocol. A template render
 error returns an explicit failure instead of silently switching prompt format.
 Tool-bearing streamed responses buffer model text until it can be validated;
 the connection receives keep-alives while generation runs. This favors tool
-correctness over live token display for these requests.
+correctness over live token display for these requests. Thinking deltas still
+stream live while tools are attached.
+
+User-facing serving instructions and modality limits are maintained in the
+[v8 HTML runbook](../docs/site/_pages/v8-runbook.html#serve).
 
 Point Qwen Code at the local server and begin with a read-only, bounded task:
 

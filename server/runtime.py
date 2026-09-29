@@ -44,6 +44,15 @@ def resolve_runtime_context_length(run_dir: Path, requested: int | None) -> int 
     return planned
 
 
+def resolve_runtime_vision_capability(run_dir: Path) -> bool:
+    """Report live vision only after a connected native media path exists.
+
+    Conversion may declare an encoder in config.json, but this server still
+    supplies text bytes to a text-only session ABI. Keep admission closed.
+    """
+    return False
+
+
 def load_manifest_templates(
     run_dir: Path,
 ) -> tuple[str | None, dict[str, str] | None, dict[str, Any] | None]:
