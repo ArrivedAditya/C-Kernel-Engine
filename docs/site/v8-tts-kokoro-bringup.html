@@ -1441,7 +1441,7 @@ The provider maps declare backward and training unsupported.</p>
 <td>FP32 input/weights/output, int32 phoneme IDs / inference only</td>
 <td>Pinned embedding capture plus exported Kokoro projection weights evaluated by PyTorch <code>torch.nn.functional.linear</code> at [36,128]→[36,768]</td>
 <td><code>tests/test_v8_linear_rows_oracle.py</code>; <code>tests/test_v8_kokoro_generated_projection.py</code></td>
-<td><code>.github/workflows/tts-kernels.yml</code>; <code>scripts/nightly_runner.py</code> keys <code>tts_linear_rows_oracle</code> and <code>tts_kokoro_generated_projection</code></td>
+<td><code>.github/workflows/nightly.yml</code> via <code>scripts/nightly_runner.py</code> keys <code>tts_linear_rows_oracle</code> and <code>tts_kokoro_generated_projection</code></td>
 <td>PASS locally: scalar linear max absolute error 9.5367431640625e-7, strided padding, invalid geometry and nonfinite rejection, repeated requests, generated failure propagation, two compiler-declared X-Ray checkpoints, and optional 602-entry exported-BUMP verification. The optional asset and live-PyTorch checks report SKIP when unavailable. X-Ray currently labels the exact resolved numerical-contract ID <code>unresolved</code>; the map declares it separately. This is an isolated projection oracle; this isolated test does not certify the complete encoder or speech; see complete encoder evidence below.</td>
 </tr>
 <tr>
@@ -1449,7 +1449,7 @@ The provider maps declare backward and training unsupported.</p>
 <td>FP32 input/weights/output, int32 phoneme IDs / inference only</td>
 <td>Pinned PyTorch <code>F.linear</code> outputs for the [36,768] Q/K/V calls; thirteen hash-checked effective BUMP tensors</td>
 <td><code>tests/test_v8_kokoro_generated_qkv.py</code>; model-neutral call binding is covered by <code>tests/test_v8_checked_op_constants.py</code></td>
-<td><code>.github/workflows/tts-kernels.yml</code>; <code>scripts/nightly_runner.py</code> keys <code>tts_kokoro_generated_qkv</code> and <code>tts_checked_op_constants</code></td>
+<td><code>.github/workflows/nightly.yml</code> via <code>scripts/nightly_runner.py</code> keys <code>tts_kokoro_generated_qkv</code> and <code>tts_checked_op_constants</code></td>
 <td>PASS locally: five compiler-declared X-Ray checkpoints, maximum Q/K/V absolute error 3.337860107421875e-6, repeated requests, capacity rejection, provider-failure propagation, optional full-BUMP replay, and byte-identical fixture recapture. Later attention, layer and encoder evidence is recorded above and below; waveform remains NOT_TESTED.</td>
 </tr>
 <tr>
@@ -1457,7 +1457,7 @@ The provider maps declare backward and training unsupported.</p>
 <td>Token-major FP32 Q/K/V and output / inference only</td>
 <td>Independent PyTorch eager matmul, scaled softmax and value matmul at [36,12,64]; committed fixture and optional live recomputation</td>
 <td><code>tests/test_v8_attention_full_token_major_oracle.py</code>; model-neutral <code>tests/test_v8_attention_full_token_major_generated.py</code>; <code>tests/test_v8_kokoro_generated_attention_context.py</code></td>
-<td><code>.github/workflows/tts-kernels.yml</code>; <code>scripts/nightly_runner.py</code> keys <code>tts_attention_full_token_major_oracle</code>, <code>tts_attention_full_token_major_generated</code> and <code>tts_kokoro_generated_attention_context</code></td>
+<td><code>.github/workflows/nightly.yml</code> via <code>scripts/nightly_runner.py</code> keys <code>tts_attention_full_token_major_oracle</code>, <code>tts_attention_full_token_major_generated</code> and <code>tts_kokoro_generated_attention_context</code></td>
 <td>PASS locally: primitive maximum absolute error 5.125999450683594e-6; generated six-checkpoint X-Ray path maximum attention-context error 7.748603820800781e-6. The provider is full and unmasked; all 36 pinned tokens are valid. Later layer and encoder evidence is recorded above and below; waveform remains NOT_TESTED.</td>
 </tr>
 <tr>
@@ -1473,7 +1473,7 @@ The provider maps declare backward and training unsupported.</p>
 <td>FP32 weights/output, int32 IDs / inference only</td>
 <td>Pinned Kokoro/PyTorch <code>[36,128]</code> embedding capture; five hash-checked BUMP payloads</td>
 <td><code>tests/test_v8_kokoro_generated_embedding.py</code></td>
-<td><code>.github/workflows/tts-kernels.yml</code>; <code>scripts/nightly_runner.py</code> key <code>tts_kokoro_generated_embedding</code></td>
+<td><code>.github/workflows/nightly.yml</code> via <code>scripts/nightly_runner.py</code> key <code>tts_kokoro_generated_embedding</code></td>
 <td>PASS locally: normal v8 lowering, generated C, X-Ray parity, repeated IDs, invalid-ID output preservation, arena-capacity/alignment rejection. Worst absolute error 2.384185791015625e-7 at token 0/channel 5. Optional verification against the local 602-entry exported BUMP bundle PASS; without <code>CKE_KOKORO_BUMP_DIR</code> it reports SKIP. The circuit covers only the embedding boundary, not a complete phoneme encoder or generated speech.</td>
 </tr>
 <tr>
@@ -1481,7 +1481,7 @@ The provider maps declare backward and training unsupported.</p>
 <td>FP32 logits → int32 durations and valid extent / forward only</td>
 <td>Pinned PyTorch <code>sigmoid → sum → speed divide → round → clamp</code> at production <code>[36,50]</code> shape</td>
 <td><code>tests/test_v8_audio_duration_logits_oracle.py</code> and separate live <code>tests/test_v8_audio_duration_logits_live.py</code></td>
-<td><code>.github/workflows/tts-kernels.yml</code>; <code>scripts/nightly_runner.py</code> keys <code>tts_duration_logits_oracle</code> and <code>tts_duration_logits_live</code></td>
+<td><code>.github/workflows/nightly.yml</code> via <code>scripts/nightly_runner.py</code> keys <code>tts_duration_logits_oracle</code> and <code>tts_duration_logits_live</code></td>
 <td>PASS locally: exact 36-token durations and 103-frame extent, ties-to-even, padded stride, invalid input and capacity rejection without output writes. Live PyTorch comparison PASS in the pinned local environment. Generated composition is covered separately below.</td>
 </tr>
 <tr>
@@ -1489,7 +1489,7 @@ The provider maps declare backward and training unsupported.</p>
 <td>FP32 logits and features / int32 durations / forward</td>
 <td>Pinned Kokoro/PyTorch duration logits and durations; independent repeated-feature expectation</td>
 <td><code>tests/test_v8_duration_logits_runtime_graph.py</code></td>
-<td><code>.github/workflows/tts-kernels.yml</code>; <code>scripts/nightly_runner.py</code> key <code>tts_duration_logits_runtime_graph</code></td>
+<td><code>.github/workflows/nightly.yml</code> via <code>scripts/nightly_runner.py</code> key <code>tts_duration_logits_runtime_graph</code></td>
 <td>PASS locally: normal v8 lowering and generated C produce 103 frames, preserve physical stride/padding, and stop downstream calls on invalid extent. Logit generation from phonemes and waveform output remain NOT_TESTED.</td>
 </tr>
 <tr>
@@ -1497,7 +1497,7 @@ The provider maps declare backward and training unsupported.</p>
 <td>FP32 logits and captured features / int32 durations / forward</td>
 <td>Pinned PyTorch Kokoro feature, duration and frame-to-token captures; committed expected tensors indexed by the captured alignment</td>
 <td><code>tests/test_v8_duration_two_stream_runtime_graph.py</code>; fixture packaging command <code>python3 version/v8/tts/reference/build_duration_two_stream_fixture.py --capture-dir &lt;pinned-capture-dir&gt;</code></td>
-<td><code>.github/workflows/tts-kernels.yml</code>; <code>scripts/nightly_runner.py</code> key <code>tts_duration_two_stream_runtime_graph</code></td>
+<td><code>.github/workflows/nightly.yml</code> via <code>scripts/nightly_runner.py</code> key <code>tts_duration_two_stream_runtime_graph</code></td>
 <td>PASS locally: normal v8 lowering and generated C produce the pinned 103-frame duration and text streams, with input stride 40, output stride 128, untouched padding, repeated 36-frame requests, and no downstream writes or published extent on rejected duration. Compiler-declared X-Ray checkpoints compare both valid regions to the captured alignment with exact FP32 equality. X-Ray also records the on-disk artifact hash and the library containing the executed symbol; the resolved numerical contract remains explicit as unresolved. Logits and features are oracle supplied. Phoneme-to-waveform execution remains NOT_TESTED.</td>
 </tr>
 <tr>
@@ -1505,7 +1505,7 @@ The provider maps declare backward and training unsupported.</p>
 <td>FP32 + int32 durations / forward only</td>
 <td>PyTorch <code>torch.repeat_interleave</code>; committed PyTorch fixture</td>
 <td><code>tests/test_v8_audio_duration_expand_oracle.py</code>; invalid extent and stride checks in <code>tests/test_v8_kokoro_shape_bounds.py</code></td>
-<td><code>.github/workflows/tts-kernels.yml</code>; <code>scripts/nightly_runner.py</code> key <code>tts_duration_expand_oracle</code></td>
+<td><code>.github/workflows/nightly.yml</code> via <code>scripts/nightly_runner.py</code> key <code>tts_duration_expand_oracle</code></td>
 <td>PASS: exact values on the fixed fixture, untouched padding, repeated call, and capacity rejection. Live PyTorch fixture check PASS in the local CKE venv.</td>
 </tr>
 <tr>
@@ -1513,7 +1513,7 @@ The provider maps declare backward and training unsupported.</p>
 <td>FP32 / forward only</td>
 <td>PyTorch <code>torch.istft</code> with centered periodic Hann; pinned Kokoro magnitude/phase capture</td>
 <td><code>tests/test_v8_audio_istft_oracle.py</code>; <code>version/v8/scripts/compare_kokoro_istft_native_v8.py</code></td>
-<td><code>.github/workflows/tts-kernels.yml</code>; <code>scripts/nightly_runner.py</code> key <code>tts_istft_oracle</code></td>
+<td><code>.github/workflows/nightly.yml</code> via <code>scripts/nightly_runner.py</code> key <code>tts_istft_oracle</code></td>
 <td>PASS: synthetic PyTorch fixture, minimum-frame and alternate-geometry fixtures, silence, DC/Nyquist, portable rejection checks, and live oracle locally. Pinned Kokoro primitive capture: 61,800 samples, max absolute error 8.4564e-7, mean absolute error 7.2885e-8.</td>
 </tr>
 <tr>
@@ -1521,7 +1521,7 @@ The provider maps declare backward and training unsupported.</p>
 <td>Size arithmetic / inference</td>
 <td>Independent mathematical boundary cases</td>
 <td><code>tests/test_v8_kokoro_shape_bounds.c</code> via <code>tests/test_v8_kokoro_shape_bounds.py</code></td>
-<td><code>.github/workflows/tts-kernels.yml</code>; <code>scripts/nightly_runner.py</code> key <code>tts_kokoro_shape_bounds</code></td>
+<td><code>.github/workflows/nightly.yml</code> via <code>scripts/nightly_runner.py</code> key <code>tts_kokoro_shape_bounds</code></td>
 <td>PASS: checked limits and overflow cases locally.</td>
 </tr>
 <tr>
@@ -1529,7 +1529,7 @@ The provider maps declare backward and training unsupported.</p>
 <td>FP32 / forward</td>
 <td>Independent synthetic duration-expansion reference; committed PyTorch inverse-STFT fixture</td>
 <td><code>tests/test_v8_runtime_extent_lowering.py</code>; <code>tests/test_v8_checked_call_codegen.py</code>; <code>tests/test_v8_xray_numerical_parity.py</code></td>
-<td><code>.github/workflows/tts-kernels.yml</code>; <code>scripts/nightly_runner.py</code> keys <code>tts_runtime_extent_lowering</code>, <code>tts_checked_call_codegen</code></td>
+<td><code>.github/workflows/nightly.yml</code> via <code>scripts/nightly_runner.py</code> keys <code>tts_runtime_extent_lowering</code>, <code>tts_checked_call_codegen</code></td>
 <td>PASS: #560/#566 generate, compile, and execute a bounded synthetic graph through normal v8 codegen. Tests cover valid extents, physical padding, repeated requests, capacity/alignment rejection, and stopping downstream calls on provider failure. This is not a Kokoro acoustic graph.</td>
 </tr>
 <tr>
