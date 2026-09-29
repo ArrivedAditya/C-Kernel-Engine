@@ -1059,6 +1059,13 @@ def test_resolve_runtime_vision_capability(tmp_path):
     (tmp_path / "layout_decode.json").write_text(
         '{"config": {"vision_num_patches": 256}}', encoding="utf-8"
     )
+    (tmp_path / "config.json").write_text('{"has_vision_encoder": true}', encoding="utf-8")
+    assert not resolve_runtime_vision_capability(tmp_path)
+    (tmp_path / "config.json").write_text('{"has_vision_encoder": false}', encoding="utf-8")
+    assert not resolve_runtime_vision_capability(tmp_path)
+    (tmp_path / "config.json").write_text('{"has_vision_encoder": 1}', encoding="utf-8")
+    assert not resolve_runtime_vision_capability(tmp_path)
+    (tmp_path / "config.json").write_text("not-json", encoding="utf-8")
     assert not resolve_runtime_vision_capability(tmp_path)
 
 
@@ -1320,3 +1327,66 @@ def test_parallel_tool_calls_all_emitted_qwen_xml():
     done = [p for ev, p in events if ev == "response.completed"]
     out = done[0]["response"]["output"]
     assert [i["name"] for i in out if i["type"] == "function_call"] == ["a", "b"]
+
+
+TEXT_ONLY_TEMPLATE = "{% for m in messages %}{{ m.role }}: {{ m.content }}\n{% endfor %}"
+
+
+def test_select_template_mirrors_render_priority():
+    from server.live import _select_template
+
+    variants = {"tool_use": "tool-variant", "default": "default-variant"}
+    assert _select_template("base", variants, has_tools=True) == "tool-variant"
+    assert _select_template("base", variants, has_tools=False) == "base"
+    assert _select_template("base", {"other": "x"}, has_tools=True) == "base"
+    assert _select_template("base", None, has_tools=True) == "base"
+    assert _select_template(None, None, has_tools=True) is None
+    assert _select_template("  ", None, has_tools=False) is None
+
+
+def test_selected_template_does_not_enable_unconnected_vision():
+    qwen35 = _load_template("Qwen3.5-4B.jinja")
+    vision_input = [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "hi"},
+                {"type": "input_image", "image_url": "http://x/i.png"},
+            ],
+        }
+    ]
+    tools = [{"type": "function", "name": "a", "parameters": {}}]
+
+    session = FakeSession(chunks=("seen",))
+    with_tools = TestClient(
+        create_app(
+            session,
+            model="fake-model",
+            chat_template=TEXT_ONLY_TEMPLATE,
+            chat_templates={"tool_use": qwen35},
+            tool_protocol="qwen_xml",
+        )
+    )
+    resp = with_tools.post(
+        "/v1/responses",
+        json={"model": "fake-model", "input": vision_input, "tools": tools},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "unsupported_media"
+
+    session2 = FakeSession(chunks=("seen",))
+    without_tools = TestClient(
+        create_app(
+            session2,
+            model="fake-model",
+            chat_template=TEXT_ONLY_TEMPLATE,
+            chat_templates={"tool_use": qwen35},
+            tool_protocol="qwen_xml",
+        )
+    )
+    resp = without_tools.post(
+        "/v1/responses", json={"model": "fake-model", "input": vision_input}
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"]["code"] == "unsupported_media"

@@ -280,6 +280,26 @@ def _content_text(content: Any) -> str:
     return text
 
 
+def _select_template(
+    chat_template: str | None,
+    chat_templates: dict[str, str] | None,
+    *,
+    has_tools: bool,
+) -> str | None:
+    """Return the template the renderer will use (single source of truth).
+
+    Select the tool variant when tools are attached, otherwise the base.
+    """
+    if has_tools and isinstance(chat_templates, dict):
+        for key in ("tool_use", "tools", "default"):
+            candidate = chat_templates.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate
+    if isinstance(chat_template, str) and chat_template.strip():
+        return chat_template
+    return None
+
+
 def _input_chat_messages(value: Any) -> list[dict[str, Any]]:
     if value is None:
         return []
@@ -754,19 +774,11 @@ def _render_with_chat_templates(
     effective_thinking: str = "suppressed",
     *, add_generation_prompt: bool = True,
 ) -> str | None:
-    tmpl_str: str | None = None
-    if (
-        body is not None
-        and getattr(body, "tools", None)
-        and isinstance(chat_templates, dict)
-    ):
-        for key in ("tool_use", "tools", "default"):
-            candidate = chat_templates.get(key)
-            if isinstance(candidate, str) and candidate.strip():
-                tmpl_str = candidate
-                break
-    if tmpl_str is None and isinstance(chat_template, str) and chat_template.strip():
-        tmpl_str = chat_template
+    tmpl_str = _select_template(
+        chat_template,
+        chat_templates,
+        has_tools=bool(body is not None and getattr(body, "tools", None)),
+    )
     if not tmpl_str:
         return None
     digest = hashlib.sha256(tmpl_str.encode("utf-8")).hexdigest()

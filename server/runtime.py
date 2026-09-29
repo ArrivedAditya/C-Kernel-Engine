@@ -45,7 +45,11 @@ def resolve_runtime_context_length(run_dir: Path, requested: int | None) -> int 
 
 
 def resolve_runtime_vision_capability(run_dir: Path) -> bool:
-    """Layout dimensions cannot enable the text-only native session ABI."""
+    """Report live vision only after a connected native media path exists.
+
+    Conversion may declare an encoder in config.json, but this server still
+    supplies text bytes to a text-only session ABI. Keep admission closed.
+    """
     return False
 
 
