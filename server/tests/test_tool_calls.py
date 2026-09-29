@@ -781,7 +781,7 @@ def test_tool_call_cancellation_reports_native_failure_and_timeout():
 
 def _load_template(name):
     root = Path(__file__).resolve().parents[2]
-    return (root / "llama.cpp" / "models" / "templates" / name).read_text(encoding="utf-8")
+    return (root / "server" / "tests" / "fixtures" / name).read_text(encoding="utf-8")
 
 
 def test_qwen3_template_tagged_json_round_trip():
@@ -789,12 +789,10 @@ def test_qwen3_template_tagged_json_round_trip():
         _extract_tool_calls_from_text,
         _input_chat_messages,
         _render_with_chat_templates,
-        _template_supports_vision,
     )
     from server.schemas.response import CreateResponseRequest
 
     template = _load_template("Qwen-Qwen3-0.6B.jinja")
-    assert not _template_supports_vision(template, None)
     body = CreateResponseRequest(
         model="fake-model",
         input="hello",
@@ -843,12 +841,10 @@ def test_qwen35_template_qwen_xml_and_vision():
         _extract_tool_calls_from_text,
         _input_chat_messages,
         _render_with_chat_templates,
-        _template_supports_vision,
     )
     from server.schemas.response import CreateResponseRequest
 
     template = _load_template("Qwen3.5-4B.jinja")
-    assert _template_supports_vision(template, None)
 
     body = CreateResponseRequest(
         model="fake-model",
@@ -881,23 +877,13 @@ def test_qwen35_template_qwen_xml_and_vision():
             model="fake-model",
             chat_template=template,
             tool_protocol="qwen_xml",
-            vision_capability=True,
         )
     )
     resp = client.post(
         "/v1/responses",
         json={
             "model": "fake-model",
-            "input": [
-                {
-                    "type": "message",
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": "read it"},
-                        {"type": "input_image", "image_url": "http://x/i.png"},
-                    ],
-                }
-            ],
+            "input": "read it",
             "tools": [{"type": "function", "name": "read_file", "parameters": {}}],
         },
     )
@@ -960,7 +946,7 @@ def test_vision_system_image_rejected():
             ],
         },
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 422
 
 
 def test_vision_rejects_bare_base64_and_too_many_images():
@@ -985,7 +971,7 @@ def test_vision_rejects_bare_base64_and_too_many_images():
             ],
         },
     )
-    assert bare.status_code == 400
+    assert bare.status_code == 422
     many = [
         {"type": "input_image", "image_url": f"http://x/{i}.png"}
         for i in range(9)
@@ -1003,7 +989,7 @@ def test_vision_rejects_bare_base64_and_too_many_images():
             ],
         },
     )
-    assert crowded.status_code == 400
+    assert crowded.status_code == 422
 
 
 def test_vision_rejected_without_encoder_capability():
@@ -1029,12 +1015,12 @@ def test_vision_rejected_without_encoder_capability():
         },
     )
     assert resp.status_code == 422
-    assert "no vision encoder" in resp.json()["error"]["message"]
+    assert "text-only" in resp.json()["error"]["message"]
 
     session2 = FakeSession(chunks=("seen",))
     client2 = TestClient(
         create_app(
-            session2, model="fake-model", chat_template=qwen35, vision_capability=True
+            session2, model="fake-model", chat_template=qwen35
         )
     )
     ok = client2.post(
@@ -1053,8 +1039,8 @@ def test_vision_rejected_without_encoder_capability():
             ],
         },
     )
-    assert ok.status_code == 200
-    assert ok.json()["status"] == "completed"
+    assert ok.status_code == 422
+    assert ok.json()["error"]["code"] == "unsupported_media"
 
 
 def test_resolve_runtime_vision_capability(tmp_path):
@@ -1069,7 +1055,7 @@ def test_resolve_runtime_vision_capability(tmp_path):
         '{"config": {"vision_num_patches": 256, "projector_out_dim": 1024}}',
         encoding="utf-8",
     )
-    assert resolve_runtime_vision_capability(tmp_path)
+    assert not resolve_runtime_vision_capability(tmp_path)
     (tmp_path / "layout_decode.json").write_text(
         '{"config": {"vision_num_patches": 256}}', encoding="utf-8"
     )
@@ -1118,7 +1104,7 @@ def test_streaming_thinking_flows_with_tools_attached():
 
 
 def test_streaming_thinking_streams_when_prompt_opens_think():
-    template = "{% for m in messages %}{{ m.role }}: {{ m.content }}\n{% endfor %}<think>\n"
+    template = "{% for m in messages %}{{ m.role }}: {{ m.content }}\n{% endfor %}{% if add_generation_prompt %}<think>\n{% endif %}"
     session = FakeSession(chunks=("pondering", " this", "</think>", "answer"))
     client = TestClient(
         create_app(session, model="fake-model", chat_template=template)
@@ -1171,12 +1157,9 @@ def test_max_tool_calls_caps_emitted_calls():
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "incomplete"
-    assert data["incomplete_details"]["reason"] == "max_tool_calls"
-    assert [i["name"] for i in data["output"] if i["type"] == "function_call"] == [
-        "a",
-        "b",
-    ]
+    assert data["status"] == "failed"
+    assert "max_tool_calls" in data["error"]["message"]
+    assert not any(i["type"] == "function_call" for i in data["output"])
 
     bad = client.post(
         "/v1/responses",
@@ -1186,6 +1169,13 @@ def test_max_tool_calls_caps_emitted_calls():
 
 
 def test_tool_choice_required_none_and_named():
+    from server.live import _enforce_tool_choice
+
+    error, _ = _enforce_tool_choice(
+        [{"name": "a"}, {"name": "other"}],
+        tool_choice={"type": "function", "function": {"name": "a"}},
+    )
+    assert error and "a" in error
     tools = [{"type": "function", "name": "a", "parameters": {}}]
 
     def _client(chunks):

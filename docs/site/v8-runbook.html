@@ -2376,6 +2376,45 @@ version/v8/scripts/ck_serve_v8.py "$RUN_DIR" --run "$RUN_DIR" \
 </div>
 
 <div class="card">
+    <h3>Qwen3.5 publisher templates and request ownership</h3>
+    <p>The Qwen3.5 circuit references the shared <code>qwen-tools-v1</code> serving profile.
+        Conversion packages the publisher Jinja and tokenizer assets into the resolved BUMP
+        serving bundle. The declared <code>qwen_xml</code> parser handles native tool envelopes;
+        it does not constrain the model's next-token sampling. Grammar-constrained generation
+        remains a separate capability. Template rendering, token-ID agreement and actual tool
+        completion each require their own evidence.</p>
+    <p>Reasoning starts from the generation suffix isolated by rendering the selected template
+        with and without <code>add_generation_prompt</code>. Literal reasoning tags in user
+        messages or tool results cannot choose the initial parser state. Tool-bearing streams
+        expose reasoning while withholding tool calls until validation. Over-limit calls are
+        rejected together; the server never silently executes a retained subset.</p>
+    <p>Typed images, files, audio and video are rejected before rendering or native execution
+        in this text-only session ABI, including media returned by tools. Publisher image-marker
+        rendering tests are render-only evidence. Plain paths remain text. Enabling vision requires
+        a connected preprocessing → generated encoder → bridge → decoder path, not positive
+        layout dimensions or template words.</p>
+    <p><code>429 Session busy</code> means the single-flight native slot is occupied. Native worker
+        completion now releases its request-owned slot independently of HTTP stream consumption.
+        Disconnects request cancellation but retain ownership until native work finishes; an old
+        response cannot cancel a newer request. A legitimate active request can still produce 429.
+        Long-prefill cancellation may exceed its acknowledgement deadline: a cancellation timeout
+        must not release buffers still in use or be described as successful bounded cancellation.</p>
+    <p>The 2026-09-28 Qwen3.8 overnight documentation trial failed after approximately five hours
+        and eighteen successful inspection calls with repeated busy responses. It produced no
+        HTML/SVG outputs. This is retained failure evidence; short read/edit acceptance does not
+        establish unattended reliability. Cheap lifecycle, media rejection and pinned-template
+        tests run in the existing serving suite; real-model acceptance is recorded separately.</p>
+    <p>A separately rebuilt Qwen3.5-0.8B Q4_K_M bundle exposed an imported tokenizer-type
+        mismatch: its tool delimiters were split into ordinary BPE pieces. Registering the
+        publisher's CONTROL and USER_DEFINED token types produced exact generated-runtime
+        agreement with the reference tokenizer for the tested tool prompts (327/327 and
+        325/325 token IDs). That bundle completed a bounded <code>read_file</code> request and
+        tool-result continuation on both Responses and Chat Completions routes, with thinking
+        suppressed and visible. A real Qwen Code 0.24.6
+        run received the correct file contents but repeated the read until its three-call budget
+        stopped it; this is not a completed harness-task certification. These results apply to
+        the tested 0.8B artifact, not every Qwen3.5 variant.</p>
+
     <h3 style="margin-top: 0;">Qwen Code Interactive And Overnight Profiles</h3>
     <p>
         A cached Qwen Code 0.24.6 <code>read_file</code> task passed through the Responses server

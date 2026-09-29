@@ -1,0 +1,17 @@
+{
+  "Qwen-Qwen3-0.6B.jinja": {
+    "source": "llama.cpp/models/templates/Qwen-Qwen3-0.6B.jinja",
+    "revision": "f3e182816421c648188b5eab269853bf1531d950",
+    "sha256": "87a2728cb8dc9fe424d624542f6060ec05a1d285ebbec578bb078900e33396b5"
+  },
+  "Qwen3.5-4B.jinja": {
+    "source": "llama.cpp/models/templates/Qwen3.5-4B.jinja",
+    "revision": "f3e182816421c648188b5eab269853bf1531d950",
+    "sha256": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715"
+  },
+  "qwen35_08b_publisher.jinja": {
+    "source": "https://huggingface.co/Qwen/Qwen3.5-0.8B/resolve/f35bff78516d5b109092c941393bb6b124723ab1/chat_template.jinja",
+    "revision": "f35bff78516d5b109092c941393bb6b124723ab1",
+    "sha256": "273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80"
+  }
+}

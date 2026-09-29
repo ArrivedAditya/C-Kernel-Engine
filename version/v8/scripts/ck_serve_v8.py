@@ -80,7 +80,6 @@ from server.live import (
     _load_runtime_templates,
     _log_performance,
     _log_rejection,
-    _message_has_vision,
     _performance_profile,
     _prompt_opens_thinking,
     _render_with_chat_templates,
@@ -88,10 +87,8 @@ from server.live import (
     _resolve_thinking_mode,
     _sse,
     _strip_tool_json_from_text,
-    _template_supports_vision,
     _truncate_stop_markers,
     _usage,
-    _vision_content_for_jinja,
     create_app as _live_create_app,
     split_thinking,
 )
@@ -166,7 +163,6 @@ __all__ = [
     "_load_runtime_templates",
     "_log_performance",
     "_log_rejection",
-    "_message_has_vision",
     "_performance_profile",
     "_prompt_opens_thinking",
     "_render_with_chat_templates",
@@ -177,10 +173,8 @@ __all__ = [
     "_sse",
     "_stop_reason_name",
     "_strip_tool_json_from_text",
-    "_template_supports_vision",
     "_truncate_stop_markers",
     "_usage",
-    "_vision_content_for_jinja",
     "add_chat_completions_route",
     "create_app",
     "load_manifest_templates",
@@ -528,11 +522,7 @@ def main(argv: list[str] | None = None) -> int:
             session.close()
             raise
 
-    vision_capability = resolve_runtime_vision_capability(run_dir)
-    if vision_capability:
-        log("Vision input enabled (generated runtime has a vision encoder)", C_GRAY)
-    else:
-        log("Vision input disabled (no vision encoder in generated runtime)", C_GRAY)
+    log("Typed media disabled: this native serving path is text-only", C_GRAY)
 
     app = create_app(
         session,

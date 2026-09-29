@@ -54,6 +54,9 @@ lib.ck_true_bpe_add_merge.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_
 lib.ck_true_bpe_add_special_token.restype = ctypes.c_int
 lib.ck_true_bpe_add_special_token.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int32]
 
+lib.ck_true_bpe_register_token_types.restype = ctypes.c_int
+lib.ck_true_bpe_register_token_types.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t]
+
 lib.ck_true_bpe_set_special_ids.restype = None
 lib.ck_true_bpe_set_special_ids.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32]
 
@@ -638,12 +641,36 @@ def test_long_prompt_completeness():
 # MAIN
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def test_imported_token_types():
+    bpe = lib.ck_true_bpe_create()
+    if not bpe:
+        return False
+    try:
+        for idx, token in enumerate((b"<", b"tool", b"_call", b">", b"<tool_call>")):
+            if lib.ck_true_bpe_add_token(bpe, token, idx, 0.0) != 0:
+                return False
+        types = (ctypes.c_uint8 * 5)(1, 1, 1, 1, 4)
+        if lib.ck_true_bpe_register_token_types(bpe, types, 4) != -1:
+            return False
+        if lib.ck_true_bpe_register_token_types(bpe, types, 5) != 0:
+            return False
+        out = (ctypes.c_int32 * 8)()
+        marker = b"<tool_call>"
+        if lib.ck_true_bpe_encode(bpe, marker, len(marker), out, 8) != 1 or out[0] != 4:
+            return False
+        if lib.ck_true_bpe_encode(bpe, b"tool", 4, out, 8) != 1 or out[0] != 1:
+            return False
+        return True
+    finally:
+        lib.ck_true_bpe_free(bpe)
+
 def main():
     print("="*60)
     print("True BPE Tokenizer Test: Special Tokens & Byte Decoding")
     print("="*60)
 
     results = []
+    results.append(("Imported Token Types", test_imported_token_types()))
 
     # Run tests
     results.append(("Special Token Encoding", test_special_token_encoding()))

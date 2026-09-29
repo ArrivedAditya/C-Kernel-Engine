@@ -156,7 +156,15 @@ class TestV8TokenizerCapabilityCodegen(unittest.TestCase):
         self.assertNotIn("CK_ENABLE_FULL_BPE_TOKENIZER", c_code)
         self.assertIn("CK_EXPORT int ck_model_can_encode_text(void)", c_code)
         self.assertIn("return (g_model && g_model->tokenizer) ? 1 : 0;", c_code)
-        self.assertIn('printf("[Tokenizer] Registered special: %s -> %d\\n",', str(generated["init"]))
+        self.assertIn("ck_true_bpe_add_special_token", str(generated["init"]))
+
+    def test_bpe_imported_types_select_metadata_registration(self) -> None:
+        generated = build_ir_v8._generate_tokenizer_c_code(
+            "bpe", vocab_size=5, num_merges=0, has_vocab_types=True,
+        )
+        self.assertIn("ck_true_bpe_register_token_types", generated["init"])
+        self.assertIn("W_VOCAB_TYPES", generated["init"])
+        self.assertNotIn("static const char *special_tokens[]", generated["init"])
 
     def test_bpe_codegen_applies_declared_pretokenizer_profile(self) -> None:
         generated = build_ir_v8._generate_tokenizer_c_code(

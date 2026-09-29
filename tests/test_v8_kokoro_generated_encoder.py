@@ -28,29 +28,22 @@ class KokoroGeneratedEncoderTest(unittest.TestCase):
     def setUpClass(cls):
         # Reuse certified import fixtures, not the first layer's execution as
         # model input. The complete entry generates every intermediate itself.
-        previous = os.environ.get('CKE_KOKORO_LAYER_EVIDENCE_DIR')
+        from types import SimpleNamespace
+        from tests.v8_kokoro_fixture_support import load_first_layer_fixtures
+        tensors = load_first_layer_fixtures(cls)
         evidence = os.environ.get('CKE_KOKORO_ENCODER_EVIDENCE_DIR')
         if evidence:
-            os.environ['CKE_KOKORO_LAYER_EVIDENCE_DIR'] = str(Path(evidence).resolve() / 'prefix')
+            root = Path(evidence).resolve() / 'encoder'
+            root.mkdir(parents=True, exist_ok=True)
+            cls.temp = SimpleNamespace(name=str(root), cleanup=lambda: None)
         else:
-            os.environ.pop('CKE_KOKORO_LAYER_EVIDENCE_DIR', None)
-        try:
-            first_layer.KokoroGeneratedAlbertLayerTest.setUpClass.__func__(cls)
-        finally:
-            if previous is None:
-                os.environ.pop('CKE_KOKORO_LAYER_EVIDENCE_DIR', None)
-            else:
-                os.environ['CKE_KOKORO_LAYER_EVIDENCE_DIR'] = previous
-        root = Path(cls.temp.name) / 'encoder'
-        root.mkdir(exist_ok=True)
+            cls.temp = tempfile.TemporaryDirectory()
+            root = Path(cls.temp.name)
         fixture = ROOT / 'tests/fixtures/tts/kokoro_encoder_pinned.npz'
         cls.encoder = dict(np.load(fixture))
         cls.encoder_meta = json.loads(fixture.with_suffix('.json').read_text())
         if hashlib.sha256(fixture.read_bytes()).hexdigest() != cls.encoder_meta['fixture_sha256']:
             raise RuntimeError('encoder fixture hash mismatch')
-        tensors = {name: np.frombuffer(cls.bump, dtype=np.float32,
-                                      count=entry['size']//4, offset=entry['file_offset']).copy().reshape(entry['shape'])
-                   for name, entry in cls.entries.items()}
         for kind in ('weight', 'bias'):
             tensors[f'phoneme_projection.{kind}'] = cls.encoder[f'weight__phoneme_projection__{kind}']
         origins = {name: {'source_name': name, 'transform': 'identity'} for name in tensors}
@@ -457,8 +450,55 @@ int main(int argc, char **argv) {{
             compile_native_graph(folder, source, circuit)
         self.assertFalse((folder / 'generated.c').exists())
 
+    def test_wrong_edge_and_shared_weight_are_detected_numerically(self):
+        import copy
+        for mutation in ('edge', 'shared_weight'):
+            with self.subTest(mutation=mutation):
+                source = copy.deepcopy(self.source)
+                ops = source['template']['block_types']['phoneme_encoder']['body']['ops']
+                query = next(op for op in ops if op['id'] == 'l01_albert_query_projection')
+                if mutation == 'edge':
+                    query['graph_slots']['inputs']['input'] = 'projection_output'
+                else:
+                    query['weight_refs']['weight'] = query['weight_refs']['weight'].replace('.query.', '.key.')
+                folder = self.root / f'wrong-{mutation}'
+                folder.mkdir(exist_ok=True)
+                circuit = folder / 'circuit.json'
+                circuit.write_text(json.dumps(source['template']))
+                layout, calls, library, loaded, fn = compile_native_graph(folder, source, circuit)
+                self.assertEqual(calls['errors'], [])
+                arena, buffers = self.arena_for(layout, self.encoder['word_ids'])
+                self.assertEqual(fn(arena, len(arena)), 0)
+                # Geometry-valid mistakes must be caught by the independent
+                # capture gate, not counted as compile failures or PASS evidence.
+                for name in ('l01_query_output', 'phoneme_features'):
+                    expected = self.encoder[name]
+                    actual = np.ndarray(expected.shape, np.float32, buffer=arena,
+                                        offset=buffers[name]['abs_offset'])
+                    self.assertTrue(np.isfinite(actual).all(), name)
+                    diff = np.abs(actual.astype(np.float64) - expected.astype(np.float64))
+                    limit = self.composition_limit(name, expected)
+                    self.assertTrue(np.any(diff > limit), (mutation, name))
+
+    def test_swapped_shared_invocation_captures_are_detected(self):
+        arena = self.arena()
+        self.assertEqual(self.fn(arena, len(arena)), 0)
+        for left, right in ((0, 1), (10, 11)):
+            name = f'l{left:02d}_albert_layer_output'
+            expected = self.encoder[name]
+            actual = self.vector(arena, name, np.float32, expected.size).reshape(expected.shape)
+            np.testing.assert_allclose(actual, expected, atol=3e-5, rtol=0)
+            swapped = self.encoder[f'l{right:02d}_albert_layer_output']
+            self.assertTrue(np.any(np.abs(actual.astype(np.float64) - swapped.astype(np.float64))
+                                   > self.composition_limit(name, swapped)))
+
 
 class KokoroEncoderCircuitAuthoringTest(unittest.TestCase):
+    def test_first_layer_fixture_is_generated_from_canonical_definition(self):
+        import build_kokoro_albert_circuit as block_author
+        self.assertEqual(block_author.build_circuit(), json.loads(block_author.FIXTURE.read_text()))
+        self.assertNotIn('tests', str(block_author.DEFINITION.relative_to(ROOT)))
+
     def test_canonical_circuit_and_shared_edges(self):
         circuit = circuit_author.build_circuit()
         self.assertEqual(circuit, json.loads(circuit_author.OUTPUT.read_text()))
@@ -482,6 +522,12 @@ class KokoroEncoderCircuitAuthoringTest(unittest.TestCase):
             graph = circuit_author.build_circuit(tokens)
             self.assertEqual(graph['activation_buffers']['phoneme_features']['shape'], [tokens, 512])
             self.assertEqual(graph['runtime_constants']['tokens'], tokens)
+            ops = graph['block_types']['phoneme_encoder']['body']['ops']
+            norm = next(op for op in ops if op['op'] == 'layernorm')
+            self.assertEqual(norm['params']['Q'], tokens * (norm['params']['C'] + 2))
+            projection = next(op for op in ops if op['op'] == 'linear_rows_checked')
+            self.assertEqual(projection['params']['call_constants']['linear_input_elements'],
+                             tokens * projection['params']['K'])
         for tokens in (0, 1, 513, -1, True, 2.0):
             with self.subTest(tokens=tokens), self.assertRaises(ValueError):
                 circuit_author.build_circuit(tokens)

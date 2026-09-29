@@ -2790,7 +2790,8 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
                                model_type: Optional[str] = None,
                                template_name: Optional[str] = None,
                                chat_contract: Optional[Dict[str, Any]] = None,
-                               tokenizer_contract: Optional[Dict[str, Any]] = None) -> Optional[Dict]:
+                               tokenizer_contract: Optional[Dict[str, Any]] = None,
+                               has_vocab_types: bool = False) -> Optional[Dict]:
     """
     Generate tokenizer-specific C code based on tokenizer type from template.
 
@@ -2865,6 +2866,36 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
             f"            {_c_string_literal(marker)},"
             for marker in special_marker_candidates
         )
+        if has_vocab_types:
+            special_registration = f"""
+            /* The imported token types are authoritative for exact-match
+             * CONTROL and USER_DEFINED tokens, including tool delimiters. */
+            if (ck_true_bpe_register_token_types(
+                    g_model->tokenizer,
+                    (const uint8_t*)(g_model->bump + W_VOCAB_TYPES),
+                    {vocab_size}) != 0) {{
+                ck_true_bpe_free(g_model->tokenizer);
+                g_model->tokenizer = NULL;
+                return -1;
+            }}"""
+        else:
+            # Older bundles have no per-token type metadata. Keep their
+            # explicit chat contract as a compatibility path.
+            special_registration = f"""
+            static const char *special_tokens[] = {{
+{special_token_lines}
+                NULL
+            }};
+            for (int i = 0; special_tokens[i] != NULL; i++) {{
+                int32_t id = ck_true_bpe_lookup(g_model->tokenizer, special_tokens[i]);
+                const char *check = ck_true_bpe_id_to_token(g_model->tokenizer, id);
+                if (check && strcmp(check, special_tokens[i]) == 0 &&
+                    ck_true_bpe_add_special_token(g_model->tokenizer, special_tokens[i], id) != 0) {{
+                    ck_true_bpe_free(g_model->tokenizer);
+                    g_model->tokenizer = NULL;
+                    return -1;
+                }}
+            }}"""
         return {
             "type": "bpe",
             "include": '#include "tokenizer/true_bpe.h"',
@@ -2878,33 +2909,21 @@ def _generate_tokenizer_c_code(tokenizer_type: str, vocab_size: int, num_merges:
     if (!ck_disable_full_bpe || strcmp(ck_disable_full_bpe, "0") == 0) {{
         g_model->tokenizer = ck_true_bpe_create();
         if (g_model->tokenizer) {{
-            ck_true_bpe_load_binary(
+            if (ck_true_bpe_load_binary(
                 g_model->tokenizer,
                 {vocab_size},
                 (const int32_t*)(g_model->bump + W_VOCAB_OFFSETS),
                 (const char*)(g_model->bump + W_VOCAB_STRINGS),
                 {num_merges},
                 (const int32_t*)(g_model->bump + W_VOCAB_MERGES)
-            );
+            ) != 0) {{
+                ck_true_bpe_free(g_model->tokenizer);
+                g_model->tokenizer = NULL;
+                return -1;
+            }}
 {bpe_contract_block}
 
-            /* Register special tokens for pre-BPE matching.
-             * Without this, <|im_end|> gets broken into characters by BPE.
-             */
-            static const char *special_tokens[] = {{
-{special_token_lines}
-                NULL
-            }};
-            for (int i = 0; special_tokens[i] != NULL; i++) {{
-                int32_t id = ck_true_bpe_lookup(g_model->tokenizer, special_tokens[i]);
-                const char *check = ck_true_bpe_id_to_token(g_model->tokenizer, id);
-                if (check && strcmp(check, special_tokens[i]) == 0) {{
-                    ck_true_bpe_add_special_token(g_model->tokenizer, special_tokens[i], id);
-                    #ifdef CK_DEBUG_TOKENIZER
-                    printf("[Tokenizer] Registered special: %s -> %d\\n", special_tokens[i], id);
-                    #endif
-                }}
-            }}
+{special_registration}
         }}
     }}""",
             "free": """
@@ -3399,6 +3418,9 @@ def generate_init_ops(manifest: Dict, config: Dict) -> List[Dict]:
         vocab_merges_info = entry_by_name.get("vocab_merges", {})
         vocab_scores_info = entry_by_name.get("vocab_scores", {})
         vocab_types_info = entry_by_name.get("vocab_types", {})
+        if tokenizer_type == "bpe" and vocab_types_info:
+            if vocab_types_info.get("dtype") != "u8" or vocab_types_info.get("size") != vocab_size:
+                raise ValueError("BPE vocab_types must contain one u8 entry per vocabulary token")
 
         # Calculate number of merges from size (each merge is 3 int32s = 12 bytes)
         merges_size = vocab_merges_info.get("size", 0)
@@ -3423,6 +3445,7 @@ def generate_init_ops(manifest: Dict, config: Dict) -> List[Dict]:
             template.get("name"),
             explicit_chat_contract,
             tokenizer_contract,
+            bool(vocab_types_info),
         )
 
         if c_code:

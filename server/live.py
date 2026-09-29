@@ -189,44 +189,55 @@ def _check_image_ref(ident: str) -> str:
     )
 
 
-def _content_parts(content: Any) -> tuple[str, list[str]]:
-    """Split message content into text plus vision image references.
-
-    Returns (text, image_urls). Text-only content yields ([text], []).
-    File parts are rejected - callers map ValueError to 400.
-    """
-    if content is None:
-        return "", []
-    if isinstance(content, str):
-        return content, []
+def _ordered_content_parts(content: Any) -> Any:
+    """Render-only normalization preserving interleaved text and image order."""
+    if content is None or isinstance(content, str):
+        return content or ""
     if not isinstance(content, list):
-        return "", []
-    texts: list[str] = []
-    images: list[str] = []
+        raise ValueError("message content must be text or ordered parts")
+    parts = []
     for part in content:
-        if isinstance(part, str):
-            texts.append(part)
-            continue
-        part_type = getattr(part, "type", None)
-        part_type = getattr(part_type, "value", part_type)
-        if isinstance(part, dict):
-            part_type = part.get("type", part_type)
-        if part_type == "input_text":
-            text = part.get("text") if isinstance(part, dict) else getattr(part, "text", None)
-            if isinstance(text, str):
-                texts.append(text)
-        elif part_type == "input_image":
-            ident = part.get("image_url") if isinstance(part, dict) else _image_identifier(part)
+        data = part if isinstance(part, dict) else part.model_dump()
+        kind = data.get("type")
+        if kind in ("input_text", "output_text", "text"):
+            parts.append({"type": "text", "text": data.get("text", "")})
+        elif kind in ("input_image", "image", "image_url"):
+            ident = data.get("image_url", data.get("image", ""))
             if isinstance(ident, dict):
                 ident = ident.get("url", "")
-            images.append(_check_image_ref(str(ident or "")))
-        elif part_type == "input_file":
-            raise ValueError("input_file content is not supported for chat templates")
+            ident = _check_image_ref(str(ident))
+            parts.append({"type": "image", "image_url": ident, "image": ident})
         else:
-            text = part.get("text") if isinstance(part, dict) else getattr(part, "text", None)
-            if isinstance(text, str):
-                texts.append(text)
-    return "\n".join(texts), images
+            raise ValueError(f"unsupported content part {kind!r}")
+    return parts
+
+
+def _content_parts(content: Any) -> tuple[str, list[str]]:
+    parts = _ordered_content_parts(content)
+    if isinstance(parts, str):
+        return parts, []
+    return ("\n".join(p["text"] for p in parts if p["type"] == "text"),
+            [p["image"] for p in parts if p["type"] == "image"])
+
+
+def _reject_live_media(value: Any) -> None:
+    """Inspect original typed input, including tool results, before extraction."""
+    if hasattr(value, "model_dump"):
+        value = value.model_dump()
+    if isinstance(value, list):
+        for item in value:
+            _reject_live_media(item)
+    elif isinstance(value, dict):
+        kind = value.get("type")
+        if kind in {"input_image", "image", "image_url", "input_file", "file",
+                    "input_audio", "audio", "video", "input_video"}:
+            raise _harness_error(
+                422, f"typed {kind} input is unsupported by this text-only native session; "
+                "no connected generated media pipeline is available",
+                err_type="invalid_request_error", code="unsupported_media",
+            )
+        for item in value.values():
+            _reject_live_media(item)
 
 
 def _extract_prompt(body: Any) -> str:
@@ -262,45 +273,11 @@ def _content_text(content: Any) -> str:
     try:
         text, images = _content_parts(content)
     except ValueError:
-        return ""
+        raise
     if images:
         markers = ["[image: " + i + "]" if i else "[image]" for i in images]
         return "\n".join([text, *markers]) if text else "\n".join(markers)
     return text
-
-
-def _vision_content_for_jinja(text: str, images: list[str]) -> Any:
-    if not images:
-        return text
-    parts: list[dict[str, Any]] = []
-    if text:
-        parts.append({"type": "text", "text": text})
-    for ident in images:
-        parts.append({"type": "image", "image_url": ident, "image": ident})
-    return parts
-
-
-def _message_has_vision(message: dict[str, Any]) -> bool:
-    content = message.get("content")
-    return isinstance(content, list) and any(
-        isinstance(p, dict) and p.get("type") == "image" for p in content
-    )
-
-
-def _template_supports_vision(
-    chat_template: str | None, chat_templates: dict[str, str] | None
-) -> bool:
-    texts: list[str] = []
-    if isinstance(chat_template, str) and chat_template.strip():
-        texts.append(chat_template.lower())
-    if isinstance(chat_templates, dict):
-        for value in chat_templates.values():
-            if isinstance(value, str) and value.strip():
-                texts.append(value.lower())
-    if not texts:
-        return False
-    markers = ("vision_start", "image_pad", "vision_end", "image_url", "render_content")
-    return any(m in t for t in texts for m in markers)
 
 
 def _input_chat_messages(value: Any) -> list[dict[str, Any]]:
@@ -317,10 +294,9 @@ def _input_chat_messages(value: Any) -> list[dict[str, Any]]:
             role = getattr(item, "role", "user")
             role = getattr(role, "value", role)
             role_str = str(role)
-            text, images = _content_parts(item.content)
-            if images and role_str == "system":
-                raise ValueError("System message cannot contain images.")
-            content: Any = _vision_content_for_jinja(text, images)
+            content = _ordered_content_parts(item.content)
+            if isinstance(content, list) and all(p["type"] == "text" for p in content):
+                content = "\n".join(p["text"] for p in content)
             message: dict[str, Any] = {
                 "role": role_str,
                 "content": content,
@@ -447,17 +423,9 @@ def split_thinking(text: str) -> tuple[str, str]:
     return "", text
 
 
-def _prompt_opens_thinking(prompt: str) -> bool:
-    """Whether the rendered prompt ends with unclosed thinking.
-
-    Qwen3.5/QwQ-style templates emit ``<think>`` as the generation prefix,
-    so the stream continues thinking with no open tag. Count-based: an
-    unmatched open marker means generation starts inside thinking.
-    """
-    if not prompt:
-        return False
-    lowered = prompt.lower()
-    return lowered.count(_THINK_OPEN) > lowered.count(_THINK_CLOSE)
+def _prompt_opens_thinking(generation_prefix: str) -> bool:
+    """Inspect only the isolated generation suffix, never arbitrary prompt text."""
+    return generation_prefix.rstrip().lower().endswith(_THINK_OPEN)
 
 
 class _StreamThinkSplitter:
@@ -769,6 +737,14 @@ def _detect_template_tool_syntax(
     return _TOOL_SYNTAX_JSON
 
 
+def _split_generated_thinking(text: str, generation_prefix: str) -> tuple[str, str]:
+    splitter = _StreamThinkSplitter(start_thinking=_prompt_opens_thinking(generation_prefix))
+    thinking, answer = [], []
+    for state, delta in [*splitter.feed(text), *splitter.flush()]:
+        (thinking if state == "thinking" else answer).append(delta)
+    return "".join(thinking).strip(), "".join(answer).strip()
+
+
 def _render_with_chat_templates(
     chat_template: str | None,
     chat_templates: dict[str, str] | None,
@@ -776,6 +752,7 @@ def _render_with_chat_templates(
     body: Any,
     chat_contract: dict[str, Any] | None = None,
     effective_thinking: str = "suppressed",
+    *, add_generation_prompt: bool = True,
 ) -> str | None:
     tmpl_str: str | None = None
     if (
@@ -820,7 +797,7 @@ def _render_with_chat_templates(
                 if body is not None
                 else None,
                 enable_thinking=(effective_thinking == "visible"),
-                add_generation_prompt=True,
+                add_generation_prompt=add_generation_prompt,
                 add_vision_id=False,
                 raise_exception=_raise_exception,
             )
@@ -1266,18 +1243,6 @@ def _tool_call_limit(parallel: Any, max_calls: Any) -> int | None:
     return n if n >= 1 else None
 
 
-def _apply_tool_call_limits(
-    tool_calls: list[dict[str, Any]] | None, *, parallel: Any, max_calls: Any
-) -> tuple[list[dict[str, Any]] | None, bool]:
-    """Trim parsed calls to the effective cap. Returns (kept, truncated)."""
-    if not tool_calls:
-        return tool_calls, False
-    cap = _tool_call_limit(parallel, max_calls)
-    if cap is not None and len(tool_calls) > cap:
-        return tool_calls[:cap], True
-    return tool_calls, False
-
-
 def _required_tool_name(tool_choice: Any) -> str | None:
     if isinstance(tool_choice, dict):
         func = tool_choice.get("function")
@@ -1308,7 +1273,7 @@ def _enforce_tool_choice(
         return None, False
     name = _required_tool_name(tool_choice)
     if name is not None:
-        if not tool_calls or all(tc.get("name") != name for tc in tool_calls):
+        if not tool_calls or any(tc.get("name") != name for tc in tool_calls):
             return (
                 f"tool_choice requires tool {name!r} but the model did not call it",
                 False,
@@ -1354,6 +1319,65 @@ def _classify_stream_mode(
             return "tool" if tool_syntax in {_TOOL_SYNTAX_TOOL_CALL_JSON, _TOOL_SYNTAX_QWEN_XML, _TOOL_SYNTAX_QWEN_CODE_XML} else "text"
         return "text"
     return "text"
+
+
+class _FlightLease:
+    """One request's execution ownership, independent of HTTP consumption."""
+    def __init__(self, lock, session):
+        self.lock = lock
+        self.session = session
+        self.guard = threading.Lock()
+        self.active = True
+        self.worker_started = False
+        self.cancelled = None
+
+    def start_worker(self, cancelled):
+        with self.guard:
+            if not self.active:
+                return False
+            self.worker_started = True
+            self.cancelled = cancelled
+            return True
+
+    def release(self):
+        with self.guard:
+            if self.active:
+                self.active = False
+                self.lock.release()
+
+    def cancel(self):
+        with self.guard:
+            if not self.active:
+                return
+            if self.cancelled is not None:
+                self.cancelled.set()
+            if self.worker_started:
+                self.session.cancel()
+
+    def disconnect(self):
+        with self.guard:
+            if not self.active:
+                return
+            if self.worker_started:
+                self.cancelled.set()
+                self.session.cancel()
+                # Native completion, not a timeout or disconnected consumer,
+                # releases state still in use.
+            else:
+                self.active = False
+                self.lock.release()
+
+
+class _OwnedStreamingResponse(StreamingResponse):
+    def __init__(self, *args, lease, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.lease = lease
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.lease.disconnect()
 
 
 # --- app factory --------------------------------------------------------------
@@ -1423,6 +1447,7 @@ def create_app(
         return None
 
     def _validate_request(body) -> None:
+        _reject_live_media(body.input)
         if body.model != model:
             raise HTTPException(
                 status_code=404,
@@ -1520,38 +1545,6 @@ def create_app(
     def _prepare_request(body):
         _validate_request(body)
         messages = _request_messages(body)
-        vision_n = sum(
-            sum(
-                1
-                for p in (m.get("content") or [])
-                if isinstance(p, dict) and p.get("type") == "image"
-            )
-            for m in messages
-            if isinstance(m.get("content"), list)
-        )
-        if vision_n > _MAX_VISION_IMAGES:
-            raise _harness_error(
-                400,
-                f"at most {_MAX_VISION_IMAGES} images per request, got {vision_n}",
-                err_type="invalid_request_error",
-                code="invalid_image",
-            )
-        if any(_message_has_vision(m) for m in messages) and not _template_supports_vision(
-            chat_template, chat_templates
-        ):
-            raise _harness_error(
-                422,
-                "vision input requires a chat template with vision support",
-                err_type="invalid_request_error",
-                code="invalid_image",
-            )
-        if any(_message_has_vision(m) for m in messages) and not vision_capability:
-            raise _harness_error(
-                422,
-                "loaded model has no vision encoder; vision input is rejected",
-                err_type="invalid_request_error",
-                code="invalid_image",
-            )
         prompt = _extract_prompt(body)
         tok_limit = (
             body.max_output_tokens if body.max_output_tokens is not None else max_tokens
@@ -1563,6 +1556,7 @@ def create_app(
         effective_flags = flags
         effective_thinking = _resolve_thinking_mode(body)
         jinja_rendered: str | None = None
+        generation_prefix = ""
         if chat_template is not None or chat_templates is not None:
             try:
                 jinja_rendered = _render_with_chat_templates(
@@ -1573,6 +1567,14 @@ def create_app(
                     chat_contract,
                     effective_thinking,
                 )
+                without_prefix = _render_with_chat_templates(
+                    chat_template, chat_templates, messages, body, chat_contract,
+                    effective_thinking, add_generation_prompt=False,
+                )
+                if jinja_rendered is not None and without_prefix is not None:
+                    if not jinja_rendered.startswith(without_prefix):
+                        raise TemplateRenderError("cannot isolate selected template generation prefix")
+                    generation_prefix = jinja_rendered[len(without_prefix):]
             except TemplateRenderError as exc:
                 raise _harness_error(
                     422, str(exc), err_type="invalid_request_error",
@@ -1633,7 +1635,7 @@ def create_app(
                         err_type="invalid_request_error",
                         code="context_length_exceeded",
                     )
-        return prompt, tok_limit, temperature_eff, top_p_eff, effective_flags
+        return prompt, tok_limit, temperature_eff, top_p_eff, effective_flags, generation_prefix
 
     def build_response(
         body,
@@ -1808,6 +1810,10 @@ def create_app(
             return [], "parallel_tool_calls_disallowed", (
                 "parallel_tool_calls=false forbids multiple tool calls in one response"
             )
+        cap = _tool_call_limit(getattr(body, "parallel_tool_calls", True),
+                               getattr(body, "max_tool_calls", None))
+        if code is None and tool_calls and cap is not None and len(tool_calls) > cap:
+            return [], "max_tool_calls_exceeded", "generated response exceeds max_tool_calls; no calls emitted"
         if code is None and not tool_calls:
             return None, None, None
         if tool_calls == [] and code is None:
@@ -1823,6 +1829,8 @@ def create_app(
         top_p,
         effective_flags=None,
         request=None,
+        generation_prefix="",
+        lease=None,
     ):
         think_enabled = _resolve_thinking_mode(body) == "visible"
         response_id = f"resp_{uuid.uuid4().hex[:24]}"
@@ -1860,7 +1868,7 @@ def create_app(
         cancelled = threading.Event()
         worker_finished = threading.Event()
         splitter = (
-            _StreamThinkSplitter(start_thinking=_prompt_opens_thinking(prompt))
+            _StreamThinkSplitter(start_thinking=_prompt_opens_thinking(generation_prefix))
             if think_enabled
             else None
         )
@@ -1913,6 +1921,9 @@ def create_app(
             except Exception as e:
                 terminal_event = ("error", str(e))
             finally:
+                with active_streams_lock:
+                    active_streams.pop(response_id, None)
+                lease.release()
                 worker_finished.set()
             events.put(terminal_event)
 
@@ -1922,8 +1933,20 @@ def create_app(
                 "cancelled": cancelled,
                 "finished": worker_finished,
                 "thread": worker_thread,
+                "lease": lease,
             }
-        worker_thread.start()
+        if not lease.start_worker(cancelled):
+            with active_streams_lock:
+                active_streams.pop(response_id, None)
+            worker_finished.set()
+            return
+        try:
+            worker_thread.start()
+        except BaseException:
+            with active_streams_lock:
+                active_streams.pop(response_id, None)
+            lease.release()
+            raise
 
         reasoning_started = False
         message_started = False
@@ -2086,7 +2109,7 @@ def create_app(
                     text = truncate_stop_markers("".join(complete), all_stop_markers)
                     thinking = None
                     if think_enabled:
-                        thinking, text = split_thinking(text)
+                        thinking, text = _split_generated_thinking(text, generation_prefix)
                         thinking = thinking or None
                     input_tokens = int(result.get("prompt_tokens") or 0)
                     output_tokens = int(result.get("generated_tokens") or len(complete))
@@ -2152,13 +2175,6 @@ def create_app(
                         )
                         return
                     incomplete_details = None
-                    tool_calls, tool_incomplete = _apply_tool_call_limits(
-                        tool_calls,
-                        parallel=getattr(body, "parallel_tool_calls", True),
-                        max_calls=getattr(body, "max_tool_calls", None),
-                    )
-                    if tool_incomplete:
-                        incomplete_details = {"reason": "max_tool_calls"}
                     remaining_text = (
                         _strip_tool_json_from_text(text, tool_calls, tool_syntax=tool_syntax)
                         if tool_calls
@@ -2498,25 +2514,16 @@ def create_app(
                     return
         finally:
             if not worker_finished.is_set():
-                cancelled.set()
-                try:
-                    session.cancel()
-                except Exception:
-                    pass
-                worker_thread.join(timeout=10.0)
-            with active_streams_lock:
-                active_streams.pop(response_id, None)
-            try:
-                _flight_lock.release()
-            except RuntimeError:
-                pass
+                lease.cancel()
+
 
     def _acquire_flight_or_429(timeout: float | None = None) -> None:
         """Take the single-flight lock, waiting briefly for harness bursts.
 
         Concurrent harness requests (e.g. title + main, client retries) wait
-        up to ``_FLIGHT_WAIT_SECONDS`` instead of failing instantly; only a
-        genuinely stuck generation still answers 429 with ``Retry-After``.
+        up to ``_FLIGHT_WAIT_SECONDS`` instead of failing instantly. A healthy
+        long generation may still answer 429 after that wait; retries are not
+        a substitute for a bounded scheduler or confirmed worker completion.
         """
         if timeout is None:
             timeout = _FLIGHT_WAIT_SECONDS
@@ -2537,24 +2544,26 @@ def create_app(
     @router.post("/responses", response_model=None)
     def create_response(body: CreateResponseRequest, request: Request):
         acquired = False
+        lease = None
         try:
             _validate_request(body)
             _acquire_flight_or_429()
             acquired = True
-            prompt, tok_limit, temperature_eff, top_p_eff, effective_flags = (
+            lease = _FlightLease(_flight_lock, session)
+            prompt, tok_limit, temperature_eff, top_p_eff, effective_flags, generation_prefix = (
                 _prepare_request(body)
             )
         except HTTPException as exc:
             _log_rejection(model, body, exc)
             if acquired:
-                _flight_lock.release()
+                lease.release()
             raise
         except Exception:
             if acquired:
-                _flight_lock.release()
+                lease.release()
             raise
         if body.stream:
-            return StreamingResponse(
+            return _OwnedStreamingResponse(
                 stream_events(
                     body,
                     prompt,
@@ -2563,7 +2572,10 @@ def create_app(
                     top_p=top_p_eff,
                     effective_flags=effective_flags,
                     request=request,
+                    generation_prefix=generation_prefix,
+                    lease=lease,
                 ),
+                lease=lease,
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -2578,6 +2590,7 @@ def create_app(
             f"rsn_{uuid.uuid4().hex[:24]}" if think_enabled else None
         )
         disconnect_cancelled = threading.Event()
+        lease.start_worker(disconnect_cancelled)
         monitor_stop = threading.Event()
 
         async def _event_loop_token():
@@ -2597,9 +2610,8 @@ def create_app(
                 except Exception:
                     return
                 if disconnected and not monitor_stop.is_set():
-                    disconnect_cancelled.set()
                     try:
-                        session.cancel()
+                        lease.cancel()
                     except Exception:
                         pass
                     return
@@ -2678,12 +2690,12 @@ def create_app(
             monitor_stop.set()
             if monitor_thread is not None:
                 monitor_thread.join(timeout=1.0)
-            _flight_lock.release()
+            lease.release()
         text = truncate_stop_markers("".join(chunks), all_stop_markers)
         thinking = None
         reasoning_tokens = 0
         if think_enabled:
-            thinking, text = split_thinking(text)
+            thinking, text = _split_generated_thinking(text, generation_prefix)
             thinking = thinking or None
             if thinking is not None:
                 reasoning_tokens = max(0, len(thinking) // 4)
@@ -2708,11 +2720,6 @@ def create_app(
             else len(chunks)
         )
         stop_reason_val = int(result.get("stop_reason") or 0) if result else 0
-        tool_calls, tool_incomplete = _apply_tool_call_limits(
-            tool_calls,
-            parallel=getattr(body, "parallel_tool_calls", True),
-            max_calls=getattr(body, "max_tool_calls", None),
-        )
         incomplete_details = None
         final_status = ResponseStatus.completed
         item_status = "completed"
@@ -2724,10 +2731,6 @@ def create_app(
                 "code": "server_error",
                 "message": tool_error_msg or "tool call failed",
             }
-        elif tool_incomplete:
-            incomplete_details = {"reason": "max_tool_calls"}
-            final_status = ResponseStatus.incomplete
-            item_status = "incomplete"
         elif stop_reason_val == 3:
             final_status = ResponseStatus.cancelled
             item_status = "incomplete"
@@ -2780,9 +2783,8 @@ def create_app(
         with active_streams_lock:
             entry = active_streams.get(response_id)
         if entry is not None:
-            entry["cancelled"].set()
             try:
-                session.cancel()
+                entry["lease"].cancel()
             except Exception as exc:
                 raise HTTPException(
                     status_code=500, detail=f"Native session cancellation failed: {exc}"

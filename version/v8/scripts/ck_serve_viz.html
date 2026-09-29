@@ -31,8 +31,6 @@
   #answer { margin-top: 14px; white-space: pre-wrap; line-height: 1.5; min-height: 40px; }
   #status { font-size: 12px; color: #6a7383; margin-top: 10px; }
   #perf { margin-top: 12px; border-top: 1px solid #333c4d; padding-top: 10px; color: #7f8aa0; font-size: 12px; white-space: pre-wrap; }
-  #vision-preview { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-  #vision-preview img { max-width: 120px; max-height: 120px; border-radius: 6px; border: 1px solid #333c4d; }
 </style>
 </head>
 <body>
@@ -89,26 +87,11 @@
       <label for="tools-json">tools JSON (list of FunctionTool)</label>
       <textarea id="tools-json" style="min-height:120px">[{"type":"function","name":"get_weather","description":"Get weather for a location","parameters":{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}}]</textarea>
       <div id="tools-error" style="color:#d45d5d;font-size:12px;min-height:16px"></div>
-      <div style="font-size:11px;color:#6a7383;margin-top:4px">Demo: prompt "What is weather in Paris?" → streams <code>function_call</code> with <code>response.function_call_arguments.delta/done</code>. Try malformed JSON or unknown tool to see <code>failed</code>, or two tools with parallel false to see <code>incomplete:max_tool_calls</code>. Tools require the server to declare a protocol (<code>--tool-protocol tagged_json|qwen_xml|bare_json</code>); otherwise requests fail 501 <code>tool_protocol_undeclared</code>.</div>
+      <div style="font-size:11px;color:#6a7383;margin-top:4px">Demo: prompt "What is weather in Paris?" → streams <code>function_call</code> with <code>response.function_call_arguments.delta/done</code>. Malformed JSON, unknown tools and too many calls fail without emitting a partial call set. Tools require the server to declare a protocol (<code>--tool-protocol tagged_json|qwen_xml|bare_json</code>); otherwise requests fail 501 <code>tool_protocol_undeclared</code>.</div>
     </div>
   </details>
 
-  <details class="tools-panel" id="vision-panel">
-    <summary>Vision input</summary>
-    <div class="body">
-      <div class="toggle">
-        <input id="enable-vision" type="checkbox">
-        <label for="enable-vision" style="margin:0">Enable vision input</label>
-      </div>
-      <label for="vision-urls">Image URLs (one per line)</label>
-      <textarea id="vision-urls" style="min-height:60px" placeholder="https://example.com/a.png"></textarea>
-      <label for="vision-files">Upload images (sent as data URLs)</label>
-      <input id="vision-files" type="file" accept="image/*" multiple>
-      <div id="vision-preview"></div>
-      <div id="vision-error" style="color:#d45d5d;font-size:12px;min-height:16px"></div>
-      <div style="font-size:11px;color:#6a7383;margin-top:4px">Sent as <code>input_image</code> parts: http(s) URLs or <code>data:image/...</code> URLs only (raw base64 is rejected). Requires a vision template (Qwen3.5) and a vision-capable runtime, otherwise 422 <code>invalid_image</code>. Without a vision encoder the model receives placeholders, not pixel bytes.</div>
-    </div>
-  </details>
+  <p class="mini-note" id="vision-status">Typed image/file input is unavailable in this text-only serving path. A template marker does not execute an encoder. Plain file paths remain text for harness tools.</p>
 
   <button id="run">Generate</button>
   <button id="cancel" disabled>Cancel</button>
@@ -147,57 +130,6 @@
   let currentResponseId = null;
   let currentAbort = null;
   const toolCallsMap = new Map(); // item_id -> {name, arguments, el}
-  const visionDataUrls = []; // data URLs from file picker
-
-  function refreshVisionPreview(urls) {
-    const box = $("vision-preview");
-    if (!box) return;
-    box.innerHTML = "";
-    (urls || []).slice(0, 8).forEach((u) => {
-      const img = document.createElement("img");
-      img.src = u;
-      img.alt = "vision input";
-      box.appendChild(img);
-    });
-  }
-
-  function collectVisionUrls() {
-    const urls = [];
-    const raw = $("vision-urls") ? $("vision-urls").value : "";
-    raw.split("\n").forEach((line) => {
-      const u = line.trim();
-      if (u && !urls.includes(u)) urls.push(u);
-    });
-    visionDataUrls.forEach((u) => { if (!urls.includes(u)) urls.push(u); });
-    return urls;
-  }
-
-  const visionFilesEl = $("vision-files");
-  if (visionFilesEl) {
-    visionFilesEl.addEventListener("change", () => {
-      visionDataUrls.length = 0;
-      const files = Array.from(visionFilesEl.files || []).slice(0, 4);
-      if (!files.length) {
-        refreshVisionPreview(collectVisionUrls());
-        return;
-      }
-      let pending = files.length;
-      files.forEach((f) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          if (!visionDataUrls.includes(reader.result)) visionDataUrls.push(reader.result);
-          pending -= 1;
-          if (pending === 0) refreshVisionPreview(collectVisionUrls());
-        };
-        reader.onerror = () => {
-          pending -= 1;
-          if (pending === 0) refreshVisionPreview(collectVisionUrls());
-        };
-        reader.readAsDataURL(f);
-      });
-    });
-  }
-
   function ensureToolCall(item_id, name) {
     if (toolCallsMap.has(item_id)) return toolCallsMap.get(item_id);
     const div = document.createElement("div");
@@ -265,7 +197,6 @@
     const enableTools = $("enable-tools") ? $("enable-tools").checked : false;
     const toolChoiceSel = $("tool-choice") ? $("tool-choice").value : "auto";
     const parallelSel = $("parallel-tool-calls") ? $("parallel-tool-calls").value : "true";
-    const enableVision = $("enable-vision") ? $("enable-vision").checked : false;
 
     answerEl.textContent = "";
     thinkingEl.textContent = "";
@@ -273,30 +204,9 @@
     thinkingBox.open = true;
     clearToolCalls();
     currentResponseId = null;
-    if ($("vision-error")) $("vision-error").textContent = "";
-
-    let input = prompt;
-    if (enableVision) {
-      const urls = collectVisionUrls();
-      if (!urls.length) {
-        if ($("vision-error")) $("vision-error").textContent = "vision enabled but no images provided";
-        statusEl.textContent = "vision enabled but no images provided";
-        return;
-      }
-      if (urls.length > 8) {
-        if ($("vision-error")) $("vision-error").textContent = "at most 8 images per request";
-        statusEl.textContent = "at most 8 images per request";
-        return;
-      }
-      const parts = [{ type: "input_text", text: prompt }];
-      urls.forEach((u) => parts.push({ type: "input_image", image_url: u }));
-      input = [{ type: "message", role: "user", content: parts }];
-      refreshVisionPreview(urls);
-    }
-
     const body = {
       model: "ck-v8",
-      input: input,
+      input: prompt,
       instructions: "You are a helpful assistant.",
       temperature: temperature,
       max_output_tokens: max_output_tokens,
@@ -347,9 +257,6 @@
             || (j && j.detail && j.detail.error && j.detail.error.code);
           if (res.status === 501 && errCode === "tool_protocol_undeclared") {
             statusEl.textContent += " -- serve with an explicit protocol, e.g. --tool-protocol qwen_xml plus a matching tool_protocol.json sidecar";
-          }
-          if (errCode === "invalid_image") {
-            if ($("vision-error")) $("vision-error").textContent = errMsg || "invalid image input";
           }
         } catch (e) {}
         return;

@@ -1017,6 +1017,27 @@ def load_tokenizer_json(path: str, vocab_size: int) -> tuple[list[int], bytes, l
             tokens_by_id[idx] = token
 
     added_tokens = data.get("added_tokens", [])
+    special_added_ids: set[int] = set()
+    config_path = Path(path).with_name("tokenizer_config.json")
+    tokenizer_config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
+    if not isinstance(tokenizer_config, dict):
+        raise GGUFError("tokenizer_config.json must contain an object")
+
+    def special_content(value: object) -> str | None:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict) and isinstance(value.get("content"), str):
+            return value["content"]
+        return None
+
+    named_specials = {
+        token for key in ("bos_token", "eos_token", "unk_token", "pad_token")
+        if (token := special_content(tokenizer_config.get(key))) is not None
+    }
+    for value in (tokenizer_config.get("additional_special_tokens") or []):
+        token = special_content(value)
+        if token is not None:
+            named_specials.add(token)
     if isinstance(added_tokens, list):
         for row in added_tokens:
             if not isinstance(row, dict):
@@ -1035,6 +1056,26 @@ def load_tokenizer_json(path: str, vocab_size: int) -> tuple[list[int], bytes, l
                     f"tokenizer.json conflicting token id {idx}: {existing!r} vs {token!r}"
                 )
             tokens_by_id[idx] = token
+            if row.get("special") is True or token in named_specials:
+                special_added_ids.add(idx)
+
+    added_decoder = tokenizer_config.get("added_tokens_decoder", {})
+    if isinstance(added_decoder, dict):
+        for key, row in added_decoder.items():
+            if not isinstance(row, dict):
+                continue
+            try:
+                idx = int(key)
+            except (TypeError, ValueError):
+                continue
+            token = special_content(row)
+            if (0 <= idx < vocab_size and token == tokens_by_id[idx]
+                    and (row.get("special") is True or token in named_specials)):
+                special_added_ids.add(idx)
+    for token in named_specials:
+        idx = vocab.get(token)
+        if isinstance(idx, int) and 0 <= idx < vocab_size and tokens_by_id[idx] == token:
+            special_added_ids.add(idx)
 
     missing_ids = [i for i, t in enumerate(tokens_by_id) if t == ""]
     if max_id + 1 != vocab_size or missing_ids:
@@ -1062,9 +1103,12 @@ def load_tokenizer_json(path: str, vocab_size: int) -> tuple[list[int], bytes, l
             strings_blob.extend(token.encode("utf-8"))
         strings_blob.append(0)
 
-    # SPM scores and types are not available in JSON format
+    # tokenizer.json marks exact-match added tokens explicitly. Preserve
+    # those declarations for the native BPE pre-token matching path.
     scores_data: list[float] = [0.0] * vocab_size
-    types_data: list[int] = [0] * vocab_size  # 0 = normal token
+    types_data: list[int] = [1] * vocab_size  # GGUF NORMAL
+    for idx in special_added_ids:
+        types_data[idx] = 4  # GGUF USER_DEFINED
 
     merges_data: list[int] = []
     if isinstance(merges, list):

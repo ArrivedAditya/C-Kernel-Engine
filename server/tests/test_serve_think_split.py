@@ -70,7 +70,7 @@ def test_stream_splitter_no_markers_emits_only_answer_on_flush():
 
 def test_prompt_opens_thinking_detects_unclosed_marker():
     assert _prompt_opens_thinking("<|im_start|>assistant\n<think>\n")
-    assert _prompt_opens_thinking("a<think>b</think>c<think>")
+    assert not _prompt_opens_thinking("quoted <think> user text")
     assert not _prompt_opens_thinking("<|im_start|>assistant\n")
     assert not _prompt_opens_thinking("a<think>b</think>c")
     assert not _prompt_opens_thinking("")
